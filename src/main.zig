@@ -10,14 +10,17 @@ const STDIN_FILENO = std.os.linux.STDIN_FILENO;
 
 pub fn main() !void {
     try enable_raw_mode();
-    defer disable_raw_mode();
 
     const stdin = std.io.getStdIn().reader();
     const stdout = std.io.getStdOut().writer();
     var buffer: [1]u8 = undefined;
 
     while (true) {
-        const bytes_read = try stdin.read(&buffer);
+        const bytes_read = stdin.read(&buffer) catch |err| {
+            std.debug.print("Could not read from stdin");
+            return err;
+        };
+
         if (bytes_read == 0)  break;
 
         const buffer_val = buffer[0];
@@ -32,6 +35,8 @@ pub fn main() !void {
             try stdout.print("{d} ('{c}')\r\n", .{buffer_val, buffer_val});
         }
     }
+
+    try disable_raw_mode();
 }
 
 fn enable_raw_mode() !void {
@@ -43,10 +48,20 @@ fn enable_raw_mode() !void {
     raw.c_oflag &= ~@as(c_uint, c.OPOST);
     raw.c_iflag &= ~@as(c_uint, c.IXON|c.ICRNL|c.BRKINT|c.INPCK|c.ISTRIP);
     raw.c_oflag |= @as(c_uint, c.CS8);
+    raw.c_cc[c.VMIN] = 0;
+    raw.c_cc[c.VTIME] = 1;
 
-    _ = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &raw);
+    const status_code = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &raw);
+
+    if (status_code != 0) {
+        return error.EnableRawModeFailed;
+    }
 }
 
-fn disable_raw_mode() void {
-    _ = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &original_termios);
+fn disable_raw_mode() !void {
+    const status_code = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &original_termios);
+
+    if (status_code != 0) {
+        return error.DisableRawModeFailed;
+    }
 }

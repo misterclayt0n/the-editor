@@ -40,8 +40,9 @@ fn enable_raw_mode() !void {
     var raw: c.termios = original_termios;
 
     raw.c_lflag &= ~@as(c_uint, c.ECHO|c.ICANON|c.ISIG|c.IEXTEN);
-    raw.c_oflag &= @as(c_uint, c.OPOST);
-    raw.c_iflag &= ~@as(c_uint, c.IXON|c.ICRNL);
+    raw.c_oflag &= ~@as(c_uint, c.OPOST);
+    raw.c_iflag &= ~@as(c_uint, c.IXON|c.ICRNL|c.BRKINT|c.INPCK|c.ISTRIP);
+    raw.c_oflag |= @as(c_uint, c.CS8);
 
     _ = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &raw);
 }

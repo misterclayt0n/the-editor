@@ -47,6 +47,12 @@ const Editor = struct {
             else => {}
         }
     }
+
+    pub fn refreshScreen(self: @This()) !void {
+        _ = self;
+        try stdout.print("\x1b[2J", .{});
+        try stdout.print("\x1b[H", .{});
+    }
 };
 
 pub fn main() !void {
@@ -55,6 +61,7 @@ pub fn main() !void {
     var editor = Editor.init();
 
     while (true) {
+        try editor.refreshScreen();
         try editor.processKeyPressed();
     }
 

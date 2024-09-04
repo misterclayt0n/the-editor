@@ -5,7 +5,6 @@ const c = @cImport({
     @cInclude("termios.h");
 });
 
-var original_termios: c.termios = undefined;
 const STDIN_FILENO = std.os.linux.STDIN_FILENO;
 const stdin = std.io.getStdIn().reader();
 const stdout = std.io.getStdOut().writer();
@@ -16,8 +15,12 @@ fn CTRL_KEY(k: u8) u8 {
 }
 
 const Editor = struct {
+    original_termios: c.termios,
+
     pub fn init() Editor {
-        return Editor{};
+        return Editor{
+            .original_termios = undefined,
+        };
     }
 
     pub fn readKey(self: @This()) !u8 {
@@ -36,12 +39,38 @@ const Editor = struct {
         }
     }
 
-    pub fn processKeyPressed(self: @This()) !void {
+    pub fn enableRawMode(self: *@This()) !void {
+        _ = c.tcgetattr(STDIN_FILENO, &self.original_termios);
+
+        var raw: c.termios = self.original_termios;
+
+        raw.c_lflag &= ~@as(c_uint, c.ECHO | c.ICANON | c.ISIG | c.IEXTEN);
+        raw.c_oflag &= ~@as(c_uint, c.OPOST);
+        raw.c_iflag &= ~@as(c_uint, c.IXON | c.ICRNL | c.BRKINT | c.INPCK | c.ISTRIP);
+        raw.c_cflag |= @as(c_uint, c.CS8);
+        raw.c_cc[c.VMIN] = 1;
+        raw.c_cc[c.VTIME] = 0;
+
+        const status_code = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &raw);
+
+        if (status_code != 0) {
+            return error.EnableRawModeFailed;
+        }
+    }
+
+    pub fn disableRawMode(self: *@This()) !void {
+        const status_code = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &self.original_termios);
+        if (status_code != 0) {
+            return error.DisableRawModeFailed;
+        }
+    }
+
+    pub fn processKeyPressed(self: *@This()) !void {
         const key = try self.readKey();
 
         switch (key) {
             CTRL_KEY('q') => {
-                try disableRawMode();
+                try self.disableRawMode();
                 std.os.linux.exit(0);
             },
             else => {}
@@ -66,41 +95,13 @@ const Editor = struct {
 };
 
 pub fn main() !void {
-    try enableRawMode();
-
     var editor = Editor.init();
+    try editor.enableRawMode();
 
     while (true) {
         try editor.refreshScreen();
         try editor.processKeyPressed();
     }
 
-    try disableRawMode();
-}
-
-fn enableRawMode() !void {
-    _ = c.tcgetattr(STDIN_FILENO, &original_termios);
-
-    var raw: c.termios = original_termios;
-
-    raw.c_lflag &= ~@as(c_uint, c.ECHO|c.ICANON|c.ISIG|c.IEXTEN);
-    raw.c_oflag &= ~@as(c_uint, c.OPOST);
-    raw.c_iflag &= ~@as(c_uint, c.IXON|c.ICRNL|c.BRKINT|c.INPCK|c.ISTRIP);
-    raw.c_oflag |= @as(c_uint, c.CS8);
-    raw.c_cc[c.VMIN] = 1;
-    raw.c_cc[c.VTIME] = 0;
-
-    const status_code = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &raw);
-
-    if (status_code != 0) {
-        return error.EnableRawModeFailed;
-    }
-}
-
-fn disableRawMode() !void {
-    const status_code = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &original_termios);
-
-    if (status_code != 0) {
-        return error.DisableRawModeFailed;
-    }
+    try editor.disableRawMode();
 }

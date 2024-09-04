@@ -49,9 +49,19 @@ const Editor = struct {
     }
 
     pub fn refreshScreen(self: @This()) !void {
-        _ = self;
         try stdout.print("\x1b[2J", .{});
         try stdout.print("\x1b[H", .{});
+
+        try self.editorDrawRows();
+        try stdout.print("\x1b[H", .{});
+    }
+
+    pub fn editorDrawRows(self: @This()) !void {
+        _ = self;
+        var y: usize = 0;
+        while (y < 24) : (y += 1) {
+            try stdout.print("~\r\n", .{});
+        }
     }
 };
 

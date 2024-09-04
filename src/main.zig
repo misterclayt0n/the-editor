@@ -7,39 +7,61 @@ const c = @cImport({
 
 var original_termios: c.termios = undefined;
 const STDIN_FILENO = std.os.linux.STDIN_FILENO;
+const stdin = std.io.getStdIn().reader();
+const stdout = std.io.getStdOut().writer();
 
-pub fn main() !void {
-    try enable_raw_mode();
 
-    const stdin = std.io.getStdIn().reader();
-    const stdout = std.io.getStdOut().writer();
-    var buffer: [1]u8 = undefined;
+fn CTRL_KEY(k: u8) u8 {
+    return k & 0x1f;
+}
 
-    while (true) {
-        const bytes_read = stdin.read(&buffer) catch |err| {
-            std.debug.print("Could not read from stdin");
-            return err;
-        };
+const Editor = struct {
+    pub fn init() Editor {
+        return Editor{};
+    }
 
-        if (bytes_read == 0)  break;
+    pub fn readKey(self: @This()) !u8 {
+        _ = self;
+        var buffer: [1]u8 = undefined;
 
-        const buffer_val = buffer[0];
+        while (true) {
+            const bytes_read = stdin.read(&buffer) catch |err| {
+                std.debug.print("Could not read from stdin", .{});
+                return err;
+            };
 
-        if (buffer[0] == 'q') {
-            break;
-        }
-
-        if (c.iscntrl(buffer_val) == 0) {
-            try stdout.print("{d}\r\n", .{buffer_val});
-        } else {
-            try stdout.print("{d} ('{c}')\r\n", .{buffer_val, buffer_val});
+            if (bytes_read == 1) {
+                return buffer[0];
+            }
         }
     }
 
-    try disable_raw_mode();
+    pub fn processKeyPressed(self: @This()) !void {
+        const key = try self.readKey();
+
+        switch (key) {
+            CTRL_KEY('q') => {
+                try disableRawMode();
+                std.os.linux.exit(0);
+            },
+            else => {}
+        }
+    }
+};
+
+pub fn main() !void {
+    try enableRawMode();
+
+    var editor = Editor.init();
+
+    while (true) {
+        try editor.processKeyPressed();
+    }
+
+    try disableRawMode();
 }
 
-fn enable_raw_mode() !void {
+fn enableRawMode() !void {
     _ = c.tcgetattr(STDIN_FILENO, &original_termios);
 
     var raw: c.termios = original_termios;
@@ -48,8 +70,8 @@ fn enable_raw_mode() !void {
     raw.c_oflag &= ~@as(c_uint, c.OPOST);
     raw.c_iflag &= ~@as(c_uint, c.IXON|c.ICRNL|c.BRKINT|c.INPCK|c.ISTRIP);
     raw.c_oflag |= @as(c_uint, c.CS8);
-    raw.c_cc[c.VMIN] = 0;
-    raw.c_cc[c.VTIME] = 1;
+    raw.c_cc[c.VMIN] = 1;
+    raw.c_cc[c.VTIME] = 0;
 
     const status_code = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &raw);
 
@@ -58,7 +80,7 @@ fn enable_raw_mode() !void {
     }
 }
 
-fn disable_raw_mode() !void {
+fn disableRawMode() !void {
     const status_code = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &original_termios);
 
     if (status_code != 0) {

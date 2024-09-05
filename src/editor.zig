@@ -11,6 +11,7 @@ const STDIN_FILENO = std.os.linux.STDIN_FILENO;
 const STDOUT_FILENO = std.os.linux.STDOUT_FILENO;
 const stdin = std.io.getStdIn().reader();
 const stdout = std.io.getStdOut().writer();
+const VERSION = "0.0.1";
 
 fn CTRL_KEY(k: u8) u8 {
     return k & 0x1f;
@@ -112,11 +113,34 @@ pub const Editor = struct {
         var y: usize = 0;
 
         while (y < self.screen_rows) : (y += 1) {
-            try buffer.append("~");
-            try buffer.append("\x1b[K");
+            if (y == @divTrunc(self.screen_rows, 3)) {
+                var welcome: [80]u8 = undefined;
+                const welcome_text = try std.fmt.bufPrint(&welcome, "The editor -- version {s}", .{VERSION});
+                const cols: usize = @intCast(self.screen_cols);
+
+                const welcome_len = if (welcome_text.len > cols) cols else welcome_text.len;
+
+                // center welcome message
+                var padding: usize = (cols - welcome_len) / 2;
+                if (padding > 0) {
+                    try buffer.append("~");
+                    padding -= 1;
+                }
+
+                while (padding != 0) : (padding -= 1) {
+                    try buffer.append(" ");
+                }
+
+                // add welcome message
+                try buffer.append(welcome[0..welcome_len]);
+            } else {
+                try buffer.append("~");
+            }
+
+            try buffer.append("\x1b[K"); // clean line
 
             if (y < self.screen_rows - 1) {
-                try buffer.append("\r\n");
+                try buffer.append("\r\n"); // add line if not the last
             }
         }
     }

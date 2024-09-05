@@ -97,7 +97,7 @@ pub const Editor = struct {
         var buffer = ab.AppendBuffer.init(self.allocator);
         defer buffer.deinit();
 
-        try buffer.append("\x1b[2J");  // clear screen
+        // try buffer.append("\x1b[2J");  // clear screen
         try buffer.append("\x1b[H");   // move cursor to the top
 
         try self.drawRows(&buffer);
@@ -113,6 +113,7 @@ pub const Editor = struct {
 
         while (y < self.screen_rows) : (y += 1) {
             try buffer.append("~");
+            try buffer.append("\x1b[K");
 
             if (y < self.screen_rows - 1) {
                 try buffer.append("\r\n");

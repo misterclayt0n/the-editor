@@ -106,27 +106,38 @@ const Editor = struct {
         }
     }
 
-    pub fn getCursorPosition(self: *@This()) !i32 {
+    pub fn getCursorPosition(self: *@This(), rows: *i32, cols: *i32) !i32 {
+        _ = self;
+        var buffer: [32]u8 = undefined;
+        var i: usize = 0;
+
         if (try stdout.write("\x1b[6n") != 4) return -1;
-        try stdout.print("\r\n", .{});
 
-        var buffer: [1]u8 = undefined;
-        const bytes_read = stdin.read(&buffer) catch |err| {
-            std.debug.print("Could not read from stdin", .{});
-            return err;
-        };
-
-        while (bytes_read == 1) {
-            if (c.iscntrl(buffer[0]) == 0) {
-                try stdout.print("{d}\r\n", .{buffer});
-            } else {
-                try stdout.print("{d} ('{c}')\r\n", .{buffer, buffer});
-            }
+        while (i < buffer.len - 1) : (i += 1) {
+            if (try stdin.read(buffer[i..i+1]) != 1) break;
+            if (buffer[i] == 'R') break;
         }
 
-        _ = try self.readKey();
+        buffer[i] = '0';
 
-        return -1;
+        // make sure response starts with '\x1b' e '['
+        if (buffer[0] != '\x1b' or buffer[1] != '[') {
+            return -1;
+        }
+
+        const semicolon_index = std.mem.indexOf(u8, buffer[2..i], ";\u{00}") orelse return -1;
+
+        const row_str = buffer[2..semicolon_index];
+        const col_str = buffer[semicolon_index+1..i];
+
+        // convert string to int
+        const row = try std.fmt.parseInt(i32, row_str, 10);
+        const col = try std.fmt.parseInt(i32, col_str, 10);
+
+        rows.* = row;
+        cols.* = col;
+
+        return 0;
     }
 };
 
@@ -141,7 +152,7 @@ pub fn getWindowSize(rows: *i32, cols: *i32, editor: *Editor) !i32 {
         if (try stdout.write("\x1b[999C\x1b[999B") != 12)  return -1;
 
         // read key to make sure the cursor has repositioned
-        return editor.getCursorPosition();
+        return editor.getCursorPosition(rows, cols);
     } else {
         cols.* = ws.ws_col;
         rows.* = ws.ws_row;

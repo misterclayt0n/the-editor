@@ -105,6 +105,29 @@ const Editor = struct {
             try stdout.print("~\r\n", .{});
         }
     }
+
+    pub fn getCursorPosition(self: *@This()) !i32 {
+        if (try stdout.write("\x1b[6n") != 4) return -1;
+        try stdout.print("\r\n", .{});
+
+        var buffer: [1]u8 = undefined;
+        const bytes_read = stdin.read(&buffer) catch |err| {
+            std.debug.print("Could not read from stdin", .{});
+            return err;
+        };
+
+        while (bytes_read == 1) {
+            if (c.iscntrl(buffer[0]) == 0) {
+                try stdout.print("{d}\r\n", .{buffer});
+            } else {
+                try stdout.print("{d} ('{c}')\r\n", .{buffer, buffer});
+            }
+        }
+
+        _ = try self.readKey();
+
+        return -1;
+    }
 };
 
 pub fn getWindowSize(rows: *i32, cols: *i32, editor: *Editor) !i32 {
@@ -115,13 +138,10 @@ pub fn getWindowSize(rows: *i32, cols: *i32, editor: *Editor) !i32 {
 
     if (result == -1 or ws.ws_col == 0) {
         // ioctl may fail
-        if (try stdout.write("\x1b[999C\x1b[999B") != 12) {
-            return -1;
-        }
+        if (try stdout.write("\x1b[999C\x1b[999B") != 12)  return -1;
 
         // read key to make sure the cursor has repositioned
-        _ = try editor.readKey();
-        return -1;
+        return editor.getCursorPosition();
     } else {
         cols.* = ws.ws_col;
         rows.* = ws.ws_row;

@@ -1,4 +1,5 @@
 const std = @import("std");
+const ab = @import("buffer.zig");
 const c = @cImport({
     @cInclude("unistd.h");
     @cInclude("ctype.h");
@@ -19,12 +20,14 @@ pub const Editor = struct {
     original_termios: c.termios,
     screen_rows: i32,
     screen_cols: i32,
+    allocator: std.mem.Allocator,
 
-    pub fn init() !Editor {
+    pub fn init(allocator: std.mem.Allocator) !Editor {
         var editor = Editor{
             .original_termios = undefined,
             .screen_rows = 0,
             .screen_cols = 0,
+            .allocator = allocator,
         };
 
         if (try getWindowSize(&editor.screen_rows, &editor.screen_cols, &editor) == -1) {
@@ -91,20 +94,28 @@ pub const Editor = struct {
     }
 
     pub fn refreshScreen(self: @This()) !void {
-        try stdout.print("\x1b[2J", .{});
-        try stdout.print("\x1b[H", .{});
+        var buffer = ab.AppendBuffer.init(self.allocator);
+        defer buffer.deinit();
 
-        try self.drawRows();
-        try stdout.print("\x1b[H", .{});
+        try buffer.append("\x1b[2J");  // clear screen
+        try buffer.append("\x1b[H");   // move cursor to the top
+
+        try self.drawRows(&buffer);
+
+        try buffer.append("\x1b[H"); // move cursor back to top
+        try buffer.append("\x1b[?25h"); // show cursor
+
+        try buffer.writeTo(stdout); // write to stdout
     }
 
-    pub fn drawRows(self: @This()) !void {
+    pub fn drawRows(self: @This(), buffer: *ab.AppendBuffer) !void {
         var y: usize = 0;
+
         while (y < self.screen_rows) : (y += 1) {
-            try stdout.print("~", .{});
+            try buffer.append("~");
 
             if (y < self.screen_rows - 1) {
-                try stdout.print("\r\n", .{});
+                try buffer.append("\r\n");
             }
         }
     }

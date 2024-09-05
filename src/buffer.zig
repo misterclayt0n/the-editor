@@ -5,9 +5,9 @@ pub const AppendBuffer = struct {
     buffer: std.ArrayList(u8),
 
     /// initialize append buffer
-    pub fn init(allocator: *std.mem.Allocator) !AppendBuffer {
+    pub fn init(allocator: std.mem.Allocator) AppendBuffer {
         return AppendBuffer{
-            .buffer = try std.ArrayList(u8).init(allocator),
+            .buffer = std.ArrayList(u8).init(allocator),
         };
     }
 
@@ -17,7 +17,11 @@ pub const AppendBuffer = struct {
     }
 
     /// free append buffer
-    pub fn free(self: *@This()) void {
-        try self.free();
+    pub fn deinit(self: *@This()) void {
+        self.buffer.deinit();
+    }
+
+    pub fn writeTo(self: *@This(), writer: anytype) !void {
+        try writer.writeAll(self.buffer.items);
     }
 };

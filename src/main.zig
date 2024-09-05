@@ -2,7 +2,8 @@ const std = @import("std");
 const editor = @import("editor.zig");
 
 pub fn main() !void {
-    var e = try editor.Editor.init();
+    const allocator = std.heap.page_allocator;
+    var e = try editor.Editor.init(allocator);
     try e.enableRawMode();
 
     while (true) {

@@ -3,9 +3,11 @@ const c = @cImport({
     @cInclude("unistd.h");
     @cInclude("ctype.h");
     @cInclude("termios.h");
+    @cInclude("sys/ioctl.h");
 });
 
 const STDIN_FILENO = std.os.linux.STDIN_FILENO;
+const STDOUT_FILENO = std.os.linux.STDOUT_FILENO;
 const stdin = std.io.getStdIn().reader();
 const stdout = std.io.getStdOut().writer();
 
@@ -16,11 +18,21 @@ fn CTRL_KEY(k: u8) u8 {
 
 const Editor = struct {
     original_termios: c.termios,
+    screen_rows: i32,
+    screen_cols: i32,
 
-    pub fn init() Editor {
-        return Editor{
+    pub fn init() !Editor {
+        var editor = Editor{
             .original_termios = undefined,
+            .screen_rows = 0,
+            .screen_cols = 0,
         };
+
+        if (try getWindowSize(&editor.screen_rows, &editor.screen_cols, &editor) == -1) {
+            return error.WindowSizeFailed;
+        }
+
+        return editor;
     }
 
     pub fn readKey(self: @This()) !u8 {
@@ -70,6 +82,8 @@ const Editor = struct {
 
         switch (key) {
             CTRL_KEY('q') => {
+                try stdout.print("\x1b[2J", .{});
+                try stdout.print("\x1b[H", .{});
                 try self.disableRawMode();
                 std.os.linux.exit(0);
             },
@@ -86,16 +100,37 @@ const Editor = struct {
     }
 
     pub fn editorDrawRows(self: @This()) !void {
-        _ = self;
         var y: usize = 0;
-        while (y < 24) : (y += 1) {
+        while (y < self.screen_rows) : (y += 1) {
             try stdout.print("~\r\n", .{});
         }
     }
 };
 
+pub fn getWindowSize(rows: *i32, cols: *i32, editor: *Editor) !i32 {
+    var ws: c.winsize = undefined;
+
+    // try to get window size with ioctl
+    const result = c.ioctl(STDOUT_FILENO, c.TIOCGWINSZ, &ws);
+
+    if (result == -1 or ws.ws_col == 0) {
+        // ioctl may fail
+        if (try stdout.write("\x1b[999C\x1b[999B") != 12) {
+            return -1;
+        }
+
+        // read key to make sure the cursor has repositioned
+        _ = try editor.readKey();
+        return -1;
+    } else {
+        cols.* = ws.ws_col;
+        rows.* = ws.ws_row;
+        return 0;
+    }
+}
+
 pub fn main() !void {
-    var editor = Editor.init();
+    var editor = try Editor.init();
     try editor.enableRawMode();
 
     while (true) {

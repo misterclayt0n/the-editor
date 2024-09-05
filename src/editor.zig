@@ -18,6 +18,8 @@ fn CTRL_KEY(k: u8) u8 {
 }
 
 pub const Editor = struct {
+    cx: i32,
+    cy: i32,
     original_termios: c.termios,
     screen_rows: i32,
     screen_cols: i32,
@@ -25,6 +27,8 @@ pub const Editor = struct {
 
     pub fn init(allocator: std.mem.Allocator) !Editor {
         var editor = Editor{
+            .cx = 10,
+            .cy = 0,
             .original_termios = undefined,
             .screen_rows = 0,
             .screen_cols = 0,
@@ -90,23 +94,30 @@ pub const Editor = struct {
                 try self.disableRawMode();
                 std.os.linux.exit(0);
             },
+            'w', 'a', 's', 'd' => {
+                self.moveCursor(key);
+            },
             else => {},
         }
     }
 
     pub fn refreshScreen(self: @This()) !void {
-        var buffer = ab.AppendBuffer.init(self.allocator);
-        defer buffer.deinit();
+        var ab_buffer = ab.AppendBuffer.init(self.allocator);
+        defer ab_buffer.deinit();
 
         // try buffer.append("\x1b[2J");  // clear screen
-        try buffer.append("\x1b[H");   // move cursor to the top
+        try ab_buffer.append("\x1b[H");   // move cursor to the top
 
-        try self.drawRows(&buffer);
+        try self.drawRows(&ab_buffer);
 
-        try buffer.append("\x1b[H"); // move cursor back to top
-        try buffer.append("\x1b[?25h"); // show cursor
+        var cursor_position: [32]u8 = undefined;
+        const cursor_str = try std.fmt.bufPrint(&cursor_position, "\x1b[{d};{d}H", .{self.cy + 1, self.cx + 1});
+        try ab_buffer.append(cursor_position[0..cursor_str.len]);
 
-        try buffer.writeTo(stdout); // write to stdout
+        // try ab_buffer.append("\x1b[H"); // move cursor back to top
+        try ab_buffer.append("\x1b[?25h"); // show cursor
+
+        try ab_buffer.writeTo(stdout); // write to stdout
     }
 
     pub fn drawRows(self: @This(), buffer: *ab.AppendBuffer) !void {
@@ -177,6 +188,32 @@ pub const Editor = struct {
         cols.* = col;
 
         return 0;
+    }
+
+    pub fn moveCursor(self: *@This(), key: u8) void {
+        switch (key) {
+            'a' => {
+                if (self.cx > 0) {
+                    self.cx -= 1;
+                }
+            },
+            'd' => {
+                if (self.cx < self.screen_cols - 1) {
+                    self.cx += 1;
+                }
+            },
+            'w' => {
+                if (self.cy > 0) {
+                    self.cy -= 1;
+                }
+            },
+            's' => {
+                if (self.cy < self.screen_rows - 1) {
+                    self.cy += 1;
+                }
+            },
+            else => {},
+        }
     }
 };
 

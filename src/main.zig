@@ -95,14 +95,18 @@ const Editor = struct {
         try stdout.print("\x1b[2J", .{});
         try stdout.print("\x1b[H", .{});
 
-        try self.editorDrawRows();
+        try self.drawRows();
         try stdout.print("\x1b[H", .{});
     }
 
-    pub fn editorDrawRows(self: @This()) !void {
+    pub fn drawRows(self: @This()) !void {
         var y: usize = 0;
         while (y < self.screen_rows) : (y += 1) {
-            try stdout.print("~\r\n", .{});
+            try stdout.print("~", .{});
+
+            if (y < self.screen_rows - 1) {
+                try stdout.print("\r\n", .{});
+            }
         }
     }
 

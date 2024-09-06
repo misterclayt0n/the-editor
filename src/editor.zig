@@ -25,6 +25,7 @@ const EditorKey = enum(u32) { ARROW_LEFT = 1000,
     PAGE_DOWN,
     HOME_KEY,
     END_KEY,
+    DEL_KEY,
     ESC = 27,
     CTRL_Q = CTRL_KEY('q')
 };
@@ -77,6 +78,7 @@ pub const Editor = struct {
                         if (sequence[2] == '~') {
                             switch (sequence[1]) {
                                 '1' => return EditorKey.HOME_KEY,
+                                '3' => return EditorKey.DEL_KEY,
                                 '4' => return EditorKey.END_KEY,
                                 '5' => return EditorKey.PAGE_UP,
                                 '6' => return EditorKey.PAGE_DOWN,

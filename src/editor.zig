@@ -17,14 +17,7 @@ fn CTRL_KEY(k: u8) u8 {
     return k & 0x1f;
 }
 
-const EditorKey = enum(u32) {
-    ARROW_LEFT = 1000,
-    ARROW_RIGHT,
-    ARROW_UP,
-    ARROW_DOWN,
-    ESC = 27,
-    CTRL_Q = CTRL_KEY('q')
-};
+const EditorKey = enum(u32) { ARROW_LEFT = 1000, ARROW_RIGHT, ARROW_UP, ARROW_DOWN, PAGE_UP, PAGE_DOWN, ESC = 27, CTRL_Q = CTRL_KEY('q') };
 
 pub const Editor = struct {
     cx: i32,
@@ -68,13 +61,26 @@ pub const Editor = struct {
 
                 // check if its an arrow key
                 if (sequence[0] == '[') {
-                    switch (sequence[1]) {
-                        'A' => return EditorKey.ARROW_UP, // up
-                        'B' => return EditorKey.ARROW_DOWN, // down
-                        'C' => return EditorKey.ARROW_RIGHT, // right
-                        'D' => return EditorKey.ARROW_LEFT, // left
-                        else => return EditorKey.ESC, // return esc if not valid
+                    if (sequence[1] >= '0' and sequence[1] <= '9') {
+                        if (try stdin.read(sequence[2..3]) != 1) return EditorKey.ESC;
+                        if (sequence[2] == '~') {
+                            switch (sequence[1]) {
+                                '5' => return EditorKey.PAGE_UP,
+                                '6' => return EditorKey.PAGE_DOWN,
+                                else => return EditorKey.ESC,
+                            }
+                        }
+                    } else {
+                        switch (sequence[1]) {
+                            'A' => return EditorKey.ARROW_UP, // up
+                            'B' => return EditorKey.ARROW_DOWN, // down
+                            'C' => return EditorKey.ARROW_RIGHT, // right
+                            'D' => return EditorKey.ARROW_LEFT, // left
+                            else => return EditorKey.ESC, // return esc if not valid
+                        }
                     }
+
+                    return EditorKey.ESC;
                 } else {
                     return EditorKey.ESC; // return esc if not valid
                 }
@@ -82,7 +88,7 @@ pub const Editor = struct {
 
             switch (buffer[0]) {
                 CTRL_KEY('q') => return EditorKey.CTRL_Q,
-                else => return EditorKey.ESC // default ESC for unknown values
+                else => return EditorKey.ESC, // default ESC for unknown values
             }
         }
     }
@@ -123,10 +129,7 @@ pub const Editor = struct {
                 try self.disableRawMode();
                 std.os.linux.exit(0);
             },
-            EditorKey.ARROW_UP,
-            EditorKey.ARROW_LEFT,
-            EditorKey.ARROW_DOWN,
-            EditorKey.ARROW_RIGHT => {
+            EditorKey.ARROW_UP, EditorKey.ARROW_LEFT, EditorKey.ARROW_DOWN, EditorKey.ARROW_RIGHT, EditorKey.PAGE_DOWN, EditorKey.PAGE_UP => {
                 self.moveCursor(key);
             },
             else => {},
@@ -242,6 +245,24 @@ pub const Editor = struct {
             EditorKey.ARROW_DOWN => {
                 if (self.cy != self.screen_rows - 1) {
                     self.cy += 1;
+                }
+            },
+            EditorKey.PAGE_DOWN => {
+                // move cursor by one screen height (screen_rows)
+                if (self.cy > 0) {
+                    self.cy -= self.screen_rows;
+                    if (self.cy < 0) {
+                        self.cy = 0;
+                    }
+                }
+            },
+            EditorKey.PAGE_UP => {
+                // move cursor down by one screen height (screen_rows)
+                if (self.cy < self.screen_rows - 1) {
+                    self.cy += self.screen_rows;
+                    if (self.cy >= self.screen_rows) {
+                        self.cy = self.screen_rows - 1;
+                    }
                 }
             },
             else => {},

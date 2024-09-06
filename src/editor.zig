@@ -31,11 +31,25 @@ const EditorKey = enum(u32) { ARROW_LEFT = 1000,
     CTRL_Q = CTRL_KEY('q')
 };
 
+const EditorRow = struct {
+    size: usize,
+    chars: []u8,
+
+    pub fn init() EditorRow {
+        return EditorRow{
+            .size = 0,
+            .chars = &[_]u8{}
+        };
+    }
+};
+
 pub const Editor = struct {
     cx: i32,
     cy: i32,
     screen_rows: i32,
     screen_cols: i32,
+    row: EditorRow,
+    num_rows: i32,
     allocator: std.mem.Allocator,
     terminal: terminal.Terminal,
 
@@ -48,7 +62,9 @@ pub const Editor = struct {
             .allocator = allocator,
             .terminal = terminal.Terminal{
                 .original_termios = undefined
-            }
+            },
+            .row = EditorRow.init(),
+            .num_rows = 0,
         };
 
         if (try editor.terminal.getWindowSize(&editor.screen_rows, &editor.screen_cols) == -1) {
@@ -64,6 +80,26 @@ pub const Editor = struct {
 
     pub fn disableRawMode(self: *@This()) !void {
         try self.terminal.disableRawMode();
+    }
+
+    // NOTE: hard coded string here just for demonstration purposes (for now.)
+    pub fn open(self: *@This()) !void {
+        const line = "hello world";
+        const line_len: usize = 13;
+
+        self.row.size = line_len;
+
+        // alloc mem to store line
+        self.row.chars = try self.allocator.alloc(u8, line_len + 1);
+
+        // copy line to allocated buffer
+        std.mem.copyForwards(u8, self.row.chars, line);
+
+        // null terminated string
+        self.row.chars[line_len] = 0;
+
+        // define number of lines
+        self.num_rows = 1;
     }
 
     pub fn readKey(self: @This()) !EditorKey {
@@ -170,28 +206,34 @@ pub const Editor = struct {
         var y: usize = 0;
 
         while (y < self.screen_rows) : (y += 1) {
-            if (y == @divTrunc(self.screen_rows, 3)) {
-                var welcome: [80]u8 = undefined;
-                const welcome_text = try std.fmt.bufPrint(&welcome, "The editor -- version {s}", .{VERSION});
-                const cols: usize = @intCast(self.screen_cols);
+            if (y >= self.num_rows) {
+                if (y == @divTrunc(self.screen_rows, 3)) {
+                    var welcome: [80]u8 = undefined;
+                    const welcome_text = try std.fmt.bufPrint(&welcome, "The editor -- version {s}", .{VERSION});
+                    const cols: usize = @intCast(self.screen_cols);
 
-                const welcome_len = if (welcome_text.len > cols) cols else welcome_text.len;
+                    const welcome_len = if (welcome_text.len > cols) cols else welcome_text.len;
 
-                // center welcome message
-                var padding: usize = (cols - welcome_len) / 2;
-                if (padding > 0) {
+                    // center welcome message
+                    var padding: usize = (cols - welcome_len) / 2;
+                    if (padding > 0) {
+                        try buffer.append("~");
+                        padding -= 1;
+                    }
+
+                    while (padding != 0) : (padding -= 1) {
+                        try buffer.append(" ");
+                    }
+
+                    // add welcome message
+                    try buffer.append(welcome[0..welcome_len]);
+                } else {
                     try buffer.append("~");
-                    padding -= 1;
                 }
-
-                while (padding != 0) : (padding -= 1) {
-                    try buffer.append(" ");
-                }
-
-                // add welcome message
-                try buffer.append(welcome[0..welcome_len]);
             } else {
-                try buffer.append("~");
+                var len: i32 = @intCast(self.row.size);
+                if (len > self.screen_cols) len = self.screen_cols;
+                try buffer.append(self.row.chars);
             }
 
             try buffer.append("\x1b[K"); // clean line

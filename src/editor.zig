@@ -1,5 +1,6 @@
 const std = @import("std");
 const ab = @import("buffer.zig");
+const terminal = @import("terminal.zig");
 const c = @cImport({
     @cInclude("unistd.h");
     @cInclude("ctype.h");
@@ -33,26 +34,36 @@ const EditorKey = enum(u32) { ARROW_LEFT = 1000,
 pub const Editor = struct {
     cx: i32,
     cy: i32,
-    original_termios: c.termios,
     screen_rows: i32,
     screen_cols: i32,
     allocator: std.mem.Allocator,
+    terminal: terminal.Terminal,
 
     pub fn init(allocator: std.mem.Allocator) !Editor {
         var editor = Editor{
             .cx = 0,
             .cy = 0,
-            .original_termios = undefined,
             .screen_rows = 0,
             .screen_cols = 0,
             .allocator = allocator,
+            .terminal = terminal.Terminal{
+                .original_termios = undefined
+            }
         };
 
-        if (try getWindowSize(&editor.screen_rows, &editor.screen_cols, &editor) == -1) {
+        if (try editor.terminal.getWindowSize(&editor.screen_rows, &editor.screen_cols) == -1) {
             return error.WindowSizeFailed;
         }
 
         return editor;
+    }
+
+    pub fn enableRawMode(self: *@This()) !void {
+        try self.terminal.enableRawMode();
+    }
+
+    pub fn disableRawMode(self: *@This()) !void {
+        try self.terminal.disableRawMode();
     }
 
     pub fn readKey(self: @This()) !EditorKey {
@@ -115,33 +126,6 @@ pub const Editor = struct {
                 CTRL_KEY('q') => return EditorKey.CTRL_Q,
                 else => return EditorKey.ESC, // default ESC for unknown values
             }
-        }
-    }
-
-
-    pub fn enableRawMode(self: *@This()) !void {
-        _ = c.tcgetattr(STDIN_FILENO, &self.original_termios);
-
-        var raw: c.termios = self.original_termios;
-
-        raw.c_lflag &= ~@as(c_uint, c.ECHO | c.ICANON | c.ISIG | c.IEXTEN);
-        raw.c_oflag &= ~@as(c_uint, c.OPOST);
-        raw.c_iflag &= ~@as(c_uint, c.IXON | c.ICRNL | c.BRKINT | c.INPCK | c.ISTRIP);
-        raw.c_cflag |= @as(c_uint, c.CS8);
-        raw.c_cc[c.VMIN] = 1;
-        raw.c_cc[c.VTIME] = 0;
-
-        const status_code = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &raw);
-
-        if (status_code != 0) {
-            return error.EnableRawModeFailed;
-        }
-    }
-
-    pub fn disableRawMode(self: *@This()) !void {
-        const status_code = c.tcsetattr(STDIN_FILENO, c.TCSAFLUSH, &self.original_termios);
-        if (status_code != 0) {
-            return error.DisableRawModeFailed;
         }
     }
 
@@ -302,22 +286,3 @@ pub const Editor = struct {
         }
     }
 };
-
-pub fn getWindowSize(rows: *i32, cols: *i32, editor: *Editor) !i32 {
-    var ws: c.winsize = undefined;
-
-    // try to get window size with ioctl
-    const result = c.ioctl(STDOUT_FILENO, c.TIOCGWINSZ, &ws);
-
-    if (result == -1 or ws.ws_col == 0) {
-        // ioctl may fail
-        if (try stdout.write("\x1b[999C\x1b[999B") != 12) return -1;
-
-        // read key to make sure the cursor has repositioned
-        return editor.getCursorPosition(rows, cols);
-    } else {
-        cols.* = ws.ws_col;
-        rows.* = ws.ws_row;
-        return 0;
-    }
-}

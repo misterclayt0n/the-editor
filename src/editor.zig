@@ -17,11 +17,13 @@ fn CTRL_KEY(k: u8) u8 {
     return k & 0x1f;
 }
 
-const EditorKey = enum(u8) {
-    ARROW_LEFT = 'a',
-    ARROW_RIGHT = 'd',
-    ARROW_UP = 'w',
-    ARROW_DOWN = 's',
+const EditorKey = enum(u32) {
+    ARROW_LEFT = 1000,
+    ARROW_RIGHT,
+    ARROW_UP,
+    ARROW_DOWN,
+    ESC = 27,
+    CTRL_Q = CTRL_KEY('q')
 };
 
 pub const Editor = struct {
@@ -49,37 +51,38 @@ pub const Editor = struct {
         return editor;
     }
 
-    pub fn readKey(self: @This()) !u8 {
+    pub fn readKey(self: @This()) !EditorKey {
         _ = self;
         var buffer: [1]u8 = undefined;
 
         while (true) {
-            const bytes_read = stdin.read(&buffer) catch |err| {
+            _ = stdin.read(&buffer) catch |err| {
                 std.debug.print("Could not read from stdin", .{});
                 return err;
             };
 
             if (buffer[0] == '\x1b') {
                 var sequence: [3]u8 = undefined;
-                if (try stdin.read(sequence[0..1]) != 1) return '\x1b';
-                if (try stdin.read(sequence[1..2]) != 1) return '\x1b';
+                if (try stdin.read(sequence[0..1]) != 1) return EditorKey.ESC;
+                if (try stdin.read(sequence[1..2]) != 1) return EditorKey.ESC;
 
                 // check if its an arrow key
                 if (sequence[0] == '[') {
                     switch (sequence[1]) {
-                        'A' => return @intFromEnum(EditorKey.ARROW_UP), // up
-                        'B' => return @intFromEnum(EditorKey.ARROW_DOWN), // down
-                        'C' => return @intFromEnum(EditorKey.ARROW_RIGHT), // right
-                        'D' => return @intFromEnum(EditorKey.ARROW_LEFT), // left
-                        else => return '\x1b', // return esc if not valid
+                        'A' => return EditorKey.ARROW_UP, // up
+                        'B' => return EditorKey.ARROW_DOWN, // down
+                        'C' => return EditorKey.ARROW_RIGHT, // right
+                        'D' => return EditorKey.ARROW_LEFT, // left
+                        else => return EditorKey.ESC, // return esc if not valid
                     }
                 } else {
-                    return '\x1b'; // return esc if not valid
+                    return EditorKey.ESC; // return esc if not valid
                 }
             }
 
-            if (bytes_read == 1) {
-                return buffer[0];
+            switch (buffer[0]) {
+                CTRL_KEY('q') => return EditorKey.CTRL_Q,
+                else => return EditorKey.ESC // default ESC for unknown values
             }
         }
     }
@@ -114,16 +117,16 @@ pub const Editor = struct {
         const key = try self.readKey();
 
         switch (key) {
-            CTRL_KEY('q') => {
+            EditorKey.CTRL_Q => {
                 try stdout.print("\x1b[2J", .{});
                 try stdout.print("\x1b[H", .{});
                 try self.disableRawMode();
                 std.os.linux.exit(0);
             },
-            @intFromEnum(EditorKey.ARROW_UP),
-            @intFromEnum(EditorKey.ARROW_LEFT),
-            @intFromEnum(EditorKey.ARROW_DOWN),
-            @intFromEnum(EditorKey.ARROW_RIGHT) => {
+            EditorKey.ARROW_UP,
+            EditorKey.ARROW_LEFT,
+            EditorKey.ARROW_DOWN,
+            EditorKey.ARROW_RIGHT => {
                 self.moveCursor(key);
             },
             else => {},
@@ -219,25 +222,25 @@ pub const Editor = struct {
         return 0;
     }
 
-    pub fn moveCursor(self: *@This(), key: u8) void {
+    pub fn moveCursor(self: *@This(), key: EditorKey) void {
         switch (key) {
-            @intFromEnum(EditorKey.ARROW_LEFT) => {
-                if (self.cx > 0) {
+            EditorKey.ARROW_LEFT => {
+                if (self.cx != 0) {
                     self.cx -= 1;
                 }
             },
-            @intFromEnum(EditorKey.ARROW_RIGHT) => {
-                if (self.cx < self.screen_cols - 1) {
+            EditorKey.ARROW_RIGHT => {
+                if (self.cx != self.screen_cols - 1) {
                     self.cx += 1;
                 }
             },
-            @intFromEnum(EditorKey.ARROW_UP) => {
-                if (self.cy > 0) {
+            EditorKey.ARROW_UP => {
+                if (self.cy != 0) {
                     self.cy -= 1;
                 }
             },
-            @intFromEnum(EditorKey.ARROW_DOWN) => {
-                if (self.cy < self.screen_rows - 1) {
+            EditorKey.ARROW_DOWN => {
+                if (self.cy != self.screen_rows - 1) {
                     self.cy += 1;
                 }
             },

@@ -34,13 +34,6 @@ const EditorKey = enum(u32) { ARROW_LEFT = 1000,
 const EditorRow = struct {
     size: usize,
     chars: []u8,
-
-    pub fn init() EditorRow {
-        return EditorRow{
-            .size = 0,
-            .chars = &[_]u8{}
-        };
-    }
 };
 
 pub const Editor = struct {
@@ -48,7 +41,7 @@ pub const Editor = struct {
     cy: i32,
     screen_rows: i32,
     screen_cols: i32,
-    row: EditorRow,
+    row: ?[]EditorRow,
     num_rows: i32,
     allocator: std.mem.Allocator,
     terminal: terminal.Terminal,
@@ -63,7 +56,7 @@ pub const Editor = struct {
             .terminal = terminal.Terminal{
                 .original_termios = undefined
             },
-            .row = EditorRow.init(),
+            .row = null,
             .num_rows = 0,
         };
 
@@ -72,6 +65,31 @@ pub const Editor = struct {
         }
 
         return editor;
+    }
+
+    pub fn append_row(self: *@This(), line: []const u8, ) !void {
+        var new_row = EditorRow{
+            .chars = try self.allocator.alloc(u8, line.len + 1), // +1 for null terminator
+            .size = line.len,
+        };
+
+        // copy data from line to new EditorRow
+        std.mem.copyForwards(u8, new_row.chars, line);
+        new_row.chars[line.len] = 0; // null terminated first line
+
+        // if line array is null (first line), alloc array
+        if (self.row == null) {
+            self.row = try self.allocator.alloc(EditorRow, 1);
+        } else {
+            // realloc line array to include EditorRow
+            const alloc_size: usize = @intCast(self.num_rows + 1);
+            self.row = try self.allocator.realloc(self.row.?, alloc_size);
+        }
+
+        // add new EditorRow in line array
+        const index: usize = @intCast(self.num_rows);
+        self.row.?[index] = new_row;
+        self.num_rows += 1;
     }
 
     pub fn enableRawMode(self: *@This()) !void {
@@ -86,29 +104,20 @@ pub const Editor = struct {
         const file = try std.fs.cwd().openFile(filename, .{});
         defer file.close();
 
-        // read file line by line
         var reader = file.reader();
-        var buffer = try reader.readAllAlloc(self.allocator, std.math.maxInt(u8));
-        var read_len = buffer.len;
 
-        if (read_len != 1) {
-            while (read_len > 0 and (buffer[read_len - 1] == '\n' or buffer[read_len - 1] == '\r')) {
-                read_len -= 1;
+        // Ler o arquivo linha por linha
+        while (true) {
+            var line = reader.readUntilDelimiterAlloc(self.allocator, '\n', std.math.maxInt(usize)) catch {
+                break;
+            };
+
+            // remove
+            while (line.len > 0 and (line[line.len - 1] == '\n' or line[line.len - 1] == '\r')) {
+                line = line[0..line.len - 1];
             }
 
-            self.row.size = read_len;
-
-            // alloc mem to store line
-            self.row.chars = try self.allocator.alloc(u8, read_len + 1);
-
-            // copy line to allocated buffer
-            std.mem.copyForwards(u8, self.row.chars, buffer[0..read_len]);
-
-            // null terminated string
-            self.row.chars[read_len] = 0;
-
-            // define number of lines
-            self.num_rows = 1;
+            try self.append_row(line[0..line.len]);
         }
     }
 
@@ -240,14 +249,13 @@ pub const Editor = struct {
                 } else {
                     try buffer.append("~");
                 }
-            } else {
-                var len: i32 = @intCast(self.row.size);
+            } else if (self.row) |rows| {
+                var len: i32 = @intCast(rows[y].size);
                 if (len > self.screen_cols) len = self.screen_cols;
-                try buffer.append(self.row.chars);
+                try buffer.append(rows[y].chars);
             }
 
             try buffer.append("\x1b[K"); // clean line
-
             if (y < self.screen_rows - 1) {
                 try buffer.append("\r\n"); // add line if not the last
             }

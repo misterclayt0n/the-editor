@@ -42,6 +42,8 @@ pub const Editor = struct {
     screen_rows: i32,
     screen_cols: i32,
     row: ?[]EditorRow,
+    row_offset: i32,
+    col_offset: i32,
     num_rows: i32,
     allocator: std.mem.Allocator,
     terminal: terminal.Terminal,
@@ -57,6 +59,8 @@ pub const Editor = struct {
                 .original_termios = undefined
             },
             .row = null,
+            .row_offset = 0,
+            .col_offset = 0,
             .num_rows = 0,
         };
 
@@ -202,7 +206,8 @@ pub const Editor = struct {
         }
     }
 
-    pub fn refreshScreen(self: @This()) !void {
+    pub fn refreshScreen(self: *@This()) !void {
+        self.scroll();
         var ab_buffer = ab.AppendBuffer.init(self.allocator);
         defer ab_buffer.deinit();
 
@@ -212,7 +217,7 @@ pub const Editor = struct {
         try self.drawRows(&ab_buffer);
 
         var cursor_position: [32]u8 = undefined;
-        const cursor_str = try std.fmt.bufPrint(&cursor_position, "\x1b[{d};{d}H", .{ self.cy + 1, self.cx + 1 });
+        const cursor_str = try std.fmt.bufPrint(&cursor_position, "\x1b[{d};{d}H", .{ (self.cy - self.row_offset) + 1, (self.cx - self.col_offset) + 1 });
         try ab_buffer.append(cursor_position[0..cursor_str.len]);
 
         // try ab_buffer.append("\x1b[H"); // move cursor back to top
@@ -221,11 +226,40 @@ pub const Editor = struct {
         try ab_buffer.writeTo(stdout); // write to stdout
     }
 
+    pub fn scroll(self: *@This()) void {
+        if (self.cy < self.row_offset) {
+            self.row_offset = self.cy;
+        }
+
+        if (self.cy >= self.row_offset + self.screen_rows) {
+            self.row_offset = self.cy - self.screen_rows + 1;
+        }
+
+        if (self.cx < self.col_offset) {
+            self.col_offset = self.cx;
+        }
+
+        if (self.cx >= self.col_offset + self.screen_cols) {
+            self.col_offset = self.cx - self.screen_cols + 1;
+        }
+    }
+
     pub fn drawRows(self: @This(), buffer: *ab.AppendBuffer) !void {
         var y: usize = 0;
 
         while (y < self.screen_rows) : (y += 1) {
-            if (y >= self.num_rows) {
+            var file_row: usize = 0;
+
+            // check if self.row_offset is not negative
+            if (self.row_offset >= 0) {
+                const row_offset_usize: usize = @intCast(self.row_offset);
+                file_row = y + row_offset_usize;
+            } else {
+                // if not, just continue rendering
+                file_row = y;
+            }
+
+            if (file_row >= self.num_rows) {
                 if (y == @divTrunc(self.screen_rows, 3) and self.num_rows == 0) {
                     var welcome: [80]u8 = undefined;
                     const welcome_text = try std.fmt.bufPrint(&welcome, "The editor -- version {s}", .{VERSION});
@@ -250,9 +284,9 @@ pub const Editor = struct {
                     try buffer.append("~");
                 }
             } else if (self.row) |rows| {
-                var len: i32 = @intCast(rows[y].size);
+                var len: i32 = @intCast(rows[file_row].size);
                 if (len > self.screen_cols) len = self.screen_cols;
-                try buffer.append(rows[y].chars);
+                try buffer.append(rows[file_row].chars);
             }
 
             try buffer.append("\x1b[K"); // clean line
@@ -314,26 +348,23 @@ pub const Editor = struct {
                 }
             },
             EditorKey.ARROW_DOWN => {
-                if (self.cy != self.screen_rows - 1) {
+                if (self.cy < self.num_rows) {
                     self.cy += 1;
                 }
             },
             EditorKey.PAGE_DOWN => {
                 // move cursor by one screen height (screen_rows)
-                if (self.cy > 0) {
-                    self.cy -= self.screen_rows;
-                    if (self.cy < 0) {
-                        self.cy = 0;
-                    }
+                self.cy += self.screen_rows;
+                if (self.cy >= self.num_rows) {
+                    self.cy = self.num_rows - 1;
                 }
             },
             EditorKey.PAGE_UP => {
                 // move cursor down by one screen height (screen_rows)
-                if (self.cy < self.screen_rows - 1) {
-                    self.cy += self.screen_rows;
-                    if (self.cy >= self.screen_rows) {
-                        self.cy = self.screen_rows - 1;
-                    }
+                if (self.cy > self.screen_rows) {
+                    self.cy -= self.screen_rows;
+                } else {
+                    self.cy = 0;
                 }
             },
             EditorKey.HOME_KEY => {

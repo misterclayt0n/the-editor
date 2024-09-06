@@ -17,7 +17,17 @@ fn CTRL_KEY(k: u8) u8 {
     return k & 0x1f;
 }
 
-const EditorKey = enum(u32) { ARROW_LEFT = 1000, ARROW_RIGHT, ARROW_UP, ARROW_DOWN, PAGE_UP, PAGE_DOWN, ESC = 27, CTRL_Q = CTRL_KEY('q') };
+const EditorKey = enum(u32) { ARROW_LEFT = 1000,
+    ARROW_RIGHT,
+    ARROW_UP,
+    ARROW_DOWN,
+    PAGE_UP,
+    PAGE_DOWN,
+    HOME_KEY,
+    END_KEY,
+    ESC = 27,
+    CTRL_Q = CTRL_KEY('q')
+};
 
 pub const Editor = struct {
     cx: i32,
@@ -59,31 +69,44 @@ pub const Editor = struct {
                 if (try stdin.read(sequence[0..1]) != 1) return EditorKey.ESC;
                 if (try stdin.read(sequence[1..2]) != 1) return EditorKey.ESC;
 
-                // check if its an arrow key
+                // check if its an arrow key or other special key
                 if (sequence[0] == '[') {
                     if (sequence[1] >= '0' and sequence[1] <= '9') {
+                        // handle sequences with numbers, e.g., Page Up, Page Down
                         if (try stdin.read(sequence[2..3]) != 1) return EditorKey.ESC;
                         if (sequence[2] == '~') {
                             switch (sequence[1]) {
+                                '1' => return EditorKey.HOME_KEY,
+                                '4' => return EditorKey.END_KEY,
                                 '5' => return EditorKey.PAGE_UP,
                                 '6' => return EditorKey.PAGE_DOWN,
+                                '7' => return EditorKey.HOME_KEY,
+                                '8' => return EditorKey.END_KEY,
                                 else => return EditorKey.ESC,
                             }
                         }
                     } else {
+                        // handle arrow keys and some other specific keys
                         switch (sequence[1]) {
-                            'A' => return EditorKey.ARROW_UP, // up
+                            'A' => return EditorKey.ARROW_UP,   // up
                             'B' => return EditorKey.ARROW_DOWN, // down
-                            'C' => return EditorKey.ARROW_RIGHT, // right
+                            'C' => return EditorKey.ARROW_RIGHT,// right
                             'D' => return EditorKey.ARROW_LEFT, // left
-                            else => return EditorKey.ESC, // return esc if not valid
+                            'H' => return EditorKey.HOME_KEY,   // home
+                            'F' => return EditorKey.END_KEY,    // end
+                            else => return EditorKey.ESC,       // fallback to ESC
                         }
                     }
-
                     return EditorKey.ESC;
-                } else {
-                    return EditorKey.ESC; // return esc if not valid
+                } else if (sequence[0] == 'O') {
+                    // handle 'O' sequences for HOME and END keys
+                    switch (sequence[1]) {
+                        'H' => return EditorKey.HOME_KEY,
+                        'F' => return EditorKey.END_KEY,
+                        else => return EditorKey.ESC,
+                    }
                 }
+                return EditorKey.ESC;
             }
 
             switch (buffer[0]) {
@@ -92,6 +115,7 @@ pub const Editor = struct {
             }
         }
     }
+
 
     pub fn enableRawMode(self: *@This()) !void {
         _ = c.tcgetattr(STDIN_FILENO, &self.original_termios);
@@ -129,7 +153,8 @@ pub const Editor = struct {
                 try self.disableRawMode();
                 std.os.linux.exit(0);
             },
-            EditorKey.ARROW_UP, EditorKey.ARROW_LEFT, EditorKey.ARROW_DOWN, EditorKey.ARROW_RIGHT, EditorKey.PAGE_DOWN, EditorKey.PAGE_UP => {
+            EditorKey.ARROW_UP, EditorKey.ARROW_LEFT, EditorKey.ARROW_DOWN,  EditorKey.ARROW_RIGHT,
+            EditorKey.PAGE_DOWN, EditorKey.PAGE_UP, EditorKey.HOME_KEY, EditorKey.END_KEY => {
                 self.moveCursor(key);
             },
             else => {},
@@ -264,6 +289,12 @@ pub const Editor = struct {
                         self.cy = self.screen_rows - 1;
                     }
                 }
+            },
+            EditorKey.HOME_KEY => {
+                self.cx = 0;
+            },
+            EditorKey.END_KEY => {
+                self.cx = self.screen_cols - 1;
             },
             else => {},
         }

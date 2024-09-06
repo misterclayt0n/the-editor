@@ -27,7 +27,7 @@ pub const Editor = struct {
 
     pub fn init(allocator: std.mem.Allocator) !Editor {
         var editor = Editor{
-            .cx = 10,
+            .cx = 0,
             .cy = 0,
             .original_termios = undefined,
             .screen_rows = 0,
@@ -51,6 +51,25 @@ pub const Editor = struct {
                 std.debug.print("Could not read from stdin", .{});
                 return err;
             };
+
+            if (buffer[0] == '\x1b') {
+                var sequence: [3]u8 = undefined;
+                if (try stdin.read(sequence[0..1]) != 1) return '\x1b';
+                if (try stdin.read(sequence[1..2]) != 1) return '\x1b';
+
+                // check if its an arrow key
+                if (sequence[0] == '[') {
+                    switch (sequence[1]) {
+                        'A' => return 'w',  // up
+                        'B' => return 's',  // down
+                        'C' => return 'd',  // right
+                        'D' => return 'a',  // left
+                        else => return '\x1b', // return esc if not valid
+                    }
+                } else {
+                    return '\x1b'; // return esc if not valid
+                }
+            }
 
             if (bytes_read == 1) {
                 return buffer[0];

@@ -82,24 +82,34 @@ pub const Editor = struct {
         try self.terminal.disableRawMode();
     }
 
-    // NOTE: hard coded string here just for demonstration purposes (for now.)
-    pub fn open(self: *@This()) !void {
-        const line = "hello world";
-        const line_len: usize = 13;
+    pub fn open(self: *@This(), filename: []const u8) !void {
+        const file = try std.fs.cwd().openFile(filename, .{});
+        defer file.close();
 
-        self.row.size = line_len;
+        // read file line by line
+        var reader = file.reader();
+        var buffer = try reader.readAllAlloc(self.allocator, std.math.maxInt(u8));
+        var read_len = buffer.len;
 
-        // alloc mem to store line
-        self.row.chars = try self.allocator.alloc(u8, line_len + 1);
+        if (read_len != 1) {
+            while (read_len > 0 and (buffer[read_len - 1] == '\n' or buffer[read_len - 1] == '\r')) {
+                read_len -= 1;
+            }
 
-        // copy line to allocated buffer
-        std.mem.copyForwards(u8, self.row.chars, line);
+            self.row.size = read_len;
 
-        // null terminated string
-        self.row.chars[line_len] = 0;
+            // alloc mem to store line
+            self.row.chars = try self.allocator.alloc(u8, read_len + 1);
 
-        // define number of lines
-        self.num_rows = 1;
+            // copy line to allocated buffer
+            std.mem.copyForwards(u8, self.row.chars, buffer[0..read_len]);
+
+            // null terminated string
+            self.row.chars[read_len] = 0;
+
+            // define number of lines
+            self.num_rows = 1;
+        }
     }
 
     pub fn readKey(self: @This()) !EditorKey {
@@ -207,7 +217,7 @@ pub const Editor = struct {
 
         while (y < self.screen_rows) : (y += 1) {
             if (y >= self.num_rows) {
-                if (y == @divTrunc(self.screen_rows, 3)) {
+                if (y == @divTrunc(self.screen_rows, 3) and self.num_rows == 0) {
                     var welcome: [80]u8 = undefined;
                     const welcome_text = try std.fmt.bufPrint(&welcome, "The editor -- version {s}", .{VERSION});
                     const cols: usize = @intCast(self.screen_cols);

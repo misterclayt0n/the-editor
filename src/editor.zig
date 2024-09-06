@@ -17,6 +17,13 @@ fn CTRL_KEY(k: u8) u8 {
     return k & 0x1f;
 }
 
+const EditorKey = enum(u8) {
+    ARROW_LEFT = 'a',
+    ARROW_RIGHT = 'd',
+    ARROW_UP = 'w',
+    ARROW_DOWN = 's',
+};
+
 pub const Editor = struct {
     cx: i32,
     cy: i32,
@@ -60,10 +67,10 @@ pub const Editor = struct {
                 // check if its an arrow key
                 if (sequence[0] == '[') {
                     switch (sequence[1]) {
-                        'A' => return 'w',  // up
-                        'B' => return 's',  // down
-                        'C' => return 'd',  // right
-                        'D' => return 'a',  // left
+                        'A' => return @intFromEnum(EditorKey.ARROW_UP), // up
+                        'B' => return @intFromEnum(EditorKey.ARROW_DOWN), // down
+                        'C' => return @intFromEnum(EditorKey.ARROW_RIGHT), // right
+                        'D' => return @intFromEnum(EditorKey.ARROW_LEFT), // left
                         else => return '\x1b', // return esc if not valid
                     }
                 } else {
@@ -113,7 +120,10 @@ pub const Editor = struct {
                 try self.disableRawMode();
                 std.os.linux.exit(0);
             },
-            'w', 'a', 's', 'd' => {
+            @intFromEnum(EditorKey.ARROW_UP),
+            @intFromEnum(EditorKey.ARROW_LEFT),
+            @intFromEnum(EditorKey.ARROW_DOWN),
+            @intFromEnum(EditorKey.ARROW_RIGHT) => {
                 self.moveCursor(key);
             },
             else => {},
@@ -125,12 +135,12 @@ pub const Editor = struct {
         defer ab_buffer.deinit();
 
         // try buffer.append("\x1b[2J");  // clear screen
-        try ab_buffer.append("\x1b[H");   // move cursor to the top
+        try ab_buffer.append("\x1b[H"); // move cursor to the top
 
         try self.drawRows(&ab_buffer);
 
         var cursor_position: [32]u8 = undefined;
-        const cursor_str = try std.fmt.bufPrint(&cursor_position, "\x1b[{d};{d}H", .{self.cy + 1, self.cx + 1});
+        const cursor_str = try std.fmt.bufPrint(&cursor_position, "\x1b[{d};{d}H", .{ self.cy + 1, self.cx + 1 });
         try ab_buffer.append(cursor_position[0..cursor_str.len]);
 
         // try ab_buffer.append("\x1b[H"); // move cursor back to top
@@ -211,22 +221,22 @@ pub const Editor = struct {
 
     pub fn moveCursor(self: *@This(), key: u8) void {
         switch (key) {
-            'a' => {
+            @intFromEnum(EditorKey.ARROW_LEFT) => {
                 if (self.cx > 0) {
                     self.cx -= 1;
                 }
             },
-            'd' => {
+            @intFromEnum(EditorKey.ARROW_RIGHT) => {
                 if (self.cx < self.screen_cols - 1) {
                     self.cx += 1;
                 }
             },
-            'w' => {
+            @intFromEnum(EditorKey.ARROW_UP) => {
                 if (self.cy > 0) {
                     self.cy -= 1;
                 }
             },
-            's' => {
+            @intFromEnum(EditorKey.ARROW_DOWN) => {
                 if (self.cy < self.screen_rows - 1) {
                     self.cy += 1;
                 }

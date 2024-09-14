@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::cmp::{self};
 
 use super::{
     editor_command::{Direction, EditorCommand},
@@ -85,7 +85,7 @@ impl View {
 
                 if x < width {
                     x += 1;
-                }             
+                }
             }
             Direction::PageUp => y = y.saturating_sub(height).saturating_sub(1),
             Direction::PageDown => y = y.saturating_add(height).saturating_sub(1),
@@ -93,10 +93,8 @@ impl View {
             Direction::End => x = self.buffer.lines.get(y).map_or(0, Line::len),
         }
 
-        // snap x to valid position
-        x = self.buffer.lines.get(y).map_or(0, |line| min(line.len(), x));
-
-        y = min(y, self.buffer.lines.len());
+        x = self.buffer.lines.get(y).map_or(0, |line| cmp::min(line.len(), x));
+        y = cmp::min(y, self.buffer.lines.len());
 
         self.location = Location { x, y };
         self.scroll_location_into_view();

@@ -5,3 +5,4 @@ edition = "2021"
 
 [dependencies]
 crossterm = "0.28.1"
+unicode-segmentation = "1.12.0"

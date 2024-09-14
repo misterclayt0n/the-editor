@@ -16,4 +16,8 @@ impl Line {
         let end = cmp::min(range.end, self.string.len());
         self.string.get(start..end).unwrap_or_default().to_string()
     }
+
+    pub fn len(&self) -> usize {
+        self.string.len()
+    }
 }

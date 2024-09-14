@@ -38,6 +38,7 @@ impl Editor {
             view,
         })
     }
+
     pub fn run(&mut self) {
         loop {
             self.refresh_screen();

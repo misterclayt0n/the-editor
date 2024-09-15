@@ -26,4 +26,5 @@ cargo build
 - [x] Open files
 - [x] Scrolling
 - [ ] Write to files
-- [ ] File manager (of some sort)
+- [ ] File manager (of some sort, inspired in [oil.nvim](https://github.com/stevearc/oil.nvim))
+- [ ] Support for user configuration, probably something like a file `~/.config/the-editor/config`

@@ -36,4 +36,10 @@ impl Buffer {
             line.insert_char(character, at.grapheme_index);
         }
     }
+
+    pub fn delete(&mut self, at: Location) {
+        if let Some(line) = self.lines.get_mut(at.line_index) {
+            line.delete(at.grapheme_index);
+        }
+    }
 }

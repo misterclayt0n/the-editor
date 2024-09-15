@@ -226,8 +226,10 @@ impl View {
         if width == 0 {
             return " ".to_string();
         }
-        let welcome_message = format!("{NAME} editor -- version {VERSION}");
+
+        let welcome_message = format!("{NAME} -- version {VERSION}");
         let len = welcome_message.len();
+
         if width <= len {
             return "~".to_string();
         }

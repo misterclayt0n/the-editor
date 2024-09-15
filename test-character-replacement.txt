@@ -1,0 +1,23 @@
+# Testing regular text
+Hello, world! This is a test.
+
+# Testing tabs
+Here	is	a	tab	separated	line.
+
+# Testing visible and invisible whitespace
+Non-breaking space and zero-width​space.
+
+# Testing control characters
+Control characters:[Escape][Bell]
+
+# Testing Compound Emojis
+Family emoji: 👨‍👩‍👧‍👦
+
+# Testing wide characters
+全角文字
+
+# Testing combined characters
+Combining: é (e with acute accent)
+
+# Testing regular symbols
+Symbols: ␣ (open box), ▯ (white vertical rectangle)

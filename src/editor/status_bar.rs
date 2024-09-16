@@ -14,13 +14,13 @@ impl StatusBar {
     pub fn update_status(&mut self, new_status: DocumentStatus) {
         if new_status != self.current_status {
             self.current_status = new_status;
-            self.mark_redraw(true);
+            self.set_needs_redraw(true);
         }
     }
 }
 
 impl UIComponent for StatusBar {
-    fn mark_redraw(&mut self, value: bool) {
+    fn set_needs_redraw(&mut self, value: bool) {
         self.needs_redraw = value;
     }
 

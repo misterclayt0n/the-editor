@@ -47,7 +47,7 @@ impl View {
     pub fn load(&mut self, file_name: &str) {
         if let Ok(buffer) = Buffer::load(file_name) {
             self.buffer = buffer;
-            self.mark_redraw(true);
+            self.set_needs_redraw(true);
         }
     }
 
@@ -93,7 +93,7 @@ impl View {
         };
 
         if offset_changed {
-            self.mark_redraw(true);
+            self.set_needs_redraw(true);
         }
     }
 
@@ -111,7 +111,7 @@ impl View {
         };
 
         if offset_changed {
-            self.mark_redraw(true);
+            self.set_needs_redraw(true);
         }
     }
 
@@ -266,14 +266,14 @@ impl View {
             self.move_text_location(&Direction::Right);
         }
 
-        self.mark_redraw(true);
+        self.set_needs_redraw(true);
     }
 
     fn insert_newline(&mut self) {
         self.buffer.insert_newline(self.text_location);
         self.text_location.line_index += 1;
         self.text_location.grapheme_index = 0;
-        self.mark_redraw(true);
+        self.set_needs_redraw(true);
     }
 
     fn delete_backwards(&mut self) {
@@ -285,12 +285,12 @@ impl View {
 
     fn delete(&mut self) {
         self.buffer.delete(self.text_location);
-        self.mark_redraw(true);
+        self.set_needs_redraw(true);
     }
 }
 
 impl UIComponent for View {
-    fn mark_redraw(&mut self, value: bool) {
+    fn set_needs_redraw(&mut self, value: bool) {
         self.needs_redraw = value;
     }
 

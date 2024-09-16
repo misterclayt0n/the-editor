@@ -12,7 +12,7 @@ use std::io::{stdout, Error, Write};
 
 pub struct Terminal {}
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
 pub struct Size {
     pub width: usize,
     pub height: usize,

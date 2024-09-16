@@ -1,11 +1,13 @@
 use crossterm::event::{read, Event, KeyEvent, KeyEventKind};
 use editor_command::EditorCommand;
+use status_bar::StatusBar;
 use std::{
     env,
     io::Error,
     panic::{set_hook, take_hook},
 };
 mod terminal;
+mod status_bar;
 mod editor_command;
 mod view;
 use terminal::Terminal;
@@ -14,6 +16,15 @@ use view::View;
 pub struct Editor {
     should_quit: bool,
     view: View,
+    status_bar: StatusBar
+}
+
+#[derive(Default, Eq, PartialEq, Debug)]
+pub struct DocumentStatus {
+    total_lines: usize,
+    current_line_index: usize,
+    is_modified: bool,
+    file_name: Option<String>
 }
 
 impl Editor {
@@ -26,7 +37,7 @@ impl Editor {
         }));
 
         Terminal::init()?;
-        let mut view = View::default();
+        let mut view = View::new(2);
         let args: Vec<String> = env::args().collect();
 
         if let Some(file_name) = args.get(1) {
@@ -36,6 +47,7 @@ impl Editor {
         Ok(Self {
             should_quit: false,
             view,
+            status_bar: StatusBar::new(1),
         })
     }
 
@@ -56,6 +68,9 @@ impl Editor {
                     }
                 }
             }
+
+            let status = self.view.get_status();
+            self.status_bar.update_status(status);
         }
     }
 
@@ -73,6 +88,9 @@ impl Editor {
                     self.should_quit = true;
                 } else {
                     self.view.handle_command(command);
+                    if let EditorCommand::Resize(size) = command {
+                        self.status_bar.resize(size);
+                    }
                 }
             }
         }
@@ -81,6 +99,7 @@ impl Editor {
     fn refresh_screen(&mut self) {
         let _ = Terminal::hide_cursor();
         self.view.render();
+        self.status_bar.render();
         let _ = Terminal::move_cursor(self.view.cursor_position());
         let _ = Terminal::show_cursor();
         let _ = Terminal::execute();

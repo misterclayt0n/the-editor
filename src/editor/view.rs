@@ -2,7 +2,7 @@ use std::cmp::min;
 
 use super::{
     editor_command::{Direction, EditorCommand},
-    terminal::{Position, Size, Terminal},
+    terminal::{Position, Size, Terminal}, DocumentStatus,
 };
 mod buffer;
 use buffer::Buffer;
@@ -26,6 +26,46 @@ pub struct View {
 }
 
 impl View {
+    pub fn new(margin_bottom: usize) -> Self {
+        let terminal_size = Terminal::size().unwrap_or_default();
+
+        Self {
+            buffer: Buffer::default(),
+            needs_redraw: true,
+            size: Size { width: terminal_size.width, height: terminal_size.height.saturating_sub(margin_bottom) },
+            text_location: Location::default(),
+            scroll_offset: Position::default()
+        }
+    }
+
+    pub fn get_status(&self) -> DocumentStatus {
+        DocumentStatus {
+            total_lines: self.buffer.height(),
+            current_line_index: self.text_location.line_index,
+            file_name: self.buffer.file_name.clone(),
+            is_modified: self.buffer.dirty
+        }
+    }
+
+    //
+    // file i/o
+    //
+
+    fn save(&mut self) {
+        let _ = self.buffer.save();
+    }
+
+    pub fn load(&mut self, file_name: &str) {
+        if let Ok(buffer) = Buffer::load(file_name) {
+            self.buffer = buffer;
+            self.needs_redraw = true;
+        }
+    }
+
+    //
+    // command handling
+    //
+
     pub fn handle_command(&mut self, command: EditorCommand) {
         match command {
             EditorCommand::Resize(size) => self.resize(size),
@@ -39,19 +79,10 @@ impl View {
         }
     }
 
-    //
-    // file i/o
-    //
-
-    fn save(&self) {
-        let _ = self.buffer.save();
-    }
-
-    pub fn load(&mut self, file_name: &str) {
-        if let Ok(buffer) = Buffer::load(file_name) {
-            self.buffer = buffer;
-            self.needs_redraw = true;
-        }
+    fn resize(&mut self, to: Size) {
+        self.size = to;
+        self.scroll_text_location_into_view();
+        self.needs_redraw = true;
     }
 
     //
@@ -90,12 +121,6 @@ impl View {
     fn render_line(at: usize, line_text: &str) {
         let result = Terminal::print_row(at, line_text);
         debug_assert!(result.is_ok(), "Failed to render line");
-    }
-
-    fn resize(&mut self, to: Size) {
-        self.size = to;
-        self.scroll_text_location_into_view();
-        self.needs_redraw = true;
     }
 
     //

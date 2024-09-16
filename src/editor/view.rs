@@ -1,7 +1,7 @@
 use std::{cmp::min, io::Error};
 
 use super::{
-    document_status::DocumentStatus, editor_command::{Direction, EditorCommand}, terminal::{Position, Size, Terminal}, ui_component::UIComponent
+    command::{Edit, Move}, document_status::DocumentStatus, terminal::{Position, Size, Terminal}, ui_component::UIComponent
 };
 
 use super::{NAME, VERSION};
@@ -40,31 +40,46 @@ impl View {
     // file i/o
     //
 
-    fn save(&mut self) {
-        let _ = self.buffer.save();
+    pub fn save(&mut self) -> Result<(), Error> {
+        self.buffer.save()
     }
 
-    pub fn load(&mut self, file_name: &str) {
-        if let Ok(buffer) = Buffer::load(file_name) {
-            self.buffer = buffer;
-            self.set_needs_redraw(true);
-        }
+    pub fn load(&mut self, file_name: &str) -> Result<(), Error> {
+        let buffer = Buffer::load(file_name)?;
+        self.buffer = buffer;
+        self.set_needs_redraw(true);
+        Ok(())
     }
 
     //
     // command handling
     //
 
-    pub fn handle_command(&mut self, command: EditorCommand) {
+    pub fn handle_edit_command(&mut self, command: Edit) {
         match command {
-            EditorCommand::Resize(_) | EditorCommand::Quit => {},
-            EditorCommand::Move(direction) => self.move_text_location(&direction),
-            EditorCommand::Insert(character) => self.insert_char(character),
-            EditorCommand::Delete => self.delete(),
-            EditorCommand::Backspace => self.delete_backwards(),
-            EditorCommand::Enter => self.insert_newline(),
-            EditorCommand::Save => self.save(),
+            Edit::Insert(character) => self.insert_char(character),
+            Edit::Delete => self.delete(),
+            Edit::DeleteBackward => self.delete_backwards(),
+            Edit::InsertNewline => self.insert_newline(),
         }
+    }
+
+    pub fn handle_move_command(&mut self, command: Move) {
+        let Size { height, .. } = self.size;
+
+        // this match moves the positon, but does not check for all boundaries.
+        // the final boundarline checking happens after the match statement.
+        match command {
+            Move::Up => self.move_up(1),
+            Move::Down => self.move_down(1),
+            Move::Left => self.move_left(),
+            Move::Right => self.move_right(),
+            Move::PageUp => self.move_up(height.saturating_sub(1)),
+            Move::PageDown => self.move_down(height.saturating_sub(1)),
+            Move::StartOfLine => self.move_to_start_of_line(),
+            Move::EndOfLine => self.move_to_end_of_line(),
+        }
+        self.scroll_text_location_into_view();
     }
 
     //
@@ -143,23 +158,6 @@ impl View {
     //
     // text location movement
     //
-
-    fn move_text_location(&mut self, direction: &Direction) {
-        let Size { height, .. } = self.size;
-
-        match direction {
-            Direction::Up => self.move_up(1),
-            Direction::Down => self.move_down(1),
-            Direction::Left => self.move_left(),
-            Direction::Right => self.move_right(),
-            Direction::PageUp => self.move_up(height.saturating_sub(1)),
-            Direction::PageDown => self.move_down(height.saturating_sub(1)),
-            Direction::Home => self.move_to_start_of_line(),
-            Direction::End => self.move_to_end_of_line(),
-        }
-
-        self.scroll_text_location_into_view();
-    }
 
     fn move_up(&mut self, step: usize) {
         self.text_location.line_index = self.text_location.line_index.saturating_sub(step);
@@ -263,7 +261,7 @@ impl View {
         let grapheme_delta = new_len.saturating_sub(old_len);
 
         if grapheme_delta > 0 {
-            self.move_text_location(&Direction::Right);
+            self.handle_move_command(Move::Right);
         }
 
         self.set_needs_redraw(true);
@@ -278,7 +276,7 @@ impl View {
 
     fn delete_backwards(&mut self) {
         if self.text_location.line_index != 0 || self.text_location.grapheme_index != 0 {
-            self.move_text_location(&Direction::Left);
+            self.handle_move_command(Move::Left);
             self.delete();
         }
     }

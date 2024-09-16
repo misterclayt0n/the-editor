@@ -32,8 +32,9 @@ impl View {
             EditorCommand::Move(direction) => self.move_text_location(&direction),
             EditorCommand::Insert(character) => self.insert_char(character),
             EditorCommand::Delete => self.delete(),
-            EditorCommand::Backspace => self.backspace(),
-            EditorCommand::Quit => {},
+            EditorCommand::Backspace => self.delete_backwards(),
+            EditorCommand::Enter => self.insert_newline(),
+            EditorCommand::Quit => {}
         }
     }
 
@@ -149,7 +150,8 @@ impl View {
     }
 
     pub fn cursor_position(&self) -> Position {
-        self.text_location_to_position().saturating_sub(self.scroll_offset)
+        self.text_location_to_position()
+            .saturating_sub(self.scroll_offset)
     }
 
     //
@@ -186,7 +188,11 @@ impl View {
 
     #[allow(clippy::arithmetic_side_effects)]
     fn move_right(&mut self) {
-        let line_width = self.buffer.lines.get(self.text_location.line_index).map_or(0, Line::grapheme_count);
+        let line_width = self
+            .buffer
+            .lines
+            .get(self.text_location.line_index)
+            .map_or(0, Line::grapheme_count);
 
         if self.text_location.grapheme_index < line_width {
             self.text_location.grapheme_index += 1;
@@ -259,11 +265,19 @@ impl View {
     //
 
     fn insert_char(&mut self, character: char) {
-        let old_len = self.buffer.lines.get(self.text_location.line_index).map_or(0, Line::grapheme_count);
+        let old_len = self
+            .buffer
+            .lines
+            .get(self.text_location.line_index)
+            .map_or(0, Line::grapheme_count);
 
-        self.buffer.insert_at(character, self.text_location);
+        self.buffer.insert_char(character, self.text_location);
 
-        let new_len = self.buffer.lines.get(self.text_location.line_index).map_or(0, Line::grapheme_count);
+        let new_len = self
+            .buffer
+            .lines
+            .get(self.text_location.line_index)
+            .map_or(0, Line::grapheme_count);
 
         let grapheme_delta = new_len.saturating_sub(old_len);
 
@@ -274,7 +288,14 @@ impl View {
         self.needs_redraw = true;
     }
 
-    fn backspace(&mut self) {
+    fn insert_newline(&mut self) {
+        self.buffer.insert_newline(self.text_location);
+        self.text_location.line_index += 1;
+        self.text_location.grapheme_index = 0;
+        self.needs_redraw = true;
+    }
+
+    fn delete_backwards(&mut self) {
         if self.text_location.line_index != 0 || self.text_location.grapheme_index != 0 {
             self.move_text_location(&Direction::Left);
             self.delete();

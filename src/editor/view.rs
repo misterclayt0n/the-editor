@@ -34,8 +34,17 @@ impl View {
             EditorCommand::Delete => self.delete(),
             EditorCommand::Backspace => self.delete_backwards(),
             EditorCommand::Enter => self.insert_newline(),
+            EditorCommand::Save => self.save(),
             EditorCommand::Quit => {}
         }
+    }
+
+    //
+    // file i/o
+    //
+
+    fn save(&self) {
+        let _ = self.buffer.save();
     }
 
     pub fn load(&mut self, file_name: &str) {
@@ -43,12 +52,6 @@ impl View {
             self.buffer = buffer;
             self.needs_redraw = true;
         }
-    }
-
-    fn resize(&mut self, to: Size) {
-        self.size = to;
-        self.scroll_text_location_into_view();
-        self.needs_redraw = true;
     }
 
     //
@@ -87,6 +90,12 @@ impl View {
     fn render_line(at: usize, line_text: &str) {
         let result = Terminal::print_row(at, line_text);
         debug_assert!(result.is_ok(), "Failed to render line");
+    }
+
+    fn resize(&mut self, to: Size) {
+        self.size = to;
+        self.scroll_text_location_into_view();
+        self.needs_redraw = true;
     }
 
     //

@@ -1,10 +1,15 @@
-use std::{fs::read_to_string, io::Error};
+use std::{
+    fs::{read_to_string, File},
+    io::Error,
+};
 
 use super::{line::Line, Location};
+use std::io::Write;
 
 #[derive(Default)]
 pub struct Buffer {
     pub lines: Vec<Line>,
+    file_name: Option<String>,
 }
 
 impl Buffer {
@@ -14,7 +19,10 @@ impl Buffer {
         for value in contents.lines() {
             lines.push(Line::from(value));
         }
-        Ok(Self { lines })
+        Ok(Self {
+            lines,
+            file_name: Some(file_name.to_string()),
+        })
     }
 
     pub fn is_empty(&self) -> bool {
@@ -39,7 +47,9 @@ impl Buffer {
 
     pub fn delete(&mut self, at: Location) {
         if let Some(line) = self.lines.get(at.line_index) {
-            if at.grapheme_index >= line.grapheme_count() && self.height() > at.line_index.saturating_add(1) {
+            if at.grapheme_index >= line.grapheme_count()
+                && self.height() > at.line_index.saturating_add(1)
+            {
                 let next_line = self.lines.remove(at.line_index.saturating_add(1));
 
                 #[allow(clippy::indexing_slicing)]
@@ -58,5 +68,17 @@ impl Buffer {
             let new = line.split(at.grapheme_index);
             self.lines.insert(at.line_index.saturating_add(1), new);
         }
+    }
+
+    pub fn save(&self) -> Result<(), Error> {
+        if let Some(file_name) = &self.file_name {
+            let mut file = File::create(file_name)?;
+
+            for line in &self.lines {
+                writeln!(file, "{line}")?;
+            }
+        }
+
+        Ok(())
     }
 }

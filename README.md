@@ -28,3 +28,4 @@ cargo build
 - [ ] Write to files
 - [ ] File manager (of some sort, inspired in [oil.nvim](https://github.com/stevearc/oil.nvim))
 - [ ] Support for user configuration, probably something like a file `~/.config/the-editor/config`
+- [ ] Use rope data structure for better optimization

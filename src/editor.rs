@@ -8,23 +8,21 @@ use std::{
 };
 mod terminal;
 mod status_bar;
+mod file_info;
+mod document_status;
 mod editor_command;
 mod view;
 use terminal::Terminal;
 use view::View;
 
+pub const NAME: &str = "the-editor";
+pub const VERSION: &str = "0.0.1";
+
 pub struct Editor {
     should_quit: bool,
     view: View,
-    status_bar: StatusBar
-}
-
-#[derive(Default, Eq, PartialEq, Debug)]
-pub struct DocumentStatus {
-    total_lines: usize,
-    current_line_index: usize,
-    is_modified: bool,
-    file_name: Option<String>
+    status_bar: StatusBar,
+    title: String
 }
 
 impl Editor {
@@ -44,11 +42,20 @@ impl Editor {
             view.load(file_name);
         }
 
-        Ok(Self {
+        let mut editor = Self {
             should_quit: false,
             view,
             status_bar: StatusBar::new(1),
-        })
+            title: String::new()
+        };
+
+        let args: Vec<String> = env::args().collect();
+        if let Some(file_name) = args.get(1) {
+            editor.view.load(file_name);
+        }
+
+        editor.refresh_status();
+        Ok(editor)
     }
 
     pub fn run(&mut self) {
@@ -88,6 +95,7 @@ impl Editor {
                     self.should_quit = true;
                 } else {
                     self.view.handle_command(command);
+
                     if let EditorCommand::Resize(size) = command {
                         self.status_bar.resize(size);
                     }
@@ -103,6 +111,16 @@ impl Editor {
         let _ = Terminal::move_cursor(self.view.cursor_position());
         let _ = Terminal::show_cursor();
         let _ = Terminal::execute();
+    }
+
+    pub fn refresh_status(&mut self) {
+        let status = self.view.get_status();
+        let title = format!("{} - {NAME}", status.file_name);
+        self.status_bar.update_status(status);
+
+        if title != self.title && matches!(Terminal::set_title(&title), Ok(())) {
+            self.title = title;
+        }
     }
 }
 

@@ -32,6 +32,19 @@ impl Buffer {
         })
     }
 
+    pub fn search(&self, query: &str) -> Option<Location> {
+        for (line_index, line) in self.lines.iter().enumerate() {
+            if let Some(grapheme_index) = line.search(query) {
+                return Some(Location {
+                    grapheme_index,
+                    line_index
+                })
+            }
+        }
+
+        None
+    }
+
     pub fn is_empty(&self) -> bool {
         self.lines.is_empty()
     }
@@ -84,14 +97,14 @@ impl Buffer {
     }
 
     fn save_to_file(&self, file_info: &FileInfo) -> Result<(), Error> {
-           if let Some(file_path) = &file_info.get_path() {
-               let mut file = File::create(file_path)?;
-               for line in &self.lines {
-                   writeln!(file, "{line}")?;
-               }
-           }
-           Ok(())
-       }
+        if let Some(file_path) = &file_info.get_path() {
+            let mut file = File::create(file_path)?;
+            for line in &self.lines {
+                writeln!(file, "{line}")?;
+            }
+        }
+        Ok(())
+    }
 
     pub fn save_as(&mut self, file_name: &str) -> Result<(), Error> {
         let file_info = FileInfo::from(file_name);

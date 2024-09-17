@@ -184,6 +184,27 @@ impl Line {
             Self::default()
         }
     }
+
+    fn byte_index_to_grapheme_index(&self, byte_index: usize) -> usize {
+        for (grapheme_index, fragment) in self.fragments.iter().enumerate() {
+            if fragment.start_byte_index >= byte_index {
+                return grapheme_index;
+            }
+        }
+        #[cfg(debug_assertions)]
+        {
+            panic!("Invalid byte_index passed to byte_index_to_grapheme_index: {byte_index:?}");
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            0
+        }
+    }
+
+    pub fn search(&self, query: &str) -> Option<usize> {
+        self.string.find(query).map(|byte_index| self.byte_index_to_grapheme_index(byte_index))
+    }
 }
 
 impl Display for Line {

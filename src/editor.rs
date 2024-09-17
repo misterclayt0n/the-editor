@@ -16,7 +16,7 @@ use self::{
         Command::{self, Edit, Move, System},
         System::{Quit, Resize, Save, Dismiss, Search},
         Edit::InsertNewline,
-        Move::{Down, Right},
+        Move::{Down, Right, Up, Left},
     },
     message_bar::MessageBar,
 };
@@ -86,6 +86,7 @@ impl Editor {
 
         let args: Vec<String> = env::args().collect();
         if let Some(file_name) = args.get(1) {
+            debug_assert!(!file_name.is_empty());
             if editor.view.load(file_name).is_err() {
                 editor.message_bar.update_message("ERROR: Could not open file: {file_name}");
             }
@@ -114,11 +115,14 @@ impl Editor {
                     {
                         panic!("Could not read event: {err:?}");
                     }
+                    #[cfg(not(debug_assertions))]
+                    {
+                        let _ = err;
+                    }
                 }
             }
 
-            let status = self.view.get_status();
-            self.status_bar.update_status(status);
+            self.refresh_status();
         }
     }
 
@@ -152,6 +156,9 @@ impl Editor {
         } else {
             self.view.cursor_position()
         };
+
+        debug_assert!(new_cursor_pos.col <= self.terminal_size.width);
+        debug_assert!(new_cursor_pos.row <= self.terminal_size.height);
 
         let _ = Terminal::move_cursor(new_cursor_pos);
         let _ = Terminal::show_cursor();
@@ -324,6 +331,7 @@ impl Editor {
                 self.view.search(&query);
             },
             Move(Right | Down) => self.view.search_next(),
+            Move(Up | Left) => self.view.search_prev(),
             System(Quit | Resize(_) | Search | Save) | Move(_) => {} // not applicable during save, Resize already handled at this stage
         }
     }

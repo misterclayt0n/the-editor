@@ -1,7 +1,13 @@
 use std::{cmp::min, io::Error};
 
 use super::{
-    command::{Edit, Move}, document_status::DocumentStatus, line::Line, position::{Col, Position, Row}, size::Size, terminal::Terminal, ui_component::UIComponent
+    command::{Edit, Move},
+    document_status::DocumentStatus,
+    line::Line,
+    position::{Col, Position, Row},
+    size::Size,
+    terminal::Terminal,
+    ui_component::UIComponent,
 };
 
 use super::{NAME, VERSION};
@@ -13,6 +19,13 @@ use location::Location;
 use search_info::SearchInfo;
 mod file_info;
 
+#[derive(Default, Eq, PartialEq, Clone, Copy)]
+pub enum SearchDirection {
+    #[default]
+    Forward,
+    Backward,
+}
+
 #[derive(Default)]
 pub struct View {
     buffer: Buffer,
@@ -21,7 +34,7 @@ pub struct View {
     size: Size,
     text_location: Location,
     scroll_offset: Position,
-    search_info: Option<SearchInfo>
+    search_info: Option<SearchInfo>,
 }
 
 impl View {
@@ -30,7 +43,7 @@ impl View {
             total_lines: self.buffer.height(),
             current_line_index: self.text_location.line_index,
             file_name: format!("{}", self.buffer.file_info),
-            is_modified: self.buffer.dirty
+            is_modified: self.buffer.dirty,
         }
     }
 
@@ -160,6 +173,9 @@ impl View {
 
     fn text_location_to_position(&self) -> Position {
         let row = self.text_location.line_index;
+
+        debug_assert!(row.saturating_sub(1) <= self.buffer.lines.len());
+
         let col = self.buffer.lines.get(row).map_or(0, |line| {
             line.width_until(self.text_location.grapheme_index)
         });
@@ -289,6 +305,7 @@ impl View {
         self.text_location.line_index += 1;
         self.text_location.grapheme_index = 0;
         self.set_needs_redraw(true);
+        self.scroll_text_location_into_view();
     }
 
     fn delete_backwards(&mut self) {
@@ -311,7 +328,7 @@ impl View {
         self.search_info = Some(SearchInfo {
             prev_location: self.text_location,
             prev_scroll_offset: self.scroll_offset,
-            query: Line::default()
+            query: None,
         });
     }
 
@@ -323,7 +340,7 @@ impl View {
         if let Some(search_info) = &self.search_info {
             self.text_location = search_info.prev_location;
             self.scroll_offset = search_info.prev_scroll_offset;
-            self.set_needs_redraw(true);
+            self.scroll_text_location_into_view(); // ensure the prev location is still visible even if the terminal has been resized during search
         }
 
         self.search_info = None;
@@ -331,52 +348,56 @@ impl View {
 
     pub fn search(&mut self, query: &str) {
         if let Some(search_info) = &mut self.search_info {
-            search_info.query = Line::from(query);
+            search_info.query = Some(Line::from(query));
         }
 
-        self.search_from(self.text_location);
+        self.search_in_direction(self.text_location, SearchDirection::default());
     }
 
-    fn search_from(&mut self, from: Location) {
-        if let Some(search_info) = self.search_info.as_ref() {
-            let query = &search_info.query;
-            if query.is_empty() {
-                return;
-            }
+    fn get_search_query(&self) -> Option<&Line> {
+        let query = self
+            .search_info
+            .as_ref()
+            .and_then(|search_info| search_info.query.as_ref());
 
-            if let Some(location) = self.buffer.search(query, from) {
-                self.text_location = location;
-                self.center_text_location();
+        debug_assert!(
+            query.is_some(),
+            "Attempting to search with malformed searchinfo present"
+        );
+
+        query
+    }
+
+    fn search_in_direction(&mut self, from: Location, direction: SearchDirection) {
+        if let Some(location) = self.get_search_query().and_then(|query| {
+            if query.is_empty() {
+                None
+            } else if direction == SearchDirection::Forward {
+                self.buffer.search_forward(query, from)
+            } else {
+                self.buffer.search_backward(query, from)
             }
-        } else {
-            #[cfg(debug_assertions)]
-            {
-                panic!("Attempting to search_from without search_info")
-            }
-        }
+        }) {
+            self.text_location = location;
+            self.center_text_location();
+        };
     }
 
     pub fn search_next(&mut self) {
-        let step_right;
-        if let Some(search_info) = self.search_info.as_ref() {
-            step_right = min(search_info.query.grapheme_count(), 1);
-        } else {
-            #[cfg(debug_assertions)]
-            {
-                panic!("Attempting to search_next without search_info");
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                return;
-            }
-        }
+        let step_right = self
+            .get_search_query()
+            .map_or(1, |query| min(query.grapheme_count(), 1));
 
         let location = Location {
             line_index: self.text_location.line_index,
-            grapheme_index: self.text_location.grapheme_index.saturating_add(step_right) // start new search behind the current match
+            grapheme_index: self.text_location.grapheme_index.saturating_add(step_right), // start the new search behind the current match
         };
 
-        self.search_from(location);
+        self.search_in_direction(location, SearchDirection::Forward);
+    }
+
+    pub fn search_prev(&mut self) {
+        self.search_in_direction(self.text_location, SearchDirection::Backward);
     }
 }
 
@@ -406,7 +427,9 @@ impl UIComponent for View {
             // subtract origin_y to get the current row relative to the view (ranging from 0 to self.size.height)
             // and add the scroll offset.
 
-            let line_index = current_row.saturating_sub(origin_row).saturating_add(scroll_top);
+            let line_index = current_row
+                .saturating_sub(origin_row)
+                .saturating_add(scroll_top);
             if let Some(line) = self.buffer.lines.get(line_index) {
                 let left = self.scroll_offset.col;
                 let right = self.scroll_offset.col.saturating_add(width);

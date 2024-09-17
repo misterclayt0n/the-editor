@@ -10,28 +10,9 @@ use crossterm::{
 };
 use std::io::{stdout, Error, Write};
 
+use super::{position::Position, size::Size};
+
 pub struct Terminal {}
-
-#[derive(Copy, Clone, Default, Eq, PartialEq)]
-pub struct Size {
-    pub width: usize,
-    pub height: usize,
-}
-
-#[derive(Copy, Clone, Default)]
-pub struct Position {
-    pub col: usize,
-    pub row: usize,
-}
-
-impl Position {
-    pub const fn saturating_sub(self, other: Self) -> Self {
-        Self {
-            row: self.row.saturating_sub(other.row),
-            col: self.col.saturating_sub(other.col),
-        }
-    }
-}
 
 impl Terminal {
     pub fn terminate() -> Result<(), Error> {

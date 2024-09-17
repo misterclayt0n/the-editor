@@ -1,14 +1,13 @@
 use std::{cmp::min, io::Error};
 
 use super::{
-    command::{Edit, Move}, document_status::DocumentStatus, terminal::{Position, Size, Terminal}, ui_component::UIComponent
+    command::{Edit, Move}, document_status::DocumentStatus, line::Line, position::Position, size::Size, terminal::Terminal, ui_component::UIComponent
 };
 
 use super::{NAME, VERSION};
 mod buffer;
 use buffer::Buffer;
-use line::Line;
-mod line;
+mod file_info;
 
 #[derive(Clone, Copy, Default)]
 pub struct Location {
@@ -36,12 +35,20 @@ impl View {
         }
     }
 
+    pub fn is_file_loaded(&self) -> bool {
+        self.buffer.is_file_loaded()
+    }
+
     //
     // file i/o
     //
 
     pub fn save(&mut self) -> Result<(), Error> {
         self.buffer.save()
+    }
+
+    pub fn save_as(&mut self, file_name: &str) -> Result<(), Error> {
+        self.buffer.save_as(file_name)
     }
 
     pub fn load(&mut self, file_name: &str) -> Result<(), Error> {
@@ -301,9 +308,9 @@ impl UIComponent for View {
         self.scroll_text_location_into_view();
     }
 
-    fn draw(&mut self, origin_y: usize) -> Result<(), std::io::Error> {
+    fn draw(&mut self, origin_row: usize) -> Result<(), std::io::Error> {
         let Size { width, height } = self.size;
-        let end_y = origin_y.saturating_add(height);
+        let end_y = origin_row.saturating_add(height);
 
         // we allow this since we don't care if our welcome message is put _exactly_ in the top third.
         // it's allowed to be a bit too far up or down
@@ -311,12 +318,12 @@ impl UIComponent for View {
         let top_third = height / 3;
         let scroll_top = self.scroll_offset.row;
 
-        for current_row in origin_y..end_y {
+        for current_row in origin_row..end_y {
             // to get the correct line index, we have to take current_row (the absolute row on screen),
             // subtract origin_y to get the current row relative to the view (ranging from 0 to self.size.height)
             // and add the scroll offset.
 
-            let line_index = current_row.saturating_sub(origin_y).saturating_add(scroll_top);
+            let line_index = current_row.saturating_sub(origin_row).saturating_add(scroll_top);
             if let Some(line) = self.buffer.lines.get(line_index) {
                 let left = self.scroll_offset.col;
                 let right = self.scroll_offset.col.saturating_add(width);

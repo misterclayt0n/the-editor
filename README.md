@@ -25,7 +25,7 @@ cargo build
 - [ ] Basic vim motions
 - [x] Open files
 - [x] Scrolling
-- [ ] Write to files
+- [x] Write to files
 - [ ] File manager (of some sort, inspired in [oil.nvim](https://github.com/stevearc/oil.nvim))
 - [ ] Support for user configuration, probably something like a file `~/.config/the-editor/config`
 - [ ] Use rope data structure for better optimization

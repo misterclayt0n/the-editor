@@ -15,7 +15,8 @@ use self::{
     command::{
         Command::{self, Edit, Move, System},
         System::{Quit, Resize, Save, Dismiss, Search},
-        Edit::InsertNewline
+        Edit::InsertNewline,
+        Move::{Down, Right},
     },
     message_bar::MessageBar,
 };
@@ -309,7 +310,6 @@ impl Editor {
 
     fn process_command_during_search(&mut self, command: Command) {
         match command {
-            System(Quit | Resize(_) | Search | Save) | Move(_) => {} // not applicable during search, resize already handled at this stage
             System(Dismiss) => {
                 self.set_prompt(PromptType::None);
                 self.view.dismiss_search();
@@ -323,6 +323,8 @@ impl Editor {
                 let query = self.command_bar.value();
                 self.view.search(&query);
             },
+            Move(Right | Down) => self.view.search_next(),
+            System(Quit | Resize(_) | Search | Save) | Move(_) => {} // not applicable during save, Resize already handled at this stage
         }
     }
 

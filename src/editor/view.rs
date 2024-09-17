@@ -1,23 +1,17 @@
 use std::{cmp::min, io::Error};
 
 use super::{
-    command::{Edit, Move}, document_status::DocumentStatus, line::Line, position::Position, size::Size, terminal::Terminal, ui_component::UIComponent
+    command::{Edit, Move}, document_status::DocumentStatus, line::Line, position::{Col, Position, Row}, size::Size, terminal::Terminal, ui_component::UIComponent
 };
 
 use super::{NAME, VERSION};
 mod buffer;
+mod location;
+mod search_info;
 use buffer::Buffer;
+use location::Location;
+use search_info::SearchInfo;
 mod file_info;
-
-struct SearchInfo {
-    prev_location: Location
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct Location {
-    pub grapheme_index: usize,
-    pub line_index: usize,
-}
 
 #[derive(Default)]
 pub struct View {
@@ -106,7 +100,7 @@ impl View {
     // scrolling
     //
 
-    fn scroll_vertically(&mut self, to: usize) {
+    fn scroll_vertically(&mut self, to: Row) {
         let Size { height, .. } = self.size;
 
         let offset_changed = if to < self.scroll_offset.row {
@@ -124,7 +118,7 @@ impl View {
         }
     }
 
-    fn scroll_horizontally(&mut self, to: usize) {
+    fn scroll_horizontally(&mut self, to: Col) {
         let Size { width, .. } = self.size;
 
         let offset_changed = if to < self.scroll_offset.col {
@@ -140,6 +134,17 @@ impl View {
         if offset_changed {
             self.set_needs_redraw(true);
         }
+    }
+
+    fn center_text_location(&mut self) {
+        let Size { height, width } = self.size;
+        let Position { row, col } = self.text_location_to_position();
+        let vertical_mid = height.div_ceil(2);
+        let horizonal_mid = width.div_ceil(2);
+
+        self.scroll_offset.row = row.saturating_sub(vertical_mid);
+        self.scroll_offset.col = col.saturating_sub(horizonal_mid);
+        self.set_needs_redraw(true);
     }
 
     fn scroll_text_location_into_view(&mut self) {
@@ -305,6 +310,8 @@ impl View {
     pub fn enter_search(&mut self) {
         self.search_info = Some(SearchInfo {
             prev_location: self.text_location,
+            prev_scroll_offset: self.scroll_offset,
+            query: Line::default()
         });
     }
 
@@ -315,21 +322,61 @@ impl View {
     pub fn dismiss_search(&mut self) {
         if let Some(search_info) = &self.search_info {
             self.text_location = search_info.prev_location;
+            self.scroll_offset = search_info.prev_scroll_offset;
+            self.set_needs_redraw(true);
         }
 
         self.search_info = None;
-        self.scroll_text_location_into_view();
     }
 
     pub fn search(&mut self, query: &str) {
-        if query.is_empty() {
-            return
+        if let Some(search_info) = &mut self.search_info {
+            search_info.query = Line::from(query);
         }
 
-        if let Some(location) = self.buffer.search(query) {
-            self.text_location = location;
-            self.scroll_text_location_into_view();
+        self.search_from(self.text_location);
+    }
+
+    fn search_from(&mut self, from: Location) {
+        if let Some(search_info) = self.search_info.as_ref() {
+            let query = &search_info.query;
+            if query.is_empty() {
+                return;
+            }
+
+            if let Some(location) = self.buffer.search(query, from) {
+                self.text_location = location;
+                self.center_text_location();
+            }
+        } else {
+            #[cfg(debug_assertions)]
+            {
+                panic!("Attempting to search_from without search_info")
+            }
         }
+    }
+
+    pub fn search_next(&mut self) {
+        let step_right;
+        if let Some(search_info) = self.search_info.as_ref() {
+            step_right = min(search_info.query.grapheme_count(), 1);
+        } else {
+            #[cfg(debug_assertions)]
+            {
+                panic!("Attempting to search_next without search_info");
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                return;
+            }
+        }
+
+        let location = Location {
+            line_index: self.text_location.line_index,
+            grapheme_index: self.text_location.grapheme_index.saturating_add(step_right) // start new search behind the current match
+        };
+
+        self.search_from(location);
     }
 }
 
@@ -351,10 +398,7 @@ impl UIComponent for View {
         let Size { width, height } = self.size;
         let end_y = origin_row.saturating_add(height);
 
-        // we allow this since we don't care if our welcome message is put _exactly_ in the top third.
-        // it's allowed to be a bit too far up or down
-        #[allow(clippy::integer_division)]
-        let top_third = height / 3;
+        let top_third = height.div_ceil(3);
         let scroll_top = self.scroll_offset.row;
 
         for current_row in origin_row..end_y {

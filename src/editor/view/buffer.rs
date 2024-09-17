@@ -7,7 +7,7 @@ use std::io::Write;
 
 use crate::editor::line::Line;
 
-use super::{file_info::FileInfo, Location};
+use super::{file_info::FileInfo, location::Location};
 
 #[derive(Default)]
 pub struct Buffer {
@@ -32,9 +32,27 @@ impl Buffer {
         })
     }
 
-    pub fn search(&self, query: &str) -> Option<Location> {
-        for (line_index, line) in self.lines.iter().enumerate() {
-            if let Some(grapheme_index) = line.search(query) {
+    pub fn search(&self, query: &str, from: Location) -> Option<Location> {
+        // search from within current line until the bottom of the document
+        for (line_index, line) in self.lines.iter().enumerate().skip(from.line_index) {
+            let from_grapheme_index = if line_index == from.line_index {
+                from.grapheme_index
+            } else {
+                0
+            };
+
+            if let Some(grapheme_index) = line.search(query, from_grapheme_index) {
+                return Some(Location {
+                    grapheme_index,
+                    line_index
+                })
+            }
+        }
+
+        // search from the top of the document until (and including) the current line
+        for (line_index, line) in self.lines.iter().enumerate().take(from.line_index) {
+            if let Some(grapheme_index) = line.search(query, 0) {
+                // after wrapping around to the top, we can always start at the beginning of the line
                 return Some(Location {
                     grapheme_index,
                     line_index

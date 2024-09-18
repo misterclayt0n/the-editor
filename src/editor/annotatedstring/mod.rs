@@ -2,7 +2,6 @@ use std::{
     cmp::{max, min},
     fmt::{self, Display},
 };
-
 pub mod annotationtype;
 pub use annotationtype::AnnotationType;
 mod annotation;
@@ -11,6 +10,8 @@ mod annotatedstringpart;
 use annotatedstringpart::AnnotatedStringPart;
 mod annotatedstringiterator;
 use annotatedstringiterator::AnnotatedStringIterator;
+
+use super::ByteIndex;
 
 #[derive(Default, Debug)]
 pub struct AnnotatedString {
@@ -29,28 +30,38 @@ impl AnnotatedString {
     pub fn add_annotation(
         &mut self,
         annotation_type: AnnotationType,
-        start_byte_idx: usize,
-        end_byte_idx: usize,
+        start: ByteIndex,
+        end: ByteIndex,
     ) {
-        debug_assert!(start_byte_idx <= end_byte_idx);
+        debug_assert!(start <= end);
         self.annotations.push(Annotation {
             annotation_type,
-            start_byte_index: start_byte_idx,
-            end_byte_index: end_byte_idx,
+            start,
+            end,
         });
     }
 
-    pub fn replace(&mut self, start_byte_index: usize, end_byte_index: usize, new_string: &str) {
-        debug_assert!(start_byte_index <= end_byte_index);
+    pub fn truncate_left_until(&mut self, until: ByteIndex) {
+        self.replace(0, until, "");
+    }
 
-        let end_byte_idx = min(end_byte_index, self.string.len());
-        if start_byte_index > end_byte_idx {
+    pub fn truncate_right_from(&mut self, from: ByteIndex) {
+        self.replace(from, self.string.len(), "");
+    }
+
+    pub fn replace(&mut self, start: ByteIndex, end: ByteIndex, new_string: &str) {
+        let end = min(end, self.string.len());
+
+        debug_assert!(start <= end);
+        debug_assert!(start <= self.string.len());
+
+        if start > end {
             return;
         }
-        self.string
-            .replace_range(start_byte_index..end_byte_idx, new_string);
 
-        let replaced_range_len = end_byte_idx.saturating_sub(start_byte_index); // This is the range we want to replace.
+        self.string.replace_range(start..end, new_string);
+
+        let replaced_range_len = end.saturating_sub(start); // This is the range we want to replace.
         let shortened = new_string.len() < replaced_range_len;
         let len_difference = new_string.len().abs_diff(replaced_range_len); // This is how much longer or shorter the new range is.
 
@@ -60,59 +71,46 @@ impl AnnotatedString {
         }
 
         self.annotations.iter_mut().for_each(|annotation| {
-            annotation.start_byte_index = if annotation.start_byte_index >= end_byte_idx {
+            annotation.start = if annotation.start >= end {
                 // For annotations starting after the replaced range, we move the start index by the difference in length.
                 if shortened {
-                    annotation.start_byte_index.saturating_sub(len_difference)
+                    annotation.start.saturating_sub(len_difference)
                 } else {
-                    annotation.start_byte_index.saturating_add(len_difference)
+                    annotation.start.saturating_add(len_difference)
                 }
-            } else if annotation.start_byte_index >= start_byte_index {
+            } else if annotation.start >= start {
                 // For annotations starting within the replaced range, we move the start index by the difference in length, constrained to the beginning or end of the replaced range.
                 if shortened {
-                    max(
-                        start_byte_index,
-                        annotation.start_byte_index.saturating_sub(len_difference),
-                    )
+                    max(start, annotation.start.saturating_sub(len_difference))
                 } else {
-                    min(
-                        end_byte_idx,
-                        annotation.start_byte_index.saturating_add(len_difference),
-                    )
+                    min(end, annotation.start.saturating_add(len_difference))
                 }
             } else {
-                annotation.start_byte_index
+                annotation.start
             };
 
-            annotation.end_byte_index = if annotation.end_byte_index >= end_byte_idx {
+            annotation.end = if annotation.end >= end {
                 // For annotations ending after the replaced range, we move the end index by the difference in length.
                 if shortened {
-                    annotation.end_byte_index.saturating_sub(len_difference)
+                    annotation.end.saturating_sub(len_difference)
                 } else {
-                    annotation.end_byte_index.saturating_add(len_difference)
+                    annotation.end.saturating_add(len_difference)
                 }
-            } else if annotation.end_byte_index >= start_byte_index {
+            } else if annotation.end >= start {
                 // For annotations ending within the replaced range, we move the end index by the difference in length, constrained to the beginning or end of the replaced range.
                 if shortened {
-                    max(
-                        start_byte_index,
-                        annotation.end_byte_index.saturating_sub(len_difference),
-                    )
+                    max(start, annotation.end.saturating_sub(len_difference))
                 } else {
-                    min(
-                        end_byte_idx,
-                        annotation.end_byte_index.saturating_add(len_difference),
-                    )
+                    min(end, annotation.end.saturating_add(len_difference))
                 }
             } else {
-                annotation.end_byte_index
+                annotation.end
             }
         });
 
-        //Filter out empty annotations, in case the previous step resulted in any.
+        // Filter out empty annotations, in case the previous step resulted in any.
         self.annotations.retain(|annotation| {
-            annotation.start_byte_index < annotation.end_byte_index
-                && annotation.start_byte_index < self.string.len()
+            annotation.start < annotation.end && annotation.start < self.string.len()
         });
     }
 }

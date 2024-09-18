@@ -1,4 +1,5 @@
 mod attribute;
+use crate::prelude::*;
 use attribute::Attribute;
 use crossterm::cursor::{Hide, MoveTo, Show};
 
@@ -117,7 +118,7 @@ impl Terminal {
         Ok(())
     }
 
-    pub fn print_row(row: usize, line_text: &str) -> Result<(), Error> {
+    pub fn print_row(row: RowIndex, line_text: &str) -> Result<(), Error> {
         Self::move_cursor_to(Position { row, col: 0 })?;
         Self::clear_line()?;
         Self::print(line_text)?;
@@ -126,7 +127,7 @@ impl Terminal {
     }
 
     pub fn print_annotated_row(
-        row: usize,
+        row: RowIndex,
         annotated_string: &AnnotatedString,
     ) -> Result<(), Error> {
         Self::move_cursor_to(Position { row, col: 0 })?;
@@ -166,7 +167,7 @@ impl Terminal {
         Ok(())
     }
 
-    pub fn print_inverted_row(row: usize, line_text: &str) -> Result<(), Error> {
+    pub fn print_inverted_row(row: RowIndex, line_text: &str) -> Result<(), Error> {
         let width = Self::size()?.width;
         Self::print_row(row, &format!("{Reverse}{line_text:width$.width$}{Reset}"))
     }

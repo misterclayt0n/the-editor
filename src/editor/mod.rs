@@ -1,25 +1,23 @@
 use crossterm::event::{read, Event, KeyEvent, KeyEventKind};
+use crate::prelude::*;
+
 use std::{
     env,
     io::Error,
     panic::{set_hook, take_hook},
 };
+
 mod annotatedstring;
 mod command;
-mod uicomponents;
 mod documentstatus;
 mod line;
-
-mod position;
-mod size;
+mod uicomponents;
 mod terminal;
 
 use annotatedstring::{AnnotatedString, AnnotationType};
 use uicomponents::{CommandBar,MessageBar,View, StatusBar, UIComponent};
 use documentstatus::DocumentStatus;
 use line::Line;
-use position::{Col, Position, Row};
-use size::Size;
 use terminal::Terminal;
 
 use self::command::{
@@ -28,8 +26,6 @@ use self::command::{
     Move::{Down, Left, Right, Up},
     System::{Dismiss, Quit, Resize, Save, Search},
 };
-pub const NAME: &str = "the-editor";
-pub const VERSION: &str = "0.0.1";
 
 const QUIT_TIMES: u8 = 3;
 

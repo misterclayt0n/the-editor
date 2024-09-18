@@ -1,43 +1,39 @@
-use command_bar::CommandBar;
 use crossterm::event::{read, Event, KeyEvent, KeyEventKind};
-use position::Position;
-use size::Size;
-use status_bar::StatusBar;
-use terminal::Terminal;
-use ui_component::UIComponent;
 use std::{
     env,
     io::Error,
     panic::{set_hook, take_hook},
 };
-use view::View;
-use self::{
-    command::{
-        Command::{self, Edit, Move, System},
-        System::{Quit, Resize, Save, Dismiss, Search},
-        Edit::InsertNewline,
-        Move::{Down, Right, Up, Left},
-    },
-    message_bar::MessageBar,
-};
-
-mod terminal;
-mod status_bar;
-mod document_status;
+mod annotatedstring;
 mod command;
-mod message_bar;
+mod uicomponents;
+mod documentstatus;
 mod line;
-mod command_bar;
-mod size;
-mod position;
-mod ui_component;
-mod view;
 
+mod position;
+mod size;
+mod terminal;
+
+use annotatedstring::{AnnotatedString, AnnotationType};
+use uicomponents::{CommandBar,MessageBar,View, StatusBar, UIComponent};
+use documentstatus::DocumentStatus;
+use line::Line;
+use position::{Col, Position, Row};
+use size::Size;
+use terminal::Terminal;
+
+use self::command::{
+    Command::{self, Edit, Move, System},
+    Edit::InsertNewline,
+    Move::{Down, Left, Right, Up},
+    System::{Dismiss, Quit, Resize, Save, Search},
+};
 pub const NAME: &str = "the-editor";
 pub const VERSION: &str = "0.0.1";
+
 const QUIT_TIMES: u8 = 3;
 
-#[derive(PartialEq, Eq, Default)]
+#[derive(Eq, PartialEq, Default)]
 enum PromptType {
     Search,
     Save,
@@ -66,7 +62,7 @@ pub struct Editor {
 
 impl Editor {
     //
-    // struct lifecycle
+    // Struct lifecycle
     //
 
     pub fn new() -> Result<Self, Error> {
@@ -77,18 +73,20 @@ impl Editor {
             current_hook(panic_info);
         }));
 
-        Terminal::init()?;
+        Terminal::initialize()?;
 
         let mut editor = Self::default();
         let size = Terminal::size().unwrap_or_default();
         editor.handle_resize_command(size);
-        editor.message_bar.update_message("we gucci");
+        editor.update_message("we gucci");
 
         let args: Vec<String> = env::args().collect();
+
         if let Some(file_name) = args.get(1) {
             debug_assert!(!file_name.is_empty());
+
             if editor.view.load(file_name).is_err() {
-                editor.message_bar.update_message("ERROR: Could not open file: {file_name}");
+                editor.update_message(&format!("ERROR: Could not open file: {file_name}"));
             }
         }
 
@@ -97,17 +95,15 @@ impl Editor {
     }
 
     //
-    // event loop
+    // Event Loop
     //
 
     pub fn run(&mut self) {
         loop {
             self.refresh_screen();
-
             if self.should_quit {
                 break;
             }
-
             match read() {
                 Ok(event) => self.evaluate_event(event),
                 Err(err) => {
@@ -121,7 +117,6 @@ impl Editor {
                     }
                 }
             }
-
             self.refresh_status();
         }
     }
@@ -141,31 +136,32 @@ impl Editor {
         }
 
         if self.terminal_size.height > 1 {
-            self.status_bar.render(self.terminal_size.height.saturating_sub(2));
+            self.status_bar
+                .render(self.terminal_size.height.saturating_sub(2));
         }
 
         if self.terminal_size.height > 2 {
             self.view.render(0);
         }
 
-        let new_cursor_pos = if self.in_prompt() {
+        let new_cursor_position = if self.in_prompt() {
             Position {
                 row: bottom_bar_row,
-                col: self.command_bar.cursor_position_col()
+                col: self.command_bar.cursor_position_col(),
             }
         } else {
             self.view.cursor_position()
         };
 
-        debug_assert!(new_cursor_pos.col <= self.terminal_size.width);
-        debug_assert!(new_cursor_pos.row <= self.terminal_size.height);
+        debug_assert!(new_cursor_position.col <= self.terminal_size.width);
+        debug_assert!(new_cursor_position.row <= self.terminal_size.height);
 
-        let _ = Terminal::move_cursor(new_cursor_pos);
+        let _ = Terminal::move_cursor_to(new_cursor_position);
         let _ = Terminal::show_cursor();
         let _ = Terminal::execute();
     }
 
-    pub fn refresh_status(&mut self) {
+    fn refresh_status(&mut self) {
         let status = self.view.get_status();
         let title = format!("{} - {NAME}", status.file_name);
         self.status_bar.update_status(status);
@@ -175,7 +171,6 @@ impl Editor {
         }
     }
 
-    #[allow(clippy::needless_pass_by_value)]
     fn evaluate_event(&mut self, event: Event) {
         let should_process = match &event {
             Event::Key(KeyEvent { kind, .. }) => kind == &KeyEventKind::Press,
@@ -191,7 +186,7 @@ impl Editor {
     }
 
     //
-    // command handling
+    // Command handling
     //
 
     fn process_command(&mut self, command: Command) {
@@ -209,13 +204,13 @@ impl Editor {
 
     fn process_command_no_prompt(&mut self, command: Command) {
         if matches!(command, System(Quit)) {
-            self.handle_quit();
+            self.handle_quit_command();
             return;
         }
-        self.reset_quit_times();
+        self.reset_quit_times(); // reset quit times for all other commands
 
         match command {
-            System(Quit | Resize(_) | Dismiss) => {} // quit and resize already handled above
+            System(Quit | Resize(_) | Dismiss) => {} // Quit and Resize already handled above, others not applicable
             System(Search) => self.set_prompt(PromptType::Search),
             System(Save) => self.handle_save_command(),
             Edit(edit_command) => self.view.handle_edit_command(edit_command),
@@ -224,19 +219,20 @@ impl Editor {
     }
 
     //
-    // resize command handling
+    // Resize command handling
     //
 
     fn handle_resize_command(&mut self, size: Size) {
         self.terminal_size = size;
+
         self.view.resize(Size {
             height: size.height.saturating_sub(2),
-            width: size.width
+            width: size.width,
         });
 
         let bar_size = Size {
             height: 1,
-            width: size.width
+            width: size.width,
         };
 
         self.message_bar.resize(bar_size);
@@ -245,15 +241,16 @@ impl Editor {
     }
 
     //
-    // quit command handling
+    // Quit command handling
     //
 
+    // clippy::arithmetic_side_effects: quit_times is guaranteed to be between 0 and QUIT_TIMES
     #[allow(clippy::arithmetic_side_effects)]
-    fn handle_quit(&mut self) {
+    fn handle_quit_command(&mut self) {
         if !self.view.get_status().is_modified || self.quit_times + 1 == QUIT_TIMES {
             self.should_quit = true;
         } else if self.view.get_status().is_modified {
-            self.message_bar.update_message(&format!(
+            self.update_message(&format!(
                 "WARNING! File has unsaved changes. Press Ctrl-Q {} more times to quit.",
                 QUIT_TIMES - self.quit_times - 1
             ));
@@ -265,12 +262,12 @@ impl Editor {
     fn reset_quit_times(&mut self) {
         if self.quit_times > 0 {
             self.quit_times = 0;
-            self.message_bar.update_message("");
+            self.update_message("");
         }
     }
 
     //
-    // save command + prompt handling
+    // Save command & prompt handling
     //
 
     fn handle_save_command(&mut self) {
@@ -280,13 +277,12 @@ impl Editor {
             self.set_prompt(PromptType::Save);
         }
     }
-
     fn process_command_during_save(&mut self, command: Command) {
         match command {
-            System(Quit | Resize(_) | Search | Save) | Move(_) => {} // not applicable during save, resize already handled at this stage
+            System(Quit | Resize(_) | Search | Save) | Move(_) => {} // Not applicable during save, Resize already handled at this stage
             System(Dismiss) => {
                 self.set_prompt(PromptType::None);
-                self.update_message("Save aborted");
+                self.update_message("Save aborted.");
             }
             Edit(InsertNewline) => {
                 let file_name = self.command_bar.value();
@@ -296,23 +292,21 @@ impl Editor {
             Edit(edit_command) => self.command_bar.handle_edit_command(edit_command),
         }
     }
-
     fn save(&mut self, file_name: Option<&str>) {
         let result = if let Some(name) = file_name {
             self.view.save_as(name)
         } else {
             self.view.save()
         };
-
         if result.is_ok() {
-            self.message_bar.update_message("File saved successfully");
+            self.update_message("File saved successfully.");
         } else {
-            self.message_bar.update_message("Error writing file");
+            self.update_message("Error writing file!");
         }
     }
 
     //
-    // search command + prompt handling
+    // Search command & prompt handling
     //
 
     fn process_command_during_search(&mut self, command: Command) {
@@ -321,23 +315,26 @@ impl Editor {
                 self.set_prompt(PromptType::None);
                 self.view.dismiss_search();
             }
+
             Edit(InsertNewline) => {
                 self.set_prompt(PromptType::None);
                 self.view.exit_search();
             }
+
             Edit(edit_command) => {
                 self.command_bar.handle_edit_command(edit_command);
                 let query = self.command_bar.value();
                 self.view.search(&query);
-            },
+            }
+
             Move(Right | Down) => self.view.search_next(),
             Move(Up | Left) => self.view.search_prev(),
-            System(Quit | Resize(_) | Search | Save) | Move(_) => {} // not applicable during save, Resize already handled at this stage
+            System(Quit | Resize(_) | Search | Save) | Move(_) => {} // Not applicable during save, Resize already handled at this stage
         }
     }
 
     //
-    // message + command bar
+    // Message & command bar
     //
 
     fn update_message(&mut self, new_message: &str) {
@@ -345,7 +342,7 @@ impl Editor {
     }
 
     //
-    // prompt handling
+    // Prompt handling
     //
 
     fn in_prompt(&self) -> bool {
@@ -354,11 +351,12 @@ impl Editor {
 
     fn set_prompt(&mut self, prompt_type: PromptType) {
         match prompt_type {
-            PromptType::None => self.message_bar.set_needs_redraw(true), // ensures the message bar is properly painted during next redraw cycle
+            PromptType::None => self.message_bar.set_needs_redraw(true), //Ensures the message bar is properly painted during the next redraw cycle
             PromptType::Save => self.command_bar.set_prompt("Save as: "),
             PromptType::Search => {
                 self.view.enter_search();
-                self.command_bar.set_prompt("Search: ");
+                self.command_bar
+                    .set_prompt("Search: ");
             }
         }
 
@@ -371,7 +369,7 @@ impl Drop for Editor {
     fn drop(&mut self) {
         let _ = Terminal::terminate();
         if self.should_quit {
-            let _ = Terminal::print("leaving so soon?\r\n");
+            let _ = Terminal::print("Leaving so soon?\r\n");
         }
     }
 }

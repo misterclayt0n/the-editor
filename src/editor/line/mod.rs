@@ -1,6 +1,8 @@
 use crate::prelude::*;
 use std::{
-    cmp::min, fmt::{self, Display}, ops::{Deref, Range}
+    cmp::min,
+    fmt::{self, Display},
+    ops::{Deref, Range},
 };
 
 mod graphemewidth;
@@ -20,6 +22,7 @@ pub struct Line {
 
 impl Line {
     pub fn from(line_str: &str) -> Self {
+        let line_str = line_str.trim_end_matches('\n');
         debug_assert!(line_str.is_empty() || line_str.lines().count() == 1);
         let fragments = Self::str_to_fragments(line_str);
 
@@ -67,6 +70,7 @@ impl Line {
         match for_str {
             " " => None,
             "\t" => Some(' '),
+            "\n" => None, // do not substitute new lines
             _ if width > 0 && for_str.trim().is_empty() => Some('␣'),
             _ if width == 0 => {
                 let mut chars = for_str.chars();
@@ -166,9 +170,7 @@ impl Line {
                 // Fragment overlaps with the start of range: Remove the left side of the string and add an ellipsis
                 result.replace(
                     0,
-                    fragment
-                        .start
-                        .saturating_add(fragment.grapheme.len()),
+                    fragment.start.saturating_add(fragment.grapheme.len()),
                     "⋯",
                 );
                 break; //End processing since all remaining fragments will be invisible.
@@ -228,9 +230,7 @@ impl Line {
 
         if let Some(fragment) = self.fragments.get(at) {
             let start = fragment.start;
-            let end = fragment
-                .start
-                .saturating_add(fragment.grapheme.len());
+            let end = fragment.start.saturating_add(fragment.grapheme.len());
             self.string.drain(start..end);
             self.rebuild_fragments();
         }
@@ -342,7 +342,6 @@ impl Line {
             self.match_graphme_clusters(&potential_matches, query) //convert the potential matches into matches which align with the grapheme boundaries.
         })
     }
-
 
     /// Finds all matches which align with grapheme boundaries.
     /// Parameters:

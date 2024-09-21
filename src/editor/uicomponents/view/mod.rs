@@ -62,7 +62,7 @@ impl View {
         if let Some(search_info) = &self.search_info {
             self.text_location = search_info.prev_location;
             self.scroll_offset = search_info.prev_scroll_offset;
-            self.scroll_text_location_into_view(); // ensure the previous location is still visible even if the terminal has been resized during search.
+            self.scroll_text_location_into_view(); // Ensure the previous location is still visible even if the terminal has been resized during search.
         }
 
         self.exit_search();
@@ -77,7 +77,7 @@ impl View {
     }
 
     /// Attempts to get the current search query - for scenarios where the search query absolutely must be there.
-    /// Panics if not present in debug, or if search info is not present in debug
+    /// Panics if not present in debug, or if search info is not present in debug.
     /// Returns None on release.
     fn get_search_query(&self) -> Option<&Line> {
         let query = self
@@ -87,7 +87,7 @@ impl View {
 
         debug_assert!(
             query.is_some(),
-            "Attempting to search with malformed searchinfo present"
+            "Attempting to search with malformed search_info present"
         );
         query
     }
@@ -108,6 +108,7 @@ impl View {
 
         self.set_needs_redraw(true);
     }
+
     pub fn search_next(&mut self) {
         let step_right = self
             .get_search_query()
@@ -115,17 +116,18 @@ impl View {
 
         let location = Location {
             line_index: self.text_location.line_index,
-            grapheme_index: self.text_location.grapheme_index.saturating_add(step_right), // Start the new search behind the current match
+            grapheme_index: self.text_location.grapheme_index.saturating_add(step_right), // Start the new search after the current match
         };
 
         self.search_in_direction(location, SearchDirection::Forward);
     }
+
     pub fn search_prev(&mut self) {
         self.search_in_direction(self.text_location, SearchDirection::Backward);
     }
 
     //
-    // File i/o
+    // File I/O
     //
 
     pub fn load(&mut self, file_name: &str) -> Result<(), Error> {
@@ -144,7 +146,7 @@ impl View {
     }
 
     //
-    // Command handling
+    // Command Handling
     //
 
     pub fn handle_edit_command(&mut self, command: Edit) {
@@ -155,11 +157,12 @@ impl View {
             Edit::InsertNewline => self.insert_newline(),
         }
     }
+
     pub fn handle_move_command(&mut self, command: Move) {
         let Size { height, .. } = self.size;
 
-        // This match moves the positon, but does not check for all boundaries.
-        // The final boundarline checking happens after the match statement.
+        // This match moves the position but does not check for all boundaries.
+        // The final boundary checking happens after the match statement.
         match command {
             Move::Up => self.move_up(1),
             Move::Down => self.move_down(1),
@@ -175,12 +178,14 @@ impl View {
     }
 
     //
-    // Text editing
+    // Text Editing
     //
 
     fn insert_newline(&mut self) {
         self.buffer.insert_newline(self.text_location);
-        self.handle_move_command(Move::Right);
+        // move cursor to the beginning of the next line
+        self.text_location.line_index += 1;
+        self.text_location.grapheme_index = 0;
         self.set_needs_redraw(true);
     }
 
@@ -197,23 +202,34 @@ impl View {
     }
 
     fn insert_char(&mut self, character: char) {
-        let old_len = self
-            .buffer
-            .lines
-            .get(self.text_location.line_index)
-            .map_or(0, Line::grapheme_count);
+        let line_index = self.text_location.line_index;
+
+        // Get the old length of the line
+        let old_len = if line_index < self.buffer.rope.len_lines() {
+            let line_slice = self.buffer.rope.line(line_index);
+            let line_str = line_slice.to_string();
+            let line = Line::from(&line_str);
+            line.grapheme_count()
+        } else {
+            0
+        };
+
         self.buffer.insert_char(character, self.text_location);
 
-        let new_len = self
-            .buffer
-            .lines
-            .get(self.text_location.line_index)
-            .map_or(0, Line::grapheme_count);
+        // Get the new length of the line after insertion
+        let new_len = if line_index < self.buffer.rope.len_lines() {
+            let line_slice = self.buffer.rope.line(line_index);
+            let line_str = line_slice.to_string();
+            let line = Line::from(&line_str);
+            line.grapheme_count()
+        } else {
+            0
+        };
 
         let grapheme_delta = new_len.saturating_sub(old_len);
 
         if grapheme_delta > 0 {
-            //move right for an added grapheme (should be the regular case)
+            // Move right for an added grapheme (should be the regular case)
             self.handle_move_command(Move::Right);
         }
 
@@ -237,7 +253,7 @@ impl View {
         let len = welcome_message.len();
         let remaining_width = width.saturating_sub(1);
 
-        // hide the welcome message if it doesn't fit entirely.
+        // Hide the welcome message if it doesn't fit entirely.
         if remaining_width < len {
             return "~".to_string();
         }
@@ -312,17 +328,20 @@ impl View {
 
     fn text_location_to_position(&self) -> Position {
         let row = self.text_location.line_index;
-        debug_assert!(row.saturating_sub(1) <= self.buffer.lines.len());
-        let col = self
-            .buffer
-            .lines
-            .get(row)
-            .map_or(0, |line| line.width_until(self.text_location.grapheme_index));
+        debug_assert!(row.saturating_sub(1) <= self.buffer.rope.len_lines());
+        let col = if row < self.buffer.rope.len_lines() {
+            let line_slice = self.buffer.rope.line(row);
+            let line_str = line_slice.to_string();
+            let line = Line::from(&line_str);
+            line.width_until(self.text_location.grapheme_index)
+        } else {
+            0
+        };
         Position { col, row }
     }
 
     //
-    // Text location movement
+    // Text Location Movement
     //
 
     fn move_up(&mut self, step: usize) {
@@ -332,19 +351,22 @@ impl View {
 
     fn move_down(&mut self, step: usize) {
         self.text_location.line_index = self.text_location.line_index.saturating_add(step);
-        self.snap_to_valid_grapheme();
         self.snap_to_valid_line();
+        self.snap_to_valid_grapheme();
     }
 
     // clippy::arithmetic_side_effects: This function performs arithmetic calculations
     // after explicitly checking that the target value will be within bounds.
     #[allow(clippy::arithmetic_side_effects)]
     fn move_right(&mut self) {
-        let line_width = self
-            .buffer
-            .lines
-            .get(self.text_location.line_index)
-            .map_or(0, Line::grapheme_count);
+        let line_width = if self.text_location.line_index < self.buffer.rope.len_lines() {
+            let line_slice = self.buffer.rope.line(self.text_location.line_index);
+            let line_str = line_slice.to_string();
+            let line = Line::from(&line_str);
+            line.grapheme_count()
+        } else {
+            0
+        };
         if self.text_location.grapheme_index < line_width {
             self.text_location.grapheme_index += 1;
         } else {
@@ -370,29 +392,38 @@ impl View {
     }
 
     fn move_to_end_of_line(&mut self) {
-        self.text_location.grapheme_index = self
-            .buffer
-            .lines
-            .get(self.text_location.line_index)
-            .map_or(0, Line::grapheme_count);
+        self.text_location.grapheme_index =
+            if self.text_location.line_index < self.buffer.rope.len_lines() {
+                let line_slice = self.buffer.rope.line(self.text_location.line_index);
+                let line_str = line_slice.to_string().trim_end_matches('\n').to_string();
+                let line = Line::from(&line_str);
+                line.grapheme_count()
+            } else {
+                0
+            };
     }
 
-    // Ensures self.location.grapheme_idx points to a valid grapheme index by snapping it to the left most grapheme if appropriate.
+    // Ensures self.text_location.grapheme_index points to a valid grapheme index by snapping it to the leftmost grapheme if appropriate.
     // Doesn't trigger scrolling.
     fn snap_to_valid_grapheme(&mut self) {
-        self.text_location.grapheme_index = self
-            .buffer
-            .lines
-            .get(self.text_location.line_index)
-            .map_or(0, |line| {
+        self.text_location.grapheme_index =
+            if self.text_location.line_index < self.buffer.rope.len_lines() {
+                let line_slice = self.buffer.rope.line(self.text_location.line_index);
+                let line_str = line_slice.to_string();
+                let line = Line::from(&line_str);
                 min(line.grapheme_count(), self.text_location.grapheme_index)
-            });
+            } else {
+                0
+            };
     }
 
-    // Ensures self.location.line_idx points to a valid line index by snapping it to the bottom most line if appropriate.
+    // Ensures self.text_location.line_index points to a valid line index by snapping it to the bottommost line if appropriate.
     // Doesn't trigger scrolling.
     fn snap_to_valid_line(&mut self) {
-        self.text_location.line_index = min(self.text_location.line_index, self.buffer.height());
+        self.text_location.line_index = min(
+            self.text_location.line_index,
+            self.buffer.height().saturating_sub(1),
+        );
     }
 
     // endregion
@@ -420,14 +451,18 @@ impl UIComponent for View {
         let scroll_top = self.scroll_offset.row;
 
         for current_row in origin_row..end_y {
-            // to get the correct line index, we have to take current_row (the absolute row on screen),
-            // subtract origin_row to get the current row relative to the view (ranging from 0 to self.size.height)
+            // To get the correct line index, we have to take current_row (the absolute row on screen),
+            // subtract origin_row to get the current row relative to the view (ranging from 0 to self.size.height),
             // and add the scroll offset.
             let line_idx = current_row
                 .saturating_sub(origin_row)
                 .saturating_add(scroll_top);
 
-            if let Some(line) = self.buffer.lines.get(line_idx) {
+            if line_idx < self.buffer.rope.len_lines() {
+                let line_slice = self.buffer.rope.line(line_idx);
+                let line_str = line_slice.to_string().trim_end_matches('\n').to_string();
+                let line = Line::from(&line_str);
+
                 let left = self.scroll_offset.col;
                 let right = self.scroll_offset.col.saturating_add(width);
 

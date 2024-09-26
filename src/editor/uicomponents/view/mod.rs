@@ -11,18 +11,20 @@ use super::UIComponent;
 mod buffer;
 use buffer::Buffer;
 mod searchdirection;
+use movement::Movement;
 use searchdirection::SearchDirection;
 mod fileinfo;
 use fileinfo::FileInfo;
 mod searchinfo;
 use searchinfo::SearchInfo;
+mod movement;
 
 #[derive(Default)]
 pub struct View {
     buffer: Buffer,
     needs_redraw: bool,
     size: Size,
-    text_location: Location,
+    movement: Movement,
     scroll_offset: Position,
     search_info: Option<SearchInfo>,
 }
@@ -31,7 +33,7 @@ impl View {
     pub fn get_status(&self) -> DocumentStatus {
         DocumentStatus {
             total_lines: self.buffer.height(),
-            current_line_index: self.text_location.line_index,
+            current_line_index: self.movement.text_location.line_index,
             file_name: format!("{}", self.buffer.file_info),
             is_modified: self.buffer.dirty,
         }
@@ -47,7 +49,7 @@ impl View {
 
     pub fn enter_search(&mut self) {
         self.search_info = Some(SearchInfo {
-            prev_location: self.text_location,
+            prev_location: self.movement.text_location,
             prev_scroll_offset: self.scroll_offset,
             query: None,
         });
@@ -60,7 +62,7 @@ impl View {
 
     pub fn dismiss_search(&mut self) {
         if let Some(search_info) = &self.search_info {
-            self.text_location = search_info.prev_location;
+            self.movement.text_location = search_info.prev_location;
             self.scroll_offset = search_info.prev_scroll_offset;
             self.scroll_text_location_into_view(); // Ensure the previous location is still visible even if the terminal has been resized during search.
         }
@@ -73,7 +75,7 @@ impl View {
             search_info.query = Some(Line::from(query));
         }
 
-        self.search_in_direction(self.text_location, SearchDirection::default());
+        self.search_in_direction(self.movement.text_location, SearchDirection::default());
     }
 
     /// Attempts to get the current search query - for scenarios where the search query absolutely must be there.
@@ -102,7 +104,7 @@ impl View {
                 self.buffer.search_backward(query, from)
             }
         }) {
-            self.text_location = location;
+            self.movement.text_location = location;
             self.center_text_location();
             self.set_needs_redraw(true);
         }
@@ -114,15 +116,19 @@ impl View {
             .map_or(1, |query| min(query.grapheme_count(), 1));
 
         let location = Location {
-            line_index: self.text_location.line_index,
-            grapheme_index: self.text_location.grapheme_index.saturating_add(step_right), // Start the new search after the current match
+            line_index: self.movement.text_location.line_index,
+            grapheme_index: self
+                .movement
+                .text_location
+                .grapheme_index
+                .saturating_add(step_right), // Start the new search after the current match
         };
 
         self.search_in_direction(location, SearchDirection::Forward);
     }
 
     pub fn search_prev(&mut self) {
-        self.search_in_direction(self.text_location, SearchDirection::Backward);
+        self.search_in_direction(self.movement.text_location, SearchDirection::Backward);
     }
 
     //
@@ -158,19 +164,19 @@ impl View {
     }
 
     pub fn handle_move_command(&mut self, command: Move) {
-        let Size { height, .. } = self.size;
-
-        // This match moves the position but does not check for all boundaries.
-        // The final boundary checking happens after the match statement.
         match command {
-            Move::Up => self.move_up(1),
-            Move::Down => self.move_down(1),
-            Move::Left => self.move_left(),
-            Move::Right => self.move_right(),
-            Move::PageUp => self.move_up(height.saturating_sub(1)),
-            Move::PageDown => self.move_down(height.saturating_sub(1)),
-            Move::StartOfLine => self.move_to_start_of_line(),
-            Move::EndOfLine => self.move_to_end_of_line(),
+            Move::Up => self.movement.move_up(&self.buffer, 1),
+            Move::Down => self.movement.move_down(&self.buffer, 1),
+            Move::Left => self.movement.move_left(&self.buffer),
+            Move::Right => self.movement.move_right(&self.buffer),
+            Move::PageUp => self
+                .movement
+                .move_up(&self.buffer, self.size.height.saturating_sub(1)),
+            Move::PageDown => self
+                .movement
+                .move_down(&self.buffer, self.size.height.saturating_sub(1)),
+            Move::StartOfLine => self.movement.move_to_start_of_line(),
+            Move::EndOfLine => self.movement.move_to_end_of_line(&self.buffer),
         }
 
         self.scroll_text_location_into_view();
@@ -181,27 +187,29 @@ impl View {
     //
 
     fn insert_newline(&mut self) {
-        self.buffer.insert_newline(self.text_location);
+        self.buffer.insert_newline(self.movement.text_location);
         // move cursor to the beginning of the next line
-        self.text_location.line_index += 1;
-        self.text_location.grapheme_index = 0;
+        self.movement.text_location.line_index += 1;
+        self.movement.text_location.grapheme_index = 0;
         self.set_needs_redraw(true);
     }
 
     fn delete_backward(&mut self) {
-        if self.text_location.line_index != 0 || self.text_location.grapheme_index != 0 {
+        if self.movement.text_location.line_index != 0
+            || self.movement.text_location.grapheme_index != 0
+        {
             self.handle_move_command(Move::Left);
             self.delete();
         }
     }
 
     fn delete(&mut self) {
-        self.buffer.delete(self.text_location);
+        self.buffer.delete(self.movement.text_location);
         self.set_needs_redraw(true);
     }
 
     fn insert_char(&mut self, character: char) {
-        let line_index = self.text_location.line_index;
+        let line_index = self.movement.text_location.line_index;
 
         // Get the old length of the line
         let old_len = if line_index < self.buffer.rope.len_lines() {
@@ -213,7 +221,8 @@ impl View {
             0
         };
 
-        self.buffer.insert_char(character, self.text_location);
+        self.buffer
+            .insert_char(character, self.movement.text_location);
 
         // Get the new length of the line after insertion
         let new_len = if line_index < self.buffer.rope.len_lines() {
@@ -326,106 +335,18 @@ impl View {
     }
 
     fn text_location_to_position(&self) -> Position {
-        let row = self.text_location.line_index;
+        let row = self.movement.text_location.line_index;
         debug_assert!(row.saturating_sub(1) <= self.buffer.rope.len_lines());
         let col = if row < self.buffer.rope.len_lines() {
             let line_slice = self.buffer.rope.line(row);
             let line_str = line_slice.to_string();
             let line = Line::from(&line_str);
-            line.width_until(self.text_location.grapheme_index)
+            line.width_until(self.movement.text_location.grapheme_index)
         } else {
             0
         };
         Position { col, row }
     }
-
-    //
-    // Text Location Movement
-    //
-
-    fn move_up(&mut self, step: usize) {
-        self.text_location.line_index = self.text_location.line_index.saturating_sub(step);
-        self.snap_to_valid_grapheme();
-    }
-
-    fn move_down(&mut self, step: usize) {
-        self.text_location.line_index = self.text_location.line_index.saturating_add(step);
-        self.snap_to_valid_line();
-        self.snap_to_valid_grapheme();
-    }
-
-    // clippy::arithmetic_side_effects: This function performs arithmetic calculations
-    // after explicitly checking that the target value will be within bounds.
-    #[allow(clippy::arithmetic_side_effects)]
-    fn move_right(&mut self) {
-        let line_width = if self.text_location.line_index < self.buffer.rope.len_lines() {
-            let line_slice = self.buffer.rope.line(self.text_location.line_index);
-            let line_str = line_slice.to_string();
-            let line = Line::from(&line_str);
-            line.grapheme_count()
-        } else {
-            0
-        };
-        if self.text_location.grapheme_index < line_width {
-            self.text_location.grapheme_index += 1;
-        } else {
-            self.move_to_start_of_line();
-            self.move_down(1);
-        }
-    }
-
-    // clippy::arithmetic_side_effects: This function performs arithmetic calculations
-    // after explicitly checking that the target value will be within bounds.
-    #[allow(clippy::arithmetic_side_effects)]
-    fn move_left(&mut self) {
-        if self.text_location.grapheme_index > 0 {
-            self.text_location.grapheme_index -= 1;
-        } else if self.text_location.line_index > 0 {
-            self.move_up(1);
-            self.move_to_end_of_line();
-        }
-    }
-
-    fn move_to_start_of_line(&mut self) {
-        self.text_location.grapheme_index = 0;
-    }
-
-    fn move_to_end_of_line(&mut self) {
-        self.text_location.grapheme_index =
-            if self.text_location.line_index < self.buffer.rope.len_lines() {
-                let line_slice = self.buffer.rope.line(self.text_location.line_index);
-                let line_str = line_slice.to_string().trim_end_matches('\n').to_string();
-                let line = Line::from(&line_str);
-                line.grapheme_count()
-            } else {
-                0
-            };
-    }
-
-    // Ensures self.text_location.grapheme_index points to a valid grapheme index by snapping it to the leftmost grapheme if appropriate.
-    // Doesn't trigger scrolling.
-    fn snap_to_valid_grapheme(&mut self) {
-        self.text_location.grapheme_index =
-            if self.text_location.line_index < self.buffer.rope.len_lines() {
-                let line_slice = self.buffer.rope.line(self.text_location.line_index);
-                let line_str = line_slice.to_string();
-                let line = Line::from(&line_str);
-                min(line.grapheme_count(), self.text_location.grapheme_index)
-            } else {
-                0
-            };
-    }
-
-    // Ensures self.text_location.line_index points to a valid line index by snapping it to the bottommost line if appropriate.
-    // Doesn't trigger scrolling.
-    fn snap_to_valid_line(&mut self) {
-        self.text_location.line_index = min(
-            self.text_location.line_index,
-            self.buffer.height().saturating_sub(1),
-        );
-    }
-
-    // endregion
 }
 
 impl UIComponent for View {
@@ -451,7 +372,7 @@ impl UIComponent for View {
 
         for current_row in origin_row..end_y {
             let line_idx = current_row
-                .saturating_add(origin_row)
+                .saturating_sub(origin_row)
                 .saturating_add(scroll_top);
 
             if line_idx < self.buffer.rope.len_lines() {
@@ -459,23 +380,41 @@ impl UIComponent for View {
 
                 let left = self.scroll_offset.col;
                 let right = self.scroll_offset.col.saturating_add(width);
-                let visible_line = line_slice.slice(left..min(right, line_slice.len_chars()));
 
-                let query = self
-                    .search_info
-                    .as_ref()
-                    .and_then(|search_info| search_info.query.as_ref());
+                // Make sure `left` and `right` are between a valid interval
+                let left = min(left, line_slice.len_chars());
+                let right = min(right, line_slice.len_chars());
 
-                let selected_match = (self.text_location.line_index == line_idx && query.is_some())
-                    .then_some(self.text_location.grapheme_index);
+                // Only executes the slicing if the indices are valid
+                if left <= right {
+                    let visible_line = line_slice.slice(left..right);
 
-                if let Some(query) = query {
-                    let line_str = visible_line.to_string();
-                    let line = Line::from(&line_str);
+                    let query = self
+                        .search_info
+                        .as_ref()
+                        .and_then(|search_info| search_info.query.as_ref());
 
-                    Terminal::print_annotated_row(current_row, &line.get_annotated_visible_substr(0..line_str.len(), Some(query), selected_match))?;
+                    let selected_match = (self.movement.text_location.line_index == line_idx
+                        && query.is_some())
+                    .then_some(self.movement.text_location.grapheme_index);
+
+                    if let Some(query) = query {
+                        let line_str = visible_line.to_string();
+                        let line = Line::from(&line_str);
+
+                        Terminal::print_annotated_row(
+                            current_row,
+                            &line.get_annotated_visible_substr(
+                                0..line_str.len(),
+                                Some(query),
+                                selected_match,
+                            ),
+                        )?;
+                    } else {
+                        Terminal::print_rope_slice_row(current_row, visible_line)?;
+                    }
                 } else {
-                    Terminal::print_rope_slice_row(current_row, visible_line)?;
+                    Self::render_line(current_row, "~")?;
                 }
             } else if current_row == top_third && self.buffer.is_empty() {
                 Self::render_line(current_row, &Self::build_welcome_message(width))?;

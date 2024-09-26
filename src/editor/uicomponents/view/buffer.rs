@@ -33,10 +33,7 @@ impl Buffer {
         let mut is_first = true;
         let total_lines = self.rope.len_lines();
 
-        let line_indices = (0..total_lines)
-            .cycle()
-            .skip(from.line_index)
-            .take(total_lines + 1);
+        let line_indices = (0..total_lines).cycle().skip(from.line_index).take(total_lines + 1);
 
         for line_idx in line_indices {
             let line_slice = self.rope.line(line_idx);
@@ -51,13 +48,16 @@ impl Buffer {
             let line_str = line_slice.to_string();
             let line = Line::from(&line_str);
 
-            if let Some(grapheme_idx) = line.search_forward(query, from_grapheme_idx) {
-                return Some(Location {
-                    grapheme_index: grapheme_idx,
-                    line_index: line_idx,
-                });
+            if from_grapheme_idx < line.grapheme_count() {
+                if let Some(grapheme_idx) = line.search_forward(query, from_grapheme_idx) {
+                    return Some(Location {
+                        grapheme_index: grapheme_idx,
+                        line_index: line_idx
+                    })
+                }
             }
         }
+
         None
     }
 

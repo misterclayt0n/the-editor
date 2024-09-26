@@ -15,7 +15,7 @@ impl<'a> Iterator for AnnotatedStringIterator<'a> {
             return None;
         }
 
-        //Find the current active annotation
+        // Find the current active annotation
         if let Some(annotation) = self
             .annotated_string
             .annotations

@@ -104,9 +104,8 @@ impl View {
         }) {
             self.text_location = location;
             self.center_text_location();
-        };
-
-        self.set_needs_redraw(true);
+            self.set_needs_redraw(true);
+        }
     }
 
     pub fn search_next(&mut self) {
@@ -446,13 +445,13 @@ impl UIComponent for View {
     fn draw(&mut self, origin_row: RowIndex) -> Result<(), Error> {
         let Size { height, width } = self.size;
         let end_y = origin_row.saturating_add(height);
+        let scroll_top = self.scroll_offset.row;
 
         let top_third = height.div_ceil(3);
-        let scroll_top = self.scroll_offset.row;
 
         for current_row in origin_row..end_y {
             let line_idx = current_row
-                .saturating_sub(origin_row)
+                .saturating_add(origin_row)
                 .saturating_add(scroll_top);
 
             if line_idx < self.buffer.rope.len_lines() {
@@ -460,21 +459,24 @@ impl UIComponent for View {
 
                 let left = self.scroll_offset.col;
                 let right = self.scroll_offset.col.saturating_add(width);
-
                 let visible_line = line_slice.slice(left..min(right, line_slice.len_chars()));
 
-                // let query = self
-                //     .search_info
-                //     .as_ref()
-                //     .and_then(|search_info| search_info.query.as_deref());
+                let query = self
+                    .search_info
+                    .as_ref()
+                    .and_then(|search_info| search_info.query.as_ref());
 
-                // let selected_match = (self.text_location.line_index == line_idx && query.is_some())
-                //     .then_some(self.text_location.grapheme_index);
+                let selected_match = (self.text_location.line_index == line_idx && query.is_some())
+                    .then_some(self.text_location.grapheme_index);
 
-                Terminal::print_rope_slice_row(
-                    current_row,
-                    visible_line,
-                )?;
+                if let Some(query) = query {
+                    let line_str = visible_line.to_string();
+                    let line = Line::from(&line_str);
+
+                    Terminal::print_annotated_row(current_row, &line.get_annotated_visible_substr(0..line_str.len(), Some(query), selected_match))?;
+                } else {
+                    Terminal::print_rope_slice_row(current_row, visible_line)?;
+                }
             } else if current_row == top_third && self.buffer.is_empty() {
                 Self::render_line(current_row, &Self::build_welcome_message(width))?;
             } else {

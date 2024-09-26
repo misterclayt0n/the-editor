@@ -2,6 +2,7 @@ use std::{
     cmp::{max, min},
     fmt::{self, Display},
 };
+
 pub mod annotationtype;
 pub use annotationtype::AnnotationType;
 mod annotation;
@@ -66,7 +67,7 @@ impl AnnotatedString {
         let len_difference = new_string.len().abs_diff(replaced_range_len); // This is how much longer or shorter the new range is.
 
         if len_difference == 0 {
-            //No adjustment of annotations needed in case the replacement did not result in a change in length.
+            // No adjustment of annotations needed in case the replacement did not result in a change in length.
             return;
         }
 

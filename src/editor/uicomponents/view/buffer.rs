@@ -159,11 +159,9 @@ impl Buffer {
 
         if char_idx < self.rope.len_chars() {
             if at.grapheme_index >= line_len && at.line_index + 1 < self.rope.len_lines() {
-                // No fim da linha, remover o caractere de nova linha para mesclar com a próxima linha
                 self.rope.remove(char_idx..char_idx + 1);
                 self.dirty = true;
             } else {
-                // Remover o caractere no índice atual
                 self.rope.remove(char_idx..char_idx + 1);
                 self.dirty = true;
             }

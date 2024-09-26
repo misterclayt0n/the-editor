@@ -240,21 +240,6 @@ impl Line {
         self.delete(self.grapheme_count().saturating_sub(1));
     }
 
-    pub fn append(&mut self, other: &Self) {
-        self.string.push_str(&other.string);
-        self.rebuild_fragments();
-    }
-
-    pub fn split(&mut self, at: GraphemeIndex) -> Self {
-        if let Some(fragment) = self.fragments.get(at) {
-            let remainder = self.string.split_off(fragment.start);
-            self.rebuild_fragments();
-            Self::from(&remainder)
-        } else {
-            Self::default()
-        }
-    }
-
     fn byte_index_to_grapheme_index(&self, byte_idx: ByteIndex) -> Option<GraphemeIndex> {
         if byte_idx > self.string.len() {
             return None;

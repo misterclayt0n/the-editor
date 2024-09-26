@@ -14,6 +14,7 @@ use crossterm::terminal::{
 };
 
 use crossterm::{queue, Command};
+use ropey::RopeSlice;
 use std::io::{stdout, Error, Write};
 
 use super::AnnotatedString;
@@ -198,6 +199,16 @@ impl Terminal {
     fn queue_command<T: Command>(command: T) -> Result<(), Error> {
         queue!(stdout(), command)?;
 
+        Ok(())
+    }
+
+    pub fn print_rope_slice_row(row: RowIndex, rope_slice: RopeSlice) -> Result<(), Error> {
+        Self::move_cursor_to(Position { row, col: 0 })?;
+        Self::clear_line()?;
+
+        for chunk in rope_slice.chunks() {
+            Self::print(chunk)?;
+        }
         Ok(())
     }
 }

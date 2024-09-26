@@ -451,32 +451,29 @@ impl UIComponent for View {
         let scroll_top = self.scroll_offset.row;
 
         for current_row in origin_row..end_y {
-            // To get the correct line index, we have to take current_row (the absolute row on screen),
-            // subtract origin_row to get the current row relative to the view (ranging from 0 to self.size.height),
-            // and add the scroll offset.
             let line_idx = current_row
                 .saturating_sub(origin_row)
                 .saturating_add(scroll_top);
 
             if line_idx < self.buffer.rope.len_lines() {
                 let line_slice = self.buffer.rope.line(line_idx);
-                let line_str = line_slice.to_string().trim_end_matches('\n').to_string();
-                let line = Line::from(&line_str);
 
                 let left = self.scroll_offset.col;
                 let right = self.scroll_offset.col.saturating_add(width);
 
-                let query = self
-                    .search_info
-                    .as_ref()
-                    .and_then(|search_info| search_info.query.as_deref());
+                let visible_line = line_slice.slice(left..min(right, line_slice.len_chars()));
 
-                let selected_match = (self.text_location.line_index == line_idx && query.is_some())
-                    .then_some(self.text_location.grapheme_index);
+                // let query = self
+                //     .search_info
+                //     .as_ref()
+                //     .and_then(|search_info| search_info.query.as_deref());
 
-                Terminal::print_annotated_row(
+                // let selected_match = (self.text_location.line_index == line_idx && query.is_some())
+                //     .then_some(self.text_location.grapheme_index);
+
+                Terminal::print_rope_slice_row(
                     current_row,
-                    &line.get_annotated_visible_substr(left..right, query, selected_match),
+                    visible_line,
                 )?;
             } else if current_row == top_third && self.buffer.is_empty() {
                 Self::render_line(current_row, &Self::build_welcome_message(width))?;

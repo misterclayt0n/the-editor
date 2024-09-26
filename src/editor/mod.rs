@@ -1,5 +1,5 @@
-use crossterm::event::{read, Event, KeyEvent, KeyEventKind};
 use crate::prelude::*;
+use crossterm::event::{read, Event, KeyEvent, KeyEventKind};
 
 use std::{
     env,
@@ -11,14 +11,14 @@ mod annotatedstring;
 mod command;
 mod documentstatus;
 mod line;
-mod uicomponents;
 mod terminal;
+mod uicomponents;
 
 use annotatedstring::{AnnotatedString, AnnotationType};
-use uicomponents::{CommandBar,MessageBar,View, StatusBar, UIComponent};
 use documentstatus::DocumentStatus;
 use line::Line;
 use terminal::Terminal;
+use uicomponents::{CommandBar, MessageBar, StatusBar, UIComponent, View};
 
 use self::command::{
     Command::{self, Edit, Move, System},
@@ -148,9 +148,6 @@ impl Editor {
         } else {
             self.view.cursor_position()
         };
-
-        debug_assert!(new_cursor_position.col <= self.terminal_size.width);
-        debug_assert!(new_cursor_position.row <= self.terminal_size.height);
 
         let _ = Terminal::move_cursor_to(new_cursor_position);
         let _ = Terminal::show_cursor();
@@ -351,8 +348,7 @@ impl Editor {
             PromptType::Save => self.command_bar.set_prompt("Save as: "),
             PromptType::Search => {
                 self.view.enter_search();
-                self.command_bar
-                    .set_prompt("Search: ");
+                self.command_bar.set_prompt("Search: ");
             }
         }
 

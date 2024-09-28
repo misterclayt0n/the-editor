@@ -1,5 +1,5 @@
 use crossterm::event::{
-    KeyCode::{Down, End, Home, Left, PageDown, PageUp, Right, Up},
+    KeyCode::{self, Down, End, Home, Left, PageDown, PageUp, Right, Up},
     KeyEvent, KeyModifiers,
 };
 
@@ -17,26 +17,12 @@ pub enum Move {
 impl TryFrom<KeyEvent> for Move {
     type Error = String;
     fn try_from(event: KeyEvent) -> Result<Self, Self::Error> {
-        let KeyEvent {
-            code, modifiers, ..
-        } = event;
-
-        if modifiers == KeyModifiers::NONE {
-            match code {
-                Up => Ok(Self::Up),
-                Down => Ok(Self::Down),
-                Left => Ok(Self::Left),
-                Right => Ok(Self::Right),
-                PageDown => Ok(Self::PageDown),
-                PageUp => Ok(Self::PageUp),
-                Home => Ok(Self::StartOfLine),
-                End => Ok(Self::EndOfLine),
-                _ => Err(format!("Unsupported code: {code:?}")),
-            }
-        } else {
-            Err(format!(
-                "Unsupported key code {code:?} or modifier {modifiers:?}"
-            ))
+        match (event.code, event.modifiers) {
+            (KeyCode::Char('h'), KeyModifiers::NONE) => Ok(Self::Left),
+            (KeyCode::Char('j'), KeyModifiers::NONE) => Ok(Self::Down),
+            (KeyCode::Char('k'), KeyModifiers::NONE) => Ok(Self::Up),
+            (KeyCode::Char('l'), KeyModifiers::NONE) => Ok(Self::Right),
+            _ => Err(format!("Not a move command: {:?}", event))
         }
     }
 }

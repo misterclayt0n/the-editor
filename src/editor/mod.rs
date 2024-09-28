@@ -1,6 +1,8 @@
 use crate::prelude::*;
+use command::VimCommand;
 use crossterm::event::{read, Event, KeyEvent, KeyEventKind};
 
+use core::fmt;
 use std::{
     env,
     io::Error,
@@ -43,6 +45,31 @@ impl PromptType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VimMode {
+    Normal,
+    Insert,
+    Visual,
+    CommandMode,
+}
+
+impl fmt::Display for VimMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VimMode::Insert => write!(f, "INSERT"),
+            VimMode::Normal => write!(f, "NORMAL"),
+            VimMode::Visual => write!(f, "VISUAL"),
+            VimMode::CommandMode => write!(f, "COMMAND"),
+        }
+    }
+}
+
+impl Default for VimMode {
+    fn default() -> Self {
+        VimMode::Normal
+    }
+}
+
 #[derive(Default)]
 pub struct Editor {
     should_quit: bool,
@@ -54,6 +81,7 @@ pub struct Editor {
     terminal_size: Size,
     title: String,
     quit_times: u8,
+    vim_mode: VimMode,
 }
 
 impl Editor {
@@ -101,7 +129,11 @@ impl Editor {
                 break;
             }
             match read() {
-                Ok(event) => self.evaluate_event(event),
+                Ok(event) => {
+                    if let Ok(command) = Command::from_event(event, self.vim_mode) {
+                        self.process_command(command);
+                    }
+                }
                 Err(err) => {
                     #[cfg(debug_assertions)]
                     {
@@ -200,14 +232,37 @@ impl Editor {
             self.handle_quit_command();
             return;
         }
-        self.reset_quit_times(); // reset quit times for all other commands
+        self.reset_quit_times(); // Reset quit times for all other commands
 
         match command {
             System(Quit | Resize(_) | Dismiss) => {} // Quit and Resize already handled above, others not applicable
             System(Search) => self.set_prompt(PromptType::Search),
             System(Save) => self.handle_save_command(),
-            Edit(edit_command) => self.view.handle_edit_command(edit_command),
-            Move(move_command) => self.view.handle_move_command(move_command),
+            Edit(edit_command) => {
+                if self.vim_mode == VimMode::Insert {
+                    // Handle edit commands in insert mode
+                    self.view.handle_edit_command(edit_command);
+                }
+            }
+            Move(move_command) => {
+                if self.vim_mode == VimMode::Normal || self.vim_mode == VimMode::Visual {
+                    // Handle move commands in normal mode
+                    self.view.handle_move_command(move_command);
+                }
+            }
+            Command::Vim(vim_command) => self.handle_vim_command(vim_command),
+        }
+    }
+
+    fn handle_vim_command(&mut self, vim_command: VimCommand) {
+        match vim_command {
+            VimCommand::ChangeMode(new_mode) => {
+                if new_mode == VimMode::Insert {
+                    self.update_insertion_point();
+                }
+                self.vim_mode = new_mode;
+                self.update_message(&format!("Switched to {} mode", self.vim_mode));
+            }
         }
     }
 
@@ -270,6 +325,7 @@ impl Editor {
             self.set_prompt(PromptType::Save);
         }
     }
+
     fn process_command_during_save(&mut self, command: Command) {
         match command {
             System(Quit | Resize(_) | Search | Save) | Move(_) => {} // Not applicable during save, Resize already handled at this stage
@@ -283,8 +339,10 @@ impl Editor {
                 self.set_prompt(PromptType::None);
             }
             Edit(edit_command) => self.command_bar.handle_edit_command(edit_command),
+            Command::Vim(vim_command) => self.handle_vim_command(vim_command),
         }
     }
+
     fn save(&mut self, file_name: Option<&str>) {
         let result = if let Some(name) = file_name {
             self.view.save_as(name)
@@ -304,25 +362,21 @@ impl Editor {
 
     fn process_command_during_search(&mut self, command: Command) {
         match command {
-            System(Dismiss) => {
+            System(Dismiss) | Command::Vim(VimCommand::ChangeMode(VimMode::Normal)) => {
+                // Handle ESC to exit search and switch back to normal mode
                 self.set_prompt(PromptType::None);
                 self.view.dismiss_search();
+                self.vim_mode = VimMode::Normal; // set mode back to normal after dismissing search
             }
-
-            Edit(InsertNewline) => {
-                self.set_prompt(PromptType::None);
-                self.view.exit_search();
-            }
-
             Edit(edit_command) => {
                 self.command_bar.handle_edit_command(edit_command);
                 let query = self.command_bar.value();
                 self.view.search(&query);
             }
-
             Move(Right | Down) => self.view.search_next(),
             Move(Up | Left) => self.view.search_prev(),
-            System(Quit | Resize(_) | Search | Save) | Move(_) => {} // Not applicable during save, Resize already handled at this stage
+            System(Quit | Resize(_) | Search | Save) | Move(_) => {}
+            Command::Vim(vim_command) => self.handle_vim_command(vim_command),
         }
     }
 
@@ -344,16 +398,24 @@ impl Editor {
 
     fn set_prompt(&mut self, prompt_type: PromptType) {
         match prompt_type {
-            PromptType::None => self.message_bar.set_needs_redraw(true), //Ensures the message bar is properly painted during the next redraw cycle
-            PromptType::Save => self.command_bar.set_prompt("Save as: "),
+            PromptType::None => self.message_bar.set_needs_redraw(true),
+            PromptType::Save => {
+                self.command_bar.set_prompt("Save as: ");
+                self.vim_mode = VimMode::CommandMode; // Enter command mode when saving
+            }
             PromptType::Search => {
                 self.view.enter_search();
                 self.command_bar.set_prompt("Search: ");
+                self.vim_mode = VimMode::CommandMode; // Enter command mode when searching
             }
         }
 
         self.command_bar.clear_value();
         self.prompt_type = prompt_type;
+    }
+
+    fn update_insertion_point(&mut self) {
+        self.view.update_insertion_point_to_cursor_position();
     }
 }
 

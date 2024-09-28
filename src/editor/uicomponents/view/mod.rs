@@ -347,6 +347,35 @@ impl View {
         };
         Position { col, row }
     }
+
+    pub fn update_insertion_point_to_cursor_position(&mut self) {
+        let cursor_position = self.cursor_position();
+        let location = Location {
+            line_index: cursor_position.row + self.scroll_offset.row,
+            grapheme_index: cursor_position.col + self.scroll_offset.col,
+        };
+
+        // Ensure the line exists
+        while self.buffer.height() <= location.line_index {
+            self.buffer.insert_newline(Location {
+                line_index: self.buffer.height(),
+                grapheme_index: 0,
+            });
+        }
+
+        self.movement.text_location = location;
+    }
+
+    /// Convert the cursor's current position back to a text location
+    fn cursor_position_to_text_location(&self) -> Location {
+        let row = self.scroll_offset.row + self.movement.text_location.line_index;
+        let col = self.scroll_offset.col + self.movement.text_location.grapheme_index;
+
+        Location {
+            line_index: row,
+            grapheme_index: col,
+        }
+    }
 }
 
 impl UIComponent for View {

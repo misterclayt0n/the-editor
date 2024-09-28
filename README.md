@@ -1,31 +1,49 @@
-# The editor
-### Motivation
-I love neovim, and wanted to create my own!
+# 📝 The Editor
 
-### Usage
-1. Install [rust](https://www.rust-lang.org/)
+### 🚀 Motivation
+I love Neovim and wanted to create my own editor that combines the simplicity of Zed, the speed and expandability of Vim, and the rich features of Emacs. Imagine an editor that configures itself based on your project: open a Rust file, and it asks if you want to set up the necessary LSP, Tree-sitter, formatter, and more. The goal is to create a customizable powerhouse where users can code their own editor using a Rust API, offering deep flexibility and advanced navigation, compile commands, and other Emacs-like functionalities.
 
-2. Clone the repository
-```zsh
-git clone https://github.com/misterclayt0n/the-editor
-```
+### ✨ Features
+- **Blazing Fast**: Lightning speed similar to Vim.
+- **User Configurations**: Coming soon—configure everything, your way.
+- **Emacs-Inspired**: Advanced navigation and compile commands.
+- **Easy Setup**: Opens files directly, suggests necessary packages, and more.
+  
+### 🛠️ Usage
+1. **Install [Rust](https://www.rust-lang.org/)**: Make sure you have Rust installed on your machine.
 
-3. Build the-editor
-```zsh
-cd the-editor
-cargo build
-```
+2. **Clone the repository**
+   ```bash
+   git clone https://github.com/misterclayt0n/the-editor
+   ```
 
-4. Edit your files
-```zsh
-./target/debug/editor <FILE>
-```
+3. **Build The Editor**
+   ```bash
+   cd the-editor
+   cargo build
+   ```
 
-### Roadmap
-- [ ] Basic vim motions
+4. **Start Editing**
+   ```bash
+   ./target/debug/editor <FILE>
+   ```
+
+### 📅 Roadmap
+- [x] Basic vim motions
 - [x] Open files
 - [x] Scrolling
 - [x] Write to files
-- [ ] File manager (of some sort, inspired in [oil.nvim](https://github.com/stevearc/oil.nvim))
-- [ ] Support for user configuration, probably something like a file `~/.config/the-editor/config`
-- [ ] Use rope data structure for better optimization
+- [ ] File manager inspired by [oil.nvim](https://github.com/stevearc/oil.nvim)
+- [ ] User configurations (`~/.config/the-editor/config`)
+- [ ] Optimize with rope data structure (almost completed)
+
+### 📚 Future Plans
+- **Integrated Setup**: Automatically configure necessary tools when opening a new file type.
+- **Expandable**: Provide a Rust API for users to customize and extend the editor, allowing them to build their own features.
+- **Emacs-like Features**: Compile commands, file navigation systems, and more to create a seamless coding environment.
+
+### 📞 Support
+If you encounter any issues, feel free to open an [issue](https://github.com/misterclayt0n/the-editor/issues) on GitHub.
+
+### 🌟 Acknowledgments
+Inspired by the simplicity of Zed, the speed of Vim, and the versatility of Emacs.

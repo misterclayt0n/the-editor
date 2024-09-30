@@ -261,15 +261,28 @@ impl Editor {
     fn handle_vim_command(&mut self, vim_command: VimCommand) {
         match vim_command {
             VimCommand::ChangeMode(new_mode) => {
-                if new_mode == VimMode::Insert {
-                    self.update_insertion_point();
-                }
+                let old_mode = self.vim_mode;
 
-                if new_mode == VimMode::Visual {
-                    self.view.start_selection();
+                match new_mode {
+                    VimMode::Insert => {
+                        self.update_insertion_point();
+                        self.view.clear_selection();
+                    }
+                    VimMode::Visual => {
+                        if old_mode != VimMode::Visual {
+                            self.view.start_selection();
+                        }
+                    }
+                    VimMode::Normal => {
+                        if old_mode == VimMode::Visual {
+                            self.view.clear_selection();
+                        }
+                    }
+                    VimMode::CommandMode => { } 
                 }
 
                 self.vim_mode = new_mode;
+                self.view.set_needs_redraw(true);
                 self.update_message(&format!("Switched to {} mode", self.vim_mode));
             }
         }

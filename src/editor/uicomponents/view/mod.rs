@@ -371,32 +371,37 @@ impl View {
     // Selection
     //
 
-    pub fn start_selection(&mut self) {
-        self.selection_start = Some(self.movement.text_location);
+    pub fn clear_selection(&mut self) {
+        self.selection_start = None;
+        self.selection_end = None;
+        self.set_needs_redraw(true);
     }
 
-    pub fn get_selection_range(&self) -> Option<(Location, Location)> {
-        if let (Some(start), Some(end)) = (self.selection_start, self.selection_end) {
-            Some(if start.line_index <= end.line_index && start.grapheme_index <= end.grapheme_index {
-                (start, end)
-            } else {
-                (end, start)
-            })
-        } else {
-            None
-        }
+    pub fn start_selection(&mut self) {
+        self.selection_start = Some(self.movement.text_location);
+        self.selection_end = Some(self.movement.text_location);
+        self.set_needs_redraw(true);
     }
 
     pub fn update_selection(&mut self) {
-        if let Some(start) = self.selection_start {
-            let end = self.movement.text_location;
-            self.set_selection_range(start, end);
+        if self.selection_start.is_some() {
+            self.selection_end = Some(self.movement.text_location);
+            self.set_needs_redraw(true);
         }
     }
 
-    pub fn set_selection_range(&mut self, start: Location, end: Location) {
-        self.selection_start = Some(start);
-        self.selection_end = Some(end);
+    pub fn get_selection_range(&self) -> Option<(Location, Location)> {
+        match (self.selection_start, self.selection_end) {
+            (Some(start), Some(end)) => Some(
+                if start.line_index <= end.line_index && start.grapheme_index <= end.grapheme_index
+                {
+                    (start, end)
+                } else {
+                    (end, start)
+                },
+            ),
+            _ => None,
+        }
     }
 }
 
@@ -458,7 +463,6 @@ impl UIComponent for View {
                         }
                     });
 
-                    // Renderize a linha com ou sem seleção
                     Terminal::print_selected_row(current_row, visible_line, selection_range)?;
                 } else {
                     Self::render_line(current_row, "~")?;

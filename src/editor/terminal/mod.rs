@@ -211,4 +211,56 @@ impl Terminal {
         }
         Ok(())
     }
+
+    pub fn print_selected_row(
+        row: RowIndex,
+        rope_slice: RopeSlice,
+        selection_range: Option<(usize, usize)>,
+    ) -> Result<(), Error> {
+        Self::move_cursor_to(Position { row, col: 0 })?;
+        Self::clear_line()?;
+
+        let mut current_index = 0;
+
+        for chunk in rope_slice.chunks() {
+            let chunk_len = chunk.len();
+
+            if let Some((start, end)) = selection_range {
+                if current_index + chunk_len >= start && current_index <= end {
+                    let relative_start = if start > current_index {
+                        start - current_index
+                    } else {
+                        0
+                    };
+                    let relative_end = if end < current_index + chunk_len {
+                        end - current_index
+                    } else {
+                        chunk_len
+                    };
+
+                    if relative_start > 0 {
+                        Self::print(&chunk[0..relative_start])?;
+                    }
+
+                    if relative_end > relative_start {
+                        Self::queue_command(SetBackgroundColor(crossterm::style::Color::Blue))?;
+                        Self::print(&chunk[relative_start..relative_end])?;
+                        Self::queue_command(ResetColor)?;
+                    }
+
+                    if relative_end < chunk_len {
+                        Self::print(&chunk[relative_end..])?;
+                    }
+                } else {
+                    Self::print(chunk)?;
+                }
+            } else {
+                Self::print(chunk)?;
+            }
+
+            current_index += chunk_len;
+        }
+
+        Ok(())
+    }
 }

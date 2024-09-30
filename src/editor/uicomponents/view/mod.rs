@@ -24,9 +24,11 @@ pub struct View {
     buffer: Buffer,
     needs_redraw: bool,
     size: Size,
-    movement: Movement,
+    pub movement: Movement,
     scroll_offset: Position,
     search_info: Option<SearchInfo>,
+    selection_start: Option<Location>,
+    selection_end: Option<Location>,
 }
 
 impl View {
@@ -355,7 +357,6 @@ impl View {
             grapheme_index: cursor_position.col + self.scroll_offset.col,
         };
 
-        // Ensure the line exists
         while self.buffer.height() <= location.line_index {
             self.buffer.insert_newline(Location {
                 line_index: self.buffer.height(),
@@ -366,15 +367,36 @@ impl View {
         self.movement.text_location = location;
     }
 
-    /// Convert the cursor's current position back to a text location
-    fn cursor_position_to_text_location(&self) -> Location {
-        let row = self.scroll_offset.row + self.movement.text_location.line_index;
-        let col = self.scroll_offset.col + self.movement.text_location.grapheme_index;
+    //
+    // Selection
+    //
 
-        Location {
-            line_index: row,
-            grapheme_index: col,
+    pub fn start_selection(&mut self) {
+        self.selection_start = Some(self.movement.text_location);
+    }
+
+    pub fn get_selection_range(&self) -> Option<(Location, Location)> {
+        if let (Some(start), Some(end)) = (self.selection_start, self.selection_end) {
+            Some(if start.line_index <= end.line_index && start.grapheme_index <= end.grapheme_index {
+                (start, end)
+            } else {
+                (end, start)
+            })
+        } else {
+            None
         }
+    }
+
+    pub fn update_selection(&mut self) {
+        if let Some(start) = self.selection_start {
+            let end = self.movement.text_location;
+            self.set_selection_range(start, end);
+        }
+    }
+
+    pub fn set_selection_range(&mut self, start: Location, end: Location) {
+        self.selection_start = Some(start);
+        self.selection_end = Some(end);
     }
 }
 
@@ -410,7 +432,7 @@ impl UIComponent for View {
                 let left = self.scroll_offset.col;
                 let right = self.scroll_offset.col.saturating_add(width);
 
-                // Make sure `left` and `right` are between a valid interval
+                // Ensure left and right bounds are within the line's grapheme count
                 let left = min(left, line_slice.len_chars());
                 let right = min(right, line_slice.len_chars());
 
@@ -418,30 +440,26 @@ impl UIComponent for View {
                 if left <= right {
                     let visible_line = line_slice.slice(left..right);
 
-                    let query = self
-                        .search_info
-                        .as_ref()
-                        .and_then(|search_info| search_info.query.as_ref());
+                    let selection_range = self.get_selection_range().and_then(|(start, end)| {
+                        if start.line_index <= line_idx && end.line_index >= line_idx {
+                            let selection_start = if start.line_index == line_idx {
+                                start.grapheme_index.saturating_sub(left)
+                            } else {
+                                0
+                            };
+                            let selection_end = if end.line_index == line_idx {
+                                end.grapheme_index.saturating_sub(left)
+                            } else {
+                                right.saturating_sub(left)
+                            };
+                            Some((selection_start, selection_end))
+                        } else {
+                            None
+                        }
+                    });
 
-                    let selected_match = (self.movement.text_location.line_index == line_idx
-                        && query.is_some())
-                    .then_some(self.movement.text_location.grapheme_index);
-
-                    if let Some(query) = query {
-                        let line_str = visible_line.to_string();
-                        let line = Line::from(&line_str);
-
-                        Terminal::print_annotated_row(
-                            current_row,
-                            &line.get_annotated_visible_substr(
-                                0..line_str.len(),
-                                Some(query),
-                                selected_match,
-                            ),
-                        )?;
-                    } else {
-                        Terminal::print_rope_slice_row(current_row, visible_line)?;
-                    }
+                    // Renderize a linha com ou sem seleção
+                    Terminal::print_selected_row(current_row, visible_line, selection_range)?;
                 } else {
                     Self::render_line(current_row, "~")?;
                 }

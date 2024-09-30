@@ -7,7 +7,7 @@ pub type RowIndex = usize;
 pub const NAME: &str = "the-editor";
 pub const VERSION: &str = "0.0.1";
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct Location {
     pub grapheme_index: GraphemeIndex,
     pub line_index: LineIndex,

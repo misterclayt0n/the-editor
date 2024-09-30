@@ -246,8 +246,12 @@ impl Editor {
             }
             Move(move_command) => {
                 if self.vim_mode == VimMode::Normal || self.vim_mode == VimMode::Visual {
-                    // Handle move commands in normal mode
                     self.view.handle_move_command(move_command);
+
+                    if self.vim_mode == VimMode::Visual {
+                        self.view.update_selection();
+                        self.view.set_needs_redraw(true);
+                    }
                 }
             }
             Command::Vim(vim_command) => self.handle_vim_command(vim_command),
@@ -260,6 +264,11 @@ impl Editor {
                 if new_mode == VimMode::Insert {
                     self.update_insertion_point();
                 }
+
+                if new_mode == VimMode::Visual {
+                    self.view.start_selection();
+                }
+
                 self.vim_mode = new_mode;
                 self.update_message(&format!("Switched to {} mode", self.vim_mode));
             }

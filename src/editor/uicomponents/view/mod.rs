@@ -437,13 +437,20 @@ impl UIComponent for View {
                 let left = self.scroll_offset.col;
                 let right = self.scroll_offset.col.saturating_add(width);
 
-                // Ensure left and right bounds are within the line's grapheme count
                 let left = min(left, line_slice.len_chars());
                 let right = min(right, line_slice.len_chars());
 
-                // Only executes the slicing if the indices are valid
                 if left <= right {
                     let visible_line = line_slice.slice(left..right);
+
+                    let query = self
+                        .search_info
+                        .as_ref()
+                        .and_then(|search_info| search_info.query.as_ref());
+
+                    let selected_match = (self.movement.text_location.line_index == line_idx
+                        && query.is_some())
+                    .then_some(self.movement.text_location.grapheme_index);
 
                     let selection_range = self.get_selection_range().and_then(|(start, end)| {
                         if start.line_index <= line_idx && end.line_index >= line_idx {
@@ -463,7 +470,29 @@ impl UIComponent for View {
                         }
                     });
 
-                    Terminal::print_selected_row(current_row, visible_line, selection_range)?;
+                    if let Some(query) = query {
+                        let line_str = visible_line.to_string();
+                        let line = Line::from(&line_str);
+
+                        Terminal::print_annotated_row(
+                            current_row,
+                            &line.get_annotated_visible_substr(
+                                0..line_str.len(),
+                                Some(query),
+                                selected_match,
+                            ),
+                        )?;
+                    }
+
+                    else if let Some((start, end)) = selection_range {
+                        Terminal::print_selected_row(
+                            current_row,
+                            visible_line,
+                            Some((start, end)),
+                        )?;
+                    } else {
+                        Terminal::print_rope_slice_row(current_row, visible_line)?;
+                    }
                 } else {
                     Self::render_line(current_row, "~")?;
                 }

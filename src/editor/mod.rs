@@ -278,7 +278,9 @@ impl Editor {
                             self.view.clear_selection();
                         }
                     }
-                    VimMode::CommandMode => { } 
+                    VimMode::CommandMode => {
+
+                    }
                 }
 
                 self.vim_mode = new_mode;

@@ -12,6 +12,7 @@ mod buffer;
 use buffer::Buffer;
 mod searchdirection;
 use movement::Movement;
+use ropey::RopeSlice;
 use searchdirection::SearchDirection;
 mod fileinfo;
 use fileinfo::FileInfo;
@@ -179,6 +180,18 @@ impl View {
                 .move_down(&self.buffer, self.size.height.saturating_sub(1)),
             Move::StartOfLine => self.movement.move_to_start_of_line(),
             Move::EndOfLine => self.movement.move_to_end_of_line(&self.buffer),
+            Move::WordForward => self
+                .movement
+                .move_word_forward(&self.buffer, WordType::Word),
+            Move::WordBackward => self
+                .movement
+                .move_word_backward(&self.buffer, WordType::Word),
+            Move::BigWordForward => self
+                .movement
+                .move_word_forward(&self.buffer, WordType::BigWord),
+            Move::BigWordBackward => self
+                .movement
+                .move_word_backward(&self.buffer, WordType::BigWord),
         }
 
         self.scroll_text_location_into_view();
@@ -250,10 +263,6 @@ impl View {
     // Rendering
     //
 
-    fn render_line(at: RowIndex, line_text: &str) -> Result<(), Error> {
-        Terminal::print_row(at, line_text)
-    }
-
     fn build_welcome_message(width: usize) -> String {
         if width == 0 {
             return String::new();
@@ -269,6 +278,167 @@ impl View {
         }
 
         format!("{:<1}{:^remaining_width$}", "~", welcome_message)
+    }
+
+    /// Calculates the line index in the buffer corresponding to the current row in the screen
+    fn calculate_line_index(
+        &self,
+        current_row: RowIndex,
+        origin_row: RowIndex,
+        scroll_top: usize,
+    ) -> usize {
+        current_row
+            .saturating_sub(origin_row)
+            .saturating_add(scroll_top)
+    }
+
+    /// Renders the current row based on the line index and other parameters
+    fn render_current_row(
+        &self,
+        current_row: RowIndex,
+        line_idx: usize,
+        top_third: usize,
+        width: usize,
+    ) -> Result<(), Error> {
+        if line_idx < self.buffer.rope.len_lines() {
+            self.render_existing_line(current_row, line_idx, width)?;
+        } else if current_row == top_third && self.buffer.is_empty() {
+            Self::render_line(current_row, &Self::build_welcome_message(width))?;
+        } else {
+            Self::render_line(current_row, "~")?;
+        }
+
+        Ok(())
+    }
+
+    /// Renders a line that exists in the buffer
+    fn render_existing_line(
+        &self,
+        current_row: RowIndex,
+        line_idx: usize,
+        width: usize,
+    ) -> Result<(), Error> {
+        let line_slice = self.buffer.rope.line(line_idx);
+        let (left, right) = self.calculate_visible_range(line_slice.len_chars(), width);
+
+        if left <= right {
+            let visible_line = line_slice.slice(left..right);
+            self.render_visible_line(current_row, line_idx, visible_line, left, right)?;
+        } else {
+            Self::render_line(current_row, "~")?;
+        }
+
+        Ok(())
+    }
+
+    /// Calculates the visible range (left and right indices) of the line based on scrolling.
+    fn calculate_visible_range(&self, line_length: usize, width: usize) -> (usize, usize) {
+        let left = min(self.scroll_offset.col, line_length);
+        let right = min(self.scroll_offset.col.saturating_add(width), line_length);
+        (left, right)
+    }
+
+    /// Renders the visible portion of the line, handling search highlighting and selection.
+    fn render_visible_line(
+        &self,
+        current_row: RowIndex,
+        line_idx: usize,
+        visible_line: RopeSlice,
+        left: usize,
+        right: usize,
+    ) -> Result<(), Error> {
+        let query = self
+            .search_info
+            .as_ref()
+            .and_then(|search_info| search_info.query.as_ref());
+
+        let selected_match = (self.movement.text_location.line_index == line_idx
+            && query.is_some())
+        .then_some(self.movement.text_location.grapheme_index);
+
+        let selection_range = self.calculate_selection_range(line_idx, left, right);
+
+        if let Some(query) = query {
+            self.render_line_with_search(current_row, visible_line, query, selected_match)?;
+        } else if let Some((start, end)) = selection_range {
+            self.render_line_with_selection(current_row, visible_line, start, end)?;
+        } else {
+            self.render_line_normal(current_row, visible_line)?;
+        }
+
+        Ok(())
+    }
+
+    /// Calculates the selection range for the current line if any selection exists.
+    fn calculate_selection_range(
+        &self,
+        line_idx: usize,
+        left: usize,
+        right: usize,
+    ) -> Option<(usize, usize)> {
+        self.get_selection_range().and_then(|(start, end)| {
+            if start.line_index <= line_idx && end.line_index >= line_idx {
+                let selection_start = if start.line_index == line_idx {
+                    start.grapheme_index.saturating_sub(left)
+                } else {
+                    0
+                };
+                let selection_end = if end.line_index == line_idx {
+                    end.grapheme_index.saturating_sub(left)
+                } else {
+                    right.saturating_sub(left)
+                };
+                Some((selection_start, selection_end))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Renders a line with search highlights.
+    fn render_line_with_search(
+        &self,
+        current_row: RowIndex,
+        visible_line: RopeSlice,
+        query: &Line,
+        selected_match: Option<GraphemeIndex>,
+    ) -> Result<(), Error> {
+        let line_str = visible_line.to_string();
+        let line = Line::from(&line_str);
+
+        Terminal::print_annotated_row(
+            current_row,
+            &line.get_annotated_visible_substr(0..line_str.len(), Some(query), selected_match),
+        )?;
+
+        Ok(())
+    }
+
+    /// Renders a line with selection highlights.
+    fn render_line_with_selection(
+        &self,
+        current_row: RowIndex,
+        visible_line: RopeSlice,
+        start: usize,
+        end: usize,
+    ) -> Result<(), Error> {
+        Terminal::print_selected_row(current_row, visible_line, Some((start, end)))?;
+        Ok(())
+    }
+
+    /// Renders a line without any highlights.
+    fn render_line_normal(
+        &self,
+        current_row: RowIndex,
+        visible_line: RopeSlice,
+    ) -> Result<(), Error> {
+        Terminal::print_rope_slice_row(current_row, visible_line)?;
+        Ok(())
+    }
+
+    /// Renders a line with a given string.
+    fn render_line(at: RowIndex, line_text: &str) -> Result<(), Error> {
+        Terminal::print_row(at, line_text)
     }
 
     //
@@ -423,84 +593,11 @@ impl UIComponent for View {
         let Size { height, width } = self.size;
         let end_y = origin_row.saturating_add(height);
         let scroll_top = self.scroll_offset.row;
-
         let top_third = height.div_ceil(3);
 
         for current_row in origin_row..end_y {
-            let line_idx = current_row
-                .saturating_sub(origin_row)
-                .saturating_add(scroll_top);
-
-            if line_idx < self.buffer.rope.len_lines() {
-                let line_slice = self.buffer.rope.line(line_idx);
-
-                let left = self.scroll_offset.col;
-                let right = self.scroll_offset.col.saturating_add(width);
-
-                let left = min(left, line_slice.len_chars());
-                let right = min(right, line_slice.len_chars());
-
-                if left <= right {
-                    let visible_line = line_slice.slice(left..right);
-
-                    let query = self
-                        .search_info
-                        .as_ref()
-                        .and_then(|search_info| search_info.query.as_ref());
-
-                    let selected_match = (self.movement.text_location.line_index == line_idx
-                        && query.is_some())
-                    .then_some(self.movement.text_location.grapheme_index);
-
-                    let selection_range = self.get_selection_range().and_then(|(start, end)| {
-                        if start.line_index <= line_idx && end.line_index >= line_idx {
-                            let selection_start = if start.line_index == line_idx {
-                                start.grapheme_index.saturating_sub(left)
-                            } else {
-                                0
-                            };
-                            let selection_end = if end.line_index == line_idx {
-                                end.grapheme_index.saturating_sub(left)
-                            } else {
-                                right.saturating_sub(left)
-                            };
-                            Some((selection_start, selection_end))
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(query) = query {
-                        let line_str = visible_line.to_string();
-                        let line = Line::from(&line_str);
-
-                        Terminal::print_annotated_row(
-                            current_row,
-                            &line.get_annotated_visible_substr(
-                                0..line_str.len(),
-                                Some(query),
-                                selected_match,
-                            ),
-                        )?;
-                    }
-
-                    else if let Some((start, end)) = selection_range {
-                        Terminal::print_selected_row(
-                            current_row,
-                            visible_line,
-                            Some((start, end)),
-                        )?;
-                    } else {
-                        Terminal::print_rope_slice_row(current_row, visible_line)?;
-                    }
-                } else {
-                    Self::render_line(current_row, "~")?;
-                }
-            } else if current_row == top_third && self.buffer.is_empty() {
-                Self::render_line(current_row, &Self::build_welcome_message(width))?;
-            } else {
-                Self::render_line(current_row, "~")?;
-            }
+            let line_idx = self.calculate_line_index(current_row, origin_row, scroll_top);
+            self.render_current_row(current_row, line_idx, top_third, width)?;
         }
 
         Ok(())

@@ -1,4 +1,5 @@
 use ropey::Rope;
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::FileInfo;
 use super::Line;
@@ -33,7 +34,10 @@ impl Buffer {
         let mut is_first = true;
         let total_lines = self.rope.len_lines();
 
-        let line_indices = (0..total_lines).cycle().skip(from.line_index).take(total_lines + 1);
+        let line_indices = (0..total_lines)
+            .cycle()
+            .skip(from.line_index)
+            .take(total_lines + 1);
 
         for line_idx in line_indices {
             let line_slice = self.rope.line(line_idx);
@@ -52,8 +56,8 @@ impl Buffer {
                 if let Some(grapheme_idx) = line.search_forward(query, from_grapheme_idx) {
                     return Some(Location {
                         grapheme_index: grapheme_idx,
-                        line_index: line_idx
-                    })
+                        line_index: line_idx,
+                    });
                 }
             }
         }
@@ -173,4 +177,125 @@ impl Buffer {
         self.rope.insert(char_idx, "\n");
         self.dirty = true;
     }
+
+    pub fn find_next_word_start(
+        &self,
+        location: Location,
+        word_type: WordType,
+    ) -> Option<Location> {
+        let total_chars = self.rope.len_chars();
+        let start_char_index = self.location_to_char_index(location);
+
+        if start_char_index >= total_chars {
+            return None;
+        }
+
+        let mut char_index = start_char_index;
+        let mut in_word = false;
+        let mut first_char = true;
+
+        let mut chars = self.rope.chars_at(char_index).peekable();
+
+        while let Some(c) = chars.next() {
+            let is_word_char = match word_type {
+                WordType::Word => !c.is_whitespace() && !is_punctuation(c),
+                WordType::BigWord => !c.is_whitespace(),
+            };
+
+            if is_word_char {
+                if !in_word && !first_char {
+                    // Found the start of the next word
+                    return Some(self.char_index_to_location(char_index));
+                }
+                in_word = true;
+            } else {
+                in_word = false;
+            }
+
+            first_char = false;
+            char_index += 1; // Move to the next character index
+        }
+
+        None
+    }
+
+    pub fn find_previous_word_start(
+        &self,
+        location: Location,
+        word_type: WordType,
+    ) -> Option<Location> {
+        let start_char_index = self.location_to_char_index(location);
+
+        if start_char_index == 0 {
+            return None;
+        }
+
+        let mut char_index = start_char_index.saturating_sub(1);
+        let mut in_word = false;
+
+        loop {
+            let c = self.rope.char(char_index);
+            let is_word_char = match word_type {
+                WordType::Word => !c.is_whitespace() && !is_punctuation(c),
+                WordType::BigWord => !c.is_whitespace(),
+            };
+
+            if is_word_char {
+                in_word = true;
+            } else if in_word {
+                // Found the start of the previous word
+                char_index += 1;
+                return Some(self.char_index_to_location(char_index));
+            } else {
+                in_word = false;
+            }
+
+            if char_index == 0 {
+                break;
+            } else {
+                char_index = char_index.saturating_sub(1);
+            }
+        }
+
+        if in_word {
+            // The word starts at the beginning of the buffer
+            return Some(self.char_index_to_location(0));
+        }
+
+        None
+    }
+
+    pub fn get_end_location(&self) -> Location {
+        let last_line_index = self.rope.len_lines().saturating_sub(1);
+        let last_line = self.rope.line(last_line_index);
+        let grapheme_index = last_line.len_chars();
+        Location {
+            line_index: last_line_index,
+            grapheme_index,
+        }
+    }
+
+    //
+    // Conversion methods
+    //
+
+    pub fn location_to_char_index(&self, location: Location) -> usize {
+        let line_start = self.rope.line_to_char(location.line_index);
+        line_start + location.grapheme_index
+    }
+
+    pub fn char_index_to_location(&self, char_index: usize) -> Location {
+        let line_index = self.rope.char_to_line(char_index);
+        let line_start_idx = self.rope.line_to_char(line_index);
+        let char_in_line = char_index - line_start_idx;
+
+        Location {
+            line_index,
+            grapheme_index: char_in_line,
+        }
+    }
+}
+
+fn is_punctuation(c: char) -> bool {
+    c.is_ascii_punctuation()
 }

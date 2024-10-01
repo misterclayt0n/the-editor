@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use command::VimCommand;
-use crossterm::event::{read, Event, KeyEvent, KeyEventKind};
+use crossterm::event::read;
 
 use core::fmt;
 use std::{
@@ -193,20 +193,6 @@ impl Editor {
 
         if title != self.title && matches!(Terminal::set_title(&title), Ok(())) {
             self.title = title;
-        }
-    }
-
-    fn evaluate_event(&mut self, event: Event) {
-        let should_process = match &event {
-            Event::Key(KeyEvent { kind, .. }) => kind == &KeyEventKind::Press,
-            Event::Resize(_, _) => true,
-            _ => false,
-        };
-
-        if should_process {
-            if let Ok(command) = Command::try_from(event) {
-                self.process_command(command);
-            }
         }
     }
 

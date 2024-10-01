@@ -73,4 +73,25 @@ impl Movement {
                 0
             };
     }
+
+    pub fn move_word_forward(&mut self, buffer: &Buffer, word_type: WordType) {
+        if let Some(new_location) = buffer.find_next_word_start(self.text_location, word_type) {
+            self.text_location = new_location;
+        } else {
+            // move to the end of the buffer
+            self.text_location = buffer.get_end_location();
+        }
+    }
+
+    pub fn move_word_backward(&mut self, buffer: &Buffer, word_type: WordType) {
+        if let Some(new_location) = buffer.find_previous_word_start(self.text_location, word_type) {
+            self.text_location = new_location;
+        } else {
+            // move to start of buffer
+            self.text_location = Location {
+                line_index: 0,
+                grapheme_index: 0,
+            };
+        }
+    }
 }

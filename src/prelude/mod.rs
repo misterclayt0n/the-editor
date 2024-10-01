@@ -33,3 +33,9 @@ pub struct Size {
     pub height: usize,
     pub width: usize,
 }
+
+#[derive(Clone, Copy)]
+pub enum WordType {
+    Word,
+    BigWord,
+}

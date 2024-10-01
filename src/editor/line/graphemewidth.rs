@@ -1,4 +1,3 @@
-
 #[derive(Copy, Clone, Debug)]
 pub enum GraphemeWidth {
     Half,

@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 pub type GraphemeIndex = usize;
 pub type LineIndex = usize;
 pub type ByteIndex = usize;
@@ -7,10 +9,24 @@ pub type RowIndex = usize;
 pub const NAME: &str = "the-editor";
 pub const VERSION: &str = "0.0.1";
 
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq)]
 pub struct Location {
     pub grapheme_index: GraphemeIndex,
     pub line_index: LineIndex,
+}
+
+impl Ord for Location {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.line_index
+            .cmp(&other.line_index)
+            .then(self.grapheme_index.cmp(&other.grapheme_index))
+    }
+}
+
+impl PartialOrd for Location {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[derive(Copy, Clone, Default)]

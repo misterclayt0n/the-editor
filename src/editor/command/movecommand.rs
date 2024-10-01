@@ -30,6 +30,10 @@ impl TryFrom<KeyEvent> for Move {
             (KeyCode::Char('b'), KeyModifiers::NONE) => Ok(Self::WordBackward),
             (KeyCode::Char('W'), KeyModifiers::SHIFT) => Ok(Self::BigWordForward),
             (KeyCode::Char('B'), KeyModifiers::SHIFT) => Ok(Self::BigWordBackward),
+            (KeyCode::Char('0'), KeyModifiers::NONE) => Ok(Self::StartOfLine),
+            (KeyCode::Char('$'), KeyModifiers::NONE) => Ok(Self::EndOfLine),
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => Ok(Self::PageDown),
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => Ok(Self::PageUp),
             _ => Err(format!("Not a move command: {:?}", event))
         }
     }

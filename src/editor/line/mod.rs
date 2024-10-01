@@ -193,15 +193,44 @@ impl Line {
         self.fragments.len()
     }
 
-    pub fn width_until(&self, grapheme_idx: GraphemeIndex) -> ColIndex {
-        self.fragments
-            .iter()
-            .take(grapheme_idx)
-            .map(|fragment| match fragment.rendered_width {
-                GraphemeWidth::Half => 1,
-                GraphemeWidth::Full => 2,
-            })
-            .sum()
+    pub fn width_until(&self, index: usize) -> usize {
+        let mut width = 0;
+
+        for i in 0..index.min(self.fragments.len()) {
+            let fragment = &self.fragments[i];
+            let grapheme = &fragment.grapheme;
+
+            if grapheme == "\t" {
+                let spaces_to_next_tab = TAB_WIDTH - (width % TAB_WIDTH);
+                width += spaces_to_next_tab;
+            } else {
+                width += fragment.rendered_width.as_usize();
+            }
+        }
+
+        width
+    }
+
+    pub fn grapheme_index_at_width(&self, width: usize) -> usize {
+        let mut accumulated_width = 0;
+        for (i, fragment) in self.fragments.iter().enumerate() {
+            let grapheme = &fragment.grapheme;
+            let fragment_width = if grapheme == "\t" {
+                let spaces_to_next_tab = TAB_WIDTH - (accumulated_width % TAB_WIDTH);
+                spaces_to_next_tab
+            } else {
+                fragment.rendered_width.as_usize()
+            };
+
+            if accumulated_width >= width {
+                return i;
+            }
+
+            accumulated_width += fragment_width;
+        }
+
+        // If we reach here, the width exceeds the line's length, return the length of the line
+        self.fragments.len()
     }
 
     pub fn width(&self) -> ColIndex {

@@ -8,6 +8,7 @@ pub type RowIndex = usize;
 
 pub const NAME: &str = "the-editor";
 pub const VERSION: &str = "0.0.1";
+pub const TAB_WIDTH: usize = 4;
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq)]
 pub struct Location {

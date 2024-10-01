@@ -18,6 +18,7 @@ mod fileinfo;
 use fileinfo::FileInfo;
 mod searchinfo;
 use searchinfo::SearchInfo;
+use unicode_width::UnicodeWidthChar;
 mod movement;
 
 #[derive(Default)]
@@ -174,10 +175,10 @@ impl View {
             Move::Right => self.movement.move_right(&self.buffer),
             Move::PageUp => self
                 .movement
-                .move_up(&self.buffer, self.size.height.saturating_sub(1)),
+                .move_up(&self.buffer, self.size.height.saturating_div(2)),
             Move::PageDown => self
                 .movement
-                .move_down(&self.buffer, self.size.height.saturating_sub(1)),
+                .move_down(&self.buffer, self.size.height.saturating_div(2)),
             Move::StartOfLine => self.movement.move_to_start_of_line(),
             Move::EndOfLine => self.movement.move_to_end_of_line(&self.buffer),
             Move::WordForward => self
@@ -432,8 +433,30 @@ impl View {
         current_row: RowIndex,
         visible_line: RopeSlice,
     ) -> Result<(), Error> {
-        Terminal::print_rope_slice_row(current_row, visible_line)?;
+        let line_str = visible_line.to_string();
+        let expanded_line = self.expand_tabs(&line_str);
+        Terminal::print_row(current_row, &expanded_line)?;
         Ok(())
+    }
+
+    fn expand_tabs(&self, input: &str) -> String {
+        let mut output = String::new();
+        let mut width = 0;
+
+        for c in input.chars() {
+            if c == '\t' {
+                let spaces_to_next_tab = TAB_WIDTH - (width % TAB_WIDTH);
+                for _ in 0..spaces_to_next_tab {
+                    output.push(' ');
+                }
+                width += spaces_to_next_tab;
+            } else {
+                output.push(c);
+                width += UnicodeWidthChar::width(c).unwrap_or(0);
+            }
+        }
+
+        output
     }
 
     /// Renders a line with a given string.
@@ -508,7 +531,8 @@ impl View {
 
     fn text_location_to_position(&self) -> Position {
         let row = self.movement.text_location.line_index;
-        debug_assert!(row.saturating_sub(1) <= self.buffer.rope.len_lines());
+        debug_assert!(row.saturating_add(1) <= self.buffer.rope.len_lines());
+
         let col = if row < self.buffer.rope.len_lines() {
             let line_slice = self.buffer.rope.line(row);
             let line_str = line_slice.to_string();
@@ -517,24 +541,34 @@ impl View {
         } else {
             0
         };
+
         Position { col, row }
     }
 
     pub fn update_insertion_point_to_cursor_position(&mut self) {
         let cursor_position = self.cursor_position();
-        let location = Location {
-            line_index: cursor_position.row + self.scroll_offset.row,
-            grapheme_index: cursor_position.col + self.scroll_offset.col,
-        };
+        let line_index = cursor_position.row + self.scroll_offset.row;
 
-        while self.buffer.height() <= location.line_index {
+        while self.buffer.height() <= line_index {
             self.buffer.insert_newline(Location {
                 line_index: self.buffer.height(),
                 grapheme_index: 0,
             });
         }
 
-        self.movement.text_location = location;
+        let grapheme_index = if line_index < self.buffer.rope.len_lines() {
+            let line_slice = self.buffer.rope.line(line_index);
+            let line_str = line_slice.to_string();
+            let line = Line::from(&line_str);
+            line.grapheme_index_at_width(cursor_position.col + self.scroll_offset.col)
+        } else {
+            0
+        };
+
+        self.movement.text_location = Location {
+            line_index,
+            grapheme_index,
+        };
     }
 
     //

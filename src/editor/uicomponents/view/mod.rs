@@ -562,14 +562,16 @@ impl View {
 
     pub fn get_selection_range(&self) -> Option<(Location, Location)> {
         match (self.selection_start, self.selection_end) {
-            (Some(start), Some(end)) => Some(
-                if start.line_index <= end.line_index && start.grapheme_index <= end.grapheme_index
+            (Some(start), Some(end)) => {
+                if start.line_index < end.line_index
+                    || (start.line_index == end.line_index
+                        && start.grapheme_index <= end.grapheme_index)
                 {
-                    (start, end)
+                    Some((start, end))
                 } else {
-                    (end, start)
-                },
-            ),
+                    Some((end, start))
+                }
+            }
             _ => None,
         }
     }

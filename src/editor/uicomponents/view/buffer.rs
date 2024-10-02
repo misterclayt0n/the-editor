@@ -239,7 +239,7 @@ impl Buffer {
     ) -> Option<Location> {
         let start_char_index = self.location_to_char_index(location);
 
-        if start_char_index == 0 {
+        if start_char_index == 0 || start_char_index > self.rope.len_chars() {
             return None;
         }
 
@@ -307,6 +307,15 @@ impl Buffer {
         Location {
             line_index,
             grapheme_index: char_in_line,
+        }
+    }
+
+    pub fn get_line_length(&self, line_index: usize) -> usize {
+        if line_index < self.rope.len_lines() {
+            let line_slice = self.rope.line(line_index);
+            line_slice.len_chars()
+        } else {
+            0
         }
     }
 }

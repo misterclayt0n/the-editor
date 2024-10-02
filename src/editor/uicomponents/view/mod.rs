@@ -3,7 +3,7 @@ use std::{cmp::min, io::Error};
 use crate::prelude::*;
 
 use super::super::{
-    command::{Edit, Move},
+    command::{Edit, Normal},
     DocumentStatus, Line, Terminal,
 };
 
@@ -167,33 +167,33 @@ impl View {
         }
     }
 
-    pub fn handle_move_command(&mut self, command: Move) {
+    pub fn handle_move_command(&mut self, command: Normal) {
         match command {
-            Move::Up => self.movement.move_up(&self.buffer, 1),
-            Move::Down => self.movement.move_down(&self.buffer, 1),
-            Move::Left => self.movement.move_left(&self.buffer),
-            Move::Right => self.movement.move_right(&self.buffer),
-            Move::PageUp => self
+            Normal::Up => self.movement.move_up(&self.buffer, 1),
+            Normal::Down => self.movement.move_down(&self.buffer, 1),
+            Normal::Left => self.movement.move_left(&self.buffer),
+            Normal::Right => self.movement.move_right(&self.buffer),
+            Normal::PageUp => self
                 .movement
                 .move_up(&self.buffer, self.size.height.saturating_div(2)),
-            Move::PageDown => self
+            Normal::PageDown => self
                 .movement
                 .move_down(&self.buffer, self.size.height.saturating_div(2)),
-            Move::StartOfLine => self.movement.move_to_start_of_line(),
-            Move::EndOfLine => self.movement.move_to_end_of_line(&self.buffer),
-            Move::WordForward => self
+            Normal::StartOfLine => self.movement.move_to_start_of_line(),
+            Normal::EndOfLine => self.movement.move_to_end_of_line(&self.buffer),
+            Normal::WordForward => self
                 .movement
                 .move_word_forward(&self.buffer, WordType::Word),
-            Move::WordBackward => self
+            Normal::WordBackward => self
                 .movement
                 .move_word_backward(&self.buffer, WordType::Word),
-            Move::BigWordForward => self
+            Normal::BigWordForward => self
                 .movement
                 .move_word_forward(&self.buffer, WordType::BigWord),
-            Move::BigWordBackward => self
+            Normal::BigWordBackward => self
                 .movement
                 .move_word_backward(&self.buffer, WordType::BigWord),
-            Move::FirstCharLine => self.movement.move_to_first_non_whitespace(&self.buffer),
+            Normal::FirstCharLine => self.movement.move_to_first_non_whitespace(&self.buffer),
         }
 
         self.scroll_text_location_into_view();
@@ -215,7 +215,7 @@ impl View {
         if self.movement.text_location.line_index != 0
             || self.movement.text_location.grapheme_index != 0
         {
-            self.handle_move_command(Move::Left);
+            self.handle_move_command(Normal::Left);
             self.delete();
         }
     }
@@ -277,7 +277,7 @@ impl View {
 
         if grapheme_delta > 0 {
             // Move right for an added grapheme (should be the regular case)
-            self.handle_move_command(Move::Right);
+            self.handle_move_command(Normal::Right);
         }
 
         self.set_needs_redraw(true);
@@ -422,19 +422,24 @@ impl View {
         &self,
         line_idx: usize,
         left: usize,
-        right: usize,
+        _right: usize,
     ) -> Option<(usize, usize)> {
         self.get_selection_range().and_then(|(start, end)| {
             if start.line_index <= line_idx && end.line_index >= line_idx {
                 let selection_start = if start.line_index == line_idx {
-                    self.expand_tabs_before_index(start.grapheme_index, line_idx) - left
+                    self.expand_tabs_before_index(start.grapheme_index, line_idx)
+                        .saturating_sub(left)
                 } else {
                     0
                 };
+
                 let selection_end = if end.line_index == line_idx {
-                    self.expand_tabs_before_index(end.grapheme_index, line_idx) - left
+                    self.expand_tabs_before_index(end.grapheme_index, line_idx)
+                        .saturating_sub(left)
                 } else {
-                    right.saturating_sub(left)
+                    // Aqui está a correção:
+                    let expanded_line_length = self.get_expanded_line_length(line_idx);
+                    expanded_line_length.saturating_sub(left)
                 };
                 Some((selection_start, selection_end))
             } else {
@@ -446,17 +451,20 @@ impl View {
     fn expand_tabs_before_index(&self, index: usize, line_idx: usize) -> usize {
         let line_slice = self.buffer.rope.line(line_idx);
         let mut expanded_width = 0;
+        let mut grapheme_count = 0;
 
-        for c in line_slice.chars().take(index) {
+        for c in line_slice.chars() {
+            if grapheme_count >= index {
+                break;
+            }
             if c == '\t' {
-                // calculate the amount of spaces until the next tab stop
                 let spaces_to_next_tab = TAB_WIDTH - (expanded_width % TAB_WIDTH);
                 expanded_width += spaces_to_next_tab;
             } else {
                 expanded_width += UnicodeWidthChar::width(c).unwrap_or(0);
             }
+            grapheme_count += 1;
         }
-
         expanded_width
     }
 
@@ -487,10 +495,7 @@ impl View {
         start: usize,
         end: usize,
     ) -> Result<(), Error> {
-        let expanded_start = self.expand_tabs_before_index(start, current_row);
-        let expanded_end = self.expand_tabs_before_index(end, current_row);
-
-        Terminal::print_selected_row(current_row, visible_line, Some((expanded_start, expanded_end)))?;
+        Terminal::print_selected_row(current_row, visible_line, Some((start, end)))?;
         Ok(())
     }
 
@@ -592,31 +597,18 @@ impl View {
     //
 
     pub fn cursor_position(&self) -> Position {
-        self.text_location_to_position()
-            .saturating_sub(self.scroll_offset)
+        let position = self.text_location_to_position();
+        Position {
+            row: position.row.saturating_sub(self.scroll_offset.row),
+            col: position.col.saturating_sub(self.scroll_offset.col),
+        }
     }
 
     fn text_location_to_position(&self) -> Position {
         let row = self.movement.text_location.line_index;
         debug_assert!(row.saturating_add(1) <= self.buffer.rope.len_lines());
 
-        let mut col = 0;
-        if row < self.buffer.rope.len_lines() {
-            let line_slice = self.buffer.rope.line(row);
-            let line_str = line_slice.to_string();
-
-            for (_, c) in line_str
-                .chars()
-                .take(self.movement.text_location.grapheme_index)
-                .enumerate()
-            {
-                if c == '\t' {
-                    col += TAB_WIDTH - (col % TAB_WIDTH);
-                } else {
-                    col += UnicodeWidthChar::width(c).unwrap_or(0);
-                }
-            }
-        }
+        let col = self.expand_tabs_before_index(self.movement.text_location.grapheme_index, row);
 
         Position { col, row }
     }
@@ -681,6 +673,22 @@ impl View {
             }
             _ => None,
         }
+    }
+
+    fn get_expanded_line_length(&self, line_idx: usize) -> usize {
+        let line_slice = self.buffer.rope.line(line_idx);
+        let mut expanded_width = 0;
+
+        for c in line_slice.chars() {
+            if c == '\t' {
+                let spaces_to_next_tab = TAB_WIDTH - (expanded_width % TAB_WIDTH);
+                expanded_width += spaces_to_next_tab;
+            } else {
+                expanded_width += UnicodeWidthChar::width(c).unwrap_or(0);
+            }
+        }
+
+        expanded_width
     }
 }
 

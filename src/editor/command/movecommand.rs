@@ -4,7 +4,7 @@ use crossterm::event::{
 };
 
 #[derive(Clone, Copy)]
-pub enum Move {
+pub enum Normal {
     PageUp,
     PageDown,
     StartOfLine,
@@ -19,7 +19,8 @@ pub enum Move {
     BigWordForward,
     BigWordBackward,
 }
-impl TryFrom<KeyEvent> for Move {
+
+impl TryFrom<KeyEvent> for Normal {
     type Error = String;
     fn try_from(event: KeyEvent) -> Result<Self, Self::Error> {
         match (event.code, event.modifiers) {

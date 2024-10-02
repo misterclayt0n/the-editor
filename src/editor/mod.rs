@@ -25,7 +25,7 @@ use uicomponents::{CommandBar, MessageBar, StatusBar, UIComponent, View};
 use self::command::{
     Command::{self, Edit, Move, System},
     Edit::InsertNewline,
-    Move::{Down, Left, Right, Up},
+    Normal::{Down, Left, Right, Up},
     System::{Dismiss, Quit, Resize, Save, Search},
 };
 
@@ -292,6 +292,13 @@ impl Editor {
                 self.view.delete_selection();
                 self.view.clear_selection();
                 self.vim_mode = VimMode::Normal; // back to normal mode after deleting
+                self.view.set_needs_redraw(true);
+            }
+            VimCommand::SubstituteSelection => {
+                self.view.delete_selection();
+                self.view.clear_selection();
+                self.vim_mode = VimMode::Insert; // back to normal mode after deleting
+                self.view.update_insertion_point_to_cursor_position(); // update point of insertion
                 self.view.set_needs_redraw(true);
             }
             _ => {}

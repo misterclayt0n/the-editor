@@ -1,7 +1,7 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use std::convert::TryFrom;
 mod movecommand;
-pub use movecommand::Move;
+pub use movecommand::Normal;
 mod system;
 pub use system::System;
 mod edit;
@@ -11,7 +11,7 @@ use super::{Size, VimMode};
 
 #[derive(Clone, Copy)]
 pub enum Command {
-    Move(Move),
+    Move(Normal),
     Edit(Edit),
     System(System),
     Vim(VimCommand),
@@ -22,6 +22,7 @@ pub enum VimCommand {
     ChangeMode(VimMode),
     DeleteLine,
     DeleteSelection,
+    SubstituteSelection,
 }
 
 impl TryFrom<KeyEvent> for VimCommand {
@@ -51,7 +52,7 @@ impl TryFrom<Event> for Command {
                 VimCommand::try_from(key_event)
                     .map(Command::Vim)
                     .or_else(|_| Edit::try_from(key_event).map(Command::Edit))
-                    .or_else(|_| Move::try_from(key_event).map(Command::Move))
+                    .or_else(|_| Normal::try_from(key_event).map(Command::Move))
                     .or_else(|_| System::try_from(key_event).map(Command::System))
                     .map_err(|_err| format!("Event not supported: {key_event:?}"))
             }
@@ -70,7 +71,7 @@ impl Command {
             Event::Key(key_event) => match current_mode {
                 VimMode::Normal => VimCommand::try_from(key_event)
                     .map(Command::Vim)
-                    .or_else(|_| Move::try_from(key_event).map(Command::Move))
+                    .or_else(|_| Normal::try_from(key_event).map(Command::Move))
                     .or_else(|_| System::try_from(key_event).map(Command::System)),
                 VimMode::Insert => {
                     if key_event.code == KeyCode::Esc {
@@ -79,18 +80,18 @@ impl Command {
                         Edit::try_from(key_event).map(Command::Edit)
                     }
                 }
-                VimMode::Visual => {
-                    if key_event.code == KeyCode::Char('d')
-                        && key_event.modifiers == KeyModifiers::NONE
-                    {
+                VimMode::Visual => match key_event.code {
+                    KeyCode::Char('d') if key_event.modifiers == KeyModifiers::NONE => {
                         Ok(Command::Vim(VimCommand::DeleteSelection))
-                    } else {
-                        VimCommand::try_from(key_event)
-                            .map(Command::Vim)
-                            .or_else(|_| Move::try_from(key_event).map(Command::Move))
-                            .or_else(|_| System::try_from(key_event).map(Command::System))
                     }
-                }
+                    KeyCode::Char('s') | KeyCode::Char('c') if key_event.modifiers == KeyModifiers::NONE => {
+                        Ok(Command::Vim(VimCommand::SubstituteSelection))
+                    }
+                    _ => VimCommand::try_from(key_event)
+                        .map(Command::Vim)
+                        .or_else(|_| Normal::try_from(key_event).map(Command::Move))
+                        .or_else(|_| System::try_from(key_event).map(Command::System)),
+                },
                 VimMode::CommandMode => {
                     if key_event.code == KeyCode::Esc {
                         Ok(Command::Vim(VimCommand::ChangeMode(VimMode::Normal)))

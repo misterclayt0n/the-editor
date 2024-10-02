@@ -10,15 +10,21 @@ pub struct Movement {
 }
 
 impl Movement {
-    pub fn move_up(&mut self, buffer: &Buffer, step: usize) {
-        self.text_location.line_index = self.text_location.line_index.saturating_sub(step);
-        self.snap_to_valid_grapheme(buffer);
+    pub fn move_up(&mut self, buffer: &Buffer, n: usize) {
+        self.text_location.line_index = self.text_location.line_index.saturating_sub(n);
+
+        let new_line_length = buffer.get_line_length(self.text_location.line_index);
+        self.text_location.grapheme_index = min(self.text_location.grapheme_index, new_line_length);
     }
 
     pub fn move_down(&mut self, buffer: &Buffer, step: usize) {
-        self.text_location.line_index = self.text_location.line_index.saturating_add(step);
-        self.snap_to_valid_line(buffer);
-        self.snap_to_valid_grapheme(buffer);
+        self.text_location.line_index = min(
+            self.text_location.line_index + step,
+            buffer.height().saturating_sub(1),
+        );
+
+        let new_line_length = buffer.get_line_length(self.text_location.line_index);
+        self.text_location.grapheme_index = min(self.text_location.grapheme_index, new_line_length);
     }
 
     pub fn move_left(&mut self, buffer: &Buffer) {
@@ -42,20 +48,6 @@ impl Movement {
         if self.text_location.grapheme_index < line_width {
             self.text_location.grapheme_index += 1;
         }
-    }
-
-    pub fn snap_to_valid_grapheme(&mut self, buffer: &Buffer) {
-        self.text_location.line_index = min(
-            self.text_location.line_index,
-            buffer.height().saturating_sub(1),
-        )
-    }
-
-    fn snap_to_valid_line(&mut self, buffer: &Buffer) {
-        self.text_location.line_index = min(
-            self.text_location.line_index,
-            buffer.height().saturating_sub(1),
-        );
     }
 
     pub fn move_to_start_of_line(&mut self) {
@@ -104,7 +96,6 @@ impl Movement {
         if let Some(new_location) = buffer.find_previous_word_start(self.text_location, word_type) {
             self.text_location = new_location;
         } else {
-            // move to start of buffer
             self.text_location = Location {
                 line_index: 0,
                 grapheme_index: 0,

@@ -693,6 +693,29 @@ impl View {
 
         expanded_width
     }
+
+    pub fn start_visual_line_selection(&mut self) {
+        self.movement.move_to_start_of_line(); // Move para o início da linha
+        self.start_selection(); // Inicia a seleção
+        self.movement.move_to_end_of_line(&self.buffer); // Selecione até o final da linha
+        self.set_needs_redraw(true);
+    }
+
+    pub fn handle_visual_line_movement(&mut self, command: Normal) {
+        match command {
+            Normal::Up => {
+                self.movement.move_up(&self.buffer, 1);
+            }
+            Normal::Down => {
+                self.movement.move_down(&self.buffer, 1);
+            }
+            _ => {}
+        }
+        // Após mover verticalmente, sempre seleciona a linha inteira
+        self.movement.move_to_start_of_line();
+        self.selection_end = Some(self.movement.text_location); // Atualiza o final da seleção
+        self.movement.move_to_end_of_line(&self.buffer);
+    }
 }
 
 impl UIComponent for View {

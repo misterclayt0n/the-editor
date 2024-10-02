@@ -21,6 +21,7 @@ pub enum Normal {
     GoToTop,
     GoToBottom,
     Wait,
+    VisualLine,
 }
 
 impl TryFrom<KeyEvent> for Normal {
@@ -42,6 +43,7 @@ impl TryFrom<KeyEvent> for Normal {
             (KeyCode::Char('_'), KeyModifiers::NONE) => Ok(Self::FirstCharLine),
             (KeyCode::Char('G'), KeyModifiers::SHIFT) => Ok(Self::GoToBottom),
             (KeyCode::Char('g'), KeyModifiers::NONE) => Ok(Self::Wait),
+            (KeyCode::Char('V'), KeyModifiers::SHIFT) => Ok(Self::VisualLine),
             _ => Err(format!("Not a move command: {:?}", event))
         }
     }

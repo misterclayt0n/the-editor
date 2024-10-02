@@ -244,6 +244,14 @@ impl Editor {
                                 self.command_buffer = Some('g');
                             }
                         }
+                        Normal::VisualLine => {
+                            self.view.start_visual_line_selection();
+                            self.vim_mode = VimMode::Visual;
+                        }
+                        Normal::Up | Normal::Down => {
+                            // Mover o cursor verticalmente e expandir a seleção no modo Visual
+                            self.view.handle_visual_line_movement(move_command);
+                        }
                         _ => {
                             self.view.handle_normal_command(move_command);
                             self.command_buffer = None; // Reseta buffer se outro comando for pressionado

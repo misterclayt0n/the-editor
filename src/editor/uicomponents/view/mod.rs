@@ -193,7 +193,7 @@ impl View {
             Move::BigWordBackward => self
                 .movement
                 .move_word_backward(&self.buffer, WordType::BigWord),
-            Move::FirstCharLine => self.movement.move_to_first_non_whitespace(&self.buffer)
+            Move::FirstCharLine => self.movement.move_to_first_non_whitespace(&self.buffer),
         }
 
         self.scroll_text_location_into_view();
@@ -449,7 +449,9 @@ impl View {
 
         for c in line_slice.chars().take(index) {
             if c == '\t' {
-                expanded_width += TAB_WIDTH - (expanded_width % TAB_WIDTH);
+                // calculate the amount of spaces until the next tab stop
+                let spaces_to_next_tab = TAB_WIDTH - (expanded_width % TAB_WIDTH);
+                expanded_width += spaces_to_next_tab;
             } else {
                 expanded_width += UnicodeWidthChar::width(c).unwrap_or(0);
             }
@@ -485,7 +487,10 @@ impl View {
         start: usize,
         end: usize,
     ) -> Result<(), Error> {
-        Terminal::print_selected_row(current_row, visible_line, Some((start, end)))?;
+        let expanded_start = self.expand_tabs_before_index(start, current_row);
+        let expanded_end = self.expand_tabs_before_index(end, current_row);
+
+        Terminal::print_selected_row(current_row, visible_line, Some((expanded_start, expanded_end)))?;
         Ok(())
     }
 

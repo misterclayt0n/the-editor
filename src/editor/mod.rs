@@ -77,6 +77,7 @@ pub struct Editor {
     status_bar: StatusBar,
     message_bar: MessageBar,
     command_bar: CommandBar,
+    command_buffer: Option<char>,
     prompt_type: PromptType,
     terminal_size: Size,
     title: String,
@@ -218,15 +219,15 @@ impl Editor {
             self.handle_quit_command();
             return;
         }
-        self.reset_quit_times(); // Reset quit times for all other commands
+        self.reset_quit_times(); // reset quit times for all other commands
 
         match command {
-            System(Quit | Resize(_) | Dismiss) => {} // Quit and Resize already handled above, others not applicable
+            System(Quit | Resize(_) | Dismiss) => {} // quit and Resize already handled above, others not applicable
             System(Search) => self.set_prompt(PromptType::Search),
             System(Save) => self.handle_save_command(),
             Edit(edit_command) => {
                 if self.vim_mode == VimMode::Insert {
-                    // Handle edit commands in insert mode
+                    // handle edit commands in insert mode
                     self.view.handle_edit_command(edit_command);
                 }
             }
@@ -241,6 +242,22 @@ impl Editor {
                 }
             }
             Command::Vim(vim_command) => self.handle_vim_command(vim_command),
+        }
+
+        if let Command::Vim(vim_command) = command {
+            match vim_command {
+                VimCommand::DeleteLine => {
+                    if let Some('d') = self.command_buffer {
+                        self.view.delete_current_line();
+                        self.command_buffer = None;
+                    } else {
+                        self.command_buffer = Some('d');
+                    }
+                }
+                _ => self.command_buffer = None,
+            }
+        } else {
+            self.reset_quit_times();
         }
     }
 
@@ -264,15 +281,14 @@ impl Editor {
                             self.view.clear_selection();
                         }
                     }
-                    VimMode::CommandMode => {
-
-                    }
+                    VimMode::CommandMode => { }
                 }
 
                 self.vim_mode = new_mode;
                 self.view.set_needs_redraw(true);
                 self.update_message(&format!("Switched to {} mode", self.vim_mode));
             }
+            _ => {}
         }
     }
 

@@ -171,6 +171,13 @@ impl Buffer {
         }
     }
 
+    pub fn delete_line(&mut self, line_index: usize) {
+        let line_start = self.rope.line_to_char(line_index);
+        let line_end = self.rope.line_to_char(line_index + 1);
+        self.rope.remove(line_start..line_end);
+        self.dirty = true;
+    }
+
     pub fn insert_newline(&mut self, at: Location) {
         let char_idx = self.rope.line_to_char(at.line_index) + at.grapheme_index;
         self.rope.insert(char_idx, "\n");

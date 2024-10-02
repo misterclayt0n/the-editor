@@ -225,6 +225,14 @@ impl View {
         self.set_needs_redraw(true);
     }
 
+    pub fn delete_current_line(&mut self) {
+        let line_index = self.movement.text_location.line_index;
+
+        self.buffer.delete_line(line_index);
+
+        self.set_needs_redraw(true);
+    }
+
     fn insert_char(&mut self, character: char) {
         let line_index = self.movement.text_location.line_index;
 

@@ -20,6 +20,7 @@ pub enum Command {
 #[derive(Clone, Copy)]
 pub enum VimCommand {
     ChangeMode(VimMode),
+    DeleteLine,
 }
 
 impl TryFrom<KeyEvent> for VimCommand {
@@ -31,6 +32,7 @@ impl TryFrom<KeyEvent> for VimCommand {
             (KeyCode::Esc, KeyModifiers::NONE) => Ok(Self::ChangeMode(VimMode::Normal)),
             (KeyCode::Char('v'), KeyModifiers::NONE) => Ok(Self::ChangeMode(VimMode::Visual)),
             (KeyCode::Char(':'), KeyModifiers::NONE) => Ok(Self::ChangeMode(VimMode::CommandMode)),
+            (KeyCode::Char('d'), KeyModifiers::NONE) => Ok(Self::DeleteLine), 
             // TODO: maybe some more keybindings
             _ => Err(format!("Not a Vim command: {:?}", event)),
         }
@@ -82,7 +84,8 @@ impl Command {
                     .or_else(|_| System::try_from(key_event).map(Command::System)),
                 VimMode::CommandMode => {
                     if key_event.code == KeyCode::Esc {
-                        Ok(Command::Vim(VimCommand::ChangeMode(VimMode::Normal))) // exit command mode on esc
+                        Ok(Command::Vim(VimCommand::ChangeMode(VimMode::Normal)))
+                    // exit command mode on esc
                     } else {
                         Edit::try_from(key_event).map(Command::Edit) // allow text editing on command mode
                     }

@@ -288,6 +288,12 @@ impl Editor {
                 self.view.set_needs_redraw(true);
                 self.update_message(&format!("Switched to {} mode", self.vim_mode));
             }
+            VimCommand::DeleteSelection => {
+                self.view.delete_selection();
+                self.view.clear_selection();
+                self.vim_mode = VimMode::Normal; // back to normal mode after deleting
+                self.view.set_needs_redraw(true);
+            }
             _ => {}
         }
     }

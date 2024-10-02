@@ -21,6 +21,7 @@ pub enum Command {
 pub enum VimCommand {
     ChangeMode(VimMode),
     DeleteLine,
+    DeleteSelection,
 }
 
 impl TryFrom<KeyEvent> for VimCommand {
@@ -32,7 +33,7 @@ impl TryFrom<KeyEvent> for VimCommand {
             (KeyCode::Esc, KeyModifiers::NONE) => Ok(Self::ChangeMode(VimMode::Normal)),
             (KeyCode::Char('v'), KeyModifiers::NONE) => Ok(Self::ChangeMode(VimMode::Visual)),
             (KeyCode::Char(':'), KeyModifiers::NONE) => Ok(Self::ChangeMode(VimMode::CommandMode)),
-            (KeyCode::Char('d'), KeyModifiers::NONE) => Ok(Self::DeleteLine), 
+            (KeyCode::Char('d'), KeyModifiers::NONE) => Ok(Self::DeleteLine),
             // TODO: maybe some more keybindings
             _ => Err(format!("Not a Vim command: {:?}", event)),
         }
@@ -78,10 +79,18 @@ impl Command {
                         Edit::try_from(key_event).map(Command::Edit)
                     }
                 }
-                VimMode::Visual => VimCommand::try_from(key_event)
-                    .map(Command::Vim)
-                    .or_else(|_| Move::try_from(key_event).map(Command::Move))
-                    .or_else(|_| System::try_from(key_event).map(Command::System)),
+                VimMode::Visual => {
+                    if key_event.code == KeyCode::Char('d')
+                        && key_event.modifiers == KeyModifiers::NONE
+                    {
+                        Ok(Command::Vim(VimCommand::DeleteSelection))
+                    } else {
+                        VimCommand::try_from(key_event)
+                            .map(Command::Vim)
+                            .or_else(|_| Move::try_from(key_event).map(Command::Move))
+                            .or_else(|_| System::try_from(key_event).map(Command::System))
+                    }
+                }
                 VimMode::CommandMode => {
                     if key_event.code == KeyCode::Esc {
                         Ok(Command::Vim(VimCommand::ChangeMode(VimMode::Normal)))

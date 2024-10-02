@@ -233,6 +233,20 @@ impl View {
         self.set_needs_redraw(true);
     }
 
+    pub fn delete_selection(&mut self) {
+        if let Some((start, end)) = self.get_selection_range() {
+            let start_idx = self.buffer.location_to_char_index(start);
+            let end_idx = self.buffer.location_to_char_index(end);
+            self.buffer.rope.remove(start_idx..end_idx);
+            self.buffer.dirty = true;
+
+            // update cursor selection
+            self.movement.text_location = start;
+            self.scroll_text_location_into_view();
+            self.set_needs_redraw(true);
+        }
+    }
+
     fn insert_char(&mut self, character: char) {
         let line_index = self.movement.text_location.line_index;
 

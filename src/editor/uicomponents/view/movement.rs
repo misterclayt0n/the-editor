@@ -62,6 +62,23 @@ impl Movement {
         self.text_location.grapheme_index = 0;
     }
 
+    pub fn move_to_first_non_whitespace(&mut self, buffer: &Buffer) {
+        if self.text_location.line_index < buffer.rope.len_lines() {
+            let line_slice = buffer.rope.line(self.text_location.line_index);
+            let line_str = line_slice.to_string();
+
+            // find first non whitespace char
+            for (i, c) in line_str.chars().enumerate() {
+                if !c.is_whitespace() {
+                    self.text_location.grapheme_index = i;
+                    break;
+                }
+            }
+        } else {
+            self.text_location.grapheme_index = 0;
+        }
+    }
+
     pub fn move_to_end_of_line(&mut self, buffer: &Buffer) {
         self.text_location.grapheme_index =
             if self.text_location.line_index < buffer.rope.len_lines() {

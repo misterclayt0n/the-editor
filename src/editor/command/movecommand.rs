@@ -8,6 +8,7 @@ pub enum Move {
     PageUp,
     PageDown,
     StartOfLine,
+    FirstCharLine,
     EndOfLine,
     Up,
     Left,
@@ -34,6 +35,7 @@ impl TryFrom<KeyEvent> for Move {
             (KeyCode::Char('$'), KeyModifiers::NONE) => Ok(Self::EndOfLine),
             (KeyCode::Char('d'), KeyModifiers::CONTROL) => Ok(Self::PageDown),
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => Ok(Self::PageUp),
+            (KeyCode::Char('_'), KeyModifiers::NONE) => Ok(Self::FirstCharLine),
             _ => Err(format!("Not a move command: {:?}", event))
         }
     }

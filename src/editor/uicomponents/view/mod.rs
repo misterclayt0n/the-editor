@@ -193,6 +193,7 @@ impl View {
             Move::BigWordBackward => self
                 .movement
                 .move_word_backward(&self.buffer, WordType::BigWord),
+            Move::FirstCharLine => self.movement.move_to_first_non_whitespace(&self.buffer)
         }
 
         self.scroll_text_location_into_view();

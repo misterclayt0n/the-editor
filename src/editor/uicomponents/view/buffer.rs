@@ -1,5 +1,4 @@
 use ropey::Rope;
-use unicode_segmentation::UnicodeSegmentation;
 
 use super::FileInfo;
 use super::Line;

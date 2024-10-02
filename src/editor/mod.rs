@@ -432,8 +432,5 @@ impl Editor {
 impl Drop for Editor {
     fn drop(&mut self) {
         let _ = Terminal::terminate();
-        if self.should_quit {
-            let _ = Terminal::print("Leaving so soon?\r\n");
-        }
     }
 }

@@ -359,12 +359,36 @@ impl View {
 
         let selection_range = self.calculate_selection_range(line_idx, left, right);
 
+        let mut expanded_line = String::new();
+        let mut width = 0;
+        for c in visible_line.chars() {
+            if c == '\t' {
+                let spaces_to_next_tab = TAB_WIDTH - (width % TAB_WIDTH);
+                expanded_line.push_str(&" ".repeat(spaces_to_next_tab));
+                width += spaces_to_next_tab;
+            } else {
+                expanded_line.push(c);
+                width += UnicodeWidthChar::width(c).unwrap_or(0);
+            }
+        }
+
         if let Some(query) = query {
-            self.render_line_with_search(current_row, visible_line, query, selected_match)?;
+            self.render_line_with_search(
+                current_row,
+                RopeSlice::from(expanded_line.as_str()), // Mudança aqui
+                query,
+                selected_match,
+            )?;
         } else if let Some((start, end)) = selection_range {
-            self.render_line_with_selection(current_row, visible_line, start, end)?;
+            self.render_line_with_selection(
+                current_row,
+                RopeSlice::from(expanded_line.as_str()), // Mudança aqui
+                start,
+                end,
+            )?;
         } else {
-            self.render_line_normal(current_row, visible_line)?;
+            self.render_line_normal(current_row, RopeSlice::from(expanded_line.as_str()))?;
+            // Mudança aqui
         }
 
         Ok(())
@@ -380,12 +404,12 @@ impl View {
         self.get_selection_range().and_then(|(start, end)| {
             if start.line_index <= line_idx && end.line_index >= line_idx {
                 let selection_start = if start.line_index == line_idx {
-                    start.grapheme_index.saturating_sub(left)
+                    self.expand_tabs_before_index(start.grapheme_index, line_idx) - left
                 } else {
                     0
                 };
                 let selection_end = if end.line_index == line_idx {
-                    end.grapheme_index.saturating_sub(left)
+                    self.expand_tabs_before_index(end.grapheme_index, line_idx) - left
                 } else {
                     right.saturating_sub(left)
                 };
@@ -394,6 +418,21 @@ impl View {
                 None
             }
         })
+    }
+
+    fn expand_tabs_before_index(&self, index: usize, line_idx: usize) -> usize {
+        let line_slice = self.buffer.rope.line(line_idx);
+        let mut expanded_width = 0;
+
+        for c in line_slice.chars().take(index) {
+            if c == '\t' {
+                expanded_width += TAB_WIDTH - (expanded_width % TAB_WIDTH);
+            } else {
+                expanded_width += UnicodeWidthChar::width(c).unwrap_or(0);
+            }
+        }
+
+        expanded_width
     }
 
     /// Renders a line with search highlights.
@@ -533,14 +572,23 @@ impl View {
         let row = self.movement.text_location.line_index;
         debug_assert!(row.saturating_add(1) <= self.buffer.rope.len_lines());
 
-        let col = if row < self.buffer.rope.len_lines() {
+        let mut col = 0;
+        if row < self.buffer.rope.len_lines() {
             let line_slice = self.buffer.rope.line(row);
             let line_str = line_slice.to_string();
-            let line = Line::from(&line_str);
-            line.width_until(self.movement.text_location.grapheme_index)
-        } else {
-            0
-        };
+
+            for (_, c) in line_str
+                .chars()
+                .take(self.movement.text_location.grapheme_index)
+                .enumerate()
+            {
+                if c == '\t' {
+                    col += TAB_WIDTH - (col % TAB_WIDTH);
+                } else {
+                    col += UnicodeWidthChar::width(c).unwrap_or(0);
+                }
+            }
+        }
 
         Position { col, row }
     }

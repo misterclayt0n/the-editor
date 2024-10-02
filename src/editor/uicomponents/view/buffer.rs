@@ -197,13 +197,16 @@ impl Buffer {
 
         while let Some(c) = chars.next() {
             let is_word_char = match word_type {
-                WordType::Word => !c.is_whitespace() && !is_punctuation(c),
+                WordType::Word => !c.is_whitespace() && !is_w_delimiter(c),
                 WordType::BigWord => !c.is_whitespace(),
             };
 
+            if is_w_delimiter(c) && !first_char && word_type == WordType::Word {
+                return Some(self.char_index_to_location(char_index));
+            }
+
             if is_word_char {
                 if !in_word && !first_char {
-                    // Found the start of the next word
                     return Some(self.char_index_to_location(char_index));
                 }
                 in_word = true;
@@ -212,7 +215,11 @@ impl Buffer {
             }
 
             first_char = false;
-            char_index += 1; // Move to the next character index
+            char_index += 1;
+
+            if char_index >= total_chars {
+                break;
+            }
         }
 
         None
@@ -231,33 +238,35 @@ impl Buffer {
 
         let mut char_index = start_char_index.saturating_sub(1);
         let mut in_word = false;
+        let mut first_char = true;
 
         loop {
             let c = self.rope.char(char_index);
             let is_word_char = match word_type {
-                WordType::Word => !c.is_whitespace() && !is_punctuation(c),
+                WordType::Word => !c.is_whitespace() && !is_b_delimiter(c),
                 WordType::BigWord => !c.is_whitespace(),
             };
+
+            if is_b_delimiter(c) && !first_char {
+                return Some(self.char_index_to_location(char_index));
+            }
 
             if is_word_char {
                 in_word = true;
             } else if in_word {
-                // Found the start of the previous word
-                char_index += 1;
-                return Some(self.char_index_to_location(char_index));
-            } else {
-                in_word = false;
+                return Some(self.char_index_to_location(char_index + 1));
             }
+
+            first_char = false;
 
             if char_index == 0 {
                 break;
-            } else {
-                char_index = char_index.saturating_sub(1);
             }
+
+            char_index = char_index.saturating_sub(1);
         }
 
         if in_word {
-            // The word starts at the beginning of the buffer
             return Some(self.char_index_to_location(0));
         }
 
@@ -295,6 +304,10 @@ impl Buffer {
     }
 }
 
-fn is_punctuation(c: char) -> bool {
-    c.is_ascii_punctuation()
+fn is_b_delimiter(c: char) -> bool {
+    c == '{' || c == '}' || c == ';' || c == ',' || c == '(' || c == ')' || c == '\\'
+}
+
+fn is_w_delimiter(c: char) -> bool {
+    c == '(' || c == ')' || c == '{' || c == '}' || c == '\\'
 }

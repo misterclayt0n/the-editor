@@ -18,6 +18,9 @@ pub enum Normal {
     WordBackward,
     BigWordForward,
     BigWordBackward,
+    GoToTop,
+    GoToBottom,
+    Wait,
 }
 
 impl TryFrom<KeyEvent> for Normal {
@@ -37,6 +40,8 @@ impl TryFrom<KeyEvent> for Normal {
             (KeyCode::Char('d'), KeyModifiers::CONTROL) => Ok(Self::PageDown),
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => Ok(Self::PageUp),
             (KeyCode::Char('_'), KeyModifiers::NONE) => Ok(Self::FirstCharLine),
+            (KeyCode::Char('G'), KeyModifiers::SHIFT) => Ok(Self::GoToBottom),
+            (KeyCode::Char('g'), KeyModifiers::NONE) => Ok(Self::Wait),
             _ => Err(format!("Not a move command: {:?}", event))
         }
     }

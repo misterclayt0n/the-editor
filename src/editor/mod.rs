@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use command::VimCommand;
+use command::{Normal, VimCommand};
 use crossterm::event::read;
 
 use core::fmt;
@@ -233,7 +233,22 @@ impl Editor {
             }
             Move(move_command) => {
                 if self.vim_mode == VimMode::Normal || self.vim_mode == VimMode::Visual {
-                    self.view.handle_move_command(move_command);
+                    match move_command {
+                        Normal::Wait => {
+                            if let Some('g') = self.command_buffer {
+                                // gg detected
+                                self.view.handle_normal_command(Normal::GoToTop);
+                                self.command_buffer = None;
+                            } else {
+                                // first 'g' got pressed, waiting for second
+                                self.command_buffer = Some('g');
+                            }
+                        }
+                        _ => {
+                            self.view.handle_normal_command(move_command);
+                            self.command_buffer = None; // Reseta buffer se outro comando for pressionado
+                        }
+                    }
 
                     if self.vim_mode == VimMode::Visual {
                         self.view.update_selection();
@@ -281,7 +296,7 @@ impl Editor {
                             self.view.clear_selection();
                         }
                     }
-                    VimMode::CommandMode => { }
+                    VimMode::CommandMode => {}
                 }
 
                 self.vim_mode = new_mode;

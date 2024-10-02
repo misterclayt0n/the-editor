@@ -167,7 +167,7 @@ impl View {
         }
     }
 
-    pub fn handle_move_command(&mut self, command: Normal) {
+    pub fn handle_normal_command(&mut self, command: Normal) {
         match command {
             Normal::Up => self.movement.move_up(&self.buffer, 1),
             Normal::Down => self.movement.move_down(&self.buffer, 1),
@@ -194,6 +194,9 @@ impl View {
                 .movement
                 .move_word_backward(&self.buffer, WordType::BigWord),
             Normal::FirstCharLine => self.movement.move_to_first_non_whitespace(&self.buffer),
+            Normal::GoToTop => self.movement.move_to_top(),
+            Normal::GoToBottom => self.movement.move_to_bottom(&self.buffer),
+            _ => {}
         }
 
         self.scroll_text_location_into_view();
@@ -215,7 +218,7 @@ impl View {
         if self.movement.text_location.line_index != 0
             || self.movement.text_location.grapheme_index != 0
         {
-            self.handle_move_command(Normal::Left);
+            self.handle_normal_command(Normal::Left);
             self.delete();
         }
     }
@@ -277,7 +280,7 @@ impl View {
 
         if grapheme_delta > 0 {
             // Move right for an added grapheme (should be the regular case)
-            self.handle_move_command(Normal::Right);
+            self.handle_normal_command(Normal::Right);
         }
 
         self.set_needs_redraw(true);

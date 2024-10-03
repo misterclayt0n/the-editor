@@ -318,6 +318,27 @@ impl Buffer {
             0
         }
     }
+
+    //
+    // Helper functions
+    //
+
+    pub fn text_location_to_col(&self, location: Location) -> usize {
+        let line_slice = self.rope.line(location.line_index);
+        let line_str = line_slice.to_string();
+        let line = Line::from(&line_str);
+        line.width_until(location.grapheme_index)
+    }
+
+    pub fn col_to_grapheme_index(&self, line_index: usize, col: usize) -> usize {
+        if line_index >= self.rope.len_lines() {
+            return 0;
+        }
+        let line_slice = self.rope.line(line_index);
+        let line_str = line_slice.to_string();
+        let line = Line::from(&line_str);
+        line.grapheme_index_at_width(col)
+    }
 }
 
 fn is_b_delimiter(c: char) -> bool {

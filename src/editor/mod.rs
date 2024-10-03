@@ -232,48 +232,57 @@ impl Editor {
                 }
             }
             Move(move_command) => {
-                if self.vim_mode == VimMode::Normal || self.vim_mode == VimMode::Visual {
-                    match move_command {
-                        Normal::AppendRight => {
-                            self.view.handle_normal_command(Normal::Right);
-                            self.vim_mode = VimMode::Insert;
-                            self.update_message("INSERT");
-                        }
-                        Normal::InsertAtLineEnd => {
-                            self.view.handle_normal_command(Normal::InsertAtLineEnd);
-                            self.vim_mode = VimMode::Insert;
-                        }
-                        Normal::InsertAtLineStart => {
-                            self.view.handle_normal_command(Normal::InsertAtLineStart);
-                            self.vim_mode = VimMode::Insert;
-                        }
-                        Normal::Wait => {
-                            if let Some('g') = self.command_buffer {
-                                // gg detected
-                                self.view.handle_normal_command(Normal::GoToTop);
+                match self.vim_mode {
+                    VimMode::Normal => {
+                        match move_command {
+                            Normal::AppendRight => {
+                                self.view.handle_normal_command(Normal::Right);
+                                self.vim_mode = VimMode::Insert;
+                            }
+                            Normal::InsertAtLineEnd => {
+                                self.view.handle_normal_command(Normal::InsertAtLineEnd);
+                                self.vim_mode = VimMode::Insert;
+                            }
+                            Normal::InsertAtLineStart => {
+                                self.view.handle_normal_command(Normal::InsertAtLineStart);
+                                self.vim_mode = VimMode::Insert;
+                            }
+                            Normal::Wait => {
+                                if let Some('g') = self.command_buffer {
+                                    // gg detected
+                                    self.view.handle_normal_command(Normal::GoToTop);
+                                    self.command_buffer = None;
+                                } else {
+                                    self.command_buffer = Some('g');
+                                }
+                            }
+                            Normal::VisualLine => {
+                                self.view.start_visual_line_selection();
+                                self.vim_mode = VimMode::Visual;
+                            }
+                            _ => {
+                                self.view.handle_normal_command(move_command);
                                 self.command_buffer = None;
-                            } else {
-                                // first 'g' got pressed, waiting for second
-                                self.command_buffer = Some('g');
                             }
                         }
-                        Normal::VisualLine => {
-                            self.view.start_visual_line_selection();
-                            self.vim_mode = VimMode::Visual;
-                        }
-                        Normal::Up | Normal::Down => {
-                            // Mover o cursor verticalmente e expandir a seleção no modo Visual
-                            self.view.handle_visual_line_movement(move_command);
-                        }
-                        _ => {
-                            self.view.handle_normal_command(move_command);
-                            self.command_buffer = None; // Reseta buffer se outro comando for pressionado
-                        }
                     }
-
-                    if self.vim_mode == VimMode::Visual {
+                    VimMode::Visual => {
+                        match move_command {
+                            Normal::Up | Normal::Down => {
+                                // Move the cursor vertically and expand the selection in Visual mode
+                                self.view.handle_visual_line_movement(move_command);
+                            }
+                            _ => {
+                                self.view.handle_normal_command(move_command);
+                                self.command_buffer = None; // Reset buffer if another command is pressed
+                            }
+                        }
+                        // After handling movement in Visual mode, update the selection
                         self.view.update_selection();
                         self.view.set_needs_redraw(true);
+                    }
+                    _ => {
+                        // Other modes (e.g., Insert, CommandMode) do not handle movement commands here
                     }
                 }
             }

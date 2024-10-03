@@ -310,6 +310,44 @@ impl View {
         self.set_needs_redraw(true);
     }
 
+    pub fn insert_newline_below(&mut self) {
+        let line_index = self.movement.text_location.line_index;
+
+        // move the cursor to the end of the line before inserting a new line
+        self.movement.text_location.grapheme_index = self.buffer.get_line_length(line_index);
+
+        self.buffer.insert_newline(Location {
+            line_index: line_index + 1,
+            grapheme_index: 0,
+        });
+
+        // move cursor to the beginning of the new line
+        self.movement.text_location = Location {
+            line_index: line_index + 1,
+            grapheme_index: 0,
+        };
+
+        self.set_needs_redraw(true);
+    }
+
+    pub fn insert_newline_above(&mut self) {
+        let line_index = self.movement.text_location.line_index;
+
+        // move cursor to the beginning of the new line
+        self.buffer.insert_newline(Location {
+            line_index,
+            grapheme_index: 0,
+        });
+
+        // move cursor to the beginning of the new line
+        self.movement.text_location = Location {
+            line_index,
+            grapheme_index: 0,
+        };
+
+        self.set_needs_redraw(true);
+    }
+
     //
     // Rendering
     //

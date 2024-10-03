@@ -424,6 +424,16 @@ impl Editor {
                     self.view.set_needs_redraw(true);
                 }
             }
+            VimCommand::OpenNewLineBelow => {
+                self.view.insert_newline_below();
+                self.vim_mode = VimMode::Insert;
+                self.view.set_needs_redraw(true);
+            }
+            VimCommand::OpenNewLineAbove => {
+                self.view.insert_newline_above();
+                self.vim_mode = VimMode::Insert;
+                self.view.set_needs_redraw(true);
+            }
             _ => {}
         }
     }

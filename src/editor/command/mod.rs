@@ -24,6 +24,8 @@ pub enum VimCommand {
     DeleteSelection,
     SubstituteSelection,
     ChangeSelection,
+    OpenNewLineBelow,
+    OpenNewLineAbove,
 }
 
 impl TryFrom<KeyEvent> for VimCommand {
@@ -36,6 +38,8 @@ impl TryFrom<KeyEvent> for VimCommand {
             (KeyCode::Char('v'), KeyModifiers::NONE) => Ok(Self::ChangeMode(VimMode::Visual)),
             (KeyCode::Char(':'), KeyModifiers::NONE) => Ok(Self::ChangeMode(VimMode::CommandMode)),
             (KeyCode::Char('d'), KeyModifiers::NONE) => Ok(Self::DeleteLine),
+            (KeyCode::Char('o'), KeyModifiers::NONE) => Ok(Self::OpenNewLineBelow),
+            (KeyCode::Char('O'), KeyModifiers::SHIFT) => Ok(Self::OpenNewLineAbove),
             // TODO: maybe some more keybindings
             _ => Err(format!("Not a Vim command: {:?}", event)),
         }

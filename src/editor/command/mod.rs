@@ -26,6 +26,8 @@ pub enum VimCommand {
     ChangeSelection,
     OpenNewLineBelow,
     OpenNewLineAbove,
+    SubstituteChar,
+    DeleteChar,
 }
 
 impl TryFrom<KeyEvent> for VimCommand {
@@ -40,6 +42,8 @@ impl TryFrom<KeyEvent> for VimCommand {
             (KeyCode::Char('d'), KeyModifiers::NONE) => Ok(Self::DeleteLine),
             (KeyCode::Char('o'), KeyModifiers::NONE) => Ok(Self::OpenNewLineBelow),
             (KeyCode::Char('O'), KeyModifiers::SHIFT) => Ok(Self::OpenNewLineAbove),
+            (KeyCode::Char('x'), KeyModifiers::NONE) => Ok(Self::DeleteChar),
+            (KeyCode::Char('s'), KeyModifiers::NONE) => Ok(Self::SubstituteChar),
             // TODO: maybe some more keybindings
             _ => Err(format!("Not a Vim command: {:?}", event)),
         }

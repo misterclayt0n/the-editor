@@ -348,6 +348,19 @@ impl View {
         self.set_needs_redraw(true);
     }
 
+    pub fn delete_char_at_cursor(&mut self) {
+        let line_index = self.movement.text_location.line_index;
+        let grapheme_index = self.movement.text_location.grapheme_index;
+
+        // check if the cursor is within a valid line and if there's a char to be deleted
+        if line_index < self.buffer.height() && grapheme_index < self.buffer.get_line_length(line_index) {
+            self.buffer.delete(self.movement.text_location);
+
+            // no need to change the cursor position
+            self.set_needs_redraw(true);
+        }
+    }
+
     //
     // Rendering
     //

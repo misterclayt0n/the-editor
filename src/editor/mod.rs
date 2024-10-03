@@ -434,6 +434,15 @@ impl Editor {
                 self.vim_mode = VimMode::Insert;
                 self.view.set_needs_redraw(true);
             }
+            VimCommand::SubstituteChar => {
+                self.view.delete_char_at_cursor();
+                self.vim_mode = VimMode::Insert;
+                self.view.set_needs_redraw(true);
+            }
+            VimCommand::DeleteChar => {
+                self.view.delete_char_at_cursor();
+                self.view.set_needs_redraw(true);
+            }
             _ => {}
         }
     }

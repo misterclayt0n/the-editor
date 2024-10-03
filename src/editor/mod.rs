@@ -234,6 +234,11 @@ impl Editor {
             Move(move_command) => {
                 if self.vim_mode == VimMode::Normal || self.vim_mode == VimMode::Visual {
                     match move_command {
+                        Normal::AppendRight => {
+                            self.view.handle_normal_command(Normal::Right);
+                            self.vim_mode = VimMode::Insert;
+                            self.update_message("INSERT");
+                        }
                         Normal::Wait => {
                             if let Some('g') = self.command_buffer {
                                 // gg detected
@@ -300,6 +305,10 @@ impl Editor {
                         }
                     }
                     VimMode::Normal => {
+                        if old_mode == VimMode::Insert {
+                            self.view.handle_normal_command(Normal::Left);
+                        }
+
                         if old_mode == VimMode::Visual {
                             self.view.clear_selection();
                         }

@@ -22,6 +22,7 @@ pub enum Normal {
     GoToBottom,
     Wait,
     VisualLine,
+    AppendRight,
 }
 
 impl TryFrom<KeyEvent> for Normal {
@@ -44,6 +45,7 @@ impl TryFrom<KeyEvent> for Normal {
             (KeyCode::Char('G'), KeyModifiers::SHIFT) => Ok(Self::GoToBottom),
             (KeyCode::Char('g'), KeyModifiers::NONE) => Ok(Self::Wait),
             (KeyCode::Char('V'), KeyModifiers::SHIFT) => Ok(Self::VisualLine),
+            (KeyCode::Char('a'), KeyModifiers::NONE) => Ok(Self::AppendRight),
             _ => Err(format!("Not a move command: {:?}", event))
         }
     }

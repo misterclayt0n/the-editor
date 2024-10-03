@@ -346,15 +346,34 @@ impl View {
         width: usize,
     ) -> Result<(), Error> {
         let line_slice = self.buffer.rope.line(line_idx);
-        let (left, right) = self.calculate_visible_range(line_slice.len_chars(), width);
+        let selection_range = self.calculate_selection_range(line_idx, 0, width);
 
-        if left <= right {
-            let visible_line = line_slice.slice(left..right);
-            self.render_visible_line(current_row, line_idx, visible_line, left, right)?;
+        if line_slice.len_chars() == 0 {
+            self.render_empty_line(current_row, selection_range)?;
         } else {
-            Self::render_line(current_row, "~")?;
-        }
+            let (left, right) = self.calculate_visible_range(line_slice.len_chars(), width);
 
+            if left <= right {
+                let visible_line = line_slice.slice(left..right);
+                self.render_visible_line(current_row, line_idx, visible_line, left, right)?;
+            } else {
+                Self::render_line(current_row, "~")?;
+            }
+        }
+        Ok(())
+    }
+
+    fn render_empty_line(
+        &self,
+        current_row: RowIndex,
+        selection_range: Option<(usize, usize)>,
+    ) -> Result<(), Error> {
+        let expanded_line = if selection_range.is_some() {
+            "~".to_string()
+        } else {
+            " ".to_string()
+        };
+        Terminal::print_selected_row(current_row, RopeSlice::from(expanded_line.as_str()), selection_range)?;
         Ok(())
     }
 
@@ -440,8 +459,7 @@ impl View {
                     self.expand_tabs_before_index(end.grapheme_index, line_idx)
                         .saturating_sub(left)
                 } else {
-                    // Aqui está a correção:
-                    let expanded_line_length = self.get_expanded_line_length(line_idx);
+                    let expanded_line_length = self.get_expanded_line_length(line_idx).max(1);
                     expanded_line_length.saturating_sub(left)
                 };
                 Some((selection_start, selection_end))
@@ -691,13 +709,17 @@ impl View {
             }
         }
 
-        expanded_width
+        if expanded_width == 0 {
+            1
+        } else {
+            expanded_width
+        }
     }
 
     pub fn start_visual_line_selection(&mut self) {
-        self.movement.move_to_start_of_line(); // Move para o início da linha
-        self.start_selection(); // Inicia a seleção
-        self.movement.move_to_end_of_line(&self.buffer); // Selecione até o final da linha
+        self.movement.move_to_start_of_line(); // move to the beginning of the line
+        self.start_selection();
+        self.movement.move_to_end_of_line(&self.buffer); // select until the end of the line
         self.set_needs_redraw(true);
     }
 
@@ -711,10 +733,12 @@ impl View {
             }
             _ => {}
         }
-        // Após mover verticalmente, sempre seleciona a linha inteira
+        // after moving vertically, always select the entire line
         self.movement.move_to_start_of_line();
-        self.selection_end = Some(self.movement.text_location); // Atualiza o final da seleção
+        self.selection_end = Some(self.movement.text_location); // update the end of selection
         self.movement.move_to_end_of_line(&self.buffer);
+
+        self.scroll_text_location_into_view();
     }
 }
 

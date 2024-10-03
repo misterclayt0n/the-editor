@@ -36,6 +36,15 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [ ] File manager inspired by [oil.nvim](https://github.com/stevearc/oil.nvim)
 - [ ] User configurations (`~/.config/the-editor/config`)
 - [ ] Optimize with rope data structure (almost completed)
+- [ ] CommandBar mode with basic operations: 
+    - [ ] Saving
+    - [ ] Subtitution
+- [ ] Advanced vim motions: 
+    - [ ] "I" and "A"
+    - [ ] "C" and "D" 
+    - [ ] "cc"
+    - [ ] Operator + number + direction
+    - [ ] Operator + inside/outside
 
 ### 📚 Future Plans
 - **Integrated Setup**: Automatically configure necessary tools when opening a new file type.

@@ -46,6 +46,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
     - [ ] Operator + number + direction
     - [ ] Operator + inside/outside
 - [ ] Very basic syntax highlight 
+- [ ] Fuzzy finder inspired by [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
 
 ### 📚 Future Plans
 - **Integrated Setup**: Automatically configure necessary tools when opening a new file type.

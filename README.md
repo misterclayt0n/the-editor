@@ -40,7 +40,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
     - [ ] Saving
     - [ ] Subtitution
 - [ ] Advanced vim motions: 
-    - [ ] "I" and "A"
+    - [x] "I" and "A"
     - [ ] "C" and "D" 
     - [ ] "cc"
     - [ ] Operator + number + direction

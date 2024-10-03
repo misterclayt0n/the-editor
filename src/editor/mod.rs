@@ -190,7 +190,7 @@ impl Editor {
     fn refresh_status(&mut self) {
         let status = self.view.get_status();
         let title = format!("{} - {NAME}", status.file_name);
-        self.status_bar.update_status(status);
+        self.status_bar.update_status(status, self.vim_mode);
 
         if title != self.title && matches!(Terminal::set_title(&title), Ok(())) {
             self.title = title;
@@ -318,7 +318,6 @@ impl Editor {
 
                 self.vim_mode = new_mode;
                 self.view.set_needs_redraw(true);
-                self.update_message(&format!("Switched to {} mode", self.vim_mode));
             }
             VimCommand::DeleteSelection => {
                 self.view.delete_selection();

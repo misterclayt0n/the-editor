@@ -196,6 +196,14 @@ impl View {
             Normal::FirstCharLine => self.movement.move_to_first_non_whitespace(&self.buffer),
             Normal::GoToTop => self.movement.move_to_top(),
             Normal::GoToBottom => self.movement.move_to_bottom(&self.buffer),
+            Normal::InsertAtLineStart => {
+                self.movement.move_to_first_non_whitespace(&self.buffer);
+                self.set_needs_redraw(true);
+            }
+            Normal::InsertAtLineEnd => {
+                self.movement.move_to_end_of_line(&self.buffer);
+                self.set_needs_redraw(true);
+            }
             _ => {}
         }
 

@@ -239,6 +239,14 @@ impl Editor {
                             self.vim_mode = VimMode::Insert;
                             self.update_message("INSERT");
                         }
+                        Normal::InsertAtLineEnd => {
+                            self.view.handle_normal_command(Normal::InsertAtLineEnd);
+                            self.vim_mode = VimMode::Insert;
+                        }
+                        Normal::InsertAtLineStart => {
+                            self.view.handle_normal_command(Normal::InsertAtLineStart);
+                            self.vim_mode = VimMode::Insert;
+                        }
                         Normal::Wait => {
                             if let Some('g') = self.command_buffer {
                                 // gg detected

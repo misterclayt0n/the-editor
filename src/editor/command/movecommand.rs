@@ -23,6 +23,8 @@ pub enum Normal {
     Wait,
     VisualLine,
     AppendRight,
+    InsertAtLineStart,
+    InsertAtLineEnd,
 }
 
 impl TryFrom<KeyEvent> for Normal {
@@ -46,6 +48,8 @@ impl TryFrom<KeyEvent> for Normal {
             (KeyCode::Char('g'), KeyModifiers::NONE) => Ok(Self::Wait),
             (KeyCode::Char('V'), KeyModifiers::SHIFT) => Ok(Self::VisualLine),
             (KeyCode::Char('a'), KeyModifiers::NONE) => Ok(Self::AppendRight),
+            (KeyCode::Char('I'), KeyModifiers::SHIFT) => Ok(Self::InsertAtLineStart),
+            (KeyCode::Char('A'), KeyModifiers::SHIFT) => Ok(Self::InsertAtLineEnd),
             _ => Err(format!("Not a move command: {:?}", event))
         }
     }

@@ -23,7 +23,7 @@ mod movement;
 
 #[derive(Default)]
 pub struct View {
-    buffer: Buffer,
+    pub buffer: Buffer,
     needs_redraw: bool,
     size: Size,
     pub movement: Movement,
@@ -31,6 +31,7 @@ pub struct View {
     search_info: Option<SearchInfo>,
     selection_start: Option<Location>,
     selection_end: Option<Location>,
+    selection_mode: Option<SelectionMode>,
 }
 
 impl View {
@@ -258,10 +259,25 @@ impl View {
         }
     }
 
+    pub fn replace_line_with_empty(&mut self, line_index: usize) {
+        if line_index < self.buffer.height() {
+            self.buffer.delete_line(line_index); // Apaga a linha existente
+            self.buffer.insert_newline(Location {
+                line_index,
+                grapheme_index: 0,
+            }); // Insere uma nova linha vazia na mesma posição
+            self.movement.text_location = Location {
+                line_index,
+                grapheme_index: 0,
+            }; // Move o cursor para o início da linha substituída
+        }
+        self.set_needs_redraw(true);
+    }
+
     fn insert_char(&mut self, character: char) {
         let line_index = self.movement.text_location.line_index;
 
-        // Get the old length of the line
+        // get the old length of the line
         let old_len = if line_index < self.buffer.rope.len_lines() {
             let line_slice = self.buffer.rope.line(line_index);
             let line_str = line_slice.to_string();
@@ -274,7 +290,7 @@ impl View {
         self.buffer
             .insert_char(character, self.movement.text_location);
 
-        // Get the new length of the line after insertion
+        // get the new length of the line after insertion
         let new_len = if line_index < self.buffer.rope.len_lines() {
             let line_slice = self.buffer.rope.line(line_index);
             let line_str = line_slice.to_string();
@@ -287,7 +303,7 @@ impl View {
         let grapheme_delta = new_len.saturating_sub(old_len);
 
         if grapheme_delta > 0 {
-            // Move right for an added grapheme (should be the regular case)
+            // move right for an added grapheme (should be the regular case)
             self.handle_normal_command(Normal::Right);
         }
 
@@ -381,7 +397,11 @@ impl View {
         } else {
             " ".to_string()
         };
-        Terminal::print_selected_row(current_row, RopeSlice::from(expanded_line.as_str()), selection_range)?;
+        Terminal::print_selected_row(
+            current_row,
+            RopeSlice::from(expanded_line.as_str()),
+            selection_range,
+        )?;
         Ok(())
     }
 
@@ -456,21 +476,32 @@ impl View {
     ) -> Option<(usize, usize)> {
         self.get_selection_range().and_then(|(start, end)| {
             if start.line_index <= line_idx && end.line_index >= line_idx {
-                let selection_start = if start.line_index == line_idx {
-                    self.expand_tabs_before_index(start.grapheme_index, line_idx)
-                        .saturating_sub(left)
-                } else {
-                    0
-                };
+                match self.selection_mode {
+                    Some(SelectionMode::Visual) => {
+                        let selection_start = if start.line_index == line_idx {
+                            self.expand_tabs_before_index(start.grapheme_index, line_idx)
+                                .saturating_sub(left)
+                        } else {
+                            0
+                        };
 
-                let selection_end = if end.line_index == line_idx {
-                    self.expand_tabs_before_index(end.grapheme_index, line_idx)
-                        .saturating_sub(left)
-                } else {
-                    let expanded_line_length = self.get_expanded_line_length(line_idx).max(1);
-                    expanded_line_length.saturating_sub(left)
-                };
-                Some((selection_start, selection_end))
+                        let selection_end = if end.line_index == line_idx {
+                            self.expand_tabs_before_index(end.grapheme_index, line_idx)
+                                .saturating_sub(left)
+                        } else {
+                            let expanded_line_length =
+                                self.get_expanded_line_length(line_idx).max(1);
+                            expanded_line_length.saturating_sub(left)
+                        };
+                        Some((selection_start, selection_end))
+                    }
+                    Some(SelectionMode::VisualLine) => {
+                        let selection_start = 0;
+                        let selection_end = self.get_expanded_line_length(line_idx).max(1);
+                        Some((selection_start, selection_end))
+                    }
+                    None => None,
+                }
             } else {
                 None
             }
@@ -675,18 +706,50 @@ impl View {
     pub fn clear_selection(&mut self) {
         self.selection_start = None;
         self.selection_end = None;
+        self.selection_mode = None;
         self.set_needs_redraw(true);
     }
 
-    pub fn start_selection(&mut self) {
-        self.selection_start = Some(self.movement.text_location);
-        self.selection_end = Some(self.movement.text_location);
+    pub fn start_selection(&mut self, mode: SelectionMode) {
+        self.selection_mode = Some(mode);
+
+        match mode {
+            SelectionMode::Visual => {
+                self.selection_start = Some(self.movement.text_location);
+                self.selection_end = Some(self.movement.text_location);
+            }
+            SelectionMode::VisualLine => {
+                let current_line = self.movement.text_location.line_index;
+                self.selection_start = Some(Location {
+                    line_index: current_line,
+                    grapheme_index: 0,
+                });
+                self.selection_end = Some(Location {
+                    line_index: current_line,
+                    grapheme_index: self.buffer.get_line_length(current_line),
+                });
+            }
+        }
+
         self.set_needs_redraw(true);
     }
 
     pub fn update_selection(&mut self) {
-        if self.selection_start.is_some() {
-            self.selection_end = Some(self.movement.text_location);
+        if let Some(mode) = self.selection_mode {
+            match mode {
+                SelectionMode::Visual => {
+                    self.selection_end = Some(self.movement.text_location);
+                }
+                SelectionMode::VisualLine => {
+                    // Only update selection_end, keep selection_start fixed
+                    self.selection_end = Some(Location {
+                        line_index: self.movement.text_location.line_index,
+                        grapheme_index: self
+                            .buffer
+                            .get_line_length(self.movement.text_location.line_index),
+                    });
+                }
+            }
             self.set_needs_redraw(true);
         }
     }
@@ -724,11 +787,9 @@ impl View {
         }
     }
 
-    pub fn start_visual_line_selection(&mut self) {
-        self.movement.move_to_start_of_line(); // move to the beginning of the line
-        self.start_selection();
-        self.movement.move_to_end_of_line(&self.buffer); // select until the end of the line
-        self.set_needs_redraw(true);
+    pub fn handle_visual_movement(&mut self, command: Normal) {
+        self.handle_normal_command(command);
+        self.update_selection();
     }
 
     pub fn handle_visual_line_movement(&mut self, command: Normal) {
@@ -741,11 +802,8 @@ impl View {
             }
             _ => {}
         }
-        // after moving vertically, always select the entire line
-        self.movement.move_to_start_of_line();
-        self.selection_end = Some(self.movement.text_location); // update the end of selection
-        self.movement.move_to_end_of_line(&self.buffer);
 
+        self.update_selection(); // Update selection to include the new line
         self.scroll_text_location_into_view();
     }
 }

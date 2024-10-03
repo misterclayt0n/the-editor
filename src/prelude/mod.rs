@@ -47,3 +47,10 @@ pub enum WordType {
     Word,
     BigWord,
 }
+
+#[derive(PartialEq, Copy, Clone)]
+pub enum SelectionMode {
+    Visual,
+    VisualLine,
+}
+

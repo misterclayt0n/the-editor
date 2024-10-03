@@ -23,6 +23,7 @@ pub enum VimCommand {
     DeleteLine,
     DeleteSelection,
     SubstituteSelection,
+    ChangeSelection,
 }
 
 impl TryFrom<KeyEvent> for VimCommand {
@@ -100,6 +101,18 @@ impl Command {
                         Edit::try_from(key_event).map(Command::Edit) // allow text editing on command mode
                     }
                 }
+                VimMode::VisualLine => match key_event.code {
+                    KeyCode::Char('d') if key_event.modifiers == KeyModifiers::NONE => {
+                        Ok(Command::Vim(VimCommand::DeleteSelection))
+                    }
+                    KeyCode::Char('s') | KeyCode::Char('c') if key_event.modifiers == KeyModifiers::NONE => {
+                        Ok(Command::Vim(VimCommand::ChangeSelection))
+                    }
+                    _ => VimCommand::try_from(key_event)
+                        .map(Command::Vim)
+                        .or_else(|_| Normal::try_from(key_event).map(Command::Move))
+                        .or_else(|_| System::try_from(key_event).map(Command::System)),
+                },
             }
             .map_err(|_err| format!("Event not supported: {key_event:?}")),
             Event::Resize(width_u16, height_u16) => Ok(Self::System(System::Resize(Size {

@@ -65,7 +65,15 @@ impl Movement {
     }
 
     pub fn move_to_end_of_line(&mut self, buffer: &Buffer) {
-        self.text_location.grapheme_index = buffer.get_line_length(self.text_location.line_index);
+        self.text_location.grapheme_index =
+            if self.text_location.line_index < buffer.rope.len_lines() {
+                let line_slice = buffer.rope.line(self.text_location.line_index);
+                let line_str = line_slice.to_string().trim_end_matches('\n').to_string();
+                let line = Line::from(&line_str);
+                line.grapheme_count()
+            } else {
+                0
+            };
         self.update_desired_col(buffer);
     }
 
@@ -104,7 +112,7 @@ impl Movement {
     // Helper functions
     //
 
-    fn update_desired_col(&mut self, buffer: &Buffer) {
+    pub fn update_desired_col(&mut self, buffer: &Buffer) {
         self.desired_col = buffer.text_location_to_col(self.text_location);
     }
 

@@ -50,6 +50,7 @@ pub enum VimMode {
     Normal,
     Insert,
     Visual,
+    VisualLine,
     CommandMode,
 }
 
@@ -59,6 +60,7 @@ impl fmt::Display for VimMode {
             VimMode::Insert => write!(f, "INSERT"),
             VimMode::Normal => write!(f, "NORMAL"),
             VimMode::Visual => write!(f, "VISUAL"),
+            VimMode::VisualLine => write!(f, "VISUAL LINE"),
             VimMode::CommandMode => write!(f, "COMMAND"),
         }
     }
@@ -240,7 +242,7 @@ impl Editor {
                                 self.vim_mode = VimMode::Insert;
                             }
                             Normal::InsertAtLineEnd => {
-                                self.view.handle_normal_command(Normal::InsertAtLineEnd);
+                                self.view.handle_normal_command(Normal::EndOfLine);
                                 self.vim_mode = VimMode::Insert;
                             }
                             Normal::InsertAtLineStart => {
@@ -257,8 +259,8 @@ impl Editor {
                                 }
                             }
                             Normal::VisualLine => {
-                                self.view.start_visual_line_selection();
-                                self.vim_mode = VimMode::Visual;
+                                self.view.start_selection(SelectionMode::VisualLine);
+                                self.vim_mode = VimMode::VisualLine;
                             }
                             _ => {
                                 self.view.handle_normal_command(move_command);
@@ -268,6 +270,39 @@ impl Editor {
                     }
                     VimMode::Visual => {
                         match move_command {
+                            Normal::Wait => {
+                                if let Some('g') = self.command_buffer {
+                                    // gg detected
+                                    self.view.handle_normal_command(Normal::GoToTop);
+                                    self.command_buffer = None;
+                                } else {
+                                    self.command_buffer = Some('g');
+                                }
+                            }
+                            Normal::Up | Normal::Down => {
+                                // Move the cursor vertically and expand the selection in Visual mode
+                                self.view.handle_visual_movement(move_command);
+                            }
+                            _ => {
+                                self.view.handle_normal_command(move_command);
+                                self.command_buffer = None; // Reset buffer if another command is pressed
+                            }
+                        }
+                        // After handling movement in Visual mode, update the selection
+                        self.view.update_selection();
+                        self.view.set_needs_redraw(true);
+                    }
+                    VimMode::VisualLine => {
+                        match move_command {
+                            Normal::Wait => {
+                                if let Some('g') = self.command_buffer {
+                                    // gg detected
+                                    self.view.handle_normal_command(Normal::GoToTop);
+                                    self.command_buffer = None;
+                                } else {
+                                    self.command_buffer = Some('g');
+                                }
+                            }
                             Normal::Up | Normal::Down => {
                                 // Move the cursor vertically and expand the selection in Visual mode
                                 self.view.handle_visual_line_movement(move_command);
@@ -318,7 +353,12 @@ impl Editor {
                     }
                     VimMode::Visual => {
                         if old_mode != VimMode::Visual {
-                            self.view.start_selection();
+                            self.view.start_selection(SelectionMode::Visual);
+                        }
+                    }
+                    VimMode::VisualLine => {
+                        if old_mode != VimMode::VisualLine {
+                            self.view.start_selection(SelectionMode::VisualLine);
                         }
                     }
                     VimMode::Normal => {
@@ -326,7 +366,7 @@ impl Editor {
                             self.view.handle_normal_command(Normal::Left);
                         }
 
-                        if old_mode == VimMode::Visual {
+                        if old_mode == VimMode::Visual || old_mode == VimMode::VisualLine {
                             self.view.clear_selection();
                         }
                     }
@@ -348,6 +388,41 @@ impl Editor {
                 self.vim_mode = VimMode::Insert; // back to normal mode after deleting
                 self.view.update_insertion_point_to_cursor_position(); // update point of insertion
                 self.view.set_needs_redraw(true);
+            }
+            VimCommand::ChangeSelection => {
+                if let Some((start, end)) = self.view.get_selection_range() {
+                    let start_line = start.line_index;
+                    let end_line = end.line_index;
+
+                    if start_line == end_line {
+                        // only one line selected
+                        self.view.replace_line_with_empty(start_line);
+                    } else {
+                        // multiple lines selected
+                        // determine the index of initial and final char to line interval
+                        let start_idx = self.view.buffer.rope.line_to_char(start_line);
+                        let end_idx = self.view.buffer.rope.line_to_char(end_line + 1);
+
+                        // remove all lines all at once
+                        self.view.buffer.rope.remove(start_idx..end_idx);
+
+                        // insert only one empty line in place of the first selected line 
+                        self.view.buffer.rope.insert(start_idx, "\n");
+
+                        // update cursor postiion
+                        self.view.movement.text_location = Location {
+                            line_index: start_line,
+                            grapheme_index: 0,
+                        };
+
+                        self.view.buffer.dirty = true;
+                    }
+
+                    // clear selection and enter insert mode
+                    self.view.clear_selection();
+                    self.vim_mode = VimMode::Insert;
+                    self.view.set_needs_redraw(true);
+                }
             }
             _ => {}
         }
@@ -415,7 +490,7 @@ impl Editor {
 
     fn process_command_during_save(&mut self, command: Command) {
         match command {
-            System(Quit | Resize(_) | Search | Save) | Move(_) => {} // Not applicable during save, Resize already handled at this stage
+            System(Quit | Resize(_) | Search | Save) | Move(_) => {} // not applicable during save, Resize already handled at this stage
             System(Dismiss) => {
                 self.set_prompt(PromptType::None);
                 self.update_message("Save aborted.");

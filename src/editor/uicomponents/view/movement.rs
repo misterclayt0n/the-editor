@@ -35,7 +35,7 @@ impl Movement {
 
     pub fn move_right(&mut self, buffer: &Buffer) {
         let line_width = buffer.get_line_length(self.text_location.line_index);
-        if self.text_location.grapheme_index < line_width {
+        if self.text_location.grapheme_index < line_width.saturating_sub(1) {
             self.text_location.grapheme_index += 1;
         }
         self.update_desired_col(buffer);

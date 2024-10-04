@@ -238,7 +238,11 @@ impl Editor {
                     VimMode::Normal => {
                         match move_command {
                             Normal::AppendRight => {
-                                self.view.handle_normal_command(Normal::Right);
+                                if self.view.at_end_of_line() {
+                                    self.view.handle_normal_command(Normal::EndOfLine);
+                                } else {
+                                    self.view.handle_normal_command(Normal::Right);
+                                }
                                 self.vim_mode = VimMode::Insert;
                             }
                             Normal::InsertAtLineEnd => {

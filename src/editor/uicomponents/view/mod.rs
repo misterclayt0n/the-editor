@@ -353,7 +353,9 @@ impl View {
         let grapheme_index = self.movement.text_location.grapheme_index;
 
         // check if the cursor is within a valid line and if there's a char to be deleted
-        if line_index < self.buffer.height() && grapheme_index < self.buffer.get_line_length(line_index) {
+        if line_index < self.buffer.height()
+            && grapheme_index < self.buffer.get_line_length(line_index)
+        {
             self.buffer.delete(self.movement.text_location);
 
             // no need to change the cursor position
@@ -856,6 +858,19 @@ impl View {
 
         self.update_selection(); // Update selection to include the new line
         self.scroll_text_location_into_view();
+    }
+
+    pub fn at_end_of_line(&self) -> bool {
+        let line_index = self.movement.text_location.line_index;
+        let grapheme_index = self.movement.text_location.grapheme_index;
+
+        // Verifica se o cursor está no fim da linha
+        if line_index < self.buffer.height() {
+            let line_length = self.buffer.get_line_length(line_index);
+            grapheme_index >= line_length
+        } else {
+            false
+        }
     }
 }
 

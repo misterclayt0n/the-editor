@@ -142,10 +142,6 @@ impl Editor {
                     {
                         panic!("Could not read event: {err:?}");
                     }
-                    #[cfg(not(debug_assertions))]
-                    {
-                        let _ = err;
-                    }
                 }
             }
             self.refresh_status();
@@ -410,7 +406,7 @@ impl Editor {
                         // remove all lines all at once
                         self.view.buffer.rope.remove(start_idx..end_idx);
 
-                        // insert only one empty line in place of the first selected line 
+                        // insert only one empty line in place of the first selected line
                         self.view.buffer.rope.insert(start_idx, "\n");
 
                         // update cursor postiion
@@ -446,6 +442,11 @@ impl Editor {
             VimCommand::DeleteChar => {
                 self.view.delete_char_at_cursor();
                 self.view.set_needs_redraw(true);
+            }
+            VimCommand::DeleteUntilEndOfLine => self.view.delete_until_end_of_line(),
+            VimCommand::ChangeUntilEndOfLine => {
+                self.view.delete_until_end_of_line();
+                self.vim_mode = VimMode::Insert;
             }
             _ => {}
         }

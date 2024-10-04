@@ -69,7 +69,7 @@ impl View {
         if let Some(search_info) = &self.search_info {
             self.movement.text_location = search_info.prev_location;
             self.scroll_offset = search_info.prev_scroll_offset;
-            self.scroll_text_location_into_view(); // Ensure the previous location is still visible even if the terminal has been resized during search.
+            self.scroll_text_location_into_view(); // ensure the previous location is still visible even if the terminal has been resized during search.
         }
 
         self.exit_search();
@@ -83,9 +83,9 @@ impl View {
         self.search_in_direction(self.movement.text_location, SearchDirection::default());
     }
 
-    /// Attempts to get the current search query - for scenarios where the search query absolutely must be there.
-    /// Panics if not present in debug, or if search info is not present in debug.
-    /// Returns None on release.
+    /// attempts to get the current search query - for scenarios where the search query absolutely must be there.
+    /// panics if not present in debug, or if search info is not present in debug.
+    /// returns None on release.
     fn get_search_query(&self) -> Option<&Line> {
         let query = self
             .search_info
@@ -126,7 +126,7 @@ impl View {
                 .movement
                 .text_location
                 .grapheme_index
-                .saturating_add(step_right), // Start the new search after the current match
+                .saturating_add(step_right), // start the new search after the current match
         };
 
         self.search_in_direction(location, SearchDirection::Forward);
@@ -259,17 +259,41 @@ impl View {
         }
     }
 
+    pub fn delete_until_end_of_line(&mut self) {
+        let line_index = self.movement.text_location.line_index;
+        let grapheme_index = self.movement.text_location.grapheme_index;
+
+        // check if cursor is within a valid line
+        if line_index < self.buffer.height() {
+            let line_length = self.buffer.get_line_length(line_index);
+            if grapheme_index < line_length {
+                // remove content from the cursor position till the end of the line
+                let start_idx = self
+                    .buffer
+                    .location_to_char_index(self.movement.text_location);
+                let end_idx = self.buffer.location_to_char_index(Location {
+                    line_index,
+                    grapheme_index: line_length.saturating_sub(1),
+                });
+                self.buffer.rope.remove(start_idx..end_idx);
+                self.buffer.dirty = true;
+            }
+        }
+
+        self.set_needs_redraw(true);
+    }
+
     pub fn replace_line_with_empty(&mut self, line_index: usize) {
         if line_index < self.buffer.height() {
-            self.buffer.delete_line(line_index); // Apaga a linha existente
+            self.buffer.delete_line(line_index); // delete existing line
             self.buffer.insert_newline(Location {
                 line_index,
                 grapheme_index: 0,
-            }); // Insere uma nova linha vazia na mesma posição
+            }); // insert a new empty line in the same position
             self.movement.text_location = Location {
                 line_index,
                 grapheme_index: 0,
-            }; // Move o cursor para o início da linha substituída
+            }; // move the cursor to the beginning of the substituted line
         }
         self.set_needs_redraw(true);
     }
@@ -376,7 +400,7 @@ impl View {
         let len = welcome_message.len();
         let remaining_width = width.saturating_sub(1);
 
-        // Hide the welcome message if it doesn't fit entirely.
+        // hide the welcome message if it doesn't fit entirely.
         if remaining_width < len {
             return "~".to_string();
         }
@@ -384,7 +408,7 @@ impl View {
         format!("{:<1}{:^remaining_width$}", "~", welcome_message)
     }
 
-    /// Calculates the line index in the buffer corresponding to the current row in the screen
+    /// calculates the line index in the buffer corresponding to the current row in the screen
     fn calculate_line_index(
         &self,
         current_row: RowIndex,
@@ -396,7 +420,7 @@ impl View {
             .saturating_add(scroll_top)
     }
 
-    /// Renders the current row based on the line index and other parameters
+    /// renders the current row based on the line index and other parameters
     fn render_current_row(
         &self,
         current_row: RowIndex,
@@ -415,7 +439,7 @@ impl View {
         Ok(())
     }
 
-    /// Renders a line that exists in the buffer
+    /// renders a line that exists in the buffer
     fn render_existing_line(
         &self,
         current_row: RowIndex,
@@ -458,14 +482,14 @@ impl View {
         Ok(())
     }
 
-    /// Calculates the visible range (left and right indices) of the line based on scrolling.
+    /// calculates the visible range (left and right indices) of the line based on scrolling.
     fn calculate_visible_range(&self, line_length: usize, width: usize) -> (usize, usize) {
         let left = min(self.scroll_offset.col, line_length);
         let right = min(self.scroll_offset.col.saturating_add(width), line_length);
         (left, right)
     }
 
-    /// Renders the visible portion of the line, handling search highlighting and selection.
+    /// renders the visible portion of the line, handling search highlighting and selection.
     fn render_visible_line(
         &self,
         current_row: RowIndex,
@@ -501,26 +525,25 @@ impl View {
         if let Some(query) = query {
             self.render_line_with_search(
                 current_row,
-                RopeSlice::from(expanded_line.as_str()), // Mudança aqui
+                RopeSlice::from(expanded_line.as_str()),
                 query,
                 selected_match,
             )?;
         } else if let Some((start, end)) = selection_range {
             self.render_line_with_selection(
                 current_row,
-                RopeSlice::from(expanded_line.as_str()), // Mudança aqui
+                RopeSlice::from(expanded_line.as_str()),
                 start,
                 end,
             )?;
         } else {
             self.render_line_normal(current_row, RopeSlice::from(expanded_line.as_str()))?;
-            // Mudança aqui
         }
 
         Ok(())
     }
 
-    /// Calculates the selection range for the current line if any selection exists.
+    /// calculates the selection range for the current line if any selection exists.
     fn calculate_selection_range(
         &self,
         line_idx: usize,
@@ -581,7 +604,7 @@ impl View {
         expanded_width
     }
 
-    /// Renders a line with search highlights.
+    /// renders a line with search highlights.
     fn render_line_with_search(
         &self,
         current_row: RowIndex,
@@ -600,7 +623,7 @@ impl View {
         Ok(())
     }
 
-    /// Renders a line with selection highlights.
+    /// renders a line with selection highlights.
     fn render_line_with_selection(
         &self,
         current_row: RowIndex,
@@ -612,7 +635,7 @@ impl View {
         Ok(())
     }
 
-    /// Renders a line without any highlights.
+    /// renders a line without any highlights.
     fn render_line_normal(
         &self,
         current_row: RowIndex,
@@ -644,7 +667,7 @@ impl View {
         output
     }
 
-    /// Renders a line with a given string.
+    /// renders a line with a given string.
     fn render_line(at: RowIndex, line_text: &str) -> Result<(), Error> {
         Terminal::print_row(at, line_text)
     }
@@ -794,7 +817,7 @@ impl View {
                     self.selection_end = Some(self.movement.text_location);
                 }
                 SelectionMode::VisualLine => {
-                    // Only update selection_end, keep selection_start fixed
+                    // only update selection_end, keep selection_start fixed
                     self.selection_end = Some(Location {
                         line_index: self.movement.text_location.line_index,
                         grapheme_index: self
@@ -856,7 +879,7 @@ impl View {
             _ => {}
         }
 
-        self.update_selection(); // Update selection to include the new line
+        self.update_selection(); // update selection to include the new line
         self.scroll_text_location_into_view();
     }
 
@@ -864,7 +887,7 @@ impl View {
         let line_index = self.movement.text_location.line_index;
         let grapheme_index = self.movement.text_location.grapheme_index;
 
-        // Verifica se o cursor está no fim da linha
+        // check if the cursor is at the end of the line
         if line_index < self.buffer.height() {
             let line_length = self.buffer.get_line_length(line_index);
             grapheme_index >= line_length

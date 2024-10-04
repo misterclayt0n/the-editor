@@ -245,6 +245,24 @@ impl View {
         self.set_needs_redraw(true);
     }
 
+    pub fn delete_current_line_and_leave_empty(&mut self) {
+        let line_index = self.movement.text_location.line_index;
+
+        self.buffer.delete_line(line_index);
+
+        self.buffer.insert_newline(Location {
+            line_index,
+            grapheme_index: 0,
+        });
+
+        self.movement.text_location = Location {
+            line_index,
+            grapheme_index: 0,
+        };
+
+        self.set_needs_redraw(true);
+    }
+
     pub fn delete_selection(&mut self) {
         if let Some((start, end)) = self.get_selection_range() {
             let start_idx = self.buffer.location_to_char_index(start);

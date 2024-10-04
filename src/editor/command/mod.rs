@@ -21,6 +21,7 @@ pub enum Command {
 pub enum VimCommand {
     ChangeMode(VimMode),
     DeleteLine,
+    ChangeLine,
     DeleteSelection,
     SubstituteSelection,
     ChangeSelection,
@@ -48,6 +49,7 @@ impl TryFrom<KeyEvent> for VimCommand {
             (KeyCode::Char('s'), KeyModifiers::NONE) => Ok(Self::SubstituteChar),
             (KeyCode::Char('C'), KeyModifiers::SHIFT) => Ok(Self::ChangeUntilEndOfLine),
             (KeyCode::Char('D'), KeyModifiers::SHIFT) => Ok(Self::DeleteUntilEndOfLine),
+            (KeyCode::Char('c'), KeyModifiers::NONE) => Ok(Self::ChangeLine),
             // TODO: maybe some more keybindings
             _ => Err(format!("Not a Vim command: {:?}", event)),
         }

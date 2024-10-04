@@ -280,7 +280,7 @@ impl Editor {
                                 }
                             }
                             Normal::Up | Normal::Down => {
-                                // Move the cursor vertically and expand the selection in Visual mode
+                                // move the cursor vertically and expand the selection in Visual mode
                                 self.view.handle_visual_movement(move_command);
                             }
                             _ => {
@@ -332,6 +332,15 @@ impl Editor {
                         self.command_buffer = None;
                     } else {
                         self.command_buffer = Some('d');
+                    }
+                }
+                VimCommand::ChangeLine => {
+                    if let Some('c') = self.command_buffer {
+                        self.view.delete_current_line_and_leave_empty();
+                        self.vim_mode = VimMode::Insert;
+                        self.command_buffer = None;
+                    } else {
+                        self.command_buffer = Some('c');
                     }
                 }
                 _ => self.command_buffer = None,

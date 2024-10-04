@@ -43,7 +43,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
     - [x] "I" and "A"
 	- [x] "o" and "O"
 	- [x] "s" and "x"
-    - [ ] "C" and "D" 
+    - [x] "C" and "D" 
     - [ ] "cc"
     - [ ] Operator + number + direction
     - [ ] Operator + inside/outside

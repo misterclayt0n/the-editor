@@ -34,6 +34,9 @@ impl Movement {
     }
 
     pub fn move_right(&mut self, buffer: &Buffer) {
+        if buffer.height() == 0 || buffer.get_line_length(self.text_location.line_index) == 0 {
+            return; // Não mover o cursor se o buffer ou a linha estiverem vazios
+        }
         let line_width = buffer.get_line_length(self.text_location.line_index);
         if self.text_location.grapheme_index < line_width.saturating_sub(1) {
             self.text_location.grapheme_index += 1;

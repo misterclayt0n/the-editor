@@ -319,35 +319,29 @@ impl View {
     fn insert_char(&mut self, character: char) {
         let line_index = self.movement.text_location.line_index;
 
-        // get the old length of the line
-        let old_len = if line_index < self.buffer.rope.len_lines() {
-            let line_slice = self.buffer.rope.line(line_index);
-            let line_str = line_slice.to_string();
-            let line = Line::from(&line_str);
-            line.grapheme_count()
-        } else {
-            0
-        };
-
-        self.buffer
-            .insert_char(character, self.movement.text_location);
-
-        // get the new length of the line after insertion
-        let new_len = if line_index < self.buffer.rope.len_lines() {
-            let line_slice = self.buffer.rope.line(line_index);
-            let line_str = line_slice.to_string();
-            let line = Line::from(&line_str);
-            line.grapheme_count()
-        } else {
-            0
-        };
-
-        let grapheme_delta = new_len.saturating_sub(old_len);
-
-        if grapheme_delta > 0 {
-            // move right for an added grapheme (should be the regular case)
-            self.handle_normal_command(Normal::Right);
+        // if the buffer is empty, insert a new line before adding more characters
+        if self.buffer.height() == 0 {
+            self.buffer.insert_newline(Location {
+                line_index: 0,
+                grapheme_index: 0,
+            });
         }
+
+        // get the length of the line to assure we are inserting in the right point
+        let line_width = self.buffer.get_line_length(line_index);
+
+        // if the cursor is at the end of line, insert new char at the end
+        if self.movement.text_location.grapheme_index >= line_width {
+            self.buffer
+                .insert_char(character, self.movement.text_location);
+        } else {
+            // else, just insert in the current cursor position 
+            self.buffer
+                .insert_char(character, self.movement.text_location);
+        }
+
+        // move right after insertion 
+        self.movement.text_location.grapheme_index += 1;
 
         self.set_needs_redraw(true);
     }

@@ -1,13 +1,13 @@
 use std::{cmp::min, io::Error};
 
 use crate::prelude::*;
-use super::super::{command::Edit, Line, Terminal};
+use super::super::{command::Edit, Terminal};
 use super::UIComponent;
 
 #[derive(Default)]
 pub struct CommandBar {
     prompt: String,
-    value: Line,
+    value: String,
     needs_redraw: bool,
     size: Size,
 }
@@ -15,9 +15,11 @@ pub struct CommandBar {
 impl CommandBar {
     pub fn handle_edit_command(&mut self, command: Edit) {
         match command {
-            Edit::Insert(character) => self.value.append_char(character),
+            Edit::Insert(character) => self.value.push(character),
             Edit::Delete | Edit::InsertNewline => {}
-            Edit::DeleteBackward => self.value.delete_last(),
+            Edit::DeleteBackward => {
+                self.value.pop();
+            }
         }
 
         self.set_needs_redraw(true);
@@ -27,7 +29,7 @@ impl CommandBar {
         let max_width = self
             .prompt
             .len()
-            .saturating_add(self.value.grapheme_count());
+            .saturating_add(self.value.len());
         min(max_width, self.size.width)
     }
 
@@ -41,7 +43,7 @@ impl CommandBar {
     }
 
     pub fn clear_value(&mut self) {
-        self.value = Line::default();
+        self.value.clear();
         self.set_needs_redraw(true);
     }
 }
@@ -57,16 +59,14 @@ impl UIComponent for CommandBar {
         self.size = size;
     }
     fn draw(&mut self, origin: RowIndex) -> Result<(), Error> {
-        let area_for_value = self.size.width.saturating_sub(self.prompt.len()); //this is how much space there is between the right side of the prompt and the edge of the bar
+        let area_for_value = self.size.width.saturating_sub(self.prompt.len()); // this is how much space there is between the right side of the prompt and the edge of the bar
 
-        let value_end = self.value.width(); // we always want to show the left part of the value, therefore the end of the visible range we try to access will be equal to the full width
-        let value_start = value_end.saturating_sub(area_for_value); //This should give us the start for the grapheme subrange we want to print out.
+        let value_end = self.value.len(); // we always want to show the left part of the value, therefore the end of the visible range we try to access will be equal to the full width
+        let value_start = value_end.saturating_sub(area_for_value); // this should give us the start for the grapheme subrange we want to print out.
 
-        let message = format!(
-            "{}{}",
-            self.prompt,
-            self.value.get_visible_graphemes(value_start..value_end)
-        );
+        let visible_line: String = self.value.chars().skip(value_start).take(area_for_value).collect();
+
+        let message = format!("{}{}", self.prompt, visible_line);
 
         let to_print = if message.len() <= self.size.width {
             message

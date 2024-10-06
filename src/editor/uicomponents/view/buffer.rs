@@ -1,7 +1,7 @@
 use ropey::Rope;
+use unicode_width::UnicodeWidthChar;
 
 use super::FileInfo;
-use super::Line;
 use crate::prelude::*;
 use std::fs::File;
 use std::io::Error;
@@ -49,15 +49,12 @@ impl Buffer {
             };
 
             let line_str = line_slice.to_string();
-            let line = Line::from(&line_str);
 
-            if from_grapheme_idx < line.grapheme_count() {
-                if let Some(grapheme_idx) = line.search_forward(query, from_grapheme_idx) {
-                    return Some(Location {
-                        grapheme_index: grapheme_idx,
-                        line_index: line_idx,
-                    });
-                }
+            if let Some(char_idx) = line_str[from_grapheme_idx..].find(query) {
+                return Some(Location {
+                    grapheme_index: from_grapheme_idx + char_idx,
+                    line_index: line_idx,
+                });
             }
         }
 
@@ -85,17 +82,14 @@ impl Buffer {
                 is_first = false;
                 from.grapheme_index
             } else {
-                let line_str = line_slice.to_string();
-                let line = Line::from(&line_str);
-                line.grapheme_count()
+                line_slice.len_chars()
             };
 
-            let line_str = line_slice.to_string();
-            let line = Line::from(&line_str);
-
-            if let Some(grapheme_idx) = line.search_backward(query, from_grapheme_idx) {
+            // Use RopeSlice to search backward for the substring
+            let line_str = line_slice.to_string(); // Temporarily convert to String for substring search
+            if let Some(char_idx) = line_str[..from_grapheme_idx].rfind(query) {
                 return Some(Location {
-                    grapheme_index: grapheme_idx,
+                    grapheme_index: char_idx,
                     line_index: line_idx,
                 });
             }
@@ -147,8 +141,6 @@ impl Buffer {
     }
 
     pub fn insert_char(&mut self, character: char, at: Location) {
-        debug_assert!(at.line_index <= self.height());
-
         let char_idx = self.rope.line_to_char(at.line_index) + at.grapheme_index;
         self.rope.insert(char_idx, &character.to_string());
         self.dirty = true;
@@ -282,14 +274,12 @@ impl Buffer {
 
     pub fn get_end_location(&self) -> Location {
         let last_line_index = self.rope.len_lines().saturating_sub(1);
-        let last_line = self.rope.line(last_line_index);
-        let grapheme_index = last_line.len_chars();
+        let grapheme_index = self.rope.line(last_line_index).len_chars();
         Location {
             line_index: last_line_index,
             grapheme_index,
         }
     }
-
     //
     // Conversion methods
     //
@@ -312,22 +302,27 @@ impl Buffer {
 
     pub fn get_line_length(&self, line_index: usize) -> usize {
         if line_index < self.rope.len_lines() {
-            let line_slice = self.rope.line(line_index);
-            line_slice.len_chars()
+            self.rope.line(line_index).len_chars()
         } else {
             0
         }
     }
-
     //
     // Helper functions
     //
 
     pub fn text_location_to_col(&self, location: Location) -> usize {
         let line_slice = self.rope.line(location.line_index);
-        let line_str = line_slice.to_string();
-        let line = Line::from(&line_str);
-        line.width_until(location.grapheme_index)
+        let mut col = 0;
+
+        for (i, c) in line_slice.chars().enumerate() {
+            if i >= location.grapheme_index {
+                break;
+            }
+            col += c.width().unwrap_or(0);
+        }
+
+        col
     }
 
     pub fn col_to_grapheme_index(&self, line_index: usize, col: usize) -> usize {
@@ -335,9 +330,17 @@ impl Buffer {
             return 0;
         }
         let line_slice = self.rope.line(line_index);
-        let line_str = line_slice.to_string();
-        let line = Line::from(&line_str);
-        line.grapheme_index_at_width(col)
+        let mut current_col = 0;
+
+        for (i, c) in line_slice.chars().enumerate() {
+            let char_width = c.width().unwrap_or(0);
+            if current_col + char_width > col {
+                return i;
+            }
+            current_col += char_width;
+        }
+
+        line_slice.len_chars()
     }
 }
 

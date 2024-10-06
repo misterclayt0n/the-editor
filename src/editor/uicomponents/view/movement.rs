@@ -1,6 +1,6 @@
 use std::cmp::min;
 
-use crate::{editor::line::Line, prelude::*};
+use crate::prelude::*;
 
 use super::buffer::Buffer;
 
@@ -71,9 +71,7 @@ impl Movement {
         self.text_location.grapheme_index =
             if self.text_location.line_index < buffer.rope.len_lines() {
                 let line_slice = buffer.rope.line(self.text_location.line_index);
-                let line_str = line_slice.to_string().trim_end_matches('\n').to_string();
-                let line = Line::from(&line_str);
-                line.grapheme_count()
+                line_slice.len_chars()
             } else {
                 0
             };

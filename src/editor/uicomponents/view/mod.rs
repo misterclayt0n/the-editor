@@ -4,7 +4,7 @@ use crate::prelude::*;
 
 use super::super::{
     command::{Edit, Normal},
-    DocumentStatus, Line, Terminal,
+    DocumentStatus, Terminal,
 };
 
 use super::UIComponent;
@@ -18,6 +18,7 @@ mod fileinfo;
 use fileinfo::FileInfo;
 mod searchinfo;
 use searchinfo::SearchInfo;
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 mod movement;
 
@@ -77,7 +78,7 @@ impl View {
 
     pub fn search(&mut self, query: &str) {
         if let Some(search_info) = &mut self.search_info {
-            search_info.query = Some(Line::from(query));
+            search_info.query = Some(query.to_string())
         }
 
         self.search_in_direction(self.movement.text_location, SearchDirection::default());
@@ -86,39 +87,35 @@ impl View {
     /// attempts to get the current search query - for scenarios where the search query absolutely must be there.
     /// panics if not present in debug, or if search info is not present in debug.
     /// returns None on release.
-    fn get_search_query(&self) -> Option<&Line> {
-        let query = self
-            .search_info
+    fn get_search_query(&self) -> Option<&str> {
+        self.search_info
             .as_ref()
-            .and_then(|search_info| search_info.query.as_ref());
-
-        debug_assert!(
-            query.is_some(),
-            "Attempting to search with malformed search_info present"
-        );
-        query
+            .and_then(|search_info| search_info.query.as_deref())
     }
 
     fn search_in_direction(&mut self, from: Location, direction: SearchDirection) {
-        if let Some(location) = self.get_search_query().and_then(|query| {
+        if let Some(query) = self.get_search_query() {
             if query.is_empty() {
-                None
-            } else if direction == SearchDirection::Forward {
-                self.buffer.search_forward(query, from)
-            } else {
-                self.buffer.search_backward(query, from)
+                return;
             }
-        }) {
-            self.movement.text_location = location;
-            self.center_text_location();
-            self.set_needs_redraw(true);
+
+            let location = match direction {
+                SearchDirection::Forward => self.buffer.search_forward(query, from),
+                SearchDirection::Backward => self.buffer.search_backward(query, from),
+            };
+
+            if let Some(location) = location {
+                self.movement.text_location = location;
+                self.center_text_location();
+                self.set_needs_redraw(true);
+            }
         }
     }
 
     pub fn search_next(&mut self) {
         let step_right = self
             .get_search_query()
-            .map_or(1, |query| min(query.grapheme_count(), 1));
+            .map_or(1, |query| min(query.graphemes(true).count(), 1));
 
         let location = Location {
             line_index: self.movement.text_location.line_index,
@@ -335,12 +332,12 @@ impl View {
             self.buffer
                 .insert_char(character, self.movement.text_location);
         } else {
-            // else, just insert in the current cursor position 
+            // else, just insert in the current cursor position
             self.buffer
                 .insert_char(character, self.movement.text_location);
         }
 
-        // move right after insertion 
+        // move right after insertion
         self.movement.text_location.grapheme_index += 1;
 
         self.set_needs_redraw(true);
@@ -459,19 +456,13 @@ impl View {
         width: usize,
     ) -> Result<(), Error> {
         let line_slice = self.buffer.rope.line(line_idx);
-        let selection_range = self.calculate_selection_range(line_idx, 0, width);
 
         if line_slice.len_chars() == 0 {
-            self.render_empty_line(current_row, selection_range)?;
+            self.render_empty_line(current_row, None)?;
         } else {
             let (left, right) = self.calculate_visible_range(line_slice.len_chars(), width);
-
-            if left <= right {
-                let visible_line = line_slice.slice(left..right);
-                self.render_visible_line(current_row, line_idx, visible_line, left, right)?;
-            } else {
-                Self::render_line(current_row, "~")?;
-            }
+            let visible_line = line_slice.slice(left..right);
+            self.render_visible_line(current_row, line_idx, visible_line, left, right)?;
         }
         Ok(())
     }
@@ -621,17 +612,22 @@ impl View {
         &self,
         current_row: RowIndex,
         visible_line: RopeSlice,
-        query: &Line,
-        selected_match: Option<GraphemeIndex>,
+        query: &str,
+        _selected_match: Option<usize>,
     ) -> Result<(), Error> {
         let line_str = visible_line.to_string();
-        let line = Line::from(&line_str);
 
-        Terminal::print_annotated_row(
-            current_row,
-            &line.get_annotated_visible_substr(0..line_str.len(), Some(query), selected_match),
-        )?;
-
+        // Realizar a busca pela substring e renderizar o resultado com destaque.
+        if let Some(start_idx) = line_str.find(query) {
+            let end_idx = start_idx + query.len();
+            Terminal::print_selected_row(
+                current_row,
+                RopeSlice::from(line_str.as_str()),
+                Some((start_idx, end_idx)),
+            )?;
+        } else {
+            Terminal::print_row(current_row, &line_str)?;
+        }
         Ok(())
     }
 
@@ -765,6 +761,7 @@ impl View {
         let cursor_position = self.cursor_position();
         let line_index = cursor_position.row + self.scroll_offset.row;
 
+        // Garante que o buffer possui linhas suficientes para a posição do cursor.
         while self.buffer.height() <= line_index {
             self.buffer.insert_newline(Location {
                 line_index: self.buffer.height(),
@@ -772,15 +769,28 @@ impl View {
             });
         }
 
+        // Calcular o índice de grafema com base na largura do cursor.
         let grapheme_index = if line_index < self.buffer.rope.len_lines() {
             let line_slice = self.buffer.rope.line(line_index);
-            let line_str = line_slice.to_string();
-            let line = Line::from(&line_str);
-            line.grapheme_index_at_width(cursor_position.col + self.scroll_offset.col)
+            let mut current_width = 0;
+            let mut grapheme_index = 0;
+
+            // Iterar sobre os caracteres da linha para calcular a posição.
+            for (i, c) in line_slice.chars().enumerate() {
+                let char_width = UnicodeWidthChar::width(c).unwrap_or(0);
+                if current_width + char_width > cursor_position.col + self.scroll_offset.col {
+                    break;
+                }
+                current_width += char_width;
+                grapheme_index = i + 1;
+            }
+
+            grapheme_index
         } else {
             0
         };
 
+        // Atualiza a localização do ponto de inserção.
         self.movement.text_location = Location {
             line_index,
             grapheme_index,

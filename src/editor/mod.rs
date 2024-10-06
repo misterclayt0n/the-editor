@@ -12,13 +12,11 @@ use std::{
 mod annotatedstring;
 mod command;
 mod documentstatus;
-mod line;
 mod terminal;
 mod uicomponents;
 
 use annotatedstring::{AnnotatedString, AnnotationType};
 use documentstatus::DocumentStatus;
-use line::Line;
 use terminal::Terminal;
 use uicomponents::{CommandBar, MessageBar, StatusBar, UIComponent, View};
 

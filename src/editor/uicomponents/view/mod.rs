@@ -264,7 +264,7 @@ impl View {
         if let Some((start, end)) = self.get_selection_range() {
             let start_idx = self.buffer.location_to_char_index(start);
             let end_idx = self.buffer.location_to_char_index(end);
-            self.buffer.rope.remove(start_idx..end_idx);
+            self.buffer.rope.remove(start_idx..end_idx + 1); // we add one here to account for the actual cursor
             self.buffer.dirty = true;
 
             // update cursor selection
@@ -567,6 +567,7 @@ impl View {
                         let selection_end = if end.line_index == line_idx {
                             self.expand_tabs_before_index(end.grapheme_index, line_idx)
                                 .saturating_sub(left)
+                                + 1
                         } else {
                             let expanded_line_length =
                                 self.get_expanded_line_length(line_idx).max(1);
@@ -769,7 +770,7 @@ impl View {
             });
         }
 
-        // calculate the grapheme index based on the width of the cursor 
+        // calculate the grapheme index based on the width of the cursor
         let grapheme_index = if line_index < self.buffer.rope.len_lines() {
             let line_slice = self.buffer.rope.line(line_index);
             let mut current_width = 0;
@@ -799,7 +800,7 @@ impl View {
             0
         };
 
-        // update the location of insertion point 
+        // update the location of insertion point
         self.movement.text_location = Location {
             line_index,
             grapheme_index,

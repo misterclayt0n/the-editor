@@ -35,7 +35,7 @@ impl Movement {
 
     pub fn move_right(&mut self, buffer: &Buffer) {
         if buffer.height() == 0 || buffer.get_line_length(self.text_location.line_index) == 0 {
-            return; // Não mover o cursor se o buffer ou a linha estiverem vazios
+            return;
         }
         let line_width = buffer.get_line_length(self.text_location.line_index);
         if self.text_location.grapheme_index < line_width.saturating_sub(1) {
@@ -71,11 +71,23 @@ impl Movement {
         self.text_location.grapheme_index =
             if self.text_location.line_index < buffer.rope.len_lines() {
                 let line_slice = buffer.rope.line(self.text_location.line_index);
-                line_slice.len_chars()
+                let line_str = line_slice.to_string().trim_end_matches('\n').to_string();
+                line_str.len()
             } else {
                 0
             };
         self.update_desired_col(buffer);
+
+        //         self.text_location.grapheme_index =
+        //     if self.text_location.line_index < buffer.rope.len_lines() {
+        //         let line_slice = buffer.rope.line(self.text_location.line_index);
+        //         let line_str = line_slice.to_string().trim_end_matches('\n').to_string();
+        //         let line = Line::from(&line_str);
+        //         line.grapheme_count()
+        //     } else {
+        //         0
+        //     };
+        // self.update_desired_col(buffer);
     }
 
     pub fn move_word_forward(&mut self, buffer: &Buffer, word_type: WordType) {

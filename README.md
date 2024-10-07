@@ -35,7 +35,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [x] Write to files
 - [ ] File manager inspired by [oil.nvim](https://github.com/stevearc/oil.nvim)
 - [ ] User configurations (`~/.config/the-editor/config`)
-- [ ] Optimize with rope data structure (almost completed)
+- [x] Optimize with rope data structure (almost completed)
 - [ ] CommandBar mode with basic operations: 
     - [ ] Saving
     - [ ] Subtitution

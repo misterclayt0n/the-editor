@@ -164,9 +164,19 @@ impl Buffer {
     }
 
     pub fn delete_line(&mut self, line_index: usize) {
-        let line_start = self.rope.line_to_char(line_index);
-        let line_end = self.rope.line_to_char(line_index + 1);
-        self.rope.remove(line_start..line_end);
+        if self.rope.len_lines() == 1 {
+            // Se for a última linha do documento, apenas a limpamos para que o buffer não fique vazio
+            let line_start = self.rope.line_to_char(line_index);
+            let line_end = self.rope.line_to_char(line_index + 1);
+            if line_end > line_start {
+                self.rope.remove(line_start..line_end);
+            }
+        } else {
+            // Se houver mais de uma linha, podemos deletar normalmente
+            let line_start = self.rope.line_to_char(line_index);
+            let line_end = self.rope.line_to_char(line_index + 1);
+            self.rope.remove(line_start..line_end);
+        }
         self.dirty = true;
     }
 

@@ -20,12 +20,12 @@ use std::io::{stdout, Error, Write};
 use super::AnnotatedString;
 use super::{Position, Size};
 
-/// Represents the Terminal.
-/// Edge Case for platforms where `usize` < `u16`:
-/// Regardless of the actual size of the Terminal, this representation
+/// represents the Terminal.
+/// edge Case for platforms where `usize` < `u16`:
+/// regardless of the actual size of the Terminal, this representation
 /// only spans over at most `usize::MAX` or `u16::size` rows/columns, whichever is smaller.
-/// Each size returned truncates to min(`usize::MAX`, `u16::MAX`)
-/// And should you attempt to set the cursor out of these bounds, it will also be truncated.
+/// each size returned truncates to min(`usize::MAX`, `u16::MAX`)
+/// and should you attempt to set the cursor out of these bounds, it will also be truncated.
 pub struct Terminal;
 
 impl Terminal {

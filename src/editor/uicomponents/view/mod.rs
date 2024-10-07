@@ -269,8 +269,9 @@ impl View {
             let mut end_idx = self.buffer.location_to_char_index(end);
 
             // include chars contained by the cursor and make sure they do not 
-            // exceed the length of the rope
-            if end_idx < self.buffer.rope.len_chars() {
+            // exceed the length of the rope. we also only want this behavior for visual mode, not
+            // visual line
+            if end_idx < self.buffer.rope.len_chars() && self.selection_mode == Some(SelectionMode::Visual) {
                 end_idx += 1;
             }
 

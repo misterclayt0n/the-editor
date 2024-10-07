@@ -761,7 +761,7 @@ impl View {
         let cursor_position = self.cursor_position();
         let line_index = cursor_position.row + self.scroll_offset.row;
 
-        // Garante que o buffer possui linhas suficientes para a posição do cursor.
+        // make sure buffer has enough lines
         while self.buffer.height() <= line_index {
             self.buffer.insert_newline(Location {
                 line_index: self.buffer.height(),
@@ -769,18 +769,27 @@ impl View {
             });
         }
 
-        // Calcular o índice de grafema com base na largura do cursor.
+        // calculate the grapheme index based on the width of the cursor 
         let grapheme_index = if line_index < self.buffer.rope.len_lines() {
             let line_slice = self.buffer.rope.line(line_index);
             let mut current_width = 0;
             let mut grapheme_index = 0;
 
-            // Iterar sobre os caracteres da linha para calcular a posição.
-            for (i, c) in line_slice.chars().enumerate() {
-                let char_width = UnicodeWidthChar::width(c).unwrap_or(0);
-                if current_width + char_width > cursor_position.col + self.scroll_offset.col {
+            // iterate over graphemes of the line to calculate the position
+            for (i, grapheme) in line_slice.to_string().graphemes(true).enumerate() {
+                let char_width = if grapheme == "\t" {
+                    // calculate how many spaces the tabs represent
+                    TAB_WIDTH - (current_width % TAB_WIDTH)
+                } else {
+                    // get grapheme width
+                    UnicodeWidthChar::width(grapheme.chars().next().unwrap()).unwrap_or(0)
+                };
+
+                if current_width >= cursor_position.col + self.scroll_offset.col {
+                    grapheme_index = i;
                     break;
                 }
+
                 current_width += char_width;
                 grapheme_index = i + 1;
             }
@@ -790,7 +799,7 @@ impl View {
             0
         };
 
-        // Atualiza a localização do ponto de inserção.
+        // update the location of insertion point 
         self.movement.text_location = Location {
             line_index,
             grapheme_index,

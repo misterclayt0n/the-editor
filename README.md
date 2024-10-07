@@ -47,6 +47,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
     - [ ] "cc"
     - [ ] Operator + number + direction
     - [ ] Operator + inside/outside
+- [ ] Yanking and pasting
 - [ ] Very basic syntax highlight 
 - [ ] Fuzzy finder inspired by [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
 

@@ -77,17 +77,6 @@ impl Movement {
                 0
             };
         self.update_desired_col(buffer);
-
-        //         self.text_location.grapheme_index =
-        //     if self.text_location.line_index < buffer.rope.len_lines() {
-        //         let line_slice = buffer.rope.line(self.text_location.line_index);
-        //         let line_str = line_slice.to_string().trim_end_matches('\n').to_string();
-        //         let line = Line::from(&line_str);
-        //         line.grapheme_count()
-        //     } else {
-        //         0
-        //     };
-        // self.update_desired_col(buffer);
     }
 
     pub fn move_word_forward(&mut self, buffer: &Buffer, word_type: WordType) {

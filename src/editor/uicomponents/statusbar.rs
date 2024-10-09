@@ -1,6 +1,6 @@
 use std::io::Error;
 
-use crate::editor::VimMode;
+use crate::editor::ModeType;
 use crate::prelude::*;
 
 use super::super::{DocumentStatus, Size, Terminal};
@@ -11,16 +11,27 @@ pub struct StatusBar {
     current_status: DocumentStatus,
     needs_redraw: bool,
     size: Size,
-    vim_mode: VimMode,
+    mode: ModeType,
 }
 
 impl StatusBar {
-    pub fn update_status(&mut self, new_status: DocumentStatus, vim_mode: VimMode) {
-        if new_status != self.current_status || self.vim_mode != vim_mode {
+    pub fn update_status(&mut self, new_status: DocumentStatus, mode: ModeType) {
+        if new_status != self.current_status || self.mode != mode {
             self.current_status = new_status;
-            self.vim_mode = vim_mode;
+            self.mode = mode;
             self.set_needs_redraw(true);
         }
+    }
+
+    pub fn set_mode(&mut self, mode: ModeType) {
+        if self.mode != mode {
+            self.mode = mode;
+            self.set_needs_redraw(true);
+        }
+    }
+
+    pub fn clear_mode(&mut self) {
+        self.set_mode(ModeType::Normal);
     }
 }
 
@@ -41,7 +52,7 @@ impl UIComponent for StatusBar {
         // assemble the first part of the status bar
         let line_count = self.current_status.line_count_to_string();
         let modified_indicator = self.current_status.modified_indicator_to_string();
-        let vim_mode_display = format!("{}", self.vim_mode); // show the mode 
+        let vim_mode_display = format!("{}", self.mode); // show the mode
 
         let beginning = format!(
             "{} - {line_count} -- {vim_mode_display} -- {modified_indicator}",

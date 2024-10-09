@@ -20,12 +20,6 @@ use std::io::{stdout, Error, Write};
 use super::AnnotatedString;
 use super::{Position, Size};
 
-/// represents the Terminal.
-/// edge Case for platforms where `usize` < `u16`:
-/// regardless of the actual size of the Terminal, this representation
-/// only spans over at most `usize::MAX` or `u16::size` rows/columns, whichever is smaller.
-/// each size returned truncates to min(`usize::MAX`, `u16::MAX`)
-/// and should you attempt to set the cursor out of these bounds, it will also be truncated.
 pub struct Terminal;
 
 impl Terminal {
@@ -173,18 +167,11 @@ impl Terminal {
         Self::print_row(row, &format!("{Reverse}{line_text:width$.width$}{Reset}"))
     }
 
-    /// Returns the current size of this Terminal.
-    /// Edge Case for systems with `usize` < `u16`:
-    /// * A `Size` representing the terminal size. Any coordinate `z` truncated to `usize` if `usize` < `z` < `u16`
     pub fn size() -> Result<Size, Error> {
         let (width_u16, height_u16) = size()?;
 
-        // clippy::as_conversions: See doc above
-        #[allow(clippy::as_conversions)]
         let height = height_u16 as usize;
 
-        // clippy::as_conversions: See doc above
-        #[allow(clippy::as_conversions)]
         let width = width_u16 as usize;
 
         Ok(Size { height, width })

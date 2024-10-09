@@ -1,6 +1,5 @@
 use crate::prelude::*;
-use command::{Normal, VimCommand};
-use crossterm::event::read;
+use crossterm::event::{read, Event, KeyCode, KeyEvent, KeyModifiers};
 
 use core::fmt;
 use std::{
@@ -10,7 +9,6 @@ use std::{
 };
 
 mod annotatedstring;
-mod command;
 mod documentstatus;
 mod terminal;
 mod uicomponents;
@@ -20,16 +18,44 @@ use documentstatus::DocumentStatus;
 use terminal::Terminal;
 use uicomponents::{CommandBar, MessageBar, StatusBar, UIComponent, View};
 
-use self::command::{
-    Command::{self, Edit, Move, System},
-    Edit::InsertNewline,
-    Normal::{Down, Left, Right, Up},
-    System::{Dismiss, Quit, Resize, Save, Search},
-};
-
 const QUIT_TIMES: u8 = 3;
 
-#[derive(Eq, PartialEq, Default)]
+#[derive(Clone, Copy)]
+pub enum Normal {
+    PageUp,
+    PageDown,
+    StartOfLine,
+    FirstCharLine,
+    EndOfLine,
+    Up,
+    Left,
+    Right,
+    Down,
+    WordForward,
+    WordBackward,
+    BigWordForward,
+    BigWordBackward,
+    GoToTop,
+    GoToBottom,
+    AppendRight,
+    InsertAtLineStart,
+    InsertAtLineEnd,
+}
+
+#[derive(Clone, Copy)]
+pub enum Edit {
+    Insert(char),
+    InsertNewline,
+    Delete,
+    DeleteBackward,
+    SubstituteChar,
+    ChangeLine,
+    SubstitueSelection,
+    InsertNewlineBelow,
+    InsertNewlineAbove,
+}
+
+#[derive(Eq, PartialEq, Default, Debug, Clone, Copy)]
 enum PromptType {
     Search,
     Save,
@@ -44,45 +70,97 @@ impl PromptType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VimMode {
+pub enum ModeType {
     Normal,
     Insert,
     Visual,
     VisualLine,
-    CommandMode,
+    Command,
+    Prompt(PromptType),
 }
 
-impl fmt::Display for VimMode {
+impl fmt::Display for ModeType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            VimMode::Insert => write!(f, "INSERT"),
-            VimMode::Normal => write!(f, "NORMAL"),
-            VimMode::Visual => write!(f, "VISUAL"),
-            VimMode::VisualLine => write!(f, "VISUAL LINE"),
-            VimMode::CommandMode => write!(f, "COMMAND"),
+            ModeType::Insert => write!(f, "INSERT"),
+            ModeType::Normal => write!(f, "NORMAL"),
+            ModeType::Visual => write!(f, "VISUAL"),
+            ModeType::VisualLine => write!(f, "VISUAL LINE"),
+            ModeType::Command => write!(f, "COMMAND"),
+            ModeType::Prompt(prompt_type) => match prompt_type {
+                PromptType::Search => write!(f, "SEARCH"),
+                PromptType::Save => write!(f, "SAVE"),
+                _ => write!(f, "PROMPT"),
+            },
         }
     }
 }
 
-impl Default for VimMode {
+impl Default for ModeType {
     fn default() -> Self {
-        VimMode::Normal
+        ModeType::Normal
     }
 }
 
-#[derive(Default)]
+use std::any::Any;
+
+trait Mode {
+    fn handle_event(&mut self, event: KeyEvent) -> Option<EditorCommand>;
+    fn enter(&mut self) -> Vec<EditorCommand>;
+    fn exit(&mut self) -> Vec<EditorCommand>;
+    fn as_any(&self) -> &dyn Any;
+}
+
+enum EditorCommand {
+    MoveCursor(Normal),
+    EditCommand(Edit),
+    SwitchMode(ModeType),
+    HandleQuitCommand,
+    HandleSaveCommand,
+    SetPrompt(PromptType),
+    ResetQuitTimes,
+    UpdateInsertionPoint,
+    UpdateMessage(String),
+    SaveAs(String),
+    Save,
+    Quit,
+    HandleResizeCommand(Size),
+    UpdateCommandBar(Edit),
+    PerformSearch(String),
+    ClearSelection,
+    DeleteSelection,
+    UpdateSelection,
+    StartSelection(SelectionMode),
+    DeleteCharAtCursor,
+    DeleteCurrentLine,
+    ChangeCurrentLine,
+    DeleteCurrentLineAndLeaveEmpty,
+    DeleteUntilEndOfLine,
+    ChangeUntilEndOfLine,
+    UpdateInsertionPointToCursorPosition,
+    SetNeedsRedraw,
+    HandleVisualMovement(Normal),
+    HandleVisualLineMovement(Normal),
+    MoveCursorAndSwitchMode(Normal, ModeType),
+    EditAndSwitchMode(Edit, ModeType),
+    EnterSearch,
+    ExitSearch,
+    SearchNext,
+    SearchPrevious,
+}
+
 pub struct Editor {
     should_quit: bool,
     view: View,
     status_bar: StatusBar,
     message_bar: MessageBar,
     command_bar: CommandBar,
-    command_buffer: Option<char>,
-    prompt_type: PromptType,
     terminal_size: Size,
     title: String,
     quit_times: u8,
-    vim_mode: VimMode,
+    current_mode: ModeType,
+    current_mode_impl: Box<dyn Mode>,
+    prompt_type: PromptType,
 }
 
 impl Editor {
@@ -100,7 +178,19 @@ impl Editor {
 
         Terminal::initialize()?;
 
-        let mut editor = Self::default();
+        let mut editor = Self {
+            should_quit: false,
+            view: View::default(),
+            status_bar: StatusBar::default(),
+            message_bar: MessageBar::default(),
+            command_bar: CommandBar::default(),
+            terminal_size: Size::default(),
+            title: String::new(),
+            quit_times: 0,
+            current_mode: ModeType::Normal,
+            current_mode_impl: Box::new(NormalMode::new()),
+            prompt_type: PromptType::None,
+        };
         let size = Terminal::size().unwrap_or_default();
         editor.handle_resize_command(size);
         editor.update_message("we gucci");
@@ -114,6 +204,8 @@ impl Editor {
                 editor.update_message(&format!("ERROR: Could not open file: {file_name}"));
             }
         }
+
+        editor.switch_mode(ModeType::Normal);
 
         editor.refresh_status();
         Ok(editor)
@@ -131,8 +223,16 @@ impl Editor {
             }
             match read() {
                 Ok(event) => {
-                    if let Ok(command) = Command::from_event(event, self.vim_mode) {
-                        self.process_command(command);
+                    if let Event::Key(key_event) = event {
+                        if let Some(command) = self.current_mode_impl.handle_event(key_event) {
+                            self.execute_command(command);
+                        }
+                    } else if let Event::Resize(width_u16, height_u16) = event {
+                        let size = Size {
+                            height: height_u16 as usize,
+                            width: width_u16 as usize,
+                        };
+                        self.execute_command(EditorCommand::HandleResizeCommand(size));
                     }
                 }
                 Err(err) => {
@@ -143,6 +243,128 @@ impl Editor {
                 }
             }
             self.refresh_status();
+        }
+    }
+
+    fn execute_command(&mut self, command: EditorCommand) {
+        match command {
+            EditorCommand::MoveCursor(direction) => {
+                self.view.handle_normal_command(direction);
+            }
+            EditorCommand::MoveCursorAndSwitchMode(direction, mode) => {
+                self.view.handle_normal_command(direction);
+                self.switch_mode(mode);
+            }
+            EditorCommand::EditAndSwitchMode(edit, mode) => {
+                self.view.handle_edit_command(edit);
+                self.switch_mode(mode);
+            }
+            EditorCommand::EditCommand(edit) => {
+                self.view.handle_edit_command(edit);
+            }
+            EditorCommand::SwitchMode(mode) => {
+                self.switch_mode(mode);
+            }
+            EditorCommand::HandleQuitCommand => {
+                self.handle_quit_command();
+            }
+            EditorCommand::HandleSaveCommand => {
+                self.handle_save_command();
+            }
+            EditorCommand::SetPrompt(prompt_type) => {
+                self.set_prompt(prompt_type);
+                self.switch_mode(ModeType::Prompt(prompt_type));
+            }
+            EditorCommand::ResetQuitTimes => {
+                self.reset_quit_times();
+            }
+            EditorCommand::EnterSearch => {
+                self.view.enter_search();
+            }
+            EditorCommand::ExitSearch => {
+                self.view.exit_search();
+            }
+            EditorCommand::SearchNext => {
+                self.view.search_next();
+            }
+            EditorCommand::SearchPrevious => {
+                self.view.search_prev();
+            }
+            EditorCommand::UpdateInsertionPoint => {
+                self.update_insertion_point();
+            }
+            EditorCommand::UpdateMessage(msg) => {
+                self.update_message(&msg);
+            }
+            EditorCommand::SaveAs(file_name) => {
+                self.save(Some(&file_name));
+            }
+            EditorCommand::Save => {
+                self.save(None);
+            }
+            EditorCommand::Quit => {
+                self.should_quit = true;
+            }
+            EditorCommand::HandleResizeCommand(size) => {
+                self.handle_resize_command(size);
+            }
+            EditorCommand::UpdateCommandBar(edit) => {
+                self.command_bar.handle_edit_command(edit);
+                if let PromptType::Search = self.prompt_type {
+                    let query = self.command_bar.value();
+                    self.view.search(&query);
+                }
+            }
+            EditorCommand::PerformSearch(_) => {
+                let query = self.command_bar.value();
+                self.view.search(&query);
+            }
+            EditorCommand::ClearSelection => {
+                self.view.clear_selection();
+            }
+            EditorCommand::DeleteSelection => {
+                self.view.delete_selection();
+                self.execute_command(EditorCommand::ClearSelection);
+                self.execute_command(EditorCommand::SwitchMode(ModeType::Normal));
+            }
+            EditorCommand::UpdateSelection => {
+                self.view.update_selection();
+            }
+            EditorCommand::StartSelection(selection_mode) => {
+                self.view.start_selection(selection_mode);
+            }
+            EditorCommand::DeleteCharAtCursor => {
+                self.view.delete_char_at_cursor();
+            }
+            EditorCommand::DeleteCurrentLine => {
+                self.view.delete_current_line();
+            }
+            EditorCommand::ChangeCurrentLine => {
+                self.view.delete_current_line_and_leave_empty();
+                self.execute_command(EditorCommand::SwitchMode(ModeType::Insert))
+            }
+            EditorCommand::DeleteCurrentLineAndLeaveEmpty => {
+                self.view.delete_current_line_and_leave_empty();
+            }
+            EditorCommand::DeleteUntilEndOfLine => {
+                self.view.delete_until_end_of_line();
+            }
+            EditorCommand::ChangeUntilEndOfLine => {
+                self.view.delete_until_end_of_line();
+                self.execute_command(EditorCommand::SwitchMode(ModeType::Insert))
+            }
+            EditorCommand::UpdateInsertionPointToCursorPosition => {
+                self.view.update_insertion_point_to_cursor_position();
+            }
+            EditorCommand::SetNeedsRedraw => {
+                self.view.set_needs_redraw(true);
+            }
+            EditorCommand::HandleVisualMovement(direction) => {
+                self.view.handle_visual_movement(direction);
+            }
+            EditorCommand::HandleVisualLineMovement(direction) => {
+                self.view.handle_visual_line_movement(direction);
+            }
         }
     }
 
@@ -186,7 +408,7 @@ impl Editor {
     fn refresh_status(&mut self) {
         let status = self.view.get_status();
         let title = format!("{} - {NAME}", status.file_name);
-        self.status_bar.update_status(status, self.vim_mode);
+        self.status_bar.update_status(status, self.current_mode);
 
         if title != self.title && matches!(Terminal::set_title(&title), Ok(())) {
             self.title = title;
@@ -194,268 +416,33 @@ impl Editor {
     }
 
     //
-    // Command handling
+    // Mode handling
     //
 
-    fn process_command(&mut self, command: Command) {
-        if let System(Resize(size)) = command {
-            self.handle_resize_command(size);
-            return;
+    fn switch_mode(&mut self, mode: ModeType) {
+        // Exit the current mode
+        let exit_commands = self.current_mode_impl.exit();
+        for command in exit_commands {
+            self.execute_command(command);
         }
 
-        match self.prompt_type {
-            PromptType::Search => self.process_command_during_search(command),
-            PromptType::Save => self.process_command_during_save(command),
-            PromptType::None => self.process_command_no_prompt(command),
-        }
-    }
+        // Set the current mode type
+        self.current_mode = mode;
 
-    fn process_command_no_prompt(&mut self, command: Command) {
-        if matches!(command, System(Quit)) {
-            self.handle_quit_command();
-            return;
-        }
-        self.reset_quit_times(); // reset quit times for all other commands
+        // Create a new mode instance
+        self.current_mode_impl = match mode {
+            ModeType::Normal => Box::new(NormalMode::new()),
+            ModeType::Insert => Box::new(InsertMode::new()),
+            ModeType::Visual => Box::new(VisualMode::new()),
+            ModeType::VisualLine => Box::new(VisualLineMode::new()),
+            ModeType::Command => Box::new(CommandMode::new()),
+            ModeType::Prompt(prompt_type) => Box::new(PromptMode::new(prompt_type)),
+        };
 
-        match command {
-            System(Quit | Resize(_) | Dismiss) => {} // quit and Resize already handled above, others not applicable
-            System(Search) => self.set_prompt(PromptType::Search),
-            System(Save) => self.handle_save_command(),
-            Edit(edit_command) => {
-                if self.vim_mode == VimMode::Insert {
-                    // handle edit commands in insert mode
-                    self.view.handle_edit_command(edit_command);
-                }
-            }
-            Move(move_command) => {
-                match self.vim_mode {
-                    VimMode::Normal => {
-                        match move_command {
-                            Normal::AppendRight => {
-                                if self.view.at_end_of_line() {
-                                    self.view.handle_normal_command(Normal::EndOfLine);
-                                } else {
-                                    self.view.handle_normal_command(Normal::Right);
-                                }
-                                self.vim_mode = VimMode::Insert;
-                            }
-                            Normal::InsertAtLineEnd => {
-                                self.view.handle_normal_command(Normal::EndOfLine);
-                                self.vim_mode = VimMode::Insert;
-                            }
-                            Normal::InsertAtLineStart => {
-                                self.view.handle_normal_command(Normal::InsertAtLineStart);
-                                self.vim_mode = VimMode::Insert;
-                            }
-                            Normal::Wait => {
-                                if let Some('g') = self.command_buffer {
-                                    // gg detected
-                                    self.view.handle_normal_command(Normal::GoToTop);
-                                    self.command_buffer = None;
-                                } else {
-                                    self.command_buffer = Some('g');
-                                }
-                            }
-                            Normal::VisualLine => {
-                                self.view.start_selection(SelectionMode::VisualLine);
-                                self.vim_mode = VimMode::VisualLine;
-                            }
-                            _ => {
-                                self.view.handle_normal_command(move_command);
-                                self.command_buffer = None;
-                            }
-                        }
-                    }
-                    VimMode::Visual => {
-                        match move_command {
-                            Normal::Wait => {
-                                if let Some('g') = self.command_buffer {
-                                    // gg detected
-                                    self.view.handle_normal_command(Normal::GoToTop);
-                                    self.command_buffer = None;
-                                } else {
-                                    self.command_buffer = Some('g');
-                                }
-                            }
-                            Normal::Up | Normal::Down => {
-                                // move the cursor vertically and expand the selection in Visual mode
-                                self.view.handle_visual_movement(move_command);
-                            }
-                            _ => {
-                                self.view.handle_normal_command(move_command);
-                                self.command_buffer = None; // Reset buffer if another command is pressed
-                            }
-                        }
-                        // After handling movement in Visual mode, update the selection
-                        self.view.update_selection();
-                        self.view.set_needs_redraw(true);
-                    }
-                    VimMode::VisualLine => {
-                        match move_command {
-                            Normal::Wait => {
-                                if let Some('g') = self.command_buffer {
-                                    // gg detected
-                                    self.view.handle_normal_command(Normal::GoToTop);
-                                    self.command_buffer = None;
-                                } else {
-                                    self.command_buffer = Some('g');
-                                }
-                            }
-                            Normal::Up | Normal::Down => {
-                                // Move the cursor vertically and expand the selection in Visual mode
-                                self.view.handle_visual_line_movement(move_command);
-                            }
-                            _ => {
-                                self.view.handle_normal_command(move_command);
-                                self.command_buffer = None; // Reset buffer if another command is pressed
-                            }
-                        }
-                        // After handling movement in Visual mode, update the selection
-                        self.view.update_selection();
-                        self.view.set_needs_redraw(true);
-                    }
-                    _ => {
-                        // Other modes (e.g., Insert, CommandMode) do not handle movement commands here
-                    }
-                }
-            }
-            Command::Vim(vim_command) => self.handle_vim_command(vim_command),
-        }
-
-        if let Command::Vim(vim_command) = command {
-            match vim_command {
-                VimCommand::DeleteLine => {
-                    if let Some('d') = self.command_buffer {
-                        self.view.delete_current_line();
-                        self.command_buffer = None;
-                    } else {
-                        self.command_buffer = Some('d');
-                    }
-                }
-                VimCommand::ChangeLine => {
-                    if let Some('c') = self.command_buffer {
-                        self.view.delete_current_line_and_leave_empty();
-                        self.vim_mode = VimMode::Insert;
-                        self.command_buffer = None;
-                    } else {
-                        self.command_buffer = Some('c');
-                    }
-                }
-                _ => self.command_buffer = None,
-            }
-        } else {
-            self.reset_quit_times();
-        }
-    }
-
-    fn handle_vim_command(&mut self, vim_command: VimCommand) {
-        match vim_command {
-            VimCommand::ChangeMode(new_mode) => {
-                let old_mode = self.vim_mode;
-
-                match new_mode {
-                    VimMode::Insert => {
-                        self.update_insertion_point();
-                        self.view.clear_selection();
-                    }
-                    VimMode::Visual => {
-                        if old_mode != VimMode::Visual {
-                            self.view.start_selection(SelectionMode::Visual);
-                        }
-                    }
-                    VimMode::VisualLine => {
-                        if old_mode != VimMode::VisualLine {
-                            self.view.start_selection(SelectionMode::VisualLine);
-                        }
-                    }
-                    VimMode::Normal => {
-                        if old_mode == VimMode::Insert {
-                            self.view.handle_normal_command(Normal::Left);
-                        }
-
-                        if old_mode == VimMode::Visual || old_mode == VimMode::VisualLine {
-                            self.view.clear_selection();
-                        }
-                    }
-                    VimMode::CommandMode => {}
-                }
-
-                self.vim_mode = new_mode;
-                self.view.set_needs_redraw(true);
-            }
-            VimCommand::DeleteSelection => {
-                self.view.delete_selection();
-                self.view.clear_selection();
-                self.vim_mode = VimMode::Normal; // back to normal mode after deleting
-                self.view.set_needs_redraw(true);
-            }
-            VimCommand::SubstituteSelection => {
-                self.view.delete_selection();
-                self.view.clear_selection();
-                self.vim_mode = VimMode::Insert; // back to normal mode after deleting
-                self.view.update_insertion_point_to_cursor_position(); // update point of insertion
-                self.view.set_needs_redraw(true);
-            }
-            VimCommand::ChangeSelection => {
-                if let Some((start, end)) = self.view.get_selection_range() {
-                    let start_line = start.line_index;
-                    let end_line = end.line_index;
-
-                    if start_line == end_line {
-                        // only one line selected
-                        self.view.replace_line_with_empty(start_line);
-                    } else {
-                        // multiple lines selected
-                        // determine the index of initial and final char to line interval
-                        let start_idx = self.view.buffer.rope.line_to_char(start_line);
-                        let end_idx = self.view.buffer.rope.line_to_char(end_line + 1);
-
-                        // remove all lines all at once
-                        self.view.buffer.rope.remove(start_idx..end_idx);
-
-                        // insert only one empty line in place of the first selected line
-                        self.view.buffer.rope.insert(start_idx, "\n");
-
-                        // update cursor postiion
-                        self.view.movement.text_location = Location {
-                            line_index: start_line,
-                            grapheme_index: 0,
-                        };
-
-                        self.view.buffer.dirty = true;
-                    }
-
-                    // clear selection and enter insert mode
-                    self.view.clear_selection();
-                    self.vim_mode = VimMode::Insert;
-                    self.view.set_needs_redraw(true);
-                }
-            }
-            VimCommand::OpenNewLineBelow => {
-                self.view.insert_newline_below();
-                self.vim_mode = VimMode::Insert;
-                self.view.set_needs_redraw(true);
-            }
-            VimCommand::OpenNewLineAbove => {
-                self.view.insert_newline_above();
-                self.vim_mode = VimMode::Insert;
-                self.view.set_needs_redraw(true);
-            }
-            VimCommand::SubstituteChar => {
-                self.view.delete_char_at_cursor();
-                self.vim_mode = VimMode::Insert;
-                self.view.set_needs_redraw(true);
-            }
-            VimCommand::DeleteChar => {
-                self.view.delete_char_at_cursor();
-                self.view.set_needs_redraw(true);
-            }
-            VimCommand::DeleteUntilEndOfLine => self.view.delete_until_end_of_line(),
-            VimCommand::ChangeUntilEndOfLine => {
-                self.view.delete_until_end_of_line();
-                self.vim_mode = VimMode::Insert;
-            }
-            _ => {}
+        // Enter the new mode
+        let enter_commands = self.current_mode_impl.enter();
+        for command in enter_commands {
+            self.execute_command(command);
         }
     }
 
@@ -485,8 +472,6 @@ impl Editor {
     // Quit command handling
     //
 
-    // clippy::arithmetic_side_effects: quit_times is guaranteed to be between 0 and QUIT_TIMES
-    #[allow(clippy::arithmetic_side_effects)]
     fn handle_quit_command(&mut self) {
         if !self.view.get_status().is_modified || self.quit_times + 1 == QUIT_TIMES {
             self.should_quit = true;
@@ -516,23 +501,7 @@ impl Editor {
             self.save(None);
         } else {
             self.set_prompt(PromptType::Save);
-        }
-    }
-
-    fn process_command_during_save(&mut self, command: Command) {
-        match command {
-            System(Quit | Resize(_) | Search | Save) | Move(_) => {} // not applicable during save, Resize already handled at this stage
-            System(Dismiss) => {
-                self.set_prompt(PromptType::None);
-                self.update_message("Save aborted.");
-            }
-            Edit(InsertNewline) => {
-                let file_name = self.command_bar.value();
-                self.save(Some(&file_name));
-                self.set_prompt(PromptType::None);
-            }
-            Edit(edit_command) => self.command_bar.handle_edit_command(edit_command),
-            Command::Vim(vim_command) => self.handle_vim_command(vim_command),
+            self.switch_mode(ModeType::Prompt(PromptType::Save));
         }
     }
 
@@ -550,30 +519,6 @@ impl Editor {
     }
 
     //
-    // Search command & prompt handling
-    //
-
-    fn process_command_during_search(&mut self, command: Command) {
-        match command {
-            System(Dismiss) | Command::Vim(VimCommand::ChangeMode(VimMode::Normal)) => {
-                // Handle ESC to exit search and switch back to normal mode
-                self.set_prompt(PromptType::None);
-                self.view.dismiss_search();
-                self.vim_mode = VimMode::Normal; // set mode back to normal after dismissing search
-            }
-            Edit(edit_command) => {
-                self.command_bar.handle_edit_command(edit_command);
-                let query = self.command_bar.value();
-                self.view.search(&query);
-            }
-            Move(Right | Down) => self.view.search_next(),
-            Move(Up | Left) => self.view.search_prev(),
-            System(Quit | Resize(_) | Search | Save) | Move(_) => {}
-            Command::Vim(vim_command) => self.handle_vim_command(vim_command),
-        }
-    }
-
-    //
     // Message & command bar
     //
 
@@ -586,7 +531,7 @@ impl Editor {
     //
 
     fn in_prompt(&self) -> bool {
-        !self.prompt_type.is_none()
+        matches!(self.current_mode, ModeType::Prompt(_))
     }
 
     fn set_prompt(&mut self, prompt_type: PromptType) {
@@ -594,16 +539,14 @@ impl Editor {
             PromptType::None => self.message_bar.set_needs_redraw(true),
             PromptType::Save => {
                 self.command_bar.set_prompt("Save as: ");
-                self.vim_mode = VimMode::CommandMode; // Enter command mode when saving
+                self.command_bar.clear_value();
             }
             PromptType::Search => {
-                self.view.enter_search();
-                self.command_bar.set_prompt("Search: ");
-                self.vim_mode = VimMode::CommandMode; // Enter command mode when searching
+                self.command_bar.set_prompt("/");
+                self.command_bar.clear_value();
             }
         }
 
-        self.command_bar.clear_value();
         self.prompt_type = prompt_type;
     }
 
@@ -615,5 +558,675 @@ impl Editor {
 impl Drop for Editor {
     fn drop(&mut self) {
         let _ = Terminal::terminate();
+    }
+}
+
+//
+// Mode Implementations
+//
+
+struct NormalMode {
+    command_buffer: Option<char>,
+}
+
+impl NormalMode {
+    fn new() -> Self {
+        Self {
+            command_buffer: None,
+        }
+    }
+}
+
+impl Mode for NormalMode {
+    fn handle_event(&mut self, event: KeyEvent) -> Option<EditorCommand> {
+        match event {
+            KeyEvent {
+                code: KeyCode::Char('i'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::SwitchMode(ModeType::Insert)),
+            KeyEvent {
+                code: KeyCode::Char('h'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::Left)),
+            KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::Down)),
+            KeyEvent {
+                code: KeyCode::Char('k'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::Up)),
+            KeyEvent {
+                code: KeyCode::Char('l'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::Right)),
+            KeyEvent {
+                code: KeyCode::Char('q'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::HandleQuitCommand),
+            KeyEvent {
+                code: KeyCode::Char('s'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::HandleSaveCommand),
+            KeyEvent {
+                code: KeyCode::Char('f'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::SetPrompt(PromptType::Search)),
+            KeyEvent {
+                code: KeyCode::Char('0'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::StartOfLine)),
+            KeyEvent {
+                code: KeyCode::Char('d'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::PageDown)),
+            KeyEvent {
+                code: KeyCode::Char('u'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::PageUp)),
+            KeyEvent {
+                code: KeyCode::Char('_'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::FirstCharLine)),
+            KeyEvent {
+                code: KeyCode::Char('$'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::EndOfLine)),
+            KeyEvent {
+                code: KeyCode::Char('w'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::WordForward)),
+            KeyEvent {
+                code: KeyCode::Char('b'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::WordBackward)),
+            KeyEvent {
+                code: KeyCode::Char('W'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::BigWordForward)),
+            KeyEvent {
+                code: KeyCode::Char('B'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::BigWordBackward)),
+            KeyEvent {
+                code: KeyCode::Char('g'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                if let Some('g') = self.command_buffer {
+                    self.command_buffer = None;
+                    Some(EditorCommand::MoveCursor(Normal::GoToTop))
+                } else {
+                    self.command_buffer = Some('g');
+                    None
+                }
+            }
+            KeyEvent {
+                code: KeyCode::Char('d'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                if let Some('d') = self.command_buffer {
+                    self.command_buffer = None;
+                    Some(EditorCommand::DeleteCurrentLine)
+                } else {
+                    self.command_buffer = Some('d');
+                    None
+                }
+            }
+            KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                if let Some('c') = self.command_buffer {
+                    self.command_buffer = None;
+                    Some(EditorCommand::ChangeCurrentLine)
+                } else {
+                    self.command_buffer = Some('c');
+                    None
+                }
+            }
+            KeyEvent {
+                code: KeyCode::Char('G'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::GoToBottom)),
+            KeyEvent {
+                code: KeyCode::Char('v'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::SwitchMode(ModeType::Visual)),
+            KeyEvent {
+                code: KeyCode::Char('V'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::SwitchMode(ModeType::VisualLine)),
+            KeyEvent {
+                code: KeyCode::Char('I'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::MoveCursorAndSwitchMode(Normal::InsertAtLineStart, ModeType::Insert)),
+            KeyEvent {
+                code: KeyCode::Char('A'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::MoveCursorAndSwitchMode(Normal::InsertAtLineEnd, ModeType::Insert)),
+            KeyEvent {
+                code: KeyCode::Char('a'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                Some(EditorCommand::MoveCursorAndSwitchMode(Normal::AppendRight, ModeType::Insert))
+            },
+            KeyEvent {
+                code: KeyCode::Char('s'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                Some(EditorCommand::EditAndSwitchMode(Edit::SubstituteChar, ModeType::Insert))
+            },
+            KeyEvent {
+                code: KeyCode::Char('x'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                Some(EditorCommand::DeleteCharAtCursor)
+            },
+            KeyEvent {
+                code: KeyCode::Char('O'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => {
+                Some(EditorCommand::EditAndSwitchMode(Edit::InsertNewlineAbove, ModeType::Insert))
+            },
+            KeyEvent {
+                code: KeyCode::Char('o'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                Some(EditorCommand::EditAndSwitchMode(Edit::InsertNewlineBelow, ModeType::Insert))
+            },
+            KeyEvent {
+                code: KeyCode::Char('D'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => {
+                Some(EditorCommand::DeleteUntilEndOfLine)
+            },
+            KeyEvent {
+                code: KeyCode::Char('C'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => {
+                Some(EditorCommand::ChangeUntilEndOfLine)
+            },
+            KeyEvent {
+                code: KeyCode::Char('/'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::SetPrompt(PromptType::Search)),
+            KeyEvent {
+                code: KeyCode::Char('n'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::SearchNext),
+            KeyEvent {
+                code: KeyCode::Char('N'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::SearchPrevious),
+
+            _ => None,
+        }
+    }
+
+    fn enter(&mut self) -> Vec<EditorCommand> {
+        vec![
+            EditorCommand::ResetQuitTimes,
+            EditorCommand::UpdateMessage(String::new()),
+            EditorCommand::SetNeedsRedraw,
+        ]
+    }
+
+    fn exit(&mut self) -> Vec<EditorCommand> {
+        vec![]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+struct InsertMode;
+
+impl InsertMode {
+    fn new() -> Self {
+        Self
+    }
+}
+
+impl Mode for InsertMode {
+    fn handle_event(&mut self, event: KeyEvent) -> Option<EditorCommand> {
+        match event {
+            KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::SwitchMode(ModeType::Normal)),
+            KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::EditCommand(Edit::Insert(c))),
+            KeyEvent {
+                code: KeyCode::Backspace,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::EditCommand(Edit::DeleteBackward)),
+            KeyEvent {
+                code: KeyCode::Delete,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::EditCommand(Edit::Delete)),
+            KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::EditCommand(Edit::InsertNewline)),
+            KeyEvent {
+                code: KeyCode::Tab,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::EditCommand(Edit::Insert('\t'))),
+            _ => None,
+        }
+    }
+
+    fn enter(&mut self) -> Vec<EditorCommand> {
+        vec![
+            EditorCommand::UpdateInsertionPoint,
+            EditorCommand::ClearSelection,
+            EditorCommand::SetNeedsRedraw,
+        ]
+    }
+
+    fn exit(&mut self) -> Vec<EditorCommand> {
+        vec![]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+struct VisualMode {
+    command_buffer: Option<char>,
+}
+
+impl VisualMode {
+    fn new() -> Self {
+        Self {
+            command_buffer: None
+        }
+    }
+}
+
+impl Mode for VisualMode {
+    fn handle_event(&mut self, event: KeyEvent) -> Option<EditorCommand> {
+        match event {
+            KeyEvent {
+                code: KeyCode::Char('d'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::DeleteSelection),
+            KeyEvent {
+                code: KeyCode::Char('s') | KeyCode::Char('c'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::EditAndSwitchMode(Edit::SubstitueSelection, ModeType::Insert)),
+            KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::SwitchMode(ModeType::Normal)),
+            KeyEvent {
+                code: KeyCode::Char('h'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::Left)),
+            KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::Down)),
+            KeyEvent {
+                code: KeyCode::Char('k'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::Up)),
+            KeyEvent {
+                code: KeyCode::Char('l'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::Right)),
+            KeyEvent {
+                code: KeyCode::Char('w'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::WordForward)),
+            KeyEvent {
+                code: KeyCode::Char('b'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::WordBackward)),
+            KeyEvent {
+                code: KeyCode::Char('W'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::BigWordForward)),
+            KeyEvent {
+                code: KeyCode::Char('B'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::BigWordBackward)),
+            KeyEvent {
+                code: KeyCode::Char('$'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::EndOfLine)),
+            KeyEvent {
+                code: KeyCode::Char('0'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::StartOfLine)),
+            KeyEvent {
+                code: KeyCode::Char('_'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::FirstCharLine)),
+            KeyEvent {
+                code: KeyCode::Char('G'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::GoToBottom)),
+            KeyEvent {
+                code: KeyCode::Char('g'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                if let Some('g') = self.command_buffer {
+                    self.command_buffer = None;
+                    Some(EditorCommand::HandleVisualMovement(Normal::GoToTop))
+                } else {
+                    self.command_buffer = Some('g');
+                    None
+                }
+            }
+            KeyEvent {
+                code: KeyCode::Char('d'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::PageDown)),
+            KeyEvent {
+                code: KeyCode::Char('u'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::PageUp)),
+            _ => None,
+        }
+    }
+
+    fn enter(&mut self) -> Vec<EditorCommand> {
+        vec![
+            EditorCommand::StartSelection(SelectionMode::Visual),
+            EditorCommand::SetNeedsRedraw,
+        ]
+    }
+
+    fn exit(&mut self) -> Vec<EditorCommand> {
+        vec![EditorCommand::ClearSelection]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+struct VisualLineMode {
+    command_buffer: Option<char>,
+}
+
+impl VisualLineMode {
+    fn new() -> Self {
+        Self {
+            command_buffer: None,
+        }
+    }
+}
+
+impl Mode for VisualLineMode {
+    fn handle_event(&mut self, event: KeyEvent) -> Option<EditorCommand> {
+        match event {
+            KeyEvent {
+                code: KeyCode::Char('d'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::DeleteSelection),
+            KeyEvent {
+                code: KeyCode::Char('s') | KeyCode::Char('c'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::EditAndSwitchMode(Edit::ChangeLine, ModeType::Insert)),
+            KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::SwitchMode(ModeType::Normal)),
+            KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualLineMovement(Normal::Down)),
+            KeyEvent {
+                code: KeyCode::Char('k'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualLineMovement(Normal::Up)),
+            KeyEvent {
+                code: KeyCode::Char('l'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualLineMovement(Normal::Right)),
+            KeyEvent {
+                code: KeyCode::Char('h'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualLineMovement(Normal::Left)),
+            KeyEvent {
+                code: KeyCode::Char('G'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::HandleVisualLineMovement(Normal::GoToBottom)),
+            KeyEvent {
+                code: KeyCode::Char('g'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                if let Some('g') = self.command_buffer {
+                    self.command_buffer = None;
+                    Some(EditorCommand::HandleVisualLineMovement(Normal::GoToTop))
+                } else {
+                    self.command_buffer = Some('g');
+                    None
+                }
+            }
+            KeyEvent {
+                code: KeyCode::Char('d'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::HandleVisualLineMovement(Normal::PageDown)),
+            KeyEvent {
+                code: KeyCode::Char('u'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::HandleVisualLineMovement(Normal::PageUp)),
+            _ => None,
+        }
+    }
+
+    fn enter(&mut self) -> Vec<EditorCommand> {
+        vec![
+            EditorCommand::StartSelection(SelectionMode::VisualLine),
+            EditorCommand::SetNeedsRedraw,
+        ]
+    }
+
+    fn exit(&mut self) -> Vec<EditorCommand> {
+        vec![EditorCommand::ClearSelection]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+struct CommandMode;
+
+impl CommandMode {
+    fn new() -> Self {
+        Self
+    }
+}
+
+impl Mode for CommandMode {
+    fn handle_event(&mut self, _event: KeyEvent) -> Option<EditorCommand> {
+        // Implement command mode handling if needed
+        None
+    }
+
+    fn enter(&mut self) -> Vec<EditorCommand> {
+        vec![]
+    }
+
+    fn exit(&mut self) -> Vec<EditorCommand> {
+        vec![]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+struct PromptMode {
+    prompt_type: PromptType,
+}
+
+impl PromptMode {
+    fn new(prompt_type: PromptType) -> Self {
+        Self { prompt_type, }
+    }
+}
+
+impl Mode for PromptMode {
+    fn handle_event(&mut self, event: KeyEvent) -> Option<EditorCommand> {
+        match self.prompt_type {
+            PromptType::Search => match event {
+                KeyEvent {
+                    code: KeyCode::Esc,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::SwitchMode(ModeType::Normal)),
+                KeyEvent {
+                    code: KeyCode::Char(c),
+                    modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
+                    ..
+                } => Some(EditorCommand::UpdateCommandBar(Edit::Insert(c))),
+                KeyEvent {
+                    code: KeyCode::Backspace,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::UpdateCommandBar(Edit::DeleteBackward)),
+                KeyEvent {
+                    code: KeyCode::Delete,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::UpdateCommandBar(Edit::Delete)),
+                KeyEvent {
+                    code: KeyCode::Enter,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::SwitchMode(ModeType::Normal)),
+                _ => None,
+            },
+            PromptType::Save => match event {
+                KeyEvent {
+                    code: KeyCode::Esc,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::SwitchMode(ModeType::Normal)),
+                KeyEvent {
+                    code: KeyCode::Char(c),
+                    modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
+                    ..
+                } => Some(EditorCommand::UpdateCommandBar(Edit::Insert(c))),
+                KeyEvent {
+                    code: KeyCode::Backspace,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::UpdateCommandBar(Edit::DeleteBackward)),
+                KeyEvent {
+                    code: KeyCode::Delete,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::UpdateCommandBar(Edit::Delete)),
+                // KeyEvent {
+                //     code: KeyCode::Enter,
+                //     modifiers: KeyModifiers::NONE,
+                //     ..
+                // } => Some(EditorCommand::SaveAs(self.command_bar_value.clone())),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn enter(&mut self) -> Vec<EditorCommand> {
+        match self.prompt_type {
+            PromptType::Search => vec![
+                EditorCommand::EnterSearch,
+                EditorCommand::SetNeedsRedraw
+            ],
+            PromptType::Save => vec![EditorCommand::SetNeedsRedraw],
+            _ => vec![],
+        }
+    }
+
+    fn exit(&mut self) -> Vec<EditorCommand> {
+        match self.prompt_type {
+            PromptType::Search => vec![EditorCommand::ExitSearch],
+            _ => vec![]
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

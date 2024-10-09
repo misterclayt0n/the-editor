@@ -1,7 +1,8 @@
 use std::{cmp::min, io::Error};
 
+use crate::editor::Edit;
 use crate::prelude::*;
-use super::super::{command::Edit, Terminal};
+use super::super::Terminal;
 use super::UIComponent;
 
 #[derive(Default)]
@@ -20,6 +21,7 @@ impl CommandBar {
             Edit::DeleteBackward => {
                 self.value.pop();
             }
+            _ => {}
         }
 
         self.set_needs_redraw(true);

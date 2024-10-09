@@ -1,11 +1,9 @@
 use std::{cmp::min, io::Error};
 
+use crate::editor::{Edit, Normal};
 use crate::prelude::*;
 
-use super::super::{
-    command::{Edit, Normal},
-    DocumentStatus, Terminal,
-};
+use super::super::{DocumentStatus, Terminal};
 
 use super::UIComponent;
 mod buffer;
@@ -30,6 +28,7 @@ pub struct View {
     pub movement: Movement,
     scroll_offset: Position,
     search_info: Option<SearchInfo>,
+    last_search_query: Option<String>,
     selection_start: Option<Location>,
     selection_end: Option<Location>,
     selection_mode: Option<SelectionMode>,
@@ -81,16 +80,17 @@ impl View {
             search_info.query = Some(query.to_string())
         }
 
+        self.last_search_query = Some(query.to_string());
         self.search_in_direction(self.movement.text_location, SearchDirection::default());
     }
 
-    /// attempts to get the current search query - for scenarios where the search query absolutely must be there.
-    /// panics if not present in debug, or if search info is not present in debug.
-    /// returns None on release.
     fn get_search_query(&self) -> Option<&str> {
-        self.search_info
-            .as_ref()
-            .and_then(|search_info| search_info.query.as_deref())
+        if let Some(search_info) = &self.search_info {
+            if let Some(query) = search_info.query.as_deref() {
+                return Some(query);
+            }
+        }
+        self.last_search_query.as_deref()
     }
 
     fn search_in_direction(&mut self, from: Location, direction: SearchDirection) {
@@ -115,7 +115,7 @@ impl View {
     pub fn search_next(&mut self) {
         let step_right = self
             .get_search_query()
-            .map_or(1, |query| min(query.graphemes(true).count(), 1));
+            .map_or(1, |query| query.graphemes(true).count().max(1));
 
         let location = Location {
             line_index: self.movement.text_location.line_index,
@@ -123,7 +123,7 @@ impl View {
                 .movement
                 .text_location
                 .grapheme_index
-                .saturating_add(step_right), // start the new search after the current match
+                .saturating_add(step_right),
         };
 
         self.search_in_direction(location, SearchDirection::Forward);
@@ -162,6 +162,49 @@ impl View {
             Edit::Delete => self.delete(),
             Edit::DeleteBackward => self.delete_backward(),
             Edit::InsertNewline => self.insert_newline(),
+            Edit::SubstituteChar => self.delete_char_at_cursor(),
+            Edit::ChangeLine => {
+                if let Some((start, end)) = self.get_selection_range() {
+                    let start_line = start.line_index;
+                    let end_line = end.line_index;
+
+                    if start_line == end_line {
+                        // only one line selected
+                        self.replace_line_with_empty(start_line);
+                    } else {
+                        // multiple lines selected
+                        // determine the index of initial and final char to line interval
+                        let start_idx = self.buffer.rope.line_to_char(start_line);
+                        let end_idx = self.buffer.rope.line_to_char(end_line + 1);
+
+                        // remove all lines all at once
+                        self.buffer.rope.remove(start_idx..end_idx);
+
+                        // insert only one empty line in place of the first selected line
+                        self.buffer.rope.insert(start_idx, "\n");
+
+                        // update cursor postiion
+                        self.movement.text_location = Location {
+                            line_index: start_line,
+                            grapheme_index: 0,
+                        };
+
+                        self.buffer.dirty = true;
+                    }
+
+                    // clear selection
+                    self.clear_selection();
+                    self.set_needs_redraw(true);
+                }
+            }
+            Edit::SubstitueSelection => {
+                self.delete_selection();
+                self.clear_selection();
+                self.update_insertion_point_to_cursor_position();
+                self.set_needs_redraw(true);
+            }
+            Edit::InsertNewlineAbove => self.insert_newline_above(),
+            Edit::InsertNewlineBelow => self.insert_newline_below(),
         }
     }
 
@@ -201,6 +244,13 @@ impl View {
             Normal::InsertAtLineEnd => {
                 self.movement.move_to_end_of_line(&self.buffer);
                 self.set_needs_redraw(true);
+            }
+            Normal::AppendRight => {
+                if self.at_end_of_line() {
+                    self.movement.move_to_end_of_line(&self.buffer);
+                } else {
+                    self.movement.move_right(&self.buffer);
+                }
             }
             _ => {}
         }
@@ -268,17 +318,19 @@ impl View {
             let start_idx = self.buffer.location_to_char_index(start);
             let mut end_idx = self.buffer.location_to_char_index(end);
 
-            // include chars contained by the cursor and make sure they do not 
+            // include chars contained by the cursor and make sure they do not
             // exceed the length of the rope. we also only want this behavior for visual mode, not
             // visual line
-            if end_idx < self.buffer.rope.len_chars() && self.selection_mode == Some(SelectionMode::Visual) {
+            if end_idx < self.buffer.rope.len_chars()
+                && self.selection_mode == Some(SelectionMode::Visual)
+            {
                 end_idx += 1;
             }
 
             self.buffer.rope.remove(start_idx..end_idx);
             self.buffer.dirty = true;
 
-            // if the buffer gets empty after exclusion, make sure 
+            // if the buffer gets empty after exclusion, make sure
             // at least one empty line is inserted
             if self.buffer.rope.len_chars() == 0 {
                 self.buffer.insert_newline(Location {
@@ -544,14 +596,12 @@ impl View {
             }
         }
 
-        let selection_range =
-            self.calculate_selection_range(line_idx, left, &char_positions);
+        let selection_range = self.calculate_selection_range(line_idx, left, &char_positions);
 
-        if let Some(query) = query {
+        if let Some(_query) = query {
             self.render_line_with_search(
                 current_row,
                 RopeSlice::from(expanded_line.as_str()),
-                query,
                 selected_match,
             )?;
         } else if let Some((start, end)) = selection_range {
@@ -573,19 +623,22 @@ impl View {
         &self,
         current_row: RowIndex,
         visible_line: RopeSlice,
-        query: &str,
         _selected_match: Option<usize>,
     ) -> Result<(), Error> {
+        let query = self.get_search_query();
         let line_str = visible_line.to_string();
 
-        // search by subtstring and render the result with highlight 
-        if let Some(start_idx) = line_str.find(query) {
-            let end_idx = start_idx + query.len();
-            Terminal::print_selected_row(
-                current_row,
-                RopeSlice::from(line_str.as_str()),
-                Some((start_idx, end_idx)),
-            )?;
+        if let Some(query) = query {
+            if let Some(start_idx) = line_str.find(query) {
+                let end_idx = start_idx + query.len();
+                Terminal::print_selected_row(
+                    current_row,
+                    RopeSlice::from(line_str.as_str()),
+                    Some((start_idx, end_idx)),
+                )?;
+            } else {
+                Terminal::print_row(current_row, &line_str)?;
+            }
         } else {
             Terminal::print_row(current_row, &line_str)?;
         }
@@ -869,12 +922,18 @@ impl View {
 
     pub fn handle_visual_line_movement(&mut self, command: Normal) {
         match command {
-            Normal::Up => {
-                self.movement.move_up(&self.buffer, 1);
-            }
-            Normal::Down => {
-                self.movement.move_down(&self.buffer, 1);
-            }
+            Normal::Up => self.movement.move_up(&self.buffer, 1),
+            Normal::Down => self.movement.move_down(&self.buffer, 1),
+            Normal::Left => self.movement.move_left(&self.buffer),
+            Normal::Right => self.movement.move_right(&self.buffer),
+            Normal::GoToTop => self.movement.move_to_top(),
+            Normal::GoToBottom => self.movement.move_to_bottom(&self.buffer),
+            Normal::PageUp => self
+                .movement
+                .move_up(&self.buffer, self.size.height.saturating_div(2)),
+            Normal::PageDown => self
+                .movement
+                .move_down(&self.buffer, self.size.height.saturating_div(2)),
             _ => {}
         }
 

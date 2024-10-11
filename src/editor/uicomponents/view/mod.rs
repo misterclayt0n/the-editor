@@ -1,6 +1,5 @@
 use std::{cmp::min, io::Error};
 
-use crate::editor::color_scheme::ColorScheme;
 use crate::editor::{Edit, Normal};
 use crate::prelude::*;
 
@@ -244,6 +243,12 @@ impl View {
             Normal::BigWordBackward => self
                 .movement
                 .move_word_backward(&self.buffer, WordType::BigWord),
+            Normal::WordEndForward => self
+                .movement
+                .move_word_end_forward(&self.buffer, WordType::Word),
+            Normal::BigWordEndForward => self
+                .movement
+                .move_word_end_forward(&self.buffer, WordType::BigWord),
             Normal::FirstCharLine => self.movement.move_to_first_non_whitespace(&self.buffer),
             Normal::GoToTop => self.movement.move_to_top(),
             Normal::GoToBottom => self.movement.move_to_bottom(&self.buffer),
@@ -587,7 +592,7 @@ impl View {
             && query.is_some())
         .then_some(self.movement.text_location.grapheme_index);
 
-        // Store positions of each character after tab expansion
+        // store positions of each character after tab expansion
         let mut expanded_line = String::new();
         let mut char_positions = Vec::new(); // positions of each character after expansion
         let mut width = 0;

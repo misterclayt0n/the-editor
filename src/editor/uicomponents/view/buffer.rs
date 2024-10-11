@@ -165,14 +165,14 @@ impl Buffer {
 
     pub fn delete_line(&mut self, line_index: usize) {
         if self.rope.len_lines() == 1 {
-            // Se for a última linha do documento, apenas a limpamos para que o buffer não fique vazio
+            // If it's the last line of the document, just clean the buffer so it's not empty
             let line_start = self.rope.line_to_char(line_index);
             let line_end = self.rope.line_to_char(line_index + 1);
             if line_end > line_start {
                 self.rope.remove(line_start..line_end);
             }
         } else {
-            // Se houver mais de uma linha, podemos deletar normalmente
+            // If there's more than one line, we can delete as usual
             let line_start = self.rope.line_to_char(line_index);
             let line_end = self.rope.line_to_char(line_index + 1);
             self.rope.remove(line_start..line_end);
@@ -282,6 +282,85 @@ impl Buffer {
         None
     }
 
+    pub fn find_next_word_end(
+        &self,
+        location: Location,
+        word_type: WordType,
+    ) -> Option<Location> {
+        let total_chars = self.rope.len_chars();
+        let mut char_index = self.location_to_char_index(location);
+
+        if char_index >= total_chars {
+            return None;
+        }
+
+        // Check if we are at the end of a word
+        let c = self.rope.char(char_index);
+        let is_word_char = match word_type {
+            WordType::Word => !c.is_whitespace() && !is_w_delimiter(c),
+            WordType::BigWord => !c.is_whitespace(),
+        };
+
+        let next_char_index = char_index + c.len_utf8();
+        if next_char_index >= total_chars {
+            // End of buffer
+            if is_word_char {
+                // Last char of a word
+                return Some(self.char_index_to_location(char_index));
+            } else {
+                return None;
+            }
+        }
+
+        let next_c = self.rope.char(next_char_index);
+        let next_is_word_char = match word_type {
+            WordType::Word => !next_c.is_whitespace() && !is_w_delimiter(next_c),
+            WordType::BigWord => !next_c.is_whitespace(),
+        };
+
+        if is_word_char && !next_is_word_char {
+            // End of a word, move to next char
+            char_index = next_char_index;
+        }
+
+        // Move beyond any chars that do not belong to the word
+        while char_index < total_chars {
+            let c = self.rope.char(char_index);
+            let is_word_char = match word_type {
+                WordType::Word => !c.is_whitespace() && !is_w_delimiter(c),
+                WordType::BigWord => !c.is_whitespace(),
+            };
+            if is_word_char {
+                break;
+            }
+            char_index += c.len_utf8();
+        }
+
+        if char_index >= total_chars {
+            return None;
+        }
+
+        // Now, we are at the beginning of a word
+        let mut last_word_char_index = None;
+
+        while char_index < total_chars {
+            let c = self.rope.char(char_index);
+            let is_word_char = match word_type {
+                WordType::Word => !c.is_whitespace() && !is_w_delimiter(c),
+                WordType::BigWord => !c.is_whitespace(),
+            };
+
+            if is_word_char {
+                last_word_char_index = Some(char_index);
+                char_index += c.len_utf8();
+            } else {
+                // End of the word
+                break;
+            }
+        }
+
+        last_word_char_index.map(|idx| self.char_index_to_location(idx))
+    }
     pub fn get_end_location(&self) -> Location {
         let last_line_index = self.rope.len_lines().saturating_sub(1);
         let grapheme_index = self.rope.line(last_line_index).len_chars();
@@ -290,6 +369,7 @@ impl Buffer {
             grapheme_index,
         }
     }
+
     //
     // Conversion methods
     //
@@ -354,10 +434,10 @@ impl Buffer {
     }
 }
 
-fn is_b_delimiter(c: char) -> bool {
-    c == '{' || c == '}' || c == ';' || c == ',' || c == '(' || c == ')' || c == '\\'
+fn is_w_delimiter(c: char) -> bool {
+    c == '(' || c == ')' || c == '{' || c == '}' || c == '\\' || c == ';' || c == ','
 }
 
-fn is_w_delimiter(c: char) -> bool {
-    c == '(' || c == ')' || c == '{' || c == '}' || c == '\\'
+fn is_b_delimiter(c: char) -> bool {
+    c == '{' || c == '}' || c == ';' || c == ',' || c == '(' || c == ')' || c == '\\'
 }

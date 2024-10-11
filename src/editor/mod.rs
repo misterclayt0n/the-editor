@@ -8,10 +8,10 @@ use std::{
     panic::{set_hook, take_hook},
 };
 
+mod color_scheme;
 mod documentstatus;
 mod terminal;
 mod uicomponents;
-mod color_scheme;
 
 use documentstatus::DocumentStatus;
 use terminal::Terminal;
@@ -34,6 +34,8 @@ pub enum Normal {
     WordBackward,
     BigWordForward,
     BigWordBackward,
+    WordEndForward,
+    BigWordEndForward,
     GoToTop,
     GoToBottom,
     AppendRight,
@@ -665,6 +667,16 @@ impl Mode for NormalMode {
                 ..
             } => Some(EditorCommand::MoveCursor(Normal::BigWordBackward)),
             KeyEvent {
+                code: KeyCode::Char('e'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::WordEndForward)),
+            KeyEvent {
+                code: KeyCode::Char('E'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::MoveCursor(Normal::BigWordEndForward)),
+            KeyEvent {
                 code: KeyCode::Char('g'),
                 modifiers: KeyModifiers::NONE,
                 ..
@@ -722,61 +734,65 @@ impl Mode for NormalMode {
                 code: KeyCode::Char('I'),
                 modifiers: KeyModifiers::SHIFT,
                 ..
-            } => Some(EditorCommand::MoveCursorAndSwitchMode(Normal::InsertAtLineStart, ModeType::Insert)),
+            } => Some(EditorCommand::MoveCursorAndSwitchMode(
+                Normal::InsertAtLineStart,
+                ModeType::Insert,
+            )),
             KeyEvent {
                 code: KeyCode::Char('A'),
                 modifiers: KeyModifiers::SHIFT,
                 ..
-            } => Some(EditorCommand::MoveCursorAndSwitchMode(Normal::InsertAtLineEnd, ModeType::Insert)),
+            } => Some(EditorCommand::MoveCursorAndSwitchMode(
+                Normal::InsertAtLineEnd,
+                ModeType::Insert,
+            )),
             KeyEvent {
                 code: KeyCode::Char('a'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => {
-                Some(EditorCommand::MoveCursorAndSwitchMode(Normal::AppendRight, ModeType::Insert))
-            },
+            } => Some(EditorCommand::MoveCursorAndSwitchMode(
+                Normal::AppendRight,
+                ModeType::Insert,
+            )),
             KeyEvent {
                 code: KeyCode::Char('s'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => {
-                Some(EditorCommand::EditAndSwitchMode(Edit::SubstituteChar, ModeType::Insert))
-            },
+            } => Some(EditorCommand::EditAndSwitchMode(
+                Edit::SubstituteChar,
+                ModeType::Insert,
+            )),
             KeyEvent {
                 code: KeyCode::Char('x'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => {
-                Some(EditorCommand::DeleteCharAtCursor)
-            },
+            } => Some(EditorCommand::DeleteCharAtCursor),
             KeyEvent {
                 code: KeyCode::Char('O'),
                 modifiers: KeyModifiers::SHIFT,
                 ..
-            } => {
-                Some(EditorCommand::EditAndSwitchMode(Edit::InsertNewlineAbove, ModeType::Insert))
-            },
+            } => Some(EditorCommand::EditAndSwitchMode(
+                Edit::InsertNewlineAbove,
+                ModeType::Insert,
+            )),
             KeyEvent {
                 code: KeyCode::Char('o'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => {
-                Some(EditorCommand::EditAndSwitchMode(Edit::InsertNewlineBelow, ModeType::Insert))
-            },
+            } => Some(EditorCommand::EditAndSwitchMode(
+                Edit::InsertNewlineBelow,
+                ModeType::Insert,
+            )),
             KeyEvent {
                 code: KeyCode::Char('D'),
                 modifiers: KeyModifiers::SHIFT,
                 ..
-            } => {
-                Some(EditorCommand::DeleteUntilEndOfLine)
-            },
+            } => Some(EditorCommand::DeleteUntilEndOfLine),
             KeyEvent {
                 code: KeyCode::Char('C'),
                 modifiers: KeyModifiers::SHIFT,
                 ..
-            } => {
-                Some(EditorCommand::ChangeUntilEndOfLine)
-            },
+            } => Some(EditorCommand::ChangeUntilEndOfLine),
             KeyEvent {
                 code: KeyCode::Char('/'),
                 modifiers: KeyModifiers::NONE,
@@ -883,7 +899,7 @@ struct VisualMode {
 impl VisualMode {
     fn new() -> Self {
         Self {
-            command_buffer: None
+            command_buffer: None,
         }
     }
 }
@@ -900,7 +916,10 @@ impl Mode for VisualMode {
                 code: KeyCode::Char('s') | KeyCode::Char('c'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => Some(EditorCommand::EditAndSwitchMode(Edit::SubstitueSelection, ModeType::Insert)),
+            } => Some(EditorCommand::EditAndSwitchMode(
+                Edit::SubstitueSelection,
+                ModeType::Insert,
+            )),
             KeyEvent {
                 code: KeyCode::Esc,
                 modifiers: KeyModifiers::NONE,
@@ -946,6 +965,16 @@ impl Mode for VisualMode {
                 modifiers: KeyModifiers::SHIFT,
                 ..
             } => Some(EditorCommand::HandleVisualMovement(Normal::BigWordBackward)),
+            KeyEvent {
+                code: KeyCode::Char('e'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::WordEndForward)),
+            KeyEvent {
+                code: KeyCode::Char('E'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::HandleVisualMovement(Normal::BigWordEndForward)),
             KeyEvent {
                 code: KeyCode::Char('$'),
                 modifiers: KeyModifiers::NONE,
@@ -1033,7 +1062,10 @@ impl Mode for VisualLineMode {
                 code: KeyCode::Char('s') | KeyCode::Char('c'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => Some(EditorCommand::EditAndSwitchMode(Edit::ChangeLine, ModeType::Insert)),
+            } => Some(EditorCommand::EditAndSwitchMode(
+                Edit::ChangeLine,
+                ModeType::Insert,
+            )),
             KeyEvent {
                 code: KeyCode::Esc,
                 modifiers: KeyModifiers::NONE,
@@ -1140,7 +1172,7 @@ struct PromptMode {
 
 impl PromptMode {
     fn new(prompt_type: PromptType) -> Self {
-        Self { prompt_type, }
+        Self { prompt_type }
     }
 }
 
@@ -1209,10 +1241,7 @@ impl Mode for PromptMode {
 
     fn enter(&mut self) -> Vec<EditorCommand> {
         match self.prompt_type {
-            PromptType::Search => vec![
-                EditorCommand::EnterSearch,
-                EditorCommand::SetNeedsRedraw
-            ],
+            PromptType::Search => vec![EditorCommand::EnterSearch, EditorCommand::SetNeedsRedraw],
             PromptType::Save => vec![EditorCommand::SetNeedsRedraw],
             _ => vec![],
         }
@@ -1221,7 +1250,7 @@ impl Mode for PromptMode {
     fn exit(&mut self) -> Vec<EditorCommand> {
         match self.prompt_type {
             PromptType::Search => vec![EditorCommand::ExitSearch],
-            _ => vec![]
+            _ => vec![],
         }
     }
 

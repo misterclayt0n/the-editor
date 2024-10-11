@@ -101,6 +101,15 @@ impl Movement {
         self.update_desired_col(buffer);
     }
 
+    pub fn move_word_end_forward(&mut self, buffer: &Buffer, word_type: WordType) {
+        if let Some(new_location) = buffer.find_next_word_end(self.text_location, word_type) {
+            self.text_location = new_location;
+        } else {
+            // move to the end of the buffer
+            self.text_location = buffer.get_end_location();
+        }
+    }
+
     pub fn move_to_top(&mut self) {
         self.text_location.line_index = 0;
         self.text_location.grapheme_index = 0;

@@ -1,11 +1,10 @@
-mod attribute;
 use crate::prelude::*;
-use attribute::Attribute;
 use crossterm::cursor::{Hide, MoveTo, Show};
 
+use crossterm::style::SetForegroundColor;
 use crossterm::style::{
     Attribute::{Reset, Reverse},
-    Print, ResetColor, SetBackgroundColor, SetForegroundColor,
+    Print, ResetColor, SetBackgroundColor,
 };
 
 use crossterm::terminal::{
@@ -17,13 +16,13 @@ use crossterm::{queue, Command};
 use ropey::RopeSlice;
 use std::io::{stdout, Error, Write};
 
-use super::AnnotatedString;
+use super::color_scheme::ColorScheme;
 use super::{Position, Size};
 
 pub struct Terminal;
 
 impl Terminal {
-    pub fn terminate() -> Result<(), Error> {
+    pub fn kill() -> Result<(), Error> {
         Self::leave_alternate_screen()?;
         Self::enable_line_wrap()?;
         Self::show_cursor()?;
@@ -33,7 +32,7 @@ impl Terminal {
         Ok(())
     }
 
-    pub fn initialize() -> Result<(), Error> {
+    pub fn init() -> Result<(), Error> {
         enable_raw_mode()?;
         Self::enter_alternate_screen()?;
         Self::disable_line_wrap()?;
@@ -107,66 +106,6 @@ impl Terminal {
         Ok(())
     }
 
-    pub fn print(string: &str) -> Result<(), Error> {
-        Self::queue_command(Print(string))?;
-
-        Ok(())
-    }
-
-    pub fn print_row(row: RowIndex, line_text: &str) -> Result<(), Error> {
-        Self::move_cursor_to(Position { row, col: 0 })?;
-        Self::clear_line()?;
-        Self::print(line_text)?;
-
-        Ok(())
-    }
-
-    pub fn print_annotated_row(
-        row: RowIndex,
-        annotated_string: &AnnotatedString,
-    ) -> Result<(), Error> {
-        Self::move_cursor_to(Position { row, col: 0 })?;
-        Self::clear_line()?;
-
-        annotated_string
-            .into_iter()
-            .try_for_each(|part| -> Result<(), Error> {
-                if let Some(annotation_type) = part.annotation_type {
-                    let attribute: Attribute = annotation_type.into();
-                    Self::set_attribute(&attribute)?;
-                }
-
-                Self::print(part.string)?;
-                Self::reset_color()?;
-                Ok(())
-            })?;
-
-        Ok(())
-    }
-
-    fn set_attribute(attribute: &Attribute) -> Result<(), Error> {
-        if let Some(foreground_color) = attribute.foreground {
-            Self::queue_command(SetForegroundColor(foreground_color))?;
-        }
-
-        if let Some(background_color) = attribute.background {
-            Self::queue_command(SetBackgroundColor(background_color))?;
-        }
-
-        Ok(())
-    }
-
-    fn reset_color() -> Result<(), Error> {
-        Self::queue_command(ResetColor)?;
-
-        Ok(())
-    }
-
-    pub fn print_inverted_row(row: RowIndex, line_text: &str) -> Result<(), Error> {
-        let width = Self::size()?.width;
-        Self::print_row(row, &format!("{Reverse}{line_text:width$.width$}{Reset}"))
-    }
-
     pub fn size() -> Result<Size, Error> {
         let (width_u16, height_u16) = size()?;
 
@@ -189,6 +128,27 @@ impl Terminal {
         Ok(())
     }
 
+    //
+    // Printing
+    //
+
+    pub fn print(string: &str) -> Result<(), Error> {
+        Self::queue_command(Print(string))?;
+        Ok(())
+    }
+
+    pub fn print_row(row: RowIndex, line_text: &str) -> Result<(), Error> {
+        Self::move_cursor_to(Position { row, col: 0 })?;
+        Self::clear_line()?;
+        Self::print(line_text)?;
+        Ok(())
+    }
+
+    pub fn print_inverted_row(row: RowIndex, line_text: &str) -> Result<(), Error> {
+        let width = Self::size()?.width;
+        Self::print_row(row, &format!("{Reverse}{line_text:width$.width$}{Reset}"))
+    }
+
     // pub fn print_rope_slice_row(row: RowIndex, rope_slice: RopeSlice) -> Result<(), Error> {
     //     Self::move_cursor_to(Position { row, col: 0 })?;
     //     Self::clear_line()?;
@@ -208,6 +168,8 @@ impl Terminal {
         Self::clear_line()?;
 
         let mut current_index = 0;
+
+        let color_scheme = ColorScheme::default();
 
         for chunk in rope_slice.chunks() {
             let chunk_len = chunk.len();
@@ -230,7 +192,67 @@ impl Terminal {
                     }
 
                     if relative_end > relative_start {
-                        Self::queue_command(SetBackgroundColor(crossterm::style::Color::Blue))?;
+                        Self::queue_command(SetBackgroundColor(color_scheme.selection_background))?;
+                        Self::queue_command(SetForegroundColor(color_scheme.selection_foreground))?;
+                        Self::print(&chunk[relative_start..relative_end])?;
+                        Self::queue_command(ResetColor)?;
+                    }
+
+                    if relative_end < chunk_len {
+                        Self::print(&chunk[relative_end..])?;
+                    }
+                } else {
+                    Self::print(chunk)?;
+                }
+            } else {
+                Self::print(chunk)?;
+            }
+
+            current_index += chunk_len;
+        }
+
+        Ok(())
+    }
+
+    pub fn print_searched_row(
+        row: RowIndex,
+        rope_slice: RopeSlice,
+        selection_range: Option<(usize, usize)>,
+    ) -> Result<(), Error> {
+        Self::move_cursor_to(Position { row, col: 0 })?;
+        Self::clear_line()?;
+
+        let mut current_index = 0;
+
+        let color_scheme = ColorScheme::default();
+
+        for chunk in rope_slice.chunks() {
+            let chunk_len = chunk.len();
+
+            if let Some((start, end)) = selection_range {
+                if current_index + chunk_len >= start && current_index <= end {
+                    let relative_start = if start > current_index {
+                        start - current_index
+                    } else {
+                        0
+                    };
+                    let relative_end = if end < current_index + chunk_len {
+                        end - current_index
+                    } else {
+                        chunk_len
+                    };
+
+                    if relative_start > 0 {
+                        Self::print(&chunk[0..relative_start])?;
+                    }
+
+                    if relative_end > relative_start {
+                        Self::queue_command(SetBackgroundColor(
+                            color_scheme.search_match_background,
+                        ))?;
+                        Self::queue_command(SetForegroundColor(
+                            color_scheme.search_match_foreground,
+                        ))?;
                         Self::print(&chunk[relative_start..relative_end])?;
                         Self::queue_command(ResetColor)?;
                     }

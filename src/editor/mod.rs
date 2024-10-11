@@ -8,12 +8,11 @@ use std::{
     panic::{set_hook, take_hook},
 };
 
-mod annotatedstring;
 mod documentstatus;
 mod terminal;
 mod uicomponents;
+mod color_scheme;
 
-use annotatedstring::{AnnotatedString, AnnotationType};
 use documentstatus::DocumentStatus;
 use terminal::Terminal;
 use uicomponents::{CommandBar, MessageBar, StatusBar, UIComponent, View};
@@ -172,11 +171,11 @@ impl Editor {
         let current_hook = take_hook();
 
         set_hook(Box::new(move |panic_info| {
-            let _ = Terminal::terminate();
+            let _ = Terminal::kill();
             current_hook(panic_info);
         }));
 
-        Terminal::initialize()?;
+        Terminal::init()?;
 
         let mut editor = Self {
             should_quit: false,
@@ -282,7 +281,7 @@ impl Editor {
                 self.view.enter_search();
             }
             EditorCommand::ExitSearch => {
-                self.view.exit_search();
+                self.view.dismiss_search();
             }
             EditorCommand::SearchNext => {
                 self.view.search_next();
@@ -557,7 +556,7 @@ impl Editor {
 
 impl Drop for Editor {
     fn drop(&mut self) {
-        let _ = Terminal::terminate();
+        let _ = Terminal::kill();
     }
 }
 

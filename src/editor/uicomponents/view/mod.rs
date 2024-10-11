@@ -1,5 +1,6 @@
 use std::{cmp::min, io::Error};
 
+use crate::editor::color_scheme::ColorScheme;
 use crate::editor::{Edit, Normal};
 use crate::prelude::*;
 
@@ -8,17 +9,26 @@ use super::super::{DocumentStatus, Terminal};
 use super::UIComponent;
 mod buffer;
 use buffer::Buffer;
-mod searchdirection;
 use movement::Movement;
 use ropey::RopeSlice;
-use searchdirection::SearchDirection;
 mod fileinfo;
 use fileinfo::FileInfo;
-mod searchinfo;
-use searchinfo::SearchInfo;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 mod movement;
+
+#[derive(Default, Eq, PartialEq, Clone, Copy)]
+pub enum SearchDirection {
+    #[default]
+    Forward,
+    Backward,
+}
+
+pub struct SearchInfo {
+    pub prev_location: Location,
+    pub prev_scroll_offset: Position,
+    pub query: Option<String>,
+}
 
 #[derive(Default)]
 pub struct View {
@@ -551,6 +561,7 @@ impl View {
         } else {
             " ".to_string()
         };
+
         Terminal::print_selected_row(
             current_row,
             RopeSlice::from(expanded_line.as_str()),
@@ -631,7 +642,7 @@ impl View {
         if let Some(query) = query {
             if let Some(start_idx) = line_str.find(query) {
                 let end_idx = start_idx + query.len();
-                Terminal::print_selected_row(
+                Terminal::print_searched_row(
                     current_row,
                     RopeSlice::from(line_str.as_str()),
                     Some((start_idx, end_idx)),

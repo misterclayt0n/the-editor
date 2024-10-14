@@ -26,19 +26,23 @@ impl Movement {
     pub fn move_left(&mut self, buffer: &Buffer) {
         if self.text_location.grapheme_index > 0 {
             self.text_location.grapheme_index -= 1;
-        } else if self.text_location.line_index > 0 {
-            self.move_up(buffer, 1);
-            self.move_to_end_of_line(buffer);
         }
         self.update_desired_col(buffer);
     }
 
     pub fn move_right(&mut self, buffer: &Buffer) {
-        if buffer.height() == 0 || buffer.get_line_length(self.text_location.line_index) == 0 {
-            return;
+        let line_length = buffer.get_line_length(self.text_location.line_index).saturating_sub(1);
+
+        if self.text_location.grapheme_index < line_length {
+            self.text_location.grapheme_index += 1;
         }
-        let line_width = buffer.get_line_length(self.text_location.line_index);
-        if self.text_location.grapheme_index < line_width.saturating_sub(1) {
+        self.update_desired_col(buffer);
+    }
+
+    pub fn move_right_beyond_end(&mut self, buffer: &Buffer) {
+        let line_length = buffer.get_line_length(self.text_location.line_index);
+
+        if self.text_location.grapheme_index < line_length {
             self.text_location.grapheme_index += 1;
         }
         self.update_desired_col(buffer);
@@ -68,6 +72,18 @@ impl Movement {
     }
 
     pub fn move_to_end_of_line(&mut self, buffer: &Buffer) {
+        self.text_location.grapheme_index =
+            if self.text_location.line_index < buffer.rope.len_lines() {
+                let line_slice = buffer.rope.line(self.text_location.line_index);
+                let line_str = line_slice.to_string().trim_end_matches('\n').to_string();
+                line_str.len().saturating_sub(1)
+            } else {
+                0
+            };
+        self.update_desired_col(buffer);
+    }
+
+    pub fn move_to_end_of_line_beyond_end(&mut self, buffer: &Buffer) {
         self.text_location.grapheme_index =
             if self.text_location.line_index < buffer.rope.len_lines() {
                 let line_slice = buffer.rope.line(self.text_location.line_index);

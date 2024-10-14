@@ -1,6 +1,6 @@
 use std::{cmp::min, io::Error};
 
-use crate::editor::{Edit, Normal};
+use crate::editor::{Edit, Normal, Operator, TextObject};
 use crate::prelude::*;
 
 use super::super::{DocumentStatus, Terminal};
@@ -257,21 +257,109 @@ impl View {
                 self.set_needs_redraw(true);
             }
             Normal::InsertAtLineEnd => {
-                self.movement.move_to_end_of_line(&self.buffer);
+                self.movement.move_to_end_of_line_beyond_end(&self.buffer);
                 self.set_needs_redraw(true);
             }
             Normal::AppendRight => {
-                if self.at_end_of_line() {
-                    self.movement.move_to_end_of_line(&self.buffer);
-                } else {
-                    self.movement.move_right(&self.buffer);
-                }
+                self.movement.move_right_beyond_end(&self.buffer);
             }
             _ => {}
         }
 
         self.scroll_text_location_into_view();
     }
+
+    pub fn handle_operator_text_object(&mut self, operator: Operator, text_object: TextObject) {
+        match operator {
+            Operator::Delete => match text_object {
+                TextObject::Inner(delimiter) => {
+                    if let Some((start, end)) = self.find_text_object_range(delimiter, true) {
+                        self.buffer.rope.remove(start..end);
+                        self.buffer.dirty = true;
+                        self.movement.text_location = self.buffer.char_index_to_location(start);
+                        self.scroll_text_location_into_view();
+                        self.set_needs_redraw(true);
+                    }
+                }
+                // TODO: add more text objects
+            },
+            // TODO: add more operators
+            _ => {}
+        }
+    }
+
+    fn find_text_object_range(&self, delimiter: char, inner: bool) -> Option<(usize, usize)> {
+        let (open_delim, close_delim) = match delimiter {
+            '(' | ')' => ('(', ')'),
+            '{' | '}' => ('{', '}'),
+            '[' | ']' => ('[', ']'),
+            '<' | '>' => ('<', '>'),
+            '"' => ('"', '"'),
+            '\'' => ('\'', '\''),
+            _ => return None,
+        };
+
+        let total_chars = self.buffer.rope.len_chars();
+        let cursor_index = self.buffer.location_to_char_index(self.movement.text_location);
+
+        let mut start = cursor_index;
+        let mut found_start = false;
+        while start > 0 {
+            start -= 1;
+            let c = self.buffer.rope.char(start);
+            if c == open_delim {
+                found_start = true;
+                break;
+            }
+        }
+
+        if !found_start {
+            start = cursor_index;
+            while start < total_chars {
+                let c = self.buffer.rope.char(start);
+                if c == open_delim {
+                    found_start = true;
+                    break;
+                }
+                start += 1;
+            }
+            if !found_start {
+                return None;
+            }
+        }
+
+        let mut end = start + 1;
+        let mut depth = 0;
+        let mut found_end = false;
+        while end < total_chars {
+            let c = self.buffer.rope.char(end);
+            if c == open_delim {
+                depth += 1;
+            } else if c == close_delim {
+                if depth == 0 {
+                    found_end = true;
+                    break;
+                } else {
+                    depth -= 1;
+                }
+            }
+            end += 1;
+        }
+
+        if !found_end {
+            return None;
+        }
+
+        if inner {
+            start += 1;
+        } else {
+            end += 1;
+        }
+
+        Some((start, end))
+    }
+
+
 
     //
     // Text Editing

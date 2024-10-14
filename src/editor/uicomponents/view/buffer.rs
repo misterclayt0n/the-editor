@@ -361,6 +361,7 @@ impl Buffer {
 
         last_word_char_index.map(|idx| self.char_index_to_location(idx))
     }
+
     pub fn get_end_location(&self) -> Location {
         let last_line_index = self.rope.len_lines().saturating_sub(1);
         let grapheme_index = self.rope.line(last_line_index).len_chars();
@@ -392,11 +393,19 @@ impl Buffer {
 
     pub fn get_line_length(&self, line_index: usize) -> usize {
         if line_index < self.rope.len_lines() {
-            self.rope.line(line_index).len_chars()
+            let line_slice = self.rope.line(line_index);
+            let len = line_slice.len_chars();
+
+            if len > 0 && line_slice.char(len - 1) == '\n' {
+                len - 1
+            } else {
+                len
+            }
         } else {
             0
         }
     }
+
     //
     // Helper functions
     //
@@ -430,7 +439,12 @@ impl Buffer {
             current_col += char_width;
         }
 
-        line_slice.len_chars()
+        // return lasst valid index, not beyond
+        if line_slice.len_chars() > 0 {
+            line_slice.len_chars().saturating_sub(1)
+        } else {
+            0
+        }
     }
 }
 

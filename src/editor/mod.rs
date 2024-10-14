@@ -20,6 +20,18 @@ use uicomponents::{CommandBar, MessageBar, StatusBar, UIComponent, View};
 const QUIT_TIMES: u8 = 3;
 
 #[derive(Clone, Copy)]
+enum Operator {
+    Delete,
+    Change,
+    Yank
+}
+
+#[derive(Clone, Copy)]
+enum TextObject {
+    Inner(char) // represents 'i' followed by a delimiter, like '('
+}
+
+#[derive(Clone, Copy)]
 pub enum Normal {
     PageUp,
     PageDown,
@@ -148,6 +160,7 @@ enum EditorCommand {
     ExitSearch,
     SearchNext,
     SearchPrevious,
+    OperatorTextObject(Operator, TextObject),
 }
 
 pub struct Editor {
@@ -252,6 +265,9 @@ impl Editor {
             EditorCommand::MoveCursor(direction) => {
                 self.view.handle_normal_command(direction);
             }
+            EditorCommand::OperatorTextObject(operator, text_object) => {
+                self.view.handle_operator_text_object(operator, text_object);
+            }
             EditorCommand::MoveCursorAndSwitchMode(direction, mode) => {
                 self.view.handle_normal_command(direction);
                 self.switch_mode(mode);
@@ -264,6 +280,9 @@ impl Editor {
                 self.view.handle_edit_command(edit);
             }
             EditorCommand::SwitchMode(mode) => {
+                if mode == ModeType::Normal {
+                    self.view.handle_normal_command(Normal::Left);
+                }
                 self.switch_mode(mode);
             }
             EditorCommand::HandleQuitCommand => {
@@ -567,13 +586,13 @@ impl Drop for Editor {
 //
 
 struct NormalMode {
-    command_buffer: Option<char>,
+    command_buffer: String,
 }
 
 impl NormalMode {
     fn new() -> Self {
         Self {
-            command_buffer: None,
+            command_buffer: String::new(),
         }
     }
 }
@@ -585,7 +604,15 @@ impl Mode for NormalMode {
                 code: KeyCode::Char('i'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => Some(EditorCommand::SwitchMode(ModeType::Insert)),
+            } => {
+                if self.command_buffer == "d" {
+                    self.command_buffer.push('i');
+                    None // espera pelo delimitador
+                } else {
+                    self.command_buffer.clear(); // Limpa o command_buffer
+                    Some(EditorCommand::SwitchMode(ModeType::Insert))
+                }
+            }
             KeyEvent {
                 code: KeyCode::Char('h'),
                 modifiers: KeyModifiers::NONE,
@@ -681,11 +708,12 @@ impl Mode for NormalMode {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                if let Some('g') = self.command_buffer {
-                    self.command_buffer = None;
+                if self.command_buffer == "g" {
+                    self.command_buffer.clear();
                     Some(EditorCommand::MoveCursor(Normal::GoToTop))
                 } else {
-                    self.command_buffer = Some('g');
+                    self.command_buffer.clear();
+                    self.command_buffer.push('g');
                     None
                 }
             }
@@ -694,11 +722,30 @@ impl Mode for NormalMode {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                if let Some('d') = self.command_buffer {
-                    self.command_buffer = None;
+                if self.command_buffer == "d" {
+                    self.command_buffer.clear();
                     Some(EditorCommand::DeleteCurrentLine)
                 } else {
-                    self.command_buffer = Some('d');
+                    self.command_buffer.clear();
+                    self.command_buffer.push('d');
+                    None // wait for the next char
+                }
+
+            }
+
+            // delimiters
+            KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } if matches!(c, '(' | ')' | '{' | '}' | '[' | ']' | '<' | '>') => {
+                if self.command_buffer.starts_with("di") {
+                    let operator = Operator::Delete;
+                    let text_object = TextObject::Inner(c);
+                    self.command_buffer.clear();
+                    Some(EditorCommand::OperatorTextObject(operator, text_object))
+                } else {
+                    self.command_buffer.clear();
                     None
                 }
             }
@@ -707,11 +754,12 @@ impl Mode for NormalMode {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                if let Some('c') = self.command_buffer {
-                    self.command_buffer = None;
+                if self.command_buffer == "c" {
+                    self.command_buffer.clear();
                     Some(EditorCommand::ChangeCurrentLine)
                 } else {
-                    self.command_buffer = Some('c');
+                    self.command_buffer.clear();
+                    self.command_buffer.push('c');
                     None
                 }
             }
@@ -809,7 +857,10 @@ impl Mode for NormalMode {
                 ..
             } => Some(EditorCommand::SearchPrevious),
 
-            _ => None,
+            _ => {
+                self.command_buffer.clear();
+                None
+            },
         }
     }
 

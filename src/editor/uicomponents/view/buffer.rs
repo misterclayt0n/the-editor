@@ -282,11 +282,7 @@ impl Buffer {
         None
     }
 
-    pub fn find_next_word_end(
-        &self,
-        location: Location,
-        word_type: WordType,
-    ) -> Option<Location> {
+    pub fn find_next_word_end(&self, location: Location, word_type: WordType) -> Option<Location> {
         let total_chars = self.rope.len_chars();
         let mut char_index = self.location_to_char_index(location);
 
@@ -418,7 +414,12 @@ impl Buffer {
             if i >= location.grapheme_index {
                 break;
             }
-            col += c.width().unwrap_or(0);
+            if c == '\t' {
+                let spaces_to_next_tab = TAB_WIDTH - (col % TAB_WIDTH);
+                col += spaces_to_next_tab;
+            } else {
+                col += c.width().unwrap_or(1);
+            }
         }
 
         col
@@ -430,21 +431,30 @@ impl Buffer {
         }
         let line_slice = self.rope.line(line_index);
         let mut current_col = 0;
+        let mut last_index = 0;
 
         for (i, c) in line_slice.chars().enumerate() {
-            let char_width = c.width().unwrap_or(0);
+            let char_width = if c == '\t' {
+                let spaces_to_next_tab = TAB_WIDTH - (current_col % TAB_WIDTH);
+                spaces_to_next_tab
+            } else {
+                c.width().unwrap_or(1)
+            };
+
             if current_col + char_width > col {
-                return i;
+                // if we are no longer close to next char, return next index
+                return if col - current_col < (current_col + char_width) - col {
+                    i
+                } else {
+                    i + 1
+                };
             }
             current_col += char_width;
+            last_index = i;
         }
 
-        // return lasst valid index, not beyond
-        if line_slice.len_chars() > 0 {
-            line_slice.len_chars().saturating_sub(1)
-        } else {
-            0
-        }
+        // if we got here, just return the last valid index
+        last_index + 1
     }
 }
 

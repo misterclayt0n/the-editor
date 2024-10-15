@@ -263,7 +263,6 @@ impl View {
             Normal::AppendRight => {
                 self.movement.move_right_beyond_end(&self.buffer);
             }
-            _ => {}
         }
 
         self.scroll_text_location_into_view();
@@ -463,7 +462,7 @@ impl View {
                     .location_to_char_index(self.movement.text_location);
                 let end_idx = self.buffer.location_to_char_index(Location {
                     line_index,
-                    grapheme_index: line_length.saturating_sub(1),
+                    grapheme_index: line_length,
                 });
                 self.buffer.rope.remove(start_idx..end_idx);
                 self.buffer.dirty = true;
@@ -934,6 +933,28 @@ impl View {
     //
     // Selection
     //
+
+    pub fn select_text_object(&mut self, text_object: TextObject) {
+        match text_object {
+            TextObject::Inner(delimiter) => {
+                if let Some((start_idx, end_idx)) = self.find_text_object_range(delimiter, true) {
+                    let start_location = self.buffer.char_index_to_location(start_idx);
+                    let end_location = self.buffer.char_index_to_location(end_idx);
+
+                    // Configura o início e fim da seleção
+                    self.selection_start = Some(start_location);
+                    self.selection_end = Some(end_location);
+                    self.selection_mode = Some(SelectionMode::Visual);
+
+                    // Move o cursor para o final da seleção
+                    self.movement.text_location = end_location;
+                    self.scroll_text_location_into_view();
+                    self.set_needs_redraw(true);
+                }
+            }
+            // Outros casos...
+        }
+    }
 
     pub fn clear_selection(&mut self) {
         self.selection_start = None;

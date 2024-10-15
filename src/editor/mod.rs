@@ -23,12 +23,12 @@ const QUIT_TIMES: u8 = 3;
 enum Operator {
     Delete,
     Change,
-    Yank
+    Yank,
 }
 
 #[derive(Clone, Copy)]
 enum TextObject {
-    Inner(char) // represents 'i' followed by a delimiter, like '('
+    Inner(char), // represents 'i' followed by a delimiter, like '('
 }
 
 #[derive(Clone, Copy)]
@@ -118,7 +118,11 @@ impl Default for ModeType {
 use std::any::Any;
 
 trait Mode {
-    fn handle_event(&mut self, event: KeyEvent) -> Option<EditorCommand>;
+    fn handle_event(
+        &mut self,
+        event: KeyEvent,
+        command_buffer: &mut String,
+    ) -> Option<EditorCommand>;
     fn enter(&mut self) -> Vec<EditorCommand>;
     fn exit(&mut self) -> Vec<EditorCommand>;
     fn as_any(&self) -> &dyn Any;
@@ -161,6 +165,7 @@ enum EditorCommand {
     SearchNext,
     SearchPrevious,
     OperatorTextObject(Operator, TextObject),
+    VisualSelectTextObject(TextObject),
 }
 
 pub struct Editor {
@@ -175,6 +180,7 @@ pub struct Editor {
     current_mode: ModeType,
     current_mode_impl: Box<dyn Mode>,
     prompt_type: PromptType,
+    command_buffer: String,
 }
 
 impl Editor {
@@ -204,6 +210,7 @@ impl Editor {
             current_mode: ModeType::Normal,
             current_mode_impl: Box::new(NormalMode::new()),
             prompt_type: PromptType::None,
+            command_buffer: String::new(),
         };
         let size = Terminal::size().unwrap_or_default();
         editor.handle_resize_command(size);
@@ -238,7 +245,10 @@ impl Editor {
             match read() {
                 Ok(event) => {
                     if let Event::Key(key_event) = event {
-                        if let Some(command) = self.current_mode_impl.handle_event(key_event) {
+                        if let Some(command) = self
+                            .current_mode_impl
+                            .handle_event(key_event, &mut self.command_buffer)
+                        {
                             self.execute_command(command);
                         }
                     } else if let Event::Resize(width_u16, height_u16) = event {
@@ -264,6 +274,10 @@ impl Editor {
         match command {
             EditorCommand::MoveCursor(direction) => {
                 self.view.handle_normal_command(direction);
+            }
+            EditorCommand::VisualSelectTextObject(text_object) => {
+                self.switch_mode(ModeType::Visual);
+                self.view.select_text_object(text_object);
             }
             EditorCommand::OperatorTextObject(operator, text_object) => {
                 self.view.handle_operator_text_object(operator, text_object);
@@ -585,31 +599,31 @@ impl Drop for Editor {
 // Mode Implementations
 //
 
-struct NormalMode {
-    command_buffer: String,
-}
+struct NormalMode;
 
 impl NormalMode {
     fn new() -> Self {
-        Self {
-            command_buffer: String::new(),
-        }
+        Self 
     }
 }
 
 impl Mode for NormalMode {
-    fn handle_event(&mut self, event: KeyEvent) -> Option<EditorCommand> {
+    fn handle_event(
+        &mut self,
+        event: KeyEvent,
+        command_buffer: &mut String,
+    ) -> Option<EditorCommand> {
         match event {
             KeyEvent {
                 code: KeyCode::Char('i'),
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                if self.command_buffer == "d" {
-                    self.command_buffer.push('i');
-                    None // espera pelo delimitador
+                if command_buffer == "v" {
+                    command_buffer.push('i');
+                    None
                 } else {
-                    self.command_buffer.clear(); // Limpa o command_buffer
+                    command_buffer.clear();
                     Some(EditorCommand::SwitchMode(ModeType::Insert))
                 }
             }
@@ -708,12 +722,12 @@ impl Mode for NormalMode {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                if self.command_buffer == "g" {
-                    self.command_buffer.clear();
+                if command_buffer == "g" {
+                    command_buffer.clear();
                     Some(EditorCommand::MoveCursor(Normal::GoToTop))
                 } else {
-                    self.command_buffer.clear();
-                    self.command_buffer.push('g');
+                    command_buffer.clear();
+                    command_buffer.push('g');
                     None
                 }
             }
@@ -722,15 +736,14 @@ impl Mode for NormalMode {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                if self.command_buffer == "d" {
-                    self.command_buffer.clear();
+                if command_buffer == "d" {
+                    command_buffer.clear();
                     Some(EditorCommand::DeleteCurrentLine)
                 } else {
-                    self.command_buffer.clear();
-                    self.command_buffer.push('d');
+                    command_buffer.clear();
+                    command_buffer.push('d');
                     None // wait for the next char
                 }
-
             }
 
             // delimiters
@@ -739,13 +752,13 @@ impl Mode for NormalMode {
                 modifiers: KeyModifiers::NONE,
                 ..
             } if matches!(c, '(' | ')' | '{' | '}' | '[' | ']' | '<' | '>') => {
-                if self.command_buffer.starts_with("di") {
+                if command_buffer.starts_with("di") {
                     let operator = Operator::Delete;
                     let text_object = TextObject::Inner(c);
-                    self.command_buffer.clear();
+                    command_buffer.clear();
                     Some(EditorCommand::OperatorTextObject(operator, text_object))
                 } else {
-                    self.command_buffer.clear();
+                    command_buffer.clear();
                     None
                 }
             }
@@ -754,12 +767,12 @@ impl Mode for NormalMode {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                if self.command_buffer == "c" {
-                    self.command_buffer.clear();
+                if command_buffer == "c" {
+                    command_buffer.clear();
                     Some(EditorCommand::ChangeCurrentLine)
                 } else {
-                    self.command_buffer.clear();
-                    self.command_buffer.push('c');
+                    command_buffer.clear();
+                    command_buffer.push('c');
                     None
                 }
             }
@@ -772,7 +785,10 @@ impl Mode for NormalMode {
                 code: KeyCode::Char('v'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => Some(EditorCommand::SwitchMode(ModeType::Visual)),
+            } => {
+                command_buffer.push('v');
+                Some(EditorCommand::SwitchMode(ModeType::Visual))
+            }
             KeyEvent {
                 code: KeyCode::Char('V'),
                 modifiers: KeyModifiers::SHIFT,
@@ -858,9 +874,9 @@ impl Mode for NormalMode {
             } => Some(EditorCommand::SearchPrevious),
 
             _ => {
-                self.command_buffer.clear();
+                command_buffer.clear();
                 None
-            },
+            }
         }
     }
 
@@ -890,7 +906,11 @@ impl InsertMode {
 }
 
 impl Mode for InsertMode {
-    fn handle_event(&mut self, event: KeyEvent) -> Option<EditorCommand> {
+    fn handle_event(
+        &mut self,
+        event: KeyEvent,
+        _command_buffer: &mut String,
+    ) -> Option<EditorCommand> {
         match event {
             KeyEvent {
                 code: KeyCode::Esc,
@@ -943,20 +963,20 @@ impl Mode for InsertMode {
     }
 }
 
-struct VisualMode {
-    command_buffer: Option<char>,
-}
+struct VisualMode;
 
 impl VisualMode {
     fn new() -> Self {
-        Self {
-            command_buffer: None,
-        }
+        Self 
     }
 }
 
 impl Mode for VisualMode {
-    fn handle_event(&mut self, event: KeyEvent) -> Option<EditorCommand> {
+    fn handle_event(
+        &mut self,
+        event: KeyEvent,
+        command_buffer: &mut String,
+    ) -> Option<EditorCommand> {
         match event {
             KeyEvent {
                 code: KeyCode::Char('d'),
@@ -971,11 +991,6 @@ impl Mode for VisualMode {
                 Edit::SubstitueSelection,
                 ModeType::Insert,
             )),
-            KeyEvent {
-                code: KeyCode::Esc,
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => Some(EditorCommand::SwitchMode(ModeType::Normal)),
             KeyEvent {
                 code: KeyCode::Char('h'),
                 modifiers: KeyModifiers::NONE,
@@ -1025,7 +1040,9 @@ impl Mode for VisualMode {
                 code: KeyCode::Char('E'),
                 modifiers: KeyModifiers::SHIFT,
                 ..
-            } => Some(EditorCommand::HandleVisualMovement(Normal::BigWordEndForward)),
+            } => Some(EditorCommand::HandleVisualMovement(
+                Normal::BigWordEndForward,
+            )),
             KeyEvent {
                 code: KeyCode::Char('$'),
                 modifiers: KeyModifiers::NONE,
@@ -1051,11 +1068,12 @@ impl Mode for VisualMode {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                if let Some('g') = self.command_buffer {
-                    self.command_buffer = None;
+                if command_buffer == "g" {
+                    command_buffer.clear();
                     Some(EditorCommand::HandleVisualMovement(Normal::GoToTop))
                 } else {
-                    self.command_buffer = Some('g');
+                    command_buffer.clear();
+                    command_buffer.push('g');
                     None
                 }
             }
@@ -1069,7 +1087,45 @@ impl Mode for VisualMode {
                 modifiers: KeyModifiers::CONTROL,
                 ..
             } => Some(EditorCommand::HandleVisualMovement(Normal::PageUp)),
-            _ => None,
+            KeyEvent {
+                code: KeyCode::Char('i'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                if command_buffer == "v" {
+                    command_buffer.push('i');
+                    None 
+                } else {
+                    command_buffer.clear();
+                    None
+                }
+            }
+            KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } if matches!(c, '(' | ')' | '{' | '}' | '[' | ']' | '<' | '>') => {
+                if command_buffer == "vi" {
+                    let text_object = TextObject::Inner(c);
+                    command_buffer.clear(); 
+                    Some(EditorCommand::VisualSelectTextObject(text_object)) 
+                } else {
+                    command_buffer.clear();
+                    None
+                }
+            }
+            KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                command_buffer.clear();
+                Some(EditorCommand::SwitchMode(ModeType::Normal))
+            }
+            _ => {
+                command_buffer.clear();
+                None
+            }
         }
     }
 
@@ -1089,20 +1145,20 @@ impl Mode for VisualMode {
     }
 }
 
-struct VisualLineMode {
-    command_buffer: Option<char>,
-}
+struct VisualLineMode;
 
 impl VisualLineMode {
     fn new() -> Self {
-        Self {
-            command_buffer: None,
-        }
+        Self 
     }
 }
 
 impl Mode for VisualLineMode {
-    fn handle_event(&mut self, event: KeyEvent) -> Option<EditorCommand> {
+    fn handle_event(
+        &mut self,
+        event: KeyEvent,
+        command_buffer: &mut String,
+    ) -> Option<EditorCommand> {
         match event {
             KeyEvent {
                 code: KeyCode::Char('d'),
@@ -1152,11 +1208,11 @@ impl Mode for VisualLineMode {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                if let Some('g') = self.command_buffer {
-                    self.command_buffer = None;
+                if command_buffer == "g" {
+                    command_buffer.clear();
                     Some(EditorCommand::HandleVisualLineMovement(Normal::GoToTop))
                 } else {
-                    self.command_buffer = Some('g');
+                    command_buffer.push('g');
                     None
                 }
             }
@@ -1199,8 +1255,11 @@ impl CommandMode {
 }
 
 impl Mode for CommandMode {
-    fn handle_event(&mut self, _event: KeyEvent) -> Option<EditorCommand> {
-        // Implement command mode handling if needed
+    fn handle_event(
+        &mut self,
+        _event: KeyEvent,
+        _command_buffer: &mut String,
+    ) -> Option<EditorCommand> {
         None
     }
 
@@ -1228,7 +1287,11 @@ impl PromptMode {
 }
 
 impl Mode for PromptMode {
-    fn handle_event(&mut self, event: KeyEvent) -> Option<EditorCommand> {
+    fn handle_event(
+        &mut self,
+        event: KeyEvent,
+        _command_buffer: &mut String,
+    ) -> Option<EditorCommand> {
         match self.prompt_type {
             PromptType::Search => match event {
                 KeyEvent {

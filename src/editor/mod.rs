@@ -132,6 +132,7 @@ enum EditorCommand {
     MoveCursor(Normal),
     EditCommand(Edit),
     SwitchMode(ModeType),
+    SwitchToNormalFromInserion,
     HandleQuitCommand,
     HandleSaveCommand,
     SetPrompt(PromptType),
@@ -293,10 +294,11 @@ impl Editor {
             EditorCommand::EditCommand(edit) => {
                 self.view.handle_edit_command(edit);
             }
+            EditorCommand::SwitchToNormalFromInserion => {
+                self.view.handle_normal_command(Normal::Left);
+                self.switch_mode(ModeType::Normal);
+            }
             EditorCommand::SwitchMode(mode) => {
-                if mode == ModeType::Normal {
-                    self.view.handle_normal_command(Normal::Left);
-                }
                 self.switch_mode(mode);
             }
             EditorCommand::HandleQuitCommand => {
@@ -603,7 +605,7 @@ struct NormalMode;
 
 impl NormalMode {
     fn new() -> Self {
-        Self 
+        Self
     }
 }
 
@@ -916,7 +918,7 @@ impl Mode for InsertMode {
                 code: KeyCode::Esc,
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => Some(EditorCommand::SwitchMode(ModeType::Normal)),
+            } => Some(EditorCommand::SwitchToNormalFromInserion),
             KeyEvent {
                 code: KeyCode::Char(c),
                 modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
@@ -967,7 +969,7 @@ struct VisualMode;
 
 impl VisualMode {
     fn new() -> Self {
-        Self 
+        Self
     }
 }
 
@@ -1094,7 +1096,7 @@ impl Mode for VisualMode {
             } => {
                 if command_buffer == "v" {
                     command_buffer.push('i');
-                    None 
+                    None
                 } else {
                     command_buffer.clear();
                     None
@@ -1107,8 +1109,8 @@ impl Mode for VisualMode {
             } if matches!(c, '(' | ')' | '{' | '}' | '[' | ']' | '<' | '>') => {
                 if command_buffer == "vi" {
                     let text_object = TextObject::Inner(c);
-                    command_buffer.clear(); 
-                    Some(EditorCommand::VisualSelectTextObject(text_object)) 
+                    command_buffer.clear();
+                    Some(EditorCommand::VisualSelectTextObject(text_object))
                 } else {
                     command_buffer.clear();
                     None
@@ -1149,7 +1151,7 @@ struct VisualLineMode;
 
 impl VisualLineMode {
     fn new() -> Self {
-        Self 
+        Self
     }
 }
 

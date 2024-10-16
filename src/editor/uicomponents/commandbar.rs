@@ -27,7 +27,7 @@ impl CommandBar {
         self.set_needs_redraw(true);
     }
 
-    pub fn cursor_position_col(&self) -> ColIndex {
+    pub fn cursor_position_col(&self) -> usize {
         let max_width = self
             .prompt
             .len()
@@ -60,7 +60,7 @@ impl UIComponent for CommandBar {
     fn set_size(&mut self, size: Size) {
         self.size = size;
     }
-    fn draw(&mut self, origin: RowIndex) -> Result<(), Error> {
+    fn draw(&mut self, origin: usize) -> Result<(), Error> {
         let area_for_value = self.size.width.saturating_sub(self.prompt.len()); // this is how much space there is between the right side of the prompt and the edge of the bar
 
         let value_end = self.value.len(); // we always want to show the left part of the value, therefore the end of the visible range we try to access will be equal to the full width

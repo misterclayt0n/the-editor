@@ -657,8 +657,8 @@ impl View {
     /// calculates the line index in the buffer corresponding to the current row in the screen
     fn calculate_line_index(
         &self,
-        current_row: RowIndex,
-        origin_row: RowIndex,
+        current_row: usize,
+        origin_row: usize,
         scroll_top: usize,
     ) -> usize {
         current_row
@@ -669,7 +669,7 @@ impl View {
     /// renders the current row based on the line index and other parameters
     fn render_current_row(
         &self,
-        current_row: RowIndex,
+        current_row: usize,
         line_idx: usize,
         top_third: usize,
         width: usize,
@@ -688,7 +688,7 @@ impl View {
     /// renders a line that exists in the buffer
     fn render_existing_line(
         &self,
-        current_row: RowIndex,
+        current_row: usize,
         line_idx: usize,
         width: usize,
     ) -> Result<(), Error> {
@@ -706,7 +706,7 @@ impl View {
 
     fn render_empty_line(
         &self,
-        current_row: RowIndex,
+        current_row: usize,
         selection_range: Option<(usize, usize)>,
     ) -> Result<(), Error> {
         let expanded_line = if selection_range.is_some() {
@@ -726,7 +726,7 @@ impl View {
     /// renders the visible portion of the line, handling search highlighting and selection.
     fn render_visible_line(
         &self,
-        current_row: RowIndex,
+        current_row: usize,
         line_idx: usize,
         visible_line: RopeSlice,
         left: usize,
@@ -785,7 +785,7 @@ impl View {
     /// renders a line with search highlights.
     fn render_line_with_search(
         &self,
-        current_row: RowIndex,
+        current_row: usize,
         visible_line: RopeSlice,
         _selected_match: Option<usize>,
     ) -> Result<(), Error> {
@@ -812,7 +812,7 @@ impl View {
     /// renders a line with selection highlights.
     fn render_line_with_selection(
         &self,
-        current_row: RowIndex,
+        current_row: usize,
         visible_line: RopeSlice,
         start: usize,
         end: usize,
@@ -824,7 +824,7 @@ impl View {
     /// renders a line without any highlights.
     fn render_line_normal(
         &self,
-        current_row: RowIndex,
+        current_row: usize,
         visible_line: RopeSlice,
     ) -> Result<(), Error> {
         let line_str = visible_line.to_string();
@@ -854,7 +854,7 @@ impl View {
     }
 
     /// renders a line with a given string.
-    fn render_line(at: RowIndex, line_text: &str) -> Result<(), Error> {
+    fn render_line(at: usize, line_text: &str) -> Result<(), Error> {
         Terminal::print_row(at, line_text)
     }
 
@@ -862,7 +862,7 @@ impl View {
     // Scrolling
     //
 
-    fn scroll_vertically(&mut self, to: RowIndex) {
+    fn scroll_vertically(&mut self, to: usize) {
         let Size { height, .. } = self.size;
 
         let offset_changed = if to < self.scroll_offset.row {
@@ -880,7 +880,7 @@ impl View {
         }
     }
 
-    fn scroll_horizontally(&mut self, to: ColIndex) {
+    fn scroll_horizontally(&mut self, to: usize) {
         let Size { width, .. } = self.size;
 
         let offset_changed = if to < self.scroll_offset.col {
@@ -1211,7 +1211,7 @@ impl UIComponent for View {
         self.scroll_text_location_into_view();
     }
 
-    fn draw(&mut self, origin_row: RowIndex) -> Result<(), Error> {
+    fn draw(&mut self, origin_row: usize) -> Result<(), Error> {
         let Size { height, width } = self.size;
         let end_y = origin_row.saturating_add(height);
         let scroll_top = self.scroll_offset.row;

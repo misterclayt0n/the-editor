@@ -14,6 +14,34 @@ pub struct Buffer {
     pub dirty: bool,
 }
 
+#[derive(PartialEq)]
+enum CharClass {
+    Whitespace,
+    Word,
+    Punctuation,
+}
+
+fn get_char_class(c: char, word_type: WordType) -> CharClass {
+    match word_type {
+        WordType::Word => {
+            if c.is_whitespace() {
+                CharClass::Whitespace
+            } else if is_word_char(c) {
+                CharClass::Word
+            } else {
+                CharClass::Punctuation
+            }
+        }
+        WordType::BigWord => {
+            if c.is_whitespace() {
+                CharClass::Whitespace
+            } else {
+                CharClass::Word // eveyrthing that is not a space is considered part of the word
+            }
+        }
+    }
+}
+
 impl Buffer {
     pub fn load(file_name: &str) -> Result<Self, Error> {
         let rope = Rope::from_reader(File::open(file_name)?)?;
@@ -85,8 +113,8 @@ impl Buffer {
                 line_slice.len_chars()
             };
 
-            // Use RopeSlice to search backward for the substring
-            let line_str = line_slice.to_string(); // Temporarily convert to String for substring search
+            // use RopeSlice to search backward for the substring
+            let line_str = line_slice.to_string(); // temporarily convert to String for substring search
             if let Some(char_idx) = line_str[..from_grapheme_idx].rfind(query) {
                 return Some(Location {
                     grapheme_index: char_idx,
@@ -165,14 +193,14 @@ impl Buffer {
 
     pub fn delete_line(&mut self, line_index: usize) {
         if self.rope.len_lines() == 1 {
-            // If it's the last line of the document, just clean the buffer so it's not empty
+            // if it's the last line of the document, just clean the buffer so it's not empty
             let line_start = self.rope.line_to_char(line_index);
             let line_end = self.rope.line_to_char(line_index + 1);
             if line_end > line_start {
                 self.rope.remove(line_start..line_end);
             }
         } else {
-            // If there's more than one line, we can delete as usual
+            // if there's more than one line, we can delete as usual
             let line_start = self.rope.line_to_char(line_index);
             let line_end = self.rope.line_to_char(line_index + 1);
             self.rope.remove(line_start..line_end);
@@ -192,46 +220,44 @@ impl Buffer {
         word_type: WordType,
     ) -> Option<Location> {
         let total_chars = self.rope.len_chars();
-        let start_char_index = self.location_to_char_index(location);
+        let mut char_index = self.location_to_char_index(location);
 
-        if start_char_index >= total_chars {
+        if char_index >= total_chars {
             return None;
         }
 
-        let mut char_index = start_char_index;
-        let mut in_word = false;
-        let mut first_char = true;
+        let c = self.rope.char(char_index);
 
-        let mut chars = self.rope.chars_at(char_index).peekable();
+        // determine the character class
+        let current_class = get_char_class(c, word_type);
 
-        while let Some(c) = chars.next() {
-            let is_word_char = match word_type {
-                WordType::Word => !c.is_whitespace() && !is_w_delimiter(c),
-                WordType::BigWord => !c.is_whitespace(),
-            };
+        // skip over characters of the same class
+        while char_index < total_chars {
+            let c = self.rope.char(char_index);
+            let class = get_char_class(c, word_type);
 
-            if is_w_delimiter(c) && !first_char && word_type == WordType::Word {
-                return Some(self.char_index_to_location(char_index));
-            }
-
-            if is_word_char {
-                if !in_word && !first_char {
-                    return Some(self.char_index_to_location(char_index));
-                }
-                in_word = true;
+            if class == current_class {
+                char_index += c.len_utf8();
             } else {
-                in_word = false;
-            }
-
-            first_char = false;
-            char_index += 1;
-
-            if char_index >= total_chars {
                 break;
             }
         }
 
-        None
+        // skip over any whitespace characters
+        while char_index < total_chars {
+            let c = self.rope.char(char_index);
+            if get_char_class(c, word_type) == CharClass::Whitespace {
+                char_index += c.len_utf8();
+            } else {
+                break;
+            }
+        }
+
+        if char_index >= total_chars {
+            return None;
+        }
+
+        Some(self.char_index_to_location(char_index))
     }
 
     pub fn find_previous_word_start(
@@ -239,47 +265,55 @@ impl Buffer {
         location: Location,
         word_type: WordType,
     ) -> Option<Location> {
-        let start_char_index = self.location_to_char_index(location);
+        let mut char_index = self.location_to_char_index(location);
 
-        if start_char_index == 0 || start_char_index > self.rope.len_chars() {
+        if char_index == 0 {
             return None;
         }
 
-        let mut char_index = start_char_index.saturating_sub(1);
-        let mut in_word = false;
-        let mut first_char = true;
+        // move the cursor one step back to start looking at the previous character
+        char_index = char_index.saturating_sub(1);
 
-        loop {
+        // skip any trailing whitespace
+        while char_index > 0 {
             let c = self.rope.char(char_index);
-            let is_word_char = match word_type {
-                WordType::Word => !c.is_whitespace() && !is_b_delimiter(c),
-                WordType::BigWord => !c.is_whitespace(),
-            };
-
-            if is_b_delimiter(c) && !first_char {
-                return Some(self.char_index_to_location(char_index));
-            }
-
-            if is_word_char {
-                in_word = true;
-            } else if in_word {
-                return Some(self.char_index_to_location(char_index + 1));
-            }
-
-            first_char = false;
-
-            if char_index == 0 {
+            if get_char_class(c, word_type) == CharClass::Whitespace {
+                char_index = char_index.saturating_sub(c.len_utf8());
+            } else {
                 break;
             }
-
-            char_index = char_index.saturating_sub(1);
         }
 
-        if in_word {
+        if char_index == 0 {
             return Some(self.char_index_to_location(0));
         }
 
-        None
+        // get the class of the character at the new position
+        let current_class = get_char_class(self.rope.char(char_index), word_type);
+
+        // skip all characters that are of the same class
+        while char_index > 0 {
+            let c = self.rope.char(char_index);
+            if get_char_class(c, word_type) == current_class {
+                char_index = char_index.saturating_sub(c.len_utf8());
+            } else {
+                // stop at the boundary between different character classes
+                char_index += c.len_utf8();
+                break;
+            }
+        }
+
+        // skip any leading whitespace before the next word
+        while char_index > 0 {
+            let c = self.rope.char(char_index);
+            if get_char_class(c, word_type) == CharClass::Whitespace {
+                char_index = char_index.saturating_sub(c.len_utf8());
+            } else {
+                break;
+            }
+        }
+
+        Some(self.char_index_to_location(char_index))
     }
 
     pub fn find_next_word_end(&self, location: Location, word_type: WordType) -> Option<Location> {
@@ -290,72 +324,44 @@ impl Buffer {
             return None;
         }
 
-        // Check if we are at the end of a word
-        let c = self.rope.char(char_index);
-        let is_word_char = match word_type {
-            WordType::Word => !c.is_whitespace() && !is_w_delimiter(c),
-            WordType::BigWord => !c.is_whitespace(),
-        };
-
-        let next_char_index = char_index + c.len_utf8();
-        if next_char_index >= total_chars {
-            // End of buffer
-            if is_word_char {
-                // Last char of a word
-                return Some(self.char_index_to_location(char_index));
-            } else {
-                return None;
-            }
+        // move forward one character if possible
+        if char_index + 1 < total_chars {
+            char_index += 1;
+        } else {
+            // We're at the end of the buffer
+            return None;
         }
 
-        let next_c = self.rope.char(next_char_index);
-        let next_is_word_char = match word_type {
-            WordType::Word => !next_c.is_whitespace() && !is_w_delimiter(next_c),
-            WordType::BigWord => !next_c.is_whitespace(),
-        };
-
-        if is_word_char && !next_is_word_char {
-            // End of a word, move to next char
-            char_index = next_char_index;
-        }
-
-        // Move beyond any chars that do not belong to the word
+        // skip over whitespace
         while char_index < total_chars {
             let c = self.rope.char(char_index);
-            let is_word_char = match word_type {
-                WordType::Word => !c.is_whitespace() && !is_w_delimiter(c),
-                WordType::BigWord => !c.is_whitespace(),
-            };
-            if is_word_char {
+            if get_char_class(c, word_type) == CharClass::Whitespace {
+                char_index += c.len_utf8();
+            } else {
                 break;
             }
-            char_index += c.len_utf8();
         }
 
         if char_index >= total_chars {
             return None;
         }
 
-        // Now, we are at the beginning of a word
-        let mut last_word_char_index = None;
+        let current_class = get_char_class(self.rope.char(char_index), word_type);
 
+        let mut last_char_index = char_index;
+
+        // move to the end of the current class sequence
         while char_index < total_chars {
             let c = self.rope.char(char_index);
-            let is_word_char = match word_type {
-                WordType::Word => !c.is_whitespace() && !is_w_delimiter(c),
-                WordType::BigWord => !c.is_whitespace(),
-            };
-
-            if is_word_char {
-                last_word_char_index = Some(char_index);
+            if get_char_class(c, word_type) == current_class {
+                last_char_index = char_index;
                 char_index += c.len_utf8();
             } else {
-                // End of the word
                 break;
             }
         }
 
-        last_word_char_index.map(|idx| self.char_index_to_location(idx))
+        Some(self.char_index_to_location(last_char_index))
     }
 
     pub fn get_end_location(&self) -> Location {
@@ -458,10 +464,6 @@ impl Buffer {
     }
 }
 
-fn is_w_delimiter(c: char) -> bool {
-    c == '(' || c == ')' || c == '{' || c == '}' || c == '\\' || c == ';' || c == ','
-}
-
-fn is_b_delimiter(c: char) -> bool {
-    c == '{' || c == '}' || c == ';' || c == ',' || c == '(' || c == ')' || c == '\\'
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }

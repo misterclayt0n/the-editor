@@ -120,7 +120,7 @@ impl Terminal {
         Ok(())
     }
 
-    pub fn print_row(row: RowIndex, line_text: &str) -> Result<(), Error> {
+    pub fn print_row(row: usize, line_text: &str) -> Result<(), Error> {
         Self::move_cursor_to(Position { row, col: 0 })?;
         Self::clear_line()?;
         Self::print(line_text)?;
@@ -128,7 +128,7 @@ impl Terminal {
         Ok(())
     }
 
-    pub fn print_inverted_row(row: RowIndex, line_text: &str) -> Result<(), Error> {
+    pub fn print_inverted_row(row: usize, line_text: &str) -> Result<(), Error> {
         let width = Self::size()?.width;
         Self::print_row(row, &format!("{Reverse}{line_text:width$.width$}{Reset}"))
     }
@@ -144,7 +144,7 @@ impl Terminal {
     // }
 
     pub fn print_selected_row(
-        row: RowIndex,
+        row: usize,
         rope_slice: RopeSlice,
         selection_range: Option<(usize, usize)>,
     ) -> Result<(), Error> {
@@ -199,7 +199,7 @@ impl Terminal {
     }
 
     pub fn print_searched_row(
-        row: RowIndex,
+        row: usize,
         rope_slice: RopeSlice,
         selection_range: Option<(usize, usize)>,
     ) -> Result<(), Error> {

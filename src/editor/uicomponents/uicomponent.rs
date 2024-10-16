@@ -18,7 +18,7 @@ pub trait UIComponent {
     fn set_size(&mut self, size: Size);
 
     /// Draw this component if it's visible and in need of redrawing
-    fn render(&mut self, origin_row: RowIndex) {
+    fn render(&mut self, origin_row: usize) {
         if self.needs_redraw() {
             if let Err(err) = self.draw(origin_row) {
                 #[cfg(debug_assertions)]
@@ -36,5 +36,5 @@ pub trait UIComponent {
     }
 
     /// Method to actually draw the component, must be implemented by each component
-    fn draw(&mut self, origin_row: RowIndex) -> Result<(), Error>;
+    fn draw(&mut self, origin_row: usize) -> Result<(), Error>;
 }

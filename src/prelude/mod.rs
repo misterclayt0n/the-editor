@@ -1,19 +1,13 @@
 use std::cmp::Ordering;
 
-pub type GraphemeIndex = usize;
-pub type LineIndex = usize;
-pub type ByteIndex = usize;
-pub type ColIndex = usize;
-pub type RowIndex = usize;
-
 pub const NAME: &str = "the-editor";
 pub const VERSION: &str = "0.0.1";
 pub const TAB_WIDTH: usize = 4;
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq)]
 pub struct Location {
-    pub grapheme_index: GraphemeIndex,
-    pub line_index: LineIndex,
+    pub grapheme_index: usize,
+    pub line_index: usize,
 }
 
 impl Ord for Location {
@@ -32,8 +26,8 @@ impl PartialOrd for Location {
 
 #[derive(Copy, Clone, Default)]
 pub struct Position {
-    pub col: ColIndex,
-    pub row: RowIndex,
+    pub col: usize,
+    pub row: usize,
 }
 
 #[derive(Default, Copy, Clone, Eq, PartialEq)]

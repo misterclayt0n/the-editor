@@ -45,6 +45,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [ ] Compile/Recompile commands
 - [ ] Working command mode 
 - [ ] Tab identation
+- [ ] Minmal mouse support (scrolling, selection, moving cursor)
 - [ ] CommandBar mode with basic operations: 
     - [ ] Saving
     - [ ] Subtitution
@@ -62,7 +63,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [ ] Fuzzy finder inspired by [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
 
 ### Fixes
-- [ ] "w" and "b" motions are not working as vim's
+- [x] "w" and "b" motions are not working as vim's
 - [ ] Need to create some sort of rendering buffer to evoid flickering
 - [ ] Selection is not working well when encountered with emojis
 

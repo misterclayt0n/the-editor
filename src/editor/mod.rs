@@ -19,7 +19,7 @@ use uicomponents::{CommandBar, MessageBar, StatusBar, UIComponent, View};
 
 const QUIT_TIMES: u8 = 3;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum Operator {
     Delete,
     Change,
@@ -282,6 +282,10 @@ impl Editor {
             }
             EditorCommand::OperatorTextObject(operator, text_object) => {
                 self.view.handle_operator_text_object(operator, text_object);
+
+                if operator == Operator::Change {
+                    self.switch_mode(ModeType::Insert);
+                }
             }
             EditorCommand::MoveCursorAndSwitchMode(direction, mode) => {
                 self.view.handle_normal_command(direction);
@@ -746,7 +750,13 @@ impl Mode for NormalMode {
                     let text_object = TextObject::Inner(c);
                     command_buffer.clear();
                     Some(EditorCommand::OperatorTextObject(operator, text_object))
-                } else {
+                } else if command_buffer == "ci" {
+                    let operator = Operator::Change;
+                    let text_object = TextObject::Inner(c);
+                    command_buffer.clear();
+                    Some(EditorCommand::OperatorTextObject(operator, text_object))
+                }
+                else {
                     command_buffer.clear();
                     None
                 }
@@ -760,6 +770,9 @@ impl Mode for NormalMode {
                     command_buffer.push('i');
                     None
                 } else if command_buffer == "d" {
+                    command_buffer.push('i');
+                    None
+                } else if command_buffer == "c" {
                     command_buffer.push('i');
                     None
                 } else {
@@ -778,7 +791,7 @@ impl Mode for NormalMode {
                 } else {
                     command_buffer.clear();
                     command_buffer.push('c');
-                    None
+                    None // wait for next command
                 }
             }
             KeyEvent {

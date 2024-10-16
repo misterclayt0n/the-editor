@@ -285,6 +285,27 @@ impl View {
                     }
                 } // TODO: add more text objects
             },
+            Operator::Change => match text_object {
+                TextObject::Inner(delimiter) => {
+                    if let Some((start, end)) = self.find_text_object_range(delimiter, true) {
+                        // remove all content between the delimiters
+                        self.buffer.rope.remove(start..end);
+                        self.buffer.dirty = true;
+
+                        // insert new line between the removed space
+                        let insertion_point = self.buffer.char_index_to_location(start + 1);
+                        self.buffer.insert_newline(insertion_point);
+
+                        // update cursor location to the beginning of the removed interval
+                        self.movement.text_location = Location {
+                            line_index: insertion_point.line_index,
+                            grapheme_index: 0,
+                        };
+                        self.scroll_text_location_into_view();
+                        self.set_needs_redraw(true);
+                    }
+                }
+            }
             // TODO: add more operators
             _ => {}
         }
@@ -1110,22 +1131,7 @@ impl View {
     }
 
     pub fn handle_visual_line_movement(&mut self, command: Normal) {
-        match command {
-            Normal::Up => self.movement.move_up(&self.buffer, 1),
-            Normal::Down => self.movement.move_down(&self.buffer, 1),
-            Normal::Left => self.movement.move_left(&self.buffer),
-            Normal::Right => self.movement.move_right(&self.buffer),
-            Normal::GoToTop => self.movement.move_to_top(),
-            Normal::GoToBottom => self.movement.move_to_bottom(&self.buffer),
-            Normal::PageUp => self
-                .movement
-                .move_up(&self.buffer, self.size.height.saturating_div(2)),
-            Normal::PageDown => self
-                .movement
-                .move_down(&self.buffer, self.size.height.saturating_div(2)),
-            _ => {}
-        }
-
+        self.handle_normal_command(command);
         self.update_selection(); // update selection to include the new line
         self.scroll_text_location_into_view();
     }

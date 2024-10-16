@@ -1,7 +1,6 @@
-use crate::prelude::*;
 use crossterm::cursor::{Hide, MoveTo, Show};
 
-use crossterm::style::SetForegroundColor;
+use crossterm::style::{Attribute, Color, SetForegroundColor};
 use crossterm::style::{
     Attribute::{Reset, Reverse},
     Print, ResetColor, SetBackgroundColor,
@@ -13,10 +12,7 @@ use crossterm::terminal::{
 };
 
 use crossterm::{queue, Command};
-use ropey::RopeSlice;
 use std::io::{stdout, Error, Write};
-
-use super::color_scheme::ColorScheme;
 use super::{Position, Size};
 
 pub struct Terminal;
@@ -143,117 +139,24 @@ impl Terminal {
     //     Ok(())
     // }
 
-    pub fn print_selected_row(
-        row: usize,
-        rope_slice: RopeSlice,
-        selection_range: Option<(usize, usize)>,
-    ) -> Result<(), Error> {
-        Self::move_cursor_to(Position { row, col: 0 })?;
-        Self::clear_line()?;
-
-        let mut current_index = 0;
-
-        let color_scheme = ColorScheme::default();
-
-        for chunk in rope_slice.chunks() {
-            let chunk_len = chunk.len();
-
-            if let Some((start, end)) = selection_range {
-                if current_index + chunk_len >= start && current_index <= end {
-                    let relative_start = if start > current_index {
-                        start - current_index
-                    } else {
-                        0
-                    };
-                    let relative_end = if end < current_index + chunk_len {
-                        end - current_index
-                    } else {
-                        chunk_len
-                    };
-
-                    if relative_start > 0 {
-                        Self::print(&chunk[0..relative_start])?;
-                    }
-
-                    if relative_end > relative_start {
-                        Self::queue_command(SetBackgroundColor(color_scheme.selection_background))?;
-                        Self::queue_command(SetForegroundColor(color_scheme.selection_foreground))?;
-                        Self::print(&chunk[relative_start..relative_end])?;
-                        Self::queue_command(ResetColor)?;
-                    }
-
-                    if relative_end < chunk_len {
-                        Self::print(&chunk[relative_end..])?;
-                    }
-                } else {
-                    Self::print(chunk)?;
-                }
-            } else {
-                Self::print(chunk)?;
-            }
-
-            current_index += chunk_len;
+    pub fn styled_text(
+        text: &str,
+        foreground: Option<Color>,
+        background: Option<Color>,
+        attributes: &[Attribute],
+    ) -> String {
+        let mut styled = String::new();
+        if let Some(bg) = background {
+            styled.push_str(&format!("{}", SetBackgroundColor(bg)));
         }
-
-        Ok(())
-    }
-
-    pub fn print_searched_row(
-        row: usize,
-        rope_slice: RopeSlice,
-        selection_range: Option<(usize, usize)>,
-    ) -> Result<(), Error> {
-        Self::move_cursor_to(Position { row, col: 0 })?;
-        Self::clear_line()?;
-
-        let mut current_index = 0;
-
-        let color_scheme = ColorScheme::default();
-
-        for chunk in rope_slice.chunks() {
-            let chunk_len = chunk.len();
-
-            if let Some((start, end)) = selection_range {
-                if current_index + chunk_len >= start && current_index <= end {
-                    let relative_start = if start > current_index {
-                        start - current_index
-                    } else {
-                        0
-                    };
-                    let relative_end = if end < current_index + chunk_len {
-                        end - current_index
-                    } else {
-                        chunk_len
-                    };
-
-                    if relative_start > 0 {
-                        Self::print(&chunk[0..relative_start])?;
-                    }
-
-                    if relative_end > relative_start {
-                        Self::queue_command(SetBackgroundColor(
-                            color_scheme.search_match_background,
-                        ))?;
-                        Self::queue_command(SetForegroundColor(
-                            color_scheme.search_match_foreground,
-                        ))?;
-                        Self::print(&chunk[relative_start..relative_end])?;
-                        Self::queue_command(ResetColor)?;
-                    }
-
-                    if relative_end < chunk_len {
-                        Self::print(&chunk[relative_end..])?;
-                    }
-                } else {
-                    Self::print(chunk)?;
-                }
-            } else {
-                Self::print(chunk)?;
-            }
-
-            current_index += chunk_len;
+        if let Some(fg) = foreground {
+            styled.push_str(&format!("{}", SetForegroundColor(fg)));
         }
-
-        Ok(())
+        for attr in attributes {
+            styled.push_str(&format!("{}", attr));
+        }
+        styled.push_str(text);
+        styled.push_str(&format!("{}", ResetColor));
+        styled
     }
 }

@@ -42,7 +42,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [ ] Auto closing?
 - [ ] Multiple cursors 
 - [ ] Visual block mode
-- [ ] Compile/Recompile commands
+- [ ] Compile/Recompile commands 
 - [ ] Working command mode 
 - [ ] Tab identation
 - [ ] Minmal mouse support (scrolling, selection, moving cursor)
@@ -64,7 +64,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 
 ### Fixes
 - [x] "w" and "b" motions are not working as vim's
-- [ ] Need to create some sort of rendering buffer to evoid flickering
+- [x] Need to create some sort of rendering buffer to evoid flickering
 - [ ] Selection is not working well when encountered with emojis
 
 ### 📚 Future Plans

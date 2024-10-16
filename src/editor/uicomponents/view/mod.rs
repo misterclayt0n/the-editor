@@ -1,5 +1,6 @@
 use std::{cmp::min, io::Error};
 
+use crate::editor::color_scheme::ColorScheme;
 use crate::editor::{Edit, Normal, Operator, TextObject};
 use crate::prelude::*;
 
@@ -9,7 +10,6 @@ use super::UIComponent;
 mod buffer;
 use buffer::Buffer;
 use movement::Movement;
-use ropey::RopeSlice;
 mod fileinfo;
 use fileinfo::FileInfo;
 use unicode_segmentation::UnicodeSegmentation;
@@ -41,6 +41,7 @@ pub struct View {
     selection_start: Option<Location>,
     selection_end: Option<Location>,
     selection_mode: Option<SelectionMode>,
+    rendered_lines: Vec<String>,
 }
 
 impl View {
@@ -319,7 +320,9 @@ impl View {
                 let range_end = if inner {
                     // search the last character (non whitespace) before the closing delimiter
                     let mut last_non_space = end - 1;
-                    while last_non_space > range_start && self.buffer.rope.char(last_non_space).is_whitespace() {
+                    while last_non_space > range_start
+                        && self.buffer.rope.char(last_non_space).is_whitespace()
+                    {
                         last_non_space -= 1;
                     }
                     last_non_space + 1
@@ -637,6 +640,187 @@ impl View {
     // Rendering
     //
 
+    fn get_rendered_line(&self, line_idx: usize, width: usize) -> Result<String, Error> {
+        let line_slice = self.buffer.rope.line(line_idx);
+
+        // just in case the line is empty
+        if line_slice.len_chars() == 0 {
+            return Ok(" ".to_string());
+        }
+
+        let (left, right) = self.calculate_visible_range(line_slice.len_chars(), width);
+        let visible_line = line_slice.slice(left..right);
+
+        // expand tabs and get char position
+        let (expanded_line, char_positions) =
+            self.expand_tabs_and_get_positions(&visible_line.to_string());
+
+        // check if there is some selection in the current line
+        let selection_ranges = self.calculate_selection_ranges(line_idx, left, &char_positions);
+
+        // check if there is a corresponding search in the current line
+        let search_ranges = self.calculate_search_ranges(&expanded_line);
+
+        // build the rendered line with highlight 
+        let rendered_line = self.build_rendered_line_with_highlights(
+            &expanded_line,
+            &selection_ranges,
+            &search_ranges,
+        );
+
+        Ok(rendered_line)
+    }
+
+    fn expand_tabs_and_get_positions(&self, input: &str) -> (String, Vec<usize>) {
+        let mut output = String::new();
+        let mut positions = Vec::new();
+        let mut width = 0;
+
+        for c in input.chars() {
+            if c == '\t' {
+                let spaces_to_next_tab = TAB_WIDTH - (width % TAB_WIDTH);
+                output.push_str(&" ".repeat(spaces_to_next_tab));
+                for _ in 0..spaces_to_next_tab {
+                    positions.push(width);
+                    width += 1;
+                }
+            } else {
+                output.push(c);
+                positions.push(width);
+                width += UnicodeWidthChar::width(c).unwrap_or(0);
+            }
+        }
+
+        (output, positions)
+    }
+
+    fn calculate_selection_ranges(
+        &self,
+        line_idx: usize,
+        left: usize,
+        char_positions: &[usize],
+    ) -> Vec<(usize, usize)> {
+        let mut ranges = Vec::new();
+
+        if let Some((start, end)) = self.get_selection_range() {
+            if start.line_index <= line_idx && end.line_index >= line_idx {
+                match self.selection_mode {
+                    Some(SelectionMode::Visual) => {
+                        let start_idx = if start.line_index == line_idx {
+                            self.expand_tabs_before_index(start.grapheme_index, line_idx)
+                        } else {
+                            0
+                        };
+
+                        let end_idx = if end.line_index == line_idx {
+                            self.expand_tabs_before_index(end.grapheme_index, line_idx)
+                        } else {
+                            char_positions.len()
+                        };
+
+                        if start_idx < end_idx {
+                            let selection_start = start_idx.saturating_sub(left);
+                            let selection_end = end_idx.saturating_sub(left);
+                            ranges.push((selection_start, selection_end));
+                        }
+                    }
+                    Some(SelectionMode::VisualLine) => {
+                        let line_length = self.get_expanded_line_length(line_idx);
+                        ranges.push((0, line_length));
+                    }
+                    None => {}
+                }
+            }
+        }
+
+        ranges
+    }
+
+    fn calculate_search_ranges(&self, expanded_line: &str) -> Vec<(usize, usize)> {
+        let mut ranges = Vec::new();
+
+        if let Some(query) = self.get_search_query() {
+            if !query.is_empty() {
+                let mut search_start = 0;
+                while let Some(start_idx) = expanded_line[search_start..].find(query) {
+                    let start = search_start + start_idx;
+                    let end = start + query.len();
+                    ranges.push((start, end));
+                    search_start = end;
+                }
+            }
+        }
+
+        ranges
+    }
+
+    fn build_rendered_line_with_highlights(
+        &self,
+        line: &str,
+        selection_ranges: &[(usize, usize)],
+        search_ranges: &[(usize, usize)],
+    ) -> String {
+        let mut rendered_line = String::new();
+        let mut idx = 0;
+
+        let mut highlight_ranges = Vec::new();
+
+        // combine ranges from selection and search, with selection being priority
+        for &(start, end) in selection_ranges {
+            highlight_ranges.push((start, end, "selection"));
+        }
+
+        for &(start, end) in search_ranges {
+            // check if this range is not covered by a selection
+            if !selection_ranges
+                .iter()
+                .any(|&(sel_start, sel_end)| start < sel_end && end > sel_start)
+            {
+                highlight_ranges.push((start, end, "search"));
+            }
+        }
+
+        // order range by initial position
+        highlight_ranges.sort_by_key(|&(start, _, _)| start);
+
+        // apply highlight
+        for &(start, end, highlight_type) in &highlight_ranges {
+            if idx < start {
+                // normal text before highlight
+                rendered_line.push_str(&line[idx..start]);
+            }
+
+            // apply highlight
+            let highlighted_text = &line[start..end];
+            let color_scheme = ColorScheme::default();
+            let styled_text = match highlight_type {
+                "selection" => Terminal::styled_text(
+                    highlighted_text,
+                    Some(color_scheme.selection_foreground),
+                    Some(color_scheme.selection_background),
+                    &[],
+                ),
+                "search" => Terminal::styled_text(
+                    highlighted_text,
+                    Some(color_scheme.search_match_foreground),
+                    Some(color_scheme.search_match_background),
+                    &[],
+                ),
+                _ => highlighted_text.to_string(),
+            };
+            rendered_line.push_str(&styled_text);
+
+            idx = end;
+        }
+
+        // remaining text after the highlight
+        if idx < line.len() {
+            rendered_line.push_str(&line[idx..]);
+        }
+
+        rendered_line
+    }
+
     fn build_welcome_message(width: usize) -> String {
         if width == 0 {
             return String::new();
@@ -664,198 +848,6 @@ impl View {
         current_row
             .saturating_sub(origin_row)
             .saturating_add(scroll_top)
-    }
-
-    /// renders the current row based on the line index and other parameters
-    fn render_current_row(
-        &self,
-        current_row: usize,
-        line_idx: usize,
-        top_third: usize,
-        width: usize,
-    ) -> Result<(), Error> {
-        if line_idx < self.buffer.rope.len_lines() {
-            self.render_existing_line(current_row, line_idx, width)?;
-        } else if current_row == top_third && self.buffer.is_empty() {
-            Self::render_line(current_row, &Self::build_welcome_message(width))?;
-        } else {
-            Self::render_line(current_row, "~")?;
-        }
-
-        Ok(())
-    }
-
-    /// renders a line that exists in the buffer
-    fn render_existing_line(
-        &self,
-        current_row: usize,
-        line_idx: usize,
-        width: usize,
-    ) -> Result<(), Error> {
-        let line_slice = self.buffer.rope.line(line_idx);
-
-        if line_slice.len_chars() == 0 {
-            self.render_empty_line(current_row, None)?;
-        } else {
-            let (left, right) = self.calculate_visible_range(line_slice.len_chars(), width);
-            let visible_line = line_slice.slice(left..right);
-            self.render_visible_line(current_row, line_idx, visible_line, left)?;
-        }
-        Ok(())
-    }
-
-    fn render_empty_line(
-        &self,
-        current_row: usize,
-        selection_range: Option<(usize, usize)>,
-    ) -> Result<(), Error> {
-        let expanded_line = if selection_range.is_some() {
-            "~".to_string()
-        } else {
-            " ".to_string()
-        };
-
-        Terminal::print_selected_row(
-            current_row,
-            RopeSlice::from(expanded_line.as_str()),
-            selection_range,
-        )?;
-        Ok(())
-    }
-
-    /// renders the visible portion of the line, handling search highlighting and selection.
-    fn render_visible_line(
-        &self,
-        current_row: usize,
-        line_idx: usize,
-        visible_line: RopeSlice,
-        left: usize,
-    ) -> Result<(), Error> {
-        let query = self
-            .search_info
-            .as_ref()
-            .and_then(|search_info| search_info.query.as_ref());
-
-        let selected_match = (self.movement.text_location.line_index == line_idx
-            && query.is_some())
-        .then_some(self.movement.text_location.grapheme_index);
-
-        // store positions of each character after tab expansion
-        let mut expanded_line = String::new();
-        let mut char_positions = Vec::new(); // positions of each character after expansion
-        let mut width = 0;
-
-        for c in visible_line.chars() {
-            if c == '\t' {
-                let spaces_to_next_tab = TAB_WIDTH - (width % TAB_WIDTH);
-                expanded_line.push_str(&" ".repeat(spaces_to_next_tab));
-                for _ in 0..spaces_to_next_tab {
-                    char_positions.push(width);
-                    width += 1;
-                }
-            } else {
-                expanded_line.push(c);
-                char_positions.push(width);
-                width += UnicodeWidthChar::width(c).unwrap_or(0);
-            }
-        }
-
-        let selection_range = self.calculate_selection_range(line_idx, left, &char_positions);
-
-        if let Some(_query) = query {
-            self.render_line_with_search(
-                current_row,
-                RopeSlice::from(expanded_line.as_str()),
-                selected_match,
-            )?;
-        } else if let Some((start, end)) = selection_range {
-            self.render_line_with_selection(
-                current_row,
-                RopeSlice::from(expanded_line.as_str()),
-                start,
-                end,
-            )?;
-        } else {
-            self.render_line_normal(current_row, RopeSlice::from(expanded_line.as_str()))?;
-        }
-
-        Ok(())
-    }
-
-    /// renders a line with search highlights.
-    fn render_line_with_search(
-        &self,
-        current_row: usize,
-        visible_line: RopeSlice,
-        _selected_match: Option<usize>,
-    ) -> Result<(), Error> {
-        let query = self.get_search_query();
-        let line_str = visible_line.to_string();
-
-        if let Some(query) = query {
-            if let Some(start_idx) = line_str.find(query) {
-                let end_idx = start_idx + query.len();
-                Terminal::print_searched_row(
-                    current_row,
-                    RopeSlice::from(line_str.as_str()),
-                    Some((start_idx, end_idx)),
-                )?;
-            } else {
-                Terminal::print_row(current_row, &line_str)?;
-            }
-        } else {
-            Terminal::print_row(current_row, &line_str)?;
-        }
-        Ok(())
-    }
-
-    /// renders a line with selection highlights.
-    fn render_line_with_selection(
-        &self,
-        current_row: usize,
-        visible_line: RopeSlice,
-        start: usize,
-        end: usize,
-    ) -> Result<(), Error> {
-        Terminal::print_selected_row(current_row, visible_line, Some((start, end)))?;
-        Ok(())
-    }
-
-    /// renders a line without any highlights.
-    fn render_line_normal(
-        &self,
-        current_row: usize,
-        visible_line: RopeSlice,
-    ) -> Result<(), Error> {
-        let line_str = visible_line.to_string();
-        let expanded_line = self.expand_tabs(&line_str);
-        Terminal::print_row(current_row, &expanded_line)?;
-        Ok(())
-    }
-
-    fn expand_tabs(&self, input: &str) -> String {
-        let mut output = String::new();
-        let mut width = 0;
-
-        for c in input.chars() {
-            if c == '\t' {
-                let spaces_to_next_tab = TAB_WIDTH - (width % TAB_WIDTH);
-                for _ in 0..spaces_to_next_tab {
-                    output.push(' ');
-                }
-                width += spaces_to_next_tab;
-            } else {
-                output.push(c);
-                width += UnicodeWidthChar::width(c).unwrap_or(0);
-            }
-        }
-
-        output
-    }
-
-    /// renders a line with a given string.
-    fn render_line(at: usize, line_text: &str) -> Result<(), Error> {
-        Terminal::print_row(at, line_text)
     }
 
     //
@@ -1126,49 +1118,6 @@ impl View {
         self.scroll_text_location_into_view();
     }
 
-    /// calculates the selection range for the current line if any selection exists.
-    fn calculate_selection_range(
-        &self,
-        line_idx: usize,
-        left: usize,
-        char_positions: &[usize],
-    ) -> Option<(usize, usize)> {
-        self.get_selection_range().and_then(|(start, end)| {
-            if start.line_index <= line_idx && end.line_index >= line_idx {
-                match self.selection_mode {
-                    Some(SelectionMode::Visual) => {
-                        let start_idx = if start.line_index == line_idx {
-                            self.expand_tabs_before_index(start.grapheme_index, line_idx)
-                        } else {
-                            0
-                        };
-
-                        let end_idx = if end.line_index == line_idx {
-                            self.expand_tabs_before_index(end.grapheme_index, line_idx)
-                        } else {
-                            char_positions.len()
-                        };
-
-                        if start_idx >= end_idx {
-                            return None;
-                        }
-
-                        let selection_start = start_idx.saturating_sub(left);
-                        let selection_end = end_idx.saturating_sub(left).saturating_add(1);
-                        Some((selection_start, selection_end))
-                    }
-                    Some(SelectionMode::VisualLine) => {
-                        let line_length = self.get_expanded_line_length(line_idx);
-                        Some((0, line_length))
-                    }
-                    None => None,
-                }
-            } else {
-                None
-            }
-        })
-    }
-
     /// calculates the visible range (left and right indices) of the line based on scrolling.
     fn calculate_visible_range(&self, line_length: usize, width: usize) -> (usize, usize) {
         let left = min(self.scroll_offset.col, line_length);
@@ -1195,6 +1144,7 @@ impl View {
         }
         expanded_width
     }
+
 }
 
 impl UIComponent for View {
@@ -1217,10 +1167,40 @@ impl UIComponent for View {
         let scroll_top = self.scroll_offset.row;
         let top_third = height.div_ceil(3);
 
+        // prepare a new buffer with rendered lines
+        let mut new_rendered_lines = Vec::with_capacity(height);
+
         for current_row in origin_row..end_y {
             let line_idx = self.calculate_line_index(current_row, origin_row, scroll_top);
-            self.render_current_row(current_row, line_idx, top_third, width)?;
+
+            let rendered_line = if line_idx < self.buffer.rope.len_lines() {
+                self.get_rendered_line(line_idx, width)?
+            } else if current_row == top_third && self.buffer.is_empty() {
+                Self::build_welcome_message(width)
+            } else {
+                "~".to_string()
+            };
+
+            new_rendered_lines.push(rendered_line);
         }
+
+        // compare old buffer with the new one and apply diffing
+        for (i, line) in new_rendered_lines.iter().enumerate() {
+            if self.rendered_lines.get(i) != Some(line) {
+                // move cursor to the correct line
+                Terminal::move_cursor_to(Position {
+                    row: origin_row + i,
+                    col: 0,
+                })?;
+                // clean current line
+                Terminal::clear_line()?;
+                // print new line 
+                Terminal::print(line)?;
+            }
+        }
+
+        // update the buffer with the rendered lines
+        self.rendered_lines = new_rendered_lines;
 
         Ok(())
     }

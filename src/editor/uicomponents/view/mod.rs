@@ -13,7 +13,7 @@ use movement::Movement;
 mod fileinfo;
 use fileinfo::FileInfo;
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 mod movement;
 
 #[derive(Default, Eq, PartialEq, Clone, Copy)]
@@ -661,7 +661,7 @@ impl View {
         // check if there is a corresponding search in the current line
         let search_ranges = self.calculate_search_ranges(&expanded_line);
 
-        // build the rendered line with highlight 
+        // build the rendered line with highlight
         let rendered_line = self.build_rendered_line_with_highlights(
             &expanded_line,
             &selection_ranges,
@@ -676,8 +676,10 @@ impl View {
         let mut positions = Vec::new();
         let mut width = 0;
 
-        for c in input.chars() {
-            if c == '\t' {
+        // iterate through gragphemes
+        // never, ever, characters
+        for grapheme in input.graphemes(true) {
+            if grapheme == "\t" {
                 let spaces_to_next_tab = TAB_WIDTH - (width % TAB_WIDTH);
                 output.push_str(&" ".repeat(spaces_to_next_tab));
                 for _ in 0..spaces_to_next_tab {
@@ -685,9 +687,9 @@ impl View {
                     width += 1;
                 }
             } else {
-                output.push(c);
+                output.push_str(grapheme);
                 positions.push(width);
-                width += UnicodeWidthChar::width(c).unwrap_or(0);
+                width += UnicodeWidthStr::width(grapheme);
             }
         }
 
@@ -760,18 +762,23 @@ impl View {
         selection_ranges: &[(usize, usize)],
         search_ranges: &[(usize, usize)],
     ) -> String {
+        use unicode_segmentation::UnicodeSegmentation;
         let mut rendered_line = String::new();
+
+        // convert line into a grapheme vector
+        let graphemes: Vec<&str> = line.graphemes(true).collect();
+        let total_graphemes = graphemes.len();
+
         let mut idx = 0;
 
         let mut highlight_ranges = Vec::new();
 
-        // combine ranges from selection and search, with selection being priority
+        // combine ranges of selection and search
         for &(start, end) in selection_ranges {
             highlight_ranges.push((start, end, "selection"));
         }
 
         for &(start, end) in search_ranges {
-            // check if this range is not covered by a selection
             if !selection_ranges
                 .iter()
                 .any(|&(sel_start, sel_end)| start < sel_end && end > sel_start)
@@ -780,28 +787,32 @@ impl View {
             }
         }
 
-        // order range by initial position
+        // order ranges by the initial position
         highlight_ranges.sort_by_key(|&(start, _, _)| start);
 
-        // apply highlight
+        // apply highlight using grapheme index
         for &(start, end, highlight_type) in &highlight_ranges {
+            let start = start.min(total_graphemes);
+            let end = end.min(total_graphemes);
+
             if idx < start {
                 // normal text before highlight
-                rendered_line.push_str(&line[idx..start]);
+                let normal_text = graphemes[idx..start].concat();
+                rendered_line.push_str(&normal_text);
             }
 
             // apply highlight
-            let highlighted_text = &line[start..end];
+            let highlighted_text = graphemes[start..end].concat();
             let color_scheme = ColorScheme::default();
             let styled_text = match highlight_type {
                 "selection" => Terminal::styled_text(
-                    highlighted_text,
+                    &highlighted_text,
                     Some(color_scheme.selection_foreground),
                     Some(color_scheme.selection_background),
                     &[],
                 ),
                 "search" => Terminal::styled_text(
-                    highlighted_text,
+                    &highlighted_text,
                     Some(color_scheme.search_match_foreground),
                     Some(color_scheme.search_match_background),
                     &[],
@@ -813,9 +824,10 @@ impl View {
             idx = end;
         }
 
-        // remaining text after the highlight
-        if idx < line.len() {
-            rendered_line.push_str(&line[idx..]);
+        // resulting text after highlight
+        if idx < total_graphemes {
+            let remaining_text = graphemes[idx..].concat();
+            rendered_line.push_str(&remaining_text);
         }
 
         rendered_line
@@ -1144,7 +1156,6 @@ impl View {
         }
         expanded_width
     }
-
 }
 
 impl UIComponent for View {
@@ -1194,7 +1205,7 @@ impl UIComponent for View {
                 })?;
                 // clean current line
                 Terminal::clear_line()?;
-                // print new line 
+                // print new line
                 Terminal::print(line)?;
             }
         }

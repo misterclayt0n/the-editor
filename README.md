@@ -36,6 +36,15 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [ ] File manager inspired by [oil.nvim](https://github.com/stevearc/oil.nvim)
 - [ ] User configurations (`~/.config/the-editor/config`)
 - [x] Optimize with rope data structure (almost completed)
+- [ ] Line numbers
+- [ ] Buffer changing
+- [ ] Window system (going to copy emacs/vim)
+- [ ] Auto closing?
+- [ ] Multiple cursors 
+- [ ] Visual block mode
+- [ ] Compile/Recompile commands
+- [ ] Working command mode 
+- [ ] Tab identation
 - [ ] CommandBar mode with basic operations: 
     - [ ] Saving
     - [ ] Subtitution
@@ -44,12 +53,18 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 	- [x] "o" and "O"
 	- [x] "s" and "x"
     - [x] "C" and "D" 
-    - [ ] "cc"
+	- [x] "cc"
     - [ ] Operator + number + direction
     - [ ] Operator + inside/outside
+	- [ ] "r" motion
 - [ ] Yanking and pasting
-- [ ] Very basic syntax highlight 
+- [ ] Very basic syntax highlight - Probably going to use tree-sitter
 - [ ] Fuzzy finder inspired by [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
+
+### Fixes
+- [ ] "w" and "b" motions are not working as vim's
+- [ ] Need to create some sort of rendering buffer to evoid flickering
+- [ ] Selection is not working well when encountered with emojis
 
 ### 📚 Future Plans
 - **Integrated Setup**: Automatically configure necessary tools when opening a new file type.

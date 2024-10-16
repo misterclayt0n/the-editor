@@ -273,21 +273,28 @@ impl View {
             Operator::Delete => match text_object {
                 TextObject::Inner(delimiter) => {
                     if let Some((start, end)) = self.find_text_object_range(delimiter, true) {
+                        // remove all content between the delimiters
                         self.buffer.rope.remove(start..end);
                         self.buffer.dirty = true;
+
+                        // update cursor location to the beginning of the removed interval
                         self.movement.text_location = self.buffer.char_index_to_location(start);
                         self.scroll_text_location_into_view();
                         self.set_needs_redraw(true);
                     }
-                }
-                // TODO: add more text objects
+                } // TODO: add more text objects
             },
             // TODO: add more operators
             _ => {}
         }
     }
 
+    //
+    // Text objects
+    //
+
     fn find_text_object_range(&self, delimiter: char, inner: bool) -> Option<(usize, usize)> {
+        // define closing and opening delimiters based on the provided delimiter
         let (open_delim, close_delim) = match delimiter {
             '(' | ')' => ('(', ')'),
             '{' | '}' => ('{', '}'),
@@ -298,67 +305,121 @@ impl View {
             _ => return None,
         };
 
-        let total_chars = self.buffer.rope.len_chars();
-        let cursor_index = self.buffer.location_to_char_index(self.movement.text_location);
-
-        let mut start = cursor_index;
-        let mut found_start = false;
-        while start > 0 {
-            start -= 1;
-            let c = self.buffer.rope.char(start);
-            if c == open_delim {
-                found_start = true;
-                break;
+        let current_location = self.movement.text_location;
+        let cursor_index = self.buffer.location_to_char_index(current_location);
+        // first try: reverse search from the cursor position to find the opening delimiter
+        if let Some(start) =
+            self.find_matching_open_delim_backward(cursor_index, open_delim, close_delim)
+        {
+            // from the opening delimiter, find the corresponding closing delimiter
+            if let Some(end) =
+                self.find_matching_close_delim_forward(start, open_delim, close_delim)
+            {
+                let range_start = if inner { start + 1 } else { start };
+                let range_end = if inner {
+                    // search the last character (non whitespace) before the closing delimiter
+                    let mut last_non_space = end - 1;
+                    while last_non_space > range_start && self.buffer.rope.char(last_non_space).is_whitespace() {
+                        last_non_space -= 1;
+                    }
+                    last_non_space + 1
+                } else {
+                    end + 1
+                };
+                return Some((range_start, range_end));
             }
         }
 
-        if !found_start {
-            start = cursor_index;
-            while start < total_chars {
-                let c = self.buffer.rope.char(start);
-                if c == open_delim {
-                    found_start = true;
-                    break;
-                }
-                start += 1;
-            }
-            if !found_start {
-                return None;
+        // second try: direct search from the cursor position to find the next opening delimiter
+        if let Some(start) =
+            self.find_matching_open_delim_forward(cursor_index, open_delim, close_delim)
+        {
+            // from the opening delimiter, search the closing correspondence
+            if let Some(end) =
+                self.find_matching_close_delim_forward(start, open_delim, close_delim)
+            {
+                let range_start = if inner { start + 1 } else { start };
+                let range_end = if inner { end } else { end + 1 };
+                return Some((range_start, range_end));
             }
         }
 
-        let mut end = start + 1;
+        None
+    }
+
+    fn find_matching_open_delim_backward(
+        &self,
+        mut start_index: usize,
+        open_delim: char,
+        close_delim: char,
+    ) -> Option<usize> {
         let mut depth = 0;
-        let mut found_end = false;
-        while end < total_chars {
-            let c = self.buffer.rope.char(end);
-            if c == open_delim {
+
+        while start_index > 0 {
+            start_index -= 1;
+            let c = self.buffer.rope.char(start_index);
+            if c == close_delim {
                 depth += 1;
-            } else if c == close_delim {
+            } else if c == open_delim {
                 if depth == 0 {
-                    found_end = true;
-                    break;
+                    return Some(start_index);
                 } else {
                     depth -= 1;
                 }
             }
-            end += 1;
         }
 
-        if !found_end {
-            return None;
-        }
-
-        if inner {
-            start += 1;
-        } else {
-            end += 1;
-        }
-
-        Some((start, end))
+        None
     }
 
+    fn find_matching_close_delim_forward(
+        &self,
+        start_index: usize,
+        open_delim: char,
+        close_delim: char,
+    ) -> Option<usize> {
+        let mut depth = 0;
+        let total_chars = self.buffer.rope.len_chars();
+        let mut index = start_index + 1;
 
+        while index < total_chars {
+            let c = self.buffer.rope.char(index);
+            if c == open_delim {
+                depth += 1;
+            } else if c == close_delim {
+                if depth == 0 {
+                    return Some(index);
+                } else {
+                    depth -= 1;
+                }
+            }
+            index += 1;
+        }
+
+        None
+    }
+
+    fn find_matching_open_delim_forward(
+        &self,
+        mut start_index: usize,
+        open_delim: char,
+        close_delim: char,
+    ) -> Option<usize> {
+        let total_chars = self.buffer.rope.len_chars();
+
+        while start_index < total_chars {
+            let c = self.buffer.rope.char(start_index);
+            if c == open_delim {
+                return Some(start_index);
+            } else if c == close_delim {
+                // if i find a closing delimiter before an opening one, ignore the motherfucker
+                // (maybe) adjust logic as necessary
+            }
+            start_index += 1;
+        }
+
+        None
+    }
 
     //
     // Text Editing
@@ -941,18 +1002,17 @@ impl View {
                     let start_location = self.buffer.char_index_to_location(start_idx);
                     let end_location = self.buffer.char_index_to_location(end_idx);
 
-                    // Configura o início e fim da seleção
+                    // configure beginning and end of the selection
                     self.selection_start = Some(start_location);
                     self.selection_end = Some(end_location);
                     self.selection_mode = Some(SelectionMode::Visual);
 
-                    // Move o cursor para o final da seleção
+                    // move cursor to the end of the selection
                     self.movement.text_location = end_location;
                     self.scroll_text_location_into_view();
                     self.set_needs_redraw(true);
                 }
-            }
-            // Outros casos...
+            } // TODO: more cases
         }
     }
 
@@ -1064,19 +1124,6 @@ impl View {
 
         self.update_selection(); // update selection to include the new line
         self.scroll_text_location_into_view();
-    }
-
-    pub fn at_end_of_line(&self) -> bool {
-        let line_index = self.movement.text_location.line_index;
-        let grapheme_index = self.movement.text_location.grapheme_index;
-
-        // check if the cursor is at the end of the line
-        if line_index < self.buffer.height() {
-            let line_length = self.buffer.get_line_length(line_index);
-            grapheme_index >= line_length
-        } else {
-            false
-        }
     }
 
     /// calculates the selection range for the current line if any selection exists.

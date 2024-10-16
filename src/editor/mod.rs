@@ -617,19 +617,6 @@ impl Mode for NormalMode {
     ) -> Option<EditorCommand> {
         match event {
             KeyEvent {
-                code: KeyCode::Char('i'),
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => {
-                if command_buffer == "v" {
-                    command_buffer.push('i');
-                    None
-                } else {
-                    command_buffer.clear();
-                    Some(EditorCommand::SwitchMode(ModeType::Insert))
-                }
-            }
-            KeyEvent {
                 code: KeyCode::Char('h'),
                 modifiers: KeyModifiers::NONE,
                 ..
@@ -754,7 +741,7 @@ impl Mode for NormalMode {
                 modifiers: KeyModifiers::NONE,
                 ..
             } if matches!(c, '(' | ')' | '{' | '}' | '[' | ']' | '<' | '>') => {
-                if command_buffer.starts_with("di") {
+                if command_buffer == "di" {
                     let operator = Operator::Delete;
                     let text_object = TextObject::Inner(c);
                     command_buffer.clear();
@@ -762,6 +749,22 @@ impl Mode for NormalMode {
                 } else {
                     command_buffer.clear();
                     None
+                }
+            }
+            KeyEvent {
+                code: KeyCode::Char('i'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => {
+                if command_buffer == "v" {
+                    command_buffer.push('i');
+                    None
+                } else if command_buffer == "d" {
+                    command_buffer.push('i');
+                    None
+                } else {
+                    command_buffer.clear();
+                    Some(EditorCommand::SwitchMode(ModeType::Insert))
                 }
             }
             KeyEvent {

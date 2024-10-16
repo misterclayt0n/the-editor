@@ -27,6 +27,7 @@ impl Terminal {
         Self::enable_line_wrap()?;
         Self::show_cursor()?;
         Self::execute()?;
+
         disable_raw_mode()?;
 
         Ok(())
@@ -34,6 +35,7 @@ impl Terminal {
 
     pub fn init() -> Result<(), Error> {
         enable_raw_mode()?;
+
         Self::enter_alternate_screen()?;
         Self::disable_line_wrap()?;
         Self::clear_screen()?;
@@ -44,73 +46,56 @@ impl Terminal {
 
     pub fn clear_screen() -> Result<(), Error> {
         Self::queue_command(Clear(ClearType::All))?;
-
         Ok(())
     }
     pub fn clear_line() -> Result<(), Error> {
         Self::queue_command(Clear(ClearType::CurrentLine))?;
-
         Ok(())
     }
 
-    /// Moves the cursor to the given Position.
-    /// # Arguments
-    /// * `Position` - the  `Position`to move the cursor to. Will be truncated to `u16::MAX` if bigger.
     pub fn move_cursor_to(position: Position) -> Result<(), Error> {
-        // clippy::as_conversions: See doc above
-        #[allow(clippy::as_conversions, clippy::cast_possible_truncation)]
         Self::queue_command(MoveTo(position.col as u16, position.row as u16))?;
-
         Ok(())
     }
 
     pub fn enter_alternate_screen() -> Result<(), Error> {
         Self::queue_command(EnterAlternateScreen)?;
-
         Ok(())
     }
 
     pub fn leave_alternate_screen() -> Result<(), Error> {
         Self::queue_command(LeaveAlternateScreen)?;
-
         Ok(())
     }
 
     pub fn hide_cursor() -> Result<(), Error> {
         Self::queue_command(Hide)?;
-
         Ok(())
     }
 
     pub fn show_cursor() -> Result<(), Error> {
         Self::queue_command(Show)?;
-
         Ok(())
     }
 
     pub fn disable_line_wrap() -> Result<(), Error> {
         Self::queue_command(DisableLineWrap)?;
-
         Ok(())
     }
 
     pub fn enable_line_wrap() -> Result<(), Error> {
         Self::queue_command(EnableLineWrap)?;
-
         Ok(())
     }
 
     pub fn set_title(title: &str) -> Result<(), Error> {
         Self::queue_command(SetTitle(title))?;
-
         Ok(())
     }
 
     pub fn size() -> Result<Size, Error> {
         let (width_u16, height_u16) = size()?;
-
         let height = height_u16 as usize;
-
         let width = width_u16 as usize;
 
         Ok(Size { height, width })
@@ -118,13 +103,11 @@ impl Terminal {
 
     pub fn execute() -> Result<(), Error> {
         stdout().flush()?;
-
         Ok(())
     }
 
     fn queue_command<T: Command>(command: T) -> Result<(), Error> {
         queue!(stdout(), command)?;
-
         Ok(())
     }
 
@@ -141,6 +124,7 @@ impl Terminal {
         Self::move_cursor_to(Position { row, col: 0 })?;
         Self::clear_line()?;
         Self::print(line_text)?;
+
         Ok(())
     }
 

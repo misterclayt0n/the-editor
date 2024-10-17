@@ -45,7 +45,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [ ] Visual block mode
 - [ ] Compile/Recompile commands 
 - [ ] Working command mode 
-- [ ] Tab identation
+- [x] Tab identation
 - [ ] Minmal mouse support (scrolling, selection, moving cursor)
 - [ ] CommandBar mode with basic operations: 
     - [ ] Saving
@@ -74,6 +74,9 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [ ] The editor is not scrolling horizontally as I type (also probably because of the virtual DOM)
 - [ ] Not really a bug, but would be nice to render an empty selected character when passing by an empty line in visual mode
 - [ ] Ctrl-d and Ctrl-u are not really working just like vim.
+- [ ] Deleting last line with selection and "d" motion crashes, I also can't delete the last line using "dd"
+- [ ] "ci" motion not working well
+- [ ] Very specific panic on searching 
 
 ### 📚 Future Plans
 - **Integrated Setup**: Automatically configure necessary tools when opening a new file type.

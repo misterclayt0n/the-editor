@@ -6,7 +6,7 @@ use super::buffer::Buffer;
 
 pub struct Movement {
     pub text_location: Location,
-    desired_col: usize,
+    pub desired_col: usize,
 }
 
 impl Movement {

@@ -612,49 +612,87 @@ impl View {
     }
 
     fn insert_newline(&mut self) {
-        let line_index = self.movement.text_location.line_index;
-        let grapheme_index = self.movement.text_location.grapheme_index;
+        if let Some(true) = self.is_cursor_between_matching_delimiters() {
+            // insert new line after opening delimiter
+            self.buffer.insert_newline(self.movement.text_location);
+            self.movement.text_location.line_index += 1;
+            self.movement.text_location.grapheme_index = 0;
 
-        let current_line = self.buffer.rope.line(line_index).to_string();
+            // insert augmented indentation in new line
+            let mut indentation =
+                self.get_indentation_of_line(self.movement.text_location.line_index - 1);
+            indentation.push('\t'); // increase indentation (could be adjusted)
 
-        // get current line indentation
-        let mut indentation = self.get_indentation_of_line(line_index);
-
-        // text before and after the cursor
-        let text_before_cursor = &current_line[..grapheme_index];
-        let trimmed_text_before_cursor = text_before_cursor.trim_end();
-        let text_after_cursor = &current_line[grapheme_index..];
-        let trimmed_text_after_cursor = text_after_cursor.trim_start();
-
-        // adjust indentation based on delimiters
-        if trimmed_text_before_cursor.ends_with('{')
-            || trimmed_text_before_cursor.ends_with('(')
-            || trimmed_text_before_cursor.ends_with('[')
-        {
-            indentation.push('\t'); // increase
-        }
-        if trimmed_text_after_cursor.starts_with('}')
-            || trimmed_text_after_cursor.starts_with(')')
-            || trimmed_text_after_cursor.starts_with(']')
-        {
-            if !indentation.is_empty() {
-                indentation.pop(); // decrease
+            for c in indentation.chars() {
+                self.buffer.insert_char(c, self.movement.text_location);
+                self.movement.text_location.grapheme_index += 1;
             }
+            let cursor_grapheme_index_after_indent = self.movement.text_location.grapheme_index;
+
+            // insert new line before the closing delimiter with reduced indentation
+            self.buffer.insert_newline(self.movement.text_location);
+            self.movement.text_location.line_index += 1;
+            self.movement.text_location.grapheme_index = 0;
+
+            // pop the mf
+            indentation.pop();
+
+            for c in indentation.chars() {
+                self.buffer.insert_char(c, self.movement.text_location);
+                self.movement.text_location.grapheme_index += 1;
+            }
+
+            // position the cursor in indented line
+            self.movement.text_location = Location {
+                line_index: self.movement.text_location.line_index - 1,
+                grapheme_index: cursor_grapheme_index_after_indent,
+            };
+            self.movement.update_desired_col(&self.buffer);
+        } else {
+            // normal insertion behavior in new line insertion
+            let line_index = self.movement.text_location.line_index;
+            let grapheme_index = self.movement.text_location.grapheme_index;
+            let current_line = self.buffer.rope.line(line_index).to_string();
+
+            // get current line indentation
+            let mut indentation = self.get_indentation_of_line(line_index);
+
+            // text before and after the cursor
+            let text_before_cursor = &current_line[..grapheme_index];
+            let trimmed_text_before_cursor = text_before_cursor.trim_end();
+            let text_after_cursor = &current_line[grapheme_index..];
+            let trimmed_text_after_cursor = text_after_cursor.trim_start();
+
+            // adjust indentation based on adjacent delimiters
+            if trimmed_text_before_cursor.ends_with('{')
+                || trimmed_text_before_cursor.ends_with('(')
+                || trimmed_text_before_cursor.ends_with('[')
+            {
+                indentation.push('\t'); // make it biggger
+            }
+            if trimmed_text_after_cursor.starts_with('}')
+                || trimmed_text_after_cursor.starts_with(')')
+                || trimmed_text_after_cursor.starts_with(']')
+            {
+                if !indentation.is_empty() {
+                    indentation.pop(); // make it smaller
+                }
+            }
+
+            // insert new line
+            self.buffer.insert_newline(self.movement.text_location);
+            self.movement.text_location.line_index += 1;
+            self.movement.text_location.grapheme_index = 0;
+
+            // insert indentation in new line
+            for c in indentation.chars() {
+                self.buffer.insert_char(c, self.movement.text_location);
+                self.movement.text_location.grapheme_index += 1;
+            }
+            self.movement.update_desired_col(&self.buffer);
         }
 
-        // insert new line
-        self.buffer.insert_newline(self.movement.text_location);
-        self.movement.text_location.line_index += 1;
-        self.movement.text_location.grapheme_index = 0;
-
-        // insert indentation of new line
-        for c in indentation.chars() {
-            self.buffer.insert_char(c, self.movement.text_location);
-            self.movement.text_location.grapheme_index += 1;
-        }
-
-        // update desired column and make sure the cursor is visible
-        self.movement.update_desired_col(&self.buffer);
+        // update cursor position to make sure it's visible
         self.scroll_text_location_into_view();
         self.set_needs_redraw(true);
     }
@@ -1186,7 +1224,7 @@ impl View {
         }
     }
 
-    // 
+    //
     // Indentation
     //
 
@@ -1271,10 +1309,48 @@ impl View {
         self.scroll_text_location_into_view();
     }
 
-
     //
     // Helpers
     //
+
+    fn is_cursor_between_matching_delimiters(&self) -> Option<bool> {
+        let line_index = self.movement.text_location.line_index;
+        let grapheme_index = self.movement.text_location.grapheme_index;
+
+        if grapheme_index == 0 || line_index >= self.buffer.rope.len_lines() {
+            return None;
+        }
+
+        let line_slice = self.buffer.rope.line(line_index);
+        let line_len = line_slice.len_chars();
+
+        if grapheme_index > line_len {
+            return None;
+        }
+
+        let before_char = line_slice.char(grapheme_index - 1);
+        let after_char = if grapheme_index < line_len {
+            line_slice.char(grapheme_index)
+        } else {
+            '\0'
+        };
+
+        let matching = match before_char {
+            '(' => ')',
+            '{' => '}',
+            '[' => ']',
+            '<' => '>',
+            '"' => '"',
+            '\'' => '\'',
+            _ => '\0',
+        };
+
+        if matching == after_char {
+            Some(true)
+        } else {
+            None
+        }
+    }
 
     fn get_expanded_line_length(&self, line_idx: usize) -> usize {
         let line_slice = self.buffer.rope.line(line_idx);

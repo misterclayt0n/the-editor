@@ -76,7 +76,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [ ] Ctrl-d and Ctrl-u are not really working just like vim.
 - [ ] Deleting last line with selection and "d" motion crashes, I also can't delete the last line using "dd"
 - [ ] "ci" motion not working well
-- [ ] Very specific panic on searching 
+- [x] Very specific panic on searching
 
 ### 📚 Future Plans
 - **Integrated Setup**: Automatically configure necessary tools when opening a new file type.

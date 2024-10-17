@@ -576,7 +576,7 @@ impl Editor {
                 self.command_bar.clear_value();
             }
             PromptType::Search => {
-                self.command_bar.set_prompt("/");
+                self.command_bar.set_prompt("Search: ");
                 self.command_bar.clear_value();
             }
         }

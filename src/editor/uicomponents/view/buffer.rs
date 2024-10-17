@@ -1,8 +1,10 @@
 use ropey::Rope;
 use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::FileInfo;
 use crate::prelude::*;
+use std::cmp::min;
 use std::fs::File;
 use std::io::Error;
 use std::io::Write;
@@ -71,16 +73,44 @@ impl Buffer {
 
             let from_grapheme_idx = if is_first {
                 is_first = false;
-                from.grapheme_index
+                min(from.grapheme_index, line_slice.len_chars())
             } else {
                 0
             };
 
             let line_str = line_slice.to_string();
 
-            if let Some(char_idx) = line_str[from_grapheme_idx..].find(query) {
+            // Converter from_grapheme_idx para índice de bytes
+            let start_byte_index = line_str
+                .grapheme_indices(true)
+                .nth(from_grapheme_idx)
+                .map(|(byte_idx, _)| byte_idx)
+                .unwrap_or(line_str.len());
+
+            if start_byte_index > line_str.len() {
+                continue;
+            }
+
+            // Realizar a busca a partir do índice de bytes
+            if let Some(match_byte_index_rel) = line_str[start_byte_index..].find(query) {
+                let match_byte_index = start_byte_index + match_byte_index_rel;
+
+                // Converter o índice de bytes da correspondência para índice de graphemes
+                let mut grapheme_index = 0;
+                let mut found_grapheme_index = None;
+                for (byte_idx, _) in line_str.grapheme_indices(true) {
+                    if byte_idx >= match_byte_index {
+                        found_grapheme_index = Some(grapheme_index);
+                        break;
+                    }
+                    grapheme_index += 1;
+                }
+                if found_grapheme_index.is_none() {
+                    found_grapheme_index = Some(grapheme_index);
+                }
+
                 return Some(Location {
-                    grapheme_index: from_grapheme_idx + char_idx,
+                    grapheme_index: found_grapheme_index.unwrap_or(0),
                     line_index: line_idx,
                 });
             }
@@ -108,13 +138,17 @@ impl Buffer {
 
             let from_grapheme_idx = if is_first {
                 is_first = false;
-                from.grapheme_index
+                min(from.grapheme_index, line_slice.len_chars())
             } else {
                 line_slice.len_chars()
             };
 
-            // use RopeSlice to search backward for the substring
-            let line_str = line_slice.to_string(); // temporarily convert to String for substring search
+            let line_str = line_slice.to_string();
+
+            if from_grapheme_idx > line_str.len() {
+                continue;
+            }
+
             if let Some(char_idx) = line_str[..from_grapheme_idx].rfind(query) {
                 return Some(Location {
                     grapheme_index: char_idx,
@@ -122,6 +156,7 @@ impl Buffer {
                 });
             }
         }
+
         None
     }
 

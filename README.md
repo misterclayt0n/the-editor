@@ -88,5 +88,3 @@ If you encounter any issues, feel free to open an [issue](https://github.com/mis
 
 ### 🌟 Acknowledgments
 Inspired by the simplicity of Zed, the speed of Vim, and the versatility of Emacs.
-
-

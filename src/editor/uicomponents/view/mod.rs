@@ -525,7 +525,9 @@ impl View {
                 }
 
                 // update cursor position
-                self.movement.text_location = self.buffer.char_index_to_location(start_idx.min(self.buffer.rope.len_chars().saturating_sub(1)));
+                self.movement.text_location = self.buffer.char_index_to_location(
+                    start_idx.min(self.buffer.rope.len_chars().saturating_sub(1)),
+                );
                 self.scroll_text_location_into_view();
                 self.set_needs_redraw(true);
             }
@@ -912,7 +914,6 @@ impl View {
         selection_ranges: &[(usize, usize)],
         search_ranges: &[(usize, usize)],
     ) -> String {
-        use unicode_segmentation::UnicodeSegmentation;
         let mut rendered_line = String::new();
 
         // convert line into a grapheme vector
@@ -952,7 +953,12 @@ impl View {
             }
 
             // apply highlight
-            let highlighted_text = graphemes[start..end].concat();
+            let mut highlighted_text = graphemes[start..end].concat();
+
+            if highlighted_text == "\n" {
+                highlighted_text = " ".to_string(); // render empty char if we find '\n'
+            }
+
             let color_scheme = ColorScheme::default();
             let styled_text = match highlight_type {
                 "selection" => Terminal::styled_text(

@@ -9,11 +9,23 @@ use std::fs::File;
 use std::io::Error;
 use std::io::Write;
 
-#[derive(Default)]
 pub struct Buffer {
     pub rope: Rope,
     pub file_info: FileInfo,
     pub dirty: bool,
+}
+
+impl Default for Buffer {
+    fn default() -> Self {
+        let mut rope = Rope::new();
+        rope.insert(rope.len_chars(), "\n");
+
+        Self {
+            rope,
+            file_info: FileInfo::default(),
+            dirty: false
+        }
+    }
 }
 
 #[derive(PartialEq)]
@@ -46,7 +58,8 @@ fn get_char_class(c: char, word_type: WordType) -> CharClass {
 
 impl Buffer {
     pub fn load(file_name: &str) -> Result<Self, Error> {
-        let rope = Rope::from_reader(File::open(file_name)?)?;
+        let mut rope = Rope::from_reader(File::open(file_name)?)?;
+        rope.insert(rope.len_chars(), "\n");
 
         Ok(Self {
             rope,
@@ -80,7 +93,6 @@ impl Buffer {
 
             let line_str = line_slice.to_string();
 
-            // Converter from_grapheme_idx para índice de bytes
             let start_byte_index = line_str
                 .grapheme_indices(true)
                 .nth(from_grapheme_idx)
@@ -91,11 +103,10 @@ impl Buffer {
                 continue;
             }
 
-            // Realizar a busca a partir do índice de bytes
+            // search from byte index
             if let Some(match_byte_index_rel) = line_str[start_byte_index..].find(query) {
                 let match_byte_index = start_byte_index + match_byte_index_rel;
 
-                // Converter o índice de bytes da correspondência para índice de graphemes
                 let mut grapheme_index = 0;
                 let mut found_grapheme_index = None;
                 for (byte_idx, _) in line_str.grapheme_indices(true) {
@@ -192,7 +203,7 @@ impl Buffer {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.rope.len_chars() == 0
+        self.rope.len_chars() == 1
     }
 
     pub const fn is_file_loaded(&self) -> bool {
@@ -200,7 +211,7 @@ impl Buffer {
     }
 
     pub fn height(&self) -> usize {
-        self.rope.len_lines()
+        self.rope.len_lines() - 1
     }
 
     pub fn insert_char(&mut self, character: char, at: Location) {
@@ -227,7 +238,7 @@ impl Buffer {
     }
 
     pub fn delete_line(&mut self, line_index: usize) {
-        if self.rope.len_lines() == 1 {
+        if self.rope.len_lines() == 2 {
             // if it's the last line of the document, just clean the buffer so it's not empty
             let line_start = self.rope.line_to_char(line_index);
             let line_end = self.rope.line_to_char(line_index + 1);
@@ -241,6 +252,11 @@ impl Buffer {
             self.rope.remove(line_start..line_end);
         }
         self.dirty = true;
+
+        if self.rope.len_chars() == 0 {
+            self.rope.insert(0, "\n");
+            self.dirty = true;
+        }
     }
 
     pub fn insert_newline(&mut self, at: Location) {
@@ -400,7 +416,7 @@ impl Buffer {
     }
 
     pub fn get_end_location(&self) -> Location {
-        let last_line_index = self.rope.len_lines().saturating_sub(1);
+        let last_line_index = self.height().saturating_sub(1);
         let grapheme_index = self.rope.line(last_line_index).len_chars();
         Location {
             line_index: last_line_index,

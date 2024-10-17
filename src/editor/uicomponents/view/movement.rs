@@ -146,11 +146,16 @@ impl Movement {
 
     pub fn move_to_top(&mut self) {
         self.text_location.line_index = 0;
-        self.text_location.grapheme_index = 0;
     }
 
     pub fn move_to_bottom(&mut self, buffer: &Buffer) {
-        self.text_location = buffer.get_end_location();
+        // fuck this man imma hard code this shit
+        let prev_grapheme_index = self.text_location.grapheme_index;
+        let Location { line_index, .. } = buffer.get_end_location();
+        self.text_location = Location {
+            line_index,
+            grapheme_index: prev_grapheme_index
+        }
     }
 
     //

@@ -467,6 +467,10 @@ impl View {
     pub fn delete_current_line(&mut self) {
         let line_index = self.movement.text_location.line_index;
 
+        if line_index >= self.buffer.height() - 1 && self.buffer.height() > 1 {
+            self.movement.move_up(&self.buffer, 1);
+        }
+
         self.buffer.delete_line(line_index);
 
         self.set_needs_redraw(true);
@@ -504,22 +508,27 @@ impl View {
                 end_idx += 1;
             }
 
-            self.buffer.rope.remove(start_idx..end_idx);
-            self.buffer.dirty = true;
+            // gotta make sure end_idx does not exceed the size of the rope
+            end_idx = end_idx.min(self.buffer.rope.len_chars());
 
-            // if the buffer gets empty after exclusion, make sure
-            // at least one empty line is inserted
-            if self.buffer.rope.len_chars() == 0 {
-                self.buffer.insert_newline(Location {
-                    line_index: 0,
-                    grapheme_index: 0,
-                });
+            if start_idx < end_idx {
+                self.buffer.rope.remove(start_idx..end_idx);
+                self.buffer.dirty = true;
+
+                // if the buffer gets empty after exclusion, make sure
+                // at least one empty line is inserted
+                if self.buffer.rope.len_chars() == 0 {
+                    self.buffer.insert_newline(Location {
+                        line_index: 0,
+                        grapheme_index: 0,
+                    });
+                }
+
+                // update cursor position
+                self.movement.text_location = self.buffer.char_index_to_location(start_idx.min(self.buffer.rope.len_chars().saturating_sub(1)));
+                self.scroll_text_location_into_view();
+                self.set_needs_redraw(true);
             }
-
-            // update cursor position
-            self.movement.text_location = start;
-            self.scroll_text_location_into_view();
-            self.set_needs_redraw(true);
         }
     }
 
@@ -862,7 +871,7 @@ impl View {
 
                         if start_idx < end_idx {
                             let selection_start = start_idx.saturating_sub(left);
-                            let selection_end = end_idx.saturating_sub(left);
+                            let selection_end = end_idx.saturating_sub(left).saturating_add(1);
                             ranges.push((selection_start, selection_end));
                         }
                     }
@@ -1426,7 +1435,7 @@ impl UIComponent for View {
         for current_row in origin_row..end_y {
             let line_idx = self.calculate_line_index(current_row, origin_row, scroll_top);
 
-            let rendered_line = if line_idx < self.buffer.rope.len_lines() {
+            let rendered_line = if line_idx < self.buffer.height() {
                 self.get_rendered_line(line_idx, width)?
             } else if current_row == top_third && self.buffer.is_empty() {
                 Self::build_welcome_message(width)

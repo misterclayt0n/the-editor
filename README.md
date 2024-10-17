@@ -59,6 +59,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
     - [ ] Operator + number + direction
     - [ ] Operator + inside/outside
 	- [ ] "r" motion
+- [ ] "J" command
 - [ ] Yanking and pasting
 - [ ] Very basic syntax highlight - Probably going to use tree-sitter
 - [ ] Fuzzy finder inspired by [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
@@ -67,6 +68,10 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [x] "w" and "b" motions are not working as vim's
 - [x] Need to create some sort of rendering buffer to evoid flickering
 - [x] Selection is not working well when encountered with emojis
+- [x] Deletion at the beginning of the line acts as delete character
+- [ ] Vertical movement from the end of the line gets the cursor stuck at one character after the end of the line
+- [ ] Zooming in does not work (probably because of the whole virtual DOM thing), I guess it would be nice to implement some interaction, if possible, with zooming
+- [ ] The editor is not scrolling horizontally as I type (also probably because of the virtual DOM)
 
 ### 📚 Future Plans
 - **Integrated Setup**: Automatically configure necessary tools when opening a new file type.

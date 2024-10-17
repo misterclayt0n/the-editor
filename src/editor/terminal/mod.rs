@@ -129,16 +129,6 @@ impl Terminal {
         Self::print_row(row, &format!("{Reverse}{line_text:width$.width$}{Reset}"))
     }
 
-    // pub fn print_rope_slice_row(row: RowIndex, rope_slice: RopeSlice) -> Result<(), Error> {
-    //     Self::move_cursor_to(Position { row, col: 0 })?;
-    //     Self::clear_line()?;
-    //
-    //     for chunk in rope_slice.chunks() {
-    //         Self::print(chunk)?;
-    //     }
-    //     Ok(())
-    // }
-
     pub fn styled_text(
         text: &str,
         foreground: Option<Color>,

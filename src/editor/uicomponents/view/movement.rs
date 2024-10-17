@@ -30,8 +30,21 @@ impl Movement {
         self.update_desired_col(buffer);
     }
 
+    pub fn move_left_after_deletion(&mut self, buffer: &Buffer) {
+        if self.text_location.grapheme_index > 0 {
+            self.text_location.grapheme_index -= 1;
+        } else if self.text_location.line_index > 0 {
+            self.move_up(buffer, 1);
+            self.move_to_end_of_line_after_deletion(buffer);
+        }
+
+        self.update_desired_col(buffer);
+    }
+
     pub fn move_right(&mut self, buffer: &Buffer) {
-        let line_length = buffer.get_line_length(self.text_location.line_index).saturating_sub(1);
+        let line_length = buffer
+            .get_line_length(self.text_location.line_index)
+            .saturating_sub(1);
 
         if self.text_location.grapheme_index < line_length {
             self.text_location.grapheme_index += 1;
@@ -80,6 +93,11 @@ impl Movement {
             } else {
                 0
             };
+        self.update_desired_col(buffer);
+    }
+
+    pub fn move_to_end_of_line_after_deletion(&mut self, buffer: &Buffer) {
+        self.text_location.grapheme_index = buffer.get_line_length(self.text_location.line_index);
         self.update_desired_col(buffer);
     }
 

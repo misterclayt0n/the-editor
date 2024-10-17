@@ -223,6 +223,7 @@ impl View {
             Normal::Up => self.movement.move_up(&self.buffer, 1),
             Normal::Down => self.movement.move_down(&self.buffer, 1),
             Normal::Left => self.movement.move_left(&self.buffer),
+            Normal::LeftAfterDeletion => self.movement.move_left_after_deletion(&self.buffer),
             Normal::Right => self.movement.move_right(&self.buffer),
             Normal::PageUp => self
                 .movement
@@ -305,7 +306,7 @@ impl View {
                         self.set_needs_redraw(true);
                     }
                 }
-            }
+            },
             // TODO: add more operators
             _ => {}
         }
@@ -449,22 +450,11 @@ impl View {
     // Text Editing
     //
 
-    fn insert_newline(&mut self) {
-        self.buffer.insert_newline(self.movement.text_location);
-        // move cursor to the beginning of the next line
-        self.movement.text_location.line_index += 1;
-        self.movement.text_location.grapheme_index = 0;
-
-        // make sure the cursor is visible after inserting a newline
-        self.scroll_text_location_into_view();
-        self.set_needs_redraw(true);
-    }
-
     fn delete_backward(&mut self) {
         if self.movement.text_location.line_index != 0
             || self.movement.text_location.grapheme_index != 0
         {
-            self.handle_normal_command(Normal::Left);
+            self.handle_normal_command(Normal::LeftAfterDeletion);
             self.delete();
         }
     }
@@ -557,6 +547,21 @@ impl View {
         self.set_needs_redraw(true);
     }
 
+    pub fn delete_char_at_cursor(&mut self) {
+        let line_index = self.movement.text_location.line_index;
+        let grapheme_index = self.movement.text_location.grapheme_index;
+
+        // check if the cursor is within a valid line and if there's a char to be deleted
+        if line_index < self.buffer.height()
+            && grapheme_index < self.buffer.get_line_length(line_index)
+        {
+            self.buffer.delete(self.movement.text_location);
+
+            // no need to change the cursor position
+            self.set_needs_redraw(true);
+        }
+    }
+
     pub fn replace_line_with_empty(&mut self, line_index: usize) {
         if line_index < self.buffer.height() {
             self.buffer.delete_line(line_index); // delete existing line
@@ -574,8 +579,9 @@ impl View {
 
     fn insert_char(&mut self, character: char) {
         let line_index = self.movement.text_location.line_index;
+        let grapheme_index = self.movement.text_location.grapheme_index;
 
-        // if the buffer is empty, insert a new line before adding more characters
+        // if buffer is empty, insert new line before adding more characters
         if self.buffer.height() == 0 {
             self.buffer.insert_newline(Location {
                 line_index: 0,
@@ -583,29 +589,94 @@ impl View {
             });
         }
 
-        // get the length of the line to assure we are inserting in the right point
-        let line_width = self.buffer.get_line_length(line_index);
+        // checking if the character is a closing delinmiter
+        if character == '}' || character == ')' || character == ']' {
+            let line_slice = self.buffer.rope.line(line_index);
+            let line_str = line_slice.to_string();
 
-        // if the cursor is at the end of line, insert new char at the end
-        if self.movement.text_location.grapheme_index >= line_width {
-            self.buffer
-                .insert_char(character, self.movement.text_location);
-        } else {
-            // else, just insert in the current cursor position
-            self.buffer
-                .insert_char(character, self.movement.text_location);
+            let prefix = if grapheme_index > 0 {
+                &line_str[..grapheme_index]
+            } else {
+                ""
+            };
+
+            if prefix.trim().is_empty() {
+                self.decrease_indentation(line_index);
+            }
         }
 
-        // move right after insertion
+        self.buffer
+            .insert_char(character, self.movement.text_location);
         self.movement.text_location.grapheme_index += 1;
+        self.set_needs_redraw(true);
+    }
 
+    fn insert_newline(&mut self) {
+        let line_index = self.movement.text_location.line_index;
+        let grapheme_index = self.movement.text_location.grapheme_index;
+
+        let current_line = self.buffer.rope.line(line_index).to_string();
+
+        // get current line indentation
+        let mut indentation = self.get_indentation_of_line(line_index);
+
+        // text before and after the cursor
+        let text_before_cursor = &current_line[..grapheme_index];
+        let trimmed_text_before_cursor = text_before_cursor.trim_end();
+        let text_after_cursor = &current_line[grapheme_index..];
+        let trimmed_text_after_cursor = text_after_cursor.trim_start();
+
+        // adjust indentation based on delimiters
+        if trimmed_text_before_cursor.ends_with('{')
+            || trimmed_text_before_cursor.ends_with('(')
+            || trimmed_text_before_cursor.ends_with('[')
+        {
+            indentation.push('\t'); // increase
+        }
+        if trimmed_text_after_cursor.starts_with('}')
+            || trimmed_text_after_cursor.starts_with(')')
+            || trimmed_text_after_cursor.starts_with(']')
+        {
+            if !indentation.is_empty() {
+                indentation.pop(); // decrease
+            }
+        }
+
+        // insert new line
+        self.buffer.insert_newline(self.movement.text_location);
+        self.movement.text_location.line_index += 1;
+        self.movement.text_location.grapheme_index = 0;
+
+        // insert indentation of new line
+        for c in indentation.chars() {
+            self.buffer.insert_char(c, self.movement.text_location);
+            self.movement.text_location.grapheme_index += 1;
+        }
+
+        // update desired column and make sure the cursor is visible
+        self.movement.update_desired_col(&self.buffer);
+        self.scroll_text_location_into_view();
         self.set_needs_redraw(true);
     }
 
     pub fn insert_newline_below(&mut self) {
         let line_index = self.movement.text_location.line_index;
 
-        // move the cursor to the end of the line before inserting a new line
+        let current_line = self.buffer.rope.line(line_index).to_string();
+
+        let mut indentation = self.get_indentation_of_line(line_index);
+
+        let trimmed_current_line = current_line.trim();
+
+        // if the line ends with an opening delimiter, increase indentation
+        if trimmed_current_line.ends_with('{')
+            || trimmed_current_line.ends_with('(')
+            || trimmed_current_line.ends_with('[')
+        {
+            indentation.push('\t');
+        }
+
+        // move cursor to the end of line before inserting a new line
         self.movement.text_location.grapheme_index = self.buffer.get_line_length(line_index);
 
         self.buffer.insert_newline(Location {
@@ -613,48 +684,58 @@ impl View {
             grapheme_index: 0,
         });
 
-        // move cursor to the beginning of the new line
+        // move cursor to the beginning of next line
         self.movement.text_location = Location {
             line_index: line_index + 1,
             grapheme_index: 0,
         };
 
-        self.scroll_text_location_into_view();
+        // insert indentation in new line
+        for c in indentation.chars() {
+            self.buffer.insert_char(c, self.movement.text_location);
+            self.movement.text_location.grapheme_index += 1;
+        }
 
+        self.movement.update_desired_col(&self.buffer);
+        self.scroll_text_location_into_view();
         self.set_needs_redraw(true);
     }
 
     pub fn insert_newline_above(&mut self) {
         let line_index = self.movement.text_location.line_index;
 
-        // move cursor to the beginning of the new line
+        let current_line = self.buffer.rope.line(line_index).to_string();
+
+        let mut indentation = self.get_indentation_of_line(line_index);
+
+        let trimmed_current_line = current_line.trim();
+
+        // same thing as before, but with closing delimiters now
+        if trimmed_current_line.starts_with('}')
+            || trimmed_current_line.starts_with(')')
+            || trimmed_current_line.starts_with(']')
+        {
+            indentation.push('\t');
+        }
+
         self.buffer.insert_newline(Location {
             line_index,
             grapheme_index: 0,
         });
 
-        // move cursor to the beginning of the new line
         self.movement.text_location = Location {
             line_index,
             grapheme_index: 0,
         };
 
-        self.set_needs_redraw(true);
-    }
-
-    pub fn delete_char_at_cursor(&mut self) {
-        let line_index = self.movement.text_location.line_index;
-        let grapheme_index = self.movement.text_location.grapheme_index;
-
-        // check if the cursor is within a valid line and if there's a char to be deleted
-        if line_index < self.buffer.height()
-            && grapheme_index < self.buffer.get_line_length(line_index)
-        {
-            self.buffer.delete(self.movement.text_location);
-
-            // no need to change the cursor position
-            self.set_needs_redraw(true);
+        for c in indentation.chars() {
+            self.buffer.insert_char(c, self.movement.text_location);
+            self.movement.text_location.grapheme_index += 1;
         }
+
+        self.movement.update_desired_col(&self.buffer);
+        self.scroll_text_location_into_view();
+        self.set_needs_redraw(true);
     }
 
     //
@@ -1105,6 +1186,96 @@ impl View {
         }
     }
 
+    // 
+    // Indentation
+    //
+
+    fn get_indentation_of_line(&self, line_index: usize) -> String {
+        if line_index >= self.buffer.rope.len_lines() {
+            return String::new();
+        }
+
+        let line_slice = self.buffer.rope.line(line_index);
+        let line_str = line_slice.to_string();
+
+        let mut indentation = String::new();
+
+        for grapheme in line_str.graphemes(true) {
+            if grapheme == " " || grapheme == "\t" {
+                indentation.push_str(grapheme);
+            } else {
+                break;
+            }
+        }
+
+        indentation
+    }
+
+    fn decrease_indentation(&mut self, line_index: usize) {
+        if line_index >= self.buffer.rope.len_lines() {
+            return;
+        }
+
+        let line_slice = self.buffer.rope.line(line_index);
+        let line_str = line_slice.to_string();
+
+        // find the size of current indentation
+        let mut indentation_end = 0;
+        for (i, grapheme) in line_str.graphemes(true).enumerate() {
+            if grapheme == " " || grapheme == "\t" {
+                indentation_end = i + 1;
+            } else {
+                break;
+            }
+        }
+
+        // if there is, remove a level
+        if indentation_end > 0 {
+            // determine the size of a level of indentation
+            let indent_level = if self.indentation_uses_tabs() { 1 } else { 4 }; // assuming 4 spaces if we're not using tabs
+
+            let new_indentation_end = indentation_end.saturating_sub(indent_level);
+
+            // remove diff of indentation
+            let line_start = self.buffer.rope.line_to_char(line_index);
+            let remove_start = line_start + new_indentation_end;
+            let remove_end = line_start + indentation_end;
+
+            if remove_end > remove_start {
+                self.buffer.rope.remove(remove_start..remove_end);
+                self.buffer.dirty = true;
+
+                // adjust cursor position
+                self.movement.text_location.grapheme_index = self
+                    .movement
+                    .text_location
+                    .grapheme_index
+                    .saturating_sub(remove_end - remove_start);
+            }
+        }
+    }
+
+    fn indentation_uses_tabs(&self) -> bool {
+        // TODO: editor configuration for tabs or spaces
+        true // assuming we're using tabs (like the lord wanted us to)
+    }
+
+    pub fn handle_visual_movement(&mut self, command: Normal) {
+        self.handle_normal_command(command);
+        self.update_selection();
+    }
+
+    pub fn handle_visual_line_movement(&mut self, command: Normal) {
+        self.handle_normal_command(command);
+        self.update_selection(); // update selection to include the new line
+        self.scroll_text_location_into_view();
+    }
+
+
+    //
+    // Helpers
+    //
+
     fn get_expanded_line_length(&self, line_idx: usize) -> usize {
         let line_slice = self.buffer.rope.line(line_idx);
         let mut expanded_width = 0;
@@ -1123,17 +1294,6 @@ impl View {
         } else {
             expanded_width
         }
-    }
-
-    pub fn handle_visual_movement(&mut self, command: Normal) {
-        self.handle_normal_command(command);
-        self.update_selection();
-    }
-
-    pub fn handle_visual_line_movement(&mut self, command: Normal) {
-        self.handle_normal_command(command);
-        self.update_selection(); // update selection to include the new line
-        self.scroll_text_location_into_view();
     }
 
     /// calculates the visible range (left and right indices) of the line based on scrolling.

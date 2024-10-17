@@ -23,7 +23,7 @@ const QUIT_TIMES: u8 = 3;
 enum Operator {
     Delete,
     Change,
-    Yank,
+    Yank, // TODO
 }
 
 #[derive(Clone, Copy)]
@@ -40,6 +40,7 @@ pub enum Normal {
     EndOfLine,
     Up,
     Left,
+    LeftAfterDeletion,
     Right,
     Down,
     WordForward,
@@ -74,12 +75,6 @@ enum PromptType {
     Save,
     #[default]
     None,
-}
-
-impl PromptType {
-    fn is_none(&self) -> bool {
-        *self == Self::None
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +120,6 @@ trait Mode {
     ) -> Option<EditorCommand>;
     fn enter(&mut self) -> Vec<EditorCommand>;
     fn exit(&mut self) -> Vec<EditorCommand>;
-    fn as_any(&self) -> &dyn Any;
 }
 
 enum EditorCommand {
@@ -909,10 +903,6 @@ impl Mode for NormalMode {
     fn exit(&mut self) -> Vec<EditorCommand> {
         vec![]
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 struct InsertMode;
@@ -974,10 +964,6 @@ impl Mode for InsertMode {
 
     fn exit(&mut self) -> Vec<EditorCommand> {
         vec![]
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
@@ -1157,10 +1143,6 @@ impl Mode for VisualMode {
     fn exit(&mut self) -> Vec<EditorCommand> {
         vec![EditorCommand::ClearSelection]
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 struct VisualLineMode;
@@ -1258,10 +1240,6 @@ impl Mode for VisualLineMode {
     fn exit(&mut self) -> Vec<EditorCommand> {
         vec![EditorCommand::ClearSelection]
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 struct CommandMode;
@@ -1287,10 +1265,6 @@ impl Mode for CommandMode {
 
     fn exit(&mut self) -> Vec<EditorCommand> {
         vec![]
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
@@ -1384,9 +1358,5 @@ impl Mode for PromptMode {
             PromptType::Search => vec![EditorCommand::ExitSearch],
             _ => vec![],
         }
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }

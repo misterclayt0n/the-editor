@@ -1345,7 +1345,7 @@ impl View {
             _ => '\0',
         };
 
-        if matching == after_char {
+        if matching != '\0' && matching == after_char {
             Some(true)
         } else {
             None

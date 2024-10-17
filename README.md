@@ -71,10 +71,10 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [x] Deletion at the beginning of the line acts as delete character
 - [ ] Vertical movement from the end of the line gets the cursor stuck at one character after the end of the line
 - [ ] Zooming in does not work (probably because of the whole virtual DOM thing), I guess it would be nice to implement some interaction, if possible, with zooming
-- [ ] The editor is not scrolling horizontally as I type (also probably because of the virtual DOM)
+- [x] The editor is not scrolling horizontally as I type (also probably because of the virtual DOM)
 - [ ] Not really a bug, but would be nice to render an empty selected character when passing by an empty line in visual mode
 - [ ] Ctrl-d and Ctrl-u are not really working just like vim.
-- [ ] Deleting last line with selection and "d" motion crashes, I also can't delete the last line using "dd"
+- [x] Deleting last line with selection and "d" motion crashes, I also can't delete the last line using "dd"
 - [ ] "ci" motion not working well
 - [x] Very specific panic on searching
 
@@ -88,3 +88,5 @@ If you encounter any issues, feel free to open an [issue](https://github.com/mis
 
 ### 🌟 Acknowledgments
 Inspired by the simplicity of Zed, the speed of Vim, and the versatility of Emacs.
+
+

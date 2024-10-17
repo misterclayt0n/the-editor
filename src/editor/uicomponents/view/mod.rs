@@ -618,6 +618,7 @@ impl View {
             .insert_char(character, self.movement.text_location);
         self.movement.text_location.grapheme_index += 1;
         self.set_needs_redraw(true);
+        self.scroll_text_location_into_view()
     }
 
     fn insert_newline(&mut self) {

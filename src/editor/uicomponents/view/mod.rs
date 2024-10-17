@@ -481,11 +481,6 @@ impl View {
 
         self.buffer.delete_line(line_index);
 
-        self.buffer.insert_newline(Location {
-            line_index,
-            grapheme_index: 0,
-        });
-
         self.movement.text_location = Location {
             line_index,
             grapheme_index: 0,

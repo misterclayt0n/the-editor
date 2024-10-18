@@ -40,8 +40,8 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [ ] Line numbers
 - [ ] Buffer changing
 - [ ] Window system (going to copy emacs/vim)
-- [ ] Auto closing?
-- [ ] Multiple cursors 
+- [x] Auto closing?
+- [ ] Multiple cursors
 - [ ] Visual block mode
 - [ ] Compile/Recompile commands 
 - [ ] Working command mode 
@@ -72,11 +72,12 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [ ] Vertical movement from the end of the line gets the cursor stuck at one character after the end of the line
 - [ ] Zooming in does not work (probably because of the whole virtual DOM thing), I guess it would be nice to implement some interaction, if possible, with zooming
 - [x] The editor is not scrolling horizontally as I type (also probably because of the virtual DOM)
-- [ ] Not really a bug, but would be nice to render an empty selected character when passing by an empty line in visual mode
+- [x] Not really a bug, but would be nice to render an empty selected character when passing by an empty line in visual mode
 - [ ] Ctrl-d and Ctrl-u are not really working just like vim.
 - [x] Deleting last line with selection and "d" motion crashes, I also can't delete the last line using "dd"
 - [ ] "ci" motion not working well
 - [x] Very specific panic on searching
+- [ ] Phantom line introduced a bug where if open a file, it keeps adding a new line
 
 ### 📚 Future Plans
 - **Integrated Setup**: Automatically configure necessary tools when opening a new file type.

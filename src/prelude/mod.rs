@@ -64,9 +64,18 @@ impl From<GraphemeWidth> for usize {
 
 impl GraphemeWidth {
     pub fn as_usize(&self) -> usize {
-	match self {
-	    GraphemeWidth::Half => 1,
-	    GraphemeWidth::Full => 2,
-	}
+        match self {
+            GraphemeWidth::Half => 1,
+            GraphemeWidth::Full => 2,
+        }
     }
 }
+
+pub const MATCHING_DELIMITERS: [(char, char); 6] = [
+    ('(', ')'),
+    ('{', '}'),
+    ('[', ']'),
+    ('"', '"'),
+    ('\'', '\''),
+    ('<', '>'),
+];

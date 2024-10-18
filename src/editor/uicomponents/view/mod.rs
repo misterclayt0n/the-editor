@@ -318,18 +318,18 @@ impl View {
 
     fn find_text_object_range(&self, delimiter: char, inner: bool) -> Option<(usize, usize)> {
         // define closing and opening delimiters based on the provided delimiter
-        let (open_delim, close_delim) = match delimiter {
-            '(' | ')' => ('(', ')'),
-            '{' | '}' => ('{', '}'),
-            '[' | ']' => ('[', ']'),
-            '<' | '>' => ('<', '>'),
-            '"' => ('"', '"'),
-            '\'' => ('\'', '\''),
-            _ => return None,
-        };
+        let (open_delim, close_delim) = MATCHING_DELIMITERS
+            .iter()
+            .find(|&&(open, close)| open == delimiter || close == delimiter)
+            .map_or(('\0', '\0'), |&(open, close)| (open, close));
+
+        if open_delim == '\0' || close_delim == '\0' {
+            return None;
+        }
 
         let current_location = self.movement.text_location;
         let cursor_index = self.buffer.location_to_char_index(current_location);
+
         // first try: reverse search from the cursor position to find the opening delimiter
         if let Some(start) =
             self.find_matching_open_delim_backward(cursor_index, open_delim, close_delim)
@@ -587,16 +587,68 @@ impl View {
         let line_index = self.movement.text_location.line_index;
         let grapheme_index = self.movement.text_location.grapheme_index;
 
-        // if buffer is empty, insert new line before adding more characters
-        if self.buffer.height() == 0 {
-            self.buffer.insert_newline(Location {
-                line_index: 0,
-                grapheme_index: 0,
-            });
+        if character == '"' || character == '\'' {
+            let current_line = self.buffer.rope.line(line_index).to_string();
+            let before_cursor = &current_line[..grapheme_index];
+
+            let count_opening_delimiters = before_cursor.matches(character).count();
+
+            // if there's an odd number of delimiters before the cursor, we insert a closing one
+            // NOTE: I'm not really sure how people usually handle this sort of situation,
+            // but I was to lazy to look up the source code of Zed or Neovim, and decided that
+            // this was the easiest, most direct approach possible hahaha
+            if count_opening_delimiters % 2 != 0 {
+                self.buffer.insert_char(character, self.movement.text_location);
+                self.movement.text_location.grapheme_index += 1;
+                self.set_needs_redraw(true);
+                self.scroll_text_location_into_view();
+                return;
+            } else {
+                // in this case, we handle both opening and closing
+                self.buffer.insert_char(character, self.movement.text_location);
+                self.movement.text_location.grapheme_index += 1;
+                self.buffer.insert_char(character, self.movement.text_location);
+                self.set_needs_redraw(true);
+                self.scroll_text_location_into_view();
+                return;
+            }
+        }
+
+        if let Some(&(_, closing_delim)) = MATCHING_DELIMITERS
+            .iter()
+            .find(|&&(open, _)| open == character)
+        {
+            self.buffer
+                .insert_char(character, self.movement.text_location);
+            self.movement.text_location.grapheme_index += 1; // move right
+
+            self.buffer
+                .insert_char(closing_delim, self.movement.text_location); // position
+            self.set_needs_redraw(true);
+            self.scroll_text_location_into_view();
+            return;
+        }
+
+
+        if let Some(&(_, closing_delim)) = MATCHING_DELIMITERS
+            .iter()
+            .find(|&&(_,close)| close == character)
+        {
+            // check if following character is the same closing delimiter
+            let line_slice = self.buffer.rope.line(line_index).to_string();
+            if grapheme_index < line_slice.len() && line_slice.chars().nth(grapheme_index) == Some(closing_delim) {
+                self.movement.text_location.grapheme_index += 1;
+                self.set_needs_redraw(true);
+                self.scroll_text_location_into_view();
+                return;
+            }
         }
 
         // checking if the character is a closing delinmiter
-        if character == '}' || character == ')' || character == ']' {
+        if let Some(&(_, _)) = MATCHING_DELIMITERS
+            .iter()
+            .find(|&&(_, close)| close == character)
+        {
             let line_slice = self.buffer.rope.line(line_index);
             let line_str = line_slice.to_string();
 
@@ -606,13 +658,13 @@ impl View {
                 ""
             };
 
+            // Se a linha antes do delimitador estiver vazia (apenas espaços), diminui a indentação
             if prefix.trim().is_empty() {
                 self.decrease_indentation(line_index);
             }
         }
 
-        self.buffer
-            .insert_char(character, self.movement.text_location);
+        self.buffer.insert_char(character, self.movement.text_location);
         self.movement.text_location.grapheme_index += 1;
         self.set_needs_redraw(true);
         self.scroll_text_location_into_view()
@@ -1155,7 +1207,7 @@ impl View {
             TextObject::Inner(delimiter) => {
                 if let Some((start_idx, end_idx)) = self.find_text_object_range(delimiter, true) {
                     let start_location = self.buffer.char_index_to_location(start_idx);
-                    let end_location = self.buffer.char_index_to_location(end_idx);
+                    let end_location = self.buffer.char_index_to_location(end_idx - 1); // have to not account for the cursor itself
 
                     // configure beginning and end of the selection
                     self.selection_start = Some(start_location);

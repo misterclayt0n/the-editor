@@ -77,7 +77,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [x] Deleting last line with selection and "d" motion crashes, I also can't delete the last line using "dd"
 - [x] "ci" motion not working well
 - [x] Very specific panic on searching
-- [ ] Phantom line introduced a bug where if open a file, it keeps adding a new line
+- [x] Phantom line introduced a bug where if open a file, it keeps adding a new line
 
 ### 📚 Future Plans
 - **Integrated Setup**: Automatically configure necessary tools when opening a new file type.

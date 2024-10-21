@@ -13,6 +13,7 @@ pub struct Buffer {
     pub rope: Rope,
     pub file_info: FileInfo,
     pub dirty: bool,
+    phantom_line: bool,
 }
 
 impl Default for Buffer {
@@ -23,7 +24,8 @@ impl Default for Buffer {
         Self {
             rope,
             file_info: FileInfo::default(),
-            dirty: false
+            dirty: false,
+            phantom_line: true,
         }
     }
 }
@@ -58,13 +60,34 @@ fn get_char_class(c: char, word_type: WordType) -> CharClass {
 
 impl Buffer {
     pub fn load(file_name: &str) -> Result<Self, Error> {
-        let mut rope = Rope::from_reader(File::open(file_name)?)?;
-        rope.insert(rope.len_chars(), "\n");
+        let rope = Rope::from_reader(File::open(file_name)?)?;
+
+        let phantom_line = if rope.len_chars() == 0 {
+            false
+        } else {
+            // check if last line ends with a new line
+            let last_char = rope.char(rope.len_chars() - 1);
+            if last_char != '\n' {
+                // if it doesn't, add phantom line
+                let mut new_rope = rope.clone();
+                new_rope.insert(new_rope.len_chars(), "\n");
+                true
+            } else {
+                // already ends with '\n'
+                false
+            }
+        };
+
+        let mut rope_to_use = rope;
+        if phantom_line {
+            rope_to_use.insert(rope_to_use.len_chars(), "\n");
+        }
 
         Ok(Self {
-            rope,
+            rope: rope_to_use,
             file_info: FileInfo::from(file_name),
             dirty: false,
+            phantom_line: true,
         })
     }
 
@@ -174,9 +197,28 @@ impl Buffer {
     fn save_to_file(&self, file_info: &FileInfo) -> Result<(), Error> {
         if let Some(file_path) = &file_info.get_path() {
             let mut file = File::create(file_path)?;
+            let total_lines = self.rope.len_lines();
 
-            for line_slice in self.rope.lines() {
-                write!(file, "{}", line_slice)?;
+            // determine how many lines should be saved
+            let lines_to_save = if self.phantom_line {
+                if total_lines == 0 {
+                    0
+                } else {
+                    total_lines - 1
+                }
+            } else {
+                total_lines
+            };
+
+            for line_idx in 0..lines_to_save {
+                let line = self.rope.line(line_idx);
+                write!(file, "{}", line)?;
+            }
+
+            // check if the original file ended with a new line, 
+            // and if necessary, add one for the phantom line
+            if !self.phantom_line && self.rope.char(self.rope.len_chars() - 1) != '\n' {
+                write!(file, "\n")?;
             }
         } else {
             #[cfg(debug_assertions)]

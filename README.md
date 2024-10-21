@@ -75,7 +75,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [x] Not really a bug, but would be nice to render an empty selected character when passing by an empty line in visual mode
 - [ ] Ctrl-d and Ctrl-u are not really working just like vim.
 - [x] Deleting last line with selection and "d" motion crashes, I also can't delete the last line using "dd"
-- [ ] "ci" motion not working well
+- [x] "ci" motion not working well
 - [x] Very specific panic on searching
 - [ ] Phantom line introduced a bug where if open a file, it keeps adding a new line
 
@@ -89,3 +89,4 @@ If you encounter any issues, feel free to open an [issue](https://github.com/mis
 
 ### 🌟 Acknowledgments
 Inspired by the simplicity of Zed, the speed of Vim, and the versatility of Emacs.
+

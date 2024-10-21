@@ -1,3 +1,6 @@
+// TODO: abstract edit commands into a new file, same thing as movement.rs,
+// but now edit.rs
+
 use std::{cmp::min, io::Error};
 
 use crate::editor::color_scheme::ColorScheme;
@@ -289,21 +292,41 @@ impl View {
             Operator::Change => match text_object {
                 TextObject::Inner(delimiter) => {
                     if let Some((start, end)) = self.find_text_object_range(delimiter, true) {
-                        // remove all content between the delimiters
-                        self.buffer.rope.remove(start..end);
-                        self.buffer.dirty = true;
+                        // get initial and end locations
+                        let start_location = self.buffer.char_index_to_location(start);
+                        let end_location = self.buffer.char_index_to_location(end);
 
-                        // insert new line between the removed space
-                        let insertion_point = self.buffer.char_index_to_location(start + 1);
-                        self.buffer.insert_newline(insertion_point);
+                        // TODO: I should probably abstract away most of the indentation code, 
+                        // I guess something like: adjust_indentation()
+                        // check if delimiters are on the same line
+                        if start_location.line_index == end_location.line_index {
+                            // first cenario: same line
+                            self.buffer.rope.remove(start..end);
+                            self.buffer.dirty = true;
+                            self.movement.text_location = self.buffer.char_index_to_location(start);
+                            self.scroll_text_location_into_view();
+                            self.set_needs_redraw(true);
+                        } else {
+                            // second cenario: delimiters in differnet lines
+                            self.buffer.rope.remove(start..end);
+                            self.buffer.dirty = true;
 
-                        // update cursor location to the beginning of the removed interval
-                        self.movement.text_location = Location {
-                            line_index: insertion_point.line_index,
-                            grapheme_index: 0,
-                        };
-                        self.scroll_text_location_into_view();
-                        self.set_needs_redraw(true);
+                            let current_indentation =
+                                self.get_indentation_of_line(start_location.line_index);
+
+                            let mut new_indentation = current_indentation.clone();
+                            new_indentation.push('\t');
+
+                            let indentation_string = format!("\n{}", new_indentation);
+                            self.buffer.rope.insert(start, &indentation_string);
+                            self.buffer.dirty = true;
+
+                            let new_cursor_location = start + indentation_string.len();
+                            self.movement.text_location =
+                                self.buffer.char_index_to_location(new_cursor_location);
+                            self.scroll_text_location_into_view();
+                            self.set_needs_redraw(true);
+                        }
                     }
                 }
             },
@@ -598,16 +621,19 @@ impl View {
             // but I was to lazy to look up the source code of Zed or Neovim, and decided that
             // this was the easiest, most direct approach possible hahaha
             if count_opening_delimiters % 2 != 0 {
-                self.buffer.insert_char(character, self.movement.text_location);
+                self.buffer
+                    .insert_char(character, self.movement.text_location);
                 self.movement.text_location.grapheme_index += 1;
                 self.set_needs_redraw(true);
                 self.scroll_text_location_into_view();
                 return;
             } else {
                 // in this case, we handle both opening and closing
-                self.buffer.insert_char(character, self.movement.text_location);
+                self.buffer
+                    .insert_char(character, self.movement.text_location);
                 self.movement.text_location.grapheme_index += 1;
-                self.buffer.insert_char(character, self.movement.text_location);
+                self.buffer
+                    .insert_char(character, self.movement.text_location);
                 self.set_needs_redraw(true);
                 self.scroll_text_location_into_view();
                 return;
@@ -629,14 +655,15 @@ impl View {
             return;
         }
 
-
         if let Some(&(_, closing_delim)) = MATCHING_DELIMITERS
             .iter()
-            .find(|&&(_,close)| close == character)
+            .find(|&&(_, close)| close == character)
         {
             // check if following character is the same closing delimiter
             let line_slice = self.buffer.rope.line(line_index).to_string();
-            if grapheme_index < line_slice.len() && line_slice.chars().nth(grapheme_index) == Some(closing_delim) {
+            if grapheme_index < line_slice.len()
+                && line_slice.chars().nth(grapheme_index) == Some(closing_delim)
+            {
                 self.movement.text_location.grapheme_index += 1;
                 self.set_needs_redraw(true);
                 self.scroll_text_location_into_view();
@@ -664,7 +691,8 @@ impl View {
             }
         }
 
-        self.buffer.insert_char(character, self.movement.text_location);
+        self.buffer
+            .insert_char(character, self.movement.text_location);
         self.movement.text_location.grapheme_index += 1;
         self.set_needs_redraw(true);
         self.scroll_text_location_into_view()
@@ -1521,3 +1549,4 @@ impl UIComponent for View {
         Ok(())
     }
 }
+

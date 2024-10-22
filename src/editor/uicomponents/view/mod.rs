@@ -228,12 +228,46 @@ impl View {
             Normal::Left => self.movement.move_left(&self.buffer),
             Normal::LeftAfterDeletion => self.movement.move_left_after_deletion(&self.buffer),
             Normal::Right => self.movement.move_right(&self.buffer),
-            Normal::PageUp => self
-                .movement
-                .move_up(&self.buffer, self.size.height.saturating_div(2)),
-            Normal::PageDown => self
-                .movement
-                .move_down(&self.buffer, self.size.height.saturating_div(2)),
+            Normal::PageUp => {
+                let half_screen = self.size.height / 2;
+                self.movement.move_up(&self.buffer, half_screen);
+
+                // new offset to center the cursor
+                let desired_scroll = self
+                    .movement
+                    .text_location
+                    .line_index
+                    .saturating_sub(half_screen);
+
+                // clamp offset to ensure it's within valid bounds
+                self.scroll_offset.row = min(
+                    desired_scroll,
+                    self.buffer.height().saturating_sub(self.size.height),
+                );
+
+                self.scroll_offset.row = self.scroll_offset.row.max(0);
+                self.set_needs_redraw(true);
+                return;
+            }
+            Normal::PageDown => {
+                let half_screen = self.size.height / 2;
+                self.movement.move_down(&self.buffer, half_screen);
+
+                let desired_scroll = self
+                    .movement
+                    .text_location
+                    .line_index
+                    .saturating_sub(half_screen);
+
+                self.scroll_offset.row = min(
+                    desired_scroll,
+                    self.buffer.height().saturating_sub(self.size.height),
+                );
+
+                self.scroll_offset.row = self.scroll_offset.row.max(0);
+                self.set_needs_redraw(true);
+                return;
+            }
             Normal::StartOfLine => self.movement.move_to_start_of_line(),
             Normal::EndOfLine => self.movement.move_to_end_of_line(&self.buffer),
             Normal::WordForward => self
@@ -296,7 +330,7 @@ impl View {
                         let start_location = self.buffer.char_index_to_location(start);
                         let end_location = self.buffer.char_index_to_location(end);
 
-                        // TODO: I should probably abstract away most of the indentation code, 
+                        // TODO: I should probably abstract away most of the indentation code,
                         // I guess something like: adjust_indentation()
                         // check if delimiters are on the same line
                         if start_location.line_index == end_location.line_index {
@@ -1550,4 +1584,3 @@ impl UIComponent for View {
         Ok(())
     }
 }
-

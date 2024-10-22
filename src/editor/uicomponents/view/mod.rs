@@ -1503,6 +1503,7 @@ impl UIComponent for View {
     fn set_size(&mut self, size: Size) {
         self.size = size;
         self.scroll_text_location_into_view();
+        self.rendered_lines.clear();
     }
 
     fn draw(&mut self, origin_row: usize) -> Result<(), Error> {

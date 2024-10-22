@@ -374,7 +374,8 @@ impl Editor {
                 self.view.delete_current_line();
             }
             EditorCommand::ChangeCurrentLine => {
-                self.view.delete_current_line_and_leave_empty();
+                let line_index = self.view.movement.text_location.line_index;
+                self.view.replace_line_with_empty(line_index);
                 self.execute_command(EditorCommand::SwitchMode(ModeType::Insert))
             }
             EditorCommand::DeleteCurrentLineAndLeaveEmpty => {
@@ -749,8 +750,7 @@ impl Mode for NormalMode {
                     let text_object = TextObject::Inner(c);
                     command_buffer.clear();
                     Some(EditorCommand::OperatorTextObject(operator, text_object))
-                }
-                else {
+                } else {
                     command_buffer.clear();
                     None
                 }

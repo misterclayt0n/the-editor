@@ -1,6 +1,6 @@
 use ropey::Rope;
-use unicode_width::UnicodeWidthChar;
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthChar;
 
 use super::FileInfo;
 use crate::prelude::*;
@@ -62,32 +62,27 @@ impl Buffer {
     pub fn load(file_name: &str) -> Result<Self, Error> {
         let rope = Rope::from_reader(File::open(file_name)?)?;
 
-        let phantom_line = if rope.len_chars() == 0 {
-            false
+        let (rope_to_use, phantom_line) = if rope.len_chars() == 0 {
+            // Arquivo vazio: inserir uma linha em branco
+            let mut new_rope = Rope::new();
+            new_rope.insert(0, "\n");
+            (new_rope, true)
         } else {
-            // check if last line ends with a new line
             let last_char = rope.char(rope.len_chars() - 1);
             if last_char != '\n' {
-                // if it doesn't, add phantom line
                 let mut new_rope = rope.clone();
                 new_rope.insert(new_rope.len_chars(), "\n");
-                true
+                (new_rope, true)
             } else {
-                // already ends with '\n'
-                false
+                (rope, false)
             }
         };
-
-        let mut rope_to_use = rope;
-        if phantom_line {
-            rope_to_use.insert(rope_to_use.len_chars(), "\n");
-        }
 
         Ok(Self {
             rope: rope_to_use,
             file_info: FileInfo::from(file_name),
             dirty: false,
-            phantom_line: true,
+            phantom_line,
         })
     }
 
@@ -215,7 +210,7 @@ impl Buffer {
                 write!(file, "{}", line)?;
             }
 
-            // check if the original file ended with a new line, 
+            // check if the original file ended with a new line,
             // and if necessary, add one for the phantom line
             if !self.phantom_line && self.rope.char(self.rope.len_chars() - 1) != '\n' {
                 write!(file, "\n")?;
@@ -553,7 +548,8 @@ impl Buffer {
         }
 
         // if we got here, just return the last valid index
-        last_index + 1
+        // last_index + 1
+        last_index
     }
 }
 

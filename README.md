@@ -69,7 +69,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [x] Need to create some sort of rendering buffer to evoid flickering
 - [x] Selection is not working well when encountered with emojis
 - [x] Deletion at the beginning of the line acts as delete character
-- [ ] Vertical movement from the end of the line gets the cursor stuck at one character after the end of the line
+- [x] Vertical movement from the end of the line gets the cursor stuck at one character after the end of the line
 - [x] Zooming in does not work (probably because of the whole virtual DOM thing), I guess it would be nice to implement some interaction, if possible, with zooming (there is no way for me to control zooming in the terminal)
 - [x] The editor is not scrolling horizontally as I type (also probably because of the virtual DOM)
 - [x] Not really a bug, but would be nice to render an empty selected character when passing by an empty line in visual mode
@@ -89,4 +89,3 @@ If you encounter any issues, feel free to open an [issue](https://github.com/mis
 
 ### 🌟 Acknowledgments
 Inspired by the simplicity of Zed, the speed of Vim, and the versatility of Emacs.
-

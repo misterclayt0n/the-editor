@@ -85,6 +85,7 @@ pub enum ModeType {
     Visual,
     VisualLine,
     Command,
+    CommandNormal, // Novo modo
     Prompt(PromptType),
 }
 
@@ -96,6 +97,7 @@ impl fmt::Display for ModeType {
             ModeType::Visual => write!(f, "VISUAL"),
             ModeType::VisualLine => write!(f, "VISUAL LINE"),
             ModeType::Command => write!(f, "COMMAND"),
+            ModeType::CommandNormal => write!(f, "COMMAND NORMAL"),
             ModeType::Prompt(prompt_type) => match prompt_type {
                 PromptType::Search => write!(f, "SEARCH"),
                 PromptType::Save => write!(f, "SAVE"),
@@ -161,6 +163,16 @@ enum EditorCommand {
     OperatorTextObject(Operator, TextObject),
     VisualSelectTextObject(TextObject),
     ExecuteCommand,
+    MoveCommandBarCursorLeft,
+    MoveCommandBarCursorRight,
+    MoveCommandBarCursorStart,
+    MoveCommandBarCursorEnd,
+    AppendRightCommandBar,
+    AppendStartCommandBar,
+    AppendEndCommandBar,
+    MoveCommandBarWordForward(WordType),
+    MoveCommandBarWordEnd(WordType),
+    MoveCommandBarWordBackward(WordType),
 }
 
 pub struct Editor {
@@ -401,8 +413,41 @@ impl Editor {
             EditorCommand::HandleVisualMovement(direction) => {
                 self.view.handle_visual_movement(direction);
             }
+            EditorCommand::MoveCommandBarCursorLeft => {
+                self.command_bar.move_cursor_left();
+            }
+            EditorCommand::MoveCommandBarCursorRight => {
+                self.command_bar.move_cursor_right();
+            }
+            EditorCommand::MoveCommandBarCursorStart => {
+                self.command_bar.move_cursor_start();
+            }
+            EditorCommand::MoveCommandBarCursorEnd => {
+                self.command_bar.move_cursor_end();
+            }
+            EditorCommand::AppendRightCommandBar => {
+                self.command_bar.move_cursor_right();
+                self.switch_mode(ModeType::Command)
+            }
+            EditorCommand::AppendStartCommandBar => {
+                self.command_bar.move_cursor_start();
+                self.switch_mode(ModeType::Command);
+            }
+            EditorCommand::AppendEndCommandBar => {
+                self.command_bar.move_cursor_end();
+                self.switch_mode(ModeType::Command);
+            }
             EditorCommand::HandleVisualLineMovement(direction) => {
                 self.view.handle_visual_line_movement(direction);
+            }
+            EditorCommand::MoveCommandBarWordForward(word_type) => {
+                self.command_bar.move_cursor_word_forward(word_type);
+            }
+            EditorCommand::MoveCommandBarWordBackward(word_type) => {
+                self.command_bar.move_cursor_word_backward(word_type);
+            }
+            EditorCommand::MoveCommandBarWordEnd(word_type) => {
+                self.command_bar.move_cursor_word_end_forward(word_type);
             }
         }
     }
@@ -491,6 +536,7 @@ impl Editor {
             ModeType::Visual => Box::new(VisualMode::new()),
             ModeType::VisualLine => Box::new(VisualLineMode::new()),
             ModeType::Command => Box::new(CommandMode::new()),
+            ModeType::CommandNormal => Box::new(CommandNormalMode::new()),
             ModeType::Prompt(prompt_type) => Box::new(PromptMode::new(prompt_type)),
         };
 
@@ -609,23 +655,28 @@ impl Editor {
     //
 
     fn in_prompt(&self) -> bool {
-        matches!(self.current_mode, ModeType::Prompt(_) | ModeType::Command)
+        matches!(
+            self.current_mode,
+            ModeType::Prompt(_) | ModeType::Command | ModeType::CommandNormal
+        )
     }
 
     fn set_prompt(&mut self, prompt_type: PromptType) {
-        match prompt_type {
-            PromptType::None => self.message_bar.set_needs_redraw(true),
-            PromptType::Save => {
-                self.command_bar.set_prompt("Save as: ");
-                self.command_bar.clear_value();
-            }
-            PromptType::Search => {
-                self.command_bar.set_prompt("Search: ");
-                self.command_bar.clear_value();
-            }
-            PromptType::Command => {
-                self.command_bar.set_prompt(":");
-                self.command_bar.clear_value();
+        if self.prompt_type != prompt_type {
+            match prompt_type {
+                PromptType::None => self.message_bar.set_needs_redraw(true),
+                PromptType::Save => {
+                    self.command_bar.set_prompt("Save as: ");
+                    self.command_bar.clear_value();
+                }
+                PromptType::Search => {
+                    self.command_bar.set_prompt("Search: ");
+                    self.command_bar.clear_value();
+                }
+                PromptType::Command => {
+                    self.command_bar.set_prompt(":");
+                    // self.command_bar.clear_value();
+                }
             }
         }
 
@@ -1313,7 +1364,7 @@ impl Mode for CommandMode {
                 code: KeyCode::Esc,
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => Some(EditorCommand::SwitchMode(ModeType::Normal)),
+            } => Some(EditorCommand::SwitchMode(ModeType::CommandNormal)),
             KeyEvent {
                 code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
@@ -1466,5 +1517,108 @@ impl Mode for PromptMode {
             PromptType::Search => vec![EditorCommand::ExitSearch],
             _ => vec![],
         }
+    }
+}
+
+struct CommandNormalMode;
+
+impl CommandNormalMode {
+    fn new() -> Self {
+        Self
+    }
+}
+
+impl Mode for CommandNormalMode {
+    fn handle_event(
+        &mut self,
+        event: KeyEvent,
+        _command_buffer: &mut String,
+    ) -> Option<EditorCommand> {
+        match event {
+            KeyEvent {
+                code: KeyCode::Char('h'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCommandBarCursorLeft),
+            KeyEvent {
+                code: KeyCode::Char('l'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCommandBarCursorRight),
+            KeyEvent {
+                code: KeyCode::Char('0'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCommandBarCursorStart),
+            KeyEvent {
+                code: KeyCode::Char('$'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCommandBarCursorEnd),
+            KeyEvent {
+                code: KeyCode::Char('i'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::SwitchMode(ModeType::Command)),
+            KeyEvent {
+                code: KeyCode::Char('I'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::AppendStartCommandBar),
+            KeyEvent {
+                code: KeyCode::Char('A'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::AppendEndCommandBar),
+            KeyEvent {
+                code: KeyCode::Char('a'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::AppendRightCommandBar),
+            KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::SwitchMode(ModeType::Normal)),
+            KeyEvent {
+                code: KeyCode::Char('w'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCommandBarWordForward(WordType::Word)),
+            KeyEvent {
+                code: KeyCode::Char('b'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCommandBarWordBackward(WordType::Word)),
+            KeyEvent {
+                code: KeyCode::Char('W'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::MoveCommandBarWordForward(WordType::BigWord)),
+            KeyEvent {
+                code: KeyCode::Char('B'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::MoveCommandBarWordBackward(WordType::BigWord)),
+            KeyEvent {
+                code: KeyCode::Char('e'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::MoveCommandBarWordEnd(WordType::Word)),
+            KeyEvent {
+                code: KeyCode::Char('E'),
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::MoveCommandBarWordEnd(WordType::BigWord)),
+            _ => None,
+        }
+    }
+
+    fn enter(&mut self) -> Vec<EditorCommand> {
+        vec![]
+    }
+
+    fn exit(&mut self) -> Vec<EditorCommand> {
+        vec![]
     }
 }

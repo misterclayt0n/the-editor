@@ -73,6 +73,7 @@ pub enum Edit {
 enum PromptType {
     Search,
     Save,
+    Command,
     #[default]
     None,
 }
@@ -109,8 +110,6 @@ impl Default for ModeType {
         ModeType::Normal
     }
 }
-
-use std::any::Any;
 
 trait Mode {
     fn handle_event(
@@ -161,6 +160,7 @@ enum EditorCommand {
     SearchPrevious,
     OperatorTextObject(Operator, TextObject),
     VisualSelectTextObject(TextObject),
+    ExecuteCommand,
 }
 
 pub struct Editor {
@@ -269,6 +269,10 @@ impl Editor {
         match command {
             EditorCommand::MoveCursor(direction) => {
                 self.view.handle_normal_command(direction);
+            }
+            EditorCommand::ExecuteCommand => {
+                let command_text = self.command_bar.value();
+                self.handle_command_input(&command_text);
             }
             EditorCommand::VisualSelectTextObject(text_object) => {
                 self.switch_mode(ModeType::Visual);
@@ -455,16 +459,32 @@ impl Editor {
     //
 
     fn switch_mode(&mut self, mode: ModeType) {
-        // Exit the current mode
+        // exit the current mode
         let exit_commands = self.current_mode_impl.exit();
         for command in exit_commands {
             self.execute_command(command);
         }
 
-        // Set the current mode type
+        // update prompt when change mode
+        match mode {
+            ModeType::Command => {
+                self.set_prompt(PromptType::Command);
+            }
+            ModeType::Prompt(prompt_type) => {
+                self.set_prompt(prompt_type);
+            }
+            _ => {
+                self.set_prompt(PromptType::None);
+            }
+        }
+
+        // set the current mode type
         self.current_mode = mode;
 
-        // Create a new mode instance
+        // clear the mf
+        self.command_buffer.clear();
+
+        // create a new mode instance
         self.current_mode_impl = match mode {
             ModeType::Normal => Box::new(NormalMode::new()),
             ModeType::Insert => Box::new(InsertMode::new()),
@@ -474,11 +494,34 @@ impl Editor {
             ModeType::Prompt(prompt_type) => Box::new(PromptMode::new(prompt_type)),
         };
 
-        // Enter the new mode
+        // enter the new mode
         let enter_commands = self.current_mode_impl.enter();
         for command in enter_commands {
             self.execute_command(command);
         }
+    }
+
+    fn handle_command_input(&mut self, input: &str) {
+        match input.trim() {
+            "w" => {
+                self.execute_command(EditorCommand::Save);
+                self.switch_mode(ModeType::Normal);
+                self.update_message("File saved");
+            }
+            "q" => {
+                self.execute_command(EditorCommand::Quit);
+            }
+            "wq" | "qw" => {
+                self.execute_command(EditorCommand::Save);
+                self.execute_command(EditorCommand::Quit);
+            }
+            _ => {
+                self.update_message(&format!("Unknown command ma man: {}", input));
+                self.switch_mode(ModeType::Normal);
+            }
+        }
+
+        self.command_bar.clear_value();
     }
 
     //
@@ -566,7 +609,7 @@ impl Editor {
     //
 
     fn in_prompt(&self) -> bool {
-        matches!(self.current_mode, ModeType::Prompt(_))
+        matches!(self.current_mode, ModeType::Prompt(_) | ModeType::Command)
     }
 
     fn set_prompt(&mut self, prompt_type: PromptType) {
@@ -578,6 +621,10 @@ impl Editor {
             }
             PromptType::Search => {
                 self.command_bar.set_prompt("Search: ");
+                self.command_bar.clear_value();
+            }
+            PromptType::Command => {
+                self.command_bar.set_prompt(":");
                 self.command_bar.clear_value();
             }
         }
@@ -640,6 +687,11 @@ impl Mode for NormalMode {
                 modifiers: KeyModifiers::CONTROL,
                 ..
             } => Some(EditorCommand::HandleQuitCommand),
+            KeyEvent {
+                code: KeyCode::Char(':'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::SwitchMode(ModeType::Command)),
             KeyEvent {
                 code: KeyCode::Char('s'),
                 modifiers: KeyModifiers::CONTROL,
@@ -1253,10 +1305,37 @@ impl CommandMode {
 impl Mode for CommandMode {
     fn handle_event(
         &mut self,
-        _event: KeyEvent,
+        event: KeyEvent,
         _command_buffer: &mut String,
     ) -> Option<EditorCommand> {
-        None
+        match event {
+            KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::SwitchMode(ModeType::Normal)),
+            KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::ExecuteCommand),
+            KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
+                ..
+            } => Some(EditorCommand::UpdateCommandBar(Edit::Insert(c))),
+            KeyEvent {
+                code: KeyCode::Backspace,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::UpdateCommandBar(Edit::DeleteBackward)),
+            KeyEvent {
+                code: KeyCode::Delete,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::UpdateCommandBar(Edit::Delete)),
+            _ => None,
+        }
     }
 
     fn enter(&mut self) -> Vec<EditorCommand> {
@@ -1341,6 +1420,34 @@ impl Mode for PromptMode {
                 // } => Some(EditorCommand::SaveAs(self.command_bar_value.clone())),
                 _ => None,
             },
+            PromptType::Command => match event {
+                KeyEvent {
+                    code: KeyCode::Esc,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::SwitchMode(ModeType::Normal)),
+                KeyEvent {
+                    code: KeyCode::Enter,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::ExecuteCommand),
+                KeyEvent {
+                    code: KeyCode::Char(c),
+                    modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
+                    ..
+                } => Some(EditorCommand::UpdateCommandBar(Edit::Insert(c))),
+                KeyEvent {
+                    code: KeyCode::Backspace,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::UpdateCommandBar(Edit::DeleteBackward)),
+                KeyEvent {
+                    code: KeyCode::Delete,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::UpdateCommandBar(Edit::Delete)),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -1349,6 +1456,7 @@ impl Mode for PromptMode {
         match self.prompt_type {
             PromptType::Search => vec![EditorCommand::EnterSearch, EditorCommand::SetNeedsRedraw],
             PromptType::Save => vec![EditorCommand::SetNeedsRedraw],
+            PromptType::Command => vec![EditorCommand::SetNeedsRedraw],
             _ => vec![],
         }
     }

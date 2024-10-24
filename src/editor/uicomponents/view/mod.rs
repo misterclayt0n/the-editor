@@ -1,6 +1,8 @@
 // TODO: abstract edit commands into a new file, same thing as movement.rs,
 // but now edit.rs
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::{cmp::min, io::Error};
 
 use crate::editor::color_scheme::ColorScheme;
@@ -33,9 +35,8 @@ pub struct SearchInfo {
     pub query: Option<String>,
 }
 
-#[derive(Default, Clone)]
 pub struct View {
-    pub buffer: Buffer,
+    pub buffer: Rc<RefCell<Buffer>>,
     needs_redraw: bool,
     size: Size,
     pub movement: Movement,
@@ -50,16 +51,17 @@ pub struct View {
 
 impl View {
     pub fn get_status(&self) -> DocumentStatus {
+        let buffer = self.buffer.borrow();
         DocumentStatus {
-            total_lines: self.buffer.height(),
+            total_lines: buffer.height(),
             current_line_index: self.movement.text_location.line_index,
-            file_name: format!("{}", self.buffer.file_info),
-            is_modified: self.buffer.dirty,
+            file_name: format!("{}", buffer.file_info),
+            is_modified: buffer.dirty,
         }
     }
 
-    pub const fn is_file_loaded(&self) -> bool {
-        self.buffer.is_file_loaded()
+    pub fn is_file_loaded(&self) -> bool {
+        self.buffer.borrow().is_file_loaded()
     }
 
     //
@@ -114,8 +116,8 @@ impl View {
             }
 
             let location = match direction {
-                SearchDirection::Forward => self.buffer.search_forward(query, from),
-                SearchDirection::Backward => self.buffer.search_backward(query, from),
+                SearchDirection::Forward => self.buffer.borrow().search_forward(query, from),
+                SearchDirection::Backward => self.buffer.borrow().search_backward(query, from),
             };
 
             if let Some(location) = location {
@@ -153,17 +155,17 @@ impl View {
 
     pub fn load(&mut self, file_name: &str) -> Result<(), Error> {
         let buffer = Buffer::load(file_name)?;
-        self.buffer = buffer;
+        *self.buffer.borrow_mut() = buffer;
         self.set_needs_redraw(true);
         Ok(())
     }
 
     pub fn save(&mut self) -> Result<(), Error> {
-        self.buffer.save()
+        self.buffer.borrow_mut().save()
     }
 
     pub fn save_as(&mut self, file_name: &str) -> Result<(), Error> {
-        self.buffer.save_as(file_name)
+        self.buffer.borrow_mut().save_as(file_name)
     }
 
     //
@@ -188,14 +190,14 @@ impl View {
                     } else {
                         // multiple lines selected
                         // determine the index of initial and final char to line interval
-                        let start_idx = self.buffer.rope.line_to_char(start_line);
-                        let end_idx = self.buffer.rope.line_to_char(end_line + 1);
+                        let start_idx = self.buffer.borrow().rope.line_to_char(start_line);
+                        let end_idx = self.buffer.borrow().rope.line_to_char(end_line + 1);
 
                         // remove all lines all at once
-                        self.buffer.rope.remove(start_idx..end_idx);
+                        self.buffer.borrow_mut().rope.remove(start_idx..end_idx);
 
                         // insert only one empty line in place of the first selected line
-                        self.buffer.rope.insert(start_idx, "\n");
+                        self.buffer.borrow_mut().rope.insert(start_idx, "\n");
 
                         // update cursor postiion
                         self.movement.text_location = Location {
@@ -203,7 +205,7 @@ impl View {
                             grapheme_index: 0,
                         };
 
-                        self.buffer.dirty = true;
+                        self.buffer.borrow_mut().dirty = true;
                     }
 
                     // clear selection
@@ -224,14 +226,14 @@ impl View {
 
     pub fn handle_normal_command(&mut self, command: Normal) {
         match command {
-            Normal::Up => self.movement.move_up(&self.buffer, 1),
-            Normal::Down => self.movement.move_down(&self.buffer, 1),
-            Normal::Left => self.movement.move_left(&self.buffer),
-            Normal::LeftAfterDeletion => self.movement.move_left_after_deletion(&self.buffer),
-            Normal::Right => self.movement.move_right(&self.buffer),
+            Normal::Up => self.movement.move_up(&self.buffer.borrow(), 1),
+            Normal::Down => self.movement.move_down(&self.buffer.borrow(), 1),
+            Normal::Left => self.movement.move_left(&self.buffer.borrow()),
+            Normal::LeftAfterDeletion => self.movement.move_left_after_deletion(&self.buffer.borrow()),
+            Normal::Right => self.movement.move_right(&self.buffer.borrow()),
             Normal::PageUp => {
                 let half_screen = self.size.height / 2;
-                self.movement.move_up(&self.buffer, half_screen);
+                self.movement.move_up(&self.buffer.borrow(), half_screen);
 
                 // new offset to center the cursor
                 let desired_scroll = self
@@ -243,7 +245,7 @@ impl View {
                 // clamp offset to ensure it's within valid bounds
                 self.scroll_offset.row = min(
                     desired_scroll,
-                    self.buffer.height().saturating_sub(self.size.height),
+                    self.buffer.borrow().height().saturating_sub(self.size.height),
                 );
 
                 self.scroll_offset.row = self.scroll_offset.row.max(0);
@@ -252,7 +254,7 @@ impl View {
             }
             Normal::PageDown => {
                 let half_screen = self.size.height / 2;
-                self.movement.move_down(&self.buffer, half_screen);
+                self.movement.move_down(&self.buffer.borrow(), half_screen);
 
                 let desired_scroll = self
                     .movement
@@ -262,7 +264,7 @@ impl View {
 
                 self.scroll_offset.row = min(
                     desired_scroll,
-                    self.buffer.height().saturating_sub(self.size.height),
+                    self.buffer.borrow().height().saturating_sub(self.size.height),
                 );
 
                 self.scroll_offset.row = self.scroll_offset.row.max(0);
@@ -270,38 +272,38 @@ impl View {
                 return;
             }
             Normal::StartOfLine => self.movement.move_to_start_of_line(),
-            Normal::EndOfLine => self.movement.move_to_end_of_line(&self.buffer),
+            Normal::EndOfLine => self.movement.move_to_end_of_line(&self.buffer.borrow()),
             Normal::WordForward => self
                 .movement
-                .move_word_forward(&self.buffer, WordType::Word),
+                .move_word_forward(&self.buffer.borrow(), WordType::Word),
             Normal::WordBackward => self
                 .movement
-                .move_word_backward(&self.buffer, WordType::Word),
+                .move_word_backward(&self.buffer.borrow(), WordType::Word),
             Normal::BigWordForward => self
                 .movement
-                .move_word_forward(&self.buffer, WordType::BigWord),
+                .move_word_forward(&self.buffer.borrow(), WordType::BigWord),
             Normal::BigWordBackward => self
                 .movement
-                .move_word_backward(&self.buffer, WordType::BigWord),
+                .move_word_backward(&self.buffer.borrow(), WordType::BigWord),
             Normal::WordEndForward => self
                 .movement
-                .move_word_end_forward(&self.buffer, WordType::Word),
+                .move_word_end_forward(&self.buffer.borrow(), WordType::Word),
             Normal::BigWordEndForward => self
                 .movement
-                .move_word_end_forward(&self.buffer, WordType::BigWord),
-            Normal::FirstCharLine => self.movement.move_to_first_non_whitespace(&self.buffer),
+                .move_word_end_forward(&self.buffer.borrow(), WordType::BigWord),
+            Normal::FirstCharLine => self.movement.move_to_first_non_whitespace(&self.buffer.borrow()),
             Normal::GoToTop => self.movement.move_to_top(),
-            Normal::GoToBottom => self.movement.move_to_bottom(&self.buffer),
+            Normal::GoToBottom => self.movement.move_to_bottom(&self.buffer.borrow()),
             Normal::InsertAtLineStart => {
-                self.movement.move_to_first_non_whitespace(&self.buffer);
+                self.movement.move_to_first_non_whitespace(&self.buffer.borrow());
                 self.set_needs_redraw(true);
             }
             Normal::InsertAtLineEnd => {
-                self.movement.move_to_end_of_line_beyond_end(&self.buffer);
+                self.movement.move_to_end_of_line_beyond_end(&self.buffer.borrow());
                 self.set_needs_redraw(true);
             }
             Normal::AppendRight => {
-                self.movement.move_right_beyond_end(&self.buffer);
+                self.movement.move_right_beyond_end(&self.buffer.borrow());
             }
         }
 
@@ -314,11 +316,11 @@ impl View {
                 TextObject::Inner(delimiter) => {
                     if let Some((start, end)) = self.find_text_object_range(delimiter, true) {
                         // remove all content between the delimiters
-                        self.buffer.rope.remove(start..end);
-                        self.buffer.dirty = true;
+                        self.buffer.borrow_mut().rope.remove(start..end);
+                        self.buffer.borrow_mut().dirty = true;
 
                         // update cursor location to the beginning of the removed interval
-                        self.movement.text_location = self.buffer.char_index_to_location(start);
+                        self.movement.text_location = self.buffer.borrow().char_index_to_location(start);
                         self.scroll_text_location_into_view();
                         self.set_needs_redraw(true);
                     }
@@ -328,23 +330,23 @@ impl View {
                 TextObject::Inner(delimiter) => {
                     if let Some((start, end)) = self.find_text_object_range(delimiter, true) {
                         // get initial and end locations
-                        let start_location = self.buffer.char_index_to_location(start);
-                        let end_location = self.buffer.char_index_to_location(end);
+                        let start_location = self.buffer.borrow().char_index_to_location(start);
+                        let end_location = self.buffer.borrow().char_index_to_location(end);
 
                         // TODO: I should probably abstract away most of the indentation code,
                         // I guess something like: adjust_indentation()
                         // check if delimiters are on the same line
                         if start_location.line_index == end_location.line_index {
                             // first cenario: same line
-                            self.buffer.rope.remove(start..end);
-                            self.buffer.dirty = true;
-                            self.movement.text_location = self.buffer.char_index_to_location(start);
+                            self.buffer.borrow_mut().rope.remove(start..end);
+                            self.buffer.borrow_mut().dirty = true;
+                            self.movement.text_location = self.buffer.borrow().char_index_to_location(start);
                             self.scroll_text_location_into_view();
                             self.set_needs_redraw(true);
                         } else {
                             // second cenario: delimiters in differnet lines
-                            self.buffer.rope.remove(start..end);
-                            self.buffer.dirty = true;
+                            self.buffer.borrow_mut().rope.remove(start..end);
+                            self.buffer.borrow_mut().dirty = true;
 
                             let current_indentation =
                                 self.get_indentation_of_line(start_location.line_index);
@@ -353,12 +355,12 @@ impl View {
                             new_indentation.push('\t');
 
                             let indentation_string = format!("\n{}", new_indentation);
-                            self.buffer.rope.insert(start, &indentation_string);
-                            self.buffer.dirty = true;
+                            self.buffer.borrow_mut().rope.insert(start, &indentation_string);
+                            self.buffer.borrow_mut().dirty = true;
 
                             let new_cursor_location = start + indentation_string.len();
                             self.movement.text_location =
-                                self.buffer.char_index_to_location(new_cursor_location);
+                                self.buffer.borrow().char_index_to_location(new_cursor_location);
                             self.scroll_text_location_into_view();
                             self.set_needs_redraw(true);
                         }
@@ -386,7 +388,7 @@ impl View {
         }
 
         let current_location = self.movement.text_location;
-        let cursor_index = self.buffer.location_to_char_index(current_location);
+        let cursor_index = self.buffer.borrow().location_to_char_index(current_location);
 
         // first try: reverse search from the cursor position to find the opening delimiter
         if let Some(start) =
@@ -401,7 +403,7 @@ impl View {
                     // search the last character (non whitespace) before the closing delimiter
                     let mut last_non_space = end - 1;
                     while last_non_space > range_start
-                        && self.buffer.rope.char(last_non_space).is_whitespace()
+                        && self.buffer.borrow().rope.char(last_non_space).is_whitespace()
                     {
                         last_non_space -= 1;
                     }
@@ -440,7 +442,7 @@ impl View {
 
         while start_index > 0 {
             start_index -= 1;
-            let c = self.buffer.rope.char(start_index);
+            let c = self.buffer.borrow().rope.char(start_index);
             if c == close_delim {
                 depth += 1;
             } else if c == open_delim {
@@ -462,11 +464,11 @@ impl View {
         close_delim: char,
     ) -> Option<usize> {
         let mut depth = 0;
-        let total_chars = self.buffer.rope.len_chars();
+        let total_chars = self.buffer.borrow().rope.len_chars();
         let mut index = start_index + 1;
 
         while index < total_chars {
-            let c = self.buffer.rope.char(index);
+            let c = self.buffer.borrow().rope.char(index);
             if c == open_delim {
                 depth += 1;
             } else if c == close_delim {
@@ -488,10 +490,10 @@ impl View {
         open_delim: char,
         close_delim: char,
     ) -> Option<usize> {
-        let total_chars = self.buffer.rope.len_chars();
+        let total_chars = self.buffer.borrow().rope.len_chars();
 
         while start_index < total_chars {
-            let c = self.buffer.rope.char(start_index);
+            let c = self.buffer.borrow().rope.char(start_index);
             if c == open_delim {
                 return Some(start_index);
             } else if c == close_delim {
@@ -518,18 +520,18 @@ impl View {
     }
 
     fn delete(&mut self) {
-        self.buffer.delete(self.movement.text_location);
+        self.buffer.borrow_mut().delete(self.movement.text_location);
         self.set_needs_redraw(true);
     }
 
     pub fn delete_current_line(&mut self) {
         let line_index = self.movement.text_location.line_index;
 
-        if line_index >= self.buffer.height() - 1 && self.buffer.height() > 1 {
-            self.movement.move_up(&self.buffer, 1);
+        if line_index >= self.buffer.borrow().height() - 1 && self.buffer.borrow().height() > 1 {
+            self.movement.move_up(&self.buffer.borrow(), 1);
         }
 
-        self.buffer.delete_line(line_index);
+        self.buffer.borrow_mut().delete_line(line_index);
 
         self.set_needs_redraw(true);
     }
@@ -537,7 +539,7 @@ impl View {
     pub fn delete_current_line_and_leave_empty(&mut self) {
         let line_index = self.movement.text_location.line_index;
 
-        self.buffer.delete_line(line_index);
+        self.buffer.borrow_mut().delete_line(line_index);
 
         self.movement.text_location = Location {
             line_index,
@@ -549,37 +551,37 @@ impl View {
 
     pub fn delete_selection(&mut self) {
         if let Some((start, end)) = self.get_selection_range() {
-            let start_idx = self.buffer.location_to_char_index(start);
-            let mut end_idx = self.buffer.location_to_char_index(end);
+            let start_idx = self.buffer.borrow().location_to_char_index(start);
+            let mut end_idx = self.buffer.borrow().location_to_char_index(end);
 
             // include chars contained by the cursor and make sure they do not
             // exceed the length of the rope. we also only want this behavior for visual mode, not
             // visual line
-            if end_idx < self.buffer.rope.len_chars()
+            if end_idx < self.buffer.borrow().rope.len_chars()
                 && self.selection_mode == Some(SelectionMode::Visual)
             {
                 end_idx += 1;
             }
 
             // gotta make sure end_idx does not exceed the size of the rope
-            end_idx = end_idx.min(self.buffer.rope.len_chars());
+            end_idx = end_idx.min(self.buffer.borrow().rope.len_chars());
 
             if start_idx < end_idx {
-                self.buffer.rope.remove(start_idx..end_idx);
-                self.buffer.dirty = true;
+                self.buffer.borrow_mut().rope.remove(start_idx..end_idx);
+                self.buffer.borrow_mut().dirty = true;
 
                 // if the buffer gets empty after exclusion, make sure
                 // at least one empty line is inserted
-                if self.buffer.rope.len_chars() == 0 {
-                    self.buffer.insert_newline(Location {
+                if self.buffer.borrow().rope.len_chars() == 0 {
+                    self.buffer.borrow_mut().insert_newline(Location {
                         line_index: 0,
                         grapheme_index: 0,
                     });
                 }
 
                 // update cursor position
-                self.movement.text_location = self.buffer.char_index_to_location(
-                    start_idx.min(self.buffer.rope.len_chars().saturating_sub(1)),
+                self.movement.text_location = self.buffer.borrow().char_index_to_location(
+                    start_idx.min(self.buffer.borrow().rope.len_chars().saturating_sub(1)),
                 );
                 self.scroll_text_location_into_view();
                 self.set_needs_redraw(true);
@@ -592,19 +594,20 @@ impl View {
         let grapheme_index = self.movement.text_location.grapheme_index;
 
         // check if cursor is within a valid line
-        if line_index < self.buffer.height() {
-            let line_length = self.buffer.get_line_length(line_index);
+        if line_index < self.buffer.borrow().height() {
+            let line_length = self.buffer.borrow().get_line_length(line_index);
             if grapheme_index < line_length {
                 // remove content from the cursor position till the end of the line
                 let start_idx = self
                     .buffer
+                    .borrow()
                     .location_to_char_index(self.movement.text_location);
-                let end_idx = self.buffer.location_to_char_index(Location {
+                let end_idx = self.buffer.borrow().location_to_char_index(Location {
                     line_index,
                     grapheme_index: line_length,
                 });
-                self.buffer.rope.remove(start_idx..end_idx);
-                self.buffer.dirty = true;
+                self.buffer.borrow_mut().rope.remove(start_idx..end_idx);
+                self.buffer.borrow_mut().dirty = true;
             }
         }
 
@@ -616,10 +619,10 @@ impl View {
         let grapheme_index = self.movement.text_location.grapheme_index;
 
         // check if the cursor is within a valid line and if there's a char to be deleted
-        if line_index < self.buffer.height()
-            && grapheme_index < self.buffer.get_line_length(line_index)
+        if line_index < self.buffer.borrow().height()
+            && grapheme_index < self.buffer.borrow().get_line_length(line_index)
         {
-            self.buffer.delete(self.movement.text_location);
+            self.buffer.borrow_mut().delete(self.movement.text_location);
 
             // no need to change the cursor position
             self.set_needs_redraw(true);
@@ -627,9 +630,9 @@ impl View {
     }
 
     pub fn replace_line_with_empty(&mut self, line_index: usize) {
-        if line_index < self.buffer.height() {
-            self.buffer.delete_line(line_index); // delete existing line
-            self.buffer.insert_newline(Location {
+        if line_index < self.buffer.borrow().height() {
+            self.buffer.borrow_mut().delete_line(line_index); // delete existing line
+            self.buffer.borrow_mut().insert_newline(Location {
                 line_index,
                 grapheme_index: 0,
             }); // insert a new empty line in the same position
@@ -646,7 +649,7 @@ impl View {
         let grapheme_index = self.movement.text_location.grapheme_index;
 
         if character == '"' || character == '\'' {
-            let current_line = self.buffer.rope.line(line_index).to_string();
+            let current_line = self.buffer.borrow().rope.line(line_index).to_string();
             let before_cursor = &current_line[..grapheme_index];
 
             let count_opening_delimiters = before_cursor.matches(character).count();
@@ -656,7 +659,7 @@ impl View {
             // but I was to lazy to look up the source code of Zed or Neovim, and decided that
             // this was the easiest, most direct approach possible hahaha
             if count_opening_delimiters % 2 != 0 {
-                self.buffer
+                self.buffer.borrow_mut()
                     .insert_char(character, self.movement.text_location);
                 self.movement.text_location.grapheme_index += 1;
                 self.set_needs_redraw(true);
@@ -664,10 +667,10 @@ impl View {
                 return;
             } else {
                 // in this case, we handle both opening and closing
-                self.buffer
+                self.buffer.borrow_mut()
                     .insert_char(character, self.movement.text_location);
                 self.movement.text_location.grapheme_index += 1;
-                self.buffer
+                self.buffer.borrow_mut()
                     .insert_char(character, self.movement.text_location);
                 self.set_needs_redraw(true);
                 self.scroll_text_location_into_view();
@@ -679,11 +682,11 @@ impl View {
             .iter()
             .find(|&&(open, _)| open == character)
         {
-            self.buffer
+            self.buffer.borrow_mut()
                 .insert_char(character, self.movement.text_location);
             self.movement.text_location.grapheme_index += 1; // move right
 
-            self.buffer
+            self.buffer.borrow_mut()
                 .insert_char(closing_delim, self.movement.text_location); // position
             self.set_needs_redraw(true);
             self.scroll_text_location_into_view();
@@ -695,7 +698,7 @@ impl View {
             .find(|&&(_, close)| close == character)
         {
             // check if following character is the same closing delimiter
-            let line_slice = self.buffer.rope.line(line_index).to_string();
+            let line_slice = self.buffer.borrow().rope.line(line_index).to_string();
             if grapheme_index < line_slice.len()
                 && line_slice.chars().nth(grapheme_index) == Some(closing_delim)
             {
@@ -711,22 +714,26 @@ impl View {
             .iter()
             .find(|&&(_, close)| close == character)
         {
-            let line_slice = self.buffer.rope.line(line_index);
-            let line_str = line_slice.to_string();
+            let prefix = {
+                // Limita o escopo do empréstimo imutável
+                let binding = self.buffer.borrow();
+                let line_slice = binding.rope.line(line_index);
+                let line_str = line_slice.to_string();
 
-            let prefix = if grapheme_index > 0 {
-                &line_str[..grapheme_index]
-            } else {
-                ""
-            };
+                if grapheme_index > 0 {
+                    line_str[..grapheme_index].to_string() // convert to owned string
+                } else {
+                    "".to_string()
+                }
+            }; // 'binding' is free here
 
-            // Se a linha antes do delimitador estiver vazia (apenas espaços), diminui a indentação
+            // if the line before the delimiter is empty (only spaces), decrease indentation
             if prefix.trim().is_empty() {
                 self.decrease_indentation(line_index);
             }
         }
 
-        self.buffer
+        self.buffer.borrow_mut()
             .insert_char(character, self.movement.text_location);
         self.movement.text_location.grapheme_index += 1;
         self.set_needs_redraw(true);
@@ -736,7 +743,7 @@ impl View {
     fn insert_newline(&mut self) {
         if let Some(true) = self.is_cursor_between_matching_delimiters() {
             // insert new line after opening delimiter
-            self.buffer.insert_newline(self.movement.text_location);
+            self.buffer.borrow_mut().insert_newline(self.movement.text_location);
             self.movement.text_location.line_index += 1;
             self.movement.text_location.grapheme_index = 0;
 
@@ -746,13 +753,13 @@ impl View {
             indentation.push('\t'); // increase indentation (could be adjusted)
 
             for c in indentation.chars() {
-                self.buffer.insert_char(c, self.movement.text_location);
+                self.buffer.borrow_mut().insert_char(c, self.movement.text_location);
                 self.movement.text_location.grapheme_index += 1;
             }
             let cursor_grapheme_index_after_indent = self.movement.text_location.grapheme_index;
 
             // insert new line before the closing delimiter with reduced indentation
-            self.buffer.insert_newline(self.movement.text_location);
+            self.buffer.borrow_mut().insert_newline(self.movement.text_location);
             self.movement.text_location.line_index += 1;
             self.movement.text_location.grapheme_index = 0;
 
@@ -760,7 +767,7 @@ impl View {
             indentation.pop();
 
             for c in indentation.chars() {
-                self.buffer.insert_char(c, self.movement.text_location);
+                self.buffer.borrow_mut().insert_char(c, self.movement.text_location);
                 self.movement.text_location.grapheme_index += 1;
             }
 
@@ -769,12 +776,12 @@ impl View {
                 line_index: self.movement.text_location.line_index - 1,
                 grapheme_index: cursor_grapheme_index_after_indent,
             };
-            self.movement.update_desired_col(&self.buffer);
+            self.movement.update_desired_col(&self.buffer.borrow());
         } else {
             // normal insertion behavior in new line insertion
             let line_index = self.movement.text_location.line_index;
             let grapheme_index = self.movement.text_location.grapheme_index;
-            let current_line = self.buffer.rope.line(line_index).to_string();
+            let current_line = self.buffer.borrow().rope.line(line_index).to_string();
 
             // get current line indentation
             let mut indentation = self.get_indentation_of_line(line_index);
@@ -802,16 +809,16 @@ impl View {
             }
 
             // insert new line
-            self.buffer.insert_newline(self.movement.text_location);
+            self.buffer.borrow_mut().insert_newline(self.movement.text_location);
             self.movement.text_location.line_index += 1;
             self.movement.text_location.grapheme_index = 0;
 
             // insert indentation in new line
             for c in indentation.chars() {
-                self.buffer.insert_char(c, self.movement.text_location);
+                self.buffer.borrow_mut().insert_char(c, self.movement.text_location);
                 self.movement.text_location.grapheme_index += 1;
             }
-            self.movement.update_desired_col(&self.buffer);
+            self.movement.update_desired_col(&self.buffer.borrow());
         }
 
         // update cursor position to make sure it's visible
@@ -822,7 +829,7 @@ impl View {
     pub fn insert_newline_below(&mut self) {
         let line_index = self.movement.text_location.line_index;
 
-        let current_line = self.buffer.rope.line(line_index).to_string();
+        let current_line = self.buffer.borrow().rope.line(line_index).to_string();
 
         let mut indentation = self.get_indentation_of_line(line_index);
 
@@ -837,9 +844,9 @@ impl View {
         }
 
         // move cursor to the end of line before inserting a new line
-        self.movement.text_location.grapheme_index = self.buffer.get_line_length(line_index);
+        self.movement.text_location.grapheme_index = self.buffer.borrow().get_line_length(line_index);
 
-        self.buffer.insert_newline(Location {
+        self.buffer.borrow_mut().insert_newline(Location {
             line_index: line_index + 1,
             grapheme_index: 0,
         });
@@ -852,11 +859,11 @@ impl View {
 
         // insert indentation in new line
         for c in indentation.chars() {
-            self.buffer.insert_char(c, self.movement.text_location);
+            self.buffer.borrow_mut().insert_char(c, self.movement.text_location);
             self.movement.text_location.grapheme_index += 1;
         }
 
-        self.movement.update_desired_col(&self.buffer);
+        self.movement.update_desired_col(&self.buffer.borrow());
         self.scroll_text_location_into_view();
         self.set_needs_redraw(true);
     }
@@ -864,7 +871,7 @@ impl View {
     pub fn insert_newline_above(&mut self) {
         let line_index = self.movement.text_location.line_index;
 
-        let current_line = self.buffer.rope.line(line_index).to_string();
+        let current_line = self.buffer.borrow().rope.line(line_index).to_string();
 
         let mut indentation = self.get_indentation_of_line(line_index);
 
@@ -878,7 +885,7 @@ impl View {
             indentation.push('\t');
         }
 
-        self.buffer.insert_newline(Location {
+        self.buffer.borrow_mut().insert_newline(Location {
             line_index,
             grapheme_index: 0,
         });
@@ -889,11 +896,11 @@ impl View {
         };
 
         for c in indentation.chars() {
-            self.buffer.insert_char(c, self.movement.text_location);
+            self.buffer.borrow_mut().insert_char(c, self.movement.text_location);
             self.movement.text_location.grapheme_index += 1;
         }
 
-        self.movement.update_desired_col(&self.buffer);
+        self.movement.update_desired_col(&self.buffer.borrow());
         self.scroll_text_location_into_view();
         self.set_needs_redraw(true);
     }
@@ -903,7 +910,8 @@ impl View {
     //
 
     fn get_rendered_line(&self, line_idx: usize, width: usize) -> Result<String, Error> {
-        let line_slice = self.buffer.rope.line(line_idx);
+        let binding = self.buffer.borrow();
+        let line_slice = binding.rope.line(line_idx);
 
         // just in case the line is empty
         if line_slice.len_chars() == 0 {
@@ -1170,7 +1178,7 @@ impl View {
 
     fn scroll_text_location_into_view(&mut self) {
         let Position { row, col } = self.text_location_to_position();
-        let max_row = self.buffer.height().saturating_sub(1);
+        let max_row = self.buffer.borrow().height().saturating_sub(1);
         let clamped_row = row.min(max_row);
 
         self.scroll_vertically(clamped_row);
@@ -1201,7 +1209,7 @@ impl View {
 
     fn text_location_to_position(&self) -> Position {
         let row = self.movement.text_location.line_index;
-        debug_assert!(row.saturating_add(1) <= self.buffer.rope.len_lines());
+        debug_assert!(row.saturating_add(1) <= self.buffer.borrow().rope.len_lines());
 
         let col = self.expand_tabs_before_index(self.movement.text_location.grapheme_index, row);
 
@@ -1212,7 +1220,7 @@ impl View {
         let cursor_position = self.cursor_position();
         let line_index = cursor_position.row + self.scroll_offset.row;
 
-        if self.buffer.height() == 0 {
+        if self.buffer.borrow().height() == 0 {
             self.movement.text_location = Location {
                 line_index: 0,
                 grapheme_index: 0,
@@ -1220,16 +1228,17 @@ impl View {
         }
 
         // make sure buffer has enough lines
-        while self.buffer.height() <= line_index {
-            self.buffer.insert_newline(Location {
-                line_index: self.buffer.height(),
+        while self.buffer.borrow().height() <= line_index {
+            self.buffer.borrow_mut().insert_newline(Location {
+                line_index: self.buffer.borrow().height(),
                 grapheme_index: 0,
             });
         }
 
         // calculate the grapheme index based on the width of the cursor
-        let grapheme_index = if line_index < self.buffer.rope.len_lines() {
-            let line_slice = self.buffer.rope.line(line_index);
+        let grapheme_index = if line_index < self.buffer.borrow().rope.len_lines() {
+            let binding = self.buffer.borrow();
+            let line_slice = binding.rope.line(line_index);
             let mut current_width = 0;
             let mut grapheme_index = 0;
 
@@ -1272,8 +1281,8 @@ impl View {
         match text_object {
             TextObject::Inner(delimiter) => {
                 if let Some((start_idx, end_idx)) = self.find_text_object_range(delimiter, true) {
-                    let start_location = self.buffer.char_index_to_location(start_idx);
-                    let end_location = self.buffer.char_index_to_location(end_idx - 1); // have to not account for the cursor itself
+                    let start_location = self.buffer.borrow().char_index_to_location(start_idx);
+                    let end_location = self.buffer.borrow().char_index_to_location(end_idx - 1); // have to not account for the cursor itself
 
                     // configure beginning and end of the selection
                     self.selection_start = Some(start_location);
@@ -1312,7 +1321,7 @@ impl View {
                 });
                 self.selection_end = Some(Location {
                     line_index: current_line,
-                    grapheme_index: self.buffer.get_line_length(current_line),
+                    grapheme_index: self.buffer.borrow().get_line_length(current_line),
                 });
             }
         }
@@ -1332,6 +1341,7 @@ impl View {
                         line_index: self.movement.text_location.line_index,
                         grapheme_index: self
                             .buffer
+                            .borrow()
                             .get_line_length(self.movement.text_location.line_index),
                     });
                 }
@@ -1358,11 +1368,12 @@ impl View {
     //
 
     fn get_indentation_of_line(&self, line_index: usize) -> String {
-        if line_index >= self.buffer.rope.len_lines() {
+        if line_index >= self.buffer.borrow().rope.len_lines() {
             return String::new();
         }
 
-        let line_slice = self.buffer.rope.line(line_index);
+        let binding = self.buffer.borrow();
+        let line_slice = binding.rope.line(line_index);
         let line_str = line_slice.to_string();
 
         let mut indentation = String::new();
@@ -1379,11 +1390,12 @@ impl View {
     }
 
     fn decrease_indentation(&mut self, line_index: usize) {
-        if line_index >= self.buffer.rope.len_lines() {
+        if line_index >= self.buffer.borrow().rope.len_lines() {
             return;
         }
 
-        let line_slice = self.buffer.rope.line(line_index);
+        let binding = self.buffer.borrow();
+        let line_slice = binding.rope.line(line_index);
         let line_str = line_slice.to_string();
 
         // find the size of current indentation
@@ -1404,13 +1416,13 @@ impl View {
             let new_indentation_end = indentation_end.saturating_sub(indent_level);
 
             // remove diff of indentation
-            let line_start = self.buffer.rope.line_to_char(line_index);
+            let line_start = self.buffer.borrow().rope.line_to_char(line_index);
             let remove_start = line_start + new_indentation_end;
             let remove_end = line_start + indentation_end;
 
             if remove_end > remove_start {
-                self.buffer.rope.remove(remove_start..remove_end);
-                self.buffer.dirty = true;
+                self.buffer.borrow_mut().rope.remove(remove_start..remove_end);
+                self.buffer.borrow_mut().dirty = true;
 
                 // adjust cursor position
                 self.movement.text_location.grapheme_index = self
@@ -1446,11 +1458,12 @@ impl View {
         let line_index = self.movement.text_location.line_index;
         let grapheme_index = self.movement.text_location.grapheme_index;
 
-        if grapheme_index == 0 || line_index >= self.buffer.rope.len_lines() {
+        if grapheme_index == 0 || line_index >= self.buffer.borrow().rope.len_lines() {
             return None;
         }
 
-        let line_slice = self.buffer.rope.line(line_index);
+        let binding = self.buffer.borrow();
+        let line_slice = binding.rope.line(line_index);
         let line_len = line_slice.len_chars();
 
         if grapheme_index > line_len {
@@ -1482,7 +1495,8 @@ impl View {
     }
 
     fn get_expanded_line_length(&self, line_idx: usize) -> usize {
-        let line_slice = self.buffer.rope.line(line_idx);
+        let binding = self.buffer.borrow();
+        let line_slice = binding.rope.line(line_idx);
         let mut expanded_width = 0;
 
         for c in line_slice.chars() {
@@ -1509,7 +1523,8 @@ impl View {
     }
 
     fn expand_tabs_before_index(&self, index: usize, line_idx: usize) -> usize {
-        let line_slice = self.buffer.rope.line(line_idx);
+        let binding = self.buffer.borrow();
+        let line_slice = binding.rope.line(line_idx);
         let mut expanded_width = 0;
         let mut grapheme_count = 0;
 
@@ -1555,9 +1570,9 @@ impl UIComponent for View {
         for current_row in origin_row..end_y {
             let line_idx = self.calculate_line_index(current_row, origin_row, scroll_top);
 
-            let rendered_line = if line_idx < self.buffer.height() {
+            let rendered_line = if line_idx < self.buffer.borrow().height() {
                 self.get_rendered_line(line_idx, width)?
-            } else if line_idx == 1 && self.buffer.is_empty() {
+            } else if line_idx == 1 && self.buffer.borrow().is_empty() {
                 Self::build_welcome_message(width)
             } else {
                 "~".to_string()
@@ -1585,5 +1600,41 @@ impl UIComponent for View {
         self.rendered_lines = new_rendered_lines;
 
         Ok(())
+    }
+}
+
+impl Default for View {
+    fn default() -> Self {
+        View {
+            buffer: Rc::new(RefCell::new(Buffer::default())),
+            needs_redraw: false,
+            size: Size::default(),
+            movement: Movement::default(),
+            scroll_offset: Position::default(),
+            search_info: None,
+            last_search_query: None,
+            selection_start: None,
+            selection_end: None,
+            selection_mode: None,
+            rendered_lines: Vec::new(),
+        }
+    }
+}
+
+impl Clone for View {
+    fn clone(&self) -> Self {
+        View {
+            buffer: Rc::clone(&self.buffer),
+            needs_redraw: self.needs_redraw,
+            size: self.size,
+            movement: self.movement.clone(),
+            scroll_offset: self.scroll_offset,
+            search_info: self.search_info.clone(),
+            last_search_query: self.last_search_query.clone(),
+            selection_start: self.selection_start.clone(),
+            selection_end: self.selection_end.clone(),
+            selection_mode: self.selection_mode,
+            rendered_lines: self.rendered_lines.clone(),
+        }
     }
 }

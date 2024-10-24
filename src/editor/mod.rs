@@ -244,7 +244,6 @@ impl Editor {
             command_buffer: String::new(),
         };
         editor.handle_resize_command(size);
-        editor.update_message("we gucci");
 
         let args: Vec<String> = env::args().collect();
 
@@ -317,6 +316,7 @@ impl Editor {
                 self.active_view_mut()
                     .handle_operator_text_object(operator, text_object);
 
+                self.mark_all_views_needing_redraw();
                 if operator == Operator::Change {
                     self.switch_mode(ModeType::Insert);
                 }
@@ -328,9 +328,11 @@ impl Editor {
             EditorCommand::EditAndSwitchMode(edit, mode) => {
                 self.active_view_mut().handle_edit_command(edit);
                 self.switch_mode(mode);
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::EditCommand(edit) => {
                 self.active_view_mut().handle_edit_command(edit);
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::SwitchToNormalFromInserion => {
                 self.active_view_mut().handle_normal_command(Normal::Left);
@@ -375,6 +377,7 @@ impl Editor {
             }
             EditorCommand::Save => {
                 self.save(None);
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::Quit => {
                 self.should_quit = true;
@@ -400,33 +403,42 @@ impl Editor {
                 self.active_view_mut().delete_selection();
                 self.execute_command(EditorCommand::ClearSelection);
                 self.execute_command(EditorCommand::SwitchMode(ModeType::Normal));
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::UpdateSelection => {
                 self.active_view_mut().update_selection();
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::StartSelection(selection_mode) => {
                 self.active_view_mut().start_selection(selection_mode);
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::DeleteCharAtCursor => {
                 self.active_view_mut().delete_char_at_cursor();
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::DeleteCurrentLine => {
                 self.active_view_mut().delete_current_line();
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::ChangeCurrentLine => {
                 let line_index = self.active_view_mut().movement.text_location.line_index;
                 self.active_view_mut().replace_line_with_empty(line_index);
-                self.execute_command(EditorCommand::SwitchMode(ModeType::Insert))
+                self.execute_command(EditorCommand::SwitchMode(ModeType::Insert));
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::DeleteCurrentLineAndLeaveEmpty => {
                 self.active_view_mut().delete_current_line_and_leave_empty();
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::DeleteUntilEndOfLine => {
                 self.active_view_mut().delete_until_end_of_line();
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::ChangeUntilEndOfLine => {
                 self.active_view_mut().delete_until_end_of_line();
-                self.execute_command(EditorCommand::SwitchMode(ModeType::Insert))
+                self.execute_command(EditorCommand::SwitchMode(ModeType::Insert));
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::UpdateInsertionPointToCursorPosition => {
                 self.active_view_mut()
@@ -437,6 +449,7 @@ impl Editor {
             }
             EditorCommand::HandleVisualMovement(direction) => {
                 self.active_view_mut().handle_visual_movement(direction);
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::MoveCommandBarCursorLeft => {
                 self.command_bar.move_cursor_left();
@@ -465,6 +478,7 @@ impl Editor {
             EditorCommand::HandleVisualLineMovement(direction) => {
                 self.active_view_mut()
                     .handle_visual_line_movement(direction);
+                self.mark_all_views_needing_redraw();
             }
             EditorCommand::MoveCommandBarWordForward(word_type) => {
                 self.command_bar.move_cursor_word_forward(word_type);
@@ -629,7 +643,7 @@ impl Editor {
             "split" => {
                 self.execute_command(EditorCommand::SplitHorizontal);
                 self.switch_mode(ModeType::Normal);
-                self.update_message("screen splitted motherfucker");
+                self.update_message("Screen splitted motherfucker");
             }
             "close" => {
                 self.execute_command(EditorCommand::CloseWindow);
@@ -646,7 +660,7 @@ impl Editor {
 
     fn focus_up(&mut self) {
         if self.windows.len() < 2 {
-            self.update_message("only one window open.");
+            self.update_message("Only one window open.");
             return;
         }
 
@@ -670,16 +684,16 @@ impl Editor {
 
         if let Some(new_active) = target_window {
             self.active_window = new_active;
-            self.update_message(&format!("switched to window {}", self.active_window + 1));
+            self.update_message(&format!("Switched to window {}", self.active_window + 1));
             self.set_needs_redraw(true);
         } else {
-            self.update_message("no window above.");
+            self.update_message("No window above.");
         }
     }
 
     fn focus_down(&mut self) {
         if self.windows.len() < 2 {
-            self.update_message("only one window open.");
+            self.update_message("Only one window open.");
             return;
         }
 
@@ -701,7 +715,7 @@ impl Editor {
 
         if let Some(new_active) = target_window {
             self.active_window = new_active;
-            self.update_message(&format!("switched to window {}", self.active_window + 1));
+            self.update_message(&format!("Switched to window {}", self.active_window + 1));
             self.set_needs_redraw(true);
         } else {
             self.update_message("no window below.");
@@ -749,12 +763,6 @@ impl Editor {
         self.command_bar.resize(bar_size);
 
         self.set_needs_redraw(true);
-    }
-
-    fn set_needs_redraw(&mut self, needs_redraw: bool) {
-        if needs_redraw {
-            self.refresh_screen();
-        }
     }
 
     //
@@ -908,6 +916,18 @@ impl Editor {
     /// mutable reference to view of active window
     fn active_view_mut(&mut self) -> &mut View {
         &mut self.windows[self.active_window].view
+    }
+
+    fn set_needs_redraw(&mut self, needs_redraw: bool) {
+        if needs_redraw {
+            self.refresh_screen();
+        }
+    }
+
+    fn mark_all_views_needing_redraw(&mut self) {
+        for window in &mut self.windows {
+            window.view.set_needs_redraw(true);
+        }
     }
 }
 

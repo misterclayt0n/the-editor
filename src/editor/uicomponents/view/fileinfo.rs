@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct FileInfo {
     path: Option<PathBuf>,
 }

@@ -4,6 +4,7 @@ use crate::prelude::*;
 
 use super::buffer::Buffer;
 
+#[derive(Clone)]
 pub struct Movement {
     pub text_location: Location,
     pub desired_col: usize,

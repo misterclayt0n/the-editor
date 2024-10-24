@@ -26,13 +26,14 @@ pub enum SearchDirection {
     Backward,
 }
 
+#[derive(Clone)]
 pub struct SearchInfo {
     pub prev_location: Location,
     pub prev_scroll_offset: Position,
     pub query: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct View {
     pub buffer: Buffer,
     needs_redraw: bool,
@@ -1169,7 +1170,10 @@ impl View {
 
     fn scroll_text_location_into_view(&mut self) {
         let Position { row, col } = self.text_location_to_position();
-        self.scroll_vertically(row);
+        let max_row = self.buffer.height().saturating_sub(1);
+        let clamped_row = row.min(max_row);
+
+        self.scroll_vertically(clamped_row);
         self.scroll_horizontally(col);
     }
 

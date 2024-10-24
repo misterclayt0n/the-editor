@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use crossterm::event::{read, Event, KeyCode, KeyEvent, KeyModifiers};
+use window::Window;
 
 use core::fmt;
 use std::{
@@ -12,6 +13,7 @@ mod color_scheme;
 mod documentstatus;
 mod terminal;
 mod uicomponents;
+mod window;
 
 use documentstatus::DocumentStatus;
 use terminal::Terminal;
@@ -173,11 +175,16 @@ enum EditorCommand {
     MoveCommandBarWordForward(WordType),
     MoveCommandBarWordEnd(WordType),
     MoveCommandBarWordBackward(WordType),
+    SplitHorizontal,
+    CloseWindow,
+    FocusUp,
+    FocusDown,
 }
 
 pub struct Editor {
     should_quit: bool,
-    view: View,
+    windows: Vec<Window>,
+    active_window: usize,
     status_bar: StatusBar,
     message_bar: MessageBar,
     command_bar: CommandBar,
@@ -204,10 +211,13 @@ impl Editor {
         }));
 
         Terminal::init()?;
+        let size = Terminal::size().unwrap_or_default();
+        let initial_window = Window::new(Position { row: 0, col: 0 }, size, View::default());
 
         let mut editor = Self {
             should_quit: false,
-            view: View::default(),
+            windows: vec![initial_window],
+            active_window: 0,
             status_bar: StatusBar::default(),
             message_bar: MessageBar::default(),
             command_bar: CommandBar::default(),
@@ -219,7 +229,6 @@ impl Editor {
             prompt_type: PromptType::None,
             command_buffer: String::new(),
         };
-        let size = Terminal::size().unwrap_or_default();
         editor.handle_resize_command(size);
         editor.update_message("we gucci");
 
@@ -228,7 +237,7 @@ impl Editor {
         if let Some(file_name) = args.get(1) {
             debug_assert!(!file_name.is_empty());
 
-            if editor.view.load(file_name).is_err() {
+            if editor.active_view_mut().load(file_name).is_err() {
                 editor.update_message(&format!("ERROR: Could not open file: {file_name}"));
             }
         }
@@ -280,7 +289,7 @@ impl Editor {
     fn execute_command(&mut self, command: EditorCommand) {
         match command {
             EditorCommand::MoveCursor(direction) => {
-                self.view.handle_normal_command(direction);
+                self.active_view_mut().handle_normal_command(direction);
             }
             EditorCommand::ExecuteCommand => {
                 let command_text = self.command_bar.value();
@@ -288,28 +297,29 @@ impl Editor {
             }
             EditorCommand::VisualSelectTextObject(text_object) => {
                 self.switch_mode(ModeType::Visual);
-                self.view.select_text_object(text_object);
+                self.active_view_mut().select_text_object(text_object);
             }
             EditorCommand::OperatorTextObject(operator, text_object) => {
-                self.view.handle_operator_text_object(operator, text_object);
+                self.active_view_mut()
+                    .handle_operator_text_object(operator, text_object);
 
                 if operator == Operator::Change {
                     self.switch_mode(ModeType::Insert);
                 }
             }
             EditorCommand::MoveCursorAndSwitchMode(direction, mode) => {
-                self.view.handle_normal_command(direction);
+                self.active_view_mut().handle_normal_command(direction);
                 self.switch_mode(mode);
             }
             EditorCommand::EditAndSwitchMode(edit, mode) => {
-                self.view.handle_edit_command(edit);
+                self.active_view_mut().handle_edit_command(edit);
                 self.switch_mode(mode);
             }
             EditorCommand::EditCommand(edit) => {
-                self.view.handle_edit_command(edit);
+                self.active_view_mut().handle_edit_command(edit);
             }
             EditorCommand::SwitchToNormalFromInserion => {
-                self.view.handle_normal_command(Normal::Left);
+                self.active_view_mut().handle_normal_command(Normal::Left);
                 self.switch_mode(ModeType::Normal);
             }
             EditorCommand::SwitchMode(mode) => {
@@ -329,16 +339,16 @@ impl Editor {
                 self.reset_quit_times();
             }
             EditorCommand::EnterSearch => {
-                self.view.enter_search();
+                self.active_view_mut().enter_search();
             }
             EditorCommand::ExitSearch => {
-                self.view.dismiss_search();
+                self.active_view_mut().dismiss_search();
             }
             EditorCommand::SearchNext => {
-                self.view.search_next();
+                self.active_view_mut().search_next();
             }
             EditorCommand::SearchPrevious => {
-                self.view.search_prev();
+                self.active_view_mut().search_prev();
             }
             EditorCommand::UpdateInsertionPoint => {
                 self.update_insertion_point();
@@ -362,56 +372,57 @@ impl Editor {
                 self.command_bar.handle_edit_command(edit);
                 if let PromptType::Search = self.prompt_type {
                     let query = self.command_bar.value();
-                    self.view.search(&query);
+                    self.active_view_mut().search(&query);
                 }
             }
             EditorCommand::PerformSearch(_) => {
                 let query = self.command_bar.value();
-                self.view.search(&query);
+                self.active_view_mut().search(&query);
             }
             EditorCommand::ClearSelection => {
-                self.view.clear_selection();
+                self.active_view_mut().clear_selection();
             }
             EditorCommand::DeleteSelection => {
-                self.view.delete_selection();
+                self.active_view_mut().delete_selection();
                 self.execute_command(EditorCommand::ClearSelection);
                 self.execute_command(EditorCommand::SwitchMode(ModeType::Normal));
             }
             EditorCommand::UpdateSelection => {
-                self.view.update_selection();
+                self.active_view_mut().update_selection();
             }
             EditorCommand::StartSelection(selection_mode) => {
-                self.view.start_selection(selection_mode);
+                self.active_view_mut().start_selection(selection_mode);
             }
             EditorCommand::DeleteCharAtCursor => {
-                self.view.delete_char_at_cursor();
+                self.active_view_mut().delete_char_at_cursor();
             }
             EditorCommand::DeleteCurrentLine => {
-                self.view.delete_current_line();
+                self.active_view_mut().delete_current_line();
             }
             EditorCommand::ChangeCurrentLine => {
-                let line_index = self.view.movement.text_location.line_index;
-                self.view.replace_line_with_empty(line_index);
+                let line_index = self.active_view_mut().movement.text_location.line_index;
+                self.active_view_mut().replace_line_with_empty(line_index);
                 self.execute_command(EditorCommand::SwitchMode(ModeType::Insert))
             }
             EditorCommand::DeleteCurrentLineAndLeaveEmpty => {
-                self.view.delete_current_line_and_leave_empty();
+                self.active_view_mut().delete_current_line_and_leave_empty();
             }
             EditorCommand::DeleteUntilEndOfLine => {
-                self.view.delete_until_end_of_line();
+                self.active_view_mut().delete_until_end_of_line();
             }
             EditorCommand::ChangeUntilEndOfLine => {
-                self.view.delete_until_end_of_line();
+                self.active_view_mut().delete_until_end_of_line();
                 self.execute_command(EditorCommand::SwitchMode(ModeType::Insert))
             }
             EditorCommand::UpdateInsertionPointToCursorPosition => {
-                self.view.update_insertion_point_to_cursor_position();
+                self.active_view_mut()
+                    .update_insertion_point_to_cursor_position();
             }
             EditorCommand::SetNeedsRedraw => {
-                self.view.set_needs_redraw(true);
+                self.active_view_mut().set_needs_redraw(true);
             }
             EditorCommand::HandleVisualMovement(direction) => {
-                self.view.handle_visual_movement(direction);
+                self.active_view_mut().handle_visual_movement(direction);
             }
             EditorCommand::MoveCommandBarCursorLeft => {
                 self.command_bar.move_cursor_left();
@@ -438,7 +449,8 @@ impl Editor {
                 self.switch_mode(ModeType::Command);
             }
             EditorCommand::HandleVisualLineMovement(direction) => {
-                self.view.handle_visual_line_movement(direction);
+                self.active_view_mut()
+                    .handle_visual_line_movement(direction);
             }
             EditorCommand::MoveCommandBarWordForward(word_type) => {
                 self.command_bar.move_cursor_word_forward(word_type);
@@ -448,6 +460,18 @@ impl Editor {
             }
             EditorCommand::MoveCommandBarWordEnd(word_type) => {
                 self.command_bar.move_cursor_word_end_forward(word_type);
+            }
+            EditorCommand::SplitHorizontal => {
+                self.split_current_window();
+            }
+            EditorCommand::CloseWindow => {
+                self.close_current_window();
+            }
+            EditorCommand::FocusUp => {
+                self.focus_up();
+            }
+            EditorCommand::FocusDown => {
+                self.focus_down();
             }
         }
     }
@@ -471,17 +495,36 @@ impl Editor {
                 .render(self.terminal_size.height.saturating_sub(2));
         }
 
-        if self.terminal_size.height > 2 {
-            self.view.render(0);
+        // determine if there is a split and calculate the position of the separator
+        let has_split = self.windows.len() > 1;
+        let separator_row = if has_split {
+            self.windows[0].origin.row + self.windows[0].size.height
+        } else {
+            0
+        };
+
+        // render all windows
+        for window in self.windows.iter_mut() {
+            window.view.render(window.origin.row);
         }
 
+        // draw the horizontal separator, if there is a split
+        if has_split {
+            self.draw_horizontal_separator(separator_row);
+        }
+
+        // define new cursor position
         let new_cursor_position = if self.in_prompt() {
             Position {
                 row: bottom_bar_row,
                 col: self.command_bar.cursor_position_col(),
             }
         } else {
-            self.view.cursor_position()
+            let active_window = &self.windows[self.active_window];
+            Position {
+                row: active_window.origin.row + active_window.view.cursor_position().row,
+                col: active_window.origin.col + active_window.view.cursor_position().col,
+            }
         };
 
         let _ = Terminal::move_cursor_to(new_cursor_position);
@@ -490,7 +533,7 @@ impl Editor {
     }
 
     fn refresh_status(&mut self) {
-        let status = self.view.get_status();
+        let status = self.active_view_mut().get_status();
         let title = format!("{} - {NAME}", status.file_name);
         self.status_bar.update_status(status, self.current_mode);
 
@@ -548,6 +591,14 @@ impl Editor {
     }
 
     fn handle_command_input(&mut self, input: &str) {
+        let parts: Vec<&str> = input.trim().split_whitespace().collect();
+
+        if parts.is_empty() {
+            self.update_message("Empty command.");
+            self.switch_mode(ModeType::Normal);
+            return;
+        }
+
         match input.trim() {
             "w" => {
                 self.execute_command(EditorCommand::Save);
@@ -561,6 +612,15 @@ impl Editor {
                 self.execute_command(EditorCommand::Save);
                 self.execute_command(EditorCommand::Quit);
             }
+            "split" => {
+                self.execute_command(EditorCommand::SplitHorizontal);
+                self.switch_mode(ModeType::Normal);
+                self.update_message("screen splitted motherfucker");
+            }
+            "close" => {
+                self.execute_command(EditorCommand::CloseWindow);
+                self.switch_mode(ModeType::Normal);
+            }
             _ => {
                 self.update_message(&format!("Unknown command ma man: {}", input));
                 self.switch_mode(ModeType::Normal);
@@ -570,26 +630,117 @@ impl Editor {
         self.command_bar.clear_value();
     }
 
+    fn focus_up(&mut self) {
+        if self.windows.len() < 2 {
+            self.update_message("only one window open.");
+            return;
+        }
+
+        // get current active window
+        let active_window = &self.windows[self.active_window];
+        let active_top = active_window.origin.row;
+
+        // find the window above the current one
+        let mut target_window: Option<usize> = None;
+        let mut min_distance = usize::MAX;
+
+        for (i, window) in self.windows.iter().enumerate() {
+            if window.origin.row + window.size.height <= active_top {
+                let distance = active_top - (window.origin.row + window.size.height);
+                if distance < min_distance {
+                    min_distance = distance;
+                    target_window = Some(i);
+                }
+            }
+        }
+
+        if let Some(new_active) = target_window {
+            self.active_window = new_active;
+            self.update_message(&format!("switched to window {}", self.active_window + 1));
+            self.set_needs_redraw(true);
+        } else {
+            self.update_message("no window above.");
+        }
+    }
+
+    fn focus_down(&mut self) {
+        if self.windows.len() < 2 {
+            self.update_message("only one window open.");
+            return;
+        }
+
+        let active_window = &self.windows[self.active_window];
+        let active_bottom = active_window.origin.row + active_window.size.height;
+
+        let mut target_window: Option<usize> = None;
+        let mut min_distance = usize::MAX;
+
+        for (i, window) in self.windows.iter().enumerate() {
+            if window.origin.row >= active_bottom {
+                let distance = window.origin.row - active_bottom;
+                if distance < min_distance {
+                    min_distance = distance;
+                    target_window = Some(i);
+                }
+            }
+        }
+
+        if let Some(new_active) = target_window {
+            self.active_window = new_active;
+            self.update_message(&format!("switched to window {}", self.active_window + 1));
+            self.set_needs_redraw(true);
+        } else {
+            self.update_message("no window below.");
+        }
+    }
+
     //
     // Resize command handling
     //
 
     fn handle_resize_command(&mut self, size: Size) {
         self.terminal_size = size;
+        let num_windows = self.windows.len();
+        if num_windows == 0 {
+            return;
+        }
 
-        self.view.resize(Size {
-            height: size.height.saturating_sub(2),
-            width: size.width,
-        });
+        let num_separator_lines = if num_windows > 1 { num_windows - 1 } else { 0 };
+        let bottom_bars_height = 2; // status bar and message bar
+        let available_height = size.height.saturating_sub(bottom_bars_height + num_separator_lines);
 
-        let bar_size = Size {
-            height: 1,
-            width: size.width,
-        };
+        let window_height = available_height / num_windows;
+        let extra_lines = available_height % num_windows;
 
+        let mut current_row = 0;
+        for (i, window) in self.windows.iter_mut().enumerate() {
+            let additional_line = if i < extra_lines { 1 } else { 0 };
+            let height = window_height + additional_line;
+
+            window.resize(
+                Position { row: current_row, col: 0 },
+                Size { height, width: size.width },
+            );
+
+            current_row += height;
+            if i < num_windows - 1 {
+                current_row += 1; // increment a line because of the separator
+            }
+        }
+
+        // resize inferior bars
+        let bar_size = Size { height: 1, width: size.width };
         self.message_bar.resize(bar_size);
         self.status_bar.resize(bar_size);
         self.command_bar.resize(bar_size);
+
+        self.set_needs_redraw(true);
+    }
+
+    fn set_needs_redraw(&mut self, needs_redraw: bool) {
+        if needs_redraw {
+            self.refresh_screen();
+        }
     }
 
     //
@@ -597,9 +748,9 @@ impl Editor {
     //
 
     fn handle_quit_command(&mut self) {
-        if !self.view.get_status().is_modified || self.quit_times + 1 == QUIT_TIMES {
+        if !self.active_view_mut().get_status().is_modified || self.quit_times + 1 == QUIT_TIMES {
             self.should_quit = true;
-        } else if self.view.get_status().is_modified {
+        } else if self.active_view_mut().get_status().is_modified {
             self.update_message(&format!(
                 "WARNING! File has unsaved changes. Press Ctrl-Q {} more times to quit.",
                 QUIT_TIMES - self.quit_times - 1
@@ -621,7 +772,7 @@ impl Editor {
     //
 
     fn handle_save_command(&mut self) {
-        if self.view.is_file_loaded() {
+        if self.active_view_mut().is_file_loaded() {
             self.save(None);
         } else {
             self.set_prompt(PromptType::Save);
@@ -631,9 +782,9 @@ impl Editor {
 
     fn save(&mut self, file_name: Option<&str>) {
         let result = if let Some(name) = file_name {
-            self.view.save_as(name)
+            self.active_view_mut().save_as(name)
         } else {
-            self.view.save()
+            self.active_view_mut().save()
         };
         if result.is_ok() {
             self.update_message("File saved successfully.");
@@ -683,8 +834,66 @@ impl Editor {
         self.prompt_type = prompt_type;
     }
 
+    //
+    // Splitting
+    //
+
+    fn split_current_window(&mut self) {
+        if self.windows.len() >= 2 {
+            self.update_message("Already split into two windows.");
+            return;
+        }
+
+        let new_view = self.active_view().clone();
+        let new_window = Window::new(Position { row: 0, col: 0 }, Size { height: 0, width: 0 }, new_view);
+        self.windows.push(new_window);
+        self.active_window = self.windows.len() - 1; // focus on new window
+
+        // call handle_resize_command to adjust the size of windows
+        self.handle_resize_command(self.terminal_size);
+    }
+
+
+    fn draw_horizontal_separator(&self, row: usize) {
+        Terminal::move_cursor_to(Position { row, col: 0 }).unwrap_or(());
+        Terminal::print(&"─".repeat(self.terminal_size.width)).unwrap_or(());
+    }
+
+    fn close_current_window(&mut self) {
+        if self.windows.len() > 1 {
+            self.windows.remove(self.active_window);
+            // adjust index of active window
+
+            if self.active_window >= self.windows.len() {
+                self.active_window = self.windows.len() - 1;
+            }
+
+            // resize remaining window to fill the entire screen
+            self.handle_resize_command(self.terminal_size);
+            self.update_message("Window closed.");
+            self.set_needs_redraw(true);
+        } else {
+            self.update_message("Cannot close the only window.");
+        }
+    }
+
+    //
+    // Helpers
+    //
+
     fn update_insertion_point(&mut self) {
-        self.view.update_insertion_point_to_cursor_position();
+        self.active_view_mut()
+            .update_insertion_point_to_cursor_position();
+    }
+
+    /// immutable reference to view of active window
+    fn active_view(&self) -> &View {
+        &self.windows[self.active_window].view
+    }
+
+    /// mutable reference to view of active window
+    fn active_view_mut(&mut self) -> &mut View {
+        &mut self.windows[self.active_window].view
     }
 }
 
@@ -987,7 +1196,21 @@ impl Mode for NormalMode {
                 modifiers: KeyModifiers::SHIFT,
                 ..
             } => Some(EditorCommand::SearchPrevious),
-
+            KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::CloseWindow),
+            KeyEvent {
+                code: KeyCode::Char('k'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::FocusUp),
+            KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::FocusDown),
             _ => {
                 command_buffer.clear();
                 None

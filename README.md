@@ -1,4 +1,4 @@
-# 📝 The Editor
+# 📝 The editor
 
 ### 🚀 Motivation
 I love Neovim and wanted to create my own editor that combines the simplicity of Zed, the speed and expandability of Vim, and the rich features of Emacs. Imagine an editor that configures itself based on your project: open a Rust file, and it asks if you want to set up the necessary LSP, Tree-sitter, formatter, and more. The goal is to create a customizable powerhouse where users can code their own editor using a Rust API, offering deep flexibility and advanced navigation, compile commands, and other Emacs-like functionalities.

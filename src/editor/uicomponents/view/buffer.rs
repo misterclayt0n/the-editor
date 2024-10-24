@@ -9,6 +9,7 @@ use std::fs::File;
 use std::io::Error;
 use std::io::Write;
 
+#[derive(Clone)]
 pub struct Buffer {
     pub rope: Rope,
     pub file_info: FileInfo,

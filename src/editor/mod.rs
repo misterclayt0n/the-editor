@@ -1,7 +1,7 @@
 use crate::prelude::*;
 use command_mode::CommandMode;
 use command_normal_mode::CommandNormalMode;
-use crossterm::event::{read, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{read, Event, KeyEvent};
 use insert_mode::InsertMode;
 use normal_mode::NormalMode;
 use prompt_mode::PromptMode;
@@ -916,7 +916,3 @@ impl Drop for Editor {
         let _ = Terminal::kill();
     }
 }
-
-//
-// Mode Implementations
-//

@@ -1548,7 +1548,6 @@ impl UIComponent for View {
         let Size { height, width } = self.size;
         let end_y = origin_row.saturating_add(height);
         let scroll_top = self.scroll_offset.row;
-        let top_third = height.div_ceil(3);
 
         // prepare a new buffer with rendered lines
         let mut new_rendered_lines = Vec::with_capacity(height);
@@ -1558,7 +1557,7 @@ impl UIComponent for View {
 
             let rendered_line = if line_idx < self.buffer.height() {
                 self.get_rendered_line(line_idx, width)?
-            } else if current_row == top_third && self.buffer.is_empty() {
+            } else if line_idx == 1 && self.buffer.is_empty() {
                 Self::build_welcome_message(width)
             } else {
                 "~".to_string()

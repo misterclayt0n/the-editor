@@ -1598,8 +1598,7 @@ impl UIComponent for View {
                     col: origin.col,
                 })?;
 
-                let line_to_print = &line[..min(line.len(), width)];
-                Terminal::print(line_to_print)?;
+                Terminal::print(line)?;
             }
         }
 

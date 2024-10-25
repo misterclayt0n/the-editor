@@ -79,7 +79,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [x] Very specific panic on searching
 - [x] Phantom line introduced a bug where if open a file, it keeps adding a new line
 - [ ] Visual line mode deletion is bugged 
-- [ ] Everything that regards horizontal scrolling of lines that get beyond the current width is bugged
+- [x] Everything that regards horizontal scrolling of lines that get beyond the current width is bugged
 
 ### 📚 Future Plans
 - **Integrated Setup**: Automatically configure necessary tools when opening a new file type.

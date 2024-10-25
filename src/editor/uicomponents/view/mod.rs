@@ -229,7 +229,9 @@ impl View {
             Normal::Up => self.movement.move_up(&self.buffer.borrow(), 1),
             Normal::Down => self.movement.move_down(&self.buffer.borrow(), 1),
             Normal::Left => self.movement.move_left(&self.buffer.borrow()),
-            Normal::LeftAfterDeletion => self.movement.move_left_after_deletion(&self.buffer.borrow()),
+            Normal::LeftAfterDeletion => self
+                .movement
+                .move_left_after_deletion(&self.buffer.borrow()),
             Normal::Right => self.movement.move_right(&self.buffer.borrow()),
             Normal::PageUp => {
                 let half_screen = self.size.height / 2;
@@ -245,7 +247,10 @@ impl View {
                 // clamp offset to ensure it's within valid bounds
                 self.scroll_offset.row = min(
                     desired_scroll,
-                    self.buffer.borrow().height().saturating_sub(self.size.height),
+                    self.buffer
+                        .borrow()
+                        .height()
+                        .saturating_sub(self.size.height),
                 );
 
                 self.scroll_offset.row = self.scroll_offset.row.max(0);
@@ -264,7 +269,10 @@ impl View {
 
                 self.scroll_offset.row = min(
                     desired_scroll,
-                    self.buffer.borrow().height().saturating_sub(self.size.height),
+                    self.buffer
+                        .borrow()
+                        .height()
+                        .saturating_sub(self.size.height),
                 );
 
                 self.scroll_offset.row = self.scroll_offset.row.max(0);
@@ -291,15 +299,19 @@ impl View {
             Normal::BigWordEndForward => self
                 .movement
                 .move_word_end_forward(&self.buffer.borrow(), WordType::BigWord),
-            Normal::FirstCharLine => self.movement.move_to_first_non_whitespace(&self.buffer.borrow()),
+            Normal::FirstCharLine => self
+                .movement
+                .move_to_first_non_whitespace(&self.buffer.borrow()),
             Normal::GoToTop => self.movement.move_to_top(),
             Normal::GoToBottom => self.movement.move_to_bottom(&self.buffer.borrow()),
             Normal::InsertAtLineStart => {
-                self.movement.move_to_first_non_whitespace(&self.buffer.borrow());
+                self.movement
+                    .move_to_first_non_whitespace(&self.buffer.borrow());
                 self.set_needs_redraw(true);
             }
             Normal::InsertAtLineEnd => {
-                self.movement.move_to_end_of_line_beyond_end(&self.buffer.borrow());
+                self.movement
+                    .move_to_end_of_line_beyond_end(&self.buffer.borrow());
                 self.set_needs_redraw(true);
             }
             Normal::AppendRight => {
@@ -320,7 +332,8 @@ impl View {
                         self.buffer.borrow_mut().dirty = true;
 
                         // update cursor location to the beginning of the removed interval
-                        self.movement.text_location = self.buffer.borrow().char_index_to_location(start);
+                        self.movement.text_location =
+                            self.buffer.borrow().char_index_to_location(start);
                         self.scroll_text_location_into_view();
                         self.set_needs_redraw(true);
                     }
@@ -340,7 +353,8 @@ impl View {
                             // first cenario: same line
                             self.buffer.borrow_mut().rope.remove(start..end);
                             self.buffer.borrow_mut().dirty = true;
-                            self.movement.text_location = self.buffer.borrow().char_index_to_location(start);
+                            self.movement.text_location =
+                                self.buffer.borrow().char_index_to_location(start);
                             self.scroll_text_location_into_view();
                             self.set_needs_redraw(true);
                         } else {
@@ -355,12 +369,17 @@ impl View {
                             new_indentation.push('\t');
 
                             let indentation_string = format!("\n{}", new_indentation);
-                            self.buffer.borrow_mut().rope.insert(start, &indentation_string);
+                            self.buffer
+                                .borrow_mut()
+                                .rope
+                                .insert(start, &indentation_string);
                             self.buffer.borrow_mut().dirty = true;
 
                             let new_cursor_location = start + indentation_string.len();
-                            self.movement.text_location =
-                                self.buffer.borrow().char_index_to_location(new_cursor_location);
+                            self.movement.text_location = self
+                                .buffer
+                                .borrow()
+                                .char_index_to_location(new_cursor_location);
                             self.scroll_text_location_into_view();
                             self.set_needs_redraw(true);
                         }
@@ -388,7 +407,10 @@ impl View {
         }
 
         let current_location = self.movement.text_location;
-        let cursor_index = self.buffer.borrow().location_to_char_index(current_location);
+        let cursor_index = self
+            .buffer
+            .borrow()
+            .location_to_char_index(current_location);
 
         // first try: reverse search from the cursor position to find the opening delimiter
         if let Some(start) =
@@ -403,7 +425,12 @@ impl View {
                     // search the last character (non whitespace) before the closing delimiter
                     let mut last_non_space = end - 1;
                     while last_non_space > range_start
-                        && self.buffer.borrow().rope.char(last_non_space).is_whitespace()
+                        && self
+                            .buffer
+                            .borrow()
+                            .rope
+                            .char(last_non_space)
+                            .is_whitespace()
                     {
                         last_non_space -= 1;
                     }
@@ -551,27 +578,42 @@ impl View {
 
     pub fn delete_selection(&mut self) {
         if let Some((start, end)) = self.get_selection_range() {
-            let start_idx = self.buffer.borrow().location_to_char_index(start);
-            let mut end_idx = self.buffer.borrow().location_to_char_index(end);
+            // check if we are in visual line mode (we treat deletion in a different way)
+            let is_visual_line = matches!(self.selection_mode, Some(SelectionMode::VisualLine));
 
-            // include chars contained by the cursor and make sure they do not
-            // exceed the length of the rope. we also only want this behavior for visual mode, not
-            // visual line
-            if end_idx < self.buffer.borrow().rope.len_chars()
-                && self.selection_mode == Some(SelectionMode::Visual)
-            {
-                end_idx += 1;
-            }
+            let start_idx =
+                self.buffer.borrow().rope.line_to_char(start.line_index) + start.grapheme_index;
+            let end_idx =
+                self.buffer.borrow().rope.line_to_char(end.line_index) + end.grapheme_index;
 
-            // gotta make sure end_idx does not exceed the size of the rope
-            end_idx = end_idx.min(self.buffer.borrow().rope.len_chars());
+            // in visual line mode, we have to adjust the indexes to include complete lines
+            let (del_start, del_end) = if is_visual_line {
+                // include the beginning of the first selected line
+                let del_start = self.buffer.borrow().rope.line_to_char(start.line_index);
 
-            if start_idx < end_idx {
-                self.buffer.borrow_mut().rope.remove(start_idx..end_idx);
+                // include the end of the last selected line (which is the '\n')
+                let del_end = if end.line_index + 1 < self.buffer.borrow().rope.len_lines() {
+                    self.buffer.borrow().rope.line_to_char(end.line_index + 1)
+                } else {
+                    self.buffer.borrow().rope.len_chars()
+                };
+
+                (del_start, del_end)
+            } else {
+                // for visual mode, I can just use the indexes directly
+                // is doesn't really matter
+                (start_idx, end_idx + 1) // but we have to add one to include cursor
+            };
+
+            let del_start = del_start.min(self.buffer.borrow().rope.len_chars());
+            let del_end = del_end.min(self.buffer.borrow().rope.len_chars());
+
+            if del_start < del_end {
+                // remove the interval of characters
+                self.buffer.borrow_mut().rope.remove(del_start..del_end);
                 self.buffer.borrow_mut().dirty = true;
 
-                // if the buffer gets empty after exclusion, make sure
-                // at least one empty line is inserted
+                // if the buffer gets empty after the removal, insert an empty newline
                 if self.buffer.borrow().rope.len_chars() == 0 {
                     self.buffer.borrow_mut().insert_newline(Location {
                         line_index: 0,
@@ -580,9 +622,10 @@ impl View {
                 }
 
                 // update cursor position
-                self.movement.text_location = self.buffer.borrow().char_index_to_location(
-                    start_idx.min(self.buffer.borrow().rope.len_chars().saturating_sub(1)),
-                );
+                let new_cursor_idx =
+                    del_start.min(self.buffer.borrow().rope.len_chars().saturating_sub(1));
+                self.movement.text_location =
+                    self.buffer.borrow().char_index_to_location(new_cursor_idx);
                 self.scroll_text_location_into_view();
                 self.set_needs_redraw(true);
             }
@@ -659,7 +702,8 @@ impl View {
             // but I was to lazy to look up the source code of Zed or Neovim, and decided that
             // this was the easiest, most direct approach possible hahaha
             if count_opening_delimiters % 2 != 0 {
-                self.buffer.borrow_mut()
+                self.buffer
+                    .borrow_mut()
                     .insert_char(character, self.movement.text_location);
                 self.movement.text_location.grapheme_index += 1;
                 self.set_needs_redraw(true);
@@ -667,10 +711,12 @@ impl View {
                 return;
             } else {
                 // in this case, we handle both opening and closing
-                self.buffer.borrow_mut()
+                self.buffer
+                    .borrow_mut()
                     .insert_char(character, self.movement.text_location);
                 self.movement.text_location.grapheme_index += 1;
-                self.buffer.borrow_mut()
+                self.buffer
+                    .borrow_mut()
                     .insert_char(character, self.movement.text_location);
                 self.set_needs_redraw(true);
                 self.scroll_text_location_into_view();
@@ -682,11 +728,13 @@ impl View {
             .iter()
             .find(|&&(open, _)| open == character)
         {
-            self.buffer.borrow_mut()
+            self.buffer
+                .borrow_mut()
                 .insert_char(character, self.movement.text_location);
             self.movement.text_location.grapheme_index += 1; // move right
 
-            self.buffer.borrow_mut()
+            self.buffer
+                .borrow_mut()
                 .insert_char(closing_delim, self.movement.text_location); // position
             self.set_needs_redraw(true);
             self.scroll_text_location_into_view();
@@ -733,7 +781,8 @@ impl View {
             }
         }
 
-        self.buffer.borrow_mut()
+        self.buffer
+            .borrow_mut()
             .insert_char(character, self.movement.text_location);
         self.movement.text_location.grapheme_index += 1;
         self.set_needs_redraw(true);
@@ -743,7 +792,9 @@ impl View {
     fn insert_newline(&mut self) {
         if let Some(true) = self.is_cursor_between_matching_delimiters() {
             // insert new line after opening delimiter
-            self.buffer.borrow_mut().insert_newline(self.movement.text_location);
+            self.buffer
+                .borrow_mut()
+                .insert_newline(self.movement.text_location);
             self.movement.text_location.line_index += 1;
             self.movement.text_location.grapheme_index = 0;
 
@@ -753,13 +804,17 @@ impl View {
             indentation.push('\t'); // increase indentation (could be adjusted)
 
             for c in indentation.chars() {
-                self.buffer.borrow_mut().insert_char(c, self.movement.text_location);
+                self.buffer
+                    .borrow_mut()
+                    .insert_char(c, self.movement.text_location);
                 self.movement.text_location.grapheme_index += 1;
             }
             let cursor_grapheme_index_after_indent = self.movement.text_location.grapheme_index;
 
             // insert new line before the closing delimiter with reduced indentation
-            self.buffer.borrow_mut().insert_newline(self.movement.text_location);
+            self.buffer
+                .borrow_mut()
+                .insert_newline(self.movement.text_location);
             self.movement.text_location.line_index += 1;
             self.movement.text_location.grapheme_index = 0;
 
@@ -767,7 +822,9 @@ impl View {
             indentation.pop();
 
             for c in indentation.chars() {
-                self.buffer.borrow_mut().insert_char(c, self.movement.text_location);
+                self.buffer
+                    .borrow_mut()
+                    .insert_char(c, self.movement.text_location);
                 self.movement.text_location.grapheme_index += 1;
             }
 
@@ -809,13 +866,17 @@ impl View {
             }
 
             // insert new line
-            self.buffer.borrow_mut().insert_newline(self.movement.text_location);
+            self.buffer
+                .borrow_mut()
+                .insert_newline(self.movement.text_location);
             self.movement.text_location.line_index += 1;
             self.movement.text_location.grapheme_index = 0;
 
             // insert indentation in new line
             for c in indentation.chars() {
-                self.buffer.borrow_mut().insert_char(c, self.movement.text_location);
+                self.buffer
+                    .borrow_mut()
+                    .insert_char(c, self.movement.text_location);
                 self.movement.text_location.grapheme_index += 1;
             }
             self.movement.update_desired_col(&self.buffer.borrow());
@@ -844,7 +905,8 @@ impl View {
         }
 
         // move cursor to the end of line before inserting a new line
-        self.movement.text_location.grapheme_index = self.buffer.borrow().get_line_length(line_index);
+        self.movement.text_location.grapheme_index =
+            self.buffer.borrow().get_line_length(line_index);
 
         self.buffer.borrow_mut().insert_newline(Location {
             line_index: line_index + 1,
@@ -859,7 +921,9 @@ impl View {
 
         // insert indentation in new line
         for c in indentation.chars() {
-            self.buffer.borrow_mut().insert_char(c, self.movement.text_location);
+            self.buffer
+                .borrow_mut()
+                .insert_char(c, self.movement.text_location);
             self.movement.text_location.grapheme_index += 1;
         }
 
@@ -896,7 +960,9 @@ impl View {
         };
 
         for c in indentation.chars() {
-            self.buffer.borrow_mut().insert_char(c, self.movement.text_location);
+            self.buffer
+                .borrow_mut()
+                .insert_char(c, self.movement.text_location);
             self.movement.text_location.grapheme_index += 1;
         }
 
@@ -1421,7 +1487,10 @@ impl View {
             let remove_end = line_start + indentation_end;
 
             if remove_end > remove_start {
-                self.buffer.borrow_mut().rope.remove(remove_start..remove_end);
+                self.buffer
+                    .borrow_mut()
+                    .rope
+                    .remove(remove_start..remove_end);
                 self.buffer.borrow_mut().dirty = true;
 
                 // adjust cursor position

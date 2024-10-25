@@ -79,3 +79,10 @@ pub const MATCHING_DELIMITERS: [(char, char); 6] = [
     ('\'', '\''),
     ('<', '>'),
 ];
+
+pub enum FocusDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}

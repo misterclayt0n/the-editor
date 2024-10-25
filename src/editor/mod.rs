@@ -7,7 +7,7 @@ use normal_mode::NormalMode;
 use prompt_mode::PromptMode;
 use visual_line_mode::VisualLineMode;
 use visual_mode::VisualMode;
-use window::Window;
+use window::{SplitDirection, Window};
 
 use core::fmt;
 use std::{
@@ -101,7 +101,7 @@ pub enum ModeType {
     Visual,
     VisualLine,
     Command,
-    CommandNormal, // Novo modo
+    CommandNormal,
     Prompt(PromptType),
 }
 
@@ -189,10 +189,9 @@ enum EditorCommand {
     MoveCommandBarWordForward(WordType),
     MoveCommandBarWordEnd(WordType),
     MoveCommandBarWordBackward(WordType),
-    SplitHorizontal,
+    Split(SplitDirection),
     CloseWindow,
-    FocusUp,
-    FocusDown,
+    Focus(FocusDirection),
 }
 
 pub struct Editor {
@@ -489,17 +488,14 @@ impl Editor {
             EditorCommand::MoveCommandBarWordEnd(word_type) => {
                 self.command_bar.move_cursor_word_end_forward(word_type);
             }
-            EditorCommand::SplitHorizontal => {
-                self.split_current_window();
+            EditorCommand::Split(direction) => {
+                self.split_current_window(direction);
             }
             EditorCommand::CloseWindow => {
                 self.close_current_window();
             }
-            EditorCommand::FocusUp => {
-                self.focus_up();
-            }
-            EditorCommand::FocusDown => {
-                self.focus_down();
+            EditorCommand::Focus(direction) => {
+                self.focus(direction)
             }
         }
     }
@@ -513,14 +509,13 @@ impl Editor {
         let _ = Terminal::hide_cursor();
 
         if self.in_prompt() {
-            self.command_bar.render(bottom_bar_row);
+            self.command_bar.render(Position { col: 0, row: bottom_bar_row });
         } else {
-            self.message_bar.render(bottom_bar_row);
+            self.message_bar.render(Position { col: 0, row: bottom_bar_row });
         }
 
         if self.terminal_size.height > 1 {
-            self.status_bar
-                .render(self.terminal_size.height.saturating_sub(2));
+            self.status_bar.render(Position { row: self.terminal_size.height.saturating_sub(2), col: 0 });
         }
 
         // determine if there is a split and calculate the position of the separator
@@ -533,12 +528,24 @@ impl Editor {
 
         // render all windows
         for window in self.windows.iter_mut() {
-            window.view.render(window.origin.row);
+            window.view.render(window.origin);
         }
 
         // draw the horizontal separator, if there is a split
         if has_split {
-            self.draw_horizontal_separator(separator_row);
+            // check if it's a horizontal or vertical split
+            if self.windows.len() == 2 {
+                let window1 = &self.windows[0];
+                let window2 = &self.windows[1];
+                if window1.origin.col == window2.origin.col {
+                    // horizontal split
+                    self.draw_horizontal_separator(separator_row);
+                } else if window1.origin.row == window2.origin.row {
+                    // vertical split
+                    let separator_col = window1.size.width;
+                    self.draw_vertical_separator(separator_col);
+                }
+            }
         }
 
         // define new cursor position
@@ -559,6 +566,7 @@ impl Editor {
         let _ = Terminal::show_cursor();
         let _ = Terminal::execute();
     }
+
 
     fn refresh_status(&mut self) {
         let status = self.active_view_mut().get_status();
@@ -628,22 +636,27 @@ impl Editor {
         }
 
         match input.trim() {
-            "w" => {
+            "w" | "W" => {
                 self.execute_command(EditorCommand::Save);
                 self.switch_mode(ModeType::Normal);
                 self.update_message("File saved");
             }
-            "q" => {
+            "q" | "Q"=> {
                 self.execute_command(EditorCommand::Quit);
             }
-            "wq" | "qw" => {
+            "wq" | "qw" | "Wq" | "Qw" | "WQ" | "QW" => {
                 self.execute_command(EditorCommand::Save);
                 self.execute_command(EditorCommand::Quit);
             }
             "split" => {
-                self.execute_command(EditorCommand::SplitHorizontal);
+                self.execute_command(EditorCommand::Split(SplitDirection::Horizontal));
                 self.switch_mode(ModeType::Normal);
-                self.update_message("Screen splitted motherfucker");
+                self.update_message("Horizontal split motherfucker");
+            }
+            "vsplit" => {
+                self.execute_command(EditorCommand::Split(SplitDirection::Vertical));
+                self.switch_mode(ModeType::Normal);
+                self.update_message("Vertical split motherfucker");
             }
             "close" => {
                 self.execute_command(EditorCommand::CloseWindow);
@@ -658,67 +671,65 @@ impl Editor {
         self.command_bar.clear_value();
     }
 
-    fn focus_up(&mut self) {
+    fn focus(&mut self, direction: FocusDirection) {
         if self.windows.len() < 2 {
-            self.update_message("Only one window open.");
+            self.update_message("Apenas uma janela está aberta.");
             return;
         }
 
-        // get current active window
         let active_window = &self.windows[self.active_window];
-        let active_top = active_window.origin.row;
-
-        // find the window above the current one
         let mut target_window: Option<usize> = None;
         let mut min_distance = usize::MAX;
 
         for (i, window) in self.windows.iter().enumerate() {
-            if window.origin.row + window.size.height <= active_top {
-                let distance = active_top - (window.origin.row + window.size.height);
-                if distance < min_distance {
-                    min_distance = distance;
-                    target_window = Some(i);
-                }
+            if i == self.active_window {
+                continue;
+            }
+
+            match direction {
+                FocusDirection::Up => {
+                    if window.origin.row + window.size.height <= active_window.origin.row {
+                        let distance = active_window.origin.row - (window.origin.row + window.size.height);
+                        if distance < min_distance {
+                            min_distance = distance;
+                            target_window = Some(i);
+                        }
+                    }
+                },
+                FocusDirection::Down => {
+                    if window.origin.row >= active_window.origin.row + active_window.size.height {
+                        let distance = window.origin.row - (active_window.origin.row + active_window.size.height);
+                        if distance < min_distance {
+                            min_distance = distance;
+                            target_window = Some(i);
+                        }
+                    }
+                },
+                FocusDirection::Left => {
+                    if window.origin.col + window.size.width <= active_window.origin.col {
+                        let distance = active_window.origin.col - (window.origin.col + window.size.width);
+                        if distance < min_distance {
+                            min_distance = distance;
+                            target_window = Some(i);
+                        }
+                    }
+                },
+                FocusDirection::Right => {
+                    if window.origin.col >= active_window.origin.col + active_window.size.width {
+                        let distance = window.origin.col - (active_window.origin.col + active_window.size.width);
+                        if distance < min_distance {
+                            min_distance = distance;
+                            target_window = Some(i);
+                        }
+                    }
+                },
             }
         }
 
         if let Some(new_active) = target_window {
             self.active_window = new_active;
-            self.update_message(&format!("Switched to window {}", self.active_window + 1));
+            self.update_message(&format!("focus on window {}", self.active_window + 1));
             self.set_needs_redraw(true);
-        } else {
-            self.update_message("No window above.");
-        }
-    }
-
-    fn focus_down(&mut self) {
-        if self.windows.len() < 2 {
-            self.update_message("Only one window open.");
-            return;
-        }
-
-        let active_window = &self.windows[self.active_window];
-        let active_bottom = active_window.origin.row + active_window.size.height;
-
-        let mut target_window: Option<usize> = None;
-        let mut min_distance = usize::MAX;
-
-        for (i, window) in self.windows.iter().enumerate() {
-            if window.origin.row >= active_bottom {
-                let distance = window.origin.row - active_bottom;
-                if distance < min_distance {
-                    min_distance = distance;
-                    target_window = Some(i);
-                }
-            }
-        }
-
-        if let Some(new_active) = target_window {
-            self.active_window = new_active;
-            self.update_message(&format!("Switched to window {}", self.active_window + 1));
-            self.set_needs_redraw(true);
-        } else {
-            self.update_message("no window below.");
         }
     }
 
@@ -728,31 +739,70 @@ impl Editor {
 
     fn handle_resize_command(&mut self, size: Size) {
         self.terminal_size = size;
+        let bottom_bars_height = 2; // status bar e message bar
         let num_windows = self.windows.len();
         if num_windows == 0 {
             return;
         }
 
-        let num_separator_lines = if num_windows > 1 { num_windows - 1 } else { 0 };
-        let bottom_bars_height = 2; // status bar and message bar
-        let available_height = size.height.saturating_sub(bottom_bars_height + num_separator_lines);
-
-        let window_height = available_height / num_windows;
-        let extra_lines = available_height % num_windows;
-
-        let mut current_row = 0;
-        for (i, window) in self.windows.iter_mut().enumerate() {
-            let additional_line = if i < extra_lines { 1 } else { 0 };
-            let height = window_height + additional_line;
-
+        if num_windows == 1 {
+            // single window that fits the entire space
+            let window = &mut self.windows[0];
             window.resize(
-                Position { row: current_row, col: 0 },
-                Size { height, width: size.width },
+                Position { row: 0, col: 0 },
+                Size {
+                    height: size.height - bottom_bars_height,
+                    width: size.width,
+                },
             );
+        } else if num_windows == 2 {
+            // horizontal or vertical split
+            let (left, right) = self.windows.split_at_mut(1);
+            let window1 = &mut left[0];
+            let window2 = &mut right[0];
 
-            current_row += height;
-            if i < num_windows - 1 {
-                current_row += 1; // increment a line because of the separator
+            if window1.origin.row == window2.origin.row {
+                // vertical split
+                let half_width = size.width / 2;
+
+                window1.resize(
+                    Position { row: 0, col: 0 },
+                    Size {
+                        height: size.height - bottom_bars_height,
+                        width: half_width,
+                    },
+                );
+                window2.resize(
+                    Position {
+                        row: 0,
+                        col: half_width + 1, // +1 for separating col
+                    },
+                    Size {
+                        height: size.height - bottom_bars_height,
+                        width: size.width - half_width - 1, // -1 for separating col
+                    },
+                );
+            } else {
+                // horizontal split
+                let half_height = (size.height - bottom_bars_height) / 2;
+
+                window1.resize(
+                    Position { row: 0, col: 0 },
+                    Size {
+                        height: half_height,
+                        width: size.width,
+                    },
+                );
+                window2.resize(
+                    Position {
+                        row: half_height + 1, // +1 for separating row
+                        col: 0,
+                    },
+                    Size {
+                        height: size.height - bottom_bars_height - half_height - 1, // -1 for separating row
+                        width: size.width,
+                    },
+                );
             }
         }
 
@@ -860,25 +910,59 @@ impl Editor {
     // Splitting
     //
 
-    fn split_current_window(&mut self) {
+    fn split_current_window(&mut self, direction: SplitDirection) {
         if self.windows.len() >= 2 {
             self.update_message("Already split into two windows.");
             return;
         }
 
-        let new_view = self.active_view().clone();
-        let new_window = Window::new(Position { row: 0, col: 0 }, Size { height: 0, width: 0 }, new_view);
-        self.windows.push(new_window);
-        self.active_window = self.windows.len() - 1; // focus on new window
+        let active_window = &mut self.windows[self.active_window];
+        let new_view = active_window.view.clone();
+        let mut new_window = Window::new(
+            Position { row: 0, col: 0 },
+            Size { height: 0, width: 0 },
+            new_view,
+        );
 
-        // call handle_resize_command to adjust the size of windows
+        match direction {
+            SplitDirection::Horizontal => {
+                let total_height = active_window.size.height;
+                let half_height = total_height / 2;
+
+                active_window.size.height = half_height;
+                new_window.origin.row = active_window.origin.row + half_height + 1;
+                new_window.origin.col = active_window.origin.col;
+                new_window.size.height = total_height - half_height - 1;
+                new_window.size.width = active_window.size.width;
+            }
+            SplitDirection::Vertical => {
+                let total_width = active_window.size.width;
+                let half_width = total_width / 2;
+
+                active_window.size.width = half_width;
+                new_window.origin.row = active_window.origin.row;
+                new_window.origin.col = active_window.origin.col + half_width + 1;
+                new_window.size.height = active_window.size.height;
+                new_window.size.width = total_width - half_width - 1;
+            }
+        }
+
+        self.windows.push(new_window);
+        self.active_window = self.windows.len() - 1;
+
         self.handle_resize_command(self.terminal_size);
     }
-
 
     fn draw_horizontal_separator(&self, row: usize) {
         Terminal::move_cursor_to(Position { row, col: 0 }).unwrap_or(());
         Terminal::print(&"─".repeat(self.terminal_size.width)).unwrap_or(());
+    }
+
+    fn draw_vertical_separator(&self, col: usize) {
+        for row in 0..self.terminal_size.height - 2 {
+            Terminal::move_cursor_to(Position { row, col }).unwrap_or(());
+            Terminal::print("│").unwrap_or(());
+        }
     }
 
     fn close_current_window(&mut self) {

@@ -58,7 +58,7 @@ impl UIComponent for MessageBar {
 
     fn set_size(&mut self, _: Size) {}
 
-    fn draw(&mut self, origin: usize) -> Result<(), Error> {
+    fn draw(&mut self, origin: Position) -> Result<(), Error> {
         if self.current_message.is_expired() {
             self.cleared_after_expiry = true; // Upon expiration, we need to write out "" once to clear the message. To avoid clearing more than necessary, we  keep track of the fact that we've already cleared the expired message once.
         }
@@ -69,6 +69,6 @@ impl UIComponent for MessageBar {
             &self.current_message.text
         };
 
-        Terminal::print_row(origin, message)
+        Terminal::print_row(origin.row, message)
     }
 }

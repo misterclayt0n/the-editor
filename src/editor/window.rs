@@ -2,6 +2,11 @@ use crate::prelude::*;
 
 use super::uicomponents::{UIComponent, View};
 
+pub enum SplitDirection {
+    Horizontal,
+    Vertical,
+}
+
 pub struct Window {
     pub view: View,
     pub origin: Position,

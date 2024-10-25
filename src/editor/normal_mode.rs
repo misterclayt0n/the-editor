@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{Edit, EditorCommand, Mode, ModeType, Normal, Operator, PromptType, TextObject};
+use super::{Edit, EditorCommand, FocusDirection, Mode, ModeType, Normal, Operator, PromptType, TextObject};
 
 pub struct NormalMode;
 
@@ -300,12 +300,22 @@ impl Mode for NormalMode {
                 code: KeyCode::Char('k'),
                 modifiers: KeyModifiers::CONTROL,
                 ..
-            } => Some(EditorCommand::FocusUp),
+            } => Some(EditorCommand::Focus(FocusDirection::Up)),
             KeyEvent {
                 code: KeyCode::Char('j'),
                 modifiers: KeyModifiers::CONTROL,
                 ..
-            } => Some(EditorCommand::FocusDown),
+            } => Some(EditorCommand::Focus(FocusDirection::Down)),
+            KeyEvent {
+                code: KeyCode::Char('l'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::Focus(FocusDirection::Right)),
+            KeyEvent {
+                code: KeyCode::Char('h'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(EditorCommand::Focus(FocusDirection::Left)),
             _ => {
                 command_buffer.clear();
                 None

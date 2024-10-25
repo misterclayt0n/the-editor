@@ -1559,16 +1559,16 @@ impl UIComponent for View {
         self.rendered_lines.clear();
     }
 
-    fn draw(&mut self, origin_row: usize) -> Result<(), Error> {
+    fn draw(&mut self, origin: Position) -> Result<(), Error> {
         let Size { height, width } = self.size;
-        let end_y = origin_row.saturating_add(height);
+        let end_y = origin.row.saturating_add(height);
         let scroll_top = self.scroll_offset.row;
 
         // prepare a new buffer with rendered lines
         let mut new_rendered_lines = Vec::with_capacity(height);
 
-        for current_row in origin_row..end_y {
-            let line_idx = self.calculate_line_index(current_row, origin_row, scroll_top);
+        for current_row in origin.row..end_y {
+            let line_idx = self.calculate_line_index(current_row, origin.row, scroll_top);
 
             let rendered_line = if line_idx < self.buffer.borrow().height() {
                 self.get_rendered_line(line_idx, width)?
@@ -1586,13 +1586,20 @@ impl UIComponent for View {
             if self.rendered_lines.get(i) != Some(line) {
                 // move cursor to the correct line
                 Terminal::move_cursor_to(Position {
-                    row: origin_row + i,
-                    col: 0,
+                    row: origin.row + i,
+                    col: origin.col,
                 })?;
-                // clean current line
-                Terminal::clear_line()?;
-                // print new line
-                Terminal::print(line)?;
+                // clear only the window's portion of the line
+                Terminal::print(&" ".repeat(width))?;
+
+                // move the cursor to the start of the window's line
+                Terminal::move_cursor_to(Position {
+                    row: origin.row + i,
+                    col: origin.col,
+                })?;
+
+                let line_to_print = &line[..min(line.len(), width)];
+                Terminal::print(line_to_print)?;
             }
         }
 

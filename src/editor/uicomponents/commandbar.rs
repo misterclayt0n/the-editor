@@ -297,7 +297,7 @@ impl CommandBar {
             }
         }
 
-        self.cursor_position = index + 1; 
+        self.cursor_position = index + 1;
         self.needs_redraw = true;
     }
 }
@@ -315,7 +315,7 @@ impl UIComponent for CommandBar {
         self.size = size;
     }
 
-    fn draw(&mut self, origin: usize) -> Result<(), Error> {
+    fn draw(&mut self, origin: Position) -> Result<(), Error> {
         let available_width = self
             .size
             .width
@@ -331,6 +331,6 @@ impl UIComponent for CommandBar {
 
         let message = format!("{}{}", self.prompt, visible_value);
 
-        Terminal::print_row(origin, &message)
+        Terminal::print_row(origin.row, &message)
     }
 }

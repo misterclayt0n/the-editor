@@ -105,6 +105,34 @@ impl Mode for PromptMode {
                 } => Some(EditorCommand::UpdateCommandBar(Edit::Delete)),
                 _ => None,
             },
+            PromptType::FindFile => match event {
+                KeyEvent {
+                    code: KeyCode::Esc,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::SwitchMode(ModeType::Normal)),
+                KeyEvent {
+                    code: KeyCode::Enter,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::OpenFileFromPrompt),
+                KeyEvent {
+                    code: KeyCode::Char(c),
+                    modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
+                    ..
+                } => Some(EditorCommand::UpdateCommandBar(Edit::Insert(c))),
+                KeyEvent {
+                    code: KeyCode::Backspace,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::UpdateCommandBar(Edit::DeleteBackward)),
+                KeyEvent {
+                    code: KeyCode::Delete,
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => Some(EditorCommand::UpdateCommandBar(Edit::Delete)),
+                _ => None,
+            }
             _ => None,
         }
     }

@@ -2,6 +2,7 @@ use crate::prelude::*;
 use command_mode::CommandMode;
 use command_normal_mode::CommandNormalMode;
 use crossterm::event::{read, Event, KeyEvent};
+use dirs::home_dir;
 use insert_mode::InsertMode;
 use normal_mode::NormalMode;
 use prompt_mode::PromptMode;
@@ -14,20 +15,21 @@ use std::{
     env,
     io::Error,
     panic::{set_hook, take_hook},
+    path::PathBuf,
 };
 
 mod color_scheme;
+mod command_mode;
+mod command_normal_mode;
 mod documentstatus;
+mod insert_mode;
+mod normal_mode;
+mod prompt_mode;
 mod terminal;
 mod uicomponents;
-mod window;
-mod normal_mode;
-mod insert_mode;
-mod visual_mode;
 mod visual_line_mode;
-mod command_mode;
-mod prompt_mode;
-mod command_normal_mode;
+mod visual_mode;
+mod window;
 
 use documentstatus::DocumentStatus;
 use terminal::Terminal;
@@ -90,6 +92,7 @@ enum PromptType {
     Search,
     Save,
     Command,
+    FindFile,
     #[default]
     None,
 }
@@ -192,6 +195,8 @@ enum EditorCommand {
     Split(SplitDirection),
     CloseWindow,
     Focus(FocusDirection),
+    OpenFileFromPrompt,
+    RestorePreviousPrompt,
 }
 
 pub struct Editor {
@@ -208,6 +213,9 @@ pub struct Editor {
     current_mode_impl: Box<dyn Mode>,
     prompt_type: PromptType,
     command_buffer: String,
+    prev_prompt_type: Option<PromptType>,
+    prev_command_bar_value: Option<String>,
+    prev_command_bar_cursor_position: Option<usize>,
 }
 
 impl Editor {
@@ -241,6 +249,9 @@ impl Editor {
             current_mode_impl: Box::new(NormalMode::new()),
             prompt_type: PromptType::None,
             command_buffer: String::new(),
+            prev_prompt_type: None,
+            prev_command_bar_value: None,
+            prev_command_bar_cursor_position: None,
         };
         editor.handle_resize_command(size);
 
@@ -494,8 +505,24 @@ impl Editor {
             EditorCommand::CloseWindow => {
                 self.close_current_window();
             }
-            EditorCommand::Focus(direction) => {
-                self.focus(direction)
+            EditorCommand::Focus(direction) => self.focus(direction),
+            EditorCommand::OpenFileFromPrompt => {
+                let file_path = self.command_bar.value();
+                self.open_file_in_current_window(&file_path);
+                self.switch_mode(ModeType::Normal);
+            }
+            EditorCommand::RestorePreviousPrompt => {
+                if let Some(prev_prompt) = self.prev_prompt_type {
+                    self.switch_mode(ModeType::Prompt(prev_prompt));
+                    if let Some(prev_value) = self.prev_command_bar_value.take() {
+                        self.command_bar.set_value(prev_value);
+                    }
+                    if let Some(prev_cursor_pos) = self.prev_command_bar_cursor_position.take() {
+                        self.command_bar.set_cursor_position(prev_cursor_pos);
+                    }
+                } else {
+                    self.switch_mode(ModeType::Normal);
+                }
             }
         }
     }
@@ -509,13 +536,22 @@ impl Editor {
         let _ = Terminal::hide_cursor();
 
         if self.in_prompt() {
-            self.command_bar.render(Position { col: 0, row: bottom_bar_row });
+            self.command_bar.render(Position {
+                col: 0,
+                row: bottom_bar_row,
+            });
         } else {
-            self.message_bar.render(Position { col: 0, row: bottom_bar_row });
+            self.message_bar.render(Position {
+                col: 0,
+                row: bottom_bar_row,
+            });
         }
 
         if self.terminal_size.height > 1 {
-            self.status_bar.render(Position { row: self.terminal_size.height.saturating_sub(2), col: 0 });
+            self.status_bar.render(Position {
+                row: self.terminal_size.height.saturating_sub(2),
+                col: 0,
+            });
         }
 
         // determine if there is a split and calculate the position of the separator
@@ -566,7 +602,6 @@ impl Editor {
         let _ = Terminal::show_cursor();
         let _ = Terminal::execute();
     }
-
 
     fn refresh_status(&mut self) {
         let status = self.active_view_mut().get_status();
@@ -640,35 +675,44 @@ impl Editor {
                 self.execute_command(EditorCommand::Save);
                 self.switch_mode(ModeType::Normal);
                 self.update_message("File saved");
+                self.command_bar.clear_value();
             }
-            "q" | "Q"=> {
+            "q" | "Q" => {
                 self.execute_command(EditorCommand::Quit);
+                self.command_bar.clear_value();
             }
             "wq" | "qw" | "Wq" | "Qw" | "WQ" | "QW" => {
                 self.execute_command(EditorCommand::Save);
                 self.execute_command(EditorCommand::Quit);
+                self.command_bar.clear_value();
             }
             "split" => {
                 self.execute_command(EditorCommand::Split(SplitDirection::Horizontal));
                 self.switch_mode(ModeType::Normal);
                 self.update_message("Horizontal split motherfucker");
+                self.command_bar.clear_value();
             }
             "vsplit" => {
                 self.execute_command(EditorCommand::Split(SplitDirection::Vertical));
                 self.switch_mode(ModeType::Normal);
                 self.update_message("Vertical split motherfucker");
+                self.command_bar.clear_value();
+            }
+            "find" => {
+                self.set_prompt(PromptType::FindFile);
+                self.switch_mode(ModeType::Prompt(PromptType::FindFile));
             }
             "close" => {
                 self.execute_command(EditorCommand::CloseWindow);
                 self.switch_mode(ModeType::Normal);
+                self.command_bar.clear_value();
             }
             _ => {
                 self.update_message(&format!("Unknown command ma man: {}", input));
                 self.switch_mode(ModeType::Normal);
+                self.command_bar.clear_value();
             }
         }
-
-        self.command_bar.clear_value();
     }
 
     fn focus(&mut self, direction: FocusDirection) {
@@ -689,40 +733,44 @@ impl Editor {
             match direction {
                 FocusDirection::Up => {
                     if window.origin.row + window.size.height <= active_window.origin.row {
-                        let distance = active_window.origin.row - (window.origin.row + window.size.height);
+                        let distance =
+                            active_window.origin.row - (window.origin.row + window.size.height);
                         if distance < min_distance {
                             min_distance = distance;
                             target_window = Some(i);
                         }
                     }
-                },
+                }
                 FocusDirection::Down => {
                     if window.origin.row >= active_window.origin.row + active_window.size.height {
-                        let distance = window.origin.row - (active_window.origin.row + active_window.size.height);
+                        let distance = window.origin.row
+                            - (active_window.origin.row + active_window.size.height);
                         if distance < min_distance {
                             min_distance = distance;
                             target_window = Some(i);
                         }
                     }
-                },
+                }
                 FocusDirection::Left => {
                     if window.origin.col + window.size.width <= active_window.origin.col {
-                        let distance = active_window.origin.col - (window.origin.col + window.size.width);
+                        let distance =
+                            active_window.origin.col - (window.origin.col + window.size.width);
                         if distance < min_distance {
                             min_distance = distance;
                             target_window = Some(i);
                         }
                     }
-                },
+                }
                 FocusDirection::Right => {
                     if window.origin.col >= active_window.origin.col + active_window.size.width {
-                        let distance = window.origin.col - (active_window.origin.col + active_window.size.width);
+                        let distance = window.origin.col
+                            - (active_window.origin.col + active_window.size.width);
                         if distance < min_distance {
                             min_distance = distance;
                             target_window = Some(i);
                         }
                     }
-                },
+                }
             }
         }
 
@@ -807,7 +855,10 @@ impl Editor {
         }
 
         // resize inferior bars
-        let bar_size = Size { height: 1, width: size.width };
+        let bar_size = Size {
+            height: 1,
+            width: size.width,
+        };
         self.message_bar.resize(bar_size);
         self.status_bar.resize(bar_size);
         self.command_bar.resize(bar_size);
@@ -900,6 +951,19 @@ impl Editor {
                     self.command_bar.set_prompt(":");
                     // self.command_bar.clear_value();
                 }
+                PromptType::FindFile => {
+                    self.command_bar.set_prompt("Find File: ");
+
+                    // let initial_value = self.get_current_file_directory();
+
+                    let initial_value = self.get_current_file_directory().unwrap_or_else(|| {
+                        match env::current_dir() {
+                            Ok(current_dir) => path_relative_to_home(&current_dir),
+                            Err(_) => String::from("~/"),
+                        }
+                    });
+                    self.command_bar.set_value(initial_value);
+                }
             }
         }
 
@@ -920,7 +984,10 @@ impl Editor {
         let new_view = active_window.view.clone();
         let mut new_window = Window::new(
             Position { row: 0, col: 0 },
-            Size { height: 0, width: 0 },
+            Size {
+                height: 0,
+                width: 0,
+            },
             new_view,
         );
 
@@ -983,6 +1050,22 @@ impl Editor {
         }
     }
 
+    fn open_file_in_current_window(&mut self, file_path: &str) {
+        let expanded_path = shellexpand::tilde(file_path).into_owned();
+        match self.active_view_mut().load(&expanded_path) {
+            Ok(_) => {
+                self.update_message(&format!("Opened file: {}", expanded_path));
+                log(&format!("Opened file: {}", expanded_path));
+            }
+            Err(err) => {
+                self.update_message(&format!("Error opening file: {}", err));
+                log(&format!("Error opening file: {}", err));
+            }
+        }
+        self.command_bar.clear_value();
+        self.mark_all_views_needing_redraw();
+    }
+
     //
     // Helpers
     //
@@ -1013,10 +1096,46 @@ impl Editor {
             window.view.set_needs_redraw(true);
         }
     }
+
+    fn get_current_file_directory(&self) -> Option<String> {
+        if let Some(current_file_path) = self.active_view().buffer.borrow().file_info.get_path() {
+            if let Some(parent_dir) = current_file_path.parent() {
+                let dir = path_relative_to_home(&PathBuf::from(parent_dir));
+                log(&format!("Diretório relativo ao Home: {}", dir));
+                Some(dir)
+            } else {
+                // Se o arquivo não tiver um diretório pai, retornar o diretório Home
+                let home = path_relative_to_home(&home_dir().unwrap_or(PathBuf::from("~/")));
+                log(&format!("Arquivo na raiz. Usando Home: {}", home));
+                Some(home)
+            }
+        } else {
+            log("Nenhum arquivo aberto. Usando diretório de trabalho atual.");
+            None
+        }
+    }
 }
 
 impl Drop for Editor {
     fn drop(&mut self) {
         let _ = Terminal::kill();
+    }
+}
+
+fn path_relative_to_home(path: &PathBuf) -> String {
+    if let Some(home_dir) = home_dir() {
+        if path.starts_with(&home_dir) {
+            let relative_path = path.strip_prefix(&home_dir).unwrap_or(path);
+            let relative_str = relative_path.to_str().unwrap_or("");
+            if relative_str.is_empty() {
+                String::from("~")
+            } else {
+                format!("~/{}", relative_str)
+            }
+        } else {
+            path.to_str().unwrap_or("").to_string()
+        }
+    } else {
+        path.to_str().unwrap_or("").to_string()
     }
 }

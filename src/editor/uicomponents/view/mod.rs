@@ -2,6 +2,7 @@
 // but now edit.rs
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::{cmp::min, io::Error};
 
@@ -154,9 +155,24 @@ impl View {
     //
 
     pub fn load(&mut self, file_name: &str) -> Result<(), Error> {
+        let path = PathBuf::from(file_name).canonicalize().unwrap_or_else(|_| PathBuf::from(file_name));
         let buffer = Buffer::load(file_name)?;
         *self.buffer.borrow_mut() = buffer;
+
+        self.movement = Movement::default();
+        self.scroll_offset = Position::default();
+        self.search_info = None;
+        self.last_search_query = None;
+        self.selection_start = None;
+        self.selection_end = None;
+        self.selection_mode = None;
+        self.rendered_lines.clear();
+
         self.set_needs_redraw(true);
+
+        self.buffer.borrow_mut().file_info.set_path(Some(path.clone()));
+
+        log(&format!("Arquivo carregado: {:?}", self.buffer.borrow().file_info.get_path()));
         Ok(())
     }
 

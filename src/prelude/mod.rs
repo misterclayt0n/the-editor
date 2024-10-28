@@ -1,4 +1,6 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, fs::OpenOptions, sync::Mutex};
+use lazy_static::lazy_static;
+use std::io::Write;
 
 pub const NAME: &str = "the-editor";
 pub const VERSION: &str = "0.0.1";
@@ -85,4 +87,18 @@ pub enum FocusDirection {
     Down,
     Left,
     Right,
+}
+
+lazy_static! {
+    static ref LOG_MUTEX: Mutex<()> = Mutex::new(());
+}
+
+pub fn log(message: &str) {
+    let _lock = LOG_MUTEX.lock().unwrap();
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("editor.log")
+        .unwrap_or_else(|_| panic!("Could not open log file."));
+    writeln!(file, "{}", message).unwrap_or_else(|_| panic!("Could not write to log file."));
 }

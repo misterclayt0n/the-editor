@@ -65,6 +65,21 @@ impl Mode for VisualLineMode {
                 ..
             } => Some(EditorCommand::HandleVisualLineMovement(Normal::GoToBottom)),
             KeyEvent {
+                code: KeyCode::Char('$'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualLineMovement(Normal::EndOfLine)),
+            KeyEvent {
+                code: KeyCode::Char('0'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualLineMovement(Normal::StartOfLine)),
+            KeyEvent {
+                code: KeyCode::Char('_'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(EditorCommand::HandleVisualLineMovement(Normal::FirstCharLine)),
+            KeyEvent {
                 code: KeyCode::Char('g'),
                 modifiers: KeyModifiers::NONE,
                 ..

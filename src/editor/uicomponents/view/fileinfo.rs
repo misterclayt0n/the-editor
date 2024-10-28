@@ -22,6 +22,10 @@ impl FileInfo {
     pub const fn has_path(&self) -> bool {
         self.path.is_some()
     }
+
+    pub fn set_path(&mut self, path: Option<PathBuf>) {
+        self.path = path;
+    }
 }
 
 impl Display for FileInfo {

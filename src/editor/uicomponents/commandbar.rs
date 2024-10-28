@@ -12,7 +12,7 @@ pub struct CommandBar {
     value: String,
     needs_redraw: bool,
     size: Size,
-    cursor_position: usize,
+    pub cursor_position: usize,
 }
 
 #[derive(PartialEq)]
@@ -65,6 +65,21 @@ impl CommandBar {
 
     pub fn value(&self) -> String {
         self.value.clone()
+    }
+
+    pub fn set_value(&mut self, value: String) {
+        self.value = value;
+        self.cursor_position = self.value.graphemes(true).count();
+        self.set_needs_redraw(true);
+    }
+
+    pub fn set_cursor_position(&mut self, pos: usize) {
+        self.cursor_position = pos.min(self.value.graphemes(true).count());
+        self.set_needs_redraw(true);
+    }
+
+    pub fn get_cursor_position(&self) -> usize {
+        self.cursor_position
     }
 
     pub fn set_prompt(&mut self, prompt: &str) {

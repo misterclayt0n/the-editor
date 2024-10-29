@@ -25,7 +25,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 
 4. **Start Editing**
    ```bash
-   ./target/debug/editor <FILE>
+   ./target/debug/editor <FILE> 
    ```
 
 ### 📅 Roadmap
@@ -64,6 +64,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [ ] Yanking and pasting
 - [ ] Very basic syntax highlight - Probably going to use tree-sitter
 - [ ] Fuzzy finder inspired by [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
+- [ ] Open links in cursor hover (some motion)
 
 ### Fixes
 - [x] "w" and "b" motions are not working as vim's

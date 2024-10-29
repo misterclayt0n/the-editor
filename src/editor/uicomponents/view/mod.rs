@@ -13,14 +13,14 @@ use crate::prelude::*;
 use super::super::{DocumentStatus, Terminal};
 
 use super::UIComponent;
-mod buffer;
-use buffer::Buffer;
+pub mod buffer;
+pub use buffer::Buffer;
 use movement::Movement;
 mod fileinfo;
 use fileinfo::FileInfo;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-mod movement;
+pub mod movement;
 
 #[derive(Default, Eq, PartialEq, Clone, Copy)]
 pub enum SearchDirection {
@@ -38,19 +38,36 @@ pub struct SearchInfo {
 
 pub struct View {
     pub buffer: Rc<RefCell<Buffer>>,
-    needs_redraw: bool,
-    size: Size,
+    pub needs_redraw: bool,
+    pub size: Size,
     pub movement: Movement,
-    scroll_offset: Position,
-    search_info: Option<SearchInfo>,
-    last_search_query: Option<String>,
-    selection_start: Option<Location>,
-    selection_end: Option<Location>,
-    selection_mode: Option<SelectionMode>,
-    rendered_lines: Vec<String>,
+    pub scroll_offset: Position,
+    pub search_info: Option<SearchInfo>,
+    pub last_search_query: Option<String>,
+    pub selection_start: Option<Location>,
+    pub selection_end: Option<Location>,
+    pub selection_mode: Option<SelectionMode>,
+    pub rendered_lines: Vec<String>,
 }
 
 impl View {
+    /// clone View sharing the same Buffer
+    pub fn clone_shared(&self) -> Self {
+        Self {
+            buffer: self.buffer.clone(), // share same Rc<RefCell<Buffer>>
+            needs_redraw: true,
+            size: self.size,
+            movement: Movement::default(),
+            scroll_offset: Position::default(),
+            search_info: None,
+            last_search_query: None,
+            selection_start: None,
+            selection_end: None,
+            selection_mode: None,
+            rendered_lines: Vec::new(),
+        }
+    }
+
     pub fn get_status(&self) -> DocumentStatus {
         let buffer = self.buffer.borrow();
         DocumentStatus {
@@ -155,7 +172,9 @@ impl View {
     //
 
     pub fn load(&mut self, file_name: &str) -> Result<(), Error> {
-        let path = PathBuf::from(file_name).canonicalize().unwrap_or_else(|_| PathBuf::from(file_name));
+        let path = PathBuf::from(file_name)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(file_name));
         let buffer = Buffer::load(file_name)?;
         *self.buffer.borrow_mut() = buffer;
 
@@ -170,7 +189,10 @@ impl View {
 
         self.set_needs_redraw(true);
 
-        self.buffer.borrow_mut().file_info.set_path(Some(path.clone()));
+        self.buffer
+            .borrow_mut()
+            .file_info
+            .set_path(Some(path.clone()));
         Ok(())
     }
 

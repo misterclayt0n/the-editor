@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use buffer_manager::BufferManager;
 use crossterm::event::{read, Event, KeyEvent};
 use dirs::home_dir;
 use input_mode::InputMode;
@@ -22,6 +23,7 @@ mod uicomponents;
 mod visual_line_mode;
 mod visual_mode;
 mod window;
+mod buffer_manager;
 
 use documentstatus::DocumentStatus;
 use terminal::Terminal;
@@ -96,6 +98,7 @@ pub struct Editor {
     current_mode: ModeType,
     current_mode_impl: Box<dyn Mode>,
     command_buffer: String,
+    buffer_manager: BufferManager,
 }
 
 impl Editor {
@@ -129,6 +132,7 @@ impl Editor {
             current_mode: ModeType::Normal,
             current_mode_impl: Box::new(NormalMode::new()),
             command_buffer: String::new(),
+            buffer_manager: BufferManager::new(),
         };
         editor.handle_resize_command(size);
 
@@ -137,8 +141,19 @@ impl Editor {
         if let Some(file_name) = args.get(1) {
             debug_assert!(!file_name.is_empty());
 
-            if editor.active_view_mut().load(file_name).is_err() {
-                editor.update_message(&format!("ERROR: Could not open file: {file_name}"));
+            let expanded_path = shellexpand::tilde(file_name).into_owned();
+            match editor.buffer_manager.get_buffer(&expanded_path) {
+                Ok(buffer_rc) => {
+                    editor.active_view_mut().buffer = buffer_rc.clone();
+                    if editor.active_view_mut().load(&expanded_path).is_err() {
+                        editor.update_message(&format!("ERROR: Could not open file: {}", expanded_path));
+                    } else {
+                        editor.update_message(&format!("File opened: {}", expanded_path));
+                    }
+                }
+                Err(err) => {
+                    editor.update_message(&format!("ERROR: Loading buffer: {}", err));
+                }
             }
         }
 
@@ -616,7 +631,6 @@ impl Editor {
 
         if let Some(new_active) = target_window {
             self.active_window = new_active;
-            self.update_message(&format!("focus on window {}", self.active_window + 1));
             self.set_needs_redraw(true);
         }
     }
@@ -813,12 +827,12 @@ impl Editor {
 
     fn split_current_window(&mut self, direction: SplitDirection) {
         if self.windows.len() >= 2 {
-            self.update_message("Already split into two windows.");
+            // TODO: allow for infinite splits
             return;
         }
 
         let active_window = &mut self.windows[self.active_window];
-        let new_view = active_window.view.clone();
+        let new_view = active_window.view.clone_shared(); // clone_independent to have a separate buffer
         let mut new_window = Window::new(
             Position { row: 0, col: 0 },
             Size {
@@ -889,12 +903,17 @@ impl Editor {
 
     fn open_file_in_current_window(&mut self, file_path: &str) {
         let expanded_path = shellexpand::tilde(file_path).into_owned();
-        match self.active_view_mut().load(&expanded_path) {
-            Ok(_) => {
-                self.update_message(&format!("Opened file: {}", expanded_path));
+        match self.buffer_manager.get_buffer(&expanded_path) {
+            Ok(buffer_rc) => {
+                self.active_view_mut().buffer = buffer_rc.clone();
+                if self.active_view_mut().load(&expanded_path).is_err() {
+                    self.update_message(&format!("ERROR: Could not open file: {}", expanded_path));
+                } else {
+                    self.update_message(&format!("File open: {}", expanded_path));
+                }
             }
             Err(err) => {
-                self.update_message(&format!("Error opening file: {}", err));
+                self.update_message(&format!("ERROR: Loading buffer: {}", err));
             }
         }
         self.command_bar.borrow_mut().clear_value();

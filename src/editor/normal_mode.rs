@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{uicomponents::CommandBar, Edit, EditorCommand, FocusDirection, InputModeType, InputType, Mode, ModeType, Normal, Operator, TextObject};
+use super::{uicomponents::CommandBar, window::SplitDirection, Edit, EditorCommand, FocusDirection, InputModeType, InputType, Mode, ModeType, Normal, Operator, TextObject};
 
 pub struct NormalMode;
 
@@ -105,6 +105,16 @@ impl Mode for NormalMode {
                 modifiers: KeyModifiers::SHIFT,
                 ..
             } => Some(EditorCommand::MoveCursor(Normal::BigWordBackward)),
+            KeyEvent {
+            	code: KeyCode::Char('v'),
+            	modifiers: KeyModifiers::ALT,
+            	..
+            } => Some(EditorCommand::Split(SplitDirection::Vertical)),
+            KeyEvent {
+            	code: KeyCode::Char('h'),
+            	modifiers: KeyModifiers::ALT,
+            	..
+            } => Some(EditorCommand::Split(SplitDirection::Horizontal)),
             KeyEvent {
                 code: KeyCode::Char('e'),
                 modifiers: KeyModifiers::NONE,
@@ -296,7 +306,7 @@ impl Mode for NormalMode {
             } => Some(EditorCommand::SearchPrevious),
             KeyEvent {
                 code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::CONTROL,
+                modifiers: KeyModifiers::ALT,
                 ..
             } => Some(EditorCommand::CloseWindow),
             KeyEvent {

@@ -171,8 +171,6 @@ impl View {
         self.set_needs_redraw(true);
 
         self.buffer.borrow_mut().file_info.set_path(Some(path.clone()));
-
-        log(&format!("Arquivo carregado: {:?}", self.buffer.borrow().file_info.get_path()));
         Ok(())
     }
 

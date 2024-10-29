@@ -38,18 +38,19 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [ ] User configurations (`~/.config/the-editor/config`)
 - [x] Optimize with rope data structure (almost completed)
 - [ ] Line numbers
-- [ ] Buffer changing
+- [x] Buffer changing -> Find file command
 - [ ] Window system (going to copy emacs/vim) -> Almost done, just need to make some sort of advanced data structure to be able to expand this further
 - [x] Auto closing?
 - [ ] Multiple cursors
 - [ ] Visual block mode
 - [ ] Compile/Recompile commands 
-- [ ] Working command mode 
+- [x] Working command mode -> Insert mode + normal mode
 - [x] Tab identation
 - [ ] Minmal mouse support (scrolling, selection, moving cursor)
-- [ ] CommandBar mode with basic operations: 
-    - [ ] Saving
+- [ ] CommandBar mode with basic operations:
+    - [x] Saving
     - [ ] Subtitution
+    - [ ] Selection using multi-cursors like Helix
 - [ ] Advanced vim motions: 
     - [x] "I" and "A"
 	- [x] "o" and "O"
@@ -78,7 +79,7 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [x] "ci" motion not working well
 - [x] Very specific panic on searching
 - [x] Phantom line introduced a bug where if open a file, it keeps adding a new line
-- [x] Visual line mode deletion is bugged 
+- [x] Visual line mode deletion is bugged
 - [x] Everything that regards horizontal scrolling of lines that get beyond the current width is bugged
 
 ### 📚 Future Plans

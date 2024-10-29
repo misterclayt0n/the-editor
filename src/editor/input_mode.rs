@@ -44,16 +44,14 @@ impl Mode for InputMode {
                         modifiers: KeyModifiers::NONE | KeyModifiers::SHIFT,
                         ..
                     } => {
-                        command_bar.borrow_mut().handle_edit_command(Edit::Insert(c));
-                        None
+                        Some(EditorCommand::UpdateCommandBar(Edit::Insert(c)))
                     }
                     KeyEvent {
                         code: KeyCode::Backspace,
                         modifiers: KeyModifiers::NONE,
                         ..
                     } => {
-                        command_bar.borrow_mut().handle_edit_command(Edit::DeleteBackward);
-                        None
+                        Some(EditorCommand::UpdateCommandBar(Edit::DeleteBackward))
                     }
                     KeyEvent {
                         code: KeyCode::Delete,

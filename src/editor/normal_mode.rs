@@ -1,6 +1,8 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{Edit, EditorCommand, FocusDirection, Mode, ModeType, Normal, Operator, PromptType, TextObject};
+use super::{uicomponents::CommandBar, Edit, EditorCommand, FocusDirection, InputModeType, InputType, Mode, ModeType, Normal, Operator, TextObject};
 
 pub struct NormalMode;
 
@@ -15,6 +17,7 @@ impl Mode for NormalMode {
         &mut self,
         event: KeyEvent,
         command_buffer: &mut String,
+        _command_bar: Rc<RefCell<CommandBar>>
     ) -> Option<EditorCommand> {
         match event {
             KeyEvent {
@@ -46,7 +49,7 @@ impl Mode for NormalMode {
                 code: KeyCode::Char(':'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => Some(EditorCommand::SwitchMode(ModeType::Command)),
+            } => Some(EditorCommand::SwitchMode(ModeType::Input(InputType::Command, InputModeType::Insert))),
             KeyEvent {
                 code: KeyCode::Char('s'),
                 modifiers: KeyModifiers::CONTROL,
@@ -56,7 +59,7 @@ impl Mode for NormalMode {
                 code: KeyCode::Char('f'),
                 modifiers: KeyModifiers::CONTROL,
                 ..
-            } => Some(EditorCommand::SetPrompt(PromptType::Search)),
+            } => Some(EditorCommand::SetPrompt(InputType::Search)),
             KeyEvent {
                 code: KeyCode::Char('0'),
                 modifiers: KeyModifiers::NONE,
@@ -280,7 +283,7 @@ impl Mode for NormalMode {
                 code: KeyCode::Char('/'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => Some(EditorCommand::SetPrompt(PromptType::Search)),
+            } => Some(EditorCommand::SetPrompt(InputType::Search)),
             KeyEvent {
                 code: KeyCode::Char('n'),
                 modifiers: KeyModifiers::NONE,

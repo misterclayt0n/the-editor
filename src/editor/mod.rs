@@ -1,30 +1,22 @@
 use crate::prelude::*;
-use command_mode::CommandMode;
-use command_normal_mode::CommandNormalMode;
 use crossterm::event::{read, Event, KeyEvent};
 use dirs::home_dir;
+use input_mode::InputMode;
 use insert_mode::InsertMode;
 use normal_mode::NormalMode;
-use prompt_mode::PromptMode;
 use visual_line_mode::VisualLineMode;
 use visual_mode::VisualMode;
 use window::{SplitDirection, Window};
 
-use core::fmt;
 use std::{
-    env,
-    io::Error,
-    panic::{set_hook, take_hook},
-    path::PathBuf,
+    cell::RefCell, env, io::Error, panic::{set_hook, take_hook}, path::PathBuf, rc::Rc
 };
 
 mod color_scheme;
-mod command_mode;
-mod command_normal_mode;
 mod documentstatus;
+mod input_mode;
 mod insert_mode;
 mod normal_mode;
-mod prompt_mode;
 mod terminal;
 mod uicomponents;
 mod visual_line_mode;
@@ -35,108 +27,12 @@ use documentstatus::DocumentStatus;
 use terminal::Terminal;
 use uicomponents::{CommandBar, MessageBar, StatusBar, UIComponent, View};
 
-const QUIT_TIMES: u8 = 3;
-
-#[derive(Clone, Copy, PartialEq)]
-enum Operator {
-    Delete,
-    Change,
-    Yank, // TODO
-}
-
-#[derive(Clone, Copy)]
-enum TextObject {
-    Inner(char), // represents 'i' followed by a delimiter, like '('
-}
-
-#[derive(Clone, Copy)]
-pub enum Normal {
-    PageUp,
-    PageDown,
-    StartOfLine,
-    FirstCharLine,
-    EndOfLine,
-    Up,
-    Left,
-    LeftAfterDeletion,
-    Right,
-    Down,
-    WordForward,
-    WordBackward,
-    BigWordForward,
-    BigWordBackward,
-    WordEndForward,
-    BigWordEndForward,
-    GoToTop,
-    GoToBottom,
-    AppendRight,
-    InsertAtLineStart,
-    InsertAtLineEnd,
-}
-
-#[derive(Clone, Copy)]
-pub enum Edit {
-    Insert(char),
-    InsertNewline,
-    Delete,
-    DeleteBackward,
-    SubstituteChar,
-    ChangeLine,
-    SubstitueSelection,
-    InsertNewlineBelow,
-    InsertNewlineAbove,
-}
-
-#[derive(Eq, PartialEq, Default, Debug, Clone, Copy)]
-enum PromptType {
-    Search,
-    Save,
-    Command,
-    FindFile,
-    #[default]
-    None,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModeType {
-    Normal,
-    Insert,
-    Visual,
-    VisualLine,
-    Command,
-    CommandNormal,
-    Prompt(PromptType),
-}
-
-impl fmt::Display for ModeType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ModeType::Insert => write!(f, "INSERT"),
-            ModeType::Normal => write!(f, "NORMAL"),
-            ModeType::Visual => write!(f, "VISUAL"),
-            ModeType::VisualLine => write!(f, "VISUAL LINE"),
-            ModeType::Command => write!(f, "COMMAND"),
-            ModeType::CommandNormal => write!(f, "COMMAND NORMAL"),
-            ModeType::Prompt(prompt_type) => match prompt_type {
-                PromptType::Search => write!(f, "SEARCH"),
-                PromptType::Save => write!(f, "SAVE"),
-                _ => write!(f, "PROMPT"),
-            },
-        }
-    }
-}
-
-impl Default for ModeType {
-    fn default() -> Self {
-        ModeType::Normal
-    }
-}
-
 trait Mode {
     fn handle_event(
         &mut self,
         event: KeyEvent,
         command_buffer: &mut String,
+        command_bar: Rc<RefCell<CommandBar>>,
     ) -> Option<EditorCommand>;
     fn enter(&mut self) -> Vec<EditorCommand>;
     fn exit(&mut self) -> Vec<EditorCommand>;
@@ -149,7 +45,7 @@ enum EditorCommand {
     SwitchToNormalFromInserion,
     HandleQuitCommand,
     HandleSaveCommand,
-    SetPrompt(PromptType),
+    SetPrompt(InputType),
     ResetQuitTimes,
     UpdateInsertionPoint,
     UpdateMessage(String),
@@ -182,21 +78,9 @@ enum EditorCommand {
     OperatorTextObject(Operator, TextObject),
     VisualSelectTextObject(TextObject),
     ExecuteCommand,
-    MoveCommandBarCursorLeft,
-    MoveCommandBarCursorRight,
-    MoveCommandBarCursorStart,
-    MoveCommandBarCursorEnd,
-    AppendRightCommandBar,
-    AppendStartCommandBar,
-    AppendEndCommandBar,
-    MoveCommandBarWordForward(WordType),
-    MoveCommandBarWordEnd(WordType),
-    MoveCommandBarWordBackward(WordType),
     Split(SplitDirection),
     CloseWindow,
     Focus(FocusDirection),
-    OpenFileFromPrompt,
-    RestorePreviousPrompt,
 }
 
 pub struct Editor {
@@ -205,17 +89,13 @@ pub struct Editor {
     active_window: usize,
     status_bar: StatusBar,
     message_bar: MessageBar,
-    command_bar: CommandBar,
+    command_bar: Rc<RefCell<CommandBar>>,
     terminal_size: Size,
     title: String,
     quit_times: u8,
     current_mode: ModeType,
     current_mode_impl: Box<dyn Mode>,
-    prompt_type: PromptType,
     command_buffer: String,
-    prev_prompt_type: Option<PromptType>,
-    prev_command_bar_value: Option<String>,
-    prev_command_bar_cursor_position: Option<usize>,
 }
 
 impl Editor {
@@ -234,6 +114,7 @@ impl Editor {
         Terminal::init()?;
         let size = Terminal::size().unwrap_or_default();
         let initial_window = Window::new(Position { row: 0, col: 0 }, size, View::default());
+        let command_bar = Rc::new(RefCell::new(CommandBar::default()));
 
         let mut editor = Self {
             should_quit: false,
@@ -241,17 +122,13 @@ impl Editor {
             active_window: 0,
             status_bar: StatusBar::default(),
             message_bar: MessageBar::default(),
-            command_bar: CommandBar::default(),
+            command_bar: command_bar.clone(),
             terminal_size: Size::default(),
             title: String::new(),
             quit_times: 0,
             current_mode: ModeType::Normal,
             current_mode_impl: Box::new(NormalMode::new()),
-            prompt_type: PromptType::None,
             command_buffer: String::new(),
-            prev_prompt_type: None,
-            prev_command_bar_value: None,
-            prev_command_bar_cursor_position: None,
         };
         editor.handle_resize_command(size);
 
@@ -286,7 +163,7 @@ impl Editor {
                     if let Event::Key(key_event) = event {
                         if let Some(command) = self
                             .current_mode_impl
-                            .handle_event(key_event, &mut self.command_buffer)
+                            .handle_event(key_event, &mut self.command_buffer, self.command_bar.clone())
                         {
                             self.execute_command(command);
                         }
@@ -315,8 +192,32 @@ impl Editor {
                 self.active_view_mut().handle_normal_command(direction);
             }
             EditorCommand::ExecuteCommand => {
-                let command_text = self.command_bar.value();
-                self.handle_command_input(&command_text);
+                if let ModeType::Input(input_type, _) = self.current_mode {
+                    match input_type {
+                        InputType::Search => {
+                            let query = self.command_bar.borrow().value();
+                            self.active_view_mut().search(&query);
+                            self.switch_mode(ModeType::Normal);
+                        },
+                        InputType::FindFile => {
+                            let file_path = self.command_bar.borrow().value();
+                            self.open_file_in_current_window(&file_path);
+                            self.switch_mode(ModeType::Normal);
+                        },
+                        InputType::Save => {
+                            let file_name = self.command_bar.borrow().value();
+                            self.save(Some(&file_name));
+                            self.switch_mode(ModeType::Normal);
+                        },
+                        InputType::Command => {
+                            let command_text = self.command_bar.borrow().value();
+                            self.handle_command_input(&command_text);
+                        },
+                    }
+                } else {
+                    let command_text = self.command_bar.borrow().value();
+                    self.handle_command_input(&command_text);
+                }
             }
             EditorCommand::VisualSelectTextObject(text_object) => {
                 self.switch_mode(ModeType::Visual);
@@ -357,9 +258,9 @@ impl Editor {
             EditorCommand::HandleSaveCommand => {
                 self.handle_save_command();
             }
-            EditorCommand::SetPrompt(prompt_type) => {
-                self.set_prompt(prompt_type);
-                self.switch_mode(ModeType::Prompt(prompt_type));
+            EditorCommand::SetPrompt(input_type) => {
+                self.set_prompt(Some(input_type));
+                self.switch_mode(ModeType::Input(input_type, InputModeType::Insert));
             }
             EditorCommand::ResetQuitTimes => {
                 self.reset_quit_times();
@@ -396,14 +297,14 @@ impl Editor {
                 self.handle_resize_command(size);
             }
             EditorCommand::UpdateCommandBar(edit) => {
-                self.command_bar.handle_edit_command(edit);
-                if let PromptType::Search = self.prompt_type {
-                    let query = self.command_bar.value();
+                self.command_bar.borrow_mut().handle_edit_command(edit);
+                if let ModeType::Input(InputType::Search, _) = self.current_mode {
+                    let query = self.command_bar.borrow().value();
                     self.active_view_mut().search(&query);
                 }
             }
             EditorCommand::PerformSearch(_) => {
-                let query = self.command_bar.value();
+                let query = self.command_bar.borrow().value();
                 self.active_view_mut().search(&query);
             }
             EditorCommand::ClearSelection => {
@@ -461,43 +362,10 @@ impl Editor {
                 self.active_view_mut().handle_visual_movement(direction);
                 self.mark_all_views_needing_redraw();
             }
-            EditorCommand::MoveCommandBarCursorLeft => {
-                self.command_bar.move_cursor_left();
-            }
-            EditorCommand::MoveCommandBarCursorRight => {
-                self.command_bar.move_cursor_right();
-            }
-            EditorCommand::MoveCommandBarCursorStart => {
-                self.command_bar.move_cursor_start();
-            }
-            EditorCommand::MoveCommandBarCursorEnd => {
-                self.command_bar.move_cursor_end();
-            }
-            EditorCommand::AppendRightCommandBar => {
-                self.command_bar.move_cursor_right();
-                self.switch_mode(ModeType::Command)
-            }
-            EditorCommand::AppendStartCommandBar => {
-                self.command_bar.move_cursor_start();
-                self.switch_mode(ModeType::Command);
-            }
-            EditorCommand::AppendEndCommandBar => {
-                self.command_bar.move_cursor_end();
-                self.switch_mode(ModeType::Command);
-            }
             EditorCommand::HandleVisualLineMovement(direction) => {
                 self.active_view_mut()
                     .handle_visual_line_movement(direction);
                 self.mark_all_views_needing_redraw();
-            }
-            EditorCommand::MoveCommandBarWordForward(word_type) => {
-                self.command_bar.move_cursor_word_forward(word_type);
-            }
-            EditorCommand::MoveCommandBarWordBackward(word_type) => {
-                self.command_bar.move_cursor_word_backward(word_type);
-            }
-            EditorCommand::MoveCommandBarWordEnd(word_type) => {
-                self.command_bar.move_cursor_word_end_forward(word_type);
             }
             EditorCommand::Split(direction) => {
                 self.split_current_window(direction);
@@ -506,24 +374,6 @@ impl Editor {
                 self.close_current_window();
             }
             EditorCommand::Focus(direction) => self.focus(direction),
-            EditorCommand::OpenFileFromPrompt => {
-                let file_path = self.command_bar.value();
-                self.open_file_in_current_window(&file_path);
-                self.switch_mode(ModeType::Normal);
-            }
-            EditorCommand::RestorePreviousPrompt => {
-                if let Some(prev_prompt) = self.prev_prompt_type {
-                    self.switch_mode(ModeType::Prompt(prev_prompt));
-                    if let Some(prev_value) = self.prev_command_bar_value.take() {
-                        self.command_bar.set_value(prev_value);
-                    }
-                    if let Some(prev_cursor_pos) = self.prev_command_bar_cursor_position.take() {
-                        self.command_bar.set_cursor_position(prev_cursor_pos);
-                    }
-                } else {
-                    self.switch_mode(ModeType::Normal);
-                }
-            }
         }
     }
 
@@ -536,7 +386,7 @@ impl Editor {
         let _ = Terminal::hide_cursor();
 
         if self.in_prompt() {
-            self.command_bar.render(Position {
+            self.command_bar.borrow_mut().render(Position {
                 col: 0,
                 row: bottom_bar_row,
             });
@@ -588,7 +438,7 @@ impl Editor {
         let new_cursor_position = if self.in_prompt() {
             Position {
                 row: bottom_bar_row,
-                col: self.command_bar.cursor_position_col(),
+                col: self.command_bar.borrow().cursor_position_col(),
             }
         } else {
             let active_window = &self.windows[self.active_window];
@@ -624,17 +474,10 @@ impl Editor {
             self.execute_command(command);
         }
 
-        // update prompt when change mode
-        match mode {
-            ModeType::Command => {
-                self.set_prompt(PromptType::Command);
-            }
-            ModeType::Prompt(prompt_type) => {
-                self.set_prompt(prompt_type);
-            }
-            _ => {
-                self.set_prompt(PromptType::None);
-            }
+        if let ModeType::Input(input_type, _) = mode {
+            self.set_prompt(Some(input_type));
+        } else {
+            self.set_prompt(None);
         }
 
         // set the current mode type
@@ -649,9 +492,9 @@ impl Editor {
             ModeType::Insert => Box::new(InsertMode::new()),
             ModeType::Visual => Box::new(VisualMode::new()),
             ModeType::VisualLine => Box::new(VisualLineMode::new()),
-            ModeType::Command => Box::new(CommandMode::new()),
-            ModeType::CommandNormal => Box::new(CommandNormalMode::new()),
-            ModeType::Prompt(prompt_type) => Box::new(PromptMode::new(prompt_type)),
+            ModeType::Input(input_type, input_mode) => {
+                Box::new(InputMode::new(input_type, input_mode))
+            }
         };
 
         // enter the new mode
@@ -675,49 +518,46 @@ impl Editor {
                 self.execute_command(EditorCommand::Save);
                 self.switch_mode(ModeType::Normal);
                 self.update_message("File saved");
-                self.command_bar.clear_value();
+                self.command_bar.borrow_mut().clear_value();
             }
             "q" | "Q" => {
                 self.execute_command(EditorCommand::Quit);
-                self.command_bar.clear_value();
+                self.command_bar.borrow_mut().clear_value();
             }
             "wq" | "qw" | "Wq" | "Qw" | "WQ" | "QW" => {
                 self.execute_command(EditorCommand::Save);
                 self.execute_command(EditorCommand::Quit);
-                self.command_bar.clear_value();
+                self.command_bar.borrow_mut().clear_value();
             }
             "split" => {
                 self.execute_command(EditorCommand::Split(SplitDirection::Horizontal));
                 self.switch_mode(ModeType::Normal);
-                self.update_message("Horizontal split motherfucker");
-                self.command_bar.clear_value();
+                self.command_bar.borrow_mut().clear_value();
             }
             "vsplit" => {
                 self.execute_command(EditorCommand::Split(SplitDirection::Vertical));
                 self.switch_mode(ModeType::Normal);
-                self.update_message("Vertical split motherfucker");
-                self.command_bar.clear_value();
+                self.command_bar.borrow_mut().clear_value();
             }
             "find" => {
-                self.set_prompt(PromptType::FindFile);
-                self.switch_mode(ModeType::Prompt(PromptType::FindFile));
+                self.switch_mode(ModeType::Input(InputType::FindFile, InputModeType::Insert));
             }
             "close" => {
                 self.execute_command(EditorCommand::CloseWindow);
                 self.switch_mode(ModeType::Normal);
-                self.command_bar.clear_value();
+                self.command_bar.borrow_mut().clear_value();
             }
             _ => {
                 self.update_message(&format!("Unknown command ma man: {}", input));
                 self.switch_mode(ModeType::Normal);
-                self.command_bar.clear_value();
+                self.command_bar.borrow_mut().clear_value();
             }
         }
     }
 
     fn focus(&mut self, direction: FocusDirection) {
         if self.windows.len() < 2 {
-            self.update_message("Apenas uma janela está aberta.");
+            self.update_message("Only one window open");
             return;
         }
 
@@ -861,7 +701,7 @@ impl Editor {
         };
         self.message_bar.resize(bar_size);
         self.status_bar.resize(bar_size);
-        self.command_bar.resize(bar_size);
+        self.command_bar.borrow_mut().resize(bar_size);
 
         self.set_needs_redraw(true);
     }
@@ -898,8 +738,8 @@ impl Editor {
         if self.active_view_mut().is_file_loaded() {
             self.save(None);
         } else {
-            self.set_prompt(PromptType::Save);
-            self.switch_mode(ModeType::Prompt(PromptType::Save));
+            self.set_prompt(Some(InputType::Save));
+            self.switch_mode(ModeType::Input(InputType::Save, InputModeType::Normal));
         }
     }
 
@@ -929,45 +769,42 @@ impl Editor {
     //
 
     fn in_prompt(&self) -> bool {
-        matches!(
-            self.current_mode,
-            ModeType::Prompt(_) | ModeType::Command | ModeType::CommandNormal
-        )
+        matches!(self.current_mode, ModeType::Input(_, _))
     }
 
-    fn set_prompt(&mut self, prompt_type: PromptType) {
-        if self.prompt_type != prompt_type {
-            match prompt_type {
-                PromptType::None => self.message_bar.set_needs_redraw(true),
-                PromptType::Save => {
-                    self.command_bar.set_prompt("Save as: ");
-                    self.command_bar.clear_value();
+    fn set_prompt(&mut self, input_type: Option<InputType>) {
+        if let Some(input_type) = input_type {
+            match input_type {
+                InputType::Save => {
+                    self.command_bar.borrow_mut().set_prompt("Save as: ");
+                    self.command_bar.borrow_mut().clear_value();
                 }
-                PromptType::Search => {
-                    self.command_bar.set_prompt("Search: ");
-                    self.command_bar.clear_value();
+                InputType::Search => {
+                    self.command_bar.borrow_mut().set_prompt("Search: ");
+                    self.command_bar.borrow_mut().clear_value();
                 }
-                PromptType::Command => {
-                    self.command_bar.set_prompt(":");
-                    // self.command_bar.clear_value();
+                InputType::Command => {
+                    self.command_bar.borrow_mut().set_prompt(":");
+                    self.command_bar.borrow_mut().clear_value();
                 }
-                PromptType::FindFile => {
-                    self.command_bar.set_prompt("Find File: ");
+                InputType::FindFile => {
+                    self.command_bar.borrow_mut().set_prompt("Find File: ");
 
                     // let initial_value = self.get_current_file_directory();
 
-                    let initial_value = self.get_current_file_directory().unwrap_or_else(|| {
-                        match env::current_dir() {
-                            Ok(current_dir) => path_relative_to_home(&current_dir),
-                            Err(_) => String::from("~/"),
-                        }
-                    });
-                    self.command_bar.set_value(initial_value);
+                    let initial_value =
+                        self.get_current_file_directory().unwrap_or_else(
+                            || match env::current_dir() {
+                                Ok(current_dir) => path_relative_to_home(&current_dir),
+                                Err(_) => String::from("~/"),
+                            },
+                        );
+                    self.command_bar.borrow_mut().set_value(initial_value);
                 }
             }
+        } else {
+            self.message_bar.set_needs_redraw(true);
         }
-
-        self.prompt_type = prompt_type;
     }
 
     //
@@ -1055,14 +892,12 @@ impl Editor {
         match self.active_view_mut().load(&expanded_path) {
             Ok(_) => {
                 self.update_message(&format!("Opened file: {}", expanded_path));
-                log(&format!("Opened file: {}", expanded_path));
             }
             Err(err) => {
                 self.update_message(&format!("Error opening file: {}", err));
-                log(&format!("Error opening file: {}", err));
             }
         }
-        self.command_bar.clear_value();
+        self.command_bar.borrow_mut().clear_value();
         self.mark_all_views_needing_redraw();
     }
 
@@ -1101,16 +936,13 @@ impl Editor {
         if let Some(current_file_path) = self.active_view().buffer.borrow().file_info.get_path() {
             if let Some(parent_dir) = current_file_path.parent() {
                 let dir = path_relative_to_home(&PathBuf::from(parent_dir));
-                log(&format!("Diretório relativo ao Home: {}", dir));
                 Some(dir)
             } else {
-                // Se o arquivo não tiver um diretório pai, retornar o diretório Home
+                // if the file has no "father" directory, return Home
                 let home = path_relative_to_home(&home_dir().unwrap_or(PathBuf::from("~/")));
-                log(&format!("Arquivo na raiz. Usando Home: {}", home));
                 Some(home)
             }
         } else {
-            log("Nenhum arquivo aberto. Usando diretório de trabalho atual.");
             None
         }
     }

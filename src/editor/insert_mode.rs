@@ -1,6 +1,8 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{Edit, EditorCommand, Mode};
+use super::{uicomponents::CommandBar, Edit, EditorCommand, Mode};
 
 pub struct InsertMode;
 
@@ -15,6 +17,7 @@ impl Mode for InsertMode {
         &mut self,
         event: KeyEvent,
         _command_buffer: &mut String,
+        _command_bar: Rc<RefCell<CommandBar>>
     ) -> Option<EditorCommand> {
         match event {
             KeyEvent {

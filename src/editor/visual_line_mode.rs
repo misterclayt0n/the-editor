@@ -1,8 +1,10 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::prelude::SelectionMode;
 
-use super::{Edit, EditorCommand, Mode, ModeType, Normal};
+use super::{uicomponents::CommandBar, Edit, EditorCommand, Mode, ModeType, Normal};
 
 pub struct VisualLineMode;
 
@@ -17,6 +19,7 @@ impl Mode for VisualLineMode {
         &mut self,
         event: KeyEvent,
         command_buffer: &mut String,
+        _command_bar: Rc<RefCell<CommandBar>>
     ) -> Option<EditorCommand> {
         match event {
             KeyEvent {

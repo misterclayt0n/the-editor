@@ -1,10 +1,12 @@
-use std::{cmp::Ordering, fs::OpenOptions, sync::Mutex};
+use core::fmt;
 use lazy_static::lazy_static;
 use std::io::Write;
+use std::{cmp::Ordering, fs::OpenOptions, sync::Mutex};
 
 pub const NAME: &str = "the-editor";
 pub const VERSION: &str = "0.0.1";
 pub const TAB_WIDTH: usize = 4;
+pub const QUIT_TIMES: u8 = 3;
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq)]
 pub struct Location {
@@ -101,4 +103,104 @@ pub fn log(message: &str) {
         .open("editor.log")
         .unwrap_or_else(|_| panic!("Could not open log file."));
     writeln!(file, "{}", message).unwrap_or_else(|_| panic!("Could not write to log file."));
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum Operator {
+    Delete,
+    Change,
+    Yank, // TODO
+}
+
+#[derive(Clone, Copy)]
+pub enum TextObject {
+    Inner(char), // represents 'i' followed by a delimiter, like '('
+}
+
+#[derive(Clone, Copy)]
+pub enum Normal {
+    PageUp,
+    PageDown,
+    StartOfLine,
+    FirstCharLine,
+    EndOfLine,
+    Up,
+    Left,
+    LeftAfterDeletion,
+    Right,
+    Down,
+    WordForward,
+    WordBackward,
+    BigWordForward,
+    BigWordBackward,
+    WordEndForward,
+    BigWordEndForward,
+    GoToTop,
+    GoToBottom,
+    AppendRight,
+    InsertAtLineStart,
+    InsertAtLineEnd,
+}
+
+#[derive(Clone, Copy)]
+pub enum Edit {
+    Insert(char),
+    InsertNewline,
+    Delete,
+    DeleteBackward,
+    SubstituteChar,
+    ChangeLine,
+    SubstitueSelection,
+    InsertNewlineBelow,
+    InsertNewlineAbove,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputType {
+    Command,
+    Search,
+    Save,
+    FindFile,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputModeType {
+    Insert,
+    Normal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModeType {
+    Normal,
+    Insert,
+    Visual,
+    VisualLine,
+    Input(InputType, InputModeType),
+}
+
+impl fmt::Display for ModeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ModeType::Insert => write!(f, "INSERT"),
+            ModeType::Normal => write!(f, "NORMAL"),
+            ModeType::Visual => write!(f, "VISUAL"),
+            ModeType::VisualLine => write!(f, "VISUAL LINE"),
+            ModeType::Input(input_type, _) => {
+                let input_str = match input_type {
+                    InputType::Command => "COMMAND",
+                    InputType::Search => "SEARCH",
+                    InputType::Save => "SAVE",
+                    InputType::FindFile => "FIND FILE",
+                };
+
+                write!(f, "{}", input_str)
+            }
+        }
+    }
+}
+
+impl Default for ModeType {
+    fn default() -> Self {
+        ModeType::Normal
+    }
 }

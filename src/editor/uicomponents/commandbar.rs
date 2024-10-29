@@ -6,7 +6,7 @@ use super::UIComponent;
 use crate::editor::Edit;
 use crate::prelude::*;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CommandBar {
     prompt: String,
     value: String,

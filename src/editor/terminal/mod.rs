@@ -1,6 +1,6 @@
 use crossterm::cursor::{Hide, MoveTo, Show};
 
-use crossterm::style::{Attribute, Color, SetForegroundColor};
+use crossterm::style::{Attribute, Color, SetAttribute, SetForegroundColor};
 use crossterm::style::{
     Attribute::{Reset, Reverse},
     Print, ResetColor, SetBackgroundColor,
@@ -11,9 +11,9 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
 };
 
+use super::{Position, Size};
 use crossterm::{queue, Command};
 use std::io::{stdout, Error, Write};
-use super::{Position, Size};
 
 pub struct Terminal;
 
@@ -148,5 +148,15 @@ impl Terminal {
         styled.push_str(text);
         styled.push_str(&format!("{}", ResetColor));
         styled
+    }
+
+    pub fn set_attribute(atribute: Attribute) -> Result<(), Error> {
+        Self::queue_command(SetAttribute(atribute))?;
+        Ok(())
+    }
+
+    pub fn reset_attributes() -> Result<(), Error> {
+        Self::queue_command(SetAttribute(Attribute::Reset))?;
+        Ok(())
     }
 }

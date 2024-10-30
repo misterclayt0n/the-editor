@@ -310,6 +310,11 @@ impl Mode for NormalMode {
                 ..
             } => Some(EditorCommand::CloseWindow),
             KeyEvent {
+                code: KeyCode::Char('d'),
+                modifiers: KeyModifiers::ALT,
+                ..
+            } => Some(EditorCommand::AddCursorInCurrentLocation),
+            KeyEvent {
                 code: KeyCode::Char('k'),
                 modifiers: KeyModifiers::CONTROL,
                 ..

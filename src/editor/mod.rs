@@ -10,9 +10,15 @@ use visual_mode::VisualMode;
 use window::{SplitDirection, Window};
 
 use std::{
-    cell::RefCell, env, io::Error, panic::{set_hook, take_hook}, path::PathBuf, rc::Rc
+    cell::RefCell,
+    env,
+    io::Error,
+    panic::{set_hook, take_hook},
+    path::PathBuf,
+    rc::Rc,
 };
 
+mod buffer_manager;
 mod color_scheme;
 mod documentstatus;
 mod input_mode;
@@ -23,7 +29,6 @@ mod uicomponents;
 mod visual_line_mode;
 mod visual_mode;
 mod window;
-mod buffer_manager;
 
 use documentstatus::DocumentStatus;
 use terminal::Terminal;
@@ -83,7 +88,9 @@ enum EditorCommand {
     Split(SplitDirection),
     CloseWindow,
     Focus(FocusDirection),
-    Replace(String, String)
+    Replace(String, String),
+    AddCursor(Location),
+    AddCursorInCurrentLocation
 }
 
 pub struct Editor {
@@ -147,7 +154,10 @@ impl Editor {
                 Ok(buffer_rc) => {
                     editor.active_view_mut().buffer = buffer_rc.clone();
                     if editor.active_view_mut().load(&expanded_path).is_err() {
-                        editor.update_message(&format!("ERROR: Could not open file: {}", expanded_path));
+                        editor.update_message(&format!(
+                            "ERROR: Could not open file: {}",
+                            expanded_path
+                        ));
                     } else {
                         editor.update_message(&format!("File opened: {}", expanded_path));
                     }
@@ -177,10 +187,11 @@ impl Editor {
             match read() {
                 Ok(event) => {
                     if let Event::Key(key_event) = event {
-                        if let Some(command) = self
-                            .current_mode_impl
-                            .handle_event(key_event, &mut self.command_buffer, self.command_bar.clone())
-                        {
+                        if let Some(command) = self.current_mode_impl.handle_event(
+                            key_event,
+                            &mut self.command_buffer,
+                            self.command_bar.clone(),
+                        ) {
                             self.execute_command(command);
                         }
                     } else if let Event::Resize(width_u16, height_u16) = event {
@@ -214,29 +225,35 @@ impl Editor {
                             let query = self.command_bar.borrow().value();
                             self.active_view_mut().search(&query);
                             self.switch_mode(ModeType::Normal);
-                        },
+                        }
                         InputType::FindFile => {
                             let file_path = self.command_bar.borrow().value();
                             self.open_file_in_current_window(&file_path);
                             self.switch_mode(ModeType::Normal);
-                        },
+                        }
                         InputType::Save => {
                             let file_name = self.command_bar.borrow().value();
                             self.save(Some(&file_name));
                             self.switch_mode(ModeType::Normal);
-                        },
+                        }
                         InputType::Command => {
                             let command_text = self.command_bar.borrow().value();
                             self.handle_command_input(&command_text);
-                        },
+                        }
                         InputType::Replace => {
                             let query = self.command_bar.borrow().value();
                             self.active_view_mut().search(&query);
-                            self.switch_mode(ModeType::Input(InputType::ReplaceFor(query), InputModeType::Insert));
+                            self.switch_mode(ModeType::Input(
+                                InputType::ReplaceFor(query),
+                                InputModeType::Insert,
+                            ));
                         }
                         InputType::ReplaceFor(target) => {
                             let replacement = self.command_bar.borrow().value();
-                            self.execute_command(EditorCommand::Replace(target.to_owned(), replacement));
+                            self.execute_command(EditorCommand::Replace(
+                                target.to_owned(),
+                                replacement,
+                            ));
                             self.switch_mode(ModeType::Normal);
                         }
                     }
@@ -324,7 +341,9 @@ impl Editor {
             }
             EditorCommand::UpdateCommandBar(edit) => {
                 self.command_bar.borrow_mut().handle_edit_command(edit);
-                if let ModeType::Input(InputType::Search | InputType::Replace, _) = self.current_mode {
+                if let ModeType::Input(InputType::Search | InputType::Replace, _) =
+                    self.current_mode
+                {
                     let query = self.command_bar.borrow().value();
                     self.active_view_mut().search(&query);
                 }
@@ -402,6 +421,13 @@ impl Editor {
             EditorCommand::Focus(direction) => self.focus(direction),
             EditorCommand::Replace(target, replacement) => {
                 self.active_view_mut().replace(&target, &replacement);
+            }
+            EditorCommand::AddCursor(location) => {
+                self.active_view_mut().add_cursor(location);
+            }
+            EditorCommand::AddCursorInCurrentLocation => {
+                let location = self.active_view().movement.text_location;
+                self.active_view_mut().add_cursor(location);
             }
         }
     }
@@ -485,7 +511,8 @@ impl Editor {
     fn refresh_status(&mut self) {
         let status = self.active_view_mut().get_status();
         let title = format!("{} - {NAME}", status.file_name);
-        self.status_bar.update_status(status, self.current_mode.clone());
+        self.status_bar
+            .update_status(status, self.current_mode.clone());
 
         if title != self.title && matches!(Terminal::set_title(&title), Ok(())) {
             self.title = title;
@@ -581,6 +608,16 @@ impl Editor {
             }
             "search" => {
                 self.switch_mode(ModeType::Input(InputType::Search, InputModeType::Insert));
+            }
+            "add cursor" => {
+                // MOCK
+                let mock_location = Location {
+                    line_index: 0,
+                    grapheme_index: 5,
+                };
+                self.execute_command(EditorCommand::AddCursor(mock_location));
+                self.switch_mode(ModeType::Normal);
+                self.command_bar.borrow_mut().clear_value();
             }
             _ => {
                 self.update_message(&format!("Unknown command ma man: {}", input));
@@ -822,7 +859,9 @@ impl Editor {
                     self.command_bar.borrow_mut().clear_value();
                 }
                 InputType::Replace => {
-                    self.command_bar.borrow_mut().set_prompt("Find to replace: ");
+                    self.command_bar
+                        .borrow_mut()
+                        .set_prompt("Find to replace: ");
                     self.command_bar.borrow_mut().clear_value();
                 }
                 InputType::ReplaceFor(_) => {

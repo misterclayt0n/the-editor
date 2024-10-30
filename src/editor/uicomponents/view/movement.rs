@@ -8,6 +8,8 @@ use super::buffer::Buffer;
 pub struct Movement {
     pub text_location: Location,
     pub desired_col: usize,
+    // TODO: implement virtual cursor movement
+    pub cursors: Vec<Location>
 }
 
 impl Movement {
@@ -182,6 +184,7 @@ impl Default for Movement {
                 grapheme_index: 0,
             },
             desired_col: 0,
+            cursors: Vec::new(),
         }
     }
 }

@@ -15,6 +15,7 @@ use super::super::{DocumentStatus, Terminal};
 use super::UIComponent;
 pub mod buffer;
 pub use buffer::Buffer;
+use crossterm::style::Attribute;
 use movement::Movement;
 mod fileinfo;
 use fileinfo::FileInfo;
@@ -40,14 +41,14 @@ pub struct View {
     pub buffer: Rc<RefCell<Buffer>>,
     pub needs_redraw: bool,
     pub size: Size,
-    pub movement: Movement,
     pub scroll_offset: Position,
     pub search_info: Option<SearchInfo>,
     pub last_search_query: Option<String>,
+    pub rendered_lines: Vec<String>,
+    pub movement: Movement,
     pub selection_start: Option<Location>,
     pub selection_end: Option<Location>,
     pub selection_mode: Option<SelectionMode>,
-    pub rendered_lines: Vec<String>,
 }
 
 impl View {
@@ -223,6 +224,7 @@ impl View {
             .borrow_mut()
             .file_info
             .set_path(Some(path.clone()));
+
         Ok(())
     }
 
@@ -1041,6 +1043,60 @@ impl View {
     // Rendering
     //
 
+    fn render_cursors(&self, origin: Position) -> Result<(), Error> {
+        for cursor in &self.movement.cursors {
+            // calculate position of the screen
+            let screen_row = cursor
+                .line_index
+                .saturating_sub(self.scroll_offset.row)
+                .saturating_add(origin.row);
+            let screen_col = self
+                .expand_tabs_before_index(cursor.grapheme_index, cursor.line_index)
+                .saturating_sub(self.scroll_offset.col)
+                .saturating_add(origin.col);
+
+            // check if the cursor is within a visible area
+            if screen_row >= origin.row
+                && screen_row < origin.row + self.size.height
+                && screen_col >= origin.col
+                && screen_col < origin.col + self.size.width
+            {
+                // move cursor to the position in the screen
+                Terminal::move_cursor_to(Position {
+                    row: screen_row,
+                    col: screen_col,
+                })?;
+
+                // get the char at the cursor position
+                let character = self.get_character_at(cursor);
+
+                // aplly Reverse attribute and print the char
+                Terminal::set_attribute(Attribute::Reverse)?;
+                Terminal::print(&character)?;
+                Terminal::reset_attributes()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn get_character_at(&self, location: &Location) -> String {
+        let buffer = self.buffer.borrow();
+
+        if location.line_index < buffer.rope.len_lines() {
+            let line = buffer.rope.line(location.line_index);
+            let binding = line.to_string();
+            let graphemes: Vec<&str> = binding.graphemes(true).collect();
+
+            if location.grapheme_index < graphemes.len() {
+                graphemes[location.grapheme_index].to_string()
+            } else {
+                " ".to_string()
+            }
+        } else {
+            " ".to_string()
+        }
+    }
+
     fn get_rendered_line(&self, line_idx: usize, width: usize) -> Result<String, Error> {
         let binding = self.buffer.borrow();
         let line_slice = binding.rope.line(line_idx);
@@ -1229,7 +1285,6 @@ impl View {
 
             idx = end;
         }
-
         // resulting text after highlight
         if idx < total_graphemes {
             let remaining_text = graphemes[idx..].concat();
@@ -1677,6 +1732,35 @@ impl View {
         }
         expanded_width
     }
+
+    //
+    // Multi cursors
+    //
+
+    pub fn add_cursor(&mut self, location: Location) {
+        if !self.movement.cursors.contains(&location) {
+            self.movement.cursors.push(location);
+            self.set_needs_redraw(true);
+        }
+    }
+
+    pub fn remove_cursor(&mut self, location: &Location) {
+        self.movement.cursors.retain(|cursor| cursor != location);
+        self.set_needs_redraw(true);
+    }
+
+    pub fn clear_cursor(&mut self) {
+        if let Some(first) = self.movement.cursors.first().cloned() {
+            self.movement.cursors = vec![first];
+        } else {
+            self.movement.cursors = vec![Location {
+                line_index: 0,
+                grapheme_index: 0,
+            }];
+        }
+
+        self.set_needs_redraw(true);
+    }
 }
 
 impl UIComponent for View {
@@ -1739,6 +1823,8 @@ impl UIComponent for View {
 
         // update the buffer with the rendered lines
         self.rendered_lines = new_rendered_lines;
+
+        self.render_cursors(origin)?;
 
         Ok(())
     }

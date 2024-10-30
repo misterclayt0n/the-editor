@@ -207,3 +207,17 @@ impl Default for ModeType {
         ModeType::Normal
     }
 }
+
+#[derive(Default, Eq, PartialEq, Clone, Copy)]
+pub enum SearchDirection {
+    #[default]
+    Forward,
+    Backward,
+}
+
+#[derive(Clone)]
+pub struct SearchInfo {
+    pub prev_location: Location,
+    pub prev_scroll_offset: Position,
+    pub query: Option<String>,
+}

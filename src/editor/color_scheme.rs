@@ -15,7 +15,7 @@ impl Default for ColorScheme {
         Self {
             background: Color::Reset,
             foreground: Color::Reset,
-            selection_background: Color::Black,
+            selection_background: Color::DarkGrey,
             selection_foreground: Color::White,
             search_match_background: Color::Yellow,
             search_match_foreground: Color::Black,

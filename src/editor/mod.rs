@@ -83,6 +83,7 @@ enum EditorCommand {
     Split(SplitDirection),
     CloseWindow,
     Focus(FocusDirection),
+    Replace(String, String)
 }
 
 pub struct Editor {
@@ -207,7 +208,7 @@ impl Editor {
                 self.active_view_mut().handle_normal_command(direction);
             }
             EditorCommand::ExecuteCommand => {
-                if let ModeType::Input(input_type, _) = self.current_mode {
+                if let ModeType::Input(ref input_type, _) = self.current_mode {
                     match input_type {
                         InputType::Search => {
                             let query = self.command_bar.borrow().value();
@@ -228,6 +229,16 @@ impl Editor {
                             let command_text = self.command_bar.borrow().value();
                             self.handle_command_input(&command_text);
                         },
+                        InputType::Replace => {
+                            let query = self.command_bar.borrow().value();
+                            self.active_view_mut().search(&query);
+                            self.switch_mode(ModeType::Input(InputType::ReplaceFor(query), InputModeType::Insert));
+                        }
+                        InputType::ReplaceFor(target) => {
+                            let replacement = self.command_bar.borrow().value();
+                            self.execute_command(EditorCommand::Replace(target.to_owned(), replacement));
+                            self.switch_mode(ModeType::Normal);
+                        }
                     }
                 } else {
                     let command_text = self.command_bar.borrow().value();
@@ -274,7 +285,7 @@ impl Editor {
                 self.handle_save_command();
             }
             EditorCommand::SetPrompt(input_type) => {
-                self.set_prompt(Some(input_type));
+                self.set_prompt(Some(input_type.clone()));
                 self.switch_mode(ModeType::Input(input_type, InputModeType::Insert));
             }
             EditorCommand::ResetQuitTimes => {
@@ -313,7 +324,7 @@ impl Editor {
             }
             EditorCommand::UpdateCommandBar(edit) => {
                 self.command_bar.borrow_mut().handle_edit_command(edit);
-                if let ModeType::Input(InputType::Search, _) = self.current_mode {
+                if let ModeType::Input(InputType::Search | InputType::Replace, _) = self.current_mode {
                     let query = self.command_bar.borrow().value();
                     self.active_view_mut().search(&query);
                 }
@@ -389,6 +400,9 @@ impl Editor {
                 self.close_current_window();
             }
             EditorCommand::Focus(direction) => self.focus(direction),
+            EditorCommand::Replace(target, replacement) => {
+                self.active_view_mut().replace(&target, &replacement);
+            }
         }
     }
 
@@ -471,7 +485,7 @@ impl Editor {
     fn refresh_status(&mut self) {
         let status = self.active_view_mut().get_status();
         let title = format!("{} - {NAME}", status.file_name);
-        self.status_bar.update_status(status, self.current_mode);
+        self.status_bar.update_status(status, self.current_mode.clone());
 
         if title != self.title && matches!(Terminal::set_title(&title), Ok(())) {
             self.title = title;
@@ -489,14 +503,14 @@ impl Editor {
             self.execute_command(command);
         }
 
-        if let ModeType::Input(input_type, _) = mode {
-            self.set_prompt(Some(input_type));
+        if let ModeType::Input(ref input_type, _) = mode {
+            self.set_prompt(Some(input_type.clone()));
         } else {
             self.set_prompt(None);
         }
 
         // set the current mode type
-        self.current_mode = mode;
+        self.current_mode = mode.clone();
 
         // clear the mf
         self.command_buffer.clear();
@@ -508,7 +522,7 @@ impl Editor {
             ModeType::Visual => Box::new(VisualMode::new()),
             ModeType::VisualLine => Box::new(VisualLineMode::new()),
             ModeType::Input(input_type, input_mode) => {
-                Box::new(InputMode::new(input_type, input_mode))
+                Box::new(InputMode::new(input_type.clone(), input_mode))
             }
         };
 
@@ -561,6 +575,12 @@ impl Editor {
                 self.execute_command(EditorCommand::CloseWindow);
                 self.switch_mode(ModeType::Normal);
                 self.command_bar.borrow_mut().clear_value();
+            }
+            "replace" => {
+                self.switch_mode(ModeType::Input(InputType::Replace, InputModeType::Insert));
+            }
+            "search" => {
+                self.switch_mode(ModeType::Input(InputType::Search, InputModeType::Insert));
             }
             _ => {
                 self.update_message(&format!("Unknown command ma man: {}", input));
@@ -799,6 +819,14 @@ impl Editor {
                 }
                 InputType::Command => {
                     self.command_bar.borrow_mut().set_prompt(":");
+                    self.command_bar.borrow_mut().clear_value();
+                }
+                InputType::Replace => {
+                    self.command_bar.borrow_mut().set_prompt("Find to replace: ");
+                    self.command_bar.borrow_mut().clear_value();
+                }
+                InputType::ReplaceFor(_) => {
+                    self.command_bar.borrow_mut().set_prompt("Replace for: ");
                     self.command_bar.borrow_mut().clear_value();
                 }
                 InputType::FindFile => {

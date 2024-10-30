@@ -83,7 +83,7 @@ impl View {
     }
 
     //
-    // Search
+    // Search/Replace
     //
 
     pub fn enter_search(&mut self) {
@@ -165,6 +165,36 @@ impl View {
 
     pub fn search_prev(&mut self) {
         self.search_in_direction(self.movement.text_location, SearchDirection::Backward);
+    }
+
+    pub fn replace(&mut self, target: &str, replacement: &str) {
+        if target.is_empty() {
+            return;
+        }
+
+        let mut search_start = 0;
+
+        while search_start < self.buffer.borrow().rope.len_chars() {
+            // limit sopce of mutable borrow
+            let found = {
+                let buffer = self.buffer.borrow();
+                buffer.find(target, search_start)
+            };
+
+            // immutable borrow was freed
+            if let Some((start, end)) = found {
+                // mutable borrow to remove and insert
+                {
+                    let mut buffer_mut = self.buffer.borrow_mut();
+                    buffer_mut.rope.remove(start..end);
+                    buffer_mut.rope.insert(start, replacement);
+                    buffer_mut.dirty = true;
+                }
+                search_start = start + replacement.chars().count();
+            } else {
+                break;
+            }
+        }
     }
 
     //

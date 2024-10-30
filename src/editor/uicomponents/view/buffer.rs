@@ -252,6 +252,26 @@ impl Buffer {
         self.rope.len_lines() - 1
     }
 
+    pub fn find(&self, target: &str, from: usize) -> Option<(usize, usize)> {
+        if target.is_empty() {
+            return None;
+        }
+
+        let target_len = target.chars().count();
+        let mut current_index = from;
+
+        while current_index + target_len <= self.rope.len_chars() {
+            let slice = self.rope.slice(current_index..current_index + target_len);
+            if slice.to_string() == target {
+                return Some((current_index, current_index + target_len));
+            }
+
+            current_index += 1;
+        }
+
+        None
+    }
+
     pub fn insert_char(&mut self, character: char, at: Location) {
         let char_idx = self.rope.line_to_char(at.line_index) + at.grapheme_index;
         self.rope.insert(char_idx, &character.to_string());

@@ -155,12 +155,14 @@ pub enum Edit {
     InsertNewlineAbove,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputType {
     Command,
     Search,
     Save,
     FindFile,
+    Replace,
+    ReplaceFor(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,7 +171,7 @@ pub enum InputModeType {
     Normal,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModeType {
     Normal,
     Insert,
@@ -191,6 +193,7 @@ impl fmt::Display for ModeType {
                     InputType::Search => "SEARCH",
                     InputType::Save => "SAVE",
                     InputType::FindFile => "FIND FILE",
+                    InputType::Replace | InputType::ReplaceFor(_) => "REPLACE",
                 };
 
                 write!(f, "{}", input_str)

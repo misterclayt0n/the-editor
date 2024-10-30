@@ -49,7 +49,9 @@ I love Neovim and wanted to create my own editor that combines the simplicity of
 - [ ] Minmal mouse support (scrolling, selection, moving cursor)
 - [ ] CommandBar mode with basic operations:
     - [x] Saving
-    - [ ] Subtitution
+    - [x] Substitution (global)
+    - [ ] Substitution (visual)
+    - [ ] Make prompt for substitution per word (like `%s/bar/foo/g` in vim)
     - [ ] Selection using multi-cursors like Helix
 - [ ] Advanced vim motions: 
     - [x] "I" and "A"

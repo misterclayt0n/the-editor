@@ -1,3 +1,4 @@
+``` 
 # Architecture
 the-editor/
 ├── Cargo.toml            # configure workspaces
@@ -16,6 +17,7 @@ the-editor/
 │   └── example_plugin/   # plugin example
 └── src/
     └── main.rs           # main entrypoint
+```
 
 - editor: global state of the editor, includes buffers, windows and modes.
 - renderer: handle efficient rendering in the terminal.

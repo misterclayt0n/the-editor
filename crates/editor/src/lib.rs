@@ -1,3 +1,4 @@
+use buffer::Buffer;
 use events::{Command, Event, EventHandler};
 use renderer::{
     terminal::{Terminal, TerminalInterface},
@@ -5,6 +6,7 @@ use renderer::{
 };
 use thiserror::Error;
 use window::Window;
+mod buffer;
 mod window;
 
 /// Represents all possible errors that can occur in `editor`.
@@ -36,21 +38,29 @@ pub struct EditorState<T: TerminalInterface> {
     pub should_quit: bool,
     event_handler: EventHandler,
     window: Window<T>, // NOTE: I should probably implement some sort of window manager
+    buffer: Option<Buffer>,
 }
 
 impl<T> EditorState<T>
 where
     T: TerminalInterface,
 {
-    pub fn new(event_handler: EventHandler, renderer: Renderer<T>) -> Result<Self, EditorError> {
+    pub fn new(event_handler: EventHandler, renderer: Renderer<T>, file_path: Option<String>) -> Result<Self, EditorError> {
         Terminal::init().map_err(|e| {
             EditorError::TerminalError(format!("Could not initialize terminal: {e}"))
         })?;
+
+        let buffer = if let Some(path) = file_path {
+            Some(Buffer::open(path)?)
+        } else {
+            None
+        };
 
         Ok(EditorState {
             should_quit: false,
             event_handler,
             window: Window::new(renderer),
+            buffer,
         })
     }
 
@@ -61,7 +71,13 @@ where
 
     /// Main entrypoint of the application
     pub fn run(&mut self) -> Result<(), EditorError> {
-        self.window.display();
+        if let Some(ref buffer) = self.buffer {
+            self.window.display_buffer(buffer).map_err(|e| EditorError::RenderError(format!("Could not display buffer: {e}")))?;
+        } else {
+            self.window.display();
+        }
+
+
 
         loop {
             // Capture events
@@ -94,9 +110,9 @@ where
                 }
             }
 
-            self.window
-                .render()
-                .map_err(|e| EditorError::RenderError(format!("Failed to render window: {e}")))?;
+            self.window.render().map_err(|e| {
+                EditorError::RenderError(format!("Failed to render window: {e}"))
+            })?;
 
             if self.should_quit {
                 break;

@@ -7,3 +7,4 @@ edition = "2021"
 thiserror = { workspace = true }
 crossterm = { workspace = true }
 events = { path = "../events" }
+renderer = { path = "../renderer" }

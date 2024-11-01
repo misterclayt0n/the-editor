@@ -1,21 +1,23 @@
 use std::io::{stdout, Write};
 
 use crossterm::{
-    cursor::{Hide, MoveTo, Show},
-    queue,
-    style::Print,
-    terminal::{Clear, ClearType},
-    Command as CECommand,
+    cursor::{Hide, MoveTo, Show}, execute, queue, style::Print, terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, Command as CECommand
 };
 
 use crate::{TerminalCommand, RendererError};
 
 pub trait TerminalInterface {
+    /// Inits the terminal
+    fn init() ->  Result<(), RendererError>;
+
     /// Puts a `Commands` into a queue
     fn queue(&self, command: TerminalCommand) -> Result<(), RendererError>;
 
     /// Executes all commands that are in the queue
     fn flush(&self) -> Result<(), RendererError>;
+
+    /// Kills the terminal
+    fn kill() ->  Result<(), RendererError>;
 }
 
 /// `Terminal` implements `TerminalInterface` using `crossterm`,
@@ -23,6 +25,10 @@ pub trait TerminalInterface {
 pub struct Terminal {}
 
 impl Terminal {
+    pub fn new() -> Self {
+        Self {}
+    }
+
     fn queue_command<T: CECommand>(command: T) -> Result<(), RendererError> {
         queue!(stdout(), command).map_err(|e| {
             RendererError::TerminalError(
@@ -49,5 +55,23 @@ impl TerminalInterface for Terminal {
                 format!("Could not flush commands: {e}").to_string()
             )
         })
+    }
+
+    fn init() ->  Result<(), RendererError> {
+        let mut stdout = stdout();
+
+        enable_raw_mode().map_err(|e| RendererError::TerminalError(format!("Could not enter raw mode: {e}")))?;
+        execute!(stdout, EnterAlternateScreen).map_err(|e| RendererError::TerminalError(format!("Could not enter alternate screen: {e}")))?;
+
+        Ok(())
+    }
+
+    fn kill() ->  Result<(), RendererError> {
+        let mut stdout = stdout();
+
+        disable_raw_mode().map_err(|e| RendererError::TerminalError(format!("Could not disable raw mode: {e}")))?;
+        execute!(stdout, LeaveAlternateScreen).map_err(|e| RendererError::TerminalError(format!("Could not leave alternate screen: {e}")))?;
+
+        Ok(())
     }
 }

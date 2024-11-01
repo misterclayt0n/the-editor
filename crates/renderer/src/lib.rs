@@ -1,4 +1,3 @@
-
 use terminal::TerminalInterface;
 use thiserror::Error;
 pub mod terminal;
@@ -22,13 +21,13 @@ pub enum RendererError {
     TerminalError(String),
 
     #[error("Generic error: {0}")]
-    GenericError(String)
+    GenericError(String),
 }
 
 /// Renderer is responsible for rendering the state of the editor in the terminal
 pub struct Renderer<T: TerminalInterface> {
     terminal: T,
-    command_queue: Vec<TerminalCommand>
+    command_queue: Vec<TerminalCommand>,
 }
 
 impl<T: TerminalInterface> Renderer<T> {
@@ -48,7 +47,9 @@ impl<T: TerminalInterface> Renderer<T> {
         self.enqueue_command(TerminalCommand::ClearScreen);
         self.enqueue_command(TerminalCommand::MoveCursor(0, 0));
         self.enqueue_command(TerminalCommand::HideCursor);
-        self.enqueue_command(TerminalCommand::Print("welcome to the-editor, press 'q' to quit".to_string()));
+        self.enqueue_command(TerminalCommand::Print(
+            "welcome to the-editor, press 'q' to quit".to_string(),
+        ));
         self.enqueue_command(TerminalCommand::ShowCursor);
     }
 

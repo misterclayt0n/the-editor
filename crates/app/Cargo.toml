@@ -1,0 +1,11 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+editor = { path = "../editor" }
+events = { path = "../events" }
+renderer = { path = "../renderer" }
+anyhow = { workspace = true }
+crossterm = { workspace = true }

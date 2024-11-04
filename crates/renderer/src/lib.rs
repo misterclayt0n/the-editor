@@ -2,6 +2,13 @@ use terminal::TerminalInterface;
 use thiserror::Error;
 pub mod terminal;
 
+/// `Component` is like a React component, but for the-editor
+pub trait Component {
+    /// Does not render the component itself, but it returns a Vector of
+    /// commands to be passed to a renderer
+    fn render(&self) -> Vec<TerminalCommand>;
+}
+
 /// Represents all commands that can be queued to be rendered
 #[derive(Debug, Clone)]
 pub enum TerminalCommand {

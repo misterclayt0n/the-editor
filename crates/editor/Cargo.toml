@@ -9,3 +9,4 @@ crossterm = { workspace = true }
 events = { path = "../events" }
 renderer = { path = "../renderer" }
 text_engine = { path = "../text_engine" }
+utils = { path = "../utils" }

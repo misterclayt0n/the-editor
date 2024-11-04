@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use renderer::{Component, TerminalCommand};
 use text_engine::TextEngine;
 
 use crate::EditorError;
@@ -9,7 +10,24 @@ pub struct Buffer {
     file_path: Option<String>, // File associated with `Buffer`
 }
 
+impl Component for Buffer {
+    /// Dictates how a `Buffer` should be rendered
+    fn render(&self) -> Vec<TerminalCommand> {
+        let mut commands = Vec::new();
+
+        commands.push(TerminalCommand::MoveCursor(0, 0));
+
+        for (line_num, line) in self.get_lines().iter().enumerate() {
+            commands.push(TerminalCommand::MoveCursor(0, line_num));
+            commands.push(TerminalCommand::Print(line.to_owned()))
+        }
+
+        return commands;
+    }
+}
+
 impl Buffer {
+    /// Returns a `Buffer` with a file loaded
     pub fn open<P>(path: P) -> Result<Self, EditorError>
     where
         P: AsRef<Path>,

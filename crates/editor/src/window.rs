@@ -1,18 +1,29 @@
-use renderer::{terminal::TerminalInterface, Renderer, RendererError, TerminalCommand};
+use renderer::{terminal::TerminalInterface, Component, Renderer, RendererError, TerminalCommand};
 
-use crate::buffer::Buffer;
+use crate::{buffer::Buffer, EditorError};
 
 /// Represents a window in the terminal
 pub struct Window<T: TerminalInterface> {
     renderer: Renderer<T>,
+    buffer: Option<Buffer>
 }
 
 impl<T> Window<T>
 where
     T: TerminalInterface,
 {
-    pub fn new(renderer: Renderer<T>) -> Self {
-        Self { renderer }
+    pub fn from_file(renderer: Renderer<T>, buffer: Option<Buffer>) -> Result<Self, EditorError> {
+        if let Some(buffer) = buffer {
+            Ok(Self {
+                renderer,
+                buffer: Some(buffer),
+            })
+        } else {
+            Ok(Self {
+                renderer,
+                buffer: None
+            })
+        }
     }
 
     /// Exhibits welcome screen, cleaning the window
@@ -20,14 +31,11 @@ where
         self.renderer.welcome_screen()
     }
 
-    /// Renders all commands queued in the window loaded from a buffer
-    pub fn display_buffer(&mut self, buffer: &Buffer) -> Result<(), RendererError> {
-        self.renderer.enqueue_command(TerminalCommand::ClearScreen);
-        self.renderer.enqueue_command(TerminalCommand::MoveCursor(0, 0));
-
-        for (line_num, line) in buffer.get_lines().iter().enumerate() {
-            self.renderer.enqueue_command(TerminalCommand::MoveCursor(0, line_num));
-            self.renderer.enqueue_command(TerminalCommand::Print(line.clone()));
+    /// Renders all commands returned by a buffer, this should be
+    pub fn display_buffer(&mut self) -> Result<(), RendererError> {
+        let commands = self.buffer.as_ref().unwrap().render();
+        for command in commands {
+            self.renderer.enqueue_command(command)
         }
 
         Ok(())
@@ -39,5 +47,9 @@ where
 
     pub fn enqueue_command(&mut self, command: TerminalCommand) {
         self.renderer.enqueue_command(command);
+    }
+
+    pub fn is_buffer_loaded(&self) -> bool {
+        self.buffer.is_some()
     }
 }

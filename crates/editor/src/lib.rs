@@ -1,10 +1,11 @@
 use buffer::Buffer;
-use events::{Command, Event, EventHandler};
+use events::{Event, EventHandler};
 use renderer::{
     terminal::{Terminal, TerminalInterface},
     Renderer,
 };
 use thiserror::Error;
+use utils::{Command, Mode};
 use window::Window;
 mod buffer;
 mod window;
@@ -38,7 +39,7 @@ pub struct EditorState<T: TerminalInterface> {
     pub should_quit: bool,
     event_handler: EventHandler,
     window: Window<T>, // NOTE: I should probably implement some sort of window manager
-    buffer: Option<Buffer>,
+    mode: Mode,
 }
 
 impl<T> EditorState<T>
@@ -56,11 +57,13 @@ where
             None
         };
 
+        let window = Window::from_file(renderer, buffer)?;
+
         Ok(EditorState {
             should_quit: false,
             event_handler,
-            window: Window::new(renderer),
-            buffer,
+            window,
+            mode: Mode::Normal // Start with Normal mode
         })
     }
 
@@ -71,13 +74,12 @@ where
 
     /// Main entrypoint of the application
     pub fn run(&mut self) -> Result<(), EditorError> {
-        if let Some(ref buffer) = self.buffer {
-            self.window.display_buffer(buffer).map_err(|e| EditorError::RenderError(format!("Could not display buffer: {e}")))?;
+        if self.window.is_buffer_loaded() {
+            // NOTE: this is the first render
+            self.window.display_buffer().map_err(|e| EditorError::RenderError(format!("Could not display buffer: {e}")))?;
         } else {
             self.window.display();
         }
-
-
 
         loop {
             // Capture events
@@ -88,7 +90,7 @@ where
 
             for event in events {
                 if let Event::KeyPress(key_event) = event {
-                    match self.event_handler.handle_key_event(key_event) {
+                    match self.event_handler.handle_key_event(key_event, self.mode) {
                         Ok(commands) => {
                             for command in commands {
                                 if let Err(e) = self.apply_command(command) {
@@ -128,6 +130,7 @@ where
             Command::Quit => self.should_quit = true,
             Command::Print(_) => {}
             Command::None => {}
+            _ => {}
         }
 
         Ok(())

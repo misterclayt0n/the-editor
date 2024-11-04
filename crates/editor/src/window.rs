@@ -1,11 +1,13 @@
 use renderer::{terminal::TerminalInterface, Component, Renderer, RendererError, TerminalCommand};
+use utils::Position;
 
 use crate::{buffer::Buffer, EditorError};
 
 /// Represents a window in the terminal
 pub struct Window<T: TerminalInterface> {
     renderer: Renderer<T>,
-    buffer: Option<Buffer>
+    buffer: Option<Buffer>,
+    cursor: Position,
 }
 
 impl<T> Window<T>
@@ -17,11 +19,13 @@ where
             Ok(Self {
                 renderer,
                 buffer: Some(buffer),
+                cursor: Position::zero(),
             })
         } else {
             Ok(Self {
                 renderer,
-                buffer: None
+                buffer: None,
+                cursor: Position::zero(),
             })
         }
     }
@@ -42,6 +46,10 @@ where
     }
 
     pub fn render(&mut self) -> Result<(), RendererError> {
+        // Enqueue cursor movement
+        self.renderer.enqueue_command(TerminalCommand::MoveCursor(self.cursor.x, self.cursor.y));
+
+        // Renders it all
         self.renderer.render()
     }
 
@@ -51,5 +59,29 @@ where
 
     pub fn is_buffer_loaded(&self) -> bool {
         self.buffer.is_some()
+    }
+
+    ///
+    /// MOCK
+    ///
+
+    pub fn move_cursor_left(&mut self) {
+        if self.cursor.x > 0 {
+            self.cursor.x -= 1;
+        }
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        self.cursor.x += 1;
+    }
+
+    pub fn move_cursor_up(&mut self) {
+        if self.cursor.y > 0 {
+            self.cursor.y -= 1;
+        }
+    }
+
+    pub fn move_cursor_down(&mut self) {
+        self.cursor.y += 1;
     }
 }

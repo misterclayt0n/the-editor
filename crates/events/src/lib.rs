@@ -61,6 +61,10 @@ impl EventHandler {
         match mode {
             Mode::Normal => match key_event.code {
                 KeyCode::Char('q') => commands.push(Command::Quit),
+                KeyCode::Char('h') => commands.push(Command::MoveCursorLeft),
+                KeyCode::Char('l') => commands.push(Command::MoveCursorRight),
+                KeyCode::Char('k') => commands.push(Command::MoveCursorUp),
+                KeyCode::Char('j') => commands.push(Command::MoveCursorDown),
                 KeyCode::Char('a') => {
                     return Err(EventsError::KeyEventError(
                         "Key 'a' is not allowed in this context".to_string(),

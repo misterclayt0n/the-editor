@@ -36,7 +36,7 @@ pub enum EditorError {
 // TODO: buffer, mode
 /// Structure that maintains the global state of the editor
 pub struct EditorState<T: TerminalInterface> {
-    pub should_quit: bool,
+    should_quit: bool,
     event_handler: EventHandler,
     window: Window<T>, // NOTE: I should probably implement some sort of window manager
     mode: Mode,
@@ -128,6 +128,10 @@ where
     pub fn apply_command(&mut self, command: Command) -> Result<(), EditorError> {
         match command {
             Command::Quit => self.should_quit = true,
+            Command::MoveCursorLeft => self.window.move_cursor_left(),
+            Command::MoveCursorRight => self.window.move_cursor_right(),
+            Command::MoveCursorUp => self.window.move_cursor_up(),
+            Command::MoveCursorDown => self.window.move_cursor_down(),
             Command::Print(_) => {}
             Command::None => {}
             _ => {}

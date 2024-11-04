@@ -9,9 +9,24 @@ pub enum Command {
     Quit,
     None,
     Print(String), // Just for now
-    MoveLeft,
-    MoveRight,
-    MoveUp,
-    MoveDown,
+    MoveCursorLeft,
+    MoveCursorDown,
+    MoveCursorUp,
+    MoveCursorRight,
     SwitchMode(Mode)
+}
+
+#[derive(Clone, Copy)]
+pub struct Position {
+    pub x: usize,
+    pub y: usize
+}
+
+impl Position {
+    pub fn zero() -> Self {
+        Self {
+            x: 0,
+            y: 0,
+        }
+    }
 }

@@ -1,7 +1,7 @@
 use std::io::{stdout, Write};
 
 use crossterm::{
-    cursor::{Hide, MoveTo, Show}, execute, queue, style::Print, terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, Command as CECommand
+    cursor::{Hide, MoveTo, Show}, execute, queue, style::Print, terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType, DisableLineWrap, EnterAlternateScreen, LeaveAlternateScreen}, Command as CECommand
 };
 
 use crate::{TerminalCommand, RendererError};
@@ -35,6 +35,14 @@ impl Terminal {
                 format!("Could not put the command in queue: {e}").to_string(),
             )
         })
+    }
+
+    pub fn size() -> Result<(usize, usize), RendererError> {
+        let (width, height) = size().map_err(|e| {
+            RendererError::TerminalError(format!("Could not get the size of the termminal: {e}"))
+        })?;
+
+        Ok((width as usize, height as usize))
     }
 }
 

@@ -13,20 +13,23 @@ pub enum Command {
     MoveCursorDown,
     MoveCursorUp,
     MoveCursorRight,
-    SwitchMode(Mode)
+    SwitchMode(Mode),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Position {
-    pub x: usize,
-    pub y: usize
+    pub x: usize, // Horizontal (row)
+    pub y: usize, // Vertical (column)
 }
 
 impl Position {
     pub fn zero() -> Self {
-        Self {
-            x: 0,
-            y: 0,
-        }
+        Self { x: 0, y: 0 }
     }
+}
+
+#[derive(Clone, Copy)]
+pub struct Size {
+    pub width: usize,
+    pub height: usize,
 }

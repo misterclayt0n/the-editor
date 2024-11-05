@@ -15,7 +15,7 @@ pub enum TextEngineError {
     GenericError(String),
 }
 
-use ropey::Rope;
+use ropey::{Rope, RopeSlice};
 use thiserror::Error;
 
 pub struct TextEngine {
@@ -48,5 +48,9 @@ impl TextEngine {
 
     pub fn lines(&self) -> ropey::iter::Lines {
         self.rope.lines()
+    }
+
+    pub fn line(&self, line_idx: usize) -> RopeSlice {
+        self.rope.line(line_idx)
     }
 }

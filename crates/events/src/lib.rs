@@ -7,11 +7,11 @@ use utils::{Command, Mode};
 /// Represents all possible errors that can occur in `events`.
 #[derive(Error, Debug)]
 pub enum EventsError {
-    /// Error in capturing terminal events
+    /// Error in capturing terminal events.
     #[error("Error in capturing event: {0}")]
     EventCapture(#[from] std::io::Error),
 
-    /// Error in handling key event
+    /// Error in handling key event.
     #[error("Error in handling key event: {0}")]
     KeyEventError(String),
 
@@ -19,10 +19,10 @@ pub enum EventsError {
     GenericError(String),
 }
 
-/// Event is any type of event that the editor can compute
+/// Event is any type of event that the editor can compute.
 pub enum Event {
     KeyPress(KeyEvent),
-    Mock, // TODO: more events like mouse clicking, scrolling, and things of the nature
+    Mock, // TODO: more events like mouse clicking, scrolling, and things of the nature.
 }
 
 pub struct EventHandler;
@@ -39,10 +39,10 @@ impl EventHandler {
         // We use event::poll here with a timeout of 0 to make it non-blocking.
         if event::poll(Duration::from_millis(0))? {
             if let Ok(c_event) = event::read() {
-                // c_event is a crossterm event
+                // c_event is a crossterm event.
                 match c_event {
                     CEvent::Key(key_event) => events.push(Event::KeyPress(key_event)),
-                    // TODO: Treat other events
+                    // TODO: Treat other events.
                     _ => {}
                 }
             }
@@ -65,6 +65,7 @@ impl EventHandler {
                 KeyCode::Char('l') => commands.push(Command::MoveCursorRight),
                 KeyCode::Char('k') => commands.push(Command::MoveCursorUp),
                 KeyCode::Char('j') => commands.push(Command::MoveCursorDown),
+                KeyCode::Char('i') => commands.push(Command::SwitchMode(Mode::Insert)),
                 KeyCode::Char('a') => {
                     return Err(EventsError::KeyEventError(
                         "Key 'a' is not allowed in this context".to_string(),
@@ -73,7 +74,10 @@ impl EventHandler {
                 KeyCode::Char(c) => commands.push(Command::Print(format!("Key pressed: {c}"))),
                 _ => {}
             },
-            Mode::Insert => {}
+            Mode::Insert => match key_event.code {
+                KeyCode::Esc => commands.push(Command::SwitchMode(Mode::Normal)),
+                _ => {}
+            }
         }
 
         Ok(commands)

@@ -1,8 +1,7 @@
 use buffer::Buffer;
 use events::{Event, EventHandler};
 use renderer::{
-    terminal::{Terminal, TerminalInterface},
-    Renderer,
+    terminal::{Terminal, TerminalInterface}, Component, Renderer
 };
 use thiserror::Error;
 use utils::{Command, Mode};
@@ -33,12 +32,11 @@ pub enum EditorError {
     GenericError(String),
 }
 
-// TODO: buffer, mode
-/// Structure that maintains the global state of the editor
+/// Structure that maintains the global state of the editor.
 pub struct EditorState<T: TerminalInterface> {
     should_quit: bool,
     event_handler: EventHandler,
-    window: Window<T>, // NOTE: I should probably implement some sort of window manager
+    window: Window<T>, // NOTE: I should probably implement some sort of window manager.
     mode: Mode,
 }
 
@@ -63,7 +61,7 @@ where
             should_quit: false,
             event_handler,
             window,
-            mode: Mode::Normal // Start with Normal mode
+            mode: Mode::Normal // Start with Normal mode.
         })
     }
 
@@ -72,15 +70,8 @@ where
         Err(EditorError::GenericError("Not yet implemented".to_string()))
     }
 
-    /// Main entrypoint of the application
+    /// Main entrypoint of the application.
     pub fn run(&mut self) -> Result<(), EditorError> {
-        if self.window.is_buffer_loaded() {
-            // NOTE: this is the first render
-            self.window.display_buffer().map_err(|e| EditorError::RenderError(format!("Could not display buffer: {e}")))?;
-        } else {
-            self.window.display();
-        }
-
         loop {
             // Capture events
             let events = self
@@ -112,9 +103,11 @@ where
                 }
             }
 
-            self.window.render().map_err(|e| {
-                EditorError::RenderError(format!("Failed to render window: {e}"))
-            })?;
+            if self.window.needs_redraw {
+                self.window.render().map_err(|e| {
+                    EditorError::RenderError(format!("Failed to render window: {e}"))
+                })?;
+            }
 
             if self.should_quit {
                 break;
@@ -124,7 +117,7 @@ where
         Ok(())
     }
 
-    /// Proccess a command and apply it to the editor state
+    /// Proccess a command and apply it to the editor state,
     pub fn apply_command(&mut self, command: Command) -> Result<(), EditorError> {
         match command {
             Command::Quit => self.should_quit = true,
@@ -134,9 +127,10 @@ where
             Command::MoveCursorDown => self.window.move_cursor_down(),
             Command::Print(_) => {}
             Command::None => {}
-            _ => {}
+            Command::SwitchMode(mode) => self.mode = mode,
         }
 
+        self.window.needs_redraw = true;
         Ok(())
     }
 }
@@ -144,7 +138,7 @@ where
 impl<T: TerminalInterface> Drop for EditorState<T> {
     fn drop(&mut self) {
         if let Err(_) = Terminal::kill() {
-            // Do nothing for now
+            // Do nothing for now.
         }
     }
 }

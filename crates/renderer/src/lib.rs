@@ -2,14 +2,14 @@ use terminal::TerminalInterface;
 use thiserror::Error;
 pub mod terminal;
 
-/// `Component` is like a React component, but for the-editor
+/// `Component` is like a React component, but for the-editor.
 pub trait Component {
     /// Does not render the component itself, but it returns a Vector of
-    /// commands to be passed to a renderer
-    fn render(&self) -> Vec<TerminalCommand>;
+    /// commands to be passed to a renderer.
+    fn render(&mut self) -> Result<(), RendererError>;
 }
 
-/// Represents all commands that can be queued to be rendered
+/// Represents all commands that can be queued to be rendered.
 #[derive(Debug, Clone)]
 pub enum TerminalCommand {
     ClearScreen,
@@ -17,7 +17,7 @@ pub enum TerminalCommand {
     MoveCursor(usize, usize),
     HideCursor,
     ShowCursor,
-    // NOTE: Add variants as needed
+    // NOTE: Add variants as needed.
 }
 
 /// Represents all possible errors that can occur in `renderer`.
@@ -31,7 +31,7 @@ pub enum RendererError {
     GenericError(String),
 }
 
-/// Renderer is responsible for rendering the state of the editor in the terminal
+/// Renderer is responsible for rendering the state of the editor in the terminal.
 pub struct Renderer<T: TerminalInterface> {
     terminal: T,
     command_queue: Vec<TerminalCommand>,
@@ -45,22 +45,12 @@ impl<T: TerminalInterface> Renderer<T> {
         }
     }
 
-    /// Add a `Command` to the command queue
+    /// Add a `Command` to the command queue.
     pub fn enqueue_command(&mut self, command: TerminalCommand) {
         self.command_queue.push(command)
     }
 
-    pub fn welcome_screen(&mut self) {
-        self.enqueue_command(TerminalCommand::ClearScreen);
-        self.enqueue_command(TerminalCommand::MoveCursor(0, 0));
-        self.enqueue_command(TerminalCommand::HideCursor);
-        self.enqueue_command(TerminalCommand::Print(
-            "welcome to the-editor, press 'q' to quit".to_string(),
-        ));
-        self.enqueue_command(TerminalCommand::ShowCursor);
-    }
-
-    /// Renders all enqueued commands
+    /// Renders all enqueued commands.
     pub fn render(&mut self) -> Result<(), RendererError> {
         for command in &self.command_queue {
             self.terminal.queue(command.clone())?;

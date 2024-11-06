@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent};
 use thiserror::Error;
-use utils::{Command, Mode};
+use utils::{Command, Mode, Size};
 
 /// Represents all possible errors that can occur in `events`.
 #[derive(Error, Debug)]
@@ -22,6 +22,7 @@ pub enum EventsError {
 /// Event is any type of event that the editor can compute.
 pub enum Event {
     KeyPress(KeyEvent),
+    Resize(usize, usize),
     Mock, // TODO: more events like mouse clicking, scrolling, and things of the nature.
 }
 
@@ -42,6 +43,9 @@ impl EventHandler {
                 // c_event is a crossterm event.
                 match c_event {
                     CEvent::Key(key_event) => events.push(Event::KeyPress(key_event)),
+                    CEvent::Resize(width, height) => {
+                        events.push(Event::Resize(width as usize, height as usize))
+                    }
                     // TODO: Treat other events.
                     _ => {}
                 }
@@ -51,6 +55,25 @@ impl EventHandler {
         Ok(events)
     }
 
+    /// Maps `Events` from `crossterm` to a `Vec<Command>`
+    pub fn handle_event(&self, event: Event, mode: Mode) -> Result<Vec<Command>, EventsError> {
+        let mut commands = Vec::new();
+
+        match event {
+            Event::KeyPress(key_event) => {
+                // Reuse the existing logic to `KeyPress`
+                commands = self.handle_key_event(key_event, mode)?;
+            }
+            Event::Resize(width, height) => {
+                commands.push(Command::Resize(Size { width, height }));
+            }
+            Event::Mock => {}
+        }
+
+        Ok(commands)
+    }
+
+    /// Returns a `Vec<Command>` based on the current `Mode` and `KeyEvent`.
     pub fn handle_key_event(
         &self,
         key_event: KeyEvent,
@@ -71,13 +94,12 @@ impl EventHandler {
                         "Key 'a' is not allowed in this context".to_string(),
                     ));
                 }
-                KeyCode::Char(c) => commands.push(Command::Print(format!("Key pressed: {c}"))),
                 _ => {}
             },
             Mode::Insert => match key_event.code {
                 KeyCode::Esc => commands.push(Command::SwitchMode(Mode::Normal)),
                 _ => {}
-            }
+            },
         }
 
         Ok(commands)

@@ -5,8 +5,13 @@ use anyhow::{Context, Result};
 use editor::EditorState;
 use events::EventHandler;
 use renderer::{terminal::Terminal, Renderer};
+use utils::{info, init_logging};
 
 fn main() -> Result<()> {
+    init_logging().unwrap();
+
+    info!("we gucci");
+
     let args: Vec<String> = env::args().collect();
     let file_path = if args.len() > 1 {
         Some(args[1].clone())

@@ -25,11 +25,33 @@ impl Buffer {
         })
     }
 
+    /// NOTE: I'm not quite sure if returning a `Vec<String> is a good or bad idea, but
+    /// it seems in fact quite easier then returning `RopeSlice` when it comes to rendering.
+    ///
+    /// Returns all lines of the `Buffer` in a `Vec<String>` format.
+    ///
+    /// Removes '\n' and empty lines from the end.
     pub fn get_lines(&self) -> Vec<String> {
-        self.text_engine.lines().map(|line| line.to_string()).collect()
-    }
+        let mut lines = self.text_engine
+            .lines()
+            .map(|line| {
+                let mut s = line.to_string();
+                if s.ends_with('\n') {
+                    s.pop(); // Remove '\n' from the end.
+                }
+                s
+            })
+            .collect::<Vec<String>>();
 
-    pub fn get_line(&self, line_idx: usize) -> String {
-        self.text_engine.line(line_idx).to_string()
+        // Remove all empty lines from the end.
+        while let Some(last) = lines.last() {
+            if last.trim().is_empty() {
+                lines.pop();
+            } else {
+                break;
+            }
+        }
+
+        lines
     }
 }

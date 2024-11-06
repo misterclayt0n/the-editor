@@ -1,7 +1,7 @@
 use std::io::{stdout, Write};
 
 use crossterm::{
-    cursor::{Hide, MoveTo, Show}, execute, queue, style::Print, terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType, DisableLineWrap, EnterAlternateScreen, LeaveAlternateScreen}, Command as CECommand
+    cursor::{Hide, MoveTo, Show}, execute, queue, style::Print, terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, Command as CECommand
 };
 
 use crate::{TerminalCommand, RendererError};

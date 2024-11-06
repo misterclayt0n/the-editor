@@ -1,10 +1,11 @@
 use buffer::Buffer;
 use events::{Event, EventHandler};
 use renderer::{
-    terminal::{Terminal, TerminalInterface}, Component, Renderer
+    terminal::{Terminal, TerminalInterface},
+    Component, Renderer,
 };
 use thiserror::Error;
-use utils::{Command, Mode};
+use utils::{Command, Mode, Size};
 use window::Window;
 mod buffer;
 mod window;
@@ -12,19 +13,19 @@ mod window;
 /// Represents all possible errors that can occur in `editor`.
 #[derive(Error, Debug)]
 pub enum EditorError {
-    /// Error in manipulating text buffers
+    /// Error in manipulating text buffers.
     #[error("Error in manipulating text buffer: {0}")]
     BufferError(String),
 
-    /// Error in capturing events
+    /// Error in capturing events.
     #[error("Error in capturing events: {0}")]
     EventError(String),
 
-    /// Error in rendering
+    /// Error in rendering.
     #[error("Error in rendering: {0}")]
     RenderError(String),
 
-    /// Error in terminal
+    /// Error in terminal.
     #[error("Error in terminal: {0}")]
     TerminalError(String),
 
@@ -44,7 +45,11 @@ impl<T> EditorState<T>
 where
     T: TerminalInterface,
 {
-    pub fn new(event_handler: EventHandler, renderer: Renderer<T>, file_path: Option<String>) -> Result<Self, EditorError> {
+    pub fn new(
+        event_handler: EventHandler,
+        renderer: Renderer<T>,
+        file_path: Option<String>,
+    ) -> Result<Self, EditorError> {
         Terminal::init().map_err(|e| {
             EditorError::TerminalError(format!("Could not initialize terminal: {e}"))
         })?;
@@ -61,7 +66,7 @@ where
             should_quit: false,
             event_handler,
             window,
-            mode: Mode::Normal // Start with Normal mode.
+            mode: Mode::Normal, // Start with Normal mode.
         })
     }
 
@@ -73,33 +78,43 @@ where
     /// Main entrypoint of the application.
     pub fn run(&mut self) -> Result<(), EditorError> {
         loop {
-            // Capture events
+            // Capture events.
             let events = self
                 .event_handler
                 .poll_events()
                 .map_err(|e| EditorError::EventError(format!("Failed to poll events: {e}")))?;
 
             for event in events {
-                if let Event::KeyPress(key_event) = event {
-                    match self.event_handler.handle_key_event(key_event, self.mode) {
-                        Ok(commands) => {
-                            for command in commands {
-                                if let Err(e) = self.apply_command(command) {
-                                    self.window
-                                        .enqueue_command(renderer::TerminalCommand::Print(
-                                            format!("ERROR: {}", e),
-                                        ));
+                match event {
+                    Event::KeyPress(key_event) => {
+                        match self.event_handler.handle_key_event(key_event, self.mode) {
+                            Ok(commands) => {
+                                for command in commands {
+                                    if let Err(e) = self.apply_command(command) {
+                                        self.window.enqueue_command(
+                                            renderer::TerminalCommand::Print(format!(
+                                                "ERROR: {}",
+                                                e
+                                            )),
+                                        );
+                                    }
                                 }
                             }
-                        }
-                        Err(e) => {
-                            self.window
-                                .enqueue_command(renderer::TerminalCommand::Print(format!(
-                                    "ERROR: {}",
-                                    e
-                                )));
+                            Err(e) => {
+                                self.window
+                                    .enqueue_command(renderer::TerminalCommand::Print(format!(
+                                        "ERROR: {}",
+                                        e
+                                    )));
+                            }
                         }
                     }
+                    Event::Resize(width, height) => {
+                        // Handle resize
+                        let new_size = Size { width, height };
+                        self.apply_command(Command::Resize(new_size))?;
+                    },
+                    _ => {}
                 }
             }
 
@@ -117,7 +132,7 @@ where
         Ok(())
     }
 
-    /// Proccess a command and apply it to the editor state,
+    /// Proccess a command and apply it to the editor state.
     pub fn apply_command(&mut self, command: Command) -> Result<(), EditorError> {
         match command {
             Command::Quit => self.should_quit = true,
@@ -125,12 +140,22 @@ where
             Command::MoveCursorRight => self.window.move_cursor_right(),
             Command::MoveCursorUp => self.window.move_cursor_up(),
             Command::MoveCursorDown => self.window.move_cursor_down(),
-            Command::Print(_) => {}
             Command::None => {}
             Command::SwitchMode(mode) => self.mode = mode,
+            Command::Resize(new_size) => self.handle_resize(new_size)?,
         }
 
         self.window.needs_redraw = true;
+        Ok(())
+    }
+
+    /// Updates the viewport size, scroll if necessary and mark the window for a
+    /// redraw.
+    fn handle_resize(&mut self, new_size: Size) -> Result<(), EditorError> {
+        self.window.viewport_size = new_size;
+        self.window.scroll_to_cursor();
+        self.window.needs_redraw = true;
+
         Ok(())
     }
 }

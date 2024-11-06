@@ -7,5 +7,6 @@ edition = "2021"
 editor = { path = "../editor" }
 events = { path = "../events" }
 renderer = { path = "../renderer" }
+utils = { path = "../utils" }
 anyhow = { workspace = true }
 crossterm = { workspace = true }

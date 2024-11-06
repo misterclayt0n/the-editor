@@ -1,8 +1,9 @@
+// TODO: Implement specific redrawing based on changes, not redrawing the entire buffer all the time.
 use renderer::{
     terminal::{Terminal, TerminalInterface},
     Component, Renderer, RendererError, TerminalCommand,
 };
-use utils::{Position, Size};
+use utils::{info, Position, Size};
 
 use crate::{buffer::Buffer, EditorError};
 
@@ -12,7 +13,7 @@ pub struct Window<T: TerminalInterface> {
     buffer: Option<Buffer>,
     cursor: Position,
     scroll_offset: Position,
-    viewport_size: Size,
+    pub viewport_size: Size,
     pub needs_redraw: bool,
 }
 
@@ -86,10 +87,17 @@ where
     }
 
     /// Calculate the visible text for the given line, considering scroll offset and viewport width.
-    fn calculate_visible_text<'a>(&self, line: &'a str, start_col: usize, width: usize) -> &'a str {
+    fn calculate_visible_text<'a>(
+        &mut self,
+        line: &'a str,
+        start_col: usize,
+        width: usize,
+    ) -> &'a str {
         let end_col = std::cmp::min(start_col + width, line.len());
+        info!("will you enter an infinite loop or something?");
         if start_col < line.len() {
-            &line[start_col..end_col]
+            let line = &line[start_col..end_col];
+            line
         } else {
             ""
         }
@@ -127,7 +135,8 @@ where
         self.needs_redraw = true;
     }
 
-    fn scroll_to_cursor(&mut self) {
+    /// Adjust the cursor scrolling based on the `scroll_offset` and `viewport_size`.
+    pub fn scroll_to_cursor(&mut self) {
         let Size { width, height } = self.viewport_size;
 
         // Horizontal scrolling.
@@ -170,23 +179,24 @@ where
                 if line_idx < lines.len() {
                     let line = &lines[line_idx];
 
-                    // NOTE: I have no idea why adding 1 to `scroll_offset.x` works, but otherwise, it
-                    // skips the render of the first character. My suspission is that this has something to do with
-                    // `crossterm`, and I'm too lazy to fix this, so let it be +1.
-                    let visible_text = self.calculate_visible_text(line, self.scroll_offset.x + 1, width);
-
+                    let visible_text =
+                        self.calculate_visible_text(line, self.scroll_offset.x, width);
                     self.render_row(screen_row, visible_text);
                 } else {
+                    // Renderiza linhas vazias com "~"
                     self.render_empty_row(screen_row);
                 }
             }
+        } else {
+            self.display_welcome();
         }
 
-        // Adjust cursor position.
+        // Adjust the cursor position at the end of the rendering.
         let cursor_x = self.cursor.x.saturating_sub(self.scroll_offset.x);
         let cursor_y = self.cursor.y.saturating_sub(self.scroll_offset.y);
         self.enqueue_command(TerminalCommand::MoveCursor(cursor_x, cursor_y));
 
+        // Flushes all queued commands.
         self.renderer.render()?;
         self.needs_redraw = false;
 

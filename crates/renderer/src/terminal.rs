@@ -7,21 +7,24 @@ use crossterm::{
 use crate::{TerminalCommand, RendererError};
 
 pub trait TerminalInterface {
-    /// Inits the terminal
+    /// Inits the terminal.
     fn init() ->  Result<(), RendererError>;
 
-    /// Puts a `Commands` into a queue
+    /// Puts a `Commands` into a queue.
     fn queue(&self, command: TerminalCommand) -> Result<(), RendererError>;
 
-    /// Executes all commands that are in the queue
+    /// Executes all commands that are in the queue.
     fn flush(&self) -> Result<(), RendererError>;
 
-    /// Kills the terminal
+    /// Kills the terminal.
     fn kill() ->  Result<(), RendererError>;
+
+    /// Returns the size of the terminal.
+    fn size() -> Result<(usize, usize), RendererError>;
 }
 
 /// `Terminal` implements `TerminalInterface` using `crossterm`,
-/// but could be used by anything else (although I don't think that's ever going to happen)
+/// but could be used by anything else (although I don't think that's ever going to happen).
 pub struct Terminal {}
 
 impl Terminal {
@@ -37,13 +40,6 @@ impl Terminal {
         })
     }
 
-    pub fn size() -> Result<(usize, usize), RendererError> {
-        let (width, height) = size().map_err(|e| {
-            RendererError::TerminalError(format!("Could not get the size of the termminal: {e}"))
-        })?;
-
-        Ok((width as usize, height as usize))
-    }
 }
 
 impl TerminalInterface for Terminal {
@@ -51,6 +47,12 @@ impl TerminalInterface for Terminal {
         match command {
             TerminalCommand::ClearScreen => Self::queue_command(Clear(ClearType::All)),
             TerminalCommand::Print(string) => Self::queue_command(Print(string)),
+            TerminalCommand::PrintRope(rope) => {
+                for chunk in rope.chunks() {
+                    Self::queue_command(Print(chunk))?;
+                }
+                Ok(())
+            }
             TerminalCommand::MoveCursor(x, y) => Self::queue_command(MoveTo(x as u16, y as u16)),
             TerminalCommand::HideCursor => Self::queue_command(Hide),
             TerminalCommand::ShowCursor => Self::queue_command(Show),
@@ -81,5 +83,13 @@ impl TerminalInterface for Terminal {
         execute!(stdout, LeaveAlternateScreen).map_err(|e| RendererError::TerminalError(format!("Could not leave alternate screen: {e}")))?;
 
         Ok(())
+    }
+
+    fn size() -> Result<(usize, usize), RendererError> {
+        let (width, height) = size().map_err(|e| {
+            RendererError::TerminalError(format!("Could not get the size of the termminal: {e}"))
+        })?;
+
+        Ok((width as usize, height as usize))
     }
 }

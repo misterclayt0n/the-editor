@@ -15,19 +15,22 @@ pub enum TextEngineError {
     GenericError(String),
 }
 
-use ropey::{Rope, RopeSlice};
+pub use ropey::{Rope, RopeSlice};
 use thiserror::Error;
 
+/// This encapsulates `Rope` as the main data structure of the-editor, with some
+/// given modifications.
 pub struct TextEngine {
     rope: Rope,
 }
 
 impl TextEngine {
-    /// Creates a new empty `TextEngine`
+    /// Creates a new empty `TextEngine`.
     pub fn new() -> Self {
         TextEngine { rope: Rope::new() }
     }
 
+    /// Loads a `TextEngine` from a file.
     pub fn from_file<P>(path: P) -> Result<Self, TextEngineError>
     where
         P: AsRef<Path>,
@@ -38,19 +41,57 @@ impl TextEngine {
         Ok(TextEngine { rope })
     }
 
+    /// Returns the length of the lines.
     pub fn len_lines(&self) -> usize {
         self.rope.len_lines()
     }
 
+    /// Returns the length of the characters, works similarly as
+    /// `len()` of a String.
     pub fn len_chars(&self) -> usize {
         self.rope.len_chars()
     }
 
+    /// Returns an iterator over the rope's lines.
     pub fn lines(&self) -> ropey::iter::Lines {
         self.rope.lines()
     }
 
+    /// Get a `RopeSlice` at a given line index.
     pub fn line(&self, line_idx: usize) -> RopeSlice {
         self.rope.line(line_idx)
+    }
+
+    /// Returns a line with removed '\n' and empty lines from the end.
+    /// This mostly exists for rendering. Buffer operations should probably not be done
+    /// using this method.
+    pub fn get_trimmed_line(&self, line_idx: usize) -> RopeSlice {
+        let line = self.rope.line(line_idx);
+        let len = line.len_chars();
+
+        if len == 0 {
+            // Empty line, just return the mf.
+            return line;
+        }
+
+        let last_char = line.char(len - 1);
+
+        if last_char == '\n' || last_char == '\r' {
+            return line.slice(..len - 1);
+        }
+
+        return line;
+    }
+
+    pub fn len_nonempty_lines(&self) -> usize {
+        let num_lines = self.len_lines();
+
+        for idx in (0..num_lines).rev() {
+            let line = self.get_trimmed_line(idx);
+            if !line.chars().all(|c| c.is_whitespace()) {
+                return idx + 1;
+            }
+        }
+        0
     }
 }

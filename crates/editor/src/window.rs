@@ -1,15 +1,18 @@
+use std::cell::RefCell;
+
 // TODO: Implement specific redrawing based on changes, not redrawing the entire buffer all the time.
 use renderer::{
     terminal::{Terminal, TerminalInterface},
     Component, Renderer, RendererError, TerminalCommand,
 };
-use utils::{info, Position, Size};
+use text_engine::{Rope, RopeSlice};
+use utils::{Position, Size};
 
 use crate::{buffer::Buffer, EditorError};
 
 /// Represents a window in the terminal.
 pub struct Window<T: TerminalInterface> {
-    renderer: Renderer<T>,
+    renderer: RefCell<Renderer<T>>, // Easiest way I've found to shared mutability.
     buffer: Option<Buffer>,
     cursor: Position,
     scroll_offset: Position,
@@ -30,7 +33,7 @@ where
 
         if let Some(buffer) = buffer {
             Ok(Self {
-                renderer,
+                renderer: RefCell::from(renderer),
                 buffer: Some(buffer),
                 cursor: Position::zero(),
                 scroll_offset: Position::zero(),
@@ -39,7 +42,7 @@ where
             })
         } else {
             Ok(Self {
-                renderer,
+                renderer: RefCell::from(renderer),
                 buffer: None,
                 cursor: Position::zero(),
                 scroll_offset: Position::zero(),
@@ -65,14 +68,18 @@ where
     }
 
     /// Renders a single row in the `Window`.
-    fn render_row(&mut self, row: usize, text: &str) {
+    fn render_row(&self, row: usize, slice: RopeSlice) {
         self.enqueue_command(TerminalCommand::MoveCursor(0, row));
-        self.enqueue_command(TerminalCommand::Print(text.to_string()));
+
+        // Since this runs in O(log N), it's better then to turn it
+        // into a string or something.
+        let rope = Rope::from(slice);
+        self.enqueue_command(TerminalCommand::PrintRope(rope));
     }
 
     /// Renders a single line with a '~' character
     /// to represent empty lines beyond the buffer.
-    fn render_empty_row(&mut self, row: usize) {
+    fn render_empty_row(&self, row: usize) {
         self.enqueue_command(TerminalCommand::MoveCursor(0, row));
         self.enqueue_command(TerminalCommand::Print("~".to_string()));
     }
@@ -82,24 +89,26 @@ where
     //
 
     /// Enqueue a command to the `Renderer` of the `Window`.
-    pub fn enqueue_command(&mut self, command: TerminalCommand) {
-        self.renderer.enqueue_command(command);
+    pub fn enqueue_command(&self, command: TerminalCommand) {
+        self.renderer.borrow_mut().enqueue_command(command);
     }
 
-    /// Calculate the visible text for the given line, considering scroll offset and viewport width.
+    /// Calculates all the visible lines given a start and width of the
+    /// viewport.
     fn calculate_visible_text<'a>(
-        &mut self,
-        line: &'a str,
+        &self,
+        line: RopeSlice<'a>,
         start_col: usize,
         width: usize,
-    ) -> &'a str {
-        let end_col = std::cmp::min(start_col + width, line.len());
-        info!("will you enter an infinite loop or something?");
-        if start_col < line.len() {
-            let line = &line[start_col..end_col];
-            line
+    ) -> RopeSlice<'a> {
+        let end_col = start_col + width;
+        let line_len = line.len_chars();
+
+        if start_col < line_len {
+            let end_col = std::cmp::min(end_col, line_len);
+            line.slice(start_col..end_col)
         } else {
-            ""
+            RopeSlice::from("")
         }
     }
 
@@ -159,7 +168,6 @@ impl<T> Component for Window<T>
 where
     T: TerminalInterface,
 {
-    /// Renders a window.
     fn render(&mut self) -> Result<(), RendererError> {
         if !self.needs_redraw {
             return Ok(());
@@ -168,22 +176,22 @@ where
         self.enqueue_command(TerminalCommand::ClearScreen);
 
         if let Some(buffer) = &self.buffer {
-            let lines = buffer.get_lines();
-
             let start_line = self.scroll_offset.y;
             let height = self.viewport_size.height;
             let width = self.viewport_size.width;
 
+            // Determine the number of non empty lines.
+            let nonempty_lines = buffer.len_nonempty_lines();
+
             for screen_row in 0..height {
                 let line_idx = start_line + screen_row;
-                if line_idx < lines.len() {
-                    let line = &lines[line_idx];
 
-                    let visible_text =
-                        self.calculate_visible_text(line, self.scroll_offset.x, width);
+                if line_idx < nonempty_lines {
+                    let line = buffer.get_line(line_idx);
+                    let visible_text = self.calculate_visible_text(line, self.scroll_offset.x, width);
+
                     self.render_row(screen_row, visible_text);
                 } else {
-                    // Renderiza linhas vazias com "~"
                     self.render_empty_row(screen_row);
                 }
             }
@@ -191,13 +199,11 @@ where
             self.display_welcome();
         }
 
-        // Adjust the cursor position at the end of the rendering.
         let cursor_x = self.cursor.x.saturating_sub(self.scroll_offset.x);
         let cursor_y = self.cursor.y.saturating_sub(self.scroll_offset.y);
         self.enqueue_command(TerminalCommand::MoveCursor(cursor_x, cursor_y));
 
-        // Flushes all queued commands.
-        self.renderer.render()?;
+        self.renderer.borrow_mut().render()?;
         self.needs_redraw = false;
 
         Ok(())

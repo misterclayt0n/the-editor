@@ -1,4 +1,4 @@
-``` 
+```
 # Architecture
 the-editor/
 ├── Cargo.toml            # configure workspaces
@@ -22,7 +22,7 @@ the-editor/
 - editor: global state of the editor, includes buffers, windows and modes.
 - renderer: handle efficient rendering in the terminal.
 - events: capture and dispatch events from the user.
-- text_engine: expand the rope data structure for efficient text manipulation (probably something like `Line`).
+- text_engine: expand the rope data structure for efficient text manipulation.
 - language_support: integrate LSP and tree-sitter to provide language features.
 - plugins: manage loading and execution of plugins.
 - file_manager: additional features for managing files.

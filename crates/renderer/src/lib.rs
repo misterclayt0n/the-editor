@@ -1,11 +1,11 @@
 use terminal::TerminalInterface;
+use text_engine::Rope;
 use thiserror::Error;
 pub mod terminal;
 
 /// `Component` is like a React component, but for the-editor.
 pub trait Component {
-    /// Does not render the component itself, but it returns a Vector of
-    /// commands to be passed to a renderer.
+    /// Renders the `Component`.
     fn render(&mut self) -> Result<(), RendererError>;
 }
 
@@ -14,6 +14,7 @@ pub trait Component {
 pub enum TerminalCommand {
     ClearScreen,
     Print(String),
+    PrintRope(Rope),
     MoveCursor(usize, usize),
     HideCursor,
     ShowCursor,

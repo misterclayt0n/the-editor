@@ -238,6 +238,7 @@ name = "renderer"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "text_engine",
  "thiserror",
  "utils",
 ]

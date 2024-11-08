@@ -1,4 +1,3 @@
-use buffer::Buffer;
 use events::{Event, EventHandler};
 use movement::{move_cursor_down, move_cursor_left, move_cursor_right, move_cursor_up};
 use renderer::{
@@ -56,13 +55,7 @@ where
             EditorError::TerminalError(format!("Could not initialize terminal: {e}"))
         })?;
 
-        let buffer = if let Some(path) = file_path {
-            Some(Buffer::open(path)?)
-        } else {
-            None
-        };
-
-        let window = Window::from_file(renderer, buffer)?;
+        let window = Window::from_file(renderer, file_path)?;
 
         Ok(EditorState {
             should_quit: false,
@@ -139,9 +132,9 @@ where
         match command {
             Command::Quit => self.should_quit = true,
             Command::MoveCursorLeft => move_cursor_left(&mut self.window.cursor),
-            Command::MoveCursorRight => move_cursor_right(&mut self.window.cursor, self.window.buffer.as_ref()),
-            Command::MoveCursorUp => move_cursor_up(&mut self.window.cursor, self.window.buffer.as_ref()),
-            Command::MoveCursorDown => move_cursor_down(&mut self.window.cursor, self.window.buffer.as_ref()),
+            Command::MoveCursorRight => move_cursor_right(&mut self.window.cursor, &self.window.buffer),
+            Command::MoveCursorUp => move_cursor_up(&mut self.window.cursor, &self.window.buffer),
+            Command::MoveCursorDown => move_cursor_down(&mut self.window.cursor, &self.window.buffer),
             Command::None => {}
             Command::SwitchMode(mode) => self.mode = mode,
             Command::Resize(new_size) => self.handle_resize(new_size)?,

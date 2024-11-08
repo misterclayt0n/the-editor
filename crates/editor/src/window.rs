@@ -1,5 +1,3 @@
-// REFACTOR: Buffer logic. Should not be an Option, because there should always be a Buffer, even if it's
-// and empty file, having an Option makes no sense whatsoever.
 use std::cell::RefCell;
 
 // TODO: Implement specific redrawing based on changes, not redrawing the entire buffer all the time.
@@ -15,7 +13,7 @@ use crate::{buffer::Buffer, EditorError};
 /// Represents a window in the terminal.
 pub struct Window<T: TerminalInterface> {
     renderer: RefCell<Renderer<T>>, // Easiest way I've found to shared mutability.
-    pub buffer: Option<Buffer>,
+    pub buffer: Buffer,
     pub cursor: Cursor,
     scroll_offset: Position,
     pub viewport_size: Size,
@@ -27,31 +25,26 @@ where
     T: TerminalInterface,
 {
     /// Loads a `Window` from a `Buffer` (can be `None`).
-    pub fn from_file(renderer: Renderer<T>, buffer: Option<Buffer>) -> Result<Self, EditorError> {
+    pub fn from_file(renderer: Renderer<T>, file_path: Option<String>) -> Result<Self, EditorError> {
         let (width, height) = Terminal::size()
             .map_err(|e| EditorError::RenderError(format!("Could not initialize viewport: {e}")))?;
 
         let viewport_size = Size { width, height };
 
-        if let Some(buffer) = buffer {
-            Ok(Self {
-                renderer: RefCell::from(renderer),
-                buffer: Some(buffer),
-                cursor: Cursor::new(),
-                scroll_offset: Position::new(),
-                viewport_size,
-                needs_redraw: true,
-            })
+        let buffer = if let Some(path) = file_path {
+            Buffer::open(path)?
         } else {
-            Ok(Self {
-                renderer: RefCell::from(renderer),
-                buffer: None,
-                cursor: Cursor::new(),
-                scroll_offset: Position::new(),
-                viewport_size,
-                needs_redraw: true,
-            })
-        }
+            Buffer::new()
+        };
+
+        Ok(Self {
+            renderer: RefCell::from(renderer),
+            buffer,
+            cursor: Cursor::new(),
+            scroll_offset: Position::new(),
+            viewport_size,
+            needs_redraw: true, // Initial drawing
+        })
     }
 
     //
@@ -145,28 +138,24 @@ where
 
         self.enqueue_command(TerminalCommand::ClearScreen);
 
-        if let Some(buffer) = &self.buffer {
-            let start_line = self.scroll_offset.y;
-            let height = self.viewport_size.height;
-            let width = self.viewport_size.width;
+        // Helpers
+        let start_line = self.scroll_offset.y;
+        let height = self.viewport_size.height;
+        let width = self.viewport_size.width;
 
-            // Determine the number of non empty lines.
-            let nonempty_lines = buffer.len_nonempty_lines();
+        let nonempty_lines = self.buffer.len_nonempty_lines();
 
-            for screen_row in 0..height {
-                let line_idx = start_line + screen_row;
+        for screen_row in 0..height {
+            let line_idx = start_line + screen_row;
 
-                if line_idx < nonempty_lines {
-                    let line = buffer.get_trimmed_line(line_idx);
-                    let visible_text = self.calculate_visible_text(line, self.scroll_offset.x, width);
+            if line_idx < nonempty_lines {
+                let line = self.buffer.get_trimmed_line(line_idx);
+                let visible_text = self.calculate_visible_text(line, self.scroll_offset.x, width);
 
-                    self.render_row(screen_row, visible_text);
-                } else {
-                    self.render_empty_row(screen_row);
-                }
+                self.render_row(screen_row, visible_text);
+            } else {
+                self.render_empty_row(screen_row);
             }
-        } else {
-            self.display_welcome();
         }
 
         let cursor_x = self.cursor.position.x.saturating_sub(self.scroll_offset.x);

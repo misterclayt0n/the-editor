@@ -10,6 +10,13 @@ pub struct Buffer {
 }
 
 impl Buffer {
+    pub fn new() -> Self {
+        Self {
+            text_engine: TextEngine::new(),
+            _file_path: None
+        }
+    }
+
     /// Returns a `Buffer` with a file loaded.
     pub fn open<P>(path: P) -> Result<Self, EditorError>
     where

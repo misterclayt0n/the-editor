@@ -52,7 +52,7 @@ pub struct Position {
 
 impl Position {
     /// Returns a new `Position` at the point (0, 0).
-    pub fn zero() -> Self {
+    pub fn new() -> Self {
         Self { x: 0, y: 0 }
     }
 }
@@ -62,4 +62,19 @@ impl Position {
 pub struct Size {
     pub width: usize,
     pub height: usize,
+}
+
+pub struct Cursor {
+    pub position: Position,
+    pub desired_x: usize, // This keeps the desired column when the position.x gets adjusted.
+}
+
+impl Cursor {
+    /// Returns a new `Cursor` with positions (0, 0) and desired_col as 0.
+    pub fn new() -> Self {
+        Self {
+            position: Position::new(),
+            desired_x: 0,
+        }
+    }
 }

@@ -6,7 +6,7 @@ use crate::EditorError;
 
 pub struct Buffer {
     text_engine: TextEngine,
-    file_path: Option<String>, // File associated with `Buffer`.
+    _file_path: Option<String>, // File associated with `Buffer`.
 }
 
 impl Buffer {
@@ -21,17 +21,24 @@ impl Buffer {
 
         Ok(Buffer {
             text_engine,
-            file_path: Some(file_path),
+            _file_path: Some(file_path),
         })
     }
 
-    /// Returns a line of `Text Engine` as a `RopeSlice`.
-    pub fn get_line(&self, line_idx: usize) -> RopeSlice {
-        self.text_engine.line(line_idx)
+    /// Returns a line with removed '\n' and empty lines from the end.
+    /// This avoids the issue of not rendering the first character.
+    pub fn get_trimmed_line(&self, line_idx: usize) -> RopeSlice {
+        self.text_engine.get_trimmed_line(line_idx)
     }
 
     /// Returns the length of non empty lines of the `TextEngine`.
     pub fn len_nonempty_lines(&self) -> usize {
         self.text_engine.len_nonempty_lines()
+    }
+
+    /// Returns only the visible portion of the line, by subtracting by 1.
+    pub fn get_visible_line_length(&self, line_idx: usize) -> usize {
+        // `saturating_sub` to avoid underflow.
+        self.text_engine.get_trimmed_line(line_idx).len_chars().saturating_sub(1)
     }
 }

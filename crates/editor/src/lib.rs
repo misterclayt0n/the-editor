@@ -1,5 +1,6 @@
 use buffer::Buffer;
 use events::{Event, EventHandler};
+use movement::{move_cursor_down, move_cursor_left, move_cursor_right, move_cursor_up};
 use renderer::{
     terminal::{Terminal, TerminalInterface},
     Component, Renderer,
@@ -9,6 +10,7 @@ use utils::{Command, Mode, Size};
 use window::Window;
 mod buffer;
 mod window;
+mod movement;
 
 /// Represents all possible errors that can occur in `editor`.
 #[derive(Error, Debug)]
@@ -136,15 +138,16 @@ where
     pub fn apply_command(&mut self, command: Command) -> Result<(), EditorError> {
         match command {
             Command::Quit => self.should_quit = true,
-            Command::MoveCursorLeft => self.window.move_cursor_left(),
-            Command::MoveCursorRight => self.window.move_cursor_right(),
-            Command::MoveCursorUp => self.window.move_cursor_up(),
-            Command::MoveCursorDown => self.window.move_cursor_down(),
+            Command::MoveCursorLeft => move_cursor_left(&mut self.window.cursor),
+            Command::MoveCursorRight => move_cursor_right(&mut self.window.cursor, self.window.buffer.as_ref()),
+            Command::MoveCursorUp => move_cursor_up(&mut self.window.cursor, self.window.buffer.as_ref()),
+            Command::MoveCursorDown => move_cursor_down(&mut self.window.cursor, self.window.buffer.as_ref()),
             Command::None => {}
             Command::SwitchMode(mode) => self.mode = mode,
             Command::Resize(new_size) => self.handle_resize(new_size)?,
         }
 
+        self.window.scroll_to_cursor();
         self.window.needs_redraw = true;
         Ok(())
     }

@@ -12,6 +12,8 @@ fn main() -> Result<()> {
 
     info!("we gucci");
 
+    // NOTE: I'm capturing the args in the most raw way possible.
+    // Maybe in the future I'll make a pretty CLI using clap or something.
     let args: Vec<String> = env::args().collect();
     let file_path = if args.len() > 1 {
         Some(args[1].clone())

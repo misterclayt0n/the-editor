@@ -1,3 +1,5 @@
+// REFACTOR: Buffer logic. Should not be an Option, because there should always be a Buffer, even if it's
+// and empty file, having an Option makes no sense whatsoever.
 use std::cell::RefCell;
 
 // TODO: Implement specific redrawing based on changes, not redrawing the entire buffer all the time.
@@ -6,15 +8,15 @@ use renderer::{
     Component, Renderer, RendererError, TerminalCommand,
 };
 use text_engine::{Rope, RopeSlice};
-use utils::{Position, Size};
+use utils::{Cursor, Position, Size};
 
 use crate::{buffer::Buffer, EditorError};
 
 /// Represents a window in the terminal.
 pub struct Window<T: TerminalInterface> {
     renderer: RefCell<Renderer<T>>, // Easiest way I've found to shared mutability.
-    buffer: Option<Buffer>,
-    cursor: Position,
+    pub buffer: Option<Buffer>,
+    pub cursor: Cursor,
     scroll_offset: Position,
     pub viewport_size: Size,
     pub needs_redraw: bool,
@@ -35,8 +37,8 @@ where
             Ok(Self {
                 renderer: RefCell::from(renderer),
                 buffer: Some(buffer),
-                cursor: Position::zero(),
-                scroll_offset: Position::zero(),
+                cursor: Cursor::new(),
+                scroll_offset: Position::new(),
                 viewport_size,
                 needs_redraw: true,
             })
@@ -44,8 +46,8 @@ where
             Ok(Self {
                 renderer: RefCell::from(renderer),
                 buffer: None,
-                cursor: Position::zero(),
-                scroll_offset: Position::zero(),
+                cursor: Cursor::new(),
+                scroll_offset: Position::new(),
                 viewport_size,
                 needs_redraw: true,
             })
@@ -112,54 +114,22 @@ where
         }
     }
 
-    ///
-    /// MOCK: Gotta put this into a separate module.
-    ///
-
-    pub fn move_cursor_left(&mut self) {
-        if self.cursor.x > 0 {
-            self.cursor.x -= 1;
-            self.scroll_to_cursor();
-            self.needs_redraw = true;
-        }
-    }
-
-    pub fn move_cursor_right(&mut self) {
-        self.cursor.x += 1;
-        self.scroll_to_cursor();
-        self.needs_redraw = true;
-    }
-
-    pub fn move_cursor_up(&mut self) {
-        if self.cursor.y > 0 {
-            self.cursor.y -= 1;
-            self.scroll_to_cursor();
-            self.needs_redraw = true;
-        }
-    }
-
-    pub fn move_cursor_down(&mut self) {
-        self.cursor.y += 1;
-        self.scroll_to_cursor();
-        self.needs_redraw = true;
-    }
-
     /// Adjust the cursor scrolling based on the `scroll_offset` and `viewport_size`.
     pub fn scroll_to_cursor(&mut self) {
         let Size { width, height } = self.viewport_size;
 
         // Horizontal scrolling.
-        if self.cursor.x < self.scroll_offset.x {
-            self.scroll_offset.x = self.cursor.x;
-        } else if self.cursor.x >= self.scroll_offset.x + width {
-            self.scroll_offset.x = self.cursor.x.saturating_sub(width - 1);
+        if self.cursor.position.x < self.scroll_offset.x {
+            self.scroll_offset.x = self.cursor.position.x;
+        } else if self.cursor.position.x >= self.scroll_offset.x + width {
+            self.scroll_offset.x = self.cursor.position.x.saturating_sub(width - 1);
         }
 
         // Vertical scrolling.
-        if self.cursor.y < self.scroll_offset.y {
-            self.scroll_offset.y = self.cursor.y;
-        } else if self.cursor.y >= self.scroll_offset.y + height {
-            self.scroll_offset.y = self.cursor.y.saturating_sub(height - 1);
+        if self.cursor.position.y < self.scroll_offset.y {
+            self.scroll_offset.y = self.cursor.position.y;
+        } else if self.cursor.position.y >= self.scroll_offset.y + height {
+            self.scroll_offset.y = self.cursor.position.y.saturating_sub(height - 1);
         }
     }
 }
@@ -187,7 +157,7 @@ where
                 let line_idx = start_line + screen_row;
 
                 if line_idx < nonempty_lines {
-                    let line = buffer.get_line(line_idx);
+                    let line = buffer.get_trimmed_line(line_idx);
                     let visible_text = self.calculate_visible_text(line, self.scroll_offset.x, width);
 
                     self.render_row(screen_row, visible_text);
@@ -199,8 +169,8 @@ where
             self.display_welcome();
         }
 
-        let cursor_x = self.cursor.x.saturating_sub(self.scroll_offset.x);
-        let cursor_y = self.cursor.y.saturating_sub(self.scroll_offset.y);
+        let cursor_x = self.cursor.position.x.saturating_sub(self.scroll_offset.x);
+        let cursor_y = self.cursor.position.y.saturating_sub(self.scroll_offset.y);
         self.enqueue_command(TerminalCommand::MoveCursor(cursor_x, cursor_y));
 
         self.renderer.borrow_mut().render()?;

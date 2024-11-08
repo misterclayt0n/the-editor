@@ -6,7 +6,7 @@ use renderer::{
     Component, Renderer, RendererError, TerminalCommand,
 };
 use text_engine::{Rope, RopeSlice};
-use utils::{Cursor, Position, Size};
+use utils::{build_welcome_message, Cursor, Position, Size};
 
 use crate::{buffer::Buffer, EditorError};
 
@@ -25,7 +25,10 @@ where
     T: TerminalInterface,
 {
     /// Loads a `Window` from a `Buffer` (can be `None`).
-    pub fn from_file(renderer: Renderer<T>, file_path: Option<String>) -> Result<Self, EditorError> {
+    pub fn from_file(
+        renderer: Renderer<T>,
+        file_path: Option<String>,
+    ) -> Result<Self, EditorError> {
         let (width, height) = Terminal::size()
             .map_err(|e| EditorError::RenderError(format!("Could not initialize viewport: {e}")))?;
 
@@ -51,15 +54,17 @@ where
     // Rendering
     //
 
-    /// Exhibits welcome screen, cleaning the window.
-    pub fn display_welcome(&mut self) {
-        self.enqueue_command(TerminalCommand::ClearScreen);
-        self.enqueue_command(TerminalCommand::MoveCursor(0, 0));
-        self.enqueue_command(TerminalCommand::HideCursor);
-        self.enqueue_command(TerminalCommand::Print(
-            "welcome to the-editor, press 'q' to quit".to_string(),
-        ));
-        self.enqueue_command(TerminalCommand::ShowCursor);
+    fn render_welcome_message(&self, viewport: Size, current_row: usize) {
+        let Size { width, height } = viewport;
+        let vertical_center = height / 3;
+
+        if current_row == vertical_center {
+            let welcome_string = build_welcome_message(width);
+            self.enqueue_command(TerminalCommand::MoveCursor(0, current_row));
+            self.enqueue_command(TerminalCommand::Print(welcome_string))
+        } else {
+            self.render_empty_row(current_row);
+        }
     }
 
     /// Renders a single row in the `Window`.
@@ -138,23 +143,25 @@ where
 
         self.enqueue_command(TerminalCommand::ClearScreen);
 
-        // Helpers
+        // Helpers.
         let start_line = self.scroll_offset.y;
-        let height = self.viewport_size.height;
-        let width = self.viewport_size.width;
-
+        let Size { width, height } = self.viewport_size;
         let nonempty_lines = self.buffer.len_nonempty_lines();
 
-        for screen_row in 0..height {
-            let line_idx = start_line + screen_row;
+        for current_row in 0..height {
+            let line_idx = start_line + current_row;
 
-            if line_idx < nonempty_lines {
-                let line = self.buffer.get_trimmed_line(line_idx);
-                let visible_text = self.calculate_visible_text(line, self.scroll_offset.x, width);
-
-                self.render_row(screen_row, visible_text);
+            if self.buffer.file_path.is_none() {
+                self.render_welcome_message(self.viewport_size, current_row);
             } else {
-                self.render_empty_row(screen_row);
+                if line_idx < nonempty_lines {
+                    let line = self.buffer.get_trimmed_line(line_idx);
+                    let visible_text = self.calculate_visible_text(line, self.scroll_offset.x, width);
+
+                    self.render_row(current_row, visible_text);
+                } else {
+                    self.render_empty_row(current_row);
+                }
             }
         }
 

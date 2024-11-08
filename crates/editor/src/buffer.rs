@@ -6,14 +6,14 @@ use crate::EditorError;
 
 pub struct Buffer {
     text_engine: TextEngine,
-    _file_path: Option<String>, // File associated with `Buffer`.
+    pub file_path: Option<String>, // File associated with `Buffer`.
 }
 
 impl Buffer {
     pub fn new() -> Self {
         Self {
             text_engine: TextEngine::new(),
-            _file_path: None
+            file_path: None
         }
     }
 
@@ -28,7 +28,7 @@ impl Buffer {
 
         Ok(Buffer {
             text_engine,
-            _file_path: Some(file_path),
+            file_path: Some(file_path),
         })
     }
 

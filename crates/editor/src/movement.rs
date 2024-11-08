@@ -49,3 +49,28 @@ pub fn move_cursor_down(cursor: &mut Cursor, buffer: &Buffer) {
         cursor.position.x = min(cursor.desired_x, line_length);
     }
 }
+
+pub fn move_cursor_end_of_line(cursor: &mut Cursor, buffer: &Buffer) {
+    let line_length = buffer.get_visible_line_length(cursor.position.y);
+    cursor.position.x = line_length;
+
+    // Updates the desired x.
+    cursor.desired_x = cursor.position.x;
+}
+
+pub fn move_cursor_start_of_line(cursor: &mut Cursor) {
+    cursor.position.x = 0;
+
+    // Updates the desired x.
+    cursor.desired_x = cursor.position.x;
+}
+
+/// Moves the cursor to the first non-blank character of the current line.
+pub fn move_cursor_first_char_of_line(cursor: &mut Cursor, buffer: &Buffer) {
+    let line = buffer.get_trimmed_line(cursor.position.y);
+    let first_non_blank = line.chars().position(|c| !c.is_whitespace());
+
+    cursor.position.x = first_non_blank.unwrap_or(0);
+
+    cursor.desired_x = cursor.position.x;
+}

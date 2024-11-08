@@ -44,6 +44,9 @@ pub enum Command {
     MoveCursorRight,
     SwitchMode(Mode),
     Resize(Size),
+    MoveCursorEndOfLine,
+    MoveCursorStartOfLine,
+    MoveCursorFirstCharOfLine,
 }
 
 /// Position determines any (x, y) point in the plane.

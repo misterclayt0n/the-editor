@@ -89,6 +89,9 @@ impl EventHandler {
                 KeyCode::Char('k') => commands.push(Command::MoveCursorUp),
                 KeyCode::Char('j') => commands.push(Command::MoveCursorDown),
                 KeyCode::Char('i') => commands.push(Command::SwitchMode(Mode::Insert)),
+                KeyCode::Char('$') => commands.push(Command::MoveCursorEndOfLine),
+                KeyCode::Char('0') => commands.push(Command::MoveCursorStartOfLine),
+                KeyCode::Char('_') => commands.push(Command::MoveCursorFirstCharOfLine),
                 KeyCode::Char('a') => {
                     return Err(EventsError::KeyEventError(
                         "Key 'a' is not allowed in this context".to_string(),

@@ -74,3 +74,10 @@ pub fn move_cursor_first_char_of_line(cursor: &mut Cursor, buffer: &Buffer) {
 
     cursor.desired_x = cursor.position.x;
 }
+
+pub fn move_cursor_word_forward(cursor: &mut Cursor, buffer: &Buffer, big_word: bool) {
+    if let Some(new_pos) = buffer.find_next_word_start(cursor.position, big_word) {
+        cursor.position = new_pos;
+        cursor.desired_x = cursor.position.x;
+    }
+}

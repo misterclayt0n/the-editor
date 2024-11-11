@@ -18,7 +18,6 @@ pub enum TerminalCommand {
     MoveCursor(usize, usize),
     HideCursor,
     ShowCursor,
-    // NOTE: Add variants as needed.
 }
 
 /// Represents all possible errors that can occur in `renderer`.

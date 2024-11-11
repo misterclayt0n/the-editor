@@ -12,18 +12,18 @@ pub fn init_logging() -> Result<(), Box<dyn std::error::Error>> {
     let log_file = File::create("editor.log")?;
 
     // Configure the mf.
-    CombinedLogger::init(
-        vec![
-            WriteLogger::new(LevelFilter::Info, Config::default(), log_file),
-        ]
-    )?;
+    CombinedLogger::init(vec![WriteLogger::new(
+        LevelFilter::Info,
+        Config::default(),
+        log_file,
+    )])?;
 
     Ok(())
 }
 
 // Export the crates from logging because I only want to
 // have to import `utils`, not `log` and `simplelog`.
-pub use log::{info, debug, warn, error};
+pub use log::{debug, error, info, warn};
 
 /// Just like vim.
 #[derive(Clone, Copy)]
@@ -47,6 +47,7 @@ pub enum Command {
     MoveCursorEndOfLine,
     MoveCursorStartOfLine,
     MoveCursorFirstCharOfLine,
+    MoveCursorWordForward(bool), // bool indicates if the word is big or not.
 }
 
 /// Position determines any (x, y) point in the plane.
@@ -82,6 +83,25 @@ impl Cursor {
             position: Position::new(),
             desired_x: 0,
         }
+    }
+}
+
+#[derive(PartialEq)]
+pub enum CharClass {
+    Whitespace,
+    Word,
+    Punctuation,
+}
+
+pub fn get_char_class(c: char, big_word: bool) -> CharClass {
+    if c.is_whitespace() {
+        CharClass::Whitespace
+    } else if big_word {
+        CharClass::Word // Here, all that is not space is considered bart of the word.
+    } else if c.is_alphanumeric() || c == '_' {
+        CharClass::Word
+    } else {
+        CharClass::Punctuation
     }
 }
 

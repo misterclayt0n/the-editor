@@ -17,6 +17,7 @@ pub enum TextEngineError {
 
 pub use ropey::{Rope, RopeSlice};
 use thiserror::Error;
+use utils::Position;
 
 /// This encapsulates `Rope` as the main data structure of the-editor, with some
 /// given modifications.
@@ -62,6 +63,10 @@ impl TextEngine {
         self.rope.line(line_idx)
     }
 
+    pub fn char(&self, char_idx: usize) -> char {
+        self.rope.char(char_idx)
+    }
+
     /// Returns a line with removed '\n' and empty lines from the end.
     /// This mostly exists for rendering. Buffer operations should probably not be done
     /// using this method.
@@ -93,5 +98,21 @@ impl TextEngine {
             }
         }
         0
+    }
+
+    pub fn line_to_char(&self, line_idx: usize) -> usize {
+        self.rope.line_to_char(line_idx)
+    }
+
+    /// Transforms a character index into a `Position`
+    pub fn char_idx_to_position(&self, char_idx: usize) -> Position {
+        let line_idx = self.rope.char_to_line(char_idx);
+        let line_start_idx = self.rope.line_to_char(line_idx);
+        let char_in_line = char_idx - line_start_idx;
+
+        Position {
+            x: char_in_line,
+            y: line_idx
+        }
     }
 }

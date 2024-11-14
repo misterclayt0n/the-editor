@@ -48,6 +48,7 @@ pub enum Command {
     MoveCursorStartOfLine,
     MoveCursorFirstCharOfLine,
     MoveCursorWordForward(bool), // bool indicates if the word is big or not.
+    MoveCursorWordBackward(bool)
 }
 
 /// Position determines any (x, y) point in the plane.

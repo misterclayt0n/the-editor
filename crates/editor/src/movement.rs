@@ -81,3 +81,10 @@ pub fn move_cursor_word_forward(cursor: &mut Cursor, buffer: &Buffer, big_word: 
         cursor.desired_x = cursor.position.x;
     }
 }
+
+pub fn move_cursor_word_backward(cursor: &mut Cursor, buffer: &Buffer, big_word: bool) {
+    if let Some(new_pos) = buffer.find_prev_word_start(cursor.position, big_word) {
+        cursor.position = new_pos;
+        cursor.desired_x = cursor.position.x;
+    }
+}

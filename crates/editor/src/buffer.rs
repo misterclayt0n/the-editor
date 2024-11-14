@@ -96,4 +96,57 @@ impl Buffer {
 
         Some(self.text_engine.char_idx_to_position(char_idx))
     }
+
+    pub fn find_prev_word_start(&self, position: Position, big_word: bool) -> Option<Position> {
+        let line_start = self.text_engine.line_to_char(position.y);
+        let mut char_idx = line_start + position.x;
+
+        if char_idx == 0 {
+            return None;
+        }
+
+        // Move the cursor one step back to start looking at the previous character.
+        char_idx = char_idx.saturating_sub(1);
+
+        // Skip any trailing whitespace.
+        while char_idx > 0 {
+            let c = self.text_engine.char(char_idx);
+            if get_char_class(c, big_word) == CharClass::Whitespace {
+                char_idx = char_idx.saturating_sub(c.len_utf8());
+            } else {
+                break;
+            }
+        }
+
+        if char_idx == 0 {
+            return Some(self.text_engine.char_idx_to_position(0));
+        }
+
+        // Get the class of the character at the new position.
+        let current_class = get_char_class(self.text_engine.char(char_idx), big_word);
+
+        // Skip all characters that are of the same class.
+        while char_idx > 0 {
+            let c = self.text_engine.char(char_idx);
+            if get_char_class(c, big_word) == current_class {
+                char_idx = char_idx.saturating_sub(c.len_utf8());
+            } else {
+                // stop at the boundary between different character classes
+                char_idx += c.len_utf8();
+                break;
+            }
+        }
+
+        // Skip any leading whitespace before the next word.
+        while char_idx > 0 {
+            let c = self.text_engine.char(char_idx);
+            if get_char_class(c, big_word) == CharClass::Whitespace {
+                char_idx = char_idx.saturating_sub(c.len_utf8());
+            } else {
+                break;
+            }
+        }
+
+        Some(self.text_engine.char_idx_to_position(char_idx))
+    }
 }

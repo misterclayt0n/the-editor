@@ -96,6 +96,8 @@ impl EventHandler {
                 KeyCode::Char('W') => commands.push(Command::MoveCursorWordForward(true)),
                 KeyCode::Char('b') => commands.push(Command::MoveCursorWordBackward(false)),
                 KeyCode::Char('B') => commands.push(Command::MoveCursorWordBackward(true)),
+                KeyCode::Char('e') => commands.push(Command::MoveCursorWordForwardEnd(false)),
+                KeyCode::Char('E') => commands.push(Command::MoveCursorWordForwardEnd(true)),
                 KeyCode::Char('a') => {
                     return Err(EventsError::KeyEventError(
                         "Key 'a' is not allowed in this context".to_string(),

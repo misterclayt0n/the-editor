@@ -149,4 +149,53 @@ impl Buffer {
 
         Some(self.text_engine.char_idx_to_position(char_idx))
     }
+
+    pub fn find_next_word_end(&self, position: Position, big_word: bool) -> Option<Position> {
+        let total_chars = self.text_engine.len_chars();
+        let line_start = self.text_engine.line_to_char(position.y);
+        let mut char_idx = line_start + position.x;
+
+        if char_idx >= total_chars {
+            return None;
+        }
+
+        // Move forward one character if possible.
+        if char_idx + 1 < total_chars {
+            char_idx += 1;
+        } else {
+            // We're at the end of the buffer.
+            return None;
+        }
+
+        // Skip over whitespace.
+        while char_idx < total_chars {
+            let c = self.text_engine.char(char_idx);
+            if get_char_class(c, big_word) == CharClass::Whitespace {
+                char_idx += c.len_utf8();
+            } else {
+                break;
+            }
+        }
+
+        if char_idx >= total_chars {
+            return None;
+        }
+
+        let current_class = get_char_class(self.text_engine.char(char_idx), big_word);
+
+        let mut last_char_index = char_idx;
+
+        // Move to the end of the current class sequence.
+        while char_idx < total_chars {
+            let c = self.text_engine.char(char_idx);
+            if get_char_class(c, big_word) == current_class {
+                last_char_index = char_idx;
+                char_idx += c.len_utf8();
+            } else {
+                break;
+            }
+        }
+
+        Some(self.text_engine.char_idx_to_position(last_char_index))
+    }
 }

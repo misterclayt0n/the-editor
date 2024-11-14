@@ -1,5 +1,5 @@
 use events::{Event, EventHandler};
-use movement::{move_cursor_down, move_cursor_end_of_line, move_cursor_first_char_of_line, move_cursor_left, move_cursor_right, move_cursor_start_of_line, move_cursor_up, move_cursor_word_backward, move_cursor_word_forward};
+use movement::{move_cursor_down, move_cursor_end_of_line, move_cursor_first_char_of_line, move_cursor_left, move_cursor_right, move_cursor_start_of_line, move_cursor_up, move_cursor_word_backward, move_cursor_word_forward, move_cursor_word_forward_end};
 use renderer::{
     terminal::{Terminal, TerminalInterface},
     Component, Renderer,
@@ -140,6 +140,7 @@ where
             Command::MoveCursorFirstCharOfLine => move_cursor_first_char_of_line(&mut self.window.cursor, &self.window.buffer),
             Command::MoveCursorWordForward(big_word) => move_cursor_word_forward(&mut self.window.cursor, &self.window.buffer, big_word),
             Command::MoveCursorWordBackward(big_word) => move_cursor_word_backward(&mut self.window.cursor, &self.window.buffer, big_word),
+            Command::MoveCursorWordForwardEnd(big_word) => move_cursor_word_forward_end(&mut self.window.cursor, &self.window.buffer, big_word),
             Command::None => {}
             Command::SwitchMode(mode) => self.mode = mode,
             Command::Resize(new_size) => self.handle_resize(new_size)?,

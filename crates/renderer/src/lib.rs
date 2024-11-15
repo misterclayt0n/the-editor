@@ -5,8 +5,10 @@ pub mod terminal;
 
 /// `Component` is like a React component, but for the-editor.
 pub trait Component {
-    /// Renders the `Component`.
-    fn render(&mut self) -> Result<(), RendererError>;
+    /// Renders the `Component`, does not require a `Renderer`, it assumes the `Component` has it's own.
+    fn render<T>(&mut self, renderer: &mut Renderer<T>) -> Result<(), RendererError>
+    where
+        T: TerminalInterface;
 }
 
 /// Represents all commands that can be queued to be rendered.
@@ -20,6 +22,7 @@ pub enum TerminalCommand {
     ShowCursor,
     ChangeCursorStyleBlock,
     ChangeCursorStyleBar,
+    ClearLine,
 }
 
 /// Represents all possible errors that can occur in `renderer`.
@@ -34,6 +37,7 @@ pub enum RendererError {
 }
 
 /// Renderer is responsible for rendering the state of the editor in the terminal.
+#[derive(Clone)]
 pub struct Renderer<T: TerminalInterface> {
     terminal: T,
     command_queue: Vec<TerminalCommand>,

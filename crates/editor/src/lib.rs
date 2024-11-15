@@ -142,7 +142,7 @@ where
             Command::MoveCursorWordBackward(big_word) => move_cursor_word_backward(&mut self.window.cursor, &self.window.buffer, big_word),
             Command::MoveCursorWordForwardEnd(big_word) => move_cursor_word_forward_end(&mut self.window.cursor, &self.window.buffer, big_word),
             Command::None => {}
-            Command::SwitchMode(mode) => self.mode = mode,
+            Command::SwitchMode(mode) => self.switch_mode(mode),
             Command::Resize(new_size) => self.handle_resize(new_size)?,
         }
 
@@ -159,6 +159,15 @@ where
         self.window.needs_redraw = true;
 
         Ok(())
+    }
+
+    fn switch_mode(&mut self, mode: Mode) {
+        match mode {
+            Mode::Insert => self.window.enqueue_command(renderer::TerminalCommand::ChangeCursorStyleBar),
+            Mode::Normal => self.window.enqueue_command(renderer::TerminalCommand::ChangeCursorStyleBlock),
+        }
+
+        self.mode = mode;
     }
 }
 

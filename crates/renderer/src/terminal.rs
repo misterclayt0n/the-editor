@@ -1,7 +1,7 @@
 use std::io::{stdout, Write};
 
 use crossterm::{
-    cursor::{Hide, MoveTo, Show}, execute, queue, style::Print, terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, Command as CECommand
+    cursor::{Hide, MoveTo, SetCursorStyle, Show}, execute, queue, style::Print, terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, Command as CECommand
 };
 
 use crate::{TerminalCommand, RendererError};
@@ -56,6 +56,8 @@ impl TerminalInterface for Terminal {
             TerminalCommand::MoveCursor(x, y) => Self::queue_command(MoveTo(x as u16, y as u16)),
             TerminalCommand::HideCursor => Self::queue_command(Hide),
             TerminalCommand::ShowCursor => Self::queue_command(Show),
+            TerminalCommand::ChangeCursorStyleBar => Self::queue_command(SetCursorStyle::BlinkingBar),
+            TerminalCommand::ChangeCursorStyleBlock => Self::queue_command(SetCursorStyle::BlinkingBlock)
         }
     }
 

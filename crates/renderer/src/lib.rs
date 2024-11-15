@@ -18,6 +18,8 @@ pub enum TerminalCommand {
     MoveCursor(usize, usize),
     HideCursor,
     ShowCursor,
+    ChangeCursorStyleBlock,
+    ChangeCursorStyleBar,
 }
 
 /// Represents all possible errors that can occur in `renderer`.

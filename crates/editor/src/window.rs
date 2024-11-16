@@ -102,7 +102,8 @@ impl Window
 
     /// Adjust the cursor scrolling based on the `scroll_offset` and `viewport_size`.
     pub fn scroll_to_cursor(&mut self) {
-        let Size { width, height } = self.viewport_size;
+        let width = self.viewport_size.width;
+        let height = self.viewport_size.height.saturating_sub(1); // NOTE: Subtract 1 to account for the status bar.
 
         // Horizontal scrolling.
         if self.cursor.position.x < self.scroll_offset.x {

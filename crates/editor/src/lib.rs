@@ -1,6 +1,9 @@
 use events::{Event, EventHandler};
 use movement::{
-    move_cursor_after_insert, move_cursor_before_deleting_backward, move_cursor_down, move_cursor_end_of_line, move_cursor_first_char_of_line, move_cursor_left, move_cursor_right, move_cursor_start_of_line, move_cursor_up, move_cursor_word_backward, move_cursor_word_forward, move_cursor_word_forward_end
+    move_cursor_after_insert, move_cursor_before_deleting_backward, move_cursor_down,
+    move_cursor_end_of_line, move_cursor_first_char_of_line, move_cursor_left, move_cursor_right,
+    move_cursor_start_of_line, move_cursor_up, move_cursor_word_backward, move_cursor_word_forward,
+    move_cursor_word_forward_end,
 };
 use renderer::{
     terminal::{Terminal, TerminalInterface},
@@ -139,8 +142,8 @@ where
         match command {
             Command::Quit => self.should_quit = true,
             Command::MoveCursorLeft => move_cursor_left(&mut self.window.cursor),
-            Command::MoveCursorRight => {
-                move_cursor_right(&mut self.window.cursor, &self.window.buffer)
+            Command::MoveCursorRight(exceed) => {
+                move_cursor_right(&mut self.window.cursor, &self.window.buffer, exceed)
             }
             Command::MoveCursorUp => move_cursor_up(&mut self.window.cursor, &self.window.buffer),
             Command::MoveCursorDown => {
@@ -172,11 +175,15 @@ where
                 move_cursor_after_insert(&mut self.window.cursor, c)
             }
             Command::DeleteCharBackward => {
-                self.window.buffer.delete_char_backward(self.window.cursor.position);
+                self.window
+                    .buffer
+                    .delete_char_backward(self.window.cursor.position);
                 move_cursor_before_deleting_backward(&mut self.window.cursor, &self.window.buffer);
             }
             Command::DeleteCharForward => {
-                self.window.buffer.delete_char_forward(self.window.cursor.position);
+                self.window
+                    .buffer
+                    .delete_char_forward(self.window.cursor.position);
             }
         }
 

@@ -15,8 +15,15 @@ pub fn move_cursor_left(cursor: &mut Cursor) {
 }
 
 /// Moves the cursor to the right, respecting the boundaries of a Buffer.
-pub fn move_cursor_right(cursor: &mut Cursor, buffer: &Buffer) {
-    let line_length = buffer.get_visible_line_length(cursor.position.y);
+///
+/// `exceed_line` means if we want the cursor to be able to move beyond the visible part
+/// of the line, which means we are counting the '\n' character.
+pub fn move_cursor_right(cursor: &mut Cursor, buffer: &Buffer, exceed_line: bool) {
+    let line_length = if exceed_line {
+        buffer.get_line_length(cursor.position.y)
+    } else {
+        buffer.get_visible_line_length(cursor.position.y)
+    };
 
     if cursor.position.x < line_length {
         cursor.position.x += 1;

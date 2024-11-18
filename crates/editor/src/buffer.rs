@@ -53,6 +53,12 @@ impl Buffer {
             .saturating_sub(1)
     }
 
+    pub fn get_line_length(&self, line_idx: usize) -> usize {
+        self.text_engine
+            .get_trimmed_line(line_idx)
+            .len_chars()
+    }
+
     /// Returns the index of the start of the next word from a given position.
     pub fn find_next_word_start(&self, position: Position, big_word: bool) -> Option<Position> {
         let total_chars = self.text_engine.len_chars();

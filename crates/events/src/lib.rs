@@ -85,7 +85,7 @@ impl EventHandler {
             Mode::Normal => match key_event.code {
                 KeyCode::Char('q') => commands.push(Command::Quit),
                 KeyCode::Char('h') => commands.push(Command::MoveCursorLeft),
-                KeyCode::Char('l') => commands.push(Command::MoveCursorRight),
+                KeyCode::Char('l') => commands.push(Command::MoveCursorRight(false)),
                 KeyCode::Char('k') => commands.push(Command::MoveCursorUp),
                 KeyCode::Char('j') => commands.push(Command::MoveCursorDown),
                 KeyCode::Char('i') => commands.push(Command::SwitchMode(Mode::Insert)),
@@ -100,7 +100,7 @@ impl EventHandler {
                 KeyCode::Char('E') => commands.push(Command::MoveCursorWordForwardEnd(true)),
                 KeyCode::Char('x') => commands.push(Command::DeleteCharForward),
                 KeyCode::Char('a') => {
-                    commands.push(Command::MoveCursorRight);
+                    commands.push(Command::MoveCursorRight(true));
                     commands.push(Command::SwitchMode(Mode::Insert));
                 }
                 _ => {}
@@ -113,7 +113,7 @@ impl EventHandler {
                 KeyCode::Char(c) => commands.push(Command::InsertChar(c)),
                 KeyCode::Enter => commands.push(Command::InsertChar('\n')),
                 KeyCode::Left => commands.push(Command::MoveCursorLeft),
-                KeyCode::Right => commands.push(Command::MoveCursorRight),
+                KeyCode::Right => commands.push(Command::MoveCursorRight(false)),
                 KeyCode::Up => commands.push(Command::MoveCursorUp),
                 KeyCode::Down => commands.push(Command::MoveCursorDown),
                 KeyCode::Backspace => commands.push(Command::DeleteCharBackward),

@@ -44,7 +44,7 @@ pub enum Command {
     MoveCursorLeft,
     MoveCursorDown,
     MoveCursorUp,
-    MoveCursorRight,
+    MoveCursorRight(bool),
     SwitchMode(Mode),
     Resize(Size),
     MoveCursorEndOfLine,

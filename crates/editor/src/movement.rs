@@ -95,3 +95,14 @@ pub fn move_cursor_word_forward_end(cursor: &mut Cursor, buffer: &Buffer, big_wo
         cursor.desired_x = cursor.position.x;
     }
 }
+
+pub fn move_cursor_after_insert(cursor: &mut Cursor, c: char) {
+    if c == '\n' {
+        cursor.position.x = 0;
+        cursor.position.y += 1;
+    } else {
+        cursor.position.x += 1;
+    }
+
+    cursor.desired_x = cursor.position.x;
+}

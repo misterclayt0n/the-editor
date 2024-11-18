@@ -107,6 +107,12 @@ impl EventHandler {
             },
             Mode::Insert => match key_event.code {
                 KeyCode::Esc => commands.push(Command::SwitchMode(Mode::Normal)),
+                KeyCode::Char(c) => commands.push(Command::InsertChar(c)),
+                KeyCode::Enter => commands.push(Command::InsertChar('\n')),
+                KeyCode::Left => commands.push(Command::MoveCursorLeft),
+                KeyCode::Right => commands.push(Command::MoveCursorRight),
+                KeyCode::Up => commands.push(Command::MoveCursorUp),
+                KeyCode::Down => commands.push(Command::MoveCursorDown),
                 _ => {}
             },
         }

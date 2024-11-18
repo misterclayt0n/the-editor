@@ -38,6 +38,7 @@ pub enum Mode {
 pub enum Command {
     Quit,
     None,
+    InsertChar(char),
     MoveCursorLeft,
     MoveCursorDown,
     MoveCursorUp,

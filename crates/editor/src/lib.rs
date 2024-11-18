@@ -1,8 +1,7 @@
+
 use events::{Event, EventHandler};
 use movement::{
-    move_cursor_down, move_cursor_end_of_line, move_cursor_first_char_of_line, move_cursor_left,
-    move_cursor_right, move_cursor_start_of_line, move_cursor_up, move_cursor_word_backward,
-    move_cursor_word_forward, move_cursor_word_forward_end,
+    move_cursor_after_insert, move_cursor_down, move_cursor_end_of_line, move_cursor_first_char_of_line, move_cursor_left, move_cursor_right, move_cursor_start_of_line, move_cursor_up, move_cursor_word_backward, move_cursor_word_forward, move_cursor_word_forward_end
 };
 use renderer::{
     terminal::{Terminal, TerminalInterface},
@@ -167,6 +166,10 @@ where
             Command::None => {}
             Command::SwitchMode(mode) => self.switch_mode(mode),
             Command::Resize(new_size) => self.handle_resize(new_size)?,
+            Command::InsertChar(c) => {
+                self.window.buffer.insert_char(self.window.cursor.position, c);
+                move_cursor_after_insert(&mut self.window.cursor, c)
+            }
         }
 
         self.window.scroll_to_cursor();

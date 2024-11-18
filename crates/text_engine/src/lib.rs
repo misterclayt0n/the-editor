@@ -104,7 +104,7 @@ impl TextEngine {
         self.rope.line_to_char(line_idx)
     }
 
-    /// Transforms a character index into a `Position`
+    /// Transforms a character index into a `Position`.
     pub fn char_idx_to_position(&self, char_idx: usize) -> Position {
         let line_idx = self.rope.char_to_line(char_idx);
         let line_start_idx = self.rope.line_to_char(line_idx);
@@ -114,5 +114,14 @@ impl TextEngine {
             x: char_in_line,
             y: line_idx
         }
+    }
+
+    //
+    // Editing
+    //
+
+    /// Inserts a character at a given index.
+    pub fn insert_char(&mut self, idx: usize, c: char) {
+        self.rope.insert_char(idx, c)
     }
 }

@@ -97,6 +97,7 @@ impl Buffer {
         Some(self.text_engine.char_idx_to_position(char_idx))
     }
 
+    /// Returns the index of the previous word from a given position.
     pub fn find_prev_word_start(&self, position: Position, big_word: bool) -> Option<Position> {
         let line_start = self.text_engine.line_to_char(position.y);
         let mut char_idx = line_start + position.x;
@@ -150,6 +151,7 @@ impl Buffer {
         Some(self.text_engine.char_idx_to_position(char_idx))
     }
 
+    /// Returns the index of the end of the next word from a given position.
     pub fn find_next_word_end(&self, position: Position, big_word: bool) -> Option<Position> {
         let total_chars = self.text_engine.len_chars();
         let line_start = self.text_engine.line_to_char(position.y);
@@ -197,5 +199,22 @@ impl Buffer {
         }
 
         Some(self.text_engine.char_idx_to_position(last_char_index))
+    }
+
+    //
+    // Editing
+    //
+
+    pub fn insert_char(&mut self, position: Position, c: char) {
+        let char_idx = self.position_to_char_idx(position);
+        self.text_engine.insert_char(char_idx, c);
+    }
+
+    //
+    // Helpers
+    //
+
+    fn position_to_char_idx(&self, position: Position) -> usize {
+        self.text_engine.line_to_char(position.y) + position.x
     }
 }

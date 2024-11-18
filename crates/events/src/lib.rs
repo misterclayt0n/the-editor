@@ -98,21 +98,26 @@ impl EventHandler {
                 KeyCode::Char('B') => commands.push(Command::MoveCursorWordBackward(true)),
                 KeyCode::Char('e') => commands.push(Command::MoveCursorWordForwardEnd(false)),
                 KeyCode::Char('E') => commands.push(Command::MoveCursorWordForwardEnd(true)),
+                KeyCode::Char('x') => commands.push(Command::DeleteCharForward),
                 KeyCode::Char('a') => {
-                    return Err(EventsError::KeyEventError(
-                        "Key 'a' is not allowed in this context".to_string(),
-                    ));
+                    commands.push(Command::MoveCursorRight);
+                    commands.push(Command::SwitchMode(Mode::Insert));
                 }
                 _ => {}
             },
             Mode::Insert => match key_event.code {
-                KeyCode::Esc => commands.push(Command::SwitchMode(Mode::Normal)),
+                KeyCode::Esc => {
+                    commands.push(Command::MoveCursorLeft);
+                    commands.push(Command::SwitchMode(Mode::Normal))
+                },
                 KeyCode::Char(c) => commands.push(Command::InsertChar(c)),
                 KeyCode::Enter => commands.push(Command::InsertChar('\n')),
                 KeyCode::Left => commands.push(Command::MoveCursorLeft),
                 KeyCode::Right => commands.push(Command::MoveCursorRight),
                 KeyCode::Up => commands.push(Command::MoveCursorUp),
                 KeyCode::Down => commands.push(Command::MoveCursorDown),
+                KeyCode::Backspace => commands.push(Command::DeleteCharBackward),
+                KeyCode::Delete => commands.push(Command::DeleteCharForward),
                 _ => {}
             },
         }

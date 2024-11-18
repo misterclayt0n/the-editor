@@ -39,6 +39,8 @@ pub enum Command {
     Quit,
     None,
     InsertChar(char),
+    DeleteCharBackward,
+    DeleteCharForward,
     MoveCursorLeft,
     MoveCursorDown,
     MoveCursorUp,

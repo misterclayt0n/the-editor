@@ -210,11 +210,39 @@ impl Buffer {
         self.text_engine.insert_char(char_idx, c);
     }
 
+    pub fn delete_char_backward(&mut self, position: Position) {
+        let char_idx = self.position_to_char_idx(position);
+        if char_idx == 0 {
+            // At the beginning of the buffer, nothing to delete.
+            return;
+        }
+
+        self.text_engine.delete_char_backward(char_idx);
+    }
+
+    pub fn delete_char_forward(&mut self, position: Position) {
+        let total_chars = self.text_engine.len_chars();
+        let char_idx = self.position_to_char_idx(position);
+
+        if char_idx >= total_chars {
+            // At the end of the buffer, nothing to delete.
+            return;
+        }
+
+        self.text_engine.delete_char_forward(char_idx);
+    }
+
     //
     // Helpers
     //
 
     fn position_to_char_idx(&self, position: Position) -> usize {
-        self.text_engine.line_to_char(position.y) + position.x
+        let line_start_idx = self.text_engine.line_to_char(position.y);
+        let line_len = self.text_engine.line(position.y).len_chars();
+
+        // Ensure cursor.x does not exceed line length
+        let x = position.x.min(line_len);
+
+        line_start_idx + x
     }
 }

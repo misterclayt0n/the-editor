@@ -68,8 +68,6 @@ impl TextEngine {
     }
 
     /// Returns a line with removed '\n' and empty lines from the end.
-    /// This mostly exists for rendering. Buffer operations should probably not be done
-    /// using this method.
     pub fn get_trimmed_line(&self, line_idx: usize) -> RopeSlice {
         let line = self.rope.line(line_idx);
         let len = line.len_chars();
@@ -123,5 +121,21 @@ impl TextEngine {
     /// Inserts a character at a given index.
     pub fn insert_char(&mut self, idx: usize, c: char) {
         self.rope.insert_char(idx, c)
+    }
+
+    /// Deletes a character before the given index (backspace).
+    pub fn delete_char_backward(&mut self, idx: usize) {
+        if idx == 0 {
+            return;
+        }
+
+        self.rope.remove(idx - 1..idx);
+    }
+
+    pub fn delete_char_forward(&mut self, idx: usize) {
+        if idx >= self.rope.len_chars() {
+            return;
+        }
+        self.rope.remove(idx..idx + 1);
     }
 }

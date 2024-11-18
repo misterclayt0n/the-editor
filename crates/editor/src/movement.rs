@@ -106,3 +106,14 @@ pub fn move_cursor_after_insert(cursor: &mut Cursor, c: char) {
 
     cursor.desired_x = cursor.position.x;
 }
+
+pub fn move_cursor_before_deleting_backward(cursor: &mut Cursor, buffer: &Buffer) {
+    if cursor.position.x > 0 {
+        cursor.position.x -= 1;
+    } else if cursor.position.y > 0 {
+        cursor.position.y -= 1;
+        cursor.position.x = buffer.get_visible_line_length(cursor.position.y);
+    }
+
+    cursor.desired_x = cursor.position.x;
+}

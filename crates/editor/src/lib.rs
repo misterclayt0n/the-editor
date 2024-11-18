@@ -1,7 +1,6 @@
-
 use events::{Event, EventHandler};
 use movement::{
-    move_cursor_after_insert, move_cursor_down, move_cursor_end_of_line, move_cursor_first_char_of_line, move_cursor_left, move_cursor_right, move_cursor_start_of_line, move_cursor_up, move_cursor_word_backward, move_cursor_word_forward, move_cursor_word_forward_end
+    move_cursor_after_insert, move_cursor_before_deleting_backward, move_cursor_down, move_cursor_end_of_line, move_cursor_first_char_of_line, move_cursor_left, move_cursor_right, move_cursor_start_of_line, move_cursor_up, move_cursor_word_backward, move_cursor_word_forward, move_cursor_word_forward_end
 };
 use renderer::{
     terminal::{Terminal, TerminalInterface},
@@ -167,8 +166,17 @@ where
             Command::SwitchMode(mode) => self.switch_mode(mode),
             Command::Resize(new_size) => self.handle_resize(new_size)?,
             Command::InsertChar(c) => {
-                self.window.buffer.insert_char(self.window.cursor.position, c);
+                self.window
+                    .buffer
+                    .insert_char(self.window.cursor.position, c);
                 move_cursor_after_insert(&mut self.window.cursor, c)
+            }
+            Command::DeleteCharBackward => {
+                self.window.buffer.delete_char_backward(self.window.cursor.position);
+                move_cursor_before_deleting_backward(&mut self.window.cursor, &self.window.buffer);
+            }
+            Command::DeleteCharForward => {
+                self.window.buffer.delete_char_forward(self.window.cursor.position);
             }
         }
 
@@ -216,9 +224,9 @@ where
         self.status_bar
             .update(self.mode, file_name, cursor_position);
 
-        self.renderer.render().map_err(|e| {
-            EditorError::RenderError(format!("Could not flush renderer: {e}"))
-        })?;
+        self.renderer
+            .render()
+            .map_err(|e| EditorError::RenderError(format!("Could not flush renderer: {e}")))?;
 
         Ok(())
     }

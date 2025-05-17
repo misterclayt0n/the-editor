@@ -162,15 +162,6 @@ where
     }
 
     fn switch_mode(&mut self, mode: Mode) {
-        match mode {
-            Mode::Insert => self
-                .renderer
-                .enqueue_command(renderer::TerminalCommand::ChangeCursorStyleBar),
-            Mode::Normal => self
-                .renderer
-                .enqueue_command(renderer::TerminalCommand::ChangeCursorStyleBlock),
-        }
-
         self.mode = mode;
     }
 

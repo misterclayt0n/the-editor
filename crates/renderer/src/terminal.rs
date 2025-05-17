@@ -2,9 +2,9 @@ use anyhow::Context;
 use std::io::{stdout, Write};
 
 use crossterm::{
-    cursor::{Hide, MoveTo, SetCursorStyle, Show},
+    cursor::{Hide, MoveTo, Show},
     execute, queue,
-    style::Print,
+    style::{Attribute, Print, SetAttribute},
     terminal::{
         disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen,
         LeaveAlternateScreen,
@@ -53,7 +53,7 @@ impl Terminal {
     /// This function can likely be used in other places, for irrecoverable errors.
     fn handle_terminal_error<E: std::fmt::Display>(error: E) -> ! {
         error!("Fatal terminal error: {}", error);
-        
+
         let error_msg = format!("Fatal error: {}", error);
         let _ = execute!(
             stdout(),
@@ -66,16 +66,13 @@ impl Terminal {
 
         // Give user time to read the error.
         std::thread::sleep(std::time::Duration::from_secs(2));
-        
+
         // Shutdown recovering the terminal
-        let _ = execute!(
-            stdout(),
-            LeaveAlternateScreen
-        );
+        let _ = execute!(stdout(), LeaveAlternateScreen);
         let _ = stdout().flush();
-        
+
         disable_raw_mode().unwrap();
-        
+
         std::process::exit(1);
     }
 }
@@ -94,14 +91,22 @@ impl TerminalInterface for Terminal {
             TerminalCommand::MoveCursor(x, y) => Self::queue_command(MoveTo(x as u16, y as u16)),
             TerminalCommand::HideCursor => Self::queue_command(Hide),
             TerminalCommand::ShowCursor => Self::queue_command(Show),
-            TerminalCommand::ChangeCursorStyleBar => {
-                Self::queue_command(SetCursorStyle::BlinkingBar)
-            }
-            TerminalCommand::ChangeCursorStyleBlock => {
-                Self::queue_command(SetCursorStyle::BlinkingBlock)
-            }
             TerminalCommand::ForceError => {
                 Self::handle_terminal_error("This is a forced error design for testing")
+            }
+            TerminalCommand::SetInverseVideo(enable) => {
+                if enable {
+                    execute!(stdout(), SetAttribute(Attribute::Reverse)).unwrap();
+                } else {
+                    execute!(stdout(), SetAttribute(Attribute::Reset)).unwrap();
+                }
+            }
+            TerminalCommand::SetUnderline(enable) => {
+                if enable {
+                    execute!(stdout(), SetAttribute(Attribute::Underlined)).unwrap();
+                } else {
+                    execute!(stdout(), SetAttribute(Attribute::Reset)).unwrap();
+                }
             }
         }
     }

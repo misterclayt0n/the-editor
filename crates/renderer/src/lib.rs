@@ -19,10 +19,10 @@ pub enum TerminalCommand {
     MoveCursor(usize, usize),
     HideCursor,
     ShowCursor,
-    ChangeCursorStyleBlock,
-    ChangeCursorStyleBar,
     ClearLine,
     ForceError,
+    SetInverseVideo(bool),
+    SetUnderline(bool),
 }
 
 /// Renderer is responsible for rendering the state of the editor in the terminal.

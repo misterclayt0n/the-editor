@@ -57,6 +57,37 @@ impl Window {
         renderer.enqueue_command(TerminalCommand::PrintRope(rope));
     }
 
+    fn render_cursor<T: TerminalInterface>(&self, renderer: &mut Renderer<T>) {
+        renderer.enqueue_command(TerminalCommand::HideCursor);
+        
+        let cursor_x = self.cursor.position.x.saturating_sub(self.scroll_offset.x);
+        let cursor_y = self.cursor.position.y.saturating_sub(self.scroll_offset.y);
+
+        // Only render if cursor is within the viewport.
+        let content_height = self.viewport_size.height.saturating_sub(1);
+        if cursor_y >= content_height {
+            return;
+        }
+
+        let char_under_cursor = if self.cursor.position.y < self.buffer.len_nonempty_lines() {
+            let line = self.buffer.get_trimmed_line(self.cursor.position.y);
+            if self.cursor.position.x < line.len_chars() {
+                line.char(self.cursor.position.x)
+            } else {
+                ' ' // Space if beyond end of line.
+            }
+        } else {
+            ' ' // Space if beyond end of line.
+        };
+
+        renderer.enqueue_command(TerminalCommand::MoveCursor(cursor_x, cursor_y));
+
+        // Block cursor: inverse video of character
+        renderer.enqueue_command(TerminalCommand::SetInverseVideo(true));
+        renderer.enqueue_command(TerminalCommand::Print(char_under_cursor.to_string()));
+        renderer.enqueue_command(TerminalCommand::SetInverseVideo(false));
+    }
+
     //
     // Helpers
     //
@@ -89,7 +120,11 @@ impl Window {
         if self.cursor.position.x < self.scroll_offset.x + Self::SCROLL_MARGIN {
             self.scroll_offset.x = self.cursor.position.x.saturating_sub(Self::SCROLL_MARGIN);
         } else if self.cursor.position.x >= self.scroll_offset.x + width - Self::SCROLL_MARGIN {
-            self.scroll_offset.x = self.cursor.position.x.saturating_sub(width - 1 - Self::SCROLL_MARGIN);
+            self.scroll_offset.x = self
+                .cursor
+                .position
+                .x
+                .saturating_sub(width - 1 - Self::SCROLL_MARGIN);
         }
 
         // Vertical scrolling.
@@ -138,5 +173,6 @@ impl Component for Window {
             cursor_y
         };
         renderer.enqueue_command(TerminalCommand::MoveCursor(cursor_x, cursor_y));
+        self.render_cursor(renderer);
     }
 }

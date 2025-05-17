@@ -14,7 +14,6 @@ pub struct Window {
     pub cursor: Cursor,
     scroll_offset: Position,
     pub viewport_size: Size,
-    pub needs_redraw: bool,
 }
 
 impl Window {
@@ -35,7 +34,6 @@ impl Window {
             cursor: Cursor::new(),
             scroll_offset: Position::new(),
             viewport_size,
-            needs_redraw: true, // Initial drawing
         }
     }
 
@@ -129,10 +127,6 @@ impl Window {
 
 impl Component for Window {
     fn render<T: TerminalInterface>(&mut self, renderer: &mut Renderer<T>) {
-        if !self.needs_redraw {
-            return;
-        }
-
         let content_height = self.viewport_size.height.saturating_sub(1);
         for row in 0..content_height {
             renderer.enqueue_command(TerminalCommand::MoveCursor(0, row));
@@ -172,7 +166,5 @@ impl Component for Window {
             cursor_y
         };
         renderer.enqueue_command(TerminalCommand::MoveCursor(cursor_x, cursor_y));
-
-        self.needs_redraw = false;
     }
 }

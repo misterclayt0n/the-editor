@@ -84,9 +84,7 @@ where
                 }
             }
 
-            if self.window.needs_redraw {
-                self.render();
-            }
+            self.render();
 
             if self.should_quit {
                 break;
@@ -147,7 +145,6 @@ where
         }
 
         self.window.scroll_to_cursor();
-        self.window.needs_redraw = true;
     }
 
     /// Updates the viewport size, scroll if necessary and mark the window for a
@@ -155,7 +152,6 @@ where
     fn handle_resize(&mut self, new_size: Size) {
         self.window.viewport_size = new_size;
         self.window.scroll_to_cursor();
-        self.window.needs_redraw = true;
         self.status_bar.size = new_size;
     }
 
@@ -184,9 +180,8 @@ where
             .update(self.mode, file_name, cursor_position);
 
         self.renderer.render();
-
-        self.renderer
-            .enqueue_command(renderer::TerminalCommand::ForceError);
+        // self.renderer
+        //     .enqueue_command(renderer::TerminalCommand::ForceError);
     }
 }
 

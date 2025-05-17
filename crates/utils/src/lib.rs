@@ -3,9 +3,6 @@ use std::fs::File;
 use log::LevelFilter;
 use simplelog::{CombinedLogger, Config, WriteLogger};
 
-const VERSION: &str = "0.0.1";
-const WELCOME_MESSAGE: &str = "the-editor";
-
 /// Initializes the logging system.
 pub fn init_logging() -> Result<(), Box<dyn std::error::Error>> {
     // Create or open the log file.
@@ -109,23 +106,4 @@ pub fn get_char_class(c: char, big_word: bool) -> CharClass {
     } else {
         CharClass::Punctuation
     }
-}
-
-/// Builds the welcome message.
-pub fn build_welcome_message(width: usize) -> String {
-    if width == 0 {
-        return "~".to_string();
-    }
-
-    let message = format!("{} -- {}", WELCOME_MESSAGE, VERSION);
-    let message_len = message.len();
-
-    if width <= message_len {
-        return message[..width].to_string();
-    }
-
-    let padding = (width - message_len) / 2;
-    let mut full_message = format!("~{}{}", " ".repeat(padding), message);
-    full_message.truncate(width);
-    return full_message;
 }

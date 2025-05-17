@@ -4,7 +4,7 @@ use renderer::{
     Component, Renderer, TerminalCommand,
 };
 use text_engine::{Rope, RopeSlice};
-use utils::{build_welcome_message, Cursor, Position, Size};
+use utils::{Cursor, Position, Size};
 
 use crate::buffer::Buffer;
 
@@ -43,24 +43,6 @@ impl Window {
     // Rendering
     //
 
-    fn render_welcome_message<T: TerminalInterface>(
-        &self,
-        viewport: Size,
-        current_row: usize,
-        renderer: &mut Renderer<T>,
-    ) {
-        let Size { width, height } = viewport;
-        let vertical_center = height / 3;
-
-        if current_row == vertical_center {
-            let welcome_string = build_welcome_message(width);
-            renderer.enqueue_command(TerminalCommand::MoveCursor(0, current_row));
-            renderer.enqueue_command(TerminalCommand::Print(welcome_string))
-        } else {
-            self.render_empty_row(current_row, renderer);
-        }
-    }
-
     /// Renders a single row in the `Window`.
     fn render_row<T: TerminalInterface>(
         &self,
@@ -74,13 +56,6 @@ impl Window {
         // into a string or something.
         let rope = Rope::from(slice);
         renderer.enqueue_command(TerminalCommand::PrintRope(rope));
-    }
-
-    /// Renders a single line with a '~' character
-    /// to represent empty lines beyond the buffer.
-    fn render_empty_row<T: TerminalInterface>(&self, row: usize, renderer: &mut Renderer<T>) {
-        renderer.enqueue_command(TerminalCommand::MoveCursor(0, row));
-        renderer.enqueue_command(TerminalCommand::Print("~".to_string()));
     }
 
     //
@@ -142,23 +117,15 @@ impl Component for Window {
         // Helpers.
         let start_line = self.scroll_offset.y;
         let width = self.viewport_size.width;
-        let nonempty_lines = self.buffer.len_nonempty_lines();
+        let total_lines = std::cmp::max(self.buffer.len_nonempty_lines(), 1);
 
         for current_row in 0..content_height {
             let line_idx = start_line + current_row;
 
-            if self.buffer.file_path.is_none() {
-                self.render_welcome_message(self.viewport_size, current_row, renderer);
-            } else {
-                if line_idx < nonempty_lines {
-                    let line = self.buffer.get_trimmed_line(line_idx);
-                    let visible_text =
-                        self.calculate_visible_text(line, self.scroll_offset.x, width);
-
-                    self.render_row(current_row, visible_text, renderer);
-                } else {
-                    self.render_empty_row(current_row, renderer);
-                }
+            if line_idx < total_lines {
+                let line = self.buffer.get_trimmed_line(line_idx);
+                let visible_text = self.calculate_visible_text(line, self.scroll_offset.x, width);
+                self.render_row(current_row, visible_text, renderer);
             }
         }
 

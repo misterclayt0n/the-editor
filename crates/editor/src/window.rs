@@ -17,6 +17,8 @@ pub struct Window {
 }
 
 impl Window {
+    const SCROLL_MARGIN: usize = 2;
+
     /// Loads a `Window` from a `Buffer` (can be `None`).
     pub fn from_file(file_path: Option<String>) -> Self {
         let (width, height) = Terminal::size();
@@ -110,17 +112,21 @@ impl Window {
         let height = self.viewport_size.height.saturating_sub(1); // NOTE: Subtract 1 to account for the status bar.
 
         // Horizontal scrolling.
-        if self.cursor.position.x < self.scroll_offset.x {
-            self.scroll_offset.x = self.cursor.position.x;
-        } else if self.cursor.position.x >= self.scroll_offset.x + width {
-            self.scroll_offset.x = self.cursor.position.x.saturating_sub(width - 1);
+        if self.cursor.position.x < self.scroll_offset.x + Self::SCROLL_MARGIN {
+            self.scroll_offset.x = self.cursor.position.x.saturating_sub(Self::SCROLL_MARGIN);
+        } else if self.cursor.position.x >= self.scroll_offset.x + width - Self::SCROLL_MARGIN {
+            self.scroll_offset.x = self.cursor.position.x.saturating_sub(width - 1 - Self::SCROLL_MARGIN);
         }
 
         // Vertical scrolling.
-        if self.cursor.position.y < self.scroll_offset.y {
-            self.scroll_offset.y = self.cursor.position.y;
-        } else if self.cursor.position.y >= self.scroll_offset.y + height {
-            self.scroll_offset.y = self.cursor.position.y.saturating_sub(height - 1);
+        if self.cursor.position.y < self.scroll_offset.y + Self::SCROLL_MARGIN {
+            self.scroll_offset.y = self.cursor.position.y.saturating_sub(Self::SCROLL_MARGIN);
+        } else if self.cursor.position.y >= self.scroll_offset.y + height - Self::SCROLL_MARGIN {
+            self.scroll_offset.y = self
+                .cursor
+                .position
+                .y
+                .saturating_sub(height - 1 - Self::SCROLL_MARGIN);
         }
     }
 }

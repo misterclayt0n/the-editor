@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-thiserror = { workspace = true }
 crossterm = { workspace = true }
+anyhow = { workspace = true }
 events = { path = "../events" }
 renderer = { path = "../renderer" }
 text_engine = { path = "../text_engine" }

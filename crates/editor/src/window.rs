@@ -1,12 +1,12 @@
 // TODO: Implement specific redrawing based on changes, not redrawing the entire buffer all the time.
 use renderer::{
     terminal::{Terminal, TerminalInterface},
-    Component, Renderer, RendererError, TerminalCommand,
+    Component, Renderer, TerminalCommand,
 };
 use text_engine::{Rope, RopeSlice};
 use utils::{build_welcome_message, Cursor, Position, Size};
 
-use crate::{buffer::Buffer, EditorError};
+use crate::buffer::Buffer;
 
 /// Represents a window in the terminal.
 pub struct Window {
@@ -17,37 +17,38 @@ pub struct Window {
     pub needs_redraw: bool,
 }
 
-impl Window
-{
+impl Window {
     /// Loads a `Window` from a `Buffer` (can be `None`).
-    pub fn from_file(
-        file_path: Option<String>,
-    ) -> Result<Self, EditorError> {
-        let (width, height) = Terminal::size()
-            .map_err(|e| EditorError::RenderError(format!("Could not initialize viewport: {e}")))?;
+    pub fn from_file(file_path: Option<String>) -> Self {
+        let (width, height) = Terminal::size();
 
         let viewport_size = Size { width, height };
 
         let buffer = if let Some(path) = file_path {
-            Buffer::open(path)?
+            Buffer::open(path)
         } else {
             Buffer::new()
         };
 
-        Ok(Self {
+        Self {
             buffer,
             cursor: Cursor::new(),
             scroll_offset: Position::new(),
             viewport_size,
             needs_redraw: true, // Initial drawing
-        })
+        }
     }
 
     //
     // Rendering
     //
 
-    fn render_welcome_message<T: TerminalInterface>(&self, viewport: Size, current_row: usize, renderer: &mut Renderer<T>) {
+    fn render_welcome_message<T: TerminalInterface>(
+        &self,
+        viewport: Size,
+        current_row: usize,
+        renderer: &mut Renderer<T>,
+    ) {
         let Size { width, height } = viewport;
         let vertical_center = height / 3;
 
@@ -61,7 +62,12 @@ impl Window
     }
 
     /// Renders a single row in the `Window`.
-    fn render_row<T: TerminalInterface> (&self, row: usize, slice: RopeSlice, renderer: &mut Renderer<T>) {
+    fn render_row<T: TerminalInterface>(
+        &self,
+        row: usize,
+        slice: RopeSlice,
+        renderer: &mut Renderer<T>,
+    ) {
         renderer.enqueue_command(TerminalCommand::MoveCursor(0, row));
 
         // Since this runs in O(log N), it's better then to turn it
@@ -122,9 +128,9 @@ impl Window
 }
 
 impl Component for Window {
-    fn render<T: TerminalInterface>(&mut self, renderer: &mut Renderer<T>) -> Result<(), RendererError> {
+    fn render<T: TerminalInterface>(&mut self, renderer: &mut Renderer<T>) {
         if !self.needs_redraw {
-            return Ok(());
+            return;
         }
 
         let content_height = self.viewport_size.height.saturating_sub(1);
@@ -146,7 +152,8 @@ impl Component for Window {
             } else {
                 if line_idx < nonempty_lines {
                     let line = self.buffer.get_trimmed_line(line_idx);
-                    let visible_text = self.calculate_visible_text(line, self.scroll_offset.x, width);
+                    let visible_text =
+                        self.calculate_visible_text(line, self.scroll_offset.x, width);
 
                     self.render_row(current_row, visible_text, renderer);
                 } else {
@@ -167,6 +174,5 @@ impl Component for Window {
         renderer.enqueue_command(TerminalCommand::MoveCursor(cursor_x, cursor_y));
 
         self.needs_redraw = false;
-        Ok(())
     }
 }

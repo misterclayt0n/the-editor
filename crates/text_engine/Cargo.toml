@@ -5,5 +5,5 @@ edition = "2021"
 
 [dependencies]
 ropey = { workspace = true }
-thiserror = { workspace = true }
+anyhow = { workspace = true }
 utils = { path = "../utils" }

@@ -1,9 +1,7 @@
-use std::path::Path;
+use std::{fmt::Display, path::Path};
 
 use text_engine::{RopeSlice, TextEngine};
-use utils::{get_char_class, CharClass, Position};
-
-use crate::EditorError;
+use utils::{error, get_char_class, CharClass, Position};
 
 pub struct Buffer {
     text_engine: TextEngine,
@@ -19,18 +17,24 @@ impl Buffer {
     }
 
     /// Returns a `Buffer` with a file loaded.
-    pub fn open<P>(path: P) -> Result<Self, EditorError>
+    pub fn open<P>(path: P) -> Self
     where
-        P: AsRef<Path>,
+        P: AsRef<Path> + Display,
     {
-        let text_engine = TextEngine::from_file(&path)
-            .map_err(|e| EditorError::BufferError(format!("Could not load text engine: {e}")))?;
-        let file_path = path.as_ref().to_string_lossy().to_string();
-
-        Ok(Buffer {
-            text_engine,
-            file_path: Some(file_path),
-        })
+        match TextEngine::from_file(&path) {
+            Ok(text_engine) => {
+                let file_path = path.as_ref().to_string_lossy().to_string();
+                Buffer {
+                    text_engine,
+                    file_path: Some(file_path),
+                }
+            }
+            
+            Err(e) => {
+                error!("Failed to load file {}: {}", path, e);
+                Buffer::new()
+            }
+        }
     }
 
     /// Returns a line with removed '\n' and empty lines from the end.
@@ -54,9 +58,7 @@ impl Buffer {
     }
 
     pub fn get_line_length(&self, line_idx: usize) -> usize {
-        self.text_engine
-            .get_trimmed_line(line_idx)
-            .len_chars()
+        self.text_engine.get_trimmed_line(line_idx).len_chars()
     }
 
     /// Returns the index of the start of the next word from a given position.

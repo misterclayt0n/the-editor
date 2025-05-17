@@ -5,6 +5,6 @@ edition = "2021"
 
 [dependencies]
 crossterm = { workspace = true }
-thiserror = { workspace = true }
+anyhow = { workspace = true }
 utils = { path = "../utils" }
 text_engine = { path = "../text_engine" }

@@ -24,7 +24,7 @@ fn main() -> Result<()> {
     let event_handler = EventHandler::new();
     let terminal = Terminal::new();
     let renderer = Renderer::new(terminal);
-    let mut editor_state = EditorState::new(event_handler, renderer, file_path).context("Could not initialize editor state")?;
+    let mut editor_state = EditorState::new(event_handler, renderer, file_path);
 
     editor_state.run().context("Running editor")?;
 

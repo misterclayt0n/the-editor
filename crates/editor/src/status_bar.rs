@@ -1,7 +1,4 @@
-use renderer::{
-    terminal::TerminalInterface,
-    Component, Renderer, RendererError, TerminalCommand,
-};
+use renderer::{terminal::TerminalInterface, Component, Renderer, TerminalCommand};
 use utils::{Mode, Position, Size};
 
 pub struct StatusBar {
@@ -29,7 +26,7 @@ impl StatusBar {
 }
 
 impl Component for StatusBar {
-    fn render<T>(&mut self, renderer: &mut Renderer<T>) -> Result<(), RendererError>
+    fn render<T>(&mut self, renderer: &mut Renderer<T>)
     where
         T: TerminalInterface,
     {
@@ -41,7 +38,7 @@ impl Component for StatusBar {
 
         let file_name = self.file_name.as_deref().unwrap_or("[No Name]");
         let cursor_pos = format!(
-            "Ln {}, Col {}",
+            "{}:{}",
             self.cursor_position.y + 1,
             self.cursor_position.x + 1
         );
@@ -64,7 +61,5 @@ impl Component for StatusBar {
 
         // TODO: Colors.
         // TODO: Reset colors.
-
-        Ok(())
     }
 }

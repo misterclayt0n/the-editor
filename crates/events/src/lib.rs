@@ -1,23 +1,9 @@
+// REFACTOR: Remove crossterm dependency from this crate, refactor it using TerminalInterface.
 use std::time::Duration;
 
+use anyhow::Result;
 use crossterm::event::{self, Event as CEvent, KeyCode, KeyEvent};
-use thiserror::Error;
-use utils::{Command, Mode, Size};
-
-/// Represents all possible errors that can occur in `events`.
-#[derive(Error, Debug)]
-pub enum EventsError {
-    /// Error in capturing terminal events.
-    #[error("Error in capturing event: {0}")]
-    EventCapture(#[from] std::io::Error),
-
-    /// Error in handling key event.
-    #[error("Error in handling key event: {0}")]
-    KeyEventError(String),
-
-    #[error("Generic error: {0}")]
-    GenericError(String),
-}
+use utils::{error, Command, Mode, Size};
 
 /// Event is any type of event that the editor can compute.
 pub enum Event {
@@ -34,35 +20,38 @@ impl EventHandler {
     }
 
     /// Capture events from the terminal and return them in a Vector.
-    pub fn poll_events(&self) -> Result<Vec<Event>, EventsError> {
+    pub fn poll_events(&self) -> Vec<Event> {
         let mut events = Vec::new();
 
         // We use event::poll here with a timeout of 0 to make it non-blocking.
-        if event::poll(Duration::from_millis(0))? {
-            if let Ok(c_event) = event::read() {
-                // c_event is a crossterm event.
-                match c_event {
-                    CEvent::Key(key_event) => events.push(Event::KeyPress(key_event)),
-                    CEvent::Resize(width, height) => {
-                        events.push(Event::Resize(width as usize, height as usize))
-                    }
-                    // TODO: Treat other events.
-                    _ => {}
+        if let Err(e) = event::poll(Duration::from_millis(0)) {
+            error!("Failed to poll events: {}", e);
+            return events;
+        }
+
+        if let Ok(c_event) = event::read() {
+            // c_event is a crossterm event.
+            match c_event {
+                CEvent::Key(key_event) => events.push(Event::KeyPress(key_event)),
+                CEvent::Resize(width, height) => {
+                    events.push(Event::Resize(width as usize, height as usize))
                 }
+                // TODO: Treat other events.
+                _ => {}
             }
         }
 
-        Ok(events)
+        return events;
     }
 
     /// Maps `Events` from `crossterm` to a `Vec<Command>`
-    pub fn handle_event(&self, event: Event, mode: Mode) -> Result<Vec<Command>, EventsError> {
+    pub fn handle_event(&self, event: Event, mode: Mode) -> Result<Vec<Command>> {
         let mut commands = Vec::new();
 
         match event {
             Event::KeyPress(key_event) => {
                 // Reuse the existing logic to `KeyPress`
-                commands = self.handle_key_event(key_event, mode)?;
+                commands = self.handle_key_event(key_event, mode);
             }
             Event::Resize(width, height) => {
                 commands.push(Command::Resize(Size { width, height }));
@@ -74,11 +63,7 @@ impl EventHandler {
     }
 
     /// Returns a `Vec<Command>` based on the current `Mode` and `KeyEvent`.
-    pub fn handle_key_event(
-        &self,
-        key_event: KeyEvent,
-        mode: Mode,
-    ) -> Result<Vec<Command>, EventsError> {
+    pub fn handle_key_event(&self, key_event: KeyEvent, mode: Mode) -> Vec<Command> {
         let mut commands = Vec::new();
 
         match mode {
@@ -109,7 +94,7 @@ impl EventHandler {
                 KeyCode::Esc => {
                     commands.push(Command::MoveCursorLeft);
                     commands.push(Command::SwitchMode(Mode::Normal))
-                },
+                }
                 KeyCode::Char(c) => commands.push(Command::InsertChar(c)),
                 KeyCode::Enter => commands.push(Command::InsertChar('\n')),
                 KeyCode::Left => commands.push(Command::MoveCursorLeft),
@@ -122,6 +107,6 @@ impl EventHandler {
             },
         }
 
-        Ok(commands)
+        return commands;
     }
 }

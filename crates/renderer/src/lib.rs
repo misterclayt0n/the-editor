@@ -1,12 +1,11 @@
 use terminal::TerminalInterface;
 use text_engine::Rope;
-use thiserror::Error;
 pub mod terminal;
 
 /// `Component` is like a React component, but for the-editor.
 pub trait Component {
     /// Renders the `Component`, does not require a `Renderer`, it assumes the `Component` has it's own.
-    fn render<T>(&mut self, renderer: &mut Renderer<T>) -> Result<(), RendererError>
+    fn render<T>(&mut self, renderer: &mut Renderer<T>)
     where
         T: TerminalInterface;
 }
@@ -23,17 +22,7 @@ pub enum TerminalCommand {
     ChangeCursorStyleBlock,
     ChangeCursorStyleBar,
     ClearLine,
-}
-
-/// Represents all possible errors that can occur in `renderer`.
-#[derive(Error, Debug)]
-pub enum RendererError {
-    /// Error in manipulating the terminal
-    #[error("Crossterm error: {0}")]
-    TerminalError(String),
-
-    #[error("Generic error: {0}")]
-    GenericError(String),
+    ForceError,
 }
 
 /// Renderer is responsible for rendering the state of the editor in the terminal.
@@ -57,14 +46,12 @@ impl<T: TerminalInterface> Renderer<T> {
     }
 
     /// Renders all enqueued commands.
-    pub fn render(&mut self) -> Result<(), RendererError> {
+    pub fn render(&mut self) {
         for command in &self.command_queue {
-            self.terminal.queue(command.clone())?;
+            self.terminal.queue(command.clone());
         }
 
-        self.terminal.flush()?;
+        self.terminal.flush();
         self.command_queue.clear();
-
-        Ok(())
     }
 }

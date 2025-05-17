@@ -1,22 +1,7 @@
-use std::{
-    fs::File,
-    io::{self, BufReader},
-    path::Path,
-};
+use std::{fmt::Display, fs::File, io::BufReader, path::Path};
 
-/// Represents all possible errors that can occur in `text_engine`.
-#[derive(Error, Debug)]
-pub enum TextEngineError {
-    /// Error in IO operations
-    #[error("Crossterm error: {0}")]
-    IOError(#[from] io::Error),
-
-    #[error("Generic error: {0}")]
-    GenericError(String),
-}
-
+use anyhow::{Context, Result};
 pub use ropey::{Rope, RopeSlice};
-use thiserror::Error;
 use utils::Position;
 
 /// This encapsulates `Rope` as the main data structure of the-editor, with some
@@ -32,13 +17,13 @@ impl TextEngine {
     }
 
     /// Loads a `TextEngine` from a file.
-    pub fn from_file<P>(path: P) -> Result<Self, TextEngineError>
+    pub fn from_file<P>(path: P) -> Result<Self>
     where
-        P: AsRef<Path>,
+        P: AsRef<Path> + Display,
     {
-        let file = File::open(path)?;
+        let file = File::open(&path).context(format!("Failed to read {}", &path))?;
         let reader = BufReader::new(file);
-        let rope = Rope::from_reader(reader)?;
+        let rope = Rope::from_reader(reader).context("Failed to turn reader into rope")?;
         Ok(TextEngine { rope })
     }
 
@@ -110,7 +95,7 @@ impl TextEngine {
 
         Position {
             x: char_in_line,
-            y: line_idx
+            y: line_idx,
         }
     }
 

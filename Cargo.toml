@@ -4,6 +4,5 @@ resolver = "2"
 
 [workspace.dependencies]
 crossterm = "0.28.1"
-thiserror = "1.0.65"
 anyhow = "1.0.91"
 ropey = "1.6.1"

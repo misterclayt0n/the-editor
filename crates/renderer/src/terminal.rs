@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::io::{stdout, Write};
 
 use crossterm::{
@@ -10,24 +11,25 @@ use crossterm::{
     },
     Command as CECommand,
 };
+use utils::error;
 
-use crate::{RendererError, TerminalCommand};
+use crate::TerminalCommand;
 
 pub trait TerminalInterface {
     /// Inits the terminal.
-    fn init() -> Result<(), RendererError>;
+    fn init();
 
     /// Puts a `Commands` into a queue.
-    fn queue(&self, command: TerminalCommand) -> Result<(), RendererError>;
+    fn queue(&self, command: TerminalCommand);
 
     /// Executes all commands that are in the queue.
-    fn flush(&self) -> Result<(), RendererError>;
+    fn flush(&self);
 
     /// Kills the terminal.
-    fn kill() -> Result<(), RendererError>;
+    fn kill();
 
     /// Returns the size of the terminal.
-    fn size() -> Result<(usize, usize), RendererError>;
+    fn size() -> (usize, usize);
 }
 
 /// `Terminal` implements `TerminalInterface` using `crossterm`,
@@ -39,26 +41,55 @@ impl Terminal {
         Self {}
     }
 
-    fn queue_command<T: CECommand>(command: T) -> Result<(), RendererError> {
-        queue!(stdout(), command).map_err(|e| {
-            RendererError::TerminalError(
-                format!("Could not put the command in queue: {e}").to_string(),
-            )
-        })
+    fn queue_command<T: CECommand>(command: T) {
+        queue!(stdout(), command)
+            .context("Failed to place command in queue")
+            .map_err(Self::handle_terminal_error)
+            .unwrap()
+    }
+
+    /// Handles all terminal errors. They're the lowest point of the application, and if they fail,
+    /// there's not a way to recover, so we just log gracefully them before crashing.
+    /// This function can likely be used in other places, for irrecoverable errors.
+    fn handle_terminal_error<E: std::fmt::Display>(error: E) -> ! {
+        error!("Fatal terminal error: {}", error);
+        
+        let error_msg = format!("Fatal error: {}", error);
+        let _ = execute!(
+            stdout(),
+            Clear(ClearType::All),
+            MoveTo(0, 0),
+            Print(error_msg),
+            Show,
+        );
+        let _ = stdout().flush();
+
+        // Give user time to read the error.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        
+        // Shutdown recovering the terminal
+        let _ = execute!(
+            stdout(),
+            LeaveAlternateScreen
+        );
+        let _ = stdout().flush();
+        
+        disable_raw_mode().unwrap();
+        
+        std::process::exit(1);
     }
 }
 
 impl TerminalInterface for Terminal {
-    fn queue(&self, command: TerminalCommand) -> Result<(), RendererError> {
+    fn queue(&self, command: TerminalCommand) {
         match command {
             TerminalCommand::ClearScreen => Self::queue_command(Clear(ClearType::All)),
             TerminalCommand::ClearLine => Self::queue_command(Clear(ClearType::CurrentLine)),
             TerminalCommand::Print(string) => Self::queue_command(Print(string)),
             TerminalCommand::PrintRope(rope) => {
                 for chunk in rope.chunks() {
-                    Self::queue_command(Print(chunk))?;
+                    Self::queue_command(Print(chunk));
                 }
-                Ok(())
             }
             TerminalCommand::MoveCursor(x, y) => Self::queue_command(MoveTo(x as u16, y as u16)),
             TerminalCommand::HideCursor => Self::queue_command(Hide),
@@ -69,45 +100,54 @@ impl TerminalInterface for Terminal {
             TerminalCommand::ChangeCursorStyleBlock => {
                 Self::queue_command(SetCursorStyle::BlinkingBlock)
             }
+            TerminalCommand::ForceError => {
+                Self::handle_terminal_error("This is a forced error design for testing")
+            }
         }
     }
 
-    fn flush(&self) -> Result<(), RendererError> {
-        stdout().flush().map_err(|e| {
-            RendererError::TerminalError(format!("Could not flush commands: {e}").to_string())
-        })
+    fn flush(&self) {
+        stdout()
+            .flush()
+            .context("Failed to flush commands")
+            .map_err(Self::handle_terminal_error)
+            .unwrap();
     }
 
-    fn init() -> Result<(), RendererError> {
+    fn init() {
         let mut stdout = stdout();
 
         enable_raw_mode()
-            .map_err(|e| RendererError::TerminalError(format!("Could not enter raw mode: {e}")))?;
-        execute!(stdout, EnterAlternateScreen).map_err(|e| {
-            RendererError::TerminalError(format!("Could not enter alternate screen: {e}"))
-        })?;
+            .context("Failed to enter raw mode")
+            .map_err(Self::handle_terminal_error)
+            .unwrap();
 
-        Ok(())
+        execute!(stdout, EnterAlternateScreen)
+            .context("Failed to enter alternate screen")
+            .map_err(Self::handle_terminal_error)
+            .unwrap();
     }
 
-    fn kill() -> Result<(), RendererError> {
+    fn kill() {
         let mut stdout = stdout();
 
-        disable_raw_mode().map_err(|e| {
-            RendererError::TerminalError(format!("Could not disable raw mode: {e}"))
-        })?;
-        execute!(stdout, LeaveAlternateScreen).map_err(|e| {
-            RendererError::TerminalError(format!("Could not leave alternate screen: {e}"))
-        })?;
+        disable_raw_mode()
+            .context("Failed to disable raw mode")
+            .map_err(Self::handle_terminal_error)
+            .unwrap();
 
-        Ok(())
+        execute!(stdout, LeaveAlternateScreen)
+            .context("Failed to leave alternate screen")
+            .map_err(Self::handle_terminal_error)
+            .unwrap();
     }
 
-    fn size() -> Result<(usize, usize), RendererError> {
-        let (width, height) = size().map_err(|e| {
-            RendererError::TerminalError(format!("Could not get the size of the termminal: {e}"))
-        })?;
+    fn size() -> (usize, usize) {
+        let (width, height) = size()
+            .context("Failed to get the size of the terminal")
+            .map_err(Self::handle_terminal_error)
+            .unwrap();
 
-        Ok((width as usize, height as usize))
+        (width as usize, height as usize)
     }
 }

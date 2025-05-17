@@ -172,16 +172,13 @@ where
         let file_name = self.window.buffer.file_path.clone();
         let cursor_position = self.window.cursor.position.clone();
 
-        self.status_bar.render(&mut self.renderer);
-
-        self.window.render(&mut self.renderer);
-
+        
         self.status_bar
             .update(self.mode, file_name, cursor_position);
 
+        self.status_bar.render(&mut self.renderer);
+        self.window.render(&mut self.renderer);
         self.renderer.render();
-        // self.renderer
-        //     .enqueue_command(renderer::TerminalCommand::ForceError);
     }
 }
 

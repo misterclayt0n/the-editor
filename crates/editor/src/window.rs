@@ -1,4 +1,3 @@
-// TODO: Implement specific redrawing based on changes, not redrawing the entire buffer all the time.
 use renderer::{
     terminal::{Terminal, TerminalInterface},
     Component, Renderer, TerminalCommand,

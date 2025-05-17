@@ -11,7 +11,7 @@ use renderer::{
     Component, Renderer,
 };
 use status_bar::StatusBar;
-use utils::{Command, Mode, Size};
+use utils::{error, Command, Mode, Size};
 use window::Window;
 mod buffer;
 mod movement;
@@ -72,13 +72,13 @@ where
                     Event::KeyPress(key_event) => {
                         let commands = self.event_handler.handle_key_event(key_event, self.mode);
                         for command in commands {
-                            self.apply_command(command);
+                            self.apply_command(command)?;
                         }
                     }
                     Event::Resize(width, height) => {
                         // Handle resize
                         let new_size = Size { width, height };
-                        self.apply_command(Command::Resize(new_size));
+                        self.apply_command(Command::Resize(new_size))?;
                     }
                     _ => {}
                 }
@@ -95,8 +95,12 @@ where
     }
 
     /// Proccess a command and apply it to the editor state.
-    pub fn apply_command(&mut self, command: Command) {
+    pub fn apply_command(&mut self, command: Command) -> Result<()> {
         match command {
+            Command::ForceError => {
+                error!("This is forced error designed for testing");
+                anyhow::bail!("Test error");
+            }
             Command::Quit => self.should_quit = true,
             Command::MoveCursorLeft => move_cursor_left(&mut self.window.cursor),
             Command::MoveCursorRight(exceed) => {
@@ -145,6 +149,8 @@ where
         }
 
         self.window.scroll_to_cursor();
+
+        Ok(())
     }
 
     /// Updates the viewport size, scroll if necessary and mark the window for a

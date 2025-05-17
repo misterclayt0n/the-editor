@@ -84,6 +84,7 @@ impl EventHandler {
                 KeyCode::Char('e') => commands.push(Command::MoveCursorWordForwardEnd(false)),
                 KeyCode::Char('E') => commands.push(Command::MoveCursorWordForwardEnd(true)),
                 KeyCode::Char('x') => commands.push(Command::DeleteCharForward),
+                KeyCode::Char('z') => commands.push(Command::ForceError),
                 KeyCode::Char('a') => {
                     commands.push(Command::MoveCursorRight(true));
                     commands.push(Command::SwitchMode(Mode::Insert));

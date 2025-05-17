@@ -36,6 +36,7 @@ pub enum Mode {
 /// Command is any sort of high-level command from the-editor.
 #[derive(Clone)]
 pub enum Command {
+    ForceError,
     Quit,
     None,
     InsertChar(char),

@@ -1,4 +1,4 @@
-use renderer::{terminal::TerminalInterface, Component, Renderer, TerminalCommand};
+use renderer::{Component, RenderCommand, Renderer};
 use utils::{Mode, Position, Size};
 
 pub struct StatusBar {
@@ -26,10 +26,7 @@ impl StatusBar {
 }
 
 impl Component for StatusBar {
-    fn render<T>(&mut self, renderer: &mut Renderer<T>)
-    where
-        T: TerminalInterface,
-    {
+    fn render(&mut self, renderer: &mut Renderer) {
         // Build the string for the `StatusBar`.
         let mode_str = match self.current_mode {
             Mode::Normal => "NORMAL",
@@ -56,8 +53,8 @@ impl Component for StatusBar {
             status_bar.push_str(&padding);
         }
 
-        renderer.enqueue_command(TerminalCommand::MoveCursor(0, self.size.height - 1));
-        renderer.enqueue_command(TerminalCommand::Print(status_bar));
+        renderer.enqueue_command(RenderCommand::MoveCursor(0, self.size.height - 1));
+        renderer.enqueue_command(RenderCommand::Print(status_bar));
 
         // TODO: Colors.
         // TODO: Reset colors.

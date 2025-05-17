@@ -4,7 +4,7 @@ use std::env;
 use anyhow::{Context, Result};
 use editor::EditorState;
 use events::EventHandler;
-use renderer::{terminal::Terminal, Renderer};
+use renderer::Renderer;
 use utils::{info, init_logging};
 
 fn main() -> Result<()> {
@@ -22,8 +22,7 @@ fn main() -> Result<()> {
     };
 
     let event_handler = EventHandler::new();
-    let terminal = Terminal::new();
-    let renderer = Renderer::new(terminal);
+    let renderer = Renderer::new(false);
     let mut editor_state = EditorState::new(event_handler, renderer, file_path);
 
     editor_state.run().context("Running editor")?;

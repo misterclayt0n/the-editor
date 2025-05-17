@@ -6,10 +6,7 @@ use movement::{
     move_cursor_start_of_line, move_cursor_up, move_cursor_word_backward, move_cursor_word_forward,
     move_cursor_word_forward_end,
 };
-use renderer::{
-    terminal::{Terminal, TerminalInterface},
-    Component, Renderer,
-};
+use renderer::{Component, Renderer};
 use status_bar::StatusBar;
 use utils::{error, Command, Mode, Size};
 use window::Window;
@@ -19,28 +16,25 @@ mod status_bar;
 mod window;
 
 /// Structure that maintains the global state of the editor.
-pub struct EditorState<T: TerminalInterface> {
+pub struct EditorState {
     should_quit: bool,
     event_handler: EventHandler,
     window: Window, // NOTE: I should probably implement some sort of window manager.
     mode: Mode,
     status_bar: StatusBar,
-    renderer: Renderer<T>,
+    renderer: Renderer,
 }
 
-impl<T> EditorState<T>
-where
-    T: TerminalInterface,
-{
+impl EditorState {
     pub fn new(
         event_handler: EventHandler,
-        renderer: Renderer<T>,
+        renderer: Renderer,
         file_path: Option<String>,
     ) -> Self {
-        Terminal::init();
+        renderer.interface.init();
 
-        let window = Window::from_file(file_path);
-        let (width, height) = Terminal::size();
+        let (width, height) = renderer.interface.size();
+        let window = Window::from_file(file_path, width, height);
 
         let viewport_size = Size { width, height };
 
@@ -169,7 +163,6 @@ where
         let file_name = self.window.buffer.file_path.clone();
         let cursor_position = self.window.cursor.position.clone();
 
-        
         self.status_bar
             .update(self.mode, file_name, cursor_position);
 
@@ -179,8 +172,8 @@ where
     }
 }
 
-impl<T: TerminalInterface> Drop for EditorState<T> {
+impl Drop for EditorState {
     fn drop(&mut self) {
-        Terminal::kill()
+        self.renderer.interface.kill()
     }
 }

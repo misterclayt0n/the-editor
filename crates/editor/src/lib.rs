@@ -26,14 +26,17 @@ pub struct EditorState {
 }
 
 impl EditorState {
-    pub fn new(
-        event_handler: EventHandler,
-        renderer: Renderer,
-        file_path: Option<String>,
-    ) -> Self {
-        renderer.interface.init();
+    pub fn new(event_handler: EventHandler, renderer: Renderer, file_path: Option<String>) -> Self {
+        match renderer.interface {
+            renderer::InterfaceType::TUI => renderer.terminal.init(),
+            renderer::InterfaceType::GUI => todo!(),
+        }
 
-        let (width, height) = renderer.interface.size();
+        let (width, height) = match renderer.interface {
+            renderer::InterfaceType::TUI => renderer.terminal.size(),
+            renderer::InterfaceType::GUI => todo!(),
+        };
+
         let window = Window::from_file(file_path, width, height);
 
         let viewport_size = Size { width, height };
@@ -174,6 +177,9 @@ impl EditorState {
 
 impl Drop for EditorState {
     fn drop(&mut self) {
-        self.renderer.interface.kill()
+        match self.renderer.interface {
+            renderer::InterfaceType::TUI => self.renderer.terminal.kill(),
+            renderer::InterfaceType::GUI => todo!(),
+        }
     }
 }

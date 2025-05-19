@@ -22,7 +22,7 @@ fn main() -> Result<()> {
     };
 
     let event_handler = EventHandler::new();
-    let renderer = Renderer::new(false);
+    let renderer = Renderer::new(renderer::InterfaceType::GUI);
     let mut editor_state = EditorState::new(event_handler, renderer, file_path);
 
     editor_state.run().context("Running editor")?;

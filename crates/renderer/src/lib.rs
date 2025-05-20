@@ -39,12 +39,16 @@ pub enum RenderTUICommand {
 pub enum RenderGUICommand {
     ClearBackground(Color),
     DrawText(String, i32, i32, i32, Color),
+    DrawRectangle(i32, i32, i32, i32, Color),
+    DrawCursor(i32, i32, i32, i32, Color, u8), // x, y, width, height, color, alpha
 }
 
 #[derive(Clone, Debug)]
 pub enum Color {
     BLACK,
     WHITE,
+    LIGHTGRAY,
+    BLUE
 }
 
 /// Renderer is responsible for rendering the state of the editor in the terminal.
@@ -57,7 +61,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(interface: InterfaceType) -> Self {
+    pub fn new(interface: InterfaceType, font_path: &str) -> Self {
         match interface {
             InterfaceType::TUI => Renderer {
                 interface,
@@ -71,7 +75,7 @@ impl Renderer {
                 tui_command_queue: Vec::new(),
                 gui_command_queue: Vec::new(),
                 terminal: None,
-                gui: Some(Gui::new(800, 600)),
+                gui: Some(Gui::new(800, 600, font_path)),
             },
         }
     }

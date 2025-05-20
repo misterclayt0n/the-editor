@@ -1,4 +1,4 @@
-use renderer::{Component, RenderGUICommand, RenderTUICommand, Renderer};
+use renderer::{Color, Component, RenderGUICommand, RenderTUICommand, Renderer};
 use utils::{Mode, Position, Size};
 
 pub struct StatusBar {
@@ -61,6 +61,42 @@ impl Component for StatusBar {
     }
 
     fn render_gui(&mut self, renderer: &mut Renderer) {
-        renderer.enqueue_gui_command(RenderGUICommand::ClearBackground(renderer::Color::WHITE));
+        // Build the string for the `StatusBar`.
+        let mode_str = match self.current_mode {
+            Mode::Normal => "NORMAL",
+            Mode::Insert => "INSERT",
+        };
+
+        let file_name = self.file_name.as_deref().unwrap_or("[No Name]");
+        let cursor_pos = format!(
+            "{}:{}",
+            self.cursor_position.y + 1,
+            self.cursor_position.x + 1
+        );
+
+        let status = format!(" {} | {} | {}", mode_str, file_name, cursor_pos);
+
+        let font_size = 20;
+        let padding = 5;
+
+        let status_bar_height = font_size + padding * 2;
+        // Status bar Y position is window height - status bar height
+        let status_bar_y_gui = self.size.height.saturating_sub(status_bar_height);
+
+        renderer.enqueue_gui_command(RenderGUICommand::DrawRectangle(
+            0,
+            status_bar_y_gui as i32,
+            self.size.width as i32,
+            status_bar_height as i32,
+            Color::LIGHTGRAY, // Use a color defined in your renderer::Color enum
+        ));
+
+        renderer.enqueue_gui_command(RenderGUICommand::DrawText(
+            status,
+            padding as i32,
+            (status_bar_y_gui + padding) as i32,
+            font_size as i32,
+            Color::BLACK, // Use a color for text
+        ));
     }
 }

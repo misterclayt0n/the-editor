@@ -43,9 +43,17 @@ impl Buffer {
         self.text_engine.get_trimmed_line(line_idx)
     }
 
+    pub fn line(&self, line_idx: usize) -> RopeSlice {
+        self.text_engine.line(line_idx)
+    }
+
     /// Returns the length of non empty lines of the `TextEngine`.
     pub fn len_nonempty_lines(&self) -> usize {
         self.text_engine.len_nonempty_lines()
+    }
+
+    pub fn len_lines(&self) -> usize {
+        self.text_engine.len_lines()
     }
 
     /// Returns only the visible portion of the line, by subtracting by 1.

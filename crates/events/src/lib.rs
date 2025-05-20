@@ -23,6 +23,7 @@ impl EventHandler {
         EventHandler { interface }
     }
 
+    /// Poll events from both gui or terminal.
     pub fn poll_events(&self, rl: Option<&mut RaylibHandle>) -> Vec<Event> {
         match self.interface {
             InterfaceType::TUI => self.poll_terminal_events(),
@@ -62,13 +63,14 @@ impl EventHandler {
         return events;
     }
 
+    /// Capture events from the GUI and return them in a Vector.
     fn poll_gui_events(&self, rl: &mut RaylibHandle) -> Vec<Event> {
         let mut events = Vec::new();
 
         if let Some(key) = rl.get_key_pressed() {
             events.push(Event::GuiKeyPress(key));
         }
-
+        
         // TODO: Check for mouse presses.
         if rl.is_window_resized() {
             events.push(Event::Resize(
@@ -80,7 +82,7 @@ impl EventHandler {
         return events;
     }
 
-    /// Maps `Events` from `crossterm` to a `Vec<Command>`
+    /// Maps `Events` from `crossterm` to a `Vec<Command>`.
     pub fn handle_event(&self, event: Event, mode: Mode) -> Result<Vec<Command>> {
         let mut commands = Vec::new();
 
@@ -101,7 +103,7 @@ impl EventHandler {
         Ok(commands)
     }
 
-    /// Returns a `Vec<Command>` based on the current `Mode` and `KeyEvent`.
+    /// Returns a `Vec<Command>` based on the current `Mode` and `KeyEvent` for the terminal.
     pub fn handle_terminal_key_event(&self, key_event: KeyEvent, mode: Mode) -> Vec<Command> {
         let mut commands = Vec::new();
 
@@ -150,6 +152,7 @@ impl EventHandler {
         return commands;
     }
 
+    /// Returns a `Vec<Command>` based on the current `Mode` and `KeyEvent` for the GUI.
     pub fn handle_gui_key_event(&self, key: KeyboardKey, mode: Mode) -> Vec<Command> {
         let mut commands = Vec::new();
         match mode {
@@ -192,13 +195,12 @@ impl EventHandler {
 }
 
 /// Helper function to convert KeyboardKey to char.
-/// This is a simplified version. For full accuracy, you'd need to check shift, caps lock, etc.
-/// Raylib's `GetKeyPressed()` gives you the raw key, not the char it would produce.
+/// This is a simplified version. For full accuracy, we'd need to check shift, caps lock, etc.
+/// Raylib's `GetKeyPressed()` returns the raw key, not the char it would produce.
 /// For text input, `GetCharPressed()` is often better if available and suitable.
 fn key_to_char(key: KeyboardKey, _is_caps_lock_on: raylib::consts::KeyboardKey) -> Option<char> {
     // A more robust implementation would involve checking rl.is_key_down(KeyboardKey::LEFT_SHIFT) etc.
-    // or using a different Raylib function if one exists for direct char input.
-    // Since rl is not available here, this is a limitation.
+    // or using a different Raylib function if one exists for direct char input. Since rl is not available here, this is a limitation.
     // This example doesn't handle shift for symbols like '!' from '1'.
     match key {
         KeyboardKey::KEY_A => Some('a'),

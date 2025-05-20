@@ -23,7 +23,7 @@ fn main() -> Result<()> {
 
     let interface = InterfaceType::GUI;
     let event_handler = EventHandler::new(interface);
-    let renderer = Renderer::new(interface);
+    let renderer = Renderer::new(interface, "fonts/GeistMono-VariableFont_wght.ttf");
     let mut editor_state = EditorState::new(event_handler, renderer, file_path);
 
     editor_state.run().context("Running editor")?;

@@ -6,7 +6,7 @@ use movement::{
     move_cursor_start_of_line, move_cursor_up, move_cursor_word_backward, move_cursor_word_forward,
     move_cursor_word_forward_end,
 };
-use renderer::{Component, Renderer};
+use renderer::{Color, Component, RenderGUICommand, Renderer};
 use status_bar::StatusBar;
 use utils::{error, Command, InterfaceType, Mode, Size};
 use window::Window;
@@ -147,7 +147,7 @@ impl EditorState {
             }
         }
 
-        self.window.scroll_to_cursor();
+        self.window.scroll_to_cursor(&self.renderer);
 
         Ok(())
     }
@@ -156,7 +156,7 @@ impl EditorState {
     /// redraw.
     fn handle_resize(&mut self, new_size: Size) {
         self.window.viewport_size = new_size;
-        self.window.scroll_to_cursor();
+        self.window.scroll_to_cursor(&self.renderer);
         self.status_bar.size = new_size;
     }
 
@@ -173,6 +173,7 @@ impl EditorState {
 
         self.status_bar.render(&mut self.renderer);
         self.window.render(&mut self.renderer);
+        self.renderer.enqueue_gui_command(RenderGUICommand::ClearBackground(Color::LIGHTGRAY));
         self.renderer.render();
     }
 }

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use events::{Event, EventHandler};
+use events::EventHandler;
 use movement::{
     move_cursor_after_insert, move_cursor_before_deleting_backward, move_cursor_down,
     move_cursor_end_of_line, move_cursor_first_char_of_line, move_cursor_left, move_cursor_right,
@@ -8,7 +8,7 @@ use movement::{
 };
 use renderer::{Component, Renderer};
 use status_bar::StatusBar;
-use utils::{error, Command, Mode, Size};
+use utils::{error, Command, InterfaceType, Mode, Size};
 use window::Window;
 mod buffer;
 mod movement;
@@ -29,13 +29,13 @@ impl EditorState {
     pub fn new(event_handler: EventHandler, renderer: Renderer, file_path: Option<String>) -> Self {
         // Init functions.
         match renderer.interface {
-            renderer::InterfaceType::TUI => renderer.terminal.as_ref().unwrap().init(),
-            renderer::InterfaceType::GUI => {} // Raylib initializes itself, so we don't have setup here.
+            InterfaceType::TUI => renderer.terminal.as_ref().unwrap().init(),
+            InterfaceType::GUI => {} // Raylib initializes itself, so we don't have setup here.
         }
 
         let (width, height) = match renderer.interface {
-            renderer::InterfaceType::TUI => renderer.terminal.as_ref().unwrap().size(),
-            renderer::InterfaceType::GUI => renderer.gui.as_ref().unwrap().size(),
+            InterfaceType::TUI => renderer.terminal.as_ref().unwrap().size(),
+            InterfaceType::GUI => renderer.gui.as_ref().unwrap().size(),
         };
 
         let window = Window::from_file(file_path, width, height);
@@ -62,24 +62,25 @@ impl EditorState {
     /// Main entrypoint of the application.
     pub fn run(&mut self) -> Result<()> {
         loop {
+            let raylib_handle_option = match self.renderer.interface {
+                InterfaceType::GUI => self.renderer.gui.as_mut().map(|gui| &mut gui.rl),
+                InterfaceType::TUI => None,
+            };
+            
             // Capture events.
-            let events = self.event_handler.poll_events();
+            let events = self.event_handler.poll_events(raylib_handle_option);
 
             for event in events {
-                match event {
-                    Event::KeyPress(key_event) => {
-                        let commands = self.event_handler.handle_key_event(key_event, self.mode);
+                let commands_result = self.event_handler.handle_event(event, self.mode);
+                match commands_result {
+                    Ok(commands) => {
                         for command in commands {
                             self.apply_command(command)?;
                         }
                     }
-                    Event::Resize(width, height) => {
-                        // Handle resize
-                        let new_size = Size { width, height };
-                        self.apply_command(Command::Resize(new_size))?;
-                    }
-                    _ => {}
+                    Err(e) => error!("Error handling events: {}", e)
                 }
+                
             }
 
             self.render();
@@ -179,8 +180,8 @@ impl EditorState {
 impl Drop for EditorState {
     fn drop(&mut self) {
         match self.renderer.interface {
-            renderer::InterfaceType::TUI => self.renderer.terminal.as_ref().unwrap().kill(),
-            renderer::InterfaceType::GUI => {} // Raylib kills itself
+            InterfaceType::TUI => self.renderer.terminal.as_ref().unwrap().kill(),
+            InterfaceType::GUI => {} // Raylib kills itself
         }
     }
 }

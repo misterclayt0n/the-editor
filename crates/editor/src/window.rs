@@ -1,4 +1,4 @@
-use renderer::{Component, RenderGUICommand, RenderTUICommand, Renderer};
+use renderer::{Color, Component, RenderGUICommand, RenderTUICommand, Renderer};
 use text_engine::{Rope, RopeSlice};
 use utils::{Cursor, Position, Size};
 
@@ -168,6 +168,12 @@ impl Component for Window {
     }
 
     fn render_gui(&mut self, renderer: &mut Renderer) {
-        renderer.enqueue_gui_command(RenderGUICommand::ClearBackground(renderer::Color::WHITE));
+        renderer.enqueue_gui_command(RenderGUICommand::DrawText(
+            "we gucci".into(),
+            100,
+            100,
+            20,
+            Color::BLACK,
+        ));
     }
 }

@@ -3,7 +3,7 @@ use raylib::{color::Color as RayColor, prelude::RaylibDraw, RaylibHandle, Raylib
 use crate::{Color, RenderGUICommand};
 
 pub struct Gui {
-    rl: RaylibHandle,
+    pub rl: RaylibHandle,
     thread: RaylibThread,
 }
 
@@ -36,6 +36,10 @@ impl Gui {
                 RenderGUICommand::ClearBackground(color) => {
                     let raylib_color = process_raylib_color(color);
                     draw_handle.clear_background(raylib_color);
+                }
+                RenderGUICommand::DrawText(text, x, y, font_size, color) => {
+                    let raylib_color = process_raylib_color(color);
+                    draw_handle.draw_text(text, *x, *y, *font_size, raylib_color);
                 }
             }
         }

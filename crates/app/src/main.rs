@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use editor::EditorState;
 use events::EventHandler;
 use renderer::Renderer;
-use utils::{info, init_logging};
+use utils::{info, init_logging, InterfaceType};
 
 fn main() -> Result<()> {
     init_logging().unwrap();
@@ -21,8 +21,9 @@ fn main() -> Result<()> {
         None
     };
 
-    let event_handler = EventHandler::new();
-    let renderer = Renderer::new(renderer::InterfaceType::GUI);
+    let interface = InterfaceType::GUI;
+    let event_handler = EventHandler::new(interface);
+    let renderer = Renderer::new(interface);
     let mut editor_state = EditorState::new(event_handler, renderer, file_path);
 
     editor_state.run().context("Running editor")?;

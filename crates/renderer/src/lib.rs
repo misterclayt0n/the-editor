@@ -1,6 +1,7 @@
 use gui::Gui;
 use terminal::Terminal;
 use text_engine::Rope;
+use utils::InterfaceType;
 pub mod gui;
 pub mod terminal;
 
@@ -37,6 +38,7 @@ pub enum RenderTUICommand {
 
 pub enum RenderGUICommand {
     ClearBackground(Color),
+    DrawText(String, i32, i32, i32, Color),
 }
 
 #[derive(Clone, Debug)]
@@ -52,11 +54,6 @@ pub struct Renderer {
     pub gui_command_queue: Vec<RenderGUICommand>,
     pub terminal: Option<Terminal>,
     pub gui: Option<Gui>,
-}
-
-pub enum InterfaceType {
-    TUI,
-    GUI,
 }
 
 impl Renderer {

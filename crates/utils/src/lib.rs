@@ -29,6 +29,13 @@ pub enum Mode {
     Insert,
 }
 
+/// Which version of the renderer to use.
+#[derive(Clone, Copy, Debug)]
+pub enum InterfaceType {
+    TUI,
+    GUI
+}
+
 /// NOTE: Maybe I'll split this into multiple different commands.
 /// Command is any sort of high-level command from the-editor.
 #[derive(Clone)]

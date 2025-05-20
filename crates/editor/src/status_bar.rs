@@ -61,6 +61,6 @@ impl Component for StatusBar {
     }
 
     fn render_gui(&mut self, renderer: &mut Renderer) {
-        renderer.enqueue_gui_command(RenderGUICommand::ClearBackground(renderer::Color::BLACK));
+        renderer.enqueue_gui_command(RenderGUICommand::ClearBackground(renderer::Color::WHITE));
     }
 }

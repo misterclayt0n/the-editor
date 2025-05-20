@@ -27,14 +27,15 @@ pub struct EditorState {
 
 impl EditorState {
     pub fn new(event_handler: EventHandler, renderer: Renderer, file_path: Option<String>) -> Self {
+        // Init functions.
         match renderer.interface {
-            renderer::InterfaceType::TUI => renderer.terminal.init(),
-            renderer::InterfaceType::GUI => todo!(),
+            renderer::InterfaceType::TUI => renderer.terminal.as_ref().unwrap().init(),
+            renderer::InterfaceType::GUI => {} // Raylib initializes itself, so we don't have setup here.
         }
 
         let (width, height) = match renderer.interface {
-            renderer::InterfaceType::TUI => renderer.terminal.size(),
-            renderer::InterfaceType::GUI => todo!(),
+            renderer::InterfaceType::TUI => renderer.terminal.as_ref().unwrap().size(),
+            renderer::InterfaceType::GUI => renderer.gui.as_ref().unwrap().size(),
         };
 
         let window = Window::from_file(file_path, width, height);
@@ -178,8 +179,8 @@ impl EditorState {
 impl Drop for EditorState {
     fn drop(&mut self) {
         match self.renderer.interface {
-            renderer::InterfaceType::TUI => self.renderer.terminal.kill(),
-            renderer::InterfaceType::GUI => todo!(),
+            renderer::InterfaceType::TUI => self.renderer.terminal.as_ref().unwrap().kill(),
+            renderer::InterfaceType::GUI => {} // Raylib kills itself
         }
     }
 }

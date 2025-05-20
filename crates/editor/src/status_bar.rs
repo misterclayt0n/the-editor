@@ -1,4 +1,4 @@
-use renderer::{Component, RenderTUICommand, Renderer};
+use renderer::{Component, RenderGUICommand, RenderTUICommand, Renderer};
 use utils::{Mode, Position, Size};
 
 pub struct StatusBar {
@@ -53,10 +53,14 @@ impl Component for StatusBar {
             status_bar.push_str(&padding);
         }
 
-        renderer.enqueue_command(RenderTUICommand::MoveCursor(0, self.size.height - 1));
-        renderer.enqueue_command(RenderTUICommand::Print(status_bar));
+        renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(0, self.size.height - 1));
+        renderer.enqueue_tui_command(RenderTUICommand::Print(status_bar));
 
         // TODO: Colors.
         // TODO: Reset colors.
+    }
+
+    fn render_gui(&mut self, renderer: &mut Renderer) {
+        renderer.enqueue_gui_command(RenderGUICommand::ClearBackground(renderer::Color::BLACK));
     }
 }

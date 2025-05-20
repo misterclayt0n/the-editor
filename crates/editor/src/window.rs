@@ -1,4 +1,4 @@
-use renderer::{Component, RenderTUICommand, Renderer};
+use renderer::{Component, RenderGUICommand, RenderTUICommand, Renderer};
 use text_engine::{Rope, RopeSlice};
 use utils::{Cursor, Position, Size};
 
@@ -40,16 +40,16 @@ impl Window {
 
     /// Renders a single row in the `Window`.
     fn render_row(&self, row: usize, slice: RopeSlice, renderer: &mut Renderer) {
-        renderer.enqueue_command(RenderTUICommand::MoveCursor(0, row));
+        renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(0, row));
 
         // Since this runs in O(log N), it's better then to turn it
         // into a string or something.
         let rope = Rope::from(slice);
-        renderer.enqueue_command(RenderTUICommand::PrintRope(rope));
+        renderer.enqueue_tui_command(RenderTUICommand::PrintRope(rope));
     }
 
     fn render_cursor(&self, renderer: &mut Renderer) {
-        renderer.enqueue_command(RenderTUICommand::HideCursor);
+        renderer.enqueue_tui_command(RenderTUICommand::HideCursor);
 
         let cursor_x = self.cursor.position.x.saturating_sub(self.scroll_offset.x);
         let cursor_y = self.cursor.position.y.saturating_sub(self.scroll_offset.y);
@@ -71,12 +71,12 @@ impl Window {
             ' ' // Space if beyond end of line.
         };
 
-        renderer.enqueue_command(RenderTUICommand::MoveCursor(cursor_x, cursor_y));
+        renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(cursor_x, cursor_y));
 
         // Block cursor: inverse video of character
-        renderer.enqueue_command(RenderTUICommand::SetInverseVideo(true));
-        renderer.enqueue_command(RenderTUICommand::Print(char_under_cursor.to_string()));
-        renderer.enqueue_command(RenderTUICommand::SetInverseVideo(false));
+        renderer.enqueue_tui_command(RenderTUICommand::SetInverseVideo(true));
+        renderer.enqueue_tui_command(RenderTUICommand::Print(char_under_cursor.to_string()));
+        renderer.enqueue_tui_command(RenderTUICommand::SetInverseVideo(false));
     }
 
     //
@@ -135,8 +135,8 @@ impl Component for Window {
     fn render_tui(&mut self, renderer: &mut Renderer) {
         let content_height = self.viewport_size.height.saturating_sub(1);
         for row in 0..content_height {
-            renderer.enqueue_command(RenderTUICommand::MoveCursor(0, row));
-            renderer.enqueue_command(RenderTUICommand::ClearLine);
+            renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(0, row));
+            renderer.enqueue_tui_command(RenderTUICommand::ClearLine);
         }
 
         // Helpers.
@@ -163,7 +163,11 @@ impl Component for Window {
         } else {
             cursor_y
         };
-        renderer.enqueue_command(RenderTUICommand::MoveCursor(cursor_x, cursor_y));
+        renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(cursor_x, cursor_y));
         self.render_cursor(renderer);
+    }
+
+    fn render_gui(&mut self, renderer: &mut Renderer) {
+        renderer.enqueue_gui_command(RenderGUICommand::ClearBackground(renderer::Color::WHITE));
     }
 }

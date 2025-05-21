@@ -12,13 +12,13 @@ pub struct Window {
     pub viewport_size: Size,
     pub gui_target_scroll_offset_px: PositionF, // Target scroll for GUI (in pixels).
     pub gui_current_scroll_offset_px: PositionF, // Current scroll for GUI (in pixels).
+    pub gui_cursor_pos_px: PositionF,           // Cached cursor position in world space (pixels).
 }
 
 impl Window {
     const SCROLL_MARGIN: usize = 2;
 
     // Constants for GUI rendering
-    // NOTE: Should I move them to a theme/config struct?
     const GUI_FONT_SIZE: i32 = 32;
     const GUI_LINE_HEIGHT: i32 = 36;
     const GUI_LEFT_PADDING: i32 = 5;
@@ -43,6 +43,7 @@ impl Window {
             viewport_size,
             gui_target_scroll_offset_px: PositionF::default(),
             gui_current_scroll_offset_px: PositionF::default(),
+            gui_cursor_pos_px: PositionF::default(),
         }
     }
 
@@ -53,13 +54,19 @@ impl Window {
     /// Renders a single row in the `Window`.
     fn render_row(&self, row: usize, slice: RopeSlice, renderer: &mut Renderer) {
         renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(0, row));
-
-        // Since this runs in O(log N), it's better then to turn it
-        // into a string or something.
         let rope = Rope::from(slice);
         renderer.enqueue_tui_command(RenderTUICommand::PrintRope(rope));
     }
 
+    /// Renders the cursor based on the interface type.
+    fn render_cursor(&mut self, renderer: &mut Renderer) {
+        match renderer.interface {
+            InterfaceType::TUI => self.render_cursor_tui(renderer),
+            InterfaceType::GUI => self.render_cursor_gui(renderer),
+        }
+    }
+
+    /// Renders the cursor for TUI.
     fn render_cursor_tui(&self, renderer: &mut Renderer) {
         renderer.enqueue_tui_command(RenderTUICommand::HideCursor);
 
@@ -84,19 +91,69 @@ impl Window {
         };
 
         renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(cursor_x, cursor_y));
-
-        // Block cursor: inverse video of character
         renderer.enqueue_tui_command(RenderTUICommand::SetInverseVideo(true));
         renderer.enqueue_tui_command(RenderTUICommand::Print(char_under_cursor.to_string()));
         renderer.enqueue_tui_command(RenderTUICommand::SetInverseVideo(false));
+    }
+
+    /// Renders the cursor for GUI.
+    fn render_cursor_gui(&self, renderer: &mut Renderer) {
+        let font_size = Self::GUI_FONT_SIZE as f32;
+        let line_height = Self::GUI_LINE_HEIGHT as f32;
+        let char_width = self.get_gui_char_width(renderer);
+
+        // Text area boundaries.
+        let (text_area_x, text_area_y, text_area_width, text_area_height) =
+            self.get_gui_text_area_bounds();
+
+        // Scroll offsets.
+        let scroll_offset_x_pixels = self.gui_current_scroll_offset_px.x;
+        let scroll_offset_y_pixels = self.gui_current_scroll_offset_px.y;
+
+        // Calculate cursor position.
+        let cursor_line = self.cursor.position.y;
+        let cursor_x_offset = self.gui_cursor_pos_px.x - Self::GUI_LEFT_PADDING as f32;
+        let (cursor_x, cursor_y) = self.get_cursor_position_pixels(
+            cursor_line,
+            cursor_x_offset,
+            scroll_offset_x_pixels,
+            scroll_offset_y_pixels,
+            text_area_x,
+            text_area_y,
+            line_height,
+        );
+
+        // Render cursor if within viewport bounds.
+        if cursor_x >= text_area_x
+            && cursor_x <= text_area_x + text_area_width
+            && cursor_y >= text_area_y
+            && cursor_y < text_area_y + text_area_height
+        {
+            renderer.enqueue_gui_command(RenderGUICommand::DrawCursor(
+                cursor_x,
+                cursor_y,
+                char_width as i32,
+                font_size as i32,
+                Color::BLUE,
+                128,
+            ));
+
+            let char_under_cursor = self.get_char_under_cursor();
+            renderer.enqueue_gui_command(RenderGUICommand::DrawText(
+                char_under_cursor,
+                cursor_x,
+                cursor_y,
+                font_size as i32,
+                Color::WHITE,
+            ));
+        }
     }
 
     //
     // Helpers
     //
 
-    /// Calculates all the visible lines given a start and width of the
-    /// viewport.
+    /// Calculates all the visible lines given a start and width of the viewport.
     fn calculate_visible_text<'a>(
         &self,
         line: RopeSlice<'a>,
@@ -112,6 +169,35 @@ impl Window {
         } else {
             RopeSlice::from("")
         }
+    }
+
+    /// Returns the GUI text area boundaries: (x, y, width, height).
+    fn get_gui_text_area_bounds(&self) -> (i32, i32, i32, i32) {
+        let text_area_x = Self::GUI_LEFT_PADDING;
+        let text_area_y = Self::GUI_TOP_PADDING;
+        let text_area_width = self.viewport_size.width as i32 - Self::GUI_LEFT_PADDING * 2;
+        let status_bar_height = Self::GUI_LINE_HEIGHT;
+        let text_area_height =
+            self.viewport_size.height as i32 - status_bar_height - Self::GUI_TOP_PADDING;
+        (text_area_x, text_area_y, text_area_width, text_area_height)
+    }
+
+    /// Returns the GUI usable dimensions: (width, height) in pixels.
+    fn get_gui_usable_dimensions(&self) -> (f32, f32) {
+        let usable_w = self.viewport_size.width as f32 - Self::GUI_LEFT_PADDING as f32 * 2.0;
+        let usable_h = self.viewport_size.height as f32
+            - Self::GUI_TOP_PADDING as f32
+            - Self::GUI_LINE_HEIGHT as f32;
+        (usable_w, usable_h)
+    }
+
+    /// Returns the GUI character width in pixels.
+    fn get_gui_char_width(&self, renderer: &Renderer) -> f32 {
+        renderer
+            .gui
+            .as_ref()
+            .map(|gui| gui.gui_measure_font_width("M", Self::GUI_FONT_SIZE as f32))
+            .unwrap_or(10.0)
     }
 
     /// Adjust the cursor scrolling.
@@ -150,12 +236,9 @@ impl Window {
                 }
             }
             InterfaceType::GUI => {
-                let usable_w =
-                    self.viewport_size.width as f32 - Self::GUI_LEFT_PADDING as f32 * 2.0;
-                let usable_h = self.viewport_size.height as f32
-                    - Self::GUI_TOP_PADDING as f32
-                    - Self::GUI_LINE_HEIGHT as f32;
+                let (usable_w, usable_h) = self.get_gui_usable_dimensions();
                 let line_height = Self::GUI_LINE_HEIGHT as f32;
+                let char_width = self.get_gui_char_width(renderer);
 
                 // Get cursor position in world space (pixels).
                 let cursor_line = self.cursor.position.y;
@@ -167,12 +250,6 @@ impl Window {
                     .take(cursor_col)
                     .collect::<String>();
 
-                let char_width = renderer
-                    .gui
-                    .as_ref()
-                    .map(|gui| gui.gui_measure_font_width("M", Self::GUI_FONT_SIZE as f32))
-                    .unwrap_or(10.0);
-                
                 let cur_x_world = Self::GUI_LEFT_PADDING as f32
                     + renderer
                         .gui
@@ -184,8 +261,11 @@ impl Window {
                             )
                         })
                         .unwrap_or(0.0);
-                
                 let cur_y_world = Self::GUI_TOP_PADDING as f32 + cursor_line as f32 * line_height;
+
+                // Cache cursor position.
+                self.gui_cursor_pos_px.x = cur_x_world;
+                self.gui_cursor_pos_px.y = cur_y_world;
 
                 // Define margins in pixels.
                 let margin_x = (Self::SCROLL_MARGIN as f32) * char_width;
@@ -226,6 +306,10 @@ impl Window {
             }
         }
     }
+
+    //
+    // Helpers
+    // 
 
     /// Calculates the index of the first visible line based on scroll offset.
     fn calculate_first_visible_line(&self, scroll_offset_y_pixels: f32, line_height: f32) -> usize {
@@ -298,27 +382,12 @@ impl Component for Window {
             }
         }
 
-        let cursor_x = self.cursor.position.x.saturating_sub(self.scroll_offset.x);
-        let cursor_y = self.cursor.position.y.saturating_sub(self.scroll_offset.y);
-
-        // Check that cursor does not get over status bar.
-        let cursor_y = if cursor_y >= content_height {
-            content_height.saturating_sub(1)
-        } else {
-            cursor_y
-        };
-        renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(cursor_x, cursor_y));
-        self.render_cursor_tui(renderer);
+        self.render_cursor(renderer);
     }
 
     fn render_gui(&mut self, renderer: &mut Renderer) {
         let font_size = Self::GUI_FONT_SIZE as f32;
         let line_height = Self::GUI_LINE_HEIGHT as f32;
-        let char_width = renderer
-            .gui
-            .as_ref()
-            .map(|gui| gui.gui_measure_font_width("M", font_size))
-            .unwrap_or(10.0);
 
         // Lerp current scroll offset towards target.
         self.gui_current_scroll_offset_px.x += (self.gui_target_scroll_offset_px.x
@@ -333,12 +402,7 @@ impl Component for Window {
         let scroll_offset_y_pixels = self.gui_current_scroll_offset_px.y;
 
         // Text area boundaries.
-        let text_area_x = Self::GUI_LEFT_PADDING;
-        let text_area_y = Self::GUI_TOP_PADDING;
-        let text_area_width = self.viewport_size.width as i32 - Self::GUI_LEFT_PADDING * 2;
-        let status_bar_height = Self::GUI_LINE_HEIGHT;
-        let text_area_height =
-            self.viewport_size.height as i32 - status_bar_height - Self::GUI_TOP_PADDING;
+        let (text_area_x, text_area_y, _, text_area_height) = self.get_gui_text_area_bounds();
 
         // Calculate visible lines.
         let first_visible_line =
@@ -375,55 +439,6 @@ impl Component for Window {
             ));
         }
 
-        // Render cursor.
-        // REFACTOR: Put this inside render_cursor() function.
-        let cursor_line = self.cursor.position.y;
-        let cursor_col = self.cursor.position.x;
-        let text_before_cursor = self
-            .buffer
-            .line(cursor_line)
-            .chars()
-            .take(cursor_col)
-            .collect::<String>();
-
-        let cursor_x_offset = renderer
-            .gui
-            .as_ref()
-            .map(|gui| gui.gui_measure_font_width(&text_before_cursor, font_size))
-            .unwrap_or(0.0);
-
-        let (cursor_x, cursor_y) = self.get_cursor_position_pixels(
-            cursor_line,
-            cursor_x_offset,
-            scroll_offset_x_pixels,
-            scroll_offset_y_pixels,
-            text_area_x,
-            text_area_y,
-            line_height,
-        );
-
-        if cursor_x >= text_area_x
-            && cursor_x <= text_area_x + text_area_width
-            && cursor_y >= text_area_y
-            && cursor_y < text_area_y + text_area_height
-        {
-            renderer.enqueue_gui_command(RenderGUICommand::DrawCursor(
-                cursor_x,
-                cursor_y,
-                char_width as i32,
-                font_size as i32,
-                Color::BLUE,
-                128,
-            ));
-
-            let char_under_cursor = self.get_char_under_cursor();
-            renderer.enqueue_gui_command(RenderGUICommand::DrawText(
-                char_under_cursor,
-                cursor_x,
-                cursor_y,
-                font_size as i32,
-                Color::WHITE,
-            ));
-        }
+        self.render_cursor(renderer);
     }
 }

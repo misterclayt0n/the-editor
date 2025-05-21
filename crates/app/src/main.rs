@@ -1,3 +1,6 @@
+// TODO: Iterate through grapheme clusters instead of per bytes.
+// TODO: Support for rendering more than ASCII in GUI version.
+
 use std::env;
 
 // TODO: I want to render all errors in some sort of message bar in the future

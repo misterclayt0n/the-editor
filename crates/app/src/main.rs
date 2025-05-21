@@ -1,3 +1,4 @@
+// TODO: Remove raylib, it does not make any sense.
 // TODO: Iterate through grapheme clusters instead of per bytes.
 // TODO: Support for rendering more than ASCII in GUI version.
 

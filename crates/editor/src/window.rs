@@ -39,7 +39,7 @@ impl Window {
         Self {
             buffer,
             cursor: Cursor::new(),
-            scroll_offset: Position::new(),
+            scroll_offset: Position::default(),
             viewport_size,
             gui_target_scroll_offset_px: PositionF::default(),
             gui_current_scroll_offset_px: PositionF::default(),

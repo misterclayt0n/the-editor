@@ -13,7 +13,7 @@ impl StatusBar {
         Self {
             current_mode: Mode::Normal, // EditorState starts with Normal mode.
             file_name: None,
-            cursor_position: Position::new(),
+            cursor_position: Position::default(),
             size,
         }
     }

@@ -61,17 +61,10 @@ pub enum Command {
 }
 
 /// Position determines any (x, y) point in the plane.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Position {
     pub x: usize,
     pub y: usize,
-}
-
-impl Position {
-    /// Returns a new `Position` at the point (0, 0).
-    pub fn new() -> Self {
-        Self { x: 0, y: 0 }
-    }
 }
 
 /// PositionF is just like Position, but using float.
@@ -97,7 +90,7 @@ impl Cursor {
     /// Returns a new `Cursor` with positions (0, 0) and desired_col as 0.
     pub fn new() -> Self {
         Self {
-            position: Position::new(),
+            position: Position::default(),
             desired_x: 0,
         }
     }

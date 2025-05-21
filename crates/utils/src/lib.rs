@@ -81,19 +81,10 @@ pub struct Size {
     pub height: usize,
 }
 
+#[derive(Default, Clone, Copy)]
 pub struct Cursor {
     pub position: Position,
     pub desired_x: usize, // This keeps the desired column when the position.x gets adjusted.
-}
-
-impl Cursor {
-    /// Returns a new `Cursor` with positions (0, 0) and desired_col as 0.
-    pub fn new() -> Self {
-        Self {
-            position: Position::default(),
-            desired_x: 0,
-        }
-    }
 }
 
 #[derive(PartialEq)]

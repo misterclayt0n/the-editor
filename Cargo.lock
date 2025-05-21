@@ -24,7 +24,6 @@ dependencies = [
  "anyhow",
  "crossterm",
  "editor",
- "events",
  "renderer",
  "utils",
 ]
@@ -145,7 +144,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crossterm",
- "events",
+ "raylib",
  "renderer",
  "text_engine",
  "utils",
@@ -165,16 +164,6 @@ checksum = "534c5cf6194dfab3db3242765c03bbe257cf92f22b38f6bc0c58d59108a820ba"
 dependencies = [
  "libc",
  "windows-sys",
-]
-
-[[package]]
-name = "events"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "crossterm",
- "raylib",
- "utils",
 ]
 
 [[package]]

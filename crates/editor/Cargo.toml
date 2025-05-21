@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 crossterm = { workspace = true }
+raylib = { workspace = true }
 anyhow = { workspace = true }
-events = { path = "../events" }
 renderer = { path = "../renderer" }
 text_engine = { path = "../text_engine" }
 utils = { path = "../utils" }

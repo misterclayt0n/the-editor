@@ -250,7 +250,7 @@ impl Component for Window {
             .map(|gui| gui.gui_measure_font_width("M", font_size))
             .unwrap_or(10.0);
 
-        // Text area boundaries, accounting for status bar
+        // Text area boundaries, accounting for status bar.
         let text_area_x = Self::GUI_LEFT_PADDING;
         let text_area_y = Self::GUI_TOP_PADDING;
         let text_area_width = self.viewport_size.width as i32 - Self::GUI_LEFT_PADDING * 2;
@@ -258,16 +258,16 @@ impl Component for Window {
         let text_area_height =
             self.viewport_size.height as i32 - status_bar_height - Self::GUI_TOP_PADDING;
 
-        // Convert scroll offset to pixels
+        // Convert scroll offset to pixels.
         let scroll_offset_x_pixels = self.scroll_offset.x as f32 * char_width;
         let scroll_offset_y_pixels = self.scroll_offset.y as f32 * line_height;
 
-        // Calculate visible lines
+        // Calculate visible lines.
         let first_visible_line =
             self.calculate_first_visible_line(scroll_offset_y_pixels, line_height);
         let num_visible_lines = (text_area_height as f32 / line_height).ceil() as usize + 1;
 
-        // Render text lines
+        // Render text lines.
         for i in 0..num_visible_lines {
             let line_idx = first_visible_line + i;
             if line_idx >= self.buffer.len_lines() {
@@ -297,7 +297,7 @@ impl Component for Window {
             ));
         }
 
-        // Render cursor
+        // Render cursor.
         let cursor_line = self.cursor.position.y;
         let cursor_col = self.cursor.position.x;
         let text_before_cursor = self
@@ -306,6 +306,7 @@ impl Component for Window {
             .chars()
             .take(cursor_col)
             .collect::<String>();
+        
         let cursor_x_offset = renderer
             .gui
             .as_ref()

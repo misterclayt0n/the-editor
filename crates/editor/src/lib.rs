@@ -6,11 +6,13 @@ use movement::{
     move_cursor_start_of_line, move_cursor_up, move_cursor_word_backward, move_cursor_word_forward,
     move_cursor_word_forward_end,
 };
+use raylib::{ffi::KeyboardKey, RaylibHandle};
 use renderer::{Color, Component, RenderGUICommand, Renderer};
 use status_bar::StatusBar;
-use utils::{error, Command, InterfaceType, Mode, Size};
+use utils::{error, info, Command, InterfaceType, Mode, Size};
 use window::Window;
 mod buffer;
+pub mod events;
 mod movement;
 mod status_bar;
 mod window;
@@ -39,9 +41,7 @@ impl EditorState {
         };
 
         let window = Window::from_file(file_path, width, height);
-
         let viewport_size = Size { width, height };
-
         let status_bar = StatusBar::new(viewport_size);
 
         let mut editor_state = EditorState {
@@ -61,33 +61,150 @@ impl EditorState {
 
     /// Main entrypoint of the application.
     pub fn run(&mut self) -> Result<()> {
-        loop {
-            let raylib_handle_option = match self.renderer.interface {
-                InterfaceType::GUI => self.renderer.gui.as_mut().map(|gui| &mut gui.rl),
-                InterfaceType::TUI => None,
-            };
-            
-            // Capture events.
-            let events = self.event_handler.poll_events(raylib_handle_option);
+        match self.renderer.interface {
+            InterfaceType::TUI => self.run_tui(),
+            InterfaceType::GUI => self.run_gui(),
+        }
+    }
 
+    fn run_tui(&mut self) -> Result<()> {
+        loop {
+            // Poll events.
+            let events = self.event_handler.poll_events();
             for event in events {
-                let commands_result = self.event_handler.handle_event(event, self.mode);
-                match commands_result {
+                let command_result = self.event_handler.handle_event(event, self.mode);
+                match command_result {
                     Ok(commands) => {
                         for command in commands {
                             self.apply_command(command)?;
                         }
                     }
-                    Err(e) => error!("Error handling events: {}", e)
+                    Err(e) => error!("Error handling events: {}", e),
                 }
-                
             }
 
             self.render();
 
             if self.should_quit {
                 break;
-            };
+            }
+        }
+
+        Ok(())
+    }
+
+    fn run_gui(&mut self) -> Result<()> {
+        while !self.should_quit {
+            self.handle_gui_inputs()?;
+            self.render();
+        }
+
+        Ok(())
+    }
+
+    fn handle_gui_inputs(&mut self) -> Result<()> {
+        // Collect commands to apply after borrowing rl.
+        let mut commands = Vec::new();
+
+        // Scope the mutable borrow of rl.
+        {
+            let rl = &mut self.renderer.gui.as_mut().unwrap().rl;
+
+            if rl.window_should_close() {
+                self.should_quit = true;
+                return Ok(());
+            }
+
+            match self.mode {
+                Mode::Normal => {
+                    if press_and_repeat(KeyboardKey::KEY_Q, rl) {
+                        commands.push(Command::Quit);
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_I, rl) {
+                        commands.push(Command::SwitchMode(Mode::Insert));
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_A, rl) {
+                        commands.push(Command::MoveCursorRight(true));
+                        commands.push(Command::SwitchMode(Mode::Insert));
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_H, rl) {
+                        commands.push(Command::MoveCursorLeft);
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_L, rl) {
+                        commands.push(Command::MoveCursorRight(false));
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_K, rl) {
+                        commands.push(Command::MoveCursorUp);
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_J, rl) {
+                        commands.push(Command::MoveCursorDown);
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_X, rl) {
+                        commands.push(Command::DeleteCharForward);
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_ZERO, rl) {
+                        commands.push(Command::MoveCursorStartOfLine);
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_FOUR, rl) {
+                        commands.push(Command::MoveCursorEndOfLine);
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_W, rl) {
+                        commands.push(Command::MoveCursorWordForward(false));
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_B, rl) {
+                        commands.push(Command::MoveCursorWordBackward(false));
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_E, rl) {
+                        commands.push(Command::MoveCursorWordForwardEnd(false));
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_ESCAPE, rl) {
+                        info!("ESC pressed in GUI Insert mode");
+                        commands.push(Command::SwitchMode(Mode::Normal));
+                    }
+                }
+                Mode::Insert => {
+                    while let Some(c) = rl.get_char_pressed() {
+                        commands.push(Command::InsertChar(c as char));
+                    }
+                    if rl.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
+                        info!("ESC pressed in GUI Insert mode");
+                        commands.push(Command::MoveCursorLeft);
+                        commands.push(Command::SwitchMode(Mode::Normal));
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_LEFT, rl) {
+                        commands.push(Command::MoveCursorLeft);
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_RIGHT, rl) {
+                        commands.push(Command::MoveCursorRight(false));
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_UP, rl) {
+                        commands.push(Command::MoveCursorUp);
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_DOWN, rl) {
+                        commands.push(Command::MoveCursorDown);
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_BACKSPACE, rl) {
+                        commands.push(Command::DeleteCharBackward);
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_DELETE, rl) {
+                        commands.push(Command::DeleteCharForward);
+                    }
+                    if press_and_repeat(KeyboardKey::KEY_ENTER, rl) {
+                        commands.push(Command::InsertChar('\n'));
+                    }
+                }
+            }
+
+            if rl.is_window_resized() {
+                let width = rl.get_screen_width() as usize;
+                let height = rl.get_screen_height() as usize;
+                commands.push(Command::Resize(Size { width, height }));
+            }
+        } // rl borrow ends here.
+
+        // Apply commands after rl is no longer borrowed.
+        for command in commands {
+            self.apply_command(command)?;
         }
 
         Ok(())
@@ -173,7 +290,8 @@ impl EditorState {
 
         self.status_bar.render(&mut self.renderer);
         self.window.render(&mut self.renderer);
-        self.renderer.enqueue_gui_command(RenderGUICommand::ClearBackground(Color::LIGHTGRAY));
+        self.renderer
+            .enqueue_gui_command(RenderGUICommand::ClearBackground(Color::LIGHTGRAY));
         self.renderer.render();
     }
 }
@@ -182,7 +300,11 @@ impl Drop for EditorState {
     fn drop(&mut self) {
         match self.renderer.interface {
             InterfaceType::TUI => self.renderer.terminal.as_ref().unwrap().kill(),
-            InterfaceType::GUI => {} // Raylib kills itself
+            InterfaceType::GUI => {} // Raylib kills itself.
         }
     }
+}
+
+fn press_and_repeat(key: KeyboardKey, rl: &mut RaylibHandle) -> bool {
+    rl.is_key_pressed(key) || rl.is_key_pressed_repeat(key)
 }

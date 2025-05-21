@@ -1,6 +1,5 @@
 use raylib::{
-    color::Color as RayColor, math::Vector2, prelude::RaylibDraw, text::{RaylibFont, WeakFont}, RaylibHandle,
-    RaylibThread,
+    color::Color as RayColor, math::Vector2, prelude::RaylibDraw, text::{RaylibFont, WeakFont}, RaylibHandle, RaylibThread
 };
 
 use utils::{error, info};
@@ -22,6 +21,9 @@ impl Gui {
             .size(width, height)
             .resizable()
             .build();
+
+        rl.set_target_fps(60);
+        rl.set_exit_key(None);
 
         let font = match rl.load_font(&thread, font_path) {
             Ok(f) => {

@@ -30,7 +30,7 @@ pub enum Mode {
 }
 
 /// Which version of the renderer to use.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InterfaceType {
     TUI,
     GUI

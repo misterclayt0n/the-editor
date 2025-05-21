@@ -16,6 +16,7 @@ use utils::error;
 use crate::RenderTUICommand;
 
 /// Terminal is a simple handler for managing terminal commands.
+#[derive(Clone)]
 pub struct Terminal {}
 
 impl Terminal {

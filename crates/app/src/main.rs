@@ -2,8 +2,7 @@ use std::env;
 
 // TODO: I want to render all errors in some sort of message bar in the future
 use anyhow::{Context, Result};
-use editor::EditorState;
-use events::EventHandler;
+use editor::{events::EventHandler, EditorState};
 use renderer::Renderer;
 use utils::{info, init_logging, InterfaceType};
 
@@ -22,7 +21,7 @@ fn main() -> Result<()> {
     };
 
     let interface = InterfaceType::GUI;
-    let event_handler = EventHandler::new(interface);
+    let event_handler = EventHandler::new();
     let renderer = Renderer::new(interface, "fonts/GeistMono-VariableFont_wght.ttf");
     let mut editor_state = EditorState::new(event_handler, renderer, file_path);
 

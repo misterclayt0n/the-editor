@@ -6,16 +6,12 @@ use utils::Position;
 
 /// This encapsulates `Rope` as the main data structure of the-editor, with some
 /// given modifications.
+#[derive(Default)]
 pub struct TextEngine {
     rope: Rope,
 }
 
 impl TextEngine {
-    /// Creates a new empty `TextEngine`.
-    pub fn new() -> Self {
-        TextEngine { rope: Rope::new() }
-    }
-
     /// Loads a `TextEngine` from a file.
     pub fn from_file<P>(path: P) -> Result<Self>
     where
@@ -28,14 +24,14 @@ impl TextEngine {
     }
 
     /// Returns the length of the lines.
-    pub fn len_lines(&self) -> usize {
-        self.rope.len_lines()
+    pub fn len_lines(&self) -> i32 {
+        self.rope.len_lines() as i32
     }
 
     /// Returns the length of the characters, works similarly as
     /// `len()` of a String.
-    pub fn len_chars(&self) -> usize {
-        self.rope.len_chars()
+    pub fn len_chars(&self) -> i32 {
+        self.rope.len_chars() as i32
     }
 
     /// Returns an iterator over the rope's lines.
@@ -44,17 +40,17 @@ impl TextEngine {
     }
 
     /// Get a `RopeSlice` at a given line index.
-    pub fn line(&self, line_idx: usize) -> RopeSlice {
-        self.rope.line(line_idx)
+    pub fn line(&self, line_idx: i32) -> RopeSlice {
+        self.rope.line(line_idx as usize)
     }
 
-    pub fn char(&self, char_idx: usize) -> char {
-        self.rope.char(char_idx)
+    pub fn char(&self, char_idx: i32) -> char {
+        self.rope.char(char_idx as usize)
     }
 
     /// Returns a line with removed '\n' and empty lines from the end.
-    pub fn get_trimmed_line(&self, line_idx: usize) -> RopeSlice {
-        let line = self.rope.line(line_idx);
+    pub fn get_trimmed_line(&self, line_idx: i32) -> RopeSlice {
+        let line = self.rope.line(line_idx as usize);
         let len = line.len_chars();
 
         if len == 0 {
@@ -68,34 +64,34 @@ impl TextEngine {
             return line.slice(..len - 1);
         }
 
-        return line;
+        line
     }
 
-    pub fn len_nonempty_lines(&self) -> usize {
+    pub fn len_nonempty_lines(&self) -> i32 {
         let num_lines = self.len_lines();
 
         for idx in (0..num_lines).rev() {
-            let line = self.get_trimmed_line(idx);
+            let line = self.get_trimmed_line(idx as i32);
             if !line.chars().all(|c| c.is_whitespace()) {
-                return idx + 1;
+                return (idx + 1) as i32;
             }
         }
         0
     }
 
-    pub fn line_to_char(&self, line_idx: usize) -> usize {
-        self.rope.line_to_char(line_idx)
+    pub fn line_to_char(&self, line_idx: i32) -> i32 {
+        self.rope.line_to_char(line_idx as usize) as i32
     }
 
     /// Transforms a character index into a `Position`.
-    pub fn char_idx_to_position(&self, char_idx: usize) -> Position {
-        let line_idx = self.rope.char_to_line(char_idx);
+    pub fn char_idx_to_position(&self, char_idx: i32) -> Position {
+        let line_idx = self.rope.char_to_line(char_idx as usize);
         let line_start_idx = self.rope.line_to_char(line_idx);
-        let char_in_line = char_idx - line_start_idx;
+        let char_in_line = char_idx - line_start_idx as i32;
 
         Position {
-            x: char_in_line,
-            y: line_idx,
+            x: char_in_line as i32,
+            y: line_idx as i32,
         }
     }
 
@@ -104,23 +100,26 @@ impl TextEngine {
     //
 
     /// Inserts a character at a given index.
-    pub fn insert_char(&mut self, idx: usize, c: char) {
-        self.rope.insert_char(idx, c)
+    pub fn insert_char(&mut self, idx: i32, c: char) {
+        self.rope.insert_char(idx as usize, c)
     }
 
     /// Deletes a character before the given index (backspace).
-    pub fn delete_char_backward(&mut self, idx: usize) {
+    pub fn delete_char_backward(&mut self, idx: i32) {
         if idx == 0 {
             return;
         }
 
+        let idx = idx as usize;
         self.rope.remove(idx - 1..idx);
     }
 
-    pub fn delete_char_forward(&mut self, idx: usize) {
-        if idx >= self.rope.len_chars() {
+    pub fn delete_char_forward(&mut self, idx: i32) {
+        if idx >= self.rope.len_chars() as i32 {
             return;
         }
+        
+        let idx = idx as usize;
         self.rope.remove(idx..idx + 1);
     }
 }

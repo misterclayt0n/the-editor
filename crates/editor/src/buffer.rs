@@ -11,7 +11,7 @@ pub struct Buffer {
 impl Buffer {
     pub fn new() -> Self {
         Self {
-            text_engine: TextEngine::new(),
+            text_engine: TextEngine::default(),
             file_path: None,
         }
     }
@@ -29,7 +29,7 @@ impl Buffer {
                     file_path: Some(file_path),
                 }
             }
-            
+
             Err(e) => {
                 error!("Failed to load file {}: {}", path, e);
                 Buffer::new()
@@ -39,34 +39,36 @@ impl Buffer {
 
     /// Returns a line with removed '\n' and empty lines from the end.
     /// This avoids the issue of not rendering the first character.
-    pub fn get_trimmed_line(&self, line_idx: usize) -> RopeSlice {
+    pub fn get_trimmed_line(&self, line_idx: i32) -> RopeSlice {
         self.text_engine.get_trimmed_line(line_idx)
     }
 
-    pub fn line(&self, line_idx: usize) -> RopeSlice {
+    pub fn line(&self, line_idx: i32) -> RopeSlice {
         self.text_engine.line(line_idx)
     }
 
     /// Returns the length of non empty lines of the `TextEngine`.
-    pub fn len_nonempty_lines(&self) -> usize {
+    pub fn len_nonempty_lines(&self) -> i32 {
         self.text_engine.len_nonempty_lines()
     }
 
-    pub fn len_lines(&self) -> usize {
+    pub fn len_lines(&self) -> i32 {
         self.text_engine.len_lines()
     }
 
     /// Returns only the visible portion of the line, by subtracting by 1.
-    pub fn get_visible_line_length(&self, line_idx: usize) -> usize {
+    pub fn get_visible_line_length(&self, line_idx: i32) -> i32 {
         // `saturating_sub` to avoid underflow.
         self.text_engine
             .get_trimmed_line(line_idx)
             .len_chars()
-            .saturating_sub(1)
+            .saturating_sub(1) as i32
     }
 
-    pub fn get_line_length(&self, line_idx: usize) -> usize {
-        self.text_engine.get_trimmed_line(line_idx).len_chars()
+    pub fn get_line_length(&self, line_idx: i32) -> i32 {
+        self.text_engine
+            .get_trimmed_line(line_idx)
+            .len_chars() as i32
     }
 
     /// Returns the index of the start of the next word from a given position.
@@ -90,7 +92,7 @@ impl Buffer {
             let class = get_char_class(c, big_word);
 
             if class == current_class {
-                char_idx += c.len_utf8();
+                char_idx += c.len_utf8() as i32;
             } else {
                 break;
             }
@@ -100,7 +102,7 @@ impl Buffer {
         while char_idx < total_chars {
             let c = self.text_engine.char(char_idx);
             if get_char_class(c, big_word) == CharClass::Whitespace {
-                char_idx += c.len_utf8();
+                char_idx += c.len_utf8() as i32;
             } else {
                 break;
             }
@@ -129,7 +131,7 @@ impl Buffer {
         while char_idx > 0 {
             let c = self.text_engine.char(char_idx);
             if get_char_class(c, big_word) == CharClass::Whitespace {
-                char_idx = char_idx.saturating_sub(c.len_utf8());
+                char_idx = char_idx.saturating_sub(c.len_utf8() as i32);
             } else {
                 break;
             }
@@ -146,10 +148,10 @@ impl Buffer {
         while char_idx > 0 {
             let c = self.text_engine.char(char_idx);
             if get_char_class(c, big_word) == current_class {
-                char_idx = char_idx.saturating_sub(c.len_utf8());
+                char_idx = char_idx.saturating_sub(c.len_utf8() as i32);
             } else {
                 // stop at the boundary between different character classes
-                char_idx += c.len_utf8();
+                char_idx += c.len_utf8() as i32;
                 break;
             }
         }
@@ -158,7 +160,7 @@ impl Buffer {
         while char_idx > 0 {
             let c = self.text_engine.char(char_idx);
             if get_char_class(c, big_word) == CharClass::Whitespace {
-                char_idx = char_idx.saturating_sub(c.len_utf8());
+                char_idx = char_idx.saturating_sub(c.len_utf8() as i32);
             } else {
                 break;
             }
@@ -189,7 +191,7 @@ impl Buffer {
         while char_idx < total_chars {
             let c = self.text_engine.char(char_idx);
             if get_char_class(c, big_word) == CharClass::Whitespace {
-                char_idx += c.len_utf8();
+                char_idx += c.len_utf8() as i32;
             } else {
                 break;
             }
@@ -208,7 +210,7 @@ impl Buffer {
             let c = self.text_engine.char(char_idx);
             if get_char_class(c, big_word) == current_class {
                 last_char_index = char_idx;
-                char_idx += c.len_utf8();
+                char_idx += c.len_utf8() as i32;
             } else {
                 break;
             }
@@ -252,9 +254,9 @@ impl Buffer {
     // Helpers
     //
 
-    fn position_to_char_idx(&self, position: Position) -> usize {
+    fn position_to_char_idx(&self, position: Position) -> i32 {
         let line_start_idx = self.text_engine.line_to_char(position.y);
-        let line_len = self.text_engine.line(position.y).len_chars();
+        let line_len = self.text_engine.line(position.y).len_chars() as i32;
 
         // Ensure cursor.x does not exceed line length
         let x = position.x.min(line_len);

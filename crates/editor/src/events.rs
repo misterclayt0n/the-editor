@@ -5,18 +5,15 @@ use utils::{error, Command, Mode, Size};
 
 pub enum Event {
     TerminalKeyPress(KeyEvent),
-    Resize(usize, usize),
+    Resize(i32, i32),
     Mock,
 }
 
 /// Specific event handler for the terminal version, that is event driven.
+#[derive(Default)]
 pub struct EventHandler;
 
 impl EventHandler {
-    pub fn new() -> Self {
-        EventHandler { }
-    }
-
     pub fn poll_events(&mut self) -> Vec<Event> {
         self.poll_terminal_events()
     }
@@ -33,7 +30,7 @@ impl EventHandler {
             match c_event {
                 CEvent::Key(key_event) => events.push(Event::TerminalKeyPress(key_event)),
                 CEvent::Resize(width, height) => {
-                    events.push(Event::Resize(width as usize, height as usize))
+                    events.push(Event::Resize(width as i32, height as i32))
                 }
                 _ => {}
             }

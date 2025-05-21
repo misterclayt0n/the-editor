@@ -42,10 +42,10 @@ impl Gui {
         Self { rl, thread, font }
     }
 
-    pub fn size(&self) -> (usize, usize) {
+    pub fn size(&self) -> (i32, i32) {
         (
-            self.rl.get_screen_width() as usize,
-            self.rl.get_screen_height() as usize,
+            self.rl.get_screen_width(),
+            self.rl.get_screen_height(),
         )
     }
 

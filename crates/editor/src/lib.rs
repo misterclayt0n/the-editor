@@ -196,8 +196,8 @@ impl EditorState {
             }
 
             if rl.is_window_resized() {
-                let width = rl.get_screen_width() as usize;
-                let height = rl.get_screen_height() as usize;
+                let width = rl.get_screen_width();
+                let height = rl.get_screen_height();
                 commands.push(Command::Resize(Size { width, height }));
             }
         } // rl borrow ends here.

@@ -45,11 +45,11 @@ impl Component for StatusBar {
 
         // Make sure it fits the screen.
         let mut status_bar = status;
-        if status_bar.len() > self.size.width {
-            status_bar.truncate(self.size.width);
+        if status_bar.len() > self.size.width as usize {
+            status_bar.truncate(self.size.width as usize);
         } else {
             // Fill with empty spaces to complete the line.
-            let padding = " ".repeat(self.size.width - status_bar.len());
+            let padding = " ".repeat(self.size.width as usize - status_bar.len());
             status_bar.push_str(&padding);
         }
 

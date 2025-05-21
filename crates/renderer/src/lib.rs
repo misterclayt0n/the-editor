@@ -27,7 +27,7 @@ pub enum RenderTUICommand {
     ClearScreen,
     Print(String),
     PrintRope(Rope),
-    MoveCursor(usize, usize),
+    MoveCursor(i32, i32),
     HideCursor,
     ShowCursor,
     ClearLine,
@@ -67,7 +67,7 @@ impl Renderer {
                 interface,
                 tui_command_queue: Vec::new(),
                 gui_command_queue: Vec::new(),
-                terminal: Some(Terminal::new()),
+                terminal: Some(Terminal::default()),
                 gui: None,
             },
             InterfaceType::GUI => Renderer {

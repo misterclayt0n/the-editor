@@ -75,9 +75,9 @@ pub fn move_cursor_start_of_line(cursor: &mut Cursor) {
 /// Moves the cursor to the first non-blank character of the current line.
 pub fn move_cursor_first_char_of_line(cursor: &mut Cursor, buffer: &Buffer) {
     let line = buffer.get_trimmed_line(cursor.position.y);
-    let first_non_blank = line.chars().position(|c| !c.is_whitespace());
+    let first_non_blank = line.chars().position(|c| !c.is_whitespace()).unwrap_or(0) as i32;
 
-    cursor.position.x = first_non_blank.unwrap_or(0);
+    cursor.position.x = first_non_blank;
 
     cursor.desired_x = cursor.position.x;
 }

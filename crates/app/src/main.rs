@@ -24,7 +24,7 @@ fn main() -> Result<()> {
     };
 
     let interface = InterfaceType::GUI; // TODO: Turn this into cli args.
-    let event_handler = EventHandler::new();
+    let event_handler = EventHandler::default();
     let renderer = Renderer::new(interface, "fonts/GeistMono-VariableFont_wght.ttf");
     let mut editor_state = EditorState::new(event_handler, renderer, file_path);
 

@@ -63,8 +63,8 @@ pub enum Command {
 /// Position determines any (x, y) point in the plane.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Position {
-    pub x: usize,
-    pub y: usize,
+    pub x: i32,
+    pub y: i32,
 }
 
 /// PositionF is just like Position, but using float.
@@ -77,14 +77,14 @@ pub struct PositionF {
 /// Size determines the width and height of any given object.
 #[derive(Clone, Copy)]
 pub struct Size {
-    pub width: usize,
-    pub height: usize,
+    pub width: i32,
+    pub height: i32,
 }
 
 #[derive(Default, Clone, Copy)]
 pub struct Cursor {
     pub position: Position,
-    pub desired_x: usize, // This keeps the desired column when the position.x gets adjusted.
+    pub desired_x: i32, // This keeps the desired column when the position.x gets adjusted.
 }
 
 #[derive(PartialEq)]
@@ -97,10 +97,8 @@ pub enum CharClass {
 pub fn get_char_class(c: char, big_word: bool) -> CharClass {
     if c.is_whitespace() {
         CharClass::Whitespace
-    } else if big_word {
+    } else if big_word || c.is_alphanumeric() || c == '_' {
         CharClass::Word // Here, all that is not space is considered bart of the word.
-    } else if c.is_alphanumeric() || c == '_' {
-        CharClass::Word
     } else {
         CharClass::Punctuation
     }

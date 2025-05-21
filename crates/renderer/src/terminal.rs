@@ -16,14 +16,10 @@ use utils::error;
 use crate::RenderTUICommand;
 
 /// Terminal is a simple handler for managing terminal commands.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Terminal {}
 
 impl Terminal {
-    pub fn new() -> Self {
-        Self {}
-    }
-
     pub fn queue_command<T: CECommand>(command: T) {
         queue!(stdout(), command)
             .context("Failed to place command in queue")
@@ -118,13 +114,13 @@ impl Terminal {
     }
 
     /// Returns the size of the terminal.
-    pub fn size(&self) -> (usize, usize) {
+    pub fn size(&self) -> (i32, i32) {
         let (width, height) = size()
             .context("Failed to get the size of the terminal")
             .map_err(Self::handle_terminal_error)
             .unwrap();
 
-        (width as usize, height as usize)
+        (width as i32, height as i32)
     }
 
     /// Inits the terminal.

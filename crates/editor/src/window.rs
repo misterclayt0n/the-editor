@@ -1,6 +1,6 @@
 use renderer::{Color, Component, RenderGUICommand, RenderTUICommand, Renderer};
 use text_engine::{Rope, RopeSlice};
-use utils::{Cursor, InterfaceType, Position, Size};
+use utils::{Cursor, InterfaceType, Position, PositionF, Size};
 
 use crate::buffer::Buffer;
 
@@ -8,8 +8,10 @@ use crate::buffer::Buffer;
 pub struct Window {
     pub buffer: Buffer,
     pub cursor: Cursor,
-    scroll_offset: Position,
+    pub scroll_offset: Position, // Target scroll based in characters.
     pub viewport_size: Size,
+    pub gui_target_scroll_offset_px: PositionF, // Target scroll for GUI (in pixels).
+    pub gui_current_scroll_offset_px: PositionF, // Current scroll for GUI (in pixels).
 }
 
 impl Window {
@@ -21,6 +23,7 @@ impl Window {
     const GUI_LINE_HEIGHT: i32 = 36;
     const GUI_LEFT_PADDING: i32 = 5;
     const GUI_TOP_PADDING: i32 = 5;
+    const GUI_SCROLL_SMOOTHNESS: f32 = 0.5;
 
     /// Loads a `Window` from a `Buffer` (can be `None`).
     /// `width` and `height` are of the viewport.
@@ -38,6 +41,8 @@ impl Window {
             cursor: Cursor::new(),
             scroll_offset: Position::new(),
             viewport_size,
+            gui_target_scroll_offset_px: PositionF::default(),
+            gui_current_scroll_offset_px: PositionF::default(),
         }
     }
 
@@ -109,52 +114,116 @@ impl Window {
         }
     }
 
-    /// Adjust the cursor scrolling based on the `scroll_offset` and `viewport_size`.
+    /// Adjust the cursor scrolling.
     pub fn scroll_to_cursor(&mut self, renderer: &Renderer) {
-        let width = match renderer.interface {
-            InterfaceType::TUI => self.viewport_size.width,
+        match renderer.interface {
+            InterfaceType::TUI => {
+                let width = self.viewport_size.width;
+                let height = self.viewport_size.height.saturating_sub(1);
+
+                // Horizontal scrolling.
+                if self.cursor.position.x < self.scroll_offset.x + Self::SCROLL_MARGIN {
+                    self.scroll_offset.x =
+                        self.cursor.position.x.saturating_sub(Self::SCROLL_MARGIN);
+                } else if self.cursor.position.x
+                    >= self.scroll_offset.x + width - Self::SCROLL_MARGIN
+                {
+                    self.scroll_offset.x = self
+                        .cursor
+                        .position
+                        .x
+                        .saturating_sub(width - 1 - Self::SCROLL_MARGIN);
+                }
+
+                // Vertical scrolling.
+                if self.cursor.position.y < self.scroll_offset.y + Self::SCROLL_MARGIN {
+                    self.scroll_offset.y =
+                        self.cursor.position.y.saturating_sub(Self::SCROLL_MARGIN);
+                } else if self.cursor.position.y
+                    >= self.scroll_offset.y + height - Self::SCROLL_MARGIN
+                {
+                    self.scroll_offset.y = self
+                        .cursor
+                        .position
+                        .y
+                        .saturating_sub(height - 1 - Self::SCROLL_MARGIN);
+                }
+            }
             InterfaceType::GUI => {
+                let usable_w =
+                    self.viewport_size.width as f32 - Self::GUI_LEFT_PADDING as f32 * 2.0;
+                let usable_h = self.viewport_size.height as f32
+                    - Self::GUI_TOP_PADDING as f32
+                    - Self::GUI_LINE_HEIGHT as f32;
+                let line_height = Self::GUI_LINE_HEIGHT as f32;
+
+                // Get cursor position in world space (pixels).
+                let cursor_line = self.cursor.position.y;
+                let cursor_col = self.cursor.position.x;
+                let text_before_cursor = self
+                    .buffer
+                    .line(cursor_line)
+                    .chars()
+                    .take(cursor_col)
+                    .collect::<String>();
+
                 let char_width = renderer
                     .gui
                     .as_ref()
                     .map(|gui| gui.gui_measure_font_width("M", Self::GUI_FONT_SIZE as f32))
-                    .unwrap_or(10.0); // Fallback.
-                (self.viewport_size.width as f32 / char_width).floor() as usize
+                    .unwrap_or(10.0);
+                
+                let cur_x_world = Self::GUI_LEFT_PADDING as f32
+                    + renderer
+                        .gui
+                        .as_ref()
+                        .map(|gui| {
+                            gui.gui_measure_font_width(
+                                &text_before_cursor,
+                                Self::GUI_FONT_SIZE as f32,
+                            )
+                        })
+                        .unwrap_or(0.0);
+                
+                let cur_y_world = Self::GUI_TOP_PADDING as f32 + cursor_line as f32 * line_height;
+
+                // Define margins in pixels.
+                let margin_x = (Self::SCROLL_MARGIN as f32) * char_width;
+                let margin_y = (Self::SCROLL_MARGIN as f32) * line_height;
+
+                // Calculate current screen position.
+                let cur_x_scr = cur_x_world - self.gui_current_scroll_offset_px.x;
+                let cur_y_scr = cur_y_world - self.gui_current_scroll_offset_px.y;
+
+                // Horizontal target.
+                if cur_x_scr < margin_x {
+                    self.gui_target_scroll_offset_px.x = (cur_x_world - margin_x).max(0.0);
+                } else if cur_x_scr > usable_w - margin_x {
+                    let line_text = self.buffer.line(cursor_line).to_string();
+                    let doc_width = Self::GUI_LEFT_PADDING as f32
+                        + renderer
+                            .gui
+                            .as_ref()
+                            .map(|gui| {
+                                gui.gui_measure_font_width(&line_text, Self::GUI_FONT_SIZE as f32)
+                            })
+                            .unwrap_or(0.0);
+                    self.gui_target_scroll_offset_px.x = (cur_x_world - (usable_w - margin_x))
+                        .max(0.0)
+                        .min((doc_width - usable_w).max(0.0));
+                }
+
+                // Vertical target.
+                if cur_y_scr < margin_y {
+                    self.gui_target_scroll_offset_px.y = (cur_y_world - margin_y).max(0.0);
+                } else if cur_y_scr > usable_h - margin_y {
+                    let doc_height =
+                        Self::GUI_TOP_PADDING as f32 + self.buffer.len_lines() as f32 * line_height;
+                    self.gui_target_scroll_offset_px.y = (cur_y_world - (usable_h - margin_y))
+                        .max(0.0)
+                        .min((doc_height - usable_h).max(0.0));
+                }
             }
-        };
-
-        let height = match renderer.interface {
-            InterfaceType::TUI => self.viewport_size.height.saturating_sub(1),
-            InterfaceType::GUI => {
-                let line_height = Self::GUI_LINE_HEIGHT as f32;
-                let status_bar_height = Self::GUI_LINE_HEIGHT as f32;
-                let text_area_height = self.viewport_size.height as f32
-                    - Self::GUI_TOP_PADDING as f32
-                    - status_bar_height;
-                (text_area_height / line_height).floor() as usize
-            }
-        };
-
-        // Horizontal scrolling.
-        if self.cursor.position.x < self.scroll_offset.x + Self::SCROLL_MARGIN {
-            self.scroll_offset.x = self.cursor.position.x.saturating_sub(Self::SCROLL_MARGIN);
-        } else if self.cursor.position.x >= self.scroll_offset.x + width - Self::SCROLL_MARGIN {
-            self.scroll_offset.x = self
-                .cursor
-                .position
-                .x
-                .saturating_sub(width - 1 - Self::SCROLL_MARGIN);
-        }
-
-        // Vertical scrolling.
-        if self.cursor.position.y < self.scroll_offset.y + Self::SCROLL_MARGIN {
-            self.scroll_offset.y = self.cursor.position.y.saturating_sub(Self::SCROLL_MARGIN);
-        } else if self.cursor.position.y >= self.scroll_offset.y + height - Self::SCROLL_MARGIN {
-            self.scroll_offset.y = self
-                .cursor
-                .position
-                .y
-                .saturating_sub(height - 1 - Self::SCROLL_MARGIN);
         }
     }
 
@@ -243,24 +312,33 @@ impl Component for Window {
     }
 
     fn render_gui(&mut self, renderer: &mut Renderer) {
-        let (font_size, line_height) = (Self::GUI_FONT_SIZE as f32, Self::GUI_LINE_HEIGHT as f32);
+        let font_size = Self::GUI_FONT_SIZE as f32;
+        let line_height = Self::GUI_LINE_HEIGHT as f32;
         let char_width = renderer
             .gui
             .as_ref()
             .map(|gui| gui.gui_measure_font_width("M", font_size))
             .unwrap_or(10.0);
 
-        // Text area boundaries, accounting for status bar.
+        // Lerp current scroll offset towards target.
+        self.gui_current_scroll_offset_px.x += (self.gui_target_scroll_offset_px.x
+            - self.gui_current_scroll_offset_px.x)
+            * Self::GUI_SCROLL_SMOOTHNESS;
+        self.gui_current_scroll_offset_px.y += (self.gui_target_scroll_offset_px.y
+            - self.gui_current_scroll_offset_px.y)
+            * Self::GUI_SCROLL_SMOOTHNESS;
+
+        // Use lerped scroll offset.
+        let scroll_offset_x_pixels = self.gui_current_scroll_offset_px.x;
+        let scroll_offset_y_pixels = self.gui_current_scroll_offset_px.y;
+
+        // Text area boundaries.
         let text_area_x = Self::GUI_LEFT_PADDING;
         let text_area_y = Self::GUI_TOP_PADDING;
         let text_area_width = self.viewport_size.width as i32 - Self::GUI_LEFT_PADDING * 2;
         let status_bar_height = Self::GUI_LINE_HEIGHT;
         let text_area_height =
             self.viewport_size.height as i32 - status_bar_height - Self::GUI_TOP_PADDING;
-
-        // Convert scroll offset to pixels.
-        let scroll_offset_x_pixels = self.scroll_offset.x as f32 * char_width;
-        let scroll_offset_y_pixels = self.scroll_offset.y as f32 * line_height;
 
         // Calculate visible lines.
         let first_visible_line =
@@ -298,6 +376,7 @@ impl Component for Window {
         }
 
         // Render cursor.
+        // REFACTOR: Put this inside render_cursor() function.
         let cursor_line = self.cursor.position.y;
         let cursor_col = self.cursor.position.x;
         let text_before_cursor = self
@@ -306,7 +385,7 @@ impl Component for Window {
             .chars()
             .take(cursor_col)
             .collect::<String>();
-        
+
         let cursor_x_offset = renderer
             .gui
             .as_ref()

@@ -33,7 +33,7 @@ pub enum Mode {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InterfaceType {
     TUI,
-    GUI
+    GUI,
 }
 
 /// NOTE: Maybe I'll split this into multiple different commands.
@@ -72,6 +72,13 @@ impl Position {
     pub fn new() -> Self {
         Self { x: 0, y: 0 }
     }
+}
+
+/// PositionF is just like Position, but using float.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PositionF {
+    pub x: f32,
+    pub y: f32,
 }
 
 /// Size determines the width and height of any given object.

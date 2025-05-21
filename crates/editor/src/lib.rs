@@ -164,7 +164,7 @@ impl EditorState {
                 }
                 Mode::Insert => {
                     while let Some(c) = rl.get_char_pressed() {
-                        commands.push(Command::InsertChar(c as char));
+                        commands.push(Command::InsertChar(c));
                     }
                     if rl.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
                         info!("ESC pressed in GUI Insert mode");
@@ -283,7 +283,7 @@ impl EditorState {
 
     fn render(&mut self) {
         let file_name = self.window.buffer.file_path.clone();
-        let cursor_position = self.window.cursor.position.clone();
+        let cursor_position = self.window.cursor.position;
 
         self.status_bar
             .update(self.mode, file_name, cursor_position);

@@ -53,10 +53,7 @@ impl Window {
 
     /// Renders a single row in the `Window`.
     fn render_row(&self, row: i32, slice: RopeSlice, renderer: &mut Renderer) {
-        renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(
-            0,
-            row.try_into().unwrap_or(0),
-        ));
+        renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(0, row));
         let rope = Rope::from(slice);
         renderer.enqueue_tui_command(RenderTUICommand::PrintRope(rope));
     }
@@ -73,16 +70,8 @@ impl Window {
     fn render_cursor_tui(&self, renderer: &mut Renderer) {
         renderer.enqueue_tui_command(RenderTUICommand::HideCursor);
 
-        let cursor_x = self
-            .cursor
-            .position
-            .x
-            .saturating_sub(self.scroll_offset.x);
-        let cursor_y = self
-            .cursor
-            .position
-            .y
-            .saturating_sub(self.scroll_offset.y);
+        let cursor_x = self.cursor.position.x.saturating_sub(self.scroll_offset.x);
+        let cursor_y = self.cursor.position.y.saturating_sub(self.scroll_offset.y);
 
         // Only render if cursor is within the viewport.
         let content_height = self.viewport_size.height.saturating_sub(1);
@@ -90,7 +79,7 @@ impl Window {
             return;
         }
 
-        let char_under_cursor = if self.cursor.position.y < self.buffer.len_nonempty_lines() as i32 {
+        let char_under_cursor = if self.cursor.position.y < self.buffer.len_nonempty_lines() {
             let line = self.buffer.get_trimmed_line(self.cursor.position.y);
             if self.cursor.position.x < line.len_chars() as i32 {
                 line.char(self.cursor.position.x as usize)
@@ -101,10 +90,7 @@ impl Window {
             ' ' // Space if beyond end of line.
         };
 
-        renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(
-            cursor_x.try_into().unwrap_or(0),
-            cursor_y.try_into().unwrap_or(0),
-        ));
+        renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(cursor_x, cursor_y));
         renderer.enqueue_tui_command(RenderTUICommand::SetInverseVideo(true));
         renderer.enqueue_tui_command(RenderTUICommand::Print(char_under_cursor.to_string()));
         renderer.enqueue_tui_command(RenderTUICommand::SetInverseVideo(false));
@@ -127,11 +113,8 @@ impl Window {
             x: text_area_x,
             y: text_area_y,
         };
-        let (cursor_x, cursor_y) = self.get_cursor_position_pixels(
-            cursor_line,
-            cursor_x_offset,
-            text_area_pos,
-        );
+        let (cursor_x, cursor_y) =
+            self.get_cursor_position_pixels(cursor_line, cursor_x_offset, text_area_pos);
 
         // Render cursor if within viewport bounds.
         if cursor_x >= text_area_x
@@ -189,14 +172,16 @@ impl Window {
         let text_area_y = Self::GUI_TOP_PADDING;
         let text_area_width = self.viewport_size.width - Self::GUI_LEFT_PADDING * 2;
         let status_bar_height = Self::GUI_LINE_HEIGHT;
-        let text_area_height = self.viewport_size.height - status_bar_height - Self::GUI_TOP_PADDING;
+        let text_area_height =
+            self.viewport_size.height - status_bar_height - Self::GUI_TOP_PADDING;
         (text_area_x, text_area_y, text_area_width, text_area_height)
     }
 
     /// Returns the GUI usable dimensions: (width, height) in pixels.
     fn get_gui_usable_dimensions(&self) -> (f32, f32) {
         let usable_w = (self.viewport_size.width - Self::GUI_LEFT_PADDING * 2) as f32;
-        let usable_h = (self.viewport_size.height - Self::GUI_TOP_PADDING - Self::GUI_LINE_HEIGHT) as f32;
+        let usable_h =
+            (self.viewport_size.height - Self::GUI_TOP_PADDING - Self::GUI_LINE_HEIGHT) as f32;
         (usable_w, usable_h)
     }
 
@@ -218,12 +203,10 @@ impl Window {
 
                 // Horizontal scrolling.
                 if self.cursor.position.x < self.scroll_offset.x + Self::SCROLL_MARGIN {
-                    self.scroll_offset.x = self
-                        .cursor
-                        .position
-                        .x
-                        .saturating_sub(Self::SCROLL_MARGIN);
-                } else if self.cursor.position.x >= self.scroll_offset.x + width - Self::SCROLL_MARGIN
+                    self.scroll_offset.x =
+                        self.cursor.position.x.saturating_sub(Self::SCROLL_MARGIN);
+                } else if self.cursor.position.x
+                    >= self.scroll_offset.x + width - Self::SCROLL_MARGIN
                 {
                     self.scroll_offset.x = self
                         .cursor
@@ -234,12 +217,10 @@ impl Window {
 
                 // Vertical scrolling.
                 if self.cursor.position.y < self.scroll_offset.y + Self::SCROLL_MARGIN {
-                    self.scroll_offset.y = self
-                        .cursor
-                        .position
-                        .y
-                        .saturating_sub(Self::SCROLL_MARGIN);
-                } else if self.cursor.position.y >= self.scroll_offset.y + height - Self::SCROLL_MARGIN
+                    self.scroll_offset.y =
+                        self.cursor.position.y.saturating_sub(Self::SCROLL_MARGIN);
+                } else if self.cursor.position.y
+                    >= self.scroll_offset.y + height - Self::SCROLL_MARGIN
                 {
                     self.scroll_offset.y = self
                         .cursor
@@ -268,7 +249,10 @@ impl Window {
                         .gui
                         .as_ref()
                         .map(|gui| {
-                            gui.gui_measure_font_width(&text_before_cursor, Self::GUI_FONT_SIZE as f32)
+                            gui.gui_measure_font_width(
+                                &text_before_cursor,
+                                Self::GUI_FONT_SIZE as f32,
+                            )
                         })
                         .unwrap_or(0.0);
                 let cur_y_world = Self::GUI_TOP_PADDING as f32 + cursor_line as f32 * line_height;
@@ -373,17 +357,14 @@ impl Component for Window {
     fn render_tui(&mut self, renderer: &mut Renderer) {
         let content_height = self.viewport_size.height.saturating_sub(1);
         for row in 0..content_height {
-            renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(
-                0,
-                row.try_into().unwrap_or(0),
-            ));
+            renderer.enqueue_tui_command(RenderTUICommand::MoveCursor(0, row));
             renderer.enqueue_tui_command(RenderTUICommand::ClearLine);
         }
 
         // Helpers.
         let start_line = self.scroll_offset.y;
         let width = self.viewport_size.width;
-        let total_lines = std::cmp::max(self.buffer.len_nonempty_lines() as i32, 1);
+        let total_lines = std::cmp::max(self.buffer.len_nonempty_lines(), 1);
 
         for current_row in 0..content_height {
             let line_idx = start_line + current_row;
@@ -429,14 +410,20 @@ impl Component for Window {
         // Render text lines.
         for i in 0..num_visible_lines {
             let line_idx = first_visible_line + i;
-            if line_idx >= self.buffer.len_lines() as i32 {
+            if line_idx >= self.buffer.len_lines() {
                 break;
             }
 
             let line = self.buffer.line(line_idx).to_string();
-            let text_y_pos = text_area_y + (line_idx as f32 * line_height - scroll_offset_y_pixels) as i32;
+            let text_y_pos =
+                text_area_y + (line_idx as f32 * line_height - scroll_offset_y_pixels) as i32;
 
-            if !self.is_line_visible(text_y_pos, text_area_y, text_area_height, line_height as i32) {
+            if !self.is_line_visible(
+                text_y_pos,
+                text_area_y,
+                text_area_height,
+                line_height as i32,
+            ) {
                 continue;
             }
 

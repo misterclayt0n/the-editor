@@ -71,9 +71,9 @@ impl TextEngine {
         let num_lines = self.len_lines();
 
         for idx in (0..num_lines).rev() {
-            let line = self.get_trimmed_line(idx as i32);
+            let line = self.get_trimmed_line(idx);
             if !line.chars().all(|c| c.is_whitespace()) {
-                return (idx + 1) as i32;
+                return idx + 1;
             }
         }
         0
@@ -90,7 +90,7 @@ impl TextEngine {
         let char_in_line = char_idx - line_start_idx as i32;
 
         Position {
-            x: char_in_line as i32,
+            x: char_in_line,
             y: line_idx as i32,
         }
     }

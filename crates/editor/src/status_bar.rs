@@ -85,17 +85,17 @@ impl Component for StatusBar {
 
         renderer.enqueue_gui_command(RenderGUICommand::DrawRectangle(
             0,
-            status_bar_y_gui as i32,
-            self.size.width as i32,
-            status_bar_height as i32,
+            status_bar_y_gui,
+            self.size.width,
+            status_bar_height,
             Color::LIGHTGRAY, // Use a color defined in your renderer::Color enum
         ));
 
         renderer.enqueue_gui_command(RenderGUICommand::DrawText(
             status,
-            padding as i32,
-            (status_bar_y_gui + padding) as i32,
-            font_size as i32,
+            padding,
+            status_bar_y_gui + padding,
+            font_size,
             Color::BLACK, // Use a color for text
         ));
     }

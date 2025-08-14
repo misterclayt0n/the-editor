@@ -1,6 +1,7 @@
 use std::env;
 
 // TODO: I want to render all errors in some sort of message bar in the future
+// I guess we gucci now
 use anyhow::{Context, Result};
 use editor::EditorState;
 use events::EventHandler;

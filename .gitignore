@@ -1,5 +1,2 @@
 /target
-*.c
-*.txt
-*.md
-*.log
+result*

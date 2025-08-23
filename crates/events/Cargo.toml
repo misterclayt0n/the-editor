@@ -1,9 +1,0 @@
-[package]
-name = "events"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-crossterm = { workspace = true }
-anyhow = { workspace = true }
-utils = { path = "../utils" }

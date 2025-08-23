@@ -1,0 +1,10 @@
+[package]
+name              = "the-editor"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "the-editor"
+path = "main.rs"
+
+[dependencies]

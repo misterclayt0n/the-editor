@@ -1,9 +1,0 @@
-[package]
-name = "text_engine"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-ropey = { workspace = true }
-anyhow = { workspace = true }
-utils = { path = "../utils" }

@@ -8,3 +8,5 @@ name = "the-editor"
 path = "main.rs"
 
 [dependencies]
+anyhow              = "1.0"
+the-editor-renderer = { path = "../the-editor-renderer" }

@@ -8,9 +8,9 @@ version.workspace = true
 path = "lib.rs"
 
 [dependencies]
-env_logger = "0.11"
-pollster   = "0.4"
-thiserror  = "2.0"
-wgpu       = "25.0"
-wgpu_text  = "0.9"
-winit      = "0.30"
+env_logger.workspace = true
+pollster.workspace   = true
+thiserror.workspace  = true
+wgpu.workspace       = true
+wgpu_text.workspace  = true
+winit.workspace      = true

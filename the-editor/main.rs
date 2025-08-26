@@ -7,6 +7,8 @@ use the_editor_renderer::{
   TextSegment,
 };
 
+mod core;
+
 struct EditorState {
   text_content: String,
 }

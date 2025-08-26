@@ -10,7 +10,6 @@
 
   outputs =
     {
-      self,
       nixpkgs,
       crane,
       flake-utils,
@@ -82,6 +81,7 @@
           // {
             inherit cargoArtifacts;
             pname = "the-editor";
+            cargoExtraArgs = "--features unicode-lines";
           }
         );
         

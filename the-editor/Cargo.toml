@@ -7,7 +7,15 @@ edition.workspace = true
 name = "the-editor"
 path = "main.rs"
 
+[features]
+integration   = [  ]
+unicode-lines = [ "ropey/unicode_lines" ]
+
 [dependencies]
-anyhow.workspace = true
+anyhow.workspace                   = true
+ropey.workspace                    = true
+unicode-general-category.workspace = true
+unicode-segmentation.workspace     = true
+unicode-width.workspace            = true
 
 the-editor-renderer = { path = "../the-editor-renderer" }

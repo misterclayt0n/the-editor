@@ -168,27 +168,49 @@ impl Range {
 }
 
 /// A selection is one or more ranges.
-/// INVARIANT: A selection can never be empty (always contain at least one primary range).
+/// INVARIANT: A selection can never be empty (always contain at least one
+/// primary range).
+#[derive(Clone, Debug)]
 pub struct Selection {
-  ranges: Vec<[Range; 1]>,
+  ranges:        Vec<Range>,
   primary_index: usize,
 }
 
 impl Selection {
-  pub fn new(ranges: Vec<[Range; 1]>, primary_index: usize) -> Self {
+  pub fn new(ranges: Vec<Range>, primary_index: usize) -> Self {
     assert!(!ranges.is_empty());
     assert!(primary_index < ranges.len());
-
-    // let selection = Self {
-      // ranges,
-      // primary_index
-    // }
-
-    // selection.normalize()
-
+    
     Self {
       ranges,
-      primary_index
+      primary_index,
+    }
+  }
+
+  pub fn point(pos: usize) -> Self {
+    Self::new(vec![Range::point(pos)], 0)
+  }
+
+  pub fn primary(&self) -> Range {
+    self.ranges[self.primary_index]
+  }
+
+  pub fn ranges(&self) -> &[Range] {
+    &self.ranges
+  }
+
+  /// Apply a transformation to all ranges and return a new Selection.
+  pub fn transform<F>(self, mut f: F) -> Self
+  where
+    F: FnMut(Range) -> Range,
+  {
+    // Apply the transformation.
+    let ranges = self.ranges.into_iter().map(|r| f(r)).collect::<Vec<_>>();
+    let primary_index = self.primary_index.min(ranges.len().saturating_sub(1));
+    
+    Selection {
+      ranges,
+      primary_index,
     }
   }
 }

@@ -74,7 +74,8 @@
 
         # Build dependencies separately for better caching.
         cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
-          pname = "the-editor-deps";
+          src = src;
+          cargoExtraArgs = "--workspace --locked";
         });
         the-editor-unwrapped = craneLib.buildPackage (
           commonArgs

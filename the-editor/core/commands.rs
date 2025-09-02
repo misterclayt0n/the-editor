@@ -1,16 +1,21 @@
 use ropey::RopeSlice;
 
 use crate::core::{
-  document::Document,
-  movement::{move_horizontally, Direction, Movement},
-  selection::Range,
-};
+    document::Document,
+    movement::{
+      Direction,
+      Movement,
+      move_horizontally,
+      move_vertically,
+    },
+    selection::Range,
+  };
 
 type MoveFn = fn(RopeSlice, Range, Direction, usize, Movement) -> Range;
 
-fn move_impl_doc(doc: &mut Document, move_fn: MoveFn, dir: Direction, behavior: Movement) {
-  let count = 1; // TODO: support counts
-  let view_id = 0usize;
+fn move_impl(doc: &mut Document, move_fn: MoveFn, dir: Direction, behavior: Movement) {
+  let count = 1; // TODO: support counts with context system.
+  let view_id = 0usize; 
 
   let current_sel = doc
     .selection_ref(view_id)
@@ -22,10 +27,18 @@ fn move_impl_doc(doc: &mut Document, move_fn: MoveFn, dir: Direction, behavior: 
   doc.set_selection(view_id, new_selection);
 }
 
-pub fn move_char_left_doc(doc: &mut Document) {
-  move_impl_doc(doc, move_horizontally, Direction::Backward, Movement::Move)
+pub fn move_char_left(doc: &mut Document) {
+  move_impl(doc, move_horizontally, Direction::Backward, Movement::Move)
 }
 
-pub fn move_char_right_doc(doc: &mut Document) {
-  move_impl_doc(doc, move_horizontally, Direction::Forward, Movement::Move)
+pub fn move_char_right(doc: &mut Document) {
+  move_impl(doc, move_horizontally, Direction::Forward, Movement::Move)
+}
+
+pub fn move_char_up(doc: &mut Document) {
+  move_impl(doc, move_vertically, Direction::Backward, Movement::Move)
+}
+
+pub fn move_char_down(doc: &mut Document) {
+  move_impl(doc, move_vertically, Direction::Forward, Movement::Move)
 }

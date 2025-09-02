@@ -7,7 +7,10 @@ use the_editor_renderer::{
   TextSegment,
 };
 
-use crate::core::{commands::*, document::Document};
+use crate::core::{
+  commands::*,
+  document::Document,
+};
 
 pub struct Editor {
   document: Document,
@@ -15,8 +18,8 @@ pub struct Editor {
 
 impl Editor {
   pub fn new() -> Self {
-    let text = "Hello world, this is a sample buffer: ççç你好";
-    
+    let text = "Hello world, this is a sample buffer: ççç你好\nalskjdlaskds\naskldjsalkjdl jaslkdjad";
+
     Self {
       document: Document::with_text(text),
     }
@@ -113,10 +116,11 @@ impl Application for Editor {
     ));
 
     // Draw current buffer text and overlay a block cursor without altering layout.
-    // NOTE: draw base text once, then overlay a block glyph at the cursor cell using
-    // a string of spaces to advance to the same monospaced column, followed by the underlying
-    // character on top for contrast.
-    // TODO: We should abstract this to the renderer it self, maybe turn cursor into a component.
+    // NOTE: draw base text once, then overlay a block glyph at the cursor cell
+    // using a string of spaces to advance to the same monospaced column,
+    // followed by the underlying character on top for contrast.
+    // TODO: We should abstract this to the renderer it self, maybe turn cursor into
+    // a component.
     let doc_text = self.document.text();
     let pos = if let Some(sel) = self.document.selection_ref(0) {
       sel.primary().cursor(doc_text.slice(..))
@@ -132,13 +136,20 @@ impl Application for Editor {
     let full = doc_text.to_string();
     renderer.draw_text(TextSection::simple(50.0, 380.0, full, font_size, normal));
 
-    let pad: String = std::iter::repeat(' ').take(pos).collect();
+    // Calculate cursor position accounting for newlines
+    let line_idx = doc_text.char_to_line(pos);
+    let line_start = doc_text.line_to_char(line_idx);
+    let col_in_line = pos - line_start;
+    
+    let pad: String = std::iter::repeat(' ').take(col_in_line).collect();
     let under_ch = doc_text.get_char(pos).unwrap_or(' ');
+    
+    let cursor_y = 380.0 + (line_idx as f32 * font_size);
 
     // Draw block background at cursor cell
     renderer.draw_text(TextSection::simple(
       50.0,
-      380.0,
+      cursor_y,
       format!("{}{}", pad, '█'),
       font_size,
       cursor_bg,
@@ -147,7 +158,7 @@ impl Application for Editor {
     // Draw underlying character on top
     renderer.draw_text(TextSection::simple(
       50.0,
-      380.0,
+      cursor_y,
       format!("{}{}", pad, under_ch),
       font_size,
       cursor_fg,
@@ -170,13 +181,21 @@ impl Application for Editor {
           use the_editor_renderer::Key;
           match key_press.code {
             Key::Left => {
-              move_char_left_doc(&mut self.document);
+              move_char_left(&mut self.document);
               true
             },
             Key::Right => {
-              move_char_right_doc(&mut self.document);
+              move_char_right(&mut self.document);
               true
             },
+            Key::Up => {
+              move_char_up(&mut self.document);
+              true
+            }
+            Key::Down => {
+              move_char_down(&mut self.document);
+              true
+            }
             _ => {
               println!("Key pressed: {:?}", key_press.code);
               false

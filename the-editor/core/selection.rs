@@ -10,9 +10,9 @@ use crate::core::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Range {
-  head:           usize,
-  anchor:         usize,
-  old_visual_pos: Option<(usize, usize)>,
+  pub head:           usize,
+  pub anchor:         usize,
+  pub old_visual_pos: Option<(usize, usize)>,
 }
 
 impl Range {
@@ -180,7 +180,7 @@ impl Selection {
   pub fn new(ranges: Vec<Range>, primary_index: usize) -> Self {
     assert!(!ranges.is_empty());
     assert!(primary_index < ranges.len());
-    
+
     Self {
       ranges,
       primary_index,
@@ -207,7 +207,7 @@ impl Selection {
     // Apply the transformation.
     let ranges = self.ranges.into_iter().map(|r| f(r)).collect::<Vec<_>>();
     let primary_index = self.primary_index.min(ranges.len().saturating_sub(1));
-    
+
     Selection {
       ranges,
       primary_index,

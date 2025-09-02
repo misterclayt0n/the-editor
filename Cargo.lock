@@ -1564,6 +1564,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex-cursor"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0497c781d2f982ae8284d2932aee6a877e58a4541daa5e8fadc18cc75c23a61d"
+dependencies = [
+ "log",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
+ "ropey",
+]
+
+[[package]]
 name = "regex-syntax"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1711,6 +1724,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
+name = "smartstring"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fb72c633efbaa2dd666986505016c32c3044395ceaf881518399d2f4127ee29"
+dependencies = [
+ "autocfg",
+ "static_assertions",
+ "version_check",
+]
+
+[[package]]
 name = "smithay-client-toolkit"
 version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1819,7 +1843,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ropey",
+ "smartstring",
  "the-editor-renderer",
+ "the-editor-stdx",
  "unicode-general-category",
  "unicode-segmentation",
  "unicode-width",
@@ -1835,6 +1861,15 @@ dependencies = [
  "wgpu",
  "wgpu_text",
  "winit",
+]
+
+[[package]]
+name = "the-editor-stdx"
+version = "0.1.0"
+dependencies = [
+ "regex-cursor",
+ "ropey",
+ "unicode-segmentation",
 ]
 
 [[package]]

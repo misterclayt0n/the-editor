@@ -12,7 +12,7 @@ use crate::core::{
 pub struct Range {
   pub head:           usize,
   pub anchor:         usize,
-  pub old_visual_pos: Option<(usize, usize)>,
+  pub old_visual_pos: Option<(u32, u32)>,
 }
 
 impl Range {

@@ -18,7 +18,8 @@ pub struct Editor {
 
 impl Editor {
   pub fn new() -> Self {
-    let text = "Hello world, this is a sample buffer: ççç你好\nalskjdlaskds\naskldjsalkjdl jaslkdjad";
+    let text =
+      "Hello world, this is a sample buffer: ççç你好\nalskjdlaskds\naskldjsalkjdl jaslkdjad";
 
     Self {
       document: Document::with_text(text),
@@ -140,10 +141,10 @@ impl Application for Editor {
     let line_idx = doc_text.char_to_line(pos);
     let line_start = doc_text.line_to_char(line_idx);
     let col_in_line = pos - line_start;
-    
+
     let pad: String = std::iter::repeat(' ').take(col_in_line).collect();
     let under_ch = doc_text.get_char(pos).unwrap_or(' ');
-    
+
     let cursor_y = 380.0 + (line_idx as f32 * font_size);
 
     // Draw block background at cursor cell
@@ -191,11 +192,11 @@ impl Application for Editor {
             Key::Up => {
               move_char_up(&mut self.document);
               true
-            }
+            },
             Key::Down => {
               move_char_down(&mut self.document);
               true
-            }
+            },
             _ => {
               println!("Key pressed: {:?}", key_press.code);
               false

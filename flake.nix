@@ -121,6 +121,7 @@
 
           "the-editor-fmt" = craneLib.cargoFmt {
             inherit src;
+            cargoFmtExtraArgs = "-- --unstable-features";
           };
 
           "the-editor-toml-fmt" = craneLib.taploFmt {

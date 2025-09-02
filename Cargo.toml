@@ -1,5 +1,5 @@
 [workspace]
-members  = [ "the-editor", "the-editor-renderer" ]
+members  = [ "the-editor", "the-editor-renderer", "the-editor-stdx" ]
 resolver = "3"
 
 [workspace.package]
@@ -14,7 +14,9 @@ name = "the-editor"
 anyhow                   = "1.0"
 env_logger               = "0.11"
 pollster                 = "0.4"
+regex-cursor             = "0.1.5"
 ropey                    = "1.6.1"
+smartstring              = "1.0.1"
 thiserror                = "2.0"
 unicode-general-category = "1.0"
 unicode-segmentation     = "1.12.0"

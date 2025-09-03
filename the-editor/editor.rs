@@ -11,18 +11,23 @@ use crate::core::{
   commands::*,
   document::Document,
 };
+use crate::keymap::{default, KeymapResult, Keymaps, Mode};
 
 pub struct Editor {
   document: Document,
+  mode:     Mode,
+  keymaps:  Keymaps,
 }
 
 impl Editor {
   pub fn new() -> Self {
     let text =
-      "Hello world, this is a sample buffer: ççç你好\nalskjdlaskds\naskldjsalkjdl jaslkdjad";
+      "Hello slkdj  world, this is a sample buffer: ççç你好\nalskjdlaskds\naskldjsalkjdl jaslkdjad";
 
     Self {
       document: Document::with_text(text),
+      mode:     Mode::Normal,
+      keymaps:  Keymaps::new(default::default()),
     }
   }
 }
@@ -180,27 +185,27 @@ impl Application for Editor {
       InputEvent::Keyboard(key_press) => {
         if key_press.pressed {
           use the_editor_renderer::Key;
-          match key_press.code {
-            Key::Left => {
-              move_char_left(&mut self.document);
+          // Dispatch renderer Key directly through keymap
+          match self.keymaps.get(self.mode, key_press.code) {
+            KeymapResult::Matched(cmd) => {
+              match cmd {
+                crate::keymap::Command::Execute(f) => f(&mut self.document),
+                crate::keymap::Command::EnterInsertMode => self.mode = Mode::Insert,
+                crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,
+              }
               true
-            },
-            Key::Right => {
-              move_char_right(&mut self.document);
-              true
-            },
-            Key::Up => {
-              move_char_up(&mut self.document);
-              true
-            },
-            Key::Down => {
-              move_char_down(&mut self.document);
-              true
-            },
-            _ => {
-              println!("Key pressed: {:?}", key_press.code);
-              false
-            },
+            }
+            KeymapResult::Pending(_) => true, // show pending UI later
+            KeymapResult::Cancelled(_) => true,
+            KeymapResult::NotFound => {
+              // If in insert, Enter inserts newline as a convenience
+                if self.mode == Mode::Insert && matches!(key_press.code, Key::Enter) {
+                  insert_text(&mut self.document, "\n");
+                  true
+                } else {
+                  false
+                }
+              }
           }
         } else {
           false
@@ -211,8 +216,29 @@ impl Application for Editor {
         false
       },
       InputEvent::Text(text) => {
-        println!("Text input: {}", text);
-        true
+        if self.mode == Mode::Insert {
+          // Insert the incoming text at the current cursor(s)
+          insert_text(&mut self.document, &text);
+          true
+        } else {
+          // Treat as normal-mode keypresses (first char only)
+          if let Some(ch) = text.chars().next() {
+            use the_editor_renderer::Key;
+            use crate::keymap::KeymapResult;
+            match self.keymaps.get(self.mode, Key::Char(ch)) {
+              KeymapResult::Matched(cmd) => {
+                match cmd {
+                  crate::keymap::Command::Execute(f) => f(&mut self.document),
+                  crate::keymap::Command::EnterInsertMode => self.mode = Mode::Insert,
+                  crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,
+                }
+                true
+              }
+              KeymapResult::Pending(_) => true,
+              KeymapResult::Cancelled(_) | KeymapResult::NotFound => false,
+            }
+          } else { false }
+        }
       },
     }
   }

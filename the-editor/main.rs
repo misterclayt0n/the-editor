@@ -2,6 +2,7 @@ use crate::editor::Editor;
 
 mod core;
 mod editor;
+pub mod keymap;
 
 fn main() -> anyhow::Result<()> {
   let editor = Editor::new();

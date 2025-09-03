@@ -2,12 +2,14 @@ use ropey::RopeSlice;
 
 use crate::core::{
   document::Document,
+  Tendril,
   movement::{
     self,
     Direction,
     Movement,
   },
   selection::Range,
+  transaction::Transaction,
   text_annotations::TextAnnotations,
   text_format::TextFormat,
 };
@@ -97,4 +99,37 @@ pub fn move_char_up(doc: &mut Document) {
 
 pub fn move_char_down(doc: &mut Document) {
   move_impl(doc, move_vertically_fmt, Direction::Forward, Movement::Move)
+}
+
+/// Insert a string at each selection head.
+pub fn insert_text(doc: &mut Document, s: &str) {
+  let view_id = 0usize;
+  let selection = doc
+    .selection_ref(view_id)
+    .cloned()
+    .unwrap_or_else(|| crate::core::selection::Selection::point(0));
+
+  let txn = Transaction::insert(doc.text(), &selection, Tendril::from(s));
+  doc.apply(view_id, &txn);
+}
+
+/// Delete the selection if non-empty; otherwise delete one grapheme backward.
+pub fn delete_backward(doc: &mut Document) {
+  let view_id = 0usize;
+  let selection = doc
+    .selection_ref(view_id)
+    .cloned()
+    .unwrap_or_else(|| crate::core::selection::Selection::point(0));
+
+  let rope = doc.text();
+  let txn = Transaction::delete_by_selection(rope, &selection, |range: &Range| {
+    if range.is_empty() {
+      let slice = rope.slice(..);
+      let start = crate::core::grapheme::prev_grapheme_boundary(slice, range.head);
+      (start, range.head)
+    } else {
+      (range.from(), range.to())
+    }
+  });
+  doc.apply(view_id, &txn);
 }

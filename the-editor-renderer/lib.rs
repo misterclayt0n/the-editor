@@ -171,7 +171,9 @@ pub fn run<A: Application + 'static>(
       EventLoop,
     },
     keyboard::{
+      Key as WinitKey,
       KeyCode,
+      NamedKey,
       PhysicalKey,
     },
     window::Window,
@@ -227,38 +229,114 @@ pub fn run<A: Application + 'static>(
             KeyEvent {
               state,
               physical_key: PhysicalKey::Code(code),
+              logical_key,
+              text,
               ..
             },
           ..
         } => {
           if let Some(renderer) = &mut self.renderer {
-            let input_event = InputEvent::Keyboard(KeyPress {
-              code:    match code {
-                KeyCode::Escape => event::Key::Escape,
-                KeyCode::Enter => event::Key::Enter,
-                KeyCode::Space => event::Key::Space,
-                KeyCode::Backspace => event::Key::Backspace,
-                KeyCode::ArrowUp => event::Key::Up,
-                KeyCode::ArrowDown => event::Key::Down,
-                KeyCode::ArrowLeft => event::Key::Left,
-                KeyCode::ArrowRight => event::Key::Right,
-                _ => event::Key::Other,
-              },
-              pressed: state == ElementState::Pressed,
-              shift:   false,
-              ctrl:    false,
-              alt:     false,
-            });
+            // Track whether the app handled this input
+            let mut handled = false;
 
-            if self.app.handle_event(input_event, renderer)
-              && let Some(window) = &self.window
-            {
-              window.request_redraw();
+            // First, handle special keys as keyboard events
+            let handled_as_key = match code {
+              KeyCode::Escape | KeyCode::Enter | KeyCode::Backspace |
+              KeyCode::ArrowUp | KeyCode::ArrowDown | 
+              KeyCode::ArrowLeft | KeyCode::ArrowRight => {
+                let input_event = InputEvent::Keyboard(KeyPress {
+                  code:    match code {
+                    KeyCode::Escape => event::Key::Escape,
+                    KeyCode::Enter => event::Key::Enter,
+                    KeyCode::Backspace => event::Key::Backspace,
+                    KeyCode::ArrowUp => event::Key::Up,
+                    KeyCode::ArrowDown => event::Key::Down,
+                    KeyCode::ArrowLeft => event::Key::Left,
+                    KeyCode::ArrowRight => event::Key::Right,
+                    _ => unreachable!(),
+                  },
+                  pressed: state == ElementState::Pressed,
+                  shift:   false,
+                  ctrl:    false,
+                  alt:     false,
+                });
+                handled = self.app.handle_event(input_event, renderer);
+                if handled && let Some(window) = &self.window {
+                  window.request_redraw();
+                }
+                true
+              },
+              _ => false,
+            };
+
+            // For regular text-producing keys, prefer KeyEvent.text
+            if !handled_as_key && state == ElementState::Pressed {
+              if let Some(t) = &text {
+                if !t.is_empty() {
+                  let text_event = InputEvent::Text(t.to_string());
+                  handled = self.app.handle_event(text_event, renderer);
+                  if handled
+                    && let Some(window) = &self.window
+                  {
+                    window.request_redraw();
+                  }
+                }
+              } else {
+                // Fallback: derive text from logical_key when KeyEvent.text is None
+                match &logical_key {
+                  WinitKey::Character(s) if !s.is_empty() => {
+                    let text_event = InputEvent::Text(s.clone().into());
+                    handled = self.app.handle_event(text_event, renderer);
+                    if handled
+                      && let Some(window) = &self.window
+                    {
+                      window.request_redraw();
+                    }
+                  },
+                  WinitKey::Named(NamedKey::Space) => {
+                    let text_event = InputEvent::Text(" ".into());
+                    handled = self.app.handle_event(text_event, renderer);
+                    if handled
+                      && let Some(window) = &self.window
+                    {
+                      window.request_redraw();
+                    }
+                  },
+                  _ => {
+                    // Ignore other non-text keys here
+                  },
+                }
+              }
             }
 
-            // Exit on Escape
-            if matches!(code, KeyCode::Escape) && state == ElementState::Pressed {
+            // Exit on Escape only if the app did not handle it
+            if matches!(code, KeyCode::Escape) && state == ElementState::Pressed && !handled {
               event_loop.exit();
+            }
+          }
+        },
+        WindowEvent::Ime(ime) => {
+          if let Some(renderer) = &mut self.renderer {
+            use winit::event::Ime;
+            match ime {
+              Ime::Commit(text) => {
+                let input_event = InputEvent::Text(text);
+                if self.app.handle_event(input_event, renderer)
+                  && let Some(window) = &self.window
+                {
+                  window.request_redraw();
+                }
+              },
+              Ime::Preedit(text, _cursor) => {
+                // For now, we could show preedit text but don't commit it
+                // This is where composed characters appear before being finalized
+                if !text.is_empty() {
+                  eprintln!("IME Preedit: {:?}", text);
+                }
+              },
+              Ime::Enabled | Ime::Disabled => {
+                // IME state changes, we can ignore these for now
+              }
             }
           }
         },

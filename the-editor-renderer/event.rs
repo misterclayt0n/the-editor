@@ -3,14 +3,14 @@
 //! This module defines the input events that can be handled by applications.
 
 /// Keyboard key codes
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Key {
+  /// A character-producing key (single Unicode scalar)
+  Char(char),
   /// Escape key
   Escape,
   /// Enter/Return key
   Enter,
-  /// Space bar
-  Space,
   /// Backspace key
   Backspace,
   /// Up arrow key

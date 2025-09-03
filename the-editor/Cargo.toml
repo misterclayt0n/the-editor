@@ -21,3 +21,4 @@ unicode-width.workspace            = true
 
 the-editor-renderer = { path = "../the-editor-renderer" }
 the-editor-stdx     = { path = "../the-editor-stdx" }
+bitflags = "2.4"

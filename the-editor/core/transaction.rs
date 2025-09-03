@@ -119,6 +119,11 @@ impl ChangeSet {
     &self.changes
   }
 
+  /// Returns the expected document length for this changeset
+  pub fn len(&self) -> usize {
+    self.len
+  }
+
   // Changeset builder operations: delete/insert/retain.
   //
 

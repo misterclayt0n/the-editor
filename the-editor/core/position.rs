@@ -9,9 +9,13 @@ use std::{
 };
 
 use ropey::RopeSlice;
+use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::core::{
+  Tendril,
+  chars::char_is_line_ending,
   doc_formatter::DocumentFormatter,
+  grapheme::ensure_grapheme_boundary_prev,
   text_annotations::TextAnnotations,
   text_format::TextFormat,
 };
@@ -65,27 +69,41 @@ impl Position {
     self.row == 0 && self.col == 0
   }
 
-  pub fn from_char_pos(text: RopeSlice, pos: usize) -> Self {
-    let row = text.char_to_line(pos);
-    let line_start = text.line_to_char(row);
-    let col = pos - line_start;
-    Self { row, col }
-  }
+  pub fn traverse(self, text: Tendril) -> Self {
+    let Self { mut row, mut col } = self;
+    let mut chars = text.chars().peekable();
 
-  pub fn to_char_pos(&self, text: RopeSlice) -> usize {
-    if self.row >= text.len_lines() {
-      return text.len_chars();
+    while let Some(ch) = chars.next() {
+      if char_is_line_ending(ch) && !(ch == '\r' && chars.peek() == Some(&'\n')) {
+        row += 1;
+        col = 0;
+      } else {
+        col += 1;
+      }
     }
 
-    let line_start = text.line_to_char(self.row);
-    let line_end = if self.row + 1 < text.len_lines() {
-      text.line_to_char(self.row + 1).saturating_sub(1)
-    } else {
-      text.len_chars()
-    };
-
-    (line_start + self.col).min(line_end)
+    Self { row, col }
   }
+}
+
+impl From<(usize, usize)> for Position {
+  fn from(value: (usize, usize)) -> Self {
+    Position::new(value.0, value.1)
+  }
+}
+
+/// Converts a character index into a `Position`.
+///
+/// Column in `char` count which can be used for row:col display in
+/// status line. See [`visual_coords_at_pos`] for a visual one.
+pub fn coords_at_pos(text: RopeSlice, pos: usize) -> Position {
+  let line = text.char_to_line(pos);
+
+  let line_start = text.line_to_char(line);
+  let pos = ensure_grapheme_boundary_prev(text, pos);
+  let col = text.slice(line_start..pos).graphemes().count();
+
+  Position::new(line, col)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

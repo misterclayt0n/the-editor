@@ -170,7 +170,7 @@ impl Range {
 /// A selection is one or more ranges.
 /// INVARIANT: A selection can never be empty (always contain at least one
 /// primary range).
-#[derive(Clone, Debug)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Selection {
   ranges:        Vec<Range>,
   primary_index: usize,
@@ -195,6 +195,10 @@ impl Selection {
     self.ranges[self.primary_index]
   }
 
+  pub fn primary_index(&self) -> usize {
+    self.primary_index
+  }
+
   pub fn ranges(&self) -> &[Range] {
     &self.ranges
   }
@@ -212,5 +216,10 @@ impl Selection {
       ranges,
       primary_index,
     }
+  }
+
+  #[inline(always)]
+  pub fn iter(&self) -> std::slice::Iter<'_, Range> {
+    self.ranges.iter()
   }
 }

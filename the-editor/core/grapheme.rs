@@ -123,25 +123,15 @@ pub struct GraphemeStr<'a> {
 
 #[must_use]
 pub fn grapheme_width(g: &str) -> usize {
-  if g.as_bytes()[0] <= 127 {
-    // Fast-path ascii.
-    // Point 1: theoretically, ascii control characters should have zero
-    // width, but in our case we actually want them to have width: if they
-    // show up in text, we want to treat them as textual elements that can
-    // be edited. So we can get away with making all ascii single width
-    // here.
-    // Point 2: we're only examining the first codepoint here, which means
-    // we're ignoring graphemes formed with combining characters. However,
-    // if it starts with ascii, it's going to be a single-width grapeheme
-    // regardless, so, again, we can get away with that here.
-    // Point 3: we're only examining the first _byte_. But for utf8, when
-    // checking for ascii range values only, that works.
-    1
+  if g.is_ascii() {
+    // Fast-path for pure ASCII: each byte renders with width 1.
+    // Tabs/newlines are handled as special Grapheme variants and
+    // should not reach this function via Grapheme::Other.
+    g.len()
   } else {
-    // We use max(1) here because all grapeheme clusters--even illformed
-    // ones--should have at least some width so they can be edited
-    // properly.
-    // TODO properly handle unicode width for all codepoints.
+    // Ensure a minimum width of 1 for ill-formed clusters so
+    // they remain editable.
+    // TODO: properly handle unicode width for all codepoints.
     UnicodeWidthStr::width(g).max(1)
   }
 }

@@ -1,3 +1,5 @@
+use std::num::NonZeroUsize;
+
 use smartstring::{
   LazyCompact,
   SmartString,
@@ -15,6 +17,7 @@ pub mod selection;
 pub mod syntax;
 pub mod text_annotations;
 pub mod text_format;
+pub mod transaction;
 
 /// This type basically optimizes small string operations by doing expensive
 /// operations in heap, and using inline storage for small strings to avoid heap

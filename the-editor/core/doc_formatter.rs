@@ -25,7 +25,7 @@ use crate::core::{
   text_format::TextFormat,
 };
 
-/// TODO make Highlight a u32 to reduce the size of this enum to a single word.
+/// TODO: make Highlight a u32 to reduce the size of this enum to a single word.
 #[derive(Debug, Clone, Copy)]
 pub enum GraphemeSource {
   Document {
@@ -40,13 +40,13 @@ pub enum GraphemeSource {
 }
 
 impl GraphemeSource {
-  /// Returns whether this grapheme is virtual inline text
+  /// Returns whether this grapheme is virtual inline text.
   pub fn is_virtual(self) -> bool {
     matches!(self, GraphemeSource::VirtualText { .. })
   }
 
   pub fn is_eof(self) -> bool {
-    // all doc chars except the EOF char have non-zero codepoints
+    // All doc chars except the EOF char have non-zero codepoints.
     matches!(self, GraphemeSource::Document { codepoints: 0 })
   }
 
@@ -113,28 +113,28 @@ pub struct DocumentFormatter<'t> {
   text_fmt:    &'t TextFormat,
   annotations: &'t TextAnnotations<'t>,
 
-  /// The visual position at the end of the last yielded word boundary
+  /// The visual position at the end of the last yielded word boundary.
   visual_pos: Position,
   graphemes:  RopeGraphemes<'t>,
-  /// The character pos of the `graphemes` iter used for inserting annotations
+  /// The character pos of the `graphemes` iter used for inserting annotations.
   char_pos:   usize,
-  /// The line pos of the `graphemes` iter used for inserting annotations
+  /// The line pos of the `graphemes` iter used for inserting annotations.
   line_pos:   usize,
   exhausted:  bool,
 
   inline_annotation_graphemes: Option<(Graphemes<'t>, Option<Highlight>)>,
 
-  // softwrap specific
-  /// The indentation of the current line
+  // Softwrap specific.
+  /// The indentation of the current line.
   /// Is set to `None` if the indentation level is not yet known
-  /// because no non-whitespace graphemes have been encountered yet
+  /// because no non-whitespace graphemes have been encountered yet.
   indent_level:    Option<usize>,
   /// In case a long word needs to be split a single grapheme might need to be
-  /// wrapped while the rest of the word stays on the same line
+  /// wrapped while the rest of the word stays on the same line.
   peeked_grapheme: Option<GraphemeWithSource<'t>>,
-  /// A first-in first-out (fifo) buffer for the Graphemes of any given word
+  /// A first-in first-out (fifo) buffer for the Graphemes of any given word.
   word_buf:        Vec<GraphemeWithSource<'t>>,
-  /// The index of the next grapheme that will be yielded from the `word_buf`
+  /// The index of the next grapheme that will be yielded from the `word_buf`.
   word_i:          usize,
 }
 
@@ -150,7 +150,7 @@ impl<'t> DocumentFormatter<'t> {
     annotations: &'t TextAnnotations,
     char_idx: usize,
   ) -> Self {
-    // TODO divide long lines into blocks to avoid bad performance for long lines
+    // TODO: divide long lines into blocks to avoid bad performance for long lines.
     let block_line_idx = text.char_to_line(char_idx.min(text.len_chars()));
     let block_char_idx = text.line_to_char(block_line_idx);
     annotations.reset_pos(block_char_idx);
@@ -171,7 +171,7 @@ impl<'t> DocumentFormatter<'t> {
     }
   }
 
-  /// returns the char index at the end of the last yielded grapheme
+  /// Returns the char index at the end of the last yielded grapheme.
   pub fn next_char_pos(&self) -> usize {
     self.char_pos
   }
@@ -219,7 +219,7 @@ impl<'t> DocumentFormatter<'t> {
         }
         self.exhausted = true;
         // EOF grapheme is required for rendering
-        // and correct position computations
+        // and correct position computations.
         return Some(GraphemeWithSource {
           grapheme: Grapheme::Other { g: " ".into() },
           source:   GraphemeSource::Document { codepoints: 0 },
@@ -441,5 +441,326 @@ impl<'t> Iterator for DocumentFormatter<'t> {
       self.visual_pos.col += grapheme.width();
     }
     Some(grapheme)
+  }
+}
+
+#[cfg(test)]
+mod doc_formatter_tests {
+  use ropey::Rope;
+
+  use super::*;
+  use crate::core::{
+    position::Position,
+    syntax::Highlight,
+    text_annotations::TextAnnotations,
+    text_format::TextFormat,
+  };
+
+  #[test]
+  fn grapheme_source_is_virtual() {
+    let doc_source = GraphemeSource::Document { codepoints: 5 };
+    let virtual_source = GraphemeSource::VirtualText { highlight: None };
+
+    assert!(!doc_source.is_virtual());
+    assert!(virtual_source.is_virtual());
+  }
+
+  #[test]
+  fn grapheme_source_is_eof() {
+    let eof_source = GraphemeSource::Document { codepoints: 0 };
+    let non_eof_source = GraphemeSource::Document { codepoints: 1 };
+    let virtual_source = GraphemeSource::VirtualText { highlight: None };
+
+    assert!(eof_source.is_eof());
+    assert!(!non_eof_source.is_eof());
+    assert!(!virtual_source.is_eof());
+  }
+
+  #[test]
+  fn grapheme_source_doc_chars() {
+    let doc_source = GraphemeSource::Document { codepoints: 42 };
+    let virtual_source = GraphemeSource::VirtualText { highlight: None };
+
+    assert_eq!(doc_source.doc_chars(), 42);
+    assert_eq!(virtual_source.doc_chars(), 0);
+  }
+
+  #[test]
+  fn grapheme_with_source_new() {
+    let grapheme =
+      GraphemeWithSource::new("a".into(), 0, 4, GraphemeSource::Document { codepoints: 1 });
+
+    assert_eq!(grapheme.doc_chars(), 1);
+    assert_eq!(grapheme.width(), 1);
+    assert!(!grapheme.is_whitespace());
+    assert!(!grapheme.is_newline());
+    assert!(!grapheme.is_eof());
+  }
+
+  #[test]
+  fn grapheme_with_source_placeholder() {
+    let placeholder = GraphemeWithSource::placeholder();
+
+    assert_eq!(placeholder.doc_chars(), 0);
+    assert!(placeholder.is_eof());
+    assert!(placeholder.is_whitespace());
+  }
+
+  #[test]
+  fn grapheme_with_source_whitespace() {
+    let space =
+      GraphemeWithSource::new(" ".into(), 0, 4, GraphemeSource::Document { codepoints: 1 });
+    let tab = GraphemeWithSource::new("\t".into(), 0, 4, GraphemeSource::Document {
+      codepoints: 1,
+    });
+
+    assert!(space.is_whitespace());
+    assert!(tab.is_whitespace());
+  }
+
+  #[test]
+  fn grapheme_with_source_newline() {
+    let newline = GraphemeWithSource::new("\n".into(), 0, 4, GraphemeSource::Document {
+      codepoints: 1,
+    });
+
+    assert!(newline.is_newline());
+    assert!(!newline.is_eof());
+  }
+
+  #[test]
+  fn formatted_grapheme_methods() {
+    let formatted = FormattedGrapheme {
+      raw:        Grapheme::Other { g: "test".into() },
+      source:     GraphemeSource::Document { codepoints: 4 },
+      visual_pos: Position { row: 1, col: 5 },
+      line_idx:   0,
+      char_idx:   0,
+    };
+
+    assert!(!formatted.is_virtual());
+    assert_eq!(formatted.doc_chars(), 4);
+    assert!(!formatted.is_whitespace());
+    assert_eq!(formatted.width(), 4);
+  }
+
+  #[test]
+  fn formatted_grapheme_virtual() {
+    let virtual_formatted = FormattedGrapheme {
+      raw:        Grapheme::Other { g: "virt".into() },
+      source:     GraphemeSource::VirtualText { highlight: None },
+      visual_pos: Position { row: 0, col: 0 },
+      line_idx:   0,
+      char_idx:   0,
+    };
+
+    assert!(virtual_formatted.is_virtual());
+    assert_eq!(virtual_formatted.doc_chars(), 0);
+  }
+
+  fn create_test_text_format() -> TextFormat {
+    TextFormat {
+      soft_wrap:                false,
+      tab_width:                4,
+      max_wrap:                 3,
+      max_indent_retain:        4,
+      wrap_indicator:           "↪".into(),
+      wrap_indicator_highlight: None,
+      viewport_width:           80,
+      soft_wrap_at_text_width:  false,
+    }
+  }
+
+  #[test]
+  fn document_formatter_new_at_prev_checkpoint() {
+    let rope = Rope::from_str("Hello\nWorld\nTest");
+    let text_fmt = create_test_text_format();
+    let annotations = TextAnnotations::default();
+
+    let formatter = DocumentFormatter::new_at_prev_checkpoint(
+      rope.slice(..),
+      &text_fmt,
+      &annotations,
+      6, // Position after "Hello\n"
+    );
+
+    assert_eq!(formatter.next_char_pos(), 6);
+  }
+
+  #[test]
+  fn document_formatter_simple_iteration() {
+    let rope = Rope::from_str("Hi");
+    let text_fmt = create_test_text_format();
+    let annotations = TextAnnotations::default();
+
+    let mut formatter =
+      DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &annotations, 0);
+
+    let first = formatter.next().unwrap();
+    assert_eq!(first.char_idx, 0);
+    assert_eq!(first.visual_pos, Position { row: 0, col: 0 });
+
+    let second = formatter.next().unwrap();
+    assert_eq!(second.char_idx, 1);
+    assert_eq!(second.visual_pos, Position { row: 0, col: 1 });
+
+    // EOF grapheme
+    let eof = formatter.next().unwrap();
+    assert!(eof.source.is_eof());
+  }
+
+  #[test]
+  fn document_formatter_newline_handling() {
+    let rope = Rope::from_str("A\nB");
+    let text_fmt = create_test_text_format();
+    let annotations = TextAnnotations::default();
+
+    let mut formatter =
+      DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &annotations, 0);
+
+    let a = formatter.next().unwrap();
+    assert_eq!(a.visual_pos, Position { row: 0, col: 0 });
+
+    let newline = formatter.next().unwrap();
+    assert_eq!(newline.visual_pos, Position { row: 0, col: 1 });
+
+    let b = formatter.next().unwrap();
+    assert_eq!(b.visual_pos, Position { row: 1, col: 0 });
+  }
+
+  #[test]
+  fn document_formatter_soft_wrap_enabled() {
+    let rope = Rope::from_str("This is a very long line that should wrap");
+    let mut text_fmt = create_test_text_format();
+    text_fmt.soft_wrap = true;
+    text_fmt.viewport_width = 10;
+    let annotations = TextAnnotations::default();
+
+    let mut formatter =
+      DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &annotations, 0);
+
+    // Should wrap at word boundaries when soft wrap is enabled
+    let mut graphemes = Vec::new();
+    while let Some(g) = formatter.next() {
+      if g.source.is_eof() {
+        break;
+      }
+      graphemes.push(g);
+    }
+
+    // Should have some graphemes that moved to new visual lines due to wrapping
+    let has_wrapped = graphemes.iter().any(|g| g.visual_pos.row > 0);
+    assert!(
+      has_wrapped,
+      "Expected soft wrap to create multiple visual lines"
+    );
+  }
+
+  #[test]
+  fn document_formatter_tab_width() {
+    let rope = Rope::from_str("A\tB");
+    let mut text_fmt = create_test_text_format();
+    text_fmt.tab_width = 8;
+    let annotations = TextAnnotations::default();
+
+    let mut formatter =
+      DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &annotations, 0);
+
+    let a = formatter.next().unwrap();
+    assert_eq!(a.visual_pos, Position { row: 0, col: 0 });
+
+    let tab = formatter.next().unwrap();
+    assert_eq!(tab.visual_pos, Position { row: 0, col: 1 });
+
+    let b = formatter.next().unwrap();
+    assert_eq!(b.visual_pos, Position { row: 0, col: 8 }); // Tab expanded to 8 spaces
+  }
+
+  #[test]
+  fn document_formatter_empty_string() {
+    let rope = Rope::from_str("");
+    let text_fmt = create_test_text_format();
+    let annotations = TextAnnotations::default();
+
+    let mut formatter =
+      DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &annotations, 0);
+
+    let eof = formatter.next().unwrap();
+    assert!(eof.source.is_eof());
+    assert_eq!(eof.visual_pos, Position { row: 0, col: 0 });
+
+    // Should return None after EOF
+    assert!(formatter.next().is_none());
+  }
+
+  #[test]
+  fn document_formatter_unicode_graphemes() {
+    let rope = Rope::from_str("café 👨‍👩‍👧‍👦");
+    let text_fmt = create_test_text_format();
+    let annotations = TextAnnotations::default();
+
+    let mut formatter =
+      DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &annotations, 0);
+
+    let mut graphemes = Vec::new();
+    while let Some(g) = formatter.next() {
+      if g.source.is_eof() {
+        break;
+      }
+      graphemes.push(g);
+    }
+
+    // Should handle multi-byte UTF-8 characters and emoji sequences properly
+    assert!(graphemes.len() > 0);
+
+    // The family emoji is a single grapheme cluster
+    let family_grapheme = graphemes
+      .iter()
+      .find(|g| matches!(g.raw, Grapheme::Other { ref g } if g.contains("👨‍👩‍👧‍👦")));
+    assert!(
+      family_grapheme.is_some(),
+      "Should find family emoji as single grapheme"
+    );
+  }
+
+  #[test]
+  fn document_formatter_start_mid_document() {
+    let rope = Rope::from_str("First line\nSecond line\nThird line");
+    let text_fmt = create_test_text_format();
+    let annotations = TextAnnotations::default();
+
+    // Start at beginning of second line
+    let second_line_start = rope.line_to_char(1);
+    let formatter = DocumentFormatter::new_at_prev_checkpoint(
+      rope.slice(..),
+      &text_fmt,
+      &annotations,
+      second_line_start,
+    );
+
+    assert_eq!(formatter.next_char_pos(), second_line_start);
+  }
+
+  #[test]
+  fn document_formatter_word_boundary_detection() {
+    let rope = Rope::from_str("hello world test");
+    let text_fmt = create_test_text_format();
+    let annotations = TextAnnotations::default();
+
+    let mut formatter =
+      DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &annotations, 0);
+
+    let mut word_boundaries = Vec::new();
+    while let Some(g) = formatter.next() {
+      if g.source.is_eof() {
+        break;
+      }
+      if g.is_word_boundary() {
+        word_boundaries.push(g.char_idx);
+      }
+    }
+
+    // Should detect word boundaries (spaces in this case).
+    assert!(!word_boundaries.is_empty(), "Should find word boundaries");
   }
 }

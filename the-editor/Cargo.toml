@@ -14,11 +14,12 @@ unicode-lines = [ "ropey/unicode_lines" ]
 [dependencies]
 anyhow.workspace                   = true
 ropey.workspace                    = true
+smallvec.workspace                 = true
 smartstring.workspace              = true
 unicode-general-category.workspace = true
 unicode-segmentation.workspace     = true
 unicode-width.workspace            = true
 
+bitflags            = "2.4"
 the-editor-renderer = { path = "../the-editor-renderer" }
 the-editor-stdx     = { path = "../the-editor-stdx" }
-bitflags = "2.4"

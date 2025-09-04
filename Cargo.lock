@@ -1844,6 +1844,7 @@ dependencies = [
  "anyhow",
  "bitflags 2.9.3",
  "ropey",
+ "smallvec",
  "smartstring",
  "the-editor-renderer",
  "the-editor-stdx",

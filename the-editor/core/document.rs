@@ -3,8 +3,14 @@ use std::collections::HashMap;
 use ropey::Rope;
 
 use crate::core::{
-  selection::{Range, Selection},
-  transaction::{Assoc, Transaction},
+  selection::{
+    Range,
+    Selection,
+  },
+  transaction::{
+    Assoc,
+    Transaction,
+  },
 };
 
 pub type ViewId = usize;
@@ -64,9 +70,11 @@ impl Document {
     // Apply text edits to the underlying Rope
     let success = transaction.apply(&mut self.text);
     if !success {
-      eprintln!("Transaction failed to apply! Document len: {}, Transaction expected len: {}", 
-               self.text.len_chars(), 
-               transaction.changes().len());
+      eprintln!(
+        "Transaction failed to apply! Document len: {}, Transaction expected len: {}",
+        self.text.len_chars(),
+        transaction.changes().len()
+      );
     }
 
     // If the transaction explicitly set a selection, honor it.
@@ -86,7 +94,10 @@ impl Document {
       })
       .collect();
 
-    let new_selection = Selection::new(new_ranges, old_selection.primary_index());
+    let new_selection = Selection::new(
+      smallvec::SmallVec::from_vec(new_ranges),
+      old_selection.primary_index(),
+    );
     self.set_selection(view, new_selection);
   }
 }

@@ -7,6 +7,7 @@ use ropey::{
   Rope,
   RopeSlice,
 };
+use smallvec::SmallVec;
 
 use crate::core::{
   Tendril,
@@ -769,7 +770,7 @@ impl Transaction {
     let mut last_selection_idx = None;
     let mut new_primary_idx = None;
     // NOTE: We should use `SmallVec` here.
-    let mut ranges: Vec<Range> = Vec::new();
+    let mut ranges: SmallVec<[Range; 1]> = SmallVec::new();
 
     let process_change = |change_start, change_end, (idx, range): (usize, &Range)| {
       // update the primary idx

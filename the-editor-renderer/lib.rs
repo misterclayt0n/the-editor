@@ -241,9 +241,13 @@ pub fn run<A: Application + 'static>(
 
             // First, handle special keys as keyboard events
             let handled_as_key = match code {
-              KeyCode::Escape | KeyCode::Enter | KeyCode::Backspace |
-              KeyCode::ArrowUp | KeyCode::ArrowDown | 
-              KeyCode::ArrowLeft | KeyCode::ArrowRight => {
+              KeyCode::Escape
+              | KeyCode::Enter
+              | KeyCode::Backspace
+              | KeyCode::ArrowUp
+              | KeyCode::ArrowDown
+              | KeyCode::ArrowLeft
+              | KeyCode::ArrowRight => {
                 let input_event = InputEvent::Keyboard(KeyPress {
                   code:    match code {
                     KeyCode::Escape => event::Key::Escape,
@@ -275,9 +279,7 @@ pub fn run<A: Application + 'static>(
                 if !t.is_empty() {
                   let text_event = InputEvent::Text(t.to_string());
                   handled = self.app.handle_event(text_event, renderer);
-                  if handled
-                    && let Some(window) = &self.window
-                  {
+                  if handled && let Some(window) = &self.window {
                     window.request_redraw();
                   }
                 }
@@ -287,18 +289,14 @@ pub fn run<A: Application + 'static>(
                   WinitKey::Character(s) if !s.is_empty() => {
                     let text_event = InputEvent::Text(s.clone().into());
                     handled = self.app.handle_event(text_event, renderer);
-                    if handled
-                      && let Some(window) = &self.window
-                    {
+                    if handled && let Some(window) = &self.window {
                       window.request_redraw();
                     }
                   },
                   WinitKey::Named(NamedKey::Space) => {
                     let text_event = InputEvent::Text(" ".into());
                     handled = self.app.handle_event(text_event, renderer);
-                    if handled
-                      && let Some(window) = &self.window
-                    {
+                    if handled && let Some(window) = &self.window {
                       window.request_redraw();
                     }
                   },
@@ -336,7 +334,7 @@ pub fn run<A: Application + 'static>(
               },
               Ime::Enabled | Ime::Disabled => {
                 // IME state changes, we can ignore these for now
-              }
+              },
             }
           }
         },

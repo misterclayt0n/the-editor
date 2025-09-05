@@ -7,11 +7,18 @@ use the_editor_renderer::{
   TextSegment,
 };
 
-use crate::core::{
-  commands::*,
-  document::Document,
+use crate::{
+  core::{
+    commands::*,
+    document::Document,
+  },
+  keymap::{
+    KeymapResult,
+    Keymaps,
+    Mode,
+    default,
+  },
 };
-use crate::keymap::{default, KeymapResult, Keymaps, Mode};
 
 pub struct Editor {
   document: Document,
@@ -194,18 +201,18 @@ impl Application for Editor {
                 crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,
               }
               true
-            }
+            },
             KeymapResult::Pending(_) => true, // show pending UI later
             KeymapResult::Cancelled(_) => true,
             KeymapResult::NotFound => {
               // If in insert, Enter inserts newline as a convenience
-                if self.mode == Mode::Insert && matches!(key_press.code, Key::Enter) {
-                  insert_text(&mut self.document, "\n");
-                  true
-                } else {
-                  false
-                }
+              if self.mode == Mode::Insert && matches!(key_press.code, Key::Enter) {
+                insert_text(&mut self.document, "\n");
+                true
+              } else {
+                false
               }
+            },
           }
         } else {
           false
@@ -224,6 +231,7 @@ impl Application for Editor {
           // Treat as normal-mode keypresses (first char only)
           if let Some(ch) = text.chars().next() {
             use the_editor_renderer::Key;
+
             use crate::keymap::KeymapResult;
             match self.keymaps.get(self.mode, Key::Char(ch)) {
               KeymapResult::Matched(cmd) => {
@@ -233,11 +241,13 @@ impl Application for Editor {
                   crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,
                 }
                 true
-              }
+              },
               KeymapResult::Pending(_) => true,
               KeymapResult::Cancelled(_) | KeymapResult::NotFound => false,
             }
-          } else { false }
+          } else {
+            false
+          }
         }
       },
     }

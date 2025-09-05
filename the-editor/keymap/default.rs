@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
-use super::{Command, KeyTrie, Mode};
+use super::{
+  Command,
+  KeyTrie,
+  Mode,
+};
 
 pub fn default() -> HashMap<Mode, KeyTrie> {
   // Normal mode: hjkl + arrows move, 'i' enters insert
@@ -41,7 +45,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   map
 }
 
-// Helper to expose mode switching commands to the editor executor if desired later.
+// Helper to expose mode switching commands to the editor executor if desired
+// later.
 #[allow(dead_code)]
 pub const ENTER_INSERT: Command = Command::EnterInsertMode;
 #[allow(dead_code)]

@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
-use crate::core::document::Document;
 use the_editor_renderer::Key;
 
-pub mod macros;
+use crate::core::document::Document;
+
 pub mod default;
+pub mod macros;
 
 // macros are exported at crate root via #[macro_export]
 
@@ -47,28 +48,44 @@ pub struct KeyTrieNode {
 
 impl KeyTrieNode {
   pub fn new(name: &str, map: HashMap<Key, KeyTrie>, order: Vec<Key>) -> Self {
-    Self { name: name.to_string(), map, order, is_sticky: false }
+    Self {
+      name: name.to_string(),
+      map,
+      order,
+      is_sticky: false,
+    }
   }
 
   pub fn merge(&mut self, mut other: Self) {
     for (k, v) in std::mem::take(&mut other.map) {
       if let Some(KeyTrie::Node(node)) = self.map.get_mut(&k) {
-        if let KeyTrie::Node(other_node) = v { node.merge(other_node); continue; }
+        if let KeyTrie::Node(other_node) = v {
+          node.merge(other_node);
+          continue;
+        }
       }
       self.map.insert(k, v);
     }
     for &k in self.map.keys() {
-      if !self.order.contains(&k) { self.order.push(k); }
+      if !self.order.contains(&k) {
+        self.order.push(k);
+      }
     }
   }
 }
 
 impl KeyTrie {
   pub fn node(&self) -> Option<&KeyTrieNode> {
-    match self { KeyTrie::Node(n) => Some(n), _ => None }
+    match self {
+      KeyTrie::Node(n) => Some(n),
+      _ => None,
+    }
   }
   pub fn node_mut(&mut self) -> Option<&mut KeyTrieNode> {
-    match self { KeyTrie::Node(n) => Some(n), _ => None }
+    match self {
+      KeyTrie::Node(n) => Some(n),
+      _ => None,
+    }
   }
   pub fn merge_nodes(&mut self, mut other: Self) {
     let node = std::mem::take(other.node_mut().expect("expected node"));
@@ -96,30 +113,46 @@ pub enum KeymapResult {
 }
 
 pub struct Keymaps {
-  pub map:   HashMap<Mode, KeyTrie>,
-  state:     Vec<Key>,
+  pub map:    HashMap<Mode, KeyTrie>,
+  state:      Vec<Key>,
   pub sticky: Option<KeyTrieNode>,
 }
 
 impl Keymaps {
   pub fn new(map: HashMap<Mode, KeyTrie>) -> Self {
-    Self { map, state: Vec::new(), sticky: None }
+    Self {
+      map,
+      state: Vec::new(),
+      sticky: None,
+    }
   }
 
-  pub fn pending(&self) -> &[Key] { &self.state }
-  
+  pub fn pending(&self) -> &[Key] {
+    &self.state
+  }
+
   // Backwards-compat: keep signature for now, but unused
   #[allow(dead_code)]
-  pub fn pending_keys(&self) -> &[Key] { &self.state }
-  pub fn sticky(&self) -> Option<&KeyTrieNode> { self.sticky.as_ref() }
+  pub fn pending_keys(&self) -> &[Key] {
+    &self.state
+  }
+  pub fn sticky(&self) -> Option<&KeyTrieNode> {
+    self.sticky.as_ref()
+  }
 
   pub fn contains_key(&self, mode: Mode, key: Key) -> bool {
     let keymap = self.map.get(&mode).expect("mode not in keymap");
-    keymap.search(self.pending()).and_then(KeyTrie::node).map_or(false, |n| n.map.contains_key(&key))
+    keymap
+      .search(self.pending())
+      .and_then(KeyTrie::node)
+      .map_or(false, |n| n.map.contains_key(&key))
   }
 
   pub fn get(&mut self, mode: Mode, key: Key) -> KeymapResult {
-    let keymap = match self.map.get(&mode) { Some(k) => k, None => return KeymapResult::NotFound };
+    let keymap = match self.map.get(&mode) {
+      Some(k) => k,
+      None => return KeymapResult::NotFound,
+    };
 
     // ESC cancels pending and clears sticky if no pending
     if matches!(key, Key::Escape) {
@@ -149,23 +182,29 @@ impl Keymaps {
           self.sticky = Some(map.clone());
         }
         KeymapResult::Pending(map.clone())
-      }
+      },
       Some(KeyTrie::Command(cmd)) => {
         self.state.clear();
         KeymapResult::Matched(*cmd)
-      }
+      },
       None => KeymapResult::Cancelled(self.state.drain(..).collect()),
     }
   }
 }
 
 impl Default for Keymaps {
-  fn default() -> Self { Self::new(default::default()) }
+  fn default() -> Self {
+    Self::new(default::default())
+  }
 }
 
 /// Merge default config keys with user-provided overrides.
 pub fn merge_keys(dst: &mut HashMap<Mode, KeyTrie>, mut delta: HashMap<Mode, KeyTrie>) {
   for (mode, keys) in dst.iter_mut() {
-    keys.merge_nodes(delta.remove(mode).unwrap_or_else(|| KeyTrie::Node(KeyTrieNode::default())));
+    keys.merge_nodes(
+      delta
+        .remove(mode)
+        .unwrap_or_else(|| KeyTrie::Node(KeyTrieNode::default())),
+    );
   }
 }

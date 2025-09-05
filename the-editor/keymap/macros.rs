@@ -1,14 +1,30 @@
 #[macro_export]
 macro_rules! key {
   // Named keys
-  (Left) => { the_editor_renderer::Key::Left };
-  (Right) => { the_editor_renderer::Key::Right };
-  (Up) => { the_editor_renderer::Key::Up };
-  (Down) => { the_editor_renderer::Key::Down };
-  (Enter) => { the_editor_renderer::Key::Enter };
-  (Esc) => { the_editor_renderer::Key::Escape };
-  (Backspace) => { the_editor_renderer::Key::Backspace };
-  (Space) => { the_editor_renderer::Key::Char(' ') };
+  (Left) => {
+    the_editor_renderer::Key::Left
+  };
+  (Right) => {
+    the_editor_renderer::Key::Right
+  };
+  (Up) => {
+    the_editor_renderer::Key::Up
+  };
+  (Down) => {
+    the_editor_renderer::Key::Down
+  };
+  (Enter) => {
+    the_editor_renderer::Key::Enter
+  };
+  (Esc) => {
+    the_editor_renderer::Key::Escape
+  };
+  (Backspace) => {
+    the_editor_renderer::Key::Backspace
+  };
+  (Space) => {
+    the_editor_renderer::Key::Char(' ')
+  };
   // Char keys
   ($ch:literal) => {{
     const C: char = $ch;

@@ -1,17 +1,17 @@
 use ropey::RopeSlice;
 
 use crate::core::{
-  document::Document,
   Tendril,
+  document::Document,
   movement::{
     self,
     Direction,
     Movement,
   },
   selection::Range,
-  transaction::Transaction,
   text_annotations::TextAnnotations,
   text_format::TextFormat,
+  transaction::Transaction,
 };
 
 type MoveFn =

@@ -28,6 +28,13 @@ impl Color {
     Self { r, g, b, a: 1.0 }
   }
 
+  /// Create a color with RGBA components (alias for new)
+  ///
+  /// Components should be in the range 0.0 to 1.0
+  pub fn rgba(r: f32, g: f32, b: f32, a: f32) -> Self {
+    Self { r, g, b, a }
+  }
+
   /// Create a color from a hex value
   ///
   /// # Example

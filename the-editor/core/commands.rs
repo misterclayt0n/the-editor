@@ -101,6 +101,37 @@ pub fn move_char_down(doc: &mut Document) {
   move_impl(doc, move_vertically_fmt, Direction::Forward, Movement::Move)
 }
 
+pub fn extend_char_left(doc: &mut Document) {
+  move_impl(
+    doc,
+    move_horizontally_fmt,
+    Direction::Backward,
+    Movement::Extend,
+  )
+}
+
+pub fn extend_char_right(doc: &mut Document) {
+  move_impl(
+    doc,
+    move_horizontally_fmt,
+    Direction::Forward,
+    Movement::Extend,
+  )
+}
+
+pub fn extend_char_up(doc: &mut Document) {
+  move_impl(
+    doc,
+    move_vertically_fmt,
+    Direction::Backward,
+    Movement::Extend,
+  )
+}
+
+pub fn extend_char_down(doc: &mut Document) {
+  move_impl(doc, move_vertically_fmt, Direction::Forward, Movement::Extend)
+}
+
 /// Insert a string at each selection head.
 pub fn insert_text(doc: &mut Document, s: &str) {
   let view_id = 0usize;

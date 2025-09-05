@@ -60,6 +60,7 @@ pub struct Renderer {
   // Text sections to render this frame - store owned strings.
   text_strings:   Vec<Vec<(String, f32, [f32; 4])>>, // content, size, color.
   text_positions: Vec<(f32, f32)>,
+  
 }
 
 impl Renderer {

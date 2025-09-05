@@ -358,10 +358,6 @@ pub fn run<A: Application + 'static>(
               Err(e) => eprintln!("Failed to begin frame: {:?}", e),
             }
           }
-
-          if let Some(window) = &self.window {
-            window.request_redraw();
-          }
         },
         _ => {},
       }
@@ -370,7 +366,7 @@ pub fn run<A: Application + 'static>(
 
   let event_loop =
     EventLoop::new().map_err(|e| crate::RendererError::WindowCreation(e.to_string()))?;
-  event_loop.set_control_flow(ControlFlow::Poll);
+  event_loop.set_control_flow(ControlFlow::Wait);
 
   let mut renderer_app = RendererApp {
     window: None,

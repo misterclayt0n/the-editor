@@ -13,6 +13,7 @@ pub mod macros;
 pub enum Mode {
   Normal,
   Insert,
+  Visual,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -20,6 +21,8 @@ pub enum Command {
   Execute(fn(&mut Document)),
   EnterInsertMode,
   ExitInsertMode,
+  EnterVisualMode,
+  ExitVisualMode,
 }
 
 impl std::fmt::Debug for Command {
@@ -28,6 +31,8 @@ impl std::fmt::Debug for Command {
       Command::Execute(_) => write!(f, "Execute(..)"),
       Command::EnterInsertMode => write!(f, "EnterInsertMode"),
       Command::ExitInsertMode => write!(f, "ExitInsertMode"),
+      Command::EnterVisualMode => write!(f, "EnterVisualMode"),
+      Command::ExitVisualMode => write!(f, "ExitVisualMode"),
     }
   }
 }

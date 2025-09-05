@@ -21,11 +21,14 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     },
   });
 
-  // Add: normal 'i' -> enter insert mode
+  // Add: normal 'i' -> enter insert mode, 'v' -> enter visual mode
   if let KeyTrie::Node(ref mut node) = normal {
     node
       .map
       .insert(crate::key!('i'), KeyTrie::Command(Command::EnterInsertMode));
+    node
+      .map
+      .insert(crate::key!('v'), KeyTrie::Command(Command::EnterVisualMode));
   }
 
   // Insert mode: text input handled via InputEvent::Text; map Esc and Backspace
@@ -39,9 +42,24 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       .insert(crate::key!(Esc), KeyTrie::Command(Command::ExitInsertMode));
   }
 
+  // Visual mode: movement extends selection, Esc exits visual mode
+  let mut visual = crate::keymap!({ "Visual"
+    'h' | Left  => extend_char_left,
+    'j' | Down  => extend_char_down,
+    'k' | Up    => extend_char_up,
+    'l' | Right => extend_char_right,
+  });
+  // Add: visual 'Esc' -> exit visual mode
+  if let KeyTrie::Node(ref mut node) = visual {
+    node
+      .map
+      .insert(crate::key!(Esc), KeyTrie::Command(Command::ExitVisualMode));
+  }
+
   let mut map = HashMap::new();
   map.insert(Mode::Normal, normal);
   map.insert(Mode::Insert, insert);
+  map.insert(Mode::Visual, visual);
   map
 }
 

@@ -44,11 +44,8 @@ impl Document {
   }
 
   /// Get or initialize the selection for a view.
-  pub fn selection(&mut self, view: ViewId) -> &Selection {
-    self
-      .selections
-      .entry(view)
-      .or_insert_with(|| Selection::point(0))
+  pub fn selection(&self, view: ViewId) -> &Selection {
+    &self.selections[&view]
   }
 
   pub fn selection_ref(&self, view: ViewId) -> Option<&Selection> {

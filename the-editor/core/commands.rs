@@ -45,6 +45,23 @@ fn move_impl(doc: &mut Document, move_fn: MoveFn, dir: Direction, behavior: Move
   doc.set_selection(view_id, new_selection);
 }
 
+fn move_word_impl<F>(doc: &mut Document, move_fn: F)
+where
+  F: Fn(RopeSlice, Range, usize) -> Range,
+{
+  let count = 1; // TODO: Support counts with context system.
+  let view_id = 0usize;
+  // let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+
+  let selection = doc
+    .selection_ref(view_id)
+    .cloned()
+    .unwrap_or_else(|| crate::core::selection::Selection::point(0))
+    .transform(|range| move_fn(text, range, count));
+  doc.set_selection(view_id, selection);
+}
+
 // Wrapper shims to adapt movement functions to the unified MoveFn signature.
 fn move_horizontally_fmt(
   slice: RopeSlice,
@@ -129,7 +146,12 @@ pub fn extend_char_up(doc: &mut Document) {
 }
 
 pub fn extend_char_down(doc: &mut Document) {
-  move_impl(doc, move_vertically_fmt, Direction::Forward, Movement::Extend)
+  move_impl(
+    doc,
+    move_vertically_fmt,
+    Direction::Forward,
+    Movement::Extend,
+  )
 }
 
 /// Insert a string at each selection head.
@@ -163,4 +185,52 @@ pub fn delete_backward(doc: &mut Document) {
     }
   });
   doc.apply(view_id, &txn);
+}
+
+pub fn move_next_word_start(doc: &mut Document) {
+    move_word_impl(doc, movement::move_next_word_start)
+}
+
+pub fn move_prev_word_start(doc: &mut Document) {
+    move_word_impl(doc, movement::move_prev_word_start)
+}
+
+pub fn move_prev_word_end(doc: &mut Document) {
+    move_word_impl(doc, movement::move_prev_word_end)
+}
+
+pub fn move_next_word_end(doc: &mut Document) {
+    move_word_impl(doc, movement::move_next_word_end)
+}
+
+pub fn move_next_long_word_start(doc: &mut Document) {
+    move_word_impl(doc, movement::move_next_long_word_start)
+}
+
+pub fn move_prev_long_word_start(doc: &mut Document) {
+    move_word_impl(doc, movement::move_prev_long_word_start)
+}
+
+pub fn move_prev_long_word_end(doc: &mut Document) {
+    move_word_impl(doc, movement::move_prev_long_word_end)
+}
+
+pub fn move_next_long_word_end(doc: &mut Document) {
+    move_word_impl(doc, movement::move_next_long_word_end)
+}
+
+pub fn move_next_sub_word_start(doc: &mut Document) {
+    move_word_impl(doc, movement::move_next_sub_word_start)
+}
+
+pub fn move_prev_sub_word_start(doc: &mut Document) {
+    move_word_impl(doc, movement::move_prev_sub_word_start)
+}
+
+pub fn move_prev_sub_word_end(doc: &mut Document) {
+    move_word_impl(doc, movement::move_prev_sub_word_end)
+}
+
+pub fn move_next_sub_word_end(doc: &mut Document) {
+    move_word_impl(doc, movement::move_next_sub_word_end)
 }

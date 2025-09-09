@@ -11,6 +11,7 @@ use crate::{
   core::{
     commands::*,
     document::Document,
+    selection::Selection,
   },
   keymap::{
     KeymapResult,
@@ -42,6 +43,9 @@ impl Editor {
 impl Application for Editor {
   fn init(&mut self, _renderer: &mut Renderer) {
     println!("Editor initialized!");
+    // Ensure the active view has an initial cursor/selection to avoid panics
+    // in motion commands that expect a selection to exist.
+    self.document.set_selection(0, Selection::point(0));
   }
 
   fn render(&mut self, renderer: &mut Renderer) {

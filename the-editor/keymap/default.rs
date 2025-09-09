@@ -13,6 +13,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     'j' | Down  => move_char_down,
     'k' | Up    => move_char_up,
     'l' | Right => move_char_right,
+    'w'         => move_next_word_start,
+    'b'         => move_prev_word_start,
+    'e'         => move_next_word_end,
 
     // Minimal examples of prefix maps
     'g' => { "Goto"

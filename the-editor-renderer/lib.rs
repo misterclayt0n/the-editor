@@ -306,11 +306,6 @@ pub fn run<A: Application + 'static>(
                 }
               }
             }
-
-            // Exit on Escape only if the app did not handle it
-            if matches!(code, KeyCode::Escape) && state == ElementState::Pressed && !handled {
-              event_loop.exit();
-            }
           }
         },
         WindowEvent::Ime(ime) => {

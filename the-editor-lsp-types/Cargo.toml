@@ -1,0 +1,20 @@
+[package]
+name              = "the-editor-lsp-types"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bitflags.workspace   = true
+serde.workspace      = true
+serde_json.workspace = true
+url.workspace        = true
+
+[features]
+default = [  ]
+# Enables proposed LSP extensions.
+# NOTE: No semver compatibility is guaranteed for types enabled by this feature.
+proposed = [  ]

@@ -1,0 +1,21 @@
+[package]
+name              = "the-editor-event"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+foldhash.workspace  = true
+hashbrown.workspace = true
+tokio.workspace     = true
+anyhow.workspace           = true
+futures-executor.workspace = true
+log.workspace              = true
+once_cell.workspace        = true
+parking_lot                = { features = [ "hardware-lock-elision" ], workspace = true }
+
+[features]
+integration_test = [  ]

@@ -1,24 +1,25 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
 use the_editor_renderer::Key;
 
-use crate::core::document::Document;
+use crate::core::commands;
 
 pub mod default;
 pub mod macros;
 
 // macros are exported at crate root via #[macro_export]
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub enum Mode {
   Normal,
   Insert,
-  Visual,
+  Select,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Command {
-  Execute(fn(&mut Document)),
+  Execute(fn(&mut commands::Context)),
   EnterInsertMode,
   ExitInsertMode,
   EnterVisualMode,
@@ -117,6 +118,7 @@ pub enum KeymapResult {
   Cancelled(Vec<Key>),
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct Keymaps {
   pub map:    HashMap<Mode, KeyTrie>,
   state:      Vec<Key>,

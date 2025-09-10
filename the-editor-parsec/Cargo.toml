@@ -1,0 +1,10 @@
+[package]
+name              = "the-editor-parsec"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]

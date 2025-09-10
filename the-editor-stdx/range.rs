@@ -6,6 +6,7 @@ use std::ops::{
 };
 
 /// A range of `char`s within the text.
+/// TODO: Change this name.
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct Range<T = usize> {
   pub start: T,

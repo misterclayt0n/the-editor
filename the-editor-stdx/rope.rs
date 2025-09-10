@@ -4,16 +4,17 @@ use std::ops::{
   RangeBounds,
 };
 
-use regex_cursor::{
-  Input as RegexInput,
-  RopeyCursor,
-};
 pub use regex_cursor::{
+  self,
   engines::meta::{
     Builder as RegexBuilder,
     Regex,
   },
   regex_automata::util::syntax::Config,
+};
+use regex_cursor::{
+  Input as RegexInput,
+  RopeyCursor,
 };
 use ropey::{
   RopeSlice,

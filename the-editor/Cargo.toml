@@ -13,13 +13,49 @@ unicode-lines = [ "ropey/unicode_lines" ]
 
 [dependencies]
 anyhow.workspace                   = true
+arc-swap                           = "1.7.1"
+bitflags                           = "2.4"
+chardetng.workspace                = true
+encoding_rs.workspace              = true
+foldhash.workspace                 = true
+futures-executor.workspace         = true
+futures-util.workspace             = true
+globset.workspace                  = true
+imara-diff.workspace               = true
+kstring.workspace                  = true
+log.workspace                      = true
+nucleo.workspace                   = true
+once_cell.workspace                = true
+regex = "1"
+parking_lot.workspace              = true
 ropey.workspace                    = true
+serde.workspace                    = true
+serde_json.workspace               = true
+slotmap.workspace                  = true
 smallvec.workspace                 = true
 smartstring.workspace              = true
+tempfile.workspace                 = true
+thiserror.workspace                = true
+tokio.workspace                    = true
+tokio-stream.workspace             = true
+toml.workspace                     = true
+tree-house.workspace               = true
 unicode-general-category.workspace = true
 unicode-segmentation.workspace     = true
 unicode-width.workspace            = true
+url.workspace                      = true
 
-bitflags            = "2.4"
-the-editor-renderer = { path = "../the-editor-renderer" }
-the-editor-stdx     = { path = "../the-editor-stdx" }
+the-editor-event     = { path = "../the-editor-event" }
+the-editor-loader    = { path = "../the-editor-loader" }
+the-editor-lsp-types = { path = "../the-editor-lsp-types" }
+the-editor-parsec    = { path = "../the-editor-parsec" }
+the-editor-renderer  = { path = "../the-editor-renderer" }
+the-editor-stdx      = { path = "../the-editor-stdx" }
+the-editor-vcs       = { path = "../the-editor-vcs" }
+
+[target.'cfg(unix)'.dependencies]
+libc   = "0.2"
+rustix = { features = [ "fs" ], version = "1.0" }
+
+[dev-dependencies]
+quickcheck = { default-features = false, version = "1" }

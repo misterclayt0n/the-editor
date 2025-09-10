@@ -236,9 +236,6 @@ pub fn run<A: Application + 'static>(
           ..
         } => {
           if let Some(renderer) = &mut self.renderer {
-            // Track whether the app handled this input
-            let mut handled = false;
-
             // First, handle special keys as keyboard events
             let handled_as_key = match code {
               KeyCode::Escape
@@ -264,7 +261,7 @@ pub fn run<A: Application + 'static>(
                   ctrl:    false,
                   alt:     false,
                 });
-                handled = self.app.handle_event(input_event, renderer);
+                let handled = self.app.handle_event(input_event, renderer);
                 if handled && let Some(window) = &self.window {
                   window.request_redraw();
                 }
@@ -278,7 +275,7 @@ pub fn run<A: Application + 'static>(
               if let Some(t) = &text {
                 if !t.is_empty() {
                   let text_event = InputEvent::Text(t.to_string());
-                  handled = self.app.handle_event(text_event, renderer);
+                  let handled = self.app.handle_event(text_event, renderer);
                   if handled && let Some(window) = &self.window {
                     window.request_redraw();
                   }
@@ -288,14 +285,14 @@ pub fn run<A: Application + 'static>(
                 match &logical_key {
                   WinitKey::Character(s) if !s.is_empty() => {
                     let text_event = InputEvent::Text(s.clone().into());
-                    handled = self.app.handle_event(text_event, renderer);
+                    let handled = self.app.handle_event(text_event, renderer);
                     if handled && let Some(window) = &self.window {
                       window.request_redraw();
                     }
                   },
                   WinitKey::Named(NamedKey::Space) => {
                     let text_event = InputEvent::Text(" ".into());
-                    handled = self.app.handle_event(text_event, renderer);
+                    let handled = self.app.handle_event(text_event, renderer);
                     if handled && let Some(window) = &self.window {
                       window.request_redraw();
                     }

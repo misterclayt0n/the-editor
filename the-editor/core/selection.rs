@@ -116,7 +116,7 @@ impl Range {
   }
 
   /// Returns true if this [Range] covers a single grapheme in the given text.
-  pub fn is_single_grapheme(&self, slice: &RopeSlice) -> bool {
+  pub fn is_single_grapheme(&self, slice: RopeSlice) -> bool {
     let mut graphemes = slice.slice(self.from()..self.to()).graphemes();
     let first = graphemes.next();
     let second = graphemes.next();
@@ -456,6 +456,20 @@ impl Selection {
 
   pub fn ranges(&self) -> &[Range] {
     &self.ranges
+  }
+
+  /// Total length of the range.
+  #[inline]
+  #[must_use]
+  pub fn len(&self) -> usize {
+    self.primary().to() - self.primary().from()
+  }
+
+  /// Check if the selection is empty (all ranges are collapsed).
+  #[inline]
+  #[must_use]
+  pub fn is_empty(&self) -> bool {
+    self.ranges().iter().all(|range| range.is_empty())
   }
 
   pub fn into_single(self) -> Self {

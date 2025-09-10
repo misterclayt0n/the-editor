@@ -1,4 +1,5 @@
 use std::{
+  borrow::Cow,
   cmp::Ordering,
   ops::{
     Add,
@@ -15,7 +16,11 @@ use crate::core::{
   Tendril,
   chars::char_is_line_ending,
   doc_formatter::DocumentFormatter,
-  grapheme::ensure_grapheme_boundary_prev,
+  grapheme::{
+    ensure_grapheme_boundary_prev,
+    grapheme_width,
+  },
+  line_ending::line_end_char_index,
   text_annotations::TextAnnotations,
   text_format::TextFormat,
 };
@@ -58,6 +63,12 @@ impl Add for Position {
     self += rhs;
     self
   }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum VisualOffsetError {
+  PosBeforeAnchorRow,
+  PosAfterMaxRow,
 }
 
 impl Position {
@@ -194,4 +205,187 @@ pub fn char_idx_at_visual_block_offset(
   }
 
   (formatter.next_char_pos(), 0)
+}
+
+/// Convert a character index to (line, column) coordinates visually.
+///
+/// Takes \t, double-width characters (CJK) into account as well as text
+/// not in the document in the future.
+/// See [`coords_at_pos`] for an "objective" one.
+///
+/// This function should be used very rarely. Usually
+/// `visual_offset_from_anchor` or `visual_offset_from_block` is preferable.
+/// However when you want to compute the actual visual row/column in the text
+/// (not what is actually shown on screen) then you should use this function.
+/// For example aligning text should ignore virtual text and softwrap.
+#[deprecated = "Doesn't account for softwrap or decorations, use visual_offset_from_anchor instead"]
+pub fn visual_coords_at_pos(text: RopeSlice, pos: usize, tab_width: usize) -> Position {
+  let line = text.char_to_line(pos);
+
+  let line_start = text.line_to_char(line);
+  let pos = ensure_grapheme_boundary_prev(text, pos);
+
+  let mut col = 0;
+
+  for grapheme in text.slice(line_start..pos).graphemes() {
+    if grapheme == "\t" {
+      col += tab_width - (col % tab_width);
+    } else {
+      let grapheme = Cow::from(grapheme);
+      col += grapheme_width(&grapheme);
+    }
+  }
+
+  Position::new(line, col)
+}
+
+/// Convert visual (line, column) coordinates to a character index.
+///
+/// If the `line` coordinate is beyond the end of the file, the EOF
+/// position will be returned.
+///
+/// If the `column` coordinate is past the end of the given line, the
+/// line-end position (in this case, just before the line ending
+/// character) will be returned.
+/// This function should be used very rarely. Usually
+/// `char_idx_at_visual_offset` is preferable. However when you want to compute
+/// a char position from the visual row/column in the text (not what is actually
+/// shown on screen) then you should use this function. For example aligning
+/// text should ignore virtual text and softwrap.
+#[deprecated = "Doesn't account for softwrap or decorations, use char_idx_at_visual_offset instead"]
+pub fn pos_at_visual_coords(text: RopeSlice, coords: Position, tab_width: usize) -> usize {
+  let Position { mut row, col } = coords;
+  row = row.min(text.len_lines() - 1);
+  let line_start = text.line_to_char(row);
+  let line_end = line_end_char_index(&text, row);
+
+  let mut col_char_offset = 0;
+  let mut cols_remaining = col;
+  for grapheme in text.slice(line_start..line_end).graphemes() {
+    let grapheme_width = if grapheme == "\t" {
+      tab_width - ((col - cols_remaining) % tab_width)
+    } else {
+      let grapheme = Cow::from(grapheme);
+      grapheme_width(&grapheme)
+    };
+
+    // If pos is in the middle of a wider grapheme (tab for example)
+    // return the starting offset.
+    if grapheme_width > cols_remaining {
+      break;
+    }
+
+    cols_remaining -= grapheme_width;
+    col_char_offset += grapheme.chars().count();
+  }
+
+  line_start + col_char_offset
+}
+
+/// Returns the height of the given text when softwrapping
+pub fn softwrapped_dimensions(text: RopeSlice, text_fmt: &TextFormat) -> (usize, u16) {
+  let last_pos =
+    visual_offset_from_block(text, 0, usize::MAX, text_fmt, &TextAnnotations::default()).0;
+  if last_pos.row == 0 {
+    (1, last_pos.col as u16)
+  } else {
+    (last_pos.row + 1, text_fmt.viewport_width)
+  }
+}
+
+pub fn visual_offset_from_anchor(
+  text: RopeSlice,
+  anchor: usize,
+  pos: usize,
+  text_fmt: &TextFormat,
+  annotations: &TextAnnotations,
+  max_rows: usize,
+) -> Result<(Position, usize), VisualOffsetError> {
+  let mut formatter =
+    DocumentFormatter::new_at_prev_checkpoint(text, text_fmt, annotations, anchor);
+  let mut anchor_line = None;
+  let mut found_pos = None;
+  let mut last_pos = Position::default();
+
+  let block_start = formatter.next_char_pos();
+  if pos < block_start {
+    return Err(VisualOffsetError::PosBeforeAnchorRow);
+  }
+
+  while let Some(grapheme) = formatter.next() {
+    last_pos = grapheme.visual_pos;
+
+    if formatter.next_char_pos() > pos {
+      if let Some(anchor_line) = anchor_line {
+        last_pos.row -= anchor_line;
+        return Ok((last_pos, block_start));
+      } else {
+        found_pos = Some(last_pos);
+      }
+    }
+    if formatter.next_char_pos() > anchor && anchor_line.is_none() {
+      if let Some(mut found_pos) = found_pos {
+        return if found_pos.row == last_pos.row {
+          found_pos.row = 0;
+          Ok((found_pos, block_start))
+        } else {
+          Err(VisualOffsetError::PosBeforeAnchorRow)
+        };
+      } else {
+        anchor_line = Some(last_pos.row);
+      }
+    }
+
+    if let Some(anchor_line) = anchor_line {
+      if grapheme.visual_pos.row >= anchor_line + max_rows {
+        return Err(VisualOffsetError::PosAfterMaxRow);
+      }
+    }
+  }
+
+  let anchor_line = anchor_line.unwrap_or(last_pos.row);
+  last_pos.row -= anchor_line;
+
+  Ok((last_pos, block_start))
+}
+
+pub fn char_idx_at_visual_offset(
+  text: RopeSlice,
+  mut anchor: usize,
+  mut row_offset: isize,
+  column: usize,
+  text_fmt: &TextFormat,
+  annotations: &TextAnnotations,
+) -> (usize, usize) {
+  let mut pos = anchor;
+  // convert row relative to visual line containing anchor to row relative to a
+  // block containing anchor (anchor may change)
+  loop {
+    let (visual_pos_in_block, block_char_offset) =
+      visual_offset_from_block(text, anchor, pos, text_fmt, annotations);
+    row_offset += visual_pos_in_block.row as isize;
+    anchor = block_char_offset;
+    if row_offset >= 0 {
+      break;
+    }
+
+    if block_char_offset == 0 {
+      row_offset = 0;
+      break;
+    }
+    // the row_offset is negative so we need to look at the previous block
+    // set the anchor to the last char before the current block so that we can
+    // compute the distance of this block from the start of the previous block
+    pos = anchor;
+    anchor -= 1;
+  }
+
+  char_idx_at_visual_block_offset(
+    text,
+    anchor,
+    row_offset as usize,
+    column,
+    text_fmt,
+    annotations,
+  )
 }

@@ -36,7 +36,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
   // Insert mode: text input handled via InputEvent::Text; map Esc and Backspace
   let mut insert = crate::keymap!({ "Insert"
-    Backspace => delete_backward,
+    Backspace => delete_char_backward,
   });
   // Add: insert 'Esc' -> exit insert mode
   if let KeyTrie::Node(ref mut node) = insert {
@@ -62,7 +62,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   let mut map = HashMap::new();
   map.insert(Mode::Normal, normal);
   map.insert(Mode::Insert, insert);
-  map.insert(Mode::Visual, visual);
+  map.insert(Mode::Select, visual);
   map
 }
 

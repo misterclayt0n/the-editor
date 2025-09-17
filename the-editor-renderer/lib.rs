@@ -206,6 +206,19 @@ pub fn run<A: Application + 'static>(
                 self.app.init(&mut renderer);
                 self.renderer = Some(renderer);
                 self.window = Some(window);
+
+                // Bridge the the-editor-event redraw requests to winit's redraws.
+                // This lets background tasks request UI redraws.
+                if let Some(win) = &self.window {
+                  let win = Arc::clone(win);
+                  std::thread::spawn(move || {
+                    loop {
+                      // Wait for an async redraw request from the event system
+                      pollster::block_on(the_editor_event::redraw_requested());
+                      win.request_redraw();
+                    }
+                  });
+                }
               },
               Err(e) => {
                 eprintln!("Failed to create renderer: {}", e);

@@ -14,3 +14,4 @@ thiserror.workspace  = true
 wgpu.workspace       = true
 wgpu_text.workspace  = true
 winit.workspace      = true
+the-editor-event = { path = "../the-editor-event" }

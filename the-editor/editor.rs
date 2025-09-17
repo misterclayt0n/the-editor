@@ -2768,6 +2768,8 @@ impl Application for Editor {
   }
 
   fn render(&mut self, renderer: &mut Renderer) {
+    // Signal start of a new frame to the event system (debounce/locks)
+    the_editor_event::start_frame();
     renderer.draw_text(TextSection::simple(
       50.0,
       50.0,

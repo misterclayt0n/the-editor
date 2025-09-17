@@ -3436,6 +3436,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "pollster",
+ "the-editor-event",
  "thiserror 2.0.16",
  "wgpu",
  "wgpu_text",

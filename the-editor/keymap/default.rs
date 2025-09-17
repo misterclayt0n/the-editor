@@ -16,6 +16,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     'w'         => move_next_word_start,
     'b'         => move_prev_word_start,
     'e'         => move_next_word_end,
+    'd'         => delete_selection,
 
     // Minimal examples of prefix maps
     'g' => { "Goto"

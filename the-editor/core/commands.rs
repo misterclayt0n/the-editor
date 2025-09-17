@@ -1,11 +1,23 @@
-use std::num::NonZeroUsize;
+use std::{
+  borrow::Cow,
+  num::NonZeroUsize,
+};
 
-use ropey::RopeSlice;
+use ropey::{
+  Rope,
+  RopeSlice,
+};
+use smallvec::SmallVec;
+use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
   core::{
     Tendril,
     auto_pairs,
+    comment,
+    grapheme,
+    indent,
+    line_ending::line_end_char_index,
     movement::{
       self,
       Direction,
@@ -25,6 +37,7 @@ use crate::{
   current_ref,
   editor::Editor,
   event::PostInsertChar,
+  keymap::Mode,
 };
 
 type MoveFn =
@@ -38,6 +51,16 @@ pub struct Context<'a> {
   // pub callback:             Vec<crate::compositor::Callback>,
   // pub on_next_key_callback: Option<(OnKeyCallback, OnKeyCallbackKind)>,
   // pub jobs:                 &'a mut Jobs,
+}
+
+enum Operation {
+  Delete,
+  Change,
+}
+
+enum YankAction {
+  Yank,
+  NoYank,
 }
 
 impl Context<'_> {
@@ -191,6 +214,48 @@ pub fn delete_char_backward(cx: &mut Context) {
   insert::delete_char_backward_impl(cx);
 }
 
+fn delete_selection_impl(cx: &mut Context, op: Operation, yank: YankAction) {
+  let (view, doc) = current!(cx.editor);
+  let selection = doc.selection(view.id);
+  let only_whole_lines = selection_is_linewise(selection, doc.text());
+
+  if cx.register != Some('_') && matches!(yank, YankAction::Yank) {
+    // yank the selection
+    let text = doc.text().slice(..);
+    let values: Vec<String> = selection.fragments(text).map(Cow::into_owned).collect();
+    let reg_name = cx
+      .register
+      .unwrap_or_else(|| cx.editor.config.load().default_yank_register);
+
+    if let Err(err) = cx.editor.registers.write(reg_name, values) {
+      cx.editor.set_error(err.to_string());
+      return;
+    }
+  }
+
+  let transaction =
+    Transaction::delete_by_selection(doc.text(), selection, |range| (range.from(), range.to()));
+  doc.apply(&transaction, view.id);
+
+  match op {
+    Operation::Delete => {
+      // exit select mode, if currently in select mode
+      exit_select_mode(cx);
+    },
+    Operation::Change => {
+      if only_whole_lines {
+        open(cx, Open::Above, CommentContinuation::Disabled);
+      } else {
+        enter_insert_mode(cx);
+      }
+    },
+  }
+}
+
+pub fn delete_selection(cx: &mut Context) {
+  delete_selection_impl(cx, Operation::Delete, YankAction::Yank);
+}
+
 pub mod insert {
   use std::borrow::Cow;
 
@@ -309,4 +374,190 @@ pub mod insert {
     let (view, doc) = current!(cx.editor);
     doc.apply(&transaction, view.id);
   }
+}
+
+fn selection_is_linewise(selection: &Selection, text: &Rope) -> bool {
+  selection.ranges().iter().all(|range| {
+    let text = text.slice(..);
+    if range.slice(text).len_lines() < 2 {
+      return false;
+    }
+
+    // If the start of the selection is at the start of a line and the end at the
+    // end of a line.
+    let (start_line, end_line) = range.line_range(text);
+    let start = text.line_to_char(start_line);
+    let end = text.line_to_char((end_line + 1).min(text.len_lines()));
+    start == range.from() && end == range.to()
+  })
+}
+
+// Mode switching
+//
+
+fn exit_select_mode(cx: &mut Context) {
+  if cx.editor.mode == Mode::Select {
+    cx.editor.mode = Mode::Normal;
+  }
+}
+
+fn enter_insert_mode(cx: &mut Context) {
+  cx.editor.mode = Mode::Insert;
+}
+
+// Inserts at the start of each selection.
+fn insert_mode(cx: &mut Context) {
+  enter_insert_mode(cx);
+  let (view, doc) = current!(cx.editor);
+
+  log::trace!(
+    "entering insert mode with sel: {:?}, text: {:?}",
+    doc.selection(view.id),
+    doc.text().to_string()
+  );
+
+  let selection = doc
+    .selection(view.id)
+    .clone()
+    .transform(|range| Range::new(range.to(), range.from()));
+
+  doc.set_selection(view.id, selection);
+}
+
+#[derive(PartialEq, Eq)]
+pub enum Open {
+  Below,
+  Above,
+}
+
+#[derive(PartialEq)]
+pub enum CommentContinuation {
+  Enabled,
+  Disabled,
+}
+
+fn open(cx: &mut Context, open: Open, comment_continuation: CommentContinuation) {
+  let count = cx.count();
+  enter_insert_mode(cx);
+  let config = cx.editor.config();
+  let (view, doc) = current!(cx.editor);
+  let loader = cx.editor.syn_loader.load();
+
+  let text = doc.text().slice(..);
+  let contents = doc.text();
+  let selection = doc.selection(view.id);
+  let mut offs = 0;
+
+  let mut ranges = SmallVec::with_capacity(selection.len());
+
+  let continue_comment_tokens =
+    if comment_continuation == CommentContinuation::Enabled && config.continue_comments {
+      doc
+        .language_config()
+        .and_then(|config| config.comment_tokens.as_ref())
+    } else {
+      None
+    };
+
+  let mut transaction = Transaction::change_by_selection(contents, selection, |range| {
+    // the line number, where the cursor is currently
+    let curr_line_num = text.char_to_line(match open {
+      Open::Below => grapheme::prev_grapheme_boundary(text, range.to()),
+      Open::Above => range.from(),
+    });
+
+    // the next line number, where the cursor will be, after finishing the
+    // transaction
+    let next_new_line_num = match open {
+      Open::Below => curr_line_num + 1,
+      Open::Above => curr_line_num,
+    };
+
+    let above_next_new_line_num = next_new_line_num.saturating_sub(1);
+
+    let continue_comment_token = continue_comment_tokens
+      .and_then(|tokens| comment::get_comment_token(text, tokens, curr_line_num));
+
+    // Index to insert newlines after, as well as the char width
+    // to use to compensate for those inserted newlines.
+    let (above_next_line_end_index, above_next_line_end_width) = if next_new_line_num == 0 {
+      (0, 0)
+    } else {
+      (
+        line_end_char_index(&text, above_next_new_line_num),
+        doc.line_ending.len_chars(),
+      )
+    };
+
+    let line = text.line(curr_line_num);
+    let indent = match line.first_non_whitespace_char() {
+      Some(pos) if continue_comment_token.is_some() => line.slice(..pos).to_string(),
+      _ => {
+        indent::indent_for_newline(
+          &loader,
+          doc.syntax(),
+          &config.indent_heuristic,
+          &doc.indent_style,
+          doc.tab_width(),
+          text,
+          above_next_new_line_num,
+          above_next_line_end_index,
+          curr_line_num,
+        )
+      },
+    };
+
+    let indent_len = indent.len();
+    let mut text = String::with_capacity(1 + indent_len);
+
+    if open == Open::Above && next_new_line_num == 0 {
+      text.push_str(&indent);
+      if let Some(token) = continue_comment_token {
+        text.push_str(token);
+        text.push(' ');
+      }
+      text.push_str(doc.line_ending.as_str());
+    } else {
+      text.push_str(doc.line_ending.as_str());
+      text.push_str(&indent);
+
+      if let Some(token) = continue_comment_token {
+        text.push_str(token);
+        text.push(' ');
+      }
+    }
+
+    let text = text.repeat(count);
+
+    // calculate new selection ranges
+    let pos = offs + above_next_line_end_index + above_next_line_end_width;
+    let comment_len = continue_comment_token
+            .map(|token| token.len() + 1) // `+ 1` for the extra space added
+            .unwrap_or_default();
+    for i in 0..count {
+      // pos                     -> beginning of reference line,
+      // + (i * (line_ending_len + indent_len + comment_len)) -> beginning of i'th
+      //   line from pos (possibly including comment token)
+      // + indent_len + comment_len ->        -> indent for i'th line
+      ranges.push(Range::point(
+        pos
+          + (i * (doc.line_ending.len_chars() + indent_len + comment_len))
+          + indent_len
+          + comment_len,
+      ));
+    }
+
+    // update the offset for the next range
+    offs += text.chars().count();
+
+    (
+      above_next_line_end_index,
+      above_next_line_end_index,
+      Some(text.into()),
+    )
+  });
+
+  transaction = transaction.with_selection(Selection::new(ranges, selection.primary_index()));
+
+  doc.apply(&transaction, view.id);
 }

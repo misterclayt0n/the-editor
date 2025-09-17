@@ -37,6 +37,7 @@ pub mod registers;
 pub mod macros;
 pub mod info;
 pub mod fuzzy;
+pub mod comment;
 
 /// This type basically optimizes small string operations by doing expensive
 /// operations in heap, and using inline storage for small strings to avoid heap

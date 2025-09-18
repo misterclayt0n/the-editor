@@ -16,6 +16,10 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     'w'         => move_next_word_start,
     'b'         => move_prev_word_start,
     'e'         => move_next_word_end,
+    'f'         => find_next_char,
+    't'         => find_till_char,
+    'F'         => find_prev_char,
+    'T'         => till_prev_char,
     'd'         => delete_selection,
 
     // Minimal examples of prefix maps
@@ -52,6 +56,10 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     'j' | Down  => extend_visual_line_down,
     'k' | Up    => extend_visual_line_up,
     'l' | Right => extend_char_right,
+    'f'         => extend_next_char,
+    't'         => extend_till_char,
+    'F'         => extend_prev_char,
+    'T'         => extend_till_prev_char,
     'd'         => delete_selection,
   });
   // Add: visual 'Esc' -> exit visual mode

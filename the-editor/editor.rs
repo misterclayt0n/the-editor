@@ -112,7 +112,6 @@ use crate::{
     graphics::{
       CursorKind,
       Rect,
-      UnderlineStyle,
     },
     info::Info,
     line_ending::{
@@ -271,6 +270,7 @@ pub struct Editor {
 
   pub mouse_down_range: Option<Range>,
   pub cursor_cache:     CursorCache,
+  pending_find_char:    Option<FindCharPending>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -1723,6 +1723,7 @@ impl Editor {
       handlers,
       mouse_down_range: None,
       cursor_cache: CursorCache::default(),
+      pending_find_char: None,
       keymaps: Keymaps::default(),
     }
   }
@@ -1739,6 +1740,20 @@ impl Editor {
 
   fn line_height(&self) -> f32 {
     EDITOR_FONT_SIZE
+  }
+
+  pub fn queue_find_char(&mut self, pending: FindCharPending) {
+    self.pending_find_char = Some(pending);
+  }
+
+  fn handle_pending_find(&mut self, input: FindCharInput) -> bool {
+    if let Some(pending) = self.pending_find_char.take() {
+      perform_find_char(self, pending, input);
+      self.needs_redraw = true;
+      true
+    } else {
+      false
+    }
   }
 
   pub fn apply_motion<F: Fn(&mut Self) + 'static>(&mut self, motion: F) {
@@ -2835,7 +2850,7 @@ impl Application for Editor {
     let visible_lines = content_rows as usize;
 
     let text_fmt = doc.text_format(viewport.width, None);
-    let mut annotations = view.text_annotations(doc, None);
+    let annotations = view.text_annotations(doc, None);
     let view_offset = doc.view_offset(focus_view);
     let (top_char_idx, _) = char_idx_at_visual_offset(
       doc_text.slice(..),
@@ -2845,8 +2860,6 @@ impl Application for Editor {
       &text_fmt,
       &annotations,
     );
-
-    drop(annotations);
 
     let start_line = doc_text.char_to_line(top_char_idx);
     for display_idx in 0..visible_lines {
@@ -2948,8 +2961,29 @@ impl Application for Editor {
   fn handle_event(&mut self, event: InputEvent, _renderer: &mut Renderer) -> bool {
     match event {
       InputEvent::Keyboard(key_press) => {
+        use the_editor_renderer::Key;
         if key_press.pressed {
-          use the_editor_renderer::Key;
+          if self.pending_find_char.is_some() {
+            match key_press.code {
+              Key::Enter => {
+                if self.handle_pending_find(FindCharInput::LineEnding) {
+                  return true;
+                }
+              },
+              Key::Char(ch) => {
+                if self.handle_pending_find(FindCharInput::Char(ch)) {
+                  return true;
+                }
+              },
+              Key::Escape => {
+                self.pending_find_char = None;
+              },
+              _ => {
+                self.pending_find_char = None;
+              },
+            }
+          }
+
           // Dispatch renderer Key directly through keymap.
           let handled = match self.keymaps.get(self.mode, key_press.code) {
             KeymapResult::Matched(cmd) => {
@@ -3035,6 +3069,17 @@ impl Application for Editor {
         true
       },
       InputEvent::Text(text) => {
+        if let Some(ch) = text.chars().next() {
+          let is_newline = ch == '\n' || ch == '\r';
+          if is_newline {
+            if self.handle_pending_find(FindCharInput::LineEnding) {
+              return true;
+            }
+          } else if self.handle_pending_find(FindCharInput::Char(ch)) {
+            return true;
+          }
+        }
+
         if self.mode == Mode::Insert {
           // Insert the incoming text at the current cursor(s).
           let mut cx = crate::core::commands::Context {

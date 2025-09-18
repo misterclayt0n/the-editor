@@ -29,6 +29,7 @@ pub mod macros;
 pub mod movement;
 pub mod position;
 pub mod registers;
+pub mod search;
 pub mod selection;
 pub mod syntax;
 pub mod text_annotations;

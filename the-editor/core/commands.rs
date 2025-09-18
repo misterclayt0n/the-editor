@@ -27,6 +27,10 @@ use crate::{
       move_vertically_visual,
     },
     position::char_idx_at_visual_offset,
+    search::{
+      self,
+      CharMatcher,
+    },
     selection::{
       Range,
       Selection,
@@ -71,6 +75,20 @@ impl Context<'_> {
   pub fn count(&self) -> usize {
     self.count.map_or(1, |v| v.get())
   }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FindCharPending {
+  pub direction: Direction,
+  pub inclusive: bool,
+  pub extend:    bool,
+  pub count:     usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum FindCharInput {
+  LineEnding,
+  Char(char),
 }
 
 fn move_impl(cx: &mut Context, move_fn: MoveFn, dir: Direction, behavior: Movement) {
@@ -400,6 +418,188 @@ fn delete_selection_impl(cx: &mut Context, op: Operation, yank: YankAction) {
 
 pub fn delete_selection(cx: &mut Context) {
   delete_selection_impl(cx, Operation::Delete, YankAction::Yank);
+}
+
+// 
+// Find
+//
+
+fn find_char(cx: &mut Context, direction: Direction, inclusive: bool, extend: bool) {
+  let pending = FindCharPending {
+    direction,
+    inclusive,
+    extend,
+    count: cx.count(),
+  };
+  cx.editor.queue_find_char(pending);
+}
+
+#[inline]
+fn find_char_impl<F, M: CharMatcher + Clone + Copy>(
+  editor: &mut Editor,
+  search_fn: &F,
+  pending: FindCharPending,
+  char_matcher: M,
+) where
+  F: Fn(RopeSlice, M, usize, usize, bool) -> Option<usize> + 'static,
+{
+  let (view, doc) = current!(editor);
+  let text = doc.text().slice(..);
+
+  let selection = doc.selection(view.id).clone().transform(|range| {
+    // TODO: use `Range::cursor()` here instead.  However, that works in terms of
+    // graphemes, whereas this function doesn't yet.  So we're doing the same logic
+    // here, but just in terms of chars instead.
+    let search_start_pos = if range.anchor < range.head {
+      range.head - 1
+    } else {
+      range.head
+    };
+
+    search_fn(
+      text,
+      char_matcher,
+      search_start_pos,
+      pending.count,
+      pending.inclusive,
+    )
+    .map_or(range, |pos| {
+      if pending.extend {
+        range.put_cursor(text, pos, true)
+      } else {
+        Range::point(range.cursor(text)).put_cursor(text, pos, true)
+      }
+    })
+  });
+  doc.set_selection(view.id, selection);
+}
+
+fn find_char_line_ending(editor: &mut Editor, pending: FindCharPending) {
+  let (view, doc) = current!(editor);
+  let text = doc.text().slice(..);
+
+  let selection = doc.selection(view.id).clone().transform(|range| {
+    let cursor = range.cursor(text);
+    let cursor_line = range.cursor_line(text);
+
+    let find_on_line = match pending.direction {
+      Direction::Forward => {
+        let on_edge = line_end_char_index(&text, cursor_line) == cursor;
+        let line = cursor_line + pending.count - 1 + (on_edge as usize);
+        if line >= text.len_lines() - 1 {
+          return range;
+        } else {
+          line
+        }
+      },
+      Direction::Backward => {
+        let on_edge = text.line_to_char(cursor_line) == cursor && !pending.inclusive;
+        let line = cursor_line as isize - (pending.count as isize - 1 + on_edge as isize);
+        if line <= 0 {
+          return range;
+        } else {
+          line as usize
+        }
+      },
+    };
+
+    let pos = match (pending.direction, pending.inclusive) {
+      (Direction::Forward, true) => line_end_char_index(&text, find_on_line),
+      (Direction::Forward, false) => line_end_char_index(&text, find_on_line) - 1,
+      (Direction::Backward, true) => line_end_char_index(&text, find_on_line - 1),
+      (Direction::Backward, false) => text.line_to_char(find_on_line),
+    };
+
+    if pending.extend {
+      range.put_cursor(text, pos, true)
+    } else {
+      Range::point(range.cursor(text)).put_cursor(text, pos, true)
+    }
+  });
+  doc.set_selection(view.id, selection);
+}
+
+fn find_next_char_impl(
+  text: RopeSlice,
+  ch: char,
+  pos: usize,
+  n: usize,
+  inclusive: bool,
+) -> Option<usize> {
+  let pos = (pos + 1).min(text.len_chars());
+  if inclusive {
+    search::find_nth_next(text, ch, pos, n)
+  } else {
+    let n = match text.get_char(pos) {
+      Some(next_ch) if next_ch == ch => n + 1,
+      _ => n,
+    };
+    search::find_nth_next(text, ch, pos, n).map(|n| n.saturating_sub(1))
+  }
+}
+
+fn find_prev_char_impl(
+  text: RopeSlice,
+  ch: char,
+  pos: usize,
+  n: usize,
+  inclusive: bool,
+) -> Option<usize> {
+  if inclusive {
+    search::find_nth_prev(text, ch, pos, n)
+  } else {
+    let n = match text.get_char(pos.saturating_sub(1)) {
+      Some(next_ch) if next_ch == ch => n + 1,
+      _ => n,
+    };
+    search::find_nth_prev(text, ch, pos, n).map(|n| (n + 1).min(text.len_chars()))
+  }
+}
+
+pub fn perform_find_char(editor: &mut Editor, pending: FindCharPending, input: FindCharInput) {
+  editor.apply_motion(move |editor| {
+    match input {
+      FindCharInput::LineEnding => find_char_line_ending(editor, pending),
+      FindCharInput::Char(ch) => {
+        match pending.direction {
+          Direction::Forward => find_char_impl(editor, &find_next_char_impl, pending, ch),
+          Direction::Backward => find_char_impl(editor, &find_prev_char_impl, pending, ch),
+        }
+      },
+    }
+  });
+}
+
+pub fn find_till_char(cx: &mut Context) {
+  find_char(cx, Direction::Forward, false, false);
+}
+
+pub fn find_next_char(cx: &mut Context) {
+  find_char(cx, Direction::Forward, true, false)
+}
+
+pub fn extend_till_char(cx: &mut Context) {
+  find_char(cx, Direction::Forward, false, true)
+}
+
+pub fn extend_next_char(cx: &mut Context) {
+  find_char(cx, Direction::Forward, true, true)
+}
+
+pub fn till_prev_char(cx: &mut Context) {
+  find_char(cx, Direction::Backward, false, false)
+}
+
+pub fn find_prev_char(cx: &mut Context) {
+  find_char(cx, Direction::Backward, true, false)
+}
+
+pub fn extend_till_prev_char(cx: &mut Context) {
+  find_char(cx, Direction::Backward, false, true)
+}
+
+pub fn extend_prev_char(cx: &mut Context) {
+  find_char(cx, Direction::Backward, true, true)
 }
 
 pub mod insert {

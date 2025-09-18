@@ -8,6 +8,10 @@ use ropey::{
   RopeSlice,
 };
 use smallvec::SmallVec;
+use the_editor_renderer::{
+  Key,
+  KeyPress,
+};
 use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
@@ -49,14 +53,22 @@ use crate::{
 type MoveFn =
   fn(RopeSlice, Range, Direction, usize, Movement, &TextFormat, &mut TextAnnotations) -> Range;
 
+pub type OnKeyCallback = Box<dyn FnOnce(&mut Context, KeyPress) + 'static>;
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum OnKeyCallbackKind {
+  Pending,
+  Fallback,
+}
+
 pub struct Context<'a> {
-  pub register: Option<char>,
-  pub count:    Option<NonZeroUsize>,
-  pub editor:   &'a mut Editor,
+  pub register:             Option<char>,
+  pub count:                Option<NonZeroUsize>,
+  pub editor:               &'a mut Editor,
+  pub on_next_key_callback: Option<(OnKeyCallback, OnKeyCallbackKind)>,
   // NOTE: We're ignoring these for now.
-  // pub callback:             Vec<crate::compositor::Callback>,
-  // pub on_next_key_callback: Option<(OnKeyCallback, OnKeyCallbackKind)>,
-  // pub jobs:                 &'a mut Jobs,
+  // pub callback: Vec<crate::compositor::Callback>,
+  // pub jobs:     &'a mut Jobs,
 }
 
 enum Operation {
@@ -74,6 +86,27 @@ impl Context<'_> {
   #[inline]
   pub fn count(&self) -> usize {
     self.count.map_or(1, |v| v.get())
+  }
+
+  #[inline]
+  pub fn on_next_key(
+    &mut self,
+    on_next_key_callback: impl FnOnce(&mut Context, KeyPress) + 'static,
+  ) {
+    self.on_next_key_callback = Some((Box::new(on_next_key_callback), OnKeyCallbackKind::Pending));
+  }
+
+  #[inline]
+  pub fn on_next_key_fallback(
+    &mut self,
+    on_next_key_callback: impl FnOnce(&mut Context, KeyPress) + 'static,
+  ) {
+    self.on_next_key_callback = Some((Box::new(on_next_key_callback), OnKeyCallbackKind::Fallback));
+  }
+
+  #[inline]
+  pub fn take_on_next_key(&mut self) -> Option<(OnKeyCallback, OnKeyCallbackKind)> {
+    self.on_next_key_callback.take()
   }
 }
 
@@ -420,7 +453,6 @@ pub fn delete_selection(cx: &mut Context) {
   delete_selection_impl(cx, Operation::Delete, YankAction::Yank);
 }
 
-// 
 // Find
 //
 
@@ -431,7 +463,22 @@ fn find_char(cx: &mut Context, direction: Direction, inclusive: bool, extend: bo
     extend,
     count: cx.count(),
   };
-  cx.editor.queue_find_char(pending);
+
+  cx.on_next_key(move |cx, event| {
+    if !event.pressed {
+      return;
+    }
+
+    match event.code {
+      Key::Enter => {
+        perform_find_char(cx.editor, pending, FindCharInput::LineEnding);
+      },
+      Key::Char(ch) => {
+        perform_find_char(cx.editor, pending, FindCharInput::Char(ch));
+      },
+      _ => {},
+    }
+  });
 }
 
 #[inline]

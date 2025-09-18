@@ -60,6 +60,8 @@ use the_editor_renderer::{
   Application,
   Color,
   InputEvent,
+  Key,
+  KeyPress,
   Renderer,
   ScrollDelta,
   TextSection,
@@ -87,6 +89,21 @@ const VIEW_PADDING_LEFT: f32 = 0.0;
 const VIEW_PADDING_TOP: f32 = 0.0;
 const VIEW_PADDING_BOTTOM: f32 = 0.0;
 const STATUS_BAR_HEIGHT: f32 = 30.0;
+
+fn key_press_from_char(ch: char) -> KeyPress {
+  let code = match ch {
+    '\n' | '\r' => Key::Enter,
+    _ => Key::Char(ch),
+  };
+
+  KeyPress {
+    code,
+    pressed: true,
+    shift: false,
+    ctrl: false,
+    alt: false,
+  }
+}
 
 use crate::{
   core::{
@@ -270,7 +287,7 @@ pub struct Editor {
 
   pub mouse_down_range: Option<Range>,
   pub cursor_cache:     CursorCache,
-  pending_find_char:    Option<FindCharPending>,
+  pending_key_callback: Option<(OnKeyCallback, OnKeyCallbackKind)>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -1723,7 +1740,7 @@ impl Editor {
       handlers,
       mouse_down_range: None,
       cursor_cache: CursorCache::default(),
-      pending_find_char: None,
+      pending_key_callback: None,
       keymaps: Keymaps::default(),
     }
   }
@@ -1742,18 +1759,38 @@ impl Editor {
     EDITOR_FONT_SIZE
   }
 
-  pub fn queue_find_char(&mut self, pending: FindCharPending) {
-    self.pending_find_char = Some(pending);
-  }
+  fn dispatch_pending_key_callback(&mut self, event: KeyPress) -> bool {
+    let Some((callback, kind)) = self.pending_key_callback.take() else {
+      return false;
+    };
 
-  fn handle_pending_find(&mut self, input: FindCharInput) -> bool {
-    if let Some(pending) = self.pending_find_char.take() {
-      perform_find_char(self, pending, input);
-      self.needs_redraw = true;
-      true
-    } else {
-      false
+    if matches!(event.code, Key::Escape) && kind == OnKeyCallbackKind::Pending {
+      return true;
     }
+
+    let mut cx = crate::core::commands::Context {
+      register:             self.selected_register,
+      count:                self.count,
+      editor:               self,
+      on_next_key_callback: None,
+    };
+
+    (callback)(&mut cx, event);
+
+    let pending = cx.take_on_next_key();
+    let register = cx.register;
+    let count = cx.count;
+
+    drop(cx);
+
+    self.selected_register = register;
+    self.count = count;
+
+    if let Some(pending) = pending {
+      self.pending_key_callback = Some(pending);
+    }
+
+    true
   }
 
   pub fn apply_motion<F: Fn(&mut Self) + 'static>(&mut self, motion: F) {
@@ -2961,25 +2998,21 @@ impl Application for Editor {
   fn handle_event(&mut self, event: InputEvent, _renderer: &mut Renderer) -> bool {
     match event {
       InputEvent::Keyboard(key_press) => {
-        use the_editor_renderer::Key;
         if key_press.pressed {
-          if self.pending_find_char.is_some() {
+          if let Some((_, kind)) = &self.pending_key_callback {
             match key_press.code {
               Key::Enter => {
-                if self.handle_pending_find(FindCharInput::LineEnding) {
-                  return true;
-                }
-              },
-              Key::Char(ch) => {
-                if self.handle_pending_find(FindCharInput::Char(ch)) {
+                if self.dispatch_pending_key_callback(key_press.clone()) {
                   return true;
                 }
               },
               Key::Escape => {
-                self.pending_find_char = None;
+                self.pending_key_callback = None;
               },
               _ => {
-                self.pending_find_char = None;
+                if *kind == OnKeyCallbackKind::Pending {
+                  self.pending_key_callback = None;
+                }
               },
             }
           }
@@ -2990,11 +3023,21 @@ impl Application for Editor {
               match cmd {
                 crate::keymap::Command::Execute(f) => {
                   let mut cx = crate::core::commands::Context {
-                    register: self.selected_register,
-                    count:    self.count,
-                    editor:   self,
+                    register:             self.selected_register,
+                    count:                self.count,
+                    editor:               self,
+                    on_next_key_callback: None,
                   };
                   f(&mut cx);
+                  let pending = cx.take_on_next_key();
+                  let register = cx.register;
+                  let count = cx.count;
+                  drop(cx);
+                  self.selected_register = register;
+                  self.count = count;
+                  if let Some(pending) = pending {
+                    self.pending_key_callback = Some(pending);
+                  }
                 },
                 crate::keymap::Command::EnterInsertMode => self.mode = Mode::Insert,
                 crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,
@@ -3008,11 +3051,21 @@ impl Application for Editor {
             KeymapResult::NotFound => {
               if self.mode == Mode::Insert && matches!(key_press.code, Key::Enter) {
                 let mut cx = crate::core::commands::Context {
-                  register: self.selected_register,
-                  count:    self.count,
-                  editor:   self,
+                  register:             self.selected_register,
+                  count:                self.count,
+                  editor:               self,
+                  on_next_key_callback: None,
                 };
                 crate::core::commands::insert::insert_char(&mut cx, '\n');
+                let pending = cx.take_on_next_key();
+                let register = cx.register;
+                let count = cx.count;
+                drop(cx);
+                self.selected_register = register;
+                self.count = count;
+                if let Some(pending) = pending {
+                  self.pending_key_callback = Some(pending);
+                }
                 true
               } else {
                 false
@@ -3059,56 +3112,91 @@ impl Application for Editor {
         }
 
         let mut cx = crate::core::commands::Context {
-          register: self.selected_register,
-          count:    self.count,
-          editor:   self,
+          register:             self.selected_register,
+          count:                self.count,
+          editor:               self,
+          on_next_key_callback: None,
         };
         crate::core::commands::scroll(&mut cx, lines, direction, false);
+        let pending = cx.take_on_next_key();
+        let register = cx.register;
+        let count = cx.count;
+        drop(cx);
+        self.selected_register = register;
+        self.count = count;
+        if let Some(pending) = pending {
+          self.pending_key_callback = Some(pending);
+        }
         let focus = self.tree.focus;
         self.ensure_cursor_in_view(focus);
         true
       },
       InputEvent::Text(text) => {
-        if let Some(ch) = text.chars().next() {
-          let is_newline = ch == '\n' || ch == '\r';
-          if is_newline {
-            if self.handle_pending_find(FindCharInput::LineEnding) {
-              return true;
+        let mut remaining = String::new();
+        let mut consumed_pending = false;
+
+        for ch in text.chars() {
+          if self.pending_key_callback.is_some() && !consumed_pending {
+            let event = key_press_from_char(ch);
+            if self.dispatch_pending_key_callback(event) {
+              consumed_pending = true;
+              continue;
             }
-          } else if self.handle_pending_find(FindCharInput::Char(ch)) {
-            return true;
           }
+          remaining.push(ch);
+        }
+
+        if remaining.is_empty() {
+          return consumed_pending;
         }
 
         if self.mode == Mode::Insert {
           // Insert the incoming text at the current cursor(s).
           let mut cx = crate::core::commands::Context {
-            register: self.selected_register,
-            count:    self.count,
-            editor:   self,
+            register:             self.selected_register,
+            count:                self.count,
+            editor:               self,
+            on_next_key_callback: None,
           };
-          for ch in text.chars() {
+          for ch in remaining.chars() {
             crate::core::commands::insert::insert_char(&mut cx, ch);
+          }
+          let pending = cx.take_on_next_key();
+          let register = cx.register;
+          let count = cx.count;
+          drop(cx);
+          self.selected_register = register;
+          self.count = count;
+          if let Some(pending) = pending {
+            self.pending_key_callback = Some(pending);
           }
           let focus = self.tree.focus;
           self.ensure_cursor_in_view(focus);
           true
         } else {
           // Treat as normal-mode keypresses (first char only).
-          if let Some(ch) = text.chars().next() {
-            use the_editor_renderer::Key;
-
+          if let Some(ch) = remaining.chars().next() {
             use crate::keymap::KeymapResult;
             let handled = match self.keymaps.get(self.mode, Key::Char(ch)) {
               KeymapResult::Matched(cmd) => {
                 match cmd {
                   crate::keymap::Command::Execute(f) => {
                     let mut cx = crate::core::commands::Context {
-                      register: self.selected_register,
-                      count:    self.count,
-                      editor:   self,
+                      register:             self.selected_register,
+                      count:                self.count,
+                      editor:               self,
+                      on_next_key_callback: None,
                     };
                     f(&mut cx);
+                    let pending = cx.take_on_next_key();
+                    let register = cx.register;
+                    let count = cx.count;
+                    drop(cx);
+                    self.selected_register = register;
+                    self.count = count;
+                    if let Some(pending) = pending {
+                      self.pending_key_callback = Some(pending);
+                    }
                   },
                   crate::keymap::Command::EnterInsertMode => self.mode = Mode::Insert,
                   crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,

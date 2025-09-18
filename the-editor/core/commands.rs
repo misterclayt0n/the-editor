@@ -954,3 +954,42 @@ fn open(cx: &mut Context, open: Open, comment_continuation: CommentContinuation)
 
   doc.apply(&transaction, view.id);
 }
+
+pub fn replace(cx: &mut Context) {
+  let mut buf = [0u8; 4]; // To hold UTF-8 encoded characters.
+
+  // Gotta wait for the next key.
+  cx.on_next_key(move |cx, event| {
+    if !event.pressed {
+      return;
+    }
+
+    let (view, doc) = current!(cx.editor);
+    let ch: Option<&str> = match event.code {
+      Key::Char(ch) => Some(ch.encode_utf8(&mut buf)),
+      Key::Enter => Some(doc.line_ending.as_str()),
+      _ => None, // Everything else just cancels it.
+    };
+
+    if let Some(ch) = ch {
+      let selection = doc.selection(view.id);
+      let transaction = Transaction::change_by_selection(doc.text(), selection, |range| {
+        if range.is_empty() {
+          (range.from(), range.to(), None)
+        } else {
+          let text: Tendril = doc
+            .text()
+            .slice(range.from()..range.to())
+            .graphemes()
+            .map(|_| ch)
+            .collect();
+
+          (range.from(), range.to(), Some(text))
+        }
+      });
+
+      doc.apply(&transaction, view.id);
+      exit_select_mode(cx);
+    }
+  });
+}

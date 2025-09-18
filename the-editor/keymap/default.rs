@@ -21,6 +21,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     'F'         => find_prev_char,
     'T'         => till_prev_char,
     'd'         => delete_selection,
+    'r'         => replace,
 
     // Minimal examples of prefix maps
     'g' => { "Goto"

@@ -62,6 +62,15 @@ pub struct MouseEvent {
   pub pressed:  bool,
 }
 
+/// Mouse scroll delta reported by the windowing backend.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScrollDelta {
+  /// Scroll expressed in logical lines.
+  Lines { x: f32, y: f32 },
+  /// Scroll expressed in physical pixels.
+  Pixels { x: f32, y: f32 },
+}
+
 /// Input event types that can be handled by the application
 #[derive(Debug, Clone)]
 pub enum InputEvent {
@@ -71,4 +80,6 @@ pub enum InputEvent {
   Mouse(MouseEvent),
   /// Text input (for typing)
   Text(String),
+  /// Mouse wheel or trackpad scrolling
+  Scroll(ScrollDelta),
 }

@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{
+  Deserialize,
+  Serialize,
+};
 use the_editor_renderer::Key;
 
 use crate::core::commands;

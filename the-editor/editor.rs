@@ -61,8 +61,8 @@ use the_editor_renderer::{
   Color,
   InputEvent,
   Renderer,
+  ScrollDelta,
   TextSection,
-  TextSegment,
 };
 use the_editor_stdx::path::canonicalize;
 use the_editor_vcs::DiffProviderRegistry;
@@ -80,6 +80,13 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use unicode_segmentation::UnicodeSegmentation;
+
+const EDITOR_FONT_SIZE: f32 = 22.0;
+const EDITOR_FONT_WIDTH: f32 = 12.0;
+const VIEW_PADDING_LEFT: f32 = 0.0;
+const VIEW_PADDING_TOP: f32 = 0.0;
+const VIEW_PADDING_BOTTOM: f32 = 0.0;
+const STATUS_BAR_HEIGHT: f32 = 30.0;
 
 use crate::{
   core::{
@@ -114,7 +121,11 @@ use crate::{
       line_end_char_index,
       str_is_line_ending,
     },
-    position::Position,
+    movement::Direction,
+    position::{
+      Position,
+      char_idx_at_visual_offset,
+    },
     registers::Registers,
     selection::{
       Range,
@@ -1726,6 +1737,10 @@ impl Editor {
       || self.config().popup_border == PopupBorderConfig::Menu
   }
 
+  fn line_height(&self) -> f32 {
+    EDITOR_FONT_SIZE
+  }
+
   pub fn apply_motion<F: Fn(&mut Self) + 'static>(&mut self, motion: F) {
     motion(self);
     self.last_motion = Some(Box::new(motion));
@@ -2770,218 +2785,161 @@ impl Application for Editor {
   fn render(&mut self, renderer: &mut Renderer) {
     // Signal start of a new frame to the event system (debounce/locks)
     the_editor_event::start_frame();
-    renderer.draw_text(TextSection::simple(
-      50.0,
-      50.0,
-      "Welcome to The Editor!",
-      48.0,
-      Color::rgb(0.9, 0.9, 0.9),
-    ));
 
-    renderer.draw_text(TextSection::simple(
-      50.0,
-      120.0,
-      "A modern text editor built with Rust",
-      24.0,
-      Color::rgb(0.7, 0.7, 0.8),
-    ));
-
-    renderer.draw_text(TextSection::simple(
-      50.0,
-      180.0,
-      "Press ESC to exit",
-      18.0,
-      Color::rgb(0.5, 0.5, 0.6),
-    ));
-
-    renderer.draw_text(
-      TextSection::new(50.0, 250.0).add_text(
-        TextSegment::new("// Sample code")
-          .with_color(Color::rgb(0.6, 0.8, 0.6))
-          .with_size(20.0),
-      ),
-    );
-
-    renderer.draw_text(
-      TextSection::new(50.0, 280.0)
-        .add_text(
-          TextSegment::new("fn ")
-            .with_color(Color::rgb(0.5, 0.7, 0.9))
-            .with_size(20.0),
-        )
-        .add_text(
-          TextSegment::new("main")
-            .with_color(Color::rgb(0.9, 0.9, 0.7))
-            .with_size(20.0),
-        )
-        .add_text(
-          TextSegment::new("() {")
-            .with_color(Color::rgb(0.9, 0.9, 0.85))
-            .with_size(20.0),
-        ),
-    );
-
-    renderer.draw_text(
-      TextSection::new(50.0, 310.0)
-        .add_text(
-          TextSegment::new("    println!")
-            .with_color(Color::rgb(0.5, 0.7, 0.9))
-            .with_size(20.0),
-        )
-        .add_text(
-          TextSegment::new("(")
-            .with_color(Color::rgb(0.9, 0.9, 0.85))
-            .with_size(20.0),
-        )
-        .add_text(
-          TextSegment::new("\"Hello, world!\"")
-            .with_color(Color::rgb(0.8, 0.6, 0.4))
-            .with_size(20.0),
-        )
-        .add_text(
-          TextSegment::new(");")
-            .with_color(Color::rgb(0.9, 0.9, 0.85))
-            .with_size(20.0),
-        ),
-    );
-
-    renderer.draw_text(TextSection::simple(
-      50.0,
-      340.0,
-      "}",
-      20.0,
-      Color::rgb(0.9, 0.9, 0.85),
-    ));
-
-    // Draw current buffer text and overlay a block cursor without altering layout.
-    let (view, doc) = current_ref!(self);
-    let doc_text = doc.text();
-    let selection = doc.selection(view.id).clone();
+    let font_size = self.line_height();
+    let font_width = EDITOR_FONT_WIDTH;
+    let available_height =
+      (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM + STATUS_BAR_HEIGHT);
+    let available_height = available_height.max(font_size);
+    let content_rows = (available_height / font_size).floor().max(1.0) as u16;
+    let area_height = content_rows.saturating_add(1);
+    let available_width = (renderer.width() as f32) - (VIEW_PADDING_LEFT * 2.0);
+    let available_width = available_width.max(font_width);
+    let area_width = (available_width / font_width).floor().max(1.0) as u16;
+    let target_area = Rect::new(0, 0, area_width, area_height);
+    if self.tree.resize(target_area) {
+      let scrolloff = self.config().scrolloff;
+      let view_ids: Vec<ViewId> = self.tree.views().map(|(view, _)| view.id).collect();
+      for view_id in view_ids {
+        let view = self.tree.get_mut(view_id);
+        let doc = doc_mut!(self, &view.doc);
+        view.sync_changes(doc);
+        view.ensure_cursor_in_view(doc, scrolloff);
+      }
+    }
 
     let normal = Color::rgb(0.85, 0.85, 0.9);
     let cursor_fg = Color::rgb(0.1, 0.1, 0.15); // Dark text on bright block.
     let cursor_bg = Color::rgb(0.2, 0.8, 0.7); // Teal block.
     let selection_bg = Color::rgba(0.3, 0.5, 0.8, 0.3); // Semi-transparent blue.
-    let font_size = 22.0;
-    let base_x = 50.0;
-    let base_y = 380.0;
+    let base_x = VIEW_PADDING_LEFT;
+    let base_y = VIEW_PADDING_TOP;
 
-    // Draw selection background if there is a selection.
-    if !selection.is_empty() {
-      for range in selection.ranges() {
-        if !range.is_empty() {
-          let start_pos = range.from();
-          let end_pos = range.to();
+    let focus_view = self.tree.focus;
+    let (doc_id, selection) = {
+      let view = self.tree.get(focus_view);
+      let doc = &self.documents[&view.doc];
+      (view.doc, doc.selection(focus_view).clone())
+    };
 
-          let start_line = doc_text.char_to_line(start_pos);
-          let end_line = doc_text.char_to_line(end_pos);
+    let doc = &self.documents[&doc_id];
+    let doc_text = doc.text();
+    let total_lines = doc_text.len_lines();
+    let cursor_pos = selection.primary().cursor(doc_text.slice(..));
+    let cursor_line = doc_text.char_to_line(cursor_pos);
+    let cursor_line_start = doc_text.line_to_char(cursor_line);
+    let cursor_col = cursor_pos.saturating_sub(cursor_line_start);
 
-          if start_line == end_line {
-            // Single line selection
-            let line_start = doc_text.line_to_char(start_line);
-            let start_col = start_pos - line_start;
-            let end_col = end_pos - line_start;
+    let view = self.tree.get(focus_view);
+    let viewport = view.inner_area(doc);
+    let visible_lines = content_rows as usize;
 
-            let y = base_y + (start_line as f32 * font_size);
-            let padding: String = std::iter::repeat(' ').take(start_col).collect();
-            let selection_width = end_col - start_col;
-            let selection_chars: String = std::iter::repeat('█').take(selection_width).collect();
+    let text_fmt = doc.text_format(viewport.width, None);
+    let mut annotations = view.text_annotations(doc, None);
+    let view_offset = doc.view_offset(focus_view);
+    let (top_char_idx, _) = char_idx_at_visual_offset(
+      doc_text.slice(..),
+      view_offset.anchor,
+      view_offset.vertical_offset as isize,
+      view_offset.horizontal_offset,
+      &text_fmt,
+      &annotations,
+    );
 
-            renderer.draw_text(TextSection::simple(
-              base_x,
-              y,
-              format!("{}{}", padding, selection_chars),
-              font_size,
-              selection_bg,
-            ));
-          } else {
-            // Multi-line selection.
-            for line in start_line..=end_line {
-              let y = base_y + (line as f32 * font_size);
-              let line_start_char = doc_text.line_to_char(line);
-              let line_len = doc_text.line(line).len_chars();
+    drop(annotations);
 
-              let (start_col, end_col) = if line == start_line {
-                // First line: from selection start to end of line.
-                (start_pos - line_start_char, line_len)
-              } else if line == end_line {
-                // Last line: from beginning to selection end.
-                (0, end_pos - line_start_char)
-              } else {
-                // Middle lines: entire line.
-                (0, line_len)
-              };
+    let start_line = doc_text.char_to_line(top_char_idx);
+    for display_idx in 0..visible_lines {
+      let line_idx = start_line + display_idx;
+      if line_idx >= doc_text.len_lines() {
+        break;
+      }
 
-              if end_col > start_col {
-                let padding: String = std::iter::repeat(' ').take(start_col).collect();
-                let selection_width = end_col - start_col;
-                let selection_chars: String =
-                  std::iter::repeat('█').take(selection_width).collect();
+      let y = base_y + display_idx as f32 * font_size;
+      let line_slice = doc_text.line(line_idx);
+      let line_start = doc_text.line_to_char(line_idx);
+      let line_len = line_slice.len_chars();
 
-                renderer.draw_text(TextSection::simple(
-                  base_x,
-                  y,
-                  format!("{}{}", padding, selection_chars),
-                  font_size,
-                  selection_bg,
-                ));
-              }
-            }
+      if !selection.is_empty() {
+        for range in selection.ranges() {
+          let sel_start = range.from();
+          let sel_end = range.to();
+
+          if sel_start >= line_start + line_len || sel_end <= line_start {
+            continue;
           }
+
+          let highlight_start = sel_start.max(line_start);
+          let highlight_end = sel_end.min(line_start + line_len);
+          let width = highlight_end.saturating_sub(highlight_start);
+          if width == 0 {
+            continue;
+          }
+          let start_col = highlight_start - line_start;
+          let padding: String = std::iter::repeat(' ').take(start_col).collect();
+          let highlight_chars: String = std::iter::repeat('█').take(width).collect();
+
+          renderer.draw_text(TextSection::simple(
+            base_x,
+            y,
+            format!("{}{}", padding, highlight_chars),
+            font_size,
+            selection_bg,
+          ));
         }
+      }
+
+      let mut line_string = line_slice.to_string();
+      while line_string.ends_with('\n') || line_string.ends_with('\r') {
+        line_string.pop();
+      }
+
+      renderer.draw_text(TextSection::simple(
+        base_x,
+        y,
+        line_string,
+        font_size,
+        normal,
+      ));
+
+      if line_idx == cursor_line {
+        let padding: String = std::iter::repeat(' ').take(cursor_col).collect();
+        let under_ch = doc_text.get_char(cursor_pos).unwrap_or(' ');
+        renderer.draw_text(TextSection::simple(
+          base_x,
+          y,
+          format!("{}{}", padding, '█'),
+          font_size,
+          cursor_bg,
+        ));
+        renderer.draw_text(TextSection::simple(
+          base_x,
+          y,
+          format!("{}{}", padding, under_ch),
+          font_size,
+          cursor_fg,
+        ));
       }
     }
 
-    // Draw the text.
-    let full = doc_text.to_string();
-    renderer.draw_text(TextSection::simple(base_x, base_y, full, font_size, normal));
-
-    // Draw cursor.
-    let pos = selection.primary().cursor(doc_text.slice(..));
-
-    // Calculate cursor position accounting for newlines.
-    let line_idx = doc_text.char_to_line(pos);
-    let line_start = doc_text.line_to_char(line_idx);
-    let col_in_line = pos - line_start;
-
-    let pad: String = std::iter::repeat(' ').take(col_in_line).collect();
-    let under_ch = doc_text.get_char(pos).unwrap_or(' ');
-
-    let cursor_y = base_y + (line_idx as f32 * font_size);
-
-    // Draw block background at cursor cell.
-    renderer.draw_text(TextSection::simple(
-      base_x,
-      cursor_y,
-      format!("{}{}", pad, '█'),
-      font_size,
-      cursor_bg,
-    ));
-
-    // Draw underlying character on top.
-    renderer.draw_text(TextSection::simple(
-      base_x,
-      cursor_y,
-      format!("{}{}", pad, under_ch),
-      font_size,
-      cursor_fg,
-    ));
-
-    let status_y = renderer.height() as f32 - 30.0;
     let mode_str = match self.mode {
       Mode::Normal => "NORMAL",
       Mode::Insert => "INSERT",
       Mode::Select => "VISUAL",
     };
+    let status_y = renderer.height() as f32 - STATUS_BAR_HEIGHT;
+    let status_text = format!(
+      "{} | Ln {}/{} Col {} | Top {}",
+      mode_str,
+      cursor_line + 1,
+      total_lines,
+      cursor_col + 1,
+      start_line + 1,
+    );
     renderer.draw_text(TextSection::simple(
       10.0,
       status_y,
-      format!(
-        "{} | Size: {}x{}",
-        mode_str,
-        renderer.width(),
-        renderer.height()
-      ),
+      status_text,
       14.0,
       Color::rgb(0.6, 0.6, 0.7),
     ));
@@ -2993,14 +2951,14 @@ impl Application for Editor {
         if key_press.pressed {
           use the_editor_renderer::Key;
           // Dispatch renderer Key directly through keymap.
-          match self.keymaps.get(self.mode, key_press.code) {
+          let handled = match self.keymaps.get(self.mode, key_press.code) {
             KeymapResult::Matched(cmd) => {
               match cmd {
                 crate::keymap::Command::Execute(f) => {
                   let mut cx = crate::core::commands::Context {
                     register: self.selected_register,
-                    count: self.count,
-                    editor: self,
+                    count:    self.count,
+                    editor:   self,
                   };
                   f(&mut cx);
                 },
@@ -3014,13 +2972,11 @@ impl Application for Editor {
             KeymapResult::Pending(_) => true, // Show pending UI later.
             KeymapResult::Cancelled(_) => true,
             KeymapResult::NotFound => {
-              // If in insert, Enter inserts newline as a convenience.
               if self.mode == Mode::Insert && matches!(key_press.code, Key::Enter) {
-                // Use insert_char command for proper handling
                 let mut cx = crate::core::commands::Context {
                   register: self.selected_register,
-                  count: self.count,
-                  editor: self,
+                  count:    self.count,
+                  editor:   self,
                 };
                 crate::core::commands::insert::insert_char(&mut cx, '\n');
                 true
@@ -3028,7 +2984,14 @@ impl Application for Editor {
                 false
               }
             },
+          };
+
+          if handled {
+            let focus = self.tree.focus;
+            self.ensure_cursor_in_view(focus);
           }
+
+          handled
         } else {
           false
         }
@@ -3037,48 +3000,91 @@ impl Application for Editor {
         println!("Mouse event at flinstons {:?}", mouse.position);
         false
       },
+      InputEvent::Scroll(delta) => {
+        let y = match delta {
+          ScrollDelta::Lines { y, .. } => y,
+          ScrollDelta::Pixels { y, .. } => y,
+        };
+
+        if y.abs() < f32::EPSILON {
+          return false;
+        }
+
+        let direction = if y > 0.0 {
+          Direction::Backward
+        } else {
+          Direction::Forward
+        };
+
+        let mut lines = {
+          let cfg = self.config();
+          cfg.scroll_lines.unsigned_abs()
+        };
+        if lines == 0 {
+          lines = 1;
+        }
+
+        let mut cx = crate::core::commands::Context {
+          register: self.selected_register,
+          count:    self.count,
+          editor:   self,
+        };
+        crate::core::commands::scroll(&mut cx, lines, direction, false);
+        let focus = self.tree.focus;
+        self.ensure_cursor_in_view(focus);
+        true
+      },
       InputEvent::Text(text) => {
         if self.mode == Mode::Insert {
           // Insert the incoming text at the current cursor(s).
           let mut cx = crate::core::commands::Context {
             register: self.selected_register,
-            count: self.count,
-            editor: self,
+            count:    self.count,
+            editor:   self,
           };
           for ch in text.chars() {
             crate::core::commands::insert::insert_char(&mut cx, ch);
           }
+          let focus = self.tree.focus;
+          self.ensure_cursor_in_view(focus);
           true
         } else {
-            // Treat as normal-mode keypresses (first char only).
-            if let Some(ch) = text.chars().next() {
-              use the_editor_renderer::Key;
+          // Treat as normal-mode keypresses (first char only).
+          if let Some(ch) = text.chars().next() {
+            use the_editor_renderer::Key;
 
-              use crate::keymap::KeymapResult;
-              match self.keymaps.get(self.mode, Key::Char(ch)) {
-                KeymapResult::Matched(cmd) => {
-                  match cmd {
-                    crate::keymap::Command::Execute(f) => {
-                      let mut cx = crate::core::commands::Context {
-                        register: self.selected_register,
-                        count: self.count,
-                        editor: self,
-                      };
-                      f(&mut cx);
-                    },
-                    crate::keymap::Command::EnterInsertMode => self.mode = Mode::Insert,
-                    crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,
-                    crate::keymap::Command::EnterVisualMode => self.mode = Mode::Select,
-                    crate::keymap::Command::ExitVisualMode => self.mode = Mode::Normal,
-                  }
-                  true
-                },
-                KeymapResult::Pending(_) => true,
-                KeymapResult::Cancelled(_) | KeymapResult::NotFound => false,
-              }
-            } else {
-              false
+            use crate::keymap::KeymapResult;
+            let handled = match self.keymaps.get(self.mode, Key::Char(ch)) {
+              KeymapResult::Matched(cmd) => {
+                match cmd {
+                  crate::keymap::Command::Execute(f) => {
+                    let mut cx = crate::core::commands::Context {
+                      register: self.selected_register,
+                      count:    self.count,
+                      editor:   self,
+                    };
+                    f(&mut cx);
+                  },
+                  crate::keymap::Command::EnterInsertMode => self.mode = Mode::Insert,
+                  crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,
+                  crate::keymap::Command::EnterVisualMode => self.mode = Mode::Select,
+                  crate::keymap::Command::ExitVisualMode => self.mode = Mode::Normal,
+                }
+                true
+              },
+              KeymapResult::Pending(_) => true,
+              KeymapResult::Cancelled(_) | KeymapResult::NotFound => false,
+            };
+
+            if handled {
+              let focus = self.tree.focus;
+              self.ensure_cursor_in_view(focus);
             }
+
+            handled
+          } else {
+            false
+          }
         }
       },
     }

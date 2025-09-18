@@ -10,13 +10,27 @@ use ropey::RopeSlice;
 
 use crate::{
   core::{
-    diagnostics::InlineDiagnostics, document::{
+    DocumentId,
+    ViewId,
+    diagnostics::InlineDiagnostics,
+    document::{
       Document,
       DocumentColorSwatches,
       DocumentInlayHints,
-    }, graphics::Rect, position::{
-      char_idx_at_visual_offset, visual_offset_from_anchor, visual_offset_from_block, Position, VisualOffsetError
-    }, selection::Selection, text_annotations::TextAnnotations, text_format::TextFormat, theme::Theme, transaction::Transaction, DocumentId, ViewId
+    },
+    graphics::Rect,
+    position::{
+      Position,
+      VisualOffsetError,
+      char_idx_at_visual_offset,
+      visual_offset_from_anchor,
+      visual_offset_from_block,
+    },
+    selection::Selection,
+    text_annotations::TextAnnotations,
+    text_format::TextFormat,
+    theme::Theme,
+    transaction::Transaction,
   },
   editor::{
     GutterConfig,

@@ -72,6 +72,7 @@ pub use event::{
   KeyPress,
   MouseButton,
   MouseEvent,
+  ScrollDelta,
 };
 pub use renderer::{
   Renderer,
@@ -163,6 +164,7 @@ pub fn run<A: Application + 'static>(
     event::{
       ElementState,
       KeyEvent,
+      MouseScrollDelta,
       WindowEvent,
     },
     event_loop::{
@@ -315,6 +317,27 @@ pub fn run<A: Application + 'static>(
                   },
                 }
               }
+            }
+          }
+        },
+        // NOTE: This sucks ass, but will do it for now.
+        WindowEvent::MouseWheel { delta, .. } => {
+          if let Some(renderer) = &mut self.renderer {
+            let scroll_delta = match delta {
+              MouseScrollDelta::LineDelta(x, y) => event::ScrollDelta::Lines { x, y },
+              MouseScrollDelta::PixelDelta(pos) => {
+                event::ScrollDelta::Pixels {
+                  x: pos.x as f32,
+                  y: pos.y as f32,
+                }
+              },
+            };
+            if self
+              .app
+              .handle_event(InputEvent::Scroll(scroll_delta), renderer)
+              && let Some(window) = &self.window
+            {
+              window.request_redraw();
             }
           }
         },

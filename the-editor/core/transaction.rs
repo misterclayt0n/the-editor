@@ -89,11 +89,11 @@ impl Assoc {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ChangeSet {
-  pub(crate) changes:   Vec<Operation>,
+  pub(crate) changes: Vec<Operation>,
   /// The required document length. Will refuse to apply changes unless it
   /// matches.
-  len:       usize,
-  len_after: usize,
+  len:                usize,
+  len_after:          usize,
 }
 
 impl ChangeSet {

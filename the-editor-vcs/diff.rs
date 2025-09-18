@@ -3,14 +3,14 @@ use std::{
   sync::Arc,
 };
 
-use ropey::Rope;
-use the_editor_event::RenderLockGuard;
 use imara_diff::Algorithm;
 pub use imara_diff::Hunk;
 use parking_lot::{
   RwLock,
   RwLockReadGuard,
 };
+use ropey::Rope;
+use the_editor_event::RenderLockGuard;
 use tokio::{
   sync::mpsc::{
     UnboundedSender,

@@ -17,6 +17,7 @@ use crate::core::{
   },
   position::{
     char_idx_at_visual_block_offset,
+    char_idx_at_visual_offset,
     visual_offset_from_block,
   },
   selection::Range,
@@ -230,6 +231,54 @@ pub fn move_horizontally(
 
   let mut new_range = range.put_cursor(slice, new_pos, behavior == Movement::Extend);
   new_range.old_visual_pos = None;
+  new_range
+}
+
+pub fn move_vertically_visual(
+  slice: RopeSlice,
+  range: Range,
+  dir: Direction,
+  count: usize,
+  behavior: Movement,
+  text_fmt: &TextFormat,
+  annotations: &mut TextAnnotations,
+) -> Range {
+  if !text_fmt.soft_wrap {
+    return move_vertically(slice, range, dir, count, behavior, text_fmt, annotations);
+  }
+
+  annotations.clear_line_annotations();
+  let pos = range.cursor(slice);
+
+  let (visual_pos, block_off) = visual_offset_from_block(slice, pos, pos, text_fmt, annotations);
+  let new_col = range
+    .old_visual_pos
+    .map_or(visual_pos.col as u32, |(_, col)| col);
+
+  let mut row_off = match dir {
+    Direction::Forward => count as isize,
+    Direction::Backward => -(count as isize),
+  };
+  row_off += visual_pos.row as isize;
+
+  let (mut new_pos, virtual_rows) = char_idx_at_visual_offset(
+    slice,
+    block_off,
+    row_off,
+    new_col as usize,
+    text_fmt,
+    annotations,
+  );
+  if dir == Direction::Forward {
+    new_pos += (virtual_rows != 0) as usize;
+  }
+
+  if behavior == Movement::Extend && slice.line(slice.char_to_line(new_pos)).len_chars() == 0 {
+    return range;
+  }
+
+  let mut new_range = range.put_cursor(slice, new_pos, behavior == Movement::Extend);
+  new_range.old_visual_pos = Some((0, new_col));
   new_range
 }
 

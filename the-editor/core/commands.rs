@@ -24,7 +24,9 @@ use crate::{
       Movement,
       move_horizontally,
       move_vertically,
+      move_vertically_visual,
     },
+    position::char_idx_at_visual_offset,
     selection::{
       Range,
       Selection,
@@ -121,8 +123,26 @@ pub fn move_char_up(cx: &mut Context) {
   move_impl(cx, move_vertically, Direction::Backward, Movement::Move)
 }
 
+pub fn move_visual_line_up(cx: &mut Context) {
+  move_impl(
+    cx,
+    move_vertically_visual,
+    Direction::Backward,
+    Movement::Move,
+  )
+}
+
 pub fn move_char_down(cx: &mut Context) {
   move_impl(cx, move_vertically, Direction::Forward, Movement::Move)
+}
+
+pub fn move_visual_line_down(cx: &mut Context) {
+  move_impl(
+    cx,
+    move_vertically_visual,
+    Direction::Forward,
+    Movement::Move,
+  )
 }
 
 pub fn extend_char_left(cx: &mut Context) {
@@ -137,8 +157,26 @@ pub fn extend_char_up(cx: &mut Context) {
   move_impl(cx, move_vertically, Direction::Backward, Movement::Extend)
 }
 
+pub fn extend_visual_line_up(cx: &mut Context) {
+  move_impl(
+    cx,
+    move_vertically_visual,
+    Direction::Backward,
+    Movement::Extend,
+  )
+}
+
 pub fn extend_char_down(cx: &mut Context) {
   move_impl(cx, move_vertically, Direction::Forward, Movement::Extend)
+}
+
+pub fn extend_visual_line_down(cx: &mut Context) {
+  move_impl(
+    cx,
+    move_vertically_visual,
+    Direction::Forward,
+    Movement::Extend,
+  )
 }
 
 /// Delete the selection if non-empty; otherwise delete one grapheme backward.
@@ -208,6 +246,114 @@ pub fn move_prev_sub_word_end(cx: &mut Context) {
 
 pub fn move_next_sub_word_end(cx: &mut Context) {
   move_word_impl(cx, movement::move_next_sub_word_end)
+}
+
+pub fn scroll(cx: &mut Context, offset: usize, direction: Direction, sync_cursor: bool) {
+  use Direction::*;
+
+  let config = cx.editor.config();
+  let (view, doc) = current!(cx.editor);
+  let mut view_offset = doc.view_offset(view.id);
+
+  let range = doc.selection(view.id).primary();
+  let cursor = {
+    let text = doc.text().slice(..);
+    range.cursor(text)
+  };
+  let height = view.inner_height();
+
+  let scrolloff = config.scrolloff.min(height.saturating_sub(1) / 2);
+  let offset = match direction {
+    Forward => offset as isize,
+    Backward => -(offset as isize),
+  };
+
+  let viewport = view.inner_area(doc);
+  let text_fmt = doc.text_format(viewport.width, None);
+  {
+    let doc_text = doc.text().slice(..);
+    (view_offset.anchor, view_offset.vertical_offset) = char_idx_at_visual_offset(
+      doc_text,
+      view_offset.anchor,
+      view_offset.vertical_offset as isize + offset,
+      0,
+      &text_fmt,
+      &view.text_annotations(&*doc, None),
+    );
+  }
+  doc.set_view_offset(view.id, view_offset);
+
+  let doc_text = doc.text().slice(..);
+  let mut annotations = view.text_annotations(&*doc, None);
+
+  if sync_cursor {
+    let movement = match cx.editor.mode {
+      Mode::Select => Movement::Extend,
+      _ => Movement::Move,
+    };
+    let selection = doc.selection(view.id).clone().transform(|range| {
+      move_vertically_visual(
+        doc_text,
+        range,
+        direction,
+        offset.unsigned_abs(),
+        movement,
+        &text_fmt,
+        &mut annotations,
+      )
+    });
+    drop(annotations);
+    doc.set_selection(view.id, selection);
+    return;
+  }
+
+  let view_offset = doc.view_offset(view.id);
+
+  let mut head;
+  match direction {
+    Forward => {
+      let off;
+      (head, off) = char_idx_at_visual_offset(
+        doc_text,
+        view_offset.anchor,
+        (view_offset.vertical_offset + scrolloff) as isize,
+        0,
+        &text_fmt,
+        &annotations,
+      );
+      head += (off != 0) as usize;
+      if head <= cursor {
+        return;
+      }
+    },
+    Backward => {
+      head = char_idx_at_visual_offset(
+        doc_text,
+        view_offset.anchor,
+        (view_offset.vertical_offset + height - scrolloff - 1) as isize,
+        0,
+        &text_fmt,
+        &annotations,
+      )
+      .0;
+      if head >= cursor {
+        return;
+      }
+    },
+  }
+
+  let anchor = if cx.editor.mode == Mode::Select {
+    range.anchor
+  } else {
+    head
+  };
+
+  let prim_sel = Range::new(anchor, head);
+  let mut sel = doc.selection(view.id).clone();
+  let idx = sel.primary_index();
+  sel = sel.replace(idx, prim_sel);
+  drop(annotations);
+  doc.set_selection(view.id, sel);
 }
 
 pub fn delete_char_backward(cx: &mut Context) {

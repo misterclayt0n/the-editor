@@ -17,7 +17,10 @@ use imara_diff::{
   InternedInput,
   Interner,
 };
-use ropey::{Rope, RopeSlice};
+use ropey::{
+  Rope,
+  RopeSlice,
+};
 
 use super::{
   MAX_DIFF_BYTES,

@@ -7,12 +7,14 @@ use anyhow::{
 };
 
 use crate::{
+  Editor,
   core::command_line::{
     ExpansionKind,
     Token,
     TokenKind,
     Tokenizer,
-  }, current_ref, Editor
+  },
+  current_ref,
 };
 
 /// Variables that can be expanded in the command mode (`:`) via the expansion

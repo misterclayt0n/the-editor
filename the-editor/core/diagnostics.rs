@@ -13,7 +13,10 @@ pub use the_editor_stdx::range::Range;
 use crate::core::{
   doc_formatter::FormattedGrapheme,
   document::Document,
-  position::{softwrapped_dimensions, Position},
+  position::{
+    Position,
+    softwrapped_dimensions,
+  },
   text_annotations::LineAnnotation,
   text_format::TextFormat,
 };

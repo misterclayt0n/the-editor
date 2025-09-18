@@ -218,7 +218,10 @@ mod tests {
   use futures_executor::block_on;
   use tokio::task::yield_now;
 
-use crate::{cancelable_future, TaskController};
+  use crate::{
+    TaskController,
+    cancelable_future,
+  };
 
   #[test]
   fn immediate_cancel() {

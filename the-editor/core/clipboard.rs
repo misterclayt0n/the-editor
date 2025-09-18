@@ -171,7 +171,7 @@ mod external {
       } else if binary_exists("win32yank.exe") {
         Self::Win32Yank
       // } else if cfg!(feature = "term") {
-        // Self::Termcode
+      // Self::Termcode
       } else {
         Self::None
       }

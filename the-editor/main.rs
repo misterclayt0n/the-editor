@@ -11,7 +11,10 @@ use crate::{
     graphics::Rect,
     theme,
   },
-  editor::{Editor, EditorConfig},
+  editor::{
+    Editor,
+    EditorConfig,
+  },
   handlers::Handlers,
 };
 
@@ -70,7 +73,10 @@ fn main() -> anyhow::Result<()> {
     area,
     theme_loader.clone(),
     Arc::new(ArcSwap::from_pointee(lang_loader)),
-    Arc::new(Map::new(Arc::clone(&config_ptr), |c: &Config| -> &EditorConfig { &c.editor })),
+    Arc::new(Map::new(
+      Arc::clone(&config_ptr),
+      |c: &Config| -> &EditorConfig { &c.editor },
+    )),
     handlers,
   );
 

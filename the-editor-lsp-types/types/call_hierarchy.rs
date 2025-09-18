@@ -6,10 +6,16 @@ use serde_json::Value;
 use url::Url;
 
 use crate::types::{
+  DynamicRegistrationClientCapabilities,
+  PartialResultParams,
+  Range,
+  SymbolKind,
+  SymbolTag,
+  TextDocumentPositionParams,
   progress::{
     WorkDoneProgressOptions,
     WorkDoneProgressParams,
-  }, DynamicRegistrationClientCapabilities, PartialResultParams, Range, SymbolKind, SymbolTag, TextDocumentPositionParams
+  },
 };
 
 pub type CallHierarchyClientCapabilities = DynamicRegistrationClientCapabilities;

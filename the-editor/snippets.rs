@@ -1,7 +1,7 @@
 pub mod active;
-pub mod render;
 pub mod elaborate;
 pub mod parser;
+pub mod render;
 
 #[derive(PartialEq, Eq, Hash, Debug, PartialOrd, Ord, Clone, Copy)]
 pub struct TabstopIdx(usize);

@@ -588,9 +588,8 @@ pub struct CompletionItemLabelDetails {
 
 #[cfg(test)]
 mod tests {
+  use super::*;
   use crate::types::tests::test_deserialization;
-
-use super::*;
 
   #[test]
   fn test_tag_support_deserialization() {

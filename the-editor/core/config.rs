@@ -97,11 +97,13 @@ impl Config {
   //   local: Result<String, ConfigLoadError>,
   // ) -> Result<Config, ConfigLoadError> {
   //   let global_config: Result<ConfigRaw, ConfigLoadError> =
-  //     global.and_then(|file| toml::from_str(&file).map_err(ConfigLoadError::BadConfig));
-    
+  //     global.and_then(|file|
+  // toml::from_str(&file).map_err(ConfigLoadError::BadConfig));
+
   //   let local_config: Result<ConfigRaw, ConfigLoadError> =
-  //     local.and_then(|file| toml::from_str(&file).map_err(ConfigLoadError::BadConfig));
-    
+  //     local.and_then(|file|
+  // toml::from_str(&file).map_err(ConfigLoadError::BadConfig));
+
   //   let res = match (global_config, local_config) {
   //     (Ok(global), Ok(local)) => {
   //       let mut keys = keymap::default();
@@ -131,9 +133,9 @@ impl Config {
   //       }
   //     },
   //     // if any configs are invalid return that first
-  //     (_, Err(ConfigLoadError::BadConfig(err))) | (Err(ConfigLoadError::BadConfig(err)), _) => {
-  //       return Err(ConfigLoadError::BadConfig(err));
-  //     },
+  //     (_, Err(ConfigLoadError::BadConfig(err))) |
+  // (Err(ConfigLoadError::BadConfig(err)), _) => {       return
+  // Err(ConfigLoadError::BadConfig(err));     },
   //     (Ok(config), Err(_)) | (Err(_), Ok(config)) => {
   //       let mut keys = keymap::default();
   //       if let Some(keymap) = config.keys {
@@ -158,9 +160,11 @@ impl Config {
 
   // pub fn load_default() -> Result<Config, ConfigLoadError> {
   //   let global_config =
-  //     fs::read_to_string(the_editor_loader::config_file()).map_err(ConfigLoadError::Error);
-    
-  //   let local_config = fs::read_to_string(the_editor_loader::workspace_config_file())
+  //     fs::read_to_string(the_editor_loader::config_file()).
+  // map_err(ConfigLoadError::Error);
+
+  //   let local_config =
+  // fs::read_to_string(the_editor_loader::workspace_config_file())
   //     .map_err(ConfigLoadError::Error);
   //   Config::load(global_config, local_config)
   //   Config::default()

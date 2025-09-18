@@ -10,8 +10,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   // Normal mode: hjkl + arrows move, 'i' enters insert
   let mut normal = crate::keymap!({ "Normal"
     'h' | Left  => move_char_left,
-    'j' | Down  => move_char_down,
-    'k' | Up    => move_char_up,
+    'j' | Down  => move_visual_line_down,
+    'k' | Up    => move_visual_line_up,
     'l' | Right => move_char_right,
     'w'         => move_next_word_start,
     'b'         => move_prev_word_start,
@@ -49,9 +49,10 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   // Visual mode: movement extends selection, Esc exits visual mode
   let mut visual = crate::keymap!({ "Visual"
     'h' | Left  => extend_char_left,
-    'j' | Down  => extend_char_down,
-    'k' | Up    => extend_char_up,
+    'j' | Down  => extend_visual_line_down,
+    'k' | Up    => extend_visual_line_up,
     'l' | Right => extend_char_right,
+    'd'         => delete_selection,
   });
   // Add: visual 'Esc' -> exit visual mode
   if let KeyTrie::Node(ref mut node) = visual {

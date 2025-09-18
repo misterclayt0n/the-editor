@@ -16,10 +16,13 @@ use ropey::{
   RopeSlice,
 };
 
-use crate::core::{transaction::{
-  ChangeSet,
-  Transaction,
-}, Tendril};
+use crate::core::{
+  Tendril,
+  transaction::{
+    ChangeSet,
+    Transaction,
+  },
+};
 
 struct ChangeSetBuilder<'a> {
   res:          ChangeSet,

@@ -1,15 +1,21 @@
 use ropey::Rope;
-use the_editor_event::{events, register_event};
+use the_editor_event::{
+  events,
+  register_event,
+};
 
 use crate::{
   core::{
+    DocumentId,
+    ViewId,
     commands,
     document::Document,
     transaction::ChangeSet,
-    DocumentId,
-    ViewId,
   },
-  editor::{Editor, EditorConfig},
+  editor::{
+    Editor,
+    EditorConfig,
+  },
   keymap::Mode,
   lsp::LanguageServerId,
 };

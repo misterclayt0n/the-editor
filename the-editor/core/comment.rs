@@ -3,11 +3,25 @@
 
 use std::borrow::Cow;
 
-use ropey::{Rope, RopeSlice};
+use ropey::{
+  Rope,
+  RopeSlice,
+};
 use smallvec::SmallVec;
 use the_editor_stdx::rope::RopeSliceExt;
 
-use crate::core::{selection::{Range, Selection}, syntax::config::BlockCommentToken, transaction::{Change, Transaction}, Tendril};
+use crate::core::{
+  Tendril,
+  selection::{
+    Range,
+    Selection,
+  },
+  syntax::config::BlockCommentToken,
+  transaction::{
+    Change,
+    Transaction,
+  },
+};
 
 pub const DEFAULT_COMMENT_TOKEN: &str = "#";
 

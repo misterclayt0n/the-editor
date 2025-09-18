@@ -5,39 +5,39 @@ use smartstring::{
   SmartString,
 };
 
+pub mod auto_pairs;
+pub mod case_conversion;
 pub mod chars;
+pub mod clipboard;
+pub mod command_line;
 pub mod commands;
+pub mod comment;
+pub mod config;
+pub mod diagnostics;
+pub mod diff;
 pub mod doc_formatter;
 pub mod document;
+pub mod editor_config;
+pub mod fuzzy;
 pub mod grapheme;
+pub mod graphics;
+pub mod history;
+pub mod indent;
+pub mod info;
 pub mod line_ending;
+pub mod macros;
 pub mod movement;
 pub mod position;
+pub mod registers;
 pub mod selection;
 pub mod syntax;
 pub mod text_annotations;
 pub mod text_format;
-pub mod transaction;
-pub mod view;
-pub mod case_conversion;
-pub mod indent;
-pub mod config;
-pub mod editor_config;
-pub mod history;
-pub mod diagnostics;
-pub mod clipboard;
-pub mod graphics;
-pub mod uri;
-pub mod diff;
-pub mod command_line;
-pub mod auto_pairs;
 pub mod theme;
+pub mod transaction;
 pub mod tree;
-pub mod registers;
-pub mod macros;
-pub mod info;
-pub mod fuzzy;
-pub mod comment;
+pub mod uri;
+pub mod view;
 
 /// This type basically optimizes small string operations by doing expensive
 /// operations in heap, and using inline storage for small strings to avoid heap

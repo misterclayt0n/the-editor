@@ -109,7 +109,7 @@ pub fn normalize(path: impl AsRef<Path>) -> PathBuf {
             },
           }
         }
-      }
+      },
       #[cfg(not(windows))]
       Component::Normal(c) => {
         ret.push(c);

@@ -120,6 +120,13 @@ impl Context<'_> {
   }
 }
 
+// Store a jump on the jumplist.
+fn push_jump(view: &mut View, doc: &mut Document) {
+  doc.append_changes_to_history(view);
+  let jump = (doc.id(), doc.selection(view.id).clone());
+  view.jumps.push(jump);
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct FindCharPending {
   pub direction: Direction,
@@ -1283,6 +1290,59 @@ pub fn switch_to_lowercase(cx: &mut Context) {
 
 // Goto
 //
+
+pub fn goto_file_start(cx: &mut Context) {
+  goto_file_start_impl(cx, Movement::Move);
+}
+
+fn goto_file_start_impl(cx: &mut Context, movement: Movement) {
+  if cx.count.is_some() {
+    goto_line_impl(cx, movement);
+  } else {
+    let (view, doc) = current!(cx.editor);
+    let text = doc.text().slice(..);
+    let selection = doc
+      .selection(view.id)
+      .clone()
+      .transform(|range| range.put_cursor(text, 0, movement == Movement::Extend));
+    push_jump(view, doc);
+    doc.set_selection(view.id, selection);
+  }
+}
+
+fn goto_line_impl(cx: &mut Context, movement: Movement) {
+  if cx.count.is_some() {
+    let (view, doc) = current!(cx.editor);
+    push_jump(view, doc);
+
+    goto_line_without_jumplist(cx.editor, cx.count, movement);
+  }
+}
+
+fn goto_line_without_jumplist(
+  editor: &mut Editor,
+  count: Option<NonZeroUsize>,
+  movement: Movement,
+) {
+  if let Some(count) = count {
+    let (view, doc) = current!(editor);
+    let text = doc.text().slice(..);
+    let max_line = if text.line(text.len_lines() - 1).len_chars() == 0 {
+      // If the last line is blank, don't jump to it.
+      text.len_lines().saturating_sub(2)
+    } else {
+      text.len_lines() - 1
+    };
+    let line_idx = std::cmp::min(count.get() - 1, max_line);
+    let pos = text.line_to_char(line_idx);
+    let selection = doc
+      .selection(view.id)
+      .clone()
+      .transform(|range| range.put_cursor(text, pos, movement == Movement::Extend));
+
+    doc.set_selection(view.id, selection);
+  }
+}
 
 pub fn goto_line_start(cx: &mut Context) {
   let (view, doc) = current!(cx.editor);

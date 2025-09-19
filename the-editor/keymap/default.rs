@@ -48,21 +48,11 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "A"         => insert_at_line_end,
 
     // Minimal examples of prefix maps
-    'g' => { "Goto"
-      'g' => move_char_left, // placeholder examples
-      'e' => move_char_right,
+    "g" => { "Goto"
+      "g" => goto_file_start, // placeholder examples
+      "e" => move_char_right,
     },
   });
-
-  // Add: normal 'i' -> enter insert mode, 'v' -> enter visual mode
-  // if let KeyTrie::Node(ref mut node) = normal {
-    // node
-      // .map
-      // .insert(crate::key!('i'), KeyTrie::Command(Command::EnterInsertMode));
-    // node
-      // .map
-      // .insert(crate::key!('v'), KeyTrie::Command(Command::EnterVisualMode));
-  // }
 
   // Insert mode: text input handled via InputEvent::Text; map Esc and Backspace
   let mut insert = crate::keymap!({ "Insert"

@@ -1401,3 +1401,21 @@ fn goto_line_end_impl(view: &mut View, doc: &mut Document, movement: Movement) {
   });
   doc.set_selection(view.id, selection);
 }
+
+pub fn goto_column(cx: &mut Context) {
+  goto_column_impl(cx, Movement::Move);
+}
+
+fn goto_column_impl(cx: &mut Context, movement: Movement) {
+  let count = cx.count();
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+  let selection = doc.selection(view.id).clone().transform(|range| {
+    let line = range.cursor_line(text);
+    let line_start = text.line_to_char(line);
+    let line_end = line_end_char_index(&text, line);
+    let pos = grapheme::nth_next_grapheme_boundary(text, line_start, count - 1).min(line_end);
+    range.put_cursor(text, pos, movement == Movement::Extend)
+  });
+  doc.set_selection(view.id, selection);
+}

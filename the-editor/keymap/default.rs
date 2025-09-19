@@ -52,7 +52,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "G" => goto_line,
     "g" => { "Goto"
       "g" => goto_file_start, // placeholder examples
-      "e" => move_char_right,
+      "|" => goto_column,
     },
   });
 

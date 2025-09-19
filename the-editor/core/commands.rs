@@ -1310,6 +1310,29 @@ fn goto_file_start_impl(cx: &mut Context, movement: Movement) {
   }
 }
 
+pub fn goto_last_line(cx: &mut Context) {
+  goto_last_line_impl(cx, Movement::Move)
+}
+
+fn goto_last_line_impl(cx: &mut Context, movement: Movement) {
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+  let line_idx = if text.line(text.len_lines() - 1).len_chars() == 0 {
+    // If the last line is blank, don't jump to it.
+    text.len_lines().saturating_sub(2)
+  } else {
+    text.len_lines() - 1
+  };
+  let pos = text.line_to_char(line_idx);
+  let selection = doc
+    .selection(view.id)
+    .clone()
+    .transform(|range| range.put_cursor(text, pos, movement == Movement::Extend));
+
+  push_jump(view, doc);
+  doc.set_selection(view.id, selection);
+}
+
 pub fn goto_line(cx: &mut Context) {
   goto_line_impl(cx, Movement::Move);
 }

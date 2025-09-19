@@ -53,6 +53,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "g" => { "Goto"
       "g" => goto_file_start, // placeholder examples
       "|" => goto_column,
+      "e" => goto_last_line,
     },
   });
 

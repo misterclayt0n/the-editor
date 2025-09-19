@@ -834,7 +834,7 @@ fn enter_insert_mode(cx: &mut Context) {
 }
 
 // Inserts at the start of each selection.
-fn insert_mode(cx: &mut Context) {
+pub fn insert_mode(cx: &mut Context) {
   enter_insert_mode(cx);
   let (view, doc) = current!(cx.editor);
 
@@ -850,6 +850,124 @@ fn insert_mode(cx: &mut Context) {
     .transform(|range| Range::new(range.to(), range.from()));
 
   doc.set_selection(view.id, selection);
+}
+
+// Inserts at the end of each selection
+pub fn append_mode(cx: &mut Context) {
+  enter_insert_mode(cx);
+  let (view, doc) = current!(cx.editor);
+  doc.restore_cursor = true;
+  let text = doc.text().slice(..);
+
+  // Make sure there's room at the end of the document if the last
+  // selection butts up against it.
+  let end = text.len_chars();
+  let last_range = doc
+    .selection(view.id)
+    .iter()
+    .last()
+    .expect("selection should always have at least one range");
+  if !last_range.is_empty() && last_range.to() == end {
+    let transaction = Transaction::change(
+      doc.text(),
+      [(end, end, Some(doc.line_ending.as_str().into()))].into_iter(),
+    );
+    doc.apply(&transaction, view.id);
+  }
+
+  let selection = doc.selection(view.id).clone().transform(|range| {
+    Range::new(
+      range.from(),
+      grapheme::next_grapheme_boundary(doc.text().slice(..), range.to()),
+    )
+  });
+  doc.set_selection(view.id, selection);
+}
+
+/// Fallback position to use for [`insert_with_indent`].
+enum IndentFallbackPos {
+  LineStart,
+  LineEnd,
+}
+
+// `I` inserts at the first nonwhitespace character of each line with a
+// selection. If the line is empty, automatically indent.
+pub fn insert_at_line_start(cx: &mut Context) {
+  insert_with_indent(cx, IndentFallbackPos::LineStart);
+}
+
+// `A` inserts at the end of each line with a selection.
+// If the line is empty, automatically indent.
+pub fn insert_at_line_end(cx: &mut Context) {
+  insert_with_indent(cx, IndentFallbackPos::LineEnd);
+}
+
+// Enter insert mode and auto-indent the current line if it is empty.
+// If the line is not empty, move the cursor to the specified fallback position.
+fn insert_with_indent(cx: &mut Context, cursor_fallback: IndentFallbackPos) {
+  enter_insert_mode(cx);
+
+  let (view, doc) = current!(cx.editor);
+  let loader = cx.editor.syn_loader.load();
+
+  let text = doc.text().slice(..);
+  let contents = doc.text();
+  let selection = doc.selection(view.id);
+
+  let syntax = doc.syntax();
+  let tab_width = doc.tab_width();
+
+  let mut ranges = SmallVec::with_capacity(selection.len());
+  let mut offs = 0;
+
+  let mut transaction = Transaction::change_by_selection(contents, selection, |range| {
+    let cursor_line = range.cursor_line(text);
+    let cursor_line_start = text.line_to_char(cursor_line);
+
+    if line_end_char_index(&text, cursor_line) == cursor_line_start {
+      // line is empty => auto indent
+      let line_end_index = cursor_line_start;
+
+      let indent = indent::indent_for_newline(
+        &loader,
+        syntax,
+        &doc.config.load().indent_heuristic,
+        &doc.indent_style,
+        tab_width,
+        text,
+        cursor_line,
+        line_end_index,
+        cursor_line,
+      );
+
+      // calculate new selection ranges
+      let pos = offs + cursor_line_start;
+      let indent_width = indent.chars().count();
+      ranges.push(Range::point(pos + indent_width));
+      offs += indent_width;
+
+      (line_end_index, line_end_index, Some(indent.into()))
+    } else {
+      // move cursor to the fallback position
+      let pos = match cursor_fallback {
+        IndentFallbackPos::LineStart => {
+          text
+            .line(cursor_line)
+            .first_non_whitespace_char()
+            .map(|ws_offset| ws_offset + cursor_line_start)
+            .unwrap_or(cursor_line_start)
+        },
+        IndentFallbackPos::LineEnd => line_end_char_index(&text, cursor_line),
+      };
+
+      ranges.push(range.put_cursor(text, pos + offs, cx.editor.mode == Mode::Select));
+
+      (cursor_line_start, cursor_line_start, None)
+    }
+  });
+
+  transaction = transaction.with_selection(Selection::new(ranges, selection.primary_index()));
+  doc.apply(&transaction, view.id);
 }
 
 #[derive(PartialEq, Eq)]

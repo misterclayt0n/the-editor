@@ -3,6 +3,8 @@ use std::{
   num::NonZeroUsize,
 };
 
+use once_cell::sync::Lazy;
+use regex::Regex;
 use ropey::{
   Rope,
   RopeSlice,
@@ -54,6 +56,8 @@ type MoveFn =
   fn(RopeSlice, Range, Direction, usize, Movement, &TextFormat, &mut TextAnnotations) -> Range;
 
 pub type OnKeyCallback = Box<dyn FnOnce(&mut Context, KeyPress) + 'static>;
+
+static LINE_ENDING_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\r\n|\r|\n").unwrap());
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum OnKeyCallbackKind {
@@ -992,4 +996,61 @@ pub fn replace(cx: &mut Context) {
       exit_select_mode(cx);
     }
   });
+}
+
+pub fn replace_with_yanked(cx: &mut Context) {
+  let register = cx
+    .register
+    .unwrap_or_else(|| cx.editor.config.load().default_yank_register);
+  let count = cx.count();
+
+  replace_with_yanked_impl(cx.editor, register, count);
+  exit_select_mode(cx);
+}
+
+fn replace_with_yanked_impl(editor: &mut Editor, register: char, count: usize) {
+  let Some(values) = editor
+    .registers
+    .read(register, editor)
+    .filter(|values| values.len() > 0)
+  else {
+    return;
+  };
+
+  let scrolloff = editor.config().scrolloff;
+  let (view, doc) = current_ref!(editor);
+
+  let map_value = |value: &Cow<str>| {
+    let value = LINE_ENDING_REGEX.replace_all(value, doc.line_ending.as_str());
+    let mut out = Tendril::from(value.as_ref());
+    for _ in 1..count {
+      out.push_str(&value);
+    }
+
+    out
+  };
+
+  let mut values_rev = values.rev().peekable();
+  
+  // `values` is asserted to have at least one entry above.
+  let last = values_rev.peek().unwrap();
+  let repeat = std::iter::repeat(map_value(last));
+  let mut values = values_rev
+    .rev()
+    .map(|value| map_value(&value))
+    .chain(repeat);
+  let selection = doc.selection(view.id);
+  let transaction = Transaction::change_by_selection(doc.text(), selection, |range| {
+    if !range.is_empty() {
+      (range.from(), range.to(), Some(values.next().unwrap()))
+    } else {
+      (range.from(), range.to(), None)
+    }
+  });
+  drop(values);
+
+  let (view, doc) = current!(editor);
+  doc.apply(&transaction, view.id);
+  doc.append_changes_to_history(view);
+  view.ensure_cursor_in_view(doc, scrolloff);
 }

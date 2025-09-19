@@ -183,6 +183,10 @@ pub fn run<A: Application + 'static>(
   };
 
   fn map_winit_key(logical_key: &WinitKey, physical_key: &PhysicalKey) -> event::Key {
+    if matches!(logical_key, WinitKey::Dead(_)) {
+      return event::Key::Other;
+    }
+
     match logical_key {
       WinitKey::Character(s) if !s.is_empty() => {
         let mut chars = s.chars();
@@ -286,6 +290,37 @@ pub fn run<A: Application + 'static>(
     }
   }
 
+  fn update_modifier_state(
+    mods: &mut ModifiersState,
+    physical_key: &PhysicalKey,
+    state: ElementState,
+  ) {
+    use winit::keyboard::KeyCode;
+
+    let flag = match physical_key {
+      PhysicalKey::Code(KeyCode::ShiftLeft) | PhysicalKey::Code(KeyCode::ShiftRight) => {
+        Some(ModifiersState::SHIFT)
+      },
+      PhysicalKey::Code(KeyCode::ControlLeft) | PhysicalKey::Code(KeyCode::ControlRight) => {
+        Some(ModifiersState::CONTROL)
+      },
+      PhysicalKey::Code(KeyCode::AltLeft) | PhysicalKey::Code(KeyCode::AltRight) => {
+        Some(ModifiersState::ALT)
+      },
+      PhysicalKey::Code(KeyCode::SuperLeft) | PhysicalKey::Code(KeyCode::SuperRight) => {
+        Some(ModifiersState::SUPER)
+      },
+      _ => None,
+    };
+
+    if let Some(flag) = flag {
+      match state {
+        ElementState::Pressed => mods.insert(flag),
+        ElementState::Released => mods.remove(flag),
+      }
+    }
+  }
+
   struct RendererApp<A: Application> {
     window:         Option<Arc<Window>>,
     renderer:       Option<Renderer>,
@@ -357,6 +392,8 @@ pub fn run<A: Application + 'static>(
           ..
         } => {
           if let Some(renderer) = &mut self.renderer {
+            update_modifier_state(&mut self.modifiers_state, &physical_key, state);
+
             let code = map_winit_key(&logical_key, &physical_key);
             let modifiers = self.modifiers_state;
             let mut key_press = KeyPress {
@@ -377,7 +414,12 @@ pub fn run<A: Application + 'static>(
             }
 
             // For regular text-producing keys, prefer KeyEvent.text when not already handled.
-            if !handled && state == ElementState::Pressed {
+            // Skip textual insertion when control or alt modifiers are active so chorded
+            // keybindings (e.g. Alt+Backspace) do not insert control characters.
+            if !handled
+              && state == ElementState::Pressed
+              && !(modifiers.alt_key() || modifiers.control_key())
+            {
               if let Some(t) = &text {
                 if !t.is_empty() {
                   let text_event = InputEvent::Text(t.to_string());

@@ -802,6 +802,27 @@ fn selection_is_linewise(selection: &Selection, text: &Rope) -> bool {
 // Mode switching
 //
 
+pub fn select_mode(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+
+  // NOTE: Make sure end-of-document selections are also 1-width.
+  //       With the exception of being in an empty document, of course.
+  let selection = doc.selection(view.id).clone().transform(|range| {
+    if range.is_empty() && range.head == text.len_chars() {
+      Range::new(
+        grapheme::prev_grapheme_boundary(text, range.anchor),
+        range.head,
+      )
+    } else {
+      range
+    }
+  });
+  doc.set_selection(view.id, selection);
+
+  cx.editor.mode = Mode::Select;
+}
+
 fn exit_select_mode(cx: &mut Context) {
   if cx.editor.mode == Mode::Select {
     cx.editor.mode = Mode::Normal;

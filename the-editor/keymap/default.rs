@@ -26,15 +26,22 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "t"         => find_till_char,
     "F"         => find_prev_char,
     "T"         => till_prev_char,
+    
     "d"         => delete_selection,
+    
     "r"         => replace,
     "R"         => replace_with_yanked,
+    
     "A-."       => repeat_last_motion,
+    
     "~"         => switch_case,
     "`"         => switch_to_lowercase,
     "A-`"       => switch_to_uppercase,
+    
     "home"      => goto_line_start,
     "end"       => goto_line_end,
+
+    "v"         => select_mode,
 
     // Minimal examples of prefix maps
     'g' => { "Goto"
@@ -48,9 +55,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     node
       .map
       .insert(crate::key!('i'), KeyTrie::Command(Command::EnterInsertMode));
-    node
-      .map
-      .insert(crate::key!('v'), KeyTrie::Command(Command::EnterVisualMode));
+    // node
+      // .map
+      // .insert(crate::key!('v'), KeyTrie::Command(Command::EnterVisualMode));
   }
 
   // Insert mode: text input handled via InputEvent::Text; map Esc and Backspace

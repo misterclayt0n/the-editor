@@ -27,6 +27,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "~"         => switch_case,
     "`"         => switch_to_lowercase,
     "A-`"       => switch_to_uppercase,
+    "home"      => goto_line_start,
+    "end"       => goto_line_end,
 
     // Minimal examples of prefix maps
     'g' => { "Goto"

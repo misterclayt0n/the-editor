@@ -25,6 +25,7 @@ use crate::{
     Tendril,
     auto_pairs,
     comment,
+    document::Document,
     grapheme,
     indent,
     line_ending::line_end_char_index,
@@ -48,6 +49,7 @@ use crate::{
     text_annotations::TextAnnotations,
     text_format::TextFormat,
     transaction::Transaction,
+    view::View,
   },
   current,
   current_ref,
@@ -1138,4 +1140,61 @@ pub fn switch_to_lowercase(cx: &mut Context) {
   switch_case_impl(cx, |string| {
     string.chunks().map(|chunk| chunk.to_lowercase()).collect()
   });
+}
+
+// Goto
+//
+
+pub fn goto_line_start(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  goto_line_start_impl(
+    view,
+    doc,
+    if cx.editor.mode == Mode::Select {
+      Movement::Extend
+    } else {
+      Movement::Move
+    },
+  )
+}
+
+fn goto_line_start_impl(view: &mut View, doc: &mut Document, movement: Movement) {
+  let text = doc.text().slice(..);
+
+  let selection = doc.selection(view.id).clone().transform(|range| {
+    let line = range.cursor_line(text);
+
+    // Adjust to start of the line.
+    let pos = text.line_to_char(line);
+    range.put_cursor(text, pos, movement == Movement::Extend)
+  });
+  doc.set_selection(view.id, selection);
+}
+
+pub fn goto_line_end(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  goto_line_end_impl(
+    view,
+    doc,
+    if cx.editor.mode == Mode::Select {
+      Movement::Extend
+    } else {
+      Movement::Move
+    },
+  )
+}
+
+fn goto_line_end_impl(view: &mut View, doc: &mut Document, movement: Movement) {
+  let text = doc.text().slice(..);
+
+  let selection = doc.selection(view.id).clone().transform(|range| {
+    let line = range.cursor_line(text);
+    let line_start = text.line_to_char(line);
+
+    let pos =
+      grapheme::prev_grapheme_boundary(text, line_end_char_index(&text, line)).max(line_start);
+
+    range.put_cursor(text, pos, movement == Movement::Extend)
+  });
+  doc.set_selection(view.id, selection);
 }

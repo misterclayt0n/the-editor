@@ -1310,6 +1310,10 @@ fn goto_file_start_impl(cx: &mut Context, movement: Movement) {
   }
 }
 
+pub fn goto_line(cx: &mut Context) {
+  goto_line_impl(cx, Movement::Move);
+}
+
 fn goto_line_impl(cx: &mut Context, movement: Movement) {
   if cx.count.is_some() {
     let (view, doc) = current!(cx.editor);

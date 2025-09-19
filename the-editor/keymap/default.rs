@@ -48,6 +48,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "A"         => insert_at_line_end,
 
     // Minimal examples of prefix maps
+    
+    "G" => goto_line,
     "g" => { "Goto"
       "g" => goto_file_start, // placeholder examples
       "e" => move_char_right,

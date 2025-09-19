@@ -93,6 +93,7 @@ const STATUS_BAR_HEIGHT: f32 = 30.0;
 fn key_press_from_char(ch: char) -> KeyPress {
   let code = match ch {
     '\n' | '\r' => Key::Enter,
+    '\t' => Key::Tab,
     _ => Key::Char(ch),
   };
 
@@ -3018,7 +3019,7 @@ impl Application for Editor {
           }
 
           // Dispatch renderer Key directly through keymap.
-          let handled = match self.keymaps.get(self.mode, key_press.code) {
+          let handled = match self.keymaps.get(self.mode, &key_press) {
             KeymapResult::Matched(cmd) => {
               match cmd {
                 crate::keymap::Command::Execute(f) => {
@@ -3177,7 +3178,8 @@ impl Application for Editor {
           // Treat as normal-mode keypresses (first char only).
           if let Some(ch) = remaining.chars().next() {
             use crate::keymap::KeymapResult;
-            let handled = match self.keymaps.get(self.mode, Key::Char(ch)) {
+            let key_press = key_press_from_char(ch);
+            let handled = match self.keymaps.get(self.mode, &key_press) {
               KeymapResult::Matched(cmd) => {
                 match cmd {
                   crate::keymap::Command::Execute(f) => {

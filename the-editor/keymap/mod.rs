@@ -1,10 +1,17 @@
-use std::collections::HashMap;
+use std::{
+  collections::HashMap,
+  fmt,
+  str::FromStr,
+};
 
 use serde::{
   Deserialize,
   Serialize,
 };
-use the_editor_renderer::Key;
+use the_editor_renderer::{
+  Key,
+  KeyPress,
+};
 
 use crate::core::commands;
 
@@ -12,6 +19,188 @@ pub mod default;
 pub mod macros;
 
 // macros are exported at crate root via #[macro_export]
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct KeyBinding {
+  pub code:  Key,
+  pub shift: bool,
+  pub ctrl:  bool,
+  pub alt:   bool,
+}
+
+impl KeyBinding {
+  pub const fn new(code: Key) -> Self {
+    Self {
+      code,
+      shift: false,
+      ctrl: false,
+      alt: false,
+    }
+  }
+
+  pub const fn with_modifiers(mut self, shift: bool, ctrl: bool, alt: bool) -> Self {
+    self.shift = shift;
+    self.ctrl = ctrl;
+    self.alt = alt;
+    self
+  }
+
+  pub const fn from_key_press(press: &KeyPress) -> Self {
+    Self {
+      code: press.code,
+      shift: press.shift,
+      ctrl: press.ctrl,
+      alt: press.alt,
+    }
+  }
+}
+
+#[derive(Debug)]
+pub struct ParseKeyBindingError(pub String);
+
+impl fmt::Display for ParseKeyBindingError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{}", self.0)
+  }
+}
+
+impl std::error::Error for ParseKeyBindingError {}
+
+impl FromStr for KeyBinding {
+  type Err = ParseKeyBindingError;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+      return Err(ParseKeyBindingError("empty key literal".into()));
+    }
+
+    if trimmed == "-" {
+      return Ok(KeyBinding::new(Key::Char('-')));
+    }
+
+    let mut tokens: Vec<_> = trimmed.split('-').collect();
+    let key_token = tokens
+      .pop()
+      .ok_or_else(|| ParseKeyBindingError("missing key token".into()))?;
+
+    let mut shift = false;
+    let mut ctrl = false;
+    let mut alt = false;
+
+    for token in tokens {
+      let modifier = token.trim();
+      if modifier.is_empty() {
+        continue;
+      }
+
+      match modifier.to_ascii_uppercase().as_str() {
+        "S" | "SHIFT" => {
+          if shift {
+            return Err(ParseKeyBindingError(format!(
+              "repeated key modifier '{}-'",
+              modifier
+            )));
+          }
+          shift = true;
+        },
+        "C" | "CTRL" | "CONTROL" => {
+          if ctrl {
+            return Err(ParseKeyBindingError(format!(
+              "repeated key modifier '{}-'",
+              modifier
+            )));
+          }
+          ctrl = true;
+        },
+        "A" | "ALT" => {
+          if alt {
+            return Err(ParseKeyBindingError(format!(
+              "repeated key modifier '{}-'",
+              modifier
+            )));
+          }
+          alt = true;
+        },
+        invalid => {
+          return Err(ParseKeyBindingError(format!(
+            "invalid key modifier '{}-'",
+            invalid
+          )));
+        },
+      }
+    }
+
+    let code = parse_key_token(key_token)?;
+
+    Ok(KeyBinding {
+      code,
+      shift,
+      ctrl,
+      alt,
+    })
+  }
+}
+
+fn parse_key_token(token: &str) -> Result<Key, ParseKeyBindingError> {
+  if token.len() == 1 {
+    return Ok(Key::Char(token.chars().next().unwrap()));
+  }
+
+  match token.to_ascii_lowercase().as_str() {
+    "space" => Ok(Key::Char(' ')),
+    "minus" => Ok(Key::Char('-')),
+    "underscore" => Ok(Key::Char('_')),
+    "comma" => Ok(Key::Char(',')),
+    "period" | "dot" => Ok(Key::Char('.')),
+    "slash" => Ok(Key::Char('/')),
+    "backslash" | "bslash" => Ok(Key::Char('\\')),
+    "semicolon" => Ok(Key::Char(';')),
+    "quote" | "apostrophe" => Ok(Key::Char('\'')),
+    "doublequote" | "dquote" => Ok(Key::Char('"')),
+    "enter" | "ret" | "return" => Ok(Key::Enter),
+    "esc" | "escape" => Ok(Key::Escape),
+    "backspace" | "bs" => Ok(Key::Backspace),
+    "tab" => Ok(Key::Tab),
+    "delete" | "del" => Ok(Key::Delete),
+    "home" => Ok(Key::Home),
+    "end" => Ok(Key::End),
+    "pageup" | "pgup" => Ok(Key::PageUp),
+    "pagedown" | "pgdown" => Ok(Key::PageDown),
+    "left" => Ok(Key::Left),
+    "right" => Ok(Key::Right),
+    "up" => Ok(Key::Up),
+    "down" => Ok(Key::Down),
+    invalid => Err(ParseKeyBindingError(format!("unknown key '{invalid}'"))),
+  }
+}
+
+pub trait IntoKeyBinding {
+  fn into_binding(self) -> Result<KeyBinding, ParseKeyBindingError>;
+}
+
+impl IntoKeyBinding for char {
+  fn into_binding(self) -> Result<KeyBinding, ParseKeyBindingError> {
+    Ok(KeyBinding::new(Key::Char(self)))
+  }
+}
+
+impl IntoKeyBinding for &'static str {
+  fn into_binding(self) -> Result<KeyBinding, ParseKeyBindingError> {
+    KeyBinding::from_str(self)
+  }
+}
+
+pub fn binding_from_literal<L: IntoKeyBinding>(literal: L) -> KeyBinding {
+  literal
+    .into_binding()
+    .unwrap_or_else(|err| panic!("invalid key literal: {err}"))
+}
+
+pub fn binding_from_ident(name: &str) -> KeyBinding {
+  KeyBinding::from_str(name)
+    .unwrap_or_else(|err| panic!("invalid key identifier '{name}': {err}"))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub enum Mode {
@@ -50,13 +239,13 @@ pub enum KeyTrie {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct KeyTrieNode {
   pub name:      String,
-  pub map:       HashMap<Key, KeyTrie>,
-  pub order:     Vec<Key>,
+  pub map:       HashMap<KeyBinding, KeyTrie>,
+  pub order:     Vec<KeyBinding>,
   pub is_sticky: bool,
 }
 
 impl KeyTrieNode {
-  pub fn new(name: &str, map: HashMap<Key, KeyTrie>, order: Vec<Key>) -> Self {
+  pub fn new(name: &str, map: HashMap<KeyBinding, KeyTrie>, order: Vec<KeyBinding>) -> Self {
     Self {
       name: name.to_string(),
       map,
@@ -101,7 +290,7 @@ impl KeyTrie {
     self.node_mut().expect("expected node").merge(node);
   }
 
-  pub fn search(&self, keys: &[Key]) -> Option<&KeyTrie> {
+  pub fn search(&self, keys: &[KeyBinding]) -> Option<&KeyTrie> {
     let mut trie = self;
     for key in keys {
       trie = match trie {
@@ -118,13 +307,13 @@ pub enum KeymapResult {
   Pending(KeyTrieNode),
   Matched(Command),
   NotFound,
-  Cancelled(Vec<Key>),
+  Cancelled(Vec<KeyBinding>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Keymaps {
   pub map:    HashMap<Mode, KeyTrie>,
-  state:      Vec<Key>,
+  state:      Vec<KeyBinding>,
   pub sticky: Option<KeyTrieNode>,
 }
 
@@ -137,42 +326,44 @@ impl Keymaps {
     }
   }
 
-  pub fn pending(&self) -> &[Key] {
+  pub fn pending(&self) -> &[KeyBinding] {
     &self.state
   }
 
   // Backwards-compat: keep signature for now, but unused
   #[allow(dead_code)]
-  pub fn pending_keys(&self) -> &[Key] {
+  pub fn pending_keys(&self) -> &[KeyBinding] {
     &self.state
   }
   pub fn sticky(&self) -> Option<&KeyTrieNode> {
     self.sticky.as_ref()
   }
 
-  pub fn contains_key(&self, mode: Mode, key: Key) -> bool {
+  pub fn contains_key(&self, mode: Mode, binding: KeyBinding) -> bool {
     let keymap = self.map.get(&mode).expect("mode not in keymap");
     keymap
       .search(self.pending())
       .and_then(KeyTrie::node)
-      .map_or(false, |n| n.map.contains_key(&key))
+      .map_or(false, |n| n.map.contains_key(&binding))
   }
 
-  pub fn get(&mut self, mode: Mode, key: Key) -> KeymapResult {
+  pub fn get(&mut self, mode: Mode, key_press: &KeyPress) -> KeymapResult {
     let keymap = match self.map.get(&mode) {
       Some(k) => k,
       None => return KeymapResult::NotFound,
     };
 
+    let binding = KeyBinding::from_key_press(key_press);
+
     // ESC cancels pending and clears sticky if no pending
-    if matches!(key, Key::Escape) {
+    if matches!(binding.code, Key::Escape) {
       if !self.state.is_empty() {
         return KeymapResult::Cancelled(self.state.drain(..).collect());
       }
       self.sticky = None;
     }
 
-    let first = self.state.first().copied().unwrap_or(key);
+    let first = self.state.first().copied().unwrap_or(binding);
     let base = match &self.sticky {
       Some(trie) => KeyTrie::Node(trie.clone()),
       None => keymap.clone(),
@@ -184,7 +375,7 @@ impl Keymaps {
       Some(t) => t,
     };
 
-    self.state.push(key);
+    self.state.push(binding);
     match trie.search(&self.state[1..]) {
       Some(KeyTrie::Node(map)) => {
         if map.is_sticky {

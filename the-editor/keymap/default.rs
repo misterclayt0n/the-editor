@@ -23,6 +23,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     'd'         => delete_selection,
     'r'         => replace,
     'R'         => replace_with_yanked,
+    "A-."       => repeat_last_motion,
 
     // Minimal examples of prefix maps
     'g' => { "Goto"

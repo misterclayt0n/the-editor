@@ -13,6 +13,18 @@ pub enum Key {
   Enter,
   /// Backspace key
   Backspace,
+  /// Tab key
+  Tab,
+  /// Delete key
+  Delete,
+  /// Home key
+  Home,
+  /// End key
+  End,
+  /// Page up key
+  PageUp,
+  /// Page down key
+  PageDown,
   /// Up arrow key
   Up,
   /// Down arrow key

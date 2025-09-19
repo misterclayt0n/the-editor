@@ -653,6 +653,10 @@ pub fn extend_prev_char(cx: &mut Context) {
   find_char(cx, Direction::Backward, true, true)
 }
 
+pub fn repeat_last_motion(cx: &mut Context) {
+  cx.editor.repeat_last_motion(cx.count());
+}
+
 pub mod insert {
   use std::borrow::Cow;
 

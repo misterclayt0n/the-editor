@@ -1,34 +1,10 @@
 #[macro_export]
 macro_rules! key {
-  // Named keys
-  (Left) => {
-    the_editor_renderer::Key::Left
-  };
-  (Right) => {
-    the_editor_renderer::Key::Right
-  };
-  (Up) => {
-    the_editor_renderer::Key::Up
-  };
-  (Down) => {
-    the_editor_renderer::Key::Down
-  };
-  (Enter) => {
-    the_editor_renderer::Key::Enter
-  };
-  (Esc) => {
-    the_editor_renderer::Key::Escape
-  };
-  (Backspace) => {
-    the_editor_renderer::Key::Backspace
-  };
-  (Space) => {
-    the_editor_renderer::Key::Char(' ')
-  };
-  // Char keys
-  ($ch:literal) => {{
-    const C: char = $ch;
-    the_editor_renderer::Key::Char(C)
+  ($name:ident) => {{
+    $crate::keymap::binding_from_ident(stringify!($name))
+  }};
+  ($lit:literal) => {{
+    $crate::keymap::binding_from_literal($lit)
   }};
 }
 
@@ -37,8 +13,8 @@ macro_rules! keymap {
   ({ $name:literal $($rest:tt)* }) => {
     {
       use std::collections::HashMap;
-      let mut _map: HashMap<the_editor_renderer::Key, $crate::keymap::KeyTrie> = HashMap::new();
-      let mut _order: Vec<the_editor_renderer::Key> = Vec::new();
+      let mut _map: HashMap<$crate::keymap::KeyBinding, $crate::keymap::KeyTrie> = HashMap::new();
+      let mut _order: Vec<$crate::keymap::KeyBinding> = Vec::new();
       $crate::keymap!(@pairs _map, _order; $($rest)*);
       $crate::keymap::KeyTrie::Node($crate::keymap::KeyTrieNode::new($name, _map, _order))
     }

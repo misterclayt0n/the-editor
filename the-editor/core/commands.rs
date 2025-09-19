@@ -1,5 +1,9 @@
 use std::{
   borrow::Cow,
+  char::{
+    ToLowercase,
+    ToUppercase,
+  },
   num::NonZeroUsize,
 };
 
@@ -1035,7 +1039,7 @@ fn replace_with_yanked_impl(editor: &mut Editor, register: char, count: usize) {
   };
 
   let mut values_rev = values.rev().peekable();
-  
+
   // `values` is asserted to have at least one entry above.
   let last = values_rev.peek().unwrap();
   let repeat = std::iter::repeat(map_value(last));
@@ -1057,4 +1061,81 @@ fn replace_with_yanked_impl(editor: &mut Editor, register: char, count: usize) {
   doc.apply(&transaction, view.id);
   doc.append_changes_to_history(view);
   view.ensure_cursor_in_view(doc, scrolloff);
+}
+
+// Case switching
+//
+
+enum CaseSwitcher {
+  Upper(ToUppercase),
+  Lower(ToLowercase),
+  Keep(Option<char>),
+}
+
+impl Iterator for CaseSwitcher {
+  type Item = char;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    match self {
+      CaseSwitcher::Upper(upper) => upper.next(),
+      CaseSwitcher::Lower(lower) => lower.next(),
+      CaseSwitcher::Keep(ch) => ch.take(),
+    }
+  }
+
+  fn size_hint(&self) -> (usize, Option<usize>) {
+    match self {
+      CaseSwitcher::Upper(upper) => upper.size_hint(),
+      CaseSwitcher::Lower(lower) => lower.size_hint(),
+      CaseSwitcher::Keep(ch) => {
+        let n = if ch.is_some() { 1 } else { 0 };
+        (n, Some(n))
+      },
+    }
+  }
+}
+
+pub fn switch_case(cx: &mut Context) {
+  switch_case_impl(cx, |string| {
+    string
+      .chars()
+      .flat_map(|ch| {
+        if ch.is_lowercase() {
+          CaseSwitcher::Upper(ch.to_uppercase())
+        } else if ch.is_uppercase() {
+          CaseSwitcher::Lower(ch.to_lowercase())
+        } else {
+          CaseSwitcher::Keep(Some(ch))
+        }
+      })
+      .collect()
+  });
+}
+
+fn switch_case_impl<F>(cx: &mut Context, change_fn: F)
+where
+  F: Fn(RopeSlice) -> Tendril,
+{
+  let (view, doc) = current!(cx.editor);
+  let selection = doc.selection(view.id);
+  let transaction = Transaction::change_by_selection(doc.text(), selection, |range| {
+    let text: Tendril = change_fn(range.slice(doc.text().slice(..)));
+
+    (range.from(), range.to(), Some(text))
+  });
+
+  doc.apply(&transaction, view.id);
+  exit_select_mode(cx);
+}
+
+pub fn switch_to_uppercase(cx: &mut Context) {
+  switch_case_impl(cx, |string| {
+    string.chunks().map(|chunk| chunk.to_uppercase()).collect()
+  });
+}
+
+pub fn switch_to_lowercase(cx: &mut Context) {
+  switch_case_impl(cx, |string| {
+    string.chunks().map(|chunk| chunk.to_lowercase()).collect()
+  });
 }

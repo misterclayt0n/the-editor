@@ -24,6 +24,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     'r'         => replace,
     'R'         => replace_with_yanked,
     "A-."       => repeat_last_motion,
+    "~"         => switch_case,
+    "`"         => switch_to_lowercase,
+    "A-`"       => switch_to_uppercase,
 
     // Minimal examples of prefix maps
     'g' => { "Goto"

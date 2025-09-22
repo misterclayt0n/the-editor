@@ -334,8 +334,10 @@ pub fn run<A: Application + 'static>(
   }
 
   struct RendererApp<A: Application> {
-    window:               Option<Arc<Window>>,
+    // Important: drop renderer before window to ensure GPU surface is released
+    // while the window still exists (avoids driver stalls on shutdown).
     renderer:             Option<Renderer>,
+    window:               Option<Arc<Window>>,
     app:                  A,
     title:                String,
     initial_width:        u32,
@@ -366,12 +368,17 @@ pub fn run<A: Application + 'static>(
                 // Bridge the the-editor-event redraw requests to winit's redraws.
                 // This lets background tasks request UI redraws.
                 if let Some(win) = &self.window {
-                  let win = Arc::clone(win);
+                  let weak_win = Arc::downgrade(win);
                   std::thread::spawn(move || {
                     loop {
                       // Wait for an async redraw request from the event system
                       pollster::block_on(the_editor_event::redraw_requested());
-                      win.request_redraw();
+                      if let Some(win) = weak_win.upgrade() {
+                        win.request_redraw();
+                      } else {
+                        // Window is gone; exit the helper thread.
+                        break;
+                      }
                     }
                   });
                 }
@@ -391,6 +398,9 @@ pub fn run<A: Application + 'static>(
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
       match event {
         WindowEvent::CloseRequested => {
+          // Drop the renderer (and thus the GPU surface) before the window
+          // to avoid platform driver stalls or validation errors.
+          let _ = self.renderer.take();
           event_loop.exit();
         },
         WindowEvent::KeyboardInput {
@@ -606,8 +616,8 @@ pub fn run<A: Application + 'static>(
   event_loop.set_control_flow(ControlFlow::Wait);
 
   let mut renderer_app = RendererApp {
-    window: None,
     renderer: None,
+    window: None,
     app,
     title: title.to_string(),
     initial_width: width,

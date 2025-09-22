@@ -1,6 +1,7 @@
 use the_editor_renderer::{
   Color,
   KeyPress,
+  MouseEvent,
   Renderer,
   TextSection,
   TextSegment,
@@ -15,16 +16,16 @@ use crate::{
 /// A simple debug panel component that displays editor information
 pub struct DebugPanel {
   visible: bool,
-  title: String,
-  lines: Vec<String>,
+  title:   String,
+  lines:   Vec<String>,
 }
 
 impl DebugPanel {
   pub fn new() -> Self {
     Self {
       visible: false,
-      title: "Debug Panel".to_string(),
-      lines: vec![
+      title:   "Debug Panel".to_string(),
+      lines:   vec![
         "This is completely mocked btw, no worries here".to_string(),
         "Press Ctrl+B to toggle".to_string(),
       ],
@@ -59,10 +60,10 @@ impl Component for DebugPanel {
     let title_text = format!("┌─ {} ─┐", self.title);
     renderer.draw_text(TextSection {
       position: (x, y),
-      texts: vec![TextSegment {
+      texts:    vec![TextSegment {
         content: title_text,
-        style: TextStyle {
-          size: font_size,
+        style:   TextStyle {
+          size:  font_size,
           color: Color::rgb(0.4, 0.8, 1.0), // Bright blue
         },
       }],
@@ -82,18 +83,18 @@ impl Component for DebugPanel {
 
       renderer.draw_text(TextSection {
         position: (x, y + ((line_idx + 1) as f32 * line_height)),
-        texts: vec![
+        texts:    vec![
           TextSegment {
             content: prefix.to_string(),
-            style: TextStyle {
-              size: font_size,
+            style:   TextStyle {
+              size:  font_size,
               color: Color::rgb(0.4, 0.8, 1.0), // Border color
             },
           },
           TextSegment {
             content: line.clone(),
-            style: TextStyle {
-              size: font_size,
+            style:   TextStyle {
+              size:  font_size,
               color: Color::rgb(0.9, 0.9, 0.9), // Light gray text
             },
           },
@@ -109,14 +110,16 @@ impl Component for DebugPanel {
 
   fn preferred_size(&self) -> Option<(u16, u16)> {
     // Calculate size based on content
-    let width = self.lines.iter()
+    let width = self
+      .lines
+      .iter()
       .map(|line| line.len())
       .max()
       .unwrap_or(20)
       .max(self.title.len())
       + 4; // padding + borders
 
-    let height = self.lines.len() + 4; // content + borders + title
+    let height = self.lines.len() + 7; // content + borders + title + button + spacing
 
     Some((width as u16, height as u16))
   }
@@ -127,5 +130,9 @@ impl Component for DebugPanel {
 
   fn set_visible(&mut self, visible: bool) {
     self.visible = visible;
+  }
+
+  fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+    self
   }
 }

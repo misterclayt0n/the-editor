@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use the_editor_renderer::{
   KeyPress,
+  MouseEvent,
   Renderer,
 };
 
@@ -19,6 +20,12 @@ pub trait Component {
     false
   }
 
+  /// Handle mouse events (position/mouse buttons).
+  /// Default does nothing and returns false (not consumed).
+  fn handle_mouse(&mut self, _mouse: &MouseEvent, _rect: Rect) -> bool {
+    false
+  }
+
   /// Get the preferred size for this component.
   fn preferred_size(&self) -> Option<(u16, u16)> {
     None
@@ -31,12 +38,22 @@ pub trait Component {
 
   /// Set visibility of this component.
   fn set_visible(&mut self, visible: bool);
+
+  /// Enable downcasting to concrete types
+  fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+
+  /// Whether the component is currently animating and needs redraws.
+  fn is_animating(&self) -> bool {
+    false
+  }
 }
 
 /// Component manager handles layout and rendering of UI components.
 pub struct ComponentManager {
   components: HashMap<String, Box<dyn Component>>,
   layout:     Layout,
+  positions:  HashMap<String, OverlayPosition>,
+  last_rects: HashMap<String, Rect>,
 }
 
 impl ComponentManager {
@@ -44,7 +61,17 @@ impl ComponentManager {
     Self {
       components: HashMap::new(),
       layout:     Layout::default(),
+      positions:  HashMap::new(),
+      last_rects: HashMap::new(),
     }
+  }
+
+  /// Returns true if any visible component is animating.
+  pub fn is_animating(&self) -> bool {
+    self
+      .components
+      .values()
+      .any(|c| c.is_visible() && c.is_animating())
   }
 
   /// Add a component with a unique ID.
@@ -54,6 +81,8 @@ impl ComponentManager {
 
   /// Remove a component.
   pub fn remove_component(&mut self, id: &str) -> Option<Box<dyn Component>> {
+    self.positions.remove(id);
+    self.last_rects.remove(id);
     self.components.remove(id)
   }
 
@@ -79,9 +108,17 @@ impl ComponentManager {
   pub fn render(&mut self, renderer: &mut Renderer, editor_rect: Rect) {
     // NOTE: This is a simple overlay layout
     // Components are rendered on top of the editor.
-    for component in self.components.values_mut() {
+    for (id, component) in self.components.iter_mut() {
       if component.is_visible() {
-        let rect = self.layout.calculate_rect(component.as_ref(), editor_rect);
+        let pos = self
+          .positions
+          .get(id)
+          .copied()
+          .unwrap_or(self.layout.overlay_position);
+        let rect = self
+          .layout
+          .calculate_rect_with(component.as_ref(), editor_rect, pos);
+        self.last_rects.insert(id.clone(), rect);
         component.render(renderer, rect);
       }
     }
@@ -95,6 +132,26 @@ impl ComponentManager {
       }
     }
     false
+  }
+
+  /// Forward mouse events to components. Returns true if any component consumes
+  /// it.
+  pub fn handle_mouse(&mut self, mouse: &MouseEvent) -> bool {
+    for (id, component) in self.components.iter_mut() {
+      if component.is_visible() {
+        if let Some(rect) = self.last_rects.get(id).copied() {
+          if component.handle_mouse(mouse, rect) {
+            return true;
+          }
+        }
+      }
+    }
+    false
+  }
+
+  /// Set the overlay position for a specific component id.
+  pub fn set_component_position(&mut self, id: &str, position: OverlayPosition) {
+    self.positions.insert(id.to_string(), position);
   }
 }
 
@@ -135,6 +192,56 @@ impl Layout {
     let height = height.min(available.height);
 
     match self.overlay_position {
+      OverlayPosition::TopLeft => Rect::new(available.x, available.y, width, height),
+      OverlayPosition::TopRight => {
+        Rect::new(
+          available.x + available.width.saturating_sub(width),
+          available.y,
+          width,
+          height,
+        )
+      },
+      OverlayPosition::BottomLeft => {
+        Rect::new(
+          available.x,
+          available.y + available.height.saturating_sub(height),
+          width,
+          height,
+        )
+      },
+      OverlayPosition::BottomRight => {
+        Rect::new(
+          available.x + available.width.saturating_sub(width),
+          available.y + available.height.saturating_sub(height),
+          width,
+          height,
+        )
+      },
+      OverlayPosition::Center => {
+        let center_x = available.x + available.width / 2;
+        let center_y = available.y + available.height / 2;
+        Rect::new(
+          center_x.saturating_sub(width / 2),
+          center_y.saturating_sub(height / 2),
+          width,
+          height,
+        )
+      },
+    }
+  }
+
+  /// Calculate rect using an explicit overlay position (overrides default).
+  pub fn calculate_rect_with(
+    &self,
+    component: &dyn Component,
+    available: Rect,
+    position: OverlayPosition,
+  ) -> Rect {
+    let (width, height) = component.preferred_size().unwrap_or((40, 10));
+    let width = width.min(available.width);
+    let height = height.min(available.height);
+
+    match position {
       OverlayPosition::TopLeft => Rect::new(available.x, available.y, width, height),
       OverlayPosition::TopRight => {
         Rect::new(

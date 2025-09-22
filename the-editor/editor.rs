@@ -1747,10 +1747,21 @@ impl Editor {
       keymaps: Keymaps::default(),
       ui_components: {
         let mut components = crate::ui::ComponentManager::new();
+
         components.add_component(
           "debug_panel".to_string(),
           Box::new(crate::ui::components::DebugPanel::new()),
         );
+        components.add_component(
+          "rad_button".to_string(),
+          Box::new(
+            crate::ui::components::Button::new("Run")
+              .color(Color::GRAY)
+              .on_click(|| println!("Run button clicked")),
+          ),
+        );
+        components.set_component_position("debug_panel", crate::ui::OverlayPosition::TopRight);
+        components.set_component_position("rad_button", crate::ui::OverlayPosition::BottomRight);
         components
       },
     }
@@ -3103,7 +3114,10 @@ impl Application for Editor {
         }
       },
       InputEvent::Mouse(mouse) => {
-        println!("Mouse event at flinstons {:?}", mouse.position);
+        // Forward mouse to UI components first.
+        if self.ui_components.handle_mouse(&mouse) {
+          return true;
+        }
         false
       },
       InputEvent::Scroll(delta) => {
@@ -3245,6 +3259,10 @@ impl Application for Editor {
 
   fn resize(&mut self, width: u32, height: u32, _renderer: &mut Renderer) {
     println!("Window resized to {}x{}", width, height);
+  }
+
+  fn wants_redraw(&self) -> bool {
+    self.ui_components.is_animating()
   }
 }
 

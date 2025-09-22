@@ -23,6 +23,7 @@ name = "the-editor"
 anyhow                   = "1.0"
 arc-swap                 = "1"
 bitflags                 = "2.9"
+bytemuck                 = { features = ["derive"], version = "1.20" }
 chardetng                = "0.1"
 dunce                    = "1.0"
 encoding_rs              = "0.8"

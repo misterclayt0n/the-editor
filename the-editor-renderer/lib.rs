@@ -116,6 +116,12 @@ pub trait Application {
   /// Update your layout or viewport-dependent state here.
   /// The renderer automatically updates its internal viewport.
   fn resize(&mut self, width: u32, height: u32, renderer: &mut Renderer);
+
+  /// Return true if the application wants another immediate redraw.
+  /// Default is false. Override for simple animations or transient effects.
+  fn wants_redraw(&self) -> bool {
+    false
+  }
 }
 
 /// Run the application with the renderer.
@@ -191,10 +197,16 @@ pub fn run<A: Application + 'static>(
       WinitKey::Character(s) if !s.is_empty() => {
         let mut chars = s.chars();
         // Prefer the first scalar value; additional characters (e.g. composed glyphs)
-        // will be delivered through the text path when the keymap does not consume them.
-        chars.next().map(event::Key::Char).unwrap_or(event::Key::Other)
+        // will be delivered through the text path when the keymap does not consume
+        // them.
+        chars
+          .next()
+          .map(event::Key::Char)
+          .unwrap_or(event::Key::Other)
       },
-      WinitKey::Named(named) => map_named_key(named).unwrap_or_else(|| map_physical_key(physical_key)),
+      WinitKey::Named(named) => {
+        map_named_key(named).unwrap_or_else(|| map_physical_key(physical_key))
+      },
       _ => map_physical_key(physical_key),
     }
   }
@@ -322,13 +334,14 @@ pub fn run<A: Application + 'static>(
   }
 
   struct RendererApp<A: Application> {
-    window:         Option<Arc<Window>>,
-    renderer:       Option<Renderer>,
-    app:            A,
-    title:          String,
-    initial_width:  u32,
-    initial_height: u32,
-    modifiers_state: ModifiersState,
+    window:               Option<Arc<Window>>,
+    renderer:             Option<Renderer>,
+    app:                  A,
+    title:                String,
+    initial_width:        u32,
+    initial_height:       u32,
+    modifiers_state:      ModifiersState,
+    last_cursor_position: Option<(f32, f32)>,
   }
 
   impl<A: Application> ApplicationHandler for RendererApp<A> {
@@ -399,9 +412,9 @@ pub fn run<A: Application + 'static>(
             let mut key_press = KeyPress {
               code,
               pressed: state == ElementState::Pressed,
-              shift:   modifiers.shift_key(),
-              ctrl:    modifiers.control_key(),
-              alt:     modifiers.alt_key(),
+              shift: modifiers.shift_key(),
+              ctrl: modifiers.control_key(),
+              alt: modifiers.alt_key(),
             };
             if matches!(key_press.code, event::Key::Char(_)) {
               key_press.shift = false;
@@ -413,9 +426,10 @@ pub fn run<A: Application + 'static>(
               window.request_redraw();
             }
 
-            // For regular text-producing keys, prefer KeyEvent.text when not already handled.
-            // Skip textual insertion when control or alt modifiers are active so chorded
-            // keybindings (e.g. Alt+Backspace) do not insert control characters.
+            // For regular text-producing keys, prefer KeyEvent.text when not already
+            // handled. Skip textual insertion when control or alt modifiers are
+            // active so chorded keybindings (e.g. Alt+Backspace) do not insert
+            // control characters.
             if !handled
               && state == ElementState::Pressed
               && !(modifiers.alt_key() || modifiers.control_key())
@@ -455,6 +469,58 @@ pub fn run<A: Application + 'static>(
         },
         WindowEvent::ModifiersChanged(modifiers) => {
           self.modifiers_state = modifiers.state();
+        },
+
+        // Handle mouse button events
+        WindowEvent::MouseInput { state, button, .. } => {
+          if let Some(renderer) = &mut self.renderer {
+            use winit::event::ElementState;
+
+            let mouse_button = match button {
+              winit::event::MouseButton::Left => Some(event::MouseButton::Left),
+              winit::event::MouseButton::Right => Some(event::MouseButton::Right),
+              winit::event::MouseButton::Middle => Some(event::MouseButton::Middle),
+              _ => None,
+            };
+
+            if let Some(mouse_button) = mouse_button {
+              let mouse_event = event::MouseEvent {
+                position: self.last_cursor_position.unwrap_or((0.0, 0.0)),
+                button:   Some(mouse_button),
+                pressed:  state == ElementState::Pressed,
+              };
+
+              if self
+                .app
+                .handle_event(InputEvent::Mouse(mouse_event), renderer)
+                && let Some(window) = &self.window
+              {
+                window.request_redraw();
+              }
+            }
+          }
+        },
+
+        // Handle cursor movement
+        WindowEvent::CursorMoved { position, .. } => {
+          if let Some(renderer) = &mut self.renderer {
+            let cursor_pos = (position.x as f32, position.y as f32);
+            self.last_cursor_position = Some(cursor_pos);
+
+            let mouse_event = event::MouseEvent {
+              position: cursor_pos,
+              button:   None,
+              pressed:  false,
+            };
+
+            if self
+              .app
+              .handle_event(InputEvent::Mouse(mouse_event), renderer)
+              && let Some(window) = &self.window
+            {
+              window.request_redraw();
+            }
+          }
         },
 
         // NOTE: This sucks ass, but will do it for now.
@@ -519,6 +585,12 @@ pub fn run<A: Application + 'static>(
                 if let Err(e) = renderer.end_frame() {
                   eprintln!("Render error: {:?}", e);
                 }
+                // If the app wants to continue animating, request another frame.
+                if self.app.wants_redraw() {
+                  if let Some(window) = &self.window {
+                    window.request_redraw();
+                  }
+                }
               },
               Err(e) => eprintln!("Failed to begin frame: {:?}", e),
             }
@@ -541,6 +613,7 @@ pub fn run<A: Application + 'static>(
     initial_width: width,
     initial_height: height,
     modifiers_state: ModifiersState::empty(),
+    last_cursor_position: None,
   };
 
   event_loop.run_app(&mut renderer_app)?;

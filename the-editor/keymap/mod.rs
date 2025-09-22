@@ -47,10 +47,10 @@ impl KeyBinding {
 
   pub const fn from_key_press(press: &KeyPress) -> Self {
     Self {
-      code: press.code,
+      code:  press.code,
       shift: press.shift,
-      ctrl: press.ctrl,
-      alt: press.alt,
+      ctrl:  press.ctrl,
+      alt:   press.alt,
     }
   }
 }
@@ -198,8 +198,7 @@ pub fn binding_from_literal<L: IntoKeyBinding>(literal: L) -> KeyBinding {
 }
 
 pub fn binding_from_ident(name: &str) -> KeyBinding {
-  KeyBinding::from_str(name)
-    .unwrap_or_else(|err| panic!("invalid key identifier '{name}': {err}"))
+  KeyBinding::from_str(name).unwrap_or_else(|err| panic!("invalid key identifier '{name}': {err}"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]

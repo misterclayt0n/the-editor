@@ -1,11 +1,7 @@
 #[macro_export]
 macro_rules! key {
-  ($name:ident) => {{
-    $crate::keymap::binding_from_ident(stringify!($name))
-  }};
-  ($lit:literal) => {{
-    $crate::keymap::binding_from_literal($lit)
-  }};
+  ($name:ident) => {{ $crate::keymap::binding_from_ident(stringify!($name)) }};
+  ($lit:literal) => {{ $crate::keymap::binding_from_literal($lit) }};
 }
 
 #[macro_export]

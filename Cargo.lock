@@ -3434,6 +3434,7 @@ version = "0.1.0"
 name = "the-editor-renderer"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "env_logger",
  "pollster",
  "the-editor-event",

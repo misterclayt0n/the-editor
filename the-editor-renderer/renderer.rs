@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use wgpu::util::DeviceExt;
 use wgpu_text::{
   BrushBuilder,
   TextBrush,
@@ -21,6 +22,34 @@ use crate::{
   Result,
   TextSection,
 };
+
+/// A single rectangle instance to be rendered
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct RectInstance {
+  position:      [f32; 2], // 0  .. 8
+  size:          [f32; 2], // 8  .. 16
+  color:         [f32; 4], // 16 .. 32
+  corner_radius: f32,      // 32 .. 36
+  _pad0:         [f32; 2], // 36 .. 44 (pad to 8-byte boundary for next vec2)
+  glow_center:   [f32; 2], // 44 .. 52
+  glow_radius:   f32,      // 52 .. 56
+  effect_kind:   f32,      // 56 .. 60
+}
+
+/// Vertex data for a rectangle (using instanced rendering)
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct RectVertex {
+  position: [f32; 2],
+}
+
+/// Uniform data for transforming coordinates
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct RectUniforms {
+  screen_size: [f32; 2],
+}
 
 /// Configuration options for the renderer
 #[derive(Debug, Clone)]
@@ -60,6 +89,15 @@ pub struct Renderer {
   // Text sections to render this frame - store owned strings.
   text_strings:   Vec<Vec<(String, f32, [f32; 4])>>, // content, size, color.
   text_positions: Vec<(f32, f32)>,
+
+  // Primitive rendering data
+  rect_render_pipeline: wgpu::RenderPipeline,
+  rect_vertex_buffer:   wgpu::Buffer,
+  rect_uniform_buffer:  wgpu::Buffer,
+  rect_bind_group:      wgpu::BindGroup,
+
+  // Primitive drawing commands for this frame
+  rect_instances: Vec<RectInstance>,
 }
 
 impl Renderer {
@@ -128,6 +166,192 @@ impl Renderer {
     let brush =
       BrushBuilder::using_font(font).build(&device, size.width, size.height, config.format);
 
+    // Set up rectangle rendering pipeline
+    let rect_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+      label:  Some("Rectangle Shader"),
+      source: wgpu::ShaderSource::Wgsl(include_str!("rect.wgsl").into()),
+    });
+
+    // Create uniform buffer for screen size
+    let rect_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+      label:              Some("Rectangle Uniform Buffer"),
+      size:               std::mem::size_of::<RectUniforms>() as u64,
+      usage:              wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
+    });
+
+    // Create bind group layout for uniforms
+    let rect_bind_group_layout =
+      device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label:   Some("Rectangle Bind Group Layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+          binding:    0,
+          visibility: wgpu::ShaderStages::VERTEX,
+          ty:         wgpu::BindingType::Buffer {
+            ty:                 wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size:   None,
+          },
+          count:      None,
+        }],
+      });
+
+    // Create bind group
+    let rect_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+      label:   Some("Rectangle Bind Group"),
+      layout:  &rect_bind_group_layout,
+      entries: &[wgpu::BindGroupEntry {
+        binding:  0,
+        resource: rect_uniform_buffer.as_entire_binding(),
+      }],
+    });
+
+    // Create pipeline layout
+    let rect_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+      label:                Some("Rectangle Pipeline Layout"),
+      bind_group_layouts:   &[&rect_bind_group_layout],
+      push_constant_ranges: &[],
+    });
+
+    // Rectangle vertex buffer (a quad)
+    let rect_vertices = [
+      RectVertex {
+        position: [0.0, 0.0],
+      }, // Top-left
+      RectVertex {
+        position: [1.0, 0.0],
+      }, // Top-right
+      RectVertex {
+        position: [0.0, 1.0],
+      }, // Bottom-left
+      RectVertex {
+        position: [1.0, 1.0],
+      }, // Bottom-right
+    ];
+
+    let rect_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+      label:    Some("Rectangle Vertex Buffer"),
+      contents: bytemuck::cast_slice(&rect_vertices),
+      usage:    wgpu::BufferUsages::VERTEX,
+    });
+
+    // Create render pipeline
+    let rect_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+      label:         Some("Rectangle Render Pipeline"),
+      layout:        Some(&rect_pipeline_layout),
+      vertex:        wgpu::VertexState {
+        module:              &rect_shader,
+        entry_point:         Some("vs_main"),
+        buffers:             &[
+          // Vertex buffer
+          wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<RectVertex>() as u64,
+            step_mode:    wgpu::VertexStepMode::Vertex,
+            attributes:   &[wgpu::VertexAttribute {
+              offset:          0,
+              shader_location: 0,
+              format:          wgpu::VertexFormat::Float32x2,
+            }],
+          },
+          // Instance buffer
+          wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<RectInstance>() as u64,
+            step_mode:    wgpu::VertexStepMode::Instance,
+            attributes:   &[
+              // rect_position
+              wgpu::VertexAttribute {
+                offset:          0,
+                shader_location: 1,
+                format:          wgpu::VertexFormat::Float32x2,
+              },
+              // rect_size
+              wgpu::VertexAttribute {
+                offset:          (std::mem::size_of::<[f32; 2]>()) as u64, // 8
+                shader_location: 2,
+                format:          wgpu::VertexFormat::Float32x2,
+              },
+              // rect_color
+              wgpu::VertexAttribute {
+                offset:          (std::mem::size_of::<[f32; 2]>() + std::mem::size_of::<[f32; 2]>())
+                  as u64, // 16
+                shader_location: 3,
+                format:          wgpu::VertexFormat::Float32x4,
+              },
+              // corner_radius
+              wgpu::VertexAttribute {
+                offset:          (std::mem::size_of::<[f32; 2]>()
+                  + std::mem::size_of::<[f32; 2]>()
+                  + std::mem::size_of::<[f32; 4]>()) as u64, // 32
+                shader_location: 4,
+                format:          wgpu::VertexFormat::Float32,
+              },
+              // glow_center (after an internal pad of 8 bytes)
+              wgpu::VertexAttribute {
+                offset:          (std::mem::size_of::<[f32; 2]>()
+                  + std::mem::size_of::<[f32; 2]>()
+                  + std::mem::size_of::<[f32; 4]>()
+                  + std::mem::size_of::<f32>()
+                  + std::mem::size_of::<[f32; 2]>()) as u64, // 44
+                shader_location: 5,
+                format:          wgpu::VertexFormat::Float32x2,
+              },
+              // glow_radius
+              wgpu::VertexAttribute {
+                offset:          (std::mem::size_of::<[f32; 2]>()
+                  + std::mem::size_of::<[f32; 2]>()
+                  + std::mem::size_of::<[f32; 4]>()
+                  + std::mem::size_of::<f32>()
+                  + std::mem::size_of::<[f32; 2]>()
+                  + std::mem::size_of::<[f32; 2]>()) as u64, // 52
+                shader_location: 6,
+                format:          wgpu::VertexFormat::Float32,
+              },
+              // effect_kind
+              wgpu::VertexAttribute {
+                offset:          (std::mem::size_of::<[f32; 2]>()
+                  + std::mem::size_of::<[f32; 2]>()
+                  + std::mem::size_of::<[f32; 4]>()
+                  + std::mem::size_of::<f32>()
+                  + std::mem::size_of::<[f32; 2]>()
+                  + std::mem::size_of::<[f32; 2]>()
+                  + std::mem::size_of::<f32>()) as u64, // 56
+                shader_location: 7,
+                format:          wgpu::VertexFormat::Float32,
+              },
+            ],
+          },
+        ],
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+      },
+      fragment:      Some(wgpu::FragmentState {
+        module:              &rect_shader,
+        entry_point:         Some("fs_main"),
+        targets:             &[Some(wgpu::ColorTargetState {
+          format:     config.format,
+          blend:      Some(wgpu::BlendState::ALPHA_BLENDING),
+          write_mask: wgpu::ColorWrites::ALL,
+        })],
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+      }),
+      primitive:     wgpu::PrimitiveState {
+        topology:           wgpu::PrimitiveTopology::TriangleStrip,
+        strip_index_format: None,
+        front_face:         wgpu::FrontFace::Ccw,
+        cull_mode:          None,
+        unclipped_depth:    false,
+        polygon_mode:       wgpu::PolygonMode::Fill,
+        conservative:       false,
+      },
+      depth_stencil: None,
+      multisample:   wgpu::MultisampleState {
+        count:                     1,
+        mask:                      !0,
+        alpha_to_coverage_enabled: false,
+      },
+      multiview:     None,
+      cache:         None,
+    });
+
     Ok(Self {
       surface,
       device,
@@ -141,6 +365,11 @@ impl Renderer {
       background_color: Color::new(0.1, 0.1, 0.15, 1.0),
       text_strings: Vec::new(),
       text_positions: Vec::new(),
+      rect_render_pipeline,
+      rect_vertex_buffer,
+      rect_uniform_buffer,
+      rect_bind_group,
+      rect_instances: Vec::new(),
     })
   }
 
@@ -188,6 +417,18 @@ impl Renderer {
     self.current_encoder = Some(encoder);
     self.text_strings.clear();
     self.text_positions.clear();
+    self.rect_instances.clear();
+
+    // Update uniform buffer with current screen size
+    let uniforms = RectUniforms {
+      screen_size: [self.size.width as f32, self.size.height as f32],
+    };
+    self.queue.write_buffer(
+      &self.rect_uniform_buffer,
+      0,
+      bytemuck::cast_slice(&[uniforms]),
+    );
+
     Ok(())
   }
 
@@ -285,6 +526,39 @@ impl Renderer {
       self.brush.draw(&mut render_pass);
     }
 
+    // Draw rectangles
+    if !self.rect_instances.is_empty() {
+      // Create instance buffer for this frame
+      let instance_buffer = self
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+          label:    Some("Rectangle Instance Buffer"),
+          contents: bytemuck::cast_slice(&self.rect_instances),
+          usage:    wgpu::BufferUsages::VERTEX,
+        });
+
+      let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label:                    Some("Rectangle Render Pass"),
+        color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
+          view:           &view,
+          resolve_target: None,
+          ops:            wgpu::Operations {
+            load:  wgpu::LoadOp::Load,
+            store: wgpu::StoreOp::Store,
+          },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes:         None,
+        occlusion_query_set:      None,
+      });
+
+      render_pass.set_pipeline(&self.rect_render_pipeline);
+      render_pass.set_bind_group(0, &self.rect_bind_group, &[]);
+      render_pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(..));
+      render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+      render_pass.draw(0..4, 0..self.rect_instances.len() as u32);
+    }
+
     self.queue.submit(std::iter::once(encoder.finish()));
     output.present();
 
@@ -322,6 +596,112 @@ impl Renderer {
 
     self.text_strings.push(texts);
     self.text_positions.push(section.position);
+  }
+
+  /// Draw a rectangle at the specified position with the given size and color
+  ///
+  /// # Example
+  ///
+  /// ```rust,no_run
+  /// # use the_editor_renderer::{Renderer, Color};
+  /// # fn draw(renderer: &mut Renderer) {
+  /// renderer.draw_rect(10.0, 10.0, 100.0, 50.0, Color::new(1.0, 0.0, 0.0, 1.0));
+  /// # }
+  /// ```
+  pub fn draw_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: Color) {
+    self.rect_instances.push(RectInstance {
+      position:      [x, y],
+      size:          [width, height],
+      color:         [color.r, color.g, color.b, color.a],
+      corner_radius: 0.0,
+      _pad0:         [0.0, 0.0],
+      glow_center:   [0.0, 0.0],
+      glow_radius:   0.0,
+      effect_kind:   0.0,
+    });
+  }
+
+  /// Draw a rounded rectangle at the specified position with the given size,
+  /// color, and corner radius
+  ///
+  /// # Example
+  ///
+  /// ```rust,no_run
+  /// # use the_editor_renderer::{Renderer, Color};
+  /// # fn draw(renderer: &mut Renderer) {
+  /// renderer.draw_rounded_rect(10.0, 10.0, 100.0, 50.0, 8.0, Color::new(0.0, 1.0, 0.0, 1.0));
+  /// # }
+  /// ```
+  pub fn draw_rounded_rect(
+    &mut self,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    corner_radius: f32,
+    color: Color,
+  ) {
+    self.rect_instances.push(RectInstance {
+      position: [x, y],
+      size: [width, height],
+      color: [color.r, color.g, color.b, color.a],
+      corner_radius,
+      _pad0: [0.0, 0.0],
+      glow_center: [0.0, 0.0],
+      glow_radius: 0.0,
+      effect_kind: 0.0,
+    });
+  }
+
+  /// Draw a rounded rectangle glow overlay, clipped to the rounded rect.
+  /// `center_x`, `center_y` are absolute pixels; `radius` in pixels controls
+  /// falloff size.
+  pub fn draw_rounded_rect_glow(
+    &mut self,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    corner_radius: f32,
+    center_x: f32,
+    center_y: f32,
+    radius: f32,
+    color: Color,
+  ) {
+    self.rect_instances.push(RectInstance {
+      position: [x, y],
+      size: [width, height],
+      color: [color.r, color.g, color.b, color.a],
+      corner_radius,
+      _pad0: [0.0, 0.0],
+      glow_center: [center_x - x, center_y - y],
+      glow_radius: radius,
+      effect_kind: 1.0,
+    });
+  }
+
+  /// Draw only the rounded-rect outline (stroke), with given thickness in
+  /// pixels.
+  pub fn draw_rounded_rect_stroke(
+    &mut self,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    corner_radius: f32,
+    thickness: f32,
+    color: Color,
+  ) {
+    self.rect_instances.push(RectInstance {
+      position: [x, y],
+      size: [width, height],
+      color: [color.r, color.g, color.b, color.a],
+      corner_radius,
+      _pad0: [0.0, 0.0],
+      glow_center: [0.0, 0.0],
+      glow_radius: thickness.max(0.5),
+      effect_kind: 2.0,
+    });
   }
 
   /// Get the current viewport width in pixels

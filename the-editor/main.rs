@@ -26,6 +26,7 @@ pub mod handlers;
 pub mod keymap;
 mod lsp;
 mod snippets;
+mod ui;
 
 fn main() -> anyhow::Result<()> {
   // Register all event types and hooks up front.

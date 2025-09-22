@@ -289,6 +289,8 @@ pub struct Editor {
   pub mouse_down_range: Option<Range>,
   pub cursor_cache:     CursorCache,
   pending_key_callback: Option<(OnKeyCallback, OnKeyCallbackKind)>,
+
+  pub ui_components: crate::ui::ComponentManager,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -1743,6 +1745,14 @@ impl Editor {
       cursor_cache: CursorCache::default(),
       pending_key_callback: None,
       keymaps: Keymaps::default(),
+      ui_components: {
+        let mut components = crate::ui::ComponentManager::new();
+        components.add_component(
+          "debug_panel".to_string(),
+          Box::new(crate::ui::components::DebugPanel::new()),
+        );
+        components
+      },
     }
   }
 
@@ -2994,6 +3004,9 @@ impl Application for Editor {
       14.0,
       Color::rgb(0.6, 0.6, 0.7),
     ));
+
+    // Render UI components
+    self.ui_components.render(renderer, target_area);
   }
 
   fn handle_event(&mut self, event: InputEvent, _renderer: &mut Renderer) -> bool {
@@ -3016,6 +3029,11 @@ impl Application for Editor {
                 }
               },
             }
+          }
+
+          // Let UI components handle input first
+          if self.ui_components.handle_input(&key_press) {
+            return true;
           }
 
           // Dispatch renderer Key directly through keymap.

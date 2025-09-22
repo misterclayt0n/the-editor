@@ -1442,3 +1442,7 @@ fn goto_column_impl(cx: &mut Context, movement: Movement) {
   });
   doc.set_selection(view.id, selection);
 }
+
+pub fn toggle_debug_panel(cx: &mut Context) {
+  cx.editor.ui_components.toggle_component("debug_panel");
+}

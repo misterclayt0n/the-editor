@@ -55,6 +55,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "|" => goto_column,
       "e" => goto_last_line,
     },
+
+    "C-b" => toggle_debug_panel,
   });
 
   // Insert mode: text input handled via InputEvent::Text; map Esc and Backspace

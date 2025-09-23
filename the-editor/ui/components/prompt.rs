@@ -8,6 +8,7 @@ use crate::{
         command_registry::CommandRegistry,
         commands::Context,
     },
+    ui::{UI_FONT_SIZE, UI_FONT_WIDTH},
 };
 
 /// Events that can occur in the prompt component
@@ -162,31 +163,39 @@ impl Prompt {
 
     /// Render the prompt to the screen
     pub fn render(&self, renderer: &mut Renderer, area: Rect) {
-        let prompt_text = format!("{}{}", self.prefix, self.input);
+        let base_x = area.x as f32;
+        let base_y = area.y as f32;
 
-        // Render prompt text
-        renderer.draw_text(TextSection::simple(
-            area.x as f32,
-            area.y as f32,
-            &prompt_text,
-            14.0,
-            Color::WHITE,
-        ));
-
-        // Render cursor - simple cursor rendering for now
+        // First draw the cursor background
         let cursor_col = self.prefix.len() + self.cursor;
-        let cursor_x = area.x as f32 + cursor_col as f32 * 8.0; // Assuming font width of 8
+        let cursor_x = base_x + cursor_col as f32 * UI_FONT_WIDTH;
 
-        // Draw cursor as a simple vertical bar
-        // Note: This is a simplified cursor rendering - in a real implementation
-        // you'd use the proper cursor rendering API
-        if cursor_col <= prompt_text.len() {
+        // Draw cursor as a block under the character at cursor position
+        let cursor_bg = Color::rgb(0.2, 0.8, 0.7); // Teal cursor like main editor
+        renderer.draw_rect(
+            cursor_x,
+            base_y,
+            UI_FONT_WIDTH,  // Width of one character
+            UI_FONT_SIZE,   // Height of the font
+            cursor_bg
+        );
+
+        // Render the prompt text character by character for precise positioning
+        // This ensures each character is positioned at exact multiples of UI_FONT_WIDTH
+        let full_text = format!("{}{}", self.prefix, self.input);
+        for (i, ch) in full_text.chars().enumerate() {
+            let x = base_x + i as f32 * UI_FONT_WIDTH;
+            let color = if i == cursor_col {
+                Color::rgb(0.1, 0.1, 0.15) // Dark text on cursor
+            } else {
+                Color::WHITE
+            };
             renderer.draw_text(TextSection::simple(
-                cursor_x,
-                area.y as f32,
-                "|",
-                14.0,
-                Color::rgb(0.8, 0.8, 0.8),
+                x,
+                base_y,
+                ch.to_string(),
+                UI_FONT_SIZE,
+                color,
             ));
         }
 
@@ -411,7 +420,7 @@ impl Prompt {
                 completion_area.x as f32 + 5.0,
                 y + 2.0,
                 completion,
-                12.0,
+                UI_FONT_SIZE - 2.0,  // Slightly smaller for completions
                 color,
             ));
         }

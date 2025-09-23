@@ -8,7 +8,7 @@ use crate::{
   core::graphics::Rect,
   editor::{StatusLineConfig, StatusLineElement},
   keymap::Mode,
-  ui::Component,
+  ui::{Component, UI_FONT_SIZE},
 };
 
 const STATUS_BAR_HEIGHT: f32 = 30.0;
@@ -168,7 +168,7 @@ impl Component for StatusLine {
       x,
       y,
       status_text,
-      14.0,
+      UI_FONT_SIZE,
       Color::rgb(0.6, 0.6, 0.7),
     ));
   }

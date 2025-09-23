@@ -10,6 +10,12 @@ use crate::core::graphics::Rect;
 
 pub mod components;
 
+// UI Font constants - used across all UI components for consistency
+pub const UI_FONT_SIZE: f32 = 14.0;
+// Font width calculated based on the monospace font at UI_FONT_SIZE
+// Monospace fonts typically have a width-to-height ratio of ~0.6
+pub const UI_FONT_WIDTH: f32 = UI_FONT_SIZE * 0.6;  // ~8.4 pixels for 14pt font
+
 /// Core trait for UI components.
 pub trait Component {
   /// Render the component using the renderer.

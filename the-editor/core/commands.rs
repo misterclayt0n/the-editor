@@ -677,9 +677,12 @@ pub mod insert {
   use unicode_width::UnicodeWidthChar;
 
   use super::*;
-  use crate::core::grapheme::{
-    nth_next_grapheme_boundary,
-    nth_prev_grapheme_boundary,
+  use crate::{
+    core::grapheme::{
+      nth_next_grapheme_boundary,
+      nth_prev_grapheme_boundary,
+    },
+    editor::SmartTabConfig,
   };
 
   fn insert(rope: &Rope, selection: &Selection, ch: char) -> Option<Transaction> {
@@ -786,6 +789,53 @@ pub mod insert {
         }
       });
     let (view, doc) = current!(cx.editor);
+    doc.apply(&transaction, view.id);
+  }
+
+  pub fn smart_tab(cx: &mut Context) {
+    let (view, doc) = current_ref!(cx.editor);
+    let view_id = view.id;
+
+    if matches!(
+      cx.editor.config().smart_tab,
+      Some(SmartTabConfig { enable: true, .. })
+    ) {
+      let cursors_after_whitespace = doc.selection(view_id).ranges().iter().all(|range| {
+        let cursor = range.cursor(doc.text().slice(..));
+        let current_line_num = doc.text().char_to_line(cursor);
+        let current_line_start = doc.text().line_to_char(current_line_num);
+        let left = doc.text().slice(current_line_start..cursor);
+        left.chars().all(|c| c.is_whitespace())
+      });
+
+      if !cursors_after_whitespace {
+        if doc.active_snippet.is_some() {
+          goto_next_tabstop(cx);
+        } else {
+          move_parent_node_end(cx);
+        }
+        return;
+      }
+    }
+
+    insert_tab(cx);
+  }
+
+  pub fn insert_tab(cx: &mut Context) {
+    insert_tab_impl(cx, 1)
+  }
+
+  fn insert_tab_impl(cx: &mut Context, count: usize) {
+    let (view, doc) = current!(cx.editor);
+    // TODO: round out to nearest indentation level (for example a line with 3
+    // spaces should indent by one to reach 4 spaces).
+
+    let indent = Tendril::from(doc.indent_style.as_str().repeat(count));
+    let transaction = Transaction::insert(
+      doc.text(),
+      &doc.selection(view.id).clone().cursors(doc.text().slice(..)),
+      indent,
+    );
     doc.apply(&transaction, view.id);
   }
 }
@@ -1455,4 +1505,69 @@ fn goto_column_impl(cx: &mut Context, movement: Movement) {
 
 pub fn toggle_debug_panel(cx: &mut Context) {
   cx.editor.ui_components.toggle_component("debug_panel");
+}
+
+pub fn goto_next_tabstop(cx: &mut Context) {
+  goto_next_tabstop_impl(cx, Direction::Forward)
+}
+
+fn goto_next_tabstop_impl(cx: &mut Context, direction: Direction) {
+  let (view, doc) = current!(cx.editor);
+  let view_id = view.id;
+  let Some(mut snippet) = doc.active_snippet.take() else {
+    cx.editor.set_error("no snippet is currently active");
+    return;
+  };
+  let tabstop = match direction {
+    Direction::Forward => Some(snippet.next_tabstop(doc.selection(view_id))),
+    Direction::Backward => {
+      snippet
+        .prev_tabstop(doc.selection(view_id))
+        .map(|selection| (selection, false))
+    },
+  };
+  let Some((selection, last_tabstop)) = tabstop else {
+    return;
+  };
+  doc.set_selection(view_id, selection);
+  if !last_tabstop {
+    doc.active_snippet = Some(snippet)
+  }
+  if cx.editor.mode() == Mode::Insert {
+    cx.on_next_key_fallback(|cx, event| {
+      let ch = match event.code {
+        Key::Char(ch) => Some(ch),
+        _ => None,
+      };
+      
+      if let Some(c) = ch {
+        let (view, doc) = current!(cx.editor);
+        if let Some(snippet) = &doc.active_snippet {
+          doc.apply(&snippet.delete_placeholder(doc.text()), view.id);
+        }
+        insert::insert_char(cx, c);
+      }
+    })
+  }
+}
+
+pub fn move_parent_node_end(cx: &mut Context) {
+  move_node_bound_impl(cx, Direction::Forward, Movement::Move)
+}
+
+fn move_node_bound_impl(cx: &mut Context, dir: Direction, movement: Movement) {
+  let motion = move |editor: &mut Editor| {
+    let (view, doc) = current!(editor);
+
+    if let Some(syntax) = doc.syntax() {
+      let text = doc.text().slice(..);
+      let current_selection = doc.selection(view.id);
+
+      let selection = movement::move_parent_node_end(syntax, text, current_selection.clone(), dir, movement);
+
+      doc.set_selection(view.id, selection);
+    }
+  };
+
+  cx.editor.apply_motion(motion);
 }

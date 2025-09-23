@@ -1,7 +1,10 @@
+use std::borrow::Cow;
+
 use ropey::{
   RopeSlice,
   iter::Chars,
 };
+use tree_house::tree_sitter::Node;
 
 use crate::core::{
   chars::{
@@ -20,7 +23,11 @@ use crate::core::{
     char_idx_at_visual_offset,
     visual_offset_from_block,
   },
-  selection::Range,
+  selection::{
+    Range,
+    Selection,
+  },
+  syntax::Syntax,
   text_annotations::TextAnnotations,
   text_format::TextFormat,
 };
@@ -440,4 +447,79 @@ pub fn move_prev_sub_word_start(slice: RopeSlice, range: Range, count: usize) ->
 
 pub fn move_prev_sub_word_end(slice: RopeSlice, range: Range, count: usize) -> Range {
   word_move(slice, range, count, WordMotionTarget::PrevSubWordEnd)
+}
+
+pub fn move_parent_node_end(
+  syntax: &Syntax,
+  text: RopeSlice,
+  selection: Selection,
+  dir: Direction,
+  movement: Movement,
+) -> Selection {
+  selection.transform(|range| {
+    let start_from = text.char_to_byte(range.from()) as u32;
+    let start_to = text.char_to_byte(range.to()) as u32;
+
+    let mut node = match syntax.named_descendant_for_byte_range(start_from, start_to) {
+      Some(node) => node,
+      None => {
+        log::debug!(
+          "no descendant found for byte range: {} - {}",
+          start_from,
+          start_to
+        );
+        return range;
+      },
+    };
+
+    let mut end_head = match dir {
+      // moving forward, we always want to move one past the end of the
+      // current node, so use the end byte of the current node, which is an exclusive
+      // end of the range
+      Direction::Forward => text.byte_to_char(node.end_byte() as usize),
+
+      // moving backward, we want the cursor to land on the start char of
+      // the current node, or if it is already at the start of a node, to traverse up to
+      // the parent
+      Direction::Backward => {
+        let end_head = text.byte_to_char(node.start_byte() as usize);
+
+        // if we're already on the beginning, look up to the parent
+        if end_head == range.cursor(text) {
+          node = find_parent_start(&node).unwrap_or(node);
+          text.byte_to_char(node.start_byte() as usize)
+        } else {
+          end_head
+        }
+      },
+    };
+
+    if movement == Movement::Move {
+      // preserve direction of original range
+      if range.direction() == Direction::Forward {
+        Range::new(end_head, end_head + 1)
+      } else {
+        Range::new(end_head + 1, end_head)
+      }
+    } else {
+      // if we end up with a forward range, then adjust it to be one past
+      // where we want
+      if end_head >= range.anchor {
+        end_head += 1;
+      }
+
+      Range::new(range.anchor, end_head)
+    }
+  })
+}
+
+fn find_parent_start<'tree>(node: &Node<'tree>) -> Option<Node<'tree>> {
+  let start = node.start_byte();
+  let mut node = Cow::Borrowed(node);
+
+  while node.start_byte() >= start || !node.is_named() {
+    node = Cow::Owned(node.parent()?);
+  }
+
+  Some(node.into_owned())
 }

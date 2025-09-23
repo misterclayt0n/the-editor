@@ -142,7 +142,10 @@ use crate::{
     position::{
       Position,
       char_idx_at_visual_offset,
+      visual_offset_from_block,
     },
+    doc_formatter::{DocumentFormatter, GraphemeSource},
+    grapheme::Grapheme,
     registers::Registers,
     selection::{
       Range,
@@ -2920,77 +2923,102 @@ impl Application for Editor {
       &annotations,
     );
 
+    // Compute row offset within the current visual block so we can align to row 0
+    let row_off = visual_offset_from_block(
+      doc_text.slice(..),
+      top_char_idx,
+      top_char_idx,
+      &text_fmt,
+      &annotations,
+    )
+    .0
+    .row;
+
+    // Iterate formatted graphemes starting at the block containing top_char_idx
+    let mut formatter =
+      DocumentFormatter::new_at_prev_checkpoint(doc_text.slice(..), &text_fmt, &annotations, top_char_idx);
+
+    let viewport_cols = viewport.width as usize;
     let start_line = doc_text.char_to_line(top_char_idx);
-    for display_idx in 0..visible_lines {
-      let line_idx = start_line + display_idx;
-      if line_idx >= doc_text.len_lines() {
+
+    // Helper: check if document position range overlaps any selection
+    let is_selected = |start: usize, len: usize| -> bool {
+      if len == 0 {
+        return false;
+      }
+      let end = start + len;
+      selection
+        .ranges()
+        .iter()
+        .any(|r| r.from() < end && r.to() > start)
+    };
+
+    while let Some(mut g) = formatter.next() {
+      // Skip visual lines before the top row of the viewport
+      if g.visual_pos.row < row_off {
+        continue;
+      }
+
+      let rel_row = g.visual_pos.row - row_off;
+      if rel_row >= visible_lines {
         break;
       }
 
-      let y = base_y + display_idx as f32 * font_size;
-      let line_slice = doc_text.line(line_idx);
-      let line_start = doc_text.line_to_char(line_idx);
-      let line_len = line_slice.len_chars();
+      // Horizontal scrolling: convert absolute visual col to viewport-relative col
+      let abs_col = g.visual_pos.col;
+      let width_cols = g.raw.width();
+      let h_off = view_offset.horizontal_offset;
 
-      if !selection.is_empty() {
-        for range in selection.ranges() {
-          let sel_start = range.from();
-          let sel_end = range.to();
-
-          if sel_start >= line_start + line_len || sel_end <= line_start {
-            continue;
-          }
-
-          let highlight_start = sel_start.max(line_start);
-          let highlight_end = sel_end.min(line_start + line_len);
-          let width = highlight_end.saturating_sub(highlight_start);
-          if width == 0 {
-            continue;
-          }
-          let start_col = highlight_start - line_start;
-          let padding: String = std::iter::repeat(' ').take(start_col).collect();
-          let highlight_chars: String = std::iter::repeat('█').take(width).collect();
-
-          renderer.draw_text(TextSection::simple(
-            base_x,
-            y,
-            format!("{}{}", padding, highlight_chars),
-            font_size,
-            selection_bg,
-          ));
-        }
+      // If the whole grapheme lies left of the viewport, skip
+      if abs_col + width_cols <= h_off {
+        continue;
       }
 
-      let mut line_string = line_slice.to_string();
-      while line_string.ends_with('\n') || line_string.ends_with('\r') {
-        line_string.pop();
+      // Compute on-screen column and clamp width to visible area
+      let rel_col = abs_col.saturating_sub(h_off);
+      if rel_col >= viewport_cols {
+        // Fully off to the right, skip
+        continue;
       }
 
-      renderer.draw_text(TextSection::simple(
-        base_x,
-        y,
-        line_string,
-        font_size,
-        normal,
-      ));
+      // For tabs, handle partial width at the left edge
+      let left_clip = if abs_col < h_off { h_off - abs_col } else { 0 };
+      let mut draw_cols = width_cols.saturating_sub(left_clip);
+      let remaining_cols = viewport_cols.saturating_sub(rel_col);
+      if draw_cols > remaining_cols {
+        draw_cols = remaining_cols;
+      }
 
-      if line_idx == cursor_line {
-        let padding: String = std::iter::repeat(' ').take(cursor_col).collect();
-        let under_ch = doc_text.get_char(cursor_pos).unwrap_or(' ');
-        renderer.draw_text(TextSection::simple(
-          base_x,
-          y,
-          format!("{}{}", padding, '█'),
-          font_size,
-          cursor_bg,
-        ));
-        renderer.draw_text(TextSection::simple(
-          base_x,
-          y,
-          format!("{}{}", padding, under_ch),
-          font_size,
-          cursor_fg,
-        ));
+      let x = base_x + (rel_col as f32) * font_width;
+      let y = base_y + (rel_row as f32) * font_size;
+
+      // Selection background per-grapheme
+      let doc_len = g.doc_chars();
+      if is_selected(g.char_idx, doc_len) {
+        renderer.draw_rect(x, y, (draw_cols as f32) * font_width, font_size, selection_bg);
+      }
+
+      // Draw cursor as a block under the character at cursor_pos
+      let is_cursor_here = g.char_idx == cursor_pos;
+      if is_cursor_here {
+        let cursor_w = width_cols.max(1) as f32 * font_width;
+        renderer.draw_rect(x, y, cursor_w.min((viewport_cols - rel_col) as f32 * font_width), font_size, cursor_bg);
+      }
+
+      // Draw the actual grapheme (skip newlines; tabs render as spacing)
+      match g.raw {
+        Grapheme::Newline => {
+          // no visible glyph
+        },
+        Grapheme::Tab { .. } => {
+          // We already advanced visual columns; nothing to draw
+        },
+        Grapheme::Other { ref g } => {
+          if left_clip == 0 {
+            let fg = if is_cursor_here { cursor_fg } else { normal };
+            renderer.draw_text(TextSection::simple(x, y, g.to_string(), font_size, fg));
+          }
+        },
       }
     }
 
@@ -3079,27 +3107,27 @@ impl Application for Editor {
             KeymapResult::Pending(_) => true, // Show pending UI later.
             KeymapResult::Cancelled(_) => true,
             KeymapResult::NotFound => {
-              if self.mode == Mode::Insert && matches!(key_press.code, Key::Enter) {
-                let mut cx = crate::core::commands::Context {
-                  register:             self.selected_register,
-                  count:                self.count,
-                  editor:               self,
-                  on_next_key_callback: None,
-                };
-                crate::core::commands::insert::insert_char(&mut cx, '\n');
-                let pending = cx.take_on_next_key();
-                let register = cx.register;
-                let count = cx.count;
-                drop(cx);
-                self.selected_register = register;
-                self.count = count;
-                if let Some(pending) = pending {
-                  self.pending_key_callback = Some(pending);
-                }
-                true
-              } else {
-                false
-              }
+                           if self.mode == Mode::Insert && matches!(key_press.code, Key::Enter) {
+                  let mut cx = crate::core::commands::Context {
+                    register:             self.selected_register,
+                    count:                self.count,
+                    editor:               self,
+                    on_next_key_callback: None,
+                  };
+                  crate::core::commands::insert::insert_char(&mut cx, '\n');
+                  let pending = cx.take_on_next_key();
+                  let register = cx.register;
+                  let count = cx.count;
+                  drop(cx);
+                  self.selected_register = register;
+                  self.count = count;
+                  if let Some(pending) = pending {
+                    self.pending_key_callback = Some(pending);
+                    }
+                    true
+                    } else {
+                        false
+                      }
             },
           };
 

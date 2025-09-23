@@ -481,7 +481,40 @@ impl Renderer {
       });
     }
 
-    // Queue and draw text
+    // Draw rectangles first (backgrounds/cursors/highlights)
+    if !self.rect_instances.is_empty() {
+      // Create instance buffer for this frame
+      let instance_buffer = self
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+          label:    Some("Rectangle Instance Buffer"),
+          contents: bytemuck::cast_slice(&self.rect_instances),
+          usage:    wgpu::BufferUsages::VERTEX,
+        });
+
+      let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label:                    Some("Rectangle Render Pass"),
+        color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
+          view:           &view,
+          resolve_target: None,
+          ops:            wgpu::Operations {
+            load:  wgpu::LoadOp::Load,
+            store: wgpu::StoreOp::Store,
+          },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes:         None,
+        occlusion_query_set:      None,
+      });
+
+      render_pass.set_pipeline(&self.rect_render_pipeline);
+      render_pass.set_bind_group(0, &self.rect_bind_group, &[]);
+      render_pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(..));
+      render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+      render_pass.draw(0..4, 0..self.rect_instances.len() as u32);
+    }
+
+    // Queue and draw text on top of rectangles
     if !self.text_strings.is_empty() {
       use wgpu_text::glyph_brush::Text;
 
@@ -524,39 +557,6 @@ impl Renderer {
       });
 
       self.brush.draw(&mut render_pass);
-    }
-
-    // Draw rectangles
-    if !self.rect_instances.is_empty() {
-      // Create instance buffer for this frame
-      let instance_buffer = self
-        .device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-          label:    Some("Rectangle Instance Buffer"),
-          contents: bytemuck::cast_slice(&self.rect_instances),
-          usage:    wgpu::BufferUsages::VERTEX,
-        });
-
-      let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label:                    Some("Rectangle Render Pass"),
-        color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
-          view:           &view,
-          resolve_target: None,
-          ops:            wgpu::Operations {
-            load:  wgpu::LoadOp::Load,
-            store: wgpu::StoreOp::Store,
-          },
-        })],
-        depth_stencil_attachment: None,
-        timestamp_writes:         None,
-        occlusion_query_set:      None,
-      });
-
-      render_pass.set_pipeline(&self.rect_render_pipeline);
-      render_pass.set_bind_group(0, &self.rect_bind_group, &[]);
-      render_pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(..));
-      render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
-      render_pass.draw(0..4, 0..self.rect_instances.len() as u32);
     }
 
     self.queue.submit(std::iter::once(encoder.finish()));

@@ -120,6 +120,10 @@ use crate::{
       InlineDiagnosticsConfig,
       Severity,
     },
+    doc_formatter::{
+      DocumentFormatter,
+      GraphemeSource,
+    },
     document::{
       Document,
       DocumentOpenError,
@@ -127,6 +131,7 @@ use crate::{
       DocumentSavedEventResult,
       SavePoint,
     },
+    grapheme::Grapheme,
     graphics::{
       CursorKind,
       Rect,
@@ -144,8 +149,6 @@ use crate::{
       char_idx_at_visual_offset,
       visual_offset_from_block,
     },
-    doc_formatter::{DocumentFormatter, GraphemeSource},
-    grapheme::Grapheme,
     registers::Registers,
     selection::{
       Range,
@@ -199,7 +202,6 @@ use crate::{
   view,
   view_mut,
 };
-
 
 /// Error thrown on failed document closed
 pub enum CloseError {
@@ -297,9 +299,9 @@ pub struct Editor {
   pub ui_components: crate::ui::ComponentManager,
 
   // Command mode support
-  pub command_prompt: Option<crate::ui::components::Prompt>,
+  pub command_prompt:   Option<crate::ui::components::Prompt>,
   pub command_registry: crate::core::command_registry::CommandRegistry,
-  pub command_history: Vec<String>,
+  pub command_history:  Vec<String>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -1774,7 +1776,9 @@ impl Editor {
         );
         components.add_component(
           "statusline".to_string(),
-          Box::new(crate::ui::components::StatusLine::new(conf.statusline.clone())),
+          Box::new(crate::ui::components::StatusLine::new(
+            conf.statusline.clone(),
+          )),
         );
         components.set_component_position("debug_panel", crate::ui::OverlayPosition::TopRight);
         components.set_component_position("rad_button", crate::ui::OverlayPosition::BottomRight);
@@ -1923,9 +1927,9 @@ impl Editor {
 
     // Create command context
     let mut context = Context {
-      register: None,
-      count: None,
-      editor: self,
+      register:             None,
+      count:                None,
+      editor:               self,
       on_next_key_callback: None,
     };
 
@@ -1936,10 +1940,10 @@ impl Editor {
     match registry.execute(&mut context, command, args) {
       Ok(()) => {
         // Command executed successfully
-      }
+      },
       Err(err) => {
         context.editor.set_error(err.to_string());
-      }
+      },
     }
 
     // Exit command mode
@@ -2944,10 +2948,30 @@ impl Application for Editor {
       }
     }
 
-    let normal = Color::rgb(0.85, 0.85, 0.9);
-    let cursor_fg = Color::rgb(0.1, 0.1, 0.15); // Dark text on bright block.
-    let cursor_bg = Color::rgb(0.2, 0.8, 0.7); // Teal block.
-    let selection_bg = Color::rgba(0.3, 0.5, 0.8, 0.3); // Semi-transparent blue.
+    // Get theme colors
+    let background_style = self.theme.get("ui.background");
+    let normal_style = self.theme.get("ui.text");
+    let selection_style = self.theme.get("ui.selection");
+
+    // Set the background color from theme
+    let background_color = background_style
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.1, 0.1, 0.15, 1.0));
+    renderer.set_background_color(background_color);
+
+    let normal = normal_style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::rgb(0.85, 0.85, 0.9));
+    
+    let cursor_fg = Color::rgb(0.1, 0.1, 0.15);
+    let cursor_bg = Color::rgb(0.2, 0.8, 0.7);
+    
+    let selection_bg = selection_style
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::rgba(0.3, 0.5, 0.8, 0.3));
     let base_x = VIEW_PADDING_LEFT;
     let base_y = VIEW_PADDING_TOP;
 
@@ -2994,8 +3018,12 @@ impl Application for Editor {
     .row;
 
     // Iterate formatted graphemes starting at the block containing top_char_idx
-    let mut formatter =
-      DocumentFormatter::new_at_prev_checkpoint(doc_text.slice(..), &text_fmt, &annotations, top_char_idx);
+    let mut formatter = DocumentFormatter::new_at_prev_checkpoint(
+      doc_text.slice(..),
+      &text_fmt,
+      &annotations,
+      top_char_idx,
+    );
 
     let viewport_cols = viewport.width as usize;
     let start_line = doc_text.char_to_line(top_char_idx);
@@ -3012,7 +3040,7 @@ impl Application for Editor {
         .any(|r| r.from() < end && r.to() > start)
     };
 
-    while let Some(mut g) = formatter.next() {
+    while let Some(g) = formatter.next() {
       // Skip visual lines before the top row of the viewport
       if g.visual_pos.row < row_off {
         continue;
@@ -3054,14 +3082,26 @@ impl Application for Editor {
       // Selection background per-grapheme
       let doc_len = g.doc_chars();
       if is_selected(g.char_idx, doc_len) {
-        renderer.draw_rect(x, y, (draw_cols as f32) * font_width, font_size, selection_bg);
+        renderer.draw_rect(
+          x,
+          y,
+          (draw_cols as f32) * font_width,
+          font_size,
+          selection_bg,
+        );
       }
 
       // Draw cursor as a block under the character at cursor_pos
       let is_cursor_here = g.char_idx == cursor_pos;
       if is_cursor_here {
         let cursor_w = width_cols.max(1) as f32 * font_width;
-        renderer.draw_rect(x, y, cursor_w.min((viewport_cols - rel_col) as f32 * font_width), font_size, cursor_bg);
+        renderer.draw_rect(
+          x,
+          y,
+          cursor_w.min((viewport_cols - rel_col) as f32 * font_width),
+          font_size,
+          cursor_bg,
+        );
       }
 
       // Draw the actual grapheme (skip newlines; tabs render as spacing)
@@ -3080,33 +3120,36 @@ impl Application for Editor {
         },
       }
     }
-    
+
     // Update statusline component with current state
     let show_command_prompt = self.mode == Mode::Command;
     if let Some(statusline) = self.ui_components.get_component_mut("statusline") {
-      if let Some(statusline) = statusline.as_any_mut().downcast_mut::<crate::ui::components::StatusLine>() {
+      if let Some(statusline) = statusline
+        .as_any_mut()
+        .downcast_mut::<crate::ui::components::StatusLine>()
+      {
         statusline.update_state(
           self.mode,
           cursor_line,
           cursor_col,
           total_lines,
           start_line,
-          None, // TODO: Add file name
+          None,  // TODO: Add file name
           false, // TODO: Add modified status
           show_command_prompt,
         );
       }
     }
-    
+
     let status_y = renderer.height() as f32 - STATUS_BAR_HEIGHT;
 
     // Render command prompt if in command mode
     if self.mode == Mode::Command {
       if let Some(prompt) = &self.command_prompt {
         prompt.render(renderer, crate::core::graphics::Rect {
-          x: 10,
-          y: status_y as u16,
-          width: (renderer.width() as u16).saturating_sub(20),
+          x:      10,
+          y:      status_y as u16,
+          width:  (renderer.width() as u16).saturating_sub(20),
           height: 25,
         });
       }
@@ -3152,15 +3195,15 @@ impl Application for Editor {
                   let input = prompt.input().to_string();
                   self.execute_command(input);
                   return true;
-                }
+                },
                 crate::ui::components::PromptEvent::Abort => {
                   self.mode = Mode::Normal;
                   self.command_prompt = None;
                   return true;
-                }
+                },
                 crate::ui::components::PromptEvent::Update => {
                   return true;
-                }
+                },
               }
             }
             return false;
@@ -3195,38 +3238,38 @@ impl Application for Editor {
                 crate::keymap::Command::EnterCommandMode => {
                   self.mode = Mode::Command;
                   self.init_command_prompt();
-                }
+                },
                 crate::keymap::Command::ExitCommandMode => {
                   self.mode = Mode::Normal;
                   self.command_prompt = None;
-                }
+                },
               }
               true
             },
             KeymapResult::Pending(_) => true, // Show pending UI later.
             KeymapResult::Cancelled(_) => true,
             KeymapResult::NotFound => {
-                           if self.mode == Mode::Insert && matches!(key_press.code, Key::Enter) {
-                  let mut cx = crate::core::commands::Context {
-                    register:             self.selected_register,
-                    count:                self.count,
-                    editor:               self,
-                    on_next_key_callback: None,
-                  };
-                  crate::core::commands::insert::insert_char(&mut cx, '\n');
-                  let pending = cx.take_on_next_key();
-                  let register = cx.register;
-                  let count = cx.count;
-                  drop(cx);
-                  self.selected_register = register;
-                  self.count = count;
-                  if let Some(pending) = pending {
-                    self.pending_key_callback = Some(pending);
-                    }
-                    true
-                    } else {
-                        false
-                      }
+              if self.mode == Mode::Insert && matches!(key_press.code, Key::Enter) {
+                let mut cx = crate::core::commands::Context {
+                  register:             self.selected_register,
+                  count:                self.count,
+                  editor:               self,
+                  on_next_key_callback: None,
+                };
+                crate::core::commands::insert::insert_char(&mut cx, '\n');
+                let pending = cx.take_on_next_key();
+                let register = cx.register;
+                let count = cx.count;
+                drop(cx);
+                self.selected_register = register;
+                self.count = count;
+                if let Some(pending) = pending {
+                  self.pending_key_callback = Some(pending);
+                }
+                true
+              } else {
+                false
+              }
             },
           };
 
@@ -3366,11 +3409,11 @@ impl Application for Editor {
                   crate::keymap::Command::EnterCommandMode => {
                     self.mode = Mode::Command;
                     self.init_command_prompt();
-                  }
+                  },
                   crate::keymap::Command::ExitCommandMode => {
                     self.mode = Mode::Normal;
                     self.command_prompt = None;
-                  }
+                  },
                 }
                 true
               },

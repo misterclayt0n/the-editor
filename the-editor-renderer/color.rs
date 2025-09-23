@@ -21,6 +21,7 @@ impl Color {
     Self { r, g, b, a }
   }
 
+
   /// Create an opaque color with RGB components
   ///
   /// Alpha is set to 1.0 (fully opaque)

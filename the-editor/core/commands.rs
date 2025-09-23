@@ -989,6 +989,16 @@ pub enum CommentContinuation {
   Disabled,
 }
 
+// 'o' inserts a new line after each line with a selection.
+pub fn open_below(cx: &mut Context) {
+  open(cx, Open::Below, CommentContinuation::Enabled)
+}
+
+// 'O' inserts a new line before each line with a selection.
+pub fn open_above(cx: &mut Context) {
+  open(cx, Open::Above, CommentContinuation::Enabled)
+}
+
 fn open(cx: &mut Context, open: Open, comment_continuation: CommentContinuation) {
   let count = cx.count();
   enter_insert_mode(cx);

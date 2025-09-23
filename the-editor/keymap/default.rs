@@ -8,7 +8,7 @@ use super::{
 
 pub fn default() -> HashMap<Mode, KeyTrie> {
   // Normal mode: hjkl + arrows move, 'i' enters insert
-  let mut normal = crate::keymap!({ "Normal"
+  let normal = crate::keymap!({ "Normal"
     "h" | Left  => move_char_left,
     "j" | Down  => move_visual_line_down,
     "k" | Up    => move_visual_line_up,
@@ -46,6 +46,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "I"         => insert_at_line_start,
     "a"         => append_mode,
     "A"         => insert_at_line_end,
+
+    "o"         => open_below,
+    "O"         => open_above,
 
     // Minimal examples of prefix maps
 

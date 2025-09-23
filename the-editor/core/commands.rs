@@ -1539,7 +1539,7 @@ fn goto_next_tabstop_impl(cx: &mut Context, direction: Direction) {
         Key::Char(ch) => Some(ch),
         _ => None,
       };
-      
+
       if let Some(c) = ch {
         let (view, doc) = current!(cx.editor);
         if let Some(snippet) = &doc.active_snippet {
@@ -1563,11 +1563,164 @@ fn move_node_bound_impl(cx: &mut Context, dir: Direction, movement: Movement) {
       let text = doc.text().slice(..);
       let current_selection = doc.selection(view.id);
 
-      let selection = movement::move_parent_node_end(syntax, text, current_selection.clone(), dir, movement);
+      let selection =
+        movement::move_parent_node_end(syntax, text, current_selection.clone(), dir, movement);
 
       doc.set_selection(view.id, selection);
     }
   };
 
   cx.editor.apply_motion(motion);
+}
+
+pub fn insert_newline(cx: &mut Context) {
+  let config = cx.editor.config();
+  let (view, doc) = current_ref!(cx.editor);
+  let loader = cx.editor.syn_loader.load();
+  let text = doc.text().slice(..);
+  let line_ending = doc.line_ending.as_str();
+
+  let contents = doc.text();
+  let selection = doc.selection(view.id);
+  let mut ranges = SmallVec::with_capacity(selection.len());
+
+  // TODO: this is annoying, but we need to do it to properly calculate pos after
+  // edits
+  let mut global_offs = 0;
+  let mut new_text = String::new();
+
+  let continue_comment_tokens = if config.continue_comments {
+    doc
+      .language_config()
+      .and_then(|config| config.comment_tokens.as_ref())
+  } else {
+    None
+  };
+
+  let mut last_pos = 0;
+  let mut transaction = Transaction::change_by_selection(contents, selection, |range| {
+    // Tracks the number of trailing whitespace characters deleted by this
+    // selection.
+    let mut chars_deleted = 0;
+    let pos = range.cursor(text);
+
+    let prev = if pos == 0 {
+      ' '
+    } else {
+      contents.char(pos - 1)
+    };
+    let curr = contents.get_char(pos).unwrap_or(' ');
+
+    let current_line = text.char_to_line(pos);
+    let line_start = text.line_to_char(current_line);
+
+    let continue_comment_token = continue_comment_tokens
+      .and_then(|tokens| comment::get_comment_token(text, tokens, current_line));
+
+    let (from, to, local_offs) =
+      if let Some(idx) = text.slice(line_start..pos).last_non_whitespace_char() {
+        let first_trailing_whitespace_char = (line_start + idx + 1).clamp(last_pos, pos);
+        last_pos = pos;
+        let line = text.line(current_line);
+
+        let indent = match line.first_non_whitespace_char() {
+          Some(pos) if continue_comment_token.is_some() => line.slice(..pos).to_string(),
+          _ => {
+            indent::indent_for_newline(
+              &loader,
+              doc.syntax(),
+              &config.indent_heuristic,
+              &doc.indent_style,
+              doc.tab_width(),
+              text,
+              current_line,
+              pos,
+              current_line,
+            )
+          },
+        };
+
+        // If we are between pairs (such as brackets), we want to
+        // insert an additional line which is indented one level
+        // more and place the cursor there
+        let on_auto_pair = doc
+          .auto_pairs(cx.editor)
+          .and_then(|pairs| pairs.get(prev))
+          .is_some_and(|pair| pair.open == prev && pair.close == curr);
+
+        let local_offs = if let Some(token) = continue_comment_token {
+          new_text.reserve_exact(line_ending.len() + indent.len() + token.len() + 1);
+          new_text.push_str(line_ending);
+          new_text.push_str(&indent);
+          new_text.push_str(token);
+          new_text.push(' ');
+          new_text.chars().count()
+        } else if on_auto_pair {
+          // line where the cursor will be
+          let inner_indent = indent.clone() + doc.indent_style.as_str();
+          new_text.reserve_exact(line_ending.len() * 2 + indent.len() + inner_indent.len());
+          new_text.push_str(line_ending);
+          new_text.push_str(&inner_indent);
+
+          // line where the matching pair will be
+          let local_offs = new_text.chars().count();
+          new_text.push_str(line_ending);
+          new_text.push_str(&indent);
+
+          local_offs
+        } else {
+          new_text.reserve_exact(line_ending.len() + indent.len());
+          new_text.push_str(line_ending);
+          new_text.push_str(&indent);
+
+          new_text.chars().count()
+        };
+
+        // Note that `first_trailing_whitespace_char` is at least `pos` so this unsigned
+        // subtraction cannot underflow.
+        chars_deleted = pos - first_trailing_whitespace_char;
+
+        (
+          first_trailing_whitespace_char,
+          pos,
+          local_offs as isize - chars_deleted as isize,
+        )
+      } else {
+        // If the current line is all whitespace, insert a line ending at the beginning
+        // of the current line. This makes the current line empty and the new
+        // line contain the indentation of the old line.
+        new_text.push_str(line_ending);
+
+        (line_start, line_start, new_text.chars().count() as isize)
+      };
+
+    let new_range = if range.cursor(text) > range.anchor {
+      // when appending, extend the range by local_offs
+      Range::new(
+        (range.anchor as isize + global_offs) as usize,
+        (range.head as isize + local_offs + global_offs) as usize,
+      )
+    } else {
+      // when inserting, slide the range by local_offs
+      Range::new(
+        (range.anchor as isize + local_offs + global_offs) as usize,
+        (range.head as isize + local_offs + global_offs) as usize,
+      )
+    };
+
+    // TODO: range replace or extend
+    // range.replace(|range| range.is_empty(), head); -> fn extend if cond true, new
+    // head pos can be used with cx.mode to do replace or extend on most changes
+    ranges.push(new_range);
+    global_offs += new_text.chars().count() as isize - chars_deleted as isize;
+    let tendril = Tendril::from(&new_text);
+    new_text.clear();
+
+    (from, to, Some(tendril))
+  });
+
+  transaction = transaction.with_selection(Selection::new(ranges, selection.primary_index()));
+
+  let (view, doc) = current!(cx.editor);
+  doc.apply(&transaction, view.id);
 }

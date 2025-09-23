@@ -182,6 +182,7 @@ pub enum OverlayPosition {
   BottomLeft,
   BottomRight,
   Center,
+  StatusLine, // Full width at bottom
 }
 
 impl Layout {
@@ -225,6 +226,16 @@ impl Layout {
           center_y.saturating_sub(height / 2),
           width,
           height,
+        )
+      },
+      OverlayPosition::StatusLine => {
+        // Status line spans full width at bottom
+        // The available area includes the status line area, so position at the last row
+        Rect::new(
+          available.x,
+          available.y + available.height.saturating_sub(1), // Last row
+          available.width,
+          1, // 1 row tall
         )
       },
     }
@@ -275,6 +286,16 @@ impl Layout {
           center_y.saturating_sub(height / 2),
           width,
           height,
+        )
+      },
+      OverlayPosition::StatusLine => {
+        // Status line spans full width at bottom
+        // The available area includes the status line area, so position at the last row
+        Rect::new(
+          available.x,
+          available.y + available.height.saturating_sub(1), // Last row
+          available.width,
+          1, // 1 row tall
         )
       },
     }

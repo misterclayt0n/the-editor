@@ -1772,8 +1772,13 @@ impl Editor {
               .on_click(|| println!("Run button clicked")),
           ),
         );
+        components.add_component(
+          "statusline".to_string(),
+          Box::new(crate::ui::components::StatusLine::new(conf.statusline.clone())),
+        );
         components.set_component_position("debug_panel", crate::ui::OverlayPosition::TopRight);
         components.set_component_position("rad_button", crate::ui::OverlayPosition::BottomRight);
+        components.set_component_position("statusline", crate::ui::OverlayPosition::StatusLine);
         components
       },
     }
@@ -3075,13 +3080,24 @@ impl Application for Editor {
         },
       }
     }
-
-    let mode_str = match self.mode {
-      Mode::Normal => "NORMAL",
-      Mode::Insert => "INSERT",
-      Mode::Select => "VISUAL",
-      Mode::Command => "COMMAND",
-    };
+    
+    // Update statusline component with current state
+    let show_command_prompt = self.mode == Mode::Command;
+    if let Some(statusline) = self.ui_components.get_component_mut("statusline") {
+      if let Some(statusline) = statusline.as_any_mut().downcast_mut::<crate::ui::components::StatusLine>() {
+        statusline.update_state(
+          self.mode,
+          cursor_line,
+          cursor_col,
+          total_lines,
+          start_line,
+          None, // TODO: Add file name
+          false, // TODO: Add modified status
+          show_command_prompt,
+        );
+      }
+    }
+    
     let status_y = renderer.height() as f32 - STATUS_BAR_HEIGHT;
 
     // Render command prompt if in command mode
@@ -3094,23 +3110,6 @@ impl Application for Editor {
           height: 25,
         });
       }
-    } else {
-      // Normal status line
-      let status_text = format!(
-        "{} | Ln {}/{} Col {} | Top {}",
-        mode_str,
-        cursor_line + 1,
-        total_lines,
-        cursor_col + 1,
-        start_line + 1,
-      );
-      renderer.draw_text(TextSection::simple(
-        10.0,
-        status_y,
-        status_text,
-        14.0,
-        Color::rgb(0.6, 0.6, 0.7),
-      ));
     }
 
     // Render UI components

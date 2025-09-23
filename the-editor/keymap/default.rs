@@ -50,6 +50,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "o"         => open_below,
     "O"         => open_above,
 
+    ":"         => command_mode,
+
     // Minimal examples of prefix maps
 
     "G" => goto_line,

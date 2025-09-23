@@ -200,6 +200,7 @@ use crate::{
   view_mut,
 };
 
+
 /// Error thrown on failed document closed
 pub enum CloseError {
   /// Document doesn't exist
@@ -294,6 +295,11 @@ pub struct Editor {
   pending_key_callback: Option<(OnKeyCallback, OnKeyCallbackKind)>,
 
   pub ui_components: crate::ui::ComponentManager,
+
+  // Command mode support
+  pub command_prompt: Option<crate::ui::components::Prompt>,
+  pub command_registry: crate::core::command_registry::CommandRegistry,
+  pub command_history: Vec<String>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -1748,6 +1754,9 @@ impl Editor {
       cursor_cache: CursorCache::default(),
       pending_key_callback: None,
       keymaps: Keymaps::default(),
+      command_prompt: None,
+      command_registry: crate::core::command_registry::CommandRegistry::new(),
+      command_history: Vec::new(),
       ui_components: {
         let mut components = crate::ui::ComponentManager::new();
 
@@ -1886,6 +1895,51 @@ impl Editor {
     let error = error.into();
     log::debug!("editor error: {}", error);
     self.status_msg = Some((error, Severity::Error));
+  }
+
+  pub fn init_command_prompt(&mut self) {
+    self.command_prompt = Some(crate::ui::components::Prompt::new(":".to_string()));
+  }
+
+  pub fn execute_command(&mut self, input: String) {
+    use crate::core::commands::Context;
+
+    // Add to history
+    self.command_history.push(input.clone());
+
+    // Parse command and arguments
+    let parts: Vec<&str> = input.trim().split_whitespace().collect();
+    if parts.is_empty() {
+      return;
+    }
+
+    let command = parts[0];
+    let args = &parts[1..];
+
+    // Create command context
+    let mut context = Context {
+      register: None,
+      count: None,
+      editor: self,
+      on_next_key_callback: None,
+    };
+
+    // Clone the command registry to avoid borrowing issues
+    let registry = context.editor.command_registry.clone();
+
+    // Execute through command registry
+    match registry.execute(&mut context, command, args) {
+      Ok(()) => {
+        // Command executed successfully
+      }
+      Err(err) => {
+        context.editor.set_error(err.to_string());
+      }
+    }
+
+    // Exit command mode
+    self.mode = Mode::Normal;
+    self.command_prompt = None;
   }
 
   #[inline]
@@ -3026,23 +3080,38 @@ impl Application for Editor {
       Mode::Normal => "NORMAL",
       Mode::Insert => "INSERT",
       Mode::Select => "VISUAL",
+      Mode::Command => "COMMAND",
     };
     let status_y = renderer.height() as f32 - STATUS_BAR_HEIGHT;
-    let status_text = format!(
-      "{} | Ln {}/{} Col {} | Top {}",
-      mode_str,
-      cursor_line + 1,
-      total_lines,
-      cursor_col + 1,
-      start_line + 1,
-    );
-    renderer.draw_text(TextSection::simple(
-      10.0,
-      status_y,
-      status_text,
-      14.0,
-      Color::rgb(0.6, 0.6, 0.7),
-    ));
+
+    // Render command prompt if in command mode
+    if self.mode == Mode::Command {
+      if let Some(prompt) = &self.command_prompt {
+        prompt.render(renderer, crate::core::graphics::Rect {
+          x: 10,
+          y: status_y as u16,
+          width: (renderer.width() as u16).saturating_sub(20),
+          height: 25,
+        });
+      }
+    } else {
+      // Normal status line
+      let status_text = format!(
+        "{} | Ln {}/{} Col {} | Top {}",
+        mode_str,
+        cursor_line + 1,
+        total_lines,
+        cursor_col + 1,
+        start_line + 1,
+      );
+      renderer.draw_text(TextSection::simple(
+        10.0,
+        status_y,
+        status_text,
+        14.0,
+        Color::rgb(0.6, 0.6, 0.7),
+      ));
+    }
 
     // Render UI components
     self.ui_components.render(renderer, target_area);
@@ -3075,6 +3144,29 @@ impl Application for Editor {
             return true;
           }
 
+          // Handle command mode input separately
+          if self.mode == Mode::Command {
+            if let Some(prompt) = &mut self.command_prompt {
+              let event = prompt.handle_key(key_press, &self.command_registry);
+              match event {
+                crate::ui::components::PromptEvent::Validate => {
+                  let input = prompt.input().to_string();
+                  self.execute_command(input);
+                  return true;
+                }
+                crate::ui::components::PromptEvent::Abort => {
+                  self.mode = Mode::Normal;
+                  self.command_prompt = None;
+                  return true;
+                }
+                crate::ui::components::PromptEvent::Update => {
+                  return true;
+                }
+              }
+            }
+            return false;
+          }
+
           // Dispatch renderer Key directly through keymap.
           let handled = match self.keymaps.get(self.mode, &key_press) {
             KeymapResult::Matched(cmd) => {
@@ -3101,6 +3193,14 @@ impl Application for Editor {
                 crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,
                 crate::keymap::Command::EnterVisualMode => self.mode = Mode::Select,
                 crate::keymap::Command::ExitVisualMode => self.mode = Mode::Normal,
+                crate::keymap::Command::EnterCommandMode => {
+                  self.mode = Mode::Command;
+                  self.init_command_prompt();
+                }
+                crate::keymap::Command::ExitCommandMode => {
+                  self.mode = Mode::Normal;
+                  self.command_prompt = None;
+                }
               }
               true
             },
@@ -3264,6 +3364,14 @@ impl Application for Editor {
                   crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,
                   crate::keymap::Command::EnterVisualMode => self.mode = Mode::Select,
                   crate::keymap::Command::ExitVisualMode => self.mode = Mode::Normal,
+                  crate::keymap::Command::EnterCommandMode => {
+                    self.mode = Mode::Command;
+                    self.init_command_prompt();
+                  }
+                  crate::keymap::Command::ExitCommandMode => {
+                    self.mode = Mode::Normal;
+                    self.command_prompt = None;
+                  }
                 }
                 true
               },

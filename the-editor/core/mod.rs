@@ -10,6 +10,7 @@ pub mod case_conversion;
 pub mod chars;
 pub mod clipboard;
 pub mod command_line;
+pub mod command_registry;
 pub mod commands;
 pub mod comment;
 pub mod config;

@@ -890,6 +890,15 @@ fn enter_insert_mode(cx: &mut Context) {
   cx.editor.mode = Mode::Insert;
 }
 
+pub fn command_mode(cx: &mut Context) {
+  cx.editor.mode = Mode::Command;
+  
+  // Initialize command prompt if needed
+  if cx.editor.command_prompt.is_none() {
+    cx.editor.init_command_prompt();
+  }
+}
+
 // Inserts at the start of each selection.
 pub fn insert_mode(cx: &mut Context) {
   enter_insert_mode(cx);

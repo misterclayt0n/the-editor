@@ -206,6 +206,7 @@ pub enum Mode {
   Normal,
   Insert,
   Select,
+  Command,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -215,6 +216,8 @@ pub enum Command {
   ExitInsertMode,
   EnterVisualMode,
   ExitVisualMode,
+  EnterCommandMode,
+  ExitCommandMode,
 }
 
 impl std::fmt::Debug for Command {
@@ -225,6 +228,8 @@ impl std::fmt::Debug for Command {
       Command::ExitInsertMode => write!(f, "ExitInsertMode"),
       Command::EnterVisualMode => write!(f, "EnterVisualMode"),
       Command::ExitVisualMode => write!(f, "ExitVisualMode"),
+      Command::EnterCommandMode => write!(f, "EnterCommandMode"),
+      Command::ExitCommandMode => write!(f, "ExitCommandMode"),
     }
   }
 }

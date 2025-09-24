@@ -84,7 +84,6 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use unicode_segmentation::UnicodeSegmentation;
 
 const EDITOR_FONT_SIZE: f32 = 22.0;
-const EDITOR_FONT_WIDTH: f32 = 12.0;
 const VIEW_PADDING_LEFT: f32 = 0.0;
 const VIEW_PADDING_TOP: f32 = 0.0;
 const VIEW_PADDING_BOTTOM: f32 = 0.0;
@@ -2927,7 +2926,8 @@ impl Application for Editor {
     the_editor_event::start_frame();
 
     let font_size = self.line_height();
-    let font_width = EDITOR_FONT_WIDTH;
+    renderer.configure_font("Iosekva Regular", font_size);
+    let font_width = renderer.cell_width().max(1.0);
     let available_height =
       (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM + STATUS_BAR_HEIGHT);
     let available_height = available_height.max(font_size);
@@ -2964,10 +2964,10 @@ impl Application for Editor {
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::rgb(0.85, 0.85, 0.9));
-    
+
     let cursor_fg = Color::rgb(0.1, 0.1, 0.15);
     let cursor_bg = Color::rgb(0.2, 0.8, 0.7);
-    
+
     let selection_bg = selection_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
@@ -3040,6 +3040,32 @@ impl Application for Editor {
         .any(|r| r.from() < end && r.to() > start)
     };
 
+    fn flush_text_run(
+      renderer: &mut Renderer,
+      run_text: &mut String,
+      run_start_x: f32,
+      run_y: f32,
+      font_size: f32,
+      run_color: Color,
+    ) {
+      if !run_text.is_empty() {
+        let text = std::mem::take(run_text);
+        renderer.draw_text(TextSection::simple(
+          run_start_x,
+          run_y,
+          text,
+          font_size,
+          run_color,
+        ));
+      }
+    }
+
+    let mut current_row = usize::MAX;
+    let mut run_text = String::new();
+    let mut run_start_x = 0.0f32;
+    let mut run_y = 0.0f32;
+    let mut run_color = normal;
+
     while let Some(g) = formatter.next() {
       // Skip visual lines before the top row of the viewport
       if g.visual_pos.row < row_off {
@@ -3076,6 +3102,18 @@ impl Application for Editor {
         draw_cols = remaining_cols;
       }
 
+      if rel_row != current_row {
+        flush_text_run(
+          renderer,
+          &mut run_text,
+          run_start_x,
+          run_y,
+          font_size,
+          run_color,
+        );
+        current_row = rel_row;
+      }
+
       let x = base_x + (rel_col as f32) * font_width;
       let y = base_y + (rel_row as f32) * font_size;
 
@@ -3107,19 +3145,77 @@ impl Application for Editor {
       // Draw the actual grapheme (skip newlines; tabs render as spacing)
       match g.raw {
         Grapheme::Newline => {
-          // no visible glyph
+          flush_text_run(
+            renderer,
+            &mut run_text,
+            run_start_x,
+            run_y,
+            font_size,
+            run_color,
+          );
         },
         Grapheme::Tab { .. } => {
-          // We already advanced visual columns; nothing to draw
+          flush_text_run(
+            renderer,
+            &mut run_text,
+            run_start_x,
+            run_y,
+            font_size,
+            run_color,
+          );
         },
         Grapheme::Other { ref g } => {
-          if left_clip == 0 {
-            let fg = if is_cursor_here { cursor_fg } else { normal };
-            renderer.draw_text(TextSection::simple(x, y, g.to_string(), font_size, fg));
+          if left_clip > 0 {
+            flush_text_run(
+              renderer,
+              &mut run_text,
+              run_start_x,
+              run_y,
+              font_size,
+              run_color,
+            );
+            continue;
           }
+
+          let fg = if is_cursor_here { cursor_fg } else { normal };
+
+          if run_text.is_empty() {
+            run_start_x = x;
+            run_y = y;
+            run_color = fg;
+          } else {
+            let color_changed = fg.r != run_color.r
+              || fg.g != run_color.g
+              || fg.b != run_color.b
+              || fg.a != run_color.a;
+            if color_changed {
+              flush_text_run(
+                renderer,
+                &mut run_text,
+                run_start_x,
+                run_y,
+                font_size,
+                run_color,
+              );
+              run_start_x = x;
+              run_y = y;
+              run_color = fg;
+            }
+          }
+
+          run_text.push_str(&g.to_string());
         },
       }
     }
+
+    flush_text_run(
+      renderer,
+      &mut run_text,
+      run_start_x,
+      run_y,
+      font_size,
+      run_color,
+    );
 
     // Update statusline component with current state
     let show_command_prompt = self.mode == Mode::Command;

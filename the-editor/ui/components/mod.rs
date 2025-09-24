@@ -5,5 +5,8 @@ pub mod statusline;
 
 pub use button::Button;
 pub use debug_panel::DebugPanel;
-pub use prompt::{Prompt, PromptEvent};
+pub use prompt::{
+  Prompt,
+  PromptEvent,
+};
 pub use statusline::StatusLine;

@@ -6,14 +6,21 @@ use the_editor_renderer::{
 
 use crate::{
   core::graphics::Rect,
-  editor::{StatusLineConfig, StatusLineElement},
+  editor::{
+    StatusLineConfig,
+    StatusLineElement,
+  },
   keymap::Mode,
-  ui::{Component, UI_FONT_SIZE},
+  ui::{
+    Component,
+    UI_FONT_SIZE,
+  },
 };
 
 const STATUS_BAR_HEIGHT: f32 = 30.0;
 
-/// StatusLine component that displays editor status information at the bottom of the screen
+/// StatusLine component that displays editor status information at the bottom
+/// of the screen
 pub struct StatusLine {
   // Configuration
   config: StatusLineConfig,
@@ -22,12 +29,12 @@ pub struct StatusLine {
   visible: bool,
 
   // Status information
-  mode: Mode,
+  mode:        Mode,
   cursor_line: usize,
-  cursor_col: usize,
+  cursor_col:  usize,
   total_lines: usize,
-  start_line: usize,
-  file_name: Option<String>,
+  start_line:  usize,
+  file_name:   Option<String>,
   is_modified: bool,
 
   // Command mode support - the statusline should not render when command prompt is shown
@@ -87,17 +94,23 @@ impl StatusLine {
     match element {
       StatusLineElement::Mode => self.mode_str().to_string(),
       StatusLineElement::Position => {
-        format!("Ln {}/{} Col {}",
-                self.cursor_line + 1,
-                self.total_lines,
-                self.cursor_col + 1)
+        format!(
+          "Ln {}/{} Col {}",
+          self.cursor_line + 1,
+          self.total_lines,
+          self.cursor_col + 1
+        )
       },
       StatusLineElement::TotalLineNumbers => self.total_lines.to_string(),
       StatusLineElement::FileName => {
-        self.file_name.clone().unwrap_or_else(|| "[No Name]".to_string())
+        self
+          .file_name
+          .clone()
+          .unwrap_or_else(|| "[No Name]".to_string())
       },
       StatusLineElement::FileBaseName => {
-        self.file_name
+        self
+          .file_name
           .as_ref()
           .and_then(|name| std::path::Path::new(name).file_name())
           .and_then(|name| name.to_str())
@@ -155,7 +168,8 @@ impl Component for StatusLine {
     }
 
     // Calculate position - status line should be at bottom
-    // Convert rect coordinates to pixel coordinates using the same approach as the button component
+    // Convert rect coordinates to pixel coordinates using the same approach as the
+    // button component
     let _char_w = 12.0f32; // May be used later for positioning
     let line_h = 20.0f32;
     let x = 10.0; // Fixed left margin like original

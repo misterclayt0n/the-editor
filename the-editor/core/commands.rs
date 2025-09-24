@@ -892,7 +892,7 @@ fn enter_insert_mode(cx: &mut Context) {
 
 pub fn command_mode(cx: &mut Context) {
   cx.editor.mode = Mode::Command;
-  
+
   // Initialize command prompt if needed
   if cx.editor.command_prompt.is_none() {
     cx.editor.init_command_prompt();

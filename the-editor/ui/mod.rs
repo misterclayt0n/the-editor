@@ -15,7 +15,7 @@ pub mod components;
 pub const UI_FONT_SIZE: f32 = 14.0;
 // Font width calculated based on the monospace font at UI_FONT_SIZE
 // Monospace fonts typically have a width-to-height ratio of ~0.6
-pub const UI_FONT_WIDTH: f32 = UI_FONT_SIZE * 0.6;  // ~8.4 pixels for 14pt font
+pub const UI_FONT_WIDTH: f32 = UI_FONT_SIZE * 0.6; // ~8.4 pixels for 14pt font
 
 /// Convert theme color to renderer color
 pub fn theme_color_to_renderer_color(theme_color: crate::core::graphics::Color) -> Color {
@@ -51,7 +51,7 @@ pub fn theme_color_to_renderer_color(theme_color: crate::core::graphics::Color) 
         6 => Color::rgb(0.0, 1.0, 1.0), // cyan
         7 => Color::WHITE,
         8 => Color::GRAY,
-        9 => Color::rgb(1.0, 0.5, 0.5), // light red
+        9 => Color::rgb(1.0, 0.5, 0.5),  // light red
         10 => Color::rgb(0.5, 1.0, 0.5), // light green
         11 => Color::rgb(1.0, 1.0, 0.5), // light yellow
         12 => Color::rgb(0.5, 0.5, 1.0), // light blue
@@ -62,9 +62,9 @@ pub fn theme_color_to_renderer_color(theme_color: crate::core::graphics::Color) 
         _ => {
           let gray = (i as f32 - 16.0) / 239.0;
           Color::rgb(gray, gray, gray)
-        }
+        },
       }
-    }
+    },
   }
 }
 

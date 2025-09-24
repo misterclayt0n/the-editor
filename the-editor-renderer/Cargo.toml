@@ -8,11 +8,9 @@ version.workspace = true
 path = "lib.rs"
 
 [dependencies]
-bytemuck.workspace   = true
 env_logger.workspace = true
+gpui = { git = "https://github.com/zed-industries/zed" }
+log.workspace = true
 pollster.workspace   = true
 thiserror.workspace  = true
-wgpu.workspace       = true
-wgpu_text.workspace  = true
-winit.workspace      = true
 the-editor-event = { path = "../the-editor-event" }

@@ -31,6 +31,10 @@ pub struct Button {
 
   // Behavior
   on_click: Option<Box<dyn FnMut() + 'static>>,
+
+  // Cached font metrics for mouse handling
+  cached_char_width: f32,
+  cached_line_height: f32,
 }
 
 impl Button {
@@ -45,6 +49,8 @@ impl Button {
       anim_active:     false,
       anim_t:          0.0,
       on_click:        None,
+      cached_char_width: 12.0, // Default fallback values
+      cached_line_height: 20.0,
     }
   }
 
@@ -85,10 +91,10 @@ impl Button {
     self.on_click = Some(Box::new(f));
   }
 
-  fn rect_to_pixels(rect: Rect) -> (f32, f32, f32, f32) {
-    // Match immediate.rs defaults: ~12px char width, ~20px line height.
-    let char_w = 12.0f32;
-    let line_h = 20.0f32;
+  fn rect_to_pixels(rect: Rect, renderer: &Renderer) -> (f32, f32, f32, f32) {
+    // Use actual font metrics from the renderer
+    let char_w = renderer.cell_width();
+    let line_h = renderer.cell_height();
     let x = rect.x as f32 * char_w;
     let y = rect.y as f32 * line_h;
     let w = rect.width as f32 * char_w;
@@ -235,7 +241,11 @@ impl Component for Button {
       return;
     }
 
-    let (x, y, w, h) = Self::rect_to_pixels(rect);
+    // Cache font metrics for mouse handling
+    self.cached_char_width = renderer.cell_width();
+    self.cached_line_height = renderer.cell_height();
+
+    let (x, y, w, h) = Self::rect_to_pixels(rect, renderer);
     let radius = (h * 0.5).min(10.0);
 
     // Base + outline
@@ -287,8 +297,11 @@ impl Component for Button {
   }
 
   fn handle_mouse(&mut self, mouse: &MouseEvent, rect: Rect) -> bool {
-    // Convert rect to pixel-space box
-    let (x, y, w, h) = Self::rect_to_pixels(rect);
+    // Convert rect to pixel-space box using cached font metrics
+    let x = rect.x as f32 * self.cached_char_width;
+    let y = rect.y as f32 * self.cached_line_height;
+    let w = rect.width as f32 * self.cached_char_width;
+    let h = rect.height as f32 * self.cached_line_height;
     let (mx, my) = mouse.position;
     let inside = mx >= x && mx <= x + w && my >= y && my <= y + h;
 

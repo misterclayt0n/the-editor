@@ -190,6 +190,11 @@ impl Renderer {
     self.cell_width
   }
 
+  /// Report the configured monospaced line height in pixels.
+  pub fn cell_height(&self) -> f32 {
+    self.cell_height
+  }
+
   /// Record a text section to be drawn this frame.
   pub fn draw_text(&mut self, section: TextSection) {
     self.commands.push(DrawCommand::Text(section));

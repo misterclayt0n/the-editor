@@ -14,6 +14,7 @@ use std::{
   sync::{
     Arc,
     Mutex,
+    Once,
     atomic::{
       AtomicBool,
       Ordering,
@@ -84,6 +85,7 @@ use renderer::{
 const MONO_FONT_BYTES: &[u8] = include_bytes!("../assets/Iosevka-Regular.ttc");
 const MONO_FONT_NAME: &str = "Iosevka";
 const DEFAULT_FONT_SIZE: f32 = 22.0;
+static LOG_FONT_FEATURES_ONCE: Once = Once::new();
 pub use renderer::{
   Renderer,
   RendererConfig,
@@ -614,21 +616,45 @@ fn paint_text_section(section: TextSection, window: &mut Window, cx: &mut App) {
   let top = px(section.position.1);
 
   for segment in section.texts {
-    if segment.content.is_empty() {
+    let TextSegment { content, style } = segment;
+
+    if content.is_empty() {
       continue;
     }
 
-    let text = SharedString::from(segment.content);
+    let protected = protect_problematic_ligatures(&content);
+    let text = match protected {
+      Cow::Borrowed(_) => SharedString::from(content),
+      Cow::Owned(protected) => SharedString::from(protected),
+    };
+
     let text_run = TextRun {
       len:              text.len(),
       font:             font(MONO_FONT_NAME),
-      color:            to_hsla(segment.style.color),
+      color:            to_hsla(style.color),
       background_color: None,
       underline:        None,
       strikethrough:    None,
     };
 
-    let font_size = px(segment.style.size);
+    // TODO: Ligature support is incomplete in cosmic-text
+    // See: https://github.com/pop-os/cosmic-text/issues/378
+    // Keeping minimal ligature config for now
+    // let mut features = FontFeatures::default();
+    // features.0 = Arc::from(vec![
+    //     ("liga".to_string(), 1),
+    //     ("calt".to_string(), 1),
+    // ]);
+    // text_run.font.features = features;
+
+    // LOG_FONT_FEATURES_ONCE.call_once(|| {
+    //   log::info!(
+    //     "text run font features: {:?}",
+    //     text_run.font.features.tag_value_list()
+    //   );
+    // });
+
+    let font_size = px(style.size);
     let shaped_line = window
       .text_system()
       .shape_line(text, font_size, &[text_run], None);
@@ -646,6 +672,58 @@ fn to_background(color: Color) -> Background {
   Background::from(to_rgba(color))
 }
 
+const WORD_JOINER: &str = "\u{2060}";
+
+/// Hard-coded ligature patterns that cosmic-text currently breaks when applying
+/// the Unicode line breaking algorithm. We guard them with word joiners until
+/// upstream gains a proper fix. Longer patterns are listed first to avoid
+/// partially rewriting shorter substrings before their longer variants.
+///
+/// Link to the issue: https://github.com/pop-os/cosmic-text/pull/392
+const PROBLEM_LIGATURES: &[&str] = &[
+  "<!--", ":?>", "|->", "<-|", "<=>", "<|>", "</>", "..<", ">..", "||=", "&&=", "+++", "---",
+  "-->", ">>=", "<<=", "=/=", "===", "!==", "=!=", "/**", "<->", "...", "??", "||", "&&", "|=",
+  "&=", "++", "--", "/*", "*/", "!=", "==", "->", "<-", "=>", "<=", ">=", "::", ":?", "?:", "<|",
+  "|>", ">>", "<<", "~>", "<~", "-~", "~-", "</", "/>", "?.", "..", "><", "<>", "|-", "-|",
+];
+
+fn protect_problematic_ligatures(text: &str) -> Cow<'_, str> {
+  let mut protected: Option<String> = None;
+
+  for pattern in PROBLEM_LIGATURES {
+    let current = protected.as_deref().unwrap_or(text);
+    if !current.contains(pattern) {
+      continue;
+    }
+
+    let replacement = join_with_word_joiner(pattern);
+    let updated = current.replace(pattern, replacement.as_str());
+    protected = Some(updated);
+  }
+
+  match protected {
+    Some(result) => Cow::Owned(result),
+    None => Cow::Borrowed(text),
+  }
+}
+
+fn join_with_word_joiner(pattern: &str) -> String {
+  let mut chars = pattern.chars();
+  let Some(first) = chars.next() else {
+    return String::new();
+  };
+
+  let mut joined =
+    String::with_capacity(pattern.len() + (pattern.len().saturating_sub(1) * WORD_JOINER.len()));
+  joined.push(first);
+  for ch in chars {
+    joined.push_str(WORD_JOINER);
+    joined.push(ch);
+  }
+
+  joined
+}
+
 fn to_hsla(color: Color) -> Hsla {
   Hsla::from(to_rgba(color))
 }
@@ -656,5 +734,41 @@ fn to_rgba(color: Color) -> Rgba {
     g: color.g,
     b: color.b,
     a: color.a,
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::borrow::Cow;
+
+  use super::*;
+
+  #[test]
+  fn protects_simple_two_char_pattern() {
+    let result = protect_problematic_ligatures("->");
+    let expected = format!("-{}>", WORD_JOINER);
+    match &result {
+      Cow::Owned(owned) => assert_eq!(owned.as_str(), expected),
+      Cow::Borrowed(_) => panic!("expected owned cow for protected ligature"),
+    }
+  }
+
+  #[test]
+  fn protects_longer_pattern_before_shorter_variants() {
+    let result = protect_problematic_ligatures("<->");
+    let expected = format!("<{}-{}>", WORD_JOINER, WORD_JOINER);
+    match &result {
+      Cow::Owned(owned) => assert_eq!(owned.as_str(), expected),
+      Cow::Borrowed(_) => panic!("expected owned cow for protected ligature"),
+    }
+  }
+
+  #[test]
+  fn leaves_non_ligature_text_unmodified() {
+    let result = protect_problematic_ligatures("hello");
+    match &result {
+      Cow::Borrowed(text) => assert_eq!(*text, "hello"),
+      Cow::Owned(_) => panic!("non-ligature text should remain borrowed"),
+    }
   }
 }

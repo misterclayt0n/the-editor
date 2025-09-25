@@ -2926,7 +2926,7 @@ impl Application for Editor {
     the_editor_event::start_frame();
 
     let font_size = self.line_height();
-    renderer.configure_font("Iosekva Regular", font_size);
+    renderer.configure_font("Iosevka Nerd Font", font_size);
     let font_width = renderer.cell_width().max(1.0);
     let available_height =
       (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM + STATUS_BAR_HEIGHT);

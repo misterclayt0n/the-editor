@@ -122,13 +122,13 @@ impl Renderer {
     self.cell_width = advance.max(1.0);
     self.cell_height = self.font_size;
     self.have_metrics = true;
-        
+
     // match window.text_system().resolve_font(&font) {
     //   Ok(font_id) => {
-      // },
-      // Err(err) => {
-        // log::warn!("failed to resolve font metrics: {err}");
-      // },
+    // },
+    // Err(err) => {
+    // log::warn!("failed to resolve font metrics: {err}");
+    // },
     // }
   }
 

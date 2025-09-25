@@ -1,3 +1,10 @@
+use std::{
+  borrow::Cow,
+  fs,
+  path::Path,
+};
+
+use anyhow::anyhow;
 use gpui::{
   Window,
   font,
@@ -39,6 +46,7 @@ pub struct Renderer {
   cell_width:   f32,
   cell_height:  f32,
   have_metrics: bool,
+  pending_font_bytes: Option<Vec<u8>>, // Font bytes to register on next metrics refresh
 }
 
 impl Renderer {
@@ -49,11 +57,12 @@ impl Renderer {
       width,
       height,
       commands: Vec::new(),
-      font_family: ".SystemUIFont".to_string(),
+      font_family: "Iosevka".to_string(),
       font_size: 16.0,
       cell_width: 8.0,
       cell_height: 16.0,
       have_metrics: false,
+      pending_font_bytes: None,
     }
   }
 
@@ -66,6 +75,11 @@ impl Renderer {
     } else {
       false
     }
+  }
+
+  /// Get the currently configured font family name.
+  pub fn current_font_family(&self) -> &str {
+    &self.font_family
   }
 
   /// Begin a new frame. This simply clears the recorded command list.
@@ -84,6 +98,7 @@ impl Renderer {
     FrameData {
       background_color: self.config.background_color,
       commands:         std::mem::take(&mut self.commands),
+      font_family:      self.font_family.clone(),
     }
   }
 
@@ -105,10 +120,48 @@ impl Renderer {
     }
   }
 
+  /// Configure the font by reading TTF/OTF/TTC bytes, resolving its family name,
+  /// and scheduling the bytes to be registered with the text system.
+  pub fn configure_font_from_bytes(&mut self, bytes: Vec<u8>, size: f32) -> anyhow::Result<()> {
+    let family = resolve_family_name(&bytes)
+      .ok_or_else(|| anyhow!("could not resolve font family from provided bytes"))?;
+
+    if self.font_family != family {
+      self.font_family = family;
+      self.have_metrics = false;
+    }
+
+    if (self.font_size - size).abs() > f32::EPSILON {
+      self.font_size = size;
+      self.have_metrics = false;
+    }
+
+    self.pending_font_bytes = Some(bytes);
+    Ok(())
+  }
+
+  /// Configure the font by reading the specified font file path and resolving
+  /// its family name automatically.
+  pub fn configure_font_from_path<P: AsRef<Path>>(
+    &mut self,
+    path: P,
+    size: f32,
+  ) -> anyhow::Result<()> {
+    let bytes = fs::read(path)?;
+    self.configure_font_from_bytes(bytes, size)
+  }
+
   /// Ensure cached font metrics are in sync with the GPUI text system.
   pub fn ensure_font_metrics(&mut self, window: &Window) {
     if self.have_metrics {
       return;
+    }
+
+    // If a new font file was configured, register it with the text system now.
+    if let Some(bytes) = self.pending_font_bytes.take() {
+      if let Err(err) = window.text_system().add_fonts(vec![Cow::Owned(bytes)]) {
+        log::warn!("failed to register configured font bytes: {err}");
+      }
     }
 
     let font = font(self.font_family.clone());
@@ -232,11 +285,33 @@ impl Renderer {
   }
 }
 
+/// Try to resolve a readable family name from raw font bytes using fontdb.
+fn resolve_family_name(bytes: &[u8]) -> Option<String> {
+  let mut db = fontdb::Database::new();
+  let before = db.faces().len();
+  db.load_font_data(bytes.to_vec());
+  let faces = db.faces();
+  let face = faces.get(before)?;
+
+  // Prefer a named family from the face if present
+  if let Some((name, _lang)) = face.families.first() {
+    return Some(name.clone());
+  }
+
+  // Fallback: post script name if available
+  if !face.post_script_name.is_empty() {
+    return Some(face.post_script_name.clone());
+  }
+
+  None
+}
+
 /// Drawing commands captured for a frame. These are consumed by the GPUI canvas
 /// when the frame is presented.
 pub struct FrameData {
   pub background_color: Color,
   pub commands:         Vec<DrawCommand>,
+  pub font_family:      String,
 }
 
 /// Individual drawing operations supported by the higher level UI code.

@@ -82,10 +82,8 @@ use renderer::{
   DrawCommand,
   FrameData,
 };
-const MONO_FONT_BYTES: &[u8] = include_bytes!("../assets/Iosevka-Regular.ttc");
-const MONO_FONT_NAME: &str = "Iosevka";
+const MONO_FONT_BYTES: &[u8] = include_bytes!("../assets/JetBrainsMono-Regular.ttf");
 const DEFAULT_FONT_SIZE: f32 = 22.0;
-static LOG_FONT_FEATURES_ONCE: Once = Once::new();
 pub use renderer::{
   Renderer,
   RendererConfig,
@@ -598,7 +596,7 @@ fn paint_frame(
         );
         window.paint_quad(quad);
       },
-      DrawCommand::Text(section) => paint_text_section(section, window, cx),
+      DrawCommand::Text(section) => paint_text_section(section, window, cx, frame.font_family.clone()),
     }
   }
 }
@@ -607,7 +605,12 @@ fn rect_bounds(x: f32, y: f32, width: f32, height: f32) -> gpui::Bounds<gpui::Pi
   gpui::Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
 }
 
-fn paint_text_section(section: TextSection, window: &mut Window, cx: &mut App) {
+fn paint_text_section(
+  section: TextSection,
+  window: &mut Window,
+  cx: &mut App,
+  font_family: String,
+) {
   if section.texts.is_empty() {
     return;
   }
@@ -630,7 +633,7 @@ fn paint_text_section(section: TextSection, window: &mut Window, cx: &mut App) {
 
     let text_run = TextRun {
       len:              text.len(),
-      font:             font(MONO_FONT_NAME),
+      font:             font(font_family.clone()),
       color:            to_hsla(style.color),
       background_color: None,
       underline:        None,

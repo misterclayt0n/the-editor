@@ -1785,13 +1785,24 @@ dependencies = [
 
 [[package]]
 name = "fontdb"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff20bef7942a72af07104346154a70a70b089c572e454b41bef6eb6cb10e9c06"
+dependencies = [
+ "log",
+ "memmap2 0.5.10",
+ "ttf-parser 0.18.1",
+]
+
+[[package]]
+name = "fontdb"
 version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0299020c3ef3f60f526a4f64ab4a3d4ce116b1acbf24cdd22da0068e5d81dc3"
 dependencies = [
  "fontconfig-parser",
  "log",
- "memmap2",
+ "memmap2 0.9.8",
  "slotmap",
  "tinyvec",
  "ttf-parser 0.20.0",
@@ -1805,7 +1816,7 @@ checksum = "457e789b3d1202543297a350643cf459f836cade38934e7a4cf6a39e7cde2905"
 dependencies = [
  "fontconfig-parser",
  "log",
- "memmap2",
+ "memmap2 0.9.8",
  "slotmap",
  "tinyvec",
  "ttf-parser 0.25.1",
@@ -2169,7 +2180,7 @@ dependencies = [
  "bstr",
  "gix-chunk",
  "gix-hash",
- "memmap2",
+ "memmap2 0.9.8",
  "thiserror 2.0.16",
 ]
 
@@ -2403,7 +2414,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "itoa",
  "libc",
- "memmap2",
+ "memmap2 0.9.8",
  "rustix 1.0.8",
  "smallvec",
  "thiserror 2.0.16",
@@ -2475,7 +2486,7 @@ dependencies = [
  "gix-hashtable",
  "gix-object",
  "gix-path",
- "memmap2",
+ "memmap2 0.9.8",
  "smallvec",
  "thiserror 2.0.16",
 ]
@@ -2579,7 +2590,7 @@ dependencies = [
  "gix-tempfile",
  "gix-utils",
  "gix-validate",
- "memmap2",
+ "memmap2 0.9.8",
  "thiserror 2.0.16",
  "winnow",
 ]
@@ -3881,6 +3892,15 @@ checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
 
 [[package]]
 name = "memmap2"
+version = "0.5.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83faa42c0a078c393f6b29d5db232d8be22776a891f8f56e5284faee4a20b327"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "memmap2"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843a98750cd611cc2965a8213b53b43e715f13c37a9e096c6408e69990961db7"
@@ -4845,7 +4865,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5877,7 +5897,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6232,7 +6252,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.0.8",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -6352,7 +6372,9 @@ version = "0.1.0"
 name = "the-editor-renderer"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "env_logger",
+ "fontdb 0.12.0",
  "gpui",
  "log",
  "pollster 0.4.0",
@@ -6767,6 +6789,12 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "ttf-parser"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0609f771ad9c6155384897e1df4d948e692667cc0588548b68eb44d052b27633"
 
 [[package]]
 name = "ttf-parser"
@@ -7989,7 +8017,7 @@ checksum = "8d66ca9352cbd4eecbbc40871d8a11b4ac8107cfc528a6e14d7c19c69d0e1ac9"
 dependencies = [
  "as-raw-xcb-connection",
  "libc",
- "memmap2",
+ "memmap2 0.9.8",
  "xkeysym",
 ]
 

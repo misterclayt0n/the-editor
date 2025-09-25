@@ -2913,8 +2913,14 @@ impl Editor {
 }
 
 impl Application for Editor {
-  fn init(&mut self, _renderer: &mut Renderer) {
+  fn init(&mut self, renderer: &mut Renderer) {
     println!("Editor initialized!");
+    // Optional: allow users to specify a font file path via env var.
+    if let Ok(path) = std::env::var("THE_EDITOR_FONT_FILE") {
+      if let Err(err) = renderer.configure_font_from_path(&path, self.line_height()) {
+        log::warn!("failed to load font from THE_EDITOR_FONT_FILE={path}: {err}");
+      }
+    }
     // Ensure the active view has an initial cursor/selection to avoid panics
     // in motion commands that expect a selection to exist.
     let (view, doc) = current!(self);
@@ -2926,7 +2932,10 @@ impl Application for Editor {
     the_editor_event::start_frame();
 
     let font_size = self.line_height();
-    renderer.configure_font("Iosevka Nerd Font", font_size);
+    // Use whatever font family has been configured or fallback to current.
+    // If no external font was configured, we keep the existing family and just update size.
+    let current_family = renderer.current_font_family().to_string();
+    renderer.configure_font(&current_family, font_size);
     let font_width = renderer.cell_width().max(1.0);
     let available_height =
       (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM + STATUS_BAR_HEIGHT);

@@ -88,6 +88,12 @@ const VIEW_PADDING_LEFT: f32 = 0.0;
 const VIEW_PADDING_TOP: f32 = 0.0;
 const VIEW_PADDING_BOTTOM: f32 = 0.0;
 const STATUS_BAR_HEIGHT: f32 = 30.0;
+const CURSOR_HEIGHT_EXTENSION: f32 = 4.0; // Extra pixels to extend cursor height at the bottom.
+const LINE_SPACING: f32 = 4.0; // Padding between lines.
+
+// Performance settings
+const DISABLE_LIGATURE_PROTECTION: bool = true; // Set to true for better performance with Iosevka
+const USE_TEXT_BATCHING: bool = true; // Batch text rendering for better performance
 
 fn key_press_from_char(ch: char) -> KeyPress {
   let code = match ch {
@@ -1780,7 +1786,7 @@ impl Editor {
           )),
         );
         components.set_component_position("debug_panel", crate::ui::OverlayPosition::TopRight);
-        components.set_component_position("rad_button", crate::ui::OverlayPosition::BottomRight);
+        components.set_component_position("rad_button", crate::ui::OverlayPosition::TopRight);
         components.set_component_position("statusline", crate::ui::OverlayPosition::StatusLine);
         components
       },
@@ -2915,6 +2921,10 @@ impl Editor {
 impl Application for Editor {
   fn init(&mut self, renderer: &mut Renderer) {
     println!("Editor initialized!");
+
+    // Apply performance settings
+    renderer.set_ligature_protection(!DISABLE_LIGATURE_PROTECTION);
+
     // Optional: allow users to specify a font file path via env var.
     if let Ok(path) = std::env::var("THE_EDITOR_FONT_FILE") {
       if let Err(err) = renderer.configure_font_from_path(&path, self.line_height()) {
@@ -2933,14 +2943,17 @@ impl Application for Editor {
 
     let font_size = self.line_height();
     // Use whatever font family has been configured or fallback to current.
-    // If no external font was configured, we keep the existing family and just update size.
+    // If no external font was configured, we keep the existing family and just
+    // update size.
     let current_family = renderer.current_font_family().to_string();
     renderer.configure_font(&current_family, font_size);
     let font_width = renderer.cell_width().max(1.0);
     let available_height =
       (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM + STATUS_BAR_HEIGHT);
     let available_height = available_height.max(font_size);
-    let content_rows = (available_height / font_size).floor().max(1.0) as u16;
+    let content_rows = (available_height / (font_size + LINE_SPACING))
+      .floor()
+      .max(1.0) as u16;
     let area_height = content_rows.saturating_add(1);
     let available_width = (renderer.width() as f32) - (VIEW_PADDING_LEFT * 2.0);
     let available_width = available_width.max(font_width);
@@ -3059,7 +3072,8 @@ impl Application for Editor {
     ) {
       if !run_text.is_empty() {
         let text = std::mem::take(run_text);
-        renderer.draw_text(TextSection::simple(
+        // Use batched text rendering for better performance
+        renderer.draw_text_batched(TextSection::simple(
           run_start_x,
           run_y,
           text,
@@ -3112,19 +3126,22 @@ impl Application for Editor {
       }
 
       if rel_row != current_row {
-        flush_text_run(
-          renderer,
-          &mut run_text,
-          run_start_x,
-          run_y,
-          font_size,
-          run_color,
-        );
+        // Only flush if we're actually changing rows and have pending text
+        if !run_text.is_empty() {
+          flush_text_run(
+            renderer,
+            &mut run_text,
+            run_start_x,
+            run_y,
+            font_size,
+            run_color,
+          );
+        }
         current_row = rel_row;
       }
 
       let x = base_x + (rel_col as f32) * font_width;
-      let y = base_y + (rel_row as f32) * font_size;
+      let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING);
 
       // Selection background per-grapheme
       let doc_len = g.doc_chars();
@@ -3133,7 +3150,7 @@ impl Application for Editor {
           x,
           y,
           (draw_cols as f32) * font_width,
-          font_size,
+          font_size + LINE_SPACING,
           selection_bg,
         );
       }
@@ -3146,7 +3163,7 @@ impl Application for Editor {
           x,
           y,
           cursor_w.min((viewport_cols - rel_col) as f32 * font_width),
-          font_size,
+          font_size + CURSOR_HEIGHT_EXTENSION,
           cursor_bg,
         );
       }

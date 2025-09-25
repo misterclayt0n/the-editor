@@ -92,7 +92,7 @@ const CURSOR_HEIGHT_EXTENSION: f32 = 4.0; // Extra pixels to extend cursor heigh
 const LINE_SPACING: f32 = 4.0; // Padding between lines.
 
 // Performance settings
-const DISABLE_LIGATURE_PROTECTION: bool = true; // Set to true for better performance with Iosevka
+const DISABLE_LIGATURE_PROTECTION: bool = false; // Keep ligature protection on so cursor reveals glyphs
 const USE_TEXT_BATCHING: bool = true; // Batch text rendering for better performance
 
 fn key_press_from_char(ch: char) -> KeyPress {
@@ -2395,7 +2395,7 @@ impl Editor {
   pub fn new_file_from_stdin(&mut self, action: Action) -> Result<DocumentId, Error> {
     let (stdin, encoding, has_bom) = crate::core::document::read_to_string(&mut stdin(), None)?;
     let doc = Document::from(
-      Rope::default(),
+      Rope::from_str("ひらがな"),
       Some((encoding, has_bom)),
       self.config.clone(),
       self.syn_loader.clone(),

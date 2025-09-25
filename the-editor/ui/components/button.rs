@@ -33,23 +33,23 @@ pub struct Button {
   on_click: Option<Box<dyn FnMut() + 'static>>,
 
   // Cached font metrics for mouse handling
-  cached_char_width: f32,
+  cached_char_width:  f32,
   cached_line_height: f32,
 }
 
 impl Button {
   pub fn new(label: impl Into<String>) -> Self {
     Self {
-      label:           label.into(),
-      base_color:      Color::new(0.45, 0.47, 0.50, 1.0), // neutral gray by default
-      visible:         true,
-      hovered:         false,
-      pressed:         false,
-      hover_cursor_px: None,
-      anim_active:     false,
-      anim_t:          0.0,
-      on_click:        None,
-      cached_char_width: 12.0, // Default fallback values
+      label:              label.into(),
+      base_color:         Color::new(0.45, 0.47, 0.50, 1.0), // neutral gray by default
+      visible:            true,
+      hovered:            false,
+      pressed:            false,
+      hover_cursor_px:    None,
+      anim_active:        false,
+      anim_t:             0.0,
+      on_click:           None,
+      cached_char_width:  12.0, // Default fallback values
       cached_line_height: 20.0,
     }
   }

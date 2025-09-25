@@ -28,7 +28,10 @@ use crate::{
     document::Document,
     grapheme,
     indent,
-    line_ending::line_end_char_index,
+    line_ending::{
+      get_line_ending_of_str,
+      line_end_char_index,
+    },
     movement::{
       self,
       Direction,
@@ -468,6 +471,18 @@ fn delete_selection_impl(cx: &mut Context, op: Operation, yank: YankAction) {
 
 pub fn delete_selection(cx: &mut Context) {
   delete_selection_impl(cx, Operation::Delete, YankAction::Yank);
+}
+
+pub fn delete_selection_noyank(cx: &mut Context) {
+  delete_selection_impl(cx, Operation::Delete, YankAction::NoYank);
+}
+
+pub fn change_selection(cx: &mut Context) {
+  delete_selection_impl(cx, Operation::Change, YankAction::Yank);
+}
+
+pub fn change_selection_noyank(cx: &mut Context) {
+  delete_selection_impl(cx, Operation::Change, YankAction::NoYank);
 }
 
 // Find
@@ -1233,6 +1248,11 @@ pub fn replace_with_yanked(cx: &mut Context) {
   exit_select_mode(cx);
 }
 
+pub fn replace_selections_with_clipboard(cx: &mut Context) {
+  replace_with_yanked_impl(cx.editor, '+', cx.count());
+  exit_select_mode(cx);
+}
+
 fn replace_with_yanked_impl(editor: &mut Editor, register: char, count: usize) {
   let Some(values) = editor
     .registers
@@ -1732,4 +1752,192 @@ pub fn insert_newline(cx: &mut Context) {
 
   let (view, doc) = current!(cx.editor);
   doc.apply(&transaction, view.id);
+}
+
+// Yank & Paste
+//
+
+pub fn yank(cx: &mut Context) {
+  yank_impl(
+    cx.editor,
+    cx.register
+      .unwrap_or(cx.editor.config().default_yank_register),
+  );
+  exit_select_mode(cx);
+}
+
+pub fn yank_to_clipboard(cx: &mut Context) {
+  yank_impl(cx.editor, '+');
+  exit_select_mode(cx);
+}
+
+pub fn yank_main_selection_to_clipboard(cx: &mut Context) {
+  yank_primary_selection_impl(cx.editor, '+');
+  exit_select_mode(cx);
+}
+
+fn yank_primary_selection_impl(editor: &mut Editor, register: char) {
+  let (view, doc) = current!(editor);
+  let text = doc.text().slice(..);
+
+  let selection = doc.selection(view.id).primary().fragment(text).to_string();
+
+  match editor.registers.write(register, vec![selection]) {
+    Ok(_) => editor.set_status(format!("yanked primary selection to register {register}",)),
+    Err(err) => editor.set_error(err.to_string()),
+  }
+}
+
+fn yank_impl(editor: &mut Editor, register: char) {
+  let (view, doc) = current!(editor);
+  let text = doc.text().slice(..);
+
+  let values: Vec<String> = doc
+    .selection(view.id)
+    .fragments(text)
+    .map(Cow::into_owned)
+    .collect();
+  let selections = values.len();
+
+  match editor.registers.write(register, values) {
+    Ok(_) => {
+      editor.set_status(format!(
+        "yanked {selections} selection{} to register {register}",
+        if selections == 1 { "" } else { "s" }
+      ))
+    },
+    Err(err) => editor.set_error(err.to_string()),
+  }
+}
+
+#[derive(Copy, Clone)]
+enum Paste {
+  Before,
+  After,
+  Cursor,
+}
+
+pub fn paste_clipboard_after(cx: &mut Context) {
+  paste(cx.editor, '+', Paste::After, cx.count());
+  exit_select_mode(cx);
+}
+
+pub fn paste_clipboard_before(cx: &mut Context) {
+  paste(cx.editor, '+', Paste::Before, cx.count());
+  exit_select_mode(cx);
+}
+
+pub fn paste_after(cx: &mut Context) {
+  paste(
+    cx.editor,
+    cx.register
+      .unwrap_or(cx.editor.config().default_yank_register),
+    Paste::After,
+    cx.count(),
+  );
+  exit_select_mode(cx);
+}
+
+pub fn paste_before(cx: &mut Context) {
+  paste(
+    cx.editor,
+    cx.register
+      .unwrap_or(cx.editor.config().default_yank_register),
+    Paste::Before,
+    cx.count(),
+  );
+  exit_select_mode(cx);
+}
+
+fn paste(editor: &mut Editor, register: char, pos: Paste, count: usize) {
+  let Some(values) = editor.registers.read(register, editor) else {
+    return;
+  };
+  let values: Vec<_> = values.map(|value| value.to_string()).collect();
+
+  let (view, doc) = current!(editor);
+  paste_impl(&values, doc, view, pos, count, editor.mode);
+}
+
+fn paste_impl(
+  values: &[String],
+  doc: &mut Document,
+  view: &mut View,
+  action: Paste,
+  count: usize,
+  mode: Mode,
+) {
+  if values.is_empty() {
+    return;
+  }
+
+  if mode == Mode::Insert {
+    doc.append_changes_to_history(view);
+  }
+
+  // if any of values ends with a line ending, it's linewise paste
+  let linewise = values
+    .iter()
+    .any(|value| get_line_ending_of_str(value).is_some());
+
+  let map_value = |value| {
+    let value = LINE_ENDING_REGEX.replace_all(value, doc.line_ending.as_str());
+    let mut out = Tendril::from(value.as_ref());
+    for _ in 1..count {
+      out.push_str(&value);
+    }
+    out
+  };
+
+  let repeat = std::iter::repeat(
+    // `values` is asserted to have at least one entry above.
+    map_value(values.last().unwrap()),
+  );
+
+  let mut values = values.iter().map(|value| map_value(value)).chain(repeat);
+
+  let text = doc.text();
+  let selection = doc.selection(view.id);
+
+  let mut offset = 0;
+  let mut ranges = SmallVec::with_capacity(selection.len());
+
+  let mut transaction = Transaction::change_by_selection(text, selection, |range| {
+    let pos = match (action, linewise) {
+      // paste linewise before
+      (Paste::Before, true) => text.line_to_char(text.char_to_line(range.from())),
+      // paste linewise after
+      (Paste::After, true) => {
+        let line = range.line_range(text.slice(..)).1;
+        text.line_to_char((line + 1).min(text.len_lines()))
+      },
+      // paste insert
+      (Paste::Before, false) => range.from(),
+      // paste append
+      (Paste::After, false) => range.to(),
+      // paste at cursor
+      (Paste::Cursor, _) => range.cursor(text.slice(..)),
+    };
+
+    let value = values.next();
+
+    let value_len = value
+      .as_ref()
+      .map(|content| content.chars().count())
+      .unwrap_or_default();
+    let anchor = offset + pos;
+
+    let new_range = Range::new(anchor, anchor + value_len).with_direction(range.direction());
+    ranges.push(new_range);
+    offset += value_len;
+
+    (pos, pos, value)
+  });
+
+  if mode == Mode::Normal {
+    transaction = transaction.with_selection(Selection::new(ranges, selection.primary_index()));
+  }
+
+  doc.apply(&transaction, view.id);
+  doc.append_changes_to_history(view);
 }

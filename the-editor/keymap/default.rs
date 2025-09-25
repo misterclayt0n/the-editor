@@ -28,6 +28,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "T"         => till_prev_char,
 
     "d"         => delete_selection,
+    "A-d"       => delete_selection_noyank,
+    "c"         => change_selection,
+    "A-c"       => change_selection_noyank,
 
     "r"         => replace,
     "R"         => replace_with_yanked,
@@ -52,6 +55,10 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
     ":"         => command_mode,
 
+    "y" => yank,
+    "p" => paste_after,
+    "P" => paste_before,
+
     // Minimal examples of prefix maps
 
     "G" => goto_line,
@@ -62,6 +69,13 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     },
 
     "C-b" => toggle_debug_panel,
+    "space" => { "Space"
+      "y" => yank_to_clipboard,
+      "Y" => yank_main_selection_to_clipboard,
+      "p" => paste_clipboard_after,
+      "P" => paste_clipboard_before,
+      "R" => replace_selections_with_clipboard,
+    },
   });
 
   // Insert mode: text input handled via InputEvent::Text; map Esc and Backspace

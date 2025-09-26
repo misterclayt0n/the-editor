@@ -3303,21 +3303,26 @@ impl Application for Editor {
     match event {
       InputEvent::Keyboard(key_press) => {
         if key_press.pressed {
-          if let Some((_, kind)) = &self.pending_key_callback {
+          // Handle pending key callbacks
+          if self.pending_key_callback.is_some() {
+            // Send ALL keys to the pending callback first
             match key_press.code {
-              Key::Enter => {
+              Key::Escape => {
+                // Escape always cancels
+                self.pending_key_callback = None;
+                return true;
+              },
+              Key::Other => {
+                // Ignore modifier-only keys (Shift/Ctrl/Alt pressed alone)
+                return false;
+              },
+              _ => {
+                // Try to dispatch to the callback
                 if self.dispatch_pending_key_callback(key_press.clone()) {
                   return true;
                 }
-              },
-              Key::Escape => {
-                self.pending_key_callback = None;
-              },
-              _ => {
-                if *kind == OnKeyCallbackKind::Pending {
-                  self.pending_key_callback = None;
-                }
-              },
+                // If callback didn't consume it, it was cancelled by dispatch
+              }
             }
           }
 
@@ -3349,7 +3354,23 @@ impl Application for Editor {
             return false;
           }
 
-          // Dispatch renderer Key directly through keymap.
+          // Filter out modifier-only keys (Shift/Ctrl/Alt pressed alone)
+          if matches!(key_press.code, Key::Other) {
+            return false;
+          }
+
+          // In normal/select modes, don't process character keyboard events
+          // (they'll come through as text events instead)
+          if self.mode != Mode::Insert {
+            if let Key::Char(_) = key_press.code {
+              if !key_press.ctrl && !key_press.alt {
+                // Text event will handle this
+                return false;
+              }
+            }
+          }
+
+          // Only process special keys and modified keys through keyboard handler
           let handled = match self.keymaps.get(self.mode, &key_press) {
             KeymapResult::Matched(cmd) => {
               match cmd {
@@ -3475,33 +3496,15 @@ impl Application for Editor {
         true
       },
       InputEvent::Text(text) => {
-        let mut remaining = String::new();
-        let mut consumed_pending = false;
-
-        for ch in text.chars() {
-          if self.pending_key_callback.is_some() && !consumed_pending {
-            let event = key_press_from_char(ch);
-            if self.dispatch_pending_key_callback(event) {
-              consumed_pending = true;
-              continue;
-            }
-          }
-          remaining.push(ch);
-        }
-
-        if remaining.is_empty() {
-          return consumed_pending;
-        }
-
+        // In insert mode, just insert the text
         if self.mode == Mode::Insert {
-          // Insert the incoming text at the current cursor(s).
           let mut cx = crate::core::commands::Context {
             register:             self.selected_register,
             count:                self.count,
             editor:               self,
             on_next_key_callback: None,
           };
-          for ch in remaining.chars() {
+          for ch in text.chars() {
             crate::core::commands::insert::insert_char(&mut cx, ch);
           }
           let pending = cx.take_on_next_key();
@@ -3515,62 +3518,76 @@ impl Application for Editor {
           }
           let focus = self.tree.focus;
           self.ensure_cursor_in_view(focus);
-          true
-        } else {
-          // Treat as normal-mode keypresses (first char only).
-          if let Some(ch) = remaining.chars().next() {
-            use crate::keymap::KeymapResult;
-            let key_press = key_press_from_char(ch);
-            let handled = match self.keymaps.get(self.mode, &key_press) {
-              KeymapResult::Matched(cmd) => {
-                match cmd {
-                  crate::keymap::Command::Execute(f) => {
-                    let mut cx = crate::core::commands::Context {
-                      register:             self.selected_register,
-                      count:                self.count,
-                      editor:               self,
-                      on_next_key_callback: None,
-                    };
-                    f(&mut cx);
-                    let pending = cx.take_on_next_key();
-                    let register = cx.register;
-                    let count = cx.count;
-                    drop(cx);
-                    self.selected_register = register;
-                    self.count = count;
-                    if let Some(pending) = pending {
-                      self.pending_key_callback = Some(pending);
-                    }
-                  },
-                  crate::keymap::Command::EnterInsertMode => self.mode = Mode::Insert,
-                  crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,
-                  crate::keymap::Command::EnterVisualMode => self.mode = Mode::Select,
-                  crate::keymap::Command::ExitVisualMode => self.mode = Mode::Normal,
-                  crate::keymap::Command::EnterCommandMode => {
-                    self.mode = Mode::Command;
-                    self.init_command_prompt();
-                  },
-                  crate::keymap::Command::ExitCommandMode => {
-                    self.mode = Mode::Normal;
-                    self.command_prompt = None;
-                  },
-                }
-                true
-              },
-              KeymapResult::Pending(_) => true,
-              KeymapResult::Cancelled(_) | KeymapResult::NotFound => false,
-            };
+          return true;
+        }
 
-            if handled {
+        // In normal/select mode, handle text input
+        // If there's a pending callback (like from 'r' command), ALL text goes to it
+        if self.pending_key_callback.is_some() {
+          for ch in text.chars() {
+            let event = key_press_from_char(ch);
+            if self.dispatch_pending_key_callback(event) {
+              return true;
+            }
+          }
+          // If callback didn't consume it, continue to normal processing
+        }
+
+        // Process text through keymap (only if no pending callback)
+        for ch in text.chars() {
+          use crate::keymap::KeymapResult;
+          let key_press = key_press_from_char(ch);
+
+          // Filter out any spurious modifier-only events
+          if matches!(key_press.code, Key::Other) {
+            continue;
+          }
+
+          match self.keymaps.get(self.mode, &key_press) {
+            KeymapResult::Matched(cmd) => {
+              match cmd {
+                crate::keymap::Command::Execute(f) => {
+                  let mut cx = crate::core::commands::Context {
+                    register:             self.selected_register,
+                    count:                self.count,
+                    editor:               self,
+                    on_next_key_callback: None,
+                  };
+                  f(&mut cx);
+                  let pending = cx.take_on_next_key();
+                  let register = cx.register;
+                  let count = cx.count;
+                  drop(cx);
+                  self.selected_register = register;
+                  self.count = count;
+                  if let Some(pending) = pending {
+                    self.pending_key_callback = Some(pending);
+                  }
+                },
+                crate::keymap::Command::EnterInsertMode => self.mode = Mode::Insert,
+                crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,
+                crate::keymap::Command::EnterVisualMode => self.mode = Mode::Select,
+                crate::keymap::Command::ExitVisualMode => self.mode = Mode::Normal,
+                crate::keymap::Command::EnterCommandMode => {
+                  self.mode = Mode::Command;
+                  self.init_command_prompt();
+                },
+                crate::keymap::Command::ExitCommandMode => {
+                  self.mode = Mode::Normal;
+                  self.command_prompt = None;
+                },
+              }
               let focus = self.tree.focus;
               self.ensure_cursor_in_view(focus);
-            }
-
-            handled
-          } else {
-            false
+              return true;
+            },
+            KeymapResult::Pending(_) => {
+              return true;
+            },
+            KeymapResult::Cancelled(_) | KeymapResult::NotFound => {},
           }
         }
+        false
       },
     }
   }

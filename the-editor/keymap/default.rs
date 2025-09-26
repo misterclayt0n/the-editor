@@ -58,17 +58,46 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "y" => yank,
     "p" => paste_after,
     "P" => paste_before,
+    
+    "C"   => copy_selection_on_next_line,
+    "A-C" => copy_selection_on_prev_line,
 
-    // Minimal examples of prefix maps
+    "C-b" => toggle_debug_panel,
+    
+    "%"   => select_all,
+    "x"   => extend_line_below,
+    "X"   => extend_to_line_bounds,
+    "A-x" => shrink_to_line_bounds,
+    
+    "u"   => undo,
+    "U"   => redo,
+    "A-u" => earlier,
+    "A-U" => later,
+    ","   => keep_primary_selection,
+    "A-," => remove_primary_selection,
+    
+    ">" => indent,
+    "<" => unindent,
+    
+    "m" => { "Match"
+      "m" => match_brackets,
+      "s" => surround_add,
+      "r" => surround_replace,
+      "d" => surround_delete,
+      "a" => select_textobject_around,
+      "i" => select_textobject_inner,
+    },
 
     "G" => goto_line,
     "g" => { "Goto"
-      "g" => goto_file_start, // placeholder examples
+      "g" => goto_file_start,
       "|" => goto_column,
       "e" => goto_last_line,
+      "h" => goto_line_start,
+      "l" => goto_line_end,
+      "s" => goto_first_nonwhitespace,
     },
 
-    "C-b" => toggle_debug_panel,
     "space" => { "Space"
       "y" => yank_to_clipboard,
       "Y" => yank_main_selection_to_clipboard,
@@ -115,6 +144,3 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   map.insert(Mode::Select, visual);
   map
 }
-
-// Helper to expose mode switching commands to the editor executor if desired
-// later.

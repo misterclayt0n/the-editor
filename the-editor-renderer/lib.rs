@@ -2,6 +2,8 @@
 //!
 //! GPU-backed renderer and event loop integration for the-editor.
 
+// NOTE: This renderer is currently simply not fast enough, like, at all.
+
 mod color;
 mod error;
 pub mod event;

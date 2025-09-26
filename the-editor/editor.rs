@@ -3020,6 +3020,17 @@ impl Application for Editor {
     let cursor_line_start = doc_text.line_to_char(cursor_line);
     let cursor_col = cursor_pos.saturating_sub(cursor_line_start);
 
+    // Collect all cursor positions for multi-cursor rendering
+    let all_cursors: Vec<(usize, bool)> = selection
+      .ranges()
+      .iter()
+      .enumerate()
+      .map(|(idx, range)| {
+        let is_primary = idx == selection.primary_index();
+        (range.cursor(doc_text.slice(..)), is_primary)
+      })
+      .collect();
+
     let view = self.tree.get(focus_view);
     let viewport = view.inner_area(doc);
     let visible_lines = content_rows as usize;

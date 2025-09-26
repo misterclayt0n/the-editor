@@ -22,37 +22,20 @@ use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
   core::{
-    Tendril,
-    auto_pairs,
-    comment,
-    document::Document,
-    grapheme,
-    indent,
-    line_ending::{
+    auto_pairs, comment, document::Document, grapheme, history::UndoKind, indent, info::Info, line_ending::{
       get_line_ending_of_str,
       line_end_char_index,
-    },
-    movement::{
-      self,
-      Direction,
-      Movement,
-      move_horizontally,
-      move_vertically,
-      move_vertically_visual,
-    },
-    position::char_idx_at_visual_offset,
-    search::{
+    }, match_brackets, movement::{
+      self, move_horizontally, move_vertically, move_vertically_visual, Direction, Movement
+    }, position::{
+      char_idx_at_visual_offset, Position
+    }, search::{
       self,
       CharMatcher,
-    },
-    selection::{
+    }, selection::{
       Range,
       Selection,
-    },
-    text_annotations::TextAnnotations,
-    text_format::TextFormat,
-    transaction::Transaction,
-    view::View,
+    }, surround, text_annotations::TextAnnotations, text_format::TextFormat, textobject, transaction::Transaction, view::View, Tendril, ViewId
   },
   current,
   current_ref,
@@ -67,6 +50,15 @@ type MoveFn =
 pub type OnKeyCallback = Box<dyn FnOnce(&mut Context, KeyPress) + 'static>;
 
 static LINE_ENDING_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\r\n|\r|\n").unwrap());
+
+static SURROUND_HELP_TEXT: [(&str, &str); 6] = [
+  ("m", "Nearest matching pair"),
+  ("( or )", "Parentheses"),
+  ("{ or }", "Curly braces"),
+  ("< or >", "Angled brackets"),
+  ("[ or ]", "Square brackets"),
+  (" ", "... or any character"),
+];
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum OnKeyCallbackKind {
@@ -1503,6 +1495,36 @@ pub fn goto_line_end(cx: &mut Context) {
   )
 }
 
+pub fn goto_first_nonwhitespace(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+
+  goto_first_nonwhitespace_impl(
+    view,
+    doc,
+    if cx.editor.mode == Mode::Select {
+      Movement::Extend
+    } else {
+      Movement::Move
+    },
+  )
+}
+
+fn goto_first_nonwhitespace_impl(view: &mut View, doc: &mut Document, movement: Movement) {
+  let text = doc.text().slice(..);
+
+  let selection = doc.selection(view.id).clone().transform(|range| {
+    let line = range.cursor_line(text);
+
+    if let Some(pos) = text.line(line).first_non_whitespace_char() {
+      let pos = pos + text.line_to_char(line);
+      range.put_cursor(text, pos, movement == Movement::Extend)
+    } else {
+      range
+    }
+  });
+  doc.set_selection(view.id, selection);
+}
+
 fn goto_line_end_impl(view: &mut View, doc: &mut Document, movement: Movement) {
   let text = doc.text().slice(..);
 
@@ -1944,4 +1966,668 @@ fn paste_impl(
 
   doc.apply(&transaction, view.id);
   doc.append_changes_to_history(view);
+}
+
+pub fn copy_selection_on_next_line(cx: &mut Context) {
+  copy_selection_on_line(cx, Direction::Forward)
+}
+
+pub fn copy_selection_on_prev_line(cx: &mut Context) {
+  copy_selection_on_line(cx, Direction::Backward)
+}
+
+#[allow(deprecated)]
+// currently uses the deprecated `visual_coords_at_pos`/`pos_at_visual_coords`
+// functions as this function ignores softwrapping (and virtual text) and
+// instead only cares about "text visual position"
+//
+// TODO: implement a variant of that uses visual lines and respects virtual text
+fn copy_selection_on_line(cx: &mut Context, direction: Direction) {
+  use crate::core::position::{
+    pos_at_visual_coords,
+    visual_coords_at_pos,
+  };
+
+  let count = cx.count();
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+  let selection = doc.selection(view.id);
+  let mut ranges = SmallVec::with_capacity(selection.ranges().len() * (count + 1));
+  ranges.extend_from_slice(selection.ranges());
+  let mut primary_index = 0;
+  for range in selection.iter() {
+    let is_primary = *range == selection.primary();
+
+    // The range is always head exclusive
+    let (head, anchor) = if range.anchor < range.head {
+      (range.head - 1, range.anchor)
+    } else {
+      (range.head, range.anchor.saturating_sub(1))
+    };
+
+    let tab_width = doc.tab_width();
+
+    let head_pos = visual_coords_at_pos(text, head, tab_width);
+    let anchor_pos = visual_coords_at_pos(text, anchor, tab_width);
+
+    let height =
+      std::cmp::max(head_pos.row, anchor_pos.row) - std::cmp::min(head_pos.row, anchor_pos.row) + 1;
+
+    if is_primary {
+      primary_index = ranges.len();
+    }
+    ranges.push(*range);
+
+    let mut sels = 0;
+    let mut i = 0;
+    while sels < count {
+      let offset = (i + 1) * height;
+
+      let anchor_row = match direction {
+        Direction::Forward => anchor_pos.row + offset,
+        Direction::Backward => anchor_pos.row.saturating_sub(offset),
+      };
+
+      let head_row = match direction {
+        Direction::Forward => head_pos.row + offset,
+        Direction::Backward => head_pos.row.saturating_sub(offset),
+      };
+
+      if anchor_row >= text.len_lines() || head_row >= text.len_lines() {
+        break;
+      }
+
+      let anchor = pos_at_visual_coords(text, Position::new(anchor_row, anchor_pos.col), tab_width);
+      let head = pos_at_visual_coords(text, Position::new(head_row, head_pos.col), tab_width);
+
+      // skip lines that are too short
+      if visual_coords_at_pos(text, anchor, tab_width).col == anchor_pos.col
+        && visual_coords_at_pos(text, head, tab_width).col == head_pos.col
+      {
+        if is_primary {
+          primary_index = ranges.len();
+        }
+        // This is Range::new(anchor, head), but it will place the cursor on the correct
+        // column
+        ranges.push(Range::point(anchor).put_cursor(text, head, true));
+        sels += 1;
+      }
+
+      if anchor_row == 0 && head_row == 0 {
+        break;
+      }
+
+      i += 1;
+    }
+  }
+
+  let selection = Selection::new(ranges, primary_index);
+  doc.set_selection(view.id, selection);
+}
+
+pub fn select_all(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+
+  let end = doc.text().len_chars();
+  doc.set_selection(view.id, Selection::single(0, end))
+}
+
+enum Extend {
+  Above,
+  Below,
+}
+
+pub fn extend_line_below(cx: &mut Context) {
+  extend_line_impl(cx, Extend::Below);
+}
+
+pub fn extend_line_above(cx: &mut Context) {
+  extend_line_impl(cx, Extend::Above);
+}
+
+pub fn extend_to_line_bounds(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+
+  doc.set_selection(
+    view.id,
+    doc.selection(view.id).clone().transform(|range| {
+      let text = doc.text();
+
+      let (start_line, end_line) = range.line_range(text.slice(..));
+      let start = text.line_to_char(start_line);
+      let end = text.line_to_char((end_line + 1).min(text.len_lines()));
+
+      Range::new(start, end).with_direction(range.direction())
+    }),
+  );
+}
+
+pub fn shrink_to_line_bounds(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+
+  doc.set_selection(
+    view.id,
+    doc.selection(view.id).clone().transform(|range| {
+      let text = doc.text();
+
+      let (start_line, end_line) = range.line_range(text.slice(..));
+
+      // Do nothing if the selection is within one line to prevent
+      // conditional logic for the behavior of this command
+      if start_line == end_line {
+        return range;
+      }
+
+      let mut start = text.line_to_char(start_line);
+
+      // line_to_char gives us the start position of the line, so
+      // we need to get the start position of the next line. In
+      // the editor, this will correspond to the cursor being on
+      // the EOL whitespace character, which is what we want.
+      let mut end = text.line_to_char((end_line + 1).min(text.len_lines()));
+
+      if start != range.from() {
+        start = text.line_to_char((start_line + 1).min(text.len_lines()));
+      }
+
+      if end != range.to() {
+        end = text.line_to_char(end_line);
+      }
+
+      Range::new(start, end).with_direction(range.direction())
+    }),
+  );
+}
+
+fn extend_line_impl(cx: &mut Context, extend: Extend) {
+  let count = cx.count();
+  let (view, doc) = current!(cx.editor);
+
+  let text = doc.text();
+  let selection = doc.selection(view.id).clone().transform(|range| {
+    let (start_line, end_line) = range.line_range(text.slice(..));
+
+    let start = text.line_to_char(start_line);
+    let end = text.line_to_char(
+      (end_line + 1) // newline of end_line
+        .min(text.len_lines()),
+    );
+
+    // extend to previous/next line if current line is selected
+    let (anchor, head) = if range.from() == start && range.to() == end {
+      match extend {
+        Extend::Above => (end, text.line_to_char(start_line.saturating_sub(count))),
+        Extend::Below => {
+          (
+            start,
+            text.line_to_char((end_line + count + 1).min(text.len_lines())),
+          )
+        },
+      }
+    } else {
+      match extend {
+        Extend::Above => (end, text.line_to_char(start_line.saturating_sub(count - 1))),
+        Extend::Below => {
+          (
+            start,
+            text.line_to_char((end_line + count).min(text.len_lines())),
+          )
+        },
+      }
+    };
+
+    Range::new(anchor, head)
+  });
+
+  doc.set_selection(view.id, selection);
+}
+
+pub fn match_brackets(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  let is_select = cx.editor.mode == Mode::Select;
+  let text = doc.text();
+  let text_slice = text.slice(..);
+
+  let selection = doc.selection(view.id).clone().transform(|range| {
+    let pos = range.cursor(text_slice);
+    if let Some(matched_pos) = doc.syntax().map_or_else(
+      || match_brackets::find_matching_bracket_plaintext(text.slice(..), pos),
+      |syntax| match_brackets::find_matching_bracket_fuzzy(syntax, text.slice(..), pos),
+    ) {
+      range.put_cursor(text_slice, matched_pos, is_select)
+    } else {
+      range
+    }
+  });
+
+  doc.set_selection(view.id, selection);
+}
+
+pub fn surround_add(cx: &mut Context) {
+  cx.on_next_key(move |cx, event| {
+    if !event.pressed {
+      return;
+    }
+
+    cx.editor.autoinfo = None;
+    let (view, doc) = current!(cx.editor);
+    // surround_len is the number of new characters being added.
+    let (open, close, surround_len) = match event.code {
+      Key::Char(ch) => {
+        let (o, c) = match_brackets::get_pair(ch);
+        let mut open = Tendril::new();
+        open.push(o);
+        let mut close = Tendril::new();
+        close.push(c);
+        (open, close, 2)
+      },
+      Key::Enter => {
+        (
+          doc.line_ending.as_str().into(),
+          doc.line_ending.as_str().into(),
+          2 * doc.line_ending.len_chars(),
+        )
+      },
+      _ => return,
+    };
+
+    let selection = doc.selection(view.id);
+    let mut changes = Vec::with_capacity(selection.len() * 2);
+    let mut ranges = SmallVec::with_capacity(selection.len());
+    let mut offs = 0;
+
+    for range in selection.iter() {
+      changes.push((range.from(), range.from(), Some(open.clone())));
+      changes.push((range.to(), range.to(), Some(close.clone())));
+
+      ranges.push(
+        Range::new(offs + range.from(), offs + range.to() + surround_len)
+          .with_direction(range.direction()),
+      );
+
+      offs += surround_len;
+    }
+
+    let transaction = Transaction::change(doc.text(), changes.into_iter())
+      .with_selection(Selection::new(ranges, selection.primary_index()));
+    doc.apply(&transaction, view.id);
+    exit_select_mode(cx);
+  });
+
+  cx.editor.autoinfo = Some(Info::new(
+    "Surround selections with",
+    &SURROUND_HELP_TEXT[1..],
+  ));
+}
+
+pub fn surround_replace(cx: &mut Context) {
+  let count = cx.count();
+  cx.on_next_key(move |cx, event| {
+    if !event.pressed {
+      return;
+    }
+
+    cx.editor.autoinfo = None;
+    let surround_ch = match event.code {
+      Key::Char('m') => None, // m selects the closest surround pair
+      Key::Char(ch) => Some(ch),
+      _ => return,
+    };
+    let (view, doc) = current!(cx.editor);
+    let text = doc.text().slice(..);
+    let selection = doc.selection(view.id);
+
+    let change_pos =
+      match surround::get_surround_pos(doc.syntax(), text, selection, surround_ch, count) {
+        Ok(c) => c,
+        Err(err) => {
+          cx.editor.set_error(err.to_string());
+          return;
+        },
+      };
+
+    let selection = selection.clone();
+    let ranges: SmallVec<[Range; 1]> = change_pos.iter().map(|&p| Range::point(p)).collect();
+    doc.set_selection(
+      view.id,
+      Selection::new(ranges, selection.primary_index() * 2),
+    );
+
+    cx.on_next_key(move |cx, event| {
+      if !event.pressed {
+        return;
+      }
+
+      cx.editor.autoinfo = None;
+      let (view, doc) = current!(cx.editor);
+      let to = match event.code {
+        Key::Char(to) => to,
+        _ => return doc.set_selection(view.id, selection),
+      };
+      let (open, close) = match_brackets::get_pair(to);
+
+      // the changeset has to be sorted to allow nested surrounds
+      let mut sorted_pos: Vec<(usize, char)> = Vec::new();
+      for p in change_pos.chunks(2) {
+        sorted_pos.push((p[0], open));
+        sorted_pos.push((p[1], close));
+      }
+      sorted_pos.sort_unstable();
+
+      let transaction = Transaction::change(
+        doc.text(),
+        sorted_pos.iter().map(|&pos| {
+          let mut t = Tendril::new();
+          t.push(pos.1);
+          (pos.0, pos.0 + 1, Some(t))
+        }),
+      );
+      doc.set_selection(view.id, selection);
+      doc.apply(&transaction, view.id);
+      exit_select_mode(cx);
+    });
+
+    cx.editor.autoinfo = Some(Info::new(
+      "Replace with a pair of",
+      &SURROUND_HELP_TEXT[1..],
+    ));
+  });
+
+  cx.editor.autoinfo = Some(Info::new(
+    "Replace surrounding pair of",
+    &SURROUND_HELP_TEXT,
+  ));
+}
+
+pub fn surround_delete(cx: &mut Context) {
+  let count = cx.count();
+  cx.on_next_key(move |cx, event| {
+    if !event.pressed {
+      return;
+    }
+
+    cx.editor.autoinfo = None;
+    let surround_ch = match event.code {
+      Key::Char('m') => None, // m selects the closest surround pair
+      Key::Char(ch) => Some(ch),
+      _ => return,
+    };
+    let (view, doc) = current!(cx.editor);
+    let text = doc.text().slice(..);
+    let selection = doc.selection(view.id);
+
+    let mut change_pos =
+      match surround::get_surround_pos(doc.syntax(), text, selection, surround_ch, count) {
+        Ok(c) => c,
+        Err(err) => {
+          cx.editor.set_error(err.to_string());
+          return;
+        },
+      };
+    change_pos.sort_unstable(); // the changeset has to be sorted to allow nested surrounds
+    let transaction =
+      Transaction::change(doc.text(), change_pos.into_iter().map(|p| (p, p + 1, None)));
+    doc.apply(&transaction, view.id);
+    exit_select_mode(cx);
+  });
+
+  cx.editor.autoinfo = Some(Info::new("Delete surrounding pair of", &SURROUND_HELP_TEXT));
+}
+
+pub fn select_textobject_around(cx: &mut Context) {
+  select_textobject(cx, textobject::TextObject::Around);
+}
+
+pub fn select_textobject_inner(cx: &mut Context) {
+  select_textobject(cx, textobject::TextObject::Inside);
+}
+
+fn select_textobject(cx: &mut Context, objtype: textobject::TextObject) {
+  let count = cx.count();
+
+  cx.on_next_key(move |cx, event| {
+    if !event.pressed {
+      return;
+    }
+
+    cx.editor.autoinfo = None;
+    if let Key::Char(ch) = event.code {
+      let textobject = move |editor: &mut Editor| {
+        let (view, doc) = current!(editor);
+        let loader = editor.syn_loader.load();
+        let text = doc.text().slice(..);
+
+        let textobject_treesitter = |obj_name: &str, range: Range| -> Range {
+          let Some(syntax) = doc.syntax() else {
+            return range;
+          };
+          textobject::textobject_treesitter(text, range, objtype, obj_name, syntax, &loader, count)
+        };
+
+        if ch == 'g' && doc.diff_handle().is_none() {
+          editor.set_status("Diff is not available in current buffer");
+          return;
+        }
+
+        let textobject_change = |range: Range| -> Range {
+          let diff_handle = doc.diff_handle().unwrap();
+          let diff = diff_handle.load();
+          let line = range.cursor_line(text);
+          let hunk_idx = if let Some(hunk_idx) = diff.hunk_at(line as u32, false) {
+            hunk_idx
+          } else {
+            return range;
+          };
+          let hunk = diff.nth_hunk(hunk_idx).after;
+
+          let start = text.line_to_char(hunk.start as usize);
+          let end = text.line_to_char(hunk.end as usize);
+          Range::new(start, end).with_direction(range.direction())
+        };
+
+        let selection = doc.selection(view.id).clone().transform(|range| {
+          match ch {
+            'w' => textobject::textobject_word(text, range, objtype, count, false),
+            'W' => textobject::textobject_word(text, range, objtype, count, true),
+            't' => textobject_treesitter("class", range),
+            'f' => textobject_treesitter("function", range),
+            'a' => textobject_treesitter("parameter", range),
+            'c' => textobject_treesitter("comment", range),
+            'T' => textobject_treesitter("test", range),
+            'e' => textobject_treesitter("entry", range),
+            'x' => textobject_treesitter("xml-element", range),
+            'p' => textobject::textobject_paragraph(text, range, objtype, count),
+            'm' => {
+              textobject::textobject_pair_surround_closest(
+                doc.syntax(),
+                text,
+                range,
+                objtype,
+                count,
+              )
+            },
+            'g' => textobject_change(range),
+            // TODO: cancel new ranges if inconsistent surround matches across lines
+            ch if !ch.is_ascii_alphanumeric() => {
+              textobject::textobject_pair_surround(doc.syntax(), text, range, objtype, ch, count)
+            },
+            _ => range,
+          }
+        });
+        doc.set_selection(view.id, selection);
+      };
+      cx.editor.apply_motion(textobject);
+    }
+  });
+
+  let title = match objtype {
+    textobject::TextObject::Inside => "Match inside",
+    textobject::TextObject::Around => "Match around",
+    _ => return,
+  };
+  let help_text = [
+    ("w", "Word"),
+    ("W", "WORD"),
+    ("p", "Paragraph"),
+    ("t", "Type definition (tree-sitter)"),
+    ("f", "Function (tree-sitter)"),
+    ("a", "Argument/parameter (tree-sitter)"),
+    ("c", "Comment (tree-sitter)"),
+    ("T", "Test (tree-sitter)"),
+    ("e", "Data structure entry (tree-sitter)"),
+    ("m", "Closest surrounding pair (tree-sitter)"),
+    ("g", "Change"),
+    ("x", "(X)HTML element (tree-sitter)"),
+    (" ", "... or any character acting as a pair"),
+  ];
+
+  cx.editor.autoinfo = Some(Info::new(title, &help_text));
+}
+
+pub fn undo(cx: &mut Context) {
+  let count = cx.count();
+  let (view, doc) = current!(cx.editor);
+  for _ in 0..count {
+    if !doc.undo(view) {
+      cx.editor.set_status("Already at oldest change");
+      break;
+    }
+  }
+}
+
+pub fn redo(cx: &mut Context) {
+  let count = cx.count();
+  let (view, doc) = current!(cx.editor);
+  for _ in 0..count {
+    if !doc.redo(view) {
+      cx.editor.set_status("Already at newest change");
+      break;
+    }
+  }
+}
+
+pub fn earlier(cx: &mut Context) {
+  let count = cx.count();
+  let (view, doc) = current!(cx.editor);
+  for _ in 0..count {
+    // rather than doing in batch we do this so get error halfway
+    if !doc.earlier(view, UndoKind::Steps(1)) {
+      cx.editor.set_status("Already at oldest change");
+      break;
+    }
+  }
+}
+
+pub fn later(cx: &mut Context) {
+  let count = cx.count();
+  let (view, doc) = current!(cx.editor);
+  for _ in 0..count {
+    // rather than doing in batch we do this so get error halfway
+    if !doc.later(view, UndoKind::Steps(1)) {
+      cx.editor.set_status("Already at newest change");
+      break;
+    }
+  }
+}
+
+pub fn keep_primary_selection(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  // TODO: handle count
+
+  let range = doc.selection(view.id).primary();
+  doc.set_selection(view.id, Selection::single(range.anchor, range.head));
+}
+
+pub fn remove_primary_selection(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  // TODO: handle count
+
+  let selection = doc.selection(view.id);
+  if selection.len() == 1 {
+    cx.editor.set_error("no selections remaining");
+    return;
+  }
+  let index = selection.primary_index();
+  let selection = selection.clone().remove(index);
+
+  doc.set_selection(view.id, selection);
+}
+
+fn get_lines(doc: &Document, view_id: ViewId) -> Vec<usize> {
+  let mut lines = Vec::new();
+
+  // Get all line numbers
+  for range in doc.selection(view_id) {
+    let (start, end) = range.line_range(doc.text().slice(..));
+
+    for line in start..=end {
+      lines.push(line)
+    }
+  }
+  lines.sort_unstable(); // sorting by usize so _unstable is preferred
+  lines.dedup();
+  lines
+}
+
+pub fn indent(cx: &mut Context) {
+  let count = cx.count();
+  let (view, doc) = current!(cx.editor);
+  let lines = get_lines(doc, view.id);
+
+  // Indent by one level
+  let indent = Tendril::from(doc.indent_style.as_str().repeat(count));
+
+  let transaction = Transaction::change(
+    doc.text(),
+    lines.into_iter().filter_map(|line| {
+      let is_blank = doc.text().line(line).chunks().all(|s| s.trim().is_empty());
+      if is_blank {
+        return None;
+      }
+      let pos = doc.text().line_to_char(line);
+      Some((pos, pos, Some(indent.clone())))
+    }),
+  );
+  doc.apply(&transaction, view.id);
+  exit_select_mode(cx);
+}
+
+pub fn unindent(cx: &mut Context) {
+  let count = cx.count();
+  let (view, doc) = current!(cx.editor);
+  let lines = get_lines(doc, view.id);
+  let mut changes = Vec::with_capacity(lines.len());
+  let tab_width = doc.tab_width();
+  let indent_width = count * doc.indent_width();
+
+  for line_idx in lines {
+    let line = doc.text().line(line_idx);
+    let mut width = 0;
+    let mut pos = 0;
+
+    for ch in line.chars() {
+      match ch {
+        ' ' => width += 1,
+        '\t' => width = (width / tab_width + 1) * tab_width,
+        _ => break,
+      }
+
+      pos += 1;
+
+      if width >= indent_width {
+        break;
+      }
+    }
+
+    // now delete from start to first non-blank
+    if pos > 0 {
+      let start = doc.text().line_to_char(line_idx);
+      changes.push((start, start + pos, None))
+    }
+  }
+
+  let transaction = Transaction::change(doc.text(), changes.into_iter());
+
+  doc.apply(&transaction, view.id);
+  exit_select_mode(cx);
 }

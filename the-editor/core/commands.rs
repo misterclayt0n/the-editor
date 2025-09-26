@@ -892,26 +892,30 @@ pub fn select_mode(cx: &mut Context) {
   });
   doc.set_selection(view.id, selection);
 
-  cx.editor.mode = Mode::Select;
+  cx.editor.set_mode(Mode::Select);
 }
 
 fn exit_select_mode(cx: &mut Context) {
   if cx.editor.mode == Mode::Select {
-    cx.editor.mode = Mode::Normal;
+    cx.editor.set_mode(Mode::Normal);
   }
 }
 
 fn enter_insert_mode(cx: &mut Context) {
-  cx.editor.mode = Mode::Insert;
+  cx.editor.set_mode(Mode::Insert);
 }
 
 pub fn command_mode(cx: &mut Context) {
-  cx.editor.mode = Mode::Command;
+  cx.editor.set_mode(Mode::Command);
 
   // Initialize command prompt if needed
   if cx.editor.command_prompt.is_none() {
     cx.editor.init_command_prompt();
   }
+}
+
+pub fn normal_mode(cx: &mut Context) {
+  cx.editor.set_mode(Mode::Normal);
 }
 
 // Inserts at the start of each selection.

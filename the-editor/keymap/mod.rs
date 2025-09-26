@@ -212,24 +212,12 @@ pub enum Mode {
 #[derive(Clone, Copy, PartialEq)]
 pub enum Command {
   Execute(fn(&mut commands::Context)),
-  EnterInsertMode,
-  ExitInsertMode,
-  EnterVisualMode,
-  ExitVisualMode,
-  EnterCommandMode,
-  ExitCommandMode,
 }
 
 impl std::fmt::Debug for Command {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       Command::Execute(_) => write!(f, "Execute(..)"),
-      Command::EnterInsertMode => write!(f, "EnterInsertMode"),
-      Command::ExitInsertMode => write!(f, "ExitInsertMode"),
-      Command::EnterVisualMode => write!(f, "EnterVisualMode"),
-      Command::ExitVisualMode => write!(f, "ExitVisualMode"),
-      Command::EnterCommandMode => write!(f, "EnterCommandMode"),
-      Command::ExitCommandMode => write!(f, "ExitCommandMode"),
     }
   }
 }

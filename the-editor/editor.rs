@@ -112,6 +112,7 @@ fn key_press_from_char(ch: char) -> KeyPress {
 }
 
 use crate::{
+  input::{InputHandler, InputResult},
   core::{
     DocumentId,
     ViewId,
@@ -301,6 +302,7 @@ pub struct Editor {
   pub cursor_cache:     CursorCache,
   pending_key_callback: Option<(OnKeyCallback, OnKeyCallbackKind)>,
 
+  pub input_handler: InputHandler,
   pub ui_components: crate::ui::ComponentManager,
 
   // Command mode support
@@ -1761,6 +1763,7 @@ impl Editor {
       cursor_cache: CursorCache::default(),
       pending_key_callback: None,
       keymaps: Keymaps::default(),
+      input_handler: InputHandler::new(Mode::Normal),
       command_prompt: None,
       command_registry: crate::core::command_registry::CommandRegistry::new(),
       command_history: Vec::new(),
@@ -1915,6 +1918,11 @@ impl Editor {
     self.command_prompt = Some(crate::ui::components::Prompt::new(":".to_string()));
   }
 
+  pub fn set_mode(&mut self, mode: Mode) {
+    self.mode = mode;
+    self.input_handler.set_mode(mode);
+  }
+
   pub fn execute_command(&mut self, input: String) {
     use crate::core::commands::Context;
 
@@ -1952,7 +1960,7 @@ impl Editor {
     }
 
     // Exit command mode
-    self.mode = Mode::Normal;
+    self.set_mode(Mode::Normal);
     self.command_prompt = None;
   }
 
@@ -2851,7 +2859,7 @@ impl Editor {
       return;
     }
 
-    self.mode = Mode::Normal;
+    self.set_mode(Mode::Normal);
     let (view, doc) = current!(self);
 
     try_restore_indent(doc, view);
@@ -3300,295 +3308,231 @@ impl Application for Editor {
   }
 
   fn handle_event(&mut self, event: InputEvent, _renderer: &mut Renderer) -> bool {
-    match event {
-      InputEvent::Keyboard(key_press) => {
-        if key_press.pressed {
-          // Handle pending key callbacks
-          if self.pending_key_callback.is_some() {
-            // Send ALL keys to the pending callback first
-            match key_press.code {
-              Key::Escape => {
-                // Escape always cancels
-                self.pending_key_callback = None;
-                return true;
-              },
-              Key::Other => {
-                // Ignore modifier-only keys (Shift/Ctrl/Alt pressed alone)
-                return false;
-              },
-              _ => {
-                // Try to dispatch to the callback
-                if self.dispatch_pending_key_callback(key_press.clone()) {
-                  return true;
-                }
-                // If callback didn't consume it, it was cancelled by dispatch
-              }
-            }
-          }
+    // Sync pending char state with input handler
+    if self.pending_key_callback.is_some() {
+      self.input_handler.set_pending_char();
+    }
 
-          // Let UI components handle input first
-          if self.ui_components.handle_input(&key_press) {
-            return true;
-          }
+    // Process the event through our unified input handler
+    let result = self.input_handler.handle_input(event);
 
-          // Handle command mode input separately
-          if self.mode == Mode::Command {
-            if let Some(prompt) = &mut self.command_prompt {
-              let event = prompt.handle_key(key_press, &self.command_registry);
-              match event {
-                crate::ui::components::PromptEvent::Validate => {
-                  let input = prompt.input().to_string();
-                  self.execute_command(input);
-                  return true;
-                },
-                crate::ui::components::PromptEvent::Abort => {
-                  self.mode = Mode::Normal;
-                  self.command_prompt = None;
-                  return true;
-                },
-                crate::ui::components::PromptEvent::Update => {
-                  return true;
-                },
-              }
-            }
-            return false;
-          }
+    // Handle cancelled pending operations
+    if result.cancelled {
+      self.pending_key_callback = None;
+      return true;
+    }
 
-          // Filter out modifier-only keys (Shift/Ctrl/Alt pressed alone)
-          if matches!(key_press.code, Key::Other) {
-            return false;
-          }
-
-          // In normal/select modes, don't process character keyboard events
-          // (they'll come through as text events instead)
-          if self.mode != Mode::Insert {
-            if let Key::Char(_) = key_press.code {
-              if !key_press.ctrl && !key_press.alt {
-                // Text event will handle this
-                return false;
-              }
-            }
-          }
-
-          // Only process special keys and modified keys through keyboard handler
-          let handled = match self.keymaps.get(self.mode, &key_press) {
-            KeymapResult::Matched(cmd) => {
-              match cmd {
-                crate::keymap::Command::Execute(f) => {
-                  let mut cx = crate::core::commands::Context {
-                    register:             self.selected_register,
-                    count:                self.count,
-                    editor:               self,
-                    on_next_key_callback: None,
-                  };
-                  f(&mut cx);
-                  let pending = cx.take_on_next_key();
-                  let register = cx.register;
-                  let count = cx.count;
-                  drop(cx);
-                  self.selected_register = register;
-                  self.count = count;
-                  if let Some(pending) = pending {
-                    self.pending_key_callback = Some(pending);
-                  }
-                },
-                crate::keymap::Command::EnterInsertMode => self.mode = Mode::Insert,
-                crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,
-                crate::keymap::Command::EnterVisualMode => self.mode = Mode::Select,
-                crate::keymap::Command::ExitVisualMode => self.mode = Mode::Normal,
-                crate::keymap::Command::EnterCommandMode => {
-                  self.mode = Mode::Command;
-                  self.init_command_prompt();
-                },
-                crate::keymap::Command::ExitCommandMode => {
-                  self.mode = Mode::Normal;
-                  self.command_prompt = None;
-                },
-              }
-              true
-            },
-            KeymapResult::Pending(_) => true, // Show pending UI later.
-            KeymapResult::Cancelled(_) => true,
-            KeymapResult::NotFound => {
-              if self.mode == Mode::Insert && matches!(key_press.code, Key::Enter) {
-                let mut cx = crate::core::commands::Context {
-                  register:             self.selected_register,
-                  count:                self.count,
-                  editor:               self,
-                  on_next_key_callback: None,
-                };
-                crate::core::commands::insert::insert_char(&mut cx, '\n');
-                let pending = cx.take_on_next_key();
-                let register = cx.register;
-                let count = cx.count;
-                drop(cx);
-                self.selected_register = register;
-                self.count = count;
-                if let Some(pending) = pending {
-                  self.pending_key_callback = Some(pending);
-                }
-                true
-              } else {
-                false
-              }
-            },
-          };
-
-          if handled {
-            let focus = self.tree.focus;
-            self.ensure_cursor_in_view(focus);
-          }
-
-          handled
-        } else {
-          false
-        }
-      },
-      InputEvent::Mouse(mouse) => {
-        // Forward mouse to UI components first.
-        if self.ui_components.handle_mouse(&mouse) {
-          return true;
-        }
-        false
-      },
-      InputEvent::Scroll(delta) => {
-        let y = match delta {
-          ScrollDelta::Lines { y, .. } => y,
-          ScrollDelta::Pixels { y, .. } => y,
-        };
-
-        if y.abs() < f32::EPSILON {
-          return false;
-        }
-
-        let direction = if y > 0.0 {
-          Direction::Backward
-        } else {
-          Direction::Forward
-        };
-
-        let mut lines = {
-          let cfg = self.config();
-          cfg.scroll_lines.unsigned_abs()
-        };
-        if lines == 0 {
-          lines = 1;
-        }
-
+    // Handle pending character callbacks (e.g., from 'r' command)
+    if let Some(ch) = result.pending_char {
+      if let Some((callback, _)) = self.pending_key_callback.take() {
         let mut cx = crate::core::commands::Context {
           register:             self.selected_register,
           count:                self.count,
           editor:               self,
           on_next_key_callback: None,
         };
-        crate::core::commands::scroll(&mut cx, lines, direction, false);
+
+        // Create a KeyPress for the callback
+        let key_press = KeyPress {
+          code: if ch == '\n' { Key::Enter } else { Key::Char(ch) },
+          pressed: true,
+          shift: false,
+          ctrl: false,
+          alt: false,
+        };
+
+        (callback)(&mut cx, key_press);
+
         let pending = cx.take_on_next_key();
         let register = cx.register;
         let count = cx.count;
         drop(cx);
+
         self.selected_register = register;
         self.count = count;
         if let Some(pending) = pending {
           self.pending_key_callback = Some(pending);
         }
-        let focus = self.tree.focus;
-        self.ensure_cursor_in_view(focus);
-        true
-      },
-      InputEvent::Text(text) => {
-        // In insert mode, just insert the text
-        if self.mode == Mode::Insert {
-          let mut cx = crate::core::commands::Context {
-            register:             self.selected_register,
-            count:                self.count,
-            editor:               self,
-            on_next_key_callback: None,
-          };
-          for ch in text.chars() {
-            crate::core::commands::insert::insert_char(&mut cx, ch);
-          }
-          let pending = cx.take_on_next_key();
-          let register = cx.register;
-          let count = cx.count;
-          drop(cx);
-          self.selected_register = register;
-          self.count = count;
-          if let Some(pending) = pending {
-            self.pending_key_callback = Some(pending);
-          }
-          let focus = self.tree.focus;
-          self.ensure_cursor_in_view(focus);
+
+        return true;
+      }
+    }
+
+    // Handle insert mode character insertion
+    if let Some(ch) = result.insert_char {
+      let mut cx = crate::core::commands::Context {
+        register:             self.selected_register,
+        count:                self.count,
+        editor:               self,
+        on_next_key_callback: None,
+      };
+
+      crate::core::commands::insert::insert_char(&mut cx, ch);
+
+      let pending = cx.take_on_next_key();
+      let register = cx.register;
+      let count = cx.count;
+      drop(cx);
+
+      self.selected_register = register;
+      self.count = count;
+      if let Some(pending) = pending {
+        self.pending_key_callback = Some(pending);
+      }
+
+      let focus = self.tree.focus;
+      self.ensure_cursor_in_view(focus);
+      return true;
+    }
+
+    // Handle command mode keys
+    if let Some(binding) = result.command_key {
+      if let Some(prompt) = &mut self.command_prompt {
+        // Convert binding back to KeyPress for prompt
+        let key_press = KeyPress {
+          code: binding.code,
+          pressed: true,
+          shift: binding.shift,
+          ctrl: binding.ctrl,
+          alt: binding.alt,
+        };
+
+        let event = prompt.handle_key(key_press, &self.command_registry);
+        match event {
+          crate::ui::components::PromptEvent::Validate => {
+            let input = prompt.input().to_string();
+            self.execute_command(input);
+            return true;
+          },
+          crate::ui::components::PromptEvent::Abort => {
+            self.set_mode(Mode::Normal);
+            self.command_prompt = None;
+            return true;
+          },
+          crate::ui::components::PromptEvent::Update => {
+            return true;
+          },
+        }
+      }
+      return false;
+    }
+
+    // Handle scroll events
+    if let Some(delta) = result.scroll {
+      let y = match delta {
+        ScrollDelta::Lines { y, .. } => y,
+        ScrollDelta::Pixels { y, .. } => y,
+      };
+
+      if y.abs() < f32::EPSILON {
+        return false;
+      }
+
+      let direction = if y > 0.0 {
+        crate::core::movement::Direction::Backward
+      } else {
+        crate::core::movement::Direction::Forward
+      };
+
+      let mut lines = {
+        let cfg = self.config();
+        cfg.scroll_lines.unsigned_abs()
+      };
+      if lines == 0 {
+        lines = 1;
+      }
+
+      let mut cx = crate::core::commands::Context {
+        register:             self.selected_register,
+        count:                self.count,
+        editor:               self,
+        on_next_key_callback: None,
+      };
+
+      crate::core::commands::scroll(&mut cx, lines, direction, false);
+
+      let pending = cx.take_on_next_key();
+      let register = cx.register;
+      let count = cx.count;
+      drop(cx);
+
+      self.selected_register = register;
+      self.count = count;
+      if let Some(pending) = pending {
+        self.pending_key_callback = Some(pending);
+      }
+
+      let focus = self.tree.focus;
+      self.ensure_cursor_in_view(focus);
+      return true;
+    }
+
+    // Handle mouse events
+    if let Some(mouse) = result.mouse {
+      // Forward mouse to UI components first
+      if self.ui_components.handle_mouse(&mouse) {
+        return true;
+      }
+      // TODO: Handle editor mouse events (clicking to position cursor, etc.)
+      return false;
+    }
+
+    // Handle keymap lookups
+    if let Some(keys) = result.keys {
+      // For now, convert the last binding back to KeyPress for compatibility
+      if let Some(binding) = keys.last() {
+        let key_press = KeyPress {
+          code: binding.code,
+          pressed: true,
+          shift: binding.shift,
+          ctrl: binding.ctrl,
+          alt: binding.alt,
+        };
+
+        // Let UI components handle input first
+        if self.ui_components.handle_input(&key_press) {
           return true;
         }
 
-        // In normal/select mode, handle text input
-        // If there's a pending callback (like from 'r' command), ALL text goes to it
-        if self.pending_key_callback.is_some() {
-          for ch in text.chars() {
-            let event = key_press_from_char(ch);
-            if self.dispatch_pending_key_callback(event) {
-              return true;
+        // Process through keymap
+        use crate::keymap::KeymapResult;
+        match self.keymaps.get(self.mode, &key_press) {
+          KeymapResult::Matched(crate::keymap::Command::Execute(f)) => {
+            let mut cx = crate::core::commands::Context {
+              register:             self.selected_register,
+              count:                self.count,
+              editor:               self,
+              on_next_key_callback: None,
+            };
+
+            f(&mut cx);
+
+            let pending = cx.take_on_next_key();
+            let register = cx.register;
+            let count = cx.count;
+            drop(cx);
+
+            self.selected_register = register;
+            self.count = count;
+            if let Some(pending) = pending {
+              self.pending_key_callback = Some(pending);
             }
-          }
-          // If callback didn't consume it, continue to normal processing
+
+            let focus = self.tree.focus;
+            self.ensure_cursor_in_view(focus);
+            true
+          },
+          KeymapResult::Pending(_) => true,
+          KeymapResult::Cancelled(_) | KeymapResult::NotFound => {
+            self.count = None;
+            false
+          },
         }
-
-        // Process text through keymap (only if no pending callback)
-        for ch in text.chars() {
-          use crate::keymap::KeymapResult;
-          let key_press = key_press_from_char(ch);
-
-          // Filter out any spurious modifier-only events
-          if matches!(key_press.code, Key::Other) {
-            continue;
-          }
-
-          match self.keymaps.get(self.mode, &key_press) {
-            KeymapResult::Matched(cmd) => {
-              match cmd {
-                crate::keymap::Command::Execute(f) => {
-                  let mut cx = crate::core::commands::Context {
-                    register:             self.selected_register,
-                    count:                self.count,
-                    editor:               self,
-                    on_next_key_callback: None,
-                  };
-                  f(&mut cx);
-                  let pending = cx.take_on_next_key();
-                  let register = cx.register;
-                  let count = cx.count;
-                  drop(cx);
-                  self.selected_register = register;
-                  self.count = count;
-                  if let Some(pending) = pending {
-                    self.pending_key_callback = Some(pending);
-                  }
-                },
-                crate::keymap::Command::EnterInsertMode => self.mode = Mode::Insert,
-                crate::keymap::Command::ExitInsertMode => self.mode = Mode::Normal,
-                crate::keymap::Command::EnterVisualMode => self.mode = Mode::Select,
-                crate::keymap::Command::ExitVisualMode => self.mode = Mode::Normal,
-                crate::keymap::Command::EnterCommandMode => {
-                  self.mode = Mode::Command;
-                  self.init_command_prompt();
-                },
-                crate::keymap::Command::ExitCommandMode => {
-                  self.mode = Mode::Normal;
-                  self.command_prompt = None;
-                },
-              }
-              let focus = self.tree.focus;
-              self.ensure_cursor_in_view(focus);
-              return true;
-            },
-            KeymapResult::Pending(_) => {
-              return true;
-            },
-            KeymapResult::Cancelled(_) | KeymapResult::NotFound => {},
-          }
-        }
+      } else {
         false
-      },
+      }
+    } else {
+      result.consumed
     }
   }
 

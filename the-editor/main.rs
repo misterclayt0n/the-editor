@@ -23,6 +23,7 @@ mod editor;
 mod event;
 mod expansion;
 pub mod handlers;
+mod input;
 pub mod keymap;
 mod lsp;
 mod snippets;

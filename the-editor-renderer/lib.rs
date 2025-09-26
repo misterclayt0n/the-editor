@@ -83,6 +83,8 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
   };
 
   fn map_winit_key(logical_key: &WinitKey, physical_key: &PhysicalKey) -> event::Key {
+    // Dead keys are handled as text events, so we shouldn't normally get here
+    // But if we do, return Other to ignore them
     if matches!(logical_key, WinitKey::Dead(_)) {
       return event::Key::Other;
     }
@@ -302,28 +304,52 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
           if let Some(renderer) = &mut self.renderer {
             update_modifier_state(&mut self.modifiers_state, &physical_key, state);
 
-            let code = map_winit_key(&logical_key, &physical_key);
+            // Skip keyboard events for dead keys - they'll come through as text events
+            let is_dead_key = matches!(logical_key, WinitKey::Dead(_));
             let modifiers = self.modifiers_state;
-            let mut key_press = KeyPress {
-              code,
-              pressed: state == ElementState::Pressed,
-              shift: modifiers.shift_key(),
-              ctrl: modifiers.control_key(),
-              alt: modifiers.alt_key(),
+            let mut handled = false;
+
+            // Check if this key has composed text (from dead key composition)
+            // Composed text is when the text doesn't match what the key would normally produce
+            // For example, ´ + space produces ' instead of just space
+            let has_composed_text = if let Some(t) = &text {
+              // Only consider it composed if it's not a special key and the text differs from expected
+              match &logical_key {
+                WinitKey::Character(expected) => t != expected,
+                WinitKey::Named(NamedKey::Space) => t != " ",
+                // Special keys like Escape, Enter, etc. should not be treated as composed text
+                WinitKey::Named(_) => false,
+                _ => false,
+              }
+            } else {
+              false
             };
-            if matches!(key_press.code, event::Key::Char(_)) {
-              key_press.shift = false;
+
+
+            if !is_dead_key && !has_composed_text {
+              let code = map_winit_key(&logical_key, &physical_key);
+              let mut key_press = KeyPress {
+                code,
+                pressed: state == ElementState::Pressed,
+                shift: modifiers.shift_key(),
+                ctrl: modifiers.control_key(),
+                alt: modifiers.alt_key(),
+              };
+              if matches!(key_press.code, event::Key::Char(_)) {
+                key_press.shift = false;
+              }
+              handled = self
+                .app
+                .handle_event(InputEvent::Keyboard(key_press), renderer);
             }
-            let handled = self
-              .app
-              .handle_event(InputEvent::Keyboard(key_press), renderer);
             if handled {
               if let Some(win) = &self.window {
                 win.request_redraw();
               }
             }
 
-            if !handled
+            // Send text events for composed text, unhandled keys, or dead keys
+            if (has_composed_text || !handled || is_dead_key)
               && state == ElementState::Pressed
               && !(modifiers.alt_key() || modifiers.control_key())
             {
@@ -338,7 +364,7 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
                     }
                   }
                 }
-              } else {
+              } else if !is_dead_key {
                 match &logical_key {
                   WinitKey::Character(s) if !s.is_empty() => {
                     let handled = self

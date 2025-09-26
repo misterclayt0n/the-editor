@@ -87,7 +87,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   if let KeyTrie::Node(ref mut node) = insert {
     node
       .map
-      .insert(crate::key!(Esc), KeyTrie::Command(Command::ExitInsertMode));
+      .insert(crate::key!(Esc), KeyTrie::Command(Command::Execute(crate::core::commands::normal_mode)));
   }
 
   // Visual mode: movement extends selection, Esc exits visual mode
@@ -106,7 +106,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   if let KeyTrie::Node(ref mut node) = visual {
     node
       .map
-      .insert(crate::key!(Esc), KeyTrie::Command(Command::ExitVisualMode));
+      .insert(crate::key!(Esc), KeyTrie::Command(Command::Execute(crate::core::commands::normal_mode)));
   }
 
   let mut map = HashMap::new();
@@ -118,7 +118,3 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
 // Helper to expose mode switching commands to the editor executor if desired
 // later.
-#[allow(dead_code)]
-pub const ENTER_INSERT: Command = Command::EnterInsertMode;
-#[allow(dead_code)]
-pub const EXIT_INSERT: Command = Command::ExitInsertMode;

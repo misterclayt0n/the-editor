@@ -3071,6 +3071,8 @@ impl Application for Editor {
       run_color: Color,
     ) {
       if !run_text.is_empty() {
+         // Force a batch boundary so ligatures cannot span across this run
+         renderer.flush_text_batch();
         let text = std::mem::take(run_text);
         // Use batched text rendering for better performance
         renderer.draw_text_batched(TextSection::simple(
@@ -3080,6 +3082,8 @@ impl Application for Editor {
           font_size,
           run_color,
         ));
+         // Immediately flush to prevent merging with subsequent runs on the same line
+         renderer.flush_text_batch();
       }
     }
 
@@ -3204,6 +3208,20 @@ impl Application for Editor {
           }
 
           let fg = if is_cursor_here { cursor_fg } else { normal };
+
+           // Split shaping run at caret boundary so ligatures don't cross the caret.
+           if is_cursor_here && !run_text.is_empty() {
+             flush_text_run(
+               renderer,
+               &mut run_text,
+               run_start_x,
+               run_y,
+               font_size,
+               run_color,
+             );
+             // Ensure a hard boundary between left and right of caret
+             renderer.flush_text_batch();
+           }
 
           if run_text.is_empty() {
             run_start_x = x;

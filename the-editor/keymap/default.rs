@@ -7,7 +7,6 @@ use super::{
 };
 
 pub fn default() -> HashMap<Mode, KeyTrie> {
-  // Normal mode: hjkl + arrows move, 'i' enters insert
   let normal = crate::keymap!({ "Normal"
     "h" | Left  => move_char_left,
     "j" | Down  => move_visual_line_down,
@@ -55,33 +54,33 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
     ":"         => command_mode,
 
-    "y" => yank,
-    "p" => paste_after,
-    "P" => paste_before,
+    "y"         => yank,
+    "p"         => paste_after,
+    "P"         => paste_before,
 
-    "C"   => copy_selection_on_next_line,
-    "A-C" => copy_selection_on_prev_line,
+    "C"         => copy_selection_on_next_line,
+    "A-C"       => copy_selection_on_prev_line,
 
-    "C-b" => toggle_debug_panel,
-    "C-n" => toggle_button,
+    "C-b"       => toggle_debug_panel,
+    "C-n"       => toggle_button,
 
-    "%"   => select_all,
-    "x"   => extend_line_below,
-    "X"   => extend_to_line_bounds,
-    "A-x" => shrink_to_line_bounds,
+    "%"         => select_all,
+    "x"         => extend_line_below,
+    "X"         => extend_to_line_bounds,
+    "A-x"       => shrink_to_line_bounds,
 
-    "u"   => undo,
-    "U"   => redo,
-    "A-u" => earlier,
-    "A-U" => later,
-    ","   => keep_primary_selection,
-    "A-," => remove_primary_selection,
+    "u"         => undo,
+    "U"         => redo,
+    "A-u"       => earlier,
+    "A-U"       => later,
+    ","         => keep_primary_selection,
+    "A-,"       => remove_primary_selection,
 
-    ">" => indent,
-    "<" => unindent,
+    ">"         => indent,
+    "<"         => unindent,
 
-    "Q" => record_macro,
-    "q" => replay_macro,
+    "Q"         => record_macro,
+    "q"         => replay_macro,
 
     "m" => { "Match"
       "m" => match_brackets,
@@ -111,7 +110,6 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     },
   });
 
-  // Insert mode: text input handled via InputEvent::Text; map Esc and Backspace
   let insert = crate::keymap!({ "Insert"
     "esc"                               => normal_mode,
 
@@ -140,28 +138,41 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   });
 
   // Visual mode: movement extends selection, Esc exits visual mode
-  let mut visual = crate::keymap!({ "Visual"
-    'h' | Left  => extend_char_left,
-    'j' | Down  => extend_visual_line_down,
-    'k' | Up    => extend_visual_line_up,
-    'l' | Right => extend_char_right,
-    'f'         => extend_next_char,
-    't'         => extend_till_char,
-    'F'         => extend_prev_char,
-    'T'         => extend_till_prev_char,
-    'd'         => delete_selection,
+  let select = crate::keymap!({ "Visual"
+    "h" | Left  => extend_char_left,
+    "j" | Down  => extend_visual_line_down,
+    "k" | Up    => extend_visual_line_up,
+    "l" | Right => extend_char_right,
+
+    "f"         => extend_next_char,
+    "t"         => extend_till_char,
+    "F"         => extend_prev_char,
+    "T"         => extend_till_prev_char,
+
+
+    "w"         => extend_next_word_start,
+    "b"         => extend_prev_word_start,
+    "e"         => extend_next_word_end,
+    "W"         => extend_next_long_word_start,
+    "B"         => extend_prev_long_word_start,
+    "E"         => extend_next_long_word_end,
+    
+    "d"         => delete_selection,
+    "c"         => change_selection,
+
+    "g" => { "Goto"
+      "g" => extend_to_file_start,
+      "|" => extend_to_column,
+      "e" => extend_to_last_line,
+      "k" => extend_line_up,
+      "j" => extend_line_down,
+      // "w" => extend_to_word,
+    },
   });
-  // Add: visual 'Esc' -> exit visual mode
-  if let KeyTrie::Node(ref mut node) = visual {
-    node.map.insert(
-      crate::key!(Esc),
-      KeyTrie::Command(Command::Execute(crate::core::commands::normal_mode)),
-    );
-  }
 
   let mut map = HashMap::new();
   map.insert(Mode::Normal, normal);
   map.insert(Mode::Insert, insert);
-  map.insert(Mode::Select, visual);
+  map.insert(Mode::Select, select);
   map
 }

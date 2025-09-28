@@ -227,6 +227,22 @@ where
   doc.set_selection(view.id, selection);
 }
 
+fn extend_word_impl<F>(cx: &mut Context, extend_fn: F)
+where
+  F: Fn(RopeSlice, Range, usize) -> Range,
+{
+  let count = cx.count();
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+
+  let selection = doc.selection(view.id).clone().transform(|range| {
+    let word = extend_fn(text, range, count);
+    let pos = word.cursor(text);
+    range.put_cursor(text, pos, true)
+  });
+  doc.set_selection(view.id, selection);
+}
+
 pub fn move_char_left(cx: &mut Context) {
   move_impl(cx, move_horizontally, Direction::Backward, Movement::Move)
 }
@@ -283,6 +299,26 @@ pub fn extend_visual_line_up(cx: &mut Context) {
 }
 
 pub fn extend_char_down(cx: &mut Context) {
+  move_impl(cx, move_vertically, Direction::Forward, Movement::Extend)
+}
+
+pub fn extend_to_file_start(cx: &mut Context) {
+  goto_file_start_impl(cx, Movement::Extend);
+}
+
+pub fn extend_to_last_line(cx: &mut Context) {
+  goto_last_line_impl(cx, Movement::Extend)
+}
+
+pub fn extend_to_column(cx: &mut Context) {
+  goto_column_impl(cx, Movement::Extend);
+}
+
+pub fn extend_line_up(cx: &mut Context) {
+  move_impl(cx, move_vertically, Direction::Backward, Movement::Extend)
+}
+
+pub fn extend_line_down(cx: &mut Context) {
   move_impl(cx, move_vertically, Direction::Forward, Movement::Extend)
 }
 
@@ -362,6 +398,54 @@ pub fn move_prev_sub_word_end(cx: &mut Context) {
 
 pub fn move_next_sub_word_end(cx: &mut Context) {
   move_word_impl(cx, movement::move_next_sub_word_end)
+}
+
+pub fn extend_next_word_start(cx: &mut Context) {
+  extend_word_impl(cx, movement::move_next_word_start)
+}
+
+pub fn extend_prev_word_start(cx: &mut Context) {
+  extend_word_impl(cx, movement::move_prev_word_start)
+}
+
+pub fn extend_next_word_end(cx: &mut Context) {
+  extend_word_impl(cx, movement::move_next_word_end)
+}
+
+pub fn extend_prev_word_end(cx: &mut Context) {
+  extend_word_impl(cx, movement::move_prev_word_end)
+}
+
+pub fn extend_next_long_word_start(cx: &mut Context) {
+  extend_word_impl(cx, movement::move_next_long_word_start)
+}
+
+pub fn extend_prev_long_word_start(cx: &mut Context) {
+  extend_word_impl(cx, movement::move_prev_long_word_start)
+}
+
+pub fn extend_prev_long_word_end(cx: &mut Context) {
+  extend_word_impl(cx, movement::move_prev_long_word_end)
+}
+
+pub fn extend_next_long_word_end(cx: &mut Context) {
+  extend_word_impl(cx, movement::move_next_long_word_end)
+}
+
+pub fn extend_next_sub_word_start(cx: &mut Context) {
+  extend_word_impl(cx, movement::move_next_sub_word_start)
+}
+
+pub fn extend_prev_sub_word_start(cx: &mut Context) {
+  extend_word_impl(cx, movement::move_prev_sub_word_start)
+}
+
+pub fn extend_prev_sub_word_end(cx: &mut Context) {
+  extend_word_impl(cx, movement::move_prev_sub_word_end)
+}
+
+pub fn extend_next_sub_word_end(cx: &mut Context) {
+  extend_word_impl(cx, movement::move_next_sub_word_end)
 }
 
 pub fn scroll(cx: &mut Context, offset: usize, direction: Direction, sync_cursor: bool) {

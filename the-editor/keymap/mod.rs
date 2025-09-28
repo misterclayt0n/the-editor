@@ -28,6 +28,46 @@ pub struct KeyBinding {
   pub alt:   bool,
 }
 
+          impl fmt::Display for KeyBinding {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+              let mut result = String::new();
+        
+              if self.ctrl {
+                result.push_str("C-");
+              }
+              if self.alt {
+                result.push_str("A-");
+              }
+              if self.shift {
+                result.push_str("S-");
+              }
+        
+              let key_str = match self.code {
+                Key::Char(' ') => "space".to_string(),
+                Key::Char(c) => c.to_string(),
+                Key::Enter => "ret".to_string(),
+                Key::Escape => "esc".to_string(),
+                Key::Backspace => "bs".to_string(),
+                Key::Tab => "tab".to_string(),
+                Key::Delete => "del".to_string(),
+                Key::Home => "home".to_string(),
+                Key::End => "end".to_string(),
+                Key::PageUp => "pgup".to_string(),
+                Key::PageDown => "pgdown".to_string(),
+                Key::Left => "left".to_string(),
+                Key::Right => "right".to_string(),
+                Key::Up => "up".to_string(),
+                Key::Down => "down".to_string(),
+                // Key::F(n) => format!("F{}", n), // Not supported in renderer yet
+               Key::Other => "other".to_string(),
+             };
+       
+             result.push_str(&key_str);
+             write!(f, "{}", result)
+           }
+         }
+       
+
 impl KeyBinding {
   pub const fn new(code: Key) -> Self {
     Self {

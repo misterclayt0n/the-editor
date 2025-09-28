@@ -112,7 +112,6 @@ fn key_press_from_char(ch: char) -> KeyPress {
 }
 
 use crate::{
-  input::{InputHandler, InputResult},
   core::{
     DocumentId,
     ViewId,
@@ -196,10 +195,12 @@ use crate::{
     DocumentFocusLost,
   },
   handlers::Handlers,
+  input::{
+    InputHandler,
+    InputResult,
+  },
   keymap::{
-    KeymapResult,
-    Keymaps,
-    Mode,
+    KeyBinding, KeymapResult, Keymaps, Mode
   },
   lsp::{
     Call,
@@ -245,7 +246,7 @@ pub struct Editor {
   pub count:             Option<std::num::NonZeroUsize>,
   pub selected_register: Option<char>,
   pub registers:         Registers,
-  // pub macro_recording:   Option<(char, Vec<KeyEvent>)>,
+  pub macro_recording:   Option<(char, Vec<KeyBinding>)>,
   pub macro_replaying:   Vec<char>,
   pub language_servers:  crate::lsp::Registry,
   pub diagnostics:       Diagnostics,
@@ -303,7 +304,6 @@ pub struct Editor {
   pending_key_callback: Option<(OnKeyCallback, OnKeyCallbackKind)>,
 
   pub input_handler: InputHandler,
-  pub ui_components: crate::ui::ComponentManager,
 
   // Command mode support
   pub command_prompt:   Option<crate::ui::components::Prompt>,
@@ -1730,7 +1730,7 @@ impl Editor {
       write_count: 0,
       count: None,
       selected_register: None,
-      // macro_recording: None,
+      macro_recording: None,
       macro_replaying: Vec::new(),
       theme: theme_loader.default(),
       language_servers,
@@ -1767,32 +1767,6 @@ impl Editor {
       command_prompt: None,
       command_registry: crate::core::command_registry::CommandRegistry::new(),
       command_history: Vec::new(),
-      ui_components: {
-        let mut components = crate::ui::ComponentManager::new();
-
-        components.add_component(
-          "debug_panel".to_string(),
-          Box::new(crate::ui::components::DebugPanel::new()),
-        );
-        components.add_component(
-          "rad_button".to_string(),
-          Box::new(
-            crate::ui::components::Button::new("Run")
-              .color(Color::GRAY)
-              .on_click(|| println!("Run button clicked")),
-          ),
-        );
-        components.add_component(
-          "statusline".to_string(),
-          Box::new(crate::ui::components::StatusLine::new(
-            conf.statusline.clone(),
-          )),
-        );
-        components.set_component_position("debug_panel", crate::ui::OverlayPosition::TopRight);
-        components.set_component_position("rad_button", crate::ui::OverlayPosition::TopRight);
-        components.set_component_position("statusline", crate::ui::OverlayPosition::StatusLine);
-        components
-      },
     }
   }
 
@@ -1819,29 +1793,12 @@ impl Editor {
       return true;
     }
 
-    let mut cx = crate::core::commands::Context {
-      register:             self.selected_register,
-      count:                self.count,
-      editor:               self,
-      on_next_key_callback: None,
-    };
-
-    (callback)(&mut cx, event);
-
-    let pending = cx.take_on_next_key();
-    let register = cx.register;
-    let count = cx.count;
-
-    drop(cx);
-
-    self.selected_register = register;
-    self.count = count;
-
-    if let Some(pending) = pending {
-      self.pending_key_callback = Some(pending);
-    }
-
-    true
+    // TODO: This needs refactoring - we don't have access to jobs/compositor here
+    // For now, just execute the callback with minimal context
+    // This is a temporary workaround until we refactor the event handling
+    _ = callback;
+    _ = event;
+    false
   }
 
   pub fn apply_motion<F: Fn(&mut Self) + 'static>(&mut self, motion: F) {
@@ -1938,26 +1895,9 @@ impl Editor {
     let command = parts[0];
     let args = &parts[1..];
 
-    // Create command context
-    let mut context = Context {
-      register:             None,
-      count:                None,
-      editor:               self,
-      on_next_key_callback: None,
-    };
-
-    // Clone the command registry to avoid borrowing issues
-    let registry = context.editor.command_registry.clone();
-
-    // Execute through command registry
-    match registry.execute(&mut context, command, args) {
-      Ok(()) => {
-        // Command executed successfully
-      },
-      Err(err) => {
-        context.editor.set_error(err.to_string());
-      },
-    }
+    // TODO: This needs refactoring - we don't have access to jobs/compositor here
+    // For now, disable command execution
+    self.set_error(format!("Command execution temporarily disabled: {}", command));
 
     // Exit command mode
     self.set_mode(Mode::Normal);
@@ -2923,636 +2863,6 @@ impl Editor {
     for doc in self.documents_mut() {
       doc.relative_path.take();
     }
-  }
-}
-
-impl Application for Editor {
-  fn init(&mut self, renderer: &mut Renderer) {
-    println!("Editor initialized!");
-
-    // Apply performance settings
-    renderer.set_ligature_protection(!DISABLE_LIGATURE_PROTECTION);
-
-    // Optional: allow users to specify a font file path via env var.
-    if let Ok(path) = std::env::var("THE_EDITOR_FONT_FILE") {
-      if let Err(err) = renderer.configure_font_from_path(&path, self.line_height()) {
-        log::warn!("failed to load font from THE_EDITOR_FONT_FILE={path}: {err}");
-      }
-    }
-    // Ensure the active view has an initial cursor/selection to avoid panics
-    // in motion commands that expect a selection to exist.
-    let (view, doc) = current!(self);
-    doc.set_selection(view.id, Selection::point(0));
-  }
-
-  fn render(&mut self, renderer: &mut Renderer) {
-    // Signal start of a new frame to the event system (debounce/locks)
-    the_editor_event::start_frame();
-
-    let font_size = self.line_height();
-    // Use whatever font family has been configured or fallback to current.
-    // If no external font was configured, we keep the existing family and just
-    // update size.
-    let current_family = renderer.current_font_family().to_string();
-    renderer.configure_font(&current_family, font_size);
-    let font_width = renderer.cell_width().max(1.0);
-    let available_height =
-      (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM + STATUS_BAR_HEIGHT);
-    let available_height = available_height.max(font_size);
-    let content_rows = (available_height / (font_size + LINE_SPACING))
-      .floor()
-      .max(1.0) as u16;
-    let area_height = content_rows.saturating_add(1);
-    let available_width = (renderer.width() as f32) - (VIEW_PADDING_LEFT * 2.0);
-    let available_width = available_width.max(font_width);
-    let area_width = (available_width / font_width).floor().max(1.0) as u16;
-    let target_area = Rect::new(0, 0, area_width, area_height);
-    if self.tree.resize(target_area) {
-      let scrolloff = self.config().scrolloff;
-      let view_ids: Vec<ViewId> = self.tree.views().map(|(view, _)| view.id).collect();
-      for view_id in view_ids {
-        let view = self.tree.get_mut(view_id);
-        let doc = doc_mut!(self, &view.doc);
-        view.sync_changes(doc);
-        view.ensure_cursor_in_view(doc, scrolloff);
-      }
-    }
-
-    // Get theme colors
-    let background_style = self.theme.get("ui.background");
-    let normal_style = self.theme.get("ui.text");
-    let selection_style = self.theme.get("ui.selection");
-
-    // Set the background color from theme
-    let background_color = background_style
-      .bg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.1, 0.1, 0.15, 1.0));
-    renderer.set_background_color(background_color);
-
-    let normal = normal_style
-      .fg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::rgb(0.85, 0.85, 0.9));
-
-    let cursor_fg = Color::rgb(0.1, 0.1, 0.15);
-    let cursor_bg = Color::rgb(0.2, 0.8, 0.7);
-
-    let selection_bg = selection_style
-      .bg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::rgba(0.3, 0.5, 0.8, 0.3));
-    let base_x = VIEW_PADDING_LEFT;
-    let base_y = VIEW_PADDING_TOP;
-
-    let focus_view = self.tree.focus;
-    let (doc_id, selection) = {
-      let view = self.tree.get(focus_view);
-      let doc = &self.documents[&view.doc];
-      (view.doc, doc.selection(focus_view).clone())
-    };
-
-    let doc = &self.documents[&doc_id];
-    let doc_text = doc.text();
-    let total_lines = doc_text.len_lines();
-    let cursor_pos = selection.primary().cursor(doc_text.slice(..));
-    let cursor_line = doc_text.char_to_line(cursor_pos);
-    let cursor_line_start = doc_text.line_to_char(cursor_line);
-    let cursor_col = cursor_pos.saturating_sub(cursor_line_start);
-
-    // Collect all cursor positions for multi-cursor rendering
-    let all_cursors: Vec<(usize, bool)> = selection
-      .ranges()
-      .iter()
-      .enumerate()
-      .map(|(idx, range)| {
-        let is_primary = idx == selection.primary_index();
-        (range.cursor(doc_text.slice(..)), is_primary)
-      })
-      .collect();
-
-    let view = self.tree.get(focus_view);
-    let viewport = view.inner_area(doc);
-    let visible_lines = content_rows as usize;
-
-    let text_fmt = doc.text_format(viewport.width, None);
-    let annotations = view.text_annotations(doc, None);
-    let view_offset = doc.view_offset(focus_view);
-    let (top_char_idx, _) = char_idx_at_visual_offset(
-      doc_text.slice(..),
-      view_offset.anchor,
-      view_offset.vertical_offset as isize,
-      view_offset.horizontal_offset,
-      &text_fmt,
-      &annotations,
-    );
-
-    // Compute row offset within the current visual block so we can align to row 0
-    let row_off = visual_offset_from_block(
-      doc_text.slice(..),
-      top_char_idx,
-      top_char_idx,
-      &text_fmt,
-      &annotations,
-    )
-    .0
-    .row;
-
-    // Iterate formatted graphemes starting at the block containing top_char_idx
-    let mut formatter = DocumentFormatter::new_at_prev_checkpoint(
-      doc_text.slice(..),
-      &text_fmt,
-      &annotations,
-      top_char_idx,
-    );
-
-    let viewport_cols = viewport.width as usize;
-    let start_line = doc_text.char_to_line(top_char_idx);
-
-    // Helper: check if document position range overlaps any selection
-    let is_selected = |start: usize, len: usize| -> bool {
-      if len == 0 {
-        return false;
-      }
-      let end = start + len;
-      selection
-        .ranges()
-        .iter()
-        .any(|r| r.from() < end && r.to() > start)
-    };
-
-    fn flush_text_run(
-      renderer: &mut Renderer,
-      run_text: &mut String,
-      run_start_x: f32,
-      run_y: f32,
-      font_size: f32,
-      run_color: Color,
-    ) {
-      if !run_text.is_empty() {
-         // Force a batch boundary so ligatures cannot span across this run
-         renderer.flush_text_batch();
-        let text = std::mem::take(run_text);
-        // Use batched text rendering for better performance
-        renderer.draw_text_batched(TextSection::simple(
-          run_start_x,
-          run_y,
-          text,
-          font_size,
-          run_color,
-        ));
-         // Immediately flush to prevent merging with subsequent runs on the same line
-         renderer.flush_text_batch();
-      }
-    }
-
-    let mut current_row = usize::MAX;
-    let mut run_text = String::new();
-    let mut run_start_x = 0.0f32;
-    let mut run_y = 0.0f32;
-    let mut run_color = normal;
-
-    while let Some(g) = formatter.next() {
-      // Skip visual lines before the top row of the viewport
-      if g.visual_pos.row < row_off {
-        continue;
-      }
-
-      let rel_row = g.visual_pos.row - row_off;
-      if rel_row >= visible_lines {
-        break;
-      }
-
-      // Horizontal scrolling: convert absolute visual col to viewport-relative col
-      let abs_col = g.visual_pos.col;
-      let width_cols = g.raw.width();
-      let h_off = view_offset.horizontal_offset;
-
-      // If the whole grapheme lies left of the viewport, skip
-      if abs_col + width_cols <= h_off {
-        continue;
-      }
-
-      // Compute on-screen column and clamp width to visible area
-      let rel_col = abs_col.saturating_sub(h_off);
-      if rel_col >= viewport_cols {
-        // Fully off to the right, skip
-        continue;
-      }
-
-      // For tabs, handle partial width at the left edge
-      let left_clip = if abs_col < h_off { h_off - abs_col } else { 0 };
-      let mut draw_cols = width_cols.saturating_sub(left_clip);
-      let remaining_cols = viewport_cols.saturating_sub(rel_col);
-      if draw_cols > remaining_cols {
-        draw_cols = remaining_cols;
-      }
-
-      if rel_row != current_row {
-        // Only flush if we're actually changing rows and have pending text
-        if !run_text.is_empty() {
-          flush_text_run(
-            renderer,
-            &mut run_text,
-            run_start_x,
-            run_y,
-            font_size,
-            run_color,
-          );
-        }
-        current_row = rel_row;
-      }
-
-      let x = base_x + (rel_col as f32) * font_width;
-      let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING);
-
-      // Selection background per-grapheme
-      let doc_len = g.doc_chars();
-      if is_selected(g.char_idx, doc_len) {
-        renderer.draw_rect(
-          x,
-          y,
-          (draw_cols as f32) * font_width,
-          font_size + LINE_SPACING,
-          selection_bg,
-        );
-      }
-
-      // Draw cursor as a block under the character at cursor_pos
-      let is_cursor_here = g.char_idx == cursor_pos;
-      if is_cursor_here {
-        let cursor_w = width_cols.max(1) as f32 * font_width;
-        renderer.draw_rect(
-          x,
-          y,
-          cursor_w.min((viewport_cols - rel_col) as f32 * font_width),
-          font_size + CURSOR_HEIGHT_EXTENSION,
-          cursor_bg,
-        );
-      }
-
-      // Draw the actual grapheme (skip newlines; tabs render as spacing)
-      match g.raw {
-        Grapheme::Newline => {
-          flush_text_run(
-            renderer,
-            &mut run_text,
-            run_start_x,
-            run_y,
-            font_size,
-            run_color,
-          );
-        },
-        Grapheme::Tab { .. } => {
-          flush_text_run(
-            renderer,
-            &mut run_text,
-            run_start_x,
-            run_y,
-            font_size,
-            run_color,
-          );
-        },
-        Grapheme::Other { ref g } => {
-          if left_clip > 0 {
-            flush_text_run(
-              renderer,
-              &mut run_text,
-              run_start_x,
-              run_y,
-              font_size,
-              run_color,
-            );
-            continue;
-          }
-
-          let fg = if is_cursor_here { cursor_fg } else { normal };
-
-           // Split shaping run at caret boundary so ligatures don't cross the caret.
-           if is_cursor_here && !run_text.is_empty() {
-             flush_text_run(
-               renderer,
-               &mut run_text,
-               run_start_x,
-               run_y,
-               font_size,
-               run_color,
-             );
-             // Ensure a hard boundary between left and right of caret
-             renderer.flush_text_batch();
-           }
-
-          if run_text.is_empty() {
-            run_start_x = x;
-            run_y = y;
-            run_color = fg;
-          } else {
-            let color_changed = fg.r != run_color.r
-              || fg.g != run_color.g
-              || fg.b != run_color.b
-              || fg.a != run_color.a;
-            if color_changed {
-              flush_text_run(
-                renderer,
-                &mut run_text,
-                run_start_x,
-                run_y,
-                font_size,
-                run_color,
-              );
-              run_start_x = x;
-              run_y = y;
-              run_color = fg;
-            }
-          }
-
-          run_text.push_str(&g.to_string());
-        },
-      }
-    }
-
-    flush_text_run(
-      renderer,
-      &mut run_text,
-      run_start_x,
-      run_y,
-      font_size,
-      run_color,
-    );
-
-    // Update statusline component with current state
-    let show_command_prompt = self.mode == Mode::Command;
-    if let Some(statusline) = self.ui_components.get_component_mut("statusline") {
-      if let Some(statusline) = statusline
-        .as_any_mut()
-        .downcast_mut::<crate::ui::components::StatusLine>()
-      {
-        statusline.update_state(
-          self.mode,
-          cursor_line,
-          cursor_col,
-          total_lines,
-          start_line,
-          None,  // TODO: Add file name
-          false, // TODO: Add modified status
-          show_command_prompt,
-        );
-      }
-    }
-
-    let status_y = renderer.height() as f32 - STATUS_BAR_HEIGHT;
-
-    // Render command prompt if in command mode
-    if self.mode == Mode::Command {
-      if let Some(prompt) = &self.command_prompt {
-        prompt.render(renderer, crate::core::graphics::Rect {
-          x:      10,
-          y:      status_y as u16,
-          width:  (renderer.width() as u16).saturating_sub(20),
-          height: 25,
-        });
-      }
-    }
-
-    // Render UI components
-    self.ui_components.render(renderer, target_area);
-  }
-
-  fn handle_event(&mut self, event: InputEvent, _renderer: &mut Renderer) -> bool {
-    // Sync pending char state with input handler
-    if self.pending_key_callback.is_some() {
-      self.input_handler.set_pending_char();
-    }
-
-    // Process the event through our unified input handler
-    let result = self.input_handler.handle_input(event);
-
-    // Handle cancelled pending operations
-    if result.cancelled {
-      self.pending_key_callback = None;
-      return true;
-    }
-
-    // Handle pending character callbacks (e.g., from 'r' command)
-    if let Some(ch) = result.pending_char {
-      if let Some((callback, _)) = self.pending_key_callback.take() {
-        let mut cx = crate::core::commands::Context {
-          register:             self.selected_register,
-          count:                self.count,
-          editor:               self,
-          on_next_key_callback: None,
-        };
-
-        // Create a KeyPress for the callback
-        let key_press = KeyPress {
-          code: if ch == '\n' { Key::Enter } else { Key::Char(ch) },
-          pressed: true,
-          shift: false,
-          ctrl: false,
-          alt: false,
-        };
-
-        (callback)(&mut cx, key_press);
-
-        let pending = cx.take_on_next_key();
-        let register = cx.register;
-        let count = cx.count;
-        drop(cx);
-
-        self.selected_register = register;
-        self.count = count;
-        if let Some(pending) = pending {
-          self.pending_key_callback = Some(pending);
-        }
-
-        return true;
-      }
-    }
-
-    // Handle insert mode character insertion
-    if let Some(ch) = result.insert_char {
-      let mut cx = crate::core::commands::Context {
-        register:             self.selected_register,
-        count:                self.count,
-        editor:               self,
-        on_next_key_callback: None,
-      };
-
-      crate::core::commands::insert::insert_char(&mut cx, ch);
-
-      let pending = cx.take_on_next_key();
-      let register = cx.register;
-      let count = cx.count;
-      drop(cx);
-
-      self.selected_register = register;
-      self.count = count;
-      if let Some(pending) = pending {
-        self.pending_key_callback = Some(pending);
-      }
-
-      let focus = self.tree.focus;
-      self.ensure_cursor_in_view(focus);
-      return true;
-    }
-
-    // Handle command mode keys
-    if let Some(binding) = result.command_key {
-      if let Some(prompt) = &mut self.command_prompt {
-        // Convert binding back to KeyPress for prompt
-        let key_press = KeyPress {
-          code: binding.code,
-          pressed: true,
-          shift: binding.shift,
-          ctrl: binding.ctrl,
-          alt: binding.alt,
-        };
-
-        let event = prompt.handle_key(key_press, &self.command_registry);
-        match event {
-          crate::ui::components::PromptEvent::Validate => {
-            let input = prompt.input().to_string();
-            self.execute_command(input);
-            return true;
-          },
-          crate::ui::components::PromptEvent::Abort => {
-            self.set_mode(Mode::Normal);
-            self.command_prompt = None;
-            return true;
-          },
-          crate::ui::components::PromptEvent::Update => {
-            return true;
-          },
-        }
-      }
-      return false;
-    }
-
-    // Handle scroll events
-    if let Some(delta) = result.scroll {
-      let y = match delta {
-        ScrollDelta::Lines { y, .. } => y,
-        ScrollDelta::Pixels { y, .. } => y,
-      };
-
-      if y.abs() < f32::EPSILON {
-        return false;
-      }
-
-      let direction = if y > 0.0 {
-        crate::core::movement::Direction::Backward
-      } else {
-        crate::core::movement::Direction::Forward
-      };
-
-      let mut lines = {
-        let cfg = self.config();
-        cfg.scroll_lines.unsigned_abs()
-      };
-      if lines == 0 {
-        lines = 1;
-      }
-
-      let mut cx = crate::core::commands::Context {
-        register:             self.selected_register,
-        count:                self.count,
-        editor:               self,
-        on_next_key_callback: None,
-      };
-
-      crate::core::commands::scroll(&mut cx, lines, direction, false);
-
-      let pending = cx.take_on_next_key();
-      let register = cx.register;
-      let count = cx.count;
-      drop(cx);
-
-      self.selected_register = register;
-      self.count = count;
-      if let Some(pending) = pending {
-        self.pending_key_callback = Some(pending);
-      }
-
-      let focus = self.tree.focus;
-      self.ensure_cursor_in_view(focus);
-      return true;
-    }
-
-    // Handle mouse events
-    if let Some(mouse) = result.mouse {
-      // Forward mouse to UI components first
-      if self.ui_components.handle_mouse(&mouse) {
-        return true;
-      }
-      // TODO: Handle editor mouse events (clicking to position cursor, etc.)
-      return false;
-    }
-
-    // Handle keymap lookups
-    if let Some(keys) = result.keys {
-      // For now, convert the last binding back to KeyPress for compatibility
-      if let Some(binding) = keys.last() {
-        let key_press = KeyPress {
-          code: binding.code,
-          pressed: true,
-          shift: binding.shift,
-          ctrl: binding.ctrl,
-          alt: binding.alt,
-        };
-
-        // Let UI components handle input first
-        if self.ui_components.handle_input(&key_press) {
-          return true;
-        }
-
-        // Process through keymap
-        use crate::keymap::KeymapResult;
-        match self.keymaps.get(self.mode, &key_press) {
-          KeymapResult::Matched(crate::keymap::Command::Execute(f)) => {
-            let mut cx = crate::core::commands::Context {
-              register:             self.selected_register,
-              count:                self.count,
-              editor:               self,
-              on_next_key_callback: None,
-            };
-
-            f(&mut cx);
-
-            let pending = cx.take_on_next_key();
-            let register = cx.register;
-            let count = cx.count;
-            drop(cx);
-
-            self.selected_register = register;
-            self.count = count;
-            if let Some(pending) = pending {
-              self.pending_key_callback = Some(pending);
-            }
-
-            let focus = self.tree.focus;
-            self.ensure_cursor_in_view(focus);
-            true
-          },
-          KeymapResult::Pending(_) => true,
-          KeymapResult::Cancelled(_) | KeymapResult::NotFound => {
-            self.count = None;
-            false
-          },
-        }
-      } else {
-        false
-      }
-    } else {
-      result.consumed
-    }
-  }
-
-  fn resize(&mut self, width: u32, height: u32, _renderer: &mut Renderer) {
-    println!("Window resized to {}x{}", width, height);
-  }
-
-  fn wants_redraw(&self) -> bool {
-    self.ui_components.is_animating()
   }
 }
 

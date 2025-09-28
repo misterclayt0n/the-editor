@@ -7,6 +7,7 @@ use std::{
   num::NonZeroUsize,
 };
 
+use anyhow::anyhow;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use ropey::{
@@ -22,32 +23,82 @@ use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
   core::{
-    auto_pairs, comment, document::Document, grapheme, history::UndoKind, indent, info::Info, line_ending::{
+    Tendril,
+    ViewId,
+    auto_pairs,
+    comment,
+    document::Document,
+    grapheme,
+    history::UndoKind,
+    indent,
+    info::Info,
+    line_ending::{
       get_line_ending_of_str,
       line_end_char_index,
-    }, match_brackets, movement::{
-      self, move_horizontally, move_vertically, move_vertically_visual, Direction, Movement
-    }, position::{
-      char_idx_at_visual_offset, Position
-    }, search::{
+    },
+    match_brackets,
+    movement::{
+      self,
+      Direction,
+      Movement,
+      move_horizontally,
+      move_vertically,
+      move_vertically_visual,
+    },
+    position::{
+      Position,
+      char_idx_at_visual_offset,
+    },
+    search::{
       self,
       CharMatcher,
-    }, selection::{
+    },
+    selection::{
       Range,
       Selection,
-    }, surround, text_annotations::TextAnnotations, text_format::TextFormat, textobject, transaction::Transaction, view::View, Tendril, ViewId
+    },
+    surround,
+    text_annotations::TextAnnotations,
+    text_format::TextFormat,
+    textobject,
+    transaction::Transaction,
+    view::View,
   },
   current,
   current_ref,
   editor::Editor,
   event::PostInsertChar,
-  keymap::Mode,
+  keymap::{
+    KeyBinding,
+    Mode,
+  },
 };
 
 type MoveFn =
   fn(RopeSlice, Range, Direction, usize, Movement, &TextFormat, &mut TextAnnotations) -> Range;
 
 pub type OnKeyCallback = Box<dyn FnOnce(&mut Context, KeyPress) + 'static>;
+
+// NOTE: For now we're only adding Context to this callback but I can see how we
+// might need to trigger UI elements from this tho.
+// Import compositor types
+use crate::ui::compositor;
+
+// Callback now takes both Compositor and Context like in Helix
+pub type Callback = Box<dyn FnOnce(&mut compositor::Compositor, &mut compositor::Context)>;
+
+// Placeholder for MappableCommand until we implement it fully
+#[derive(Debug, Clone, Copy)]
+pub enum MappableCommand {
+    NormalMode,
+}
+
+// Provide a method to match Helix's API
+impl MappableCommand {
+    pub const fn normal_mode() -> Self {
+        MappableCommand::NormalMode
+    }
+}
 
 static LINE_ENDING_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\r\n|\r|\n").unwrap());
 
@@ -71,9 +122,8 @@ pub struct Context<'a> {
   pub count:                Option<NonZeroUsize>,
   pub editor:               &'a mut Editor,
   pub on_next_key_callback: Option<(OnKeyCallback, OnKeyCallbackKind)>,
-  // NOTE: We're ignoring these for now.
-  // pub callback: Vec<crate::compositor::Callback>,
-  // pub jobs:     &'a mut Jobs,
+  pub callback: Vec<Callback>,
+  pub jobs:     &'a mut crate::ui::job::Jobs,
 }
 
 enum Operation {
@@ -1558,8 +1608,9 @@ fn goto_column_impl(cx: &mut Context, movement: Movement) {
   doc.set_selection(view.id, selection);
 }
 
-pub fn toggle_debug_panel(cx: &mut Context) {
-  cx.editor.ui_components.toggle_component("debug_panel");
+pub fn toggle_debug_panel(_cx: &mut Context) {
+  // TODO: Implement debug panel toggling through compositor
+  // Need access to compositor to toggle UI layers
 }
 
 pub fn goto_next_tabstop(cx: &mut Context) {
@@ -2630,4 +2681,138 @@ pub fn unindent(cx: &mut Context) {
 
   doc.apply(&transaction, view.id);
   exit_select_mode(cx);
+}
+
+pub fn record_macro(cx: &mut Context) {
+  if let Some((reg, mut keys)) = cx.editor.macro_recording.take() {
+    // Remove the keypress which ends the recording
+    keys.pop();
+    let s = keys
+      .into_iter()
+      .map(|key| {
+        let s = key.to_string();
+        if s.chars().count() == 1 {
+          s
+        } else {
+          format!("<{}>", s)
+        }
+      })
+      .collect::<String>();
+    match cx.editor.registers.write(reg, vec![s]) {
+      Ok(_) => {
+        cx.editor
+          .set_status(format!("Recorded to register [{}]", reg))
+      },
+      Err(err) => cx.editor.set_error(err.to_string()),
+    }
+  } else {
+    let reg = cx.register.take().unwrap_or('@');
+    cx.editor.macro_recording = Some((reg, Vec::new()));
+    cx.editor
+      .set_status(format!("Recording to register [{}]", reg));
+  }
+}
+
+pub fn replay_macro(cx: &mut Context) {
+  let reg = cx.register.unwrap_or('@');
+
+  if cx.editor.macro_replaying.contains(&reg) {
+    cx.editor.set_error(format!(
+      "Cannot replay from register [{}] because already replaying from same register",
+      reg
+    ));
+    return;
+  }
+
+  let keys: Vec<KeyBinding> = if let Some(keys) = cx
+    .editor
+    .registers
+    .read(reg, cx.editor)
+    .filter(|values| values.len() == 1)
+    .map(|mut values| values.next().unwrap())
+  {
+    match parse_macro(&keys) {
+      Ok(keys) => keys,
+      Err(err) => {
+        cx.editor.set_error(format!("Invalid macro: {}", err));
+        return;
+      },
+    }
+  } else {
+    cx.editor.set_error(format!("Register [{}] empty", reg));
+    return;
+  };
+
+  // Once the macro has been fully validated, it's marked as being under replay
+  // to ensure we don't fall into infinite recursion.
+  cx.editor.macro_replaying.push(reg);
+
+  let count = cx.count();
+  cx.callback.push(Box::new(move |compositor, cx| {
+    for _ in 0..count {
+      for &key in keys.iter() {
+        compositor.handle_event(&compositor::Event::Key(key), cx);
+      }
+    }
+    // The macro under replay is cleared at the end of the callback, not in the
+    // macro replay context, or it will not correctly protect the user from
+    // replaying recursively.
+    cx.editor.macro_replaying.pop();
+  }));
+}
+
+pub fn toggle_button(cx: &mut Context) {
+  // Toggle visibility of button components in the compositor
+  cx.callback.push(Box::new(|compositor, cx| {
+    use crate::ui::components::button::Button;
+    for layer in compositor.layers.iter_mut() {
+      if let Some(button) = layer.as_any_mut().downcast_mut::<Button>() {
+        button.toggle_visible();
+        break; // Toggle first button found
+      }
+    }
+  }));
+}
+
+pub fn parse_macro(keys_str: &str) -> anyhow::Result<Vec<KeyBinding>> {
+  use anyhow::Context;
+  let mut keys_res: anyhow::Result<_> = Ok(Vec::new());
+  let mut i = 0;
+  while let Ok(keys) = &mut keys_res {
+    if i >= keys_str.len() {
+      break;
+    }
+    if !keys_str.is_char_boundary(i) {
+      i += 1;
+      continue;
+    }
+
+    let s = &keys_str[i..];
+    let mut end_i = 1;
+    while !s.is_char_boundary(end_i) {
+      end_i += 1;
+    }
+    let c = &s[..end_i];
+    if c == ">" {
+      keys_res = Err(anyhow!("Unmatched '>'"));
+    } else if c != "<" {
+      keys.push(if c == "-" { "minus" } else { c });
+      i += end_i;
+    } else {
+      match s.find('>').context("'>' expected") {
+        Ok(end_i) => {
+          keys.push(&s[1..end_i]);
+          i += end_i + 1;
+        },
+        Err(err) => keys_res = Err(err),
+      }
+    }
+  }
+  keys_res.and_then(|keys| {
+    keys
+      .into_iter()
+      .map(|s| s.parse::<KeyBinding>())
+      .collect::<Result<Vec<_>, _>>()
+      .map_err(|e| anyhow::anyhow!("Failed to parse key: {}", e))
+  })
 }

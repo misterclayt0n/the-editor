@@ -18,6 +18,7 @@ use crate::{
   handlers::Handlers,
 };
 
+mod application;
 mod core;
 mod editor;
 mod event;
@@ -95,6 +96,9 @@ fn main() -> anyhow::Result<()> {
     }
   }
 
-  the_editor_renderer::run("The Editor - Modern Text Editor", 1024, 768, editor)
+  // Create the application wrapper
+  let app = crate::application::App::new(editor);
+
+  the_editor_renderer::run("The Editor - Modern Text Editor", 1024, 768, app)
     .map_err(|e| anyhow::anyhow!("Failed to run renderer: {}", e))
 }

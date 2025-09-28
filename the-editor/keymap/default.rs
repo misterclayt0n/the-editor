@@ -63,6 +63,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "A-C" => copy_selection_on_prev_line,
 
     "C-b" => toggle_debug_panel,
+    "C-n" => toggle_button,
     
     "%"   => select_all,
     "x"   => extend_line_below,
@@ -78,6 +79,10 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     
     ">" => indent,
     "<" => unindent,
+
+    
+    "Q" => record_macro,
+    "q" => replay_macro,
     
     "m" => { "Match"
       "m" => match_brackets,

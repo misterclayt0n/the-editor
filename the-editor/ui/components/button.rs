@@ -7,8 +7,12 @@ use the_editor_renderer::{
 };
 
 use crate::{
-  core::graphics::Rect,
-  ui::Component,
+    core::{
+        graphics::{CursorKind, Rect},
+        position::Position,
+    },
+    editor::Editor,
+    ui::compositor::{Component, Context, Event, EventResult, Surface},
 };
 
 /// A simple RAD-style button with outline, hover glow, and click feedback.
@@ -35,6 +39,11 @@ pub struct Button {
   // Cached font metrics for mouse handling
   cached_char_width:  f32,
   cached_line_height: f32,
+
+  // Position and size in the compositor
+  rect: Rect,
+  // Last rendered area (for mouse hit testing)
+  last_rendered_area: Rect,
 }
 
 impl Button {
@@ -51,6 +60,8 @@ impl Button {
       on_click:           None,
       cached_char_width:  12.0, // Default fallback values
       cached_line_height: 20.0,
+      rect: Rect::new(0, 0, 10, 2), // Default size
+      last_rendered_area: Rect::new(0, 0, 10, 2),
     }
   }
 
@@ -74,6 +85,19 @@ impl Button {
     self
   }
 
+  /// Set the button position and size (builder-style)
+  pub fn with_rect(mut self, rect: Rect) -> Self {
+    self.rect = rect;
+    self.last_rendered_area = rect;
+    self
+  }
+
+  /// Set visibility (builder-style)
+  pub fn visible(mut self, visible: bool) -> Self {
+    self.visible = visible;
+    self
+  }
+
   // --- Runtime setters ---------------------------------------------------
 
   /// Update the button text at runtime
@@ -89,6 +113,16 @@ impl Button {
   /// Update the click callback at runtime
   pub fn set_on_click<F: FnMut() + 'static>(&mut self, f: F) {
     self.on_click = Some(Box::new(f));
+  }
+
+  /// Toggle visibility
+  pub fn toggle_visible(&mut self) {
+    self.visible = !self.visible;
+  }
+
+  /// Check if visible
+  pub fn is_visible(&self) -> bool {
+    self.visible
   }
 
   fn rect_to_pixels(rect: Rect, renderer: &Renderer) -> (f32, f32, f32, f32) {
@@ -147,9 +181,9 @@ impl Button {
     );
   }
 
-  fn draw_click_flash(&mut self, renderer: &mut Renderer, x: f32, y: f32, w: f32, h: f32) {
+  fn draw_click_flash(&mut self, renderer: &mut Renderer, x: f32, y: f32, w: f32, h: f32) -> bool {
     if !self.anim_active {
-      return;
+      return false;
     }
 
     let cx = x + w * 0.5;
@@ -193,7 +227,10 @@ impl Button {
     if self.anim_t >= 1.0 {
       self.anim_active = false;
       self.anim_t = 0.0;
+      return false; // Animation finished
     }
+
+    true // Animation still running, need more redraws
   }
 
   // --- Color helpers -----------------------------------------------------
@@ -236,10 +273,77 @@ impl Default for Button {
 }
 
 impl Component for Button {
-  fn render(&mut self, renderer: &mut Renderer, rect: Rect) {
+  fn handle_event(&mut self, event: &Event, _cx: &mut Context) -> EventResult {
+    match event {
+      Event::Mouse(mouse) => {
+        // Use the last rendered area for hit testing
+        let rect = self.last_rendered_area;
+        // Convert rect to pixel-space box using cached font metrics
+        let x = rect.x as f32 * self.cached_char_width;
+        let y = rect.y as f32 * self.cached_line_height;
+        let w = rect.width as f32 * self.cached_char_width;
+        let h = rect.height as f32 * self.cached_line_height;
+        let (mx, my) = mouse.position;
+        let inside = mx >= x && mx <= x + w && my >= y && my <= y + h;
+
+        // Track hover + cursor pos relative to button
+        let prev_hovered = self.hovered;
+        if inside {
+          self.hovered = true;
+          self.hover_cursor_px = Some((mx - x, my - y));
+        } else {
+          self.hovered = false;
+          self.hover_cursor_px = None;
+        }
+
+        // Handle press/release only on left button
+        if let Some(MouseButton::Left) = mouse.button {
+          if inside && mouse.pressed {
+            self.pressed = true;
+            return EventResult::Consumed(None);
+          } else if self.pressed && !mouse.pressed {
+            // Release
+            self.pressed = false;
+            // Trigger center-out glow animation
+            self.anim_active = true;
+            self.anim_t = 0.0;
+            // Fire callback only if release occurs inside the button
+            if inside {
+              if let Some(cb) = self.on_click.as_mut() {
+                (cb)();
+              }
+            }
+            // Return empty callback for now - animation will progress on any event
+            // The issue is that we need events to trigger redraws
+            return EventResult::Consumed(Some(Box::new(|_compositor, _cx| {
+              // Animation will progress whenever any event causes a redraw
+              // This includes mouse movements, key presses, etc.
+            })));
+          }
+        }
+
+        // Request redraw when leaving/entering hover, or for hover motion
+        if inside || (prev_hovered != self.hovered) {
+          EventResult::Consumed(None)
+        } else {
+          EventResult::Ignored(None)
+        }
+      }
+      _ => EventResult::Ignored(None),
+    }
+  }
+
+  fn render(&mut self, _area: Rect, renderer: &mut Surface, _cx: &mut Context) {
     if !self.visible {
       return;
     }
+
+    // Always use our internal rect for buttons
+    // Buttons are positioned absolutely, not relative to the provided area
+    let rect = self.rect;
+
+    // Store the rendered area for mouse hit testing
+    self.last_rendered_area = rect;
 
     // Cache font metrics for mouse handling
     self.cached_char_width = renderer.cell_width();
@@ -254,7 +358,7 @@ impl Component for Button {
     // Hover glow following cursor
     self.draw_hover_glow(renderer, x, y, w, h);
 
-    // Click flash (one-shot)
+    // Click flash (one-shot) - returns true if animation needs more frames
     self.draw_click_flash(renderer, x, y, w, h);
 
     // Label centered
@@ -276,67 +380,17 @@ impl Component for Button {
     renderer.draw_text(TextSection::simple(tx, ty, text, font_size, text_color));
   }
 
-  fn preferred_size(&self) -> Option<(u16, u16)> {
-    // 16 cols wide, 2 rows tall by default
-    Some((16, 2))
+  fn cursor(&self, _area: Rect, _editor: &Editor) -> (Option<Position>, CursorKind) {
+    (None, CursorKind::Hidden)
   }
 
-  fn is_visible(&self) -> bool {
-    self.visible
-  }
-  fn set_visible(&mut self, visible: bool) {
-    self.visible = visible;
+  fn required_size(&mut self, _viewport: (u16, u16)) -> Option<(u16, u16)> {
+    // Return the button's preferred size (10x2 by default)
+    Some((10, 2))
   }
 
-  fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-    self
-  }
-
-  fn is_animating(&self) -> bool {
+  fn should_update(&self) -> bool {
+    // Update when animating
     self.anim_active
-  }
-
-  fn handle_mouse(&mut self, mouse: &MouseEvent, rect: Rect) -> bool {
-    // Convert rect to pixel-space box using cached font metrics
-    let x = rect.x as f32 * self.cached_char_width;
-    let y = rect.y as f32 * self.cached_line_height;
-    let w = rect.width as f32 * self.cached_char_width;
-    let h = rect.height as f32 * self.cached_line_height;
-    let (mx, my) = mouse.position;
-    let inside = mx >= x && mx <= x + w && my >= y && my <= y + h;
-
-    // Track hover + cursor pos relative to button
-    let prev_hovered = self.hovered;
-    if inside {
-      self.hovered = true;
-      self.hover_cursor_px = Some((mx - x, my - y));
-    } else {
-      self.hovered = false;
-      self.hover_cursor_px = None;
-    }
-
-    // Handle press/release only on left button
-    if let Some(MouseButton::Left) = mouse.button {
-      if inside && mouse.pressed {
-        self.pressed = true;
-        return true; // consume + request redraw
-      } else if self.pressed && !mouse.pressed {
-        // Release
-        self.pressed = false;
-        // Trigger center-out glow animation
-        self.anim_active = true;
-        self.anim_t = 0.0;
-        // Fire callback only if release occurs inside the button
-        if inside {
-          if let Some(cb) = self.on_click.as_mut() {
-            (cb)();
-          }
-        }
-        return true;
-      }
-    }
-
-    // Request redraw when leaving/entering hover, or for hover motion
-    inside || (prev_hovered != self.hovered)
   }
 }

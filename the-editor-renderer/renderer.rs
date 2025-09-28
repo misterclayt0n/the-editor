@@ -73,9 +73,9 @@ struct RectUniforms {
 }
 
 struct TextCommand {
-  position:        (f32, f32),
-  buffer:          Buffer,
-  bounds:          TextBounds,
+  position: (f32, f32),
+  buffer:   Buffer,
+  bounds:   TextBounds,
 }
 
 /// Pool of reusable text buffers for better performance
@@ -501,7 +501,8 @@ impl Renderer {
 
     // Return buffers to pool before clearing commands
     for cmd in self.text_commands.drain(..) {
-      if self.buffer_pool.buffers.len() < 8 { // Keep pool size reasonable
+      if self.buffer_pool.buffers.len() < 8 {
+        // Keep pool size reasonable
         self.buffer_pool.buffers.push(cmd.buffer);
       }
     }
@@ -645,7 +646,8 @@ impl Renderer {
   }
 
   /// Batch multiple text segments for efficient rendering.
-  /// Call this instead of draw_text for better performance when rendering many small text segments.
+  /// Call this instead of draw_text for better performance when rendering many
+  /// small text segments.
   pub fn draw_text_batched(&mut self, section: TextSection) {
     if section.texts.is_empty() {
       return;
@@ -657,7 +659,8 @@ impl Renderer {
       let y_diff = (section.position.1 - batch_y).abs();
 
       // Batch if: same Y position (same line) AND text is adjacent or very close
-      if y_diff < 1.0 && x_diff < self.cell_width * 50.0 { // Within 50 chars on same line
+      if y_diff < 1.0 && x_diff < self.cell_width * 50.0 {
+        // Within 50 chars on same line
         // Merge into existing batch
         if x_diff < 1.0 {
           // Same position, just append
@@ -682,7 +685,7 @@ impl Renderer {
 
   /// Flush any pending batched text
   pub fn flush_text_batch(&mut self) {
-    if let Some((batch, _, _)) = self.pending_text_batch.take() {
+    if let Some((batch, ..)) = self.pending_text_batch.take() {
       self.draw_text_internal(batch);
     }
   }
@@ -935,8 +938,8 @@ impl Renderer {
   }
 
   /// Enable or disable ligature protection for performance.
-  /// When disabled, ligatures will render normally which may cause visual artifacts
-  /// with some fonts, but will significantly improve performance.
+  /// When disabled, ligatures will render normally which may cause visual
+  /// artifacts with some fonts, but will significantly improve performance.
   pub fn set_ligature_protection(&mut self, enabled: bool) {
     self.disable_ligature_protection = !enabled;
   }

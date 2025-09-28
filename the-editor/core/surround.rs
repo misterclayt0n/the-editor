@@ -2,7 +2,23 @@ use std::fmt::Display;
 
 use ropey::RopeSlice;
 
-use crate::core::{grapheme::next_grapheme_boundary, match_brackets::{find_matching_bracket, find_matching_bracket_fuzzy, get_pair, is_close_bracket, is_open_bracket}, movement::Direction, search, selection::{Range, Selection}, syntax::Syntax};
+use crate::core::{
+  grapheme::next_grapheme_boundary,
+  match_brackets::{
+    find_matching_bracket,
+    find_matching_bracket_fuzzy,
+    get_pair,
+    is_close_bracket,
+    is_open_bracket,
+  },
+  movement::Direction,
+  search,
+  selection::{
+    Range,
+    Selection,
+  },
+  syntax::Syntax,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {

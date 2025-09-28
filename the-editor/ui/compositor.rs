@@ -97,7 +97,7 @@ pub trait Component: Any + AnyComponent {
 
 pub struct Compositor {
   pub layers: Vec<Box<dyn Component>>,
-  area:   Rect,
+  area:       Rect,
 
   pub(crate) last_picker: Option<Box<dyn Component>>,
   pub(crate) full_redraw: bool,

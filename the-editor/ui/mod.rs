@@ -112,5 +112,3 @@ pub trait Component {
     false
   }
 }
-
-

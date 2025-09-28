@@ -90,14 +90,14 @@ pub type Callback = Box<dyn FnOnce(&mut compositor::Compositor, &mut compositor:
 // Placeholder for MappableCommand until we implement it fully
 #[derive(Debug, Clone, Copy)]
 pub enum MappableCommand {
-    NormalMode,
+  NormalMode,
 }
 
 // Provide a method to match Helix's API
 impl MappableCommand {
-    pub const fn normal_mode() -> Self {
-        MappableCommand::NormalMode
-    }
+  pub const fn normal_mode() -> Self {
+    MappableCommand::NormalMode
+  }
 }
 
 static LINE_ENDING_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\r\n|\r|\n").unwrap());
@@ -122,8 +122,8 @@ pub struct Context<'a> {
   pub count:                Option<NonZeroUsize>,
   pub editor:               &'a mut Editor,
   pub on_next_key_callback: Option<(OnKeyCallback, OnKeyCallbackKind)>,
-  pub callback: Vec<Callback>,
-  pub jobs:     &'a mut crate::ui::job::Jobs,
+  pub callback:             Vec<Callback>,
+  pub jobs:                 &'a mut crate::ui::job::Jobs,
 }
 
 enum Operation {

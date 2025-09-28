@@ -312,10 +312,11 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
             let mut handled = false;
 
             // Check if this key has composed text (from dead key composition)
-            // Composed text is when the text doesn't match what the key would normally produce
-            // For example, ´ + space produces ' instead of just space
+            // Composed text is when the text doesn't match what the key would normally
+            // produce For example, ´ + space produces ' instead of just space
             let has_composed_text = if let Some(t) = &text {
-              // Only consider it composed if it's not a special key and the text differs from expected
+              // Only consider it composed if it's not a special key and the text differs from
+              // expected
               match &logical_key {
                 WinitKey::Character(expected) => t != expected,
                 WinitKey::Named(NamedKey::Space) => t != " ",
@@ -326,7 +327,6 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
             } else {
               false
             };
-
 
             if !is_dead_key && !has_composed_text {
               let code = map_winit_key(&logical_key, &physical_key);

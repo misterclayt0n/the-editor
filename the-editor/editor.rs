@@ -56,16 +56,6 @@ use serde::{
   ser::SerializeMap,
 };
 use the_editor_event::dispatch;
-use the_editor_renderer::{
-  Application,
-  Color,
-  InputEvent,
-  Key,
-  KeyPress,
-  Renderer,
-  ScrollDelta,
-  TextSection,
-};
 use the_editor_stdx::path::canonicalize;
 use the_editor_vcs::DiffProviderRegistry;
 use tokio::{
@@ -83,34 +73,6 @@ use tokio::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use unicode_segmentation::UnicodeSegmentation;
 
-const EDITOR_FONT_SIZE: f32 = 22.0;
-const VIEW_PADDING_LEFT: f32 = 0.0;
-const VIEW_PADDING_TOP: f32 = 0.0;
-const VIEW_PADDING_BOTTOM: f32 = 0.0;
-const STATUS_BAR_HEIGHT: f32 = 30.0;
-const CURSOR_HEIGHT_EXTENSION: f32 = 4.0; // Extra pixels to extend cursor height at the bottom.
-const LINE_SPACING: f32 = 4.0; // Padding between lines.
-
-// Performance settings
-const DISABLE_LIGATURE_PROTECTION: bool = false; // Keep ligature protection on so cursor reveals glyphs
-const USE_TEXT_BATCHING: bool = true; // Batch text rendering for better performance
-
-fn key_press_from_char(ch: char) -> KeyPress {
-  let code = match ch {
-    '\n' | '\r' => Key::Enter,
-    '\t' => Key::Tab,
-    _ => Key::Char(ch),
-  };
-
-  KeyPress {
-    code,
-    pressed: true,
-    shift: false,
-    ctrl: false,
-    alt: false,
-  }
-}
-
 use crate::{
   core::{
     DocumentId,
@@ -118,16 +80,11 @@ use crate::{
     auto_pairs::AutoPairs,
     chars::char_is_whitespace,
     clipboard::ClipboardProvider,
-    commands::*,
     diagnostics::{
       DiagnosticFilter,
       DiagnosticProvider,
       InlineDiagnosticsConfig,
       Severity,
-    },
-    doc_formatter::{
-      DocumentFormatter,
-      GraphemeSource,
     },
     document::{
       Document,
@@ -136,7 +93,6 @@ use crate::{
       DocumentSavedEventResult,
       SavePoint,
     },
-    grapheme::Grapheme,
     graphics::{
       CursorKind,
       Rect,
@@ -148,12 +104,7 @@ use crate::{
       line_end_char_index,
       str_is_line_ending,
     },
-    movement::Direction,
-    position::{
-      Position,
-      char_idx_at_visual_offset,
-      visual_offset_from_block,
-    },
+    position::Position,
     registers::Registers,
     selection::{
       Range,
@@ -195,12 +146,11 @@ use crate::{
     DocumentFocusLost,
   },
   handlers::Handlers,
-  input::{
-    InputHandler,
-    InputResult,
-  },
+  input::InputHandler,
   keymap::{
-    KeyBinding, KeymapResult, Keymaps, Mode
+    KeyBinding,
+    Keymaps,
+    Mode,
   },
   lsp::{
     Call,
@@ -301,7 +251,6 @@ pub struct Editor {
 
   pub mouse_down_range: Option<Range>,
   pub cursor_cache:     CursorCache,
-  pending_key_callback: Option<(OnKeyCallback, OnKeyCallbackKind)>,
 
   pub input_handler: InputHandler,
 
@@ -1166,24 +1115,16 @@ fn count_digits(n: usize) -> usize {
 }
 
 fn execution_pause_indicator<'doc>(
-  editor: &'doc Editor,
+  _editor: &'doc Editor,
   doc: &'doc Document,
   theme: &Theme,
   is_focused: bool,
 ) -> GutterFn<'doc> {
   let style = theme.get("ui.debug.active");
-  // let current_stack_frame = editor.current_stack_frame();
-  // let frame_line = current_stack_frame.map(|frame| frame.line - 1);
-  // let frame_source_path = current_stack_frame.map(|frame| {
-  //   frame
-  //     .source
-  //     .as_ref()
-  //     .and_then(|source| source.path.as_ref())
-  // });
   let should_display_for_current_doc = doc.path().is_some();
 
   Box::new(
-    move |line: usize, _selected: bool, first_visual_line: bool, out: &mut String| {
+    move |_line: usize, _selected: bool, first_visual_line: bool, out: &mut String| {
       if !first_visual_line || !is_focused || !should_display_for_current_doc {
         return None;
       }
@@ -1689,19 +1630,6 @@ impl Default for SearchConfig {
   }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct Breakpoint {
-  pub id:       Option<usize>,
-  pub verified: bool,
-  pub message:  Option<String>,
-
-  pub line:          usize,
-  pub column:        Option<usize>,
-  pub condition:     Option<String>,
-  pub hit_condition: Option<String>,
-  pub log_message:   Option<String>,
-}
-
 type Diagnostics =
   BTreeMap<Uri, Vec<(the_editor_lsp_types::types::Diagnostic, DiagnosticProvider)>>;
 
@@ -1761,7 +1689,6 @@ impl Editor {
       handlers,
       mouse_down_range: None,
       cursor_cache: CursorCache::default(),
-      pending_key_callback: None,
       keymaps: Keymaps::default(),
       input_handler: InputHandler::new(Mode::Normal),
       command_prompt: None,
@@ -1778,27 +1705,6 @@ impl Editor {
   pub fn menu_border(&self) -> bool {
     self.config().popup_border == PopupBorderConfig::All
       || self.config().popup_border == PopupBorderConfig::Menu
-  }
-
-  fn line_height(&self) -> f32 {
-    EDITOR_FONT_SIZE
-  }
-
-  fn dispatch_pending_key_callback(&mut self, event: KeyPress) -> bool {
-    let Some((callback, kind)) = self.pending_key_callback.take() else {
-      return false;
-    };
-
-    if matches!(event.code, Key::Escape) && kind == OnKeyCallbackKind::Pending {
-      return true;
-    }
-
-    // TODO: This needs refactoring - we don't have access to jobs/compositor here
-    // For now, just execute the callback with minimal context
-    // This is a temporary workaround until we refactor the event handling
-    _ = callback;
-    _ = event;
-    false
   }
 
   pub fn apply_motion<F: Fn(&mut Self) + 'static>(&mut self, motion: F) {
@@ -1881,8 +1787,6 @@ impl Editor {
   }
 
   pub fn execute_command(&mut self, input: String) {
-    use crate::core::commands::Context;
-
     // Add to history
     self.command_history.push(input.clone());
 
@@ -1893,11 +1797,13 @@ impl Editor {
     }
 
     let command = parts[0];
-    let args = &parts[1..];
 
-    // TODO: This needs refactoring - we don't have access to jobs/compositor here
-    // For now, disable command execution
-    self.set_error(format!("Command execution temporarily disabled: {}", command));
+    // TODO: This needs refactoring - we don't have access to jobs/compositor here.
+    // For now, disable command execution.
+    self.set_error(format!(
+      "Command execution temporarily disabled: {}",
+      command
+    ));
 
     // Exit command mode
     self.set_mode(Mode::Normal);

@@ -58,32 +58,32 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "y" => yank,
     "p" => paste_after,
     "P" => paste_before,
-    
+
     "C"   => copy_selection_on_next_line,
     "A-C" => copy_selection_on_prev_line,
 
     "C-b" => toggle_debug_panel,
     "C-n" => toggle_button,
-    
+
     "%"   => select_all,
     "x"   => extend_line_below,
     "X"   => extend_to_line_bounds,
     "A-x" => shrink_to_line_bounds,
-    
+
     "u"   => undo,
     "U"   => redo,
     "A-u" => earlier,
     "A-U" => later,
     ","   => keep_primary_selection,
     "A-," => remove_primary_selection,
-    
+
     ">" => indent,
     "<" => unindent,
 
-    
+
     "Q" => record_macro,
     "q" => replay_macro,
-    
+
     "m" => { "Match"
       "m" => match_brackets,
       "s" => surround_add,
@@ -119,9 +119,10 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   });
   // Add: insert 'Esc' -> exit insert mode
   if let KeyTrie::Node(ref mut node) = insert {
-    node
-      .map
-      .insert(crate::key!(Esc), KeyTrie::Command(Command::Execute(crate::core::commands::normal_mode)));
+    node.map.insert(
+      crate::key!(Esc),
+      KeyTrie::Command(Command::Execute(crate::core::commands::normal_mode)),
+    );
   }
 
   // Visual mode: movement extends selection, Esc exits visual mode
@@ -138,9 +139,10 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   });
   // Add: visual 'Esc' -> exit visual mode
   if let KeyTrie::Node(ref mut node) = visual {
-    node
-      .map
-      .insert(crate::key!(Esc), KeyTrie::Command(Command::Execute(crate::core::commands::normal_mode)));
+    node.map.insert(
+      crate::key!(Esc),
+      KeyTrie::Command(Command::Execute(crate::core::commands::normal_mode)),
+    );
   }
 
   let mut map = HashMap::new();

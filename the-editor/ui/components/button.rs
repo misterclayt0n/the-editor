@@ -7,12 +7,21 @@ use the_editor_renderer::{
 };
 
 use crate::{
-    core::{
-        graphics::{CursorKind, Rect},
-        position::Position,
+  core::{
+    graphics::{
+      CursorKind,
+      Rect,
     },
-    editor::Editor,
-    ui::compositor::{Component, Context, Event, EventResult, Surface},
+    position::Position,
+  },
+  editor::Editor,
+  ui::compositor::{
+    Component,
+    Context,
+    Event,
+    EventResult,
+    Surface,
+  },
 };
 
 /// A simple RAD-style button with outline, hover glow, and click feedback.
@@ -41,7 +50,7 @@ pub struct Button {
   cached_line_height: f32,
 
   // Position and size in the compositor
-  rect: Rect,
+  rect:               Rect,
   // Last rendered area (for mouse hit testing)
   last_rendered_area: Rect,
 }
@@ -60,7 +69,7 @@ impl Button {
       on_click:           None,
       cached_char_width:  12.0, // Default fallback values
       cached_line_height: 20.0,
-      rect: Rect::new(0, 0, 10, 2), // Default size
+      rect:               Rect::new(0, 0, 10, 2), // Default size
       last_rendered_area: Rect::new(0, 0, 10, 2),
     }
   }
@@ -328,7 +337,7 @@ impl Component for Button {
         } else {
           EventResult::Ignored(None)
         }
-      }
+      },
       _ => EventResult::Ignored(None),
     }
   }

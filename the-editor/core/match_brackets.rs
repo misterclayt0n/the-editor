@@ -1,10 +1,16 @@
 use std::iter;
 
 use ropey::RopeSlice;
-
-use crate::core::syntax::Syntax;
-use crate::core::movement::Direction::{self, Forward, Backward};
 use tree_house::tree_sitter::Node;
+
+use crate::core::{
+  movement::Direction::{
+    self,
+    Backward,
+    Forward,
+  },
+  syntax::Syntax,
+};
 
 const MAX_PLAINTEXT_SCAN: usize = 10000;
 const MATCH_LIMIT: usize = 16;

@@ -27,22 +27,22 @@ pub mod indent;
 pub mod info;
 pub mod line_ending;
 pub mod macros;
+pub mod match_brackets;
 pub mod movement;
 pub mod position;
 pub mod registers;
 pub mod search;
 pub mod selection;
+pub mod surround;
 pub mod syntax;
 pub mod text_annotations;
 pub mod text_format;
+pub mod textobject;
 pub mod theme;
 pub mod transaction;
 pub mod tree;
 pub mod uri;
 pub mod view;
-pub mod match_brackets;
-pub mod surround;
-pub mod textobject;
 
 /// This type basically optimizes small string operations by doing expensive
 /// operations in heap, and using inline storage for small strings to avoid heap

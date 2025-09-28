@@ -12,11 +12,9 @@ use the_editor_renderer::{
   ScrollDelta,
 };
 
-use crate::{
-  keymap::{
-    KeyBinding,
-    Mode,
-  },
+use crate::keymap::{
+  KeyBinding,
+  Mode,
 };
 
 /// Unified key event after processing and normalization.
@@ -28,10 +26,10 @@ pub enum UnifiedKey {
   Special(SpecialKey),
   /// A modified character (e.g., Ctrl+A, Shift+Space).
   Modified {
-    key: char,
+    key:   char,
     shift: bool,
-    ctrl: bool,
-    alt: bool,
+    ctrl:  bool,
+    alt:   bool,
   },
   /// Escape key (special handling in many contexts).
   Escape,
@@ -136,10 +134,10 @@ impl InputProcessor {
       Key::Char(ch) if key_press.ctrl || key_press.alt || key_press.shift => {
         // Modified character.
         Some(UnifiedKey::Modified {
-          key:  ch,
+          key:   ch,
           shift: key_press.shift,
-          ctrl: key_press.ctrl,
-          alt:  key_press.alt,
+          ctrl:  key_press.ctrl,
+          alt:   key_press.alt,
         })
       },
       Key::Char(ch) => {
@@ -175,10 +173,10 @@ impl InputProcessor {
         // NOTE: Check if it might be a modified key based on our modifier state.
         if self.ctrl_held || self.alt_held {
           events.push(ProcessedInput::Key(UnifiedKey::Modified {
-            key:  ch,
+            key:   ch,
             shift: self.shift_held,
-            ctrl: self.ctrl_held,
-            alt:  self.alt_held,
+            ctrl:  self.ctrl_held,
+            alt:   self.alt_held,
           }));
         } else {
           events.push(ProcessedInput::Key(UnifiedKey::Character(ch)));
@@ -195,9 +193,12 @@ impl UnifiedKey {
   pub fn to_key_binding(&self) -> Option<KeyBinding> {
     match self {
       UnifiedKey::Character(ch) => Some(KeyBinding::new(Key::Char(*ch))),
-      UnifiedKey::Modified { key, shift, ctrl, alt } => {
-        Some(KeyBinding::new(Key::Char(*key)).with_modifiers(*shift, *ctrl, *alt))
-      },
+      UnifiedKey::Modified {
+        key,
+        shift,
+        ctrl,
+        alt,
+      } => Some(KeyBinding::new(Key::Char(*key)).with_modifiers(*shift, *ctrl, *alt)),
       UnifiedKey::Escape => Some(KeyBinding::new(Key::Escape)),
       UnifiedKey::Special(special) => {
         let key = match special {
@@ -386,7 +387,8 @@ mod tests {
   use the_editor_renderer::{
     InputEvent,
     Key,
-    KeyPress, MouseButton,
+    KeyPress,
+    MouseButton,
   };
 
   use super::*;

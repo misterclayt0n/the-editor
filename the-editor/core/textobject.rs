@@ -2,7 +2,25 @@ use std::fmt::Display;
 
 use ropey::RopeSlice;
 
-use crate::core::{chars::{categorize_char, char_is_whitespace, CharCategory}, grapheme::{next_grapheme_boundary, prev_grapheme_boundary}, line_ending::rope_is_line_ending, movement::Direction, selection::Range, surround, syntax::{self, Syntax}};
+use crate::core::{
+  chars::{
+    CharCategory,
+    categorize_char,
+    char_is_whitespace,
+  },
+  grapheme::{
+    next_grapheme_boundary,
+    prev_grapheme_boundary,
+  },
+  line_ending::rope_is_line_ending,
+  movement::Direction,
+  selection::Range,
+  surround,
+  syntax::{
+    self,
+    Syntax,
+  },
+};
 
 fn find_word_boundary(slice: RopeSlice, mut pos: usize, direction: Direction, long: bool) -> usize {
   use CharCategory::{
@@ -420,9 +438,9 @@ mod test {
   //     let (s, selection) = crate::test::print(before);
   //     let text = Rope::from(s.as_str());
   //     let selection =
-  //       selection.transform(|r| textobject_paragraph(text.slice(..), r, TextObject::Inside, 1));
-  //     let actual = crate::test::plain(s.as_ref(), &selection);
-  //     assert_eq!(actual, expected, "\nbefore: `{:?}`", before);
+  //       selection.transform(|r| textobject_paragraph(text.slice(..), r,
+  // TextObject::Inside, 1));     let actual = crate::test::plain(s.as_ref(),
+  // &selection);     assert_eq!(actual, expected, "\nbefore: `{:?}`", before);
   //   }
   // }
 
@@ -443,9 +461,9 @@ mod test {
   //     let (s, selection) = crate::test::print(before);
   //     let text = Rope::from(s.as_str());
   //     let selection =
-  //       selection.transform(|r| textobject_paragraph(text.slice(..), r, TextObject::Inside, 2));
-  //     let actual = crate::test::plain(s.as_ref(), &selection);
-  //     assert_eq!(actual, expected, "\nbefore: `{:?}`", before);
+  //       selection.transform(|r| textobject_paragraph(text.slice(..), r,
+  // TextObject::Inside, 2));     let actual = crate::test::plain(s.as_ref(),
+  // &selection);     assert_eq!(actual, expected, "\nbefore: `{:?}`", before);
   //   }
   // }
 
@@ -474,9 +492,9 @@ mod test {
   //     let (s, selection) = crate::test::print(before);
   //     let text = Rope::from(s.as_str());
   //     let selection =
-  //       selection.transform(|r| textobject_paragraph(text.slice(..), r, TextObject::Around, 1));
-  //     let actual = crate::test::plain(s.as_ref(), &selection);
-  //     assert_eq!(actual, expected, "\nbefore: `{:?}`", before);
+  //       selection.transform(|r| textobject_paragraph(text.slice(..), r,
+  // TextObject::Around, 1));     let actual = crate::test::plain(s.as_ref(),
+  // &selection);     assert_eq!(actual, expected, "\nbefore: `{:?}`", before);
   //   }
   // }
 

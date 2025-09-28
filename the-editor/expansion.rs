@@ -240,7 +240,7 @@ fn expand_inner<'a>(editor: &Editor, content: Cow<'a, str>) -> Result<Cow<'a, st
   }
 }
 
-// Note: the lifetime of the expanded variable (the `Cow`) must not be tied to
+// NOTE: the lifetime of the expanded variable (the `Cow`) must not be tied to
 // the lifetime of the borrow of `Editor`. That would prevent commands from
 // mutating the `Editor` until the command consumed or cloned all arguments -
 // this is poor ergonomics. A sensible thing for this function to return then,

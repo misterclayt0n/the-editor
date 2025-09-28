@@ -61,7 +61,10 @@ use crate::{
     text_annotations::TextAnnotations,
     text_format::TextFormat,
     textobject,
-    transaction::Transaction,
+    transaction::{
+      Deletion,
+      Transaction,
+    },
     view::View,
   },
   current,
@@ -469,10 +472,6 @@ pub fn scroll(cx: &mut Context, offset: usize, direction: Direction, sync_cursor
   doc.set_selection(view.id, sel);
 }
 
-pub fn delete_char_backward(cx: &mut Context) {
-  insert::delete_char_backward_impl(cx);
-}
-
 fn delete_selection_impl(cx: &mut Context, op: Operation, yank: YankAction) {
   let (view, doc) = current!(cx.editor);
   let selection = doc.selection(view.id);
@@ -727,174 +726,307 @@ pub fn repeat_last_motion(cx: &mut Context) {
   cx.editor.repeat_last_motion(cx.count());
 }
 
-pub mod insert {
-  use std::borrow::Cow;
+use unicode_width::UnicodeWidthChar;
 
-  use ropey::Rope;
-  use unicode_width::UnicodeWidthChar;
+use crate::{
+  core::grapheme::{
+    nth_next_grapheme_boundary,
+    nth_prev_grapheme_boundary,
+  },
+  editor::SmartTabConfig,
+};
 
-  use super::*;
-  use crate::{
-    core::grapheme::{
-      nth_next_grapheme_boundary,
-      nth_prev_grapheme_boundary,
-    },
-    editor::SmartTabConfig,
-  };
+fn insert(rope: &Rope, selection: &Selection, ch: char) -> Option<Transaction> {
+  let cursors = selection.clone().cursors(rope.slice(..));
+  let mut t = Tendril::new();
+  t.push(ch);
+  let transaction = Transaction::insert(rope, &cursors, t);
+  Some(transaction)
+}
 
-  fn insert(rope: &Rope, selection: &Selection, ch: char) -> Option<Transaction> {
-    let cursors = selection.clone().cursors(rope.slice(..));
-    let mut t = Tendril::new();
-    t.push(ch);
-    let transaction = Transaction::insert(rope, &cursors, t);
-    Some(transaction)
+pub fn insert_char(cx: &mut Context, c: char) {
+  let (view, doc) = current_ref!(cx.editor);
+  let text = doc.text();
+  let selection = doc.selection(view.id);
+  let auto_pairs = doc.auto_pairs(cx.editor);
+
+  let transaction = auto_pairs
+    .as_ref()
+    .and_then(|ap| auto_pairs::hook(text, selection, c, ap))
+    .or_else(|| insert(text, selection, c));
+
+  let (view, doc) = current!(cx.editor);
+  if let Some(t) = transaction {
+    doc.apply(&t, view.id);
   }
 
-  pub fn insert_char(cx: &mut Context, c: char) {
-    let (view, doc) = current_ref!(cx.editor);
-    let text = doc.text();
-    let selection = doc.selection(view.id);
-    let auto_pairs = doc.auto_pairs(cx.editor);
+  the_editor_event::dispatch(PostInsertChar { c, cx });
+}
 
-    let transaction = auto_pairs
-      .as_ref()
-      .and_then(|ap| auto_pairs::hook(text, selection, c, ap))
-      .or_else(|| insert(text, selection, c));
+pub fn delete_char_backward(cx: &mut Context) {
+  let count = cx.count();
+  let (view, doc) = current_ref!(cx.editor);
+  let text = doc.text().slice(..);
+  let tab_width = doc.tab_width();
+  let indent_width = doc.indent_width();
+  let auto_pairs = doc.auto_pairs(cx.editor);
 
-    let (view, doc) = current!(cx.editor);
-    if let Some(t) = transaction {
-      doc.apply(&t, view.id);
+  let transaction = Transaction::delete_by_selection(doc.text(), doc.selection(view.id), |range| {
+    let pos = range.cursor(text);
+    if pos == 0 {
+      return (pos, pos);
     }
-
-    the_editor_event::dispatch(PostInsertChar { c, cx });
-  }
-
-  pub fn delete_char_backward_impl(cx: &mut Context) {
-    let count = cx.count();
-    let (view, doc) = current_ref!(cx.editor);
-    let text = doc.text().slice(..);
-    let tab_width = doc.tab_width();
-    let indent_width = doc.indent_width();
-    let auto_pairs = doc.auto_pairs(cx.editor);
-
-    let transaction =
-      Transaction::delete_by_selection(doc.text(), doc.selection(view.id), |range| {
-        let pos = range.cursor(text);
-        if pos == 0 {
-          return (pos, pos);
-        }
-        let line_start_pos = text.line_to_char(range.cursor_line(text));
-        // consider to delete by indent level if all characters before `pos` are indent
-        // units.
-        let fragment = Cow::from(text.slice(line_start_pos..pos));
-        if !fragment.is_empty() && fragment.chars().all(|ch| ch == ' ' || ch == '\t') {
-          if text.get_char(pos.saturating_sub(1)) == Some('\t') {
-            // fast path, delete one char
-            (nth_prev_grapheme_boundary(text, pos, 1), pos)
-          } else {
-            let width: usize = fragment
-              .chars()
-              .map(|ch| {
-                if ch == '\t' {
-                  tab_width
-                } else {
-                  // it can be none if it still meet control characters other than '\t'
-                  // here just set the width to 1 (or some value better?).
-                  ch.width().unwrap_or(1)
-                }
-              })
-              .sum();
-            let mut drop = width % indent_width; // round down to nearest unit
-            if drop == 0 {
-              drop = indent_width
-            }; // if it's already at a unit, consume a whole unit
-            let mut chars = fragment.chars().rev();
-            let mut start = pos;
-            for _ in 0..drop {
-              // delete up to `drop` spaces
-              match chars.next() {
-                Some(' ') => start -= 1,
-                _ => break,
-              }
+    let line_start_pos = text.line_to_char(range.cursor_line(text));
+    // consider to delete by indent level if all characters before `pos` are indent
+    // units.
+    let fragment = Cow::from(text.slice(line_start_pos..pos));
+    if !fragment.is_empty() && fragment.chars().all(|ch| ch == ' ' || ch == '\t') {
+      if text.get_char(pos.saturating_sub(1)) == Some('\t') {
+        // fast path, delete one char
+        (nth_prev_grapheme_boundary(text, pos, 1), pos)
+      } else {
+        let width: usize = fragment
+          .chars()
+          .map(|ch| {
+            if ch == '\t' {
+              tab_width
+            } else {
+              // it can be none if it still meet control characters other than '\t'
+              // here just set the width to 1 (or some value better?).
+              ch.width().unwrap_or(1)
             }
-            (start, pos) // delete!
-          }
-        } else {
-          match (
-            text.get_char(pos.saturating_sub(1)),
-            text.get_char(pos),
-            auto_pairs,
-          ) {
-            (Some(_x), Some(_y), Some(ap))
-              if range.is_single_grapheme(text)
-                && ap.get(_x).is_some()
-                && ap.get(_x).unwrap().open == _x
-                && ap.get(_x).unwrap().close == _y =>
-            // delete both autopaired characters
-            {
-              (
-                nth_prev_grapheme_boundary(text, pos, count),
-                nth_next_grapheme_boundary(text, pos, count),
-              )
-            },
-            _ =>
-            // delete 1 char
-            {
-              (nth_prev_grapheme_boundary(text, pos, count), pos)
-            },
+          })
+          .sum();
+        let mut drop = width % indent_width; // round down to nearest unit
+        if drop == 0 {
+          drop = indent_width
+        }; // if it's already at a unit, consume a whole unit
+        let mut chars = fragment.chars().rev();
+        let mut start = pos;
+        for _ in 0..drop {
+          // delete up to `drop` spaces
+          match chars.next() {
+            Some(' ') => start -= 1,
+            _ => break,
           }
         }
-      });
-    let (view, doc) = current!(cx.editor);
-    doc.apply(&transaction, view.id);
-  }
-
-  pub fn smart_tab(cx: &mut Context) {
-    let (view, doc) = current_ref!(cx.editor);
-    let view_id = view.id;
-
-    if matches!(
-      cx.editor.config().smart_tab,
-      Some(SmartTabConfig { enable: true, .. })
-    ) {
-      let cursors_after_whitespace = doc.selection(view_id).ranges().iter().all(|range| {
-        let cursor = range.cursor(doc.text().slice(..));
-        let current_line_num = doc.text().char_to_line(cursor);
-        let current_line_start = doc.text().line_to_char(current_line_num);
-        let left = doc.text().slice(current_line_start..cursor);
-        left.chars().all(|c| c.is_whitespace())
-      });
-
-      if !cursors_after_whitespace {
-        if doc.active_snippet.is_some() {
-          goto_next_tabstop(cx);
-        } else {
-          move_parent_node_end(cx);
-        }
-        return;
+        (start, pos) // delete!
+      }
+    } else {
+      match (
+        text.get_char(pos.saturating_sub(1)),
+        text.get_char(pos),
+        auto_pairs,
+      ) {
+        (Some(_x), Some(_y), Some(ap))
+          if range.is_single_grapheme(text)
+            && ap.get(_x).is_some()
+            && ap.get(_x).unwrap().open == _x
+            && ap.get(_x).unwrap().close == _y =>
+        // delete both autopaired characters
+        {
+          (
+            nth_prev_grapheme_boundary(text, pos, count),
+            nth_next_grapheme_boundary(text, pos, count),
+          )
+        },
+        _ =>
+        // delete 1 char
+        {
+          (nth_prev_grapheme_boundary(text, pos, count), pos)
+        },
       }
     }
+  });
+  let (view, doc) = current!(cx.editor);
+  doc.apply(&transaction, view.id);
+}
 
-    insert_tab(cx);
+pub fn delete_char_forward(cx: &mut Context) {
+  let count = cx.count();
+  delete_by_selection_insert_mode(
+    cx,
+    |text, range| {
+      let pos = range.cursor(text);
+      (pos, grapheme::nth_next_grapheme_boundary(text, pos, count))
+    },
+    Direction::Forward,
+  )
+}
+
+fn exclude_cursor(text: RopeSlice, range: Range, cursor: Range) -> Range {
+  if range.to() == cursor.to() && text.len_chars() != cursor.to() {
+    Range::new(
+      range.from(),
+      grapheme::prev_grapheme_boundary(text, cursor.to()),
+    )
+  } else {
+    range
+  }
+}
+
+pub fn delete_word_backward(cx: &mut Context) {
+  let count = cx.count();
+  delete_by_selection_insert_mode(
+    cx,
+    |text, range| {
+      let anchor = movement::move_prev_word_start(text, *range, count).from();
+      let next = Range::new(anchor, range.cursor(text));
+      let range = exclude_cursor(text, next, *range);
+      (range.from(), range.to())
+    },
+    Direction::Backward,
+  );
+}
+
+pub fn delete_word_forward(cx: &mut Context) {
+  let count = cx.count();
+  delete_by_selection_insert_mode(
+    cx,
+    |text, range| {
+      let head = movement::move_next_word_end(text, *range, count).to();
+      (range.cursor(text), head)
+    },
+    Direction::Forward,
+  );
+}
+
+pub fn kill_to_line_end(cx: &mut Context) {
+  delete_by_selection_insert_mode(
+    cx,
+    |text, range| {
+      let line = range.cursor_line(text);
+      let line_end_pos = line_end_char_index(&text, line);
+      let pos = range.cursor(text);
+
+      // if the cursor is on the newline char delete that
+      if pos == line_end_pos {
+        (pos, text.line_to_char(line + 1))
+      } else {
+        (pos, line_end_pos)
+      }
+    },
+    Direction::Forward,
+  );
+}
+
+pub fn kill_to_line_start(cx: &mut Context) {
+  delete_by_selection_insert_mode(
+    cx,
+    move |text, range| {
+      let line = range.cursor_line(text);
+      let first_char = text.line_to_char(line);
+      let anchor = range.cursor(text);
+      let head = if anchor == first_char && line != 0 {
+        // select until previous line
+        line_end_char_index(&text, line - 1)
+      } else if let Some(pos) = text.line(line).first_non_whitespace_char() {
+        if first_char + pos < anchor {
+          // select until first non-blank in line if cursor is after it
+          first_char + pos
+        } else {
+          // select until start of line
+          first_char
+        }
+      } else {
+        // select until start of line
+        first_char
+      };
+      (head, anchor)
+    },
+    Direction::Backward,
+  );
+}
+
+fn delete_by_selection_insert_mode(
+  cx: &mut Context,
+  mut f: impl FnMut(RopeSlice, &Range) -> Deletion,
+  direction: Direction,
+) {
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+  let mut selection = SmallVec::new();
+  let mut insert_newline = false;
+  let text_len = text.len_chars();
+  let mut transaction =
+    Transaction::delete_by_selection(doc.text(), doc.selection(view.id), |range| {
+      let (start, end) = f(text, range);
+      if direction == Direction::Forward {
+        let mut range = *range;
+        if range.head > range.anchor {
+          insert_newline |= end == text_len;
+          // move the cursor to the right so that the selection
+          // doesn't shrink when deleting forward (so the text appears to
+          // move to  left)
+          // += 1 is enough here as the range is normalized to grapheme boundaries
+          // later anyway
+          range.head += 1;
+        }
+        selection.push(range);
+      }
+      (start, end)
+    });
+
+  // in case we delete the last character and the cursor would be moved to the EOF
+  // char insert a newline, just like when entering append mode
+  if insert_newline {
+    transaction = transaction.insert_at_eof(doc.line_ending.as_str().into());
   }
 
-  pub fn insert_tab(cx: &mut Context) {
-    insert_tab_impl(cx, 1)
-  }
-
-  fn insert_tab_impl(cx: &mut Context, count: usize) {
-    let (view, doc) = current!(cx.editor);
-    // TODO: round out to nearest indentation level (for example a line with 3
-    // spaces should indent by one to reach 4 spaces).
-
-    let indent = Tendril::from(doc.indent_style.as_str().repeat(count));
-    let transaction = Transaction::insert(
-      doc.text(),
-      &doc.selection(view.id).clone().cursors(doc.text().slice(..)),
-      indent,
+  if direction == Direction::Forward {
+    doc.set_selection(
+      view.id,
+      Selection::new(selection, doc.selection(view.id).primary_index()),
     );
-    doc.apply(&transaction, view.id);
   }
+  doc.apply(&transaction, view.id);
+}
+
+pub fn smart_tab(cx: &mut Context) {
+  let (view, doc) = current_ref!(cx.editor);
+  let view_id = view.id;
+
+  if matches!(
+    cx.editor.config().smart_tab,
+    Some(SmartTabConfig { enable: true, .. })
+  ) {
+    let cursors_after_whitespace = doc.selection(view_id).ranges().iter().all(|range| {
+      let cursor = range.cursor(doc.text().slice(..));
+      let current_line_num = doc.text().char_to_line(cursor);
+      let current_line_start = doc.text().line_to_char(current_line_num);
+      let left = doc.text().slice(current_line_start..cursor);
+      left.chars().all(|c| c.is_whitespace())
+    });
+
+    if !cursors_after_whitespace {
+      if doc.active_snippet.is_some() {
+        goto_next_tabstop(cx);
+      } else {
+        move_parent_node_end(cx);
+      }
+      return;
+    }
+  }
+
+  insert_tab(cx);
+}
+
+pub fn insert_tab(cx: &mut Context) {
+  insert_tab_impl(cx, 1)
+}
+
+fn insert_tab_impl(cx: &mut Context, count: usize) {
+  let (view, doc) = current!(cx.editor);
+  // TODO: round out to nearest indentation level (for example a line with 3
+  // spaces should indent by one to reach 4 spaces).
+
+  let indent = Tendril::from(doc.indent_style.as_str().repeat(count));
+  let transaction = Transaction::insert(
+    doc.text(),
+    &doc.selection(view.id).clone().cursors(doc.text().slice(..)),
+    indent,
+  );
+  doc.apply(&transaction, view.id);
 }
 
 fn selection_is_linewise(selection: &Selection, text: &Rope) -> bool {
@@ -1545,6 +1677,31 @@ pub fn goto_line_end(cx: &mut Context) {
   )
 }
 
+pub fn goto_line_end_newline(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  goto_line_end_newline_impl(
+    view,
+    doc,
+    if cx.editor.mode == Mode::Select {
+      Movement::Extend
+    } else {
+      Movement::Move
+    },
+  )
+}
+
+fn goto_line_end_newline_impl(view: &mut View, doc: &mut Document, movement: Movement) {
+  let text = doc.text().slice(..);
+
+  let selection = doc.selection(view.id).clone().transform(|range| {
+    let line = range.cursor_line(text);
+    let pos = line_end_char_index(&text, line);
+
+    range.put_cursor(text, pos, movement == Movement::Extend)
+  });
+  doc.set_selection(view.id, selection);
+}
+
 pub fn goto_first_nonwhitespace(cx: &mut Context) {
   let (view, doc) = current!(cx.editor);
 
@@ -1651,7 +1808,7 @@ fn goto_next_tabstop_impl(cx: &mut Context, direction: Direction) {
         if let Some(snippet) = &doc.active_snippet {
           doc.apply(&snippet.delete_placeholder(doc.text()), view.id);
         }
-        insert::insert_char(cx, c);
+        insert_char(cx, c);
       }
     })
   }
@@ -2816,3 +2973,28 @@ pub fn parse_macro(keys_str: &str) -> anyhow::Result<Vec<KeyBinding>> {
       .map_err(|e| anyhow::anyhow!("Failed to parse key: {}", e))
   })
 }
+
+pub fn commit_undo_checkpoint(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  doc.append_changes_to_history(view);
+}
+
+// pub fn insert_register(cx: &mut Context) {
+//   cx.editor.autoinfo = Some(Info::from_registers(
+//     "Insert register",
+//     &cx.editor.registers,
+//   ));
+//   cx.on_next_key(move |cx, event| {
+//     cx.editor.autoinfo = None;
+//     if let Some(Key::Char(ch)) = event.code {
+//       cx.register = Some(ch);
+//       paste(
+//         cx.editor,
+//         cx.register
+//           .unwrap_or(cx.editor.config().default_yank_register),
+//         Paste::Cursor,
+//         cx.count(),
+//       );
+//     }
+//   })
+// }

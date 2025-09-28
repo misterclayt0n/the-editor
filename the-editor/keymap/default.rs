@@ -80,7 +80,6 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     ">" => indent,
     "<" => unindent,
 
-
     "Q" => record_macro,
     "q" => replay_macro,
 
@@ -113,17 +112,32 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   });
 
   // Insert mode: text input handled via InputEvent::Text; map Esc and Backspace
-  let mut insert = crate::keymap!({ "Insert"
-    Backspace     => delete_char_backward,
-    "C-j" | "ret" => insert_newline,
+  let insert = crate::keymap!({ "Insert"
+    "esc"                               => normal_mode,
+
+    "C-s"                               => commit_undo_checkpoint,
+    // "C-x"                               => completion,
+    // "C-r"                               => insert_register,
+
+    "C-w" | "A-backspace"               => delete_word_backward,
+    "A-d" | "A-del"                     => delete_word_forward,
+    "C-u"                               => kill_to_line_start,
+    "C-k"                               => kill_to_line_end,
+    "C-h" | "backspace" | "S-backspace" => delete_char_backward,
+    "C-d" | "del"                       => delete_char_forward,
+    "C-j" | "ret"                       => insert_newline,
+    "tab"                               => smart_tab,
+    "S-tab"                             => insert_tab,
+
+    "up"                                => move_visual_line_up,
+    "down"                              => move_visual_line_down,
+    "left"                              => move_char_left,
+    "right"                             => move_char_right,
+    // "pageup"                            => page_up,
+    // "pagedown"                          => page_down,
+    "home"                              => goto_line_start,
+    "end"                               => goto_line_end_newline,
   });
-  // Add: insert 'Esc' -> exit insert mode
-  if let KeyTrie::Node(ref mut node) = insert {
-    node.map.insert(
-      crate::key!(Esc),
-      KeyTrie::Command(Command::Execute(crate::core::commands::normal_mode)),
-    );
-  }
 
   // Visual mode: movement extends selection, Esc exits visual mode
   let mut visual = crate::keymap!({ "Visual"

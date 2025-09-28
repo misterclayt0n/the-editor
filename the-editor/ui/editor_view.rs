@@ -127,57 +127,57 @@ impl Component for EditorView {
                 jobs:                 cx.jobs,
               };
 
-              commands::insert::insert_char(&mut cmd_cx, *ch);
+              commands::insert_char(&mut cmd_cx, *ch);
               return EventResult::Consumed(None);
             },
-            the_editor_renderer::Key::Enter => {
-              // Insert newline
-              let mut cmd_cx = commands::Context {
-                register:             cx.editor.selected_register,
-                count:                cx.editor.count,
-                editor:               cx.editor,
-                on_next_key_callback: None,
-                callback:             Vec::new(),
-                jobs:                 cx.jobs,
-              };
+            // the_editor_renderer::Key::Enter => {
+            //   // Insert newline
+            //   let mut cmd_cx = commands::Context {
+            //     register:             cx.editor.selected_register,
+            //     count:                cx.editor.count,
+            //     editor:               cx.editor,
+            //     on_next_key_callback: None,
+            //     callback:             Vec::new(),
+            //     jobs:                 cx.jobs,
+            //   };
 
-              // Insert newline using insert_char
-              commands::insert::insert_char(&mut cmd_cx, '\n');
-              return EventResult::Consumed(None);
-            },
-            the_editor_renderer::Key::Tab => {
-              // Insert tab
-              let mut cmd_cx = commands::Context {
-                register:             cx.editor.selected_register,
-                count:                cx.editor.count,
-                editor:               cx.editor,
-                on_next_key_callback: None,
-                callback:             Vec::new(),
-                jobs:                 cx.jobs,
-              };
+            //   // Insert newline using insert_char
+            //   commands::insert_char(&mut cmd_cx, '\n');
+            //   return EventResult::Consumed(None);
+            // },
+            // the_editor_renderer::Key::Tab => {
+            //   // Insert tab
+            //   let mut cmd_cx = commands::Context {
+            //     register:             cx.editor.selected_register,
+            //     count:                cx.editor.count,
+            //     editor:               cx.editor,
+            //     on_next_key_callback: None,
+            //     callback:             Vec::new(),
+            //     jobs:                 cx.jobs,
+            //   };
 
-              commands::insert::insert_tab(&mut cmd_cx);
-              return EventResult::Consumed(None);
-            },
-            the_editor_renderer::Key::Backspace => {
-              // Delete char before cursor
-              let mut cmd_cx = commands::Context {
-                register:             cx.editor.selected_register,
-                count:                cx.editor.count,
-                editor:               cx.editor,
-                on_next_key_callback: None,
-                callback:             Vec::new(),
-                jobs:                 cx.jobs,
-              };
+            //   commands::insert_tab(&mut cmd_cx);
+            //   return EventResult::Consumed(None);
+            // },
+            // the_editor_renderer::Key::Backspace => {
+            //   // Delete char before cursor
+            //   let mut cmd_cx = commands::Context {
+            //     register:             cx.editor.selected_register,
+            //     count:                cx.editor.count,
+            //     editor:               cx.editor,
+            //     on_next_key_callback: None,
+            //     callback:             Vec::new(),
+            //     jobs:                 cx.jobs,
+            //   };
 
-              commands::delete_char_backward(&mut cmd_cx);
-              return EventResult::Consumed(None);
-            },
-            the_editor_renderer::Key::Escape => {
-              // Exit insert mode
-              cx.editor.set_mode(Mode::Normal);
-              return EventResult::Consumed(None);
-            },
+            //   commands::delete_char_backward(&mut cmd_cx);
+            //   return EventResult::Consumed(None);
+            // },
+            // the_editor_renderer::Key::Escape => {
+            //   // Exit insert mode
+            //   cx.editor.set_mode(Mode::Normal);
+            //   return EventResult::Consumed(None);
+            // },
             _ => {},
           }
         }

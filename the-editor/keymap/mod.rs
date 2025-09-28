@@ -249,7 +249,7 @@ pub enum Mode {
   Command,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 pub enum Command {
   Execute(fn(&mut commands::Context)),
 }
@@ -262,13 +262,13 @@ impl std::fmt::Debug for Command {
   }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum KeyTrie {
   Command(Command),
   Node(KeyTrieNode),
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct KeyTrieNode {
   pub name:      String,
   pub map:       HashMap<KeyBinding, KeyTrie>,
@@ -334,7 +334,7 @@ impl KeyTrie {
   }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum KeymapResult {
   Pending(KeyTrieNode),
   Matched(Command),
@@ -342,7 +342,7 @@ pub enum KeymapResult {
   Cancelled(Vec<KeyBinding>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Keymaps {
   pub map:    HashMap<Mode, KeyTrie>,
   state:      Vec<KeyBinding>,

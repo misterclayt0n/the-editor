@@ -503,7 +503,7 @@ impl Client {
   {
     // NOTE: Little workaround nightly rust
     let params = Box::new(params);
-    let this = self.clone();
+    let this = self;
     async move { this.call_with_ref::<R>(&*params).await }
   }
 

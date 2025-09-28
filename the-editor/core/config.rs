@@ -60,7 +60,7 @@ pub fn user_lang_loader() -> Result<Loader, LanguageLoaderError> {
   Loader::new(config).map_err(LanguageLoaderError::LoaderError)
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Config {
   pub theme:  Option<String>,
   pub keymap: Keymaps,

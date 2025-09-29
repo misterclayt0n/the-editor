@@ -39,7 +39,10 @@ use crate::{
       Surface,
     },
     render_cache::DirtyRegion,
-    render_commands::{CommandBatcher, RenderCommand},
+    render_commands::{
+      CommandBatcher,
+      RenderCommand,
+    },
   },
 };
 
@@ -52,14 +55,14 @@ const CURSOR_HEIGHT_EXTENSION: f32 = 4.0;
 const LINE_SPACING: f32 = 4.0;
 
 pub struct EditorView {
-  pub keymaps: Keymaps,
-  on_next_key: Option<(OnKeyCallback, OnKeyCallbackKind)>,
+  pub keymaps:         Keymaps,
+  on_next_key:         Option<(OnKeyCallback, OnKeyCallbackKind)>,
   // Track last command for macro replay
-  last_insert: (MappableCommand, Vec<KeyBinding>),
+  last_insert:         (MappableCommand, Vec<KeyBinding>),
   // Rendering optimizations
-  dirty_region: DirtyRegion,
-  command_batcher: CommandBatcher,
-  last_cursor_pos: Option<usize>,
+  dirty_region:        DirtyRegion,
+  command_batcher:     CommandBatcher,
+  last_cursor_pos:     Option<usize>,
   last_selection_hash: u64,
 }
 
@@ -129,7 +132,10 @@ impl Component for EditorView {
               let focus_view = cx.editor.tree.focus;
               let view = cx.editor.tree.get(focus_view);
               let doc = &cx.editor.documents[&view.doc];
-              let cursor_pos = doc.selection(focus_view).primary().cursor(doc.text().slice(..));
+              let cursor_pos = doc
+                .selection(focus_view)
+                .primary()
+                .cursor(doc.text().slice(..));
               let current_line = if cursor_pos < doc.text().len_chars() {
                 doc.text().char_to_line(cursor_pos)
               } else {
@@ -153,7 +159,10 @@ impl Component for EditorView {
               let focus_view = cx.editor.tree.focus;
               let view = cx.editor.tree.get(focus_view);
               let doc = &cx.editor.documents[&view.doc];
-              let new_cursor_pos = doc.selection(focus_view).primary().cursor(doc.text().slice(..));
+              let new_cursor_pos = doc
+                .selection(focus_view)
+                .primary()
+                .cursor(doc.text().slice(..));
               let new_line = if new_cursor_pos < doc.text().len_chars() {
                 doc.text().char_to_line(new_cursor_pos)
               } else {
@@ -268,7 +277,10 @@ impl Component for EditorView {
             let focus_view = cx.editor.tree.focus;
             let view = cx.editor.tree.get(focus_view);
             let doc = &cx.editor.documents[&view.doc];
-            let new_cursor_pos = doc.selection(focus_view).primary().cursor(doc.text().slice(..));
+            let new_cursor_pos = doc
+              .selection(focus_view)
+              .primary()
+              .cursor(doc.text().slice(..));
             let new_line = if new_cursor_pos < doc.text().len_chars() {
               doc.text().char_to_line(new_cursor_pos)
             } else {
@@ -303,7 +315,6 @@ impl Component for EditorView {
   }
 
   fn render(&mut self, _area: Rect, renderer: &mut Surface, cx: &mut Context) {
-
     let font_size = 22.0; // TODO: Get from config
     renderer.configure_font(&renderer.current_font_family().to_string(), font_size);
     let font_width = renderer.cell_width().max(1.0);
@@ -378,8 +389,13 @@ impl Component for EditorView {
 
     // Check if cursor or selection changed
     let selection_hash = {
-      use std::collections::hash_map::DefaultHasher;
-      use std::hash::{Hash, Hasher};
+      use std::{
+        collections::hash_map::DefaultHasher,
+        hash::{
+          Hash,
+          Hasher,
+        },
+      };
       let mut hasher = DefaultHasher::new();
       for range in selection.ranges() {
         range.from().hash(&mut hasher);
@@ -446,7 +462,9 @@ impl Component for EditorView {
     let doc_len = doc_text.len_chars();
 
     // Update viewport bounds in dirty region tracker
-    self.dirty_region.set_viewport(row_off, row_off + visible_lines);
+    self
+      .dirty_region
+      .set_viewport(row_off, row_off + visible_lines);
 
     // For now, disable frame timing optimization as it's blocking renders
     // TODO: Fix frame timer logic
@@ -480,49 +498,49 @@ impl Component for EditorView {
 
     // Helper to flush a line batch
     let mut flush_line_batch = |batch: &mut Vec<(f32, f32, String, Color)>,
-                                 batcher: &mut CommandBatcher,
-                                 font_width: f32,
-                                 font_size: f32| {
-        if batch.is_empty() {
-            return;
+                                batcher: &mut CommandBatcher,
+                                font_width: f32,
+                                font_size: f32| {
+      if batch.is_empty() {
+        return;
+      }
+
+      // Group consecutive characters with same style
+      let mut i = 0;
+      while i < batch.len() {
+        let (x, y, _, color) = batch[i].clone();
+        let mut text = batch[i].2.clone();
+        let mut j = i + 1;
+
+        // Track the expected position for next character
+        let mut expected_x = x + font_width;
+
+        // Merge consecutive characters with same color at adjacent positions
+        while j < batch.len() {
+          let (next_x, _, _, next_color) = &batch[j];
+          // Check if next character is adjacent and same color (compare RGBA components)
+          if (next_x - expected_x).abs() < 1.0
+            && next_color.r == color.r
+            && next_color.g == color.g
+            && next_color.b == color.b
+            && next_color.a == color.a
+          {
+            text.push_str(&batch[j].2);
+            expected_x = next_x + font_width;
+            j += 1;
+          } else {
+            break;
+          }
         }
 
-        // Group consecutive characters with same style
-        let mut i = 0;
-        while i < batch.len() {
-            let (x, y, _, color) = batch[i].clone();
-            let mut text = batch[i].2.clone();
-            let mut j = i + 1;
+        // Render the merged text
+        batcher.add_command(RenderCommand::Text {
+          section: TextSection::simple(x, y, text, font_size, color),
+        });
 
-            // Track the expected position for next character
-            let mut expected_x = x + font_width;
-
-            // Merge consecutive characters with same color at adjacent positions
-            while j < batch.len() {
-                let (next_x, _, _, next_color) = &batch[j];
-                // Check if next character is adjacent and same color (compare RGBA components)
-                if (next_x - expected_x).abs() < 1.0
-                    && next_color.r == color.r
-                    && next_color.g == color.g
-                    && next_color.b == color.b
-                    && next_color.a == color.a {
-                    text.push_str(&batch[j].2);
-                    expected_x = next_x + font_width;
-                    j += 1;
-                } else {
-                    break;
-                }
-            }
-
-
-            // Render the merged text
-            batcher.add_command(RenderCommand::Text {
-                section: TextSection::simple(x, y, text, font_size, color),
-            });
-
-            i = j;
-        }
-        batch.clear();
+        i = j;
+      }
+      batch.clear();
     };
 
     // Render document graphemes using command batcher
@@ -568,7 +586,12 @@ impl Component for EditorView {
 
       // Track current row and flush batch on line change
       if rel_row != current_row {
-        flush_line_batch(&mut line_batch, &mut self.command_batcher, font_width, font_size);
+        flush_line_batch(
+          &mut line_batch,
+          &mut self.command_batcher,
+          font_width,
+          font_size,
+        );
         current_row = rel_row;
       }
 
@@ -620,11 +643,16 @@ impl Component for EditorView {
     }
 
     // Flush any remaining batch
-    flush_line_batch(&mut line_batch, &mut self.command_batcher, font_width, font_size);
+    flush_line_batch(
+      &mut line_batch,
+      &mut self.command_batcher,
+      font_width,
+      font_size,
+    );
 
-    // If the document is empty or we didn't render any graphemes, at least render the cursor
+    // If the document is empty or we didn't render any graphemes, at least render
+    // the cursor
     if grapheme_count == 0 {
-
       // Render cursor at position 0 for empty document
       let x = base_x;
       let y = base_y;

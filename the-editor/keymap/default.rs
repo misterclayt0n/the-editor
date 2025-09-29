@@ -139,7 +139,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   // Visual mode: movement extends selection, Esc exits visual mode
   let select = crate::keymap!({ "Visual"
    "esc"       => normal_mode,
-    
+
     "h" | Left  => extend_char_left,
     "j" | Down  => extend_visual_line_down,
     "k" | Up    => extend_visual_line_up,
@@ -157,7 +157,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "W"         => extend_next_long_word_start,
     "B"         => extend_prev_long_word_start,
     "E"         => extend_next_long_word_end,
-    
+
     "d"         => delete_selection,
     "c"         => change_selection,
 

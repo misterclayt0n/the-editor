@@ -488,6 +488,9 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
             self
               .app
               .resize(physical_size.width, physical_size.height, renderer);
+            if let Some(win) = &self.window {
+              win.request_redraw();
+            }
           }
         },
         WindowEvent::ScaleFactorChanged { .. } => {},
@@ -504,6 +507,9 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
                     win.request_redraw();
                   }
                 }
+              },
+              Err(RendererError::SkipFrame) => {
+                // Expected during interactive resize; quietly skip
               },
               Err(e) => log::error!("Failed to begin frame: {e:?}"),
             }

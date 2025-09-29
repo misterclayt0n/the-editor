@@ -73,9 +73,9 @@ struct RectUniforms {
 }
 
 struct TextCommand {
-  position: (f32, f32),
+  position:  (f32, f32),
   cache_key: crate::text_cache::ShapedTextKey, // Key to retrieve buffer from cache
-  bounds:   TextBounds,
+  bounds:    TextBounds,
 }
 
 /// Pool of reusable text buffers for better performance
@@ -104,11 +104,13 @@ impl Default for RendererConfig {
 
 /// The main renderer struct that manages GPU resources and drawing operations
 pub struct Renderer {
-  surface: wgpu::Surface<'static>,
-  device:  wgpu::Device,
-  queue:   wgpu::Queue,
-  config:  wgpu::SurfaceConfiguration,
-  size:    PhysicalSize<u32>,
+  surface:        wgpu::Surface<'static>,
+  device:         wgpu::Device,
+  queue:          wgpu::Queue,
+  config:         wgpu::SurfaceConfiguration,
+  size:           PhysicalSize<u32>,
+  /// Tracks a resize that needs a surface reconfigure. Applied in begin_frame.
+  pending_resize: Option<PhysicalSize<u32>>,
 
   cache:         Cache,
   font_system:   FontSystem,
@@ -196,22 +198,20 @@ impl Renderer {
       .copied()
       .unwrap_or(surface_caps.formats[0]);
 
-    let present_mode = if log::log_enabled!(log::Level::Debug) {
-      // Prefer mailbox when debugging for latency if available.
-      surface_caps
-        .present_modes
-        .iter()
-        .copied()
-        .find(|mode| *mode == wgpu::PresentMode::Mailbox)
-        .unwrap_or(surface_caps.present_modes[0])
-    } else {
-      surface_caps
-        .present_modes
-        .iter()
-        .copied()
-        .find(|mode| *mode == wgpu::PresentMode::Fifo)
-        .unwrap_or(surface_caps.present_modes[0])
-    };
+    // Prefer low-latency present mode when available.
+    let present_mode = surface_caps
+      .present_modes
+      .iter()
+      .copied()
+      .find(|m| *m == wgpu::PresentMode::Mailbox)
+      .or_else(|| {
+        surface_caps
+          .present_modes
+          .iter()
+          .copied()
+          .find(|m| *m == wgpu::PresentMode::Immediate)
+      })
+      .unwrap_or(wgpu::PresentMode::Fifo);
 
     let config = wgpu::SurfaceConfiguration {
       usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -404,6 +404,7 @@ impl Renderer {
       queue,
       config,
       size,
+      pending_resize: None,
       cache,
       font_system,
       swash_cache,
@@ -429,7 +430,8 @@ impl Renderer {
         buffers: Vec::with_capacity(4),
         metrics: Metrics::new(16.0, 16.0 * LINE_HEIGHT_FACTOR),
       },
-      shaped_text_cache: crate::text_cache::ShapedTextCache::new(1000), // Cache up to 1000 text runs
+      shaped_text_cache: crate::text_cache::ShapedTextCache::new(1000), /* Cache up to 1000 text
+                                                                         * runs */
       pending_text_batch: None,
     };
 
@@ -461,14 +463,10 @@ impl Renderer {
   /// Resize the renderer viewport
   pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
     if new_size.width > 0 && new_size.height > 0 {
+      // Defer heavy surface reconfiguration until the next frame to
+      // coalesce rapid resize events into a single reconfigure.
       self.size = new_size;
-      self.config.width = new_size.width;
-      self.config.height = new_size.height;
-      self.surface.configure(&self.device, &self.config);
-      self.viewport.update(&self.queue, Resolution {
-        width:  self.config.width,
-        height: self.config.height,
-      });
+      self.pending_resize = Some(new_size);
     }
   }
 
@@ -484,10 +482,46 @@ impl Renderer {
 
   /// Begin a new rendering frame
   pub fn begin_frame(&mut self) -> Result<()> {
-    let output = self
-      .surface
-      .get_current_texture()
-      .map_err(|e| RendererError::Runtime(format!("Failed to acquire frame: {e}")))?;
+    // Apply any pending resize before acquiring the next frame.
+    if let Some(new_size) = self.pending_resize.take() {
+      self.config.width = new_size.width.max(1);
+      self.config.height = new_size.height.max(1);
+      self.surface.configure(&self.device, &self.config);
+      self.viewport.update(&self.queue, Resolution {
+        width:  self.config.width,
+        height: self.config.height,
+      });
+    }
+
+    // Acquire the surface texture with robust error handling during resizes.
+    let output = match self.surface.get_current_texture() {
+      Ok(o) => o,
+      Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => {
+        // Reconfigure and retry once.
+        self.surface.configure(&self.device, &self.config);
+        match self.surface.get_current_texture() {
+          Ok(o2) => o2,
+          Err(wgpu::SurfaceError::Timeout) => {
+            // Skip this frame quietly.
+            return Err(RendererError::SkipFrame);
+          },
+          Err(e) => {
+            return Err(RendererError::Runtime(format!(
+              "Failed to acquire frame after reconfigure: {e}"
+            )));
+          },
+        }
+      },
+      Err(wgpu::SurfaceError::Timeout) => {
+        // Skip this frame quietly.
+        return Err(RendererError::SkipFrame);
+      },
+      Err(e) => {
+        return Err(RendererError::Runtime(format!(
+          "Failed to acquire frame: {e}"
+        )));
+      },
+    };
     let view = output
       .texture
       .create_view(&wgpu::TextureViewDescriptor::default());
@@ -602,17 +636,21 @@ impl Renderer {
           &self.viewport,
           self.text_commands.iter().filter_map(|command| {
             // Get buffer from cache
-            self.shaped_text_cache.entries.get(&command.cache_key).map(|entry| {
-              TextArea {
-                buffer:        &entry.buffer,
-                left:          command.position.0,
-                top:           command.position.1,
-                scale:         1.0,
-                bounds:        command.bounds,
-                default_color: GlyphColor::rgba(255, 255, 255, 255),
-                custom_glyphs: &[],
-              }
-            })
+            self
+              .shaped_text_cache
+              .entries
+              .get(&command.cache_key)
+              .map(|entry| {
+                TextArea {
+                  buffer:        &entry.buffer,
+                  left:          command.position.0,
+                  top:           command.position.1,
+                  scale:         1.0,
+                  bounds:        command.bounds,
+                  default_color: GlyphColor::rgba(255, 255, 255, 255),
+                  custom_glyphs: &[],
+                }
+              })
           }),
           &mut self.swash_cache,
         )
@@ -727,16 +765,22 @@ impl Renderer {
 
     // Create cache key
     let cache_key = crate::text_cache::ShapedTextKey {
-      text: full_text.clone(),
-      metrics: ((self.font_size * 100.0) as u32, (self.cell_height * 100.0) as u32),
-      color: [
+      text:          full_text.clone(),
+      metrics:       (
+        (self.font_size * 100.0) as u32,
+        (self.cell_height * 100.0) as u32,
+      ),
+      color:         [
         (first_color.r * 255.0) as u8,
         (first_color.g * 255.0) as u8,
         (first_color.b * 255.0) as u8,
         (first_color.a * 255.0) as u8,
       ],
       position_hash: {
-        use std::hash::{Hash, Hasher};
+        use std::hash::{
+          Hash,
+          Hasher,
+        };
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         section.position.0.to_bits().hash(&mut hasher);
         section.position.1.to_bits().hash(&mut hasher);
@@ -811,7 +855,10 @@ impl Renderer {
         generation: self.shaped_text_cache.current_generation,
       };
 
-      self.shaped_text_cache.entries.insert(cache_key.clone(), entry);
+      self
+        .shaped_text_cache
+        .entries
+        .insert(cache_key.clone(), entry);
     } else {
       // Update cache hit stats
       self.shaped_text_cache.hits += 1;

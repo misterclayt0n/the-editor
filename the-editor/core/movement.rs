@@ -280,7 +280,10 @@ pub fn move_vertically_visual(
     new_pos += (virtual_rows != 0) as usize;
   }
 
-  if behavior == Movement::Extend && new_pos < slice.len_chars() && slice.line(slice.char_to_line(new_pos)).len_chars() == 0 {
+  if behavior == Movement::Extend
+    && new_pos < slice.len_chars()
+    && slice.line(slice.char_to_line(new_pos)).len_chars() == 0
+  {
     return range;
   }
 

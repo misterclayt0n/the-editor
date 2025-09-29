@@ -3,6 +3,10 @@ use thiserror::Error;
 /// Errors that can occur in the renderer
 #[derive(Error, Debug, Clone)]
 pub enum RendererError {
+  /// Non-fatal condition where the current frame should be skipped silently
+  /// (e.g. surface Timeout/Outdated during interactive resize). Not an error.
+  #[error("Skip frame")]
+  SkipFrame,
   /// Window creation failed
   #[error("Failed to create window: {0}")]
   WindowCreation(String),

@@ -8,14 +8,14 @@ version.workspace = true
 path = "lib.rs"
 
 [dependencies]
-foldhash.workspace  = true
-hashbrown.workspace = true
-tokio.workspace     = true
 anyhow.workspace           = true
+foldhash.workspace         = true
 futures-executor.workspace = true
+hashbrown.workspace        = true
 log.workspace              = true
 once_cell.workspace        = true
 parking_lot                = { features = [ "hardware-lock-elision" ], workspace = true }
+tokio.workspace            = true
 
 [features]
 integration_test = [  ]

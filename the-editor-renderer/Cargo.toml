@@ -8,14 +8,14 @@ version.workspace = true
 path = "lib.rs"
 
 [dependencies]
-anyhow.workspace = true
-bytemuck.workspace = true
+anyhow.workspace     = true
+bytemuck.workspace   = true
 env_logger.workspace = true
-fontdb = "0.12"
-glyphon = "0.9"
-log.workspace = true
-pollster.workspace = true
-the-editor-event = { path = "../the-editor-event" }
-thiserror.workspace = true
-wgpu.workspace = true
-winit.workspace = true
+fontdb               = "0.12"
+glyphon              = "0.9"
+log.workspace        = true
+pollster.workspace   = true
+the-editor-event     = { path = "../the-editor-event" }
+thiserror.workspace  = true
+wgpu.workspace       = true
+winit.workspace      = true

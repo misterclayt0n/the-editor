@@ -320,7 +320,7 @@ where
   )
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct GutterConfig {
   /// Gutter Layout
@@ -490,7 +490,7 @@ where
   Ok(chars)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct EditorConfig {
   /// Padding to keep between the edge of the screen and the cursor when
@@ -594,6 +594,14 @@ pub struct EditorConfig {
   /// Whether to color modes with different colors. Defaults to `false`.
   pub color_modes:               bool,
   pub soft_wrap:                 SoftWrap,
+  // Smooth scrolling animation
+  pub smooth_scroll_enabled:     bool,
+  pub scroll_lerp_factor:        f32,
+  pub scroll_min_step_lines:     f32,
+  pub scroll_min_step_cols:      f32,
+  // Cursor animation
+  pub cursor_anim_enabled:       bool,
+  pub cursor_lerp_factor:        f32,
   /// Workspace specific lsp ceiling dirs
   pub workspace_lsp_roots:       Vec<PathBuf>,
   /// Which line ending to choose for new documents. Defaults to `native`. i.e.
@@ -1617,6 +1625,13 @@ impl Default for EditorConfig {
       clipboard_provider:        ClipboardProvider::default(),
       editor_config:             true,
       rainbow_brackets:          false,
+      // Animations defaults
+      smooth_scroll_enabled:     true,
+      scroll_lerp_factor:        0.25,
+      scroll_min_step_lines:     0.75,
+      scroll_min_step_cols:      1.0,
+      cursor_anim_enabled:       true,
+      cursor_lerp_factor:        0.25,
     }
   }
 }

@@ -53,8 +53,8 @@ fn main() -> anyhow::Result<()> {
   let lang_loader = crate::core::config::user_lang_loader()
     .unwrap_or_else(|_err| crate::core::config::default_lang_loader());
 
-  // Load config (use defaults for now).
-  let config = Config::default();
+  // Load config from ~/.config/the-editor/config.toml (falls back to defaults).
+  let config = crate::core::config::Config::load_user().unwrap_or_default();
   let config_ptr = Arc::new(ArcSwap::from_pointee(config.clone()));
 
   // Build handlers and register hooks.

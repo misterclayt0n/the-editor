@@ -73,6 +73,7 @@ pub struct EditorView {
 
 impl EditorView {
   pub fn new(keymaps: Keymaps) -> Self {
+    // Defaults; will be overridden from config on first render
     Self {
       keymaps,
       on_next_key: None,
@@ -188,54 +189,6 @@ impl Component for EditorView {
 
               return EventResult::Consumed(None);
             },
-            // the_editor_renderer::Key::Enter => {
-            //   // Insert newline
-            //   let mut cmd_cx = commands::Context {
-            //     register:             cx.editor.selected_register,
-            //     count:                cx.editor.count,
-            //     editor:               cx.editor,
-            //     on_next_key_callback: None,
-            //     callback:             Vec::new(),
-            //     jobs:                 cx.jobs,
-            //   };
-
-            //   // Insert newline using insert_char
-            //   commands::insert_char(&mut cmd_cx, '\n');
-            //   return EventResult::Consumed(None);
-            // },
-            // the_editor_renderer::Key::Tab => {
-            //   // Insert tab
-            //   let mut cmd_cx = commands::Context {
-            //     register:             cx.editor.selected_register,
-            //     count:                cx.editor.count,
-            //     editor:               cx.editor,
-            //     on_next_key_callback: None,
-            //     callback:             Vec::new(),
-            //     jobs:                 cx.jobs,
-            //   };
-
-            //   commands::insert_tab(&mut cmd_cx);
-            //   return EventResult::Consumed(None);
-            // },
-            // the_editor_renderer::Key::Backspace => {
-            //   // Delete char before cursor
-            //   let mut cmd_cx = commands::Context {
-            //     register:             cx.editor.selected_register,
-            //     count:                cx.editor.count,
-            //     editor:               cx.editor,
-            //     on_next_key_callback: None,
-            //     callback:             Vec::new(),
-            //     jobs:                 cx.jobs,
-            //   };
-
-            //   commands::delete_char_backward(&mut cmd_cx);
-            //   return EventResult::Consumed(None);
-            // },
-            // the_editor_renderer::Key::Escape => {
-            //   // Exit insert mode
-            //   cx.editor.set_mode(Mode::Normal);
-            //   return EventResult::Consumed(None);
-            // },
             _ => {},
           }
         }
@@ -375,6 +328,13 @@ impl Component for EditorView {
         }
       }
       let _ = view_id_doc; // keep variable to ensure scope is closed
+    }
+
+    // Sync cursor animation config from editor config
+    {
+      let conf = cx.editor.config();
+      self.cursor_anim_enabled = conf.cursor_anim_enabled;
+      self.cursor_lerp_factor = conf.cursor_lerp_factor;
     }
 
     // Get theme colors
@@ -665,11 +625,11 @@ impl Component for EditorView {
         };
 
         self.command_batcher.add_command(RenderCommand::Cursor {
-          x: anim_x,
-          y: anim_y,
-          width: cursor_w.min((viewport_cols - rel_col) as f32 * font_width),
+          x:      anim_x,
+          y:      anim_y,
+          width:  cursor_w.min((viewport_cols - rel_col) as f32 * font_width),
           height: font_size + CURSOR_HEIGHT_EXTENSION,
-          color: cursor_bg,
+          color:  cursor_bg,
         });
       }
 

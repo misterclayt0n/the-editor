@@ -69,15 +69,16 @@ impl App {
     );
     compositor.push(button);
 
+    let conf = editor.config();
     Self {
       compositor,
       editor,
       jobs: Jobs::new(),
       input_handler: InputHandler::new(mode),
-      smooth_scroll_enabled: true,
-      scroll_lerp_factor: 0.25,
-      scroll_min_step_lines: 0.75,
-      scroll_min_step_cols: 1.0,
+      smooth_scroll_enabled: conf.smooth_scroll_enabled,
+      scroll_lerp_factor: conf.scroll_lerp_factor,
+      scroll_min_step_lines: conf.scroll_min_step_lines,
+      scroll_min_step_cols: conf.scroll_min_step_cols,
       pending_scroll_lines: 0.0,
       pending_scroll_cols: 0.0,
     }

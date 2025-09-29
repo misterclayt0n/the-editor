@@ -31,6 +31,13 @@ pub enum UnifiedKey {
     ctrl:  bool,
     alt:   bool,
   },
+  /// A modified special key (e.g., Alt+Backspace, Ctrl+Delete).
+  ModifiedSpecial {
+    key:   SpecialKey,
+    shift: bool,
+    ctrl:  bool,
+    alt:   bool,
+  },
   /// Escape key (special handling in many contexts).
   Escape,
 }
@@ -116,9 +123,38 @@ impl InputProcessor {
     self.ctrl_held = key_press.ctrl;
     self.alt_held = key_press.alt;
 
+    // Check if special keys have modifiers - if so, treat them as modified keys
+    let has_modifiers = key_press.ctrl || key_press.alt || key_press.shift;
+
     // Convert to unified key.
     let unified = match key_press.code {
       Key::Escape => Some(UnifiedKey::Escape),
+      // Special keys with modifiers need special handling
+      Key::Enter if has_modifiers => Some(UnifiedKey::ModifiedSpecial {
+        key:   SpecialKey::Enter,
+        shift: key_press.shift,
+        ctrl:  key_press.ctrl,
+        alt:   key_press.alt,
+      }),
+      Key::Tab if has_modifiers => Some(UnifiedKey::ModifiedSpecial {
+        key:   SpecialKey::Tab,
+        shift: key_press.shift,
+        ctrl:  key_press.ctrl,
+        alt:   key_press.alt,
+      }),
+      Key::Backspace if has_modifiers => Some(UnifiedKey::ModifiedSpecial {
+        key:   SpecialKey::Backspace,
+        shift: key_press.shift,
+        ctrl:  key_press.ctrl,
+        alt:   key_press.alt,
+      }),
+      Key::Delete if has_modifiers => Some(UnifiedKey::ModifiedSpecial {
+        key:   SpecialKey::Delete,
+        shift: key_press.shift,
+        ctrl:  key_press.ctrl,
+        alt:   key_press.alt,
+      }),
+      // Unmodified special keys
       Key::Enter => Some(UnifiedKey::Special(SpecialKey::Enter)),
       Key::Tab => Some(UnifiedKey::Special(SpecialKey::Tab)),
       Key::Backspace => Some(UnifiedKey::Special(SpecialKey::Backspace)),
@@ -216,6 +252,28 @@ impl UnifiedKey {
           SpecialKey::Right => Key::Right,
         };
         Some(KeyBinding::new(key))
+      },
+      UnifiedKey::ModifiedSpecial {
+        key,
+        shift,
+        ctrl,
+        alt,
+      } => {
+        let key_code = match key {
+          SpecialKey::Enter => Key::Enter,
+          SpecialKey::Tab => Key::Tab,
+          SpecialKey::Backspace => Key::Backspace,
+          SpecialKey::Delete => Key::Delete,
+          SpecialKey::Home => Key::Home,
+          SpecialKey::End => Key::End,
+          SpecialKey::PageUp => Key::PageUp,
+          SpecialKey::PageDown => Key::PageDown,
+          SpecialKey::Up => Key::Up,
+          SpecialKey::Down => Key::Down,
+          SpecialKey::Left => Key::Left,
+          SpecialKey::Right => Key::Right,
+        };
+        Some(KeyBinding::new(key_code).with_modifiers(*shift, *ctrl, *alt))
       },
     }
   }
@@ -617,5 +675,37 @@ mod tests {
     assert!(result.mouse.is_some());
     let result_mouse = result.mouse.unwrap();
     assert_eq!(result_mouse.position, (100.0, 200.0));
+  }
+
+  #[test]
+  fn test_alt_backspace_in_insert_mode() {
+    let mut handler = InputHandler::new(Mode::Insert);
+
+    // Alt+Backspace should produce a key binding with alt modifier.
+    let event = InputEvent::Keyboard(create_key_press(Key::Backspace, false, false, true));
+    let result = handler.handle_input(event);
+
+    assert!(result.keys.is_some());
+    let keys = result.keys.unwrap();
+    assert_eq!(keys[0].code, Key::Backspace);
+    assert!(keys[0].alt);
+    assert!(!keys[0].ctrl);
+    assert!(!keys[0].shift);
+  }
+
+  #[test]
+  fn test_ctrl_w_in_insert_mode() {
+    let mut handler = InputHandler::new(Mode::Insert);
+
+    // Ctrl+W should also produce a key binding with ctrl modifier.
+    let event = InputEvent::Keyboard(create_key_press(Key::Char('w'), false, true, false));
+    let result = handler.handle_input(event);
+
+    assert!(result.keys.is_some());
+    let keys = result.keys.unwrap();
+    assert_eq!(keys[0].code, Key::Char('w'));
+    assert!(keys[0].ctrl);
+    assert!(!keys[0].alt);
+    assert!(!keys[0].shift);
   }
 }

@@ -15,7 +15,9 @@ log                  = "0.4"
 once_cell            = "1.21"
 serde                = { features = [ "derive" ], version = "1.0" }
 tempfile.workspace   = true
-the-editor-stdx      = { path = "../the-editor-stdx" }
 threadpool           = { version = "1.0" }
 toml.workspace       = true
 tree-house.workspace = true
+
+the-editor-stdx      = { path = "../the-stdx" }
+

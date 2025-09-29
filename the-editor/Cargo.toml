@@ -45,13 +45,13 @@ unicode-segmentation.workspace     = true
 unicode-width.workspace            = true
 url.workspace                      = true
 
-the-editor-event     = { path = "../the-editor-event" }
-the-editor-loader    = { path = "../the-editor-loader" }
-the-editor-lsp-types = { path = "../the-editor-lsp-types" }
-the-editor-parsec    = { path = "../the-editor-parsec" }
-the-editor-renderer  = { path = "../the-editor-renderer" }
-the-editor-stdx      = { path = "../the-editor-stdx" }
-the-editor-vcs       = { path = "../the-editor-vcs" }
+the-editor-event     = { path = "../the-event" }
+the-editor-loader    = { path = "../the-loader" }
+the-editor-lsp-types = { path = "../the-lsp-types" }
+the-editor-parsec    = { path = "../the-parsec" }
+the-editor-renderer  = { path = "../the-renderer" }
+the-editor-stdx      = { path = "../the-stdx" }
+the-editor-vcs       = { path = "../the-vcs" }
 
 [target.'cfg(unix)'.dependencies]
 libc   = "0.2"

@@ -1,13 +1,13 @@
 [workspace]
 members = [
   "the-editor",
-  "the-editor-event",
-  "the-editor-loader",
-  "the-editor-lsp-types",
-  "the-editor-parsec",
-  "the-editor-renderer",
-  "the-editor-stdx",
-  "the-editor-vcs",
+  "the-event",
+  "the-loader",
+  "the-lsp-types",
+  "the-parsec",
+  "the-renderer",
+  "the-stdx",
+  "the-vcs",
 ]
 resolver = "3"
 

@@ -15,7 +15,9 @@ fontdb               = "0.12"
 glyphon              = "0.9"
 log.workspace        = true
 pollster.workspace   = true
-the-editor-event     = { path = "../the-editor-event" }
 thiserror.workspace  = true
 wgpu.workspace       = true
 winit.workspace      = true
+
+the-editor-event     = { path = "../the-event" }
+

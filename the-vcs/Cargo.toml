@@ -8,8 +8,6 @@ version.workspace = true
 path = "lib.rs"
 
 [dependencies]
-the-editor-event = { path = "../the-editor-event" }
-
 anyhow.workspace      = true
 arc-swap.workspace    = true
 imara-diff.workspace  = true
@@ -22,6 +20,8 @@ gix = { default-features = false, features = [
   "attributes",
   "status",
 ], optional = true, version = "0.73.0" }
+
+the-editor-event = { path = "../the-event" }
 
 [features]
 git = [ "gix" ]

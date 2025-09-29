@@ -3,6 +3,7 @@ use the_editor_renderer::{
   InputEvent,
   Key,
   Renderer,
+  ScrollDelta,
 };
 
 use crate::{
@@ -12,6 +13,10 @@ use crate::{
   keymap::{
     KeyBinding,
     Keymaps,
+  },
+  core::{
+    commands,
+    movement::Direction,
   },
   ui::{
     components::button::Button,
@@ -31,6 +36,16 @@ pub struct App {
   pub editor:        Editor,
   pub jobs:          Jobs,
   pub input_handler: InputHandler,
+
+  // Smooth scrolling configuration and state
+  smooth_scroll_enabled: bool,
+  scroll_lerp_factor:    f32,  // fraction of remaining distance per frame (0..1)
+  scroll_min_step_lines: f32,  // minimum line step when animating
+  scroll_min_step_cols:  f32,  // minimum column step when animating
+
+  // Accumulated pending scroll deltas to animate (lines/cols)
+  pending_scroll_lines:  f32,
+  pending_scroll_cols:   f32,
 }
 
 impl App {
@@ -59,6 +74,12 @@ impl App {
       editor,
       jobs: Jobs::new(),
       input_handler: InputHandler::new(mode),
+      smooth_scroll_enabled: true,
+      scroll_lerp_factor: 0.25,
+      scroll_min_step_lines: 0.75,
+      scroll_min_step_cols: 1.0,
+      pending_scroll_lines: 0.0,
+      pending_scroll_cols: 0.0,
     }
   }
 }
@@ -88,6 +109,11 @@ impl Application for App {
 
     // The renderer's begin_frame/end_frame are handled by the main loop.
     // We just need to draw our content here.
+
+    // Apply smooth scrolling animation prior to rendering this frame.
+    if self.smooth_scroll_enabled {
+      self.animate_scroll(renderer);
+    }
 
     // Create context for rendering.
     let mut cx = Context {
@@ -176,9 +202,9 @@ impl Application for App {
     }
 
     // Handle scroll events.
-    if let Some(_scroll) = result.scroll {
-      // TODO: Implement scroll handling.
-      return false;
+    if let Some(scroll) = result.scroll {
+      self.handle_scroll(scroll, _renderer);
+      return true;
     }
 
     // Handle mouse events.
@@ -250,6 +276,13 @@ impl Application for App {
       return true;
     }
 
+    // Keep redrawing while a scroll animation is active.
+    if self.smooth_scroll_enabled
+      && (self.pending_scroll_lines.abs() > 0.01 || self.pending_scroll_cols.abs() > 0.01)
+    {
+      return true;
+    }
+
     // Then check if any component needs updates.
     for layer in self.compositor.layers.iter() {
       // Check if it's a button with active animation.
@@ -266,5 +299,110 @@ impl Application for App {
     }
 
     false
+  }
+}
+
+impl App {
+  fn handle_scroll(&mut self, delta: ScrollDelta, renderer: &mut Renderer) {
+    // Convert incoming delta to logical lines/columns
+    // Positive wheel y in winit is typically scroll up; map to negative lines (toward file top)
+    let (mut d_cols, mut d_lines) = match delta {
+      ScrollDelta::Lines { x, y } => {
+        let config_lines = self.editor.config().scroll_lines.max(1) as f32;
+        (-x * 4.0, -y * config_lines)
+      },
+      ScrollDelta::Pixels { x, y } => {
+        let line_h = renderer.cell_height().max(1.0);
+        let col_w = renderer.cell_width().max(1.0);
+        (-x / col_w, -y / line_h)
+      },
+    };
+
+    // Accumulate into pending animation deltas
+    self.pending_scroll_lines += d_lines;
+    self.pending_scroll_cols += d_cols;
+
+    // Nudge a redraw loop
+    the_editor_event::request_redraw();
+  }
+
+  fn animate_scroll(&mut self, _renderer: &mut Renderer) {
+    // Vertical: apply a fraction of pending lines via commands::scroll
+    let apply_axis = |pending: &mut f32| -> i32 {
+      let remaining = *pending;
+      if remaining.abs() < 0.01 {
+        return 0;
+      }
+      let step_f = remaining * self.scroll_lerp_factor;
+      // Ensure a minimum perceptible step in the right direction
+      let min_step = self.scroll_min_step_lines.copysign(remaining);
+      let mut step = if step_f.abs() < self.scroll_min_step_lines.abs() {
+        min_step
+      } else {
+        step_f
+      };
+      // Clamp step to remaining so we don't overshoot wildly
+      if step.abs() > remaining.abs() {
+        step = remaining;
+      }
+      // Convert to integral lines
+      let step_i = if step >= 0.0 { step.floor() as i32 } else { step.ceil() as i32 };
+      if step_i == 0 {
+        // If fractional but significant remaining, force a single-line step
+        let forced = if remaining > 0.0 { 1 } else { -1 };
+        *pending -= forced as f32;
+        return forced;
+      }
+      *pending -= step_i as f32;
+      step_i
+    };
+
+    // Apply vertical scroll
+    let v_lines = apply_axis(&mut self.pending_scroll_lines);
+    if v_lines != 0 {
+      let direction = if v_lines > 0 { Direction::Forward } else { Direction::Backward };
+      let mut cmd_cx = commands::Context {
+        register:             self.editor.selected_register,
+        count:                self.editor.count,
+        editor:               &mut self.editor,
+        on_next_key_callback: None,
+        callback:             Vec::new(),
+        jobs:                 &mut self.jobs,
+      };
+      commands::scroll(&mut cmd_cx, v_lines.unsigned_abs() as usize, direction, false);
+    }
+
+    // Horizontal: adjust view_offset.horizontal_offset directly
+    // We use a separate min step for columns as columns tend to be smaller
+    let remaining_h = self.pending_scroll_cols;
+    if remaining_h.abs() >= 0.01 {
+      let step_f = remaining_h * self.scroll_lerp_factor;
+      let min_step = self.scroll_min_step_cols.copysign(remaining_h);
+      let mut step = if step_f.abs() < self.scroll_min_step_cols.abs() {
+        min_step
+      } else {
+        step_f
+      };
+      if step.abs() > remaining_h.abs() {
+        step = remaining_h;
+      }
+      let step_i = if step >= 0.0 { step.floor() as i32 } else { step.ceil() as i32 };
+      let step_i = if step_i == 0 { if remaining_h > 0.0 { 1 } else { -1 } } else { step_i };
+
+      // Apply to focused view
+      let focus_view = self.editor.tree.focus;
+      let view = self.editor.tree.get(focus_view);
+      let doc_id = view.doc;
+      let doc = self.editor.documents.get_mut(&doc_id).unwrap();
+      let mut vp = doc.view_offset(focus_view);
+      let new_h = if step_i >= 0 {
+        vp.horizontal_offset.saturating_add(step_i as usize)
+      } else {
+        vp.horizontal_offset.saturating_sub((-step_i) as usize)
+      };
+      vp.horizontal_offset = new_h;
+      doc.set_view_offset(focus_view, vp);
+      self.pending_scroll_cols -= step_i as f32;
+    }
   }
 }

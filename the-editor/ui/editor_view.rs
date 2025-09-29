@@ -64,6 +64,11 @@ pub struct EditorView {
   command_batcher:     CommandBatcher,
   last_cursor_pos:     Option<usize>,
   last_selection_hash: u64,
+  // Cursor animation state
+  cursor_anim_enabled: bool,
+  cursor_lerp_factor:  f32,
+  cursor_pos_smooth:   Option<(f32, f32)>,
+  cursor_anim_active:  bool,
 }
 
 impl EditorView {
@@ -76,6 +81,10 @@ impl EditorView {
       command_batcher: CommandBatcher::new(),
       last_cursor_pos: None,
       last_selection_hash: 0,
+      cursor_anim_enabled: true,
+      cursor_lerp_factor: 0.25,
+      cursor_pos_smooth: None,
+      cursor_anim_active: false,
     }
   }
 
@@ -85,6 +94,11 @@ impl EditorView {
 }
 
 impl Component for EditorView {
+  fn should_update(&self) -> bool {
+    // Redraw only when needed: dirty regions or ongoing cursor animation
+    self.dirty_region.needs_redraw() || (self.cursor_anim_enabled && self.cursor_anim_active)
+  }
+
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
     match event {
       Event::Key(key) => {
@@ -342,6 +356,25 @@ impl Component for EditorView {
       }
       // Viewport changed, mark everything dirty
       self.dirty_region.mark_all_dirty();
+    }
+
+    // Ensure cursor is kept within the viewport including scrolloff padding
+    {
+      let focus_view = cx.editor.tree.focus;
+      let scrolloff = cx.editor.config().scrolloff;
+      let view_id_doc;
+      {
+        // Limit the mutable borrow scope
+        let view = cx.editor.tree.get_mut(focus_view);
+        let doc = cx.editor.documents.get_mut(&view.doc).unwrap();
+        view_id_doc = view.doc;
+        if !view.is_cursor_in_view(doc, scrolloff) {
+          view.ensure_cursor_in_view(doc, scrolloff);
+          // Viewport changed, force a redraw of visible content
+          self.dirty_region.mark_all_dirty();
+        }
+      }
+      let _ = view_id_doc; // keep variable to ensure scope is closed
     }
 
     // Get theme colors
@@ -614,9 +647,26 @@ impl Component for EditorView {
       let is_cursor_here = g.char_idx == cursor_pos;
       if is_cursor_here {
         let cursor_w = width_cols.max(1) as f32 * font_width;
+        // Cursor animation: lerp toward target (x, y)
+        let (anim_x, anim_y) = if self.cursor_anim_enabled {
+          let (mut sx, mut sy) = self.cursor_pos_smooth.unwrap_or((x, y));
+          let dx = x - sx;
+          let dy = y - sy;
+          sx += dx * self.cursor_lerp_factor;
+          sy += dy * self.cursor_lerp_factor;
+          self.cursor_pos_smooth = Some((sx, sy));
+          // Mark animation active if still far from target
+          self.cursor_anim_active = (dx * dx + dy * dy).sqrt() > 0.5;
+          (sx, sy)
+        } else {
+          self.cursor_anim_active = false;
+          self.cursor_pos_smooth = Some((x, y));
+          (x, y)
+        };
+
         self.command_batcher.add_command(RenderCommand::Cursor {
-          x,
-          y,
+          x: anim_x,
+          y: anim_y,
           width: cursor_w.min((viewport_cols - rel_col) as f32 * font_width),
           height: font_size + CURSOR_HEIGHT_EXTENSION,
           color: cursor_bg,

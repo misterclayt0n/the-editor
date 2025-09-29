@@ -252,46 +252,48 @@ impl CommandBatcher {
   }
 }
 
-/// Frame timing for batching rapid movements
-pub struct FrameTimer {
-  last_render:    std::time::Instant,
-  min_frame_time: std::time::Duration,
-  pending_render: bool,
-}
+// NOTE: We have no use for this now, but may come in handy later.
 
-impl FrameTimer {
-  pub fn new(target_fps: u32) -> Self {
-    Self {
-      last_render:    std::time::Instant::now(),
-      min_frame_time: std::time::Duration::from_millis(1000 / target_fps as u64),
-      pending_render: true, // Start with a pending render for initial frame
-    }
-  }
+// /// Frame timing for batching rapid movements
+// pub struct FrameTimer {
+//   last_render:    std::time::Instant,
+//   min_frame_time: std::time::Duration,
+//   pending_render: bool,
+// }
 
-  /// Check if we should render this frame
-  pub fn should_render(&mut self) -> bool {
-    let now = std::time::Instant::now();
-    let elapsed = now.duration_since(self.last_render);
+// impl FrameTimer {
+//   pub fn new(target_fps: u32) -> Self {
+//     Self {
+//       last_render:    std::time::Instant::now(),
+//       min_frame_time: std::time::Duration::from_millis(1000 / target_fps as u64),
+//       pending_render: true, // Start with a pending render for initial frame
+//     }
+//   }
 
-    if elapsed >= self.min_frame_time && self.pending_render {
-      self.last_render = now;
-      self.pending_render = false;
-      true
-    } else {
-      false
-    }
-  }
+//   /// Check if we should render this frame
+//   pub fn should_render(&mut self) -> bool {
+//     let now = std::time::Instant::now();
+//     let elapsed = now.duration_since(self.last_render);
 
-  /// Mark that a render is needed
-  pub fn request_render(&mut self) {
-    self.pending_render = true;
-  }
+//     if elapsed >= self.min_frame_time && self.pending_render {
+//       self.last_render = now;
+//       self.pending_render = false;
+//       true
+//     } else {
+//       false
+//     }
+//   }
 
-  /// Force immediate render (e.g., for important events)
-  pub fn force_render(&mut self) -> bool {
-    self.last_render = std::time::Instant::now();
-    let was_pending = self.pending_render;
-    self.pending_render = false;
-    was_pending
-  }
-}
+//   /// Mark that a render is needed
+//   pub fn request_render(&mut self) {
+//     self.pending_render = true;
+//   }
+
+//   /// Force immediate render (e.g., for important events)
+//   pub fn force_render(&mut self) -> bool {
+//     self.last_render = std::time::Instant::now();
+//     let was_pending = self.pending_render;
+//     self.pending_render = false;
+//     was_pending
+//   }
+// }

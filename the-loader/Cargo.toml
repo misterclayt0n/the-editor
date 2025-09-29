@@ -19,5 +19,4 @@ threadpool           = { version = "1.0" }
 toml.workspace       = true
 tree-house.workspace = true
 
-the-editor-stdx      = { path = "../the-stdx" }
-
+the-editor-stdx = { path = "../the-stdx" }

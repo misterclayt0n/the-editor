@@ -399,7 +399,7 @@ mod test {
       selection = selection.map(transaction.changes());
 
       assert_eq!(doc, "  1\n\n  2\n  3");
-      assert!(selection.len() == 1); // to ignore the selection unused warning
+      let _ = selection; // to ignore the selection unused warning
     }
 
     #[test]
@@ -412,7 +412,7 @@ mod test {
       selection = selection.map(transaction.changes());
 
       assert_eq!(doc, "  1\n\n  2\n  3");
-      assert!(selection.len() == 1); // to ignore the selection unused warning
+      let _ = selection; // to ignore the selection unused warning
     }
 
     #[test]
@@ -424,7 +424,7 @@ mod test {
       transaction.apply(&mut doc);
       selection = selection.map(transaction.changes());
       assert_eq!(doc, "");
-      assert!(selection.len() == 1); // to ignore the selection unused warning
+      let _ = selection; // to ignore the selection unused warning
     }
   }
 

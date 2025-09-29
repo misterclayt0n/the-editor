@@ -29,14 +29,14 @@ where
   P: Into<Cow<'a, Path>>,
 {
   let path = path.into();
-  if let Ok(home) = home_dir() {
-    if let Ok(stripped) = path.strip_prefix(&home) {
-      let mut path = OsString::with_capacity(2 + stripped.as_os_str().len());
-      path.push("~");
-      path.push(MAIN_SEPARATOR_STR);
-      path.push(stripped);
-      return Cow::Owned(PathBuf::from(path));
-    }
+  if let Ok(home) = home_dir()
+    && let Ok(stripped) = path.strip_prefix(&home)
+  {
+    let mut path = OsString::with_capacity(2 + stripped.as_os_str().len());
+    path.push("~");
+    path.push(MAIN_SEPARATOR_STR);
+    path.push(stripped);
+    return Cow::Owned(PathBuf::from(path));
   }
 
   path
@@ -53,13 +53,13 @@ where
 {
   let path = path.into();
   let mut components = path.components();
-  if let Some(Component::Normal(c)) = components.next() {
-    if c == "~" {
-      if let Ok(mut buf) = home_dir() {
-        buf.push(components);
-        return Cow::Owned(buf);
-      }
-    }
+
+  if let Some(Component::Normal(c)) = components.next()
+    && c == "~"
+    && let Ok(mut buf) = home_dir()
+  {
+    buf.push(components);
+    return Cow::Owned(buf);
   }
 
   path
@@ -180,7 +180,7 @@ where
 /// ```
 /// use std::path::Path;
 ///
-/// use helix_stdx::path::get_truncated_path;
+/// use the_editor_stdx::path::get_truncated_path;
 ///
 /// assert_eq!(
 ///   get_truncated_path("/home/cnorris/documents/jokes.txt").as_path(),

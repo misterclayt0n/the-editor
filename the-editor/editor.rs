@@ -910,6 +910,7 @@ pub enum StatusLineElement {
 pub struct CursorShapeConfig([CursorKind; 3]);
 
 impl CursorShapeConfig {
+  #[allow(clippy::wrong_self_convention)]
   pub fn from_mode(&self, mode: Mode) -> CursorKind {
     self.get(mode as usize).copied().unwrap_or_default()
   }
@@ -1283,7 +1284,7 @@ pub fn diagnostic<'doc>(
         .iter()
         .take_while(|d| {
           d.line == line
-            && d.provider.language_server_id().map_or(true, |id| {
+            && d.provider.language_server_id().is_none_or(|id| {
               doc
                 .language_servers_with_feature(LanguageServerFeature::Diagnostics)
                 .any(|ls| ls.id() == id)
@@ -1754,7 +1755,7 @@ impl Editor {
     the_editor_event::dispatch(crate::event::ConfigDidChange {
       editor: self,
       old:    old_config,
-      new:    &*config,
+      new:    &config,
     })
   }
 
@@ -1806,7 +1807,7 @@ impl Editor {
     self.command_history.push(input.clone());
 
     // Parse command and arguments
-    let parts: Vec<&str> = input.trim().split_whitespace().collect();
+    let parts: Vec<&str> = input.split_whitespace().collect();
     if parts.is_empty() {
       return;
     }
@@ -2059,7 +2060,7 @@ impl Editor {
       doc.language_servers.iter().filter(|(name, doc_ls)| {
         language_servers
           .get(*name)
-          .map_or(true, |ls| ls.id() != doc_ls.id())
+          .is_none_or(|ls| ls.id() != doc_ls.id())
       });
 
     for (_, language_server) in doc_language_servers_not_in_registry {
@@ -2070,7 +2071,7 @@ impl Editor {
       doc
         .language_servers
         .get(*name)
-        .map_or(true, |doc_ls| ls.id() != doc_ls.id())
+        .is_none_or(|doc_ls| ls.id() != doc_ls.id())
     });
 
     for (_, language_server) in language_servers_not_in_doc {

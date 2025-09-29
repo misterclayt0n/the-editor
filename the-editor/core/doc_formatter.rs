@@ -182,10 +182,9 @@ impl<'t> DocumentFormatter<'t> {
   ) -> Option<(&'t str, Option<Highlight>)> {
     loop {
       if let Some(&mut (ref mut annotation, highlight)) = self.inline_annotation_graphemes.as_mut()
+        && let Some(grapheme) = annotation.next()
       {
-        if let Some(grapheme) = annotation.next() {
-          return Some((grapheme, highlight));
-        }
+        return Some((grapheme, highlight));
       }
 
       if let Some((annotation, highlight)) = self.annotations.next_inline_annotation_at(char_pos) {
@@ -203,7 +202,7 @@ impl<'t> DocumentFormatter<'t> {
     let (grapheme, source) =
       if let Some((grapheme, highlight)) = self.next_inline_annotation_grapheme(char_pos) {
         (grapheme.into(), GraphemeSource::VirtualText { highlight })
-      } else if let Some(grapheme) = self.graphemes.next() {
+      } else if let Some(grapheme) = self.graphemes.next_grapheme() {
         let codepoints = grapheme.len_chars() as u32;
 
         let overlay = self.annotations.overlay_at(char_pos);
@@ -451,7 +450,6 @@ mod doc_formatter_tests {
   use super::*;
   use crate::core::{
     position::Position,
-    syntax::Highlight,
     text_annotations::TextAnnotations,
     text_format::TextFormat,
   };
@@ -636,12 +634,12 @@ mod doc_formatter_tests {
     text_fmt.viewport_width = 10;
     let annotations = TextAnnotations::default();
 
-    let mut formatter =
+    let formatter =
       DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &annotations, 0);
 
     // Should wrap at word boundaries when soft wrap is enabled
     let mut graphemes = Vec::new();
-    while let Some(g) = formatter.next() {
+    for g in formatter {
       if g.source.is_eof() {
         break;
       }
@@ -699,11 +697,11 @@ mod doc_formatter_tests {
     let text_fmt = create_test_text_format();
     let annotations = TextAnnotations::default();
 
-    let mut formatter =
+    let formatter =
       DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &annotations, 0);
 
     let mut graphemes = Vec::new();
-    while let Some(g) = formatter.next() {
+    for g in formatter {
       if g.source.is_eof() {
         break;
       }
@@ -711,7 +709,7 @@ mod doc_formatter_tests {
     }
 
     // Should handle multi-byte UTF-8 characters and emoji sequences properly
-    assert!(graphemes.len() > 0);
+    assert!(!graphemes.is_empty());
 
     // The family emoji is a single grapheme cluster
     let family_grapheme = graphemes
@@ -747,11 +745,11 @@ mod doc_formatter_tests {
     let text_fmt = create_test_text_format();
     let annotations = TextAnnotations::default();
 
-    let mut formatter =
+    let formatter =
       DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &annotations, 0);
 
     let mut word_boundaries = Vec::new();
-    while let Some(g) = formatter.next() {
+    for g in formatter {
       if g.source.is_eof() {
         break;
       }

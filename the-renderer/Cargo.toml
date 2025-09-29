@@ -3,6 +3,10 @@ name              = "the-editor-renderer"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+include           = [ "**/*.rs", "*.wgsl" ]
+[lints]
+workspace = true
+
 
 [lib]
 path = "lib.rs"

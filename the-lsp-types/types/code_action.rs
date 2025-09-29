@@ -138,6 +138,7 @@ pub type CodeActionResponse = Vec<CodeActionOrCommand>;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum CodeActionOrCommand {
   Command(Command),
   CodeAction(CodeAction),

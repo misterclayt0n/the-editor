@@ -1,7 +1,6 @@
 use the_editor_renderer::{
   Color,
   MouseButton,
-  MouseEvent,
   Renderer,
   TextSection,
 };
@@ -317,10 +316,8 @@ impl Component for Button {
             self.anim_active = true;
             self.anim_t = 0.0;
             // Fire callback only if release occurs inside the button
-            if inside {
-              if let Some(cb) = self.on_click.as_mut() {
-                (cb)();
-              }
+            if inside && let Some(cb) = self.on_click.as_mut() {
+              (cb)();
             }
             // Return empty callback for now - animation will progress on any event
             // The issue is that we need events to trigger redraws
@@ -378,7 +375,7 @@ impl Component for Button {
     } else {
       self.base_color
     };
-    let font_size = (h * 0.5).max(12.0).min(20.0);
+    let font_size = (h * 0.5).clamp(12.0, 20.0);
     // Position is top-left; center the text inside the button.
     let text = self.label.clone();
     // Estimate text width: ~0.6 * font_size per character as a rough width

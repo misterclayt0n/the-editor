@@ -420,13 +420,13 @@ impl Loader {
     let mut best_match_length = 0;
     let mut best_match_position = None;
     for (idx, data) in self.languages.iter().enumerate() {
-      if let Some(injection_regex) = &data.config.injection_regex {
-        if let Some(mat) = injection_regex.find(text.regex_input()) {
-          let length = mat.end() - mat.start();
-          if length > best_match_length {
-            best_match_position = Some(idx);
-            best_match_length = length;
-          }
+      if let Some(injection_regex) = &data.config.injection_regex
+        && let Some(mat) = injection_regex.find(text.regex_input())
+      {
+        let length = mat.end() - mat.start();
+        if length > best_match_length {
+          best_match_position = Some(idx);
+          best_match_length = length;
         }
       }
     }
@@ -726,18 +726,16 @@ impl Syntax {
           },
           highlight: Highlight::new((scope_stack.len() % rainbow_length) as u32),
         });
-      } else if capture == rainbow_query.bracket_capture {
-        if let Some(scope) = scope_stack.last() {
-          if !scope
-            .node
-            .as_ref()
-            .is_some_and(|node| mat.node.parent().as_ref() != Some(node))
-          {
-            let start = source.byte_to_char(source.floor_char_boundary(byte_range.start as usize));
-            let end = source.byte_to_char(source.ceil_char_boundary(byte_range.end as usize));
-            highlights.push((scope.highlight, start..end));
-          }
-        }
+      } else if capture == rainbow_query.bracket_capture
+        && let Some(scope) = scope_stack.last()
+        && !scope
+          .node
+          .as_ref()
+          .is_some_and(|node| mat.node.parent().as_ref() != Some(node))
+      {
+        let start = source.byte_to_char(source.floor_char_boundary(byte_range.start as usize));
+        let end = source.byte_to_char(source.ceil_char_boundary(byte_range.end as usize));
+        highlights.push((scope.highlight, start..end));
       }
     }
 
@@ -1085,7 +1083,7 @@ impl TextObjectQuery {
   ///   (function)
   /// ) @capture
   /// ```
-  pub fn capture_nodes<'a, 'names>(
+  pub fn capture_nodes<'a>(
     &'a self,
     capture_name: &'a str,
     node: &Node<'a>,
@@ -1209,7 +1207,6 @@ fn pretty_print_tree_impl<W: fmt::Write>(
 }
 
 /// Finds the child of `node` which contains the given byte range.
-
 pub fn child_for_byte_range<'a>(node: &Node<'a>, range: ops::Range<u32>) -> Option<Node<'a>> {
   for child in node.children() {
     let child_range = child.byte_range();

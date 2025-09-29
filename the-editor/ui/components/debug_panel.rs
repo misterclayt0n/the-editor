@@ -1,7 +1,6 @@
 use the_editor_renderer::{
   Color,
   KeyPress,
-  MouseEvent,
   Renderer,
   TextSection,
   TextSegment,

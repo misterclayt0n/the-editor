@@ -287,11 +287,11 @@ impl KeyTrieNode {
 
   pub fn merge(&mut self, mut other: Self) {
     for (k, v) in std::mem::take(&mut other.map) {
-      if let Some(KeyTrie::Node(node)) = self.map.get_mut(&k) {
-        if let KeyTrie::Node(other_node) = v {
-          node.merge(other_node);
-          continue;
-        }
+      if let Some(KeyTrie::Node(node)) = self.map.get_mut(&k)
+        && let KeyTrie::Node(other_node) = v
+      {
+        node.merge(other_node);
+        continue;
       }
       self.map.insert(k, v);
     }
@@ -375,7 +375,7 @@ impl Keymaps {
     keymap
       .search(self.pending())
       .and_then(KeyTrie::node)
-      .map_or(false, |n| n.map.contains_key(&binding))
+      .is_some_and(|n| n.map.contains_key(&binding))
   }
 
   pub fn get(&mut self, mode: Mode, key_press: &KeyPress) -> KeymapResult {

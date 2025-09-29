@@ -17,10 +17,7 @@ use arc_swap::ArcSwap;
 pub use client::Client;
 use futures_util::stream::select_all::SelectAll;
 pub use jsonrpc::Call;
-pub use lsp::types::{
-  Position,
-  Url,
-};
+pub use lsp::types::Url;
 use slotmap::SlotMap;
 pub use the_editor_lsp_types as lsp;
 use the_editor_lsp_types::types::{
@@ -948,15 +945,14 @@ fn start_client(
   let root_path = root.clone().unwrap_or_else(|| workspace.clone());
   let root_uri = root.and_then(|root| url::Url::from_file_path(root).ok());
 
-  if let Some(globset) = &ls_config.required_root_patterns {
-    if !root_path
+  if let Some(globset) = &ls_config.required_root_patterns
+    && !root_path
       .read_dir()?
       .flatten()
       .map(|entry| entry.file_name())
       .any(|entry| globset.is_match(entry))
-    {
-      return Err(StartupError::NoRequiredRootFound);
-    }
+  {
+    return Err(StartupError::NoRequiredRootFound);
   }
 
   let (client, incoming, initialize_notify) = Client::start(

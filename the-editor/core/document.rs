@@ -955,14 +955,12 @@ impl Document {
       }
 
       // Protect against overwriting changes made externally
-      if !force {
-        if let Ok(metadata) = fs::metadata(&path).await {
-          if let Ok(mtime) = metadata.modified() {
-            if last_saved_time < mtime {
-              bail!("file modified by an external process, use :w! to overwrite");
-            }
-          }
-        }
+      if !force
+        && let Ok(metadata) = fs::metadata(&path).await
+        && let Ok(mtime) = metadata.modified()
+        && last_saved_time < mtime
+      {
+        bail!("file modified by an external process, use :w! to overwrite");
       }
       let write_path = tokio::fs::read_link(&path)
         .await
@@ -1132,10 +1130,10 @@ impl Document {
   }
 
   pub fn detect_editor_config(&mut self) {
-    if self.config.load().editor_config {
-      if let Some(path) = self.path.as_ref() {
-        self.editor_config = EditorConfig::find(path);
-      }
+    if self.config.load().editor_config
+      && let Some(path) = self.path.as_ref()
+    {
+      self.editor_config = EditorConfig::find(path);
     }
   }
 
@@ -1637,7 +1635,7 @@ impl Document {
     let savepoint_idx = self
       .savepoints
       .iter()
-      .position(|savepoint_ref| savepoint_ref.as_ptr() == savepoint as *const _)
+      .position(|savepoint_ref| std::ptr::eq(savepoint_ref.as_ptr(), savepoint))
       .expect("Savepoint must belong to this document");
 
     let savepoint_ref = self.savepoints.remove(savepoint_idx);
@@ -2053,12 +2051,11 @@ impl Document {
       }
     });
 
-    if let Some(lang_conf) = language_config {
-      if let Some(severity) = severity {
-        if severity < lang_conf.diagnostic_severity {
-          return None;
-        }
-      }
+    if let Some(lang_conf) = language_config
+      && let Some(severity) = severity
+      && severity < lang_conf.diagnostic_severity
+    {
+      return None;
     };
     use crate::core::diagnostics::{
       DiagnosticTag,
@@ -2076,7 +2073,7 @@ impl Document {
     };
 
     let tags = if let Some(tags) = &diagnostic.tags {
-      let new_tags = tags
+      tags
         .iter()
         .filter_map(|tag| {
           match *tag {
@@ -2085,9 +2082,7 @@ impl Document {
             _ => None,
           }
         })
-        .collect();
-
-      new_tags
+        .collect()
     } else {
       Vec::new()
     };

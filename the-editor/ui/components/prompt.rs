@@ -301,41 +301,41 @@ impl Prompt {
   }
 
   fn completion_next(&mut self) {
-    if let Some(index) = self.completion_index {
-      if !self.completions.is_empty() {
-        self.completion_index = Some((index + 1) % self.completions.len());
-      }
+    if let Some(index) = self.completion_index
+      && !self.completions.is_empty()
+    {
+      self.completion_index = Some((index + 1) % self.completions.len());
     }
   }
 
   fn completion_previous(&mut self) {
-    if let Some(index) = self.completion_index {
-      if !self.completions.is_empty() {
-        self.completion_index = Some(if index == 0 {
-          self.completions.len() - 1
-        } else {
-          index - 1
-        });
-      }
+    if let Some(index) = self.completion_index
+      && !self.completions.is_empty()
+    {
+      self.completion_index = Some(if index == 0 {
+        self.completions.len() - 1
+      } else {
+        index - 1
+      });
     }
   }
 
   fn complete_current(&mut self) {
-    if let Some(index) = self.completion_index {
-      if let Some(completion) = self.completions.get(index) {
-        // Replace the current command with the completion
-        let parts: Vec<&str> = self.input.split_whitespace().collect();
-        if !parts.is_empty() {
-          let mut new_input = completion.clone();
-          if parts.len() > 1 {
-            new_input.push(' ');
-            new_input.push_str(&parts[1..].join(" "));
-          }
-          self.input = new_input;
-          self.cursor = self.input.len();
-          self.show_completions = false;
-          self.completion_index = None;
+    if let Some(index) = self.completion_index
+      && let Some(completion) = self.completions.get(index)
+    {
+      // Replace the current command with the completion
+      let parts: Vec<&str> = self.input.split_whitespace().collect();
+      if !parts.is_empty() {
+        let mut new_input = completion.clone();
+        if parts.len() > 1 {
+          new_input.push(' ');
+          new_input.push_str(&parts[1..].join(" "));
         }
+        self.input = new_input;
+        self.cursor = self.input.len();
+        self.show_completions = false;
+        self.completion_index = None;
       }
     }
   }
@@ -381,7 +381,7 @@ impl Prompt {
 
   fn history_next(&mut self) {
     match self.history_pos {
-      None => return, // Not in history mode
+      None => (), // Not in history mode
       Some(pos) => {
         if pos + 1 < self.history.len() {
           let new_pos = pos + 1;
@@ -455,7 +455,6 @@ mod tests {
   #[test]
   fn test_prompt_input() {
     let mut prompt = Prompt::new(":".to_string());
-    let registry = CommandRegistry::new();
 
     prompt.insert_char('q');
     assert_eq!(prompt.input(), "q");

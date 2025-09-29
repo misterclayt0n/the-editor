@@ -116,30 +116,30 @@ enum DiffProvider {
 }
 
 impl DiffProvider {
-  fn get_diff_base(&self, file: &Path) -> Result<Vec<u8>> {
+  fn get_diff_base(&self, _file: &Path) -> Result<Vec<u8>> {
     match self {
       #[cfg(feature = "git")]
-      Self::Git => git::get_diff_base(file),
+      Self::Git => git::get_diff_base(_file),
       Self::None => bail!("No diff support compiled in"),
     }
   }
 
-  fn get_current_head_name(&self, file: &Path) -> Result<Arc<ArcSwap<Box<str>>>> {
+  fn get_current_head_name(&self, _file: &Path) -> Result<Arc<ArcSwap<Box<str>>>> {
     match self {
       #[cfg(feature = "git")]
-      Self::Git => git::get_current_head_name(file),
+      Self::Git => git::get_current_head_name(_file),
       Self::None => bail!("No diff support compiled in"),
     }
   }
 
   fn for_each_changed_file(
     &self,
-    cwd: &Path,
-    f: impl Fn(Result<FileChange>) -> bool,
+    _cwd: &Path,
+    _f: impl Fn(Result<FileChange>) -> bool,
   ) -> Result<()> {
     match self {
       #[cfg(feature = "git")]
-      Self::Git => git::for_each_changed_file(cwd, f),
+      Self::Git => git::for_each_changed_file(_cwd, _f),
       Self::None => bail!("No diff support compiled in"),
     }
   }

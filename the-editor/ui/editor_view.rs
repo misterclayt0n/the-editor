@@ -26,7 +26,6 @@ use crate::{
   editor::Editor,
   keymap::{
     KeyBinding,
-    KeymapResult,
     Keymaps,
     Mode,
   },
@@ -117,7 +116,7 @@ impl Component for EditorView {
 
           // Convert KeyBinding to KeyPress for the callback
           let key_press = the_editor_renderer::KeyPress {
-            code:    key.code.clone(),
+            code:    key.code,
             pressed: true,
             shift:   key.shift,
             ctrl:    key.ctrl,
@@ -195,7 +194,7 @@ impl Component for EditorView {
 
         // Convert to KeyPress for keymap lookup
         let key_press = the_editor_renderer::KeyPress {
-          code:    key.code.clone(),
+          code:    key.code,
           pressed: true,
           shift:   key.shift,
           ctrl:    key.ctrl,
@@ -283,7 +282,8 @@ impl Component for EditorView {
 
   fn render(&mut self, _area: Rect, renderer: &mut Surface, cx: &mut Context) {
     let font_size = 22.0; // TODO: Get from config
-    renderer.configure_font(&renderer.current_font_family().to_string(), font_size);
+    let font_family = renderer.current_font_family().to_string();
+    renderer.configure_font(&font_family, font_size);
     let font_width = renderer.cell_width().max(1.0);
 
     let available_height = (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM);
@@ -451,9 +451,6 @@ impl Component for EditorView {
     .0
     .row;
 
-    // Check document content
-    let doc_len = doc_text.len_chars();
-
     // Update viewport bounds in dirty region tracker
     self
       .dirty_region
@@ -464,7 +461,7 @@ impl Component for EditorView {
     // Always render when we have changes to show
 
     // Create document formatter
-    let mut formatter = DocumentFormatter::new_at_prev_checkpoint(
+    let formatter = DocumentFormatter::new_at_prev_checkpoint(
       doc_text.slice(..),
       &text_fmt,
       &annotations,
@@ -490,10 +487,10 @@ impl Component for EditorView {
     let mut line_batch = Vec::new(); // Batch characters on the same line
 
     // Helper to flush a line batch
-    let mut flush_line_batch = |batch: &mut Vec<(f32, f32, String, Color)>,
-                                batcher: &mut CommandBatcher,
-                                font_width: f32,
-                                font_size: f32| {
+    let flush_line_batch = |batch: &mut Vec<(f32, f32, String, Color)>,
+                            batcher: &mut CommandBatcher,
+                            font_width: f32,
+                            font_size: f32| {
       if batch.is_empty() {
         return;
       }
@@ -537,7 +534,7 @@ impl Component for EditorView {
     };
 
     // Render document graphemes using command batcher
-    while let Some(g) = formatter.next() {
+    for g in formatter {
       grapheme_count += 1;
       // Skip visual lines before the top row of the viewport
       if g.visual_pos.row < row_off {
@@ -570,7 +567,7 @@ impl Component for EditorView {
       }
 
       // Handle partial width at left edge
-      let left_clip = if abs_col < h_off { h_off - abs_col } else { 0 };
+      let left_clip = h_off.saturating_sub(abs_col);
       let mut draw_cols = width_cols.saturating_sub(left_clip);
       let remaining_cols = viewport_cols.saturating_sub(rel_col);
       if draw_cols > remaining_cols {

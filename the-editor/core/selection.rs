@@ -118,14 +118,14 @@ impl Range {
   /// Returns true if this [Range] covers a single grapheme in the given text.
   pub fn is_single_grapheme(&self, slice: RopeSlice) -> bool {
     let mut graphemes = slice.slice(self.from()..self.to()).graphemes();
-    let first = graphemes.next();
-    let second = graphemes.next();
+    let first = graphemes.next_grapheme();
+    let second = graphemes.next_grapheme();
     first.is_some() && second.is_none()
   }
 
   /// Converts this [Range] into an in order byte range, with no regard for
   /// direction.
-  pub fn into_byte_range(&self, slice: &RopeSlice) -> (usize, usize) {
+  pub fn into_byte_range(self, slice: &RopeSlice) -> (usize, usize) {
     (
       slice.char_to_byte(self.from()),
       slice.char_to_byte(self.to()),

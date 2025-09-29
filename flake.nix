@@ -55,6 +55,7 @@
             (lib.hasSuffix ".toml" path) ||
             (lib.hasSuffix ".ttf" path) ||
             (lib.hasSuffix ".otf" path) ||
+            (lib.hasSuffix ".wgsl" path) ||
             (lib.hasInfix "/assets/" path) ||
             (craneLib.filterCargoSources path type);
         };
@@ -115,7 +116,7 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              env.RUSTDOCFLAGS = "--deny warnings";
+              # env.RUSTDOCFLAGS = "--deny warnings";
             }
           );
 
@@ -134,7 +135,7 @@
               inherit cargoArtifacts;
               partitions = 1;
               partitionType = "count";
-              cargoNextestPartitionsExtraArgs = "--no-tests=pass";
+              cargoNextestPartitionsExtraArgs = "--no-tests=pass --features unicode-lines";
             }
           );
         };

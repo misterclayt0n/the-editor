@@ -867,13 +867,6 @@ impl Renderer {
       }
     }
 
-    let bounds = TextBounds {
-      left:   0,
-      top:    0,
-      right:  self.config.width as i32,
-      bottom: self.config.height as i32,
-    };
-
     // Store the command with cache key for deferred rendering
     let bounds = TextBounds {
       left:   0,
@@ -926,6 +919,7 @@ impl Renderer {
   }
 
   /// Draw a rounded rectangle glow overlay, clipped to the rounded rect
+  #[allow(clippy::too_many_arguments)]
   pub fn draw_rounded_rect_glow(
     &mut self,
     x: f32,
@@ -951,6 +945,7 @@ impl Renderer {
   }
 
   /// Draw only the rounded-rect outline (stroke)
+  #[allow(clippy::too_many_arguments)]
   pub fn draw_rounded_rect_stroke(
     &mut self,
     x: f32,

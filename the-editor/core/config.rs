@@ -1,9 +1,11 @@
-use std::io::Error as IOError;
+use std::{
+  fs,
+  io::Error as IOError,
+  path::PathBuf,
+};
 
-use toml::de::Error as TomlError;
 use serde::Deserialize;
-use std::fs;
-use std::path::PathBuf;
+use toml::de::Error as TomlError;
 
 use crate::{
   core::{
@@ -65,6 +67,7 @@ pub fn user_lang_loader() -> Result<Loader, LanguageLoaderError> {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
+#[derive(Default)]
 pub struct Config {
   pub theme:  Option<String>,
   #[serde(skip)]
@@ -80,16 +83,6 @@ pub struct Config {
 //   pub editor: Option<toml::Value>,
 // }
 
-impl Default for Config {
-  fn default() -> Config {
-    Config {
-      theme:  None,
-      keymap: Keymaps::default(),
-      editor: EditorConfig::default(),
-    }
-  }
-}
-
 #[derive(Debug)]
 pub enum ConfigLoadError {
   BadConfig(TomlError),
@@ -97,7 +90,8 @@ pub enum ConfigLoadError {
 }
 
 impl Config {
-  /// Load user config from ~/.config/the-editor/config.toml using loader's config_dir.
+  /// Load user config from ~/.config/the-editor/config.toml using loader's
+  /// config_dir.
   pub fn load_user() -> Result<Config, ConfigLoadError> {
     let dir: PathBuf = the_editor_loader::config_dir();
     let path = dir.join("config.toml");

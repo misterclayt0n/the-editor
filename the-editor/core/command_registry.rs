@@ -292,12 +292,12 @@ fn buffer_close(cx: &mut Context, _args: &[&str]) -> Result<()> {
     .map(|(id, _)| *id);
 
   if let Some(doc_id) = doc_id {
-    if let Some(doc) = cx.editor.documents.get(&doc_id) {
-      if doc.is_modified() {
-        cx.editor
-          .set_error("unsaved changes, save first".to_string());
-        return Ok(());
-      }
+    if let Some(doc) = cx.editor.documents.get(&doc_id)
+      && doc.is_modified()
+    {
+      cx.editor
+        .set_error("unsaved changes, save first".to_string());
+      return Ok(());
     }
 
     match cx.editor.close_document(doc_id, false) {

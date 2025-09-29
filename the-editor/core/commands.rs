@@ -331,27 +331,6 @@ pub fn extend_visual_line_down(cx: &mut Context) {
   )
 }
 
-/// Delete the selection if non-empty; otherwise delete one grapheme backward.
-// pub fn delete_backward(doc: &mut Document) {
-//   let view_id = 0usize;
-//   let selection = doc
-//     .selection_ref(view_id)
-//     .cloned()
-//     .unwrap_or_else(|| crate::core::selection::Selection::point(0));
-
-//   let rope = doc.text();
-//   let txn = Transaction::delete_by_selection(rope, &selection, |range:
-// &Range| {     if range.is_empty() {
-//       let slice = rope.slice(..);
-//       let start = crate::core::grapheme::prev_grapheme_boundary(slice,
-// range.head);       (start, range.head)
-//     } else {
-//       (range.from(), range.to())
-//     }
-//   });
-//   doc.apply(view_id, &txn);
-// }
-
 pub fn move_next_word_start(cx: &mut Context) {
   move_word_impl(cx, movement::move_next_word_start)
 }
@@ -3004,7 +2983,7 @@ pub fn replay_macro(cx: &mut Context) {
 
 pub fn toggle_button(cx: &mut Context) {
   // Toggle visibility of button components in the compositor
-  cx.callback.push(Box::new(|compositor, cx| {
+  cx.callback.push(Box::new(|compositor, _cx| {
     use crate::ui::components::button::Button;
     for layer in compositor.layers.iter_mut() {
       if let Some(button) = layer.as_any_mut().downcast_mut::<Button>() {

@@ -130,30 +130,38 @@ impl InputProcessor {
     let unified = match key_press.code {
       Key::Escape => Some(UnifiedKey::Escape),
       // Special keys with modifiers need special handling
-      Key::Enter if has_modifiers => Some(UnifiedKey::ModifiedSpecial {
-        key:   SpecialKey::Enter,
-        shift: key_press.shift,
-        ctrl:  key_press.ctrl,
-        alt:   key_press.alt,
-      }),
-      Key::Tab if has_modifiers => Some(UnifiedKey::ModifiedSpecial {
-        key:   SpecialKey::Tab,
-        shift: key_press.shift,
-        ctrl:  key_press.ctrl,
-        alt:   key_press.alt,
-      }),
-      Key::Backspace if has_modifiers => Some(UnifiedKey::ModifiedSpecial {
-        key:   SpecialKey::Backspace,
-        shift: key_press.shift,
-        ctrl:  key_press.ctrl,
-        alt:   key_press.alt,
-      }),
-      Key::Delete if has_modifiers => Some(UnifiedKey::ModifiedSpecial {
-        key:   SpecialKey::Delete,
-        shift: key_press.shift,
-        ctrl:  key_press.ctrl,
-        alt:   key_press.alt,
-      }),
+      Key::Enter if has_modifiers => {
+        Some(UnifiedKey::ModifiedSpecial {
+          key:   SpecialKey::Enter,
+          shift: key_press.shift,
+          ctrl:  key_press.ctrl,
+          alt:   key_press.alt,
+        })
+      },
+      Key::Tab if has_modifiers => {
+        Some(UnifiedKey::ModifiedSpecial {
+          key:   SpecialKey::Tab,
+          shift: key_press.shift,
+          ctrl:  key_press.ctrl,
+          alt:   key_press.alt,
+        })
+      },
+      Key::Backspace if has_modifiers => {
+        Some(UnifiedKey::ModifiedSpecial {
+          key:   SpecialKey::Backspace,
+          shift: key_press.shift,
+          ctrl:  key_press.ctrl,
+          alt:   key_press.alt,
+        })
+      },
+      Key::Delete if has_modifiers => {
+        Some(UnifiedKey::ModifiedSpecial {
+          key:   SpecialKey::Delete,
+          shift: key_press.shift,
+          ctrl:  key_press.ctrl,
+          alt:   key_press.alt,
+        })
+      },
       // Unmodified special keys
       Key::Enter => Some(UnifiedKey::Special(SpecialKey::Enter)),
       Key::Tab => Some(UnifiedKey::Special(SpecialKey::Tab)),

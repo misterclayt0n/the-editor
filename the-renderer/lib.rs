@@ -345,10 +345,8 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
                 .app
                 .handle_event(InputEvent::Keyboard(key_press), renderer);
             }
-            if handled {
-              if let Some(win) = &self.window {
-                win.request_redraw();
-              }
+            if handled && let Some(win) = &self.window {
+              win.request_redraw();
             }
 
             // Send text events for composed text, unhandled keys, or dead keys
@@ -361,10 +359,8 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
                   let handled = self
                     .app
                     .handle_event(InputEvent::Text(t.to_string()), renderer);
-                  if handled {
-                    if let Some(win) = &self.window {
-                      win.request_redraw();
-                    }
+                  if handled && let Some(win) = &self.window {
+                    win.request_redraw();
                   }
                 }
               } else if !is_dead_key {
@@ -373,20 +369,16 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
                     let handled = self
                       .app
                       .handle_event(InputEvent::Text(s.to_string()), renderer);
-                    if handled {
-                      if let Some(win) = &self.window {
-                        win.request_redraw();
-                      }
+                    if handled && let Some(win) = &self.window {
+                      win.request_redraw();
                     }
                   },
                   WinitKey::Named(NamedKey::Space) => {
                     let handled = self
                       .app
                       .handle_event(InputEvent::Text(" ".into()), renderer);
-                    if handled {
-                      if let Some(win) = &self.window {
-                        win.request_redraw();
-                      }
+                    if handled && let Some(win) = &self.window {
+                      win.request_redraw();
                     }
                   },
                   _ => {},
@@ -417,10 +409,9 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
               if self
                 .app
                 .handle_event(InputEvent::Mouse(mouse_event), renderer)
+                && let Some(win) = &self.window
               {
-                if let Some(win) = &self.window {
-                  win.request_redraw();
-                }
+                win.request_redraw();
               }
             }
           }
@@ -439,10 +430,9 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
             if self
               .app
               .handle_event(InputEvent::Mouse(mouse_event), renderer)
+              && let Some(win) = &self.window
             {
-              if let Some(win) = &self.window {
-                win.request_redraw();
-              }
+              win.request_redraw();
             }
           }
         },
@@ -460,10 +450,9 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
             if self
               .app
               .handle_event(InputEvent::Scroll(scroll_delta), renderer)
+              && let Some(win) = &self.window
             {
-              if let Some(win) = &self.window {
-                win.request_redraw();
-              }
+              win.request_redraw();
             }
           }
         },
@@ -472,10 +461,10 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
             use winit::event::Ime;
             match ime {
               Ime::Commit(text) => {
-                if self.app.handle_event(InputEvent::Text(text), renderer) {
-                  if let Some(win) = &self.window {
-                    win.request_redraw();
-                  }
+                if self.app.handle_event(InputEvent::Text(text), renderer)
+                  && let Some(win) = &self.window
+                {
+                  win.request_redraw();
                 }
               },
               Ime::Preedit(..) | Ime::Enabled | Ime::Disabled => {},
@@ -502,10 +491,10 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
                 if let Err(err) = renderer.end_frame() {
                   log::error!("Render error: {err:?}");
                 }
-                if self.app.wants_redraw() {
-                  if let Some(win) = &self.window {
-                    win.request_redraw();
-                  }
+                if self.app.wants_redraw()
+                  && let Some(win) = &self.window
+                {
+                  win.request_redraw();
                 }
               },
               Err(RendererError::SkipFrame) => {

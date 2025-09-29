@@ -136,8 +136,7 @@ pub struct CallHierarchyOutgoingCall {
   pub to: CallHierarchyItem,
 
   /// The range at which this item is called. This is the range relative to the
-  /// caller, e.g the item passed to [`provideCallHierarchyOutgoingCalls`](#
-  /// CallHierarchyItemProvider.provideCallHierarchyOutgoingCalls)
-  /// and not [`this.to`](#CallHierarchyOutgoingCall.to).
+  /// caller, e.g the item passed to `provideCallHierarchyOutgoingCalls`
+  /// and not [`to`](Self::to).
   pub from_ranges: Vec<Range>,
 }

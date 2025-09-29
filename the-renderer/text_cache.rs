@@ -146,7 +146,7 @@ impl ShapedTextCache {
     self.current_frame += 1;
 
     // Periodically clean up stale entries
-    if self.current_frame % 60 == 0 {
+    if self.current_frame.is_multiple_of(60) {
       self.cleanup_stale_entries();
     }
   }

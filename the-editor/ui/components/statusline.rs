@@ -58,6 +58,7 @@ impl StatusLine {
   }
 
   /// Update the editor state information
+  #[allow(clippy::too_many_arguments)]
   pub fn update_state(
     &mut self,
     mode: Mode,
@@ -161,7 +162,7 @@ impl StatusLine {
 }
 
 impl Component for StatusLine {
-  fn render(&mut self, renderer: &mut Renderer, rect: Rect) {
+  fn render(&mut self, renderer: &mut Renderer, _rect: Rect) {
     if !self.visible || self.show_command_prompt {
       // Don't render statusline when command prompt is shown
       return;
@@ -171,7 +172,7 @@ impl Component for StatusLine {
     // Convert rect coordinates to pixel coordinates using the same approach as the
     // button component
     let _char_w = 12.0f32; // May be used later for positioning
-    let line_h = 20.0f32;
+    let _line_h = 20.0f32;
     let x = 10.0; // Fixed left margin like original
     let y = renderer.height() as f32 - STATUS_BAR_HEIGHT;
     // let y = rect.y as f32 * line_h;

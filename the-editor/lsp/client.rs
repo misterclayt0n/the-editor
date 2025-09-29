@@ -494,8 +494,8 @@ impl Client {
   }
 
   /// Execute a RPC request on the language server.
-  fn call<'a, R: lsp::request::Request>(
-    &'a self,
+  fn call<R: lsp::request::Request>(
+    &self,
     params: R::Params,
   ) -> impl Future<Output = Result<R::Result>>
   where

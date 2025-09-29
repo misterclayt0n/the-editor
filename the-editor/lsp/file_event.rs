@@ -150,10 +150,10 @@ impl Handler {
 
           let mut builder = GlobSetBuilder::new();
           for watcher in ops.watchers {
-            if let lsp::GlobPattern::String(pattern) = watcher.glob_pattern {
-              if let Ok(glob) = GlobBuilder::new(&pattern).build() {
-                builder.add(glob);
-              }
+            if let lsp::GlobPattern::String(pattern) = watcher.glob_pattern
+              && let Ok(glob) = GlobBuilder::new(&pattern).build()
+            {
+              builder.add(glob);
             }
           }
           match builder.build() {

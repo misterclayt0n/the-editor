@@ -116,7 +116,7 @@ impl CommandBatcher {
       RenderCommand::Text { section } => {
         // Group text by font size and color for batching
         let key = Self::text_key(&section);
-        let commands = self.text_batch.entry(key).or_insert_with(Vec::new);
+        let commands = self.text_batch.entry(key).or_default();
 
         // Extract text and position from the section
         let text = section
@@ -265,9 +265,9 @@ impl CommandBatcher {
 //   pub fn new(target_fps: u32) -> Self {
 //     Self {
 //       last_render:    std::time::Instant::now(),
-//       min_frame_time: std::time::Duration::from_millis(1000 / target_fps as u64),
-//       pending_render: true, // Start with a pending render for initial frame
-//     }
+//       min_frame_time: std::time::Duration::from_millis(1000 / target_fps as
+// u64),       pending_render: true, // Start with a pending render for initial
+// frame     }
 //   }
 
 //   /// Check if we should render this frame

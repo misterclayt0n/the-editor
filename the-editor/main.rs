@@ -90,10 +90,10 @@ fn main() -> anyhow::Result<()> {
   }
 
   // Apply configured theme if present.
-  if let Some(theme_name) = config.theme.as_deref() {
-    if let Ok(theme) = theme_loader.load(theme_name) {
-      editor.set_theme(theme);
-    }
+  if let Some(theme_name) = config.theme.as_deref()
+    && let Ok(theme) = theme_loader.load(theme_name)
+  {
+    editor.set_theme(theme);
   }
 
   // Create the application wrapper

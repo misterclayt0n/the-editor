@@ -41,8 +41,8 @@ impl Display for Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-/// Finds the position of surround pairs of any [`crate::match_brackets::PAIRS`]
-/// using tree-sitter when possible.
+/// Finds the position of surround pairs of any
+/// [`crate::core::match_brackets::PAIRS`] using tree-sitter when possible.
 ///
 /// # Returns
 ///

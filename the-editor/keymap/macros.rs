@@ -23,7 +23,7 @@ macro_rules! keymap {
   (@pairs $map:ident, $order:ident; $($k:tt)|+ => $cmd:ident, $($rest:tt)*) => {
     $(
       let _k = $crate::key!($k);
-      if $map.insert(_k, $crate::keymap::KeyTrie::Command($crate::keymap::Command::Execute(crate::core::commands::$cmd))).is_none() { $order.push(_k); }
+      if $map.insert(_k, $crate::keymap::KeyTrie::Command($crate::keymap::Command::Execute($crate::core::commands::$cmd))).is_none() { $order.push(_k); }
     )+
     $crate::keymap!(@pairs $map, $order; $($rest)*);
   };
@@ -31,7 +31,7 @@ macro_rules! keymap {
   // single key => cmd,
   (@pairs $map:ident, $order:ident; $k:tt => $cmd:ident, $($rest:tt)*) => {
     let _k = $crate::key!($k);
-    if $map.insert(_k, $crate::keymap::KeyTrie::Command($crate::keymap::Command::Execute(crate::core::commands::$cmd))).is_none() { $order.push(_k); }
+    if $map.insert(_k, $crate::keymap::KeyTrie::Command($crate::keymap::Command::Execute($crate::core::commands::$cmd))).is_none() { $order.push(_k); }
     $crate::keymap!(@pairs $map, $order; $($rest)*);
   };
 

@@ -544,14 +544,14 @@ impl ThemePalette {
   }
 
   fn hex_string_to_rgb(s: &str) -> Result<Color, String> {
-    if s.len() >= 7 {
-      if let (Ok(red), Ok(green), Ok(blue)) = (
+    if s.len() >= 7
+      && let (Ok(red), Ok(green), Ok(blue)) = (
         u8::from_str_radix(&s[1..3], 16),
         u8::from_str_radix(&s[3..5], 16),
         u8::from_str_radix(&s[5..7], 16),
-      ) {
-        return Ok(Color::Rgb(red, green, blue));
-      }
+      )
+    {
+      return Ok(Color::Rgb(red, green, blue));
     }
 
     Err(format!("Malformed hexcode: {}", s))

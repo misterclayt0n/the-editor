@@ -49,7 +49,7 @@ pub trait RopeSliceExt<'a>: Sized {
   ///
   /// ```
   /// # use ropey::RopeSlice;
-  /// # use helix_stdx::rope::RopeSliceExt;
+  /// # use the_editor_stdx::rope::RopeSliceExt;
   /// let text = RopeSlice::from("⌚"); // three bytes: e2 8c 9a
   /// assert_eq!(text.floor_char_boundary(0), 0);
   /// assert_eq!(text.floor_char_boundary(1), 0);
@@ -69,7 +69,7 @@ pub trait RopeSliceExt<'a>: Sized {
   ///
   /// ```
   /// # use ropey::RopeSlice;
-  /// # use helix_stdx::rope::RopeSliceExt;
+  /// # use the_editor_stdx::rope::RopeSliceExt;
   /// let text = RopeSlice::from("⌚"); // three bytes: e2 8c 9a
   /// assert_eq!(text.ceil_char_boundary(0), 0);
   /// assert_eq!(text.ceil_char_boundary(1), 3);
@@ -83,7 +83,7 @@ pub trait RopeSliceExt<'a>: Sized {
   ///
   /// ```
   /// # use ropey::RopeSlice;
-  /// # use helix_stdx::rope::RopeSliceExt;
+  /// # use the_editor_stdx::rope::RopeSliceExt;
   /// let text = RopeSlice::from("⌚"); // three bytes: e2 8c 9a
   /// assert!(text.is_char_boundary(0));
   /// assert!(!text.is_char_boundary(1));
@@ -106,7 +106,7 @@ pub trait RopeSliceExt<'a>: Sized {
   ///
   /// ```
   /// # use ropey::RopeSlice;
-  /// # use helix_stdx::rope::RopeSliceExt;
+  /// # use the_editor_stdx::rope::RopeSliceExt;
   /// let text = RopeSlice::from("\r\n"); // U+000D U+000A, hex: 0d 0a
   /// assert_eq!(text.floor_grapheme_boundary(0), 0);
   /// assert_eq!(text.floor_grapheme_boundary(1), 0);
@@ -127,7 +127,7 @@ pub trait RopeSliceExt<'a>: Sized {
   ///
   /// ```
   /// # use ropey::RopeSlice;
-  /// # use helix_stdx::rope::RopeSliceExt;
+  /// # use the_editor_stdx::rope::RopeSliceExt;
   /// let text = RopeSlice::from("\r\n"); // U+000D U+000A, hex: 0d 0a
   /// assert_eq!(text.ceil_grapheme_boundary(0), 0);
   /// assert_eq!(text.ceil_grapheme_boundary(1), 2);
@@ -140,7 +140,7 @@ pub trait RopeSliceExt<'a>: Sized {
   ///
   /// ```
   /// # use ropey::RopeSlice;
-  /// # use helix_stdx::rope::RopeSliceExt;
+  /// # use the_editor_stdx::rope::RopeSliceExt;
   /// let text = RopeSlice::from("\r\n"); // U+000D U+000A, hex: 0d 0a
   /// assert!(text.is_grapheme_boundary(0));
   /// assert!(!text.is_grapheme_boundary(1));
@@ -154,7 +154,7 @@ pub trait RopeSliceExt<'a>: Sized {
   ///
   /// ```
   /// # use ropey::RopeSlice;
-  /// # use helix_stdx::rope::RopeSliceExt;
+  /// # use the_editor_stdx::rope::RopeSliceExt;
   /// let text = RopeSlice::from("😶‍🌫️🏴‍☠️🖼️");
   /// let graphemes: Vec<_> = text.graphemes().collect();
   /// assert_eq!(graphemes.as_slice(), &["😶‍🌫️", "🏴‍☠️", "🖼️"]);
@@ -171,7 +171,7 @@ pub trait RopeSliceExt<'a>: Sized {
   ///
   /// ```
   /// # use ropey::RopeSlice;
-  /// # use helix_stdx::rope::RopeSliceExt;
+  /// # use the_editor_stdx::rope::RopeSliceExt;
   /// let text = RopeSlice::from("😶‍🌫️🏴‍☠️🖼️");
   /// let graphemes: Vec<_> = text.graphemes_rev().collect();
   /// assert_eq!(graphemes.as_slice(), &["🖼️", "🏴‍☠️", "😶‍🌫️"]);
@@ -184,7 +184,7 @@ pub trait RopeSliceExt<'a>: Sized {
   ///
   /// ```
   /// # use ropey::Rope;
-  /// # use helix_stdx::rope::RopeSliceExt;
+  /// # use the_editor_stdx::rope::RopeSliceExt;
   /// let text = Rope::from_str("😶‍🌫️🏴‍☠️🖼️");
   /// // 14 is the byte index of the pirate flag's starting cluster boundary.
   /// let graphemes: Vec<_> = text.slice(..).graphemes_at(14).collect();
@@ -201,7 +201,7 @@ pub trait RopeSliceExt<'a>: Sized {
   ///
   /// ```
   /// # use ropey::Rope;
-  /// # use helix_stdx::rope::RopeSliceExt;
+  /// # use the_editor_stdx::rope::RopeSliceExt;
   /// let text = Rope::from_str("😶‍🌫️🏴‍☠️🖼️");
   /// let slice = text.slice(..);
   /// let graphemes: Vec<_> = slice.grapheme_indices_at(0).collect();
@@ -230,7 +230,7 @@ pub trait RopeSliceExt<'a>: Sized {
   ///
   /// ```
   /// # use ropey::Rope;
-  /// # use helix_stdx::rope::RopeSliceExt;
+  /// # use the_editor_stdx::rope::RopeSliceExt;
   /// let text = Rope::from_str("😶‍🌫️🏴‍☠️🖼️");
   /// let slice = text.slice(..);
   /// let mut byte_idx = 0;
@@ -278,7 +278,7 @@ pub trait RopeSliceExt<'a>: Sized {
   ///
   /// ```
   /// # use ropey::Rope;
-  /// # use helix_stdx::rope::RopeSliceExt;
+  /// # use the_editor_stdx::rope::RopeSliceExt;
   /// let text = Rope::from_str("😶‍🌫️🏴‍☠️🖼️");
   /// let slice = text.slice(..);
   /// let mut byte_idx = text.len_bytes();
@@ -635,7 +635,7 @@ impl fmt::Debug for RopeGraphemes<'_> {
 }
 
 impl<'a> RopeGraphemes<'a> {
-  pub fn next(&mut self) -> Option<RopeSlice<'a>> {
+  pub fn next_grapheme(&mut self) -> Option<RopeSlice<'a>> {
     if self.is_reversed {
       self.prev_impl()
     } else {
@@ -735,7 +735,7 @@ impl<'a> Iterator for RopeGraphemes<'a> {
   type Item = RopeSlice<'a>;
 
   fn next(&mut self) -> Option<Self::Item> {
-    RopeGraphemes::next(self)
+    RopeGraphemes::next_grapheme(self)
   }
 }
 
@@ -780,7 +780,7 @@ impl<'a> RopeGraphemeIndices<'a> {
   }
 
   fn next_impl(&mut self) -> Option<(usize, RopeSlice<'a>)> {
-    let slice = self.iter.next()?;
+    let slice = self.iter.next_grapheme()?;
     let idx = self.front_offset;
     self.front_offset += slice.len_bytes();
     Some((idx, slice))

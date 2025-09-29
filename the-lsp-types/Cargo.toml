@@ -3,6 +3,9 @@ name              = "the-editor-lsp-types"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+[lints]
+workspace = true
+
 
 [lib]
 path = "lib.rs"

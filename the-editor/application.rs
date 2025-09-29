@@ -7,16 +7,16 @@ use the_editor_renderer::{
 };
 
 use crate::{
-  core::graphics::Rect,
+  core::{
+    commands,
+    graphics::Rect,
+    movement::Direction,
+  },
   editor::Editor,
   input::InputHandler,
   keymap::{
     KeyBinding,
     Keymaps,
-  },
-  core::{
-    commands,
-    movement::Direction,
   },
   ui::{
     components::button::Button,
@@ -39,13 +39,13 @@ pub struct App {
 
   // Smooth scrolling configuration and state
   smooth_scroll_enabled: bool,
-  scroll_lerp_factor:    f32,  // fraction of remaining distance per frame (0..1)
-  scroll_min_step_lines: f32,  // minimum line step when animating
-  scroll_min_step_cols:  f32,  // minimum column step when animating
+  scroll_lerp_factor:    f32, // fraction of remaining distance per frame (0..1)
+  scroll_min_step_lines: f32, // minimum line step when animating
+  scroll_min_step_cols:  f32, // minimum column step when animating
 
   // Accumulated pending scroll deltas to animate (lines/cols)
-  pending_scroll_lines:  f32,
-  pending_scroll_cols:   f32,
+  pending_scroll_lines: f32,
+  pending_scroll_cols:  f32,
 }
 
 impl App {
@@ -92,11 +92,11 @@ impl Application for App {
     renderer.set_ligature_protection(false);
 
     // NOTE: We currently allow users to specify a font file path via env var
-    if let Ok(path) = std::env::var("THE_EDITOR_FONT_FILE") {
-      if let Err(err) = renderer.configure_font_from_path(&path, 22.0) {
-        // TODO: Get from editor config.
-        log::warn!("failed to load font from THE_EDITOR_FONT_FILE={path}: {err}");
-      }
+    if let Ok(path) = std::env::var("THE_EDITOR_FONT_FILE")
+      && let Err(err) = renderer.configure_font_from_path(&path, 22.0)
+    {
+      // TODO: Get from editor config.
+      log::warn!("failed to load font from THE_EDITOR_FONT_FILE={path}: {err}");
     }
 
     // Ensure the active view has an initial cursor/selection.
@@ -136,7 +136,7 @@ impl Application for App {
       layer
         .as_any()
         .downcast_ref::<crate::ui::editor_view::EditorView>()
-        .map_or(false, |view| view.has_pending_on_next_key())
+        .is_some_and(|view| view.has_pending_on_next_key())
     });
 
     if pending_char {
@@ -287,10 +287,10 @@ impl Application for App {
     // Then check if any component needs updates.
     for layer in self.compositor.layers.iter() {
       // Check if it's a button with active animation.
-      if let Some(button) = layer.as_any().downcast_ref::<Button>() {
-        if button.should_update() {
-          return true;
-        }
+      if let Some(button) = layer.as_any().downcast_ref::<Button>()
+        && button.should_update()
+      {
+        return true;
       }
 
       // Other components can also request redraws via should_update.
@@ -306,8 +306,9 @@ impl Application for App {
 impl App {
   fn handle_scroll(&mut self, delta: ScrollDelta, renderer: &mut Renderer) {
     // Convert incoming delta to logical lines/columns
-    // Positive wheel y in winit is typically scroll up; map to negative lines (toward file top)
-    let (mut d_cols, mut d_lines) = match delta {
+    // Positive wheel y in winit is typically scroll up; map to negative lines
+    // (toward file top)
+    let (d_cols, d_lines) = match delta {
       ScrollDelta::Lines { x, y } => {
         let config_lines = self.editor.config().scroll_lines.max(1) as f32;
         (-x * 4.0, -y * config_lines)
@@ -347,7 +348,11 @@ impl App {
         step = remaining;
       }
       // Convert to integral lines
-      let step_i = if step >= 0.0 { step.floor() as i32 } else { step.ceil() as i32 };
+      let step_i = if step >= 0.0 {
+        step.floor() as i32
+      } else {
+        step.ceil() as i32
+      };
       if step_i == 0 {
         // If fractional but significant remaining, force a single-line step
         let forced = if remaining > 0.0 { 1 } else { -1 };
@@ -361,7 +366,11 @@ impl App {
     // Apply vertical scroll
     let v_lines = apply_axis(&mut self.pending_scroll_lines);
     if v_lines != 0 {
-      let direction = if v_lines > 0 { Direction::Forward } else { Direction::Backward };
+      let direction = if v_lines > 0 {
+        Direction::Forward
+      } else {
+        Direction::Backward
+      };
       let mut cmd_cx = commands::Context {
         register:             self.editor.selected_register,
         count:                self.editor.count,
@@ -370,7 +379,12 @@ impl App {
         callback:             Vec::new(),
         jobs:                 &mut self.jobs,
       };
-      commands::scroll(&mut cmd_cx, v_lines.unsigned_abs() as usize, direction, false);
+      commands::scroll(
+        &mut cmd_cx,
+        v_lines.unsigned_abs() as usize,
+        direction,
+        false,
+      );
     }
 
     // Horizontal: adjust view_offset.horizontal_offset directly
@@ -387,8 +401,16 @@ impl App {
       if step.abs() > remaining_h.abs() {
         step = remaining_h;
       }
-      let step_i = if step >= 0.0 { step.floor() as i32 } else { step.ceil() as i32 };
-      let step_i = if step_i == 0 { if remaining_h > 0.0 { 1 } else { -1 } } else { step_i };
+      let step_i = if step >= 0.0 {
+        step.floor() as i32
+      } else {
+        step.ceil() as i32
+      };
+      let step_i = if step_i == 0 {
+        if remaining_h > 0.0 { 1 } else { -1 }
+      } else {
+        step_i
+      };
 
       // Apply to focused view
       let focus_view = self.editor.tree.focus;

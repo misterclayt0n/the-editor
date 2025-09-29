@@ -381,11 +381,17 @@ where
   F: Fn(&P::Output) -> bool,
 {
   move |input| {
-    if let Ok((next_input, value)) = parser.parse(input) {
-      if pred_fn(&value) {
-        return Ok((next_input, value));
-      }
+    // if let Ok((next_input, value)) = parser.parse(input) {
+    //   if pred_fn(&value) {
+    //     return Ok((next_input, value));
+    //   }
+    // }
+    if let Ok((next_input, value)) = parser.parse(input)
+      && pred_fn(&value)
+    {
+      return Ok((next_input, value));
     }
+
     Err(input)
   }
 }

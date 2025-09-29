@@ -409,7 +409,7 @@ fn word_move(slice: RopeSlice, range: Range, count: usize, target: WordMotionTar
     range = next_range;
   }
 
-  return range;
+  range
 }
 
 pub fn move_next_word_start(slice: RopeSlice, range: Range, count: usize) -> Range {

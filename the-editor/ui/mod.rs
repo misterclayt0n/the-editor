@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use the_editor_renderer::{
   Color,
   KeyPress,
@@ -7,16 +5,14 @@ use the_editor_renderer::{
   Renderer,
 };
 
-use crate::{
-  core::graphics::Rect,
-  editor::Editor,
-  ui::job::Jobs,
-};
+use crate::core::graphics::Rect;
 
 pub mod components;
 pub mod compositor;
 pub mod editor_view;
 pub mod job;
+pub mod render_cache;
+pub mod render_commands;
 
 // UI Font constants - used across all UI components for consistency
 pub const UI_FONT_SIZE: f32 = 14.0;

@@ -9,6 +9,7 @@ mod error;
 pub mod event;
 mod renderer;
 mod text;
+mod text_cache;
 
 use std::sync::Arc;
 

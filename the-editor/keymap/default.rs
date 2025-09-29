@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use super::{
-  Command,
   KeyTrie,
   Mode,
 };
@@ -139,6 +138,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
   // Visual mode: movement extends selection, Esc exits visual mode
   let select = crate::keymap!({ "Visual"
+   "esc"       => normal_mode,
+    
     "h" | Left  => extend_char_left,
     "j" | Down  => extend_visual_line_down,
     "k" | Up    => extend_visual_line_up,

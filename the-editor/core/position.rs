@@ -108,7 +108,11 @@ impl From<(usize, usize)> for Position {
 /// Column in `char` count which can be used for row:col display in
 /// status line. See [`visual_coords_at_pos`] for a visual one.
 pub fn coords_at_pos(text: RopeSlice, pos: usize) -> Position {
-  let line = text.char_to_line(pos);
+  let line = if pos < text.len_chars() {
+    text.char_to_line(pos)
+  } else {
+    text.len_lines().saturating_sub(1)
+  };
 
   let line_start = text.line_to_char(line);
   let pos = ensure_grapheme_boundary_prev(text, pos);
@@ -220,7 +224,11 @@ pub fn char_idx_at_visual_block_offset(
 /// For example aligning text should ignore virtual text and softwrap.
 #[deprecated = "Doesn't account for softwrap or decorations, use visual_offset_from_anchor instead"]
 pub fn visual_coords_at_pos(text: RopeSlice, pos: usize, tab_width: usize) -> Position {
-  let line = text.char_to_line(pos);
+  let line = if pos < text.len_chars() {
+    text.char_to_line(pos)
+  } else {
+    text.len_lines().saturating_sub(1)
+  };
 
   let line_start = text.line_to_char(line);
   let pos = ensure_grapheme_boundary_prev(text, pos);

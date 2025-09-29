@@ -1,4 +1,3 @@
-use ropey::RopeSlice;
 use the_editor_renderer::{
   Color,
   TextSection,
@@ -12,10 +11,7 @@ use crate::{
       OnKeyCallback,
       OnKeyCallbackKind,
     },
-    doc_formatter::{
-      DocumentFormatter,
-      GraphemeSource,
-    },
+    doc_formatter::DocumentFormatter,
     grapheme::Grapheme,
     graphics::{
       CursorKind,
@@ -34,13 +30,16 @@ use crate::{
     Keymaps,
     Mode,
   },
-  ui::compositor::{
-    Callback,
-    Component,
-    Context,
-    Event,
-    EventResult,
-    Surface,
+  ui::{
+    compositor::{
+      Component,
+      Context,
+      Event,
+      EventResult,
+      Surface,
+    },
+    render_cache::DirtyRegion,
+    render_commands::{CommandBatcher, RenderCommand},
   },
 };
 
@@ -57,6 +56,11 @@ pub struct EditorView {
   on_next_key: Option<(OnKeyCallback, OnKeyCallbackKind)>,
   // Track last command for macro replay
   last_insert: (MappableCommand, Vec<KeyBinding>),
+  // Rendering optimizations
+  dirty_region: DirtyRegion,
+  command_batcher: CommandBatcher,
+  last_cursor_pos: Option<usize>,
+  last_selection_hash: u64,
 }
 
 impl EditorView {
@@ -65,6 +69,10 @@ impl EditorView {
       keymaps,
       on_next_key: None,
       last_insert: (MappableCommand::NormalMode, Vec::new()),
+      dirty_region: DirtyRegion::new(),
+      command_batcher: CommandBatcher::new(),
+      last_cursor_pos: None,
+      last_selection_hash: 0,
     }
   }
 
@@ -117,6 +125,18 @@ impl Component for EditorView {
           // In insert mode, handle character input directly
           match &key.code {
             the_editor_renderer::Key::Char(ch) if !key.ctrl && !key.alt => {
+              // Mark current line as dirty before insertion
+              let focus_view = cx.editor.tree.focus;
+              let view = cx.editor.tree.get(focus_view);
+              let doc = &cx.editor.documents[&view.doc];
+              let cursor_pos = doc.selection(focus_view).primary().cursor(doc.text().slice(..));
+              let current_line = if cursor_pos < doc.text().len_chars() {
+                doc.text().char_to_line(cursor_pos)
+              } else {
+                doc.text().len_lines().saturating_sub(1)
+              };
+              self.dirty_region.mark_line_dirty(current_line);
+
               // Insert the character
               let mut cmd_cx = commands::Context {
                 register:             cx.editor.selected_register,
@@ -128,6 +148,21 @@ impl Component for EditorView {
               };
 
               commands::insert_char(&mut cmd_cx, *ch);
+
+              // Mark line as dirty after insertion (may be different if newline was inserted)
+              let focus_view = cx.editor.tree.focus;
+              let view = cx.editor.tree.get(focus_view);
+              let doc = &cx.editor.documents[&view.doc];
+              let new_cursor_pos = doc.selection(focus_view).primary().cursor(doc.text().slice(..));
+              let new_line = if new_cursor_pos < doc.text().len_chars() {
+                doc.text().char_to_line(new_cursor_pos)
+              } else {
+                doc.text().len_lines().saturating_sub(1)
+              };
+              if new_line != current_line {
+                self.dirty_region.mark_line_dirty(new_line);
+              }
+
               return EventResult::Consumed(None);
             },
             // the_editor_renderer::Key::Enter => {
@@ -229,6 +264,22 @@ impl Component for EditorView {
             cx.editor.selected_register = new_register;
             cx.editor.count = new_count;
 
+            // Mark affected lines as dirty after command execution
+            let focus_view = cx.editor.tree.focus;
+            let view = cx.editor.tree.get(focus_view);
+            let doc = &cx.editor.documents[&view.doc];
+            let new_cursor_pos = doc.selection(focus_view).primary().cursor(doc.text().slice(..));
+            let new_line = if new_cursor_pos < doc.text().len_chars() {
+              doc.text().char_to_line(new_cursor_pos)
+            } else {
+              doc.text().len_lines().saturating_sub(1)
+            };
+
+            // Mark lines as dirty (conservative approach - mark a range around cursor)
+            let start_line = new_line.saturating_sub(1);
+            let end_line = (new_line + 1).min(doc.text().len_lines().saturating_sub(1));
+            self.dirty_region.mark_range_dirty(start_line, end_line);
+
             // Process callbacks
             if !callbacks.is_empty() {
               EventResult::Consumed(Some(Box::new(move |compositor, cx| {
@@ -252,6 +303,7 @@ impl Component for EditorView {
   }
 
   fn render(&mut self, _area: Rect, renderer: &mut Surface, cx: &mut Context) {
+
     let font_size = 22.0; // TODO: Get from config
     renderer.configure_font(&renderer.current_font_family().to_string(), font_size);
     let font_width = renderer.cell_width().max(1.0);
@@ -277,6 +329,8 @@ impl Component for EditorView {
         view.sync_changes(doc);
         view.ensure_cursor_in_view(doc, scrolloff);
       }
+      // Viewport changed, mark everything dirty
+      self.dirty_region.mark_all_dirty();
     }
 
     // Get theme colors
@@ -322,6 +376,44 @@ impl Component for EditorView {
 
     let cursor_pos = selection.primary().cursor(doc_text.slice(..));
 
+    // Check if cursor or selection changed
+    let selection_hash = {
+      use std::collections::hash_map::DefaultHasher;
+      use std::hash::{Hash, Hasher};
+      let mut hasher = DefaultHasher::new();
+      for range in selection.ranges() {
+        range.from().hash(&mut hasher);
+        range.to().hash(&mut hasher);
+      }
+      hasher.finish()
+    };
+
+    let cursor_changed = self.last_cursor_pos != Some(cursor_pos);
+    let selection_changed = self.last_selection_hash != selection_hash;
+
+    if cursor_changed || selection_changed {
+      // Only mark cursor-related areas as dirty, not entire viewport
+      if let Some(old_cursor) = self.last_cursor_pos {
+        // Mark old cursor line dirty
+        let old_line = if old_cursor < doc_text.len_chars() {
+          doc_text.char_to_line(old_cursor)
+        } else {
+          doc_text.len_lines().saturating_sub(1)
+        };
+        self.dirty_region.mark_line_dirty(old_line);
+      }
+      // Mark new cursor line dirty
+      let new_line = if cursor_pos < doc_text.len_chars() {
+        doc_text.char_to_line(cursor_pos)
+      } else {
+        doc_text.len_lines().saturating_sub(1)
+      };
+      self.dirty_region.mark_line_dirty(new_line);
+
+      self.last_cursor_pos = Some(cursor_pos);
+      self.last_selection_hash = selection_hash;
+    }
+
     // Get viewport information
     let viewport = view.inner_area(doc);
     let visible_lines = content_rows as usize;
@@ -350,6 +442,16 @@ impl Component for EditorView {
     .0
     .row;
 
+    // Check document content
+    let doc_len = doc_text.len_chars();
+
+    // Update viewport bounds in dirty region tracker
+    self.dirty_region.set_viewport(row_off, row_off + visible_lines);
+
+    // For now, disable frame timing optimization as it's blocking renders
+    // TODO: Fix frame timer logic
+    // Always render when we have changes to show
+
     // Create document formatter
     let mut formatter = DocumentFormatter::new_at_prev_checkpoint(
       doc_text.slice(..),
@@ -372,37 +474,60 @@ impl Component for EditorView {
         .any(|r| r.from() < end && r.to() > start)
     };
 
-    // Helper function to flush text run
-    fn flush_text_run(
-      renderer: &mut Surface,
-      run_text: &mut String,
-      run_start_x: f32,
-      run_y: f32,
-      font_size: f32,
-      run_color: Color,
-    ) {
-      if !run_text.is_empty() {
-        renderer.flush_text_batch();
-        let text = std::mem::take(run_text);
-        renderer.draw_text_batched(TextSection::simple(
-          run_start_x,
-          run_y,
-          text,
-          font_size,
-          run_color,
-        ));
-        renderer.flush_text_batch();
-      }
-    }
-
     let mut current_row = usize::MAX;
-    let mut run_text = String::new();
-    let mut run_start_x = 0.0f32;
-    let mut run_y = 0.0f32;
-    let mut run_color = normal;
+    let mut grapheme_count = 0;
+    let mut line_batch = Vec::new(); // Batch characters on the same line
 
-    // Render document graphemes
+    // Helper to flush a line batch
+    let mut flush_line_batch = |batch: &mut Vec<(f32, f32, String, Color)>,
+                                 batcher: &mut CommandBatcher,
+                                 font_width: f32,
+                                 font_size: f32| {
+        if batch.is_empty() {
+            return;
+        }
+
+        // Group consecutive characters with same style
+        let mut i = 0;
+        while i < batch.len() {
+            let (x, y, _, color) = batch[i].clone();
+            let mut text = batch[i].2.clone();
+            let mut j = i + 1;
+
+            // Track the expected position for next character
+            let mut expected_x = x + font_width;
+
+            // Merge consecutive characters with same color at adjacent positions
+            while j < batch.len() {
+                let (next_x, _, _, next_color) = &batch[j];
+                // Check if next character is adjacent and same color (compare RGBA components)
+                if (next_x - expected_x).abs() < 1.0
+                    && next_color.r == color.r
+                    && next_color.g == color.g
+                    && next_color.b == color.b
+                    && next_color.a == color.a {
+                    text.push_str(&batch[j].2);
+                    expected_x = next_x + font_width;
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+
+
+            // Render the merged text
+            batcher.add_command(RenderCommand::Text {
+                section: TextSection::simple(x, y, text, font_size, color),
+            });
+
+            i = j;
+        }
+        batch.clear();
+    };
+
+    // Render document graphemes using command batcher
     while let Some(g) = formatter.next() {
+      grapheme_count += 1;
       // Skip visual lines before the top row of the viewport
       if g.visual_pos.row < row_off {
         continue;
@@ -412,6 +537,10 @@ impl Component for EditorView {
       if rel_row >= visible_lines {
         break;
       }
+
+      // For now, disable per-line dirty checking as it's causing rendering issues
+      // We'll still benefit from batching and frame timing
+      // TODO: Re-enable once we properly track all dirty regions
 
       // Horizontal scrolling
       let abs_col = g.visual_pos.col;
@@ -437,137 +566,82 @@ impl Component for EditorView {
         draw_cols = remaining_cols;
       }
 
+      // Track current row and flush batch on line change
       if rel_row != current_row {
-        if !run_text.is_empty() {
-          flush_text_run(
-            renderer,
-            &mut run_text,
-            run_start_x,
-            run_y,
-            font_size,
-            run_color,
-          );
-        }
+        flush_line_batch(&mut line_batch, &mut self.command_batcher, font_width, font_size);
         current_row = rel_row;
       }
 
       let x = base_x + (rel_col as f32) * font_width;
       let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING);
 
-      // Draw selection background
+      // Add selection background command
       let doc_len = g.doc_chars();
       if is_selected(g.char_idx, doc_len) {
-        renderer.draw_rect(
+        self.command_batcher.add_command(RenderCommand::Selection {
           x,
           y,
-          (draw_cols as f32) * font_width,
-          font_size + LINE_SPACING,
-          selection_bg,
-        );
+          width: (draw_cols as f32) * font_width,
+          height: font_size + LINE_SPACING,
+          color: selection_bg,
+        });
       }
 
-      // Draw cursor
+      // Check if this is the cursor position
       let is_cursor_here = g.char_idx == cursor_pos;
       if is_cursor_here {
         let cursor_w = width_cols.max(1) as f32 * font_width;
-        renderer.draw_rect(
+        self.command_batcher.add_command(RenderCommand::Cursor {
           x,
           y,
-          cursor_w.min((viewport_cols - rel_col) as f32 * font_width),
-          font_size + CURSOR_HEIGHT_EXTENSION,
-          cursor_bg,
-        );
+          width: cursor_w.min((viewport_cols - rel_col) as f32 * font_width),
+          height: font_size + CURSOR_HEIGHT_EXTENSION,
+          color: cursor_bg,
+        });
       }
 
-      // Draw the grapheme
+      // Add text command
       match g.raw {
         Grapheme::Newline => {
-          flush_text_run(
-            renderer,
-            &mut run_text,
-            run_start_x,
-            run_y,
-            font_size,
-            run_color,
-          );
+          // End of line, no text to draw
         },
         Grapheme::Tab { .. } => {
-          flush_text_run(
-            renderer,
-            &mut run_text,
-            run_start_x,
-            run_y,
-            font_size,
-            run_color,
-          );
           // Tabs are rendered as spacing, no text to draw
         },
         Grapheme::Other { ref g } => {
-          if left_clip > 0 {
-            flush_text_run(
-              renderer,
-              &mut run_text,
-              run_start_x,
-              run_y,
-              font_size,
-              run_color,
-            );
-            continue;
+          if left_clip == 0 {
+            let fg = if is_cursor_here { cursor_fg } else { normal };
+
+            // Add to line batch for efficient rendering
+            line_batch.push((x, y, g.to_string(), fg));
           }
-
-          let fg = if is_cursor_here { cursor_fg } else { normal };
-
-          // Split shaping run at cursor boundary
-          if is_cursor_here && !run_text.is_empty() {
-            flush_text_run(
-              renderer,
-              &mut run_text,
-              run_start_x,
-              run_y,
-              font_size,
-              run_color,
-            );
-            renderer.flush_text_batch();
-          }
-
-          if run_text.is_empty() {
-            run_start_x = x;
-            run_y = y;
-            run_color = fg;
-          } else {
-            let color_changed = fg.r != run_color.r
-              || fg.g != run_color.g
-              || fg.b != run_color.b
-              || fg.a != run_color.a;
-            if color_changed {
-              flush_text_run(
-                renderer,
-                &mut run_text,
-                run_start_x,
-                run_y,
-                font_size,
-                run_color,
-              );
-              run_start_x = x;
-              run_y = y;
-              run_color = fg;
-            }
-          }
-
-          run_text.push_str(&g.to_string());
         },
       }
     }
 
-    // Flush final text run
-    flush_text_run(
-      renderer,
-      &mut run_text,
-      run_start_x,
-      run_y,
-      font_size,
-      run_color,
-    );
+    // Flush any remaining batch
+    flush_line_batch(&mut line_batch, &mut self.command_batcher, font_width, font_size);
+
+    // If the document is empty or we didn't render any graphemes, at least render the cursor
+    if grapheme_count == 0 {
+
+      // Render cursor at position 0 for empty document
+      let x = base_x;
+      let y = base_y;
+      self.command_batcher.add_command(RenderCommand::Cursor {
+        x,
+        y,
+        width: font_width,
+        height: font_size + CURSOR_HEIGHT_EXTENSION,
+        color: cursor_bg,
+      });
+    }
+
+    // Execute all batched commands
+    self.command_batcher.execute(renderer);
+
+    // Clear dirty regions after successful render
+    self.dirty_region.clear();
   }
 
   fn cursor(&self, _area: Rect, _ctx: &Editor) -> (Option<Position>, CursorKind) {

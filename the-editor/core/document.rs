@@ -1454,6 +1454,10 @@ impl Document {
       } else if diagnostic.range.start >= diagnostic.range.end {
         return false;
       }
+      // Ensure the diagnostic position is within bounds
+      if diagnostic.range.start >= self.text.len_chars() {
+        return false;
+      }
       diagnostic.line = self.text.char_to_line(diagnostic.range.start);
       true
     });

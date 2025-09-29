@@ -74,7 +74,7 @@ struct RectUniforms {
 
 struct TextCommand {
   position: (f32, f32),
-  buffer:   Buffer,
+  cache_key: crate::text_cache::ShapedTextKey, // Key to retrieve buffer from cache
   bounds:   TextBounds,
 }
 
@@ -149,6 +149,9 @@ pub struct Renderer {
 
   // Buffer pool for text rendering performance
   buffer_pool: BufferPool,
+
+  // Shaped text cache for avoiding re-shaping
+  shaped_text_cache: crate::text_cache::ShapedTextCache,
 }
 
 impl Renderer {
@@ -426,6 +429,7 @@ impl Renderer {
         buffers: Vec::with_capacity(4),
         metrics: Metrics::new(16.0, 16.0 * LINE_HEIGHT_FACTOR),
       },
+      shaped_text_cache: crate::text_cache::ShapedTextCache::new(1000), // Cache up to 1000 text runs
       pending_text_batch: None,
     };
 
@@ -499,13 +503,11 @@ impl Renderer {
     self.current_encoder = Some(encoder);
     self.rect_instances.clear();
 
-    // Return buffers to pool before clearing commands
-    for cmd in self.text_commands.drain(..) {
-      if self.buffer_pool.buffers.len() < 8 {
-        // Keep pool size reasonable
-        self.buffer_pool.buffers.push(cmd.buffer);
-      }
-    }
+    // Advance frame counter for cache LRU tracking
+    self.shaped_text_cache.next_frame();
+
+    // Clear text commands (buffers are now kept in cache)
+    self.text_commands.clear();
 
     // Clear any pending text batch
     self.pending_text_batch = None;
@@ -598,16 +600,19 @@ impl Renderer {
           &mut self.font_system,
           &mut self.text_atlas,
           &self.viewport,
-          self.text_commands.iter().map(|command| {
-            TextArea {
-              buffer:        &command.buffer,
-              left:          command.position.0,
-              top:           command.position.1,
-              scale:         1.0,
-              bounds:        command.bounds,
-              default_color: GlyphColor::rgba(255, 255, 255, 255),
-              custom_glyphs: &[],
-            }
+          self.text_commands.iter().filter_map(|command| {
+            // Get buffer from cache
+            self.shaped_text_cache.entries.get(&command.cache_key).map(|entry| {
+              TextArea {
+                buffer:        &entry.buffer,
+                left:          command.position.0,
+                top:           command.position.1,
+                scale:         1.0,
+                bounds:        command.bounds,
+                default_color: GlyphColor::rgba(255, 255, 255, 255),
+                custom_glyphs: &[],
+              }
+            })
           }),
           &mut self.swash_cache,
         )
@@ -696,7 +701,7 @@ impl Renderer {
     self.draw_text_internal(section);
   }
 
-  /// Internal text drawing implementation
+  /// Internal text drawing implementation using cached shaped text
   fn draw_text_internal(&mut self, section: TextSection) {
     if section.texts.is_empty() {
       return;
@@ -705,85 +710,124 @@ impl Renderer {
     let width = self.config.width as f32;
     let height = self.config.height as f32;
 
-    let base_metrics = Metrics::new(self.font_size, self.cell_height);
-
-    // Get a buffer from the pool or create a new one
-    let mut buffer = if let Some(mut pooled) = self.buffer_pool.buffers.pop() {
-      // Reuse pooled buffer - only update if metrics changed
-      if self.buffer_pool.metrics != base_metrics {
-        pooled.set_metrics(&mut self.font_system, base_metrics);
-        self.buffer_pool.metrics = base_metrics;
-      }
-      pooled.set_size(&mut self.font_system, Some(width), Some(height));
-      pooled
-    } else {
-      // Create new buffer
-      let mut buffer = Buffer::new(&mut self.font_system, base_metrics);
-      buffer.set_wrap(&mut self.font_system, Wrap::None);
-      buffer.set_size(&mut self.font_system, Some(width), Some(height));
-      self.buffer_pool.metrics = base_metrics;
-      buffer
-    };
-
+    // Build the full text string
     let mut full_text = String::new();
-    let mut spans = Vec::new();
-    let mut cursor = 0usize;
-
-    let family = self.font_family.clone();
-
-    for mut segment in section.texts {
-      if segment.content.is_empty() {
-        continue;
+    for segment in &section.texts {
+      if !segment.content.is_empty() {
+        full_text.push_str(&segment.content);
       }
-
-      let start = cursor;
-
-      // Only apply ligature protection if not disabled (performance optimization)
-      let text_to_use = if self.disable_ligature_protection {
-        segment.content.as_str()
-      } else {
-        let protected = protect_problematic_ligatures(&segment.content);
-        match protected {
-          Cow::Borrowed(_) => segment.content.as_str(),
-          Cow::Owned(replaced) => {
-            segment.content = replaced;
-            segment.content.as_str()
-          },
-        }
-      };
-
-      full_text.push_str(text_to_use);
-      cursor = full_text.len();
-
-      let seg_metrics = Metrics::new(segment.style.size, segment.style.size * LINE_HEIGHT_FACTOR);
-      let attrs = Attrs::new()
-        .family(Family::Name(family.as_str()))
-        .metrics(seg_metrics)
-        .color(to_glyph_color(segment.style.color));
-
-      spans.push((start..cursor, AttrsOwned::new(&attrs)));
     }
 
     if full_text.is_empty() {
       return;
     }
 
-    let default_attrs = Attrs::new()
-      .family(Family::Name(family.as_str()))
-      .metrics(base_metrics);
+    // Get first color for cache key
+    let first_color = section.texts[0].style.color;
 
-    buffer.set_rich_text(
-      &mut self.font_system,
-      spans
-        .iter()
-        .map(|(range, attrs_owned)| (&full_text[range.clone()], attrs_owned.as_attrs())),
-      &default_attrs,
-      Shaping::Advanced,
-      None,
-    );
+    // Create cache key
+    let cache_key = crate::text_cache::ShapedTextKey {
+      text: full_text.clone(),
+      metrics: ((self.font_size * 100.0) as u32, (self.cell_height * 100.0) as u32),
+      color: [
+        (first_color.r * 255.0) as u8,
+        (first_color.g * 255.0) as u8,
+        (first_color.b * 255.0) as u8,
+        (first_color.a * 255.0) as u8,
+      ],
+      position_hash: {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        section.position.0.to_bits().hash(&mut hasher);
+        section.position.1.to_bits().hash(&mut hasher);
+        hasher.finish()
+      },
+    };
 
-    buffer.shape_until_scroll(&mut self.font_system, false);
+    let base_metrics = Metrics::new(self.font_size, self.cell_height);
 
+    // Check if we already have this text shaped in cache
+    if !self.shaped_text_cache.entries.contains_key(&cache_key) {
+      // Need to create and shape new buffer
+      self.shaped_text_cache.misses += 1;
+
+      let mut buffer = if let Some(mut pooled) = self.buffer_pool.buffers.pop() {
+        pooled.set_metrics(&mut self.font_system, base_metrics);
+        pooled.set_size(&mut self.font_system, Some(width), Some(height));
+        pooled
+      } else {
+        let mut buffer = Buffer::new(&mut self.font_system, base_metrics);
+        buffer.set_wrap(&mut self.font_system, Wrap::None);
+        buffer.set_size(&mut self.font_system, Some(width), Some(height));
+        buffer
+      };
+
+      // Build spans for styled text
+      let mut spans = Vec::new();
+      let mut cursor = 0usize;
+      let family = self.font_family.clone();
+
+      for segment in section.texts {
+        if segment.content.is_empty() {
+          continue;
+        }
+
+        let start = cursor;
+        cursor += segment.content.len();
+
+        let seg_metrics = Metrics::new(segment.style.size, segment.style.size * LINE_HEIGHT_FACTOR);
+        let attrs = Attrs::new()
+          .family(Family::Name(family.as_str()))
+          .metrics(seg_metrics)
+          .color(to_glyph_color(segment.style.color));
+
+        spans.push((start..cursor, AttrsOwned::new(&attrs)));
+      }
+
+      let default_attrs = Attrs::new()
+        .family(Family::Name(family.as_str()))
+        .metrics(base_metrics);
+
+      buffer.set_rich_text(
+        &mut self.font_system,
+        spans
+          .iter()
+          .map(|(range, attrs_owned)| (&full_text[range.clone()], attrs_owned.as_attrs())),
+        &default_attrs,
+        Shaping::Advanced,
+        None,
+      );
+
+      buffer.shape_until_scroll(&mut self.font_system, false);
+
+      // Store in cache
+      if self.shaped_text_cache.entries.len() >= 1000 {
+        self.shaped_text_cache.evict_lru();
+      }
+
+      let entry = crate::text_cache::CachedShapedText {
+        buffer,
+        last_used_frame: self.shaped_text_cache.current_frame,
+        generation: self.shaped_text_cache.current_generation,
+      };
+
+      self.shaped_text_cache.entries.insert(cache_key.clone(), entry);
+    } else {
+      // Update cache hit stats
+      self.shaped_text_cache.hits += 1;
+      if let Some(entry) = self.shaped_text_cache.entries.get_mut(&cache_key) {
+        entry.last_used_frame = self.shaped_text_cache.current_frame;
+      }
+    }
+
+    let bounds = TextBounds {
+      left:   0,
+      top:    0,
+      right:  self.config.width as i32,
+      bottom: self.config.height as i32,
+    };
+
+    // Store the command with cache key for deferred rendering
     let bounds = TextBounds {
       left:   0,
       top:    0,
@@ -793,7 +837,7 @@ impl Renderer {
 
     self.text_commands.push(TextCommand {
       position: section.position,
-      buffer,
+      cache_key,
       bounds,
     });
   }

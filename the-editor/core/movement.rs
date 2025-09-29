@@ -280,7 +280,7 @@ pub fn move_vertically_visual(
     new_pos += (virtual_rows != 0) as usize;
   }
 
-  if behavior == Movement::Extend && slice.line(slice.char_to_line(new_pos)).len_chars() == 0 {
+  if behavior == Movement::Extend && new_pos < slice.len_chars() && slice.line(slice.char_to_line(new_pos)).len_chars() == 0 {
     return range;
   }
 
@@ -299,7 +299,11 @@ pub fn move_vertically(
   annotations: &mut TextAnnotations,
 ) -> Range {
   let pos = range.cursor(slice);
-  let line_idx = slice.char_to_line(pos);
+  let line_idx = if pos < slice.len_chars() {
+    slice.char_to_line(pos)
+  } else {
+    slice.len_lines().saturating_sub(1)
+  };
   let line_start = slice.line_to_char(line_idx);
 
   // Compute the current positions's 2d coordinates.
@@ -309,7 +313,11 @@ pub fn move_vertically(
     .old_visual_pos
     .map_or((visual_pos.row as u32, visual_pos.col as u32), |pos| pos);
   new_row = new_row.max(visual_pos.row as u32);
-  let line_idx = slice.char_to_line(pos);
+  let line_idx = if pos < slice.len_chars() {
+    slice.char_to_line(pos)
+  } else {
+    slice.len_lines().saturating_sub(1)
+  };
 
   // Compute the new position.
   let mut new_line_idx = match dir {

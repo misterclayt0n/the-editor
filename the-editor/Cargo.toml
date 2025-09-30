@@ -25,6 +25,7 @@ foldhash.workspace                 = true
 futures-executor.workspace         = true
 futures-util.workspace             = true
 globset.workspace                  = true
+ignore.workspace                   = true
 imara-diff.workspace               = true
 kstring.workspace                  = true
 log.workspace                      = true

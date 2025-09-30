@@ -30,6 +30,7 @@ use crate::keymap::KeyBinding;
 pub enum Event {
   Key(KeyBinding),
   Mouse(the_editor_renderer::MouseEvent),
+  Scroll(the_editor_renderer::ScrollDelta),
   Resize(u16, u16),
   IdleTimeout,
   FocusGained,
@@ -43,6 +44,7 @@ pub struct Context<'a> {
   pub editor: &'a mut Editor,
   pub scroll: Option<usize>,
   pub jobs:   &'a mut Jobs,
+  pub dt:     f32, // Delta time in seconds since last frame
 }
 
 impl Context<'_> {

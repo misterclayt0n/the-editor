@@ -2118,6 +2118,7 @@ impl Editor {
     let view = self.tree.get_mut(current_view);
 
     view.doc = doc_id;
+    view.zoom_anim = 0.0; // Trigger zoom animation for new document
     let doc = doc_mut!(self, &doc_id);
 
     doc.ensure_view_init(view.id);

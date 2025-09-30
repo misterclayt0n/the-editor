@@ -39,6 +39,7 @@ futures-executor         = "0.3"
 futures-util             = { default-features = false, features = [ "std", "async-await" ], version = "0.3" }
 globset                  = "0.4.16"
 hashbrown                = "0.15"
+ignore                   = "0.4"
 imara-diff               = "0.2.0"
 kstring                  = "2.0"
 log                      = "0.4"

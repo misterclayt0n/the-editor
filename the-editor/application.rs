@@ -49,6 +49,9 @@ pub struct App {
   // Accumulated pending scroll deltas to animate (lines/cols)
   pending_scroll_lines: f32,
   pending_scroll_cols:  f32,
+
+  // Delta time tracking for time-based animations
+  last_frame_time: std::time::Instant,
 }
 
 impl App {
@@ -88,6 +91,7 @@ impl App {
       scroll_min_step_cols: conf.scroll_min_step_cols,
       pending_scroll_lines: 0.0,
       pending_scroll_cols: 0.0,
+      last_frame_time: std::time::Instant::now(),
     }
   }
 }
@@ -118,6 +122,11 @@ impl Application for App {
     // The renderer's begin_frame/end_frame are handled by the main loop.
     // We just need to draw our content here.
 
+    // Calculate delta time for time-based animations
+    let now = std::time::Instant::now();
+    let dt = now.duration_since(self.last_frame_time).as_secs_f32();
+    self.last_frame_time = now;
+
     // Apply smooth scrolling animation prior to rendering this frame.
     if self.smooth_scroll_enabled {
       self.animate_scroll(renderer);
@@ -127,7 +136,8 @@ impl Application for App {
     let mut cx = Context {
       editor: &mut self.editor,
       scroll: None,
-      jobs:   &mut self.jobs,
+      jobs: &mut self.jobs,
+      dt,
     };
 
     // Render through the compositor.
@@ -176,6 +186,7 @@ impl Application for App {
         editor: &mut self.editor,
         scroll: None,
         jobs:   &mut self.jobs,
+        dt:     0.0, // Events don't use delta time
       };
 
       return self.compositor.handle_event(&event, &mut cx);
@@ -191,6 +202,7 @@ impl Application for App {
         editor: &mut self.editor,
         scroll: None,
         jobs:   &mut self.jobs,
+        dt:     0.0,
       };
 
       return self.compositor.handle_event(&event, &mut cx);
@@ -204,6 +216,7 @@ impl Application for App {
         editor: &mut self.editor,
         scroll: None,
         jobs:   &mut self.jobs,
+        dt:     0.0,
       };
 
       return self.compositor.handle_event(&event, &mut cx);
@@ -211,7 +224,20 @@ impl Application for App {
 
     // Handle scroll events.
     if let Some(scroll) = result.scroll {
-      self.handle_scroll(scroll, _renderer);
+      // Try to pass scroll to compositor first (for pickers, etc.)
+      let event = Event::Scroll(scroll);
+      let mut cx = Context {
+        editor: &mut self.editor,
+        scroll: None,
+        jobs:   &mut self.jobs,
+        dt:     0.0,
+      };
+      let handled = self.compositor.handle_event(&event, &mut cx);
+
+      // If not handled by compositor, use default scroll behavior
+      if !handled {
+        self.handle_scroll(scroll, _renderer);
+      }
       return true;
     }
 
@@ -223,6 +249,7 @@ impl Application for App {
         editor: &mut self.editor,
         scroll: None,
         jobs:   &mut self.jobs,
+        dt:     0.0,
       };
 
       return self.compositor.handle_event(&event, &mut cx);
@@ -238,6 +265,7 @@ impl Application for App {
           editor: &mut self.editor,
           scroll: None,
           jobs:   &mut self.jobs,
+          dt:     0.0,
         };
 
         return self.compositor.handle_event(&event, &mut cx);
@@ -257,6 +285,7 @@ impl Application for App {
             editor: &mut self.editor,
             scroll: None,
             jobs:   &mut self.jobs,
+            dt:     0.0,
           };
 
           if self.compositor.handle_event(&event, &mut cx) {

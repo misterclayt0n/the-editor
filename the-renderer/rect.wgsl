@@ -75,6 +75,14 @@ fn sdf_rounded_rect(pos: vec2<f32>, size: vec2<f32>, radius: f32) -> f32 {
     return length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0) - radius;
 }
 
+fn saturate(value: f32) -> f32 {
+    return clamp(value, 0.0, 1.0);
+}
+
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    return a + (b - a) * t;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let dist = sdf_rounded_rect(in.local_pos, in.rect_size, in.corner_radius);
@@ -102,7 +110,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Keep glow simple and gentle; emphasize the edge modestly
         let intensity = clamp(glow * (0.40 + 0.60 * edge), 0.0, 1.0);
         return vec4<f32>(in.color.rgb, in.color.a * intensity * shape_alpha);
-    } else {
+    } else if (in.effect_kind < 2.5) {
         // Stroke ring: difference of outer and inner rounded-rect masks.
         // Use glow_radius as stroke thickness in pixels.
         let thickness = max(in.glow_radius, 0.5);
@@ -115,5 +123,29 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let alpha_inner = 1.0 - smoothstep(-0.5, 0.5, dist_inner);
         let ring_alpha = clamp(alpha_outer - alpha_inner, 0.0, 1.0);
         return vec4<f32>(in.color.rgb, in.color.a * ring_alpha);
+    } else {
+        // Directional stroke ring with thickness fading from top -> sides -> bottom.
+        let thickness_top = in.glow_center.x;
+        let thickness_bottom = in.glow_center.y;
+        let thickness_side = in.glow_radius;
+
+        let dist_top = in.local_pos.y;
+        let dist_side = min(in.local_pos.x, in.rect_size.x - in.local_pos.x);
+
+        let top_range = max(thickness_top * 3.0, 1.0);
+        let side_range = max(thickness_side * 3.0, 1.0);
+
+        let top_influence = saturate(1.0 - dist_top / top_range);
+        let side_influence = saturate(1.0 - dist_side / side_range);
+
+        let thickness_by_top = lerp(thickness_bottom, thickness_top, top_influence);
+        let thickness_by_side = lerp(thickness_bottom, thickness_side, side_influence);
+        let thickness = max(max(thickness_by_top, thickness_by_side), 0.5);
+
+        let outer_alpha = 1.0 - smoothstep(-0.5, 0.5, dist);
+        let inner_threshold = -thickness;
+        let inner_alpha = 1.0 - smoothstep(inner_threshold - 0.5, inner_threshold + 0.5, dist);
+        let ring_alpha = clamp(outer_alpha - inner_alpha, 0.0, 1.0);
+        return vec4<f32>(in.color.rgb, in.color.a * ring_alpha * shape_alpha);
     }
 }

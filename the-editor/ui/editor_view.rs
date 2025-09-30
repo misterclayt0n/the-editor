@@ -48,7 +48,7 @@ use crate::{
 // Constants from the old editor
 const VIEW_PADDING_LEFT: f32 = 0.0;
 const VIEW_PADDING_TOP: f32 = 0.0;
-const VIEW_PADDING_BOTTOM: f32 = 0.0;
+const VIEW_PADDING_BOTTOM: f32 = 28.0; // Reserve space for statusline
 const STATUS_BAR_HEIGHT: f32 = 30.0;
 const CURSOR_HEIGHT_EXTENSION: f32 = 4.0;
 const LINE_SPACING: f32 = 4.0;
@@ -68,6 +68,8 @@ pub struct EditorView {
   cursor_lerp_factor:  f32,
   cursor_pos_smooth:   Option<(f32, f32)>,
   cursor_anim_active:  bool,
+  // Zoom animation state
+  zoom_anim_active:    bool,
 }
 
 impl EditorView {
@@ -85,6 +87,7 @@ impl EditorView {
       cursor_lerp_factor: 0.25,
       cursor_pos_smooth: None,
       cursor_anim_active: false,
+      zoom_anim_active: false,
     }
   }
 
@@ -95,8 +98,10 @@ impl EditorView {
 
 impl Component for EditorView {
   fn should_update(&self) -> bool {
-    // Redraw only when needed: dirty regions or ongoing cursor animation
-    self.dirty_region.needs_redraw() || (self.cursor_anim_enabled && self.cursor_anim_active)
+    // Redraw only when needed: dirty regions, cursor animation, or zoom animation
+    self.dirty_region.needs_redraw()
+      || (self.cursor_anim_enabled && self.cursor_anim_active)
+      || self.zoom_anim_active
   }
 
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
@@ -354,28 +359,55 @@ impl Component for EditorView {
       .unwrap_or(Color::new(0.1, 0.1, 0.15, 1.0));
     renderer.set_background_color(background_color);
 
-    let normal = normal_style
+    let mut normal = normal_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::rgb(0.85, 0.85, 0.9));
 
-    let cursor_fg = Color::rgb(0.1, 0.1, 0.15);
-    let cursor_bg = cursor_style
+    let mut cursor_fg = Color::rgb(0.1, 0.1, 0.15);
+    let mut cursor_bg = cursor_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::rgb(0.2, 0.8, 0.7));
 
-    let selection_bg = selection_style
+    let mut selection_bg = selection_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::rgba(0.3, 0.5, 0.8, 0.3));
 
-    let base_x = VIEW_PADDING_LEFT;
-    let base_y = VIEW_PADDING_TOP;
-
     // Get current view and document
     let focus_view = cx.editor.tree.focus;
+
+    // Update zoom animation
+    let zoom_anim_speed = 20.0; // Fast animation (completes in ~0.05s)
+    {
+      let view = cx.editor.tree.get_mut(focus_view);
+      if view.zoom_anim < 1.0 {
+        view.zoom_anim = (view.zoom_anim + cx.dt * zoom_anim_speed).min(1.0);
+        self.zoom_anim_active = true;
+      } else {
+        self.zoom_anim_active = false;
+      }
+    }
+
     let view = cx.editor.tree.get(focus_view);
+    let zoom_t = view.zoom_anim;
+    let zoom_ease = zoom_t * zoom_t * (3.0 - 2.0 * zoom_t); // Smoothstep easing
+
+    // Apply slide-up + fade effect with more pronounced motion
+    // Alpha fades in quickly, but slide is more dramatic
+    let zoom_alpha = zoom_ease.powf(0.7); // Faster fade-in
+    let zoom_offset_y = (1.0 - zoom_ease) * 50.0; // Start 50px below, slide to normal position
+
+    // Apply zoom alpha to all colors for fade-in effect
+    normal.a *= zoom_alpha;
+    cursor_fg.a *= zoom_alpha;
+    cursor_bg.a *= zoom_alpha;
+    selection_bg.a *= zoom_alpha;
+
+    let base_x = VIEW_PADDING_LEFT;
+    let base_y = VIEW_PADDING_TOP + zoom_offset_y;
+
     let doc_id = view.doc;
     let doc = &cx.editor.documents[&doc_id];
     let doc_text = doc.text();
@@ -612,8 +644,10 @@ impl Component for EditorView {
           let (mut sx, mut sy) = self.cursor_pos_smooth.unwrap_or((x, y));
           let dx = x - sx;
           let dy = y - sy;
-          sx += dx * self.cursor_lerp_factor;
-          sy += dy * self.cursor_lerp_factor;
+          // Time-based lerp: 5x faster than before for snappier cursor
+          let lerp_t = 1.0 - (1.0 - self.cursor_lerp_factor).powf(cx.dt * 420.0);
+          sx += dx * lerp_t;
+          sy += dy * lerp_t;
           self.cursor_pos_smooth = Some((sx, sy));
           // Mark animation active if still far from target
           self.cursor_anim_active = (dx * dx + dy * dy).sqrt() > 0.5;

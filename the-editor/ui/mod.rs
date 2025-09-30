@@ -108,3 +108,71 @@ pub trait Component {
     false
   }
 }
+
+/// Create a file picker for the given directory
+pub fn file_picker<F>(
+  root: std::path::PathBuf,
+  on_select: F,
+) -> components::Picker<std::path::PathBuf>
+where
+  F: Fn(&std::path::PathBuf) + Send + 'static,
+{
+  use ignore::WalkBuilder;
+
+  let root_for_format = root.clone();
+  let picker = components::Picker::new(
+    move |path: &std::path::PathBuf| {
+      // Format the path relative to root, stripping the root prefix
+      path
+        .strip_prefix(&root_for_format)
+        .ok()
+        .and_then(|p| p.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| path.display().to_string())
+    },
+    on_select,
+  );
+
+  let injector = picker.injector();
+  let root_clone = root.clone();
+
+  // Spawn background thread to walk directory and inject files
+  std::thread::spawn(move || {
+    let mut walker = WalkBuilder::new(&root_clone);
+    walker
+      .hidden(false)
+      .parents(true) // Read .gitignore files from parent directories
+      .git_ignore(true)
+      .git_global(false)
+      .git_exclude(false)
+      .filter_entry(|entry| {
+        // Skip .git directories
+        !entry.file_name().to_str().map(|s| s == ".git").unwrap_or(false)
+      })
+      .sort_by_file_name(|a, b| a.cmp(b));
+
+    for entry in walker.build() {
+      let Ok(entry) = entry else { continue };
+      if entry.file_type().is_some_and(|ft| ft.is_file()) {
+        let path = entry.into_path();
+        let root_for_inject = root_clone.clone();
+        if injector
+          .push(path.clone(), move |item, cols| {
+            // Use relative path for matching
+            let relative = item
+              .strip_prefix(&root_for_inject)
+              .ok()
+              .and_then(|p| p.to_str())
+              .unwrap_or_else(|| item.to_str().unwrap_or(""));
+            cols[0] = relative.into();
+          })
+          .is_err()
+        {
+          break; // Picker was closed
+        }
+      }
+    }
+  });
+
+  picker
+}

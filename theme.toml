@@ -46,9 +46,13 @@ tabstop = { bg = "bossanova", modifiers = [ "italic" ] }
 
 "ui.background"           = { bg = "midnight" }
 "ui.background.separator" = { fg = "comet" }
+"ui.button"               = { bg = "revolver", fg = "lavender" }
+"ui.button.highlight"     = { fg = "lilac" }
 "ui.help"                 = { bg = "#7958DC", fg = "#171452" }
 "ui.linenr"               = { fg = "comet" }
 "ui.linenr.selected"      = { fg = "lilac" }
+"ui.picker.selected"      = { bg = "#3a2a4c", fg = "lilac" }
+"ui.picker.selected.text" = { fg = "white" }
 "ui.popup"                = { bg = "revolver" }
 "ui.statusline"           = { bg = "revolver", fg = "lilac" }
 "ui.statusline.inactive"  = { bg = "revolver", fg = "lavender" }

@@ -133,16 +133,18 @@ impl Component for StatusLine {
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.6, 0.6, 0.6, 0.9));
 
-    // Update vertical animation
-    const ANIM_SPEED: f32 = 0.12; // Animation speed per frame
+    // Update vertical animation (time-based) - 5x faster
+    const ANIM_SPEED: f32 = 0.12; // Animation speed per frame (at 60fps)
     if self.anim_t < 1.0 {
-      self.anim_t = (self.anim_t + ANIM_SPEED).min(1.0);
+      // 5x faster for snappier animations
+      let speed = ANIM_SPEED * 420.0; // Speed per second
+      self.anim_t = (self.anim_t + speed * cx.dt).min(1.0);
     }
 
     // Calculate eased animation value (smooth ease-out)
     let eased_t = 1.0 - (1.0 - self.anim_t) * (1.0 - self.anim_t);
 
-    // Update horizontal slide animation
+    // Update horizontal slide animation (time-based) - 5x faster
     // Calculate target offset based on current viewport width
     const PROMPT_WIDTH_PERCENT: f32 = 0.25; // Match prompt's 25% width
     let target_offset = if self.should_slide {
@@ -151,9 +153,10 @@ impl Component for StatusLine {
       0.0
     };
 
-    const SLIDE_SPEED: f32 = 0.15; // Slightly faster for slide
+    const SLIDE_SPEED: f32 = 0.15; // Slightly faster for slide (at 60fps)
     if self.slide_anim_t < 1.0 {
-      self.slide_anim_t = (self.slide_anim_t + SLIDE_SPEED).min(1.0);
+      let speed = SLIDE_SPEED * 420.0; // 7x faster
+      self.slide_anim_t = (self.slide_anim_t + speed * cx.dt).min(1.0);
     }
 
     // Calculate eased slide value (smooth ease-out)
@@ -255,20 +258,24 @@ impl Component for StatusLine {
         }
       }
 
-      // Update animation
-      const STATUS_ANIM_SPEED: f32 = 0.15;
+      // Update animation (time-based) - 5x faster
+      const STATUS_ANIM_SPEED: f32 = 0.15; // At 60fps
       if self.status_msg_anim_t < 1.0 {
-        self.status_msg_anim_t = (self.status_msg_anim_t + STATUS_ANIM_SPEED).min(1.0);
+        let speed = STATUS_ANIM_SPEED * 420.0; // 7x faster
+        self.status_msg_anim_t = (self.status_msg_anim_t + speed * cx.dt).min(1.0);
       }
 
       // Calculate eased animation (smooth ease-out)
       let eased = 1.0 - (1.0 - self.status_msg_anim_t) * (1.0 - self.status_msg_anim_t);
 
-      // Lerp the slide position if animation is enabled
+      // Lerp the slide position if animation is enabled (time-based) - 5x faster
       if anim_enabled {
         let target_x = 0.0;
         let dx = target_x - self.status_msg_slide_x;
-        self.status_msg_slide_x += dx * 0.25; // Lerp factor
+        // 5x faster for snappier slide
+        let lerp_factor = 0.25_f32;
+        let lerp_t = 1.0 - (1.0 - lerp_factor).powf(cx.dt * 420.0);
+        self.status_msg_slide_x += dx * lerp_t;
       } else {
         self.status_msg_slide_x = 0.0;
       }

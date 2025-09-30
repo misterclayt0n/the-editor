@@ -232,10 +232,11 @@ impl Prompt {
       bg_color,
     );
 
-    // Update glow animation
-    const GLOW_SPEED: f32 = 0.025; // Slower for sweeping effect
+    // Update glow animation (time-based) - 4x faster
+    const GLOW_SPEED: f32 = 0.025; // Slower for sweeping effect (at 60fps)
     if self.glow_anim_t < 1.0 {
-      self.glow_anim_t = (self.glow_anim_t + GLOW_SPEED).min(1.0);
+      let speed = GLOW_SPEED * 420.0; // 7x faster
+      self.glow_anim_t = (self.glow_anim_t + speed * cx.dt).min(1.0);
     }
 
     // Draw bordered box around prompt area

@@ -198,6 +198,9 @@ pub struct View {
   // left to future work. For now we treat all views as focused and give them
   // each their own handler.
   pub diagnostics_handler: DiagnosticsHandler,
+  /// Animation factor for document opening (0.0 = just opened, 1.0 = fully
+  /// loaded)
+  pub zoom_anim:           f32,
 }
 
 impl fmt::Debug for View {
@@ -223,6 +226,7 @@ impl View {
       gutters,
       doc_revisions: HashMap::new(),
       diagnostics_handler: DiagnosticsHandler::new(),
+      zoom_anim: 1.0, // Start fully loaded for existing views
     }
   }
 

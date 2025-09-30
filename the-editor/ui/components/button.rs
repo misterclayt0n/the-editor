@@ -14,12 +14,15 @@ use crate::{
     position::Position,
   },
   editor::Editor,
-  ui::compositor::{
-    Component,
-    Context,
-    Event,
-    EventResult,
-    Surface,
+  ui::{
+    compositor::{
+      Component,
+      Context,
+      Event,
+      EventResult,
+      Surface,
+    },
+    theme_color_to_renderer_color,
   },
 };
 
@@ -29,7 +32,8 @@ pub struct Button {
   label: String,
 
   // Appearance
-  base_color: Color, // Outline and text color base; glow derives from this
+  base_color:     Color, // Outline and text color base; glow derives from this
+  color_override: bool,
 
   // State
   visible:         bool,
@@ -37,9 +41,8 @@ pub struct Button {
   pressed:         bool,
   hover_cursor_px: Option<(f32, f32)>, // cursor position in pixels relative to button top-left
 
-  // Click glow animation state
-  anim_active: bool,
-  anim_t:      f32, // 0.0 -> 1.0
+  // Click state animation (0.0 = not pressed, 1.0 = fully pressed)
+  anim_t: f32,
 
   // Behavior
   on_click: Option<Box<dyn FnMut() + 'static>>,
@@ -59,11 +62,11 @@ impl Button {
     Self {
       label:              label.into(),
       base_color:         Color::new(0.45, 0.47, 0.50, 1.0), // neutral gray by default
+      color_override:     false,
       visible:            true,
       hovered:            false,
       pressed:            false,
       hover_cursor_px:    None,
-      anim_active:        false,
       anim_t:             0.0,
       on_click:           None,
       cached_char_width:  12.0, // Default fallback values
@@ -84,6 +87,7 @@ impl Button {
   /// Set the outline/text base color (builder-style)
   pub fn color(mut self, color: Color) -> Self {
     self.base_color = color;
+    self.color_override = true;
     self
   }
 
@@ -116,6 +120,7 @@ impl Button {
   /// Update the base color at runtime
   pub fn set_color(&mut self, color: Color) {
     self.base_color = color;
+    self.color_override = true;
   }
 
   /// Update the click callback at runtime
@@ -144,6 +149,31 @@ impl Button {
     (x, y, w, h)
   }
 
+  fn resolve_colors(&self, cx: &Context) -> (Color, Color) {
+    if self.color_override {
+      let base = self.base_color;
+      let highlight = Self::glow_rgb_from_base(base);
+      return (base, highlight);
+    }
+
+    let theme = &cx.editor.theme;
+
+    let base = theme
+      .try_get_exact("ui.button")
+      .and_then(|style| style.fg)
+      .map(theme_color_to_renderer_color)
+      .unwrap_or(self.base_color);
+
+    let highlight = theme
+      .try_get_exact("ui.button.highlight")
+      .and_then(|style| style.fg)
+      .map(theme_color_to_renderer_color)
+      .unwrap_or_else(|| Self::glow_rgb_from_base(base));
+
+    (base, highlight)
+  }
+
+  #[allow(clippy::too_many_arguments)]
   fn draw_outline_button(
     &self,
     renderer: &mut Renderer,
@@ -152,15 +182,126 @@ impl Button {
     w: f32,
     h: f32,
     rounded: f32,
+    click_t: f32, // 0.0 = not clicking, 1.0 = fully clicked
+    base_color: Color,
+    highlight_color: Color,
   ) {
     // Colors: transparent fill, outline derived from base color
-    let mut outline = self.base_color;
+    let mut outline = base_color;
     outline.a = 0.95;
-    let border_thickness = 1.0; // thinner outline
-    renderer.draw_rounded_rect_stroke(x, y, w, h, rounded, border_thickness, outline);
+
+    if self.hovered {
+      // Directional border thickness only when hovered: top > sides > bottom
+      let bottom_thickness = (h * 0.035).clamp(0.6, 1.4);
+      let side_thickness = (bottom_thickness * 1.55).min(bottom_thickness + 1.8);
+      let top_thickness = (bottom_thickness * 2.3).min(bottom_thickness + 2.6);
+
+      renderer.draw_rounded_rect_stroke_fade(
+        x,
+        y,
+        w,
+        h,
+        rounded,
+        top_thickness,
+        side_thickness,
+        bottom_thickness,
+        outline,
+      );
+    } else {
+      // Default idle border remains uniform
+      renderer.draw_rounded_rect_stroke(x, y, w, h, rounded, 1.0, outline);
+    }
+
+    let glow_color = highlight_color;
+
+    // Bottom glow (only appears on click)
+    if click_t > 0.0 {
+      let bottom_center_y = y + h + 1.5; // slightly below bottom edge
+      let bottom_glow_strength = click_t * 0.12; // only on click, reduced intensity
+      let bottom_glow = Color::new(
+        glow_color.r,
+        glow_color.g,
+        glow_color.b,
+        bottom_glow_strength,
+      );
+      let bottom_radius = (w * 0.45).max(h * 0.42);
+      renderer.draw_rounded_rect_glow(
+        x,
+        y,
+        w,
+        h,
+        rounded,
+        x + w * 0.5,
+        bottom_center_y,
+        bottom_radius,
+        bottom_glow,
+      );
+    }
+
+    if self.hovered {
+      let hover_strength = 1.0 - click_t * 0.9; // almost fully disappear on click
+      Self::draw_hover_layers(renderer, x, y, w, h, rounded, glow_color, hover_strength);
+    }
   }
 
-  fn draw_hover_glow(&self, renderer: &mut Renderer, x: f32, y: f32, w: f32, h: f32) {
+  #[allow(clippy::too_many_arguments)]
+  pub(crate) fn draw_hover_layers(
+    renderer: &mut Renderer,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    rounded: f32,
+    highlight_color: Color,
+    strength: f32,
+  ) {
+    if strength <= 0.0 {
+      return;
+    }
+
+    let max_depth = (h * 0.33).max(1.0);
+    let top_center_x = x + w * 0.5;
+    let width_base = (w * 0.5).max(max_depth);
+    let layers = [
+      (-0.12, 0.9, 0.16),
+      (0.12, 1.12, 0.11),
+      (0.24, 1.3, 0.07),
+      (0.33, 1.48, 0.035),
+    ];
+
+    for (depth_ratio, radius_scale, alpha_scale) in layers {
+      let center_y = y + max_depth * depth_ratio;
+      let radius = (width_base * radius_scale).max(max_depth * (0.75 + depth_ratio.abs() * 0.4));
+      renderer.draw_rounded_rect_glow(
+        x,
+        y,
+        w,
+        h,
+        rounded,
+        top_center_x,
+        center_y,
+        radius,
+        Color::new(
+          highlight_color.r,
+          highlight_color.g,
+          highlight_color.b,
+          alpha_scale * strength,
+        ),
+      );
+    }
+  }
+
+  #[allow(clippy::too_many_arguments)]
+  fn draw_hover_glow(
+    &self,
+    renderer: &mut Renderer,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    click_t: f32,
+    highlight_color: Color,
+  ) {
     if !self.hovered {
       return;
     }
@@ -172,10 +313,15 @@ impl Button {
     let center_x = x + cx;
     let center_y = y + cy;
 
-    // Smooth internal glow, clipped in shader and with border accent.
-    let glow_radius = (w.max(h)) * 1.2; // A bit of larger area.
-    let glow_rgb = Self::glow_rgb_from_base(self.base_color);
-    let glow = Color::new(glow_rgb.r, glow_rgb.g, glow_rgb.b, 0.12);
+    // Subtle mouse-follow glow, fades during click
+    let glow_radius = (w.max(h)) * 1.2;
+    let glow_strength = 0.042 * (1.0 - click_t * 0.7);
+    let glow = Color::new(
+      highlight_color.r,
+      highlight_color.g,
+      highlight_color.b,
+      glow_strength,
+    );
     renderer.draw_rounded_rect_glow(
       x,
       y,
@@ -189,56 +335,23 @@ impl Button {
     );
   }
 
-  fn draw_click_flash(&mut self, renderer: &mut Renderer, x: f32, y: f32, w: f32, h: f32) -> bool {
-    if !self.anim_active {
-      return false;
+  fn update_click_state(&mut self, dt: f32) -> f32 {
+    // Target state: 1.0 when pressed, 0.0 when not pressed
+    let target = if self.pressed { 1.0 } else { 0.0 };
+
+    // Animate toward target
+    let anim_speed = 12.0; // Quick response
+    if (self.anim_t - target).abs() < 0.01 {
+      self.anim_t = target;
+    } else if self.anim_t < target {
+      self.anim_t = (self.anim_t + dt * anim_speed).min(target);
+    } else {
+      self.anim_t = (self.anim_t - dt * anim_speed).max(target);
     }
 
-    let cx = x + w * 0.5;
-    let cy = y + h * 0.5;
-    let base_r = (w.max(h)) * 0.9;
-    // Aggressive center-out dissipate with visible pulse
+    // Use ease-in-out for smooth transition
     let t = self.anim_t.clamp(0.0, 1.0);
-    let eased = 1.0 - (1.0 - t) * (1.0 - t);
-    let radius = base_r * (0.15 + 0.85 * eased);
-    let alpha = (1.0 - t).powf(0.6) * 0.22;
-    let glow_rgb = Self::glow_rgb_from_base(self.base_color);
-    renderer.draw_rounded_rect_glow(
-      x,
-      y,
-      w,
-      h,
-      (h * 0.5).min(10.0),
-      cx,
-      cy,
-      radius,
-      Color::new(glow_rgb.r, glow_rgb.g, glow_rgb.b, alpha),
-    );
-
-    // Secondary inner pulse for more impact.
-    let radius2 = base_r * (0.08 + 0.50 * eased);
-    let alpha2 = (1.0 - t).powf(0.4) * 0.30;
-    renderer.draw_rounded_rect_glow(
-      x,
-      y,
-      w,
-      h,
-      (h * 0.5).min(10.0),
-      cx,
-      cy,
-      radius2,
-      Color::new(glow_rgb.r, glow_rgb.g, glow_rgb.b, alpha2),
-    );
-
-    // Advance animation.
-    self.anim_t += 0.16; // ~6-7 frames to finish.
-    if self.anim_t >= 1.0 {
-      self.anim_active = false;
-      self.anim_t = 0.0;
-      return false; // Animation finished
-    }
-
-    true // Animation still running, need more redraws
+    t * t * (3.0 - 2.0 * t) // smoothstep
   }
 
   // --- Color helpers -----------------------------------------------------
@@ -312,9 +425,6 @@ impl Component for Button {
           } else if self.pressed && !mouse.pressed {
             // Release
             self.pressed = false;
-            // Trigger center-out glow animation
-            self.anim_active = true;
-            self.anim_t = 0.0;
             // Fire callback only if release occurs inside the button
             if inside && let Some(cb) = self.on_click.as_mut() {
               (cb)();
@@ -339,7 +449,7 @@ impl Component for Button {
     }
   }
 
-  fn render(&mut self, _area: Rect, renderer: &mut Surface, _cx: &mut Context) {
+  fn render(&mut self, _area: Rect, renderer: &mut Surface, cx: &mut Context) {
     if !self.visible {
       return;
     }
@@ -358,22 +468,34 @@ impl Component for Button {
     let (x, y, w, h) = Self::rect_to_pixels(rect, renderer);
     let radius = (h * 0.5).min(10.0);
 
-    // Base + outline
-    self.draw_outline_button(renderer, x, y, w, h, radius);
+    // Update click state and get current progress
+    let click_t = self.update_click_state(cx.dt);
 
-    // Hover glow following cursor
-    self.draw_hover_glow(renderer, x, y, w, h);
+    let (base_color, highlight_color) = self.resolve_colors(cx);
 
-    // Click flash (one-shot) - returns true if animation needs more frames
-    self.draw_click_flash(renderer, x, y, w, h);
+    // Base + outline (with click inversion effect)
+    self.draw_outline_button(
+      renderer,
+      x,
+      y,
+      w,
+      h,
+      radius,
+      click_t,
+      base_color,
+      highlight_color,
+    );
+
+    // Hover glow following cursor (weakens during click)
+    self.draw_hover_glow(renderer, x, y, w, h, click_t, highlight_color);
 
     // Label centered
     let text_color = if self.hovered {
       // Slightly elevated contrast on hover
-      let lifted = Self::mix(self.base_color, Color::WHITE, 0.70);
+      let lifted = Self::mix(base_color, Color::WHITE, 0.70);
       Color::new(lifted.r, lifted.g, lifted.b, 1.0)
     } else {
-      self.base_color
+      base_color
     };
     let font_size = (h * 0.5).clamp(12.0, 20.0);
     // Position is top-left; center the text inside the button.
@@ -396,7 +518,8 @@ impl Component for Button {
   }
 
   fn should_update(&self) -> bool {
-    // Update when animating
-    self.anim_active
+    // Update when animating click state transition
+    let target = if self.pressed { 1.0 } else { 0.0 };
+    (self.anim_t - target).abs() > 0.01
   }
 }

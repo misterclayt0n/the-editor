@@ -1169,6 +1169,88 @@ pub fn normal_mode(cx: &mut Context) {
   cx.editor.set_mode(Mode::Normal);
 }
 
+pub fn file_picker(cx: &mut Context) {
+  use std::{
+    path::PathBuf,
+    sync::{
+      Arc,
+      Mutex,
+    },
+  };
+
+  let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+  let selected_file = Arc::new(Mutex::new(None::<PathBuf>));
+  let selected_file_clone = selected_file.clone();
+
+  cx.callback.push(Box::new(move |compositor, _cx| {
+    let picker = crate::ui::file_picker(cwd, move |path: &PathBuf| {
+      *selected_file.lock().unwrap() = Some(path.clone());
+    });
+
+    // Create a wrapper picker that will open the file when closed
+    struct PickerWrapper {
+      picker:        crate::ui::components::Picker<PathBuf>,
+      selected_file: Arc<Mutex<Option<PathBuf>>>,
+    }
+
+    impl crate::ui::compositor::Component for PickerWrapper {
+      fn handle_event(
+        &mut self,
+        event: &crate::ui::compositor::Event,
+        ctx: &mut crate::ui::compositor::Context,
+      ) -> crate::ui::compositor::EventResult {
+        let result = self.picker.handle_event(event, ctx);
+
+        // If the picker is closing, check if a file was selected and open it
+        if let crate::ui::compositor::EventResult::Consumed(Some(callback)) = result {
+          let selected = self.selected_file.lock().unwrap().take();
+          return crate::ui::compositor::EventResult::Consumed(Some(Box::new(
+            move |compositor, ctx| {
+              // First execute the picker's close callback
+              callback(compositor, ctx);
+
+              // Then open the selected file if any
+              if let Some(path) = selected {
+                use crate::editor::Action;
+                if let Err(e) = ctx.editor.open(&path, Action::Replace) {
+                  ctx.editor.set_error(format!("Failed to open file: {}", e));
+                }
+              }
+            },
+          )));
+        }
+
+        result
+      }
+
+      fn render(
+        &mut self,
+        area: crate::core::graphics::Rect,
+        surface: &mut crate::ui::compositor::Surface,
+        ctx: &mut crate::ui::compositor::Context,
+      ) {
+        self.picker.render(area, surface, ctx);
+      }
+
+      fn cursor(
+        &self,
+        area: crate::core::graphics::Rect,
+        editor: &crate::editor::Editor,
+      ) -> (
+        Option<crate::core::position::Position>,
+        crate::core::graphics::CursorKind,
+      ) {
+        self.picker.cursor(area, editor)
+      }
+    }
+
+    compositor.push(Box::new(PickerWrapper {
+      picker,
+      selected_file: selected_file_clone,
+    }));
+  }));
+}
+
 // Inserts at the start of each selection.
 pub fn insert_mode(cx: &mut Context) {
   enter_insert_mode(cx);

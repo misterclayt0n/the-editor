@@ -102,6 +102,9 @@ impl Component for EditorView {
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
     match event {
       Event::Key(key) => {
+        // Clear status on any key press
+        cx.editor.clear_status();
+
         // Check if we're waiting for a key callback
         if let Some((callback, _)) = self.on_next_key.take() {
           // Execute the on_next_key callback

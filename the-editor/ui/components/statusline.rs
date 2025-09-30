@@ -22,26 +22,33 @@ const FONT_SIZE: f32 = 13.0;
 /// StatusLine component with RAD Debugger aesthetics
 /// Emacs-style: shows mode and buffer as plain text with color coding
 pub struct StatusLine {
-  visible:        bool,
-  target_visible: bool, // Animation target
-  anim_t:         f32,  // Animation progress 0.0 -> 1.0
-  status_bar_y:   f32,  // Current animated Y position
+  visible:            bool,
+  target_visible:     bool, // Animation target
+  anim_t:             f32,  // Animation progress 0.0 -> 1.0
+  status_bar_y:       f32,  // Current animated Y position
   // Horizontal slide for prompt
-  slide_offset:   f32,  // Current horizontal offset
-  should_slide:   bool, // Whether we should be slid for prompt
-  slide_anim_t:   f32,  // Slide animation progress 0.0 -> 1.0
+  slide_offset:       f32,  // Current horizontal offset
+  should_slide:       bool, // Whether we should be slid for prompt
+  slide_anim_t:       f32,  // Slide animation progress 0.0 -> 1.0
+  // Status message animation
+  status_msg_anim_t:  f32,            // Fade-in animation for status messages
+  status_msg_slide_x: f32,            // Horizontal slide position
+  last_status_msg:    Option<String>, // Track last message to detect changes
 }
 
 impl StatusLine {
   pub fn new() -> Self {
     Self {
-      visible:        true,
-      target_visible: true,
-      anim_t:         1.0, // Start fully visible
-      status_bar_y:   0.0, // Will be calculated on first render
-      slide_offset:   0.0,
-      should_slide:   false,
-      slide_anim_t:   1.0, // Start at rest
+      visible:            true,
+      target_visible:     true,
+      anim_t:             1.0, // Start fully visible
+      status_bar_y:       0.0, // Will be calculated on first render
+      slide_offset:       0.0,
+      should_slide:       false,
+      slide_anim_t:       1.0, // Start at rest
+      status_msg_anim_t:  0.0, // Start invisible
+      status_msg_slide_x: 0.0,
+      last_status_msg:    None,
     }
   }
 
@@ -229,7 +236,90 @@ impl Component for StatusLine {
     } else {
       format!("{}/{} sel", selection.primary_index() + 1, selection_count)
     };
-    let _sel_width = Self::draw_text(surface, x, bar_y, &selection_text, text_color);
+    let sel_width = Self::draw_text(surface, x, bar_y, &selection_text, text_color);
+    x += sel_width + SEGMENT_SPACING;
+
+    // Status message (with fade-in and slide animation)
+    if let Some((status_msg, severity)) = cx.editor.get_status() {
+      let anim_enabled = cx.editor.config().status_msg_anim_enabled;
+
+      // Detect message changes to restart animation
+      let current_msg = status_msg.to_string();
+      if self.last_status_msg.as_ref() != Some(&current_msg) {
+        self.last_status_msg = Some(current_msg);
+        self.status_msg_anim_t = 0.0; // Reset animation
+        if anim_enabled {
+          self.status_msg_slide_x = -30.0; // Start 30px to the left
+        } else {
+          self.status_msg_slide_x = 0.0;
+        }
+      }
+
+      // Update animation
+      const STATUS_ANIM_SPEED: f32 = 0.15;
+      if self.status_msg_anim_t < 1.0 {
+        self.status_msg_anim_t = (self.status_msg_anim_t + STATUS_ANIM_SPEED).min(1.0);
+      }
+
+      // Calculate eased animation (smooth ease-out)
+      let eased = 1.0 - (1.0 - self.status_msg_anim_t) * (1.0 - self.status_msg_anim_t);
+
+      // Lerp the slide position if animation is enabled
+      if anim_enabled {
+        let target_x = 0.0;
+        let dx = target_x - self.status_msg_slide_x;
+        self.status_msg_slide_x += dx * 0.25; // Lerp factor
+      } else {
+        self.status_msg_slide_x = 0.0;
+      }
+
+      // Get color based on severity
+      use crate::core::diagnostics::Severity;
+      let msg_color = match severity {
+        Severity::Error => {
+          let error_style = theme.get("error");
+          error_style
+            .fg
+            .map(crate::ui::theme_color_to_renderer_color)
+            .unwrap_or(Color::new(0.9, 0.3, 0.3, 1.0))
+        },
+        Severity::Warning => {
+          let warning_style = theme.get("warning");
+          warning_style
+            .fg
+            .map(crate::ui::theme_color_to_renderer_color)
+            .unwrap_or(Color::new(0.9, 0.7, 0.3, 1.0))
+        },
+        Severity::Info => {
+          let info_style = theme.get("info");
+          info_style
+            .fg
+            .map(crate::ui::theme_color_to_renderer_color)
+            .unwrap_or(Color::new(0.4, 0.7, 0.9, 1.0))
+        },
+        Severity::Hint => {
+          let hint_style = theme.get("hint");
+          hint_style
+            .fg
+            .map(crate::ui::theme_color_to_renderer_color)
+            .unwrap_or(Color::new(0.5, 0.5, 0.5, 1.0))
+        },
+      };
+
+      // Apply animation to color alpha
+      let animated_color = Color::new(msg_color.r, msg_color.g, msg_color.b, msg_color.a * eased);
+
+      // Draw at animated position
+      let anim_x = x + self.status_msg_slide_x;
+      Self::draw_text(surface, anim_x, bar_y, status_msg.as_ref(), animated_color);
+    } else {
+      // Clear last message when there's no status
+      if self.last_status_msg.is_some() {
+        self.last_status_msg = None;
+        self.status_msg_anim_t = 0.0;
+        self.status_msg_slide_x = 0.0;
+      }
+    }
 
     // Right side: LSP | GIT BRANCH (right-aligned)
     let mut right_segments = Vec::new();
@@ -257,6 +347,6 @@ impl Component for StatusLine {
 
   fn should_update(&self) -> bool {
     // Keep updating while any animation is running
-    self.anim_t < 1.0 || self.slide_anim_t < 1.0
+    self.anim_t < 1.0 || self.slide_anim_t < 1.0 || self.status_msg_anim_t < 1.0
   }
 }

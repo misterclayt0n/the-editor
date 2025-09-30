@@ -602,6 +602,8 @@ pub struct EditorConfig {
   // Cursor animation
   pub cursor_anim_enabled:       bool,
   pub cursor_lerp_factor:        f32,
+  // Status message animation
+  pub status_msg_anim_enabled:   bool,
   /// Workspace specific lsp ceiling dirs
   pub workspace_lsp_roots:       Vec<PathBuf>,
   /// Which line ending to choose for new documents. Defaults to `native`. i.e.
@@ -1633,6 +1635,7 @@ impl Default for EditorConfig {
       scroll_min_step_cols:      1.0,
       cursor_anim_enabled:       true,
       cursor_lerp_factor:        0.25,
+      status_msg_anim_enabled:   true,
     }
   }
 }

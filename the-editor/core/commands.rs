@@ -2994,6 +2994,19 @@ pub fn toggle_button(cx: &mut Context) {
   }));
 }
 
+pub fn toggle_statusline(cx: &mut Context) {
+  // Toggle visibility of statusline with animation
+  cx.callback.push(Box::new(|compositor, _cx| {
+    use crate::ui::components::statusline::StatusLine;
+    for layer in compositor.layers.iter_mut() {
+      if let Some(statusline) = layer.as_any_mut().downcast_mut::<StatusLine>() {
+        statusline.toggle();
+        break;
+      }
+    }
+  }));
+}
+
 pub fn parse_macro(keys_str: &str) -> anyhow::Result<Vec<KeyBinding>> {
   use anyhow::Context;
   let mut keys_res: anyhow::Result<_> = Ok(Vec::new());

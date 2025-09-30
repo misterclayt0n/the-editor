@@ -19,7 +19,10 @@ use crate::{
     Keymaps,
   },
   ui::{
-    components::button::Button,
+    components::{
+      button::Button,
+      statusline::StatusLine,
+    },
     compositor::{
       Component,
       Compositor,
@@ -58,6 +61,10 @@ impl App {
     let keymaps = Keymaps::default();
     let editor_view = Box::new(EditorView::new(keymaps));
     compositor.push(editor_view);
+
+    // Add statusline
+    let statusline = Box::new(StatusLine::new());
+    compositor.push(statusline);
 
     // NOTE: This is a test button btw.
     let button = Box::new(

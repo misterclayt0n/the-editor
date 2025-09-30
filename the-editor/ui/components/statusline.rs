@@ -66,7 +66,7 @@ impl StatusLine {
     match mode {
       Mode::Normal => "NORMAL",
       Mode::Insert => "INSERT",
-      Mode::Select => "VISUAL",
+      Mode::Select => "SELECT",
       Mode::Command => "COMMAND",
     }
   }

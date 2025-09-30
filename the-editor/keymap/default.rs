@@ -137,9 +137,10 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "end"                               => goto_line_end_newline,
   });
 
-  // Visual mode: movement extends selection, Esc exits visual mode
-  let select = crate::keymap!({ "Visual"
-   "esc"       => normal_mode,
+  // Visual mode: inherits from Normal, overrides movement to extend selection
+  let mut select = normal.clone();
+  select.merge_nodes(crate::keymap!({ "Visual"
+    "esc"       => normal_mode,
 
     "h" | Left  => extend_char_left,
     "j" | Down  => extend_visual_line_down,
@@ -151,16 +152,12 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "F"         => extend_prev_char,
     "T"         => extend_till_prev_char,
 
-
     "w"         => extend_next_word_start,
     "b"         => extend_prev_word_start,
     "e"         => extend_next_word_end,
     "W"         => extend_next_long_word_start,
     "B"         => extend_prev_long_word_start,
     "E"         => extend_next_long_word_end,
-
-    "d"         => delete_selection,
-    "c"         => change_selection,
 
     "g" => { "Goto"
       "g" => extend_to_file_start,
@@ -170,11 +167,20 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "j" => extend_line_down,
       // "w" => extend_to_word,
     },
-  });
+  }));
+
+  // Command mode: inherits from Normal, but blocks most keys for text input
+  let mut command = normal.clone();
+  command.merge_nodes(crate::keymap!({ "Command"
+    "esc" => normal_mode,
+    // Command mode specific bindings are handled by the Prompt component
+    // This just provides fallback behavior for unhandled keys
+  }));
 
   let mut map = HashMap::new();
   map.insert(Mode::Normal, normal);
   map.insert(Mode::Insert, insert);
   map.insert(Mode::Select, select);
+  map.insert(Mode::Command, command);
   map
 }

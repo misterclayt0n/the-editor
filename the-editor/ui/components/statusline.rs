@@ -26,6 +26,10 @@ pub struct StatusLine {
   target_visible: bool, // Animation target
   anim_t:         f32,  // Animation progress 0.0 -> 1.0
   status_bar_y:   f32,  // Current animated Y position
+  // Horizontal slide for prompt
+  slide_offset:   f32,  // Current horizontal offset
+  should_slide:   bool, // Whether we should be slid for prompt
+  slide_anim_t:   f32,  // Slide animation progress 0.0 -> 1.0
 }
 
 impl StatusLine {
@@ -35,6 +39,9 @@ impl StatusLine {
       target_visible: true,
       anim_t:         1.0, // Start fully visible
       status_bar_y:   0.0, // Will be calculated on first render
+      slide_offset:   0.0,
+      should_slide:   false,
+      slide_anim_t:   1.0, // Start at rest
     }
   }
 
@@ -46,6 +53,12 @@ impl StatusLine {
 
   pub fn is_visible(&self) -> bool {
     self.visible
+  }
+
+  /// Slide statusline content to make room for prompt
+  pub fn slide_for_prompt(&mut self, slide: bool) {
+    self.should_slide = slide;
+    self.slide_anim_t = 0.0; // Start animation
   }
 
   /// Get mode string
@@ -113,7 +126,7 @@ impl Component for StatusLine {
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.6, 0.6, 0.6, 0.9));
 
-    // Update animation
+    // Update vertical animation
     const ANIM_SPEED: f32 = 0.12; // Animation speed per frame
     if self.anim_t < 1.0 {
       self.anim_t = (self.anim_t + ANIM_SPEED).min(1.0);
@@ -121,6 +134,24 @@ impl Component for StatusLine {
 
     // Calculate eased animation value (smooth ease-out)
     let eased_t = 1.0 - (1.0 - self.anim_t) * (1.0 - self.anim_t);
+
+    // Update horizontal slide animation
+    // Calculate target offset based on current viewport width
+    const PROMPT_WIDTH_PERCENT: f32 = 0.25; // Match prompt's 25% width
+    let target_offset = if self.should_slide {
+      surface.width() as f32 * PROMPT_WIDTH_PERCENT + 16.0 // Add spacing after prompt box
+    } else {
+      0.0
+    };
+
+    const SLIDE_SPEED: f32 = 0.15; // Slightly faster for slide
+    if self.slide_anim_t < 1.0 {
+      self.slide_anim_t = (self.slide_anim_t + SLIDE_SPEED).min(1.0);
+    }
+
+    // Calculate eased slide value (smooth ease-out)
+    let eased_slide = 1.0 - (1.0 - self.slide_anim_t) * (1.0 - self.slide_anim_t);
+    self.slide_offset = self.slide_offset + (target_offset - self.slide_offset) * eased_slide;
 
     // Calculate Y position with animation
     let base_y = surface.height() as f32 - STATUS_BAR_HEIGHT;
@@ -154,7 +185,8 @@ impl Component for StatusLine {
     let doc = cx.editor.documents.get(&view.doc).unwrap();
 
     // Left side: MODE | FILE | % | SELECTION
-    let mut x = SEGMENT_PADDING_X;
+    // Apply horizontal slide offset
+    let mut x = SEGMENT_PADDING_X + self.slide_offset;
 
     // Mode text
     let mode_text = Self::mode_text(mode);
@@ -214,17 +246,17 @@ impl Component for StatusLine {
       right_segments.push(format!("{}", branch.as_ref()));
     }
 
-    // Render right-aligned segments
+    // Render right-aligned segments (also offset)
     if !right_segments.is_empty() {
       let combined_text = right_segments.join(" | ");
       let text_width = Self::measure_text(&combined_text);
-      let right_x = surface.width() as f32 - text_width - SEGMENT_PADDING_X;
+      let right_x = surface.width() as f32 - text_width - SEGMENT_PADDING_X + self.slide_offset;
       Self::draw_text(surface, right_x, bar_y, &combined_text, text_color);
     }
   }
 
   fn should_update(&self) -> bool {
-    // Keep updating while animation is running
-    self.anim_t < 1.0
+    // Keep updating while any animation is running
+    self.anim_t < 1.0 || self.slide_anim_t < 1.0
   }
 }

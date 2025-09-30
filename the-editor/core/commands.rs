@@ -1143,12 +1143,26 @@ fn enter_insert_mode(cx: &mut Context) {
 }
 
 pub fn command_mode(cx: &mut Context) {
+  // Set editor mode to Command so statusline shows COMMAND
   cx.editor.set_mode(Mode::Command);
 
-  // Initialize command prompt if needed
-  if cx.editor.command_prompt.is_none() {
-    cx.editor.init_command_prompt();
-  }
+  // Push the command prompt to the compositor
+  let prompt = crate::ui::components::prompt::Prompt::new(String::new()); // Empty prefix
+
+  cx.callback.push(Box::new(|compositor, _cx| {
+    // Find the statusline and trigger slide animation
+    for layer in compositor.layers.iter_mut() {
+      if let Some(statusline) = layer
+        .as_any_mut()
+        .downcast_mut::<crate::ui::components::statusline::StatusLine>()
+      {
+        statusline.slide_for_prompt(true);
+        break;
+      }
+    }
+
+    compositor.push(Box::new(prompt));
+  }));
 }
 
 pub fn normal_mode(cx: &mut Context) {

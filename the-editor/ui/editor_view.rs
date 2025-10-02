@@ -644,8 +644,8 @@ impl Component for EditorView {
           let (mut sx, mut sy) = self.cursor_pos_smooth.unwrap_or((x, y));
           let dx = x - sx;
           let dy = y - sy;
-          // Time-based lerp: 5x faster than before for snappier cursor
-          let lerp_t = 1.0 - (1.0 - self.cursor_lerp_factor).powf(cx.dt * 420.0);
+          // Time-based lerp: much faster for snappier cursor while typing
+          let lerp_t = 1.0 - (1.0 - self.cursor_lerp_factor).powf(cx.dt * 800.0);
           sx += dx * lerp_t;
           sy += dy * lerp_t;
           self.cursor_pos_smooth = Some((sx, sy));

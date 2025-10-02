@@ -740,6 +740,17 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
     let corner_radius = (height_scaled * 0.02).min(8.0);
     let border_thickness = 1.0;
 
+    // Draw opaque picker background first (before enabling overlay text mode)
+    let picker_bg = Color::new(bg_color.r, bg_color.g, bg_color.b, alpha);
+    surface.draw_rounded_rect(
+      x,
+      y,
+      picker_width_scaled,
+      height_scaled,
+      corner_radius,
+      picker_bg,
+    );
+
     // Set stencil mask to prevent text from rendering in the picker area (including
     // preview if visible). This uses GPU stencil buffer for precise pixel-level
     // text occlusion.
@@ -753,18 +764,8 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
     surface.set_stencil_mask_rect(x, y, mask_width, height_scaled);
 
     // Enable overlay text mode for picker UI (bypasses stencil mask)
+    // Only enable after background is drawn to prevent text flashing outside container
     surface.begin_overlay_text();
-
-    // Draw opaque picker background (like Helix does with clear_with)
-    let picker_bg = Color::new(bg_color.r, bg_color.g, bg_color.b, alpha);
-    surface.draw_rounded_rect(
-      x,
-      y,
-      picker_width_scaled,
-      height_scaled,
-      corner_radius,
-      picker_bg,
-    );
 
     // Apply alpha to border color
     let border_color_anim = Color::new(

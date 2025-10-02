@@ -232,10 +232,10 @@ impl Prompt {
       bg_color,
     );
 
-    // Update glow animation (time-based) - 4x faster
-    const GLOW_SPEED: f32 = 0.025; // Slower for sweeping effect (at 60fps)
+    // Update glow animation (time-based) - balanced speed
+    const GLOW_SPEED: f32 = 0.025; // Base speed for sweeping effect
     if self.glow_anim_t < 1.0 {
-      let speed = GLOW_SPEED * 420.0; // 7x faster
+      let speed = GLOW_SPEED * 300.0; // Faster but still visible
       self.glow_anim_t = (self.glow_anim_t + speed * cx.dt).min(1.0);
     }
 

@@ -255,9 +255,11 @@ pub struct Editor {
   pub input_handler: InputHandler,
 
   // Command mode support
-  pub command_prompt:   Option<crate::ui::components::Prompt>,
-  pub command_registry: crate::core::command_registry::CommandRegistry,
-  pub command_history:  Vec<String>,
+  pub command_prompt:    Option<crate::ui::components::Prompt>,
+  pub command_registry:  crate::core::command_registry::CommandRegistry,
+  pub command_history:   Vec<String>,
+  // Font size override (for runtime zooming)
+  pub font_size_override: Option<f32>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -647,6 +649,8 @@ pub struct EditorConfig {
   /// Whether to render rainbow colors for matching brackets. Defaults to
   /// `false`.
   pub rainbow_brackets:          bool,
+  /// Font size for the editor buffer. Defaults to 22.0.
+  pub font_size:                 f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
@@ -1636,6 +1640,7 @@ impl Default for EditorConfig {
       cursor_anim_enabled:       true,
       cursor_lerp_factor:        0.25,
       status_msg_anim_enabled:   true,
+      font_size:                 22.0,
     }
   }
 }
@@ -1713,6 +1718,7 @@ impl Editor {
       command_prompt: None,
       command_registry: crate::core::command_registry::CommandRegistry::new(),
       command_history: Vec::new(),
+      font_size_override: None,
     }
   }
 

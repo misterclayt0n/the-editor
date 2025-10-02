@@ -63,6 +63,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "C-b"       => toggle_debug_panel,
     "C-n"       => toggle_button,
     "C-d"       => toggle_statusline,
+    "C-="       => increase_font_size,
+    "C-minus"   => decrease_font_size,
 
     "%"         => select_all,
     "x"         => extend_line_below,

@@ -3103,6 +3103,18 @@ pub fn toggle_statusline(cx: &mut Context) {
   }));
 }
 
+pub fn increase_font_size(cx: &mut Context) {
+  let new_size = (cx.editor.font_size_override.unwrap_or(cx.editor.config().font_size) + 2.0).min(72.0);
+  cx.editor.font_size_override = Some(new_size);
+  cx.editor.set_status(format!("Font size: {}", new_size));
+}
+
+pub fn decrease_font_size(cx: &mut Context) {
+  let new_size = (cx.editor.font_size_override.unwrap_or(cx.editor.config().font_size) - 2.0).max(8.0);
+  cx.editor.font_size_override = Some(new_size);
+  cx.editor.set_status(format!("Font size: {}", new_size));
+}
+
 pub fn parse_macro(keys_str: &str) -> anyhow::Result<Vec<KeyBinding>> {
   use anyhow::Context;
   let mut keys_res: anyhow::Result<_> = Ok(Vec::new());

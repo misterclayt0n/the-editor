@@ -289,7 +289,7 @@ impl Component for EditorView {
   }
 
   fn render(&mut self, _area: Rect, renderer: &mut Surface, cx: &mut Context) {
-    let font_size = 22.0; // TODO: Get from config
+    let font_size = cx.editor.font_size_override.unwrap_or(cx.editor.config().font_size);
     let font_family = renderer.current_font_family().to_string();
     renderer.configure_font(&font_family, font_size);
     let font_width = renderer.cell_width().max(1.0);

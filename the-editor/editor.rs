@@ -255,9 +255,9 @@ pub struct Editor {
   pub input_handler: InputHandler,
 
   // Command mode support
-  pub command_prompt:    Option<crate::ui::components::Prompt>,
-  pub command_registry:  crate::core::command_registry::CommandRegistry,
-  pub command_history:   Vec<String>,
+  pub command_prompt:     Option<crate::ui::components::Prompt>,
+  pub command_registry:   crate::core::command_registry::CommandRegistry,
+  pub command_history:    Vec<String>,
   // Font size override (for runtime zooming)
   pub font_size_override: Option<f32>,
 }
@@ -1600,7 +1600,7 @@ impl Default for EditorConfig {
       file_picker:               FilePickerConfig::default(),
       statusline:                StatusLineConfig::default(),
       cursor_shape:              CursorShapeConfig::default(),
-      true_color:                false,
+      true_color:                true,
       undercurl:                 false,
       search:                    SearchConfig::default(),
       lsp:                       LspConfig::default(),
@@ -1672,7 +1672,7 @@ impl Editor {
     // HAXX: offset the render area height by 1 to account for prompt/commandline
     area.height -= 1;
 
-    Self {
+    let editor = Self {
       mode: Mode::Normal,
       tree: Tree::new(area),
       next_document_id: DocumentId::default(),
@@ -1719,7 +1719,12 @@ impl Editor {
       command_registry: crate::core::command_registry::CommandRegistry::new(),
       command_history: Vec::new(),
       font_size_override: None,
-    }
+    };
+
+    let scopes = editor.theme.scopes().to_vec();
+    (*editor.syn_loader).load().set_scopes(scopes);
+
+    editor
   }
 
   pub fn popup_border(&self) -> bool {

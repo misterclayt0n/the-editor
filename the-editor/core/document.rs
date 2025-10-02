@@ -1264,9 +1264,6 @@ impl Document {
     self.syntax = self.language.as_ref().and_then(|config| {
       Syntax::new(self.text.slice(..), config.language(), loader)
         .map_err(|err| {
-          // `NoRootConfig` means that there was an issue loading the language/syntax
-          // config for the root language of the document. An error must have already
-          // been logged by `LanguageData::syntax_config`.
           if err != syntax::HighlighterError::NoRootConfig {
             log::warn!("Error building syntax for '{}': {err}", self.display_name());
           }

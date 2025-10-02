@@ -83,17 +83,17 @@ fn main() -> anyhow::Result<()> {
     handlers,
   );
 
+  let theme = config
+    .theme
+    .as_deref()
+    .and_then(|name| theme_loader.load(name).ok())
+    .unwrap_or_else(|| theme_loader.default_theme(config.editor.true_color));
+  editor.set_theme(theme);
+
   // Create the initial view by opening a new empty file (like helix does).
   {
     use crate::editor::Action;
     editor.new_file(Action::VerticalSplit);
-  }
-
-  // Apply configured theme if present.
-  if let Some(theme_name) = config.theme.as_deref()
-    && let Ok(theme) = theme_loader.load(theme_name)
-  {
-    editor.set_theme(theme);
   }
 
   // Create the application wrapper

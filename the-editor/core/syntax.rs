@@ -315,6 +315,7 @@ fn reconfigure_highlights(config: &SyntaxConfig, recognized_names: &[String]) {
         best_match_len = len;
       }
     }
+
     best_index.map(|idx| Highlight::new(idx as u32))
   });
 }
@@ -576,6 +577,21 @@ impl FileTypeGlobMatcher {
 #[derive(Debug)]
 pub struct Syntax {
   inner: tree_house::Syntax,
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn debug_highlight_config() {
+    let loader = crate::core::config::default_lang_loader();
+    let theme = crate::core::theme::DEFAULT_THEME.clone();
+    loader.set_scopes(theme.scopes().to_vec());
+
+    let language = loader.language_for_name("nix").expect("nix language");
+    let _ = loader.language(language).syntax_config(&loader);
+  }
 }
 
 const PARSE_TIMEOUT: Duration = Duration::from_millis(500); // half a second is pretty generous
@@ -1265,6 +1281,71 @@ mod test {
   use crate::core::transaction::Transaction;
 
   static LOADER: Lazy<Loader> = Lazy::new(crate::core::config::default_lang_loader);
+
+  #[test]
+  fn default_theme_highlight_colors() {
+    let theme = crate::core::theme::DEFAULT_THEME.clone();
+    LOADER.set_scopes(theme.scopes().to_vec());
+
+    let language = LOADER.language_for_name("rust").expect("rust language");
+    let text = Rope::from("fn main() { 1 + 2 }");
+    let syntax = Syntax::new(text.slice(..), language, &LOADER).expect("syntax");
+    let mut highlighter = syntax.highlighter(text.slice(..), &LOADER, 0..text.len_bytes() as u32);
+
+    let mut saw_color = None;
+    for _ in 0..128 {
+      let (event, highlights) = highlighter.advance();
+      let base = match event {
+        HighlightEvent::Refresh => crate::core::graphics::Style::default(),
+        HighlightEvent::Push => crate::core::graphics::Style::default(),
+      };
+      let style = highlights.fold(base, |acc, highlight| acc.patch(theme.highlight(highlight)));
+      if let Some(color) = style.fg {
+        saw_color = Some(color);
+        break;
+      }
+      if highlighter.next_event_offset() == u32::MAX {
+        break;
+      }
+    }
+
+    match saw_color {
+      Some(crate::core::graphics::Color::Rgb(..)) => {},
+      Some(other) => panic!("unexpected non-RGB color from default theme: {:?}", other),
+      None => panic!("expected at least one highlighted token with foreground color"),
+    }
+  }
+
+  #[test]
+  fn default_theme_highlight_colors_nix() {
+    let theme = crate::core::theme::DEFAULT_THEME.clone();
+    LOADER.set_scopes(theme.scopes().to_vec());
+
+    let language = match LOADER.language_for_name("nix") {
+      Some(lang) => lang,
+      None => return,
+    };
+    let text = Rope::from("{ description = \"hi\"; }");
+    let syntax = Syntax::new(text.slice(..), language, &LOADER).expect("syntax");
+    let mut highlighter = syntax.highlighter(text.slice(..), &LOADER, 0..text.len_bytes() as u32);
+
+    for _ in 0..128 {
+      let (event, highlights) = highlighter.advance();
+      let base = match event {
+        HighlightEvent::Refresh => crate::core::graphics::Style::default(),
+        HighlightEvent::Push => crate::core::graphics::Style::default(),
+      };
+      let style = highlights.fold(base, |acc, highlight| acc.patch(theme.highlight(highlight)));
+      if let Some(crate::core::graphics::Color::Rgb(..)) = style.fg {
+        return;
+      }
+      if highlighter.next_event_offset() == u32::MAX {
+        break;
+      }
+    }
+
+    panic!("expected nix snippet to receive at least one RGB highlight color");
+  }
 
   #[test]
   fn test_textobject_queries() {

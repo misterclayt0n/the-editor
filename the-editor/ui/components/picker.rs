@@ -764,7 +764,8 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
     surface.set_stencil_mask_rect(x, y, mask_width, height_scaled);
 
     // Enable overlay text mode for picker UI (bypasses stencil mask)
-    // Only enable after background is drawn to prevent text flashing outside container
+    // Only enable after background is drawn to prevent text flashing outside
+    // container
     surface.begin_overlay_text();
 
     // Apply alpha to border color

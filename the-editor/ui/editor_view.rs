@@ -2,6 +2,7 @@ use the_editor_renderer::{
   Color,
   TextSection,
 };
+use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
   core::{
@@ -93,6 +94,72 @@ impl EditorView {
 
   pub fn has_pending_on_next_key(&self) -> bool {
     self.on_next_key.is_some()
+  }
+}
+
+/// Wrapper for syntax highlighting that tracks position and styles
+struct SyntaxHighlighter<'h, 'r, 't> {
+  inner:      Option<crate::core::syntax::Highlighter<'h>>,
+  text:       ropey::RopeSlice<'r>,
+  pos:        usize, // Character index of next highlight event
+  theme:      &'t crate::core::theme::Theme,
+  text_style: crate::core::graphics::Style,
+  style:      crate::core::graphics::Style, // Current accumulated style
+}
+
+impl<'h, 'r, 't> SyntaxHighlighter<'h, 'r, 't> {
+  fn new(
+    inner: Option<crate::core::syntax::Highlighter<'h>>,
+    text: ropey::RopeSlice<'r>,
+    theme: &'t crate::core::theme::Theme,
+    text_style: crate::core::graphics::Style,
+  ) -> Self {
+    let mut highlighter = Self {
+      inner,
+      text,
+      pos: 0,
+      theme,
+      style: text_style,
+      text_style,
+    };
+    highlighter.update_pos();
+    highlighter
+  }
+
+  fn update_pos(&mut self) {
+    self.pos = self
+      .inner
+      .as_ref()
+      .and_then(|highlighter| {
+        let next_byte_idx = highlighter.next_event_offset();
+        (next_byte_idx != u32::MAX).then(|| {
+          // Move byte index to nearest character boundary and convert to char index
+          self
+            .text
+            .byte_to_char(self.text.ceil_char_boundary(next_byte_idx as usize))
+        })
+      })
+      .unwrap_or(usize::MAX);
+  }
+
+  fn advance(&mut self) {
+    let Some(highlighter) = self.inner.as_mut() else {
+      return;
+    };
+
+    use crate::core::syntax::HighlightEvent;
+    let (event, highlights) = highlighter.advance();
+    let base = match event {
+      HighlightEvent::Refresh => self.text_style,
+      HighlightEvent::Push => self.style,
+    };
+
+    self.style = highlights.fold(base, |acc, highlight| {
+      let highlight_style = self.theme.highlight(highlight);
+      acc.patch(highlight_style)
+    });
+
+    self.update_pos();
   }
 }
 
@@ -289,7 +356,10 @@ impl Component for EditorView {
   }
 
   fn render(&mut self, _area: Rect, renderer: &mut Surface, cx: &mut Context) {
-    let font_size = cx.editor.font_size_override.unwrap_or(cx.editor.config().font_size);
+    let font_size = cx
+      .editor
+      .font_size_override
+      .unwrap_or(cx.editor.config().font_size);
     let font_family = renderer.current_font_family().to_string();
     renderer.configure_font(&font_family, font_size);
     let font_width = renderer.cell_width().max(1.0);
@@ -503,6 +573,36 @@ impl Component for EditorView {
       top_char_idx,
     );
 
+    // Create syntax highlighter
+    let syn_loader = cx.editor.syn_loader.load();
+    let syntax_highlighter = doc.syntax().map(|syntax| {
+      let text = doc_text.slice(..);
+      let row = text.char_to_line(top_char_idx.min(text.len_chars()));
+
+      // Calculate byte range for visible viewport
+      let start_line = row;
+      let end_line = (row + visible_lines).min(text.len_lines());
+      let start_byte = text.line_to_byte(start_line);
+      let end_byte = if end_line < text.len_lines() {
+        text.line_to_byte(end_line)
+      } else {
+        text.len_bytes()
+      };
+
+      let range = start_byte as u32..end_byte as u32;
+      syntax.highlighter(text, &syn_loader, range)
+    });
+
+    let text_style = normal_style;
+
+    let mut syntax_hl = SyntaxHighlighter::new(
+      syntax_highlighter,
+      doc_text.slice(..),
+      &cx.editor.theme,
+      text_style,
+    );
+
+    // Debug per document (track by document ID)
     let viewport_cols = viewport.width as usize;
 
     // Helper: check if document position range overlaps any selection
@@ -667,6 +767,21 @@ impl Component for EditorView {
         });
       }
 
+      // Advance syntax highlighter to current position
+      let mut advance_count = 0;
+
+      while g.char_idx >= syntax_hl.pos {
+        syntax_hl.advance();
+        advance_count += 1;
+        if advance_count > 100 {
+          eprintln!(
+            "WARNING: Too many advances at char_idx {}, breaking",
+            g.char_idx
+          );
+          break;
+        }
+      }
+
       // Add text command
       match g.raw {
         Grapheme::Newline => {
@@ -677,7 +792,16 @@ impl Component for EditorView {
         },
         Grapheme::Other { ref g } => {
           if left_clip == 0 {
-            let fg = if is_cursor_here { cursor_fg } else { normal };
+            // Use syntax highlighting color, or fall back to normal
+            let fg = if is_cursor_here {
+              cursor_fg
+            } else if let Some(syntax_fg) = syntax_hl.style.fg {
+              let mut color = crate::ui::theme_color_to_renderer_color(syntax_fg);
+              color.a *= zoom_alpha; // Apply zoom fade
+              color
+            } else {
+              normal
+            };
 
             // Add to line batch for efficient rendering
             line_batch.push((x, y, g.to_string(), fg));

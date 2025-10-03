@@ -215,6 +215,8 @@ pub struct Document {
   pub color_swatches:                 Option<DocumentColorSwatches>,
   pub color_swatch_controller:        TaskController,
   syn_loader:                         Arc<ArcSwap<syntax::Loader>>,
+  /// Cache for syntax highlight results to avoid re-querying tree-sitter every frame
+  highlight_cache:                    Option<syntax::HighlightCache>,
 }
 
 /// Inlay hints for a single `(Document, View)` combo.
@@ -685,6 +687,7 @@ impl Document {
       color_swatches: None,
       color_swatch_controller: TaskController::new(),
       syn_loader,
+      highlight_cache: None,
     }
   }
 

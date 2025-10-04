@@ -8,6 +8,7 @@ use std::{
   collections::HashMap,
   io,
   mem,
+  ops,
   path::{
     Path,
     PathBuf,
@@ -1961,6 +1962,51 @@ impl Document {
   /// Tree-sitter AST tree
   pub fn syntax(&self) -> Option<&Syntax> {
     self.syntax.as_ref()
+  }
+
+  /// Get cached highlights for a viewport range, populating cache if needed.
+  /// Returns None if syntax highlighting is not available.
+  pub fn get_viewport_highlights(
+    &mut self,
+    byte_range: ops::Range<usize>,
+    loader: &syntax::Loader,
+  ) -> Option<Vec<(syntax::Highlight, ops::Range<usize>)>> {
+    let syntax = self.syntax.as_ref()?;
+
+    // Initialize cache if it doesn't exist
+    if self.highlight_cache.is_none() {
+      self.highlight_cache = Some(syntax::HighlightCache::new());
+    }
+
+    let cache = self.highlight_cache.as_mut().unwrap();
+
+    // Check if viewport is cached
+    let text = self.text.slice(..);
+    let start_line = text.byte_to_line(byte_range.start);
+    let end_line = text.byte_to_line(byte_range.end.min(text.len_bytes()));
+
+    // Check if any lines in the range need to be cached
+    let mut needs_caching = false;
+    for line in start_line..=end_line {
+      if !cache.is_line_cached(line) {
+        needs_caching = true;
+        break;
+      }
+    }
+
+    // Populate cache if needed
+    if needs_caching {
+      syntax.requery_and_cache(
+        cache,
+        text,
+        loader,
+        start_line..end_line + 1,
+        self.version as usize,
+      );
+    }
+
+    // Return cached highlights for the line range
+    Some(cache.get_line_range(start_line, end_line))
   }
 
   /// The width that the tab character is rendered at

@@ -581,7 +581,7 @@ pub struct Syntax {
 
 #[cfg(test)]
 mod tests {
-  use super::{Highlight, HighlightCache, generate_edits};
+  use super::{HighlightCache, generate_edits};
 
   #[test]
   fn debug_highlight_config() {
@@ -706,6 +706,11 @@ impl HighlightCache {
   /// Check if cache is empty
   pub fn is_empty(&self) -> bool {
     self.by_line.is_empty()
+  }
+
+  /// Check if a specific line is cached
+  pub fn is_line_cached(&self, line: usize) -> bool {
+    self.by_line.contains_key(&line)
   }
 }
 

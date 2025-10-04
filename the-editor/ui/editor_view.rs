@@ -479,6 +479,30 @@ impl Component for EditorView {
     let base_y = VIEW_PADDING_TOP + zoom_offset_y;
 
     let doc_id = view.doc;
+
+    // Get cached highlights early while we can still mutably borrow doc
+    // (We'll compute the exact range later, but pre-cache a larger range)
+    let cached_highlights_opt = {
+      let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
+      let text = doc.text();
+      let view_offset = doc.view_offset(focus_view);
+      let row = text.char_to_line(view_offset.anchor.min(text.len_chars()));
+      let visible_lines = content_rows as usize;
+
+      // Calculate byte range for visible viewport with some margin
+      let start_line = row.saturating_sub(10);
+      let end_line = (row + visible_lines + 10).min(text.len_lines());
+      let start_byte = text.line_to_byte(start_line);
+      let end_byte = if end_line < text.len_lines() {
+        text.line_to_byte(end_line)
+      } else {
+        text.len_bytes()
+      };
+
+      let loader = cx.editor.syn_loader.load();
+      doc.get_viewport_highlights(start_byte..end_byte, &loader)
+    };
+
     let doc = &cx.editor.documents[&doc_id];
     let doc_text = doc.text();
     let selection = doc.selection(focus_view);
@@ -531,6 +555,7 @@ impl Component for EditorView {
     // Get viewport information
     let viewport = view.inner_area(doc);
     let visible_lines = content_rows as usize;
+    let cached_highlights = cached_highlights_opt;
 
     let text_fmt = doc.text_format(viewport.width, None);
     let annotations = view.text_annotations(doc, None);
@@ -573,25 +598,31 @@ impl Component for EditorView {
       top_char_idx,
     );
 
-    // Create syntax highlighter
+    // Create syntax highlighter - use cached highlights if available, otherwise create live highlighter
     let syn_loader = cx.editor.syn_loader.load();
-    let syntax_highlighter = doc.syntax().map(|syntax| {
-      let text = doc_text.slice(..);
-      let row = text.char_to_line(top_char_idx.min(text.len_chars()));
+    let syntax_highlighter = if cached_highlights.is_none() {
+      // No cached highlights, create live highlighter as fallback
+      doc.syntax().map(|syntax| {
+        let text = doc_text.slice(..);
+        let row = text.char_to_line(top_char_idx.min(text.len_chars()));
 
-      // Calculate byte range for visible viewport
-      let start_line = row;
-      let end_line = (row + visible_lines).min(text.len_lines());
-      let start_byte = text.line_to_byte(start_line);
-      let end_byte = if end_line < text.len_lines() {
-        text.line_to_byte(end_line)
-      } else {
-        text.len_bytes()
-      };
+        // Calculate byte range for visible viewport
+        let start_line = row;
+        let end_line = (row + visible_lines).min(text.len_lines());
+        let start_byte = text.line_to_byte(start_line);
+        let end_byte = if end_line < text.len_lines() {
+          text.line_to_byte(end_line)
+        } else {
+          text.len_bytes()
+        };
 
-      let range = start_byte as u32..end_byte as u32;
-      syntax.highlighter(text, &syn_loader, range)
-    });
+        let range = start_byte as u32..end_byte as u32;
+        syntax.highlighter(text, &syn_loader, range)
+      })
+    } else {
+      // We have cached highlights, don't create a live highlighter
+      None
+    };
 
     let text_style = normal_style;
 
@@ -767,20 +798,36 @@ impl Component for EditorView {
         });
       }
 
-      // Advance syntax highlighter to current position
-      let mut advance_count = 0;
+      // Get syntax highlighting color
+      let syntax_fg = if let Some(ref highlights) = cached_highlights {
+        // Use cached highlights - find active highlights at this byte position
+        let byte_pos = doc_text.char_to_byte(g.char_idx);
+        let mut active_style = text_style;
 
-      while g.char_idx >= syntax_hl.pos {
-        syntax_hl.advance();
-        advance_count += 1;
-        if advance_count > 100 {
-          eprintln!(
-            "WARNING: Too many advances at char_idx {}, breaking",
-            g.char_idx
-          );
-          break;
+        for (highlight, range) in highlights {
+          if range.contains(&byte_pos) {
+            let hl_style = cx.editor.theme.highlight(*highlight);
+            active_style = active_style.patch(hl_style);
+          }
         }
-      }
+
+        active_style.fg
+      } else {
+        // Use live highlighter
+        let mut advance_count = 0;
+        while g.char_idx >= syntax_hl.pos {
+          syntax_hl.advance();
+          advance_count += 1;
+          if advance_count > 100 {
+            eprintln!(
+              "WARNING: Too many advances at char_idx {}, breaking",
+              g.char_idx
+            );
+            break;
+          }
+        }
+        syntax_hl.style.fg
+      };
 
       // Add text command
       match g.raw {
@@ -795,8 +842,8 @@ impl Component for EditorView {
             // Use syntax highlighting color, or fall back to normal
             let fg = if is_cursor_here {
               cursor_fg
-            } else if let Some(syntax_fg) = syntax_hl.style.fg {
-              let mut color = crate::ui::theme_color_to_renderer_color(syntax_fg);
+            } else if let Some(color) = syntax_fg {
+              let mut color = crate::ui::theme_color_to_renderer_color(color);
               color.a *= zoom_alpha; // Apply zoom fade
               color
             } else {

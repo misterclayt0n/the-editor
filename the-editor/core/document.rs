@@ -1342,6 +1342,67 @@ impl Document {
     self.jump_labels.remove(&view_id);
   }
 
+  /// Calculate the range of lines affected by a changeset
+  ///
+  /// Returns (start_line, end_line) inclusive, or None if no changes
+  fn calculate_changed_line_range(
+    old_text: &Rope,
+    new_text: &Rope,
+    changes: &ChangeSet,
+  ) -> Option<(usize, usize)> {
+    if changes.is_empty() {
+      return None;
+    }
+
+    let mut min_line = usize::MAX;
+    let mut max_line = 0;
+
+    // Iterate through all changes to find the affected line range
+    let mut pos = 0;
+    for change in changes.changes() {
+      use crate::core::transaction::Operation;
+      match change {
+        Operation::Retain(len) => {
+          pos += len;
+        },
+        Operation::Delete(len) => {
+          // Calculate affected lines in old text
+          let start = pos;
+          let end = pos + len;
+
+          if start < old_text.len_chars() {
+            let start_line = old_text.char_to_line(start);
+            let end_line = old_text.char_to_line(end.min(old_text.len_chars()));
+
+            min_line = min_line.min(start_line);
+            max_line = max_line.max(end_line);
+          }
+
+          pos += len;
+        },
+        Operation::Insert(s) => {
+          // Calculate affected lines in new text
+          let start = pos;
+          let end = pos + s.chars().count();
+
+          if start < new_text.len_chars() {
+            let start_line = new_text.char_to_line(start);
+            let end_line = new_text.char_to_line(end.min(new_text.len_chars()));
+
+            min_line = min_line.min(start_line);
+            max_line = max_line.max(end_line);
+          }
+        },
+      }
+    }
+
+    if min_line == usize::MAX {
+      None
+    } else {
+      Some((min_line, max_line))
+    }
+  }
+
   /// Apply a [`Transaction`] to the [`Document`] to change its text.
   fn apply_impl(
     &mut self,
@@ -1415,6 +1476,25 @@ impl Document {
       ) {
         log::error!("TS parser failed, disabling TS for the current buffer: {err}");
         self.syntax = None;
+      }
+    }
+
+    // Invalidate highlight cache for changed lines
+    if let Some(cache) = &mut self.highlight_cache {
+      // Calculate the range of affected lines from the changes
+      if let Some((start_line, end_line)) = Self::calculate_changed_line_range(
+        &old_doc,
+        &self.text,
+        transaction.changes(),
+      ) {
+        // Add margin to handle semantic dependencies (tree-sitter locals, etc.)
+        const INVALIDATION_MARGIN: usize = 20;
+
+        let start_with_margin = start_line.saturating_sub(INVALIDATION_MARGIN);
+        let end_with_margin = (end_line + INVALIDATION_MARGIN)
+          .min(self.text.len_lines().saturating_sub(1));
+
+        cache.invalidate_line_range(start_with_margin, end_with_margin);
       }
     }
 
@@ -2279,5 +2359,122 @@ impl Document {
   /// deactivated).
   pub fn reset_all_inlay_hints(&mut self) {
     self.inlay_hints = Default::default();
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::core::transaction::Transaction;
+
+  #[test]
+  fn test_calculate_changed_line_range_insert() {
+    let old_text = Rope::from("line 1\nline 2\nline 3\n");
+    let new_text = Rope::from("line 1\nNEW LINE\nline 2\nline 3\n");
+
+    // Insert "NEW LINE\n" after line 0 (position 7)
+    let transaction = Transaction::change(&old_text, vec![(7, 7, Some("NEW LINE\n".into()))].into_iter());
+
+    let range = Document::calculate_changed_line_range(&old_text, &new_text, transaction.changes());
+
+    assert!(range.is_some());
+    let (start, end) = range.unwrap();
+    // Insert affects lines 1-2 in new text (insertion point through end of inserted content)
+    assert_eq!(start, 1);
+    assert!(end >= 1); // Should include at least the insertion line
+  }
+
+  #[test]
+  fn test_calculate_changed_line_range_delete() {
+    let old_text = Rope::from("line 1\nline 2\nline 3\n");
+    let new_text = Rope::from("line 1\nline 3\n");
+
+    // Delete "line 2\n" (7 chars starting at position 7)
+    let transaction = Transaction::change(&old_text, vec![(7, 14, None)].into_iter());
+
+    let range = Document::calculate_changed_line_range(&old_text, &new_text, transaction.changes());
+
+    assert!(range.is_some());
+    let (start, end) = range.unwrap();
+    // Delete affects lines 1-2 in old text (deletion spans these lines)
+    assert_eq!(start, 1);
+    assert!(end >= 1); // Should include at least the deletion start line
+  }
+
+  #[test]
+  fn test_calculate_changed_line_range_multiline_edit() {
+    let old_text = Rope::from("line 1\nline 2\nline 3\nline 4\n");
+    let new_text = Rope::from("line 1\nMODIFIED\nMODIFIED\nline 4\n");
+
+    // Replace lines 2-3
+    let transaction = Transaction::change(
+      &old_text,
+      vec![(7, 21, Some("MODIFIED\nMODIFIED\n".into()))].into_iter()
+    );
+
+    let range = Document::calculate_changed_line_range(&old_text, &new_text, transaction.changes());
+
+    assert!(range.is_some());
+    let (start, end) = range.unwrap();
+    assert_eq!(start, 1);
+    assert!(end >= 1); // Should cover the modified lines
+  }
+
+  #[test]
+  fn test_calculate_changed_line_range_empty() {
+    let text = Rope::from("line 1\nline 2\n");
+    let transaction = Transaction::change(&text, vec![].into_iter());
+
+    let range = Document::calculate_changed_line_range(&text, &text, transaction.changes());
+
+    assert!(range.is_none());
+  }
+
+  #[test]
+  fn test_highlight_cache_invalidation_on_edit() {
+    use std::sync::Arc;
+    use arc_swap::ArcSwap;
+
+    // Create a simple test document without full config setup
+    let text = Rope::from("line 1\nline 2\nline 3\n");
+    let syn_loader = Arc::new(ArcSwap::from_pointee(crate::core::config::default_lang_loader()));
+    let config = Arc::new(ArcSwap::from_pointee(crate::editor::EditorConfig::default()));
+    let mut doc = Document::from(text, None, config, syn_loader);
+
+    // Initialize highlight cache
+    doc.highlight_cache = Some(syntax::HighlightCache::new());
+
+    // Populate cache with some highlights
+    let highlights = vec![
+      (syntax::Highlight::new(0), 0..5),
+      (syntax::Highlight::new(1), 7..12),
+      (syntax::Highlight::new(2), 14..19),
+    ];
+
+    doc.highlight_cache.as_mut().unwrap().update_range(
+      0..doc.text.len_bytes(),
+      highlights,
+      doc.text.slice(..),
+      0
+    );
+
+    let cache_len_before = doc.highlight_cache.as_ref().unwrap().len();
+    assert_eq!(cache_len_before, 3);
+
+    // Make an edit on line 1 (insert some text)
+    let view_id = ViewId::default();
+    doc.selections.insert(view_id, Selection::point(7)); // Position at start of line 2
+    let transaction = Transaction::change(&doc.text, vec![(7, 7, Some("NEW ".into()))].into_iter());
+
+    doc.apply(&transaction, view_id);
+
+    // Cache should have been invalidated for affected lines
+    // With margin of 20 lines, this small document should have most/all highlights invalidated
+    let cache_len_after = doc.highlight_cache.as_ref().unwrap().len();
+
+    // The cache should have fewer entries due to invalidation
+    assert!(cache_len_after < cache_len_before || cache_len_after == 0,
+      "Cache should be invalidated after edit. Before: {}, After: {}",
+      cache_len_before, cache_len_after);
   }
 }

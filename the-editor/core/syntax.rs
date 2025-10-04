@@ -775,6 +775,57 @@ impl Syntax {
     Highlighter::new(&self.inner, source, loader, range)
   }
 
+  /// Collects all highlights for the given byte range.
+  /// Returns a vector of (Highlight, byte_range) tuples.
+  pub fn collect_highlights(
+    &self,
+    source: RopeSlice,
+    loader: &Loader,
+    byte_range: ops::Range<usize>,
+  ) -> Vec<(Highlight, ops::Range<usize>)> {
+    let highlighter = self.highlighter(source, loader, byte_range.start as u32..byte_range.end as u32);
+
+    highlighter
+      .collect_highlights()
+      .into_iter()
+      .map(|(hl, range)| (hl, range.start as usize..range.end as usize))
+      .collect()
+  }
+
+  /// Re-queries the given line range and updates the cache with fresh highlights.
+  /// Returns the number of highlight entries added to the cache.
+  pub fn requery_and_cache(
+    &self,
+    cache: &mut HighlightCache,
+    source: RopeSlice,
+    loader: &Loader,
+    line_range: ops::Range<usize>,
+    doc_version: usize,
+  ) -> usize {
+    if line_range.start >= source.len_lines() {
+      return 0;
+    }
+
+    let start_line = line_range.start;
+    let end_line = line_range.end.min(source.len_lines());
+
+    // Convert line range to byte range
+    let start_byte = source.line_to_byte(start_line);
+    let end_byte = if end_line < source.len_lines() {
+      source.line_to_byte(end_line)
+    } else {
+      source.len_bytes()
+    };
+
+    // Collect highlights for this range
+    let highlights = self.collect_highlights(source, loader, start_byte..end_byte);
+
+    // Update the cache
+    cache.update_range(start_byte..end_byte, highlights, source, doc_version);
+
+    cache.len()
+  }
+
   pub fn query_iter<'a, QueryLoader, LayerState, Range>(
     &'a self,
     source: RopeSlice<'a>,

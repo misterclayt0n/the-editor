@@ -651,7 +651,8 @@ pub struct EditorConfig {
   pub rainbow_brackets:          bool,
   /// Font size for the editor buffer. Defaults to 22.0.
   pub font_size:                 f32,
-  /// Whether to show window decorations (title bar, borders). Defaults to `true`.
+  /// Whether to show window decorations (title bar, borders). Defaults to
+  /// `true`.
   pub window_decorations:        bool,
 }
 

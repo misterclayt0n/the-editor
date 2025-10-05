@@ -100,8 +100,9 @@ fn main() -> anyhow::Result<()> {
   let app = crate::application::App::new(editor);
 
   // Build window configuration from editor config
-  let window_config = the_editor_renderer::WindowConfig::new("The Editor - Modern Text Editor", 1024, 768)
-    .with_decorations(config.editor.window_decorations);
+  let window_config =
+    the_editor_renderer::WindowConfig::new("The Editor - Modern Text Editor", 1024, 768)
+      .with_decorations(config.editor.window_decorations);
 
   the_editor_renderer::run(window_config, app)
     .map_err(|e| anyhow::anyhow!("Failed to run renderer: {}", e))

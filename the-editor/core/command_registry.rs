@@ -191,6 +191,13 @@ impl CommandRegistry {
       "Show help for commands",
       show_help,
     ));
+
+    self.register(TypableCommand::new(
+      "theme",
+      &[],
+      "Change the editor theme (show current theme if no name specified)",
+      theme,
+    ));
   }
 }
 
@@ -335,8 +342,8 @@ fn show_help(cx: &mut Context, args: &[&str]) -> Result<()> {
     let help_text = "Available commands:\n:quit, :q - Close the editor\n:quit!, :q! - Force close \
                      without saving\n:write, :w [file] - Write buffer to file\n:write-quit, :wq, \
                      :x - Write and quit\n:open, :o, :e, :edit <file> - Open a file\n:new, :n - \
-                     Create new buffer\n:buffer-close, :bc - Close current buffer\n:help, :h \
-                     [command] - Show help";
+                     Create new buffer\n:buffer-close, :bc - Close current buffer\n:theme <name> \
+                     - Change the editor theme\n:help, :h [command] - Show help";
 
     cx.editor.set_status(help_text.to_string());
   } else {
@@ -346,6 +353,42 @@ fn show_help(cx: &mut Context, args: &[&str]) -> Result<()> {
     } else {
       cx.editor.set_error(format!("unknown command: {}", args[0]));
     }
+  }
+
+  Ok(())
+}
+
+fn theme(cx: &mut Context, args: &[&str]) -> Result<()> {
+  let config = cx.editor.config();
+  let true_color = config.true_color;
+
+  if args.is_empty() {
+    // Show current theme name
+    let current_theme = cx.editor.theme.name();
+    cx.editor.set_status(current_theme.to_string());
+    return Ok(());
+  }
+
+  let theme_name = args[0];
+
+  // Try to load the theme
+  match cx.editor.theme_loader.load(theme_name) {
+    Ok(theme) => {
+      // Check if theme is compatible with current color mode
+      if !true_color && !theme.is_16_color() {
+        cx.editor
+          .set_error("theme requires true color support".to_string());
+        return Ok(());
+      }
+
+      cx.editor.set_theme(theme);
+      cx.editor
+        .set_status(format!("theme changed to: {}", theme_name));
+    },
+    Err(err) => {
+      cx.editor
+        .set_error(format!("failed to load theme '{}': {}", theme_name, err));
+    },
   }
 
   Ok(())

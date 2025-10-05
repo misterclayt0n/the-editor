@@ -180,6 +180,121 @@ pub enum EditorEvent {
   Redraw,
 }
 
+/// State for smooth theme transitions
+struct ThemeTransition {
+  /// The source theme we're transitioning from
+  from_theme:          Theme,
+  /// The target theme we're transitioning to
+  to_theme:            Theme,
+  /// Animation progress (0.0 = from_theme, 1.0 = to_theme)
+  progress:            f32,
+  /// Cached interpolated theme to avoid reallocating every frame
+  cached_interpolated: Option<Theme>,
+  /// Progress value when cache was created
+  last_cached_at:      f32,
+}
+
+/// Interpolate between two theme colors
+fn interpolate_color(
+  from: Option<crate::core::graphics::Color>,
+  to: Option<crate::core::graphics::Color>,
+  t: f32,
+) -> Option<crate::core::graphics::Color> {
+  use crate::core::graphics::Color;
+
+  match (from, to) {
+    // RGB colors can be interpolated smoothly
+    (Some(Color::Rgb(r1, g1, b1)), Some(Color::Rgb(r2, g2, b2))) => {
+      let lerp = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t) as u8;
+      Some(Color::Rgb(lerp(r1, r2), lerp(g1, g2), lerp(b1, b2)))
+    },
+    // If only one color is present, use it based on progress
+    (Some(from_color), None) | (None, Some(from_color)) if t <= 0.5 => Some(from_color),
+    (None, Some(to_color)) | (Some(_), Some(to_color)) => Some(to_color),
+    // Non-RGB colors (named colors, indexed) cannot be interpolated smoothly,
+    // so we snap at the midpoint
+    _ => {
+      if t > 0.5 {
+        to
+      } else {
+        from
+      }
+    },
+  }
+}
+
+/// Interpolate between two styles
+fn interpolate_style(
+  from: crate::core::graphics::Style,
+  to: crate::core::graphics::Style,
+  t: f32,
+) -> crate::core::graphics::Style {
+  crate::core::graphics::Style {
+    fg:              interpolate_color(from.fg, to.fg, t),
+    bg:              interpolate_color(from.bg, to.bg, t),
+    underline_color: interpolate_color(from.underline_color, to.underline_color, t),
+    // For non-color properties, snap at 50%
+    underline_style: if t > 0.5 {
+      to.underline_style
+    } else {
+      from.underline_style
+    },
+    add_modifier:    if t > 0.5 {
+      to.add_modifier
+    } else {
+      from.add_modifier
+    },
+    sub_modifier:    if t > 0.5 {
+      to.sub_modifier
+    } else {
+      from.sub_modifier
+    },
+  }
+}
+
+/// Create a fully interpolated theme between two themes at progress t
+fn create_interpolated_theme(from: &Theme, to: &Theme, t: f32) -> Theme {
+  use std::collections::{
+    HashMap,
+    HashSet,
+  };
+
+  // Interpolate UI styles
+  let mut interpolated_styles = HashMap::new();
+
+  // Collect all unique scope names from both themes
+  let all_scopes: HashSet<&str> = from.style_keys().chain(to.style_keys()).collect();
+
+  // Interpolate each UI style
+  for scope in all_scopes {
+    let from_style = from.try_get(scope).unwrap_or_default();
+    let to_style = to.try_get(scope).unwrap_or_default();
+    let interp_style = interpolate_style(from_style, to_style, t);
+    interpolated_styles.insert(scope.to_string(), interp_style);
+  }
+
+  // Interpolate syntax highlighting styles
+  let from_highlights = from.highlights();
+  let to_highlights = to.highlights();
+  let max_highlights = from_highlights.len().max(to_highlights.len());
+  let mut interpolated_highlights = Vec::with_capacity(max_highlights);
+
+  for i in 0..max_highlights {
+    let from_style = from_highlights.get(i).copied().unwrap_or_default();
+    let to_style = to_highlights.get(i).copied().unwrap_or_default();
+    interpolated_highlights.push(interpolate_style(from_style, to_style, t));
+  }
+
+  // Create the interpolated theme
+  Theme::with_styles(
+    format!("{}→{}@{:.0}%", from.name(), to.name(), t * 100.0),
+    interpolated_styles,
+    to.scopes().to_vec(), // Use target theme's scopes
+    interpolated_highlights,
+    to.rainbow_length(),
+  )
+}
+
 pub struct Editor {
   /// Current editing mode.
   pub mode:             Mode,
@@ -212,6 +327,8 @@ pub struct Editor {
   /// The currently applied editor theme. While previewing a theme, the
   /// previewed theme is set here.
   pub theme:        Theme,
+  /// Theme transition animation state
+  theme_transition: Option<ThemeTransition>,
 
   /// The primary Selection prior to starting a goto_line_number preview. This
   /// is restored when the preview is aborted, or added to the jumplist when
@@ -654,6 +771,10 @@ pub struct EditorConfig {
   /// Whether to show window decorations (title bar, borders). Defaults to
   /// `true`.
   pub window_decorations:        bool,
+  /// Whether to enable smooth theme transitions. Defaults to `true`.
+  pub theme_transition_enabled:  bool,
+  /// Theme transition speed (lerp factor, 0.0-1.0). Defaults to 0.15.
+  pub theme_transition_speed:    f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
@@ -1645,6 +1766,8 @@ impl Default for EditorConfig {
       status_msg_anim_enabled:   true,
       font_size:                 22.0,
       window_decorations:        true,
+      theme_transition_enabled:  true,
+      theme_transition_speed:    0.15,
     }
   }
 }
@@ -1697,6 +1820,7 @@ impl Editor {
       syn_loader,
       theme_loader,
       last_theme: None,
+      theme_transition: None,
       last_selection: None,
       registers: Registers::new(Box::new(arc_swap::access::Map::new(
         Arc::clone(&config),
@@ -1892,6 +2016,10 @@ impl Editor {
     let scopes = theme.scopes();
     (*self.syn_loader).load().set_scopes(scopes.to_vec());
 
+    // Check if theme transitions are enabled
+    let config = self.config();
+    let enable_transition = config.theme_transition_enabled && matches!(preview, ThemeAction::Set);
+
     match preview {
       ThemeAction::Preview => {
         let last_theme = std::mem::replace(&mut self.theme, theme);
@@ -1900,11 +2028,85 @@ impl Editor {
       },
       ThemeAction::Set => {
         self.last_theme = None;
-        self.theme = theme;
+        if enable_transition {
+          // Start transition animation
+          self.theme_transition = Some(ThemeTransition {
+            from_theme:          self.theme.clone(),
+            to_theme:            theme,
+            progress:            0.0,
+            cached_interpolated: None,
+            last_cached_at:      -1.0, // Force initial cache creation
+          });
+        } else {
+          // Instant theme change
+          self.theme = theme;
+        }
       },
     }
 
     self._refresh();
+  }
+
+  /// Update theme transition animation. Should be called every frame.
+  /// Returns true if animation is still running (needs redraw).
+  pub fn update_theme_transition(&mut self, dt: f32) -> bool {
+    // Get config first to avoid borrowing issues
+    let speed = {
+      let config = self.config();
+      config.theme_transition_speed
+    };
+
+    if let Some(transition) = &mut self.theme_transition {
+      // Time-based lerp for consistent animation speed
+      let lerp_t = 1.0 - (1.0 - speed).powf(dt * 60.0);
+      transition.progress += lerp_t * (1.0 - transition.progress);
+
+      let progress = transition.progress;
+
+      // Animation complete when progress >= 0.99
+      if progress >= 0.99 {
+        // Finalize the transition by setting the theme
+        let final_theme = self.theme_transition.take().unwrap().to_theme;
+        self.theme = final_theme;
+        false
+      } else {
+        // Check if we need to regenerate the cached interpolated theme
+        // Only recreate if progress changed significantly (> 0.5% difference)
+        let needs_update = transition.cached_interpolated.is_none()
+          || (progress - transition.last_cached_at).abs() > 0.005;
+
+        if needs_update {
+          // Create a fully interpolated theme
+          let interpolated =
+            create_interpolated_theme(&transition.from_theme, &transition.to_theme, progress);
+          transition.cached_interpolated = Some(interpolated.clone());
+          transition.last_cached_at = progress;
+          self.theme = interpolated;
+        } else if let Some(cached) = &transition.cached_interpolated {
+          // Reuse cached theme
+          self.theme = cached.clone();
+        }
+        true
+      }
+    } else {
+      false
+    }
+  }
+
+  /// Get the current theme, taking transition state into account.
+  /// During transitions, returns the target theme (interpolation happens via
+  /// get_theme_style).
+  pub fn current_theme(&self) -> &Theme {
+    if let Some(transition) = &self.theme_transition {
+      &transition.to_theme
+    } else {
+      &self.theme
+    }
+  }
+
+  /// Check if a theme transition is currently active.
+  pub fn is_theme_transitioning(&self) -> bool {
+    self.theme_transition.is_some()
   }
 
   #[inline]

@@ -96,4 +96,29 @@ impl Color {
     b: 0.5,
     a: 1.0,
   };
+
+  /// Linear interpolation between two colors
+  ///
+  /// # Arguments
+  ///
+  /// * `other` - The target color to interpolate towards
+  /// * `t` - Interpolation factor (0.0 = self, 1.0 = other)
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// # use the_editor_renderer::Color;
+  /// let black = Color::BLACK;
+  /// let white = Color::WHITE;
+  /// let gray = black.lerp(white, 0.5); // 50% between black and white
+  /// ```
+  pub fn lerp(self, other: Self, t: f32) -> Self {
+    let t = t.clamp(0.0, 1.0);
+    Self {
+      r: self.r + (other.r - self.r) * t,
+      g: self.g + (other.g - self.g) * t,
+      b: self.b + (other.b - self.b) * t,
+      a: self.a + (other.a - self.a) * t,
+    }
+  }
 }

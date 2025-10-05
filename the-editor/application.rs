@@ -132,6 +132,9 @@ impl Application for App {
       self.animate_scroll(renderer);
     }
 
+    // Update theme transition animation
+    let _theme_animating = self.editor.update_theme_transition(dt);
+
     // Create context for rendering.
     let mut cx = Context {
       editor: &mut self.editor,
@@ -310,6 +313,11 @@ impl Application for App {
 
     // First check editor needs_redraw.
     if self.editor.needs_redraw {
+      return true;
+    }
+
+    // Keep redrawing while a theme transition is active.
+    if self.editor.is_theme_transitioning() {
       return true;
     }
 

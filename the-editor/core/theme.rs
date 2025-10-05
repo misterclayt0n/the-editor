@@ -465,6 +465,33 @@ impl Theme {
     self.rainbow_length
   }
 
+  /// Get an iterator over all UI style scope names
+  pub fn style_keys(&self) -> impl Iterator<Item = &str> {
+    self.styles.keys().map(|s| s.as_str())
+  }
+
+  /// Get access to the highlights vector for interpolation
+  pub fn highlights(&self) -> &[Style] {
+    &self.highlights
+  }
+
+  /// Create a new theme with given components (for interpolation)
+  pub fn with_styles(
+    name: String,
+    styles: HashMap<String, Style>,
+    scopes: Vec<String>,
+    highlights: Vec<Style>,
+    rainbow_length: usize,
+  ) -> Self {
+    Self {
+      name,
+      styles,
+      scopes,
+      highlights,
+      rainbow_length,
+    }
+  }
+
   fn from_toml(value: Value) -> (Self, Vec<String>) {
     if let Value::Table(table) = value {
       Theme::from_keys(table)

@@ -651,6 +651,8 @@ pub struct EditorConfig {
   pub rainbow_brackets:          bool,
   /// Font size for the editor buffer. Defaults to 22.0.
   pub font_size:                 f32,
+  /// Whether to show window decorations (title bar, borders). Defaults to `true`.
+  pub window_decorations:        bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
@@ -1641,6 +1643,7 @@ impl Default for EditorConfig {
       cursor_lerp_factor:        0.25,
       status_msg_anim_enabled:   true,
       font_size:                 22.0,
+      window_decorations:        true,
     }
   }
 }

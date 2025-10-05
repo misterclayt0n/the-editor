@@ -38,6 +38,31 @@ pub use text::{
 };
 use winit::window::WindowId;
 
+/// Configuration for window creation.
+#[derive(Debug, Clone)]
+pub struct WindowConfig {
+  pub title:       String,
+  pub width:       u32,
+  pub height:      u32,
+  pub decorations: bool,
+}
+
+impl WindowConfig {
+  pub fn new(title: impl Into<String>, width: u32, height: u32) -> Self {
+    Self {
+      title:       title.into(),
+      width,
+      height,
+      decorations: true,
+    }
+  }
+
+  pub fn with_decorations(mut self, decorations: bool) -> Self {
+    self.decorations = decorations;
+    self
+  }
+}
+
 /// Main trait that applications must implement to use the renderer.
 pub trait Application {
   /// Called once when the renderer is initialized.
@@ -59,7 +84,7 @@ pub trait Application {
 }
 
 /// Run the application with the renderer.
-pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: A) -> Result<()> {
+pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Result<()> {
   let _ = env_logger::try_init();
 
   use winit::{
@@ -233,9 +258,7 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
     renderer:             Option<Renderer>,
     window:               Option<Arc<Window>>,
     app:                  A,
-    title:                String,
-    initial_width:        u32,
-    initial_height:       u32,
+    window_config:        WindowConfig,
     modifiers_state:      ModifiersState,
     last_cursor_position: Option<(f32, f32)>,
   }
@@ -247,11 +270,12 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
       }
 
       let window_attributes = Window::default_attributes()
-        .with_title(&self.title)
+        .with_title(&self.window_config.title)
         .with_inner_size(winit::dpi::LogicalSize::new(
-          self.initial_width,
-          self.initial_height,
-        ));
+          self.window_config.width,
+          self.window_config.height,
+        ))
+        .with_decorations(self.window_config.decorations);
 
       match event_loop.create_window(window_attributes) {
         Ok(window) => {
@@ -516,9 +540,7 @@ pub fn run<A: Application + 'static>(title: &str, width: u32, height: u32, app: 
     renderer: None,
     window: None,
     app,
-    title: title.to_string(),
-    initial_width: width,
-    initial_height: height,
+    window_config,
     modifiers_state: ModifiersState::empty(),
     last_cursor_position: None,
   };

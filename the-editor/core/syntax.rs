@@ -598,6 +598,13 @@ const PARSE_TIMEOUT: Duration = Duration::from_millis(500); // half a second is 
 
 /// Cache for syntax highlighting results to avoid re-querying tree-sitter on every frame.
 ///
+/// Maximum number of lines to keep in the highlight cache.
+/// This prevents unbounded memory growth while being generous enough for most use cases.
+/// At ~100 bytes per line of highlights, this is roughly 1MB of cache per document.
+const MAX_CACHED_LINES: usize = 10_000;
+
+/// Cache for syntax highlight results to avoid re-querying tree-sitter on every frame.
+///
 /// This cache stores highlight spans indexed by line number for fast lookup during rendering.
 /// It tracks which ranges have been queried and invalidates entries when the document changes.
 #[derive(Debug, Clone)]
@@ -656,6 +663,11 @@ impl HighlightCache {
 
     for line in start_line..=end_line {
       self.by_line.remove(&line);
+    }
+
+    // If cache is getting too large, clear it entirely to prevent unbounded growth
+    if self.by_line.len() > MAX_CACHED_LINES {
+      self.by_line.clear();
     }
 
     // Group highlights by the line they start on

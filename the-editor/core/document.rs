@@ -1274,6 +1274,11 @@ impl Document {
         })
         .ok()
     });
+
+    // Clear highlight cache when language changes since highlights are no longer valid
+    if let Some(cache) = &mut self.highlight_cache {
+      cache.clear();
+    }
   }
 
   /// Set the programming language for the file if you know the language but

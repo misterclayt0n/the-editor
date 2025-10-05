@@ -598,7 +598,8 @@ impl Component for EditorView {
       top_char_idx,
     );
 
-    // Create syntax highlighter - use cached highlights if available, otherwise create live highlighter
+    // Create syntax highlighter - use cached highlights if available, otherwise
+    // create live highlighter
     let syn_loader = cx.editor.syn_loader.load();
     let syntax_highlighter = if cached_highlights.is_none() {
       // No cached highlights, create live highlighter as fallback

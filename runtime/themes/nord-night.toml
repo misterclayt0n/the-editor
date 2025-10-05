@@ -6,15 +6,15 @@
 
 inherits = 'nord'
 
-'constant' = 'nord13'
+'constant'                 = 'nord13'
 'constant.builtin.boolean' = 'nord13'
-'constant.numeric' = 'nord13'
+'constant.numeric'         = 'nord13'
 
-'keyword.control' = 'nord11'
+'keyword.control'             = 'nord11'
 'keyword.control.conditional' = 'nord11'
-'keyword.control.exception' = 'nord11'
-'keyword.control.repeat' = 'nord11'
-'keyword.control.return' = 'nord11'
+'keyword.control.exception'   = 'nord11'
+'keyword.control.repeat'      = 'nord11'
+'keyword.control.return'      = 'nord11'
 
 'variable.parameter' = 'nord15'
 

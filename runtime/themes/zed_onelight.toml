@@ -3,60 +3,60 @@
 
 inherits = "zed_onedark"
 
-"attribute" = { fg = "green" }
-"constant" = { fg = "green" }
-"constant.numeric" = { fg = "gold" }
-"constant.builtin" = { fg = "gold" }
+"attribute"                = { fg = "green" }
+"constant"                 = { fg = "green" }
+"constant.builtin"         = { fg = "gold" }
 "constant.builtin.boolean" = { fg = "green" }
-"variable.builtin" = { fg = "gold" }
-"variable.other.member" = { fg = "orange" }
+"constant.numeric"         = { fg = "gold" }
+"variable.builtin"         = { fg = "gold" }
+"variable.other.member"    = { fg = "orange" }
 
 "markup.heading" = { fg = "orange" }
-"markup.list" = { fg = "orange" }
-"markup.quote" = { fg = "green" }
+"markup.list"    = { fg = "orange" }
+"markup.quote"   = { fg = "green" }
 
-"ui.cursor" = { fg = "dark-blue", modifiers = ["reversed"] }
-"ui.cursor.primary" = { fg = "dark-blue", modifiers = ["reversed"] }
-"ui.cursor.insert" = { fg = "dark-blue" }
+"ui.cursor"         = { fg = "dark-blue", modifiers = [ "reversed" ] }
+"ui.cursor.insert"  = { fg = "dark-blue" }
+"ui.cursor.primary" = { fg = "dark-blue", modifiers = [ "reversed" ] }
 
-"ui.selection.primary" = { bg = "blue-gray" }
 "ui.cursorline.primary" = { bg = "faint-gray" }
+"ui.selection.primary"  = { bg = "blue-gray" }
 
-"ui.virtual.inlay-hint" = { fg = "violet", modifiers = ["bold"] }
+"ui.virtual.inlay-hint" = { fg = "violet", modifiers = [ "bold" ] }
 
-"ui.statusline" = { fg = "black", bg = "gray" }
-"ui.statusline.inactive" = { fg = "white", bg = "light-black" }
-"ui.statusline.normal" = { fg = "white", bg = "blue" }
-"ui.statusline.insert" = { fg = "white", bg = "green" }
-"ui.statusline.select" = { fg = "white", bg = "purple" }
+"ui.statusline"          = { bg = "gray", fg = "black" }
+"ui.statusline.inactive" = { bg = "light-black", fg = "white" }
+"ui.statusline.insert"   = { bg = "green", fg = "white" }
+"ui.statusline.normal"   = { bg = "blue", fg = "white" }
+"ui.statusline.select"   = { bg = "purple", fg = "white" }
 
-"ui.text.focus" = { fg = "ui-text", bg = "gray", modifiers = ["bold"] }
+"ui.text.focus" = { bg = "gray", fg = "ui-text", modifiers = [ "bold" ] }
 
-"ui.help" = { fg = "black", bg = "dark-gray" }
-"ui.popup" = { bg = "dark-gray" }
+"ui.help"   = { bg = "dark-gray", fg = "black" }
+"ui.popup"  = { bg = "dark-gray" }
 "ui.window" = { fg = "dark-gray" }
 
 [palette]
-yellow = "#dabb7e"
-red = "#d36151ff"
-orange = "#d3604fff"
-blue = "#5b79e3ff"
-dark-blue = "#4a62db"
-purple = "#a449abff"
-violet = "#9294beff"
-green = "#649f57ff"
-gold = "#ad6e25ff"
-cyan = "#3882b7ff"
+blue        = "#5b79e3ff"
+cyan        = "#3882b7ff"
+dark-blue   = "#4a62db"
+gold        = "#ad6e25ff"
+green       = "#649f57ff"
 light-black = "#2e323a"
+orange      = "#d3604fff"
+purple      = "#a449abff"
+red         = "#d36151ff"
+violet      = "#9294beff"
+yellow      = "#dabb7e"
 # gray = "#dcdcdd"
-gray = "#eaeaed"
-dark-gray = "#ebebec"
-light-gray = "#a2a3a7ff"
-blue-gray = "#d9dcea"
+blue-gray  = "#d9dcea"
+dark-gray  = "#ebebec"
 faint-gray = "#efefef"
-linenr = "#b0b1b3"
+gray       = "#eaeaed"
+light-gray = "#a2a3a7ff"
+linenr     = "#b0b1b3"
 
-black = "#383a41ff"
-white = "#fafafaff"
-ui-text = "#383a41ff"
+black            = "#383a41ff"
+ui-text          = "#383a41ff"
 ui-text-reversed = "#fafafaff"
+white            = "#fafafaff"

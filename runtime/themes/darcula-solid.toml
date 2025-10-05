@@ -3,10 +3,10 @@
 inherits = "darcula"
 
 "ui.background.separator" = { bg = "grey01" }
-"ui.menu.scroll" = { fg = "grey02", bg = "grey00" }
-"ui.popup" = { fg = "grey05", bg = "grey00" }
-"ui.window" = { bg = "grey00" }
 "ui.cursorline.secondary" = { bg = "grey03" }
+"ui.menu.scroll"          = { bg = "grey00", fg = "grey02" }
+"ui.popup"                = { bg = "grey00", fg = "grey05" }
+"ui.window"               = { bg = "grey00" }
 
 [palette]
 grey00 = "#101010"

@@ -1,135 +1,135 @@
-"attribute" = { fg = "violet" }
-"keyword" = { fg = "green" }
-"keyword.directive" = { fg = "orange" }
-"namespace" = { fg = "violet" }
-"operator" = { fg = "green" }
-"special" = { fg = "orange" }
-"variable.builtin" = { fg = "cyan", modifiers = ["bold"] }
-"variable.function" = { fg = "blue" }
-"type" = { fg = "yellow" }
-"type.builtin" = { fg = "yellow", modifiers = ["bold"] }
-"constructor" = { fg = "blue" }
-"function" = { fg = "blue" }
-"function.macro" = { fg = "magenta" }
-"function.builtin" = { fg = "blue", modifiers = ["bold"] }
-"function.special" = { fg = "magenta" }
-"comment" = { fg = "base01" }
-"string" = { fg = "cyan" }
-"constant" = { fg = "cyan" }
-"constant.builtin" = { fg = "cyan", modifiers = ["bold"] }
-"constant.character.escape" = { fg = "red", modifiers = ["bold"] }
-"label" = { fg = "green" }
-"module" = { fg = "violet" }
-"tag" = { fg = "magenta" }
+"attribute"                 = { fg = "violet" }
+"comment"                   = { fg = "base01" }
+"constant"                  = { fg = "cyan" }
+"constant.builtin"          = { fg = "cyan", modifiers = [ "bold" ] }
+"constant.character.escape" = { fg = "red", modifiers = [ "bold" ] }
+"constructor"               = { fg = "blue" }
+"function"                  = { fg = "blue" }
+"function.builtin"          = { fg = "blue", modifiers = [ "bold" ] }
+"function.macro"            = { fg = "magenta" }
+"function.special"          = { fg = "magenta" }
+"keyword"                   = { fg = "green" }
+"keyword.directive"         = { fg = "orange" }
+"label"                     = { fg = "green" }
+"module"                    = { fg = "violet" }
+"namespace"                 = { fg = "violet" }
+"operator"                  = { fg = "green" }
+"special"                   = { fg = "orange" }
+"string"                    = { fg = "cyan" }
+"tag"                       = { fg = "magenta" }
+"type"                      = { fg = "yellow" }
+"type.builtin"              = { fg = "yellow", modifiers = [ "bold" ] }
+"variable.builtin"          = { fg = "cyan", modifiers = [ "bold" ] }
+"variable.function"         = { fg = "blue" }
 
 # TODO
-"markup.heading" = "blue"
-"markup.list" = "red"
-"markup.bold" = { fg = "yellow", modifiers = ["bold"] }
-"markup.italic" = { fg = "magenta", modifiers = ["italic"] }
-"markup.strikethrough" = { modifiers = ["crossed_out"] }
-"markup.link.url" = { fg = "yellow", modifiers = ["underlined"] }
-"markup.link.text" = "red"
-"markup.quote" = "cyan"
-"markup.raw" = "green"
+"markup.bold"          = { fg = "yellow", modifiers = [ "bold" ] }
+"markup.heading"       = "blue"
+"markup.italic"        = { fg = "magenta", modifiers = [ "italic" ] }
+"markup.link.text"     = "red"
+"markup.link.url"      = { fg = "yellow", modifiers = [ "underlined" ] }
+"markup.list"          = "red"
+"markup.quote"         = "cyan"
+"markup.raw"           = "green"
+"markup.strikethrough" = { modifiers = [ "crossed_out" ] }
 
-"diff.plus" = { fg = "green" }
 "diff.delta" = { fg = "yellow" }
 "diff.minus" = { fg = "red" }
+"diff.plus"  = { fg = "green" }
 
 # 背景
 "ui.background" = { bg = "base03" }
 
+"ui.virtual.inlay-hint" = { fg = "base01", modifiers = [ "italic" ] }
+"ui.virtual.jump-label" = { fg = "red", modifiers = [ "bold" ] }
 "ui.virtual.whitespace" = { fg = "base01" }
-"ui.virtual.inlay-hint" = { fg = "base01", modifiers = ["italic"] }
-"ui.virtual.jump-label" = { fg = "red", modifiers = ["bold"] }
 
 # 行号栏
-"ui.linenr" = { fg = "base0", bg = "base02" }
+"ui.linenr" = { bg = "base02", fg = "base0" }
 # 当前行号栏
-"ui.linenr.selected" = { fg = "blue", modifiers = ["bold"] }
+"ui.linenr.selected" = { fg = "blue", modifiers = [ "bold" ] }
 #cursorline
 "ui.cursorline" = { bg = "base03" }
 
 # 状态栏
-"ui.statusline" = { fg = "base03", bg = "base0" }
-"ui.statusline.normal" = { bg = "blue" }
+"ui.statusline"        = { bg = "base0", fg = "base03" }
 "ui.statusline.insert" = { bg = "green" }
+"ui.statusline.normal" = { bg = "blue" }
 "ui.statusline.select" = { bg = "yellow" }
 
 # 非活动状态栏
-"ui.statusline.inactive" = { fg = "base1", bg = "base01" }
+"ui.statusline.inactive" = { bg = "base01", fg = "base1" }
 
 # 补全窗口, preview窗口
 "ui.popup" = { bg = "base02" }
 # 影响 补全选中 cmd弹出信息选中
-"ui.menu.selected" = { fg = "base02", bg = "base2"}
-"ui.menu" = { fg = "base0", bg = "base02" }
+"ui.menu"          = { bg = "base02", fg = "base0" }
+"ui.menu.selected" = { bg = "base2", fg = "base02" }
 # ??
 "ui.window" = { fg = "base3" }
 # 命令行 补全的帮助信息
-"ui.help" = { modifiers = ["reversed"] }
+"ui.help" = { modifiers = [ "reversed" ] }
 
 # 快捷键窗口 
-"ui.popup.info" = {fg = "base02", bg = "base1", modifiers = ["bold"]}
+"ui.popup.info" = { bg = "base1", fg = "base02", modifiers = [ "bold" ] }
 # 快捷键字体
-"ui.text.info" = {fg = "base02", modifiers = ["bold"]}
+"ui.text.info" = { fg = "base02", modifiers = [ "bold" ] }
 
 # 普通ui的字体样式
 "ui.text" = { fg = "base1" }
 # 影响 picker列表选中, 快捷键帮助窗口文本
-"ui.text.focus" = { fg = "blue", modifiers = ["bold"]}
+"ui.text.focus" = { fg = "blue", modifiers = [ "bold" ] }
 
 # 主光标/selectio
-"ui.cursor.primary" = { fg = "base03", bg = "base1" }
-"ui.cursor.select" = { fg = "base02", bg = "cyan" }
-"ui.cursorline.primary" = { bg = "base02" }
+"ui.cursor.primary"       = { bg = "base1", fg = "base03" }
+"ui.cursor.select"        = { bg = "cyan", fg = "base02" }
+"ui.cursorline.primary"   = { bg = "base02" }
 "ui.cursorline.secondary" = { bg = "base025" }
 
-"ui.selection" = { bg = "base0175" }
+"ui.selection"         = { bg = "base0175" }
 "ui.selection.primary" = { bg = "base015" }
 
 "ui.virtual.indent-guide" = { fg = "base02" }
-"ui.virtual.ruler" = { bg = "base02" }
+"ui.virtual.ruler"        = { bg = "base02" }
 
 # normal模式的光标
-"ui.cursor" = {fg = "base02", bg = "cyan"}
-"ui.cursor.insert" = {fg = "base03", bg = "base3"}
+"ui.cursor"        = { bg = "cyan", fg = "base02" }
+"ui.cursor.insert" = { bg = "base3", fg = "base03" }
 # 当前光标匹配的标点符号
-"ui.cursor.match" = { fg = "base03", bg = "base00" }
+"ui.cursor.match" = { bg = "base00", fg = "base03" }
 
-"warning" =  { fg = "orange", modifiers= ["bold", "underlined"] }
-"error" = { fg = "red", modifiers= ["bold", "underlined"] }
-"info" = { fg = "blue", modifiers= ["bold", "underlined"] }
-"hint" = { fg = "base01", modifiers= ["bold", "underlined"] }
+"error"   = { fg = "red", modifiers = [ "bold", "underlined" ] }
+"hint"    = { fg = "base01", modifiers = [ "bold", "underlined" ] }
+"info"    = { fg = "blue", modifiers = [ "bold", "underlined" ] }
+"warning" = { fg = "orange", modifiers = [ "bold", "underlined" ] }
 
-"diagnostic.warning" = { underline = { style = "curl", color = "orange" } }
-"diagnostic.error" = { underline = { style = "curl", color = "red" } }
-"diagnostic.info" = { underline = { style = "curl", color = "blue" } }
-"diagnostic.hint" = { underline = { style = "curl", color = "base01" } }
-"diagnostic.unnecessary" = { modifiers = ["dim"] }
-"diagnostic.deprecated" = { modifiers = ["crossed_out"] }
+"diagnostic.deprecated"  = { modifiers = [ "crossed_out" ] }
+"diagnostic.error"       = { underline = { color = "red", style = "curl" } }
+"diagnostic.hint"        = { underline = { color = "base01", style = "curl" } }
+"diagnostic.info"        = { underline = { color = "blue", style = "curl" } }
+"diagnostic.unnecessary" = { modifiers = [ "dim" ] }
+"diagnostic.warning"     = { underline = { color = "orange", style = "curl" } }
 
 [palette]
 # 深色 越来越深
-base03   = "#002b36"
-base025  = "#03303b"
-base02   = "#073642"
-base0175 = "#16404b"
-base015  = "#2c4f59"
-base01   = "#586e75"
-base00   = "#657b83"
 base0    = "#839496"
+base00   = "#657b83"
+base01   = "#586e75"
+base015  = "#2c4f59"
+base0175 = "#16404b"
+base02   = "#073642"
+base025  = "#03303b"
+base03   = "#002b36"
 base1    = "#93a1a1"
 base2    = "#eee8d5"
 base3    = "#fdf6e3"
 
 # 浅色 越來越浅
-yellow  = "#b58900"
-orange  = "#cb4b16"
-red     = "#dc322f"
-magenta = "#d33682"
-violet  = "#6c71c4"
 blue    = "#268bd2"
 cyan    = "#2aa198"
 green   = "#859900"
+magenta = "#d33682"
+orange  = "#cb4b16"
+red     = "#dc322f"
+violet  = "#6c71c4"
+yellow  = "#b58900"

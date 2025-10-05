@@ -50,11 +50,10 @@ pub static BASE16_DEFAULT_THEME_DATA: Lazy<Value> = Lazy::new(|| {
 });
 
 pub static DEFAULT_THEME: Lazy<Theme> = Lazy::new(|| {
-  let theme = Theme {
+  Theme {
     name: "default".into(),
     ..Theme::from(DEFAULT_THEME_DATA.clone())
-  };
-  theme
+  }
 });
 
 pub static BASE16_DEFAULT_THEME: Lazy<Theme> = Lazy::new(|| {

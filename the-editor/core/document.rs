@@ -216,7 +216,8 @@ pub struct Document {
   pub color_swatches:                 Option<DocumentColorSwatches>,
   pub color_swatch_controller:        TaskController,
   syn_loader:                         Arc<ArcSwap<syntax::Loader>>,
-  /// Cache for syntax highlight results to avoid re-querying tree-sitter every frame
+  /// Cache for syntax highlight results to avoid re-querying tree-sitter every
+  /// frame
   highlight_cache:                    Option<syntax::HighlightCache>,
 }
 
@@ -1275,7 +1276,8 @@ impl Document {
         .ok()
     });
 
-    // Clear highlight cache when language changes since highlights are no longer valid
+    // Clear highlight cache when language changes since highlights are no longer
+    // valid
     if let Some(cache) = &mut self.highlight_cache {
       cache.clear();
     }
@@ -1488,17 +1490,15 @@ impl Document {
     // Invalidate and re-query highlight cache for changed lines
     if let (Some(cache), Some(syntax)) = (&mut self.highlight_cache, &self.syntax) {
       // Calculate the range of affected lines from the changes
-      if let Some((start_line, end_line)) = Self::calculate_changed_line_range(
-        &old_doc,
-        &self.text,
-        transaction.changes(),
-      ) {
+      if let Some((start_line, end_line)) =
+        Self::calculate_changed_line_range(&old_doc, &self.text, transaction.changes())
+      {
         // Add margin to handle semantic dependencies (tree-sitter locals, etc.)
         const INVALIDATION_MARGIN: usize = 20;
 
         let start_with_margin = start_line.saturating_sub(INVALIDATION_MARGIN);
-        let end_with_margin = (end_line + INVALIDATION_MARGIN)
-          .min(self.text.len_lines().saturating_sub(1));
+        let end_with_margin =
+          (end_line + INVALIDATION_MARGIN).min(self.text.len_lines().saturating_sub(1));
 
         cache.invalidate_line_range(start_with_margin, end_with_margin);
 
@@ -1980,7 +1980,7 @@ impl Document {
 
     // Initialize cache if it doesn't exist
     if self.highlight_cache.is_none() {
-      self.highlight_cache = Some(syntax::HighlightCache::new());
+      self.highlight_cache = Some(syntax::HighlightCache::default());
     }
 
     let cache = self.highlight_cache.as_mut().unwrap();
@@ -2434,13 +2434,17 @@ mod tests {
     let new_text = Rope::from("line 1\nNEW LINE\nline 2\nline 3\n");
 
     // Insert "NEW LINE\n" after line 0 (position 7)
-    let transaction = Transaction::change(&old_text, vec![(7, 7, Some("NEW LINE\n".into()))].into_iter());
+    let transaction = Transaction::change(
+      &old_text,
+      vec![(7, 7, Some("NEW LINE\n".into()))].into_iter(),
+    );
 
     let range = Document::calculate_changed_line_range(&old_text, &new_text, transaction.changes());
 
     assert!(range.is_some());
     let (start, end) = range.unwrap();
-    // Insert affects lines 1-2 in new text (insertion point through end of inserted content)
+    // Insert affects lines 1-2 in new text (insertion point through end of inserted
+    // content)
     assert_eq!(start, 1);
     assert!(end >= 1); // Should include at least the insertion line
   }
@@ -2470,7 +2474,7 @@ mod tests {
     // Replace lines 2-3
     let transaction = Transaction::change(
       &old_text,
-      vec![(7, 21, Some("MODIFIED\nMODIFIED\n".into()))].into_iter()
+      vec![(7, 21, Some("MODIFIED\nMODIFIED\n".into()))].into_iter(),
     );
 
     let range = Document::calculate_changed_line_range(&old_text, &new_text, transaction.changes());
@@ -2507,11 +2511,14 @@ mod tests {
     // invalidated and repopulated with fresh highlights.
 
     // For now, we just verify the integration compiles and runs.
-    // A more comprehensive test would require a full language setup with grammars.
+    // A more comprehensive test would require a full language setup with
+    // grammars.
 
     // The functionality is tested implicitly through:
-    // 1. test_highlight_cache_invalidation_on_edit - verifies invalidation works
-    // 2. Phase 3 implementation in apply_impl - calls requery_and_cache after invalidation
+    // 1. test_highlight_cache_invalidation_on_edit - verifies invalidation
+    //    works
+    // 2. Phase 3 implementation in apply_impl - calls requery_and_cache after
+    //    invalidation
     // 3. Manual testing with the editor
   }
 }

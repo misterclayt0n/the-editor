@@ -1,66 +1,66 @@
 # A unofficial port of VIM's zenburn theme: https://github.com/jnurmine/Zenburn/
 
-"ui.background" = { bg = "bg" }
-"ui.menu" = { fg = "#9f9f9f", bg = "uibg" }
-"ui.menu.selected" = { fg = "#d0d0a0", bg = "#242424", modifiers = ["bold"] }
-"ui.linenr" = { fg = "#9fafaf", bg = "#262626"}
-"ui.linenr.selected" = { modifiers = ["bold"]}
-"ui.popup" = { bg = "uibg" }
-"ui.selection" = { bg = "#304a3d" }
-"ui.selection.primary" = { bg = "#2f2f2f" }
-"comment" = { fg = "comment" }
-"comment.block.documentation" = { fg = "comment", modifiers = ["bold"] }
-"comment.line.documentation" = { fg = "comment", modifiers = ["bold"] }
-"ui.virtual.inlay-hint" = { fg = "#9f9f9f" }
-"ui.statusline" = { bg = "statusbg", fg = "#ccdc90" }
-"ui.statusline.inactive" = { fg = '#2e3330', bg = '#88b090' }
-"ui.cursor" = { fg = "#000d18", bg = "#8faf9f", modifiers = ["bold"] }
-"ui.text" = { fg = "normal"}
-"operator" = { fg = "#f0efd0" , modifiers = []}
-"variable" = "normal"
-"variable.builtin" = {fg = "constant", modifiers = ["bold"]}
-"constant.numeric" = "numeric"
-"constant" = { fg = "constant", modifiers = ["bold"] }
-"type" = { fg = "#dfdfbf", modifiers = ["bold"] }
-"ui.cursor.match" = { fg = "#343434", bg = "#284f28", modifiers = ["bold"] }
-"string"  = "#cc9393"
-"variable.other.member" = "#efef8f"
-"constant.character.escape" = { fg = "#dca3a3", modifiers = ["bold"]}
-"function" = "#efef8f"
-"function.macro" = { fg = "#ffcfaf", modifiers = ["bold"] }
-"special" = "#cfbfaf"
-"keyword" = { fg = "#f0dfaf", modifiers = ["bold"]}
-"keyword.storage-class" = { fg = "#c3bf9f", modifiers = ["bold"]}
-"label" = { fg = "#dfcfaf", modifiers = ["underlined"] }
-"ui.help" = { fg = "white", bg = "black" }
-"ui.virtual.ruler" = { bg = "#484848" }
-"ui.virtual.whitespace" = { fg = "#5b605e", modifiers = ["bold"]}
+"comment"                     = { fg = "comment" }
+"comment.block.documentation" = { fg = "comment", modifiers = [ "bold" ] }
+"comment.line.documentation"  = { fg = "comment", modifiers = [ "bold" ] }
+"constant"                    = { fg = "constant", modifiers = [ "bold" ] }
+"constant.character.escape"   = { fg = "#dca3a3", modifiers = [ "bold" ] }
+"constant.numeric"            = "numeric"
+"function"                    = "#efef8f"
+"function.macro"              = { fg = "#ffcfaf", modifiers = [ "bold" ] }
+"keyword"                     = { fg = "#f0dfaf", modifiers = [ "bold" ] }
+"keyword.storage-class"       = { fg = "#c3bf9f", modifiers = [ "bold" ] }
+"label"                       = { fg = "#dfcfaf", modifiers = [ "underlined" ] }
+"operator"                    = { fg = "#f0efd0", modifiers = [  ] }
+"special"                     = "#cfbfaf"
+"string"                      = "#cc9393"
+"type"                        = { fg = "#dfdfbf", modifiers = [ "bold" ] }
+"ui.background"               = { bg = "bg" }
+"ui.cursor"                   = { bg = "#8faf9f", fg = "#000d18", modifiers = [ "bold" ] }
+"ui.cursor.match"             = { bg = "#284f28", fg = "#343434", modifiers = [ "bold" ] }
+"ui.help"                     = { bg = "black", fg = "white" }
+"ui.linenr"                   = { bg = "#262626", fg = "#9fafaf" }
+"ui.linenr.selected"          = { modifiers = [ "bold" ] }
+"ui.menu"                     = { bg = "uibg", fg = "#9f9f9f" }
+"ui.menu.selected"            = { bg = "#242424", fg = "#d0d0a0", modifiers = [ "bold" ] }
+"ui.popup"                    = { bg = "uibg" }
+"ui.selection"                = { bg = "#304a3d" }
+"ui.selection.primary"        = { bg = "#2f2f2f" }
+"ui.statusline"               = { bg = "statusbg", fg = "#ccdc90" }
+"ui.statusline.inactive"      = { bg = '#88b090', fg = '#2e3330' }
+"ui.text"                     = { fg = "normal" }
+"ui.virtual.inlay-hint"       = { fg = "#9f9f9f" }
+"ui.virtual.ruler"            = { bg = "#484848" }
+"ui.virtual.whitespace"       = { fg = "#5b605e", modifiers = [ "bold" ] }
+"variable"                    = "normal"
+"variable.builtin"            = { fg = "constant", modifiers = [ "bold" ] }
+"variable.other.member"       = "#efef8f"
 
 "punctuation.delimiter" = "#8f8f8f"
 
 "ui.virtual.indent-guide" = "#4f4f4f"
 
-"diff.plus" = {fg = "#709080"}
-"diff.delta" = {fg = "#464646"}
-"diff.minus" = {fg = "#cc9393"}
+"diff.delta" = { fg = "#464646" }
+"diff.minus" = { fg = "#cc9393" }
+"diff.plus"  = { fg = "#709080" }
 
-"diagnostic" = {bg = "statusbg"}
-"diagnostic.error" = { fg = "errorfg", bg = "errorbg"}
-"diagnostic.unnecessary" = { modifiers = ["dim"] }
-"diagnostic.deprecated" = { modifiers = ["crossed_out"] }
-"ui.gutter" = { bg = "statusbg" }
-"hint" = {fg = "numeric", bg = "statusbg"}
-"warning" = "numeric"
-"error" = "errorfg"
+"diagnostic"             = { bg = "statusbg" }
+"diagnostic.deprecated"  = { modifiers = [ "crossed_out" ] }
+"diagnostic.error"       = { bg = "errorbg", fg = "errorfg" }
+"diagnostic.unnecessary" = { modifiers = [ "dim" ] }
+"error"                  = "errorfg"
+"hint"                   = { bg = "statusbg", fg = "numeric" }
+"ui.gutter"              = { bg = "statusbg" }
+"warning"                = "numeric"
 
 [palette]
-comment = "#7f9f7f"
-bg = "#3f3f3f"
-uibg = "#2c2e2e"
+bg       = "#3f3f3f"
+comment  = "#7f9f7f"
 constant = "#dca3a3"
-normal = "#dcdccc"
-todo = "#dfdfdf"
-errorfg = "#e37170"
-errorbg = "#3d3535"
+errorbg  = "#3d3535"
+errorfg  = "#e37170"
+normal   = "#dcdccc"
+numeric  = "#8cd0d3"
 statusbg = "#313633"
-numeric = "#8cd0d3"
+todo     = "#dfdfdf"
+uibg     = "#2c2e2e"

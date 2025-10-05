@@ -4,10 +4,10 @@
 
 inherits = "gruvbox"
 
-"ui.cursor.primary" = { modifiers = ["reversed"] }
-"ui.cursor.match" = { bg = "bg2" }
+"ui.cursor.match"   = { bg = "bg2" }
+"ui.cursor.primary" = { modifiers = [ "reversed" ] }
 
-"diagnostic.error" = { underline = { color = "red0", style = "curl"} }
+"diagnostic.error" = { underline = { color = "red0", style = "curl" } }
 
 [palette]
 bg0 = "#1d2021" # main background

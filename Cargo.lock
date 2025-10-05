@@ -3809,6 +3809,7 @@ checksum = "b9d12581f227e93f094d3af2ae690a574abb8a2b9b7a96e7cfe9647b2b617678"
 [[package]]
 name = "tree-house"
 version = "0.3.0"
+source = "git+https://github.com/misterclayt0n/tree-house#8d8ace7e135712e0232126ced4342dd9fe8383eb"
 dependencies = [
  "arc-swap",
  "hashbrown 0.15.5",
@@ -3824,6 +3825,7 @@ dependencies = [
 [[package]]
 name = "tree-house-bindings"
 version = "0.2.2"
+source = "git+https://github.com/misterclayt0n/tree-house#8d8ace7e135712e0232126ced4342dd9fe8383eb"
 dependencies = [
  "cc",
  "libloading",

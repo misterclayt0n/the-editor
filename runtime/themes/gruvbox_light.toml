@@ -4,9 +4,9 @@
 
 inherits = "gruvbox"
 
-"ui.cursor.primary" = { modifiers = ["reversed"] }
-"ui.cursor.match" = { bg = "bg2" }
-"ui.cursorline" = { bg = "bg1" }
+"ui.cursor.match"   = { bg = "bg2" }
+"ui.cursor.primary" = { modifiers = [ "reversed" ] }
+"ui.cursorline"     = { bg = "bg1" }
 
 [palette]
 bg0 = "#fbf1c7" # main background
@@ -23,10 +23,10 @@ fg4 = "#7c6f64" # gray0
 
 gray0 = "#7c6f64"
 
-red1 = "#9d0006" # bright
-green1 = "#79740e"
-yellow1 = "#b57614"
-blue1 = "#076678"
-purple1 = "#8f3f71"
-aqua1 = "#427b58"
+aqua1   = "#427b58"
+blue1   = "#076678"
+green1  = "#79740e"
 orange1 = "#af3a03"
+purple1 = "#8f3f71"
+red1    = "#9d0006" # bright
+yellow1 = "#b57614"

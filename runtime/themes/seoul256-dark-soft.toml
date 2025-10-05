@@ -4,12 +4,12 @@
 
 inherits = "seoul256-dark"
 
-"ui.background" = { bg = "gray8" }
-"ui.gutter" = { bg = "gray6" }
+"ui.background"         = { bg = "gray8" }
 "ui.cursorline.primary" = { bg = "gray5" }
-"ui.gutter.selected" = { bg = "gray5" }
-"ui.linenr.selected" = { bg = "gray5", fg = "magenta", modifiers = ["bold"] }
+"ui.gutter"             = { bg = "gray6" }
+"ui.gutter.selected"    = { bg = "gray5" }
+"ui.linenr.selected"    = { bg = "gray5", fg = "magenta", modifiers = [ "bold" ] }
 
-"ui.help" = { bg = "gray5" }
+"ui.help"  = { bg = "gray5" }
+"ui.menu"  = { bg = "gray5" }
 "ui.popup" = { bg = "gray5" }
-"ui.menu" = { bg = "gray5" }

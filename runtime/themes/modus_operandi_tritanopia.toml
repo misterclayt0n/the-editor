@@ -6,69 +6,69 @@
 
 inherits = "modus_operandi"
 
-"type" = "blue-warmer"
-"constructor" = "blue-warmer"
-"constant" = "green-cooler"
+"comment"                   = "red-faint"
+"constant"                  = "green-cooler"
 "constant.character.escape" = "red-cooler"
-"string" = "cyan"
-"comment" = "red-faint"
-"variable.parameter" = "cyan-cooler"
-"keyword" = "red-cooler"
-"keyword.directive" = "red-warmer"
-"function" = "cyan-warmer"
-"function.macro" = "magenta"
-"tag" = "red-cooler"
+"constructor"               = "blue-warmer"
+"function"                  = "cyan-warmer"
+"function.macro"            = "magenta"
+"keyword"                   = "red-cooler"
+"keyword.directive"         = "red-warmer"
+"string"                    = "cyan"
+"tag"                       = "red-cooler"
+"type"                      = "blue-warmer"
+"variable.parameter"        = "cyan-cooler"
 
-"markup.heading.2" = { fg = "red-faint", modifiers = ["bold"] }
-"markup.heading.3" = { fg = "cyan-faint", modifiers = ["bold"] }
-"markup.heading.6" = { fg = "magenta-faint", modifiers = ["bold"] }
-"markup.link.url" = { fg = "cyan-cooler" }
-"markup.link.text" = { fg = "cyan", modifiers = ["underlined"] }
+"markup.heading.2" = { fg = "red-faint", modifiers = [ "bold" ] }
+"markup.heading.3" = { fg = "cyan-faint", modifiers = [ "bold" ] }
+"markup.heading.6" = { fg = "magenta-faint", modifiers = [ "bold" ] }
+"markup.link.text" = { fg = "cyan", modifiers = [ "underlined" ] }
+"markup.link.url"  = { fg = "cyan-cooler" }
 
-"ui.cursor" = { fg = "bg-main", bg = "red-intense" }
-"ui.cursor.primary.normal" = { fg = "bg-main", bg = "red-intense" }
+"ui.cursor"                = { bg = "red-intense", fg = "bg-main" }
+"ui.cursor.primary.normal" = { bg = "red-intense", fg = "bg-main" }
 
-"diagnostic.error" = { underline = { color = "red-warmer", style = "curl" } }
+"diagnostic.error"   = { underline = { color = "red-warmer", style = "curl" } }
+"diagnostic.hint"    = { underline = { color = "blue", style = "curl" } }
+"diagnostic.info"    = { underline = { color = "cyan", style = "curl" } }
 "diagnostic.warning" = { underline = { color = "magenta", style = "curl" } }
-"diagnostic.info" = { underline = { color = "cyan", style = "curl" } }
-"diagnostic.hint" = { underline = { color = "blue", style = "curl" } }
 
-error = "red-warmer"
+error   = "red-warmer"
+hint    = "blue"
+info    = "cyan"
 warning = "magenta"
-info = "cyan"
-hint = "blue"
 
 [palette]
 
 # Common accent foregrounds
-red-warmer = "#b21100"
-red-faint = "#702000"
-yellow = "#695500"
-yellow-warmer = "#973300"
-yellow-cooler = "#77492f"
+cyan-faint      = "#004f5f"
 magenta-intense = "#cd22bd"
-cyan-faint = "#004f5f"
+red-faint       = "#702000"
+red-warmer      = "#b21100"
+yellow          = "#695500"
+yellow-cooler   = "#77492f"
+yellow-warmer   = "#973300"
 
 # Special purpose
-bg-completion = "#afdfef"
-bg-hover = "#ffafbc"
+bg-completion      = "#afdfef"
+bg-hl-line         = "#dfeaec"
+bg-hover           = "#ffafbc"
 bg-hover-secondary = "#9fdfff"
-bg-hl-line = "#dfeaec"
 
 bg-char-0 = "#ff908f"
 bg-char-1 = "#bfbfff"
 bg-char-2 = "#5fcfdf"
 
-bg-mode-line-active = "#afe0f2"
-fg-mode-line-active = "#0f0f0f"
+bg-mode-line-active     = "#afe0f2"
 border-mode-line-active = "#2f4f44"
+fg-mode-line-active     = "#0f0f0f"
 
-modeline-err = "#8f0000"
+modeline-err     = "#8f0000"
+modeline-info    = "#00445f"
 modeline-warning = "#6f306f"
-modeline-info = "#00445f"
 
 # Diffs
-bg-added = "#b5e7ff"
-fg-added = "#005079"
+bg-added   = "#b5e7ff"
 bg-changed = "#eecfdf"
+fg-added   = "#005079"
 fg-changed = "#6f1343"

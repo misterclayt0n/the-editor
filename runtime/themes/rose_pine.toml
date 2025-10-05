@@ -4,70 +4,70 @@
 #   Please submit changes to https://github.com/rose-pine/helix.
 #   The Rosé Pine team will update Helix, including you as a co-author.
 
-"ui.background" = { bg = "base" }
+"ui.background"           = { bg = "base" }
 "ui.background.separator" = { bg = "base" }
 
-"ui.cursor" = { fg = "text", bg = "highlight_high" }
+"ui.cursor" = { bg = "highlight_high", fg = "text" }
 # "ui.cursor.select" = {}
-"ui.cursor.match" = { fg = "text", bg = "highlight_med" }
-"ui.cursor.primary" = { fg = "text", bg = "muted" }
+"ui.cursor.match"   = { bg = "highlight_med", fg = "text" }
+"ui.cursor.primary" = { bg = "muted", fg = "text" }
 
 # "ui.gutter" = {}
 # "ui.gutter.selected" = {}
 
-"ui.linenr" = { fg = "muted" }
+"ui.linenr"          = { fg = "muted" }
 "ui.linenr.selected" = { fg = "text" }
 
-"ui.bufferline" = { fg = "muted", bg = "base" }
-"ui.bufferline.active" = { fg = "text", bg = "overlay" }
-"ui.statusline" = { fg = "subtle", bg = "surface" }
-"ui.statusline.inactive" = { fg = "muted", bg = "surface" }
-"ui.statusline.normal" = { fg = "rose", bg = "rose_10" }
-"ui.statusline.insert" = { fg = "foam", bg = "foam_10" }
-"ui.statusline.select" = { fg = "iris", bg = "iris_10" }
+"ui.bufferline"          = { bg = "base", fg = "muted" }
+"ui.bufferline.active"   = { bg = "overlay", fg = "text" }
+"ui.statusline"          = { bg = "surface", fg = "subtle" }
+"ui.statusline.inactive" = { bg = "surface", fg = "muted" }
+"ui.statusline.insert"   = { bg = "foam_10", fg = "foam" }
+"ui.statusline.normal"   = { bg = "rose_10", fg = "rose" }
+"ui.statusline.select"   = { bg = "iris_10", fg = "iris" }
 # "ui.statusline.separator" = {}
 
-"ui.popup" = { bg = "surface" }
+"ui.popup"      = { bg = "surface" }
 "ui.popup.info" = { bg = "surface" }
 
-"ui.window" = { fg = "overlay", bg = "base" }
-"ui.help" = { fg = "subtle", bg = "overlay" }
+"ui.help"   = { bg = "overlay", fg = "subtle" }
+"ui.window" = { bg = "base", fg = "overlay" }
 
-"ui.text" = { fg = "text" }
-"ui.text.focus" = { bg = "overlay" }
-"ui.text.info" = { fg = "subtle" }
+"ui.text"           = { fg = "text" }
 "ui.text.directory" = { fg = "iris" }
+"ui.text.focus"     = { bg = "overlay" }
+"ui.text.info"      = { fg = "subtle" }
 
-"ui.virtual.jump-label" = { fg = "love", modifiers = ["bold"] }
-"ui.virtual.ruler" = { bg = "overlay" }
-"ui.virtual.whitespace" = { fg = "highlight_high" }
 "ui.virtual.indent-guide" = { fg = "muted" }
-"ui.virtual.inlay-hint" = { fg = "subtle" }
+"ui.virtual.inlay-hint"   = { fg = "subtle" }
+"ui.virtual.jump-label"   = { fg = "love", modifiers = [ "bold" ] }
+"ui.virtual.ruler"        = { bg = "overlay" }
+"ui.virtual.whitespace"   = { fg = "highlight_high" }
 
-"ui.menu" = { fg = "subtle", bg = "surface" }
-"ui.menu.selected" = { fg = "text", bg = "overlay" }
-"ui.menu.scroll" = { fg = "muted", bg = "highlight_med" }
+"ui.menu"          = { bg = "surface", fg = "subtle" }
+"ui.menu.scroll"   = { bg = "highlight_med", fg = "muted" }
+"ui.menu.selected" = { bg = "overlay", fg = "text" }
 
-"ui.selection" = { bg = "overlay" }
+"ui.selection"         = { bg = "overlay" }
 "ui.selection.primary" = { bg = "highlight_med" }
 
-"ui.cursorline.primary" = { bg = "highlight_low" }
+"ui.cursorline.primary"   = { bg = "highlight_low" }
 "ui.cursorline.secondary" = { bg = "surface" }
 
+"debug"   = "rose"
+"error"   = "love"
+"hint"    = "iris"
+"info"    = "foam"
 "warning" = "gold"
-"error" = "love"
-"info" = "foam"
-"hint" = "iris"
-"debug" = "rose"
 
-"diagnostic" = { underline = { color = "subtle", style = "curl" } }
-"diagnostic.hint" = { underline = { color = "iris", style = "curl" } }
-"diagnostic.info" = { underline = { color = "foam", style = "curl" } }
-"diagnostic.warning" = { underline = { color = "gold", style = "curl" } }
-"diagnostic.error" = { underline = { color = "love", style = "curl" } }
-"diagnostic.unnecessary" = { modifiers = ["dim"] }
-"diagnostic.deprecated" = { modifiers = ["crossed_out"] }
-"special" = "rose"
+"diagnostic"             = { underline = { color = "subtle", style = "curl" } }
+"diagnostic.deprecated"  = { modifiers = [ "crossed_out" ] }
+"diagnostic.error"       = { underline = { color = "love", style = "curl" } }
+"diagnostic.hint"        = { underline = { color = "iris", style = "curl" } }
+"diagnostic.info"        = { underline = { color = "foam", style = "curl" } }
+"diagnostic.unnecessary" = { modifiers = [ "dim" ] }
+"diagnostic.warning"     = { underline = { color = "gold", style = "curl" } }
+"special"                = "rose"
 
 "attribute" = "iris"
 
@@ -76,12 +76,12 @@
 
 "constructor" = "foam"
 
-"constant" = "foam"
-"constant.builtin" = "love"
-"constant.builtin.boolean" = "rose"
-"constant.character" = "gold"
+"constant"                  = "foam"
+"constant.builtin"          = "love"
+"constant.builtin.boolean"  = "rose"
+"constant.character"        = "gold"
 "constant.character.escape" = "pine"
-"constant.numeric" = "gold"
+"constant.numeric"          = "gold"
 # "constant.numeric.integer" = ""
 # "constant.numeric.float" = ""
 
@@ -92,14 +92,14 @@
 # "string.special.url" = ""
 # "string.special.symbol" = ""
 
-"comment" = { fg = "muted", modifiers = ["italic"] }
+"comment" = { fg = "muted", modifiers = [ "italic" ] }
 # "comment.line" = ""
 # "comment.line.documentation" = ""
 # "comment.block" = ""
 # "comment.block.documentation" = ""
 
-"variable" = "text"
-"variable.builtin" = "love"
+"variable"           = "text"
+"variable.builtin"   = "love"
 "variable.parameter" = "iris"
 # "variable.other" = ""
 "variable.other.member" = "foam"
@@ -127,7 +127,7 @@
 
 "operator" = "subtle"
 
-"function" = "rose"         # maybe pine
+"function"         = "rose" # maybe pine
 "function.builtin" = "love"
 # "function.method" = ""
 # "function.macro" = ""
@@ -137,28 +137,28 @@
 
 "namespace" = "text"
 
+"markup.heading"        = { fg = "iris", modifiers = [ "bold" ] }
+"markup.heading.1"      = { fg = "iris", modifiers = [ "bold" ] }
+"markup.heading.2"      = { fg = "foam", modifiers = [ "bold" ] }
+"markup.heading.3"      = { fg = "rose", modifiers = [ "bold" ] }
+"markup.heading.4"      = { fg = "gold", modifiers = [ "bold" ] }
+"markup.heading.5"      = { fg = "pine", modifiers = [ "bold" ] }
+"markup.heading.6"      = { fg = "foam", modifiers = [ "bold" ] }
 "markup.heading.marker" = "muted"
-"markup.heading" = { fg = "iris", modifiers = ["bold"] }
-"markup.heading.1" = { fg = "iris", modifiers = ["bold"] }
-"markup.heading.2" = { fg = "foam", modifiers = ["bold"] }
-"markup.heading.3" = { fg = "rose", modifiers = ["bold"] }
-"markup.heading.4" = { fg = "gold", modifiers = ["bold"] }
-"markup.heading.5" = { fg = "pine", modifiers = ["bold"] }
-"markup.heading.6" = { fg = "foam", modifiers = ["bold"] }
 # "markup.heading.completion" = ""
 # "markup.heading.hover" = ""
 "markup.list" = "muted"
 # "markup.list.unnumbered" = ""
 # "markup.list.numbered" = ""
-"markup.bold" = { modifiers = ["bold"] }
-"markup.italic" = { modifiers = ["italic"] }
-"markup.strikethrough" = { modifiers = ["crossed_out"] }
-"markup.link" = "iris"
-"markup.link.url" = { fg = "iris", underline = { color = "iris", style = "line" } }
-"markup.link.label" = "subtle"
-"markup.link.text" = "text"
-"markup.quote" = "subtle"
-"markup.raw" = "subtle"
+"markup.bold"          = { modifiers = [ "bold" ] }
+"markup.italic"        = { modifiers = [ "italic" ] }
+"markup.link"          = "iris"
+"markup.link.label"    = "subtle"
+"markup.link.text"     = "text"
+"markup.link.url"      = { fg = "iris", underline = { color = "iris", style = "line" } }
+"markup.quote"         = "subtle"
+"markup.raw"           = "subtle"
+"markup.strikethrough" = { modifiers = [ "crossed_out" ] }
 # "markup.raw.inline" = {}
 # "markup.raw.inline.completion" = {}
 # "markup.raw.inline.hover" = {}
@@ -167,31 +167,31 @@
 # "markup.normal.completion" = ""
 # "markup.normal.hover" = ""
 
-"diff" = "overlay"
-"diff.plus" = "foam"
-"diff.minus" = "love"
+"diff"       = "overlay"
 "diff.delta" = "highlight_high"
+"diff.minus" = "love"
+"diff.plus"  = "foam"
 # "diff.delta.moved" = ""
 
 [palette]
-base = "#191724"
-surface = "#1f1d2e"
-overlay = "#26233a"
-muted = "#6e6a86"
-subtle = "#908caa"
-text = "#e0def4"
-love = "#eb6f92"
-love_10 = "#311f30"
-gold = "#f6c177"
-gold_10 = "#30282c"
-rose = "#ebbcba"
-rose_10 = "#2f2834"
-pine = "#31748f"
-pine_10 = "#1a2030"
-foam = "#9ccfd8"
-foam_10 = "#252937"
-iris = "#c4a7e7"
-iris_10 = "#2b2539"
-highlight_low = "#21202e"
-highlight_med = "#403d52"
+base           = "#191724"
+foam           = "#9ccfd8"
+foam_10        = "#252937"
+gold           = "#f6c177"
+gold_10        = "#30282c"
 highlight_high = "#524f67"
+highlight_low  = "#21202e"
+highlight_med  = "#403d52"
+iris           = "#c4a7e7"
+iris_10        = "#2b2539"
+love           = "#eb6f92"
+love_10        = "#311f30"
+muted          = "#6e6a86"
+overlay        = "#26233a"
+pine           = "#31748f"
+pine_10        = "#1a2030"
+rose           = "#ebbcba"
+rose_10        = "#2f2834"
+subtle         = "#908caa"
+surface        = "#1f1d2e"
+text           = "#e0def4"

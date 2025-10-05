@@ -28,14 +28,14 @@ cargo build -p the-editor
 cargo run -p the-editor
 
 # Run tests (all crates)
-cargo test
+cargo nextest r --features unicode-lines
 
 # Run tests matching a pattern
-cargo test <pattern>
+cargo nextest -p <pattern>
 # Example: cargo test movement
 
 # Run tests for specific crate
-cargo test -p the-editor
+cargo nextest -p the-editor
 
 # Format code (required before commits)
 cargo fmt --all

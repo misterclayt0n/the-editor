@@ -4,33 +4,33 @@
 # Syntax
 
 ## Constants
-"constant" = "white"
-"constant.builtin" = "pink"
+"constant"                  = "white"
+"constant.builtin"          = "pink"
 "constant.character.escape" = "blue"
-"constant.numeric" = "purple"
+"constant.numeric"          = "purple"
 
 ## Diagnostics
-"diagnostic" = { modifiers = ["underlined"] }
-"diagnostic.error" = { underline = { style = "curl", color = "pink" } }
-"diagnostic.warning" = { underline = { style = "curl", color = "orange" } }
-"diagnostic.info" = { underline = { style = "curl", color = "white" } }
-"diagnostic.unnecessary" = { modifiers = ["dim"] }
-"diagnostic.deprecated" = { modifiers = ["crossed_out"] }
+"diagnostic"             = { modifiers = [ "underlined" ] }
+"diagnostic.deprecated"  = { modifiers = [ "crossed_out" ] }
+"diagnostic.error"       = { underline = { color = "pink", style = "curl" } }
+"diagnostic.info"        = { underline = { color = "white", style = "curl" } }
+"diagnostic.unnecessary" = { modifiers = [ "dim" ] }
+"diagnostic.warning"     = { underline = { color = "orange", style = "curl" } }
 
 ## Diffs
-"diff.plus" = "green"
-"diff.delta" = "orange"
-"diff.minus" = "pink"
+"diff.delta"       = "orange"
 "diff.delta.moved" = "orange"
+"diff.minus"       = "pink"
+"diff.plus"        = "green"
 
 ## Functions
-"function" = "green"
-"function.macro" = "blue"
+"constructor"      = "blue"
+"function"         = "green"
 "function.builtin" = "pink"
-"constructor" = "blue"
+"function.macro"   = "blue"
 
 ## Keywords
-"keyword" = "pink"
+"keyword"           = "pink"
 "keyword.directive" = "blue"
 
 ## Punctuation
@@ -40,84 +40,84 @@
 "string" = "yellow"
 
 ## Types
-"type" = "blue"
+"type"         = "blue"
 "type.builtin" = "pink"
 
 ## Variables
-"variable"  = "white"
-"variable.builtin" = "pink"
+"variable"              = "white"
+"variable.builtin"      = "pink"
 "variable.other.member" = "white"
-"variable.parameter" = "softorange"
+"variable.parameter"    = "softorange"
 
 ## Markup
-"markup.heading" = "green"
-"markup.bold" = { fg = "orange", modifiers = ["bold"] }
-"markup.italic" = { fg = "orange", modifiers = ["italic"] }
-"markup.link.url" = { fg = "orange", modifiers = ["underlined"] }
+"markup.bold"      = { fg = "orange", modifiers = [ "bold" ] }
+"markup.heading"   = "green"
+"markup.italic"    = { fg = "orange", modifiers = [ "italic" ] }
 "markup.link.text" = "yellow"
-"markup.quote" = "green"
+"markup.link.url"  = { fg = "orange", modifiers = [ "underlined" ] }
+"markup.quote"     = "green"
 
 ## Misc
 "attribute" = "blue"
-"comment" = { fg = "gray", modifiers = ["italic"] }
-"error" = "pink"
-"hint" = "white"
-"info" = "white"
-"label" = "yellow"
-"module" = "softorange"
+"comment"   = { fg = "gray", modifiers = [ "italic" ] }
+"error"     = "pink"
+"hint"      = "white"
+"info"      = "white"
+"label"     = "yellow"
+"module"    = "softorange"
 "namespace" = "pink"
-"operator" = "pink"
-"special" = "softorange"
-"warning" = "orange"
+"operator"  = "pink"
+"special"   = "softorange"
+"warning"   = "orange"
 
 # Editor UI
 
 ## Main
 "ui.background" = { bg = "background" }
-"ui.text" = "white"
-"ui.window" = { bg = "darkgray" }
+"ui.text"       = "white"
+"ui.window"     = { bg = "darkgray" }
 
 ## Debug (TODO)
 
 ## Menus
-"ui.menu" = { fg = "white", bg = "darkgray" }
-"ui.menu.selected" = { modifiers = ["reversed"] }
-"ui.popup" = { bg = "darkgray" }
-"ui.help" = { fg = "white", bg = "darkgray" }
+"ui.help"          = { bg = "darkgray", fg = "white" }
+"ui.menu"          = { bg = "darkgray", fg = "white" }
+"ui.menu.selected" = { modifiers = [ "reversed" ] }
+"ui.popup"         = { bg = "darkgray" }
 
 ## Gutter
-"ui.linenr" = "darkgray"
+"ui.linenr"          = "darkgray"
 "ui.linenr.selected" = "orange"
 
 ## Cursor
-"ui.cursor.primary" = { fg = "white", modifiers = ["reversed"] }
-"ui.cursor.match" = { fg = "white", modifiers = ["reversed"] }
-"ui.selection" = { bg = "darkgray" }
+"ui.cursor.match"   = { fg = "white", modifiers = [ "reversed" ] }
+"ui.cursor.primary" = { fg = "white", modifiers = [ "reversed" ] }
+"ui.selection"      = { bg = "darkgray" }
 
 ## Statusline
-"ui.statusline" = { bg = "darkgray" }
-"ui.statusline.inactive" = { fg = "white", bg = "darkgray" }
-"ui.statusline.normal" = { fg = "white", bg = "blue" }
-"ui.statusline.insert" = { fg = "white", bg = "green" }
-"ui.statusline.select" = { fg = "white", bg = "purple" }
+"ui.statusline"          = { bg = "darkgray" }
+"ui.statusline.inactive" = { bg = "darkgray", fg = "white" }
+"ui.statusline.insert"   = { bg = "green", fg = "white" }
+"ui.statusline.normal"   = { bg = "blue", fg = "white" }
+"ui.statusline.select"   = { bg = "purple", fg = "white" }
 
-"ui.text.focus" = { fg = "yellow", modifiers = ["bold"] }
-"ui.virtual" = "darkgray"
-"ui.virtual.ruler" = { bg = "darkgray" }
-"ui.virtual.jump-label" = { fg = "softorange", modifiers = ["bold"] }
+"ui.text.focus"         = { fg = "yellow", modifiers = [ "bold" ] }
+"ui.virtual"            = "darkgray"
+"ui.virtual.jump-label" = { fg = "softorange", modifiers = [ "bold" ] }
+"ui.virtual.ruler"      = { bg = "darkgray" }
 
 # Palette
 
 [palette]
-"purple" = "#AE81FF"
-"yellow" = "#E6DB74"
-"pink" = "#f92a72"
-"white" = "#cfcfc2"
-"gray" = "#75715e"
-"darkgray" = "#444444"
-"black" = "#222222"
-"blue" = "#66d9ef"
-"green" = "#a6e22e"
-"softorange" = "#f59762"
-"orange" = "#fd971f"
 "background" = "#191919"
+"black"      = "#222222"
+"blue"       = "#66d9ef"
+"darkgray"   = "#444444"
+"gray"       = "#75715e"
+"green"      = "#a6e22e"
+"orange"     = "#fd971f"
+"pink"       = "#f92a72"
+"purple"     = "#AE81FF"
+"softorange" = "#f59762"
+"white"      = "#cfcfc2"
+"yellow"     = "#E6DB74"

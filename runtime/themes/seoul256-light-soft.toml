@@ -4,13 +4,13 @@
 
 inherits = "seoul256-light"
 
-"ui.background" = { bg = "white" }
-"ui.cursor.match" = { bg = "gray13", modifiers = ["underlined"] }
-"ui.gutter" = { bg = "gray13" }
+"ui.background"         = { bg = "white" }
+"ui.cursor.match"       = { bg = "gray13", modifiers = [ "underlined" ] }
 "ui.cursorline.primary" = { bg = "gray10" }
-"ui.gutter.selected" = { bg = "gray10" }
-"ui.linenr.selected" = { bg = "gray10", fg = "magenta", modifiers = ["bold"] }
+"ui.gutter"             = { bg = "gray13" }
+"ui.gutter.selected"    = { bg = "gray10" }
+"ui.linenr.selected"    = { bg = "gray10", fg = "magenta", modifiers = [ "bold" ] }
 
-"ui.help" = { fg = "black1", bg = "gray10" }
-"ui.popup" = { fg = "black1", bg = "gray10" }
-"ui.menu" = { fg = "black1", bg = "gray10" }
+"ui.help"  = { bg = "gray10", fg = "black1" }
+"ui.menu"  = { bg = "gray10", fg = "black1" }
+"ui.popup" = { bg = "gray10", fg = "black1" }

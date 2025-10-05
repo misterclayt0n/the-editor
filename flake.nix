@@ -56,7 +56,9 @@
             (lib.hasSuffix ".ttf" path) ||
             (lib.hasSuffix ".otf" path) ||
             (lib.hasSuffix ".wgsl" path) ||
+            (lib.hasSuffix ".scm" path) ||
             (lib.hasInfix "/assets/" path) ||
+            (lib.hasInfix "/runtime/" path) ||
             (craneLib.filterCargoSources path type);
         };
 
@@ -68,9 +70,9 @@
             ++ lib.optionals pkgs.stdenv.isDarwin [
               pkgs.libiconv
           ];
-          
-          # NOTE: Env vars.
-          # MISTER = "clayton";
+
+          # Set HELIX_DEFAULT_RUNTIME at compile time so tests can find runtime/ directory
+          HELIX_DEFAULT_RUNTIME = "${src}/runtime";
         };
 
         # Build dependencies separately for better caching.

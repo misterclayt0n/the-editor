@@ -9,94 +9,94 @@
 inherits = "kanagawa"
 
 ## User interface
-"ui.selection" = { bg = "waveBlue2" }
+"ui.background"        = { bg = "dragonBlack3", fg = "dragonWhite" }
+"ui.gutter"            = { bg = "dragonBlack4", fg = "dragonBlack6" }
+"ui.selection"         = { bg = "waveBlue2" }
 "ui.selection.primary" = { bg = "waveBlue1" }
-"ui.background" = { fg = "dragonWhite", bg = "dragonBlack3" }
-"ui.gutter" = { fg = "dragonBlack6", bg = "dragonBlack4" }
 
-"ui.linenr" = { fg = "dragonBlack6", bg = "dragonBlack4" }
-"ui.linenr.selected" = { fg = "roninYellow", modifiers = ["bold"] }
+"ui.linenr"          = { bg = "dragonBlack4", fg = "dragonBlack6" }
+"ui.linenr.selected" = { fg = "roninYellow", modifiers = [ "bold" ] }
 
-"ui.virtual" = "dragonBlack4"
-"ui.virtual.ruler" = { bg = "dragonBlack5" }
-"ui.virtual.inlay-hint" = "dragonGray2"
-"ui.virtual.inlay-hint.parameter" = { fg = "dragonYellow", modifiers = ["dim"] }
-"ui.virtual.inlay-hint.type" = { fg = "dragonAqua", modifiers = ["dim"] }
-"ui.virtual.jump-label" = { fg = "dragonRed", modifiers = ["bold"] }
+"ui.virtual"                      = "dragonBlack4"
+"ui.virtual.inlay-hint"           = "dragonGray2"
+"ui.virtual.inlay-hint.parameter" = { fg = "dragonYellow", modifiers = [ "dim" ] }
+"ui.virtual.inlay-hint.type"      = { fg = "dragonAqua", modifiers = [ "dim" ] }
+"ui.virtual.jump-label"           = { fg = "dragonRed", modifiers = [ "bold" ] }
+"ui.virtual.ruler"                = { bg = "dragonBlack5" }
 
-"ui.statusline" = { fg = "oldWhite", bg = "dragonBlack0" }
+"ui.statusline" = { bg = "dragonBlack0", fg = "oldWhite" }
 
-"ui.bufferline" = { fg = "oldWhite", bg = "dragonBlack0" }
-"ui.bufferline.active" = { fg = "oldWhite", bg = "dragonBlack0" }
+"ui.bufferline"            = { bg = "dragonBlack0", fg = "oldWhite" }
+"ui.bufferline.active"     = { bg = "dragonBlack0", fg = "oldWhite" }
 "ui.bufferline.background" = { bg = "sumiInk0" }
 
-"ui.popup" = { fg = "oldWhite", bg = "dragonBlack0" }
-"ui.window" = { fg = "sumiInk0" }
-"ui.help" = { fg = "fujiWhite", bg = "sumiInk0" }
-"ui.text" = "dragonWhite"
-"ui.text.focus" = { fg = "dragonWhite", bg = "waveBlue1", modifiers = ["bold"] }
+"ui.help"       = { bg = "sumiInk0", fg = "fujiWhite" }
+"ui.popup"      = { bg = "dragonBlack0", fg = "oldWhite" }
+"ui.text"       = "dragonWhite"
+"ui.text.focus" = { bg = "waveBlue1", fg = "dragonWhite", modifiers = [ "bold" ] }
+"ui.window"     = { fg = "sumiInk0" }
 
-"ui.cursor" = { fg = "waveBlue1", bg = "waveAqua2" }
-"ui.cursor.primary" = { fg = "waveBlue1", bg = "fujiWhite" }
-"ui.cursor.match" = { fg = "roninYellow", modifiers = ["bold"] }
-"ui.highlight" = { fg = "fujiWhite", bg = "waveBlue2" }
+"ui.cursor"         = { bg = "waveAqua2", fg = "waveBlue1" }
+"ui.cursor.match"   = { fg = "roninYellow", modifiers = [ "bold" ] }
+"ui.cursor.primary" = { bg = "fujiWhite", fg = "waveBlue1" }
+"ui.highlight"      = { bg = "waveBlue2", fg = "fujiWhite" }
 
-"ui.cursorline.primary" = { bg = "dragonBlack5" }
 "ui.cursorcolumn.primary" = { bg = "dragonBlack5" }
+"ui.cursorline.primary"   = { bg = "dragonBlack5" }
 
-"diagnostic.info" = { underline = { color = "dragonBlue", style = "curl" } }
-"diagnostic.hint" = { underline = { color = "waveAqua1", style = "curl" } }
-"diagnostic.deprecated" = { fg= "katanaGray", modifiers = ["crossed_out"] }
+"diagnostic.deprecated" = { fg = "katanaGray", modifiers = [ "crossed_out" ] }
+"diagnostic.hint"       = { underline = { color = "waveAqua1", style = "curl" } }
+"diagnostic.info"       = { underline = { color = "dragonBlue", style = "curl" } }
 
 ## Syntax highlighting
-"attribute" = "waveRed"
-"type" = "dragonAqua"
-"type.enum.variant" = "dragonOrange"
-"constructor" = "dragonTeal"
-"constant" = "dragonOrange"
-"constant.numeric" = "dragonPink"
+"attribute"                 = "waveRed"
+"comment"                   = "dragonAsh"
+"constant"                  = "dragonOrange"
 "constant.character.escape" = "dragonBlue2"
-"string" = "dragonGreen2"
-"string.regexp" = "dragonRed"
-"string.special.url" = "dragonTeal"
-"string.special.symbol" = "dragonTeal"
-"comment" = "dragonAsh"
-"variable" = "dragonWhite"
-"variable.builtin" = "dragonRed"
-"variable.parameter" = "dragonGray"
-"variable.other.member" = "dragonYellow"
-"label" = "dragonRed"
-"punctuation" = "dragonWhite"
-"keyword" = "dragonViolet"
-"keyword.control.return" = "dragonRed"
+"constant.numeric"          = "dragonPink"
+"constructor"               = "dragonTeal"
+"function"                  = "dragonBlue2"
+"function.builtin"          = "dragonBlue2"
+"function.macro"            = "dragonRed"
+"keyword"                   = "dragonViolet"
 "keyword.control.exception" = "dragonRed"
-"keyword.directive" = "dragonRed"
-"operator" = "dragonRed"
-"function" = "dragonBlue2"
-"function.builtin" = "dragonBlue2"
-"function.macro" = "dragonRed"
-"tag" = "dragonYellow"
-"namespace" = "dragonWhite"
-"special" = "dragonYellow"
+"keyword.control.return"    = "dragonRed"
+"keyword.directive"         = "dragonRed"
+"label"                     = "dragonRed"
+"namespace"                 = "dragonWhite"
+"operator"                  = "dragonRed"
+"punctuation"               = "dragonWhite"
+"special"                   = "dragonYellow"
+"string"                    = "dragonGreen2"
+"string.regexp"             = "dragonRed"
+"string.special.symbol"     = "dragonTeal"
+"string.special.url"        = "dragonTeal"
+"tag"                       = "dragonYellow"
+"type"                      = "dragonAqua"
+"type.enum.variant"         = "dragonOrange"
+"variable"                  = "dragonWhite"
+"variable.builtin"          = "dragonRed"
+"variable.other.member"     = "dragonYellow"
+"variable.parameter"        = "dragonGray"
 
 ## Markup modifiers
-"markup.heading.marker" = "dragonViolet"
-"markup.heading.1" = { fg = "dragonOrange", modifiers = ["bold"] }
-"markup.heading.2" = { fg = "dragonYellow", modifiers = ["bold"] }
-"markup.heading.3" = { fg = "dragonBlue2", modifiers = ["bold"] }
-"markup.heading.4" = { fg = "dragonWhite", modifiers = ["bold"] }
-"markup.heading.5" = { fg = "dragonRed", modifiers = ["bold"] }
-"markup.heading.6" = { fg = "dragonPink", modifiers = ["bold"] }
-"markup.list.numbered" = "dragonPink"
+"markup.bold"            = { modifiers = [ "bold" ] }
+"markup.heading.1"       = { fg = "dragonOrange", modifiers = [ "bold" ] }
+"markup.heading.2"       = { fg = "dragonYellow", modifiers = [ "bold" ] }
+"markup.heading.3"       = { fg = "dragonBlue2", modifiers = [ "bold" ] }
+"markup.heading.4"       = { fg = "dragonWhite", modifiers = [ "bold" ] }
+"markup.heading.5"       = { fg = "dragonRed", modifiers = [ "bold" ] }
+"markup.heading.6"       = { fg = "dragonPink", modifiers = [ "bold" ] }
+"markup.heading.marker"  = "dragonViolet"
+"markup.italic"          = { modifiers = [ "italic" ] }
+"markup.link.label"      = "dragonBlue2"
+"markup.link.text"       = "dragonTeal"
+"markup.link.url"        = { fg = "dragonPink", underline.style = "line" }
+"markup.list.numbered"   = "dragonPink"
 "markup.list.unnumbered" = "dragonRed"
-"markup.bold" = { modifiers = ["bold"] }
-"markup.italic" = { modifiers = ["italic"] }
-"markup.strikethrough" = { modifiers = ["crossed_out"] }
-"markup.link.text" = "dragonTeal"
-"markup.link.url" = { fg = "dragonPink", underline.style = "line" }
-"markup.link.label" = "dragonBlue2"
-"markup.quote" = "springViolet1"
-"markup.raw" = "dragonGreen2"
+"markup.quote"           = "springViolet1"
+"markup.raw"             = "dragonGreen2"
+"markup.strikethrough"   = { modifiers = [ "crossed_out" ] }
 
 [palette]
 dragonBlack0 = "#0d0c0c"
@@ -107,19 +107,19 @@ dragonBlack4 = "#282727"
 dragonBlack5 = "#393836"
 dragonBlack6 = "#625e5a"
 
-dragonWhite = "#c5c9c5"
-dragonGreen = "#87a987"
-dragonGreen2 = "#8a9a7b"
-dragonPink = "#a292a3"
-dragonOrange = "#b6927b"
+dragonAqua    = "#8ea4a2"
+dragonAsh     = "#737c73"
+dragonBlue2   = "#8ba4b0"
+dragonGray    = "#a6a69c"
+dragonGray2   = "#9e9b93"
+dragonGray3   = "#7a8382"
+dragonGreen   = "#87a987"
+dragonGreen2  = "#8a9a7b"
+dragonOrange  = "#b6927b"
 dragonOrange2 = "#b98d7b"
-dragonGray = "#a6a69c"
-dragonGray2 = "#9e9b93"
-dragonGray3 = "#7a8382"
-dragonBlue2 = "#8ba4b0"
-dragonViolet= "#8992a7"
-dragonRed = "#c4746e"
-dragonAqua = "#8ea4a2"
-dragonAsh = "#737c73"
-dragonTeal = "#949fb5"
-dragonYellow = "#c4b28a"
+dragonPink    = "#a292a3"
+dragonRed     = "#c4746e"
+dragonTeal    = "#949fb5"
+dragonViolet  = "#8992a7"
+dragonWhite   = "#c5c9c5"
+dragonYellow  = "#c4b28a"

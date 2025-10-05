@@ -2,87 +2,87 @@
 # The unofficial Monokai Pro theme, simply migrate from jetbrains monokai pro theme: https://github.com/subtheme-dev/monokai-pro
 # Credit goes to the original creator: https://monokai.pro
 
-"ui.linenr.selected" = { bg = "base3" }
-"ui.text.focus" = { fg = "yellow", modifiers= ["bold"] }
-"ui.menu" = { fg = "base8", bg = "base3" }
-"ui.menu.selected" = { fg = "base2", bg = "yellow" }
+"ui.linenr.selected"    = { bg = "base3" }
+"ui.menu"               = { bg = "base3", fg = "base8" }
+"ui.menu.selected"      = { bg = "yellow", fg = "base2" }
+"ui.text.focus"         = { fg = "yellow", modifiers = [ "bold" ] }
+"ui.virtual.jump-label" = { fg = "red", modifiers = [ "bold" ] }
+"ui.virtual.ruler"      = { bg = "base1" }
 "ui.virtual.whitespace" = "base5"
-"ui.virtual.ruler" = { bg = "base1" }
-"ui.virtual.jump-label" = { fg = "red", modifiers = ["bold"] }
 
-"info" = "base8"
 "hint" = "base8"
+"info" = "base8"
 
 # background color
 "ui.background" = { bg = "base2" }
 
 # status bars, panels, modals, autocompletion
-"ui.statusline" = { fg = "base8", bg = "base4" }
-"ui.statusline.inactive" = { fg = "base8", bg = "base8x0c" }
-"ui.statusline.normal" = { fg = "base4", bg = "blue" }
-"ui.statusline.insert" = { fg = "base4", bg = "green" }
-"ui.statusline.select" = { fg = "base4", bg = "purple" }
-"ui.popup" = { bg = "base3" }
-"ui.window" = { bg = "base3" }
-"ui.help" = { fg = "base8", bg = "base3" }
+"ui.help"                = { bg = "base3", fg = "base8" }
+"ui.popup"               = { bg = "base3" }
+"ui.statusline"          = { bg = "base4", fg = "base8" }
+"ui.statusline.inactive" = { bg = "base8x0c", fg = "base8" }
+"ui.statusline.insert"   = { bg = "green", fg = "base4" }
+"ui.statusline.normal"   = { bg = "blue", fg = "base4" }
+"ui.statusline.select"   = { bg = "purple", fg = "base4" }
+"ui.window"              = { bg = "base3" }
 
 # active line, highlighting
-"ui.selection" = { bg = "base4" }
 "ui.cursor.match" = { bg = "base4" }
-"ui.cursorline" = { bg = "base1" }
+"ui.cursorline"   = { bg = "base1" }
+"ui.selection"    = { bg = "base4" }
 
 # bufferline, inlay hints
-"ui.bufferline" = { fg = "base6", bg = "base8x0c" }
-"ui.bufferline.active" = { fg = "base8", bg = "base4" }
+"ui.bufferline"         = { bg = "base8x0c", fg = "base6" }
+"ui.bufferline.active"  = { bg = "base4", fg = "base8" }
 "ui.virtual.inlay-hint" = { fg = "base6" }
 
 # comments, nord3 based lighter color
-"comment" = { fg = "base5", modifiers = ["italic"] }
+"comment"   = { fg = "base5", modifiers = [ "italic" ] }
 "ui.linenr" = { fg = "base5" }
 
 # cursor, variables, constants, attributes, fields
-"ui.cursor.primary" = { fg = "base7", modifiers = ["reversed"] }
-"attribute" = "blue"
-"variable"  = "base8"
-"constant"  = "orange"
-"variable.builtin" = "red"
-"constant.builtin" = "red"
-"namespace" = "base8"
+"attribute"         = "blue"
+"constant"          = "orange"
+"constant.builtin"  = "red"
+"namespace"         = "base8"
+"ui.cursor.primary" = { fg = "base7", modifiers = [ "reversed" ] }
+"variable"          = "base8"
+"variable.builtin"  = "red"
 
 # base text, punctuation
-"ui.text" = { fg = "base8" }
 "punctuation" = "base6"
+"ui.text"     = { fg = "base8" }
 
 # classes, types, primitives
-"type" = "green"
-"type.builtin" = { fg = "red"}
-"label" = "base8"
+"label"        = "base8"
+"type"         = "green"
+"type.builtin" = { fg = "red" }
 
 # declaration, methods, routines
-"constructor" = "blue"
-"function" = "green"
-"function.macro" = { fg = "blue" }
+"constructor"      = "blue"
+"function"         = "green"
 "function.builtin" = { fg = "cyan" }
+"function.macro"   = { fg = "blue" }
 
 # operator, tags, units, punctuations
-"operator" = "red"
+"operator"              = "red"
 "variable.other.member" = "base8"
 
 # keywords, special
-"keyword" = { fg = "red" }
-"keyword.directive" = "blue"
+"keyword"            = { fg = "red" }
+"keyword.directive"  = "blue"
 "variable.parameter" = "#f59762"
 
 # error
 "error" = "red"
 
 # annotations, decorators
+"module"  = "#f59762"
 "special" = "#f59762"
-"module" = "#f59762"
 
 # warnings, escape characters, regex
-"warning" = "orange"
 "constant.character.escape" = { fg = "base8" }
+"warning"                   = "orange"
 
 # strings
 "string" = "yellow"
@@ -91,35 +91,35 @@
 "constant.numeric" = "purple"
 
 # vcs
-"diff.plus" = "green"
 "diff.delta" = "orange"
 "diff.minus" = "red"
+"diff.plus"  = "green"
 
 # make diagnostic underlined, to distinguish with selection text.
-"diagnostic.warning" = { underline = { color = "orange", style = "curl" } }
-"diagnostic.error" = { underline = { color = "red", style = "curl" } }
-"diagnostic.info" = { underline = { color = "base8", style = "curl" } }
-"diagnostic.hint" = { underline = { color = "base8", style = "curl" } }
-"diagnostic.unnecessary" = { modifiers = ["dim"] }
-"diagnostic.deprecated" = { modifiers = ["crossed_out"] }
+"diagnostic.deprecated"  = { modifiers = [ "crossed_out" ] }
+"diagnostic.error"       = { underline = { color = "red", style = "curl" } }
+"diagnostic.hint"        = { underline = { color = "base8", style = "curl" } }
+"diagnostic.info"        = { underline = { color = "base8", style = "curl" } }
+"diagnostic.unnecessary" = { modifiers = [ "dim" ] }
+"diagnostic.warning"     = { underline = { color = "orange", style = "curl" } }
 
 # markup highlight, no need for `markup.raw` and `markup.list`, make them to be default
-"markup.heading" = "green"
-"markup.bold" = { fg = "orange", modifiers = ["bold"] }
-"markup.italic" = { fg = "orange", modifiers = ["italic"] }
-"markup.strikethrough" = { modifiers = ["crossed_out"] }
-"markup.link.url" = { fg = "orange", modifiers = ["underlined"] }
-"markup.link.text" = "yellow"
-"markup.quote" = "green"
+"markup.bold"          = { fg = "orange", modifiers = [ "bold" ] }
+"markup.heading"       = "green"
+"markup.italic"        = { fg = "orange", modifiers = [ "italic" ] }
+"markup.link.text"     = "yellow"
+"markup.link.url"      = { fg = "orange", modifiers = [ "underlined" ] }
+"markup.quote"         = "green"
+"markup.strikethrough" = { modifiers = [ "crossed_out" ] }
 
 [palette]
 # primary colors
-"red" = "#ff6188"
+"blue"   = "#78dce8"
+"green"  = "#a9dc76"
 "orange" = "#fc9867"
-"yellow" = "#ffd866"
-"green" = "#a9dc76"
-"blue" = "#78dce8"
 "purple" = "#ab9df2"
+"red"    = "#ff6188"
+"yellow" = "#ffd866"
 # base colors, sorted from darkest to lightest
 "base0" = "#19181a"
 "base1" = "#221f22"

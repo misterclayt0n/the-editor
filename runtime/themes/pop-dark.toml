@@ -4,162 +4,162 @@
 # Version: 1.0
 # This theme is based on Nathaniel Webb's VSCodePopTheme <https://github.com/ArtisanByteCrafter/VSCodePopTheme>
 
-info = { fg = 'brownD' }
-hint = { fg = 'yellowH', modifiers = ['bold'] }
-warning = { fg = 'orangeW', modifiers = ['bold'] }
-error = { fg = 'redE', modifiers = ['bold'] }
-'diagnostic.info'.underline = { color = 'yellowH', style = 'curl' } 
-'diagnostic.hint'.underline = { color = 'yellowH', style = 'curl' } 
-'diagnostic.warning'.underline = { color = 'orangeW', style = 'curl' } 
-'diagnostic.error'.underline = { color = 'redE', style = 'curl' } 
-"diagnostic.unnecessary" = { modifiers = ["dim"] }
-"diagnostic.deprecated" = { modifiers = ["crossed_out"] }
-'ui.background' = { bg = 'brownN' }
-'ui.window' = { bg = 'brownH', fg = 'brownD' } 
-'ui.gutter' = { bg = 'brownU' }
-'ui.text' = { fg = 'greyT' }
-'ui.text.focus' = { fg = 'orangeN' }
-'ui.text.info' = { fg = 'orangeH', bg = 'brownH' }
-'ui.cursor' = { fg = 'greyD', bg = 'orangeY' }
-'ui.cursor.insert' = { fg = 'orangeN', bg = 'orangeN' }
-'ui.cursor.select' = { fg = 'black', bg = 'orangeN' }
-'ui.cursor.match' = { fg = 'black', bg = 'blueD' }
-'ui.cursor.primary' = { fg = 'black', bg = 'orangeN' }
-'ui.selection' = { bg = 'blueH', fg = 'white' }
-'ui.selection.primary' = { bg = 'blueD', fg = 'white' }
-'ui.linenr' = { bg = 'brownU', fg = 'greyL' }
-'ui.linenr.selected' = { fg = 'orangeH' }
-'ui.cursorline' = { bg = 'brownH' }
-'ui.statusline' = { fg = 'greyT', bg = 'brownU' }
-'ui.statusline.inactive' = { fg = 'greyT', bg = 'brownN' }
-'ui.statusline.normal' = { fg = 'greyT', bg = 'brownD', modifiers = ['bold'] }
-'ui.statusline.select' = { bg = 'blueL', fg = 'brownD', modifiers = ['bold'] }
-'ui.statusline.insert' = { bg = 'orangeL', fg = 'brownD', modifiers = ['bold'] }
-'ui.help' = { fg = 'greyT', bg = 'brownD' }
-'ui.highlight' = { bg = 'brownH' }
-'ui.virtual' = { fg = 'brownV' }
-'ui.virtual.ruler' = { bg = 'brownR' }
-'ui.virtual.whitespace' = { fg = 'brownV' }
-'ui.virtual.indent-guide' = { fg = 'brownR' }
-'ui.virtual.inlay-hint' = {fg = 'brownD', bg = 'brownU'}
-'ui.menu' = { fg = 'greyT', bg = 'brownD' }
-'ui.menu.selected' = { fg = 'orangeH', bg = 'brownH' }
-'ui.popup' = { bg = 'brownD' }
-'ui.popup.info' = { bg = 'brownH', fg = 'greyT' }
-tag = { fg = 'blueH' }
-label = { fg = 'greenS' }
-module = { bg = 'orangeL' }
-special = { fg = 'orangeW' }
-operator = { fg = 'orangeY' }
-attribute = { fg = 'orangeL' }
-namespace = { fg = 'orangeL' }
-'type' = { fg = 'redH' }
-'type.builtin' = { fg = 'orangeL' }
-'type.enum.variant' = { fg = 'orangeL' }
-'constructor' = { fg = 'blueD' }
-'constant' = { fg = 'greyG' }
-'constant.builtin' = { fg = 'redL' }
-'constant.builtin.boolean' = { fg = 'redL' }
-'constant.character' = { fg = 'greenS' }
-'constant.character.escape' = { fg = 'blueL' }
-'constant.numeric' = { fg = 'redH' }
-'string' = { fg = 'greenN' }
-'string.regexp' = { fg = 'blueL' }
-'string.special' = { fg = 'orangeW' }
-'string.special.path' = { fg = 'orangeW' }
-'string.special.url' = { fg = 'orangeW' }
-'string.special.symbol' = { fg = 'orangeW' }
-'comment' = { fg = 'greyC', modifiers = ['italic'] }
-'comment.line' = { fg = 'greyC', modifiers = ['italic'] }
-'comment.line.documentation' = { fg = 'greyC', modifiers = ['italic'] }
-'comment.block' = { fg = 'greyC', modifiers = ['italic'] }
-'comment.block.documentation' = { fg = 'greyC', modifiers = ['italic'] }
-'variable' = { fg = 'greyT' }
-'variable.builtin' = { fg = 'blueL' }
-'variable.parameter' = { fg = 'white' }
-'variable.other.member' = { fg = 'orangeH' }
-'variable.function' = { fg = 'blueL' }
-'punctuation' = { fg = 'blueL' }
-'punctuation.delimiter' = { fg = 'blueH' }
-'punctuation.bracket' = { fg = 'orangeN' }
-'keyword' = { fg = 'blueH' }
-'keyword.control' = { fg = 'blueL' }
-'keyword.control.conditional' = { fg = 'blueL' }
-'keyword.control.repeat' = { fg = 'blueL' }
-'keyword.control.import' = { fg = 'redH' }
-'keyword.control.return' = { fg = 'blueL' }
-'keyword.control.exception' = { fg = 'redH' }
-'keyword.operator' = { fg = 'blueL' }
-'keyword.directive' = { fg = 'blueL' }
-'keyword.function' = { fg = 'redH' }
-'function' = { fg = 'blueH' }
-'function.builtin' = { fg = 'blueH' }
-'function.method' = { fg = 'blueH' }
-'function.macro' = { fg = 'greyH' }
-'function.special' = { fg = 'blueD' }
-'markup.heading' = { fg = 'greenN' }
-'markup.heading.1' = { fg = '#FFC977' }
-'markup.heading.2' = { fg = '#FFC26C' }
-'markup.heading.3' = { fg = '#FFC166' }
-'markup.heading.4' = { fg = '#FFB950' }
-'markup.heading.5' = { fg = '#FFB340' }
-'markup.heading.6' = { fg = '#FFAD34' }
-'markup.heading.marker' = { fg = 'orangeN' }
-'markup.list' = { fg = 'greenN' }
-'markup.list.numbered' = { fg = 'greenN' }
-'markup.list.unnumbered' = { fg = 'greenN' }
-'markup.bold' = { modifiers = ['bold'] }
-'markup.italic' = { modifiers = ['italic'] }
-'markup.strikethrough' = { modifiers = ['crossed_out'] }
-'markup.link' = { fg = 'blueD' }
-'markup.link.url' = { fg = 'blueL' }
-'markup.link.label' = { fg = 'blueH' }
-'markup.link.text' = { fg = 'blueN' }
-'markup.quote' = { fg = 'blueL' }
-'markup.normal' = { fg = 'blueL' }
-'markup.normal.completion' = { bg = 'brownN' }
-'markup.normal.raw' = { bg = 'brownN' }
-'markup.heading.completion' = { fg = 'greenN' }
-'markup.heading.raw' = { bg = 'brownN' }
-'markup.raw' = { bg = 'brownN' }
-'markup.raw.block' = { bg = 'brownH', fg = 'orangeH' }
-'markup.raw.inline' = { fg = 'blueL' }
+attribute                      = { fg = 'orangeL' }
+'comment'                      = { fg = 'greyC', modifiers = [ 'italic' ] }
+'comment.block'                = { fg = 'greyC', modifiers = [ 'italic' ] }
+'comment.block.documentation'  = { fg = 'greyC', modifiers = [ 'italic' ] }
+'comment.line'                 = { fg = 'greyC', modifiers = [ 'italic' ] }
+'comment.line.documentation'   = { fg = 'greyC', modifiers = [ 'italic' ] }
+'constant'                     = { fg = 'greyG' }
+'constant.builtin'             = { fg = 'redL' }
+'constant.builtin.boolean'     = { fg = 'redL' }
+'constant.character'           = { fg = 'greenS' }
+'constant.character.escape'    = { fg = 'blueL' }
+'constant.numeric'             = { fg = 'redH' }
+'constructor'                  = { fg = 'blueD' }
+"diagnostic.deprecated"        = { modifiers = [ "crossed_out" ] }
+'diagnostic.error'.underline   = { color = 'redE', style = 'curl' }
+'diagnostic.hint'.underline    = { color = 'yellowH', style = 'curl' }
+'diagnostic.info'.underline    = { color = 'yellowH', style = 'curl' }
+"diagnostic.unnecessary"       = { modifiers = [ "dim" ] }
+'diagnostic.warning'.underline = { color = 'orangeW', style = 'curl' }
+'diff.delta'                   = { fg = '#4d4ddd' }
+'diff.delta.moved'             = { fg = '#dd4ddd' }
+'diff.minus'                   = { fg = '#dd4d4d' }
+'diff.plus'                    = { fg = '#4dd44d' }
+error                          = { fg = 'redE', modifiers = [ 'bold' ] }
+'function'                     = { fg = 'blueH' }
+'function.builtin'             = { fg = 'blueH' }
+'function.macro'               = { fg = 'greyH' }
+'function.method'              = { fg = 'blueH' }
+'function.special'             = { fg = 'blueD' }
+hint                           = { fg = 'yellowH', modifiers = [ 'bold' ] }
+info                           = { fg = 'brownD' }
+'keyword'                      = { fg = 'blueH' }
+'keyword.control'              = { fg = 'blueL' }
+'keyword.control.conditional'  = { fg = 'blueL' }
+'keyword.control.exception'    = { fg = 'redH' }
+'keyword.control.import'       = { fg = 'redH' }
+'keyword.control.repeat'       = { fg = 'blueL' }
+'keyword.control.return'       = { fg = 'blueL' }
+'keyword.directive'            = { fg = 'blueL' }
+'keyword.function'             = { fg = 'redH' }
+'keyword.operator'             = { fg = 'blueL' }
+label                          = { fg = 'greenS' }
+'markup.bold'                  = { modifiers = [ 'bold' ] }
+'markup.heading'               = { fg = 'greenN' }
+'markup.heading.1'             = { fg = '#FFC977' }
+'markup.heading.2'             = { fg = '#FFC26C' }
+'markup.heading.3'             = { fg = '#FFC166' }
+'markup.heading.4'             = { fg = '#FFB950' }
+'markup.heading.5'             = { fg = '#FFB340' }
+'markup.heading.6'             = { fg = '#FFAD34' }
+'markup.heading.completion'    = { fg = 'greenN' }
+'markup.heading.marker'        = { fg = 'orangeN' }
+'markup.heading.raw'           = { bg = 'brownN' }
+'markup.italic'                = { modifiers = [ 'italic' ] }
+'markup.link'                  = { fg = 'blueD' }
+'markup.link.label'            = { fg = 'blueH' }
+'markup.link.text'             = { fg = 'blueN' }
+'markup.link.url'              = { fg = 'blueL' }
+'markup.list'                  = { fg = 'greenN' }
+'markup.list.numbered'         = { fg = 'greenN' }
+'markup.list.unnumbered'       = { fg = 'greenN' }
+'markup.normal'                = { fg = 'blueL' }
+'markup.normal.completion'     = { bg = 'brownN' }
+'markup.normal.raw'            = { bg = 'brownN' }
+'markup.quote'                 = { fg = 'blueL' }
+'markup.raw'                   = { bg = 'brownN' }
+'markup.raw.block'             = { bg = 'brownH', fg = 'orangeH' }
+'markup.raw.inline'            = { fg = 'blueL' }
 'markup.raw.inline.completion' = { fg = 'greenN' }
-'markup.raw.inline.hover' = { fg = 'greenS' }
-'diff.plus' = { fg = '#4dd44d' }
-'diff.minus' = { fg = '#dd4d4d' }
-'diff.delta' = { fg = '#4d4ddd' }
-'diff.delta.moved' = { fg = '#dd4ddd' }
+'markup.raw.inline.hover'      = { fg = 'greenS' }
+'markup.strikethrough'         = { modifiers = [ 'crossed_out' ] }
+module                         = { bg = 'orangeL' }
+namespace                      = { fg = 'orangeL' }
+operator                       = { fg = 'orangeY' }
+'punctuation'                  = { fg = 'blueL' }
+'punctuation.bracket'          = { fg = 'orangeN' }
+'punctuation.delimiter'        = { fg = 'blueH' }
+special                        = { fg = 'orangeW' }
+'string'                       = { fg = 'greenN' }
+'string.regexp'                = { fg = 'blueL' }
+'string.special'               = { fg = 'orangeW' }
+'string.special.path'          = { fg = 'orangeW' }
+'string.special.symbol'        = { fg = 'orangeW' }
+'string.special.url'           = { fg = 'orangeW' }
+tag                            = { fg = 'blueH' }
+'type'                         = { fg = 'redH' }
+'type.builtin'                 = { fg = 'orangeL' }
+'type.enum.variant'            = { fg = 'orangeL' }
+'ui.background'                = { bg = 'brownN' }
+'ui.cursor'                    = { bg = 'orangeY', fg = 'greyD' }
+'ui.cursor.insert'             = { bg = 'orangeN', fg = 'orangeN' }
+'ui.cursor.match'              = { bg = 'blueD', fg = 'black' }
+'ui.cursor.primary'            = { bg = 'orangeN', fg = 'black' }
+'ui.cursor.select'             = { bg = 'orangeN', fg = 'black' }
+'ui.cursorline'                = { bg = 'brownH' }
+'ui.gutter'                    = { bg = 'brownU' }
+'ui.help'                      = { bg = 'brownD', fg = 'greyT' }
+'ui.highlight'                 = { bg = 'brownH' }
+'ui.linenr'                    = { bg = 'brownU', fg = 'greyL' }
+'ui.linenr.selected'           = { fg = 'orangeH' }
+'ui.menu'                      = { bg = 'brownD', fg = 'greyT' }
+'ui.menu.selected'             = { bg = 'brownH', fg = 'orangeH' }
+'ui.popup'                     = { bg = 'brownD' }
+'ui.popup.info'                = { bg = 'brownH', fg = 'greyT' }
+'ui.selection'                 = { bg = 'blueH', fg = 'white' }
+'ui.selection.primary'         = { bg = 'blueD', fg = 'white' }
+'ui.statusline'                = { bg = 'brownU', fg = 'greyT' }
+'ui.statusline.inactive'       = { bg = 'brownN', fg = 'greyT' }
+'ui.statusline.insert'         = { bg = 'orangeL', fg = 'brownD', modifiers = [ 'bold' ] }
+'ui.statusline.normal'         = { bg = 'brownD', fg = 'greyT', modifiers = [ 'bold' ] }
+'ui.statusline.select'         = { bg = 'blueL', fg = 'brownD', modifiers = [ 'bold' ] }
+'ui.text'                      = { fg = 'greyT' }
+'ui.text.focus'                = { fg = 'orangeN' }
+'ui.text.info'                 = { bg = 'brownH', fg = 'orangeH' }
+'ui.virtual'                   = { fg = 'brownV' }
+'ui.virtual.indent-guide'      = { fg = 'brownR' }
+'ui.virtual.inlay-hint'        = { bg = 'brownU', fg = 'brownD' }
+'ui.virtual.ruler'             = { bg = 'brownR' }
+'ui.virtual.whitespace'        = { fg = 'brownV' }
+'ui.window'                    = { bg = 'brownH', fg = 'brownD' }
+'variable'                     = { fg = 'greyT' }
+'variable.builtin'             = { fg = 'blueL' }
+'variable.function'            = { fg = 'blueL' }
+'variable.other.member'        = { fg = 'orangeH' }
+'variable.parameter'           = { fg = 'white' }
+warning                        = { fg = 'orangeW', modifiers = [ 'bold' ] }
 
 [palette]
-white = '#FFFFFF'
-greyH = '#CFCFCF'
-greyT = '#DEDEDE'
-greyG = '#DDFFDD'
-greyC = '#A0B4A7'
-greyL = '#9A9A9A'
-greyD = '#444444'
-black = '#000000'
-yellowH = '#FFCC00'
+black   = '#000000'
+blueD   = '#4AAAD6'
+blueH   = '#8DEEF9'
+blueL   = '#6dd2fa'
+blueN   = '#39B7C7'
+brownD  = '#2B2928'
+brownH  = '#4b4845'
+brownN  = '#3E3B39'
+brownR  = '#35312f'
+brownU  = '#4C4643'
+brownV  = '#67634F'
+greenN  = '#73C48F'
+greenS  = '#6FC475'
+greyC   = '#A0B4A7'
+greyD   = '#444444'
+greyG   = '#DDFFDD'
+greyH   = '#CFCFCF'
+greyL   = '#9A9A9A'
+greyT   = '#DEDEDE'
 orangeH = '#FFD68A'
 orangeL = '#FFCB6B'
-orangeY = '#FDC33B'
 orangeN = '#FDAF1F'
-orangeW = '#FF9500'
 orangeS = '#F79A6C'
-redH = '#F78C6C'
-redL = '#F96964'
-redE = '#FF2200'
-redD = '#CC3333'
-greenN = '#73C48F'
-greenS = '#6FC475'
-blueH = '#8DEEF9'
-blueL = '#6dd2fa'
-blueN = '#39B7C7'
-blueD = '#4AAAD6'
-brownV = '#67634F'
-brownH = '#4b4845'
-brownN = '#3E3B39'
-brownR = '#35312f'
-brownD = '#2B2928'
-brownU = '#4C4643'
+orangeW = '#FF9500'
+orangeY = '#FDC33B'
+redD    = '#CC3333'
+redE    = '#FF2200'
+redH    = '#F78C6C'
+redL    = '#F96964'
+white   = '#FFFFFF'
+yellowH = '#FFCC00'

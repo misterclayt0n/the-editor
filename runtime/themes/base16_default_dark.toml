@@ -1,64 +1,64 @@
 # Author: RayGervais <raygervais@hotmail.ca>
 
-"ui.background" = { bg = "base00" }
-"ui.virtual.whitespace" = "base03"
-"ui.virtual.jump-label" = { fg = "blue", modifiers = ["bold", "underlined"] }
-"ui.virtual.ruler" = { bg = "base01" }
-"ui.menu" = { fg = "base05", bg = "base01" }
-"ui.menu.selected" = { fg = "base01", bg = "base04" }
-"ui.linenr" = { fg = "base03", bg = "base01" }
-"ui.popup" = { bg = "base01" }
-"ui.window" = { bg = "base01" }
-"ui.linenr.selected" = { fg = "base04", bg = "base01", modifiers = ["bold"] }
-"ui.selection" = { bg = "base02" }
-"comment" = { fg = "base03", modifiers = ["italic"] }
-"ui.statusline" = { fg = "base04", bg = "base01" }
-"ui.cursor" = { fg = "base04", modifiers = ["reversed"] }
-"ui.cursor.primary" = { fg = "base05", modifiers = ["reversed"] }
-"ui.text" = "base05"
-"operator" = "base05"
-"ui.text.focus" = "base05"
-"variable" = "base08"
-"constant.numeric" = "base09"
-"constant" = "base09"
-"attribute" = "base09"
-"type" = "base0A"
-"ui.cursor.match" = { fg = "base0A", modifiers = ["underlined"] }
-"string"  = "base0B"
-"variable.other.member" = "base0B"
+"attribute"                 = "base09"
+"comment"                   = { fg = "base03", modifiers = [ "italic" ] }
+"constant"                  = "base09"
 "constant.character.escape" = "base0C"
-"function" = "base0D"
-"constructor" = "base0D"
-"special" = "base0D"
-"keyword" = "base0E"
-"label" = "base0E"
-"namespace" = "base0E"
-"ui.help" = { fg = "base06", bg = "base01" }
+"constant.numeric"          = "base09"
+"constructor"               = "base0D"
+"function"                  = "base0D"
+"keyword"                   = "base0E"
+"label"                     = "base0E"
+"namespace"                 = "base0E"
+"operator"                  = "base05"
+"special"                   = "base0D"
+"string"                    = "base0B"
+"type"                      = "base0A"
+"ui.background"             = { bg = "base00" }
+"ui.cursor"                 = { fg = "base04", modifiers = [ "reversed" ] }
+"ui.cursor.match"           = { fg = "base0A", modifiers = [ "underlined" ] }
+"ui.cursor.primary"         = { fg = "base05", modifiers = [ "reversed" ] }
+"ui.help"                   = { bg = "base01", fg = "base06" }
+"ui.linenr"                 = { bg = "base01", fg = "base03" }
+"ui.linenr.selected"        = { bg = "base01", fg = "base04", modifiers = [ "bold" ] }
+"ui.menu"                   = { bg = "base01", fg = "base05" }
+"ui.menu.selected"          = { bg = "base04", fg = "base01" }
+"ui.popup"                  = { bg = "base01" }
+"ui.selection"              = { bg = "base02" }
+"ui.statusline"             = { bg = "base01", fg = "base04" }
+"ui.text"                   = "base05"
+"ui.text.focus"             = "base05"
+"ui.virtual.jump-label"     = { fg = "blue", modifiers = [ "bold", "underlined" ] }
+"ui.virtual.ruler"          = { bg = "base01" }
+"ui.virtual.whitespace"     = "base03"
+"ui.window"                 = { bg = "base01" }
+"variable"                  = "base08"
+"variable.other.member"     = "base0B"
 
-"markup.heading" = "base0D"
-"markup.list" = "base08"
-"markup.bold" = { fg = "base0A", modifiers = ["bold"] }
-"markup.italic" = { fg = "base0E", modifiers = ["italic"] }
-"markup.strikethrough" = { modifiers = ["crossed_out"] }
-"markup.link.url" = { fg = "base09", modifiers = ["underlined"] }
-"markup.link.text" = "base08"
-"markup.quote" = "base0C"
-"markup.raw" = "base0B"
+"markup.bold"          = { fg = "base0A", modifiers = [ "bold" ] }
+"markup.heading"       = "base0D"
+"markup.italic"        = { fg = "base0E", modifiers = [ "italic" ] }
+"markup.link.text"     = "base08"
+"markup.link.url"      = { fg = "base09", modifiers = [ "underlined" ] }
+"markup.list"          = "base08"
+"markup.quote"         = "base0C"
+"markup.raw"           = "base0B"
+"markup.strikethrough" = { modifiers = [ "crossed_out" ] }
 
-"diff.plus" = "base0B"
 "diff.delta" = "base09"
 "diff.minus" = "base08"
+"diff.plus"  = "base0B"
 
-"diagnostic" = { modifiers = ["underlined"] }
-"ui.gutter" = { bg = "base01" }
-"info" = "base0D"
-"hint" = "base03"
-"debug" = "base03"
-"warning" = "base09"
-"error" = "base08"
+"debug"      = "base03"
+"diagnostic" = { modifiers = [ "underlined" ] }
+"error"      = "base08"
+"hint"       = "base03"
+"info"       = "base0D"
+"ui.gutter"  = { bg = "base01" }
+"warning"    = "base09"
 
-"ui.bufferline" = { fg = "base04", bg = "base00" }
-"ui.bufferline.active" = { fg = "base06", bg = "base01" }
+"ui.bufferline"        = { bg = "base00", fg = "base04" }
+"ui.bufferline.active" = { bg = "base01", fg = "base06" }
 
 [palette]
 base00 = "#181818" # Default Background

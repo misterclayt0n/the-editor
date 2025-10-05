@@ -14,127 +14,127 @@
 # Contributors:
 # @cemalokten
 
-"attribute" = "green"
-"type" = "light_blue"
+"attribute"         = "green"
+"constant"          = "dark_orange"
+"constructor"       = "yellow"
+"type"              = "light_blue"
 "type.enum.variant" = "purple"
-"constructor" = "yellow"
-"constant" = "dark_orange"
 
-"constant.builtin.boolean" = "yellow"
-"constant.character" = "yellow"
+"comment"                   = "light_gray"
+"constant.builtin.boolean"  = "yellow"
+"constant.character"        = "yellow"
 "constant.character.escape" = "red_error"
-"constant.numeric" = "dark_orange"
-"string" = "dark_green"
-"string.regexp" = "light_purple"
-"string.special" = { fg = "yellow", modifiers = ["underlined"] }
-"comment" = "light_gray"
+"constant.numeric"          = "dark_orange"
+"string"                    = "dark_green"
+"string.regexp"             = "light_purple"
+"string.special"            = { fg = "yellow", modifiers = [ "underlined" ] }
 
-"variable" = "light_yellow"
-"variable.builtin" = { fg = "dark_green", modifiers = ["underlined"] }
-"variable.parameter" = "yellow"
-"variable.other.member" = "light_purple"
-"label" = "yellow"
-"punctuation" = "mid_blue"
-"keyword" = "mid_blue"
+"function"                  = "yellow"
+"function.builtin"          = "green"
+"function.macro"            = "green"
+"function.method"           = "yellow"
+"function.special"          = "green"
+"keyword"                   = "mid_blue"
 "keyword.control.exception" = "purple"
-"operator" = "light_purple"
-"function" = "yellow"
-"function.macro" = "green"
-"function.builtin" = "green"
-"function.special" = "green"
-"function.method" = "yellow"
-"tag" = "light_blue"
-"special" = "green"
-"namespace" = "light_purple"
+"label"                     = "yellow"
+"namespace"                 = "light_purple"
+"operator"                  = "light_purple"
+"punctuation"               = "mid_blue"
+"special"                   = "green"
+"tag"                       = "light_blue"
+"variable"                  = "light_yellow"
+"variable.builtin"          = { fg = "dark_green", modifiers = [ "underlined" ] }
+"variable.other.member"     = "light_purple"
+"variable.parameter"        = "yellow"
 
-"markup.bold" = { fg = "white", modifiers = ["bold"] }
-"markup.italic" = { modifiers = ["italic"] }
-"markup.strikethrough" = { modifiers = ["crossed_out"] }
-"markup.heading" = { fg = "mid_blue", modifiers = ["bold"] }
-"markup.list" = "dark_green"
-"markup.list.numbered" = "mid_blue"
+"markup.bold"            = { fg = "white", modifiers = [ "bold" ] }
+"markup.heading"         = { fg = "mid_blue", modifiers = [ "bold" ] }
+"markup.italic"          = { modifiers = [ "italic" ] }
+"markup.link.label"      = "purple"
+"markup.link.text"       = "mid_blue"
+"markup.link.url"        = { fg = "dark_green", modifiers = [ 'italic', 'underlined' ] }
+"markup.list"            = "dark_green"
+"markup.list.numbered"   = "mid_blue"
 "markup.list.unnumbered" = "mid_blue"
-"markup.link.url" = { fg = "dark_green", modifiers = ['italic', 'underlined'] }
-"markup.link.text" = "mid_blue"
-"markup.link.label" = "purple"
-"markup.quote" = "dark_green"
-"markup.raw" = "dark_green"
-"markup.raw.inline" = "mid_blue"
-"markup.raw.block" = "dark_green"
+"markup.quote"           = "dark_green"
+"markup.raw"             = "dark_green"
+"markup.raw.block"       = "dark_green"
+"markup.raw.inline"      = "mid_blue"
+"markup.strikethrough"   = { modifiers = [ "crossed_out" ] }
 
-"diff.plus" = "diff_plus"
-"diff.minus" = "red_accent"
 "diff.delta" = "blue_accent"
+"diff.minus" = "red_accent"
+"diff.plus"  = "diff_plus"
 
 # ui specific
-"ui.background" = { bg = "background" }                                            # .separator
-"ui.cursor" = { bg = "background", modifiers = ["reversed"] }
-"ui.cursor.insert" = { bg = "light_yellow", fg = "background" }
-"ui.cursor.match" = { fg = "background", bg = "dark_orange" }
-"ui.cursorline" = { bg = "darker" }
-"ui.linenr" = "dark_gray"
-"ui.linenr.selected" = { fg = "light_yellow", bg = "darker" }
-"ui.statusline" = { fg = "light_yellow", bg = "darker" }
-"ui.statusline.inactive" = { fg = "dark", bg = "darker" }
-"ui.statusline.normal" = { fg = "light_yellow", bg = "darker" }
-"ui.statusline.insert" = { fg = "darker", bg = "purple" }
-"ui.statusline.select" = { fg = "selectionFG", bg = "selection" }
-"ui.popup" = { fg = "light_yellow", bg = "darkest" }
-"ui.window" = { fg = "dark", bg = "darkest" }
-"ui.help" = { fg = "light_yellow", bg = "darkest" }
-"ui.text" = "light_yellow"
-"ui.text.focus" = { fg = "white", bg = "dark_blue" }
-"ui.virtual" = "dark"
-"ui.virtual.ruler" = { bg = "darker" }
-"ui.menu" = { fg = "light_purple", bg = "darkest" }
-"ui.menu.selected" = { fg = "white", bg = "dark_blue" }
-"ui.selection" = { bg = "darker" }
-"ui.selection.primary" = { bg = "selection", fg = "selectionFG" }
-"hint" = "blue"
-"info" = "yellow_accent"
-"warning" = "orange_accent"
-"error" = "red_error"
-"diagnostic" = { modifiers = [] }
-"diagnostic.hint" = { underline = { color = "light_purple", style = "line" } }
-"diagnostic.info" = { underline = { color = "blue_accent", style = "line" } }
-"diagnostic.warning" = { underline = { color = "yellow_accent", style = "line" } }
-"diagnostic.error" = { underline = { color = "red_error", style = "line" } }
-"diagnostic.unnecessary" = { modifiers = ["dim"] }
-"diagnostic.deprecated" = { modifiers = ["crossed_out"] }
+"diagnostic"             = { modifiers = [  ] }
+"diagnostic.deprecated"  = { modifiers = [ "crossed_out" ] }
+"diagnostic.error"       = { underline = { color = "red_error", style = "line" } }
+"diagnostic.hint"        = { underline = { color = "light_purple", style = "line" } }
+"diagnostic.info"        = { underline = { color = "blue_accent", style = "line" } }
+"diagnostic.unnecessary" = { modifiers = [ "dim" ] }
+"diagnostic.warning"     = { underline = { color = "yellow_accent", style = "line" } }
+"error"                  = "red_error"
+"hint"                   = "blue"
+"info"                   = "yellow_accent"
+"ui.background"          = { bg = "background" }                                       # .separator
+"ui.cursor"              = { bg = "background", modifiers = [ "reversed" ] }
+"ui.cursor.insert"       = { bg = "light_yellow", fg = "background" }
+"ui.cursor.match"        = { bg = "dark_orange", fg = "background" }
+"ui.cursorline"          = { bg = "darker" }
+"ui.help"                = { bg = "darkest", fg = "light_yellow" }
+"ui.linenr"              = "dark_gray"
+"ui.linenr.selected"     = { bg = "darker", fg = "light_yellow" }
+"ui.menu"                = { bg = "darkest", fg = "light_purple" }
+"ui.menu.selected"       = { bg = "dark_blue", fg = "white" }
+"ui.popup"               = { bg = "darkest", fg = "light_yellow" }
+"ui.selection"           = { bg = "darker" }
+"ui.selection.primary"   = { bg = "selection", fg = "selectionFG" }
+"ui.statusline"          = { bg = "darker", fg = "light_yellow" }
+"ui.statusline.inactive" = { bg = "darker", fg = "dark" }
+"ui.statusline.insert"   = { bg = "purple", fg = "darker" }
+"ui.statusline.normal"   = { bg = "darker", fg = "light_yellow" }
+"ui.statusline.select"   = { bg = "selection", fg = "selectionFG" }
+"ui.text"                = "light_yellow"
+"ui.text.focus"          = { bg = "dark_blue", fg = "white" }
+"ui.virtual"             = "dark"
+"ui.virtual.ruler"       = { bg = "darker" }
+"ui.window"              = { bg = "darkest", fg = "dark" }
+"warning"                = "orange_accent"
 
 [palette]
 background = "#151515"
-darkest = "#1e1e1e"
-darker = "#292929"
-dark = "#898989"
-white = "#ffffff"
-dark_gray = "#535353"
+dark       = "#898989"
+dark_gray  = "#535353"
+darker     = "#292929"
+darkest    = "#1e1e1e"
 light_gray = "#6d6d6d"
+white      = "#ffffff"
 
-purple = "#a390f0"
 light_purple = "#CDBEF0"
+purple       = "#a390f0"
 
-blue = "#52a7f6"
-light_blue = "#8fbfdc"
-mid_blue = "#8197bf"
-dark_blue = "#204474"
+blue        = "#52a7f6"
 blue_accent = "#2197F3"
+dark_blue   = "#204474"
+light_blue  = "#8fbfdc"
+mid_blue    = "#8197bf"
 
-green = "#99ad6a"
 dark_green = "#84A775"
+green      = "#99ad6a"
 
-red = "#CC7C8A"
-red_error = "#902020"
+red        = "#CC7C8A"
 red_accent = "#F44747"
+red_error  = "#902020"
 
-orange = "#efb080"
-dark_orange = "#cf6a4c"
+dark_orange   = "#cf6a4c"
+orange        = "#efb080"
 orange_accent = "#EE7F25"
 
-yellow = "#fad07a"
-light_yellow = "#EBEBD8"
+light_yellow  = "#EBEBD8"
+yellow        = "#fad07a"
 yellow_accent = "#DEA407"
 
-diff_plus = "#5A9F81"
-selection = "#37232D"
+diff_plus   = "#5A9F81"
+selection   = "#37232D"
 selectionFG = "#F2AAC7"

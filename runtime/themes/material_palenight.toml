@@ -3,14 +3,14 @@
 inherits = "material_deep_ocean"
 
 [palette]
-bg = "#292d3e"
+bg   = "#292d3e"
 text = "#a6accd"
 
 disabled = "#515772"
 
 accent = "#ab47bc"
 
-active = "#414863"
+active    = "#414863"
 highlight = "#444267"
 
 comment = "#676e95"

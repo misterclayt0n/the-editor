@@ -1,33 +1,33 @@
 # Author : Tomas Ruud <git@me.2ms.no>
 
-"ui.selection" = { fg = "white", bg = "gray" }
-"ui.cursor" = { fg = "black", bg = "light-gray" }
-"ui.cursor.primary" = { fg = "black", bg = "light-gray" }
-"ui.cursor.match" = { modifiers = ["underlined"] }
 "ui.background.separator" = "gray"
-"ui.linenr" = "gray"
-"ui.linenr.selected" = { fg = "white", bg = "gray" }
-"ui.statusline" = { bg = "black", fg = "white" }
-"ui.menu" = { fg = "white", bg = "black" }
-"ui.menu.selected" = { bg = "light-gray", fg = "black" }
-"ui.popup" = { fg = "white", bg = "black" }
-"ui.help" = { fg = "white", bg = "black" }
-"ui.virtual.ruler" = { underline = { style = "line"} }
+"ui.cursor"               = { bg = "light-gray", fg = "black" }
+"ui.cursor.match"         = { modifiers = [ "underlined" ] }
+"ui.cursor.primary"       = { bg = "light-gray", fg = "black" }
+"ui.help"                 = { bg = "black", fg = "white" }
+"ui.linenr"               = "gray"
+"ui.linenr.selected"      = { bg = "gray", fg = "white" }
+"ui.menu"                 = { bg = "black", fg = "white" }
+"ui.menu.selected"        = { bg = "light-gray", fg = "black" }
+"ui.popup"                = { bg = "black", fg = "white" }
+"ui.selection"            = { bg = "gray", fg = "white" }
+"ui.statusline"           = { bg = "black", fg = "white" }
+"ui.virtual.ruler"        = { underline = { style = "line" } }
 
-"string" = { bg = "light-green", fg = "black" }
+"comment"  = { bg = "light-magenta", fg = "black" }
 "constant" = { bg = "light-cyan", fg = "black" }
-"comment" = { bg = "light-magenta", fg = "black" }
+"string"   = { bg = "light-green", fg = "black" }
 
-"diff.plus" = "green"
-"diff.minus" = "red"
 "diff.delta" = "gray"
+"diff.minus" = "red"
+"diff.plus"  = "green"
 
-"warning" = { fg = "black", bg = "light-yellow" }
-"error" = { fg = "black", bg = "light-red" }
-"hint" = { fg = "black", bg = "light-blue" }
+"error"   = { bg = "light-red", fg = "black" }
+"hint"    = { bg = "light-blue", fg = "black" }
+"warning" = { bg = "light-yellow", fg = "black" }
 
-"diagnostic.warning" = { fg = "black", bg = "light-yellow" }
-"diagnostic.error" = { fg = "black", bg = "light-red" }
-"diagnostic.hint" = { fg = "black", bg = "light-blue" }
-"diagnostic.unnecessary" = { modifiers = ["dim"] }
-"diagnostic.deprecated" = { modifiers = ["crossed_out"] }
+"diagnostic.deprecated"  = { modifiers = [ "crossed_out" ] }
+"diagnostic.error"       = { bg = "light-red", fg = "black" }
+"diagnostic.hint"        = { bg = "light-blue", fg = "black" }
+"diagnostic.unnecessary" = { modifiers = [ "dim" ] }
+"diagnostic.warning"     = { bg = "light-yellow", fg = "black" }

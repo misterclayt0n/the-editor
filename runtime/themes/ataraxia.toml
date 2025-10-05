@@ -9,158 +9,158 @@
 
 # GENERAL ==============================
 
-warning = "soft-blue"
-error = "electric-violet"
-info = "sky-cyan"
-hint = "neon-cyan"
 diagnostic = "cool-sky"
+error      = "electric-violet"
+hint       = "neon-cyan"
+info       = "sky-cyan"
+warning    = "soft-blue"
 
- 
-"diagnostic.error" = "electric-violet"
+
+"diagnostic.error"   = "electric-violet"
+"diagnostic.hint"    = "neon-cyan"
+"diagnostic.info"    = "sky-cyan"
 "diagnostic.warning" = "soft-blue"
-"diagnostic.info" = "sky-cyan"
-"diagnostic.hint" = "neon-cyan"
 
- 
+
 # UI ==============================
 
-"ui.background" = { fg = "orchid", bg = "midnight" }
-"ui.help" = {fg = "neon-cyan", bg = "midnight"}
-"ui.text" = {fg = "neon-cyan", bg = "midnight"}
-"ui.window" = "orchid"
-"ui.cursor" = { fg = "#000000", bg = "neon-cyan" }
-"ui.cursor.primary" = { fg = "#000000", bg = "electric-violet" }
-"ui.cursor.primary.normal" = { fg = "#000000", bg = "neon-cyan" }
-"ui.cursor.primary.insert" = { fg = "#000000", bg = "ufo-green" }
-"ui.cursor.primary.select" = { fg = "#000000", bg = "muted-violet" }
-"ui.cursor.match" = "orchid"
-"ui.popup" = {fg = "neon-cyan", bg = "midnight"}
-"ui.selection" = { fg = "#000000", bg = "muted-violet" }
-"ui.selection.primary" = { fg = "#000000", bg = "muted-violet" }
-"ui.virtual" = "eggplant"
-"ui.virtual.whitespace" = "deep-indigo"
-"ui.linenr" = "purple-gray"
-"ui.linenr.selected" = "neon-cyan"
-"ui.statusline" = "sky-cyan"
-"ui.statusline.inactive" = "orchid"
-"ui.statusline.normal" = "neon-cyan"
-"ui.statusline.insert" = "ufo-green"
-"ui.statusline.select" = "muted-violet"
-"ui.statusline.separator" = "neon-cyan"
-"ui.bufferline" = { fg = "orchid", bg = "midnight"}
-"ui.bufferline.active" = { fg = "neon-cyan", bg = "midnight"}
-"ui.menu" = "orchid"
-"ui.menu.selected" = "orchid"
+"ui.background"            = { bg = "midnight", fg = "orchid" }
+"ui.bufferline"            = { bg = "midnight", fg = "orchid" }
+"ui.bufferline.active"     = { bg = "midnight", fg = "neon-cyan" }
+"ui.cursor"                = { bg = "neon-cyan", fg = "#000000" }
+"ui.cursor.match"          = "orchid"
+"ui.cursor.primary"        = { bg = "electric-violet", fg = "#000000" }
+"ui.cursor.primary.insert" = { bg = "ufo-green", fg = "#000000" }
+"ui.cursor.primary.normal" = { bg = "neon-cyan", fg = "#000000" }
+"ui.cursor.primary.select" = { bg = "muted-violet", fg = "#000000" }
+"ui.help"                  = { bg = "midnight", fg = "neon-cyan" }
+"ui.linenr"                = "purple-gray"
+"ui.linenr.selected"       = "neon-cyan"
+"ui.menu"                  = "orchid"
+"ui.menu.selected"         = "orchid"
+"ui.popup"                 = { bg = "midnight", fg = "neon-cyan" }
+"ui.selection"             = { bg = "muted-violet", fg = "#000000" }
+"ui.selection.primary"     = { bg = "muted-violet", fg = "#000000" }
+"ui.statusline"            = "sky-cyan"
+"ui.statusline.inactive"   = "orchid"
+"ui.statusline.insert"     = "ufo-green"
+"ui.statusline.normal"     = "neon-cyan"
+"ui.statusline.select"     = "muted-violet"
+"ui.statusline.separator"  = "neon-cyan"
+"ui.text"                  = { bg = "midnight", fg = "neon-cyan" }
+"ui.virtual"               = "eggplant"
+"ui.virtual.whitespace"    = "deep-indigo"
+"ui.window"                = "orchid"
 
 # SYNTAX HIGHLIGHTING  ==============================
 
-"comment" = "purple-gray"
-"comment.line" = "purple-gray"
-"comment.line.documentation" = "purple-gray"
-"comment.block" = "dead-green"
+"comment"                     = "purple-gray"
+"comment.block"               = "dead-green"
 "comment.block.documentation" = "dead-green"
+"comment.line"                = "purple-gray"
+"comment.line.documentation"  = "purple-gray"
 
-"constant" = "soft-blue"
-"constant.builtin" = "royal-blue"
-"constant.builtin.boolean" = "ufo-green"
-"constant.character" = "royal-blue"
+"constant"                  = "soft-blue"
+"constant.builtin"          = "royal-blue"
+"constant.builtin.boolean"  = "ufo-green"
+"constant.character"        = "royal-blue"
 "constant.character.escape" = "royal-blue"
-"constant.numeric"  = "cool-sky"
-"constant.numeric.integer" = "cool-sky"
-"constant.numeric.float" = "cool-sky"
+"constant.numeric"          = "cool-sky"
+"constant.numeric.float"    = "cool-sky"
+"constant.numeric.integer"  = "cool-sky"
 
-"string" = "ufo-green" 
-"string.regexp" = "orchid"
-"string.special" = "orchid"
-"string.special.path" = "orchid"
-"string.special.url" = "orchid"
+"string"                = "ufo-green"
+"string.regexp"         = "orchid"
+"string.special"        = "orchid"
+"string.special.path"   = "orchid"
 "string.special.symbol" = "orchid"
+"string.special.url"    = "orchid"
 
 "constructor" = "royal-blue"
 
-"variable" = "deep-grape"
-"variable.builtin" = "neon-cyan"
-"variable.parameter" = "neon-cyan" 
+"variable"              = "deep-grape"
+"variable.builtin"      = "neon-cyan"
 "variable.other.member" = "orchid"
+"variable.parameter"    = "neon-cyan"
 
-"function" = "royal-blue"
+"function"         = "royal-blue"
 "function.builtin" = "royal-blue"
-"function.method" = "royal-blue"
-"function.macro" = "ufo-green"
+"function.macro"   = "ufo-green"
+"function.method"  = "royal-blue"
 "function.special" = "royal-blue"
 
-"punctuation.special" = "neon-cyan"
+"punctuation.bracket"   = "neon-cyan"
 "punctuation.delimiter" = "neon-cyan"
-"punctuation.bracket" = "neon-cyan"
+"punctuation.special"   = "neon-cyan"
 
-"keyword" = "royal-blue"
-"keyword.control" = "orchid"
+"keyword"                     = "royal-blue"
+"keyword.control"             = "orchid"
 "keyword.control.conditional" = "deep-grape"
-"keyword.control.repeat" = "deep-grape"
-"keyword.control.import" = "royal-blue"
-"keyword.control.return" = "deep-grape"
-"keyword.control.exception" = "orchid"
-"keyword.operator" = "royal-blue"
-"keyword.directive" = "royal-blue"
-"keyword.storage" = "orchid"
-"keyword.function" = "orchid"
+"keyword.control.exception"   = "orchid"
+"keyword.control.import"      = "royal-blue"
+"keyword.control.repeat"      = "deep-grape"
+"keyword.control.return"      = "deep-grape"
+"keyword.directive"           = "royal-blue"
+"keyword.function"            = "orchid"
+"keyword.operator"            = "royal-blue"
+"keyword.storage"             = "orchid"
 
-"operator" = "amethyst"
-"type" = "soft-blue"
-"type.builtin" = "plum"
-"type.parameter" = "orchid"
-"type.enum" = "soft-blue"
+"attribute"         = "deep-grape"
+"namespace"         = "muted-violet"
+"operator"          = "amethyst"
+"special"           = "cool-sky"
+"tag"               = "neon-cyan"
+"tag.error"         = "bad"
+"type"              = "soft-blue"
+"type.builtin"      = "plum"
+"type.enum"         = "soft-blue"
 "type.enum.variant" = "royal-blue"
-"attribute" = "deep-grape"
-"namespace" = "muted-violet"
-"special" = "cool-sky"
-"tag" = "neon-cyan"
-"tag.error" = "bad"
+"type.parameter"    = "orchid"
 
 # Markup  ==============================
 
-"markup.heading.1" = "deep-grape"
-"markup.heading.2" = "muted-violet"
-"markup.heading.3" = "orchid"
-"markup.heading.4" = "amethyst"
-"markup.heading.5" = "soft-blue"
-"markup.heading.6" = "cool-sky"
+"markup.bold"           = "soft-blue"
+"markup.heading.1"      = "deep-grape"
+"markup.heading.2"      = "muted-violet"
+"markup.heading.3"      = "orchid"
+"markup.heading.4"      = "amethyst"
+"markup.heading.5"      = "soft-blue"
+"markup.heading.6"      = "cool-sky"
 "markup.heading.marker" = "ufo-green"
-"markup.list" = "ufo-green"
-"markup.list.checked" = "ufo-green"
+"markup.italic"         = "cool-sky"
+"markup.link.text"      = "orchid"
+"markup.link.url"       = "sky-cyan"
+"markup.list"           = "ufo-green"
+"markup.list.checked"   = "ufo-green"
 "markup.list.unchecked" = "deep-indigo"
-"markup.bold" = "soft-blue"
-"markup.italic" = "cool-sky"
-"markup.strikethrough" = "deep-indigo"
-"markup.link.url" = "sky-cyan"
-"markup.link.text" = "orchid"
-"markup.quote" = "muted-violet"
-"markup.raw" = "eggplant"
+"markup.quote"          = "muted-violet"
+"markup.raw"            = "eggplant"
+"markup.strikethrough"  = "deep-indigo"
 
 
 # Diff ==============================
 
-"diff.plus" = "ufo-green"
-"diff.minus" = "bad"
 "diff.delta" = "soft-blue"
- 
+"diff.minus" = "bad"
+"diff.plus"  = "ufo-green"
+
 
 [palette]
-midnight = "#1c0c28"
-eggplant = "#301b4d"
-deep-indigo = "#432775"
-purple-gray = "#5c3a9e"
-muted-violet = "#7b52c7"
-neon-cyan = "#00D2F7"
-cool-sky = "#7a88ff"
-orchid = "#8f45ff"
-soft-blue = "#8AA3FE"
-plum = "#6d4db8"
-ufo-green = "#00D974"
-dead-green = "#025c33"
-sky-cyan = "#00ddff"
-royal-blue = "#4264d9"
+amethyst        = "#9963ff"
+bad             = "#EB3E5EFF"
+cool-sky        = "#7a88ff"
+dead-green      = "#025c33"
+deep-grape      = "#7640cc"
+deep-indigo     = "#432775"
+eggplant        = "#301b4d"
 electric-violet = "#A600FF"
-amethyst = "#9963ff"
-deep-grape = "#7640cc"
-bad = "#EB3E5EFF"
+midnight        = "#1c0c28"
+muted-violet    = "#7b52c7"
+neon-cyan       = "#00D2F7"
+orchid          = "#8f45ff"
+plum            = "#6d4db8"
+purple-gray     = "#5c3a9e"
+royal-blue      = "#4264d9"
+sky-cyan        = "#00ddff"
+soft-blue       = "#8AA3FE"
+ufo-green       = "#00D974"

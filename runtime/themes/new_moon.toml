@@ -1,126 +1,126 @@
 
+"module"    = { fg = "blue" }
 "namespace" = { fg = "blue" }
-"module" = { fg = "blue" }
 
-"type" = { fg = "blue" }
-"type.builtin" = { fg = "blue" }
-"type.enum.variant" = { fg = "blue" } # or aqua
-"constructor" = { fg = "blue" }
+"constructor"           = { fg = "blue" }
+"type"                  = { fg = "blue" }
+"type.builtin"          = { fg = "blue" }
+"type.enum.variant"     = { fg = "blue" } # or aqua
 "variable.other.member" = { fg = "red" }
 
-"keyword" = { fg = "light_yellow" }
+"keyword"           = { fg = "light_yellow" }
+"keyword.control"   = { fg = "light_yellow" }
 "keyword.directive" = { fg = "light_yellow" }
-"keyword.control" = { fg = "light_yellow" }
-"label" = { fg = "blue" }
-"tag" = "blue"
+"label"             = { fg = "blue" }
+"tag"               = "blue"
 
-"special" = { fg = "lightest" } # or beige
 "operator" = { fg = "beige" }
+"special"  = { fg = "lightest" } # or beige
 
-"punctuation" = { fg = "text" }
+"punctuation"           = { fg = "text" }
 "punctuation.delimiter" = { fg = "text" }
 
-"variable" = { fg = "red" }
+"constant"           = { fg = "purple" }
+"constant.builtin"   = { fg = "purple" }
+"variable"           = { fg = "red" }
+"variable.builtin"   = { fg = "blue" }
 "variable.parameter" = { fg = "red" }
-"variable.builtin" = { fg = "blue" }
-"constant" = { fg = "purple" }
-"constant.builtin" = { fg = "purple" }
 
-"function" = { fg = "lightest" }
+"attribute"        = { fg = "yellow" }
+"function"         = { fg = "lightest" }
 "function.builtin" = { fg = "lightest" }
-"function.macro" = { fg = "blue" }
-"attribute" = { fg = "yellow" }
+"function.macro"   = { fg = "blue" }
 
 "comment" = { fg = "medium" }
 
-"string" = { fg = "green" }
-"constant.character" = { fg = "green" }
-"string.regexp" = { fg = "orange" }
-"constant.numeric" = { fg = "orange" }
+"constant.character"        = { fg = "green" }
 "constant.character.escape" = { fg = "aqua" }
+"constant.numeric"          = { fg = "orange" }
+"string"                    = { fg = "green" }
+"string.regexp"             = { fg = "orange" }
 
-"markup.heading" = { fg = "blue", modifiers = ["bold"] }
-"markup.list" = "aqua"
-"markup.bold" = { fg = "blue", modifiers = ["bold"] }
-"markup.italic" = { modifiers = ["italic"] }
-"markup.strikethrough" = { modifiers = ["crossed_out"] }
-"markup.link.url" = { modifiers = ["underlined"] }
-"markup.link.text" = "orange"
-"markup.quote" = "green"
-"markup.raw" = "orange"
+"markup.bold"          = { fg = "blue", modifiers = [ "bold" ] }
+"markup.heading"       = { fg = "blue", modifiers = [ "bold" ] }
+"markup.italic"        = { modifiers = [ "italic" ] }
+"markup.link.text"     = "orange"
+"markup.link.url"      = { modifiers = [ "underlined" ] }
+"markup.list"          = "aqua"
+"markup.quote"         = "green"
+"markup.raw"           = "orange"
+"markup.strikethrough" = { modifiers = [ "crossed_out" ] }
 
-"diff.plus" = { fg = "green" }
 "diff.delta" = { fg = "blue" }
 "diff.minus" = { fg = "red" }
+"diff.plus"  = { fg = "green" }
 
-"ui.background" = { fg = "light", bg = "darkest" }
+"ui.background" = { bg = "darkest", fg = "light" }
 
-"ui.window" = { bg = "widget" }
-"ui.popup" = { fg = "beige", bg = "widget" }
-"ui.help" = { fg = "text", bg = "widget" }
-"ui.menu" = { fg = "text", bg = "widget" }
+"ui.help"          = { bg = "widget", fg = "text" }
+"ui.menu"          = { bg = "widget", fg = "text" }
 "ui.menu.selected" = { bg = "darker_blue" }
+"ui.popup"         = { bg = "widget", fg = "beige" }
+"ui.window"        = { bg = "widget" }
 
-"ui.cursor" = { fg = "cursor", modifiers = ["reversed"] }
-"ui.cursor.primary" = { fg = "cursor", modifiers = ["reversed"] }
-"ui.cursor.match" = { bg = "#3a3d41", modifiers = ["underlined"] }
+"ui.cursor"         = { fg = "cursor", modifiers = [ "reversed" ] }
+"ui.cursor.match"   = { bg = "#3a3d41", modifiers = [ "underlined" ] }
+"ui.cursor.primary" = { fg = "cursor", modifiers = [ "reversed" ] }
 
-"ui.selection" = { bg = "#3a3d41" }
+"ui.selection"         = { bg = "#3a3d41" }
 "ui.selection.primary" = { bg = "darkest_blue" }
 
-"ui.linenr" = { fg = "dark_gray_virtual" }
+"ui.linenr"          = { fg = "dark_gray_virtual" }
 "ui.linenr.selected" = { fg = "light_gray_virtual" }
 
 "ui.cursorline.primary" = { bg = "active_line" }
-"ui.statusline" = { fg = "white", bg = "darker_blue" }
+"ui.statusline"         = { bg = "darker_blue", fg = "white" }
 # "ui.statusline.inactive" = { fg = "white", bg = "blue" }
 # "ui.statusline.insert" = { fg = "white", bg = "yellow" }
 # "ui.statusline.select" = { fg = "white", bg = "magenta" }
 
-"ui.bufferline" = { fg = "text", bg = "widget" }
-"ui.bufferline.active" = { fg = "white", bg = "darker_blue" }
+"ui.bufferline"            = { bg = "widget", fg = "text" }
+"ui.bufferline.active"     = { bg = "darker_blue", fg = "white" }
 "ui.bufferline.background" = { bg = "darkest" }
 
-"ui.text" = { fg = "text" }
+"ui.text"       = { fg = "text" }
 "ui.text.focus" = { fg = "lightest" }
 
-"ui.virtual.whitespace" = { fg = "dark_gray_virtual" }
-"ui.virtual.ruler" = { bg = "borders" }
 "ui.virtual.indent-guide" = { fg = "dark_gray_virtual" }
-"ui.virtual.inlay-hint" = { fg = "dark_gray_virtual"}
+"ui.virtual.inlay-hint"   = { fg = "dark_gray_virtual" }
+"ui.virtual.ruler"        = { bg = "borders" }
+"ui.virtual.whitespace"   = { fg = "dark_gray_virtual" }
 
+"error"   = { fg = "red" }
+"hint"    = { fg = "light_gray" }
+"info"    = { fg = "blue" }
 "warning" = { fg = "yellow" }
-"error" = { fg = "red" }
-"info" = { fg = "blue" }
-"hint" = { fg = "light_gray" }
 
+"diagnostic.deprecated"      = { modifiers = [ "crossed_out" ] }
 "diagnostic.error".underline = { color = "red", style = "curl" }
-"diagnostic".underline = { color = "yellow", style = "curl" }
-"diagnostic.unnecessary" = { modifiers = ["dim"] }
-"diagnostic.deprecated" = { modifiers = ["crossed_out"] }
+"diagnostic".underline       = { color = "yellow", style = "curl" }
+"diagnostic.unnecessary"     = { modifiers = [ "dim" ] }
 
 [palette]
-darkest = "#2d2d2d"
-medium = "#777c85"
-light = "#b3b9c5"
-lightest = "#ffffff"
-red = "#f2777a"
-orange = "#fca369"
-yellow = "#ffd479"
-light_yellow = "#ffeea6"
-green = "#92d192"
-blue = "#6ab0f3"
-darker_blue = "#007acc"
-darkest_blue= "#264f78"
-aqua = "#76d4d6"
-purple = "#e1a6f2"
-beige = "#ac8d58"
-light_gray = "#eeeeee"
-dark_gray_virtual = "#606060"
+active_line        = "#252525"
+aqua               = "#76d4d6"
+beige              = "#ac8d58"
+blue               = "#6ab0f3"
+dark_gray_virtual  = "#606060"
+darker_blue        = "#007acc"
+darkest            = "#2d2d2d"
+darkest_blue       = "#264f78"
+green              = "#92d192"
+light              = "#b3b9c5"
+light_gray         = "#eeeeee"
 light_gray_virtual = "#909090"
-active_line = "#252525"
+light_yellow       = "#ffeea6"
+lightest           = "#ffffff"
+medium             = "#777c85"
+orange             = "#fca369"
+purple             = "#e1a6f2"
+red                = "#f2777a"
+yellow             = "#ffd479"
 
-text = "#d4d4d4"
-cursor = "#a6a6a6"
-widget = "#252526"
 borders = "#323232"
+cursor  = "#a6a6a6"
+text    = "#d4d4d4"
+widget  = "#252526"

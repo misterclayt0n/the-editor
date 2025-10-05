@@ -1,66 +1,66 @@
 # Author : geonove <andre.novellini@gmail.com>
 # License : Vim License
 
-"ui.menu" = { fg = "light-gray", bg = "gray" }
-"ui.menu.selected" = { modifiers = ["reversed"] }
-"ui.linenr" = "yellow"
-"ui.popup" = { bg = "black" }
-"ui.window" = { bg = "black" }
-"ui.linenr.selected" = "light-yellow"
-"ui.selection" = { fg = "gray", modifiers = ["reversed"] }
-"ui.text.focus" = { fg = "black", bg = "white" }
-"comment" = "light-green"
-"comment.line" = "light-green"
-"comment.line.documentation" = "light-green"
-"comment.block" = "red"
+"attribute"                   = "yellow"
+"comment"                     = "light-green"
+"comment.block"               = "red"
 "comment.block.documentation" = "red"
-"ui.statusline" = { fg = "black", bg = "light-cyan" }
-"ui.statusline.inactive" = { fg = "gray", bg = "black" }
-"ui.help" = { fg = "white", bg = "black" }
-"ui.cursor" = { fg = "light-gray", modifiers = ["reversed"] }
-"ui.cursor.primary" = { fg = "light-gray", modifiers = ["reversed"] }
-"ui.virtual.whitespace" = "light-gray"
-"ui.virtual.jump-label" = { fg = "blue", modifiers = ["bold", "underlined"] }
-"ui.virtual.ruler" = { bg = "black" }
-"variable" = "white"
-"constant.numeric" = "red"
-"constant" = "white"
-"constant.builtin" = "red"
-"attribute" = "yellow"
-"type" = "green"
-"type.builtin" = "cyan"
-"ui.cursor.match" = { fg = "light-gray", modifiers = ["reversed"] }
-"string"  = "red"
-"variable.other.member" = "white"
-"constant.character.escape" = "light-cyan"
+"comment.line"                = "light-green"
+"comment.line.documentation"  = "light-green"
+"constant"                    = "white"
+"constant.builtin"            = "red"
+"constant.character.escape"   = "light-cyan"
+"constant.numeric"            = "red"
+"string"                      = "red"
+"type"                        = "green"
+"type.builtin"                = "cyan"
+"ui.cursor"                   = { fg = "light-gray", modifiers = [ "reversed" ] }
+"ui.cursor.match"             = { fg = "light-gray", modifiers = [ "reversed" ] }
+"ui.cursor.primary"           = { fg = "light-gray", modifiers = [ "reversed" ] }
+"ui.help"                     = { bg = "black", fg = "white" }
+"ui.linenr"                   = "yellow"
+"ui.linenr.selected"          = "light-yellow"
+"ui.menu"                     = { bg = "gray", fg = "light-gray" }
+"ui.menu.selected"            = { modifiers = [ "reversed" ] }
+"ui.popup"                    = { bg = "black" }
+"ui.selection"                = { fg = "gray", modifiers = [ "reversed" ] }
+"ui.statusline"               = { bg = "light-cyan", fg = "black" }
+"ui.statusline.inactive"      = { bg = "black", fg = "gray" }
+"ui.text.focus"               = { bg = "white", fg = "black" }
+"ui.virtual.jump-label"       = { fg = "blue", modifiers = [ "bold", "underlined" ] }
+"ui.virtual.ruler"            = { bg = "black" }
+"ui.virtual.whitespace"       = "light-gray"
+"ui.window"                   = { bg = "black" }
+"variable"                    = "white"
+"variable.other.member"       = "white"
 #"function.builtin" = "cyan"
 #"function.method" = "cyan"
 #"function.method.private" = "cyan"
-"function" = "cyan"
-"constructor" = "cyan"
-"special" = "light-blue"
-"keyword" = "yellow"
+"constructor"            = "cyan"
+"function"               = "cyan"
+"keyword"                = "yellow"
 "keyword.control.import" = "magenta"
-"label" = "white"
-"namespace" = "white"
+"label"                  = "white"
+"namespace"              = "white"
+"special"                = "light-blue"
 
-"markup.heading" = "light-magenta"
-"markup.list" = "light-red"
-"markup.bold" = { fg = "light-yellow", modifiers = ["bold"] }
-"markup.italic" = { fg = "light-magenta", modifiers = ["italic"] }
-"markup.strikethrough" = { modifiers = ["crossed_out"] }
-"markup.link.url" = { fg = "yellow", modifiers = ["underlined"] }
-"markup.link.text" = "light-red"
-"markup.quote" = "light-cyan"
-"markup.raw" = "light-green"
+"markup.bold"          = { fg = "light-yellow", modifiers = [ "bold" ] }
+"markup.heading"       = "light-magenta"
+"markup.italic"        = { fg = "light-magenta", modifiers = [ "italic" ] }
+"markup.link.text"     = "light-red"
+"markup.link.url"      = { fg = "yellow", modifiers = [ "underlined" ] }
+"markup.list"          = "light-red"
+"markup.quote"         = "light-cyan"
+"markup.raw"           = "light-green"
+"markup.strikethrough" = { modifiers = [ "crossed_out" ] }
 
-"diff.plus" = "light-green"
 "diff.delta" = "yellow"
 "diff.minus" = "light-red"
+"diff.plus"  = "light-green"
 
-"diagnostic" = { modifiers = ["underlined"] }
-"info" = "light-blue"
-"hint" = "gray"
-"debug" = "gray"
-"warning" = "yellow"
-"error" = "light-red"
+"debug"      = "gray"
+"diagnostic" = { modifiers = [ "underlined" ] }
+"error"      = "light-red"
+"hint"       = "gray"
+"info"       = "light-blue"
+"warning"    = "yellow"

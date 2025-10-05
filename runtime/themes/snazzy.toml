@@ -13,12 +13,12 @@
 "function.macro".fg   = "blue"
 "function.method".fg  = "opal"
 
-"keyword"                   = { fg = "magenta", modifiers = ["bold"] }
-"keyword.control"           = { fg = "carnation", modifiers = ["bold"] }
-"keyword.control.exception" = { fg = "red", modifiers = ["bold"] }
-"keyword.function"          = { fg = "lilac", modifiers = ["bold"] }
-"keyword.operator"          = { fg = "coral", modifiers = ["bold"] }
-"keyword.storage"           = { fg = "coral", modifiers = ["bold"] }
+"keyword"                   = { fg = "magenta", modifiers = [ "bold" ] }
+"keyword.control"           = { fg = "carnation", modifiers = [ "bold" ] }
+"keyword.control.exception" = { fg = "red", modifiers = [ "bold" ] }
+"keyword.function"          = { fg = "lilac", modifiers = [ "bold" ] }
+"keyword.operator"          = { fg = "coral", modifiers = [ "bold" ] }
+"keyword.storage"           = { fg = "coral", modifiers = [ "bold" ] }
 
 "operator".fg = "coral"
 
@@ -40,7 +40,7 @@
 "variable.builtin".fg      = "olive"
 "variable".fg              = "cyan"
 "variable.other.member".fg = "lilac"
-"variable.parameter"       = { fg = "blue", modifiers = ["italic"] }
+"variable.parameter"       = { fg = "blue", modifiers = [ "italic" ] }
 
 "constructor".fg = "sand"
 "label".fg       = "magenta"
@@ -51,53 +51,53 @@
 "diff.minus".fg = "red"
 "diff.plus".fg  = "green"
 
-"ui.background"           = { fg = "foreground", bg = "background" }
-"ui.cursor"               = { fg = "background", bg = "blue", modifiers = ["dim"] }
-"ui.cursor.match"         = { fg = "green", modifiers = ["underlined"] }
-"ui.cursor.primary"       = { fg = "background", bg = "cyan", modifiers = ["dim"] }
+"ui.background"           = { bg = "background", fg = "foreground" }
+"ui.cursor"               = { bg = "blue", fg = "background", modifiers = [ "dim" ] }
+"ui.cursor.match"         = { fg = "green", modifiers = [ "underlined" ] }
+"ui.cursor.primary"       = { bg = "cyan", fg = "background", modifiers = [ "dim" ] }
 "ui.cursorline"           = { bg = "background_dark" }
-"ui.help"                 = { fg = "foreground", bg = "background_dark" }
+"ui.help"                 = { bg = "background_dark", fg = "foreground" }
 "ui.linenr"               = { fg = "comment" }
 "ui.linenr.selected"      = { fg = "foreground" }
-"ui.menu"                 = { fg = "foreground", bg = "background_dark" }
-"ui.menu.selected"        = { fg = "cyan", bg = "background_dark" }
-"ui.popup"                = { fg = "foreground", bg = "background_dark" }
+"ui.menu"                 = { bg = "background_dark", fg = "foreground" }
+"ui.menu.selected"        = { bg = "background_dark", fg = "cyan" }
+"ui.popup"                = { bg = "background_dark", fg = "foreground" }
 "ui.selection"            = { bg = "secondary_highlight" }
 "ui.selection.primary"    = { bg = "primary_highlight" }
-"ui.statusline"           = { fg = "foreground", bg = "background_dark" }
-"ui.statusline.inactive"  = { fg = "comment", bg = "background_dark" }
-"ui.statusline.insert"    = { fg = "olive", bg = "background_dark" }
-"ui.statusline.normal"    = { fg = "opal", bg = "background_dark" }
-"ui.statusline.select"    = { fg = "carnation", bg = "background_dark" }
+"ui.statusline"           = { bg = "background_dark", fg = "foreground" }
+"ui.statusline.inactive"  = { bg = "background_dark", fg = "comment" }
+"ui.statusline.insert"    = { bg = "background_dark", fg = "olive" }
+"ui.statusline.normal"    = { bg = "background_dark", fg = "opal" }
+"ui.statusline.select"    = { bg = "background_dark", fg = "carnation" }
 "ui.text"                 = { fg = "foreground" }
 "ui.text.focus"           = { fg = "cyan" }
 "ui.virtual.indent-guide" = { fg = "opal" }
+"ui.virtual.inlay-hint"   = { bg = "background_dark", fg = "comment" }
 "ui.virtual.ruler"        = { bg = "background_dark" }
-"ui.virtual.inlay-hint" =   { bg = "background_dark", fg = "comment" }
 "ui.virtual.whitespace"   = { fg = "comment" }
 "ui.window"               = { fg = "foreground" }
 
 "error"   = { fg = "red" }
 "warning" = { fg = "cyan" }
 
-"diagnostic"             = { underline = { style = "line", color = "coral" }, bg = "cyan" }
-"diagnostic.deprecated"  = { modifiers = ["crossed_out"] }
-"diagnostic.error"       = { underline = { style = "curl", color = "red" } }
-"diagnostic.hint"        = { underline = { style = "line", color = "cyan" } }
+"diagnostic"             = { bg = "cyan", underline = { color = "coral", style = "line" } }
+"diagnostic.deprecated"  = { modifiers = [ "crossed_out" ] }
+"diagnostic.error"       = { underline = { color = "red", style = "curl" } }
+"diagnostic.hint"        = { underline = { color = "cyan", style = "line" } }
 "diagnostic.info"        = { underline = { style = "line" } }
-"diagnostic.unnecessary" = { modifiers = ["dim"] }
-"diagnostic.warning"     = { underline = { style = "curl", color = "yellow" } }
+"diagnostic.unnecessary" = { modifiers = [ "dim" ] }
+"diagnostic.warning"     = { underline = { color = "yellow", style = "curl" } }
 
-"markup.bold"          = { fg = "blue", modifiers = ["bold"] }
-"markup.heading"       = { fg = "purple", modifiers = ["bold"] }
-"markup.italic"        = { fg = "yellow", modifiers = ["italic"] }
-"markup.link.label"    = { fg = "blue", modifiers = ["italic"] }
+"markup.bold"          = { fg = "blue", modifiers = [ "bold" ] }
+"markup.heading"       = { fg = "purple", modifiers = [ "bold" ] }
+"markup.italic"        = { fg = "yellow", modifiers = [ "italic" ] }
+"markup.link.label"    = { fg = "blue", modifiers = [ "italic" ] }
 "markup.link.text"     = "magenta"
 "markup.link.url"      = "cyan"
 "markup.list"          = "cyan"
-"markup.quote"         = { fg = "yellow", modifiers = ["italic"] }
+"markup.quote"         = { fg = "yellow", modifiers = [ "italic" ] }
 "markup.raw"           = { fg = "foreground" }
-"markup.strikethrough" = { modifiers = ["crossed_out"] }
+"markup.strikethrough" = { modifiers = [ "crossed_out" ] }
 
 [palette]
 background          = "#282a36"

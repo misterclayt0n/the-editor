@@ -4,108 +4,108 @@
 # Version: 1.0
 # Info: This is a theme I made one afternoon because I was bored
 
-attribute = "buff"
-keyword = "sglow"
-"keyword.directive" = "defineish" 
-namespace = "blue"
-punctuation = "white"
-"punctuation.delimiter" = "functionish"
-operator = "greenish"
-special = "maize"
-"variable.other.member" = "bsienna"
-variable = "tan"
-"variable.parameter" = { fg = "parameters" }
-"variable.builtin" = "white"
-type = "light-blue"
-"type.builtin" = "functionish" 
-constructor = "typeish"
-function = "functionish"
-"function.macro" = "blue"
-"function.builtin" = "typeish" 
-tag = "functionish"
-comment = "bgrey"
-constant = "tan"
-"constant.builtin" = "#D38588"
-string = "redish"
-"constant.numeric" = "functionish"
+attribute                   = "buff"
+comment                     = "bgrey"
+constant                    = "tan"
+"constant.builtin"          = "#D38588"
 "constant.character.escape" = "cyan"
-label = "yellow"
+"constant.numeric"          = "functionish"
+constructor                 = "typeish"
+function                    = "functionish"
+"function.builtin"          = "typeish"
+"function.macro"            = "blue"
+keyword                     = "sglow"
+"keyword.directive"         = "defineish"
+label                       = "yellow"
+namespace                   = "blue"
+operator                    = "greenish"
+punctuation                 = "white"
+"punctuation.delimiter"     = "functionish"
+special                     = "maize"
+string                      = "redish"
+tag                         = "functionish"
+type                        = "light-blue"
+"type.builtin"              = "functionish"
+variable                    = "tan"
+"variable.builtin"          = "white"
+"variable.other.member"     = "bsienna"
+"variable.parameter"        = { fg = "parameters" }
 
-"markup.heading" = "functionish"
-"markup.list" = "status-two"
-"markup.quote" = "tan"
-"markup.bold" = { fg = "sglow", modifiers = ["bold"] }
-"markup.italic" = { fg = "sglow", modifiers = ["italic"] }
-"markup.strikethrough" = { modifiers = ["crossed_out"] }
-"markup.link.url" = { fg = "sglow", modifiers = ["underlined"] }
-"markup.link.text" = "greenish"
-"markup.raw" = "light-grey"
+"markup.bold"          = { fg = "sglow", modifiers = [ "bold" ] }
+"markup.heading"       = "functionish"
+"markup.italic"        = { fg = "sglow", modifiers = [ "italic" ] }
+"markup.link.text"     = "greenish"
+"markup.link.url"      = { fg = "sglow", modifiers = [ "underlined" ] }
+"markup.list"          = "status-two"
+"markup.quote"         = "tan"
+"markup.raw"           = "light-grey"
+"markup.strikethrough" = { modifiers = [ "crossed_out" ] }
 
-"diff.plus" = "#7DDF64"
-"diff.minus" = "#F22B29"
 "diff.delta" = "#6f44f0"
+"diff.minus" = "#F22B29"
+"diff.plus"  = "#7DDF64"
 
-"ui.background" = { fg = "#25262B", bg="#1f1f21" }
+"ui.background"           = { bg = "#1f1f21", fg = "#25262B" }
 "ui.background.separator" = { fg = "sglow" }
-"ui.linenr" = { fg = "light-grey", modifiers = ["italic"] }
-"ui.linenr.selected" = { fg = "bpink", modifiers = ["bold"] }
+"ui.linenr"               = { fg = "light-grey", modifiers = [ "italic" ] }
+"ui.linenr.selected"      = { fg = "bpink", modifiers = [ "bold" ] }
 
-"ui.statusline" = { fg = "black", bg = "light-grey", modifiers = ["bold"] }
-"ui.statusline.inactive" = { fg = "black", bg = "bgrey-two" }
-"ui.popup" = { fg = "bgrey", bg = "#25262B" }
-"ui.window" = { fg = "white" }
-"ui.help" = { bg = "#3f4047", fg = "light-grey" }
+"ui.help"                = { bg = "#3f4047", fg = "light-grey" }
+"ui.popup"               = { bg = "#25262B", fg = "bgrey" }
+"ui.statusline"          = { bg = "light-grey", fg = "black", modifiers = [ "bold" ] }
+"ui.statusline.inactive" = { bg = "bgrey-two", fg = "black" }
+"ui.window"              = { fg = "white" }
 
-"ui.text" = { fg = "white" }
-"ui.text.focus" = { fg = "maize", bg = "bgrey" }
-"ui.text.inactive" = "bgrey"
-"ui.virtual" = { fg = "blue" }
-"ui.virtual.ruler" = { bg = "bgrey-two" }
+"ui.text"                 = { fg = "white" }
+"ui.text.focus"           = { bg = "bgrey", fg = "maize" }
+"ui.text.inactive"        = "bgrey"
+"ui.virtual"              = { fg = "blue" }
 "ui.virtual.indent-guide" = { fg = "gray" }
+"ui.virtual.ruler"        = { bg = "bgrey-two" }
 
 
-"ui.selection" = { bg = "maize" }
-"ui.selection.primary" = { fg = "white", bg = "bgrey" }
-"ui.cursor.select" = { bg = "white" }
-"ui.cursor.insert" = { bg = "white" }
-"ui.cursor.match" = { fg = "#212121", bg = "#6C6999" }
-"ui.cursor" = { bg = "bgrey-two", modifiers = ["reversed"] }
+"ui.cursor"             = { bg = "bgrey-two", modifiers = [ "reversed" ] }
+"ui.cursor.insert"      = { bg = "white" }
+"ui.cursor.match"       = { bg = "#6C6999", fg = "#212121" }
+"ui.cursor.select"      = { bg = "white" }
 "ui.cursorline.primary" = { bg = "#44414c" }
+"ui.selection"          = { bg = "maize" }
+"ui.selection.primary"  = { bg = "bgrey", fg = "white" }
 
-"ui.highlight" = { bg = "white" }
+"ui.debug"               = { fg = "#634450" }
+"ui.debug.breakpoint"    = { fg = "bpink" }
+"ui.highlight"           = { bg = "white" }
 "ui.highlight.frameline" = { bg = "#634450" }
-"ui.debug" = { fg = "#634450" }
-"ui.debug.breakpoint" = { fg = "bpink" }
-"ui.menu" = { fg = "white", bg = "#23232d" }
-"ui.menu.selected" = { fg = "white", bg = "bgrey" }
-"ui.menu.scroll" = { fg = "white", bg = "white" }
+"ui.menu"                = { bg = "#23232d", fg = "white" }
+"ui.menu.scroll"         = { bg = "white", fg = "white" }
+"ui.menu.selected"       = { bg = "bgrey", fg = "white" }
 
-"diagnostic.hint" = { underline = { color = "maize", style = "curl" } }
-"diagnostic.info" = { underline = { color = "sglow", style = "curl" } }
+"diagnostic.error"   = { underline = { color = "bpink", style = "curl" } }
+"diagnostic.hint"    = { underline = { color = "maize", style = "curl" } }
+"diagnostic.info"    = { underline = { color = "sglow", style = "curl" } }
 "diagnostic.warning" = { underline = { color = "redish", style = "curl" } }
-"diagnostic.error" = { underline = { color = "bpink", style = "curl" } }
 
+error   = "bsienna"
+hint    = "tan"
+info    = "maize"
 warning = "bpink"
-error = "bsienna"
-info = "maize"
-hint = "tan"
 
 [palette]
-parameters = "#d89182"
-defineish = "#71c45c"
-buff = "#f0dc82"
-tan = "#DAB785"
-typeish = "#AAAAA5"
-greenish = "#458588"
+bgrey       = "#8c8681"
+bgrey-two   = "#706b68"
+bpink       = "#FF5964"
+bsienna     = "#D5896F"
+buff        = "#f0dc82"
+defineish   = "#71c45c"
 functionish = "#b784a3"
-bsienna = "#D5896F"
-bpink = "#FF5964"
-maize = "#FFE74C"
-bgrey = "#8c8681"
-sglow = "#FFCF56"
-status = "#15616D"
-status-two = "#3879A1"
-redish = "#E76B74"
-light-grey = "#b7afa8"
-bgrey-two = "#706b68"
-gruvgreen = "#B8BB26"
+greenish    = "#458588"
+gruvgreen   = "#B8BB26"
+light-grey  = "#b7afa8"
+maize       = "#FFE74C"
+parameters  = "#d89182"
+redish      = "#E76B74"
+sglow       = "#FFCF56"
+status      = "#15616D"
+status-two  = "#3879A1"
+tan         = "#DAB785"
+typeish     = "#AAAAA5"

@@ -6,123 +6,123 @@
 # Author: arturoalviar
 # License: MIT License
 
-"escape" = "orange"
-"type" = "yellow"
-"constant" = "purple"
-"number" = "purple"
-"string" = "fg"
-"comment" = { fg = "grey2", modifiers = [ "italic" ] }
-"variable" = "yellow"
-"variable.builtin" = "blue"
-"variable.parameter" = "yellow"
-"variable.property" = "yellow"
-"label" = "aqua"
-"punctuation" = "grey0"
+"attribute"             = "aqua"
+"comment"               = { fg = "grey2", modifiers = [ "italic" ] }
+"constant"              = "purple"
+"constructor"           = "yellow"
+"escape"                = "orange"
+"function"              = "green"
+"function.builtin"      = "blue"
+"function.macro"        = "aqua"
+"keyword"               = "red"
+"label"                 = "aqua"
+"module"                = "blue"
+"namespace"             = "fg"
+"number"                = "purple"
+"operator"              = "grey2"
+"punctuation"           = "grey0"
+"punctuation.bracket"   = "fg"
 "punctuation.delimiter" = "grey2"
-"punctuation.bracket" = "fg"
-"keyword" = "red"
-"operator" = "grey2"
-"function" = "green"
-"function.builtin" = "blue"
-"function.macro" = "aqua"
-"tag" = "yellow"
-"namespace" = "fg"
-"attribute" = "aqua"
-"constructor" = "yellow"
-"module" = "blue"
-"special" = "orange"
+"special"               = "orange"
+"string"                = "fg"
+"tag"                   = "yellow"
+"type"                  = "yellow"
+"variable"              = "yellow"
+"variable.builtin"      = "blue"
+"variable.parameter"    = "yellow"
+"variable.property"     = "yellow"
 
-"ui.background" = { bg = "bg0" }
-"ui.background.separator" = { fg = "bg5" }
-"ui.bufferline" = { fg = "grey1" }
-"ui.bufferline.active" = { fg = "pale-yellow" }
+"ui.background"            = { bg = "bg0" }
+"ui.background.separator"  = { fg = "bg5" }
+"ui.bufferline"            = { fg = "grey1" }
+"ui.bufferline.active"     = { fg = "pale-yellow" }
 "ui.bufferline.background" = { bg = "bg5" }
-"ui.cursor" = { fg = "bg0", bg = "dark-red" }
-"ui.cursor.match" = { fg = "pale-yellow", bg = "bg5" }
-"ui.cursor.insert" = { fg = "fg", bg = "pale-yellow" }
-"ui.cursor.select" = { fg = "fg", bg = "bg-yellow" }
-"ui.cursor.primary" = { fg = "nasty-red", bg = "grey0" }
-"ui.cursor.primary.match" = { fg = "grey2", bg = "pale-yellow" }
-"ui.cursor.primary.insert" = { fg = "dark-red", bg = "yellow" }
-"ui.cursor.primary.select" = { fg = "yellow", bg = "dark-red" }
-"ui.linenr" = { fg = "yellow", modifiers = ["dim"] }
-"ui.linenr.selected" = { fg = "fg", modifiers = ["dim"], underline.style = "line" }
-"ui.cursorline" = { bg = "bg0", modifiers = ["dim"] }
-"ui.statusline" = { fg = "grey1", bg = "bg5" }
-"ui.statusline.inactive" = { fg = "grey1", bg = "bg3" }
-"ui.statusline.insert" = { fg = "blue" }
-"ui.statusline.select" = { fg = "pale-yellow" }
-"ui.popup" = { fg = "bg0", bg = "bg5" }
-"ui.picker.header" = { fg = "bg2", underline.style = "dashed" }
-"ui.window" = { fg = "bg5", bg = "bg5" }
-"ui.help" = { fg = "bg0", bg = "bg5" }
-"ui.text" = "fg"
-"ui.text.focus" = "yellow"
-"ui.text.inactive" = { fg = "fg", modifiers = [ "dim" ] }
-"ui.text.directory" = "grey2"
-"ui.menu" = { fg = "bg0", bg = "bg3" }
-"ui.menu.selected" = { fg = "bg0", bg = "bg-yellow" }
-"ui.selection" = { bg = "grey0", modifiers = [ "dim" ] }
-"ui.selection.prime" = { underline.style = "line" }
-"ui.virtual.inlay-hint" = { fg = "grey2", modifiers = ["italic"] }
-"ui.virtual.jump-label" = { fg = "nasty-red", modifiers = ["bold"] }
-"ui.virtual.ruler" = { bg = "bg0", modifiers = ["dim"] }
-"ui.virtual.whitespace" = { fg = "grey2", modifiers = [ "italic" ] }
-"ui.virtual.wrap" = { fg = "grey2", modifiers = [ "italic" ] }
+"ui.cursor"                = { bg = "dark-red", fg = "bg0" }
+"ui.cursor.insert"         = { bg = "pale-yellow", fg = "fg" }
+"ui.cursor.match"          = { bg = "bg5", fg = "pale-yellow" }
+"ui.cursor.primary"        = { bg = "grey0", fg = "nasty-red" }
+"ui.cursor.primary.insert" = { bg = "yellow", fg = "dark-red" }
+"ui.cursor.primary.match"  = { bg = "pale-yellow", fg = "grey2" }
+"ui.cursor.primary.select" = { bg = "dark-red", fg = "yellow" }
+"ui.cursor.select"         = { bg = "bg-yellow", fg = "fg" }
+"ui.cursorline"            = { bg = "bg0", modifiers = [ "dim" ] }
+"ui.help"                  = { bg = "bg5", fg = "bg0" }
+"ui.linenr"                = { fg = "yellow", modifiers = [ "dim" ] }
+"ui.linenr.selected"       = { fg = "fg", modifiers = [ "dim" ], underline.style = "line" }
+"ui.menu"                  = { bg = "bg3", fg = "bg0" }
+"ui.menu.selected"         = { bg = "bg-yellow", fg = "bg0" }
+"ui.picker.header"         = { fg = "bg2", underline.style = "dashed" }
+"ui.popup"                 = { bg = "bg5", fg = "bg0" }
+"ui.selection"             = { bg = "grey0", modifiers = [ "dim" ] }
+"ui.selection.prime"       = { underline.style = "line" }
+"ui.statusline"            = { bg = "bg5", fg = "grey1" }
+"ui.statusline.inactive"   = { bg = "bg3", fg = "grey1" }
+"ui.statusline.insert"     = { fg = "blue" }
+"ui.statusline.select"     = { fg = "pale-yellow" }
+"ui.text"                  = "fg"
+"ui.text.directory"        = "grey2"
+"ui.text.focus"            = "yellow"
+"ui.text.inactive"         = { fg = "fg", modifiers = [ "dim" ] }
+"ui.virtual.inlay-hint"    = { fg = "grey2", modifiers = [ "italic" ] }
+"ui.virtual.jump-label"    = { fg = "nasty-red", modifiers = [ "bold" ] }
+"ui.virtual.ruler"         = { bg = "bg0", modifiers = [ "dim" ] }
+"ui.virtual.whitespace"    = { fg = "grey2", modifiers = [ "italic" ] }
+"ui.virtual.wrap"          = { fg = "grey2", modifiers = [ "italic" ] }
+"ui.window"                = { bg = "bg5", fg = "bg5" }
 
-"hint" = "blue"
-"info" = "aqua"
+"error"   = "nasty-red"
+"hint"    = "blue"
+"info"    = "aqua"
 "warning" = "yellow"
-"error" = "nasty-red"
 
-"diagnostic" = { underline = { style = "curl", color = "purple" } }
-"diagnostic.hint" = { underline = { style = "curl", color = "blue" } }
-"diagnostic.info" = { underline = { style = "curl", color = "aqua" } }
-"diagnostic.warning" = { underline = { style = "curl", color = "yellow" } }
-"diagnostic.error" = { underline = { style = "curl", color = "nasty-red" } }
-"diagnostic.unnecessary" = { modifiers = ["dim"] }
-"diagnostic.deprecated" = { modifiers = ["crossed_out"] }
+"diagnostic"             = { underline = { color = "purple", style = "curl" } }
+"diagnostic.deprecated"  = { modifiers = [ "crossed_out" ] }
+"diagnostic.error"       = { underline = { color = "nasty-red", style = "curl" } }
+"diagnostic.hint"        = { underline = { color = "blue", style = "curl" } }
+"diagnostic.info"        = { underline = { color = "aqua", style = "curl" } }
+"diagnostic.unnecessary" = { modifiers = [ "dim" ] }
+"diagnostic.warning"     = { underline = { color = "yellow", style = "curl" } }
 
-"diff.plus" = { fg = "bg-green" }
 "diff.delta" = { fg = "bg-blue" }
 "diff.minus" = { fg = "nasty-red" }
+"diff.plus"  = { fg = "bg-green" }
 
-"markup.heading" = { fg = "purple", modifiers = ["bold"] }
-"markup.list" = "cyan"
-"markup.bold" = { fg = "orange", modifiers = ["bold"] }
-"markup.italic" = { fg = "yellow", modifiers = ["italic"] }
-"markup.strikethrough" = { modifiers = ["crossed_out"] }
-"markup.link.url" = "cyan"
-"markup.link.text" = "pink"
-"markup.quote" = { fg = "yellow", modifiers = ["italic"] }
-"markup.raw" = { fg = "fg" }
+"markup.bold"          = { fg = "orange", modifiers = [ "bold" ] }
+"markup.heading"       = { fg = "purple", modifiers = [ "bold" ] }
+"markup.italic"        = { fg = "yellow", modifiers = [ "italic" ] }
+"markup.link.text"     = "pink"
+"markup.link.url"      = "cyan"
+"markup.list"          = "cyan"
+"markup.quote"         = { fg = "yellow", modifiers = [ "italic" ] }
+"markup.raw"           = { fg = "fg" }
+"markup.strikethrough" = { modifiers = [ "crossed_out" ] }
 
 [palette]
 
-bg0 = "#d1d0c5"
-bg1 = "#494c50"
-bg2 = "#55585e"
-bg3 = "#61656b"
-bg4 = "#6d7278"
-bg5 = "#797e86"
+bg-blue   = "#6a89af"
+bg-green  = "#86b365"
+bg-red    = "#7e2a33"
 bg-visual = "#646669"
-bg-red = "#7e2a33"
-bg-green = "#86b365"
-bg-blue = "#6a89af"
 bg-yellow = "#e2b714"
+bg0       = "#d1d0c5"
+bg1       = "#494c50"
+bg2       = "#55585e"
+bg3       = "#61656b"
+bg4       = "#6d7278"
+bg5       = "#797e86"
 
-fg = "#323437"
-red = "#621d28"
-nasty-red = "#da3333"
-dark-red = "#791717"
-orange = "#57320f"
-yellow = "#9a7d0e"
+aqua        = "#455054"
+blue        = "#3f5673"
+dark-red    = "#791717"
+fg          = "#323437"
+green       = "#3d5128"
+grey0       = "#aaaeb3"
+grey1       = "#e1e1e3"
+grey2       = "#646669"
+nasty-red   = "#da3333"
+orange      = "#57320f"
 pale-yellow = "#e2b714"
-green = "#3d5128"
-aqua = "#455054"
-blue = "#3f5673"
-purple = "#5a4066"
-grey0 = "#aaaeb3"
-grey1 = "#e1e1e3"
-grey2 = "#646669"
-pink = "#e06c75"
+pink        = "#e06c75"
+purple      = "#5a4066"
+red         = "#621d28"
+yellow      = "#9a7d0e"

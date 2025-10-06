@@ -78,6 +78,8 @@ pub struct Completion {
   scroll_offset:   usize,
   /// Whether documentation has been resolved for current selection
   doc_resolved:    bool,
+  /// Animation progress (0.0 = just appeared, 1.0 = fully visible)
+  anim_progress:   f32,
 }
 
 impl Completion {
@@ -96,6 +98,7 @@ impl Completion {
       replace_mode: false,
       scroll_offset: 0,
       doc_resolved: false,
+      anim_progress: 0.0, // Start animation from 0
     };
 
     // Initial scoring
@@ -430,28 +433,52 @@ impl Component for Completion {
       return;
     }
 
+    // Update animation progress (fast lerp, completes in ~0.1s)
+    const ANIM_SPEED: f32 = 30.0; // Higher = faster
+    if self.anim_progress < 1.0 {
+      self.anim_progress = (self.anim_progress + ctx.dt * ANIM_SPEED).min(1.0);
+    }
+
+    // Smoothstep easing for smooth animation
+    let t = self.anim_progress;
+    let eased_t = t * t * (3.0 - 2.0 * t);
+
+    // Animation effects:
+    // - Fade in (alpha)
+    // - Slight upward slide
+    // - Small scale (starts at 95%, grows to 100%)
+    let alpha = eased_t;
+    let slide_offset = (1.0 - eased_t) * 8.0; // Slide up 8px
+    let scale = 0.95 + (eased_t * 0.05); // 95% -> 100%
+
     // Get theme colors
     let theme = &ctx.editor.theme;
     let bg_style = theme.get("ui.popup");
     let text_style = theme.get("ui.text");
     let selected_style = theme.get("ui.menu.selected");
 
-    let bg_color = bg_style
+    let mut bg_color = bg_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.12, 0.12, 0.15, 0.98));
-    let text_color = text_style
+    let mut text_color = text_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
-    let selected_bg = selected_style
+    let mut selected_bg = selected_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.25, 0.3, 0.45, 1.0));
-    let selected_fg = selected_style
+    let mut selected_fg = selected_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(1.0, 1.0, 1.0, 1.0));
+
+    // Apply animation alpha to all colors
+    bg_color.a *= alpha;
+    text_color.a *= alpha;
+    selected_bg.a *= alpha;
+    selected_fg.a *= alpha;
 
     // Calculate layout
     let visible_items = MAX_VISIBLE_ITEMS.min(self.filtered.len());
@@ -459,19 +486,28 @@ impl Component for Completion {
     let item_padding = 6.0;
     let menu_height = (visible_items as f32 * line_height) + (item_padding * 2.0);
 
-    // Determine menu width based on longest item
-    let mut menu_width: f32 = 250.0; // minimum width
+    // First pass: find the longest label to determine kind column alignment
+    let mut max_label_width: f32 = 0.0;
     for &(idx, _) in self.filtered.iter().take(20) {
       let item = &self.items[idx as usize];
       let label = match item {
         CompletionItem::Lsp(lsp_item) => &lsp_item.item.label,
         CompletionItem::Other(other) => &other.label,
       };
+      let label_width = label.len() as f32 * UI_FONT_WIDTH;
+      max_label_width = max_label_width.max(label_width);
+    }
+
+    // Second pass: determine menu width based on aligned layout
+    let kind_column_offset = max_label_width + 20.0; // Extra spacing before kind
+    let mut menu_width: f32 = 250.0; // minimum width
+    for &(idx, _) in self.filtered.iter().take(20) {
+      let item = &self.items[idx as usize];
       let kind = match item {
         CompletionItem::Lsp(lsp_item) => Self::format_kind(lsp_item.item.kind),
         CompletionItem::Other(other) => other.kind.as_deref().unwrap_or(""),
       };
-      let item_width = (label.len() as f32 * UI_FONT_WIDTH) + (kind.len() as f32 * UI_FONT_WIDTH) + 40.0;
+      let item_width = kind_column_offset + (kind.len() as f32 * UI_FONT_WIDTH) + 16.0;
       menu_width = menu_width.max(item_width);
     }
     menu_width = menu_width.min(MAX_MENU_WIDTH as f32 * UI_FONT_WIDTH);
@@ -514,16 +550,24 @@ impl Component for Completion {
       (x, y)
     };
 
+    // Apply animation transforms
+    let anim_y = cursor_y + slide_offset;
+    let anim_width = menu_width * scale;
+    let anim_height = menu_height * scale;
+    // Center the scaled popup at the cursor position
+    let anim_x = cursor_x - (menu_width - anim_width) / 2.0;
+
     // Draw background
     let corner_radius = 6.0;
-    surface.draw_rounded_rect(cursor_x, cursor_y, menu_width, menu_height, corner_radius, bg_color);
+    surface.draw_rounded_rect(anim_x, anim_y, anim_width, anim_height, corner_radius, bg_color);
 
-    // Draw border
-    let border_color = Color::new(0.3, 0.3, 0.35, 0.8);
-    surface.draw_rounded_rect_stroke(cursor_x, cursor_y, menu_width, menu_height, corner_radius, 1.0, border_color);
+    // Draw border (with animated alpha)
+    let mut border_color = Color::new(0.3, 0.3, 0.35, 0.8);
+    border_color.a *= alpha;
+    surface.draw_rounded_rect_stroke(anim_x, anim_y, anim_width, anim_height, corner_radius, 1.0, border_color);
 
-    // Render items
-    surface.with_overlay_region(cursor_x, cursor_y, menu_width, menu_height, |surface| {
+    // Render items (using animated transforms)
+    surface.with_overlay_region(anim_x, anim_y, anim_width, anim_height, |surface| {
       let visible_range = self.scroll_offset..self.scroll_offset + visible_items;
       for (row, &(idx, _score)) in self.filtered[visible_range.clone()].iter().enumerate() {
         let item = &self.items[idx as usize];
@@ -538,15 +582,15 @@ impl Component for Completion {
           CompletionItem::Other(other) => (other.label.as_str(), other.kind.as_deref().unwrap_or(""), false),
         };
 
-        let item_y = cursor_y + item_padding + (row as f32 * line_height);
+        let item_y = anim_y + item_padding + (row as f32 * line_height * scale);
 
         // Draw selection background
         if is_selected {
           surface.draw_rect(
-            cursor_x + 4.0,
-            item_y - 2.0,
-            menu_width - 8.0,
-            line_height,
+            anim_x + 4.0 * scale,
+            item_y - 2.0 * scale,
+            anim_width - 8.0 * scale,
+            line_height * scale,
             selected_bg,
           );
         }
@@ -555,36 +599,45 @@ impl Component for Completion {
         let label_color = if is_selected {
           selected_fg
         } else if deprecated {
-          Color::new(0.5, 0.5, 0.5, 1.0)
+          let mut gray = Color::new(0.5, 0.5, 0.5, 1.0);
+          gray.a *= alpha;
+          gray
         } else {
           text_color
         };
 
         let kind_color = if is_selected {
-          Color::new(selected_fg.r * 0.7, selected_fg.g * 0.7, selected_fg.b * 0.7, 1.0)
+          let mut c = Color::new(selected_fg.r * 0.7, selected_fg.g * 0.7, selected_fg.b * 0.7, 1.0);
+          c.a *= alpha;
+          c
         } else {
-          Color::new(0.6, 0.6, 0.7, 1.0)
+          let mut c = Color::new(0.6, 0.6, 0.7, 1.0);
+          c.a *= alpha;
+          c
         };
 
-        // Note: renderer doesn't support strikethrough, so deprecated items just use gray color
+        // Draw label
         surface.draw_text(TextSection {
-          position: (cursor_x + 8.0, item_y),
-          texts:    vec![
-            TextSegment {
-              content: label.to_string(),
-              style:   TextStyle {
-                size:  UI_FONT_SIZE,
-                color: label_color,
-              },
+          position: (anim_x + 8.0 * scale, item_y),
+          texts:    vec![TextSegment {
+            content: label.to_string(),
+            style:   TextStyle {
+              size:  UI_FONT_SIZE * scale,
+              color: label_color,
             },
-            TextSegment {
-              content: format!("  {}", kind),
-              style:   TextStyle {
-                size:  UI_FONT_SIZE,
-                color: kind_color,
-              },
+          }],
+        });
+
+        // Draw kind at aligned column
+        surface.draw_text(TextSection {
+          position: (anim_x + 8.0 * scale + kind_column_offset * scale, item_y),
+          texts:    vec![TextSegment {
+            content: kind.to_string(),
+            style:   TextStyle {
+              size:  UI_FONT_SIZE * scale,
+              color: kind_color,
             },
-          ],
+          }],
         });
       }
     });

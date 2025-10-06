@@ -50,6 +50,7 @@ pub enum SignatureHelpInvoked {
   Manual,
 }
 
+#[derive(Debug)]
 pub enum SignatureHelpEvent {
   Invoked,
   Trigger,

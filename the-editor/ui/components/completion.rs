@@ -61,6 +61,93 @@ const MAX_MENU_WIDTH: u16 = 60;
 const MAX_VISIBLE_ITEMS: usize = 15;
 
 /// Simple text wrapping function
+/// Strip simple snippet syntax from completion text and return cursor offset
+/// This is a temporary solution until we have full snippet support
+/// Handles patterns like:
+/// - ${1:} -> ("", cursor at position)
+/// - ${1:text} -> ("text", cursor after text)
+/// - $1 -> ("", cursor at position)
+/// - Println(${1:}) -> ("Println()", cursor between parens)
+/// Returns (stripped_text, cursor_offset_from_start)
+fn strip_snippet_syntax(text: &str) -> (String, Option<usize>) {
+  let mut result = String::with_capacity(text.len());
+  let mut chars = text.chars().peekable();
+  let mut first_tabstop_pos = None;
+
+  while let Some(ch) = chars.next() {
+    if ch == '$' {
+      // Check if this is a snippet placeholder
+      if chars.peek() == Some(&'{') {
+        chars.next(); // consume '{'
+
+        // Parse the tabstop number
+        let mut tabstop_num = String::new();
+        while let Some(&c) = chars.peek() {
+          if c.is_ascii_digit() {
+            tabstop_num.push(c);
+            chars.next();
+          } else {
+            break;
+          }
+        }
+
+        // Check for ':' which indicates default text
+        if chars.peek() == Some(&':') {
+          chars.next(); // consume ':'
+
+          // Remember position of first tabstop ($1 or ${1:...})
+          if first_tabstop_pos.is_none() && (tabstop_num == "1" || tabstop_num == "0") {
+            first_tabstop_pos = Some(result.len());
+          }
+
+          // Collect text until '}'
+          let mut depth = 1;
+          while let Some(c) = chars.next() {
+            if c == '{' {
+              depth += 1;
+              result.push(c);
+            } else if c == '}' {
+              depth -= 1;
+              if depth == 0 {
+                break;
+              }
+              result.push(c);
+            } else {
+              result.push(c);
+            }
+          }
+        } else if chars.peek() == Some(&'}') {
+          chars.next(); // consume '}'
+
+          // Remember position of first tabstop
+          if first_tabstop_pos.is_none() && (tabstop_num == "1" || tabstop_num == "0") {
+            first_tabstop_pos = Some(result.len());
+          }
+        }
+      } else {
+        // $1 style - skip the number but remember position
+        let mut tabstop_num = String::new();
+        while let Some(&c) = chars.peek() {
+          if c.is_ascii_digit() {
+            tabstop_num.push(c);
+            chars.next();
+          } else {
+            break;
+          }
+        }
+
+        if first_tabstop_pos.is_none() && (tabstop_num == "1" || tabstop_num == "0") {
+          first_tabstop_pos = Some(result.len());
+        }
+      }
+    } else {
+      result.push(ch);
+    }
+  }
+
+  (result, first_tabstop_pos)
+}
+
 fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
   let mut lines = Vec::new();
   let mut current_line = String::new();
@@ -548,9 +635,38 @@ impl Completion {
           },
         };
 
+        // Check if this is a snippet that needs to be processed
+        let (final_text, cursor_offset) = if matches!(
+          lsp_item.item.insert_text_format,
+          Some(lsp::InsertTextFormat::SNIPPET)
+        ) {
+          // For now, do a simple strip of snippet syntax since we don't have full snippet support yet
+          // This handles common cases like ${1:} -> empty string, ${1:text} -> text
+          strip_snippet_syntax(&text)
+        } else {
+          (text, None)
+        };
+
+        // Check if we should trigger signature help after completion
+        let should_trigger_signature_help = cursor_offset.is_some() && final_text.contains('(');
+
         // Create and apply main completion transaction
-        let transaction = Transaction::change(doc.text(), [(start, end, Some(text.into()))].iter().cloned());
+        let transaction = Transaction::change(doc.text(), [(start, end, Some(final_text.into()))].iter().cloned());
         doc.apply(&transaction, view.id);
+
+        // If snippet had a cursor position, move cursor there
+        if let Some(offset) = cursor_offset {
+          let cursor_pos = start + offset;
+          let selection = crate::core::selection::Selection::point(cursor_pos);
+          doc.set_selection(view.id, selection);
+        }
+
+        // If we moved the cursor and the completion text contains '(', trigger signature help
+        if should_trigger_signature_help {
+          use the_editor_event::send_blocking;
+          use crate::handlers::lsp::SignatureHelpEvent;
+          send_blocking(&ctx.editor.handlers.signature_hints, SignatureHelpEvent::Trigger);
+        }
 
         // Apply additional text edits (e.g., auto-imports)
         if let Some(ref additional_edits) = lsp_item.item.additional_text_edits {
@@ -924,5 +1040,9 @@ impl Component for Completion {
     let width = MAX_MENU_WIDTH;
 
     Some((width, height))
+  }
+
+  fn is_animating(&self) -> bool {
+    self.anim_progress < 1.0
   }
 }

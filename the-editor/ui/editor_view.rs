@@ -75,6 +75,8 @@ pub struct EditorView {
   pub gutter_manager:   GutterManager,
   // Completion popup
   pub(crate) completion: Option<crate::ui::components::Completion>,
+  // Signature help popup
+  pub(crate) signature_help: Option<crate::ui::components::SignatureHelp>,
 }
 
 impl EditorView {
@@ -95,6 +97,7 @@ impl EditorView {
       zoom_anim_active: false,
       gutter_manager: GutterManager::with_defaults(),
       completion: None,
+      signature_help: None,
     }
   }
 
@@ -141,6 +144,65 @@ impl EditorView {
   pub fn clear_completion(&mut self, _editor: &mut Editor) {
     self.completion = None;
   }
+
+  /// Set signature help popup
+  pub fn set_signature_help(
+    &mut self,
+    language: String,
+    active_signature: usize,
+    signatures: Vec<crate::handlers::signature_help::Signature>,
+  ) {
+    if let Some(sig_help) = &mut self.signature_help {
+      // Update existing signature help
+      sig_help.update(language, active_signature, signatures);
+    } else {
+      // Create new signature help component
+      self.signature_help = Some(crate::ui::components::SignatureHelp::new(
+        language,
+        active_signature,
+        signatures,
+      ));
+    }
+  }
+
+  /// Clear signature help popup
+  pub fn clear_signature_help(&mut self) {
+    self.signature_help = None;
+  }
+
+  /// Simple text wrapping function
+  fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+    let mut current_width = 0;
+
+    for word in text.split_whitespace() {
+      let word_len = word.len();
+
+      if current_width + word_len + 1 > max_width && !current_line.is_empty() {
+        // Start new line
+        lines.push(current_line);
+        current_line = word.to_string();
+        current_width = word_len;
+      } else {
+        // Add to current line
+        if !current_line.is_empty() {
+          current_line.push(' ');
+          current_width += 1;
+        }
+        current_line.push_str(word);
+        current_width += word_len;
+      }
+    }
+
+    if !current_line.is_empty() {
+      lines.push(current_line);
+    }
+
+    lines
+  }
+
+  /// Render signature help popup
 
   /// Mark all visible lines as dirty to force a full redraw
   pub fn mark_all_dirty(&mut self) {
@@ -216,10 +278,12 @@ impl<'h, 'r, 't> SyntaxHighlighter<'h, 'r, 't> {
 
 impl Component for EditorView {
   fn should_update(&self) -> bool {
-    // Redraw only when needed: dirty regions, cursor animation, or zoom animation
+    // Redraw only when needed: dirty regions, cursor animation, zoom animation, or popup animations
     self.dirty_region.needs_redraw()
       || (self.cursor_anim_enabled && self.cursor_anim_active)
       || self.zoom_anim_active
+      || self.completion.as_ref().is_some_and(|c| c.is_animating())
+      || self.signature_help.as_ref().is_some_and(|s| s.is_animating())
   }
 
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
@@ -295,6 +359,37 @@ impl Component for EditorView {
                   | the_editor_renderer::Key::End => {
                     self.completion = None;
                     cx.editor.last_completion = None;
+                  },
+                  _ => {},
+                }
+              },
+            }
+          }
+
+          // Let signature help handle the event if it's active
+          if let Some(sig_help) = &mut self.signature_help {
+            match sig_help.handle_event(event, cx) {
+              EventResult::Consumed(callback) => {
+                // Signature help handled the event (e.g., Escape)
+                if callback.is_some() {
+                  // Callback will close signature help
+                  return EventResult::Consumed(callback);
+                }
+              },
+              EventResult::Ignored(_) => {
+                // Signature help didn't handle it, check if we should close on certain keys
+                match &key.code {
+                  // Close signature help on navigation or mode-changing keys
+                  the_editor_renderer::Key::Escape
+                  | the_editor_renderer::Key::Left
+                  | the_editor_renderer::Key::Right
+                  | the_editor_renderer::Key::Up
+                  | the_editor_renderer::Key::Down
+                  | the_editor_renderer::Key::PageUp
+                  | the_editor_renderer::Key::PageDown
+                  | the_editor_renderer::Key::Home
+                  | the_editor_renderer::Key::End => {
+                    self.signature_help = None;
                   },
                   _ => {},
                 }
@@ -455,7 +550,7 @@ impl Component for EditorView {
     }
   }
 
-  fn render(&mut self, _area: Rect, renderer: &mut Surface, cx: &mut Context) {
+  fn render(&mut self, area: Rect, renderer: &mut Surface, cx: &mut Context) {
     let font_size = cx
       .editor
       .font_size_override
@@ -1089,6 +1184,11 @@ impl Component for EditorView {
       // TODO: Calculate proper position based on cursor location
       let popup_area = Rect::new(0, 0, 60, 15);
       completion.render(popup_area, renderer, cx);
+    }
+
+    // Render signature help popup if active
+    if let Some(ref mut sig_help) = self.signature_help {
+      sig_help.render(area, renderer, cx);
     }
 
     // Clear dirty regions after successful render

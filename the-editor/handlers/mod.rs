@@ -12,7 +12,10 @@ use crate::{
       CompletionEvent,
       CompletionHandler,
     },
-    lsp::SignatureHelpInvoked,
+    lsp::{
+      SignatureHelpEvent,
+      SignatureHelpInvoked,
+    },
   },
 };
 
@@ -22,6 +25,7 @@ pub mod completion_request_helpers;
 pub mod completion_resolve;
 pub mod diagnostics;
 pub mod lsp;
+pub mod signature_help;
 pub mod word_index;
 
 #[derive(Debug)]
@@ -33,7 +37,7 @@ pub enum AutoSaveEvent {
 pub struct Handlers {
   // only public because most of the actual implementation is in helix-term right now :/
   pub completions:     CompletionHandler,
-  pub signature_hints: Sender<lsp::SignatureHelpEvent>,
+  pub signature_hints: Sender<SignatureHelpEvent>,
   pub auto_save:       Sender<AutoSaveEvent>,
   pub document_colors: Sender<lsp::DocumentColorsEvent>,
   pub word_index:      word_index::Handler,
@@ -71,4 +75,5 @@ pub fn register_hooks(handlers: &Handlers) {
   lsp::register_hooks(handlers);
   word_index::register_hooks(handlers);
   completion_request::register_completion_hooks(handlers);
+  signature_help::register_hooks(handlers);
 }

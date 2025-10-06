@@ -4,6 +4,7 @@ use arc_swap::{
   ArcSwap,
   access::Map,
 };
+use the_editor_event::AsyncHook;
 
 use crate::{
   core::{
@@ -62,7 +63,8 @@ fn main() -> anyhow::Result<()> {
   let completion_hook = crate::handlers::completion_request::CompletionRequestHook::new();
   let completion_tx = completion_hook.spawn();
 
-  let (signature_tx, _signature_rx) = tokio::sync::mpsc::channel(100);
+  let signature_help_handler = crate::handlers::signature_help::SignatureHelpHandler::new();
+  let signature_tx = signature_help_handler.spawn();
   let (auto_save_tx, _auto_save_rx) = tokio::sync::mpsc::channel(100);
   let (colors_tx, _colors_rx) = tokio::sync::mpsc::channel(100);
 

@@ -95,6 +95,11 @@ pub trait Component: Any + AnyComponent {
   fn id(&self) -> Option<&'static str> {
     None
   }
+
+  /// Whether the component is currently animating and needs redraws
+  fn is_animating(&self) -> bool {
+    false
+  }
 }
 
 pub struct Compositor {

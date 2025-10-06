@@ -1175,7 +1175,7 @@ impl Client {
     text_document: lsp::TextDocumentIdentifier,
     position: lsp::Position,
     work_done_token: Option<lsp::ProgressToken>,
-  ) -> Option<impl Future<Output = Result<Option<SignatureHelp>>>> {
+  ) -> Option<BoxFuture<'static, Result<Option<SignatureHelp>>>> {
     let capabilities = self.capabilities.get().unwrap();
 
     // Return early if the server does not support signature help.
@@ -1191,7 +1191,7 @@ impl Client {
       // lsp::SignatureHelpContext
     };
 
-    Some(self.call::<lsp::request::SignatureHelpRequest>(params))
+    Some(self.call_with_ref::<lsp::request::SignatureHelpRequest>(&params))
   }
 
   pub fn text_document_range_inlay_hints(

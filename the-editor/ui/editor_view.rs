@@ -443,11 +443,16 @@ impl Component for EditorView {
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::rgb(0.85, 0.85, 0.9));
 
-    let mut cursor_fg = Color::rgb(0.1, 0.1, 0.15);
-    let mut cursor_bg = cursor_style
-      .bg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::rgb(0.2, 0.8, 0.7));
+    // Check if cursor style has reversed modifier
+    use crate::core::graphics::Modifier;
+    let cursor_reversed = cursor_style.add_modifier.contains(Modifier::REVERSED);
+
+    // Cursor colors from theme
+    let cursor_fg_from_theme = cursor_style.fg.map(crate::ui::theme_color_to_renderer_color);
+    let cursor_bg_from_theme = cursor_style.bg.map(crate::ui::theme_color_to_renderer_color);
+
+    // If no cursor colors are specified at all, default to reversed behavior (adaptive cursor)
+    let use_adaptive_cursor = cursor_reversed || (cursor_fg_from_theme.is_none() && cursor_bg_from_theme.is_none());
 
     let mut selection_bg = selection_style
       .bg
@@ -480,8 +485,6 @@ impl Component for EditorView {
 
     // Apply zoom alpha to all colors for fade-in effect
     normal.a *= zoom_alpha;
-    cursor_fg.a *= zoom_alpha;
-    cursor_bg.a *= zoom_alpha;
     selection_bg.a *= zoom_alpha;
 
     let base_y = VIEW_PADDING_TOP + zoom_offset_y;
@@ -811,37 +814,8 @@ impl Component for EditorView {
 
       // Check if this is the cursor position
       let is_cursor_here = g.char_idx == cursor_pos;
-      if is_cursor_here {
-        let cursor_w = width_cols.max(1) as f32 * font_width;
-        // Cursor animation: lerp toward target (x, y)
-        let (anim_x, anim_y) = if self.cursor_anim_enabled {
-          let (mut sx, mut sy) = self.cursor_pos_smooth.unwrap_or((x, y));
-          let dx = x - sx;
-          let dy = y - sy;
-          // Time-based lerp: much faster for snappier cursor while typing
-          let lerp_t = 1.0 - (1.0 - self.cursor_lerp_factor).powf(cx.dt * 800.0);
-          sx += dx * lerp_t;
-          sy += dy * lerp_t;
-          self.cursor_pos_smooth = Some((sx, sy));
-          // Mark animation active if still far from target
-          self.cursor_anim_active = (dx * dx + dy * dy).sqrt() > 0.5;
-          (sx, sy)
-        } else {
-          self.cursor_anim_active = false;
-          self.cursor_pos_smooth = Some((x, y));
-          (x, y)
-        };
 
-        self.command_batcher.add_command(RenderCommand::Cursor {
-          x:      anim_x,
-          y:      anim_y,
-          width:  cursor_w.min((viewport_cols - rel_col) as f32 * font_width),
-          height: font_size + CURSOR_HEIGHT_EXTENSION,
-          color:  cursor_bg,
-        });
-      }
-
-      // Get syntax highlighting color
+      // Get syntax highlighting color first (needed for cursor rendering)
       let syntax_fg = if let Some(ref highlights) = cached_highlights {
         // Use cached highlights - find active highlights at this byte position
         let byte_pos = doc_text.char_to_byte(g.char_idx);
@@ -872,6 +846,60 @@ impl Component for EditorView {
         syntax_hl.style.fg
       };
 
+      // Draw cursor if at this position
+      if is_cursor_here {
+        let cursor_w = width_cols.max(1) as f32 * font_width;
+        // Cursor animation: lerp toward target (x, y)
+        let (anim_x, anim_y) = if self.cursor_anim_enabled {
+          let (mut sx, mut sy) = self.cursor_pos_smooth.unwrap_or((x, y));
+          let dx = x - sx;
+          let dy = y - sy;
+          // Time-based lerp: much faster for snappier cursor while typing
+          let lerp_t = 1.0 - (1.0 - self.cursor_lerp_factor).powf(cx.dt * 800.0);
+          sx += dx * lerp_t;
+          sy += dy * lerp_t;
+          self.cursor_pos_smooth = Some((sx, sy));
+          // Mark animation active if still far from target
+          self.cursor_anim_active = (dx * dx + dy * dy).sqrt() > 0.5;
+          (sx, sy)
+        } else {
+          self.cursor_anim_active = false;
+          self.cursor_pos_smooth = Some((x, y));
+          (x, y)
+        };
+
+        // Determine cursor background color
+        let cursor_bg_color = if use_adaptive_cursor {
+          // Adaptive/reversed: use character's syntax color as bg
+          if let Some(color) = syntax_fg {
+            let mut color = crate::ui::theme_color_to_renderer_color(color);
+            color.a *= zoom_alpha;
+            color
+          } else {
+            let mut color = normal;
+            color.a *= zoom_alpha;
+            color
+          }
+        } else if let Some(mut bg) = cursor_bg_from_theme {
+          // Explicit bg from theme
+          bg.a *= zoom_alpha;
+          bg
+        } else {
+          // Should not reach here, but default to cyan
+          let mut color = Color::rgb(0.2, 0.8, 0.7);
+          color.a *= zoom_alpha;
+          color
+        };
+
+        self.command_batcher.add_command(RenderCommand::Cursor {
+          x:      anim_x,
+          y:      anim_y,
+          width:  cursor_w.min((viewport_cols - rel_col) as f32 * font_width),
+          height: font_size + CURSOR_HEIGHT_EXTENSION,
+          color:  cursor_bg_color,
+        });
+      }
+
       // Add text command
       match g.raw {
         Grapheme::Newline => {
@@ -882,9 +910,25 @@ impl Component for EditorView {
         },
         Grapheme::Other { ref g } => {
           if left_clip == 0 {
-            // Use syntax highlighting color, or fall back to normal
+            // Determine foreground color
             let fg = if is_cursor_here {
-              cursor_fg
+              if use_adaptive_cursor {
+                // Adaptive/reversed: use background color as fg
+                let mut bg = background_color;
+                bg.a *= zoom_alpha;
+                bg
+              } else if let Some(mut cursor_fg) = cursor_fg_from_theme {
+                // Explicit fg color in theme
+                cursor_fg.a *= zoom_alpha;
+                cursor_fg
+              } else if let Some(color) = syntax_fg {
+                // No explicit fg: use character's syntax color (inverted cursor effect)
+                let mut color = crate::ui::theme_color_to_renderer_color(color);
+                color.a *= zoom_alpha;
+                color
+              } else {
+                normal
+              }
             } else if let Some(color) = syntax_fg {
               let mut color = crate::ui::theme_color_to_renderer_color(color);
               color.a *= zoom_alpha; // Apply zoom fade
@@ -914,12 +958,29 @@ impl Component for EditorView {
       // Render cursor at position 0 for empty document
       let x = base_x;
       let y = base_y;
+
+      // Use default cursor bg for empty document
+      let cursor_bg_color = if use_adaptive_cursor {
+        // For empty document with adaptive cursor, use normal text color
+        let mut color = normal;
+        color.a *= zoom_alpha;
+        color
+      } else if let Some(mut bg) = cursor_bg_from_theme {
+        bg.a *= zoom_alpha;
+        bg
+      } else {
+        // Should not reach here, but default to cyan
+        let mut color = Color::rgb(0.2, 0.8, 0.7);
+        color.a *= zoom_alpha;
+        color
+      };
+
       self.command_batcher.add_command(RenderCommand::Cursor {
         x,
         y,
         width: font_width,
         height: font_size + CURSOR_HEIGHT_EXTENSION,
-        color: cursor_bg,
+        color: cursor_bg_color,
       });
     }
 

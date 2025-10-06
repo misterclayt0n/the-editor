@@ -336,9 +336,39 @@ impl Completion {
           },
         };
 
-        // Create and apply transaction
+        // Create and apply main completion transaction
         let transaction = Transaction::change(doc.text(), [(start, end, Some(text.into()))].iter().cloned());
         doc.apply(&transaction, view.id);
+
+        // Apply additional text edits (e.g., auto-imports)
+        if let Some(ref additional_edits) = lsp_item.item.additional_text_edits {
+          if !additional_edits.is_empty() {
+            log::info!("Applying {} additional text edits for auto-import", additional_edits.len());
+
+            // Convert LSP text edits to transaction
+            let text = doc.text();
+            let mut changes = Vec::new();
+
+            for edit in additional_edits {
+              let start = lsp_pos_to_pos(text, edit.range.start, offset_encoding)
+                .unwrap_or_else(|| {
+                  log::error!("Invalid additional edit start position");
+                  0
+                });
+              let end = lsp_pos_to_pos(text, edit.range.end, offset_encoding)
+                .unwrap_or_else(|| {
+                  log::error!("Invalid additional edit end position");
+                  start
+                });
+
+              changes.push((start, end, Some(edit.new_text.clone().into())));
+            }
+
+            // Apply all additional edits as a single transaction
+            let additional_transaction = Transaction::change(doc.text(), changes.iter().cloned());
+            doc.apply(&additional_transaction, view.id);
+          }
+        }
       },
       CompletionItem::Other(other) => {
         // For non-LSP completions, replace from trigger to cursor with the label

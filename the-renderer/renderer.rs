@@ -153,8 +153,8 @@ pub struct Renderer {
   // Scissor rect stack for clipping text to specific regions
   scissor_rect_stack: Vec<(f32, f32, f32, f32)>, // (x, y, width, height)
 
-  // Stencil mask rect for excluding text from specific regions
-  stencil_mask_rect: Option<(f32, f32, f32, f32)>, // (x, y, width, height)
+  // Stencil mask rects for excluding text from specific regions (supports multiple overlays)
+  stencil_mask_rects: Vec<(f32, f32, f32, f32)>, // (x, y, width, height)
 
   // Rectangle pipeline resources.
   rect_render_pipeline: wgpu::RenderPipeline,
@@ -649,7 +649,7 @@ impl Renderer {
       text_commands: Vec::new(),
       overlay_text_commands: Vec::new(),
       scissor_rect_stack: Vec::new(),
-      stencil_mask_rect: None,
+      stencil_mask_rects: Vec::new(),
       pending_text_batch: None,
       is_overlay_mode: false,
       rect_render_pipeline,
@@ -809,8 +809,8 @@ impl Renderer {
     // Clear any pending text batch
     self.pending_text_batch = None;
 
-    // Clear stencil mask rect (per-frame state)
-    self.stencil_mask_rect = None;
+    // Clear stencil mask rects (per-frame state)
+    self.stencil_mask_rects.clear();
     self.is_overlay_mode = false;
 
     let uniforms = RectUniforms {
@@ -906,26 +906,30 @@ impl Renderer {
       pass.draw(0..4, 0..self.rect_instances.len() as u32);
     }
 
-    // If there's a stencil mask rect, write it to the stencil buffer before
-    // rendering text
-    if let Some((mask_x, mask_y, mask_width, mask_height)) = self.stencil_mask_rect {
-      // Render the mask rect to stencil (write 1 where the picker will be)
-      let mask_instance = RectInstance {
-        position:      [mask_x, mask_y],
-        size:          [mask_width, mask_height],
-        color:         [0.0, 0.0, 0.0, 0.0], // Invisible, we're only writing to stencil
-        corner_radius: 0.0,
-        _pad0:         [0.0, 0.0],
-        glow_center:   [0.0, 0.0],
-        glow_radius:   0.0,
-        effect_kind:   0.0,
-      };
+    // If there are stencil mask rects, write them to the stencil buffer before
+    // rendering text (supports multiple overlay regions per frame)
+    if !self.stencil_mask_rects.is_empty() {
+      // Create instances for all mask rects
+      let mask_instances: Vec<RectInstance> = self
+        .stencil_mask_rects
+        .iter()
+        .map(|(mask_x, mask_y, mask_width, mask_height)| RectInstance {
+          position:      [*mask_x, *mask_y],
+          size:          [*mask_width, *mask_height],
+          color:         [0.0, 0.0, 0.0, 0.0], // Invisible, we're only writing to stencil
+          corner_radius: 0.0,
+          _pad0:         [0.0, 0.0],
+          glow_center:   [0.0, 0.0],
+          glow_radius:   0.0,
+          effect_kind:   0.0,
+        })
+        .collect();
 
       let mask_buffer = self
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
           label:    Some("Stencil Mask Instance Buffer"),
-          contents: bytemuck::cast_slice(&[mask_instance]),
+          contents: bytemuck::cast_slice(&mask_instances),
           usage:    wgpu::BufferUsages::VERTEX,
         });
 
@@ -957,7 +961,7 @@ impl Renderer {
       mask_pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(..));
       mask_pass.set_vertex_buffer(1, mask_buffer.slice(..));
       mask_pass.set_stencil_reference(1); // Write 1 to stencil
-      mask_pass.draw(0..4, 0..1);
+      mask_pass.draw(0..4, 0..mask_instances.len() as u32);
       drop(mask_pass);
     }
 
@@ -1545,28 +1549,45 @@ impl Renderer {
     self.scissor_rect_stack.pop();
   }
 
-  /// Set a stencil mask rect. Text will NOT be rendered in this region.
-  /// This is useful for overlays like pickers that should occlude text behind
-  /// them.
-  pub fn set_stencil_mask_rect(&mut self, x: f32, y: f32, width: f32, height: f32) {
-    self.stencil_mask_rect = Some((x, y, width, height));
+  /// Add a stencil mask rect. Text will NOT be rendered in this region.
+  /// Private: used internally by `with_overlay_region`.
+  fn add_stencil_mask_rect(&mut self, x: f32, y: f32, width: f32, height: f32) {
+    self.stencil_mask_rects.push((x, y, width, height));
   }
 
-  /// Clear the stencil mask rect.
-  pub fn clear_stencil_mask_rect(&mut self) {
-    self.stencil_mask_rect = None;
-  }
-
-  /// Enable overlay text mode. Text rendered in this mode will ignore stencil
-  /// masks. This is useful for UI overlays like pickers that need to render
-  /// on top of masked content.
-  pub fn begin_overlay_text(&mut self) {
+  /// Enable overlay text mode. Text rendered in this mode will ignore stencil masks.
+  /// Private: used internally by `with_overlay_region`.
+  fn begin_overlay_text(&mut self) {
     self.is_overlay_mode = true;
   }
 
   /// Disable overlay text mode, returning to normal text rendering.
-  pub fn end_overlay_text(&mut self) {
+  /// Private: used internally by `with_overlay_region`.
+  fn end_overlay_text(&mut self) {
     self.is_overlay_mode = false;
+  }
+
+  /// Render content in an overlay region with automatic masking.
+  ///
+  /// This combines stencil masking and overlay text mode into a single call.
+  /// The specified region will be masked from normal rendering (preventing the
+  /// editor from drawing into it), and all drawing within the callback will be
+  /// in overlay mode (bypassing the mask).
+  ///
+  /// This is the preferred API for UI components that need to overlap the editor.
+  pub fn with_overlay_region<F>(&mut self, x: f32, y: f32, width: f32, height: f32, f: F)
+  where
+    F: FnOnce(&mut Self),
+  {
+    // Add this overlay region to the stencil mask (supports multiple overlays per frame)
+    self.add_stencil_mask_rect(x, y, width, height);
+    self.begin_overlay_text();
+
+    // Execute the drawing code
+    f(self);
+
+    // Clean up overlay text mode (mask rect stays active for the frame)
+    self.end_overlay_text();
   }
 
   /// Ensure intermediate textures are created for the current viewport size

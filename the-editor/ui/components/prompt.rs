@@ -8,7 +8,6 @@ use the_editor_renderer::{
   Color,
   Key,
   KeyPress,
-  Renderer,
   TextSection,
 };
 
@@ -235,7 +234,7 @@ impl Prompt {
   }
 
   /// Render the prompt to the screen (internal)
-  fn render_prompt(&mut self, renderer: &mut Renderer, area: Rect, cx: &Context) {
+  fn render_prompt(&mut self, surface: &mut Surface, area: Rect, cx: &Context) {
     let base_x = area.x as f32;
     let base_y = area.y as f32;
 
@@ -249,13 +248,8 @@ impl Prompt {
 
     // Draw background bar matching statusline
     const STATUS_BAR_HEIGHT: f32 = 28.0;
-    renderer.draw_rect(
-      0.0,
-      base_y,
-      renderer.width() as f32,
-      STATUS_BAR_HEIGHT,
-      bg_color,
-    );
+    let viewport_width = surface.width() as f32;
+    surface.draw_rect(0.0, base_y, viewport_width, STATUS_BAR_HEIGHT, bg_color);
 
     // Update glow animation (time-based) - balanced speed
     const GLOW_SPEED: f32 = 0.025; // Base speed for sweeping effect
@@ -266,12 +260,34 @@ impl Prompt {
 
     // Draw bordered box around prompt area
     const PROMPT_WIDTH_PERCENT: f32 = 0.25; // 25% of viewport width
-    let prompt_box_width = renderer.width() as f32 * PROMPT_WIDTH_PERCENT;
+    let prompt_box_width = viewport_width * PROMPT_WIDTH_PERCENT;
     let border_color = Color::new(0.3, 0.3, 0.35, 1.0);
     const BORDER_THICKNESS: f32 = 1.0;
 
+    // Calculate completion area for stencil mask
+    const COMPLETION_ITEM_HEIGHT: f32 = 20.0;
+    const MAX_VISIBLE: usize = 10;
+    const COMPLETION_PADDING: f32 = 12.0;
+    // Completion box scales with prompt box (slightly inset)
+    let completion_x = COMPLETION_PADDING;
+    let completion_width = prompt_box_width - COMPLETION_PADDING * 2.0;
+    let completion_height = if !self.completions.is_empty() {
+      let visible_count = self.completions.len().min(MAX_VISIBLE);
+      visible_count as f32 * COMPLETION_ITEM_HEIGHT + 5.0 // Include 5px gap
+    } else {
+      0.0
+    };
+
+    // Render prompt content in overlay mode with automatic masking
+    // Only mask the prompt box area (not the full width) to avoid blanking the text buffer
+    let mask_width = prompt_box_width;
+    let mask_height = STATUS_BAR_HEIGHT + completion_height;
+    let mask_y = base_y - completion_height;
+
+    surface.with_overlay_region(0.0, mask_y, mask_width, mask_height, |surface| {
+
     // Top border
-    renderer.draw_rect(
+    surface.draw_rect(
       0.0,
       base_y,
       prompt_box_width,
@@ -280,7 +296,7 @@ impl Prompt {
     );
 
     // Bottom border
-    renderer.draw_rect(
+    surface.draw_rect(
       0.0,
       base_y + STATUS_BAR_HEIGHT - BORDER_THICKNESS,
       prompt_box_width,
@@ -289,7 +305,7 @@ impl Prompt {
     );
 
     // Left border
-    renderer.draw_rect(
+    surface.draw_rect(
       0.0,
       base_y,
       BORDER_THICKNESS,
@@ -298,7 +314,7 @@ impl Prompt {
     );
 
     // Right border (vertical line separating prompt from statusline)
-    renderer.draw_rect(
+    surface.draw_rect(
       prompt_box_width - BORDER_THICKNESS,
       base_y,
       BORDER_THICKNESS,
@@ -339,7 +355,7 @@ impl Prompt {
           );
 
           // Top border glow
-          renderer.draw_rect(
+          surface.draw_rect(
             segment_x,
             base_y - GLOW_WIDTH,
             segment_width,
@@ -348,7 +364,7 @@ impl Prompt {
           );
 
           // Bottom border glow
-          renderer.draw_rect(
+          surface.draw_rect(
             segment_x,
             base_y + STATUS_BAR_HEIGHT,
             segment_width,
@@ -368,7 +384,7 @@ impl Prompt {
           0.7 * intensity,
           intensity * 0.6,
         );
-        renderer.draw_rect(
+        surface.draw_rect(
           -GLOW_WIDTH,
           base_y,
           GLOW_WIDTH,
@@ -386,7 +402,7 @@ impl Prompt {
           0.7 * intensity,
           intensity * 0.6,
         );
-        renderer.draw_rect(
+        surface.draw_rect(
           prompt_box_width,
           base_y,
           GLOW_WIDTH,
@@ -458,7 +474,7 @@ impl Prompt {
 
       // Draw cursor with same height extension as main editor
       const CURSOR_HEIGHT_EXTENSION: f32 = 4.0;
-      renderer.draw_rect(
+      surface.draw_rect(
         anim_x,
         text_y,
         UI_FONT_WIDTH,
@@ -481,7 +497,7 @@ impl Prompt {
       } else {
         Color::WHITE
       };
-      renderer.draw_text(TextSection::simple(
+      surface.draw_text(TextSection::simple(
         x,
         text_y,
         ch.to_string(),
@@ -493,8 +509,9 @@ impl Prompt {
     // Render completions if visible (above the prompt)
     // Render completions if available
     if !self.completions.is_empty() {
-      self.render_completions_internal(renderer, base_y);
+      self.render_completions_internal(surface, base_y, completion_x, completion_width);
     }
+    }); // End overlay region
   }
 
   /// Execute the current command
@@ -678,7 +695,13 @@ impl Prompt {
     }
   }
 
-  fn render_completions_internal(&self, renderer: &mut Renderer, prompt_y: f32) {
+  fn render_completions_internal(
+    &self,
+    surface: &mut Surface,
+    prompt_y: f32,
+    completion_x: f32,
+    completion_width: f32,
+  ) {
     if self.completions.is_empty() {
       return;
     }
@@ -693,7 +716,7 @@ impl Prompt {
 
     // Draw background for completions
     let bg_color = Color::new(0.15, 0.15, 0.16, 0.95);
-    renderer.draw_rect(12.0, completion_y, 300.0, completion_height, bg_color);
+    surface.draw_rect(completion_x, completion_y, completion_width, completion_height, bg_color);
 
     // Draw completions
     for (i, completion) in self.completions.iter().take(MAX_VISIBLE).enumerate() {
@@ -703,10 +726,10 @@ impl Prompt {
       // Draw selection background
       if is_selected {
         let selection_bg = Color::new(0.25, 0.45, 0.75, 0.4);
-        renderer.draw_rect(
-          13.0,
+        surface.draw_rect(
+          completion_x + 1.0,
           y + 1.0,
-          298.0,
+          completion_width - 2.0,
           COMPLETION_ITEM_HEIGHT - 2.0,
           selection_bg,
         );
@@ -718,8 +741,8 @@ impl Prompt {
         Color::rgb(0.8, 0.8, 0.8) // Light gray for normal
       };
 
-      renderer.draw_text(TextSection::simple(
-        17.0, // 12.0 + 5.0 padding
+      surface.draw_text(TextSection::simple(
+        completion_x + 5.0, // padding
         y + 3.0,
         &completion.text,
         UI_FONT_SIZE - 2.0, // Slightly smaller for completions

@@ -751,9 +751,7 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
       picker_bg,
     );
 
-    // Set stencil mask to prevent text from rendering in the picker area (including
-    // preview if visible). This uses GPU stencil buffer for precise pixel-level
-    // text occlusion.
+    // Calculate mask width for overlay region (covers picker and preview if visible)
     let mask_width = if self.preview_anim > 0.0 {
       // Mask covers both picker and preview panels
       total_width * scale
@@ -761,12 +759,9 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
       // Mask covers only picker panel
       picker_width_scaled
     };
-    surface.set_stencil_mask_rect(x, y, mask_width, height_scaled);
 
-    // Enable overlay text mode for picker UI (bypasses stencil mask)
-    // Only enable after background is drawn to prevent text flashing outside
-    // container
-    surface.begin_overlay_text();
+    // Render picker content in overlay mode with automatic masking
+    surface.with_overlay_region(x, y, mask_width, height_scaled, |surface| {
 
     // Apply alpha to border color
     let border_color_anim = Color::new(
@@ -1226,9 +1221,7 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
         }],
       });
     }
-
-    // Disable overlay text mode (back to normal rendering)
-    surface.end_overlay_text();
+    }); // End overlay region
   }
 
   fn cursor(&self, _area: Rect, _editor: &crate::editor::Editor) -> (Option<Position>, CursorKind) {

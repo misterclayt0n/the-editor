@@ -903,6 +903,12 @@ pub fn delete_char_backward(cx: &mut Context) {
   });
   let (view, doc) = current!(cx.editor);
   doc.apply(&transaction, view.id);
+
+  // Dispatch PostCommand event after command execution
+  the_editor_event::dispatch(crate::event::PostCommand {
+    command: "delete_char_backward",
+    cx,
+  });
 }
 
 pub fn delete_char_forward(cx: &mut Context) {

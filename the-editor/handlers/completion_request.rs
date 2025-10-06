@@ -27,10 +27,10 @@ use crate::{
     DocumentId,
     ViewId,
   },
-  doc,
   editor::Editor,
   event::{
     OnModeSwitch,
+    PostCommand,
     PostInsertChar,
   },
   keymap::Mode,
@@ -39,7 +39,6 @@ use crate::{
     OffsetEncoding,
   },
   ui,
-  view,
 };
 
 /// Debounce duration for auto-triggered completions
@@ -57,7 +56,7 @@ where
 }
 
 /// Pending completion request
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 struct PendingTrigger {
   cursor: usize,
   doc:    DocumentId,
@@ -76,12 +75,15 @@ enum TriggerKind {
 pub struct CompletionRequestHook {
   /// The pending trigger (if any)
   pending_trigger: Option<PendingTrigger>,
+  /// The currently in-flight trigger (being processed)
+  in_flight:       Option<PendingTrigger>,
 }
 
 impl CompletionRequestHook {
   pub fn new() -> Self {
     Self {
       pending_trigger: None,
+      in_flight:       None,
     }
   }
 
@@ -98,18 +100,28 @@ impl AsyncHook for CompletionRequestHook {
     log::info!("CompletionRequestHook received event: {:?}", event);
     match event {
       CompletionEvent::AutoTrigger { cursor, doc, view } => {
-        // Debounce auto-triggered completions
-        self.pending_trigger = Some(PendingTrigger {
-          cursor,
-          doc,
-          view,
-          kind: TriggerKind::Auto,
-        });
-        log::info!("Set auto-trigger, will fire in 120ms");
-        Some(Instant::now() + AUTO_DEBOUNCE)
+        // Only set trigger if doc/view match in-flight OR we have no in-flight
+        // This prevents switching documents/views from triggering completions
+        if self
+          .pending_trigger
+          .or(self.in_flight)
+          .map_or(true, |trigger| trigger.doc == doc && trigger.view == view)
+        {
+          self.pending_trigger = Some(PendingTrigger {
+            cursor,
+            doc,
+            view,
+            kind: TriggerKind::Auto,
+          });
+          log::info!("Set auto-trigger, will fire in 120ms");
+          Some(Instant::now() + AUTO_DEBOUNCE)
+        } else {
+          log::info!("Ignoring auto-trigger for different doc/view");
+          None
+        }
       }
       CompletionEvent::TriggerChar { cursor, doc, view } => {
-        // Short debounce for trigger characters
+        // Cancel any pending trigger and set new trigger char request
         self.pending_trigger = Some(PendingTrigger {
           cursor,
           doc,
@@ -130,14 +142,21 @@ impl AsyncHook for CompletionRequestHook {
         log::info!("Manual trigger, firing immediately");
         None // Fire immediately
       }
-      CompletionEvent::DeleteText { .. } => {
-        // Cancel pending trigger on delete
-        self.pending_trigger = None;
+      CompletionEvent::DeleteText { cursor } => {
+        // If we deleted before the trigger position, cancel
+        if matches!(self.pending_trigger.or(self.in_flight), Some(PendingTrigger{ cursor: trigger_cursor, .. }) if cursor < trigger_cursor)
+        {
+          log::info!("Deleted before trigger position, cancelling");
+          self.pending_trigger = None;
+          // TODO: Cancel in-flight request via TaskController
+        }
         None
       }
       CompletionEvent::Cancel => {
         // Cancel pending trigger
+        log::info!("Cancelling completion");
         self.pending_trigger = None;
+        // TODO: Cancel in-flight request via TaskController
         None
       }
     }
@@ -148,6 +167,7 @@ impl AsyncHook for CompletionRequestHook {
     log::info!("finish_debounce called, pending_trigger: {:?}", self.pending_trigger);
     if let Some(trigger) = self.pending_trigger.take() {
       log::info!("Dispatching completion request for cursor {}", trigger.cursor);
+      self.in_flight = Some(trigger.clone());
       crate::ui::job::dispatch_blocking(move |editor, compositor| {
         request_completions_sync(trigger, editor, compositor);
       });
@@ -176,55 +196,57 @@ fn request_completions_sync(
     }
   }
 
-  // Collect completion futures
+  // Get document and view
+  let Some(doc) = editor.documents.get(&trigger.doc) else {
+    log::info!("Document {:?} not found, skipping completion", trigger.doc);
+    return;
+  };
+  let Some(view) = editor.tree.try_get(trigger.view) else {
+    log::info!("View {:?} not found, skipping completion", trigger.view);
+    return;
+  };
+
+  // Verify cursor hasn't moved backwards
+  let text = doc.text();
+  let cursor = doc.selection(view.id).primary().cursor(text.slice(..));
+  log::info!("Current cursor: {}, trigger cursor: {}", cursor, trigger.cursor);
+  if cursor < trigger.cursor {
+    log::info!("Cursor moved backwards, skipping completion");
+    return;
+  }
+
+  // IMPORTANT: Update trigger position to current cursor
+  // This matches Helix's behavior - send the CURRENT position, not the old trigger position
+  // Language servers need this for incomplete completion lists and proper filtering
+  let trigger_offset = cursor;
+  log::info!("Updated trigger offset from {} to {}", trigger.cursor, trigger_offset);
+
+  // Determine trigger kind and character for LSP
+  let (lsp_trigger_kind, lsp_trigger_char) = match trigger.kind {
+    TriggerKind::Manual => (lsp::CompletionTriggerKind::INVOKED, None),
+    TriggerKind::TriggerChar => {
+      // Find the trigger character
+      let trigger_char = doc
+        .language_servers()
+        .find_map(|ls| {
+          ls.capabilities()
+            .completion_provider
+            .as_ref()
+            .and_then(|cap| cap.trigger_characters.as_ref())
+            .and_then(|chars| {
+              let trigger_text = text.slice(..cursor);
+              chars.iter().find(|ch| trigger_text.ends_with(ch.as_str())).cloned()
+            })
+        });
+      (lsp::CompletionTriggerKind::TRIGGER_CHARACTER, trigger_char)
+    },
+    TriggerKind::Auto => (lsp::CompletionTriggerKind::INVOKED, None),
+  };
+
+  let doc_id = trigger.doc;
   let mut completion_futures = Vec::new();
-  let doc_id;
-  let trigger_offset;
 
   {
-    // Get document and view
-    let Some(doc) = editor.documents.get(&trigger.doc) else {
-      log::info!("Document {:?} not found, skipping completion", trigger.doc);
-      return;
-    };
-    let Some(view) = editor.tree.try_get(trigger.view) else {
-      log::info!("View {:?} not found, skipping completion", trigger.view);
-      return;
-    };
-
-    // Verify cursor hasn't moved backwards
-    let text = doc.text();
-    let cursor = doc.selection(view.id).primary().cursor(text.slice(..));
-    log::info!("Current cursor: {}, trigger cursor: {}", cursor, trigger.cursor);
-    if cursor < trigger.cursor {
-      log::info!("Cursor moved backwards, skipping completion");
-      return;
-    }
-
-    // Determine trigger kind and character for LSP
-    let (lsp_trigger_kind, lsp_trigger_char) = match trigger.kind {
-      TriggerKind::Manual => (lsp::CompletionTriggerKind::INVOKED, None),
-      TriggerKind::TriggerChar => {
-        // Find the trigger character
-        let trigger_char = doc
-          .language_servers()
-          .find_map(|ls| {
-            ls.capabilities()
-              .completion_provider
-              .as_ref()
-              .and_then(|cap| cap.trigger_characters.as_ref())
-              .and_then(|chars| {
-                let trigger_text = text.slice(..cursor);
-                chars.iter().find(|ch| trigger_text.ends_with(ch.as_str())).cloned()
-              })
-          });
-        (lsp::CompletionTriggerKind::TRIGGER_CHARACTER, trigger_char)
-      },
-      TriggerKind::Auto => (lsp::CompletionTriggerKind::INVOKED, None),
-    };
-
-    doc_id = trigger.doc;
-    trigger_offset = trigger.cursor;
 
     // Get document URI and LSP position
     let uri_str = doc.uri().map(|u| u.to_string());
@@ -439,97 +461,32 @@ fn show_completion(
 
 /// Register hooks for automatic completion triggering
 pub fn register_completion_hooks(handlers: &Handlers) {
-  let completions_insert = handlers.completions.clone();
   let completions_mode = handlers.completions.clone();
 
   // Hook: Trigger completion on character insertion
   register_hook!(move |event: &mut PostInsertChar<'_, '_>| {
+    use crate::handlers::completion_request_helpers::{
+      trigger_auto_completion,
+      update_completion_filter,
+    };
+
     let c = event.c;
     log::info!("PostInsertChar hook fired for char: '{}'", c);
 
     // If completion is already active, update the filter
     if event.cx.editor.last_completion.is_some() {
       log::info!("Completion is active, updating filter");
-      let completions = completions_insert.clone();
-      event.cx.callback.push(Box::new(move |compositor, cx| {
-        let Some(editor_view) = compositor.find::<ui::EditorView>() else {
-          return;
-        };
 
-        if let Some(completion) = &mut editor_view.completion {
-          completion.update_filter(Some(c));
+      // Check if we should clear last_completion immediately to prevent race conditions
+      if !crate::core::chars::char_is_word(c) {
+        event.cx.editor.last_completion = None;
+        log::info!("Clearing last_completion immediately for non-word char '{}'", c);
+      }
 
-          // Close completion if:
-          // 1. Filter resulted in no matches, OR
-          // 2. Character is not a word character (e.g., space)
-          if completion.is_empty() || !crate::core::chars::char_is_word(c) {
-            log::info!("Closing completion: empty={}, non-word={}",
-              completion.is_empty(), !crate::core::chars::char_is_word(c));
-            editor_view.completion = None;
-            cx.editor.last_completion = None;
-
-            // If we typed a trigger char, re-trigger completion
-            if !crate::core::chars::char_is_word(c) {
-              let doc = doc!(cx.editor);
-              let view = view!(cx.editor);
-              let cursor = doc.selection(view.id).primary().cursor(doc.text().slice(..));
-
-              let is_trigger_char = doc
-                .language_servers()
-                .any(|ls| {
-                  ls.capabilities()
-                    .completion_provider
-                    .as_ref()
-                    .and_then(|cap| cap.trigger_characters.as_ref())
-                    .map_or(false, |chars| chars.iter().any(|s| s.as_str() == c.to_string()))
-                });
-
-              if is_trigger_char {
-                completions.event(CompletionEvent::TriggerChar {
-                  cursor,
-                  doc: doc.id,
-                  view: view.id,
-                });
-              }
-            }
-          }
-        }
-      }));
+      update_completion_filter(event.cx, Some(c));
     } else {
       // No completion active, try to trigger one
-      let doc = doc!(event.cx.editor);
-      let view = view!(event.cx.editor);
-      let cursor = doc.selection(view.id).primary().cursor(doc.text().slice(..));
-
-      // Check if this is a trigger character
-      let is_trigger_char = doc
-        .language_servers()
-        .any(|ls| {
-          ls.capabilities()
-            .completion_provider
-            .as_ref()
-            .and_then(|cap| cap.trigger_characters.as_ref())
-            .map_or(false, |chars| chars.iter().any(|s| s.as_str() == c.to_string()))
-        });
-
-      if is_trigger_char {
-        log::info!("Trigger character detected, sending TriggerChar event");
-        completions_insert.event(CompletionEvent::TriggerChar {
-          cursor,
-          doc: doc.id,
-          view: view.id,
-        });
-      } else if crate::core::chars::char_is_word(c) {
-        // Auto-trigger on word characters
-        log::info!("Word character detected, sending AutoTrigger event");
-        completions_insert.event(CompletionEvent::AutoTrigger {
-          cursor,
-          doc: doc.id,
-          view: view.id,
-        });
-      } else {
-        log::info!("Character '{}' is neither trigger nor word char", c);
-      }
+      trigger_auto_completion(event.cx.editor, false);
     }
 
     Ok(())
@@ -540,6 +497,51 @@ pub fn register_completion_hooks(handlers: &Handlers) {
     if event.old_mode == Mode::Insert && event.new_mode != Mode::Insert {
       completions_mode.event(CompletionEvent::Cancel);
       event.cx.editor.last_completion = None;
+    }
+    Ok(())
+  });
+
+  // Hook: Handle commands that affect completion
+  let completions_command = handlers.completions.clone();
+  register_hook!(move |event: &mut PostCommand<'_, '_>| {
+    use crate::handlers::completion_request_helpers::{
+      clear_completions,
+      update_completion_filter,
+    };
+
+    if event.cx.editor.mode == Mode::Insert {
+      if event.cx.editor.last_completion.is_some() {
+        // Completion is active, handle specific commands
+        match event.command {
+          "delete_char_backward" => {
+            // Update filter with None to simulate backspace
+            update_completion_filter(event.cx, None);
+          }
+          "delete_word_forward" | "delete_char_forward" | "completion" => {
+            // These commands don't close completion
+          }
+          _ => {
+            // Any other command closes completion
+            clear_completions(event.cx);
+          }
+        }
+      } else {
+        // No completion active, send events for delete operations
+        match event.command {
+          "delete_char_backward" | "delete_word_forward" | "delete_char_forward" => {
+            let (view, doc) = crate::current!(event.cx.editor);
+            let primary_cursor = doc.selection(view.id).primary().cursor(doc.text().slice(..));
+            completions_command.event(CompletionEvent::DeleteText {
+              cursor: primary_cursor,
+            });
+          }
+          // Don't cancel for these commands
+          "completion" | "insert_mode" | "append_mode" => {}
+          _ => {
+            completions_command.event(CompletionEvent::Cancel);
+          }
+        }
+      }
     }
     Ok(())
   });

@@ -2911,6 +2911,22 @@ impl Editor {
     }
   }
 
+  /// Try to poll for an LSP message without blocking.
+  /// Returns Some if a message is available, None otherwise.
+  pub fn try_poll_lsp_message(&mut self) -> Option<(crate::lsp::LanguageServerId, crate::lsp::Call)> {
+    use std::task::{Context, Poll};
+    use futures_util::task::noop_waker;
+    use futures_util::stream::Stream;
+
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+
+    match Pin::new(&mut self.language_servers.incoming).poll_next(&mut cx) {
+      Poll::Ready(Some(msg)) => Some(msg),
+      _ => None,
+    }
+  }
+
   pub async fn flush_writes(&mut self) -> anyhow::Result<()> {
     while self.write_count > 0 {
       if let Some(save_event) = self.save_queue.next().await {

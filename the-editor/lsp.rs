@@ -971,6 +971,7 @@ fn start_client(
 
   // Initialize the client asynchronously
   let _client = client.clone();
+  let server_id = id;
   tokio::spawn(async move {
     use futures_util::TryFutureExt;
     let value = _client
@@ -991,6 +992,16 @@ fn start_client(
     _client.notify::<lsp::types::notification::Initialized>(InitializedParams {});
 
     initialize_notify.notify_one();
+
+    // Dispatch event to inform hooks that the language server is initialized
+    crate::ui::job::dispatch(move |editor, _compositor| {
+      use crate::event::LanguageServerInitialized;
+      the_editor_event::dispatch(LanguageServerInitialized {
+        editor,
+        server_id,
+      });
+    })
+    .await;
   });
 
   Ok(NewClient(client, incoming))

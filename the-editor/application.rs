@@ -94,6 +94,133 @@ impl App {
       last_frame_time: std::time::Instant::now(),
     }
   }
+
+  fn handle_language_server_message(&mut self, server_id: crate::lsp::LanguageServerId, call: crate::lsp::Call) {
+    use crate::lsp::{Call, MethodCall, Notification};
+
+    match call {
+      Call::Notification(notification) => {
+        // Parse and handle the notification
+        match Notification::parse(&notification.method, notification.params) {
+          Ok(notification) => {
+            // TODO: Handle different notification types
+            // For now, just log them
+            log::debug!("Received LSP notification: {:?}", notification);
+          },
+          Err(crate::lsp::Error::Unhandled) => {
+            log::info!("Ignoring unhandled notification from language server");
+          },
+          Err(err) => {
+            log::error!("Failed to parse LSP notification: {:?}", err);
+          },
+        }
+      },
+      Call::MethodCall(method_call) => {
+        let crate::lsp::jsonrpc::MethodCall { method, params, id, .. } = method_call;
+
+        // Parse the method call and generate a reply
+        let reply = match MethodCall::parse(&method, params) {
+          Err(crate::lsp::Error::Unhandled) => {
+            log::error!("Language server method not found: {} (id: {:?})", method, id);
+            Err(crate::lsp::jsonrpc::Error {
+              code: crate::lsp::jsonrpc::ErrorCode::MethodNotFound,
+              message: format!("Method not found: {}", method),
+              data: None,
+            })
+          },
+          Err(err) => {
+            log::error!("Failed to parse language server method call {}: {:?}", method, err);
+            Err(crate::lsp::jsonrpc::Error {
+              code: crate::lsp::jsonrpc::ErrorCode::ParseError,
+              message: format!("Malformed method call: {}", method),
+              data: None,
+            })
+          },
+          Ok(MethodCall::WorkDoneProgressCreate(_params)) => {
+            // Just acknowledge the progress creation
+            Ok(serde_json::Value::Null)
+          },
+          Ok(MethodCall::ApplyWorkspaceEdit(params)) => {
+            // Get the language server to get its offset encoding
+            if let Some(language_server) = self.editor.language_server_by_id(server_id) {
+              let offset_encoding = language_server.offset_encoding();
+              let result = self.editor.apply_workspace_edit(offset_encoding, &params.edit);
+
+              use crate::lsp::lsp::types::ApplyWorkspaceEditResponse;
+              Ok(serde_json::to_value(ApplyWorkspaceEditResponse {
+                applied: result.is_ok(),
+                failure_reason: result.as_ref().err().map(|err| err.kind.to_string()),
+                failed_change: result.as_ref().err().map(|err| err.failed_change_idx as u32),
+              }).unwrap())
+            } else {
+              Err(crate::lsp::jsonrpc::Error {
+                code: crate::lsp::jsonrpc::ErrorCode::InvalidRequest,
+                message: "Language server not found".to_string(),
+                data: None,
+              })
+            }
+          },
+          Ok(MethodCall::WorkspaceConfiguration(params)) => {
+            if let Some(language_server) = self.editor.language_server_by_id(server_id) {
+              let result: Vec<_> = params
+                .items
+                .iter()
+                .map(|item| {
+                  let mut config = language_server.config()?;
+                  if let Some(section) = item.section.as_ref() {
+                    // Some LSPs send an empty string (e.g., vscode-eslint-language-server)
+                    if !section.is_empty() {
+                      for part in section.split('.') {
+                        config = config.get(part)?;
+                      }
+                    }
+                  }
+                  Some(config.clone())
+                })
+                .collect();
+              Ok(serde_json::to_value(result).unwrap())
+            } else {
+              Err(crate::lsp::jsonrpc::Error {
+                code: crate::lsp::jsonrpc::ErrorCode::InvalidRequest,
+                message: "Language server not found".to_string(),
+                data: None,
+              })
+            }
+          },
+          Ok(MethodCall::RegisterCapability(_params)) => {
+            // For now, just acknowledge capability registration
+            // TODO: Actually register file watchers, etc.
+            log::debug!("Language server registered capability (not yet fully implemented)");
+            Ok(serde_json::Value::Null)
+          },
+          Ok(MethodCall::UnregisterCapability(_params)) => {
+            // For now, just acknowledge capability unregistration
+            log::debug!("Language server unregistered capability");
+            Ok(serde_json::Value::Null)
+          },
+          Ok(_) => {
+            // Other method calls we don't handle yet
+            log::warn!("Unimplemented language server method: {}", method);
+            Err(crate::lsp::jsonrpc::Error {
+              code: crate::lsp::jsonrpc::ErrorCode::MethodNotFound,
+              message: format!("Method not implemented: {}", method),
+              data: None,
+            })
+          },
+        };
+
+        // Send the reply back to the language server
+        if let Some(language_server) = self.editor.language_server_by_id(server_id) {
+          if let Err(err) = language_server.reply(id, reply) {
+            log::error!("Failed to send reply to language server: {:?}", err);
+          }
+        }
+      },
+      Call::Invalid { id } => {
+        log::error!("Received invalid LSP call with id: {:?}", id);
+      },
+    }
+  }
 }
 
 impl Application for App {
@@ -121,6 +248,21 @@ impl Application for App {
 
     // The renderer's begin_frame/end_frame are handled by the main loop.
     // We just need to draw our content here.
+
+    // Process any pending LSP messages
+    while let Some((server_id, call)) = self.editor.try_poll_lsp_message() {
+      self.handle_language_server_message(server_id, call);
+    }
+
+    // Process any pending job callbacks before rendering
+    while let Ok(callback) = self.jobs.callbacks.try_recv() {
+      self.jobs.handle_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback)));
+    }
+
+    // Process any pending status messages
+    while let Ok(status) = self.jobs.status_messages.try_recv() {
+      self.editor.set_status(status.message.to_string());
+    }
 
     // Calculate delta time for time-based animations
     let now = std::time::Instant::now();

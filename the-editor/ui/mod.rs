@@ -15,6 +15,8 @@ pub mod job;
 pub mod render_cache;
 pub mod render_commands;
 
+pub use editor_view::EditorView;
+
 // UI Font constants - used across all UI components for consistency
 pub const UI_FONT_SIZE: f32 = 14.0;
 // Font width calculated based on the monospace font at UI_FONT_SIZE

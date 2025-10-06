@@ -31,6 +31,7 @@ use crate::{
     DiagnosticsDidChange,
     DocumentDidChange,
     DocumentDidClose,
+    DocumentDidOpen,
     LanguageServerInitialized,
   },
   lsp::{
@@ -435,8 +436,42 @@ impl Editor {
 }
 
 pub fn register_hooks(_handlers: &Handlers) {
+  register_hook!(move |event: &mut DocumentDidOpen<'_>| {
+    // Send textDocument/didOpen notifications when a document is opened
+    log::info!("DocumentDidOpen hook called for doc {:?}", event.doc);
+
+    let Some(doc) = event.editor.documents.get(&event.doc) else {
+      log::info!("Document {:?} not found", event.doc);
+      return Ok(());
+    };
+
+    let Some(url) = doc.url() else {
+      log::info!("Document {:?} has no URL", event.doc);
+      return Ok(());
+    };
+
+    log::info!("Document URL: {}", url);
+
+    let language_id = doc.language_id().map(ToOwned::to_owned).unwrap_or_default();
+    log::info!("Language ID: {:?}", language_id);
+
+    let server_count = doc.language_servers().count();
+    log::info!("Found {} language servers for document", server_count);
+
+    for language_server in doc.language_servers() {
+      log::info!("Sending didOpen to server {:?}", language_server.id());
+      language_server.text_document_did_open(url.clone(), doc.version(), doc.text(), language_id.clone());
+    }
+
+    Ok(())
+  });
+
   register_hook!(move |event: &mut LanguageServerInitialized<'_>| {
+    log::info!("LanguageServerInitialized hook called for server {:?}", event.server_id);
     let language_server = event.editor.language_server_by_id(event.server_id).unwrap();
+
+    let doc_count = event.editor.documents().filter(|doc| doc.supports_language_server(event.server_id)).count();
+    log::info!("Found {} documents that support this server", doc_count);
 
     for doc in event
       .editor
@@ -448,6 +483,10 @@ pub fn register_hooks(_handlers: &Handlers) {
       };
 
       let language_id = doc.language_id().map(ToOwned::to_owned).unwrap_or_default();
+      let text = doc.text();
+      let text_preview = text.slice(..text.len_chars().min(50)).to_string().replace('\n', "\\n");
+
+      log::info!("Sending didOpen for {} (version {}) with text (first 50 chars): '{}'", url, doc.version(), text_preview);
 
       language_server.text_document_did_open(url, doc.version(), doc.text(), language_id);
     }

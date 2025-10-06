@@ -58,7 +58,10 @@ fn main() -> anyhow::Result<()> {
   let config_ptr = Arc::new(ArcSwap::from_pointee(config.clone()));
 
   // Build handlers and register hooks.
-  let (completion_tx, _completion_rx) = tokio::sync::mpsc::channel(100);
+  // Spawn the completion request hook (async debouncer)
+  let completion_hook = crate::handlers::completion_request::CompletionRequestHook::new();
+  let completion_tx = completion_hook.spawn();
+
   let (signature_tx, _signature_rx) = tokio::sync::mpsc::channel(100);
   let (auto_save_tx, _auto_save_rx) = tokio::sync::mpsc::channel(100);
   let (colors_tx, _colors_rx) = tokio::sync::mpsc::channel(100);

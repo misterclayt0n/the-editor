@@ -17,6 +17,7 @@ use crate::{
 };
 
 pub mod completion;
+pub mod completion_request;
 pub mod diagnostics;
 pub mod lsp;
 pub mod word_index;
@@ -67,4 +68,5 @@ impl Handlers {
 pub fn register_hooks(handlers: &Handlers) {
   lsp::register_hooks(handlers);
   word_index::register_hooks(handlers);
+  completion_request::register_completion_hooks(handlers);
 }

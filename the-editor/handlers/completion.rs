@@ -1,13 +1,16 @@
 use std::{
-  borrow::Cow,
   collections::HashMap,
-  sync::Arc,
+  sync::{
+    Arc,
+    Mutex,
+  },
 };
 
 use the_editor_event::{
   TaskController,
   send_blocking,
 };
+use the_editor_lsp_types::types as lsp;
 use tokio::sync::mpsc::Sender;
 
 use crate::{
@@ -20,14 +23,101 @@ use crate::{
   lsp::LanguageServerId,
 };
 
+/// LSP completion item with lazy resolution support
+#[derive(Debug, Clone)]
+pub struct LspCompletionItem {
+  /// The raw LSP completion item
+  pub item:              lsp::CompletionItem,
+  /// The LSP server that provided this completion
+  pub provider:          LanguageServerId,
+  /// Whether this item has been resolved (documentation fetched)
+  pub resolved:          bool,
+  /// Provider priority for sorting
+  pub provider_priority: i8,
+}
+
+impl LspCompletionItem {
+  /// Get the text to use for fuzzy filtering
+  pub fn filter_text(&self) -> &str {
+    self.item.filter_text.as_ref().unwrap_or(&self.item.label).as_str()
+  }
+
+  /// Check if this item is preselected
+  pub fn preselect(&self) -> bool {
+    self.item.preselect.unwrap_or(false)
+  }
+}
+
+impl PartialEq for LspCompletionItem {
+  fn eq(&self, other: &Self) -> bool {
+    self.item.label == other.item.label && self.provider == other.provider
+  }
+}
+
+/// Non-LSP completion item (e.g., from word or path completion)
 #[derive(Debug, PartialEq, Clone)]
-pub struct CompletionItem {
+pub struct OtherCompletionItem {
   pub transaction:   Transaction,
-  pub label:         Cow<'static, str>,
-  pub kind:          Cow<'static, str>,
-  /// Containing Markdown
+  pub label:         String,
+  pub kind:          Option<String>,
   pub documentation: Option<String>,
-  pub provider:      CompletionProvider,
+}
+
+impl OtherCompletionItem {
+  pub fn filter_text(&self) -> &str {
+    &self.label
+  }
+}
+
+/// Completion item that can come from LSP or other sources
+#[derive(Debug, Clone)]
+pub enum CompletionItem {
+  Lsp(LspCompletionItem),
+  Other(OtherCompletionItem),
+}
+
+impl CompletionItem {
+  /// Get the text to use for fuzzy filtering
+  pub fn filter_text(&self) -> &str {
+    match self {
+      CompletionItem::Lsp(item) => item.filter_text(),
+      CompletionItem::Other(item) => item.filter_text(),
+    }
+  }
+
+  /// Check if this item is preselected
+  pub fn preselect(&self) -> bool {
+    match self {
+      CompletionItem::Lsp(item) => item.preselect(),
+      CompletionItem::Other(_) => false,
+    }
+  }
+
+  /// Get the provider for this completion
+  pub fn provider(&self) -> CompletionProvider {
+    match self {
+      CompletionItem::Lsp(item) => CompletionProvider::Lsp(item.provider),
+      CompletionItem::Other(_) => CompletionProvider::Word, // Default, will be set properly later
+    }
+  }
+
+  /// Get provider priority for sorting
+  pub fn provider_priority(&self) -> i8 {
+    match self {
+      CompletionItem::Lsp(item) => item.provider_priority,
+      CompletionItem::Other(_) => 0,
+    }
+  }
+}
+
+impl PartialEq for CompletionItem {
+  fn eq(&self, other: &Self) -> bool {
+    match (self, other) {
+      (CompletionItem::Lsp(a), CompletionItem::Lsp(b)) => a == b,
+      (CompletionItem::Other(a), CompletionItem::Other(b)) => a == b,
+      _ => false,
+    }
+  }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -43,18 +133,19 @@ impl From<LanguageServerId> for CompletionProvider {
   }
 }
 
+#[derive(Clone)]
 pub struct CompletionHandler {
   event_tx:               Sender<CompletionEvent>,
-  pub active_completions: HashMap<CompletionProvider, ResponseContext>,
-  pub request_controller: TaskController,
+  pub active_completions: Arc<Mutex<HashMap<CompletionProvider, ResponseContext>>>,
+  pub request_controller: Arc<Mutex<TaskController>>,
 }
 
 impl CompletionHandler {
   pub fn new(event_tx: Sender<CompletionEvent>) -> Self {
     Self {
       event_tx,
-      active_completions: HashMap::new(),
-      request_controller: TaskController::new(),
+      active_completions: Arc::new(Mutex::new(HashMap::new())),
+      request_controller: Arc::new(Mutex::new(TaskController::new())),
     }
   }
 
@@ -63,6 +154,7 @@ impl CompletionHandler {
   }
 }
 
+#[derive(Clone)]
 pub struct ResponseContext {
   /// Whether the completion response is marked as "incomplete."
   ///
@@ -74,6 +166,7 @@ pub struct ResponseContext {
   pub savepoint:     Arc<SavePoint>,
 }
 
+#[derive(Debug)]
 pub enum CompletionEvent {
   /// Auto completion was triggered by typing a word char
   AutoTrigger {

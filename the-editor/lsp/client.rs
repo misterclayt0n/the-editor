@@ -17,6 +17,8 @@ use std::{
   },
 };
 
+use futures_util::future::BoxFuture;
+
 use parking_lot::Mutex;
 use ropey::Rope;
 use serde::Deserialize;
@@ -497,20 +499,17 @@ impl Client {
   fn call<R: lsp::request::Request>(
     &self,
     params: R::Params,
-  ) -> impl Future<Output = Result<R::Result>>
+  ) -> BoxFuture<'static, Result<R::Result>>
   where
     R::Params: serde::Serialize,
   {
-    // NOTE: Little workaround nightly rust
-    let params = Box::new(params);
-    let this = self;
-    async move { this.call_with_ref::<R>(&*params).await }
+    self.call_with_timeout::<R>(&params, self.req_timeout)
   }
 
   fn call_with_ref<R: lsp::request::Request>(
     &self,
     params: &R::Params,
-  ) -> impl Future<Output = Result<R::Result>>
+  ) -> BoxFuture<'static, Result<R::Result>>
   where
     R::Params: serde::Serialize,
   {
@@ -521,7 +520,7 @@ impl Client {
     &self,
     params: &R::Params,
     timeout_secs: u64,
-  ) -> impl Future<Output = Result<R::Result>>
+  ) -> BoxFuture<'static, Result<R::Result>>
   where
     R::Params: serde::Serialize,
   {
@@ -549,7 +548,7 @@ impl Client {
         Ok(rx)
       });
 
-    async move {
+    Box::pin(async move {
       use std::time::Duration;
 
       use tokio::time::timeout;
@@ -559,7 +558,7 @@ impl Client {
                 .map_err(|_| Error::Timeout(id))? // return Timeout
                 .ok_or(Error::StreamClosed)?
                 .and_then(|value| serde_json::from_value(value).map_err(Into::into))
-    }
+    })
   }
 
   /// Send a RPC notification to the language server.
@@ -1124,7 +1123,7 @@ impl Client {
     position: lsp::Position,
     work_done_token: Option<lsp::ProgressToken>,
     context: lsp::CompletionContext,
-  ) -> Option<impl Future<Output = Result<Option<lsp::CompletionResponse>>>> {
+  ) -> Option<BoxFuture<'static, Result<Option<lsp::CompletionResponse>>>> {
     let capabilities = self.capabilities.get().unwrap();
 
     // Return early if the server does not support completion.
@@ -1143,13 +1142,13 @@ impl Client {
       },
     };
 
-    Some(self.call::<lsp::request::Completion>(params))
+    Some(Box::pin(self.call::<lsp::request::Completion>(params)))
   }
 
   pub fn resolve_completion_item(
     &self,
     completion_item: &lsp::CompletionItem,
-  ) -> impl Future<Output = Result<lsp::CompletionItem>> {
+  ) -> BoxFuture<'static, Result<lsp::CompletionItem>> {
     self.call_with_ref::<lsp::request::ResolveCompletionItem>(completion_item)
   }
 

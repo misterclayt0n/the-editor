@@ -73,6 +73,8 @@ pub struct EditorView {
   zoom_anim_active:     bool,
   // Gutter management
   pub gutter_manager:   GutterManager,
+  // Completion popup
+  pub(crate) completion: Option<crate::ui::components::Completion>,
 }
 
 impl EditorView {
@@ -92,11 +94,52 @@ impl EditorView {
       cursor_anim_active: false,
       zoom_anim_active: false,
       gutter_manager: GutterManager::with_defaults(),
+      completion: None,
     }
   }
 
   pub fn has_pending_on_next_key(&self) -> bool {
     self.on_next_key.is_some()
+  }
+
+  /// Set the completion popup with the given items
+  pub fn set_completion(
+    &mut self,
+    editor: &Editor,
+    items: Vec<crate::handlers::completion::CompletionItem>,
+    trigger_offset: usize,
+  ) -> Option<Rect> {
+    use crate::ui::components::Completion;
+
+    // Get the initial filter text (text typed since trigger)
+    let (view, doc) = crate::current_ref!(editor);
+    let text = doc.text();
+    let cursor = doc.selection(view.id).primary().cursor(text.slice(..));
+
+    // Calculate filter string from trigger offset to cursor
+    let filter = if cursor >= trigger_offset {
+      text.slice(trigger_offset..cursor).to_string()
+    } else {
+      String::new()
+    };
+
+    let completion = Completion::new(items, trigger_offset, filter);
+
+    if completion.is_empty() {
+      // Skip if we got no completion results
+      return None;
+    }
+
+    // Store the completion
+    self.completion = Some(completion);
+
+    // TODO: Calculate actual area based on cursor position
+    Some(Rect::new(0, 0, 60, 15))
+  }
+
+  /// Clear the completion popup
+  pub fn clear_completion(&mut self, _editor: &mut Editor) {
+    self.completion = None;
   }
 
   /// Mark all visible lines as dirty to force a full redraw
@@ -514,9 +557,11 @@ impl Component for EditorView {
       doc.get_viewport_highlights(start_byte..end_byte, &loader)
     };
 
-    let doc = &cx.editor.documents[&doc_id];
-    let doc_text = doc.text();
-    let selection = doc.selection(focus_view);
+    // Wrap main rendering in scope to drop borrows before rendering completion
+    {
+      let doc = &cx.editor.documents[&doc_id];
+      let doc_text = doc.text();
+      let selection = doc.selection(focus_view);
 
     // Calculate gutter offset using GutterManager
     let gutter_width = self.gutter_manager.total_width(view, doc);
@@ -984,9 +1029,18 @@ impl Component for EditorView {
         color: cursor_bg_color,
       });
     }
+    } // End scope - drop doc borrow before rendering completion
 
     // Execute all batched commands
     self.command_batcher.execute(renderer);
+
+    // Render completion popup on top if active
+    if let Some(ref mut completion) = self.completion {
+      // Position completion popup
+      // TODO: Calculate proper position based on cursor location
+      let popup_area = Rect::new(0, 0, 60, 15);
+      completion.render(popup_area, renderer, cx);
+    }
 
     // Clear dirty regions after successful render
     self.dirty_region.clear();

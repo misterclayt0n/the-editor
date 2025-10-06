@@ -10,21 +10,71 @@ use anyhow::{
 };
 
 use super::commands::Context;
+use crate::{
+  editor::Editor,
+  ui::components::prompt::Completion,
+};
 
 /// Type alias for a command function that takes a context and arguments
 pub type CommandFn = fn(&mut Context, &[&str]) -> Result<()>;
+
+/// Type alias for a completer function
+/// Takes the editor and current input, returns completions
+pub type Completer = fn(&Editor, &str) -> Vec<Completion>;
+
+/// Command completer configuration
+#[derive(Clone, Copy)]
+pub struct CommandCompleter {
+  /// Completers for positional arguments (index-based)
+  pub positional: &'static [Completer],
+  /// Completer for variadic arguments (all remaining args use this)
+  pub variadic:   Completer,
+}
+
+impl CommandCompleter {
+  /// No completion
+  pub const fn none() -> Self {
+    Self {
+      positional: &[],
+      variadic:   completers::none,
+    }
+  }
+
+  /// Use the same completer for all arguments
+  pub const fn all(completer: Completer) -> Self {
+    Self {
+      positional: &[],
+      variadic:   completer,
+    }
+  }
+
+  /// Use specific completers for specific positions, with fallback for extra args
+  pub const fn positional(positional: &'static [Completer], variadic: Completer) -> Self {
+    Self {
+      positional,
+      variadic,
+    }
+  }
+
+  /// Get the completer for a specific argument position
+  pub fn get(&self, index: usize) -> Completer {
+    self.positional.get(index).copied().unwrap_or(self.variadic)
+  }
+}
 
 /// A typable command that can be executed in command mode
 #[derive(Clone)]
 pub struct TypableCommand {
   /// Command name (primary identifier)
-  pub name:    &'static str,
+  pub name:      &'static str,
   /// Command aliases (alternative names)
-  pub aliases: &'static [&'static str],
+  pub aliases:   &'static [&'static str],
   /// Short documentation string
-  pub doc:     &'static str,
+  pub doc:       &'static str,
   /// The function to execute
-  pub fun:     CommandFn,
+  pub fun:       CommandFn,
+  /// Completion configuration for arguments
+  pub completer: CommandCompleter,
 }
 
 impl TypableCommand {
@@ -34,12 +84,14 @@ impl TypableCommand {
     aliases: &'static [&'static str],
     doc: &'static str,
     fun: CommandFn,
+    completer: CommandCompleter,
   ) -> Self {
     Self {
       name,
       aliases,
       doc,
       fun,
+      completer,
     }
   }
 
@@ -120,6 +172,95 @@ impl CommandRegistry {
       .collect()
   }
 
+  /// Complete a command line input (command name or arguments)
+  /// This is the main completion function used by the prompt
+  pub fn complete_command_line(&self, editor: &Editor, input: &str) -> Vec<Completion> {
+    // Split input into command and arguments
+    let parts: Vec<&str> = input.split_whitespace().collect();
+
+    if parts.is_empty() {
+      // Empty input - show all commands
+      return self
+        .command_names()
+        .into_iter()
+        .map(|name| Completion {
+          range: 0..,
+          text:  name.to_string(),
+          doc:   self.get(name).map(|cmd| cmd.doc.to_string()),
+        })
+        .collect();
+    }
+
+    let first_word = parts[0];
+
+    // Check if we're still typing the command name or have moved to arguments
+    let complete_command_name = if input.ends_with(char::is_whitespace) {
+      // Input ends with whitespace - complete arguments
+      false
+    } else if parts.len() == 1 {
+      // Only one word and no trailing space - still typing command
+      true
+    } else {
+      // Multiple words - complete arguments
+      false
+    };
+
+    if complete_command_name {
+      // Complete command names
+      let input_lower = first_word.to_lowercase();
+      self
+        .command_names()
+        .into_iter()
+        .filter(|name| name.to_lowercase().contains(&input_lower))
+        .map(|name| Completion {
+          range: 0..,
+          text:  name.to_string(),
+          doc:   self.get(name).map(|cmd| cmd.doc.to_string()),
+        })
+        .collect()
+    } else {
+      // Complete arguments for the command
+      if let Some(cmd) = self.get(first_word) {
+        // Calculate which argument we're completing
+        let arg_index = if input.ends_with(char::is_whitespace) {
+          parts.len() - 1 // Starting a new argument
+        } else {
+          parts.len() - 2 // Completing current argument
+        };
+
+        // Get the completer for this argument position
+        let completer = cmd.completer.get(arg_index);
+
+        // Get the current argument text (what we're completing)
+        let arg_input = if input.ends_with(char::is_whitespace) {
+          ""
+        } else {
+          parts.last().copied().unwrap_or("")
+        };
+
+        // Calculate the offset where the argument starts
+        let arg_start_offset = if arg_input.is_empty() {
+          input.len()
+        } else {
+          input.len() - arg_input.len()
+        };
+
+        // Run the completer and adjust ranges
+        let mut completions = completer(editor, arg_input);
+
+        // Adjust completion ranges to account for the command prefix
+        for completion in &mut completions {
+          completion.range = arg_start_offset..;
+        }
+
+        completions
+      } else {
+        // Unknown command - no completions
+        Vec::new()
+      }
+    }
+  }
+
   /// Register all built-in commands
   fn register_builtin_commands(&mut self) {
     self.register(TypableCommand::new(
@@ -127,6 +268,7 @@ impl CommandRegistry {
       &["q"],
       "Close the editor",
       quit,
+      CommandCompleter::none(),
     ));
 
     self.register(TypableCommand::new(
@@ -134,6 +276,7 @@ impl CommandRegistry {
       &["q!"],
       "Force close the editor without saving",
       force_quit,
+      CommandCompleter::none(),
     ));
 
     self.register(TypableCommand::new(
@@ -141,6 +284,7 @@ impl CommandRegistry {
       &["w"],
       "Write buffer to file",
       write_buffer,
+      CommandCompleter::all(completers::filename),
     ));
 
     self.register(TypableCommand::new(
@@ -148,6 +292,7 @@ impl CommandRegistry {
       &["wq", "x"],
       "Write buffer to file and close the editor",
       write_quit,
+      CommandCompleter::all(completers::filename),
     ));
 
     self.register(TypableCommand::new(
@@ -155,6 +300,7 @@ impl CommandRegistry {
       &["o", "e", "edit"],
       "Open a file for editing",
       open_file,
+      CommandCompleter::all(completers::filename),
     ));
 
     self.register(TypableCommand::new(
@@ -162,6 +308,7 @@ impl CommandRegistry {
       &["n"],
       "Create a new buffer",
       new_file,
+      CommandCompleter::none(),
     ));
 
     self.register(TypableCommand::new(
@@ -169,6 +316,7 @@ impl CommandRegistry {
       &["bc", "bclose"],
       "Close the current buffer",
       buffer_close,
+      CommandCompleter::none(),
     ));
 
     self.register(TypableCommand::new(
@@ -176,6 +324,7 @@ impl CommandRegistry {
       &["bn", "bnext"],
       "Go to next buffer",
       buffer_next,
+      CommandCompleter::none(),
     ));
 
     self.register(TypableCommand::new(
@@ -183,6 +332,7 @@ impl CommandRegistry {
       &["bp", "bprev"],
       "Go to previous buffer",
       buffer_previous,
+      CommandCompleter::none(),
     ));
 
     self.register(TypableCommand::new(
@@ -190,6 +340,7 @@ impl CommandRegistry {
       &["h"],
       "Show help for commands",
       show_help,
+      CommandCompleter::all(completers::command),
     ));
 
     self.register(TypableCommand::new(
@@ -197,6 +348,7 @@ impl CommandRegistry {
       &[],
       "Change the editor theme (show current theme if no name specified)",
       theme,
+      CommandCompleter::all(completers::theme),
     ));
   }
 }
@@ -204,6 +356,129 @@ impl CommandRegistry {
 impl Default for CommandRegistry {
   fn default() -> Self {
     Self::new()
+  }
+}
+
+/// Completer functions for command arguments
+pub mod completers {
+  use super::*;
+
+  /// No completion
+  pub fn none(_editor: &Editor, _input: &str) -> Vec<Completion> {
+    Vec::new()
+  }
+
+  /// Filename completer with fuzzy matching
+  pub fn filename(_editor: &Editor, input: &str) -> Vec<Completion> {
+    use std::{
+      fs,
+      path::Path,
+    };
+
+    let input_path = Path::new(input);
+    let (dir, prefix) = if input.ends_with('/') || input.is_empty() {
+      (input_path, "")
+    } else {
+      (
+        input_path.parent().unwrap_or(Path::new(".")),
+        input_path
+          .file_name()
+          .and_then(|s| s.to_str())
+          .unwrap_or(""),
+      )
+    };
+
+    let Ok(entries) = fs::read_dir(dir) else {
+      return Vec::new();
+    };
+
+    let mut completions = Vec::new();
+    for entry in entries.flatten() {
+      let Ok(file_name) = entry.file_name().into_string() else {
+        continue;
+      };
+
+      // Fuzzy match against prefix
+      if file_name.to_lowercase().contains(&prefix.to_lowercase()) {
+        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        let mut path = if dir == Path::new(".") {
+          file_name.clone()
+        } else {
+          dir.join(&file_name).to_string_lossy().to_string()
+        };
+
+        if is_dir {
+          path.push('/');
+        }
+
+        // Range starts from beginning of input (replace entire path)
+        completions.push(Completion {
+          range: 0..,
+          text:  path,
+          doc:   None,
+        });
+      }
+    }
+
+    // Sort completions: directories first, then alphabetically
+    completions.sort_by(|a, b| {
+      let a_is_dir = a.text.ends_with('/');
+      let b_is_dir = b.text.ends_with('/');
+      match (a_is_dir, b_is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.text.cmp(&b.text),
+      }
+    });
+
+    completions
+  }
+
+  /// Theme name completer
+  pub fn theme(_editor: &Editor, input: &str) -> Vec<Completion> {
+    use std::path::PathBuf;
+
+    use crate::core::theme;
+
+    // Get theme directories from runtime paths
+    let runtime_dirs = vec![PathBuf::from("runtime/themes")];
+
+    let mut theme_names: Vec<String> = Vec::new();
+    for dir in &runtime_dirs {
+      let names = theme::Loader::read_names(dir);
+      theme_names.extend(names);
+    }
+
+    theme_names.sort();
+    theme_names.dedup();
+
+    let input_lower = input.to_lowercase();
+    theme_names
+      .into_iter()
+      .filter(|name| name.to_lowercase().contains(&input_lower))
+      .map(|name| Completion {
+        range: 0..,
+        text:  name,
+        doc:   None,
+      })
+      .collect()
+  }
+
+  /// Command name completer
+  pub fn command(editor: &Editor, input: &str) -> Vec<Completion> {
+    let input_lower = input.to_lowercase();
+
+    editor
+      .command_registry
+      .command_names()
+      .into_iter()
+      .filter(|name| name.to_lowercase().contains(&input_lower))
+      .map(|name| Completion {
+        range: 0..,
+        text:  name.to_string(),
+        doc:   None,
+      })
+      .collect()
   }
 }
 
@@ -418,7 +693,13 @@ mod tests {
       Ok(())
     }
 
-    let cmd = TypableCommand::new("test", &["t"], "Test command", test_cmd);
+    let cmd = TypableCommand::new(
+      "test",
+      &["t"],
+      "Test command",
+      test_cmd,
+      CommandCompleter::none(),
+    );
 
     assert_eq!(cmd.name, "test");
     assert_eq!(cmd.aliases, &["t"]);

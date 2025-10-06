@@ -1143,11 +1143,22 @@ fn enter_insert_mode(cx: &mut Context) {
 }
 
 pub fn command_mode(cx: &mut Context) {
+  use std::sync::Arc;
+
   // Set editor mode to Command so statusline shows COMMAND
   cx.editor.set_mode(Mode::Command);
 
-  // Push the command prompt to the compositor
-  let prompt = crate::ui::components::prompt::Prompt::new(String::new()); // Empty prefix
+  // Clone the registry for use in the completion function
+  let registry = cx.editor.command_registry.clone();
+
+  // Create completion function that uses the command registry
+  let completion_fn = Arc::new(move |editor: &crate::editor::Editor, input: &str| {
+    registry.complete_command_line(editor, input)
+  });
+
+  // Create prompt with completion function
+  let prompt =
+    crate::ui::components::prompt::Prompt::new(String::new()).with_completion(completion_fn);
 
   cx.callback.push(Box::new(|compositor, _cx| {
     // Find the statusline and trigger slide animation

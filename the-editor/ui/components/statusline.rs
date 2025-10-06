@@ -177,12 +177,15 @@ impl Component for StatusLine {
 
     self.status_bar_y = bar_y;
 
-    // Early exit if fully hidden
+    // Early exit if fully hidden - no need to render anything
     if !self.target_visible && self.anim_t >= 1.0 {
+      self.visible = false;
       return;
     }
 
-    // Draw background bar across full width
+    self.visible = true;
+
+    // Draw background bar across full width (before enabling overlay mode)
     surface.draw_rect(
       0.0,
       bar_y,
@@ -190,6 +193,12 @@ impl Component for StatusLine {
       STATUS_BAR_HEIGHT,
       bg_color,
     );
+
+    // Set stencil mask to prevent editor text from rendering in statusbar area
+    surface.set_stencil_mask_rect(0.0, bar_y, surface.width() as f32, STATUS_BAR_HEIGHT);
+
+    // Enable overlay text mode for statusbar UI (bypasses stencil mask)
+    surface.begin_overlay_text();
 
     let view = cx.editor.tree.get(cx.editor.tree.focus);
     let doc = cx.editor.documents.get(&view.doc).unwrap();
@@ -350,6 +359,9 @@ impl Component for StatusLine {
       let right_x = surface.width() as f32 - text_width - SEGMENT_PADDING_X + self.slide_offset;
       Self::draw_text(surface, right_x, bar_y, &combined_text, text_color);
     }
+
+    // Disable overlay text mode (back to normal rendering)
+    surface.end_overlay_text();
   }
 
   fn should_update(&self) -> bool {

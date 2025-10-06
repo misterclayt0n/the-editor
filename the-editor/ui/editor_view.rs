@@ -47,10 +47,9 @@ use crate::{
 };
 
 // Constants from the old editor
-const VIEW_PADDING_LEFT: f32 = 0.0;
+const VIEW_PADDING_LEFT: f32 = 0.0; // No visual padding - only scrolloff
 const VIEW_PADDING_TOP: f32 = 0.0;
-const VIEW_PADDING_BOTTOM: f32 = 28.0; // Reserve space for statusline
-const STATUS_BAR_HEIGHT: f32 = 30.0;
+const VIEW_PADDING_BOTTOM: f32 = 0.0; // No reservation - statusbar is now an overlay
 const CURSOR_HEIGHT_EXTENSION: f32 = 4.0;
 const LINE_SPACING: f32 = 4.0;
 
@@ -370,7 +369,8 @@ impl Component for EditorView {
       .floor()
       .max(1.0)) as u16;
 
-    let available_width = (renderer.width() as f32) - (VIEW_PADDING_LEFT * 2.0);
+    // Don't subtract visual padding from viewport width - it's only for rendering offset
+    let available_width = renderer.width() as f32;
     let available_width = available_width.max(font_width);
     let area_width = (available_width / font_width).floor().max(1.0) as u16;
     let target_area = Rect::new(0, 0, area_width, content_rows.saturating_add(1));
@@ -475,7 +475,6 @@ impl Component for EditorView {
     cursor_bg.a *= zoom_alpha;
     selection_bg.a *= zoom_alpha;
 
-    let base_x = VIEW_PADDING_LEFT;
     let base_y = VIEW_PADDING_TOP + zoom_offset_y;
 
     let doc_id = view.doc;
@@ -506,6 +505,10 @@ impl Component for EditorView {
     let doc = &cx.editor.documents[&doc_id];
     let doc_text = doc.text();
     let selection = doc.selection(focus_view);
+
+    // Add gutter offset to base_x so text renders after gutters
+    let gutter_offset = view.gutter_offset(doc) as f32 * font_width;
+    let base_x = VIEW_PADDING_LEFT + gutter_offset;
 
     let cursor_pos = selection.primary().cursor(doc_text.slice(..));
 

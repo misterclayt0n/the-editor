@@ -452,11 +452,7 @@ impl Default for GutterConfig {
   fn default() -> Self {
     Self {
       layout:       vec![
-        GutterType::Diagnostics,
-        GutterType::Spacer,
-        GutterType::LineNumbers,
-        GutterType::Spacer,
-        GutterType::Diff,
+        // Empty - no gutters by default (no line numbers, no padding)
       ],
       line_numbers: GutterLineNumbersConfig::default(),
     }

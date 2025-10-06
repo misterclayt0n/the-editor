@@ -30,9 +30,13 @@ use crate::{
     },
     position::Position,
   },
-  handlers::completion::{
-    CompletionItem,
-    CompletionProvider,
+  handlers::{
+    completion::{
+      CompletionItem,
+      CompletionProvider,
+      LspCompletionItem,
+    },
+    completion_resolve::ResolveHandler,
   },
   ui::{
     UI_FONT_SIZE,
@@ -55,6 +59,38 @@ const MAX_MENU_WIDTH: u16 = 60;
 
 /// Maximum visible completion items
 const MAX_VISIBLE_ITEMS: usize = 15;
+
+/// Simple text wrapping function
+fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+  let mut lines = Vec::new();
+  let mut current_line = String::new();
+  let mut current_width = 0;
+
+  for word in text.split_whitespace() {
+    let word_len = word.len();
+
+    if current_width + word_len + 1 > max_width && !current_line.is_empty() {
+      // Start new line
+      lines.push(current_line);
+      current_line = word.to_string();
+      current_width = word_len;
+    } else {
+      // Add to current line
+      if !current_line.is_empty() {
+        current_line.push(' ');
+        current_width += 1;
+      }
+      current_line.push_str(word);
+      current_width += word_len;
+    }
+  }
+
+  if !current_line.is_empty() {
+    lines.push(current_line);
+  }
+
+  lines
+}
 
 /// Completion popup component
 pub struct Completion {
@@ -80,6 +116,8 @@ pub struct Completion {
   doc_resolved:    bool,
   /// Animation progress (0.0 = just appeared, 1.0 = fully visible)
   anim_progress:   f32,
+  /// Handler for resolving incomplete completion items
+  resolve_handler: ResolveHandler,
 }
 
 impl Completion {
@@ -99,6 +137,7 @@ impl Completion {
       scroll_offset: 0,
       doc_resolved: false,
       anim_progress: 0.0, // Start animation from 0
+      resolve_handler: ResolveHandler::new(),
     };
 
     // Initial scoring
@@ -233,6 +272,179 @@ impl Completion {
 
     // Re-score
     self.score(false);
+  }
+
+  /// Replace a specific completion item with a resolved version
+  /// Used by the resolve handler to update items with documentation
+  pub fn replace_item(&mut self, old_item: &LspCompletionItem, new_item: CompletionItem) {
+    // Find the item in our list
+    for item in &mut self.items {
+      if let CompletionItem::Lsp(lsp_item) = item {
+        if lsp_item == old_item {
+          *item = new_item;
+          log::debug!("Replaced completion item with resolved version");
+          return;
+        }
+      }
+    }
+    log::warn!("Could not find item to replace in completion list");
+  }
+
+  /// Trigger resolution for the currently selected item
+  fn trigger_resolve(&mut self) {
+    // Get the current selection index before borrowing resolve_handler
+    let item_idx = if self.filtered.is_empty() {
+      None
+    } else {
+      let (idx, _score) = self.filtered[self.cursor];
+      Some(idx as usize)
+    };
+
+    if let Some(idx) = item_idx {
+      if let Some(CompletionItem::Lsp(lsp_item)) = self.items.get_mut(idx) {
+        self.resolve_handler.ensure_item_resolved(lsp_item);
+      }
+    }
+  }
+
+  /// Render the documentation popup for the selected completion item
+  fn render_documentation(
+    &self,
+    item: &CompletionItem,
+    completion_x: f32,
+    completion_y: f32,
+    completion_width: f32,
+    completion_height: f32,
+    alpha: f32,
+    surface: &mut Surface,
+    ctx: &mut Context,
+  ) {
+    // Extract documentation and detail from the item
+    let (detail, doc) = match item {
+      CompletionItem::Lsp(lsp_item) => {
+        let detail = lsp_item.item.detail.as_deref();
+        let doc = lsp_item.item.documentation.as_ref().and_then(|d| match d {
+          lsp::Documentation::String(s) => Some(s.as_str()),
+          lsp::Documentation::MarkupContent(content) => Some(content.value.as_str()),
+        });
+        (detail, doc)
+      },
+      CompletionItem::Other(_other) => {
+        // Other items don't have documentation yet
+        return;
+      },
+    };
+
+    // If there's no documentation to show, return early
+    if detail.is_none() && doc.is_none() {
+      return;
+    }
+
+    // Get window dimensions
+    let window_width = surface.width() as f32;
+    let window_height = surface.height() as f32;
+
+    // Constants for doc popup
+    const MIN_DOC_WIDTH: f32 = 200.0;
+    const MAX_DOC_WIDTH: f32 = 500.0;
+    const MIN_DOC_HEIGHT: f32 = 100.0;
+    const DOC_PADDING: f32 = 8.0;
+
+    // Try to position documentation to the right of completion
+    let space_on_right = window_width - (completion_x + completion_width);
+
+    let (doc_x, doc_y, doc_width, doc_height) = if space_on_right >= MIN_DOC_WIDTH {
+      // Position to the right
+      let doc_x = completion_x + completion_width + 8.0;
+      let doc_y = completion_y;
+      let doc_width = space_on_right.min(MAX_DOC_WIDTH) - 16.0;
+      let doc_height = completion_height.max(MIN_DOC_HEIGHT);
+      (doc_x, doc_y, doc_width, doc_height)
+    } else {
+      // Position below completion
+      let doc_x = completion_x;
+      let doc_y = completion_y + completion_height + 8.0;
+      let doc_width = completion_width.max(MIN_DOC_WIDTH).min(MAX_DOC_WIDTH);
+      let space_below = window_height - doc_y;
+      let doc_height = space_below.min(completion_height.max(MIN_DOC_HEIGHT));
+      (doc_x, doc_y, doc_width, doc_height)
+    };
+
+    // Don't render if there's not enough space
+    if doc_width < 100.0 || doc_height < 50.0 {
+      return;
+    }
+
+    // Get theme colors (same as completion popup)
+    let theme = &ctx.editor.theme;
+    let bg_style = theme.get("ui.popup");
+    let text_style = theme.get("ui.text");
+
+    let mut bg_color = bg_style
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.12, 0.12, 0.15, 0.98));
+    let mut text_color = text_style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
+
+    // Apply animation alpha
+    bg_color.a *= alpha;
+    text_color.a *= alpha;
+
+    // Draw background
+    let corner_radius = 6.0;
+    surface.draw_rounded_rect(doc_x, doc_y, doc_width, doc_height, corner_radius, bg_color);
+
+    // Draw border
+    let mut border_color = Color::new(0.3, 0.3, 0.35, 0.8);
+    border_color.a *= alpha;
+    surface.draw_rounded_rect_stroke(doc_x, doc_y, doc_width, doc_height, corner_radius, 1.0, border_color);
+
+    // Render documentation content
+    let mut y_offset = doc_y + DOC_PADDING;
+    let font_size = UI_FONT_SIZE;
+    let line_height = font_size + 4.0;
+
+    // Render detail (in a code-like style if present)
+    if let Some(detail_text) = detail {
+      let mut detail_color = Color::new(0.7, 0.8, 0.9, 1.0);
+      detail_color.a *= alpha;
+
+      surface.draw_text(TextSection {
+        position: (doc_x + DOC_PADDING, y_offset),
+        texts:    vec![TextSegment {
+          content: detail_text.to_string(),
+          style:   TextStyle {
+            size:  font_size,
+            color: detail_color,
+          },
+        }],
+      });
+      y_offset += line_height * 2.0; // Extra spacing after detail
+    }
+
+    // Render documentation text (wrapped)
+    if let Some(doc_text) = doc {
+      // Simple line wrapping - split into words and wrap at doc_width
+      let max_chars_per_line = ((doc_width - DOC_PADDING * 2.0) / (font_size * 0.6)) as usize;
+      let lines = wrap_text(doc_text, max_chars_per_line);
+
+      for line in lines.iter().take(((doc_height - y_offset + doc_y - DOC_PADDING) / line_height) as usize) {
+        surface.draw_text(TextSection {
+          position: (doc_x + DOC_PADDING, y_offset),
+          texts:    vec![TextSegment {
+            content: line.to_string(),
+            style:   TextStyle {
+              size:  font_size,
+              color: text_color,
+            },
+          }],
+        });
+        y_offset += line_height;
+      }
+    }
   }
 
   /// Format a completion item kind to a display string
@@ -398,21 +610,25 @@ impl Component for Completion {
       // Up - move up
       (Key::Up, _, _, _) | (Key::Char('p'), true, _, _) => {
         self.move_up(1);
+        self.trigger_resolve();
         EventResult::Consumed(None)
       }
       // Down - move down
       (Key::Down, _, _, _) | (Key::Char('n'), true, _, _) => {
         self.move_down(1);
+        self.trigger_resolve();
         EventResult::Consumed(None)
       }
       // PageUp - page up
       (Key::PageUp, _, _, _) | (Key::Char('u'), true, _, _) => {
         self.move_up(MAX_VISIBLE_ITEMS / 2);
+        self.trigger_resolve();
         EventResult::Consumed(None)
       }
       // PageDown - page down
       (Key::PageDown, _, _, _) | (Key::Char('d'), true, _, _) => {
         self.move_down(MAX_VISIBLE_ITEMS / 2);
+        self.trigger_resolve();
         EventResult::Consumed(None)
       }
       // Home - to start
@@ -420,6 +636,7 @@ impl Component for Completion {
         self.cursor = 0;
         self.scroll_offset = 0;
         self.doc_resolved = false;
+        self.trigger_resolve();
         EventResult::Consumed(None)
       }
       // End - to end
@@ -428,6 +645,7 @@ impl Component for Completion {
           self.cursor = self.filtered.len() - 1;
           self.ensure_cursor_in_view();
           self.doc_resolved = false;
+          self.trigger_resolve();
         }
         EventResult::Consumed(None)
       }
@@ -672,7 +890,19 @@ impl Component for Completion {
       }
     });
 
-    // TODO: Render documentation panel if there's room and item is selected
+    // Render documentation panel for selected item
+    if let Some(selected_item) = self.selection() {
+      self.render_documentation(
+        selected_item,
+        cursor_x,
+        cursor_y,
+        anim_width,
+        anim_height,
+        alpha,
+        surface,
+        ctx,
+      );
+    }
   }
 
   fn cursor(&self, _area: Rect, _editor: &crate::Editor) -> (Option<Position>, CursorKind) {

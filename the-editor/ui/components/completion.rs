@@ -272,10 +272,89 @@ impl Completion {
         .as_ref()
         .map_or(false, |tags| tags.contains(&lsp::CompletionItemTag::DEPRECATED))
   }
+
+  /// Apply the selected completion item
+  fn apply_completion(&self, ctx: &mut Context, item: &CompletionItem) {
+    use crate::core::transaction::Transaction;
+    use crate::lsp::util::lsp_pos_to_pos;
+    use the_editor_lsp_types::types as lsp;
+
+    // For LSP items, get the offset encoding before borrowing editor
+    let offset_encoding = match item {
+      CompletionItem::Lsp(lsp_item) => {
+        let language_server = match ctx.editor.language_server_by_id(lsp_item.provider) {
+          Some(ls) => ls,
+          None => {
+            log::error!("Language server not found for completion");
+            return;
+          },
+        };
+        Some(language_server.offset_encoding())
+      },
+      CompletionItem::Other(_) => None,
+    };
+
+    let (view, doc) = crate::current!(ctx.editor);
+
+    match item {
+      CompletionItem::Lsp(lsp_item) => {
+        let offset_encoding = offset_encoding.unwrap(); // We know it's Some from above
+
+        // Get the text edit from the LSP item
+        // IMPORTANT: Use current cursor position as end, not the LSP's range end,
+        // because the user may have typed more characters while the completion was pending
+        let cursor = doc.selection(view.id).primary().cursor(doc.text().slice(..));
+
+        let (start, end, text) = match &lsp_item.item.text_edit {
+          Some(lsp::CompletionTextEdit::Edit(edit)) => {
+            // Use the LSP-provided start position, but extend end to current cursor
+            let start = lsp_pos_to_pos(doc.text(), edit.range.start, offset_encoding)
+              .unwrap_or_else(|| {
+                log::error!("Invalid LSP edit start position");
+                self.trigger_offset
+              });
+            // Use cursor position to capture any characters typed while waiting
+            (start, cursor, edit.new_text.clone())
+          },
+          Some(lsp::CompletionTextEdit::InsertAndReplace(edit)) => {
+            // Use the insert range start, but extend end to current cursor
+            let start = lsp_pos_to_pos(doc.text(), edit.insert.start, offset_encoding)
+              .unwrap_or_else(|| {
+                log::error!("Invalid LSP edit start position");
+                self.trigger_offset
+              });
+            (start, cursor, edit.new_text.clone())
+          },
+          None => {
+            // No text edit provided, fall back to inserting from trigger_offset to cursor
+            let start = self.trigger_offset;
+            let text = lsp_item.item.insert_text.as_ref().unwrap_or(&lsp_item.item.label);
+            (start, cursor, text.clone())
+          },
+        };
+
+        // Create and apply transaction
+        let transaction = Transaction::change(doc.text(), [(start, end, Some(text.into()))].iter().cloned());
+        doc.apply(&transaction, view.id);
+      },
+      CompletionItem::Other(other) => {
+        // For non-LSP completions, replace from trigger to cursor with the label
+        let cursor = doc.selection(view.id).primary().cursor(doc.text().slice(..));
+        let start = self.trigger_offset;
+        let end = cursor;
+
+        let transaction = Transaction::change(doc.text(), [(start, end, Some(other.label.clone().into()))].iter().cloned());
+        doc.apply(&transaction, view.id);
+      },
+    }
+
+    // Save to history
+    doc.append_changes_to_history(view);
+  }
 }
 
 impl Component for Completion {
-  fn handle_event(&mut self, event: &Event, _ctx: &mut Context) -> EventResult {
+  fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> EventResult {
     let Event::Key(key) = event else {
       return EventResult::Ignored(None);
     };
@@ -319,17 +398,27 @@ impl Component for Completion {
         }
         EventResult::Consumed(None)
       }
-      // Escape / Ctrl+c - close completion
-      (Key::Escape, _, _, _) | (Key::Char('c'), true, _, _) => {
-        EventResult::Consumed(Some(Box::new(|compositor, _ctx| {
-          compositor.pop();
+      // Escape - don't consume, let editor handle mode switch
+      // The editor_view will close completion and switch to normal mode
+      (Key::Escape, _, _, _) => EventResult::Ignored(None),
+      // Ctrl+c - explicitly close completion without mode switch
+      // Return a callback to signal we want to close (editor_view handles it)
+      (Key::Char('c'), true, _, _) => {
+        EventResult::Consumed(Some(Box::new(|_compositor, _ctx| {
+          // Empty callback - just signals completion should close
+          // EditorView will set self.completion = None
         })))
       }
       // Enter / Tab - accept completion
       (Key::Enter, _, _, _) | (Key::Tab, _, _, false) => {
-        // Will be handled by parent to apply the selected item
-        EventResult::Consumed(Some(Box::new(|compositor, _ctx| {
-          compositor.pop();
+        if let Some(item) = self.selection() {
+          // Apply the selected completion
+          self.apply_completion(ctx, item);
+        }
+        // Return a callback to signal we want to close (editor_view handles it)
+        EventResult::Consumed(Some(Box::new(|_compositor, _ctx| {
+          // Empty callback - just signals completion should close
+          // EditorView will set self.completion = None
         })))
       }
       _ => EventResult::Ignored(None),

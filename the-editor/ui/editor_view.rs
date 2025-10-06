@@ -265,6 +265,43 @@ impl Component for EditorView {
 
         // Handle insert mode specially - direct character insertion
         if cx.editor.mode() == Mode::Insert {
+          // Let completion handle the event first if it's active
+          if let Some(completion) = &mut self.completion {
+            // Give completion first chance to handle the event
+            match completion.handle_event(event, cx) {
+              EventResult::Consumed(callback) => {
+                // Completion handled the event
+                let should_close = callback.is_some();
+                if should_close {
+                  // Completion wants to close, clear it
+                  self.completion = None;
+                  cx.editor.last_completion = None;
+                }
+                return EventResult::Consumed(callback);
+              },
+              EventResult::Ignored(_) => {
+                // Completion didn't handle it, continue with normal insert mode handling
+                // But first, check if we should close completion on certain keys
+                match &key.code {
+                  // Close completion on navigation or mode-changing keys
+                  the_editor_renderer::Key::Escape
+                  | the_editor_renderer::Key::Left
+                  | the_editor_renderer::Key::Right
+                  | the_editor_renderer::Key::Up
+                  | the_editor_renderer::Key::Down
+                  | the_editor_renderer::Key::PageUp
+                  | the_editor_renderer::Key::PageDown
+                  | the_editor_renderer::Key::Home
+                  | the_editor_renderer::Key::End => {
+                    self.completion = None;
+                    cx.editor.last_completion = None;
+                  },
+                  _ => {},
+                }
+              },
+            }
+          }
+
           // In insert mode, handle character input directly
           match &key.code {
             the_editor_renderer::Key::Char(ch) if !key.ctrl && !key.alt => {
@@ -295,6 +332,9 @@ impl Component for EditorView {
 
               commands::insert_char(&mut cmd_cx, *ch);
 
+              // Extract callbacks before re-borrowing cx.editor
+              let callbacks = cmd_cx.callback;
+
               // Mark line as dirty after insertion (may be different if newline was inserted)
               let focus_view = cx.editor.tree.focus;
               let view = cx.editor.tree.get(focus_view);
@@ -310,6 +350,15 @@ impl Component for EditorView {
               };
               if new_line != current_line {
                 self.dirty_region.mark_line_dirty(new_line);
+              }
+
+              // Process any callbacks generated (e.g., from PostInsertChar hooks)
+              if !callbacks.is_empty() {
+                return EventResult::Consumed(Some(Box::new(move |compositor, cx| {
+                  for callback in callbacks {
+                    callback(compositor, cx);
+                  }
+                })));
               }
 
               return EventResult::Consumed(None);

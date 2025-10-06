@@ -161,7 +161,6 @@ fn request_completions_sync(
   editor: &mut Editor,
   compositor: &mut crate::ui::compositor::Compositor,
 ) {
-  use crate::ui::compositor::Component;
 
   log::info!("request_completions_sync called for cursor {}, kind: {:?}", trigger.cursor, trigger.kind);
 
@@ -411,8 +410,6 @@ fn show_completion(
   trigger_offset: usize,
   doc_id: DocumentId,
 ) {
-  use crate::ui::compositor::Component;
-
   // Verify we're still in insert mode
   if editor.mode != Mode::Insert {
     return;
@@ -433,6 +430,9 @@ fn show_completion(
     return;
   };
 
+  // Mark completion as triggered
+  editor.last_completion = Some(crate::editor::CompleteAction::Triggered);
+
   // Set the completion
   editor_view.set_completion(editor, items, trigger_offset);
 }
@@ -446,38 +446,90 @@ pub fn register_completion_hooks(handlers: &Handlers) {
   register_hook!(move |event: &mut PostInsertChar<'_, '_>| {
     let c = event.c;
     log::info!("PostInsertChar hook fired for char: '{}'", c);
-    let doc = doc!(event.cx.editor);
-    let view = view!(event.cx.editor);
-    let cursor = doc.selection(view.id).primary().cursor(doc.text().slice(..));
 
-    // Check if this is a trigger character
-    let is_trigger_char = doc
-      .language_servers()
-      .any(|ls| {
-        ls.capabilities()
-          .completion_provider
-          .as_ref()
-          .and_then(|cap| cap.trigger_characters.as_ref())
-          .map_or(false, |chars| chars.iter().any(|s| s.as_str() == c.to_string()))
-      });
+    // If completion is already active, update the filter
+    if event.cx.editor.last_completion.is_some() {
+      log::info!("Completion is active, updating filter");
+      let completions = completions_insert.clone();
+      event.cx.callback.push(Box::new(move |compositor, cx| {
+        let Some(editor_view) = compositor.find::<ui::EditorView>() else {
+          return;
+        };
 
-    if is_trigger_char {
-      log::info!("Trigger character detected, sending TriggerChar event");
-      completions_insert.event(CompletionEvent::TriggerChar {
-        cursor,
-        doc: doc.id,
-        view: view.id,
-      });
-    } else if crate::core::chars::char_is_word(c) {
-      // Auto-trigger on word characters
-      log::info!("Word character detected, sending AutoTrigger event");
-      completions_insert.event(CompletionEvent::AutoTrigger {
-        cursor,
-        doc: doc.id,
-        view: view.id,
-      });
+        if let Some(completion) = &mut editor_view.completion {
+          completion.update_filter(Some(c));
+
+          // Close completion if:
+          // 1. Filter resulted in no matches, OR
+          // 2. Character is not a word character (e.g., space)
+          if completion.is_empty() || !crate::core::chars::char_is_word(c) {
+            log::info!("Closing completion: empty={}, non-word={}",
+              completion.is_empty(), !crate::core::chars::char_is_word(c));
+            editor_view.completion = None;
+            cx.editor.last_completion = None;
+
+            // If we typed a trigger char, re-trigger completion
+            if !crate::core::chars::char_is_word(c) {
+              let doc = doc!(cx.editor);
+              let view = view!(cx.editor);
+              let cursor = doc.selection(view.id).primary().cursor(doc.text().slice(..));
+
+              let is_trigger_char = doc
+                .language_servers()
+                .any(|ls| {
+                  ls.capabilities()
+                    .completion_provider
+                    .as_ref()
+                    .and_then(|cap| cap.trigger_characters.as_ref())
+                    .map_or(false, |chars| chars.iter().any(|s| s.as_str() == c.to_string()))
+                });
+
+              if is_trigger_char {
+                completions.event(CompletionEvent::TriggerChar {
+                  cursor,
+                  doc: doc.id,
+                  view: view.id,
+                });
+              }
+            }
+          }
+        }
+      }));
     } else {
-      log::info!("Character '{}' is neither trigger nor word char", c);
+      // No completion active, try to trigger one
+      let doc = doc!(event.cx.editor);
+      let view = view!(event.cx.editor);
+      let cursor = doc.selection(view.id).primary().cursor(doc.text().slice(..));
+
+      // Check if this is a trigger character
+      let is_trigger_char = doc
+        .language_servers()
+        .any(|ls| {
+          ls.capabilities()
+            .completion_provider
+            .as_ref()
+            .and_then(|cap| cap.trigger_characters.as_ref())
+            .map_or(false, |chars| chars.iter().any(|s| s.as_str() == c.to_string()))
+        });
+
+      if is_trigger_char {
+        log::info!("Trigger character detected, sending TriggerChar event");
+        completions_insert.event(CompletionEvent::TriggerChar {
+          cursor,
+          doc: doc.id,
+          view: view.id,
+        });
+      } else if crate::core::chars::char_is_word(c) {
+        // Auto-trigger on word characters
+        log::info!("Word character detected, sending AutoTrigger event");
+        completions_insert.event(CompletionEvent::AutoTrigger {
+          cursor,
+          doc: doc.id,
+          view: view.id,
+        });
+      } else {
+        log::info!("Character '{}' is neither trigger nor word char", c);
+      }
     }
 
     Ok(())
@@ -487,6 +539,7 @@ pub fn register_completion_hooks(handlers: &Handlers) {
   register_hook!(move |event: &mut OnModeSwitch<'_, '_>| {
     if event.old_mode == Mode::Insert && event.new_mode != Mode::Insert {
       completions_mode.event(CompletionEvent::Cancel);
+      event.cx.editor.last_completion = None;
     }
     Ok(())
   });

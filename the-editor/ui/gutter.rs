@@ -10,6 +10,7 @@ use crate::{
     view::View,
   },
   editor::Editor,
+  theme::Theme,
   ui::compositor::{
     Event,
     Surface,
@@ -50,6 +51,7 @@ pub trait Gutter: Send + Sync {
     editor: &Editor,
     doc: &Document,
     view: &View,
+    theme: &Theme,
   ) -> Option<(String, Color)>;
 
   /// Handle an event (e.g., mouse click on this gutter)
@@ -144,6 +146,7 @@ impl GutterManager {
     editor: &Editor,
     doc: &Document,
     view: &View,
+    theme: &Theme,
     surface: &mut Surface,
     base_x: f32,
     y: f32,
@@ -156,7 +159,7 @@ impl GutterManager {
     for gutter in self.gutters.iter_mut().filter(|g| g.is_enabled()) {
       let width = gutter.width(view, doc);
 
-      if let Some((text, color)) = gutter.render_line(line_info, editor, doc, view) {
+      if let Some((text, color)) = gutter.render_line(line_info, editor, doc, view, theme) {
         // Right-align text within the gutter column
         let text_width = text.len();
         let padding = width.saturating_sub(text_width);
@@ -250,16 +253,27 @@ impl Gutter for LineNumberGutter {
     _editor: &Editor,
     _doc: &Document,
     _view: &View,
+    theme: &Theme,
   ) -> Option<(String, Color)> {
     if !line_info.first_visual_line {
       return None;
     }
 
     let display_num = line_info.doc_line + 1;
+
+    // Get color from theme
     let color = if line_info.selected {
-      Color::rgb(0.9, 0.9, 0.95) // Brighter for selected line
+      theme
+        .get("ui.linenr.selected")
+        .fg
+        .map(crate::ui::theme_color_to_renderer_color)
+        .unwrap_or(Color::rgb(0.9, 0.9, 0.95))
     } else {
-      Color::rgb(0.5, 0.5, 0.6) // Dimmed for other lines
+      theme
+        .get("ui.linenr")
+        .fg
+        .map(crate::ui::theme_color_to_renderer_color)
+        .unwrap_or(Color::rgb(0.5, 0.5, 0.6))
     };
 
     Some((format!("{:>width$}", display_num, width = self.width(_view, _doc)), color))
@@ -304,6 +318,7 @@ impl Gutter for DiagnosticGutter {
     _editor: &Editor,
     doc: &Document,
     _view: &View,
+    theme: &Theme,
   ) -> Option<(String, Color)> {
     if !line_info.first_visual_line {
       return None;
@@ -319,10 +334,38 @@ impl Gutter for DiagnosticGutter {
 
     use crate::core::diagnostics::Severity;
     let (symbol, color) = match diag.severity {
-      Some(Severity::Error) => ("●", Color::rgb(0.9, 0.3, 0.3)),
-      Some(Severity::Warning) | None => ("●", Color::rgb(0.9, 0.7, 0.3)),
-      Some(Severity::Info) => ("●", Color::rgb(0.3, 0.7, 0.9)),
-      Some(Severity::Hint) => ("●", Color::rgb(0.5, 0.8, 0.5)),
+      Some(Severity::Error) => (
+        "●",
+        theme
+          .get("error")
+          .fg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::rgb(0.9, 0.3, 0.3)),
+      ),
+      Some(Severity::Warning) | None => (
+        "●",
+        theme
+          .get("warning")
+          .fg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::rgb(0.9, 0.7, 0.3)),
+      ),
+      Some(Severity::Info) => (
+        "●",
+        theme
+          .get("info")
+          .fg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::rgb(0.3, 0.7, 0.9)),
+      ),
+      Some(Severity::Hint) => (
+        "●",
+        theme
+          .get("hint")
+          .fg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::rgb(0.5, 0.8, 0.5)),
+      ),
     };
 
     Some((symbol.to_string(), color))
@@ -367,6 +410,7 @@ impl Gutter for DiffGutter {
     _editor: &Editor,
     doc: &Document,
     _view: &View,
+    theme: &Theme,
   ) -> Option<(String, Color)> {
     let diff_handle = doc.diff_handle()?;
     let hunks = diff_handle.load();
@@ -400,14 +444,38 @@ impl Gutter for DiffGutter {
 
     // Determine the symbol and color
     let (symbol, color) = if is_pure_insertion(&hunk) {
-      ("▍", Color::rgb(0.3, 0.8, 0.3)) // Green for additions
+      (
+        "▍",
+        theme
+          .get("diff.plus.gutter")
+          .fg
+          .or(theme.get("diff.plus").fg)
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::rgb(0.3, 0.8, 0.3)),
+      )
     } else if is_pure_removal(&hunk) {
       if !line_info.first_visual_line {
         return None;
       }
-      ("▔", Color::rgb(0.9, 0.3, 0.3)) // Red for deletions
+      (
+        "▔",
+        theme
+          .get("diff.minus.gutter")
+          .fg
+          .or(theme.get("diff.minus").fg)
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::rgb(0.9, 0.3, 0.3)),
+      )
     } else {
-      ("▍", Color::rgb(0.7, 0.7, 0.3)) // Yellow for modifications
+      (
+        "▍",
+        theme
+          .get("diff.delta.gutter")
+          .fg
+          .or(theme.get("diff.delta").fg)
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::rgb(0.7, 0.7, 0.3)),
+      )
     };
 
     Some((symbol.to_string(), color))
@@ -452,6 +520,7 @@ impl Gutter for SpacerGutter {
     _editor: &Editor,
     _doc: &Document,
     _view: &View,
+    _theme: &Theme,
   ) -> Option<(String, Color)> {
     None // Spacer renders nothing
   }

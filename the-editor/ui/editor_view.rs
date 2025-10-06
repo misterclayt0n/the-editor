@@ -791,6 +791,7 @@ impl Component for EditorView {
           cx.editor,
           doc,
           view,
+          &cx.editor.theme,
           renderer,
           VIEW_PADDING_LEFT,
           y,

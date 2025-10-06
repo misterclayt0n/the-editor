@@ -476,20 +476,54 @@ impl Component for Completion {
     }
     menu_width = menu_width.min(MAX_MENU_WIDTH as f32 * UI_FONT_WIDTH);
 
-    // Position near cursor (TODO: get actual cursor position from context)
-    let x = 100.0;
-    let y = 100.0;
+    // Calculate cursor position from trigger_offset
+    // For now, use current cursor position as approximation
+    // TODO: Calculate exact position based on trigger_offset when cursor has moved
+    let (cursor_x, cursor_y) = {
+      let (view, doc) = crate::current_ref!(ctx.editor);
+      let text = doc.text();
+      let cursor_pos = doc.selection(view.id).primary().cursor(text.slice(..));
+
+      // Convert char position to line/column
+      let line = text.char_to_line(cursor_pos);
+      let line_start = text.line_to_char(line);
+      let col = cursor_pos - line_start;
+
+      // Get view scroll offset
+      let view_offset = doc.view_offset(view.id);
+      let anchor_line = text.char_to_line(view_offset.anchor.min(text.len_chars()));
+
+      // Calculate screen coordinates
+      let font_size = ctx.editor.font_size_override.unwrap_or(ctx.editor.config().font_size);
+      let font_width = surface.cell_width().max(1.0);
+      let gutter_width = 6; // Approximate gutter width
+      let gutter_offset = gutter_width as f32 * font_width;
+
+      const VIEW_PADDING_LEFT: f32 = 10.0;
+      const VIEW_PADDING_TOP: f32 = 10.0;
+      const LINE_SPACING: f32 = 2.0;
+
+      let base_x = VIEW_PADDING_LEFT + gutter_offset;
+      let base_y = VIEW_PADDING_TOP;
+
+      let rel_row = line.saturating_sub(anchor_line);
+      let x = base_x + (col as f32) * font_width;
+      // Position below the cursor line
+      let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING) + font_size + LINE_SPACING;
+
+      (x, y)
+    };
 
     // Draw background
     let corner_radius = 6.0;
-    surface.draw_rounded_rect(x, y, menu_width, menu_height, corner_radius, bg_color);
+    surface.draw_rounded_rect(cursor_x, cursor_y, menu_width, menu_height, corner_radius, bg_color);
 
     // Draw border
     let border_color = Color::new(0.3, 0.3, 0.35, 0.8);
-    surface.draw_rounded_rect_stroke(x, y, menu_width, menu_height, corner_radius, 1.0, border_color);
+    surface.draw_rounded_rect_stroke(cursor_x, cursor_y, menu_width, menu_height, corner_radius, 1.0, border_color);
 
     // Render items
-    surface.with_overlay_region(x, y, menu_width, menu_height, |surface| {
+    surface.with_overlay_region(cursor_x, cursor_y, menu_width, menu_height, |surface| {
       let visible_range = self.scroll_offset..self.scroll_offset + visible_items;
       for (row, &(idx, _score)) in self.filtered[visible_range.clone()].iter().enumerate() {
         let item = &self.items[idx as usize];
@@ -504,12 +538,12 @@ impl Component for Completion {
           CompletionItem::Other(other) => (other.label.as_str(), other.kind.as_deref().unwrap_or(""), false),
         };
 
-        let item_y = y + item_padding + (row as f32 * line_height);
+        let item_y = cursor_y + item_padding + (row as f32 * line_height);
 
         // Draw selection background
         if is_selected {
           surface.draw_rect(
-            x + 4.0,
+            cursor_x + 4.0,
             item_y - 2.0,
             menu_width - 8.0,
             line_height,
@@ -534,7 +568,7 @@ impl Component for Completion {
 
         // Note: renderer doesn't support strikethrough, so deprecated items just use gray color
         surface.draw_text(TextSection {
-          position: (x + 8.0, item_y),
+          position: (cursor_x + 8.0, item_y),
           texts:    vec![
             TextSegment {
               content: label.to_string(),

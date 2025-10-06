@@ -56,7 +56,7 @@ the-editor-lsp-types = { path = "../the-lsp-types" }
 the-editor-parsec    = { path = "../the-parsec" }
 the-editor-renderer  = { path = "../the-renderer" }
 the-editor-stdx      = { path = "../the-stdx" }
-the-editor-vcs       = { path = "../the-vcs" }
+the-editor-vcs       = { path = "../the-vcs", features = ["git"] }
 
 [target.'cfg(unix)'.dependencies]
 libc   = "0.2"

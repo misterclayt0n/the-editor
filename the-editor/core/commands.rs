@@ -3184,6 +3184,65 @@ pub fn commit_undo_checkpoint(cx: &mut Context) {
   doc.append_changes_to_history(view);
 }
 
+/// Toggle line numbers gutter
+pub fn toggle_line_numbers(cx: &mut Context) {
+  cx.callback.push(Box::new(|compositor, cx| {
+    if let Some(editor_view) = compositor.find::<crate::ui::editor_view::EditorView>() {
+      let toggled = editor_view.gutter_manager.toggle_gutter("line-numbers");
+      if toggled {
+        // Force redraw of all lines since text positions will change
+        editor_view.mark_all_dirty();
+        cx.editor.set_status("Toggled line numbers");
+      }
+    }
+  }));
+}
+
+/// Toggle diagnostics gutter
+pub fn toggle_diagnostics_gutter(cx: &mut Context) {
+  cx.callback.push(Box::new(|compositor, cx| {
+    if let Some(editor_view) = compositor.find::<crate::ui::editor_view::EditorView>() {
+      let toggled = editor_view.gutter_manager.toggle_gutter("diagnostics");
+      if toggled {
+        // Force redraw of all lines since text positions will change
+        editor_view.mark_all_dirty();
+        cx.editor.set_status("Toggled diagnostics gutter");
+      }
+    }
+  }));
+}
+
+/// Toggle diff gutter
+pub fn toggle_diff_gutter(cx: &mut Context) {
+  cx.callback.push(Box::new(|compositor, cx| {
+    if let Some(editor_view) = compositor.find::<crate::ui::editor_view::EditorView>() {
+      let toggled = editor_view.gutter_manager.toggle_gutter("diff");
+      if toggled {
+        // Force redraw of all lines since text positions will change
+        editor_view.mark_all_dirty();
+        cx.editor.set_status("Toggled diff gutter");
+      }
+    }
+  }));
+}
+
+/// Show list of all gutters and their state
+pub fn list_gutters(cx: &mut Context) {
+  cx.callback.push(Box::new(|compositor, cx| {
+    if let Some(editor_view) = compositor.find::<crate::ui::editor_view::EditorView>() {
+      let gutters = editor_view.gutter_manager.list_gutters();
+      let status = gutters
+        .iter()
+        .map(|(_id, name, enabled)| {
+          format!("{}: {}", name, if *enabled { "ON" } else { "OFF" })
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+      cx.editor.set_status(format!("Gutters: {}", status));
+    }
+  }));
+}
+
 // pub fn insert_register(cx: &mut Context) {
 //   cx.editor.autoinfo = Some(Info::from_registers(
 //     "Insert register",

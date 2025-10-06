@@ -10,6 +10,7 @@ use crate::core::graphics::Rect;
 pub mod components;
 pub mod compositor;
 pub mod editor_view;
+pub mod gutter;
 pub mod job;
 pub mod render_cache;
 pub mod render_commands;

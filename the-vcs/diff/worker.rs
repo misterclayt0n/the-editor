@@ -206,7 +206,7 @@ impl EventAccumulator {
         timeout: Some(timeout),
       }) => {
         let notify_clone = diff_finished_notify.clone();
-        tokio::task::spawn_local(async move {
+        tokio::task::spawn(async move {
           let res = {
             // Acquire a lock on the redraw handle.
             // The lock will block the rendering from occurring while held.
@@ -233,7 +233,7 @@ impl EventAccumulator {
         lock,
         timeout: None,
       }) => {
-        tokio::task::spawn_local(async move {
+        tokio::task::spawn(async move {
           diff_finished_notify.notified().await;
           // diff is done release the lock
           drop(lock)

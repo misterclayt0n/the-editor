@@ -38,6 +38,7 @@ use crate::{
       EventResult,
       Surface,
     },
+    gutter::GutterManager,
     render_cache::DirtyRegion,
     render_commands::{
       CommandBatcher,
@@ -54,22 +55,24 @@ const CURSOR_HEIGHT_EXTENSION: f32 = 4.0;
 const LINE_SPACING: f32 = 4.0;
 
 pub struct EditorView {
-  pub keymaps:         Keymaps,
-  on_next_key:         Option<(OnKeyCallback, OnKeyCallbackKind)>,
+  pub keymaps:          Keymaps,
+  on_next_key:          Option<(OnKeyCallback, OnKeyCallbackKind)>,
   // Track last command for macro replay
-  last_insert:         (MappableCommand, Vec<KeyBinding>),
+  last_insert:          (MappableCommand, Vec<KeyBinding>),
   // Rendering optimizations
-  dirty_region:        DirtyRegion,
-  command_batcher:     CommandBatcher,
-  last_cursor_pos:     Option<usize>,
-  last_selection_hash: u64,
+  dirty_region:         DirtyRegion,
+  command_batcher:      CommandBatcher,
+  last_cursor_pos:      Option<usize>,
+  last_selection_hash:  u64,
   // Cursor animation state
-  cursor_anim_enabled: bool,
-  cursor_lerp_factor:  f32,
-  cursor_pos_smooth:   Option<(f32, f32)>,
-  cursor_anim_active:  bool,
+  cursor_anim_enabled:  bool,
+  cursor_lerp_factor:   f32,
+  cursor_pos_smooth:    Option<(f32, f32)>,
+  cursor_anim_active:   bool,
   // Zoom animation state
-  zoom_anim_active:    bool,
+  zoom_anim_active:     bool,
+  // Gutter management
+  pub gutter_manager:   GutterManager,
 }
 
 impl EditorView {
@@ -88,11 +91,17 @@ impl EditorView {
       cursor_pos_smooth: None,
       cursor_anim_active: false,
       zoom_anim_active: false,
+      gutter_manager: GutterManager::with_defaults(),
     }
   }
 
   pub fn has_pending_on_next_key(&self) -> bool {
     self.on_next_key.is_some()
+  }
+
+  /// Mark all visible lines as dirty to force a full redraw
+  pub fn mark_all_dirty(&mut self) {
+    self.dirty_region.mark_all_dirty();
   }
 }
 
@@ -506,8 +515,9 @@ impl Component for EditorView {
     let doc_text = doc.text();
     let selection = doc.selection(focus_view);
 
-    // Add gutter offset to base_x so text renders after gutters
-    let gutter_offset = view.gutter_offset(doc) as f32 * font_width;
+    // Calculate gutter offset using GutterManager
+    let gutter_width = self.gutter_manager.total_width(view, doc);
+    let gutter_offset = gutter_width as f32 * font_width;
     let base_x = VIEW_PADDING_LEFT + gutter_offset;
 
     let cursor_pos = selection.primary().cursor(doc_text.slice(..));
@@ -655,6 +665,7 @@ impl Component for EditorView {
     let mut current_row = usize::MAX;
     let mut grapheme_count = 0;
     let mut line_batch = Vec::new(); // Batch characters on the same line
+    let mut rendered_gutter_lines = std::collections::HashSet::new(); // Track which lines have gutters rendered
 
     // Helper to flush a line batch
     let flush_line_batch = |batch: &mut Vec<(f32, f32, String, Color)>,
@@ -757,6 +768,34 @@ impl Component for EditorView {
 
       let x = base_x + (rel_col as f32) * font_width;
       let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING);
+
+      // Render gutter for this line if we haven't already
+      let doc_line = doc_text.char_to_line(g.char_idx.min(doc_text.len_chars()));
+      if rendered_gutter_lines.insert(doc_line) {
+        // This is the first time we're rendering this doc line, so render its gutter
+        let cursor_line = doc_text.char_to_line(cursor_pos.min(doc_text.len_chars()));
+        let selected = doc_line == cursor_line;
+
+        let line_info = crate::ui::gutter::GutterLineInfo {
+          doc_line,
+          visual_line: rel_row,
+          selected,
+          first_visual_line: g.visual_pos.col == 0, // First visual line if at column 0
+        };
+
+        self.gutter_manager.render_line(
+          &line_info,
+          cx.editor,
+          doc,
+          view,
+          renderer,
+          VIEW_PADDING_LEFT,
+          y,
+          font_width,
+          font_size,
+          normal,
+        );
+      }
 
       // Add selection background command
       let doc_len = g.doc_chars();

@@ -152,5 +152,3 @@ the user and ask for further feedback and clarifications.
 
 The user is a domain expert and will be able to not only assist, but to also suggest
 and think about the proper solutions in these cases.
-
-

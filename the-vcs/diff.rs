@@ -66,7 +66,7 @@ impl DiffHandle {
       diff_finished_notify: Arc::default(),
       diff_alloc:           imara_diff::Diff::default(),
     };
-    let handle = tokio::task::spawn_local(worker.run(diff_base, doc));
+    let handle = tokio::task::spawn(worker.run(diff_base, doc));
     let differ = DiffHandle {
       channel: sender,
       diff,

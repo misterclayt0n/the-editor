@@ -315,6 +315,28 @@ impl<T: 'static + Send + Sync> Picker<T> {
     self.ensure_cursor_in_view();
   }
 
+  fn to_start(&mut self) {
+    let len = self.matcher.snapshot().matched_item_count();
+    if len == 0 {
+      return;
+    }
+    self.prev_cursor = self.cursor;
+    self.cursor = 0;
+    self.selection_anim = 0.0; // Start animation
+    self.ensure_cursor_in_view();
+  }
+
+  fn to_end(&mut self) {
+    let len = self.matcher.snapshot().matched_item_count();
+    if len == 0 {
+      return;
+    }
+    self.prev_cursor = self.cursor;
+    self.cursor = len.saturating_sub(1);
+    self.selection_anim = 0.0; // Start animation
+    self.ensure_cursor_in_view();
+  }
+
   /// Update the search query
   fn update_query(&mut self) {
     use nucleo::pattern::{
@@ -352,6 +374,131 @@ impl<T: 'static + Send + Sync> Picker<T> {
       self.query_cursor = cursor;
       self.update_query();
     }
+  }
+
+  fn delete_char_forward(&mut self) {
+    if self.query_cursor < self.query.len() {
+      self.query.remove(self.query_cursor);
+      self.update_query();
+    }
+  }
+
+  fn move_cursor_left(&mut self) {
+    if self.query_cursor > 0 {
+      let mut cursor = self.query_cursor;
+      while cursor > 0 {
+        cursor -= 1;
+        if self.query.is_char_boundary(cursor) {
+          break;
+        }
+      }
+      self.query_cursor = cursor;
+    }
+  }
+
+  fn move_cursor_right(&mut self) {
+    if self.query_cursor < self.query.len() {
+      let mut cursor = self.query_cursor + 1;
+      while cursor < self.query.len() && !self.query.is_char_boundary(cursor) {
+        cursor += 1;
+      }
+      self.query_cursor = cursor;
+    }
+  }
+
+  fn is_word_boundary(c: char) -> bool {
+    c.is_whitespace() || c == '/' || c == '-' || c == '_'
+  }
+
+  fn move_word_backward(&mut self) {
+    if self.query_cursor == 0 {
+      return;
+    }
+
+    let chars: Vec<char> = self.query.chars().collect();
+
+    // Convert byte position to char position
+    let char_pos = self.query[..self.query_cursor].chars().count();
+    if char_pos == 0 {
+      return;
+    }
+
+    let mut char_idx = char_pos.saturating_sub(1);
+
+    // Skip whitespace
+    while char_idx > 0 && Self::is_word_boundary(chars[char_idx]) {
+      char_idx -= 1;
+    }
+
+    // Move to start of word
+    while char_idx > 0 && !Self::is_word_boundary(chars[char_idx - 1]) {
+      char_idx -= 1;
+    }
+
+    // Convert char position back to byte position
+    self.query_cursor = self.query.chars().take(char_idx).map(|c| c.len_utf8()).sum();
+  }
+
+  fn move_word_forward(&mut self) {
+    let chars: Vec<char> = self.query.chars().collect();
+    if chars.is_empty() {
+      return;
+    }
+
+    // Convert byte position to char position
+    let char_pos = self.query[..self.query_cursor].chars().count();
+    if char_pos >= chars.len() {
+      return;
+    }
+
+    let mut char_idx = char_pos;
+
+    // Skip current word
+    while char_idx < chars.len() && !Self::is_word_boundary(chars[char_idx]) {
+      char_idx += 1;
+    }
+
+    // Skip whitespace
+    while char_idx < chars.len() && Self::is_word_boundary(chars[char_idx]) {
+      char_idx += 1;
+    }
+
+    // Convert char position back to byte position
+    self.query_cursor = self.query.chars().take(char_idx).map(|c| c.len_utf8()).sum();
+  }
+
+  fn delete_word_backward(&mut self) {
+    if self.query_cursor == 0 {
+      return;
+    }
+
+    let old_cursor = self.query_cursor;
+    self.move_word_backward();
+    self.query.replace_range(self.query_cursor..old_cursor, "");
+    self.update_query();
+  }
+
+  fn delete_word_forward(&mut self) {
+    if self.query_cursor >= self.query.len() {
+      return;
+    }
+
+    let old_cursor = self.query_cursor;
+    self.move_word_forward();
+    self.query.replace_range(old_cursor..self.query_cursor, "");
+    self.query_cursor = old_cursor;
+    self.update_query();
+  }
+
+  fn kill_to_end(&mut self) {
+    self.query.truncate(self.query_cursor);
+    self.update_query();
+  }
+
+  fn kill_to_start(&mut self) {
+    self.query.replace_range(..self.query_cursor, "");
+    self.query_cursor = 0;
+    self.update_query();
   }
 
   /// Close the picker
@@ -476,8 +623,10 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
       return EventResult::Ignored(None);
     };
 
-    match key.code {
-      Key::Escape => {
+    // Emacs-style keybindings (like Helix)
+    match (key.code, key.ctrl, key.alt, key.shift) {
+      // Escape / Ctrl+c - close
+      (Key::Escape, _, _, _) | (Key::Char('c'), true, _, _) => {
         self.close();
         let callback = Box::new(
           |compositor: &mut crate::ui::compositor::Compositor, _ctx: &mut Context| {
@@ -486,7 +635,8 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
         );
         EventResult::Consumed(Some(callback))
       },
-      Key::Enter => {
+      // Enter - select
+      (Key::Enter, _, _, _) => {
         self.select();
         let callback = Box::new(
           |compositor: &mut crate::ui::compositor::Compositor, _ctx: &mut Context| {
@@ -495,27 +645,99 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
         );
         EventResult::Consumed(Some(callback))
       },
-      Key::Up if key.ctrl => {
-        self.page_up();
+
+      // Query text editing (Emacs-style)
+      // Ctrl+b / Left - backward char
+      (Key::Char('b'), true, _, _) | (Key::Left, false, false, false) => {
+        self.move_cursor_left();
         EventResult::Consumed(None)
       },
-      Key::Up => {
-        self.move_up();
+      // Ctrl+f / Right - forward char
+      (Key::Char('f'), true, _, _) | (Key::Right, false, false, false) => {
+        self.move_cursor_right();
         EventResult::Consumed(None)
       },
-      Key::Down if key.ctrl => {
-        self.page_down();
+      // Alt+b / Ctrl+Left - backward word
+      (Key::Char('b'), _, true, _) | (Key::Left, true, false, _) => {
+        self.move_word_backward();
         EventResult::Consumed(None)
       },
-      Key::Down => {
-        self.move_down();
+      // Alt+f / Ctrl+Right - forward word
+      (Key::Char('f'), _, true, _) | (Key::Right, true, false, _) => {
+        self.move_word_forward();
         EventResult::Consumed(None)
       },
-      Key::Backspace => {
+      // Ctrl+a - start of query line
+      (Key::Char('a'), true, _, _) => {
+        self.query_cursor = 0;
+        EventResult::Consumed(None)
+      },
+      // Ctrl+e - end of query line
+      (Key::Char('e'), true, _, _) => {
+        self.query_cursor = self.query.len();
+        EventResult::Consumed(None)
+      },
+      // Ctrl+h / Backspace - delete char backwards
+      (Key::Char('h'), true, _, _) | (Key::Backspace, false, false, _) => {
         self.delete_char_backwards();
         EventResult::Consumed(None)
       },
-      Key::Char(c) => {
+      // Delete - delete char forward
+      (Key::Delete, false, false, false) => {
+        self.delete_char_forward();
+        EventResult::Consumed(None)
+      },
+      // Ctrl+w / Alt+Backspace / Ctrl+Backspace - delete word backward
+      (Key::Char('w'), true, _, _) | (Key::Backspace, _, true, _) | (Key::Backspace, true, _, _) => {
+        self.delete_word_backward();
+        EventResult::Consumed(None)
+      },
+      // Alt+d / Alt+Delete / Ctrl+Delete - delete word forward
+      (Key::Char('d'), _, true, _) | (Key::Delete, _, true, _) | (Key::Delete, true, _, _) => {
+        self.delete_word_forward();
+        EventResult::Consumed(None)
+      },
+      // Ctrl+k - kill to end of query
+      (Key::Char('k'), true, _, _) => {
+        self.kill_to_end();
+        EventResult::Consumed(None)
+      },
+
+      // List navigation
+      // Ctrl+p / Up / Shift+Tab - move up
+      (Key::Char('p'), true, _, _) | (Key::Up, false, false, false) | (Key::Tab, _, _, true) => {
+        self.move_up();
+        EventResult::Consumed(None)
+      },
+      // Ctrl+n / Down / Tab - move down
+      (Key::Char('n'), true, _, _) | (Key::Down, false, false, false) | (Key::Tab, _, _, false) => {
+        self.move_down();
+        EventResult::Consumed(None)
+      },
+      // Ctrl+u / PageUp - page up
+      (Key::Char('u'), true, _, _) | (Key::PageUp, _, _, _) => {
+        self.page_up();
+        EventResult::Consumed(None)
+      },
+      // Ctrl+d / PageDown - page down (note: conflicts with delete forward, but Ctrl+d for page down is more common in pickers)
+      // We handle delete forward with just Delete key above
+      (Key::Char('d'), true, _, _) | (Key::PageDown, _, _, _) => {
+        self.page_down();
+        EventResult::Consumed(None)
+      },
+      // Home - to start
+      (Key::Home, _, _, _) => {
+        self.to_start();
+        EventResult::Consumed(None)
+      },
+      // End - to end
+      (Key::End, _, _, _) => {
+        self.to_end();
+        EventResult::Consumed(None)
+      },
+
+      // Regular character input
+      (Key::Char(c), false, false, _) => {
         self.insert_char(c);
         EventResult::Consumed(None)
       },

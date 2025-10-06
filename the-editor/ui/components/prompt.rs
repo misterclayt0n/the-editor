@@ -141,66 +141,113 @@ impl Prompt {
       return PromptEvent::Update;
     }
 
-    match (key.code, key.shift) {
-      (Key::Enter, _) => {
-        // Execute command
+    // Emacs-style keybindings (like Helix)
+    match (key.code, key.ctrl, key.alt, key.shift) {
+      // Enter - execute
+      (Key::Enter, _, _, _) => {
         if !self.input.trim().is_empty() {
           self.add_to_history(self.input.clone());
         }
         PromptEvent::Validate
       },
-      (Key::Escape, _) => {
-        // Cancel prompt and exit selection
+      // Escape / Ctrl+c - abort
+      (Key::Escape, _, _, _) | (Key::Char('c'), true, _, _) => {
         self.exit_selection();
         PromptEvent::Abort
       },
-      (Key::Backspace, _) => {
+      // Ctrl+b / Left - backward char
+      (Key::Char('b'), true, _, _) | (Key::Left, false, false, false) => {
+        self.move_cursor_left();
+        PromptEvent::Update
+      },
+      // Ctrl+f / Right - forward char
+      (Key::Char('f'), true, _, _) | (Key::Right, false, false, false) => {
+        self.move_cursor_right();
+        PromptEvent::Update
+      },
+      // Alt+b / Ctrl+Left - backward word
+      (Key::Char('b'), _, true, _) | (Key::Left, true, false, _) => {
+        self.move_word_backward();
+        PromptEvent::Update
+      },
+      // Alt+f / Ctrl+Right - forward word
+      (Key::Char('f'), _, true, _) | (Key::Right, true, false, _) => {
+        self.move_word_forward();
+        PromptEvent::Update
+      },
+      // Ctrl+a / Home - start of line
+      (Key::Char('a'), true, _, _) | (Key::Home, _, _, _) => {
+        self.cursor = 0;
+        PromptEvent::Update
+      },
+      // Ctrl+e / End - end of line
+      (Key::Char('e'), true, _, _) | (Key::End, _, _, _) => {
+        self.cursor = self.input.len();
+        PromptEvent::Update
+      },
+      // Ctrl+h / Backspace - delete char backward
+      (Key::Char('h'), true, _, _) | (Key::Backspace, false, false, _) => {
         self.delete_char_backward();
         self.recalculate_completions(editor);
         PromptEvent::Update
       },
-      (Key::Delete, _) => {
+      // Ctrl+d / Delete - delete char forward
+      (Key::Char('d'), true, _, _) | (Key::Delete, false, false, false) => {
         self.delete_char_forward();
         self.recalculate_completions(editor);
         PromptEvent::Update
       },
-      (Key::Left, _) => {
-        self.move_cursor_left();
+      // Ctrl+w / Alt+Backspace / Ctrl+Backspace - delete word backward
+      (Key::Char('w'), true, _, _) | (Key::Backspace, _, true, _) | (Key::Backspace, true, _, _) => {
+        self.delete_word_backward();
+        self.recalculate_completions(editor);
         PromptEvent::Update
       },
-      (Key::Right, _) => {
-        self.move_cursor_right();
+      // Alt+d / Alt+Delete / Ctrl+Delete - delete word forward
+      (Key::Char('d'), _, true, _) | (Key::Delete, _, true, _) | (Key::Delete, true, _, _) => {
+        self.delete_word_forward();
+        self.recalculate_completions(editor);
         PromptEvent::Update
       },
-      (Key::Up, _) => {
-        // Only use for history navigation (not completion)
+      // Ctrl+k - kill to end of line
+      (Key::Char('k'), true, _, _) => {
+        self.kill_to_end();
+        self.recalculate_completions(editor);
+        PromptEvent::Update
+      },
+      // Ctrl+u - kill to start of line
+      (Key::Char('u'), true, _, _) => {
+        self.kill_to_start();
+        self.recalculate_completions(editor);
+        PromptEvent::Update
+      },
+      // Ctrl+p / Up - history previous
+      (Key::Char('p'), true, _, _) | (Key::Up, false, false, false) => {
         self.history_previous();
         PromptEvent::Update
       },
-      (Key::Down, _) => {
-        // Only use for history navigation (not completion)
+      // Ctrl+n / Down - history next
+      (Key::Char('n'), true, _, _) | (Key::Down, false, false, false) => {
         self.history_next();
         PromptEvent::Update
       },
-      (Key::Tab, false) => {
-        // Tab - cycle forward through completions
+      // Tab - next completion
+      (Key::Tab, _, _, false) => {
         self.change_completion_selection_forward();
         PromptEvent::Update
       },
-      (Key::Tab, true) => {
-        // Shift+Tab - cycle backward through completions
+      // Shift+Tab - previous completion
+      (Key::Tab, _, _, true) => {
         self.change_completion_selection_backward();
         PromptEvent::Update
       },
-      (Key::Home, _) => {
-        self.cursor = 0;
+      // Ctrl+q - exit selection
+      (Key::Char('q'), true, _, _) => {
+        self.exit_selection();
         PromptEvent::Update
       },
-      (Key::End, _) => {
-        self.cursor = self.input.len();
-        PromptEvent::Update
-      },
-      (Key::Char(c), _) => {
+      // Regular character input
+      (Key::Char(c), false, false, _) => {
         self.insert_char(c);
         self.recalculate_completions(editor);
         PromptEvent::Update
@@ -596,6 +643,83 @@ impl Prompt {
     if self.cursor < self.input.len() {
       self.cursor += 1;
     }
+  }
+
+  fn is_word_boundary(c: char) -> bool {
+    c.is_whitespace() || c == '/' || c == '-' || c == '_'
+  }
+
+  fn move_word_backward(&mut self) {
+    if self.cursor == 0 {
+      return;
+    }
+
+    let chars: Vec<char> = self.input.chars().collect();
+    let mut pos = self.cursor.saturating_sub(1);
+
+    // Skip whitespace
+    while pos > 0 && Self::is_word_boundary(chars[pos]) {
+      pos -= 1;
+    }
+
+    // Move to start of word
+    while pos > 0 && !Self::is_word_boundary(chars[pos - 1]) {
+      pos -= 1;
+    }
+
+    self.cursor = pos;
+  }
+
+  fn move_word_forward(&mut self) {
+    let chars: Vec<char> = self.input.chars().collect();
+    if self.cursor >= chars.len() {
+      return;
+    }
+
+    let mut pos = self.cursor;
+
+    // Skip current word
+    while pos < chars.len() && !Self::is_word_boundary(chars[pos]) {
+      pos += 1;
+    }
+
+    // Skip whitespace
+    while pos < chars.len() && Self::is_word_boundary(chars[pos]) {
+      pos += 1;
+    }
+
+    self.cursor = pos;
+  }
+
+  fn delete_word_backward(&mut self) {
+    if self.cursor == 0 {
+      return;
+    }
+
+    let old_cursor = self.cursor;
+    self.move_word_backward();
+    self.input.replace_range(self.cursor..old_cursor, "");
+  }
+
+  fn delete_word_forward(&mut self) {
+    let chars: Vec<char> = self.input.chars().collect();
+    if self.cursor >= chars.len() {
+      return;
+    }
+
+    let old_cursor = self.cursor;
+    self.move_word_forward();
+    self.input.replace_range(old_cursor..self.cursor, "");
+    self.cursor = old_cursor;
+  }
+
+  fn kill_to_end(&mut self) {
+    self.input.truncate(self.cursor);
+  }
+
+  fn kill_to_start(&mut self) {
+    self.input.replace_range(..self.cursor, "");
+    self.cursor = 0;
   }
 
   /// Recalculate completions based on current input

@@ -24,6 +24,7 @@ use crate::{
   ui::{
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
+    components::button::Button,
     compositor::{
       Component,
       Context,
@@ -64,30 +65,38 @@ pub enum PromptEvent {
 /// A prompt component for handling command input
 pub struct Prompt {
   /// Current input text
-  input:              String,
+  input:                  String,
   /// Cursor position within the input
-  cursor:             usize,
+  cursor:                 usize,
   /// Command history (previous commands)
-  history:            VecDeque<String>,
+  history:                VecDeque<String>,
   /// Current position in history during navigation
-  history_pos:        Option<usize>,
+  history_pos:            Option<usize>,
   /// Current completions based on input
-  completions:        Vec<Completion>,
+  completions:            Vec<Completion>,
   /// Index of selected completion
-  selection:          Option<usize>,
+  selection:              Option<usize>,
   /// Completion function to generate completions
-  completion_fn:      Option<CompletionFn>,
+  completion_fn:          Option<CompletionFn>,
   /// Maximum history size
-  max_history:        usize,
+  max_history:            usize,
   /// Prefix for the prompt (e.g., ":")
-  prefix:             String,
+  prefix:                 String,
   /// Horizontal scroll offset (in characters)
-  scroll_offset:      usize,
+  scroll_offset:          usize,
   /// Cursor animation state
-  cursor_pos_smooth:  Option<f32>,
-  cursor_anim_active: bool,
+  cursor_pos_smooth:      Option<f32>,
+  cursor_anim_active:     bool,
   /// Border glow animation (0.0 = start, 1.0 = done)
-  glow_anim_t:        f32,
+  glow_anim_t:            f32,
+  /// Completion scroll offset (for scrolling through many completions)
+  completion_scroll:      usize,
+  /// Selection animation (0.0 = start, 1.0 = done)
+  selection_anim:         f32,
+  /// Last selected index (to detect selection changes)
+  last_selection:         Option<usize>,
+  /// Completion list animation (0.0 = hidden, 1.0 = shown)
+  completion_list_anim_t: f32,
 }
 
 impl Prompt {
@@ -106,7 +115,11 @@ impl Prompt {
       scroll_offset: 0,
       cursor_pos_smooth: None,
       cursor_anim_active: false,
-      glow_anim_t: 0.0, // Start glow animation
+      glow_anim_t: 0.0,
+      completion_scroll: 0,
+      selection_anim: 1.0,
+      last_selection: None,
+      completion_list_anim_t: 0.0,
     }
   }
 
@@ -216,6 +229,10 @@ impl Prompt {
     self.selection = None;
     self.history_pos = None;
     self.scroll_offset = 0;
+    self.completion_scroll = 0;
+    self.selection_anim = 1.0;
+    self.last_selection = None;
+    self.completion_list_anim_t = 0.0;
   }
 
   /// Update scroll offset to keep cursor visible
@@ -251,11 +268,25 @@ impl Prompt {
     let viewport_width = surface.width() as f32;
     surface.draw_rect(0.0, base_y, viewport_width, STATUS_BAR_HEIGHT, bg_color);
 
-    // Update glow animation (time-based) - balanced speed
+    // Update animations (time-based)
     const GLOW_SPEED: f32 = 0.025; // Base speed for sweeping effect
     if self.glow_anim_t < 1.0 {
       let speed = GLOW_SPEED * 300.0; // Faster but still visible
       self.glow_anim_t = (self.glow_anim_t + speed * cx.dt).min(1.0);
+    }
+
+    // Update selection animation (like picker)
+    const SELECTION_ANIM_SPEED: f32 = 15.0;
+    if self.selection_anim < 1.0 {
+      self.selection_anim = (self.selection_anim + cx.dt * SELECTION_ANIM_SPEED).min(1.0);
+    }
+
+    // Update completion list animation
+    const COMPLETION_LIST_ANIM_SPEED: f32 = 12.0;
+    if !self.completions.is_empty() && self.completion_list_anim_t < 1.0 {
+      self.completion_list_anim_t = (self.completion_list_anim_t + cx.dt * COMPLETION_LIST_ANIM_SPEED).min(1.0);
+    } else if self.completions.is_empty() {
+      self.completion_list_anim_t = 0.0;
     }
 
     // Draw bordered box around prompt area
@@ -264,16 +295,18 @@ impl Prompt {
     let border_color = Color::new(0.3, 0.3, 0.35, 1.0);
     const BORDER_THICKNESS: f32 = 1.0;
 
-    // Calculate completion area for stencil mask
-    const COMPLETION_ITEM_HEIGHT: f32 = 20.0;
+    // Calculate completion area for stencil mask (updated to match new rendering)
+    const COMPLETION_ITEM_HEIGHT: f32 = 24.0;
+    const ITEM_GAP: f32 = 2.0;
     const MAX_VISIBLE: usize = 10;
     const COMPLETION_PADDING: f32 = 12.0;
     // Completion box scales with prompt box (slightly inset)
     let completion_x = COMPLETION_PADDING;
     let completion_width = prompt_box_width - COMPLETION_PADDING * 2.0;
     let completion_height = if !self.completions.is_empty() {
-      let visible_count = self.completions.len().min(MAX_VISIBLE);
-      visible_count as f32 * COMPLETION_ITEM_HEIGHT + 5.0 // Include 5px gap
+      let offset = self.completion_scroll;
+      let visible_count = (self.completions.len() - offset).min(MAX_VISIBLE);
+      visible_count as f32 * (COMPLETION_ITEM_HEIGHT + ITEM_GAP) - ITEM_GAP + 5.0 // Include 5px gap
     } else {
       0.0
     };
@@ -509,7 +542,7 @@ impl Prompt {
     // Render completions if visible (above the prompt)
     // Render completions if available
     if !self.completions.is_empty() {
-      self.render_completions_internal(surface, base_y, completion_x, completion_width);
+      self.render_completions_internal(surface, base_y, completion_x, completion_width, cx);
     }
     }); // End overlay region
   }
@@ -569,6 +602,8 @@ impl Prompt {
   /// This is called whenever the input changes
   fn recalculate_completions(&mut self, editor: &Editor) {
     self.selection = None; // Clear selection on recalculate
+    self.completion_scroll = 0; // Reset scroll
+    self.completion_list_anim_t = 0.0; // Start animation
 
     if let Some(ref completion_fn) = self.completion_fn {
       self.completions = completion_fn(editor, &self.input);
@@ -588,7 +623,21 @@ impl Prompt {
       None => 0,
     };
 
+    // Trigger animation if selection changed
+    if self.selection != Some(index) {
+      self.selection_anim = 0.0;
+    }
     self.selection = Some(index);
+    self.last_selection = Some(index);
+
+    // Update scroll to keep selection visible (like VSCode)
+    const MAX_VISIBLE: usize = 10;
+    if index >= self.completion_scroll + MAX_VISIBLE {
+      self.completion_scroll = index - MAX_VISIBLE + 1;
+    } else if index < self.completion_scroll {
+      self.completion_scroll = index;
+    }
+
     self.apply_completion(index);
   }
 
@@ -609,7 +658,21 @@ impl Prompt {
       None => self.completions.len() - 1,
     };
 
+    // Trigger animation if selection changed
+    if self.selection != Some(index) {
+      self.selection_anim = 0.0;
+    }
     self.selection = Some(index);
+    self.last_selection = Some(index);
+
+    // Update scroll to keep selection visible (like VSCode)
+    const MAX_VISIBLE: usize = 10;
+    if index >= self.completion_scroll + MAX_VISIBLE {
+      self.completion_scroll = index - MAX_VISIBLE + 1;
+    } else if index < self.completion_scroll {
+      self.completion_scroll = index;
+    }
+
     self.apply_completion(index);
   }
 
@@ -696,59 +759,206 @@ impl Prompt {
   }
 
   fn render_completions_internal(
-    &self,
+    &mut self,
     surface: &mut Surface,
     prompt_y: f32,
     completion_x: f32,
     completion_width: f32,
+    cx: &Context,
   ) {
     if self.completions.is_empty() {
       return;
     }
 
-    const COMPLETION_ITEM_HEIGHT: f32 = 20.0;
+    const COMPLETION_ITEM_HEIGHT: f32 = 24.0; // Taller items like picker
     const MAX_VISIBLE: usize = 10;
+    const ITEM_PADDING_X: f32 = 12.0;
+    const ITEM_PADDING_Y: f32 = 6.0;
+    const ITEM_GAP: f32 = 2.0;
+    const CORNER_RADIUS: f32 = 6.0;
 
-    // Calculate how many completions to show
-    let visible_count = self.completions.len().min(MAX_VISIBLE);
-    let completion_height = visible_count as f32 * COMPLETION_ITEM_HEIGHT;
+    // Get theme colors (like picker does)
+    let theme = &cx.editor.theme;
+    let bg_style = theme.get("ui.popup");
+    let bg_color = bg_style
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.15, 0.15, 0.16, 0.95));
+
+    let text_style = theme.get("ui.text");
+    let text_color = text_style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::rgb(0.8, 0.8, 0.8));
+
+    let selected_style = theme.get("ui.picker.selected");
+    let mut selected_fill = selected_style
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.25, 0.45, 0.75, 0.6));
+    selected_fill.a = 1.0;
+
+    let mut selected_outline = selected_style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.3, 0.6, 0.9, 1.0));
+    selected_outline.a = 1.0;
+
+    let selected_fg_style = theme.get("ui.picker.selected");
+    let selected_fg = selected_fg_style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::rgb(1.0, 1.0, 1.0));
+
+    // Calculate visible range with scrolling
+    let offset = self.completion_scroll;
+    let visible_count = (self.completions.len() - offset).min(MAX_VISIBLE);
+    let completion_height = visible_count as f32 * (COMPLETION_ITEM_HEIGHT + ITEM_GAP) - ITEM_GAP;
     let completion_y = prompt_y - completion_height - 5.0; // 5px gap above prompt
 
-    // Draw background for completions
-    let bg_color = Color::new(0.15, 0.15, 0.16, 0.95);
-    surface.draw_rect(completion_x, completion_y, completion_width, completion_height, bg_color);
+    // Draw background with rounded corners
+    surface.draw_rounded_rect(
+      completion_x,
+      completion_y,
+      completion_width,
+      completion_height,
+      CORNER_RADIUS,
+      bg_color,
+    );
 
-    // Draw completions
-    for (i, completion) in self.completions.iter().take(MAX_VISIBLE).enumerate() {
-      let y = completion_y + i as f32 * COMPLETION_ITEM_HEIGHT;
-      let is_selected = self.selection == Some(i);
+    // Clip all completion content to the box bounds
+    surface.push_scissor_rect(completion_x, completion_y, completion_width, completion_height);
 
-      // Draw selection background
-      if is_selected {
-        let selection_bg = Color::new(0.25, 0.45, 0.75, 0.4);
-        surface.draw_rect(
-          completion_x + 1.0,
-          y + 1.0,
-          completion_width - 2.0,
-          COMPLETION_ITEM_HEIGHT - 2.0,
-          selection_bg,
-        );
+    // Draw completions with scrolling
+    for (visual_i, actual_i) in (offset..offset + visible_count).enumerate() {
+      if let Some(completion) = self.completions.get(actual_i) {
+        let y = completion_y + visual_i as f32 * (COMPLETION_ITEM_HEIGHT + ITEM_GAP);
+        let is_selected = self.selection == Some(actual_i);
+
+        let item_x = completion_x + 4.0;
+        let item_width = completion_width - 8.0;
+        let item_radius = 4.0;
+
+        // Alternating stripe background (like picker)
+        let stripe_primary = Self::mix_colors(bg_color, selected_fill, 0.1);
+        let stripe_secondary = Self::mix_colors(bg_color, selected_fill, 0.05);
+        let stripe_color = if actual_i % 2 == 0 {
+          stripe_primary
+        } else {
+          stripe_secondary
+        };
+        surface.draw_rounded_rect(item_x, y, item_width, COMPLETION_ITEM_HEIGHT, item_radius, stripe_color);
+
+        // Draw selection background with animation (like picker)
+        if is_selected {
+          let selection_t = self.selection_anim.clamp(0.0, 1.0);
+          let selection_ease = selection_t * selection_t * (3.0 - 2.0 * selection_t); // Smoothstep
+
+          let mut fill_color = selected_fill;
+          fill_color.a = (fill_color.a * (0.82 + 0.18 * selection_ease)).clamp(0.0, 1.0);
+          surface.draw_rounded_rect(item_x, y, item_width, COMPLETION_ITEM_HEIGHT, item_radius, fill_color);
+
+          // Draw outline with variable thickness (like picker)
+          let bottom_thickness = (COMPLETION_ITEM_HEIGHT * 0.035).clamp(0.6, 1.2);
+          let side_thickness = (bottom_thickness * 1.55).min(bottom_thickness + 1.6);
+          let top_thickness = (bottom_thickness * 2.2).min(bottom_thickness + 2.4);
+          surface.draw_rounded_rect_stroke_fade(
+            item_x,
+            y,
+            item_width,
+            COMPLETION_ITEM_HEIGHT,
+            item_radius,
+            top_thickness,
+            side_thickness,
+            bottom_thickness,
+            selected_outline,
+          );
+
+          // Draw glow effect (like picker)
+          let glow_strength = (0.85 + 0.15 * selection_ease).clamp(0.0, 1.0);
+          Button::draw_hover_layers(
+            surface,
+            item_x,
+            y,
+            item_width,
+            COMPLETION_ITEM_HEIGHT,
+            item_radius,
+            selected_outline,
+            glow_strength,
+          );
+
+          // Pulse animation on selection change (like picker)
+          if self.selection_anim < 1.0 {
+            let pulse_ease = 1.0 - (1.0 - selection_t) * (1.0 - selection_t);
+            let center_x = item_x + item_width * 0.5;
+            let center_y = y + COMPLETION_ITEM_HEIGHT * 0.52;
+            let pulse_radius = item_width.max(COMPLETION_ITEM_HEIGHT) * (0.42 + 0.35 * (1.0 - pulse_ease));
+            let pulse_alpha = (1.0 - pulse_ease) * 0.18;
+            let glow_color = Self::glow_from_base(selected_outline);
+            surface.draw_rounded_rect_glow(
+              item_x,
+              y,
+              item_width,
+              COMPLETION_ITEM_HEIGHT,
+              item_radius,
+              center_x,
+              center_y,
+              pulse_radius,
+              Color::new(glow_color.r, glow_color.g, glow_color.b, pulse_alpha),
+            );
+          }
+        }
+
+        // Draw text with truncation if too long
+        let text_x = item_x + ITEM_PADDING_X;
+        let text_y = y + ITEM_PADDING_Y;
+        let item_color = if is_selected { selected_fg } else { text_color };
+
+        // Calculate available width for text
+        let available_width = item_width - (ITEM_PADDING_X * 2.0);
+        let max_chars = (available_width / UI_FONT_WIDTH) as usize;
+
+        // Truncate text if needed
+        let display_text = if completion.text.chars().count() > max_chars && max_chars > 2 {
+          let truncated: String = completion.text.chars().take(max_chars - 2).collect();
+          format!("{}..", truncated)
+        } else {
+          completion.text.clone()
+        };
+
+        surface.draw_text(TextSection::simple(
+          text_x,
+          text_y,
+          &display_text,
+          UI_FONT_SIZE,
+          item_color,
+        ));
       }
-
-      let color = if is_selected {
-        Color::rgb(1.0, 1.0, 1.0) // White for selected
-      } else {
-        Color::rgb(0.8, 0.8, 0.8) // Light gray for normal
-      };
-
-      surface.draw_text(TextSection::simple(
-        completion_x + 5.0, // padding
-        y + 3.0,
-        &completion.text,
-        UI_FONT_SIZE - 2.0, // Slightly smaller for completions
-        color,
-      ));
     }
+
+    // Pop the scissor rect for the entire completion box
+    surface.pop_scissor_rect();
+  }
+
+  // Helper functions (copied from picker)
+  fn mix_colors(a: Color, b: Color, t: f32) -> Color {
+    Color::new(
+      a.r + (b.r - a.r) * t,
+      a.g + (b.g - a.g) * t,
+      a.b + (b.b - a.b) * t,
+      a.a + (b.a - a.a) * t,
+    )
+  }
+
+  fn glow_from_base(base: Color) -> Color {
+    let brightness = (base.r + base.g + base.b) / 3.0;
+    let boost = if brightness < 0.5 { 1.8 } else { 1.3 };
+    Color::new(
+      (base.r * boost).min(1.0),
+      (base.g * boost).min(1.0),
+      (base.b * boost).min(1.0),
+      base.a,
+    )
   }
 }
 
@@ -901,8 +1111,12 @@ impl Component for Prompt {
   }
 
   fn should_update(&self) -> bool {
-    // Always update for input responsiveness
-    true
+    // Keep updating while animations are active or for input responsiveness
+    self.glow_anim_t < 1.0
+      || self.selection_anim < 1.0
+      || self.completion_list_anim_t < 1.0
+      || self.cursor_anim_active
+      || !self.completions.is_empty() // Keep updating while completions are visible
   }
 }
 

@@ -3249,6 +3249,34 @@ pub fn list_gutters(cx: &mut Context) {
   }));
 }
 
+/// Manually trigger completion (bound to C-x in insert mode)
+pub fn completion(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+  let cursor = doc.selection(view.id).primary().cursor(text);
+
+  log::info!("Manual completion command called");
+  log::info!("  Cursor position: {}", cursor);
+  log::info!("  Document ID: {:?}", doc.id);
+  log::info!("  View ID: {:?}", view.id);
+  log::info!("  Mode: {:?}", cx.editor.mode);
+
+  // Log some context around cursor
+  let start = cursor.saturating_sub(10);
+  let end = (cursor + 10).min(text.len_chars());
+  let context = text.slice(start..end).to_string();
+  log::info!("  Context: {:?}", context);
+
+  // Trigger manual completion via handlers
+  cx.editor.handlers.trigger_completions(cursor, doc.id, view.id);
+
+  // Dispatch PostCommand event
+  the_editor_event::dispatch(crate::event::PostCommand {
+    command: "completion",
+    cx,
+  });
+}
+
 // pub fn insert_register(cx: &mut Context) {
 //   cx.editor.autoinfo = Some(Info::from_registers(
 //     "Insert register",

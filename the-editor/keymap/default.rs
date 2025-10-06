@@ -119,7 +119,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "esc"                               => normal_mode,
 
     "C-s"                               => commit_undo_checkpoint,
-    // "C-x"                               => completion,
+    "C-x"                               => completion,
     // "C-r"                               => insert_register,
 
     "C-w" | "A-backspace"               => delete_word_backward,

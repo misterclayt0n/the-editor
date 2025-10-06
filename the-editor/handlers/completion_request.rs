@@ -132,7 +132,9 @@ impl AsyncHook for CompletionRequestHook {
         Some(Instant::now() + TRIGGER_CHAR_DEBOUNCE)
       }
       CompletionEvent::ManualTrigger { cursor, doc, view } => {
-        // No debounce for manual triggers
+        // Manual triggers should fire immediately without debouncing
+        // We can't return None because that would wait for the next event
+        // Instead, use Instant::now() to expire immediately
         self.pending_trigger = Some(PendingTrigger {
           cursor,
           doc,
@@ -140,7 +142,7 @@ impl AsyncHook for CompletionRequestHook {
           kind: TriggerKind::Manual,
         });
         log::info!("Manual trigger, firing immediately");
-        None // Fire immediately
+        Some(Instant::now()) // Expire immediately
       }
       CompletionEvent::DeleteText { cursor } => {
         // If we deleted before the trigger position, cancel
@@ -403,6 +405,7 @@ async fn request_completions_async(
     tokio::select! {
       result = future => {
         if let Some((server_id, lsp_items)) = result {
+          log::info!("Received {} completion items from {:?}", lsp_items.len(), server_id);
           // Convert LSP items to our CompletionItem type
           for lsp_item in lsp_items {
             items.push(CompletionItem::Lsp(LspCompletionItem {
@@ -444,8 +447,10 @@ fn show_completion(
 
   // Don't show if empty
   if items.is_empty() {
+    log::info!("Not showing completion: items list is empty");
     return;
   }
+  log::info!("Showing completion with {} items", items.len());
 
   // Get editor view from compositor
   let Some(editor_view) = compositor.find::<ui::EditorView>() else {

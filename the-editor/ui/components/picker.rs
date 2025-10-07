@@ -130,6 +130,11 @@ pub enum PickerAction {
 /// Returns true if the picker should close, false to keep it open
 pub type ActionHandler<T, D> = Arc<dyn Fn(&T, &D, PickerAction) -> bool + Send + Sync>;
 
+/// Callback for dynamic queries that fetch items based on the query string
+/// Takes the query string and an injector to add items asynchronously
+/// This is useful for LSP workspace symbols, where we query the server as the user types
+pub type DynQueryCallback<T, D> = Arc<dyn Fn(String, Injector<T, D>) + Send + Sync>;
+
 /// A filter in the query
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryFilter {
@@ -299,6 +304,14 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   preview_cache:            HashMap<PathBuf, CachedPreview>,
   /// Reusable buffer for binary detection
   read_buffer:              Vec<u8>,
+  /// Dynamic query callback for async item fetching
+  dyn_query_callback:       Option<DynQueryCallback<T, D>>,
+  /// Debounce timer for dynamic queries (milliseconds)
+  dyn_query_debounce_ms:    u64,
+  /// Time when query was last changed (for debouncing)
+  last_query_change:        Option<std::time::Instant>,
+  /// Last query that was sent to dynamic callback
+  last_dyn_query:           String,
 }
 
 #[derive(Clone)]
@@ -380,6 +393,10 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       preview_fn: None,
       preview_cache: HashMap::new(),
       read_buffer: Vec::new(),
+      dyn_query_callback: None,
+      dyn_query_debounce_ms: 300, // Default 300ms debounce
+      last_query_change: None,
+      last_dyn_query: String::new(),
     }
   }
 
@@ -415,6 +432,21 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
   /// Set the action handler for custom picker actions
   pub fn with_action_handler(mut self, handler: ActionHandler<T, D>) -> Self {
     self.action_handler = Some(handler);
+    self
+  }
+
+  /// Set the dynamic query callback for async item fetching
+  /// The callback will be called when the user types, with debouncing
+  /// Useful for LSP workspace symbols or other dynamic data sources
+  pub fn with_dynamic_query(mut self, callback: DynQueryCallback<T, D>) -> Self {
+    self.dyn_query_callback = Some(callback);
+    self
+  }
+
+  /// Set the debounce delay for dynamic queries (in milliseconds)
+  /// Default is 300ms
+  pub fn with_debounce(mut self, debounce_ms: u64) -> Self {
+    self.dyn_query_debounce_ms = debounce_ms;
     self
   }
 
@@ -665,6 +697,40 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
 
       column_idx += 1;
     }
+
+    // Mark query as changed for debouncing
+    self.last_query_change = Some(std::time::Instant::now());
+  }
+
+  /// Trigger the dynamic query callback if conditions are met
+  fn trigger_dynamic_query(&mut self) {
+    // Only trigger if we have a dynamic query callback
+    let Some(ref callback) = self.dyn_query_callback else {
+      return;
+    };
+
+    // Check if query has changed since last dynamic query
+    if self.query == self.last_dyn_query {
+      return;
+    }
+
+    // Check debounce timer
+    if let Some(last_change) = self.last_query_change {
+      let elapsed = last_change.elapsed().as_millis() as u64;
+      if elapsed < self.dyn_query_debounce_ms {
+        // Still within debounce period, don't trigger yet
+        return;
+      }
+    }
+
+    // Clear existing items and bump version
+    self.version.fetch_add(1, Ordering::Relaxed);
+    self.last_dyn_query = self.query.clone();
+
+    // Call the dynamic query callback
+    let query = self.query.clone();
+    let injector = self.injector();
+    callback(query, injector);
   }
 
   /// Handle text input
@@ -1163,6 +1229,9 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
     // Process pending updates from nucleo
     let status = self.matcher.tick(10);
     self.matcher_running = status.running || status.changed;
+
+    // Check if we should trigger a dynamic query (debounce timer elapsed)
+    self.trigger_dynamic_query();
 
     // Get preview before taking snapshot to avoid borrow checker issues
     // First ensure the preview is loaded into cache
@@ -2685,5 +2754,189 @@ mod tests {
     let snapshot = picker.matcher.snapshot();
     // Should match at least the "foo" item
     assert!(snapshot.matched_item_count() >= 1);
+  }
+
+  #[test]
+  fn test_dynamic_query_callback_called_after_debounce() {
+    use std::sync::{
+      Arc,
+      Mutex,
+    };
+
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let called_queries = Arc::new(Mutex::new(Vec::<String>::new()));
+    let called_queries_clone = called_queries.clone();
+
+    let callback = Arc::new(move |query: String, _injector: Injector<TestItem, ()>| {
+      called_queries_clone.lock().unwrap().push(query);
+    });
+
+    let mut picker = Picker::new(columns, 0, Vec::new(), (), |_| {})
+      .with_dynamic_query(callback)
+      .with_debounce(100); // 100ms debounce
+
+    // Set query and mark as changed
+    picker.query = "test".to_string();
+    picker.update_query();
+
+    // Should not trigger immediately (still in debounce period)
+    picker.trigger_dynamic_query();
+    assert_eq!(called_queries.lock().unwrap().len(), 0);
+
+    // Wait for debounce period
+    std::thread::sleep(std::time::Duration::from_millis(150));
+
+    // Now it should trigger
+    picker.trigger_dynamic_query();
+    let queries = called_queries.lock().unwrap();
+    assert_eq!(queries.len(), 1);
+    assert_eq!(queries[0], "test");
+  }
+
+  #[test]
+  fn test_dynamic_query_callback_not_called_for_same_query() {
+    use std::sync::{
+      Arc,
+      Mutex,
+    };
+
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let called_count = Arc::new(Mutex::new(0));
+    let called_count_clone = called_count.clone();
+
+    let callback = Arc::new(move |_query: String, _injector: Injector<TestItem, ()>| {
+      *called_count_clone.lock().unwrap() += 1;
+    });
+
+    let mut picker = Picker::new(columns, 0, Vec::new(), (), |_| {})
+      .with_dynamic_query(callback)
+      .with_debounce(50);
+
+    // Set query and mark as changed
+    picker.query = "test".to_string();
+    picker.update_query();
+
+    // Wait for debounce
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    picker.trigger_dynamic_query();
+
+    assert_eq!(*called_count.lock().unwrap(), 1);
+
+    // Trigger again without changing query
+    picker.trigger_dynamic_query();
+
+    // Should still be 1 (not called again)
+    assert_eq!(*called_count.lock().unwrap(), 1);
+  }
+
+  #[test]
+  fn test_dynamic_query_callback_updates_version() {
+    use std::sync::atomic::Ordering;
+
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let callback = Arc::new(move |_query: String, _injector: Injector<TestItem, ()>| {
+      // Callback doesn't need to do anything for this test
+    });
+
+    let mut picker = Picker::new(columns, 0, Vec::new(), (), |_| {})
+      .with_dynamic_query(callback)
+      .with_debounce(50);
+
+    let initial_version = picker.version.load(Ordering::Relaxed);
+
+    // Set query and trigger
+    picker.query = "test".to_string();
+    picker.update_query();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    picker.trigger_dynamic_query();
+
+    let new_version = picker.version.load(Ordering::Relaxed);
+    assert!(new_version > initial_version, "Version should increment when dynamic query triggers");
+  }
+
+  #[test]
+  fn test_dynamic_query_injector_works() {
+    use std::sync::{
+      Arc,
+      Mutex,
+    };
+
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let injected_items = Arc::new(Mutex::new(Vec::<TestItem>::new()));
+    let injected_items_clone = injected_items.clone();
+
+    let callback = Arc::new(move |query: String, injector: Injector<TestItem, ()>| {
+      // Simulate async query results
+      let items = vec![
+        TestItem {
+          name:  format!("result_{}", query),
+          value: 1,
+        },
+        TestItem {
+          name:  format!("another_{}", query),
+          value: 2,
+        },
+      ];
+
+      for item in items.clone() {
+        injected_items_clone.lock().unwrap().push(item.clone());
+        let _ = injector.push(item);
+      }
+    });
+
+    let mut picker = Picker::new(columns, 0, Vec::new(), (), |_| {})
+      .with_dynamic_query(callback)
+      .with_debounce(50);
+
+    // Set query and trigger
+    picker.query = "foo".to_string();
+    picker.update_query();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    picker.trigger_dynamic_query();
+
+    // Process injected items
+    picker.matcher.tick(10);
+
+    // Verify items were injected
+    let items = injected_items.lock().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].name, "result_foo");
+    assert_eq!(items[1].name, "another_foo");
+
+    // Verify picker received the items
+    let snapshot = picker.matcher.snapshot();
+    assert_eq!(snapshot.item_count(), 2);
+  }
+
+  #[test]
+  fn test_dynamic_query_without_callback_does_nothing() {
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let mut picker = Picker::new(columns, 0, Vec::new(), (), |_| {});
+
+    // Set query without dynamic query callback
+    picker.query = "test".to_string();
+    picker.update_query();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Should not panic or error
+    picker.trigger_dynamic_query();
+
+    // Verify last_dyn_query remains empty (callback never called)
+    assert_eq!(picker.last_dyn_query, "");
   }
 }

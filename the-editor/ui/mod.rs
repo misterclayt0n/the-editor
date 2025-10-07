@@ -14,6 +14,7 @@ pub mod gutter;
 pub mod job;
 pub mod render_cache;
 pub mod render_commands;
+pub mod text_decorations;
 
 pub use editor_view::EditorView;
 

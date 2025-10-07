@@ -214,7 +214,7 @@ pub fn file_picker<F>(
   on_select: F,
 ) -> components::Picker<std::path::PathBuf, FilePickerData>
 where
-  F: Fn(&std::path::PathBuf) + Send + 'static,
+  F: Fn(&std::path::PathBuf) + Send + Sync + 'static,
 {
   use ignore::WalkBuilder;
 
@@ -233,13 +233,39 @@ where
     root: root.clone(),
   };
 
+  // Create action handler that supports open, hsplit, and vsplit
+  let action_handler = std::sync::Arc::new(move |path: &std::path::PathBuf, _data: &FilePickerData, action: components::PickerAction| {
+    match action {
+      components::PickerAction::Primary => {
+        // Primary action: open file normally
+        on_select(path);
+        true // Close picker
+      },
+      components::PickerAction::Secondary => {
+        // Secondary action: open in horizontal split (mocked for now)
+        // TODO: Implement actual horizontal split once window management is ready
+        eprintln!("[MOCK] Would open {:?} in horizontal split", path);
+        on_select(path); // For now, just open normally
+        true // Close picker
+      },
+      components::PickerAction::Tertiary => {
+        // Tertiary action: open in vertical split (mocked for now)
+        // TODO: Implement actual vertical split once window management is ready
+        eprintln!("[MOCK] Would open {:?} in vertical split", path);
+        on_select(path); // For now, just open normally
+        true // Close picker
+      },
+    }
+  });
+
   let picker = components::Picker::new(
     columns,
     0, // primary column index
     Vec::new(), // no initial items (will be injected asynchronously)
     editor_data,
-    on_select,
+    |_| {}, // Dummy on_select since we're using action_handler
   )
+  .with_action_handler(action_handler)
   .with_preview(|path: &std::path::PathBuf| Some(path.clone()));
 
   let injector = picker.injector();

@@ -114,6 +114,22 @@ impl<T, D> Column<T, D> {
   }
 }
 
+/// Actions that can be performed on picker items
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerAction {
+  /// Primary action (typically Enter key - open/select)
+  Primary,
+  /// Secondary action (typically Ctrl+s - horizontal split)
+  Secondary,
+  /// Tertiary action (typically Ctrl+v - vertical split)
+  Tertiary,
+}
+
+/// Handler function for picker actions
+/// Takes the selected item, editor data, and action type
+/// Returns true if the picker should close, false to keep it open
+pub type ActionHandler<T, D> = Arc<dyn Fn(&T, &D, PickerAction) -> bool + Send + Sync>;
+
 /// Helper function to inject an item into nucleo with all columns
 fn inject_nucleo_item<T, D>(
   injector: &nucleo::Injector<T>,
@@ -167,8 +183,10 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   query_cursor:             usize,
   /// Version counter for invalidating background tasks
   version:                  Arc<AtomicUsize>,
-  /// Callback when item is selected
+  /// Callback when item is selected (deprecated, use action_handler instead)
   on_select:                Box<dyn Fn(&T) + Send>,
+  /// Action handler for picker actions (open, split, etc.)
+  action_handler:           Option<ActionHandler<T, D>>,
   /// Callback when picker is closed
   on_close:                 Option<Box<dyn FnOnce() + Send>>,
   /// Whether picker is visible
@@ -268,6 +286,7 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       query_cursor: 0,
       version: Arc::new(AtomicUsize::new(0)),
       on_select: Box::new(on_select),
+      action_handler: None,
       on_close: None,
       visible: true,
       completion_height: 0,
@@ -317,6 +336,12 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     F: Fn(&T) -> Option<PathBuf> + Send + Sync + 'static,
   {
     self.preview_fn = Some(Arc::new(preview_fn));
+    self
+  }
+
+  /// Set the action handler for custom picker actions
+  pub fn with_action_handler(mut self, handler: ActionHandler<T, D>) -> Self {
+    self.action_handler = Some(handler);
     self
   }
 
@@ -706,12 +731,34 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     }
   }
 
-  /// Select current item
-  fn select(&mut self) {
-    if let Some(item) = self.selection() {
-      (self.on_select)(item);
+  /// Execute an action on the selected item
+  /// Returns true if the picker should close
+  fn execute_action(&mut self, action: PickerAction) -> bool {
+    let Some(item) = self.selection() else {
+      return false;
+    };
+
+    if let Some(ref handler) = self.action_handler {
+      // Use action handler
+      handler(item, &self.editor_data, action)
+    } else {
+      // Fall back to on_select for backward compatibility
+      // Only execute for Primary action
+      if action == PickerAction::Primary {
+        (self.on_select)(item);
+        true
+      } else {
+        false
+      }
     }
-    self.close();
+  }
+
+  /// Select current item (deprecated, use execute_action instead)
+  fn select(&mut self) {
+    let should_close = self.execute_action(PickerAction::Primary);
+    if should_close {
+      self.close();
+    }
   }
 }
 
@@ -831,15 +878,50 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         );
         EventResult::Consumed(Some(callback))
       },
-      // Enter - select
-      (Key::Enter, _, _, _) => {
-        self.select();
-        let callback = Box::new(
-          |compositor: &mut crate::ui::compositor::Compositor, _ctx: &mut Context| {
-            compositor.pop();
-          },
-        );
-        EventResult::Consumed(Some(callback))
+      // Enter - primary action (open/select)
+      (Key::Enter, false, false, _) => {
+        let should_close = self.execute_action(PickerAction::Primary);
+        if should_close {
+          self.close();
+          let callback = Box::new(
+            |compositor: &mut crate::ui::compositor::Compositor, _ctx: &mut Context| {
+              compositor.pop();
+            },
+          );
+          EventResult::Consumed(Some(callback))
+        } else {
+          EventResult::Consumed(None)
+        }
+      },
+      // Ctrl+s - secondary action (horizontal split)
+      (Key::Char('s'), true, false, false) => {
+        let should_close = self.execute_action(PickerAction::Secondary);
+        if should_close {
+          self.close();
+          let callback = Box::new(
+            |compositor: &mut crate::ui::compositor::Compositor, _ctx: &mut Context| {
+              compositor.pop();
+            },
+          );
+          EventResult::Consumed(Some(callback))
+        } else {
+          EventResult::Consumed(None)
+        }
+      },
+      // Ctrl+v - tertiary action (vertical split)
+      (Key::Char('v'), true, false, false) => {
+        let should_close = self.execute_action(PickerAction::Tertiary);
+        if should_close {
+          self.close();
+          let callback = Box::new(
+            |compositor: &mut crate::ui::compositor::Compositor, _ctx: &mut Context| {
+              compositor.pop();
+            },
+          );
+          EventResult::Consumed(Some(callback))
+        } else {
+          EventResult::Consumed(None)
+        }
       },
 
       // Query text editing (Emacs-style)
@@ -2143,5 +2225,205 @@ mod tests {
     assert_eq!(picker.cursor, 1);
     picker.move_up();
     assert_eq!(picker.cursor, 0);
+  }
+
+  #[test]
+  fn test_action_handler_primary() {
+    use std::sync::{
+      Arc,
+      Mutex,
+    };
+
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let items = vec![TestItem {
+      name:  "foo".to_string(),
+      value: 1,
+    }];
+
+    let action_log = Arc::new(Mutex::new(Vec::new()));
+    let action_log_clone = action_log.clone();
+
+    let handler = Arc::new(move |item: &TestItem, _data: &(), action: PickerAction| {
+      action_log_clone
+        .lock()
+        .unwrap()
+        .push((item.name.clone(), action));
+      true // Close picker
+    });
+
+    let mut picker = Picker::new(columns, 0, items, (), |_| {}).with_action_handler(handler);
+
+    picker.matcher.tick(10);
+
+    let should_close = picker.execute_action(PickerAction::Primary);
+    assert!(should_close);
+
+    let log = action_log.lock().unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0], ("foo".to_string(), PickerAction::Primary));
+  }
+
+  #[test]
+  fn test_action_handler_secondary() {
+    use std::sync::{
+      Arc,
+      Mutex,
+    };
+
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let items = vec![TestItem {
+      name:  "bar".to_string(),
+      value: 2,
+    }];
+
+    let action_log = Arc::new(Mutex::new(Vec::new()));
+    let action_log_clone = action_log.clone();
+
+    let handler = Arc::new(move |item: &TestItem, _data: &(), action: PickerAction| {
+      action_log_clone
+        .lock()
+        .unwrap()
+        .push((item.name.clone(), action));
+      true
+    });
+
+    let mut picker = Picker::new(columns, 0, items, (), |_| {}).with_action_handler(handler);
+
+    picker.matcher.tick(10);
+
+    let should_close = picker.execute_action(PickerAction::Secondary);
+    assert!(should_close);
+
+    let log = action_log.lock().unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0], ("bar".to_string(), PickerAction::Secondary));
+  }
+
+  #[test]
+  fn test_action_handler_tertiary() {
+    use std::sync::{
+      Arc,
+      Mutex,
+    };
+
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let items = vec![TestItem {
+      name:  "baz".to_string(),
+      value: 3,
+    }];
+
+    let action_log = Arc::new(Mutex::new(Vec::new()));
+    let action_log_clone = action_log.clone();
+
+    let handler = Arc::new(move |item: &TestItem, _data: &(), action: PickerAction| {
+      action_log_clone
+        .lock()
+        .unwrap()
+        .push((item.name.clone(), action));
+      false // Don't close picker
+    });
+
+    let mut picker = Picker::new(columns, 0, items, (), |_| {}).with_action_handler(handler);
+
+    picker.matcher.tick(10);
+
+    let should_close = picker.execute_action(PickerAction::Tertiary);
+    assert!(!should_close); // Handler returns false
+
+    let log = action_log.lock().unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0], ("baz".to_string(), PickerAction::Tertiary));
+  }
+
+  #[test]
+  fn test_fallback_to_on_select() {
+    use std::sync::{
+      Arc,
+      Mutex,
+    };
+
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let items = vec![TestItem {
+      name:  "fallback".to_string(),
+      value: 99,
+    }];
+
+    let selected = Arc::new(Mutex::new(None));
+    let selected_clone = selected.clone();
+
+    let mut picker = Picker::new(columns, 0, items, (), move |item: &TestItem| {
+      *selected_clone.lock().unwrap() = Some(item.name.clone());
+    });
+
+    picker.matcher.tick(10);
+
+    // No action handler set, should fall back to on_select for Primary
+    let should_close = picker.execute_action(PickerAction::Primary);
+    assert!(should_close);
+
+    let result = selected.lock().unwrap();
+    assert_eq!(*result, Some("fallback".to_string()));
+  }
+
+  #[test]
+  fn test_action_handler_with_editor_data() {
+    use std::sync::{
+      Arc,
+      Mutex,
+    };
+
+    struct CustomData {
+      prefix: String,
+    }
+
+    let columns = vec![Column::new("Name", |item: &TestItem, data: &CustomData| {
+      format!("{}{}", data.prefix, item.name)
+    })];
+
+    let items = vec![TestItem {
+      name:  "test".to_string(),
+      value: 42,
+    }];
+
+    let editor_data = CustomData {
+      prefix: "data_".to_string(),
+    };
+
+    let action_log = Arc::new(Mutex::new(Vec::new()));
+    let action_log_clone = action_log.clone();
+
+    let handler = Arc::new(move |item: &TestItem, data: &CustomData, action: PickerAction| {
+      action_log_clone.lock().unwrap().push((
+        item.name.clone(),
+        data.prefix.clone(),
+        action,
+      ));
+      true
+    });
+
+    let mut picker = Picker::new(columns, 0, items, editor_data, |_| {}).with_action_handler(handler);
+
+    picker.matcher.tick(10);
+
+    picker.execute_action(PickerAction::Primary);
+
+    let log = action_log.lock().unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(
+      log[0],
+      ("test".to_string(), "data_".to_string(), PickerAction::Primary)
+    );
   }
 }

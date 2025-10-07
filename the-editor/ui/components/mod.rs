@@ -11,6 +11,7 @@ pub mod statusline;
 pub use picker::{
   Column,
   Picker,
+  PickerAction,
 };
 pub use prompt::Prompt;
 

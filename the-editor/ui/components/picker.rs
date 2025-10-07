@@ -32,9 +32,11 @@ const MIN_AREA_WIDTH_FOR_PREVIEW: u16 = 120;
 const MAX_FILE_SIZE_FOR_PREVIEW: u64 = 10 * 1024 * 1024;
 
 /// Cached preview types
-enum CachedPreview {
+pub enum CachedPreview {
   /// Loaded document with syntax highlighting
   Document(Box<Document>),
+  /// Directory with list of entries
+  Directory(Vec<String>),
   /// Binary file (not text)
   Binary,
   /// File too large to preview
@@ -49,6 +51,9 @@ enum PreviewData {
     lines: Vec<String>,
     /// Syntax highlights: (highlight, byte_range)
     highlights: Vec<(crate::core::syntax::Highlight, std::ops::Range<usize>)>,
+  },
+  Directory {
+    entries: Vec<String>,
   },
   Placeholder(&'static str),
 }
@@ -78,38 +83,50 @@ pub type ColumnFormatFn<T, D> = for<'a> fn(&'a T, &'a D) -> String;
 
 /// A column in the picker table
 pub struct Column<T, D> {
-  pub name:   Arc<str>,
-  pub format: ColumnFormatFn<T, D>,
+  pub name:          Arc<str>,
+  pub format:        ColumnFormatFn<T, D>,
   /// Whether this column should be used for nucleo matching/filtering
-  pub filter: bool,
+  pub filter:        bool,
   /// Whether this column is hidden (data-only, not displayed)
-  pub hidden: bool,
+  pub hidden:        bool,
+  /// Whether to truncate from the start (true) or end (false) when text is too long
+  /// Useful for file paths where you want to see the filename at the end
+  pub truncate_start: bool,
 }
 
 impl<T, D> Column<T, D> {
   /// Create a new column with the given name and format function
   pub fn new(name: impl Into<Arc<str>>, format: ColumnFormatFn<T, D>) -> Self {
     Self {
-      name:   name.into(),
+      name:           name.into(),
       format,
-      filter: true,
-      hidden: false,
+      filter:         true,
+      hidden:         false,
+      truncate_start: false,
     }
   }
 
   /// Create a hidden column (not displayed, data-only)
   pub fn hidden(name: impl Into<Arc<str>>) -> Self {
     Self {
-      name:   name.into(),
-      format: |_, _| unreachable!("hidden column should never be formatted"),
-      filter: false,
-      hidden: true,
+      name:           name.into(),
+      format:         |_, _| unreachable!("hidden column should never be formatted"),
+      filter:         false,
+      hidden:         true,
+      truncate_start: false,
     }
   }
 
   /// Disable filtering for this column (won't be passed to nucleo)
   pub fn without_filtering(mut self) -> Self {
     self.filter = false;
+    self
+  }
+
+  /// Enable truncation from the start instead of the end
+  /// Useful for file paths where you want to see the filename at the end
+  pub fn with_truncate_start(mut self) -> Self {
+    self.truncate_start = true;
     self
   }
 }
@@ -134,6 +151,10 @@ pub type ActionHandler<T, D> = Arc<dyn Fn(&T, &D, PickerAction) -> bool + Send +
 /// Takes the query string and an injector to add items asynchronously
 /// This is useful for LSP workspace symbols, where we query the server as the user types
 pub type DynQueryCallback<T, D> = Arc<dyn Fn(String, Injector<T, D>) + Send + Sync>;
+
+/// Preview handler for custom preview loading (can be async)
+/// Takes a PathBuf and Context, returns an optional CachedPreview
+pub type PreviewHandler = Arc<dyn Fn(&std::path::Path, &Context) -> Option<CachedPreview> + Send + Sync>;
 
 /// A filter in the query
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -300,6 +321,8 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   height_anim_active:       bool,
   /// Preview callback to get file path from item
   preview_fn:               Option<Arc<dyn Fn(&T) -> Option<PathBuf> + Send + Sync>>,
+  /// Custom preview handler for loading previews
+  preview_handler:          Option<PreviewHandler>,
   /// Cache of loaded previews
   preview_cache:            HashMap<PathBuf, CachedPreview>,
   /// Reusable buffer for binary detection
@@ -312,6 +335,12 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   last_query_change:        Option<std::time::Instant>,
   /// Last query that was sent to dynamic callback
   last_dyn_query:           String,
+  /// Register to store picker history (selected items)
+  history_register:         Option<char>,
+  /// Format function to convert items to strings for history register
+  history_format:           Option<Arc<dyn Fn(&T, &D) -> String + Send + Sync>>,
+  /// Pending items to add to history (flushed during render)
+  pending_history:          Vec<String>,
 }
 
 #[derive(Clone)]
@@ -391,12 +420,16 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       height_smooth: None,
       height_anim_active: false,
       preview_fn: None,
+      preview_handler: None,
       preview_cache: HashMap::new(),
       read_buffer: Vec::new(),
       dyn_query_callback: None,
       dyn_query_debounce_ms: 300, // Default 300ms debounce
       last_query_change: None,
       last_dyn_query: String::new(),
+      history_register: None,
+      history_format: None,
+      pending_history: Vec::new(),
     }
   }
 
@@ -429,6 +462,14 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     self
   }
 
+  /// Set a custom preview handler for loading previews
+  /// This allows customizing how previews are loaded, including async loading
+  /// The handler receives the file path and context, and returns a CachedPreview
+  pub fn with_preview_handler(mut self, handler: PreviewHandler) -> Self {
+    self.preview_handler = Some(handler);
+    self
+  }
+
   /// Set the action handler for custom picker actions
   pub fn with_action_handler(mut self, handler: ActionHandler<T, D>) -> Self {
     self.action_handler = Some(handler);
@@ -447,6 +488,18 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
   /// Default is 300ms
   pub fn with_debounce(mut self, debounce_ms: u64) -> Self {
     self.dyn_query_debounce_ms = debounce_ms;
+    self
+  }
+
+  /// Set the history register to store selected items
+  /// Selected items will be pushed to this register, allowing access to picker history
+  /// The format function converts items to strings for storage in the register
+  pub fn with_history_register<F>(mut self, register: char, format: F) -> Self
+  where
+    F: Fn(&T, &D) -> String + Send + Sync + 'static,
+  {
+    self.history_register = Some(register);
+    self.history_format = Some(Arc::new(format));
     self
   }
 
@@ -473,10 +526,46 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       return Some(&self.preview_cache[&path]);
     }
 
+    // Use custom preview handler if provided
+    if let Some(ref handler) = self.preview_handler {
+      if let Some(preview) = handler(&path, ctx) {
+        self.preview_cache.insert(path.clone(), preview);
+        return Some(&self.preview_cache[&path]);
+      }
+      // Handler returned None, use default loading
+    }
+
     // Load file
     let preview = std::fs::metadata(&path)
       .and_then(|metadata| {
-        if metadata.is_file() {
+        if metadata.is_dir() {
+          // Handle directory: list its contents
+          let mut entries = std::fs::read_dir(&path)?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| {
+              let file_name = entry.file_name().to_string_lossy().to_string();
+              let is_dir = entry.file_type().ok().map(|ft| ft.is_dir()).unwrap_or(false);
+              if is_dir {
+                format!("{}/", file_name)
+              } else {
+                file_name
+              }
+            })
+            .collect::<Vec<_>>();
+
+          // Sort: directories first, then files, both alphabetically
+          entries.sort_by(|a, b| {
+            let a_is_dir = a.ends_with('/');
+            let b_is_dir = b.ends_with('/');
+            match (a_is_dir, b_is_dir) {
+              (true, false) => std::cmp::Ordering::Less,
+              (false, true) => std::cmp::Ordering::Greater,
+              _ => a.cmp(b),
+            }
+          });
+
+          Ok(CachedPreview::Directory(entries))
+        } else if metadata.is_file() {
           if metadata.len() > MAX_FILE_SIZE_FOR_PREVIEW {
             return Ok(CachedPreview::LargeFile);
           }
@@ -507,7 +596,7 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
         } else {
           Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            "Not a regular file",
+            "Not a regular file or directory",
           ))
         }
       })
@@ -897,7 +986,16 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       return false;
     };
 
-    if let Some(ref handler) = self.action_handler {
+    // Add to history if configured (format immediately to avoid borrow issues)
+    let history_entry = if self.history_register.is_some() {
+      self.history_format.as_ref().map(|format_fn| {
+        format_fn(item, &self.editor_data)
+      })
+    } else {
+      None
+    };
+
+    let result = if let Some(ref handler) = self.action_handler {
       // Use action handler
       handler(item, &self.editor_data, action)
     } else {
@@ -909,7 +1007,14 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       } else {
         false
       }
+    };
+
+    // Push history entry after action is executed
+    if let Some(entry) = history_entry {
+      self.pending_history.push(entry);
     }
+
+    result
   }
 
   /// Select current item (deprecated, use execute_action instead)
@@ -1192,6 +1297,16 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       return;
     }
 
+    // Flush pending history to register
+    if let Some(register) = self.history_register {
+      if !self.pending_history.is_empty() {
+        // Push items to register (most recent first, so reverse)
+        for item in self.pending_history.drain(..).rev() {
+          let _ = ctx.editor.registers.push(register, item);
+        }
+      }
+    }
+
     // Animate lerp factor for smooth entrance
     let anim_speed = 12.0; // Speed of animation
     if self.anim_lerp < 1.0 {
@@ -1270,6 +1385,11 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 .unwrap_or_default();
 
               PreviewData::Document { lines, highlights }
+            },
+            CachedPreview::Directory(entries) => {
+              PreviewData::Directory {
+                entries: entries.clone(),
+              }
             },
             CachedPreview::Binary => PreviewData::Placeholder("<Binary file>"),
             CachedPreview::LargeFile => PreviewData::Placeholder("<File too large to preview>"),
@@ -1847,9 +1967,24 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         let max_chars = (text_available_width / UI_FONT_WIDTH).floor() as usize;
 
         // Truncate text if it's too long
+        // Check if primary column uses truncate_start
+        let truncate_from_start = self.columns.iter()
+          .find(|c| c.filter && !c.hidden)
+          .map(|c| c.truncate_start)
+          .unwrap_or(false);
+
         let truncated_text = if display_text.chars().count() > max_chars.saturating_sub(3) && max_chars > 3 {
-          let truncated: String = display_text.chars().take(max_chars.saturating_sub(3)).collect();
-          format!("{}...", truncated)
+          if truncate_from_start {
+            // Truncate from start: "...filename"
+            let char_count = display_text.chars().count();
+            let start_idx = char_count.saturating_sub(max_chars.saturating_sub(3));
+            let truncated: String = display_text.chars().skip(start_idx).collect();
+            format!("...{}", truncated)
+          } else {
+            // Truncate from end: "filename..."
+            let truncated: String = display_text.chars().take(max_chars.saturating_sub(3)).collect();
+            format!("{}...", truncated)
+          }
         } else {
           display_text
         };
@@ -2054,6 +2189,88 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
                   current_y += line_height;
                   byte_offset = line_end_byte;
+                }
+              },
+            );
+          },
+          PreviewData::Directory { entries } => {
+            // Render directory listing
+            let padding = 12.0;
+            let line_height = UI_FONT_SIZE + 4.0;
+            let content_x = preview_x + padding;
+            let content_y = y + padding;
+            let content_width = preview_width - (padding * 2.0);
+            let content_height = height_scaled - (padding * 2.0);
+
+            // Calculate how many entries we can show
+            let max_entries = (content_height / line_height).floor() as usize;
+            let entries_to_show = max_entries.min(entries.len());
+
+            // Calculate max characters per line based on available width
+            let max_chars = (content_width / UI_FONT_WIDTH).floor() as usize;
+
+            // Use overlay region for clipping
+            surface.with_overlay_region(
+              preview_x + padding,
+              y + padding,
+              content_width,
+              content_height,
+              |surface| {
+                let mut current_y = content_y + UI_FONT_SIZE; // Start with font size offset for baseline
+
+                for entry in entries.iter().take(entries_to_show) {
+                  let is_dir = entry.ends_with('/');
+
+                  // Use different colors for directories vs files
+                  let entry_color = if is_dir {
+                    // Directories: light blue
+                    let mut dir_color = Color::rgb(0.5, 0.7, 1.0);
+                    dir_color.a *= preview_alpha;
+                    dir_color
+                  } else {
+                    text_color_preview
+                  };
+
+                  // Truncate if entry name is too long
+                  let max_display_chars = max_chars.saturating_sub(3);
+                  let should_truncate = entry.chars().count() > max_display_chars;
+
+                  let display_text = if should_truncate {
+                    let truncated: String = entry.chars().take(max_display_chars).collect();
+                    format!("{}...", truncated)
+                  } else {
+                    entry.clone()
+                  };
+
+                  surface.draw_text(TextSection {
+                    position: (content_x, current_y),
+                    texts: vec![TextSegment {
+                      content: display_text,
+                      style: TextStyle {
+                        size: UI_FONT_SIZE,
+                        color: entry_color,
+                      },
+                    }],
+                  });
+
+                  current_y += line_height;
+                }
+
+                // Show count if there are more entries
+                if entries.len() > entries_to_show {
+                  let remaining = entries.len() - entries_to_show;
+                  let more_text = format!("... and {} more", remaining);
+
+                  surface.draw_text(TextSection {
+                    position: (content_x, current_y),
+                    texts: vec![TextSegment {
+                      content: more_text,
+                      style: TextStyle {
+                        size: UI_FONT_SIZE,
+                        color: text_color_preview,
+                      },
+                    }],
+                  });
                 }
               },
             );

@@ -73,33 +73,92 @@ use crate::{
   },
 };
 
+/// Format function for a picker column
+pub type ColumnFormatFn<T, D> = for<'a> fn(&'a T, &'a D) -> String;
+
+/// A column in the picker table
+pub struct Column<T, D> {
+  pub name:   Arc<str>,
+  pub format: ColumnFormatFn<T, D>,
+  /// Whether this column should be used for nucleo matching/filtering
+  pub filter: bool,
+  /// Whether this column is hidden (data-only, not displayed)
+  pub hidden: bool,
+}
+
+impl<T, D> Column<T, D> {
+  /// Create a new column with the given name and format function
+  pub fn new(name: impl Into<Arc<str>>, format: ColumnFormatFn<T, D>) -> Self {
+    Self {
+      name:   name.into(),
+      format,
+      filter: true,
+      hidden: false,
+    }
+  }
+
+  /// Create a hidden column (not displayed, data-only)
+  pub fn hidden(name: impl Into<Arc<str>>) -> Self {
+    Self {
+      name:   name.into(),
+      format: |_, _| unreachable!("hidden column should never be formatted"),
+      filter: false,
+      hidden: true,
+    }
+  }
+
+  /// Disable filtering for this column (won't be passed to nucleo)
+  pub fn without_filtering(mut self) -> Self {
+    self.filter = false;
+    self
+  }
+}
+
+/// Helper function to inject an item into nucleo with all columns
+fn inject_nucleo_item<T, D>(
+  injector: &nucleo::Injector<T>,
+  columns: &[Column<T, D>],
+  item: T,
+  editor_data: &D,
+) {
+  injector.push(item, |item, dst| {
+    for (column, text) in columns.iter().filter(|col| col.filter).zip(dst) {
+      *text = (column.format)(item, editor_data).into();
+    }
+  });
+}
+
 /// Injector for adding items to the picker asynchronously
 #[derive(Clone)]
-pub struct PickerInjector<T> {
+pub struct Injector<T, D> {
   dst:            nucleo::Injector<T>,
+  columns:        Arc<[Column<T, D>]>,
+  editor_data:    Arc<D>,
   version:        usize,
   picker_version: Arc<AtomicUsize>,
 }
 
-impl<T> PickerInjector<T> {
-  pub fn push(
-    &self,
-    item: T,
-    accessor: impl FnMut(&T, &mut [nucleo::Utf32String]),
-  ) -> Result<(), ()> {
+impl<T, D> Injector<T, D> {
+  pub fn push(&self, item: T) -> Result<(), ()> {
     // Check if picker has been closed/reset
     if self.version != self.picker_version.load(Ordering::Relaxed) {
       return Err(());
     }
-    self.dst.push(item, accessor);
+    inject_nucleo_item(&self.dst, &self.columns, item, &self.editor_data);
     Ok(())
   }
 }
 
 /// Generic picker component for fuzzy finding
-pub struct Picker<T: 'static + Send + Sync> {
+pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   /// Nucleo matcher for fuzzy finding
   matcher:                  Nucleo<T>,
+  /// Columns for the picker table
+  columns:                  Arc<[Column<T, D>]>,
+  /// Primary column index (default for filtering)
+  primary_column:           usize,
+  /// Editor data passed to column formatters
+  editor_data:              Arc<D>,
   /// Current cursor position in results
   cursor:                   u32,
   /// Search query
@@ -116,8 +175,6 @@ pub struct Picker<T: 'static + Send + Sync> {
   visible:                  bool,
   /// Number of visible rows
   completion_height:        u16,
-  /// Format function to convert item to display string
-  format_fn:                Arc<dyn Fn(&T) -> String + Send + Sync>,
   /// Animation lerp factor (0.0 = just opened, 1.0 = fully visible)
   anim_lerp:                f32,
   /// Preview panel animation lerp (0.0 = hidden, 1.0 = fully visible)
@@ -166,22 +223,46 @@ struct PickerLayout {
   visible_count: u32,
 }
 
-impl<T: 'static + Send + Sync> Picker<T> {
-  /// Create a new picker
-  pub fn new<F, C>(format_fn: F, on_select: C) -> Self
+impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
+  /// Create a new picker with columns
+  pub fn new<C, O>(
+    columns: C,
+    primary_column: usize,
+    options: O,
+    editor_data: D,
+    on_select: impl Fn(&T) + Send + 'static,
+  ) -> Self
   where
-    F: Fn(&T) -> String + Send + Sync + 'static,
-    C: Fn(&T) + Send + 'static,
+    C: IntoIterator<Item = Column<T, D>>,
+    O: IntoIterator<Item = T>,
   {
+    let columns: Arc<[_]> = columns.into_iter().collect();
+    let matcher_columns = columns.iter().filter(|col| col.filter).count() as u32;
+    assert!(
+      matcher_columns > 0,
+      "Picker must have at least one filterable column"
+    );
+
     let matcher = Nucleo::new(
       Config::DEFAULT,
       Arc::new(|| {}), // No-op redraw callback
       None,
-      1, // Single column for matching
+      matcher_columns,
     );
+
+    let editor_data = Arc::new(editor_data);
+    let injector = matcher.injector();
+
+    // Inject initial items
+    for item in options {
+      inject_nucleo_item(&injector, &columns, item, &editor_data);
+    }
 
     Self {
       matcher,
+      columns,
+      primary_column,
+      editor_data,
       cursor: 0,
       query: String::new(),
       query_cursor: 0,
@@ -190,7 +271,6 @@ impl<T: 'static + Send + Sync> Picker<T> {
       on_close: None,
       visible: true,
       completion_height: 0,
-      format_fn: Arc::new(format_fn),
       anim_lerp: 0.0,
       preview_anim: 0.0,
       preview_initialized: false,
@@ -212,9 +292,11 @@ impl<T: 'static + Send + Sync> Picker<T> {
   }
 
   /// Get an injector for adding items asynchronously
-  pub fn injector(&self) -> PickerInjector<T> {
-    PickerInjector {
+  pub fn injector(&self) -> Injector<T, D> {
+    Injector {
       dst:            self.matcher.injector(),
+      columns:        self.columns.clone(),
+      editor_data:    self.editor_data.clone(),
       version:        self.version.load(Ordering::Relaxed),
       picker_version: self.version.clone(),
     }
@@ -380,6 +462,11 @@ impl<T: 'static + Send + Sync> Picker<T> {
   /// Ensure cursor is visible by adjusting scroll_offset if needed
   fn ensure_cursor_in_view(&mut self) {
     let visible_count = self.completion_height as u32;
+
+    // Skip if no items are visible (e.g., during tests or before first render)
+    if visible_count == 0 {
+      return;
+    }
 
     // If cursor is above visible area, scroll up
     if self.cursor < self.scroll_offset {
@@ -628,7 +715,7 @@ impl<T: 'static + Send + Sync> Picker<T> {
   }
 }
 
-impl<T: 'static + Send + Sync> Component for Picker<T> {
+impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
   fn handle_event(&mut self, event: &Event, _ctx: &mut Context) -> EventResult {
     if !self.visible {
       return EventResult::Ignored(None);
@@ -1489,8 +1576,14 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
           }
         }
 
-        // Format and draw item text without highlighting
-        let display_text = (self.format_fn)(item.data);
+        // Format item text from all visible columns
+        let mut display_text = String::new();
+        for (i, column) in self.columns.iter().filter(|c| !c.hidden).enumerate() {
+          if i > 0 {
+            display_text.push_str("  ");
+          }
+          display_text.push_str(&(column.format)(item.data, &self.editor_data));
+        }
 
         // Skip rendering text if empty (should not happen, but safety check)
         if display_text.is_empty() {
@@ -1773,5 +1866,282 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
       || self.query_cursor_anim_active
       || self.matcher_running
       || self.height_anim_active
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[derive(Debug, Clone, PartialEq)]
+  struct TestItem {
+    name:  String,
+    value: u32,
+  }
+
+  struct TestData {
+    prefix: String,
+  }
+
+  #[test]
+  fn test_column_new_creates_filterable_visible_column() {
+    let column = Column::<TestItem, TestData>::new("Name", |item, _data| item.name.clone());
+
+    assert_eq!(column.name.as_ref(), "Name");
+    assert!(column.filter, "New column should be filterable by default");
+    assert!(!column.hidden, "New column should be visible by default");
+  }
+
+  #[test]
+  fn test_column_hidden_creates_hidden_column() {
+    let column = Column::<TestItem, TestData>::hidden("Hidden");
+
+    assert_eq!(column.name.as_ref(), "Hidden");
+    assert!(!column.filter, "Hidden column should not be filterable");
+    assert!(column.hidden, "Hidden column should be hidden");
+  }
+
+  #[test]
+  fn test_column_without_filtering_disables_filtering() {
+    let column =
+      Column::<TestItem, TestData>::new("Name", |item, _data| item.name.clone()).without_filtering();
+
+    assert_eq!(column.name.as_ref(), "Name");
+    assert!(!column.filter, "Column should not be filterable");
+    assert!(!column.hidden, "Column should still be visible");
+  }
+
+  #[test]
+  fn test_column_format_with_editor_data() {
+    let column = Column::<TestItem, TestData>::new("Name", |item, data| {
+      format!("{}{}", data.prefix, item.name)
+    });
+
+    let item = TestItem {
+      name:  "test".to_string(),
+      value: 42,
+    };
+    let data = TestData {
+      prefix: "prefix_".to_string(),
+    };
+
+    let result = (column.format)(&item, &data);
+    assert_eq!(result, "prefix_test");
+  }
+
+  #[test]
+  fn test_picker_new_with_single_column() {
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let items = vec![
+      TestItem {
+        name:  "foo".to_string(),
+        value: 1,
+      },
+      TestItem {
+        name:  "bar".to_string(),
+        value: 2,
+      },
+    ];
+
+    let mut picker = Picker::new(columns, 0, items, (), |_item| {});
+
+    // Process injected items
+    picker.matcher.tick(10);
+
+    let snapshot = picker.matcher.snapshot();
+    assert_eq!(snapshot.item_count(), 2);
+  }
+
+  #[test]
+  fn test_picker_new_with_multiple_columns() {
+    let columns = vec![
+      Column::new("Name", |item: &TestItem, _data: &()| item.name.clone()),
+      Column::new("Value", |item: &TestItem, _data: &()| item.value.to_string()),
+    ];
+
+    let items = vec![TestItem {
+      name:  "test".to_string(),
+      value: 42,
+    }];
+
+    let picker = Picker::new(columns, 0, items, (), |_item| {});
+
+    assert_eq!(picker.columns.len(), 2);
+    assert_eq!(picker.primary_column, 0);
+  }
+
+  #[test]
+  fn test_picker_with_hidden_column() {
+    let columns = vec![
+      Column::new("Name", |item: &TestItem, _data: &()| item.name.clone()),
+      Column::hidden("Hidden"),
+      Column::new("Value", |item: &TestItem, _data: &()| item.value.to_string()),
+    ];
+
+    let items = vec![TestItem {
+      name:  "test".to_string(),
+      value: 42,
+    }];
+
+    let picker = Picker::new(columns, 0, items, (), |_item| {});
+
+    let visible_columns: Vec<_> = picker.columns.iter().filter(|c| !c.hidden).collect();
+    assert_eq!(visible_columns.len(), 2);
+  }
+
+  #[test]
+  fn test_picker_with_non_filterable_column() {
+    let columns = vec![
+      Column::new("Name", |item: &TestItem, _data: &()| item.name.clone()),
+      Column::new("Value", |item: &TestItem, _data: &()| item.value.to_string()).without_filtering(),
+    ];
+
+    let items = vec![TestItem {
+      name:  "test".to_string(),
+      value: 42,
+    }];
+
+    let picker = Picker::new(columns, 0, items, (), |_item| {});
+
+    let filterable_columns: Vec<_> = picker.columns.iter().filter(|c| c.filter).collect();
+    assert_eq!(filterable_columns.len(), 1);
+  }
+
+  #[test]
+  #[should_panic(expected = "Picker must have at least one filterable column")]
+  fn test_picker_panics_with_no_filterable_columns() {
+    let columns = vec![
+      Column::new("Name", |item: &TestItem, _data: &()| item.name.clone()).without_filtering(),
+      Column::new("Value", |item: &TestItem, _data: &()| item.value.to_string()).without_filtering(),
+    ];
+
+    let _picker = Picker::new(columns, 0, Vec::<TestItem>::new(), (), |_item| {});
+  }
+
+  #[test]
+  fn test_injector_push() {
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let picker = Picker::new(columns, 0, Vec::new(), (), |_item| {});
+    let injector = picker.injector();
+
+    let item = TestItem {
+      name:  "injected".to_string(),
+      value: 100,
+    };
+
+    assert!(injector.push(item).is_ok());
+  }
+
+  #[test]
+  fn test_injector_push_after_version_change() {
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let mut picker = Picker::new(columns, 0, Vec::new(), (), |_item| {});
+    let injector = picker.injector();
+
+    // Close picker (increments version)
+    picker.close();
+
+    let item = TestItem {
+      name:  "injected".to_string(),
+      value: 100,
+    };
+
+    // Should fail because picker version changed
+    assert!(injector.push(item).is_err());
+  }
+
+  #[test]
+  fn test_picker_selection() {
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let items = vec![
+      TestItem {
+        name:  "foo".to_string(),
+        value: 1,
+      },
+      TestItem {
+        name:  "bar".to_string(),
+        value: 2,
+      },
+    ];
+
+    let mut picker = Picker::new(columns, 0, items, (), |_item| {});
+
+    // Process injected items
+    picker.matcher.tick(10);
+
+    // Initially cursor is at 0
+    let selection = picker.selection();
+    assert!(selection.is_some());
+    assert_eq!(selection.unwrap().name, "foo");
+  }
+
+  #[test]
+  fn test_picker_move_down() {
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let items = vec![
+      TestItem {
+        name:  "foo".to_string(),
+        value: 1,
+      },
+      TestItem {
+        name:  "bar".to_string(),
+        value: 2,
+      },
+    ];
+
+    let mut picker = Picker::new(columns, 0, items, (), |_item| {});
+
+    // Process injected items
+    picker.matcher.tick(10);
+
+    assert_eq!(picker.cursor, 0);
+    picker.move_down();
+    assert_eq!(picker.cursor, 1);
+    picker.move_down(); // Should wrap to 0
+    assert_eq!(picker.cursor, 0);
+  }
+
+  #[test]
+  fn test_picker_move_up() {
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let items = vec![
+      TestItem {
+        name:  "foo".to_string(),
+        value: 1,
+      },
+      TestItem {
+        name:  "bar".to_string(),
+        value: 2,
+      },
+    ];
+
+    let mut picker = Picker::new(columns, 0, items, (), |_item| {});
+
+    // Process injected items
+    picker.matcher.tick(10);
+
+    assert_eq!(picker.cursor, 0);
+    picker.move_up(); // Should wrap to last item
+    assert_eq!(picker.cursor, 1);
+    picker.move_up();
+    assert_eq!(picker.cursor, 0);
   }
 }

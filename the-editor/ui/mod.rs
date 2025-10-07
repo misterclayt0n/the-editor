@@ -203,27 +203,41 @@ pub fn show_signature_help(
   }
 }
 
+/// Editor data for file picker (contains root directory)
+pub struct FilePickerData {
+  root: std::path::PathBuf,
+}
+
 /// Create a file picker for the given directory
 pub fn file_picker<F>(
   root: std::path::PathBuf,
   on_select: F,
-) -> components::Picker<std::path::PathBuf>
+) -> components::Picker<std::path::PathBuf, FilePickerData>
 where
   F: Fn(&std::path::PathBuf) + Send + 'static,
 {
   use ignore::WalkBuilder;
 
-  let root_for_format = root.clone();
+  // Define column: format path relative to root
+  let columns = vec![components::Column::new("File", |path: &std::path::PathBuf, data: &FilePickerData| {
+    // Format the path relative to root, stripping the root prefix
+    path
+      .strip_prefix(&data.root)
+      .ok()
+      .and_then(|p| p.to_str())
+      .map(|s| s.to_string())
+      .unwrap_or_else(|| path.display().to_string())
+  })];
+
+  let editor_data = FilePickerData {
+    root: root.clone(),
+  };
+
   let picker = components::Picker::new(
-    move |path: &std::path::PathBuf| {
-      // Format the path relative to root, stripping the root prefix
-      path
-        .strip_prefix(&root_for_format)
-        .ok()
-        .and_then(|p| p.to_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| path.display().to_string())
-    },
+    columns,
+    0, // primary column index
+    Vec::new(), // no initial items (will be injected asynchronously)
+    editor_data,
     on_select,
   )
   .with_preview(|path: &std::path::PathBuf| Some(path.clone()));
@@ -250,19 +264,7 @@ where
       let Ok(entry) = entry else { continue };
       if entry.file_type().is_some_and(|ft| ft.is_file()) {
         let path = entry.into_path();
-        let root_for_inject = root_clone.clone();
-        if injector
-          .push(path.clone(), move |item, cols| {
-            // Use relative path for matching
-            let relative = item
-              .strip_prefix(&root_for_inject)
-              .ok()
-              .and_then(|p| p.to_str())
-              .unwrap_or_else(|| item.to_str().unwrap_or(""));
-            cols[0] = relative.into();
-          })
-          .is_err()
-        {
+        if injector.push(path).is_err() {
           break; // Picker was closed
         }
       }

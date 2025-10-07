@@ -8,7 +8,10 @@ pub mod prompt;
 pub mod signature_help;
 pub mod statusline;
 
-pub use picker::Picker;
+pub use picker::{
+  Column,
+  Picker,
+};
 pub use prompt::Prompt;
 
 // Completion, SignatureHelp, and Hover are used internally by the editor

@@ -1206,7 +1206,7 @@ pub fn file_picker(cx: &mut Context) {
 
     // Create a wrapper picker that will open the file when closed
     struct PickerWrapper {
-      picker:        crate::ui::components::Picker<PathBuf>,
+      picker:        crate::ui::components::Picker<PathBuf, crate::ui::FilePickerData>,
       selected_file: Arc<Mutex<Option<PathBuf>>>,
     }
 

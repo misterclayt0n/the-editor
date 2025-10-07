@@ -132,29 +132,21 @@ pub fn show_signature_help(
   use the_editor_event::send_blocking;
   use the_editor_lsp_types::types as lsp;
 
-  log::info!("show_signature_help: Called with invoked={:?}, response={:?}", invoked, response.is_some());
-
   let config = &editor.config();
 
   // Check if we should show signature help
   if !(config.lsp.auto_signature_help || invoked == SignatureHelpInvoked::Manual) {
-    log::info!("show_signature_help: Not showing - auto_signature_help={}, invoked={:?}", config.lsp.auto_signature_help, invoked);
     return;
   }
 
   // Don't show if not in insert mode (for automatic invocations)
   if invoked == SignatureHelpInvoked::Automatic && editor.mode != crate::keymap::Mode::Insert {
-    log::info!("show_signature_help: Not showing - automatic invocation but not in insert mode");
     return;
   }
 
   let response = match response {
-    Some(s) if !s.signatures.is_empty() => {
-      log::info!("show_signature_help: Got {} signatures", s.signatures.len());
-      s
-    },
+    Some(s) if !s.signatures.is_empty() => s,
     _ => {
-      log::info!("show_signature_help: No signatures in response");
       send_blocking(
         &editor.handlers.signature_hints,
         SignatureHelpEvent::RequestComplete { open: false },
@@ -182,18 +174,8 @@ pub fn show_signature_help(
   let signatures: Vec<Signature> = response
     .signatures
     .into_iter()
-    .enumerate()
-    .map(|(idx, s)| {
-      log::info!(
-        "show_signature_help: Signature {}: label='{}', active_parameter={:?}, response.active_parameter={:?}",
-        idx,
-        s.label,
-        s.active_parameter,
-        response.active_parameter
-      );
-
+    .map(|s| {
       let active_param_range_val = active_param_range(&s, response.active_parameter);
-      log::info!("show_signature_help: Signature {} active_param_range={:?}", idx, active_param_range_val);
 
       let signature_doc = if config.lsp.display_signature_help_docs {
         s.documentation.map(|doc| match doc {
@@ -214,14 +196,9 @@ pub fn show_signature_help(
 
   let active_signature = response.active_signature.map(|s| s as usize).unwrap_or(0);
 
-  log::info!("show_signature_help: Setting signature help with {} signatures", signatures.len());
-
   // Update EditorView with signature help
   if let Some(editor_view) = compositor.find::<EditorView>() {
     editor_view.set_signature_help(language.to_string(), active_signature, signatures);
-    log::info!("show_signature_help: Signature help set on EditorView");
-  } else {
-    log::warn!("show_signature_help: EditorView not found in compositor");
   }
 }
 

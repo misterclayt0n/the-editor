@@ -30,8 +30,6 @@ pub fn update_completion_filter(cx: &mut commands::Context, c: Option<char>) {
       // 1. Filter resulted in no matches, OR
       // 2. Character is not a word character (e.g., space, dot)
       if completion.is_empty() || c.is_some_and(|c| !char_is_word(c)) {
-        log::info!("Closing completion: empty={}, non-word={:?}",
-          completion.is_empty(), c.map(|c| !char_is_word(c)));
         editor_view.completion = None;
         cx.editor.last_completion = None;
 
@@ -55,7 +53,6 @@ pub fn update_completion_filter(cx: &mut commands::Context, c: Option<char>) {
           .any(|context| context.is_incomplete);
 
         if has_incomplete {
-          log::info!("Re-requesting incomplete completion lists");
           // TODO: Call request_incomplete_completion_list when we have TaskController support
           // For now, just log that we would re-request
         }
@@ -104,7 +101,6 @@ pub fn trigger_auto_completion(editor: &Editor, trigger_char_only: bool) {
   });
 
   if is_trigger_char {
-    log::info!("Trigger character detected at cursor {}", cursor);
     editor.handlers.completions.event(CompletionEvent::TriggerChar {
       cursor,
       doc: doc.id,
@@ -126,8 +122,6 @@ pub fn trigger_auto_completion(editor: &Editor, trigger_char_only: bool) {
     let trigger_length = 2;
 
     if word_char_count >= trigger_length {
-      log::info!("Auto-triggering completion at cursor {} ({} word chars)",
-        cursor, word_char_count);
       editor.handlers.completions.event(CompletionEvent::AutoTrigger {
         cursor,
         doc: doc.id,

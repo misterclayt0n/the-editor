@@ -44,32 +44,25 @@ impl AsyncHook for SignatureHelpHandler {
   type Event = SignatureHelpEvent;
 
   fn handle_event(&mut self, event: Self::Event, timeout: Option<Instant>) -> Option<Instant> {
-    log::info!("SignatureHelp: handle_event {:?}", event);
     match event {
       SignatureHelpEvent::Invoked => {
-        log::info!("SignatureHelp: Manual invocation");
         self.trigger = Some(SignatureHelpInvoked::Manual);
         self.state = State::Closed;
         self.finish_debounce();
         return None;
       },
-      SignatureHelpEvent::Trigger => {
-        log::info!("SignatureHelp: Trigger event");
-      },
+      SignatureHelpEvent::Trigger => {},
       SignatureHelpEvent::ReTrigger => {
-        log::info!("SignatureHelp: ReTrigger event, state: {:?}", self.state);
         // Don't retrigger if we aren't open/pending yet
         if matches!(self.state, State::Closed) {
           return timeout;
         }
       },
       SignatureHelpEvent::Cancel => {
-        log::info!("SignatureHelp: Cancel event");
         self.state = State::Closed;
         return None;
       },
       SignatureHelpEvent::RequestComplete { open } => {
-        log::info!("SignatureHelp: RequestComplete open={}", open);
         self.state = if open { State::Open } else { State::Closed };
         return timeout;
       },
@@ -79,15 +72,12 @@ impl AsyncHook for SignatureHelpHandler {
       self.trigger = Some(SignatureHelpInvoked::Automatic);
     }
 
-    log::info!("SignatureHelp: Setting timeout for {}ms", TIMEOUT_MS);
     Some(Instant::now() + Duration::from_millis(TIMEOUT_MS))
   }
 
   fn finish_debounce(&mut self) {
     let invoked = self.trigger.take().unwrap();
     self.state = State::Pending;
-
-    log::info!("SignatureHelp: finish_debounce called, spawning request");
 
     // Spawn task to request signature help
     tokio::spawn(async move {
@@ -97,13 +87,10 @@ impl AsyncHook for SignatureHelpHandler {
 }
 
 async fn request_signature_help(invoked: SignatureHelpInvoked) {
-  log::info!("SignatureHelp: request_signature_help started");
-
   // Create a oneshot channel to get the signature help future from the main thread
   let (tx, rx) = tokio::sync::oneshot::channel();
 
   crate::ui::job::dispatch_blocking(move |editor, _compositor| {
-    log::info!("SignatureHelp: Inside dispatch_blocking");
     let (view, doc) = crate::current_ref!(editor);
 
     // Find first language server that supports signature help
@@ -113,26 +100,20 @@ async fn request_signature_help(invoked: SignatureHelpInvoked) {
         Some(lsp::SignatureHelpOptions { .. })
       )
     }) else {
-      log::warn!("SignatureHelp: No language server with signature help support found");
       let _ = tx.send(None);
       return;
     };
 
-    log::info!("SignatureHelp: Found language server, requesting signature help");
     let pos = doc.position(view.id, ls.offset_encoding());
     let doc_id = doc.identifier();
     let future = ls.text_document_signature_help(doc_id, pos, None);
-    log::info!("SignatureHelp: Got future, sending through channel");
     let _ = tx.send(future);
   });
 
   // Wait for the future from main thread
   let Some(future) = rx.await.ok().flatten() else {
-    log::warn!("SignatureHelp: Failed to receive future from channel");
     return;
   };
-
-  log::info!("SignatureHelp: Awaiting signature help response");
 
   // Await the signature help response
   let response = match future.await {
@@ -143,11 +124,8 @@ async fn request_signature_help(invoked: SignatureHelpInvoked) {
     },
   };
 
-  log::info!("SignatureHelp: Got response: {:?}", response);
-
   // Update UI with response
   crate::ui::job::dispatch_blocking(move |editor, compositor| {
-    log::info!("SignatureHelp: Calling show_signature_help");
     crate::ui::show_signature_help(editor, compositor, invoked, response);
   });
 }
@@ -212,20 +190,13 @@ pub fn register_hooks(handlers: &crate::handlers::Handlers) {
     keymap::Mode,
   };
 
-  log::info!("SignatureHelp: Registering hooks");
   let tx = handlers.signature_hints.clone();
 
   // Trigger on mode switch
   let tx_mode = tx.clone();
   register_hook!(move |event: &mut OnModeSwitch<'_, '_>| {
-    log::info!(
-      "SignatureHelp: OnModeSwitch hook - old: {:?}, new: {:?}",
-      event.old_mode,
-      event.new_mode
-    );
     match (event.old_mode, event.new_mode) {
       (Mode::Insert, _) => {
-        log::info!("SignatureHelp: Leaving insert mode, sending Cancel");
         send_blocking(&tx_mode, SignatureHelpEvent::Cancel);
         // Also clear the UI signature help popup immediately
         event.cx.callback.push(Box::new(|compositor: &mut crate::ui::compositor::Compositor, _| {
@@ -235,7 +206,6 @@ pub fn register_hooks(handlers: &crate::handlers::Handlers) {
         }));
       },
       (_, Mode::Insert) => {
-        log::info!("SignatureHelp: Entering insert mode, sending Trigger");
         if event.cx.editor.config().lsp.auto_signature_help {
           send_blocking(&tx_mode, SignatureHelpEvent::Trigger);
         }
@@ -247,10 +217,7 @@ pub fn register_hooks(handlers: &crate::handlers::Handlers) {
 
   // Trigger on signature help trigger characters (like '(' and ',')
   register_hook!(move |event: &mut PostInsertChar<'_, '_>| {
-    log::info!("SignatureHelp: PostInsertChar hook - char: '{}'", event.c);
-
     if !event.cx.editor.config().lsp.auto_signature_help {
-      log::info!("SignatureHelp: auto_signature_help is disabled");
       return Ok(());
     }
 
@@ -263,7 +230,6 @@ pub fn register_hooks(handlers: &crate::handlers::Handlers) {
         Some(lsp::SignatureHelpOptions { .. })
       )
     }) else {
-      log::info!("SignatureHelp: No language server with signature help support");
       return Ok(());
     };
 
@@ -274,21 +240,12 @@ pub fn register_hooks(handlers: &crate::handlers::Handlers) {
       ..
     }) = capabilities.signature_help_provider
     {
-      log::info!("SignatureHelp: Trigger characters: {:?}", triggers);
       let mut text = doc.text().slice(..);
       let cursor = doc.selection(view.id).primary().cursor(text);
       text = text.slice(..cursor);
 
-      // Get last few characters for debugging
-      let text_str = text.to_string();
-      let last_chars: String = text_str.chars().rev().take(10).collect::<Vec<_>>().into_iter().rev().collect();
-      log::info!("SignatureHelp: Last 10 chars before cursor: {:?}", last_chars);
-
       if triggers.iter().any(|trigger| text.ends_with(trigger.as_str())) {
-        log::info!("SignatureHelp: Text ends with trigger character, sending Trigger");
         send_blocking(&tx, SignatureHelpEvent::Trigger);
-      } else {
-        log::info!("SignatureHelp: Text does not end with any trigger character");
       }
     }
 
@@ -299,7 +256,6 @@ pub fn register_hooks(handlers: &crate::handlers::Handlers) {
   let tx_doc_change = handlers.signature_hints.clone();
   register_hook!(move |event: &mut DocumentDidChange<'_>| {
     if event.doc.config.load().lsp.auto_signature_help && !event.ghost_transaction {
-      log::info!("SignatureHelp: DocumentDidChange - sending ReTrigger");
       send_blocking(&tx_doc_change, SignatureHelpEvent::ReTrigger);
     }
     Ok(())
@@ -309,7 +265,6 @@ pub fn register_hooks(handlers: &crate::handlers::Handlers) {
   let tx_selection = handlers.signature_hints.clone();
   register_hook!(move |event: &mut SelectionDidChange<'_>| {
     if event.doc.config.load().lsp.auto_signature_help {
-      log::info!("SignatureHelp: SelectionDidChange - sending ReTrigger");
       send_blocking(&tx_selection, SignatureHelpEvent::ReTrigger);
     }
     Ok(())

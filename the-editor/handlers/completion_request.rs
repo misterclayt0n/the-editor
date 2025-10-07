@@ -97,7 +97,6 @@ impl AsyncHook for CompletionRequestHook {
   type Event = CompletionEvent;
 
   fn handle_event(&mut self, event: Self::Event, _timeout: Option<Instant>) -> Option<Instant> {
-    log::info!("CompletionRequestHook received event: {:?}", event);
     match event {
       CompletionEvent::AutoTrigger { cursor, doc, view } => {
         // Only set trigger if doc/view match in-flight OR we have no in-flight
@@ -113,10 +112,8 @@ impl AsyncHook for CompletionRequestHook {
             view,
             kind: TriggerKind::Auto,
           });
-          log::info!("Set auto-trigger, will fire in 120ms");
           Some(Instant::now() + AUTO_DEBOUNCE)
         } else {
-          log::info!("Ignoring auto-trigger for different doc/view");
           None
         }
       }
@@ -128,7 +125,6 @@ impl AsyncHook for CompletionRequestHook {
           view,
           kind: TriggerKind::TriggerChar,
         });
-        log::info!("Set trigger-char, will fire in 5ms");
         Some(Instant::now() + TRIGGER_CHAR_DEBOUNCE)
       }
       CompletionEvent::ManualTrigger { cursor, doc, view } => {
@@ -141,14 +137,12 @@ impl AsyncHook for CompletionRequestHook {
           view,
           kind: TriggerKind::Manual,
         });
-        log::info!("Manual trigger, firing immediately");
         Some(Instant::now()) // Expire immediately
       }
       CompletionEvent::DeleteText { cursor } => {
         // If we deleted before the trigger position, cancel
         if matches!(self.pending_trigger.or(self.in_flight), Some(PendingTrigger{ cursor: trigger_cursor, .. }) if cursor < trigger_cursor)
         {
-          log::info!("Deleted before trigger position, cancelling");
           self.pending_trigger = None;
           // TODO: Cancel in-flight request via TaskController
         }
@@ -156,7 +150,6 @@ impl AsyncHook for CompletionRequestHook {
       }
       CompletionEvent::Cancel => {
         // Cancel pending trigger
-        log::info!("Cancelling completion");
         self.pending_trigger = None;
         // TODO: Cancel in-flight request via TaskController
         None
@@ -166,9 +159,7 @@ impl AsyncHook for CompletionRequestHook {
 
   fn finish_debounce(&mut self) {
     // When debounce timer fires, request completions
-    log::info!("finish_debounce called, pending_trigger: {:?}", self.pending_trigger);
     if let Some(trigger) = self.pending_trigger.take() {
-      log::info!("Dispatching completion request for cursor {}", trigger.cursor);
       self.in_flight = Some(trigger.clone());
       crate::ui::job::dispatch_blocking(move |editor, compositor| {
         request_completions_sync(trigger, editor, compositor);
@@ -183,12 +174,8 @@ fn request_completions_sync(
   editor: &mut Editor,
   compositor: &mut crate::ui::compositor::Compositor,
 ) {
-
-  log::info!("request_completions_sync called for cursor {}, kind: {:?}", trigger.cursor, trigger.kind);
-
   // Check if we're still in insert mode and no completion is already showing
   if editor.mode != Mode::Insert {
-    log::info!("Not in insert mode, skipping completion");
     return;
   }
 
@@ -200,20 +187,16 @@ fn request_completions_sync(
 
   // Get document and view
   let Some(doc) = editor.documents.get(&trigger.doc) else {
-    log::info!("Document {:?} not found, skipping completion", trigger.doc);
     return;
   };
   let Some(view) = editor.tree.try_get(trigger.view) else {
-    log::info!("View {:?} not found, skipping completion", trigger.view);
     return;
   };
 
   // Verify cursor hasn't moved backwards
   let text = doc.text();
   let cursor = doc.selection(view.id).primary().cursor(text.slice(..));
-  log::info!("Current cursor: {}, trigger cursor: {}", cursor, trigger.cursor);
   if cursor < trigger.cursor {
-    log::info!("Cursor moved backwards, skipping completion");
     return;
   }
 
@@ -221,7 +204,6 @@ fn request_completions_sync(
   // This matches Helix's behavior - send the CURRENT position, not the old trigger position
   // Language servers need this for incomplete completion lists and proper filtering
   let trigger_offset = cursor;
-  log::info!("Updated trigger offset from {} to {}", trigger.cursor, trigger_offset);
 
   // Determine trigger kind and character for LSP
   let (lsp_trigger_kind, lsp_trigger_char) = match trigger.kind {
@@ -253,7 +235,6 @@ fn request_completions_sync(
     // Get document URI and LSP position
     let uri_str = doc.uri().map(|u| u.to_string());
     let Some(uri_str) = uri_str else {
-      log::info!("Document has no URI, skipping completion");
       return;
     };
 
@@ -265,21 +246,15 @@ fn request_completions_sync(
     };
 
     let Some(lsp_uri) = lsp_uri else {
-      log::info!("Failed to parse URI: {:?}", uri_str);
       return;
     };
-    log::info!("Document URI: {}", lsp_uri);
 
     // Convert cursor position to LSP position
     let pos = crate::lsp::util::pos_to_lsp_pos(text, cursor, OffsetEncoding::Utf16);
 
     // Collect completion futures from each language server (now 'static thanks to BoxFuture)
-    let server_count = doc.language_servers().count();
-    log::info!("Found {} language servers", server_count);
-
     for client in doc.language_servers() {
       let server_id = client.id();
-      log::info!("Requesting completion from server {:?}", server_id);
       let context = lsp::CompletionContext {
         trigger_kind: lsp_trigger_kind,
         trigger_character: lsp_trigger_char.clone(),
@@ -292,17 +267,12 @@ fn request_completions_sync(
         None,
         context,
       ) {
-        log::info!("Got completion future from server {:?}", server_id);
         completion_futures.push((server_id, completion_future));
-      } else {
-        log::info!("Server {:?} returned None for completion request", server_id);
       }
     }
   } // Drop editor borrow here
 
-  log::info!("Collected {} completion futures", completion_futures.len());
   if completion_futures.is_empty() {
-    log::info!("No completion futures collected, skipping");
     return;
   }
 
@@ -405,7 +375,6 @@ async fn request_completions_async(
     tokio::select! {
       result = future => {
         if let Some((server_id, lsp_items)) = result {
-          log::info!("Received {} completion items from {:?}", lsp_items.len(), server_id);
           // Convert LSP items to our CompletionItem type
           for lsp_item in lsp_items {
             items.push(CompletionItem::Lsp(LspCompletionItem {
@@ -447,10 +416,8 @@ fn show_completion(
 
   // Don't show if empty
   if items.is_empty() {
-    log::info!("Not showing completion: items list is empty");
     return;
   }
-  log::info!("Showing completion with {} items", items.len());
 
   // Get editor view from compositor
   let Some(editor_view) = compositor.find::<ui::EditorView>() else {
@@ -476,16 +443,12 @@ pub fn register_completion_hooks(handlers: &Handlers) {
     };
 
     let c = event.c;
-    log::info!("PostInsertChar hook fired for char: '{}'", c);
 
     // If completion is already active, update the filter
     if event.cx.editor.last_completion.is_some() {
-      log::info!("Completion is active, updating filter");
-
       // Check if we should clear last_completion immediately to prevent race conditions
       if !crate::core::chars::char_is_word(c) {
         event.cx.editor.last_completion = None;
-        log::info!("Clearing last_completion immediately for non-word char '{}'", c);
       }
 
       update_completion_filter(event.cx, Some(c));

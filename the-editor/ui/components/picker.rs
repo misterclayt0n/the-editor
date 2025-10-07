@@ -130,6 +130,79 @@ pub enum PickerAction {
 /// Returns true if the picker should close, false to keep it open
 pub type ActionHandler<T, D> = Arc<dyn Fn(&T, &D, PickerAction) -> bool + Send + Sync>;
 
+/// A filter in the query
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueryFilter {
+  /// Filter all columns with this pattern
+  AllColumns(String),
+  /// Filter a specific column with this pattern
+  Column { name: String, pattern: String },
+}
+
+/// Parsed query with multiple filters
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedQuery {
+  /// List of filters to apply
+  pub filters: Vec<QueryFilter>,
+}
+
+impl ParsedQuery {
+  /// Parse a query string into filters
+  /// Syntax: `column:pattern` for column-specific, `pattern` for all columns
+  /// Multiple filters separated by spaces
+  pub fn parse(query: &str) -> Self {
+    let mut filters = Vec::new();
+
+    // Split query into tokens (space-separated, but respect quotes later if needed)
+    for token in query.split_whitespace() {
+      if let Some((column_name, pattern)) = token.split_once(':') {
+        // Column-specific filter: "name:foo"
+        if !column_name.is_empty() && !pattern.is_empty() {
+          filters.push(QueryFilter::Column {
+            name:    column_name.to_string(),
+            pattern: pattern.to_string(),
+          });
+        }
+      } else if !token.is_empty() {
+        // All-columns filter: "foo"
+        filters.push(QueryFilter::AllColumns(token.to_string()));
+      }
+    }
+
+    ParsedQuery { filters }
+  }
+
+  /// Get the pattern for a specific column name
+  /// Returns None if no filter applies to this column
+  pub fn pattern_for_column(&self, column_name: &str) -> Option<String> {
+    let mut patterns = Vec::new();
+
+    for filter in &self.filters {
+      match filter {
+        QueryFilter::AllColumns(pattern) => {
+          patterns.push(pattern.as_str());
+        },
+        QueryFilter::Column { name, pattern } if name == column_name => {
+          patterns.push(pattern.as_str());
+        },
+        _ => {},
+      }
+    }
+
+    if patterns.is_empty() {
+      None
+    } else {
+      // Combine patterns with space (nucleo will OR them)
+      Some(patterns.join(" "))
+    }
+  }
+
+  /// Check if the query is empty
+  pub fn is_empty(&self) -> bool {
+    self.filters.is_empty()
+  }
+}
+
 /// Helper function to inject an item into nucleo with all columns
 fn inject_nucleo_item<T, D>(
   injector: &nucleo::Injector<T>,
@@ -565,13 +638,33 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       Normalization,
     };
 
-    self.matcher.pattern.reparse(
-      0,
-      &self.query,
-      CaseMatching::Smart,
-      Normalization::Smart,
-      false,
-    );
+    // Parse the query into filters
+    let parsed = ParsedQuery::parse(&self.query);
+
+    // Update pattern for each filterable column
+    let mut column_idx = 0;
+    for column in self.columns.iter().filter(|c| c.filter) {
+      // Get the pattern for this specific column
+      let pattern = if parsed.is_empty() {
+        // Empty query - match everything
+        String::new()
+      } else {
+        // Get column-specific pattern, or empty if no filters apply
+        parsed
+          .pattern_for_column(&column.name)
+          .unwrap_or_default()
+      };
+
+      self.matcher.pattern.reparse(
+        column_idx,
+        &pattern,
+        CaseMatching::Smart,
+        Normalization::Smart,
+        false,
+      );
+
+      column_idx += 1;
+    }
   }
 
   /// Handle text input
@@ -2425,5 +2518,172 @@ mod tests {
       log[0],
       ("test".to_string(), "data_".to_string(), PickerAction::Primary)
     );
+  }
+
+  #[test]
+  fn test_query_parser_empty() {
+    let parsed = ParsedQuery::parse("");
+    assert!(parsed.is_empty());
+    assert_eq!(parsed.filters.len(), 0);
+  }
+
+  #[test]
+  fn test_query_parser_all_columns() {
+    let parsed = ParsedQuery::parse("foo");
+    assert!(!parsed.is_empty());
+    assert_eq!(parsed.filters.len(), 1);
+    assert_eq!(parsed.filters[0], QueryFilter::AllColumns("foo".to_string()));
+  }
+
+  #[test]
+  fn test_query_parser_column_specific() {
+    let parsed = ParsedQuery::parse("name:foo");
+    assert_eq!(parsed.filters.len(), 1);
+    assert_eq!(
+      parsed.filters[0],
+      QueryFilter::Column {
+        name:    "name".to_string(),
+        pattern: "foo".to_string(),
+      }
+    );
+  }
+
+  #[test]
+  fn test_query_parser_multiple_filters() {
+    let parsed = ParsedQuery::parse("name:foo bar type:baz");
+    assert_eq!(parsed.filters.len(), 3);
+    assert_eq!(
+      parsed.filters[0],
+      QueryFilter::Column {
+        name:    "name".to_string(),
+        pattern: "foo".to_string(),
+      }
+    );
+    assert_eq!(parsed.filters[1], QueryFilter::AllColumns("bar".to_string()));
+    assert_eq!(
+      parsed.filters[2],
+      QueryFilter::Column {
+        name:    "type".to_string(),
+        pattern: "baz".to_string(),
+      }
+    );
+  }
+
+  #[test]
+  fn test_query_parser_pattern_for_column() {
+    let parsed = ParsedQuery::parse("name:foo bar name:baz");
+
+    // name column should get both "foo" and "baz"
+    let name_pattern = parsed.pattern_for_column("name");
+    assert!(name_pattern.is_some());
+    let pattern = name_pattern.unwrap();
+    assert!(pattern.contains("foo"));
+    assert!(pattern.contains("baz"));
+
+    // non-existent column should get "bar" (all-columns filter)
+    let other_pattern = parsed.pattern_for_column("other");
+    assert_eq!(other_pattern, Some("bar".to_string()));
+
+    // Column with no filters
+    let parsed2 = ParsedQuery::parse("name:foo");
+    assert_eq!(parsed2.pattern_for_column("other"), None);
+  }
+
+  #[test]
+  fn test_query_parser_ignores_invalid() {
+    // Empty column name
+    let parsed = ParsedQuery::parse(":foo");
+    assert!(parsed.is_empty());
+
+    // Empty pattern
+    let parsed = ParsedQuery::parse("name:");
+    assert!(parsed.is_empty());
+
+    // Just colon
+    let parsed = ParsedQuery::parse(":");
+    assert!(parsed.is_empty());
+  }
+
+  #[test]
+  fn test_query_parser_multiple_colons() {
+    // Only first colon is used as separator
+    let parsed = ParsedQuery::parse("url:http://example.com");
+    assert_eq!(parsed.filters.len(), 1);
+    assert_eq!(
+      parsed.filters[0],
+      QueryFilter::Column {
+        name:    "url".to_string(),
+        pattern: "http://example.com".to_string(),
+      }
+    );
+  }
+
+  #[test]
+  fn test_picker_query_filtering_basic() {
+    let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
+      item.name.clone()
+    })];
+
+    let items = vec![
+      TestItem {
+        name:  "foo".to_string(),
+        value: 1,
+      },
+      TestItem {
+        name:  "bar".to_string(),
+        value: 2,
+      },
+      TestItem {
+        name:  "foobar".to_string(),
+        value: 3,
+      },
+    ];
+
+    let mut picker = Picker::new(columns, 0, items, (), |_| {});
+    picker.matcher.tick(10);
+
+    // Initially all items match
+    let snapshot = picker.matcher.snapshot();
+    assert_eq!(snapshot.matched_item_count(), 3);
+
+    // Filter for "foo"
+    picker.query = "foo".to_string();
+    picker.update_query();
+    picker.matcher.tick(10);
+
+    let snapshot = picker.matcher.snapshot();
+    // Should match "foo" and "foobar"
+    assert!(snapshot.matched_item_count() >= 1);
+  }
+
+  #[test]
+  fn test_picker_query_filtering_column_specific() {
+    let columns = vec![
+      Column::new("Name", |item: &TestItem, _data: &()| item.name.clone()),
+      Column::new("Value", |item: &TestItem, _data: &()| item.value.to_string()),
+    ];
+
+    let items = vec![
+      TestItem {
+        name:  "foo".to_string(),
+        value: 1,
+      },
+      TestItem {
+        name:  "bar".to_string(),
+        value: 2,
+      },
+    ];
+
+    let mut picker = Picker::new(columns, 0, items, (), |_| {});
+    picker.matcher.tick(10);
+
+    // Filter for "Name:foo" - should only search name column
+    picker.query = "Name:foo".to_string();
+    picker.update_query();
+    picker.matcher.tick(10);
+
+    let snapshot = picker.matcher.snapshot();
+    // Should match at least the "foo" item
+    assert!(snapshot.matched_item_count() >= 1);
   }
 }

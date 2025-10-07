@@ -10,8 +10,10 @@ pub mod statusline;
 
 pub use picker::{
   Column,
+  ParsedQuery,
   Picker,
   PickerAction,
+  QueryFilter,
 };
 pub use prompt::Prompt;
 

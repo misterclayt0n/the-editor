@@ -3296,3 +3296,11 @@ pub fn completion(cx: &mut Context) {
 //     }
 //   })
 // }
+
+/// Show LSP hover information at cursor
+pub fn hover(_cx: &mut Context) {
+  // Spawn async task to request hover information
+  tokio::spawn(async move {
+    let _ = crate::handlers::hover::request_hover().await;
+  });
+}

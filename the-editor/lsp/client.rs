@@ -1242,7 +1242,7 @@ impl Client {
     text_document: lsp::TextDocumentIdentifier,
     position: lsp::Position,
     work_done_token: Option<lsp::ProgressToken>,
-  ) -> Option<impl Future<Output = Result<Option<lsp::Hover>>>> {
+  ) -> Option<BoxFuture<'static, Result<Option<lsp::Hover>>>> {
     let capabilities = self.capabilities.get().unwrap();
 
     // Return early if the server does not support hover.

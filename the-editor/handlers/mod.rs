@@ -24,6 +24,7 @@ pub mod completion_request;
 pub mod completion_request_helpers;
 pub mod completion_resolve;
 pub mod diagnostics;
+pub mod hover;
 pub mod lsp;
 pub mod signature_help;
 pub mod word_index;

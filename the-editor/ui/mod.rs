@@ -224,7 +224,8 @@ where
         .unwrap_or_else(|| path.display().to_string())
     },
     on_select,
-  );
+  )
+  .with_preview(|path: &std::path::PathBuf| Some(path.clone()));
 
   let injector = picker.injector();
   let root_clone = root.clone();

@@ -1,8 +1,12 @@
-use std::sync::{
-  Arc,
-  atomic::{
-    AtomicUsize,
-    Ordering,
+use std::{
+  collections::HashMap,
+  path::PathBuf,
+  sync::{
+    Arc,
+    atomic::{
+      AtomicUsize,
+      Ordering,
+    },
   },
 };
 
@@ -19,9 +23,35 @@ use the_editor_renderer::{
 };
 
 use super::button::Button;
+use crate::core::document::Document;
 
 /// Minimum area width to show preview panel (needs enough room for both panels)
 const MIN_AREA_WIDTH_FOR_PREVIEW: u16 = 120;
+
+/// Maximum file size to preview (10MB)
+const MAX_FILE_SIZE_FOR_PREVIEW: u64 = 10 * 1024 * 1024;
+
+/// Cached preview types
+enum CachedPreview {
+  /// Loaded document with syntax highlighting
+  Document(Box<Document>),
+  /// Binary file (not text)
+  Binary,
+  /// File too large to preview
+  LargeFile,
+  /// File not found
+  NotFound,
+}
+
+/// Preview data prepared for rendering (to avoid borrow issues)
+enum PreviewData {
+  Document {
+    lines: Vec<String>,
+    /// Syntax highlights: (highlight, byte_range)
+    highlights: Vec<(crate::core::syntax::Highlight, std::ops::Range<usize>)>,
+  },
+  Placeholder(&'static str),
+}
 
 use crate::{
   core::{
@@ -115,6 +145,12 @@ pub struct Picker<T: 'static + Send + Sync> {
   /// Animated height for smooth size transitions
   height_smooth:            Option<f32>,
   height_anim_active:       bool,
+  /// Preview callback to get file path from item
+  preview_fn:               Option<Arc<dyn Fn(&T) -> Option<PathBuf> + Send + Sync>>,
+  /// Cache of loaded previews
+  preview_cache:            HashMap<PathBuf, CachedPreview>,
+  /// Reusable buffer for binary detection
+  read_buffer:              Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -169,6 +205,9 @@ impl<T: 'static + Send + Sync> Picker<T> {
       matcher_running: false,
       height_smooth: None,
       height_anim_active: false,
+      preview_fn: None,
+      preview_cache: HashMap::new(),
+      read_buffer: Vec::new(),
     }
   }
 
@@ -190,10 +229,80 @@ impl<T: 'static + Send + Sync> Picker<T> {
     self
   }
 
+  /// Set the preview callback to enable file preview
+  pub fn with_preview<F>(mut self, preview_fn: F) -> Self
+  where
+    F: Fn(&T) -> Option<PathBuf> + Send + Sync + 'static,
+  {
+    self.preview_fn = Some(Arc::new(preview_fn));
+    self
+  }
+
   /// Get the currently selected item
   pub fn selection(&self) -> Option<&T> {
     let snapshot = self.matcher.snapshot();
     snapshot.get_matched_item(self.cursor).map(|item| item.data)
+  }
+
+  /// Get preview for the currently selected item
+  fn get_preview(&mut self, ctx: &Context) -> Option<&CachedPreview> {
+    let preview_fn = self.preview_fn.as_ref()?;
+    let selected = self.selection()?;
+    let path = (preview_fn)(selected)?;
+
+    // Check if already open in editor
+    if ctx.editor.document_by_path(&path).is_some() {
+      // For now, we'll still load it into cache rather than reference the editor doc
+      // This is simpler and avoids lifetime issues
+    }
+
+    // Check cache
+    if self.preview_cache.contains_key(&path) {
+      return Some(&self.preview_cache[&path]);
+    }
+
+    // Load file
+    let preview = std::fs::metadata(&path)
+      .and_then(|metadata| {
+        if metadata.is_file() {
+          if metadata.len() > MAX_FILE_SIZE_FOR_PREVIEW {
+            return Ok(CachedPreview::LargeFile);
+          }
+
+          // Check if binary by reading first 1KB
+          let file = std::fs::File::open(&path)?;
+          use std::io::Read;
+          let n = file.take(1024).read_to_end(&mut self.read_buffer)?;
+
+          // Simple binary detection: check for null bytes
+          let is_binary = self.read_buffer[..n].contains(&0);
+          self.read_buffer.clear();
+
+          if is_binary {
+            return Ok(CachedPreview::Binary);
+          }
+
+          // Load document
+          let doc = Document::open(
+            &path,
+            None,
+            true, // detect language
+            ctx.editor.config.clone(),
+            ctx.editor.syn_loader.clone(),
+          ).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+          Ok(CachedPreview::Document(Box::new(doc)))
+        } else {
+          Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Not a regular file",
+          ))
+        }
+      })
+      .unwrap_or(CachedPreview::NotFound);
+
+    self.preview_cache.insert(path.clone(), preview);
+    Some(&self.preview_cache[&path])
   }
 
   fn mix_rgb(base: Color, accent: Color, t: f32) -> Color {
@@ -792,6 +901,53 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
     // Process pending updates from nucleo
     let status = self.matcher.tick(10);
     self.matcher_running = status.running || status.changed;
+
+    // Get preview before taking snapshot to avoid borrow checker issues
+    // First ensure the preview is loaded into cache
+    let _preview = self.get_preview(ctx);
+
+    // Now extract preview data with mutable access for highlights
+    let preview_data = {
+      let preview_fn = self.preview_fn.as_ref();
+      let selected = preview_fn.and_then(|f| {
+        let snapshot = self.matcher.snapshot();
+        snapshot.get_matched_item(self.cursor).map(|item| (f)(item.data))
+      }).flatten();
+
+      selected.and_then(|path| {
+        self.preview_cache.get_mut(&path).map(|preview| {
+          match preview {
+            CachedPreview::Document(doc) => {
+              // Extract the lines we need to render
+              let text = doc.text();
+              let total_lines = text.len_lines();
+              let max_preview_lines = 100; // Limit to first 100 lines
+              let lines: Vec<String> = (0..total_lines.min(max_preview_lines))
+                .map(|i| text.line(i).to_string())
+                .collect();
+
+              // Get syntax highlights for the visible range
+              let end_line = total_lines.min(max_preview_lines);
+              let start_byte = 0;
+              let end_byte = if end_line < total_lines {
+                text.line_to_byte(end_line)
+              } else {
+                text.len_bytes()
+              };
+
+              let highlights = doc.get_viewport_highlights(start_byte..end_byte, &ctx.editor.syn_loader.load())
+                .unwrap_or_default();
+
+              PreviewData::Document { lines, highlights }
+            },
+            CachedPreview::Binary => PreviewData::Placeholder("<Binary file>"),
+            CachedPreview::LargeFile => PreviewData::Placeholder("<File too large to preview>"),
+            CachedPreview::NotFound => PreviewData::Placeholder("<File not found>"),
+          }
+        })
+      })
+    };
+
     let snapshot = self.matcher.snapshot();
 
     // Ensure cursor is in bounds
@@ -1347,6 +1503,20 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
         let text_x = item_x + item_padding_x;
         let text_y = item_y + item_padding_y;
 
+        // Calculate available width for text (excluding padding)
+        let available_width = item_width - (item_padding_x * 2.0);
+        let prefix_width = prefix.len() as f32 * UI_FONT_WIDTH;
+        let text_available_width = available_width - prefix_width;
+        let max_chars = (text_available_width / UI_FONT_WIDTH).floor() as usize;
+
+        // Truncate text if it's too long
+        let truncated_text = if display_text.chars().count() > max_chars.saturating_sub(3) && max_chars > 3 {
+          let truncated: String = display_text.chars().take(max_chars.saturating_sub(3)).collect();
+          format!("{}...", truncated)
+        } else {
+          display_text
+        };
+
         // Draw text in single color
         let item_color = if is_selected {
           selected_fg_anim
@@ -1365,7 +1535,7 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
               },
             },
             TextSegment {
-              content: display_text,
+              content: truncated_text,
               style:   TextStyle {
                 color: item_color,
                 ..Default::default()
@@ -1426,22 +1596,167 @@ impl<T: 'static + Send + Sync> Component for Picker<T> {
         border_color_preview,
       );
 
-      // Mock preview content - just show "Preview" text centered
-      let preview_text = "Preview";
-      let text_width = preview_text.len() as f32 * surface.cell_width();
-      let preview_text_x = preview_x + (preview_width - text_width) / 2.0;
-      let preview_text_y = y + height_scaled / 2.0;
+      // Render preview content with clipping
+      if let Some(preview) = &preview_data {
+        match preview {
+          PreviewData::Document { lines, highlights } => {
+            // Render document content with clipping region
+            let padding = 12.0;
+            let line_height = UI_FONT_SIZE + 4.0;
+            let content_x = preview_x + padding;
+            let content_y = y + padding;
+            let content_width = preview_width - (padding * 2.0);
+            let content_height = height_scaled - (padding * 2.0);
 
-      surface.draw_text(TextSection {
-        position: (preview_text_x, preview_text_y),
-        texts:    vec![TextSegment {
-          content: preview_text.to_string(),
-          style:   TextStyle {
-            color: text_color_preview,
-            ..Default::default()
+            // Calculate how many lines we can show
+            let max_lines = (content_height / line_height).floor() as usize;
+            let lines_to_show = max_lines.min(lines.len());
+
+            // Calculate max characters per line based on available width
+            let max_chars = (content_width / UI_FONT_WIDTH).floor() as usize;
+
+            // Use overlay region for clipping
+            surface.with_overlay_region(
+              preview_x + padding,
+              y + padding,
+              content_width,
+              content_height,
+              |surface| {
+                let mut current_y = content_y + UI_FONT_SIZE; // Start with font size offset for baseline
+                let mut byte_offset = 0;
+
+                for (_line_idx, line_str) in lines.iter().enumerate().take(lines_to_show) {
+                  // Trim trailing whitespace
+                  let trimmed = line_str.trim_end();
+                  let line_byte_len = line_str.len();
+
+                  // Calculate byte range for this line
+                  let line_start_byte = byte_offset;
+                  let line_end_byte = byte_offset + line_byte_len;
+
+                  // Build text segments with syntax highlighting
+                  let mut segments = Vec::new();
+                  let mut current_char_idx = 0;
+                  let mut current_byte_in_line = 0;
+
+                  // Truncate if line is too long
+                  let max_display_chars = max_chars.saturating_sub(3);
+                  let should_truncate = trimmed.chars().count() > max_display_chars;
+
+                  for ch in trimmed.chars() {
+                    if should_truncate && current_char_idx >= max_display_chars {
+                      // Add ellipsis and stop
+                      segments.push(TextSegment {
+                        content: "...".to_string(),
+                        style: TextStyle {
+                          size: UI_FONT_SIZE,
+                          color: text_color_preview,
+                        },
+                      });
+                      break;
+                    }
+
+                    let char_byte_pos = line_start_byte + current_byte_in_line;
+
+                    // Find active highlight for this byte position
+                    let mut active_color = text_color_preview;
+                    for (highlight, range) in highlights.iter() {
+                      if range.contains(&char_byte_pos) {
+                        // Apply theme color for this highlight
+                        let hl_style = theme.highlight(*highlight);
+                        if let Some(fg) = hl_style.fg {
+                          active_color = crate::ui::theme_color_to_renderer_color(fg);
+                          active_color.a *= preview_alpha;
+                        }
+                        break;
+                      }
+                    }
+
+                    // Check if we can merge with previous segment (same color)
+                    if let Some(last_seg) = segments.last_mut() {
+                      // Compare colors (approximately)
+                      let colors_match = (last_seg.style.color.r - active_color.r).abs() < 0.001
+                        && (last_seg.style.color.g - active_color.g).abs() < 0.001
+                        && (last_seg.style.color.b - active_color.b).abs() < 0.001;
+
+                      if colors_match {
+                        // Merge with previous segment
+                        last_seg.content.push(ch);
+                      } else {
+                        // Start new segment
+                        segments.push(TextSegment {
+                          content: ch.to_string(),
+                          style: TextStyle {
+                            size: UI_FONT_SIZE,
+                            color: active_color,
+                          },
+                        });
+                      }
+                    } else {
+                      // First segment
+                      segments.push(TextSegment {
+                        content: ch.to_string(),
+                        style: TextStyle {
+                          size: UI_FONT_SIZE,
+                          color: active_color,
+                        },
+                      });
+                    }
+
+                    current_char_idx += 1;
+                    current_byte_in_line += ch.len_utf8();
+                  }
+
+                  // Render the line with all segments
+                  if !segments.is_empty() {
+                    surface.draw_text(TextSection {
+                      position: (content_x, current_y),
+                      texts: segments,
+                    });
+                  }
+
+                  current_y += line_height;
+                  byte_offset = line_end_byte;
+                }
+              },
+            );
           },
-        }],
-      });
+          PreviewData::Placeholder(placeholder) => {
+            // Show placeholder text centered
+            let text_width = placeholder.len() as f32 * surface.cell_width();
+            let text_x = preview_x + (preview_width - text_width) / 2.0;
+            let text_y = y + height_scaled / 2.0;
+
+            surface.draw_text(TextSection {
+              position: (text_x, text_y),
+              texts:    vec![TextSegment {
+                content: placeholder.to_string(),
+                style:   TextStyle {
+                  size: UI_FONT_SIZE,
+                  color: text_color_preview,
+                },
+              }],
+            });
+          },
+        }
+      } else {
+        // No preview available - show placeholder
+        let placeholder = "No preview";
+        let text_width = placeholder.len() as f32 * surface.cell_width();
+        let text_x = preview_x + (preview_width - text_width) / 2.0;
+        let text_y = y + height_scaled / 2.0;
+
+        surface.draw_text(TextSection {
+          position: (text_x, text_y),
+          texts:    vec![TextSegment {
+            content: placeholder.to_string(),
+            style:   TextStyle {
+              size: UI_FONT_SIZE,
+              color: text_color_preview,
+            },
+          }],
+        });
+      }
     }
     }); // End overlay region
   }

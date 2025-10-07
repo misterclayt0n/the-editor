@@ -103,9 +103,34 @@ impl App {
         // Parse and handle the notification
         match Notification::parse(&notification.method, notification.params) {
           Ok(notification) => {
-            // TODO: Handle different notification types
-            // For now, just log them
-            log::debug!("Received LSP notification: {:?}", notification);
+            match notification {
+              crate::lsp::Notification::PublishDiagnostics(params) => {
+                let uri = match crate::core::uri::Uri::try_from(&params.uri) {
+                  Ok(uri) => uri,
+                  Err(err) => {
+                    log::error!("Invalid URI in PublishDiagnostics: {:?}", err);
+                    return;
+                  },
+                };
+
+                // Convert LSP diagnostics to internal diagnostics
+                use crate::core::diagnostics::DiagnosticProvider;
+                let provider = DiagnosticProvider::Lsp {
+                  server_id,
+                  identifier: None,
+                };
+
+                self.editor.handle_lsp_diagnostics(
+                  &provider,
+                  uri,
+                  params.version,
+                  params.diagnostics,
+                );
+              },
+              _ => {
+                log::debug!("Received LSP notification: {:?}", notification);
+              },
+            }
           },
           Err(crate::lsp::Error::Unhandled) => {
             log::info!("Ignoring unhandled notification from language server");

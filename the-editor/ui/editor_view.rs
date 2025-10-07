@@ -803,6 +803,59 @@ impl Component for EditorView {
       top_char_idx,
     );
 
+    // Create decoration manager for inline diagnostics
+    let mut decoration_manager = crate::ui::text_decorations::DecorationManager::new();
+
+    // Add diagnostic underlines decoration
+    let underlines = crate::ui::text_decorations::diagnostic_underlines::DiagnosticUnderlines::new(
+      doc,
+      &cx.editor.theme,
+      base_x,
+      base_y,
+      font_size + LINE_SPACING,
+      font_width,
+      font_size,
+      view_offset.horizontal_offset,
+    );
+    decoration_manager.add_decoration(underlines);
+
+    // Add inline diagnostics decoration if enabled
+    let inline_diagnostics_config = cx.editor.config().inline_diagnostics.clone();
+    let eol_diagnostics = cx.editor.config().end_of_line_diagnostics;
+    if !inline_diagnostics_config.disabled() {
+      let inline_diag = crate::ui::text_decorations::diagnostics::InlineDiagnostics::new(
+        doc,
+        &cx.editor.theme,
+        cursor_pos,
+        inline_diagnostics_config,
+        eol_diagnostics,
+        base_x,
+        base_y,
+        font_size + LINE_SPACING,
+        font_width,
+        viewport.width,
+        view_offset.horizontal_offset,
+      );
+      decoration_manager.add_decoration(inline_diag);
+    }
+
+    // Add inlay hints decoration if available
+    if let Some(hints) = doc.inlay_hints(focus_view) {
+      let inlay_hints_decoration = crate::ui::text_decorations::inlay_hints::InlayHints::new(
+        hints,
+        &cx.editor.theme,
+        cursor_pos,
+        viewport.width,
+        base_x,
+        base_y,
+        font_size + LINE_SPACING,
+      );
+      decoration_manager.add_decoration(inlay_hints_decoration);
+    }
+
+    // Prepare decorations for rendering
+    decoration_manager.prepare_for_rendering(top_char_idx);
+
     // Create syntax highlighter - use cached highlights if available, otherwise
     // create live highlighter
     let syn_loader = cx.editor.syn_loader.load();
@@ -855,9 +908,15 @@ impl Component for EditorView {
     };
 
     let mut current_row = usize::MAX;
+    let mut current_doc_line = usize::MAX;
+    let mut last_doc_line_end_row = 0; // Track the last visual row of the previous doc_line
     let mut grapheme_count = 0;
     let mut line_batch = Vec::new(); // Batch characters on the same line
     let mut rendered_gutter_lines = std::collections::HashSet::new(); // Track which lines have gutters rendered
+    let mut line_end_x = std::collections::HashMap::new(); // Track the rightmost x position for each doc line
+    let mut current_line_max_x = base_x; // Track max x for current line
+
+    // EOL diagnostics are now handled by the decoration system
 
     // Helper to flush a line batch
     let flush_line_batch = |batch: &mut Vec<(f32, f32, String, Color)>,
@@ -963,6 +1022,30 @@ impl Component for EditorView {
 
       // Render gutter for this line if we haven't already
       let doc_line = doc_text.char_to_line(g.char_idx.min(doc_text.len_chars()));
+
+      // Call decoration hooks for line changes
+      if doc_line != current_doc_line {
+        // Render end-of-line diagnostic for previous line before switching
+        if current_doc_line != usize::MAX {
+          // Render virtual lines for the previous line using the last visual row it ended on
+          decoration_manager.render_virtual_lines(renderer, (current_doc_line, last_doc_line_end_row as u16), viewport_cols);
+        }
+
+        // Decorate the new line
+        decoration_manager.decorate_line(renderer, (doc_line, rel_row as u16));
+        current_doc_line = doc_line;
+        last_doc_line_end_row = rel_row; // Initialize for the new doc_line
+        current_line_max_x = base_x; // Reset for new line
+      } else {
+        // Still on the same doc_line, update the last row we saw content on
+        last_doc_line_end_row = rel_row;
+      }
+
+      // Track the rightmost x position on this line
+      current_line_max_x = current_line_max_x.max(x + (draw_cols as f32) * font_width);
+
+      // Call decoration hook for this grapheme
+      decoration_manager.decorate_grapheme(&g);
       if rendered_gutter_lines.insert(doc_line) {
         // This is the first time we're rendering this doc line, so render its gutter
         let cursor_line = doc_text.char_to_line(cursor_pos.min(doc_text.len_chars()));
@@ -1093,6 +1176,8 @@ impl Component for EditorView {
       // Add text command
       match g.raw {
         Grapheme::Newline => {
+          // Store the line end x position for this doc line
+          line_end_x.insert(doc_line, current_line_max_x);
           // End of line, no text to draw
         },
         Grapheme::Tab { .. } => {
@@ -1141,6 +1226,11 @@ impl Component for EditorView {
       font_width,
       font_size,
     );
+
+    // Render virtual lines for the last line
+    if current_doc_line != usize::MAX {
+      decoration_manager.render_virtual_lines(renderer, (current_doc_line, last_doc_line_end_row as u16), viewport_cols);
+    }
 
     // If the document is empty or we didn't render any graphemes, at least render
     // the cursor

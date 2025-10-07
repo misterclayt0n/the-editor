@@ -40,6 +40,8 @@ use crate::{
   RendererError,
   Result,
   TextSection,
+  TextSegment,
+  TextStyle,
 };
 
 const LINE_HEIGHT_FACTOR: f32 = 1.2;
@@ -1192,6 +1194,21 @@ impl Renderer {
   pub fn draw_text(&mut self, section: TextSection) {
     // For compatibility, immediately draw without batching
     self.draw_text_internal(section);
+  }
+
+  /// Draw a single decoration grapheme at the specified position
+  /// This is a convenience method for rendering single characters with a specific color
+  pub fn draw_decoration_grapheme(&mut self, grapheme: &str, color: Color, x: f32, y: f32) {
+    self.draw_text(TextSection {
+      position: (x, y),
+      texts:    vec![TextSegment {
+        content: grapheme.to_string(),
+        style:   TextStyle {
+          size: self.font_size,
+          color,
+        },
+      }],
+    });
   }
 
   /// Internal text drawing implementation using cached shaped text

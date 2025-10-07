@@ -19,6 +19,10 @@ use crate::{
   },
 };
 
+pub mod diagnostics;
+pub mod diagnostic_underlines;
+pub mod inlay_hints;
+
 /// Decorations are the primary mechanism for extending the text rendering.
 ///
 /// Any on-screen element which is anchored to the rendered text in some form
@@ -40,7 +44,7 @@ pub trait Decoration {
   /// here is (essentially) useless as the text color is overwritten by the
   /// rendered text. This _of course_ doesn't apply when rendering inside virtual lines
   /// below the line reserved by `LineAnnotation`s as no text will be rendered here.
-  fn decorate_line(&mut self, _pos: (usize, u16)) {
+  fn decorate_line(&mut self, _surface: &mut Surface, _pos: (usize, u16)) {
     // pos: (doc_line, visual_line)
   }
 
@@ -64,6 +68,7 @@ pub trait Decoration {
   /// ```
   fn render_virt_lines(
     &mut self,
+    _surface: &mut Surface,
     _pos: (usize, u16),
     _virt_off: Position,
   ) -> Position {
@@ -100,9 +105,9 @@ pub trait Decoration {
   }
 }
 
-impl<F: FnMut((usize, u16))> Decoration for F {
-  fn decorate_line(&mut self, pos: (usize, u16)) {
-    self(pos);
+impl<F: FnMut(&mut Surface, (usize, u16))> Decoration for F {
+  fn decorate_line(&mut self, surface: &mut Surface, pos: (usize, u16)) {
+    self(surface, pos);
   }
 }
 
@@ -151,21 +156,21 @@ impl<'a> DecorationManager<'a> {
   }
 
   /// Call decorate_line on all decorations
-  pub fn decorate_line(&mut self, pos: (usize, u16)) {
+  pub fn decorate_line(&mut self, surface: &mut Surface, pos: (usize, u16)) {
     for (decoration, _) in &mut self.decorations {
-      decoration.decorate_line(pos);
+      decoration.decorate_line(surface, pos);
     }
   }
 
   /// Render virtual lines for all decorations
   ///
   /// Returns the total number of virtual lines rendered
-  pub fn render_virtual_lines(&mut self, pos: (usize, u16), line_width: usize) -> u16 {
-    let mut virt_off = Position::new(1, line_width); // start at 1 so the line is never overwritten
+  pub fn render_virtual_lines(&mut self, surface: &mut Surface, pos: (usize, u16), line_width: usize) -> u16 {
+    let mut virt_off = Position::new(1, line_width); // start at 1 to render in first virtual line slot
     let mut total_lines = 0u16;
 
     for (decoration, _) in &mut self.decorations {
-      let result = decoration.render_virt_lines(pos, virt_off);
+      let result = decoration.render_virt_lines(surface, pos, virt_off);
       virt_off += result;
       total_lines = total_lines.saturating_add(result.row as u16);
     }
@@ -216,8 +221,31 @@ impl DecorationRenderer for Surface {
     max_width: usize,
     color: Color,
   ) -> usize {
-    let char_count = text.chars().count();
-    if char_count <= max_width {
+    use unicode_segmentation::UnicodeSegmentation;
+
+    if max_width == 0 {
+      return 0;
+    }
+
+    // Calculate actual display width using grapheme clusters
+    let graphemes: Vec<&str> = text.graphemes(true).collect();
+    let mut total_width = 0;
+    let mut grapheme_count = 0;
+
+    for grapheme in &graphemes {
+      let width = unicode_width::UnicodeWidthStr::width(*grapheme);
+      if total_width + width > max_width {
+        break;
+      }
+      total_width += width;
+      grapheme_count += 1;
+    }
+
+    // Check if truncation is needed
+    let needs_truncation = grapheme_count < graphemes.len();
+
+    if !needs_truncation {
+      // Render full text
       self.draw_text(TextSection {
         position: (x, y),
         texts:    vec![TextSegment {
@@ -228,11 +256,25 @@ impl DecorationRenderer for Surface {
           },
         }],
       });
-      char_count
+      total_width
     } else {
-      // Truncate and add ellipsis
-      let truncated: String = text.chars().take(max_width.saturating_sub(3)).collect();
-      let display = format!("{}...", truncated);
+      // Truncate and add ellipsis (reserve 1 char for "…")
+      let truncate_to = if max_width > 1 { max_width - 1 } else { 0 };
+      let mut truncated_width = 0;
+      let mut truncated_count = 0;
+
+      for grapheme in &graphemes {
+        let width = unicode_width::UnicodeWidthStr::width(*grapheme);
+        if truncated_width + width > truncate_to {
+          break;
+        }
+        truncated_width += width;
+        truncated_count += 1;
+      }
+
+      let truncated: String = graphemes[..truncated_count].concat();
+      let display = format!("{}…", truncated);
+
       self.draw_text(TextSection {
         position: (x, y),
         texts:    vec![TextSegment {
@@ -243,7 +285,7 @@ impl DecorationRenderer for Surface {
           },
         }],
       });
-      max_width
+      truncated_width + 1 // +1 for ellipsis
     }
   }
 

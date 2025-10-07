@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
     .enable_all()
     .build()?;
   // Enter the runtime before constructing handlers that spawn tasks.
-  let _guard = rt.enter();
+  let guard = rt.enter();
 
   // Prepare theme loader.
   let mut theme_parent_dirs = vec![the_editor_loader::config_dir()];
@@ -109,6 +109,16 @@ fn main() -> anyhow::Result<()> {
     the_editor_renderer::WindowConfig::new("The Editor - Modern Text Editor", 1024, 768)
       .with_decorations(config.editor.window_decorations);
 
-  the_editor_renderer::run(window_config, app)
-    .map_err(|e| anyhow::anyhow!("Failed to run renderer: {}", e))
+  let result = the_editor_renderer::run(window_config, app)
+    .map_err(|e| anyhow::anyhow!("Failed to run renderer: {}", e));
+
+  // Explicitly shutdown the runtime with a timeout to avoid blocking on exit
+  // Drop the guard first to exit the runtime context
+  drop(guard);
+
+  // Shutdown the runtime with a 100ms timeout
+  // This prevents the editor from hanging on exit waiting for background tasks
+  rt.shutdown_timeout(std::time::Duration::from_millis(100));
+
+  result
 }

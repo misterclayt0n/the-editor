@@ -109,6 +109,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "i" => goto_implementation,
       "r" => goto_reference,
       "f" => goto_file,
+      "t" => goto_window_top,
+      "c" => goto_window_center,
+      "b" => goto_window_bottom,
     },
 
     "space" => { "Space"

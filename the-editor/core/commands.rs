@@ -46,14 +46,22 @@ use crate::{
     }, surround, text_annotations::TextAnnotations, text_format::TextFormat, textobject, transaction::{
       Deletion,
       Transaction,
-    }, view::View, Tendril, ViewId
-  }, current, current_ref, editor::{
+    }, view::{
+      Align,
+      View,
+    }, Tendril, ViewId
+  },
+  current,
+  current_ref,
+  editor::{
     Action,
     Editor,
-  }, event::PostInsertChar, keymap::{
+  },
+  event::PostInsertChar,
+  keymap::{
     KeyBinding,
     Mode,
-  }
+  }, view_mut,
 };
 
 type MoveFn =
@@ -1793,6 +1801,57 @@ fn goto_line_without_jumplist(
   }
 }
 
+fn goto_window(cx: &mut Context, align: Align) {
+  let count = cx.count.map(|c| c.get()).unwrap_or(1).saturating_sub(1);
+  let config = cx.editor.config();
+  let (view, doc) = current!(cx.editor);
+  let view_offset = doc.view_offset(view.id);
+
+  let height = view.inner_height();
+
+  // respect user given count if any
+  // - 1 so we have at least one gap in the middle.
+  // a height of 6 with padding of 3 on each side will keep shifting the view back
+  // and forth as we type
+  let scrolloff = config.scrolloff.min(height.saturating_sub(1) / 2);
+
+  let last_visual_line = view.last_visual_line(doc);
+
+  let visual_line = match align {
+    Align::Top => view_offset.vertical_offset + scrolloff + count,
+    Align::Center => view_offset.vertical_offset + (last_visual_line / 2),
+    Align::Bottom => {
+      view_offset.vertical_offset + last_visual_line.saturating_sub(scrolloff + count)
+    },
+  };
+  let visual_line = visual_line
+    .max(view_offset.vertical_offset + scrolloff)
+    .min(view_offset.vertical_offset + last_visual_line.saturating_sub(scrolloff));
+
+  let pos = view
+    .pos_at_visual_coords(doc, visual_line as u16, 0, false)
+    .expect("visual_line was constrained to the view area");
+
+  let text = doc.text().slice(..);
+  let selection = doc
+    .selection(view.id)
+    .clone()
+    .transform(|range| range.put_cursor(text, pos, cx.editor.mode == Mode::Select));
+  doc.set_selection(view.id, selection);
+}
+
+pub fn goto_window_top(cx: &mut Context) {
+  goto_window(cx, Align::Top);
+}
+
+pub fn goto_window_center(cx: &mut Context) {
+  goto_window(cx, Align::Center);
+}
+
+pub fn goto_window_bottom(cx: &mut Context) {
+  goto_window(cx, Align::Bottom);
+}
+
 pub fn goto_line_start(cx: &mut Context) {
   let (view, doc) = current!(cx.editor);
   goto_line_start_impl(
@@ -3339,7 +3398,12 @@ pub fn goto_file_impl(cx: &mut Context, action: Action) {
   let primary = selections.primary();
   let rel_path = doc
     .relative_path()
-    .map(|path| path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf())
+    .map(|path| {
+      path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf()
+    })
     .unwrap_or_default();
 
   let paths: Vec<_> = if selections.len() == 1 && primary.len() == 1 {
@@ -3356,7 +3420,8 @@ pub fn goto_file_impl(cx: &mut Context, action: Action) {
     };
 
     let search_end_line = (pos_line + 1).min(text.len_lines().saturating_sub(1));
-    let search_end = text.line_to_byte(search_end_line)
+    let search_end = text
+      .line_to_byte(search_end_line)
       .min((pos + lookaround).min(text.len_bytes()));
 
     let search_range = text.byte_slice(search_start..search_end);
@@ -3392,7 +3457,8 @@ pub fn goto_file_impl(cx: &mut Context, action: Action) {
           };
 
           if let Err(e) = cx.editor.open(&final_path, action) {
-            cx.editor.set_error(format!("Failed to open {}: {}", final_path.display(), e));
+            cx.editor
+              .set_error(format!("Failed to open {}: {}", final_path.display(), e));
           }
         }
       } else {
@@ -3411,9 +3477,11 @@ pub fn goto_file_impl(cx: &mut Context, action: Action) {
     };
 
     if final_path.is_dir() {
-      cx.editor.set_error(format!("{} is a directory", final_path.display()));
+      cx.editor
+        .set_error(format!("{} is a directory", final_path.display()));
     } else if let Err(e) = cx.editor.open(&final_path, action) {
-      cx.editor.set_error(format!("Failed to open {}: {}", final_path.display(), e));
+      cx.editor
+        .set_error(format!("Failed to open {}: {}", final_path.display(), e));
     }
   }
 }

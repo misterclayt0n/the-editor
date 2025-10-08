@@ -5,10 +5,6 @@ This document is just so I can have a little basis btw
 
 #### Goto submenu (g)
 
-• "f" -> goto_file
-• "t" -> goto_window_top
-• "c" -> goto_window_center
-• "b" -> goto_window_bottom
 • "a" -> goto_last_accessed_file
 • "m" -> goto_last_modified_file
 • "n" -> goto_next_buffer

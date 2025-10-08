@@ -112,6 +112,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "t" => goto_window_top,
       "c" => goto_window_center,
       "b" => goto_window_bottom,
+      "a" => goto_last_accessed_file,
     },
 
     "space" => { "Space"

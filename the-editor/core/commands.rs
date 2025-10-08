@@ -30,26 +30,52 @@ use url::Url;
 
 use crate::{
   core::{
-    auto_pairs, comment, document::Document, grapheme, history::UndoKind, indent, info::Info, line_ending::{
+    Tendril,
+    ViewId,
+    auto_pairs,
+    comment,
+    document::Document,
+    grapheme,
+    history::UndoKind,
+    indent,
+    info::Info,
+    line_ending::{
       get_line_ending_of_str,
       line_end_char_index,
-    }, match_brackets, movement::{
-      self, move_horizontally, move_vertically, move_vertically_visual, Direction, Movement
-    }, position::{
-      char_idx_at_visual_offset, Position
-    }, search::{
+    },
+    match_brackets,
+    movement::{
+      self,
+      Direction,
+      Movement,
+      move_horizontally,
+      move_vertically,
+      move_vertically_visual,
+    },
+    position::{
+      Position,
+      char_idx_at_visual_offset,
+    },
+    search::{
       self,
       CharMatcher,
-    }, selection::{
+    },
+    selection::{
       Range,
       Selection,
-    }, surround, text_annotations::TextAnnotations, text_format::TextFormat, textobject, transaction::{
+    },
+    surround,
+    text_annotations::TextAnnotations,
+    text_format::TextFormat,
+    textobject,
+    transaction::{
       Deletion,
       Transaction,
-    }, view::{
+    },
+    view::{
       Align,
       View,
-    }, Tendril, ViewId
+    },
   },
   current,
   current_ref,
@@ -61,7 +87,8 @@ use crate::{
   keymap::{
     KeyBinding,
     Mode,
-  }, view_mut,
+  },
+  view_mut,
 };
 
 type MoveFn =
@@ -3489,6 +3516,15 @@ pub fn goto_file_impl(cx: &mut Context, action: Action) {
 /// Open the file under the cursor or selection (gf)
 pub fn goto_file(cx: &mut Context) {
   goto_file_impl(cx, Action::Replace);
+}
+
+pub fn goto_last_accessed_file(cx: &mut Context) {
+  let view = view_mut!(cx.editor);
+  if let Some(alt) = view.docs_access_history.pop() {
+    cx.editor.switch(alt, Action::Replace);
+  } else {
+    cx.editor.set_error("no last accessed buffer")
+  }
 }
 
 // Re-export LSP commands

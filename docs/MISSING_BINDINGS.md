@@ -3,13 +3,6 @@ This document is just so I can have a little basis btw
 
 ### Normal Mode
 
-#### Goto submenu (g)
-
-• "k" -> move_line_up
-• "j" -> move_line_down
-• "." -> goto_last_modification
-• "w" -> goto_word
-
 #### Selection Operations
 
 • "s"                -> select_regex

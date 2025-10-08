@@ -51,8 +51,13 @@ pub struct Completion {
 /// Takes the editor and current input, returns list of completions
 pub type CompletionFn = Arc<dyn Fn(&Editor, &str) -> Vec<Completion> + Send + Sync>;
 
+/// Function type for handling prompt events (validate, update, abort)
+/// Takes context, current input, and event type
+/// This allows custom behavior for different prompt types (rename, search, etc.)
+pub type CallbackFn = Box<dyn FnMut(&mut Context, &str, PromptEvent)>;
+
 /// Events that can occur in the prompt component
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptEvent {
   /// Validate and execute the current input
   Validate,
@@ -78,6 +83,9 @@ pub struct Prompt {
   selection:              Option<usize>,
   /// Completion function to generate completions
   completion_fn:          Option<CompletionFn>,
+  /// Callback function for handling events (validate, update, abort)
+  /// If None, falls back to command execution
+  callback_fn:            Option<CallbackFn>,
   /// Maximum history size
   max_history:            usize,
   /// Prefix for the prompt (e.g., ":")
@@ -110,6 +118,7 @@ impl Prompt {
       completions: Vec::new(),
       selection: None,
       completion_fn: None,
+      callback_fn: None,
       max_history: 100,
       prefix,
       scroll_offset: 0,
@@ -132,6 +141,24 @@ impl Prompt {
   /// Set the completion function (builder pattern alternative)
   pub fn set_completion_fn(&mut self, completion_fn: CompletionFn) {
     self.completion_fn = Some(completion_fn);
+  }
+
+  /// Set a custom callback function for handling prompt events
+  /// This allows the prompt to be used for custom interactions like rename, search, etc.
+  /// If no callback is set, the prompt falls back to command execution
+  pub fn with_callback(
+    mut self,
+    callback: impl FnMut(&mut Context, &str, PromptEvent) + 'static,
+  ) -> Self {
+    self.callback_fn = Some(Box::new(callback));
+    self
+  }
+
+  /// Pre-fill the prompt with initial text (useful for rename, edit, etc.)
+  pub fn with_prefill(mut self, text: String) -> Self {
+    self.cursor = text.len();
+    self.input = text;
+    self
   }
 
   /// Handle a key press and return the appropriate event
@@ -1109,6 +1136,35 @@ impl Component for Prompt {
 
     let prompt_event = self.handle_key_internal(key_press, cx.editor);
 
+    // If we have a custom callback, use it instead of command execution
+    if let Some(ref mut callback) = self.callback_fn {
+      let input = self.input.clone();
+      callback(cx, &input, prompt_event);
+
+      // For Abort and Validate events, close the prompt
+      if prompt_event == PromptEvent::Abort || prompt_event == PromptEvent::Validate {
+        return EventResult::Consumed(Some(Box::new(|compositor, cx| {
+          // Switch back to Normal mode
+          cx.editor.set_mode(crate::keymap::Mode::Normal);
+
+          // Find statusline and slide back
+          for layer in compositor.layers.iter_mut() {
+            if let Some(statusline) = layer
+              .as_any_mut()
+              .downcast_mut::<crate::ui::components::statusline::StatusLine>(
+            ) {
+              statusline.slide_for_prompt(false);
+              break;
+            }
+          }
+          compositor.pop();
+        })));
+      }
+
+      return EventResult::Consumed(None);
+    }
+
+    // No custom callback - fall back to command execution
     match prompt_event {
       PromptEvent::Abort => {
         // Close the prompt and slide statusline back

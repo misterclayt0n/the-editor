@@ -264,6 +264,15 @@ pub fn goto_type_definition(cx: &mut Context) {
   );
 }
 
+pub fn goto_implementation(cx: &mut Context) {
+  goto_single_impl(
+    cx,
+    LanguageServerFeature::GotoImplementation,
+    |ls, pos, doc_id| ls.goto_implementation(doc_id, pos, None),
+    "No implementation found",
+  );
+}
+
 pub fn goto_reference(cx: &mut Context) {
   let (view, doc) = current_ref!(cx.editor);
 

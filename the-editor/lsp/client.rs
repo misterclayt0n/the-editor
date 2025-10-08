@@ -1447,10 +1447,10 @@ impl Client {
     text_document: lsp::TextDocumentIdentifier,
     position: lsp::Position,
     work_done_token: Option<lsp::ProgressToken>,
-  ) -> Option<impl Future<Output = Result<Option<lsp::GotoDefinitionResponse>>>> {
+  ) -> Option<BoxFuture<'static, Result<Option<lsp::GotoDefinitionResponse>>>> {
     let capabilities = self.capabilities.get().unwrap();
 
-    // Return early if the server does not support goto-definition.
+    // Return early if the server does not support goto-implementation.
     match capabilities.implementation_provider {
       Some(
         lsp::ImplementationProviderCapability::Simple(true)
@@ -1459,11 +1459,11 @@ impl Client {
       _ => return None,
     }
 
-    Some(self.goto_request::<lsp::request::GotoImplementation>(
+    Some(Box::pin(self.goto_request::<lsp::request::GotoImplementation>(
       text_document,
       position,
       work_done_token,
-    ))
+    )))
   }
 
   pub fn goto_reference(

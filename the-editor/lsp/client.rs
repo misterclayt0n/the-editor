@@ -1357,7 +1357,7 @@ impl Client {
     text_document: lsp::TextDocumentIdentifier,
     position: lsp::Position,
     work_done_token: Option<lsp::ProgressToken>,
-  ) -> impl Future<Output = Result<T::Result>> + 'static {
+  ) -> BoxFuture<'static, Result<T::Result>> {
     let params = lsp::GotoDefinitionParams {
       text_document_position_params: lsp::TextDocumentPositionParams {
         text_document,
@@ -1377,7 +1377,7 @@ impl Client {
     text_document: lsp::TextDocumentIdentifier,
     position: lsp::Position,
     work_done_token: Option<lsp::ProgressToken>,
-  ) -> Option<impl Future<Output = Result<Option<lsp::GotoDefinitionResponse>>> + 'static> {
+  ) -> Option<BoxFuture<'static, Result<Option<lsp::GotoDefinitionResponse>>>> {
     let capabilities = self.capabilities.get().unwrap();
 
     // Return early if the server does not support goto-definition.
@@ -1386,11 +1386,11 @@ impl Client {
       _ => return None,
     }
 
-    Some(self.goto_request::<lsp::request::GotoDefinition>(
+    Some(Box::pin(self.goto_request::<lsp::request::GotoDefinition>(
       text_document,
       position,
       work_done_token,
-    ))
+    )))
   }
 
   pub fn goto_declaration(
@@ -1398,7 +1398,7 @@ impl Client {
     text_document: lsp::TextDocumentIdentifier,
     position: lsp::Position,
     work_done_token: Option<lsp::ProgressToken>,
-  ) -> Option<impl Future<Output = Result<Option<lsp::GotoDefinitionResponse>>>> {
+  ) -> Option<BoxFuture<'static, Result<Option<lsp::GotoDefinitionResponse>>>> {
     let capabilities = self.capabilities.get().unwrap();
 
     // Return early if the server does not support goto-declaration.
@@ -1411,11 +1411,11 @@ impl Client {
       _ => return None,
     }
 
-    Some(self.goto_request::<lsp::request::GotoDeclaration>(
+    Some(Box::pin(self.goto_request::<lsp::request::GotoDeclaration>(
       text_document,
       position,
       work_done_token,
-    ))
+    )))
   }
 
   pub fn goto_type_definition(

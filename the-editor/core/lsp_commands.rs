@@ -1,4 +1,5 @@
 use futures_util::{
+  future::BoxFuture,
   stream::FuturesOrdered,
   StreamExt,
 };
@@ -16,6 +17,8 @@ use crate::{
   current_ref,
   editor::Action,
   lsp::{
+    self,
+    Client,
     OffsetEncoding,
     lsp::types as lsp_types,
     util::lsp_range_to_range,
@@ -98,18 +101,28 @@ fn goto_impl(
   }
 }
 
-pub fn goto_definition(cx: &mut Context) {
+/// Generic helper function for goto requests (definition, declaration, type definition, etc.)
+fn goto_single_impl<P>(
+  cx: &mut Context,
+  feature: LanguageServerFeature,
+  request_provider: P,
+  error_msg: &'static str,
+) where
+  P: Fn(
+    &Client,
+    lsp_types::Position,
+    lsp_types::TextDocumentIdentifier,
+  ) -> Option<BoxFuture<'static, lsp::Result<Option<lsp_types::GotoDefinitionResponse>>>>,
+{
   let (view, doc) = current_ref!(cx.editor);
 
   // Collect all the futures with their offset encodings
-  // We need to collect into a Vec to avoid lifetime issues
   let requests: Vec<_> = doc
-    .language_servers_with_feature(LanguageServerFeature::GotoDefinition)
+    .language_servers_with_feature(feature)
     .filter_map(|language_server| {
       let offset_encoding = language_server.offset_encoding();
       let pos = doc.position(view.id, offset_encoding);
-      language_server
-        .goto_definition(doc.identifier(), pos, None)
+      request_provider(language_server, pos, doc.identifier())
         .map(|future| (future, offset_encoding))
     })
     .collect();
@@ -150,14 +163,14 @@ pub fn goto_definition(cx: &mut Context) {
           }
         },
         Err(err) => {
-          log::error!("Error requesting goto definition: {err}");
+          log::error!("Error requesting {}: {err}", error_msg);
         },
       }
     }
 
     let call = move |editor: &mut crate::editor::Editor, compositor: &mut Compositor| {
       if locations.is_empty() {
-        editor.set_error("No definition found");
+        editor.set_error(error_msg);
       } else {
         goto_impl(editor, compositor, locations);
       }
@@ -165,4 +178,22 @@ pub fn goto_definition(cx: &mut Context) {
 
     Ok(Callback::EditorCompositor(Box::new(call)))
   });
+}
+
+pub fn goto_definition(cx: &mut Context) {
+  goto_single_impl(
+    cx,
+    LanguageServerFeature::GotoDefinition,
+    |ls, pos, doc_id| ls.goto_definition(doc_id, pos, None),
+    "No definition found",
+  );
+}
+
+pub fn goto_declaration(cx: &mut Context) {
+  goto_single_impl(
+    cx,
+    LanguageServerFeature::GotoDeclaration,
+    |ls, pos, doc_id| ls.goto_declaration(doc_id, pos, None),
+    "No declaration found",
+  );
 }

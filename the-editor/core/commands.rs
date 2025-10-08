@@ -3306,4 +3306,7 @@ pub fn hover(_cx: &mut Context) {
 }
 
 // Re-export LSP commands
-pub use super::lsp_commands::goto_definition;
+pub use super::lsp_commands::{
+  goto_declaration,
+  goto_definition,
+};

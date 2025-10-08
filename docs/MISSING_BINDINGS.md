@@ -5,7 +5,6 @@ This document is just so I can have a little basis btw
 
 #### Selection Operations
 
-• "s"                -> select_regex
 • "A-s"              -> split_selection_on_newline
 • "A-minus"          -> merge_selections
 • "A-_"              -> merge_consecutive_selections

@@ -46,7 +46,10 @@ use crate::{
     }, selection::{
       Range,
       Selection,
-    }, surround, text_annotations::{Overlay, TextAnnotations}, text_format::TextFormat, textobject, transaction::{
+    }, surround, text_annotations::{
+      Overlay,
+      TextAnnotations,
+    }, text_format::TextFormat, textobject, transaction::{
       Deletion,
       Transaction,
     }, view::{
@@ -1169,6 +1172,89 @@ pub fn command_mode(cx: &mut Context) {
 
 pub fn normal_mode(cx: &mut Context) {
   cx.editor.set_mode(Mode::Normal);
+}
+
+pub fn select_regex(cx: &mut Context) {
+  // Set custom mode string
+  cx.editor.set_custom_mode_str("SELECT".to_string());
+
+  // Set mode to Command so prompt is shown
+  cx.editor.set_mode(Mode::Command);
+
+  // Capture the original selection before starting the prompt
+  let (view, doc) = current_ref!(cx.editor);
+  let text = doc.text().slice(..);
+  let original_selection = doc.selection(view.id).clone();
+
+  // If original selection is just a point (cursor), expand to whole document
+  // Otherwise, search within the existing selection
+  let search_selection = if original_selection.primary().is_empty() {
+    crate::core::selection::Selection::single(0, text.len_chars())
+  } else {
+    original_selection
+  };
+
+  // Create prompt with callback
+  let prompt = crate::ui::components::Prompt::new(String::new()).with_callback(move |cx, input, event| {
+    use crate::ui::components::prompt::PromptEvent;
+
+    // Handle events
+    match event {
+      PromptEvent::Update | PromptEvent::Validate => {
+        if matches!(event, PromptEvent::Validate) {
+          // Clear custom mode string on validation
+          cx.editor.clear_custom_mode_str();
+        }
+
+        // Skip empty input
+        if input.is_empty() {
+          return;
+        }
+
+        // Parse regex
+        let regex = match the_editor_stdx::rope::Regex::new(input) {
+          Ok(regex) => regex,
+          Err(err) => {
+            cx.editor.set_error(format!("Invalid regex: {}", err));
+            return;
+          }
+        };
+
+        let (view, doc) = current!(cx.editor);
+        let text = doc.text().slice(..);
+
+        // Use the captured original search selection
+        // Apply select_on_matches
+        if let Some(new_selection) =
+          crate::core::selection::select_on_matches(text, &search_selection, &regex)
+        {
+          doc.set_selection(view.id, new_selection);
+        } else if matches!(event, PromptEvent::Validate) {
+          cx.editor.set_error("No matches found");
+        }
+      }
+      PromptEvent::Abort => {
+        // Clear custom mode string on abort
+        cx.editor.clear_custom_mode_str();
+      }
+    }
+  });
+
+  // Push prompt to compositor with statusline slide animation
+  cx.callback.push(Box::new(|compositor, _cx| {
+    // Find the statusline and trigger slide animation
+    for layer in compositor.layers.iter_mut() {
+      if let Some(statusline) = layer
+        .as_any_mut()
+        .downcast_mut::<crate::ui::components::statusline::StatusLine>()
+      {
+        statusline.slide_for_prompt(true);
+        break;
+      }
+    }
+
+    compositor.push(Box::new(prompt));
+  }));
 }
 
 pub fn file_picker(cx: &mut Context) {
@@ -3709,7 +3795,7 @@ fn jump_to_label(cx: &mut Context, labels: Vec<Range>, behaviour: Movement) {
       _ => {
         doc_mut!(cx.editor, &doc).remove_jump_labels(view);
         return;
-      }
+      },
     };
     let Some(i) = alphabet.iter().position(|&it| it == ch) else {
       doc_mut!(cx.editor, &doc).remove_jump_labels(view);
@@ -3756,11 +3842,11 @@ fn jump_to_label(cx: &mut Context, labels: Vec<Range>, behaviour: Movement) {
 }
 
 pub fn goto_word(cx: &mut Context) {
-    jump_to_word(cx, Movement::Move)
+  jump_to_word(cx, Movement::Move)
 }
 
 pub fn extend_to_word(cx: &mut Context) {
-    jump_to_word(cx, Movement::Extend)
+  jump_to_word(cx, Movement::Extend)
 }
 
 // Re-export LSP commands

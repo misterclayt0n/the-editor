@@ -138,6 +138,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "R" => replace_selections_with_clipboard,
       "h" => select_references,
     },
+    
+    "s" => select_regex,
 
     "[" => { "Left bracket"
       "d" => goto_prev_diag,

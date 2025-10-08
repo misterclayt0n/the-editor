@@ -298,6 +298,9 @@ fn create_interpolated_theme(from: &Theme, to: &Theme, t: f32) -> Theme {
 pub struct Editor {
   /// Current editing mode.
   pub mode:             Mode,
+  /// Custom mode string override (e.g., "RENAME" for rename symbol)
+  /// If set, this is displayed in the statusline instead of the mode name
+  pub custom_mode_str:  Option<String>,
   pub tree:             Tree,
   pub next_document_id: DocumentId,
   pub documents:        BTreeMap<DocumentId, Document>,
@@ -1797,6 +1800,7 @@ impl Editor {
 
     let editor = Self {
       mode: Mode::Normal,
+      custom_mode_str: None,
       tree: Tree::new(area),
       next_document_id: DocumentId::default(),
       documents: BTreeMap::new(),
@@ -1877,6 +1881,17 @@ impl Editor {
   /// Current editing mode for the [`Editor`].
   pub fn mode(&self) -> Mode {
     self.mode
+  }
+
+  /// Set a custom mode string to display in the statusline
+  /// (e.g., "RENAME" for rename symbol operations)
+  pub fn set_custom_mode_str(&mut self, mode_str: String) {
+    self.custom_mode_str = Some(mode_str);
+  }
+
+  /// Clear the custom mode string, reverting to normal mode display
+  pub fn clear_custom_mode_str(&mut self) {
+    self.custom_mode_str = None;
   }
 
   pub fn config(&self) -> DynGuard<EditorConfig> {

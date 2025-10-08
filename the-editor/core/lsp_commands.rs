@@ -14,6 +14,7 @@ use crate::{
       align_view,
     },
   },
+  current,
   current_ref,
   editor::Action,
   lsp::{
@@ -412,4 +413,245 @@ pub fn code_action(cx: &mut Context) {
 
     Ok(Callback::EditorCompositor(Box::new(call)))
   });
+}
+
+pub fn rename_symbol(cx: &mut Context) {
+  let (view, doc) = current_ref!(cx.editor);
+
+  // Check if any language server supports rename
+  if doc
+    .language_servers_with_feature(LanguageServerFeature::RenameSymbol)
+    .next()
+    .is_none()
+  {
+    cx.editor.set_error("No language server with rename symbol support");
+    return;
+  }
+
+  // Get the word under cursor as prefill
+  let text = doc.text().slice(..);
+  let selection = doc.selection(view.id).primary();
+
+  // Expand selection to full word if it's just a cursor or single char
+  let word_range = if selection.len() <= 1 {
+    crate::core::textobject::textobject_word(
+      text,
+      selection,
+      crate::core::textobject::TextObject::Inside,
+      1,
+      false,
+    )
+  } else {
+    selection
+  };
+
+  let prefill = word_range.fragment(text).to_string();
+
+  // Set custom mode string
+  cx.editor.set_custom_mode_str("RENAME".to_string());
+
+  // Set mode to Command so prompt is shown
+  cx.editor.set_mode(crate::keymap::Mode::Command);
+
+  // Create prompt with callback
+  let prompt = crate::ui::components::Prompt::new(String::new())
+    .with_prefill(prefill)
+    .with_callback(|cx, input, event| {
+      // Handle events
+      match event {
+        crate::ui::components::prompt::PromptEvent::Validate => {
+          // Clear custom mode string
+          cx.editor.clear_custom_mode_str();
+
+          let (view, doc) = current!(cx.editor);
+
+          // Get language server
+          let Some(language_server) = doc
+            .language_servers_with_feature(LanguageServerFeature::RenameSymbol)
+            .next()
+          else {
+            cx.editor.set_error("No language server with rename symbol support");
+            return;
+          };
+
+          let offset_encoding = language_server.offset_encoding();
+          let pos = doc.position(view.id, offset_encoding);
+
+          // Call rename_symbol
+          let Some(future) = language_server.rename_symbol(doc.identifier(), pos, input.to_string())
+          else {
+            cx.editor.set_error("Language server does not support rename");
+            return;
+          };
+
+          // Block on the future to get the result synchronously (like Helix does)
+          use futures_executor::block_on;
+          log::info!("rename_symbol: calling LSP with new name: {}", input);
+          match block_on(future) {
+            Ok(Some(workspace_edit)) => {
+              log::info!("rename_symbol: received workspace edit: {:?}", workspace_edit);
+              if let Err(err) = apply_workspace_edit(cx.editor, &workspace_edit) {
+                log::error!("rename_symbol: failed to apply workspace edit: {}", err);
+                cx.editor.set_error(format!("Failed to apply rename: {}", err));
+              } else {
+                log::info!("rename_symbol: workspace edit applied successfully");
+                cx.editor.set_status("Symbol renamed");
+              }
+            }
+            Ok(None) => {
+              log::warn!("rename_symbol: LSP returned no workspace edit");
+              cx.editor.set_status("No changes from rename");
+            }
+            Err(err) => {
+              log::error!("rename_symbol: LSP error: {}", err);
+              cx.editor.set_error(format!("Rename failed: {}", err));
+            }
+          }
+        }
+        crate::ui::components::prompt::PromptEvent::Abort => {
+          // Clear custom mode string on abort
+          cx.editor.clear_custom_mode_str();
+        }
+        crate::ui::components::prompt::PromptEvent::Update => {
+          // Nothing to do on update
+        }
+      }
+    });
+
+  // Push prompt to compositor with statusline slide animation
+  cx.callback.push(Box::new(|compositor, _cx| {
+    // Find the statusline and trigger slide animation
+    for layer in compositor.layers.iter_mut() {
+      if let Some(statusline) = layer
+        .as_any_mut()
+        .downcast_mut::<crate::ui::components::statusline::StatusLine>()
+      {
+        statusline.slide_for_prompt(true);
+        break;
+      }
+    }
+
+    compositor.push(Box::new(prompt));
+  }));
+}
+
+/// Apply a workspace edit to the editor
+fn apply_workspace_edit(
+  editor: &mut crate::editor::Editor,
+  edit: &lsp_types::WorkspaceEdit,
+) -> anyhow::Result<()> {
+  use crate::lsp::util::lsp_range_to_range;
+
+  // Apply document changes
+  if let Some(ref changes) = edit.changes {
+    for (uri, text_edits) in changes {
+      let path = uri
+        .to_file_path()
+        .map_err(|_| anyhow::anyhow!("Invalid file path"))?;
+
+      // Open or get the document
+      let doc_id = editor.open(&path, Action::Replace)?;
+      let doc = editor
+        .documents
+        .get_mut(&doc_id)
+        .ok_or_else(|| anyhow::anyhow!("Failed to get document"))?;
+
+      // Get the language server to determine offset encoding
+      let language_server = doc
+        .language_servers_with_feature(LanguageServerFeature::RenameSymbol)
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No language server"))?;
+
+      let offset_encoding = language_server.offset_encoding();
+
+      // Apply edits in reverse order to maintain offsets
+      let mut edits: Vec<_> = text_edits.iter().collect();
+      edits.sort_by_key(|edit| std::cmp::Reverse(edit.range.start));
+
+      for edit in edits {
+        let text = doc.text();
+        if let Some(range) = lsp_range_to_range(text, edit.range, offset_encoding) {
+          let transaction = crate::core::transaction::Transaction::change(
+            text,
+            [(range.anchor, range.head, Some(edit.new_text.as_str().into()))].into_iter(),
+          );
+
+          doc.apply(&transaction, editor.tree.focus);
+        }
+      }
+    }
+  }
+
+  // Handle document_changes (TextDocumentEdit)
+  if let Some(ref document_changes) = edit.document_changes {
+    use lsp_types::DocumentChanges;
+
+    let text_edits = match document_changes {
+      DocumentChanges::Edits(edits) => edits.as_slice(),
+      DocumentChanges::Operations(ops) => {
+        // For now, just extract TextDocumentEdit operations
+        // Ignore other operations like create/rename/delete files
+        let mut edits = Vec::new();
+        for op in ops {
+          if let lsp_types::DocumentChangeOperation::Edit(edit) = op {
+            edits.push(edit.clone());
+          }
+        }
+        // This is a workaround - we'd need to handle this differently
+        // but for rename operations, we typically only get Edits variant
+        return Err(anyhow::anyhow!("Unsupported document changes format"));
+      }
+    };
+
+    for text_doc_edit in text_edits {
+      let path = text_doc_edit.text_document.uri
+        .to_file_path()
+        .map_err(|_| anyhow::anyhow!("Invalid file path"))?;
+
+      // Open or get the document
+      let doc_id = editor.open(&path, Action::Replace)?;
+      let doc = editor
+        .documents
+        .get_mut(&doc_id)
+        .ok_or_else(|| anyhow::anyhow!("Failed to get document"))?;
+
+      // Get the language server to determine offset encoding
+      let language_server = doc
+        .language_servers_with_feature(LanguageServerFeature::RenameSymbol)
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No language server"))?;
+
+      let offset_encoding = language_server.offset_encoding();
+
+      // Extract text edits from the annotated edit union
+      let mut text_edits_vec = Vec::new();
+      for edit in &text_doc_edit.edits {
+        match edit {
+          lsp_types::OneOf::Left(text_edit) => {
+            text_edits_vec.push(text_edit);
+          }
+          lsp_types::OneOf::Right(annotated_edit) => {
+            text_edits_vec.push(&annotated_edit.text_edit);
+          }
+        }
+      }
+
+      // Apply edits in reverse order to maintain offsets
+      text_edits_vec.sort_by_key(|edit| std::cmp::Reverse(edit.range.start));
+
+      for edit in text_edits_vec {
+        let text = doc.text();
+        if let Some(range) = lsp_range_to_range(text, edit.range, offset_encoding) {
+          let transaction = crate::core::transaction::Transaction::change(
+            text,
+            [(range.anchor, range.head, Some(edit.new_text.as_str().into()))].into_iter(),
+          );
+
+          doc.apply(&transaction, editor.tree.focus);
+        }
+      }
+    }
+  }
+
+  Ok(())
 }

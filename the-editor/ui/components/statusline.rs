@@ -205,8 +205,12 @@ impl Component for StatusLine {
     // Apply horizontal slide offset
     let mut x = SEGMENT_PADDING_X + self.slide_offset;
 
-    // Mode text
-    let mode_text = Self::mode_text(mode);
+    // Mode text (use custom mode string if set, otherwise use mode name)
+    let mode_text = cx
+      .editor
+      .custom_mode_str
+      .as_deref()
+      .unwrap_or_else(|| Self::mode_text(mode));
     let mode_width = Self::draw_text(surface, x, bar_y, mode_text, mode_color);
     x += mode_width + SEGMENT_SPACING;
 

@@ -114,6 +114,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "f" => file_picker,
       "k" => hover,
       "a" => code_action,
+      "r" => rename_symbol,
       "y" => yank_to_clipboard,
       "Y" => yank_main_selection_to_clipboard,
       "p" => paste_clipboard_after,

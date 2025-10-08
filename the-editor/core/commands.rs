@@ -30,66 +30,36 @@ use url::Url;
 
 use crate::{
   core::{
-    Tendril,
-    ViewId,
-    auto_pairs,
-    comment,
-    document::Document,
-    grapheme,
-    history::UndoKind,
-    indent,
-    info::Info,
-    line_ending::{
+    auto_pairs, chars::char_is_word, comment, document::Document, grapheme::{
+      self,
+      next_grapheme_boundary,
+    }, history::UndoKind, indent, info::Info, line_ending::{
       get_line_ending_of_str,
       line_end_char_index,
-    },
-    match_brackets,
-    movement::{
-      self,
-      Direction,
-      Movement,
-      move_horizontally,
-      move_vertically,
-      move_vertically_visual,
-    },
-    position::{
-      Position,
-      char_idx_at_visual_offset,
-    },
-    search::{
+    }, match_brackets, movement::{
+      self, move_horizontally, move_vertically, move_vertically_visual, Direction, Movement
+    }, position::{
+      char_idx_at_visual_offset, Position
+    }, search::{
       self,
       CharMatcher,
-    },
-    selection::{
+    }, selection::{
       Range,
       Selection,
-    },
-    surround,
-    text_annotations::TextAnnotations,
-    text_format::TextFormat,
-    textobject,
-    transaction::{
+    }, surround, text_annotations::{Overlay, TextAnnotations}, text_format::TextFormat, textobject, transaction::{
       Deletion,
       Transaction,
-    },
-    view::{
+    }, view::{
       Align,
       View,
-    },
-  },
-  current,
-  current_ref,
-  editor::{
+    }, Tendril, ViewId
+  }, current, current_ref, doc, doc_mut, editor::{
     Action,
     Editor,
-  },
-  event::PostInsertChar,
-  keymap::{
+  }, event::PostInsertChar, keymap::{
     KeyBinding,
     Mode,
-  },
-  view,
-  view_mut,
+  }, view, view_mut
 };
 
 type MoveFn =
@@ -3582,6 +3552,215 @@ pub fn move_line_up(cx: &mut Context) {
 
 pub fn move_line_down(cx: &mut Context) {
   move_impl(cx, move_vertically, Direction::Forward, Movement::Move)
+}
+
+pub fn goto_last_modification(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  let pos = doc.history.get_mut().last_edit_pos();
+  let text = doc.text().slice(..);
+  if let Some(pos) = pos {
+    let selection = doc
+      .selection(view.id)
+      .clone()
+      .transform(|range| range.put_cursor(text, pos, cx.editor.mode == Mode::Select));
+    doc.set_selection(view.id, selection);
+  }
+}
+
+fn jump_to_word(cx: &mut Context, behaviour: Movement) {
+  // Calculate the jump candidates: ranges for any visible words with two or
+  // more characters.
+  let alphabet = &cx.editor.config().jump_label_alphabet;
+  if alphabet.is_empty() {
+    return;
+  }
+
+  let jump_label_limit = alphabet.len() * alphabet.len();
+  let mut words = Vec::with_capacity(jump_label_limit);
+  let (view, doc) = current_ref!(cx.editor);
+  let text = doc.text().slice(..);
+
+  // This is not necessarily exact if there is virtual text like soft wrap.
+  // It's ok though because the extra jump labels will not be rendered.
+  let start = text.line_to_char(text.char_to_line(doc.view_offset(view.id).anchor));
+  let end = text.line_to_char(view.estimate_last_doc_line(doc) + 1);
+
+  let primary_selection = doc.selection(view.id).primary();
+  let cursor = primary_selection.cursor(text);
+  let mut cursor_fwd = Range::point(cursor);
+  let mut cursor_rev = Range::point(cursor);
+  if text.get_char(cursor).is_some_and(|c| !c.is_whitespace()) {
+    let cursor_word_end = movement::move_next_word_end(text, cursor_fwd, 1);
+    //  single grapheme words need a special case
+    if cursor_word_end.anchor == cursor {
+      cursor_fwd = cursor_word_end;
+    }
+    let cursor_word_start = movement::move_prev_word_start(text, cursor_rev, 1);
+    if cursor_word_start.anchor == next_grapheme_boundary(text, cursor) {
+      cursor_rev = cursor_word_start;
+    }
+  }
+  'outer: loop {
+    let mut changed = false;
+    while cursor_fwd.head < end {
+      cursor_fwd = movement::move_next_word_end(text, cursor_fwd, 1);
+      // The cursor is on a word that is atleast two graphemes long and
+      // madeup of word characters. The latter condition is needed because
+      // move_next_word_end simply treats a sequence of characters from
+      // the same char class as a word so `=<` would also count as a word.
+      let add_label = text
+        .slice(..cursor_fwd.head)
+        .graphemes_rev()
+        .take(2)
+        .take_while(|g| g.chars().all(char_is_word))
+        .count()
+        == 2;
+      if !add_label {
+        continue;
+      }
+      changed = true;
+      // skip any leading whitespace
+      cursor_fwd.anchor += text
+        .chars_at(cursor_fwd.anchor)
+        .take_while(|&c| !char_is_word(c))
+        .count();
+      words.push(cursor_fwd);
+      if words.len() == jump_label_limit {
+        break 'outer;
+      }
+      break;
+    }
+    while cursor_rev.head > start {
+      cursor_rev = movement::move_prev_word_start(text, cursor_rev, 1);
+      // The cursor is on a word that is atleast two graphemes long and
+      // madeup of word characters. The latter condition is needed because
+      // move_prev_word_start simply treats a sequence of characters from
+      // the same char class as a word so `=<` would also count as a word.
+      let add_label = text
+        .slice(cursor_rev.head..)
+        .graphemes()
+        .take(2)
+        .take_while(|g| g.chars().all(char_is_word))
+        .count()
+        == 2;
+      if !add_label {
+        continue;
+      }
+      changed = true;
+      cursor_rev.anchor -= text
+        .chars_at(cursor_rev.anchor)
+        .reversed()
+        .take_while(|&c| !char_is_word(c))
+        .count();
+      words.push(cursor_rev);
+      if words.len() == jump_label_limit {
+        break 'outer;
+      }
+      break;
+    }
+    if !changed {
+      break;
+    }
+  }
+  jump_to_label(cx, words, behaviour)
+}
+
+fn jump_to_label(cx: &mut Context, labels: Vec<Range>, behaviour: Movement) {
+  let doc = doc!(cx.editor);
+  let alphabet = &cx.editor.config().jump_label_alphabet;
+  if labels.is_empty() {
+    return;
+  }
+  let alphabet_char = |i| {
+    let mut res = Tendril::new();
+    res.push(alphabet[i]);
+    res
+  };
+
+  // Add label for each jump candidate to the View as virtual text.
+  let text = doc.text().slice(..);
+  let mut overlays: Vec<_> = labels
+    .iter()
+    .enumerate()
+    .flat_map(|(i, range)| {
+      [
+        Overlay::new(range.from(), alphabet_char(i / alphabet.len())),
+        Overlay::new(
+          grapheme::next_grapheme_boundary(text, range.from()),
+          alphabet_char(i % alphabet.len()),
+        ),
+      ]
+    })
+    .collect();
+  overlays.sort_unstable_by_key(|overlay| overlay.char_idx);
+  let (view, doc) = current!(cx.editor);
+  doc.set_jump_labels(view.id, overlays);
+
+  // Accept two characters matching a visible label. Jump to the candidate
+  // for that label if it exists.
+  let primary_selection = doc.selection(view.id).primary();
+  let view = view.id;
+  let doc = doc.id();
+  cx.on_next_key(move |cx, event| {
+    let alphabet = &cx.editor.config().jump_label_alphabet;
+    // Extract char from KeyPress and check for no modifiers
+    let ch = match event.code {
+      the_editor_renderer::Key::Char(c) if !event.shift && !event.ctrl && !event.alt => c,
+      _ => {
+        doc_mut!(cx.editor, &doc).remove_jump_labels(view);
+        return;
+      }
+    };
+    let Some(i) = alphabet.iter().position(|&it| it == ch) else {
+      doc_mut!(cx.editor, &doc).remove_jump_labels(view);
+      return;
+    };
+    let outer = i * alphabet.len();
+    // Bail if the given character cannot be a jump label.
+    if outer > labels.len() {
+      doc_mut!(cx.editor, &doc).remove_jump_labels(view);
+      return;
+    }
+    cx.on_next_key(move |cx, event| {
+      doc_mut!(cx.editor, &doc).remove_jump_labels(view);
+      let alphabet = &cx.editor.config().jump_label_alphabet;
+      // Extract char from KeyPress and check for no modifiers
+      let ch = match event.code {
+        the_editor_renderer::Key::Char(c) if !event.shift && !event.ctrl && !event.alt => c,
+        _ => return,
+      };
+      let Some(inner) = alphabet.iter().position(|&it| it == ch) else {
+        return;
+      };
+      if let Some(mut range) = labels.get(outer + inner).copied() {
+        range = if behaviour == Movement::Extend {
+          let anchor = if range.anchor < range.head {
+            let from = primary_selection.from();
+            if range.anchor < from {
+              range.anchor
+            } else {
+              from
+            }
+          } else {
+            let to = primary_selection.to();
+            if range.anchor > to { range.anchor } else { to }
+          };
+          Range::new(anchor, range.head)
+        } else {
+          range.with_direction(Direction::Forward)
+        };
+        doc_mut!(cx.editor, &doc).set_selection(view, range.into());
+      }
+    });
+  });
+}
+
+pub fn goto_word(cx: &mut Context) {
+    jump_to_word(cx, Movement::Move)
+}
+
+pub fn extend_to_word(cx: &mut Context) {
+    jump_to_word(cx, Movement::Extend)
 }
 
 // Re-export LSP commands

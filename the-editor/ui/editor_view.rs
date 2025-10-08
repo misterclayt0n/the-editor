@@ -54,6 +54,51 @@ const VIEW_PADDING_BOTTOM: f32 = 0.0; // No reservation - statusbar is now an ov
 const CURSOR_HEIGHT_EXTENSION: f32 = 4.0;
 const LINE_SPACING: f32 = 4.0;
 
+/// Wrapper around syntax::OverlayHighlighter that maintains position and style
+struct OverlayHighlighter<'t> {
+  inner: crate::core::syntax::OverlayHighlighter,
+  pos:   usize,
+  theme: &'t crate::core::theme::Theme,
+  style: crate::core::graphics::Style,
+}
+
+impl<'t> OverlayHighlighter<'t> {
+  fn new(
+    overlays: Vec<crate::core::syntax::OverlayHighlights>,
+    theme: &'t crate::core::theme::Theme,
+  ) -> Self {
+    let inner = crate::core::syntax::OverlayHighlighter::new(overlays);
+    let mut highlighter = Self {
+      inner,
+      pos: 0,
+      theme,
+      style: crate::core::graphics::Style::default(),
+    };
+    highlighter.update_pos();
+    highlighter
+  }
+
+  fn update_pos(&mut self) {
+    self.pos = self.inner.next_event_offset();
+  }
+
+  fn advance(&mut self) {
+    use crate::core::syntax::HighlightEvent;
+    let (event, highlights) = self.inner.advance();
+    let base = match event {
+      HighlightEvent::Refresh => crate::core::graphics::Style::default(),
+      HighlightEvent::Push => self.style,
+    };
+
+    self.style = highlights.fold(base, |acc, highlight| acc.patch(self.theme.highlight(highlight)));
+    self.update_pos();
+  }
+
+  fn style(&self) -> crate::core::graphics::Style {
+    self.style
+  }
+}
+
 pub struct EditorView {
   pub keymaps:          Keymaps,
   on_next_key:          Option<(OnKeyCallback, OnKeyCallbackKind)>,
@@ -313,6 +358,11 @@ impl Component for EditorView {
             alt:     key.alt,
           };
           callback(&mut cmd_cx, key_press);
+
+          // Check if callback set a new on_next_key
+          if let Some(on_next_key) = cmd_cx.on_next_key_callback {
+            self.on_next_key = Some(on_next_key);
+          }
 
           // Process any callbacks generated
           let callbacks = cmd_cx.callback;
@@ -763,7 +813,7 @@ impl Component for EditorView {
     let cached_highlights = cached_highlights_opt;
 
     let text_fmt = doc.text_format(viewport.width, None);
-    let annotations = view.text_annotations(doc, None);
+    let annotations = view.text_annotations(doc, Some(theme));
     let view_offset = doc.view_offset(focus_view);
 
     let (top_char_idx, _) = char_idx_at_visual_offset(
@@ -774,6 +824,14 @@ impl Component for EditorView {
       &text_fmt,
       &annotations,
     );
+
+    // Collect overlay highlights (e.g., jump labels) for the visible range
+    let mut overlay_highlighter = {
+      let start_char = top_char_idx;
+      let end_char = (start_char + (visible_lines * viewport.width as usize)).min(doc_text.len_chars());
+      let overlay_highlights_data = annotations.collect_overlay_highlights(start_char..end_char);
+      OverlayHighlighter::new(vec![overlay_highlights_data], theme)
+    };
 
     // Compute row offset
     let row_off = visual_offset_from_block(
@@ -1088,35 +1146,55 @@ impl Component for EditorView {
       // Check if this is the cursor position
       let is_cursor_here = g.char_idx == cursor_pos;
 
-      // Get syntax highlighting color first (needed for cursor rendering)
-      let syntax_fg = if let Some(ref highlights) = cached_highlights {
-        // Use cached highlights - find active highlights at this byte position
-        let byte_pos = doc_text.char_to_byte(g.char_idx);
-        let mut active_style = text_style;
+      // Advance overlay highlighter
+      while g.char_idx >= overlay_highlighter.pos {
+        overlay_highlighter.advance();
+      }
 
-        for (highlight, range) in highlights {
-          if range.contains(&byte_pos) {
-            let hl_style = cx.editor.theme.highlight(*highlight);
-            active_style = active_style.patch(hl_style);
-          }
-        }
+      // Get text color - check for overlay/virtual text first, then syntax highlighting
+      use crate::core::doc_formatter::GraphemeSource;
+      let syntax_fg = match g.source {
+        GraphemeSource::VirtualText { highlight } => {
+          // Use overlay highlight if present
+          highlight.and_then(|h| cx.editor.theme.highlight(h).fg)
+        },
+        GraphemeSource::Document { .. } => {
+          // Get syntax highlighting color for document text, then patch with overlay
+          let mut active_style = if let Some(ref highlights) = cached_highlights {
+            // Use cached highlights - find active highlights at this byte position
+            let byte_pos = doc_text.char_to_byte(g.char_idx);
+            let mut style = text_style;
 
-        active_style.fg
-      } else {
-        // Use live highlighter
-        let mut advance_count = 0;
-        while g.char_idx >= syntax_hl.pos {
-          syntax_hl.advance();
-          advance_count += 1;
-          if advance_count > 100 {
-            eprintln!(
-              "WARNING: Too many advances at char_idx {}, breaking",
-              g.char_idx
-            );
-            break;
-          }
-        }
-        syntax_hl.style.fg
+            for (highlight, range) in highlights {
+              if range.contains(&byte_pos) {
+                let hl_style = cx.editor.theme.highlight(*highlight);
+                style = style.patch(hl_style);
+              }
+            }
+
+            style
+          } else {
+            // Use live highlighter
+            let mut advance_count = 0;
+            while g.char_idx >= syntax_hl.pos {
+              syntax_hl.advance();
+              advance_count += 1;
+              if advance_count > 100 {
+                eprintln!(
+                  "WARNING: Too many advances at char_idx {}, breaking",
+                  g.char_idx
+                );
+                break;
+              }
+            }
+            syntax_hl.style
+          };
+
+          // Patch with overlay highlights (e.g., jump labels)
+          active_style = active_style.patch(overlay_highlighter.style());
+
+          active_style.fg
+        },
       };
 
       // Draw cursor if at this position

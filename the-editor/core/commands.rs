@@ -3304,3 +3304,6 @@ pub fn hover(_cx: &mut Context) {
     let _ = crate::handlers::hover::request_hover().await;
   });
 }
+
+// Re-export LSP commands
+pub use super::lsp_commands::goto_definition;

@@ -1357,7 +1357,7 @@ impl Client {
     text_document: lsp::TextDocumentIdentifier,
     position: lsp::Position,
     work_done_token: Option<lsp::ProgressToken>,
-  ) -> impl Future<Output = Result<T::Result>> {
+  ) -> impl Future<Output = Result<T::Result>> + 'static {
     let params = lsp::GotoDefinitionParams {
       text_document_position_params: lsp::TextDocumentPositionParams {
         text_document,
@@ -1377,7 +1377,7 @@ impl Client {
     text_document: lsp::TextDocumentIdentifier,
     position: lsp::Position,
     work_done_token: Option<lsp::ProgressToken>,
-  ) -> Option<impl Future<Output = Result<Option<lsp::GotoDefinitionResponse>>>> {
+  ) -> Option<impl Future<Output = Result<Option<lsp::GotoDefinitionResponse>>> + 'static> {
     let capabilities = self.capabilities.get().unwrap();
 
     // Return early if the server does not support goto-definition.

@@ -26,6 +26,7 @@ pub mod history;
 pub mod indent;
 pub mod info;
 pub mod line_ending;
+pub mod lsp_commands;
 pub mod macros;
 pub mod match_brackets;
 pub mod movement;

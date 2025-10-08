@@ -51,6 +51,10 @@ enum PreviewData {
     lines: Vec<String>,
     /// Syntax highlights: (highlight, byte_range)
     highlights: Vec<(crate::core::syntax::Highlight, std::ops::Range<usize>)>,
+    /// Offset of the first line in the document (for scrolled views)
+    line_offset: usize,
+    /// Byte offset of the first line in the document
+    byte_offset: usize,
   },
   Directory {
     entries: Vec<String>,
@@ -1376,16 +1380,30 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
               // Extract the lines we need to render
               let text = doc.text();
               let total_lines = text.len_lines();
-              let max_preview_lines = 100; // Limit to first 100 lines
-              let lines: Vec<String> = (0..total_lines.min(max_preview_lines))
+              let max_preview_lines = 200; // Maximum lines to load for preview
+
+              // Determine which range of lines to load based on line_range
+              let (preview_start, preview_end) = if let Some((target_start, target_end)) = line_range {
+                // Calculate context around the target range
+                let target_middle = target_start + (target_end.saturating_sub(target_start)) / 2;
+                let half_context = max_preview_lines / 2;
+
+                let start = target_middle.saturating_sub(half_context);
+                let end = (start + max_preview_lines).min(total_lines);
+                (start, end)
+              } else {
+                // No target range, load from the beginning
+                (0, total_lines.min(max_preview_lines))
+              };
+
+              let lines: Vec<String> = (preview_start..preview_end)
                 .map(|i| text.line(i).to_string())
                 .collect();
 
-              // Get syntax highlights for the visible range
-              let end_line = total_lines.min(max_preview_lines);
-              let start_byte = 0;
-              let end_byte = if end_line < total_lines {
-                text.line_to_byte(end_line)
+              // Get syntax highlights for the loaded range
+              let start_byte = text.line_to_byte(preview_start);
+              let end_byte = if preview_end < total_lines {
+                text.line_to_byte(preview_end)
               } else {
                 text.len_bytes()
               };
@@ -1393,7 +1411,12 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
               let highlights = doc.get_viewport_highlights(start_byte..end_byte, &ctx.editor.syn_loader.load())
                 .unwrap_or_default();
 
-              PreviewData::Document { lines, highlights }
+              PreviewData::Document {
+                lines,
+                highlights,
+                line_offset: preview_start,
+                byte_offset: start_byte,
+              }
             },
             CachedPreview::Directory(entries) => {
               PreviewData::Directory {
@@ -2086,7 +2109,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       // Render preview content with clipping
       if let Some(preview) = &preview_data {
         match preview {
-          PreviewData::Document { lines, highlights } => {
+          PreviewData::Document { lines, highlights, line_offset, byte_offset } => {
             // Render document content with clipping region
             let padding = 12.0;
             let line_height = UI_FONT_SIZE + 4.0;
@@ -2099,10 +2122,15 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
             let max_lines = (content_height / line_height).floor() as usize;
 
             // If we have a preview line range, center the middle of the range in the view
+            // Note: lines are in document coordinates, but lines vector is offset by line_offset
             let start_line = if let Some((range_start, range_end)) = preview_line {
+              // Adjust target range to be relative to our loaded lines
+              let relative_start = range_start.saturating_sub(*line_offset);
+              let relative_end = range_end.saturating_sub(*line_offset);
+
               // Calculate the middle of the range
-              let range_height = range_end.saturating_sub(range_start);
-              let middle_line = range_start + range_height / 2;
+              let range_height = relative_end.saturating_sub(relative_start);
+              let middle_line = relative_start + range_height / 2;
               // Center the middle line, but ensure we don't go below 0
               let half_visible = max_lines / 2;
               middle_line.saturating_sub(half_visible).min(lines.len().saturating_sub(max_lines))
@@ -2117,23 +2145,26 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
             let max_chars = (content_width / UI_FONT_WIDTH).floor() as usize;
 
             // Use overlay region for clipping
+            // Capture byte_offset for use in closure
+            let doc_byte_start = *byte_offset;
             surface.with_overlay_region(
               preview_x + padding,
               y + padding,
               content_width,
               content_height,
               |surface| {
-                let mut byte_offset: usize = lines.iter().take(start_line).map(|s| s.len()).sum();
+                let mut relative_byte_offset: usize = lines.iter().take(start_line).map(|s| s.len()).sum();
 
                 for (visible_idx, line_str) in lines.iter().skip(start_line).enumerate().take(lines_to_show) {
-                  let line_idx = start_line + visible_idx;
+                  let line_idx = start_line + visible_idx; // Index within lines vector
+                  let doc_line_idx = line_idx + line_offset; // Actual line number in document
 
                   // Calculate text baseline position (following same pattern as hover/completion)
                   let text_y = content_y + UI_FONT_SIZE + visible_idx as f32 * line_height;
 
-                  // Draw highlight background for lines in the target range
+                  // Draw highlight background for lines in the target range (use doc coordinates)
                   let should_highlight = if let Some((range_start, range_end)) = preview_line {
-                    line_idx >= range_start && line_idx <= range_end
+                    doc_line_idx >= range_start && doc_line_idx <= range_end
                   } else {
                     false
                   };
@@ -2158,9 +2189,9 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                   let trimmed = line_str.trim_end();
                   let line_byte_len = line_str.len();
 
-                  // Calculate byte range for this line
-                  let line_start_byte = byte_offset;
-                  let line_end_byte = byte_offset + line_byte_len;
+                  // Calculate byte range for this line (relative to lines vector)
+                  let line_start_byte = relative_byte_offset;
+                  let line_end_byte = relative_byte_offset + line_byte_len;
 
                   // Build text segments with syntax highlighting
                   let mut segments = Vec::new();
@@ -2184,12 +2215,15 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                       break;
                     }
 
-                    let char_byte_pos = line_start_byte + current_byte_in_line;
+                    // Calculate byte position (relative to lines vector)
+                    let relative_byte_pos = line_start_byte + current_byte_in_line;
+                    // Convert to absolute document byte position for highlight lookup
+                    let doc_byte_pos = doc_byte_start + relative_byte_pos;
 
                     // Find active highlight for this byte position
                     let mut active_color = text_color_preview;
                     for (highlight, range) in highlights.iter() {
-                      if range.contains(&char_byte_pos) {
+                      if range.contains(&doc_byte_pos) {
                         // Apply theme color for this highlight
                         let hl_style = theme.highlight(*highlight);
                         if let Some(fg) = hl_style.fg {
@@ -2243,7 +2277,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                     });
                   }
 
-                  byte_offset = line_end_byte;
+                  relative_byte_offset = line_end_byte;
                 }
               },
             );

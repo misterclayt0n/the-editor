@@ -124,6 +124,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "p" => paste_clipboard_after,
       "P" => paste_clipboard_before,
       "R" => replace_selections_with_clipboard,
+      "h" => select_references,
     },
   });
 

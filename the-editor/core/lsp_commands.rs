@@ -1268,3 +1268,115 @@ pub fn workspace_diagnostics(cx: &mut Context) {
     compositor.push(Box::new(picker));
   }));
 }
+
+/// Select all references to the symbol under cursor in the current file
+pub fn select_references(cx: &mut Context) {
+  let (view, doc) = current_ref!(cx.editor);
+
+  let current_uri = match doc.url() {
+    Some(uri) => uri,
+    None => {
+      cx.editor.set_error("Document has no URL");
+      return;
+    }
+  };
+
+  // Collect all the futures with their offset encodings
+  let requests: Vec<_> = doc
+    .language_servers_with_feature(LanguageServerFeature::GotoReference)
+    .filter_map(|language_server| {
+      let offset_encoding = language_server.offset_encoding();
+      let pos = doc.position(view.id, offset_encoding);
+      language_server
+        .goto_reference(doc.identifier(), pos, true, None)
+        .map(|future| (future, offset_encoding))
+    })
+    .collect();
+
+  if requests.is_empty() {
+    cx.editor.set_error("No language server with goto reference support");
+    return;
+  }
+
+  let doc_id = view.doc;
+  let view_id = view.id;
+
+  cx.jobs.callback(async move {
+    let mut futures: FuturesOrdered<_> = requests
+      .into_iter()
+      .map(|(future, offset_encoding)| async move {
+        anyhow::Ok((future.await?, offset_encoding))
+      })
+      .collect();
+
+    let mut locations = Vec::new();
+
+    while let Some(response) = futures.next().await {
+      match response {
+        Ok((lsp_locations, offset_encoding)) => {
+          locations.extend(
+            lsp_locations
+              .into_iter()
+              .flatten()
+              .map(|location| lsp_location_to_location(location, offset_encoding)),
+          );
+        },
+        Err(err) => {
+          log::error!("Error requesting references: {err}");
+        },
+      }
+    }
+
+    let call = move |editor: &mut crate::editor::Editor, _compositor: &mut Compositor| {
+      let doc = match editor.documents.get_mut(&doc_id) {
+        Some(doc) => doc,
+        None => {
+          editor.set_error("Document closed");
+          return;
+        }
+      };
+
+      // Filter to only locations in the current file
+      let current_file_locations: Vec<_> = locations
+        .into_iter()
+        .filter(|loc| loc.uri == current_uri)
+        .collect();
+
+      if current_file_locations.is_empty() {
+        editor.set_error("No references found in current file");
+        return;
+      }
+
+      // Convert LSP locations to editor ranges
+      let text = doc.text();
+      let mut ranges = Vec::new();
+
+      for loc in current_file_locations {
+        if let Some(range) = lsp_range_to_range(text, loc.range, loc.offset_encoding) {
+          ranges.push(crate::core::selection::Range::new(range.anchor, range.head));
+        }
+      }
+
+      if ranges.is_empty() {
+        editor.set_error("Failed to convert reference locations");
+        return;
+      }
+
+      // Sort ranges by position
+      ranges.sort_by_key(|r| r.from());
+
+      // Create selection with all ranges
+      let selection = Selection::new(ranges.into(), 0);
+      let count = selection.len();
+      doc.set_selection(view_id, selection);
+
+      // Align view to the first selection
+      let view = editor.tree.get_mut(view_id);
+      align_view(doc, view, Align::Center);
+
+      editor.set_status(format!("Selected {} references", count));
+    };
+
+    Ok(Callback::EditorCompositor(Box::new(call)))
+  });
+}

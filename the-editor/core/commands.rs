@@ -30,65 +30,33 @@ use url::Url;
 
 use crate::{
   core::{
-    Tendril,
-    ViewId,
-    auto_pairs,
-    comment,
-    document::Document,
-    grapheme,
-    history::UndoKind,
-    indent,
-    info::Info,
-    line_ending::{
+    auto_pairs, comment, document::Document, grapheme, history::UndoKind, indent, info::Info, line_ending::{
       get_line_ending_of_str,
       line_end_char_index,
-    },
-    match_brackets,
-    movement::{
-      self,
-      Direction,
-      Movement,
-      move_horizontally,
-      move_vertically,
-      move_vertically_visual,
-    },
-    position::{
-      Position,
-      char_idx_at_visual_offset,
-    },
-    search::{
+    }, match_brackets, movement::{
+      self, move_horizontally, move_vertically, move_vertically_visual, Direction, Movement
+    }, position::{
+      char_idx_at_visual_offset, Position
+    }, search::{
       self,
       CharMatcher,
-    },
-    selection::{
+    }, selection::{
       Range,
       Selection,
-    },
-    surround,
-    text_annotations::TextAnnotations,
-    text_format::TextFormat,
-    textobject,
-    transaction::{
+    }, surround, text_annotations::TextAnnotations, text_format::TextFormat, textobject, transaction::{
       Deletion,
       Transaction,
-    },
-    view::{
+    }, view::{
       Align,
       View,
-    },
-  },
-  current,
-  current_ref,
-  editor::{
+    }, Tendril, ViewId
+  }, current, current_ref, editor::{
     Action,
     Editor,
-  },
-  event::PostInsertChar,
-  keymap::{
+  }, event::PostInsertChar, keymap::{
     KeyBinding,
     Mode,
-  },
-  view_mut,
+  }, view, view_mut
 };
 
 type MoveFn =
@@ -3524,6 +3492,20 @@ pub fn goto_last_accessed_file(cx: &mut Context) {
     cx.editor.switch(alt, Action::Replace);
   } else {
     cx.editor.set_error("no last accessed buffer")
+  }
+}
+
+pub fn goto_last_modified_file(cx: &mut Context) {
+  let view = view!(cx.editor);
+  let alternate_file = view
+    .last_modified_docs
+    .into_iter()
+    .flatten()
+    .find(|&id| id != view.doc);
+  if let Some(alt) = alternate_file {
+    cx.editor.switch(alt, Action::Replace);
+  } else {
+    cx.editor.set_error("no last modified buffer")
   }
 }
 

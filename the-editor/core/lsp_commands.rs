@@ -40,12 +40,12 @@ struct Location {
 fn lsp_location_to_location(
   location: lsp_types::Location,
   offset_encoding: OffsetEncoding,
-) -> Option<Location> {
-  Some(Location {
+) -> Location {
+  Location {
     uri: location.uri,
     range: location.range,
     offset_encoding,
-  })
+  }
 }
 
 fn jump_to_location(
@@ -85,18 +85,76 @@ fn jump_to_location(
 
 fn goto_impl(
   editor: &mut crate::editor::Editor,
-  _compositor: &mut Compositor,
+  compositor: &mut Compositor,
   locations: Vec<Location>,
 ) {
+  use crate::ui::components::{
+    Column,
+    Picker,
+    PickerAction,
+  };
+
   match locations.as_slice() {
     [location] => {
       jump_to_location(editor, location, Action::Replace);
     },
+    [] => {
+      editor.set_error("No locations found");
+    },
     _locations => {
-      // TODO: For multiple locations, show a picker
-      // For now, just jump to the first one
-      jump_to_location(editor, &locations[0], Action::Replace);
-      editor.set_status(format!("Found {} definitions, jumped to first", locations.len()));
+      // Show picker for multiple locations
+      let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+      // Define column: format location as "path:line"
+      let columns = vec![Column::new("Location", |location: &Location, _cwd: &std::path::PathBuf| {
+        let path = location.uri.to_file_path().ok();
+        let path_str = if let Some(p) = &path {
+          p.strip_prefix(&_cwd).unwrap_or(p).display().to_string()
+        } else {
+          location.uri.to_string()
+        };
+        format!("{}:{}", path_str, location.range.start.line + 1)
+      })];
+
+      let editor_data = cwd.clone();
+
+      // Create action handler
+      let action_handler = std::sync::Arc::new(
+        move |location: &Location, _data: &std::path::PathBuf, action: PickerAction| {
+          let action_type = match action {
+            PickerAction::Primary => Action::Replace,
+            PickerAction::Secondary => Action::HorizontalSplit,
+            PickerAction::Tertiary => Action::VerticalSplit,
+          };
+
+          // Clone location to move into the closure
+          let location = location.clone();
+
+          // Jump to the location
+          crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+            jump_to_location(editor, &location, action_type);
+          });
+
+          true // Close picker
+        },
+      );
+
+      let picker = Picker::new(
+        columns,
+        0, // primary column index
+        locations,
+        editor_data,
+        |_| {}, // Dummy on_select since we're using action_handler
+      )
+      .with_action_handler(action_handler)
+      .with_preview(|location: &Location| {
+        // Return path and line range (LSP lines are already 0-indexed)
+        location.uri.to_file_path().ok().map(|path| {
+          (path, Some((location.range.start.line as usize, location.range.end.line as usize)))
+        })
+      });
+
+      compositor.push(Box::new(picker));
     },
   }
 }
@@ -142,20 +200,19 @@ fn goto_single_impl<P>(
         Ok((response, offset_encoding)) => {
           match response {
             Some(lsp_types::GotoDefinitionResponse::Scalar(lsp_location)) => {
-              locations.extend(lsp_location_to_location(lsp_location, offset_encoding));
+              locations.push(lsp_location_to_location(lsp_location, offset_encoding));
             },
             Some(lsp_types::GotoDefinitionResponse::Array(lsp_locations)) => {
-              locations.extend(lsp_locations.into_iter().filter_map(|location| {
+              locations.extend(lsp_locations.into_iter().map(|location| {
                 lsp_location_to_location(location, offset_encoding)
               }));
             },
             Some(lsp_types::GotoDefinitionResponse::Link(lsp_locations)) => {
               locations.extend(lsp_locations.into_iter().map(|location_link| {
-                lsp_types::Location::new(
+                let location = lsp_types::Location::new(
                   location_link.target_uri,
                   location_link.target_range,
-                )
-              }).filter_map(|location| {
+                );
                 lsp_location_to_location(location, offset_encoding)
               }));
             },
@@ -205,4 +262,57 @@ pub fn goto_type_definition(cx: &mut Context) {
     |ls, pos, doc_id| ls.goto_type_definition(doc_id, pos, None),
     "No type definition found",
   );
+}
+
+pub fn goto_reference(cx: &mut Context) {
+  let (view, doc) = current_ref!(cx.editor);
+
+  // Collect all the futures with their offset encodings
+  let requests: Vec<_> = doc
+    .language_servers_with_feature(LanguageServerFeature::GotoReference)
+    .filter_map(|language_server| {
+      let offset_encoding = language_server.offset_encoding();
+      let pos = doc.position(view.id, offset_encoding);
+      language_server
+        .goto_reference(doc.identifier(), pos, true, None)
+        .map(|future| (future, offset_encoding))
+    })
+    .collect();
+
+  cx.jobs.callback(async move {
+    let mut futures: FuturesOrdered<_> = requests
+      .into_iter()
+      .map(|(future, offset_encoding)| async move {
+        anyhow::Ok((future.await?, offset_encoding))
+      })
+      .collect();
+
+    let mut locations = Vec::new();
+
+    while let Some(response) = futures.next().await {
+      match response {
+        Ok((lsp_locations, offset_encoding)) => {
+          locations.extend(
+            lsp_locations
+              .into_iter()
+              .flatten()
+              .map(|location| lsp_location_to_location(location, offset_encoding)),
+          );
+        },
+        Err(err) => {
+          log::error!("Error requesting references: {err}");
+        },
+      }
+    }
+
+    let call = move |editor: &mut crate::editor::Editor, compositor: &mut Compositor| {
+      if locations.is_empty() {
+        editor.set_error("No references found");
+      } else {
+        goto_impl(editor, compositor, locations);
+      }
+    };
+
+    Ok(Callback::EditorCompositor(Box::new(call)))
+  });
 }

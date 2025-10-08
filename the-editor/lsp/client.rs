@@ -1472,7 +1472,7 @@ impl Client {
     position: lsp::Position,
     include_declaration: bool,
     work_done_token: Option<lsp::ProgressToken>,
-  ) -> Option<impl Future<Output = Result<Option<Vec<lsp::Location>>>>> {
+  ) -> Option<BoxFuture<'static, Result<Option<Vec<lsp::Location>>>>> {
     let capabilities = self.capabilities.get().unwrap();
 
     // Return early if the server does not support goto-reference.
@@ -1495,7 +1495,7 @@ impl Client {
       },
     };
 
-    Some(self.call::<lsp::request::References>(params))
+    Some(Box::pin(self.call::<lsp::request::References>(params)))
   }
 
   pub fn document_symbols(

@@ -319,8 +319,9 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   /// Animated height for smooth size transitions
   height_smooth:            Option<f32>,
   height_anim_active:       bool,
-  /// Preview callback to get file path from item
-  preview_fn:               Option<Arc<dyn Fn(&T) -> Option<PathBuf> + Send + Sync>>,
+  /// Preview callback to get file path from item, optionally with line range
+  /// Returns (PathBuf, Option<(start_line, end_line)>) where lines are 0-indexed
+  preview_fn:               Option<Arc<dyn Fn(&T) -> Option<(PathBuf, Option<(usize, usize)>)> + Send + Sync>>,
   /// Custom preview handler for loading previews
   preview_handler:          Option<PreviewHandler>,
   /// Cache of loaded previews
@@ -454,9 +455,11 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
   }
 
   /// Set the preview callback to enable file preview
+  /// The callback returns an optional tuple of (PathBuf, Option<(start_line, end_line)>)
+  /// where line numbers are 0-indexed and the range will be highlighted in the preview
   pub fn with_preview<F>(mut self, preview_fn: F) -> Self
   where
-    F: Fn(&T) -> Option<PathBuf> + Send + Sync + 'static,
+    F: Fn(&T) -> Option<(PathBuf, Option<(usize, usize)>)> + Send + Sync + 'static,
   {
     self.preview_fn = Some(Arc::new(preview_fn));
     self
@@ -510,10 +513,10 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
   }
 
   /// Get preview for the currently selected item
-  fn get_preview(&mut self, ctx: &Context) -> Option<&CachedPreview> {
+  fn get_preview(&mut self, ctx: &Context) -> Option<(&CachedPreview, Option<(usize, usize)>)> {
     let preview_fn = self.preview_fn.as_ref()?;
     let selected = self.selection()?;
-    let path = (preview_fn)(selected)?;
+    let (path, line_range) = (preview_fn)(selected)?;
 
     // Check if already open in editor
     if ctx.editor.document_by_path(&path).is_some() {
@@ -523,14 +526,14 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
 
     // Check cache
     if self.preview_cache.contains_key(&path) {
-      return Some(&self.preview_cache[&path]);
+      return Some((&self.preview_cache[&path], line_range));
     }
 
     // Use custom preview handler if provided
     if let Some(ref handler) = self.preview_handler {
       if let Some(preview) = handler(&path, ctx) {
         self.preview_cache.insert(path.clone(), preview);
-        return Some(&self.preview_cache[&path]);
+        return Some((&self.preview_cache[&path], line_range));
       }
       // Handler returned None, use default loading
     }
@@ -603,7 +606,7 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       .unwrap_or(CachedPreview::NotFound);
 
     self.preview_cache.insert(path.clone(), preview);
-    Some(&self.preview_cache[&path])
+    Some((&self.preview_cache[&path], line_range))
   }
 
   fn mix_rgb(base: Color, accent: Color, t: f32) -> Color {
@@ -1353,14 +1356,20 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
     let _preview = self.get_preview(ctx);
 
     // Now extract preview data with mutable access for highlights
-    let preview_data = {
+    let (preview_data, preview_line) = {
       let preview_fn = self.preview_fn.as_ref();
-      let selected = preview_fn.and_then(|f| {
+      let selected_result = preview_fn.and_then(|f| {
         let snapshot = self.matcher.snapshot();
         snapshot.get_matched_item(self.cursor).map(|item| (f)(item.data))
       }).flatten();
 
-      selected.and_then(|path| {
+      let (path, line_range) = if let Some((p, l)) = selected_result {
+        (p, l)
+      } else {
+        (std::path::PathBuf::new(), None)
+      };
+
+      let data = if !path.as_os_str().is_empty() {
         self.preview_cache.get_mut(&path).map(|preview| {
           match preview {
             CachedPreview::Document(doc) => {
@@ -1396,7 +1405,11 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
             CachedPreview::NotFound => PreviewData::Placeholder("<File not found>"),
           }
         })
-      })
+      } else {
+        None
+      };
+
+      (data, line_range)
     };
 
     let snapshot = self.matcher.snapshot();
@@ -1511,8 +1524,9 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
     // Calculate how many items can fit with gaps
     let max_rows = ((available_height + item_gap) / (actual_item_height + item_gap)).floor() as u32;
-    // Allow more rows (up to 30 instead of 15)
-    self.completion_height = max_rows.min(len).min(30) as u16;
+    // Fixed height: always use max_rows (up to 30) regardless of item count
+    // This prevents the picker from resizing based on results
+    self.completion_height = max_rows.min(30) as u16;
 
     // Calculate actual height needed for the items
     let rows_height = if self.completion_height > 0 {
@@ -1973,16 +1987,17 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
           .map(|c| c.truncate_start)
           .unwrap_or(false);
 
-        let truncated_text = if display_text.chars().count() > max_chars.saturating_sub(3) && max_chars > 3 {
+        let truncated_text = if max_chars > 3 && display_text.chars().count() > max_chars {
+          let truncate_to = max_chars.saturating_sub(3);
           if truncate_from_start {
             // Truncate from start: "...filename"
             let char_count = display_text.chars().count();
-            let start_idx = char_count.saturating_sub(max_chars.saturating_sub(3));
+            let start_idx = char_count.saturating_sub(truncate_to);
             let truncated: String = display_text.chars().skip(start_idx).collect();
             format!("...{}", truncated)
           } else {
             // Truncate from end: "filename..."
-            let truncated: String = display_text.chars().take(max_chars.saturating_sub(3)).collect();
+            let truncated: String = display_text.chars().take(truncate_to).collect();
             format!("{}...", truncated)
           }
         } else {
@@ -2082,7 +2097,21 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
             // Calculate how many lines we can show
             let max_lines = (content_height / line_height).floor() as usize;
-            let lines_to_show = max_lines.min(lines.len());
+
+            // If we have a preview line range, center the middle of the range in the view
+            let start_line = if let Some((range_start, range_end)) = preview_line {
+              // Calculate the middle of the range
+              let range_height = range_end.saturating_sub(range_start);
+              let middle_line = range_start + range_height / 2;
+              // Center the middle line, but ensure we don't go below 0
+              let half_visible = max_lines / 2;
+              middle_line.saturating_sub(half_visible).min(lines.len().saturating_sub(max_lines))
+            } else {
+              0
+            };
+
+            let end_line = (start_line + max_lines).min(lines.len());
+            let lines_to_show = end_line - start_line;
 
             // Calculate max characters per line based on available width
             let max_chars = (content_width / UI_FONT_WIDTH).floor() as usize;
@@ -2094,10 +2123,37 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
               content_width,
               content_height,
               |surface| {
-                let mut current_y = content_y + UI_FONT_SIZE; // Start with font size offset for baseline
-                let mut byte_offset = 0;
+                let mut byte_offset: usize = lines.iter().take(start_line).map(|s| s.len()).sum();
 
-                for (_line_idx, line_str) in lines.iter().enumerate().take(lines_to_show) {
+                for (visible_idx, line_str) in lines.iter().skip(start_line).enumerate().take(lines_to_show) {
+                  let line_idx = start_line + visible_idx;
+
+                  // Calculate text baseline position (following same pattern as hover/completion)
+                  let text_y = content_y + UI_FONT_SIZE + visible_idx as f32 * line_height;
+
+                  // Draw highlight background for lines in the target range
+                  let should_highlight = if let Some((range_start, range_end)) = preview_line {
+                    line_idx >= range_start && line_idx <= range_end
+                  } else {
+                    false
+                  };
+
+                  if should_highlight {
+                    let highlight_color = Color::new(
+                      border_color_preview.r,
+                      border_color_preview.g,
+                      border_color_preview.b,
+                      0.15 * preview_alpha,
+                    );
+                    // Draw highlight slightly above baseline, matching completion component
+                    surface.draw_rect(
+                      content_x,
+                      text_y - 2.0,
+                      content_width,
+                      line_height,
+                      highlight_color,
+                    );
+                  }
                   // Trim trailing whitespace
                   let trimmed = line_str.trim_end();
                   let line_byte_len = line_str.len();
@@ -2182,12 +2238,11 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                   // Render the line with all segments
                   if !segments.is_empty() {
                     surface.draw_text(TextSection {
-                      position: (content_x, current_y),
+                      position: (content_x, text_y),
                       texts: segments,
                     });
                   }
 
-                  current_y += line_height;
                   byte_offset = line_end_byte;
                 }
               },
@@ -2216,9 +2271,9 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
               content_width,
               content_height,
               |surface| {
-                let mut current_y = content_y + UI_FONT_SIZE; // Start with font size offset for baseline
+                for (idx, entry) in entries.iter().take(entries_to_show).enumerate() {
+                  let text_y = content_y + UI_FONT_SIZE + idx as f32 * line_height;
 
-                for entry in entries.iter().take(entries_to_show) {
                   let is_dir = entry.ends_with('/');
 
                   // Use different colors for directories vs files
@@ -2243,7 +2298,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                   };
 
                   surface.draw_text(TextSection {
-                    position: (content_x, current_y),
+                    position: (content_x, text_y),
                     texts: vec![TextSegment {
                       content: display_text,
                       style: TextStyle {
@@ -2252,17 +2307,16 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                       },
                     }],
                   });
-
-                  current_y += line_height;
                 }
 
                 // Show count if there are more entries
                 if entries.len() > entries_to_show {
                   let remaining = entries.len() - entries_to_show;
                   let more_text = format!("... and {} more", remaining);
+                  let text_y = content_y + UI_FONT_SIZE + entries_to_show as f32 * line_height;
 
                   surface.draw_text(TextSection {
-                    position: (content_x, current_y),
+                    position: (content_x, text_y),
                     texts: vec![TextSegment {
                       content: more_text,
                       style: TextStyle {

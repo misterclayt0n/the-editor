@@ -266,7 +266,7 @@ where
     |_| {}, // Dummy on_select since we're using action_handler
   )
   .with_action_handler(action_handler)
-  .with_preview(|path: &std::path::PathBuf| Some(path.clone()));
+  .with_preview(|path: &std::path::PathBuf| Some((path.clone(), None)));
 
   let injector = picker.injector();
   let root_clone = root.clone();

@@ -3309,5 +3309,6 @@ pub fn hover(_cx: &mut Context) {
 pub use super::lsp_commands::{
   goto_declaration,
   goto_definition,
+  goto_reference,
   goto_type_definition,
 };

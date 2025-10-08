@@ -5,8 +5,6 @@ This document is just so I can have a little basis btw
 
 #### Goto submenu (g)
 
-• "a" -> goto_last_accessed_file
-• "m" -> goto_last_modified_file
 • "n" -> goto_next_buffer
 • "p" -> goto_previous_buffer
 • "k" -> move_line_up

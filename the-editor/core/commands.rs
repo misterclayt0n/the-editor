@@ -3547,9 +3547,8 @@ pub fn goto_next_buffer(cx: &mut Context) {
 }
 
 pub fn goto_previous_buffer(cx: &mut Context) {
-    goto_buffer(cx.editor, Direction::Backward, cx.count());
+  goto_buffer(cx.editor, Direction::Backward, cx.count());
 }
-
 
 fn goto_buffer(editor: &mut Editor, direction: Direction, count: usize) {
   let current = view!(editor).doc;
@@ -3575,6 +3574,14 @@ fn goto_buffer(editor: &mut Editor, direction: Direction, count: usize) {
   let id = *id;
 
   editor.switch(id, Action::Replace);
+}
+
+pub fn move_line_up(cx: &mut Context) {
+  move_impl(cx, move_vertically, Direction::Backward, Movement::Move)
+}
+
+pub fn move_line_down(cx: &mut Context) {
+  move_impl(cx, move_vertically, Direction::Forward, Movement::Move)
 }
 
 // Re-export LSP commands

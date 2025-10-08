@@ -350,6 +350,14 @@ impl CommandRegistry {
       theme,
       CommandCompleter::all(completers::theme),
     ));
+
+    self.register(TypableCommand::new(
+      "format",
+      &["fmt"],
+      "Format the current buffer using formatter or language server",
+      format,
+      CommandCompleter::none(),
+    ));
   }
 }
 
@@ -665,6 +673,73 @@ fn theme(cx: &mut Context, args: &[&str]) -> Result<()> {
         .set_error(format!("failed to load theme '{}': {}", theme_name, err));
     },
   }
+
+  Ok(())
+}
+
+fn format(cx: &mut Context, _args: &[&str]) -> Result<()> {
+  use crate::current;
+
+  // Get IDs first before any borrows
+  let (view, doc) = current!(cx.editor);
+  let doc_id = view.doc;
+  let view_id = view.id;
+  let doc_version = doc.version();
+
+  // Get the document as a static reference (required by format method)
+  let doc_ptr = doc as *const _;
+  let doc_static = unsafe { &*(doc_ptr as *const crate::core::document::Document) };
+
+  let Some(format_future) = doc_static.format(cx.editor) else {
+    cx.editor.set_error(
+      "No formatter available (check languages.toml or language server support)".to_string(),
+    );
+    return Ok(());
+  };
+
+  // Spawn async task to format and apply changes
+  cx.jobs.callback(async move {
+    let transaction_result = format_future.await;
+
+    let callback = move |editor: &mut crate::editor::Editor, _compositor: &mut crate::ui::compositor::Compositor| {
+      // Check if document and view still exist
+      let Some(doc) = editor.documents.get_mut(&doc_id) else {
+        return;
+      };
+
+      if !editor.tree.contains(view_id) {
+        return;
+      }
+
+      match transaction_result {
+        Ok(transaction) => {
+          // Check if document version hasn't changed
+          if doc.version() == doc_version {
+            // Apply the formatting transaction
+            doc.apply(&transaction, view_id);
+
+            // Detect indent and line ending after formatting
+            doc.detect_indent_and_line_ending();
+
+            // Ensure cursor stays in view
+            let view = editor.tree.get_mut(view_id);
+            crate::core::view::align_view(doc, view, crate::core::view::Align::Center);
+
+            editor.set_status("Buffer formatted".to_string());
+          } else {
+            log::info!("Discarded formatting changes because the document changed");
+            editor.set_status("Formatting discarded (document changed)".to_string());
+          }
+        }
+        Err(err) => {
+          log::error!("Formatting failed: {:?}", err);
+          editor.set_error(format!("Formatting failed: {:?}", err));
+        }
+      }
+    };
+
+    Ok(crate::ui::job::Callback::EditorCompositor(Box::new(callback)))
+  });
 
   Ok(())
 }

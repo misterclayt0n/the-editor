@@ -126,6 +126,14 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "R" => replace_selections_with_clipboard,
       "h" => select_references,
     },
+
+    "[" => { "Left bracket"
+      "d" => goto_prev_diag,
+    },
+
+    "]" => { "Right bracket"
+      "d" => goto_next_diag,
+    },
   });
 
   let insert = crate::keymap!({ "Insert"

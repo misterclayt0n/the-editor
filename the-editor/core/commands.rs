@@ -3305,6 +3305,48 @@ pub fn hover(_cx: &mut Context) {
   });
 }
 
+/// Goto next diagnostic
+pub fn goto_next_diag(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+
+  let cursor_pos = doc.selection(view.id).primary().cursor(doc.text().slice(..));
+
+  let diag = doc
+    .diagnostics()
+    .iter()
+    .find(|diag| diag.range.start > cursor_pos);
+
+  let Some(diag) = diag else {
+    cx.editor.set_status("No next diagnostic");
+    return;
+  };
+
+  doc.set_selection(view.id, Selection::single(diag.range.start, diag.range.end));
+  crate::core::view::align_view(doc, view, crate::core::view::Align::Center);
+}
+
+/// Goto previous diagnostic
+pub fn goto_prev_diag(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+
+  let cursor_pos = doc.selection(view.id).primary().cursor(doc.text().slice(..));
+
+  let diag = doc
+    .diagnostics()
+    .iter()
+    .rev()
+    .find(|diag| diag.range.start < cursor_pos);
+
+  let Some(diag) = diag else {
+    cx.editor.set_status("No previous diagnostic");
+    return;
+  };
+
+  // Selection is reversed to match Helix behavior (going backwards)
+  doc.set_selection(view.id, Selection::single(diag.range.end, diag.range.start));
+  crate::core::view::align_view(doc, view, crate::core::view::Align::Center);
+}
+
 // Re-export LSP commands
 pub use super::lsp_commands::{
   code_action,

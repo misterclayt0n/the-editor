@@ -1029,3 +1029,106 @@ pub fn workspace_symbols(cx: &mut Context) {
     Ok(Callback::EditorCompositor(Box::new(call)))
   });
 }
+/// Document diagnostics picker - view all diagnostics in current file
+pub fn document_diagnostics(cx: &mut Context) {
+  let (_view, doc) = current_ref!(cx.editor);
+
+  // Get document diagnostics
+  let diagnostics = doc.diagnostics();
+
+  if diagnostics.is_empty() {
+    cx.editor.set_status("No diagnostics in current document");
+    return;
+  }
+
+  // Get document URL for preview
+  let doc_url = doc.url();
+
+  // Clone diagnostics for async callback
+  let diagnostics: Vec<_> = diagnostics.iter().cloned().collect();
+
+  cx.callback.push(Box::new(move |compositor, _cx| {
+    use crate::{
+      core::diagnostics::Severity,
+      ui::components::{
+        Column,
+        Picker,
+        PickerAction,
+      },
+    };
+
+    let columns = vec![
+      Column::new("Severity", |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
+        match diag.severity {
+          Some(Severity::Error) => "ERROR",
+          Some(Severity::Warning) => "WARN",
+          Some(Severity::Info) => "INFO",
+          Some(Severity::Hint) => "HINT",
+          None => "",
+        }
+        .to_string()
+      }),
+      Column::new("Source", |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
+        diag.source.clone().unwrap_or_default()
+      }),
+      Column::new("Code", |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
+        match &diag.code {
+          Some(crate::core::diagnostics::NumberOrString::Number(n)) => n.to_string(),
+          Some(crate::core::diagnostics::NumberOrString::String(s)) => s.clone(),
+          None => String::new(),
+        }
+      }),
+      Column::new("Line", |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
+        format!("{}", diag.line + 1)
+      }),
+      Column::new("Message", |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
+        diag.message.clone()
+      }),
+    ];
+
+    // Create action handler to jump to diagnostic
+    let action_handler = std::sync::Arc::new(
+      move |diag: &crate::core::diagnostics::Diagnostic, _: &(), _action: PickerAction| {
+        // Clone diagnostic to move into the closure
+        let diag = diag.clone();
+
+        // Jump to the diagnostic location
+        crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+          // Get the current view and document
+          let view = editor.tree.get_mut(editor.tree.focus);
+          let doc = editor.documents.get_mut(&view.doc).unwrap();
+
+          // Set selection to the diagnostic location
+          doc.set_selection(view.id, Selection::single(diag.range.start, diag.range.end));
+
+          // Align view to center the diagnostic
+          align_view(doc, view, Align::Center);
+        });
+
+        true // Close picker
+      },
+    );
+
+    let picker = Picker::new(
+      columns,
+      4, // Primary column is "Message"
+      diagnostics,
+      (),
+      |_| {}, // Dummy on_select
+    )
+    .with_action_handler(action_handler)
+    .with_preview(move |diag: &crate::core::diagnostics::Diagnostic| {
+      // Return path and line range for preview with selection
+      doc_url.as_ref().and_then(|url| {
+        url.to_file_path().ok().map(|path| {
+          (
+            path,
+            Some((diag.line, diag.line)),
+          )
+        })
+      })
+    });
+
+    compositor.push(Box::new(picker));
+  }));
+}

@@ -522,13 +522,31 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     let selected = self.selection()?;
     let (path, line_range) = (preview_fn)(selected)?;
 
-    // Check if already open in editor
-    if ctx.editor.document_by_path(&path).is_some() {
-      // For now, we'll still load it into cache rather than reference the editor doc
-      // This is simpler and avoids lifetime issues
+    // Check if already open in editor - if so, always use fresh data
+    if let Some(doc) = ctx.editor.document_by_path(&path) {
+      // Create a temporary document by extracting the necessary data
+      let text_rope = doc.text().clone();
+
+      // Create a new document with the same text
+      let mut temp_doc = Document::from(
+        text_rope,
+        None, // encoding
+        ctx.editor.config.clone(),
+        ctx.editor.syn_loader.clone(),
+      );
+
+      // Set the same language as the original document to get proper syntax highlighting
+      if let Some(ref lang) = doc.language {
+        let loader = ctx.editor.syn_loader.load();
+        temp_doc.set_language(Some(lang.clone()), &loader);
+      }
+
+      // Cache it (it will be replaced on next call if document changes)
+      self.preview_cache.insert(path.clone(), CachedPreview::Document(Box::new(temp_doc)));
+      return Some((&self.preview_cache[&path], line_range));
     }
 
-    // Check cache
+    // Check cache (for documents not open in editor)
     if self.preview_cache.contains_key(&path) {
       return Some((&self.preview_cache[&path], line_range));
     }

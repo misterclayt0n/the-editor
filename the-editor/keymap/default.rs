@@ -105,6 +105,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "s" => goto_first_nonwhitespace,
       "d" => goto_definition,
       "D" => goto_declaration,
+      "y" => goto_type_definition,
     },
 
     "space" => { "Space"

@@ -197,3 +197,12 @@ pub fn goto_declaration(cx: &mut Context) {
     "No declaration found",
   );
 }
+
+pub fn goto_type_definition(cx: &mut Context) {
+  goto_single_impl(
+    cx,
+    LanguageServerFeature::GotoTypeDefinition,
+    |ls, pos, doc_id| ls.goto_type_definition(doc_id, pos, None),
+    "No type definition found",
+  );
+}

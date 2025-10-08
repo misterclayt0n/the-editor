@@ -1546,7 +1546,7 @@ impl Client {
   pub fn workspace_symbols(
     &self,
     query: String,
-  ) -> Option<impl Future<Output = Result<Option<lsp::WorkspaceSymbolResponse>>>> {
+  ) -> Option<BoxFuture<'static, Result<Option<lsp::WorkspaceSymbolResponse>>>> {
     let capabilities = self.capabilities.get().unwrap();
 
     // Return early if the server does not support workspace symbols.
@@ -1561,7 +1561,7 @@ impl Client {
       partial_result_params: lsp::PartialResultParams::default(),
     };
 
-    Some(self.call::<lsp::request::WorkspaceSymbolRequest>(params))
+    Some(Box::pin(self.call::<lsp::request::WorkspaceSymbolRequest>(params)))
   }
 
   pub fn code_actions(

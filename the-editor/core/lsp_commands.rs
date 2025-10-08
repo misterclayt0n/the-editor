@@ -861,3 +861,171 @@ pub fn document_symbols(cx: &mut Context) {
     Ok(Callback::EditorCompositor(Box::new(call)))
   });
 }
+/// Workspace symbols picker - navigate across entire workspace by symbols
+pub fn workspace_symbols(cx: &mut Context) {
+  let (_view, doc) = current_ref!(cx.editor);
+
+  // Collect all workspace symbols from language servers
+  let requests: Vec<_> = doc
+    .language_servers_with_feature(LanguageServerFeature::WorkspaceSymbols)
+    .filter_map(|language_server| {
+      let offset_encoding = language_server.offset_encoding();
+      // Use empty query to get all symbols, let picker handle filtering
+      language_server
+        .workspace_symbols(String::new())
+        .map(|future| (future, offset_encoding))
+    })
+    .collect();
+
+  if requests.is_empty() {
+    cx.editor.set_error("No language server with workspace symbols support");
+    return;
+  }
+
+  cx.jobs.callback(async move {
+    let mut all_symbols = Vec::new();
+
+    for (future, offset_encoding) in requests {
+      match future.await {
+        Ok(Some(response)) => {
+          match response {
+            lsp_types::WorkspaceSymbolResponse::Flat(symbols) => {
+              for symbol in symbols {
+                all_symbols.push(FlatSymbol {
+                  name:            symbol.name,
+                  kind:            symbol.kind,
+                  range:           symbol.location.range,
+                  uri:             symbol.location.uri.clone(),
+                  offset_encoding,
+                });
+              }
+            }
+            lsp_types::WorkspaceSymbolResponse::Nested(_) => {
+              // Nested workspace symbols are rare, skip for now
+              log::warn!("Nested workspace symbols not supported");
+            }
+          }
+        }
+        Ok(None) => {}
+        Err(err) => {
+          log::error!("Error requesting workspace symbols: {err}");
+        }
+      }
+    }
+
+    let call = move |editor: &mut crate::editor::Editor, compositor: &mut Compositor| {
+      if all_symbols.is_empty() {
+        editor.set_status("No workspace symbols found");
+        return;
+      }
+
+      // Create picker columns
+      use crate::ui::components::{
+        Column,
+        Picker,
+        PickerAction,
+      };
+
+      let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+      let columns = vec![
+        Column::new("Kind", |symbol: &FlatSymbol, _: &std::path::PathBuf| {
+          symbol_kind_to_string(symbol.kind)
+        }),
+        Column::new("Symbol", |symbol: &FlatSymbol, _: &std::path::PathBuf| {
+          symbol.name.clone()
+        }),
+        Column::new("File", |symbol: &FlatSymbol, cwd: &std::path::PathBuf| {
+          if let Ok(path) = symbol.uri.to_file_path() {
+            path
+              .strip_prefix(cwd)
+              .unwrap_or(&path)
+              .display()
+              .to_string()
+          } else {
+            symbol.uri.to_string()
+          }
+        }),
+        Column::new("Line", |symbol: &FlatSymbol, _: &std::path::PathBuf| {
+          format!("{}", symbol.range.start.line + 1)
+        }),
+      ];
+
+      // Create action handler to jump to symbol
+      let action_handler = std::sync::Arc::new(
+        move |symbol: &FlatSymbol, _: &std::path::PathBuf, action: PickerAction| {
+          // Clone symbol to move into the closure
+          let symbol = symbol.clone();
+
+          let action_type = match action {
+            PickerAction::Primary => Action::Replace,
+            PickerAction::Secondary => Action::HorizontalSplit,
+            PickerAction::Tertiary => Action::VerticalSplit,
+          };
+
+          // Jump to the symbol location
+          crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+            let path = match symbol.uri.to_file_path() {
+              Ok(p) => p,
+              Err(_) => {
+                editor.set_error(format!("Invalid URI: {}", symbol.uri));
+                return;
+              }
+            };
+
+            // Open the file
+            let doc_id = match editor.open(&path, action_type) {
+              Ok(id) => id,
+              Err(err) => {
+                editor.set_error(format!("Failed to open file: {}", err));
+                return;
+              }
+            };
+
+            // Get the view and document
+            let view = editor.tree.get_mut(editor.tree.focus);
+            let doc = editor.documents.get_mut(&doc_id).unwrap();
+
+            // Convert LSP range to editor range
+            if let Some(range) =
+              lsp_range_to_range(doc.text(), symbol.range, symbol.offset_encoding)
+            {
+              // Set selection to the symbol location
+              doc.set_selection(view.id, Selection::single(range.anchor, range.head));
+
+              // Align view to center the symbol
+              align_view(doc, view, Align::Center);
+            }
+          });
+
+          true // Close picker
+        },
+      );
+
+      let picker = Picker::new(
+        columns,
+        1, // Primary column is "Symbol"
+        all_symbols,
+        cwd,
+        |_| {}, // Dummy on_select
+      )
+      .with_action_handler(action_handler)
+      .with_preview(|symbol: &FlatSymbol| {
+        // Return path and line range for preview with selection
+        symbol.uri.to_file_path().ok().map(|path| {
+          (
+            path,
+            Some((
+              symbol.range.start.line as usize,
+              symbol.range.end.line as usize,
+            )),
+          )
+        })
+      });
+
+      compositor.push(Box::new(picker));
+    };
+
+    Ok(Callback::EditorCompositor(Box::new(call)))
+  });
+}

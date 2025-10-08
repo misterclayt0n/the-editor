@@ -115,6 +115,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "s" => document_symbols,
       "S" => workspace_symbols,
       "d" => document_diagnostics,
+      "D" => workspace_diagnostics,
       "k" => hover,
       "a" => code_action,
       "r" => rename_symbol,

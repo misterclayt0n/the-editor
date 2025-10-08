@@ -3316,5 +3316,6 @@ pub use super::lsp_commands::{
   goto_reference,
   goto_type_definition,
   rename_symbol,
+  workspace_diagnostics,
   workspace_symbols,
 };

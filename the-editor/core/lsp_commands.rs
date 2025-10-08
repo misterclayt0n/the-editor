@@ -1132,3 +1132,139 @@ pub fn document_diagnostics(cx: &mut Context) {
     compositor.push(Box::new(picker));
   }));
 }
+
+/// Workspace diagnostics picker - view all diagnostics across the workspace
+pub fn workspace_diagnostics(cx: &mut Context) {
+  // Collect diagnostics from all documents
+  #[derive(Debug, Clone)]
+  struct DiagnosticItem {
+    diagnostic: crate::core::diagnostics::Diagnostic,
+    doc_id:     crate::core::DocumentId,
+    path:       Option<std::path::PathBuf>,
+    file_name:  String,
+  }
+
+  let mut all_diagnostics = Vec::new();
+
+  // Iterate through all documents
+  for (doc_id, doc) in &cx.editor.documents {
+    let diagnostics = doc.diagnostics();
+    if diagnostics.is_empty() {
+      continue;
+    }
+
+    let path = doc.path().map(|p| p.to_path_buf());
+    let file_name = path
+      .as_ref()
+      .and_then(|p| p.file_name())
+      .and_then(|n| n.to_str())
+      .unwrap_or("[No Name]")
+      .to_string();
+
+    for diag in diagnostics.iter() {
+      all_diagnostics.push(DiagnosticItem {
+        diagnostic: diag.clone(),
+        doc_id:     *doc_id,
+        path:       path.clone(),
+        file_name:  file_name.clone(),
+      });
+    }
+  }
+
+  if all_diagnostics.is_empty() {
+    cx.editor.set_status("No diagnostics in workspace");
+    return;
+  }
+
+  cx.callback.push(Box::new(move |compositor, _cx| {
+    use crate::{
+      core::diagnostics::Severity,
+      ui::components::{
+        Column,
+        Picker,
+        PickerAction,
+      },
+    };
+
+    let columns = vec![
+      Column::new("Severity", |item: &DiagnosticItem, _: &()| {
+        match item.diagnostic.severity {
+          Some(Severity::Error) => "ERROR",
+          Some(Severity::Warning) => "WARN",
+          Some(Severity::Info) => "INFO",
+          Some(Severity::Hint) => "HINT",
+          None => "",
+        }
+        .to_string()
+      }),
+      Column::new("File", |item: &DiagnosticItem, _: &()| item.file_name.clone()),
+      Column::new("Line", |item: &DiagnosticItem, _: &()| {
+        format!("{}", item.diagnostic.line + 1)
+      }),
+      Column::new("Source", |item: &DiagnosticItem, _: &()| {
+        item.diagnostic.source.clone().unwrap_or_default()
+      }),
+      Column::new("Code", |item: &DiagnosticItem, _: &()| {
+        match &item.diagnostic.code {
+          Some(crate::core::diagnostics::NumberOrString::Number(n)) => n.to_string(),
+          Some(crate::core::diagnostics::NumberOrString::String(s)) => s.clone(),
+          None => String::new(),
+        }
+      }),
+      Column::new("Message", |item: &DiagnosticItem, _: &()| item.diagnostic.message.clone()),
+    ];
+
+    // Create action handler to jump to diagnostic
+    let action_handler = std::sync::Arc::new(move |item: &DiagnosticItem, _: &(), _action: PickerAction| {
+      // Clone item to move into the closure
+      let item = item.clone();
+
+      // Jump to the diagnostic location
+      crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+        // First, ensure the document is open
+        let doc_id = editor.documents.get(&item.doc_id).map(|_| item.doc_id).or_else(|| {
+          // Document might have been closed, try to open it
+          item.path.as_ref().and_then(|path| {
+            editor.open(path, crate::editor::Action::Replace).ok()
+          })
+        });
+
+        if let Some(doc_id) = doc_id {
+          // Focus the document
+          let view_id = editor.tree.focus;
+          let view = editor.tree.get_mut(view_id);
+          view.doc = doc_id;
+
+          // Set selection to the diagnostic location
+          let doc = editor.documents.get_mut(&doc_id).unwrap();
+          doc.set_selection(view_id, Selection::single(item.diagnostic.range.start, item.diagnostic.range.end));
+
+          // Align view to center the diagnostic
+          align_view(doc, editor.tree.get_mut(view_id), Align::Center);
+        }
+      });
+
+      true // Close picker
+    });
+
+    let picker = Picker::new(
+      columns,
+      5, // Primary column is "Message"
+      all_diagnostics,
+      (),
+      |_| {}, // Dummy on_select
+    )
+    .with_action_handler(action_handler)
+    .with_preview(move |item: &DiagnosticItem| {
+      // Return path and line range for preview with selection
+      item.path.as_ref().map(|path| {
+        (
+          path.clone(),
+          Some((item.diagnostic.line, item.diagnostic.line)),
+        )
+      })
+    });
+
+    compositor.push(Box::new(picker));
+  }));
+}

@@ -1,4 +1,5 @@
 pub mod button;
+pub mod code_action;
 pub mod completion;
 pub mod debug_panel;
 pub mod hover;
@@ -19,6 +20,7 @@ pub use picker::{
 };
 pub use prompt::Prompt;
 
-// Completion, SignatureHelp, and Hover are used internally by the editor
+// Completion, SignatureHelp, Hover, and CodeActionMenu are used internally by the editor
+pub(crate) use code_action::CodeActionMenu;
 pub(crate) use completion::Completion;
 pub(crate) use signature_help::SignatureHelp;

@@ -1569,7 +1569,7 @@ impl Client {
     text_document: lsp::TextDocumentIdentifier,
     range: lsp::Range,
     context: lsp::CodeActionContext,
-  ) -> Option<impl Future<Output = Result<Option<Vec<lsp::CodeActionOrCommand>>>>> {
+  ) -> Option<BoxFuture<'static, Result<Option<Vec<lsp::CodeActionOrCommand>>>>> {
     let capabilities = self.capabilities.get().unwrap();
 
     // Return early if the server does not support code actions.
@@ -1589,7 +1589,7 @@ impl Client {
       partial_result_params: lsp::PartialResultParams::default(),
     };
 
-    Some(self.call::<lsp::request::CodeActionRequest>(params))
+    Some(Box::pin(self.call::<lsp::request::CodeActionRequest>(params)))
   }
 
   pub fn rename_symbol(

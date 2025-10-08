@@ -113,6 +113,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "space" => { "Space"
       "f" => file_picker,
       "k" => hover,
+      "a" => code_action,
       "y" => yank_to_clipboard,
       "Y" => yank_main_selection_to_clipboard,
       "p" => paste_clipboard_after,

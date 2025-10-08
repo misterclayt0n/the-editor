@@ -325,3 +325,91 @@ pub fn goto_reference(cx: &mut Context) {
     Ok(Callback::EditorCompositor(Box::new(call)))
   });
 }
+
+pub fn code_action(cx: &mut Context) {
+  let (view, doc) = current_ref!(cx.editor);
+
+  // Get selection range
+  let selection = doc.selection(view.id).primary();
+
+  // Collect all the futures
+  let requests: Vec<_> = doc
+    .language_servers_with_feature(LanguageServerFeature::CodeAction)
+    .filter_map(|language_server| {
+      let offset_encoding = language_server.offset_encoding();
+
+      // Convert selection to LSP range
+      let range = crate::lsp::util::range_to_lsp_range(
+        doc.text(),
+        selection,
+        offset_encoding,
+      );
+
+      // Get diagnostics overlapping the selection
+      let diagnostics: Vec<lsp_types::Diagnostic> = doc
+        .diagnostics()
+        .iter()
+        .filter(|diag| {
+          let diag_range =
+            crate::core::selection::Range::new(diag.range.start, diag.range.end);
+          selection.overlaps(&diag_range)
+        })
+        .map(|diag| {
+          crate::lsp::util::diagnostic_to_lsp_diagnostic(
+            doc.text(),
+            diag,
+            offset_encoding,
+          )
+        })
+        .collect();
+
+      let context = lsp_types::CodeActionContext {
+        diagnostics,
+        only: None,
+        trigger_kind: Some(lsp_types::CodeActionTriggerKind::INVOKED),
+      };
+
+      language_server.code_actions(doc.identifier(), range, context)
+    })
+    .collect();
+
+  if requests.is_empty() {
+    cx.editor.set_error("No language server with code action support");
+    return;
+  }
+
+  cx.jobs.callback(async move {
+    let mut all_actions = Vec::new();
+
+    for future in requests {
+      match future.await {
+        Ok(Some(actions)) => {
+          // Filter out disabled actions
+          let enabled_actions: Vec<_> = actions
+            .into_iter()
+            .filter(|action| match action {
+              lsp_types::CodeActionOrCommand::CodeAction(action) => action.disabled.is_none(),
+              _ => true,
+            })
+            .collect();
+          all_actions.extend(enabled_actions);
+        }
+        Ok(None) => {}
+        Err(err) => {
+          log::error!("Error requesting code actions: {err}");
+        }
+      }
+    }
+
+    let call = move |editor: &mut crate::editor::Editor, compositor: &mut Compositor| {
+      if all_actions.is_empty() {
+        editor.set_status("No code actions available");
+      } else {
+        use crate::ui::components::CodeActionMenu;
+        compositor.push(Box::new(CodeActionMenu::new(all_actions)));
+      }
+    };
+
+    Ok(Callback::EditorCompositor(Box::new(call)))
+  });
+}

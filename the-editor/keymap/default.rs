@@ -108,6 +108,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "y" => goto_type_definition,
       "i" => goto_implementation,
       "r" => goto_reference,
+      "f" => goto_file,
     },
 
     "space" => { "Space"

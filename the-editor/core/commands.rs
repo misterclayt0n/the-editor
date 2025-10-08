@@ -19,62 +19,41 @@ use the_editor_renderer::{
   Key,
   KeyPress,
 };
-use the_editor_stdx::rope::RopeSliceExt;
+use the_editor_stdx::{
+  path::{
+    self,
+    find_paths,
+  },
+  rope::RopeSliceExt,
+};
+use url::Url;
 
 use crate::{
   core::{
-    Tendril,
-    ViewId,
-    auto_pairs,
-    comment,
-    document::Document,
-    grapheme,
-    history::UndoKind,
-    indent,
-    info::Info,
-    line_ending::{
+    auto_pairs, comment, document::Document, grapheme, history::UndoKind, indent, info::Info, line_ending::{
       get_line_ending_of_str,
       line_end_char_index,
-    },
-    match_brackets,
-    movement::{
-      self,
-      Direction,
-      Movement,
-      move_horizontally,
-      move_vertically,
-      move_vertically_visual,
-    },
-    position::{
-      Position,
-      char_idx_at_visual_offset,
-    },
-    search::{
+    }, match_brackets, movement::{
+      self, move_horizontally, move_vertically, move_vertically_visual, Direction, Movement
+    }, position::{
+      char_idx_at_visual_offset, Position
+    }, search::{
       self,
       CharMatcher,
-    },
-    selection::{
+    }, selection::{
       Range,
       Selection,
-    },
-    surround,
-    text_annotations::TextAnnotations,
-    text_format::TextFormat,
-    textobject,
-    transaction::{
+    }, surround, text_annotations::TextAnnotations, text_format::TextFormat, textobject, transaction::{
       Deletion,
       Transaction,
-    },
-    view::View,
-  },
-  current,
-  current_ref,
-  editor::Editor,
-  event::PostInsertChar,
-  keymap::{
+    }, view::View, Tendril, ViewId
+  }, current, current_ref, editor::{
+    Action,
+    Editor,
+  }, event::PostInsertChar, keymap::{
     KeyBinding,
     Mode,
-  },
+  }
 };
 
 type MoveFn =
@@ -3239,9 +3218,7 @@ pub fn list_gutters(cx: &mut Context) {
       let gutters = editor_view.gutter_manager.list_gutters();
       let status = gutters
         .iter()
-        .map(|(_id, name, enabled)| {
-          format!("{}: {}", name, if *enabled { "ON" } else { "OFF" })
-        })
+        .map(|(_id, name, enabled)| format!("{}: {}", name, if *enabled { "ON" } else { "OFF" }))
         .collect::<Vec<_>>()
         .join(", ");
       cx.editor.set_status(format!("Gutters: {}", status));
@@ -3268,7 +3245,9 @@ pub fn completion(cx: &mut Context) {
   log::info!("  Context: {:?}", context);
 
   // Trigger manual completion via handlers
-  cx.editor.handlers.trigger_completions(cursor, doc.id, view.id);
+  cx.editor
+    .handlers
+    .trigger_completions(cursor, doc.id, view.id);
 
   // Dispatch PostCommand event
   the_editor_event::dispatch(crate::event::PostCommand {
@@ -3309,7 +3288,10 @@ pub fn hover(_cx: &mut Context) {
 pub fn goto_next_diag(cx: &mut Context) {
   let (view, doc) = current!(cx.editor);
 
-  let cursor_pos = doc.selection(view.id).primary().cursor(doc.text().slice(..));
+  let cursor_pos = doc
+    .selection(view.id)
+    .primary()
+    .cursor(doc.text().slice(..));
 
   let diag = doc
     .diagnostics()
@@ -3329,7 +3311,10 @@ pub fn goto_next_diag(cx: &mut Context) {
 pub fn goto_prev_diag(cx: &mut Context) {
   let (view, doc) = current!(cx.editor);
 
-  let cursor_pos = doc.selection(view.id).primary().cursor(doc.text().slice(..));
+  let cursor_pos = doc
+    .selection(view.id)
+    .primary()
+    .cursor(doc.text().slice(..));
 
   let diag = doc
     .diagnostics()
@@ -3345,6 +3330,97 @@ pub fn goto_prev_diag(cx: &mut Context) {
   // Selection is reversed to match Helix behavior (going backwards)
   doc.set_selection(view.id, Selection::single(diag.range.end, diag.range.start));
   crate::core::view::align_view(doc, view, crate::core::view::Align::Center);
+}
+
+pub fn goto_file_impl(cx: &mut Context, action: Action) {
+  let (view, doc) = current_ref!(cx.editor);
+  let text = doc.text().slice(..);
+  let selections = doc.selection(view.id);
+  let primary = selections.primary();
+  let rel_path = doc
+    .relative_path()
+    .map(|path| path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf())
+    .unwrap_or_default();
+
+  let paths: Vec<_> = if selections.len() == 1 && primary.len() == 1 {
+    // Cap the search at roughly 1k bytes around the cursor
+    let lookaround = 1000;
+    let pos = text.char_to_byte(primary.cursor(text));
+    let pos_line = text.byte_to_line(pos);
+
+    // Calculate search bounds
+    let search_start = if pos < lookaround {
+      0
+    } else {
+      text.line_to_byte(text.byte_to_line(pos.saturating_sub(lookaround)))
+    };
+
+    let search_end_line = (pos_line + 1).min(text.len_lines().saturating_sub(1));
+    let search_end = text.line_to_byte(search_end_line)
+      .min((pos + lookaround).min(text.len_bytes()));
+
+    let search_range = text.byte_slice(search_start..search_end);
+
+    // Try to find a path near the cursor
+    let path = find_paths(search_range, true)
+      .take_while(|range| search_start + range.start <= pos + 1)
+      .find(|range| pos <= search_start + range.end)
+      .map(|range| Cow::from(search_range.byte_slice(range)));
+
+    log::debug!("goto_file auto-detected path: {path:?}");
+    let path = path.unwrap_or_else(|| primary.fragment(text));
+    vec![path.into_owned()]
+  } else {
+    // Otherwise use each selection, trimmed.
+    selections
+      .fragments(text)
+      .map(|sel| sel.trim().to_owned())
+      .filter(|sel| !sel.is_empty())
+      .collect()
+  };
+
+  for sel in paths {
+    // Try parsing as URL first
+    if let Ok(url) = Url::parse(&sel) {
+      if url.scheme() == "file" {
+        // Extract path from file:// URL
+        if let Ok(path) = url.to_file_path() {
+          let final_path = if path.is_absolute() {
+            path
+          } else {
+            rel_path.join(path)
+          };
+
+          if let Err(e) = cx.editor.open(&final_path, action) {
+            cx.editor.set_error(format!("Failed to open {}: {}", final_path.display(), e));
+          }
+        }
+      } else {
+        // Non-file URLs - just show an error for now
+        cx.editor.set_error(format!("Cannot open URL: {}", url));
+      }
+      continue;
+    }
+
+    // Treat as a regular file path
+    let path = path::expand(&sel);
+    let final_path = if path.is_absolute() {
+      path.into_owned()
+    } else {
+      rel_path.join(path)
+    };
+
+    if final_path.is_dir() {
+      cx.editor.set_error(format!("{} is a directory", final_path.display()));
+    } else if let Err(e) = cx.editor.open(&final_path, action) {
+      cx.editor.set_error(format!("Failed to open {}: {}", final_path.display(), e));
+    }
+  }
+}
+
+/// Open the file under the cursor or selection (gf)
+pub fn goto_file(cx: &mut Context) {
+  goto_file_impl(cx, Action::Replace);
 }
 
 // Re-export LSP commands

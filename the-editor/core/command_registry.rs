@@ -510,7 +510,8 @@ fn write_buffer(cx: &mut Context, args: &[&str]) -> Result<()> {
 
   use crate::current;
 
-  let (_view, doc) = current!(cx.editor);
+  let (view, doc) = current!(cx.editor);
+  let doc_id = view.doc;
 
   let path = if args.is_empty() {
     doc.path().map(|p| p.to_path_buf())
@@ -519,7 +520,7 @@ fn write_buffer(cx: &mut Context, args: &[&str]) -> Result<()> {
   };
 
   if let Some(path) = path {
-    match doc.save(Some(path.clone()), true) {
+    match cx.editor.save(doc_id, Some(path.clone()), true) {
       Ok(_) => {
         cx.editor.set_status(format!("written: {}", path.display()));
       },

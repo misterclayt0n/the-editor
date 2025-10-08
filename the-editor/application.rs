@@ -279,6 +279,13 @@ impl Application for App {
       self.handle_language_server_message(server_id, call);
     }
 
+    // Process any pending saves
+    while let Some(save_event) = self.editor.try_poll_save() {
+      if let Some(doc) = self.editor.documents.get_mut(&save_event.doc_id) {
+        doc.set_last_saved_revision(save_event.revision, save_event.save_time);
+      }
+    }
+
     // Process any pending job callbacks before rendering
     while let Ok(callback) = self.jobs.callbacks.try_recv() {
       self.jobs.handle_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback)));

@@ -89,6 +89,7 @@ use crate::{
     document::{
       Document,
       DocumentOpenError,
+      DocumentSavedEvent,
       DocumentSavedEventFuture,
       DocumentSavedEventResult,
       SavePoint,
@@ -2938,6 +2939,30 @@ impl Editor {
 
     match Pin::new(&mut self.language_servers.incoming).poll_next(&mut cx) {
       Poll::Ready(Some(msg)) => Some(msg),
+      _ => None,
+    }
+  }
+
+  /// Try to poll for a save event without blocking.
+  /// Returns Some if a save completed, None otherwise.
+  pub fn try_poll_save(&mut self) -> Option<DocumentSavedEvent> {
+    use std::task::{Context, Poll};
+    use futures_util::task::noop_waker;
+    use futures_util::stream::Stream;
+
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+
+    match Pin::new(&mut self.save_queue).poll_next(&mut cx) {
+      Poll::Ready(Some(Ok(event))) => {
+        self.write_count -= 1;
+        Some(event)
+      },
+      Poll::Ready(Some(Err(err))) => {
+        self.write_count -= 1;
+        self.set_error(format!("Save failed: {}", err));
+        None
+      },
       _ => None,
     }
   }

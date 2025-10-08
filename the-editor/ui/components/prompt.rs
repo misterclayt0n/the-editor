@@ -40,11 +40,11 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 pub struct Completion {
   /// Range in the input to replace (from position onwards)
-  pub range:  RangeFrom<usize>,
+  pub range: RangeFrom<usize>,
   /// The completion text
-  pub text:   String,
+  pub text:  String,
   /// Optional documentation/description
-  pub doc:    Option<String>,
+  pub doc:   Option<String>,
 }
 
 /// Function type for generating completions
@@ -53,7 +53,8 @@ pub type CompletionFn = Arc<dyn Fn(&Editor, &str) -> Vec<Completion> + Send + Sy
 
 /// Function type for handling prompt events (validate, update, abort)
 /// Takes context, current input, and event type
-/// This allows custom behavior for different prompt types (rename, search, etc.)
+/// This allows custom behavior for different prompt types (rename, search,
+/// etc.)
 pub type CallbackFn = Box<dyn FnMut(&mut Context, &str, PromptEvent)>;
 
 /// Events that can occur in the prompt component
@@ -144,8 +145,9 @@ impl Prompt {
   }
 
   /// Set a custom callback function for handling prompt events
-  /// This allows the prompt to be used for custom interactions like rename, search, etc.
-  /// If no callback is set, the prompt falls back to command execution
+  /// This allows the prompt to be used for custom interactions like rename,
+  /// search, etc. If no callback is set, the prompt falls back to command
+  /// execution
   pub fn with_callback(
     mut self,
     callback: impl FnMut(&mut Context, &str, PromptEvent) + 'static,
@@ -171,24 +173,24 @@ impl Prompt {
     // Emacs-style keybindings (like Helix)
     match (key.code, key.ctrl, key.alt, key.shift) {
       // Enter - execute
-      (Key::Enter, _, _, _) => {
+      (Key::Enter, ..) => {
         if !self.input.trim().is_empty() {
           self.add_to_history(self.input.clone());
         }
         PromptEvent::Validate
       },
       // Escape / Ctrl+c - abort
-      (Key::Escape, _, _, _) | (Key::Char('c'), true, _, _) => {
+      (Key::Escape, ..) | (Key::Char('c'), true, ..) => {
         self.exit_selection();
         PromptEvent::Abort
       },
       // Ctrl+b / Left - backward char
-      (Key::Char('b'), true, _, _) | (Key::Left, false, false, false) => {
+      (Key::Char('b'), true, ..) | (Key::Left, false, false, false) => {
         self.move_cursor_left();
         PromptEvent::Update
       },
       // Ctrl+f / Right - forward char
-      (Key::Char('f'), true, _, _) | (Key::Right, false, false, false) => {
+      (Key::Char('f'), true, ..) | (Key::Right, false, false, false) => {
         self.move_cursor_right();
         PromptEvent::Update
       },
@@ -203,58 +205,58 @@ impl Prompt {
         PromptEvent::Update
       },
       // Ctrl+a / Home - start of line
-      (Key::Char('a'), true, _, _) | (Key::Home, _, _, _) => {
+      (Key::Char('a'), true, ..) | (Key::Home, ..) => {
         self.cursor = 0;
         PromptEvent::Update
       },
       // Ctrl+e / End - end of line
-      (Key::Char('e'), true, _, _) | (Key::End, _, _, _) => {
+      (Key::Char('e'), true, ..) | (Key::End, ..) => {
         self.cursor = self.input.len();
         PromptEvent::Update
       },
       // Ctrl+h / Backspace - delete char backward
-      (Key::Char('h'), true, _, _) | (Key::Backspace, false, false, _) => {
+      (Key::Char('h'), true, ..) | (Key::Backspace, false, false, _) => {
         self.delete_char_backward();
         self.recalculate_completions(editor);
         PromptEvent::Update
       },
       // Ctrl+d / Delete - delete char forward
-      (Key::Char('d'), true, _, _) | (Key::Delete, false, false, false) => {
+      (Key::Char('d'), true, ..) | (Key::Delete, false, false, false) => {
         self.delete_char_forward();
         self.recalculate_completions(editor);
         PromptEvent::Update
       },
       // Ctrl+w / Alt+Backspace / Ctrl+Backspace - delete word backward
-      (Key::Char('w'), true, _, _) | (Key::Backspace, _, true, _) | (Key::Backspace, true, _, _) => {
+      (Key::Char('w'), true, ..) | (Key::Backspace, _, true, _) | (Key::Backspace, true, ..) => {
         self.delete_word_backward();
         self.recalculate_completions(editor);
         PromptEvent::Update
       },
       // Alt+d / Alt+Delete / Ctrl+Delete - delete word forward
-      (Key::Char('d'), _, true, _) | (Key::Delete, _, true, _) | (Key::Delete, true, _, _) => {
+      (Key::Char('d'), _, true, _) | (Key::Delete, _, true, _) | (Key::Delete, true, ..) => {
         self.delete_word_forward();
         self.recalculate_completions(editor);
         PromptEvent::Update
       },
       // Ctrl+k - kill to end of line
-      (Key::Char('k'), true, _, _) => {
+      (Key::Char('k'), true, ..) => {
         self.kill_to_end();
         self.recalculate_completions(editor);
         PromptEvent::Update
       },
       // Ctrl+u - kill to start of line
-      (Key::Char('u'), true, _, _) => {
+      (Key::Char('u'), true, ..) => {
         self.kill_to_start();
         self.recalculate_completions(editor);
         PromptEvent::Update
       },
       // Ctrl+p / Up - history previous
-      (Key::Char('p'), true, _, _) | (Key::Up, false, false, false) => {
+      (Key::Char('p'), true, ..) | (Key::Up, false, false, false) => {
         self.history_previous();
         PromptEvent::Update
       },
       // Ctrl+n / Down - history next
-      (Key::Char('n'), true, _, _) | (Key::Down, false, false, false) => {
+      (Key::Char('n'), true, ..) | (Key::Down, false, false, false) => {
         self.history_next();
         PromptEvent::Update
       },
@@ -269,7 +271,7 @@ impl Prompt {
         PromptEvent::Update
       },
       // Ctrl+q - exit selection
-      (Key::Char('q'), true, _, _) => {
+      (Key::Char('q'), true, ..) => {
         self.exit_selection();
         PromptEvent::Update
       },
@@ -358,7 +360,8 @@ impl Prompt {
     // Update completion list animation
     const COMPLETION_LIST_ANIM_SPEED: f32 = 12.0;
     if !self.completions.is_empty() && self.completion_list_anim_t < 1.0 {
-      self.completion_list_anim_t = (self.completion_list_anim_t + cx.dt * COMPLETION_LIST_ANIM_SPEED).min(1.0);
+      self.completion_list_anim_t =
+        (self.completion_list_anim_t + cx.dt * COMPLETION_LIST_ANIM_SPEED).min(1.0);
     } else if self.completions.is_empty() {
       self.completion_list_anim_t = 0.0;
     }
@@ -386,238 +389,239 @@ impl Prompt {
     };
 
     // Render prompt content in overlay mode with automatic masking
-    // Only mask the prompt box area (not the full width) to avoid blanking the text buffer
+    // Only mask the prompt box area (not the full width) to avoid blanking the text
+    // buffer
     let mask_width = prompt_box_width;
     let mask_height = STATUS_BAR_HEIGHT + completion_height;
     let mask_y = base_y - completion_height;
 
     surface.with_overlay_region(0.0, mask_y, mask_width, mask_height, |surface| {
+      // Top border
+      surface.draw_rect(
+        0.0,
+        base_y,
+        prompt_box_width,
+        BORDER_THICKNESS,
+        border_color,
+      );
 
-    // Top border
-    surface.draw_rect(
-      0.0,
-      base_y,
-      prompt_box_width,
-      BORDER_THICKNESS,
-      border_color,
-    );
+      // Bottom border
+      surface.draw_rect(
+        0.0,
+        base_y + STATUS_BAR_HEIGHT - BORDER_THICKNESS,
+        prompt_box_width,
+        BORDER_THICKNESS,
+        border_color,
+      );
 
-    // Bottom border
-    surface.draw_rect(
-      0.0,
-      base_y + STATUS_BAR_HEIGHT - BORDER_THICKNESS,
-      prompt_box_width,
-      BORDER_THICKNESS,
-      border_color,
-    );
+      // Left border
+      surface.draw_rect(
+        0.0,
+        base_y,
+        BORDER_THICKNESS,
+        STATUS_BAR_HEIGHT,
+        border_color,
+      );
 
-    // Left border
-    surface.draw_rect(
-      0.0,
-      base_y,
-      BORDER_THICKNESS,
-      STATUS_BAR_HEIGHT,
-      border_color,
-    );
+      // Right border (vertical line separating prompt from statusline)
+      surface.draw_rect(
+        prompt_box_width - BORDER_THICKNESS,
+        base_y,
+        BORDER_THICKNESS,
+        STATUS_BAR_HEIGHT,
+        border_color,
+      );
 
-    // Right border (vertical line separating prompt from statusline)
-    surface.draw_rect(
-      prompt_box_width - BORDER_THICKNESS,
-      base_y,
-      BORDER_THICKNESS,
-      STATUS_BAR_HEIGHT,
-      border_color,
-    );
+      // Draw sweeping glow effect that travels from left to right
+      if self.glow_anim_t < 1.0 {
+        const GLOW_WIDTH: f32 = 4.0; // Width perpendicular to border
+        const GLOW_SWEEP_WIDTH: f32 = 80.0; // Width of the traveling glow spot
 
-    // Draw sweeping glow effect that travels from left to right
-    if self.glow_anim_t < 1.0 {
-      const GLOW_WIDTH: f32 = 4.0; // Width perpendicular to border
-      const GLOW_SWEEP_WIDTH: f32 = 80.0; // Width of the traveling glow spot
+        // Calculate the position of the glow center as it travels left to right
+        let glow_center_x = self.glow_anim_t * prompt_box_width;
 
-      // Calculate the position of the glow center as it travels left to right
-      let glow_center_x = self.glow_anim_t * prompt_box_width;
+        // Draw glow segments on top and bottom borders
+        let segments = 50; // Number of segments to draw for smooth gradient
+        for i in 0..segments {
+          let segment_x = (i as f32 / segments as f32) * prompt_box_width;
+          let segment_width = prompt_box_width / segments as f32;
 
-      // Draw glow segments on top and bottom borders
-      let segments = 50; // Number of segments to draw for smooth gradient
-      for i in 0..segments {
-        let segment_x = (i as f32 / segments as f32) * prompt_box_width;
-        let segment_width = prompt_box_width / segments as f32;
+          // Calculate distance from glow center
+          let dist = (segment_x - glow_center_x).abs();
 
-        // Calculate distance from glow center
-        let dist = (segment_x - glow_center_x).abs();
+          // Calculate intensity based on distance (Gaussian-like falloff)
+          let intensity = if dist < GLOW_SWEEP_WIDTH {
+            1.0 - (dist / GLOW_SWEEP_WIDTH).powf(2.0)
+          } else {
+            0.0
+          };
 
-        // Calculate intensity based on distance (Gaussian-like falloff)
-        let intensity = if dist < GLOW_SWEEP_WIDTH {
-          1.0 - (dist / GLOW_SWEEP_WIDTH).powf(2.0)
-        } else {
-          0.0
-        };
+          if intensity > 0.01 {
+            let glow_color = Color::new(
+              0.3 + intensity * 0.5,
+              0.8 * intensity,
+              0.7 * intensity,
+              intensity * 0.6,
+            );
 
-        if intensity > 0.01 {
+            // Top border glow
+            surface.draw_rect(
+              segment_x,
+              base_y - GLOW_WIDTH,
+              segment_width,
+              GLOW_WIDTH,
+              glow_color,
+            );
+
+            // Bottom border glow
+            surface.draw_rect(
+              segment_x,
+              base_y + STATUS_BAR_HEIGHT,
+              segment_width,
+              GLOW_WIDTH,
+              glow_color,
+            );
+          }
+        }
+
+        // Draw glow on vertical borders when sweep passes through them
+        // Left border glow (fades in at start)
+        if self.glow_anim_t < 0.15 {
+          let intensity = (self.glow_anim_t / 0.15).min(1.0);
           let glow_color = Color::new(
             0.3 + intensity * 0.5,
             0.8 * intensity,
             0.7 * intensity,
             intensity * 0.6,
           );
-
-          // Top border glow
           surface.draw_rect(
-            segment_x,
-            base_y - GLOW_WIDTH,
-            segment_width,
+            -GLOW_WIDTH,
+            base_y,
             GLOW_WIDTH,
+            STATUS_BAR_HEIGHT,
             glow_color,
           );
+        }
 
-          // Bottom border glow
+        // Right border glow (fades in at end)
+        if self.glow_anim_t > 0.85 {
+          let intensity = ((self.glow_anim_t - 0.85) / 0.15).min(1.0);
+          let glow_color = Color::new(
+            0.3 + intensity * 0.5,
+            0.8 * intensity,
+            0.7 * intensity,
+            intensity * 0.6,
+          );
           surface.draw_rect(
-            segment_x,
-            base_y + STATUS_BAR_HEIGHT,
-            segment_width,
+            prompt_box_width,
+            base_y,
             GLOW_WIDTH,
+            STATUS_BAR_HEIGHT,
             glow_color,
           );
         }
       }
 
-      // Draw glow on vertical borders when sweep passes through them
-      // Left border glow (fades in at start)
-      if self.glow_anim_t < 0.15 {
-        let intensity = (self.glow_anim_t / 0.15).min(1.0);
-        let glow_color = Color::new(
-          0.3 + intensity * 0.5,
-          0.8 * intensity,
-          0.7 * intensity,
-          intensity * 0.6,
-        );
+      // Calculate text baseline (vertically centered in status bar)
+      let text_y = base_y + (STATUS_BAR_HEIGHT - UI_FONT_SIZE) * 0.5;
+
+      // Calculate visible width (how many characters fit in the prompt box)
+      const PADDING: f32 = 12.0;
+      let usable_width = prompt_box_width - (PADDING * 2.0) - BORDER_THICKNESS;
+      let visible_chars = (usable_width / UI_FONT_WIDTH) as usize;
+
+      // Account for prefix in visible width
+      let prefix_len = self.prefix.chars().count();
+      let visible_input_chars = visible_chars.saturating_sub(prefix_len);
+
+      // Update scroll to keep cursor visible
+      self.update_scroll(visible_input_chars);
+
+      // Build the visible text (prefix + visible portion of input)
+      let input_chars: Vec<char> = self.input.chars().collect();
+      let visible_end = (self.scroll_offset + visible_input_chars).min(input_chars.len());
+      let visible_input: String = input_chars[self.scroll_offset..visible_end]
+        .iter()
+        .collect();
+      let full_text = format!("{}{}", self.prefix, visible_input);
+
+      // Calculate cursor position relative to visible area
+      let visible_cursor_col = if self.cursor >= self.scroll_offset {
+        prefix_len + (self.cursor - self.scroll_offset)
+      } else {
+        prefix_len
+      };
+
+      // Get cursor color from theme
+      let theme = &cx.editor.theme;
+      let cursor_style = theme.get("ui.cursor");
+      let cursor_bg = cursor_style
+        .bg
+        .map(crate::ui::theme_color_to_renderer_color)
+        .unwrap_or(Color::rgb(0.2, 0.8, 0.7));
+
+      // Only draw cursor if it's within visible area
+      if self.cursor >= self.scroll_offset && self.cursor < self.scroll_offset + visible_input_chars
+      {
+        let target_x = base_x + PADDING + visible_cursor_col as f32 * UI_FONT_WIDTH;
+
+        // Cursor animation: lerp toward target position
+        let cursor_lerp_factor = cx.editor.config().cursor_lerp_factor;
+        let cursor_anim_enabled = cx.editor.config().cursor_anim_enabled;
+
+        let anim_x = if cursor_anim_enabled {
+          let mut sx = self.cursor_pos_smooth.unwrap_or(target_x);
+          let dx = target_x - sx;
+          sx += dx * cursor_lerp_factor;
+          self.cursor_pos_smooth = Some(sx);
+          // Mark animation active if still far from target
+          self.cursor_anim_active = dx.abs() > 0.5;
+          sx
+        } else {
+          self.cursor_anim_active = false;
+          self.cursor_pos_smooth = Some(target_x);
+          target_x
+        };
+
+        // Draw cursor with same height extension as main editor
+        const CURSOR_HEIGHT_EXTENSION: f32 = 4.0;
         surface.draw_rect(
-          -GLOW_WIDTH,
-          base_y,
-          GLOW_WIDTH,
-          STATUS_BAR_HEIGHT,
-          glow_color,
+          anim_x,
+          text_y,
+          UI_FONT_WIDTH,
+          UI_FONT_SIZE + CURSOR_HEIGHT_EXTENSION,
+          cursor_bg,
         );
       }
 
-      // Right border glow (fades in at end)
-      if self.glow_anim_t > 0.85 {
-        let intensity = ((self.glow_anim_t - 0.85) / 0.15).min(1.0);
-        let glow_color = Color::new(
-          0.3 + intensity * 0.5,
-          0.8 * intensity,
-          0.7 * intensity,
-          intensity * 0.6,
-        );
-        surface.draw_rect(
-          prompt_box_width,
-          base_y,
-          GLOW_WIDTH,
-          STATUS_BAR_HEIGHT,
-          glow_color,
-        );
+      // Get cursor foreground color from theme
+      let cursor_fg = cursor_style
+        .fg
+        .map(crate::ui::theme_color_to_renderer_color)
+        .unwrap_or(Color::rgb(0.1, 0.1, 0.15));
+
+      // Render the visible text character by character
+      for (i, ch) in full_text.chars().enumerate() {
+        let x = base_x + PADDING + i as f32 * UI_FONT_WIDTH;
+        let color = if i == visible_cursor_col {
+          cursor_fg // Use theme cursor foreground color
+        } else {
+          Color::WHITE
+        };
+        surface.draw_text(TextSection::simple(
+          x,
+          text_y,
+          ch.to_string(),
+          UI_FONT_SIZE,
+          color,
+        ));
       }
-    }
 
-    // Calculate text baseline (vertically centered in status bar)
-    let text_y = base_y + (STATUS_BAR_HEIGHT - UI_FONT_SIZE) * 0.5;
-
-    // Calculate visible width (how many characters fit in the prompt box)
-    const PADDING: f32 = 12.0;
-    let usable_width = prompt_box_width - (PADDING * 2.0) - BORDER_THICKNESS;
-    let visible_chars = (usable_width / UI_FONT_WIDTH) as usize;
-
-    // Account for prefix in visible width
-    let prefix_len = self.prefix.chars().count();
-    let visible_input_chars = visible_chars.saturating_sub(prefix_len);
-
-    // Update scroll to keep cursor visible
-    self.update_scroll(visible_input_chars);
-
-    // Build the visible text (prefix + visible portion of input)
-    let input_chars: Vec<char> = self.input.chars().collect();
-    let visible_end = (self.scroll_offset + visible_input_chars).min(input_chars.len());
-    let visible_input: String = input_chars[self.scroll_offset..visible_end]
-      .iter()
-      .collect();
-    let full_text = format!("{}{}", self.prefix, visible_input);
-
-    // Calculate cursor position relative to visible area
-    let visible_cursor_col = if self.cursor >= self.scroll_offset {
-      prefix_len + (self.cursor - self.scroll_offset)
-    } else {
-      prefix_len
-    };
-
-    // Get cursor color from theme
-    let theme = &cx.editor.theme;
-    let cursor_style = theme.get("ui.cursor");
-    let cursor_bg = cursor_style
-      .bg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::rgb(0.2, 0.8, 0.7));
-
-    // Only draw cursor if it's within visible area
-    if self.cursor >= self.scroll_offset && self.cursor < self.scroll_offset + visible_input_chars {
-      let target_x = base_x + PADDING + visible_cursor_col as f32 * UI_FONT_WIDTH;
-
-      // Cursor animation: lerp toward target position
-      let cursor_lerp_factor = cx.editor.config().cursor_lerp_factor;
-      let cursor_anim_enabled = cx.editor.config().cursor_anim_enabled;
-
-      let anim_x = if cursor_anim_enabled {
-        let mut sx = self.cursor_pos_smooth.unwrap_or(target_x);
-        let dx = target_x - sx;
-        sx += dx * cursor_lerp_factor;
-        self.cursor_pos_smooth = Some(sx);
-        // Mark animation active if still far from target
-        self.cursor_anim_active = dx.abs() > 0.5;
-        sx
-      } else {
-        self.cursor_anim_active = false;
-        self.cursor_pos_smooth = Some(target_x);
-        target_x
-      };
-
-      // Draw cursor with same height extension as main editor
-      const CURSOR_HEIGHT_EXTENSION: f32 = 4.0;
-      surface.draw_rect(
-        anim_x,
-        text_y,
-        UI_FONT_WIDTH,
-        UI_FONT_SIZE + CURSOR_HEIGHT_EXTENSION,
-        cursor_bg,
-      );
-    }
-
-    // Get cursor foreground color from theme
-    let cursor_fg = cursor_style
-      .fg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::rgb(0.1, 0.1, 0.15));
-
-    // Render the visible text character by character
-    for (i, ch) in full_text.chars().enumerate() {
-      let x = base_x + PADDING + i as f32 * UI_FONT_WIDTH;
-      let color = if i == visible_cursor_col {
-        cursor_fg // Use theme cursor foreground color
-      } else {
-        Color::WHITE
-      };
-      surface.draw_text(TextSection::simple(
-        x,
-        text_y,
-        ch.to_string(),
-        UI_FONT_SIZE,
-        color,
-      ));
-    }
-
-    // Render completions if visible (above the prompt)
-    // Render completions if available
-    if !self.completions.is_empty() {
-      self.render_completions_internal(surface, base_y, completion_x, completion_width, cx);
-    }
+      // Render completions if visible (above the prompt)
+      // Render completions if available
+      if !self.completions.is_empty() {
+        self.render_completions_internal(surface, base_y, completion_x, completion_width, cx);
+      }
     }); // End overlay region
   }
 
@@ -978,7 +982,12 @@ impl Prompt {
     );
 
     // Clip all completion content to the box bounds
-    surface.push_scissor_rect(completion_x, completion_y, completion_width, completion_height);
+    surface.push_scissor_rect(
+      completion_x,
+      completion_y,
+      completion_width,
+      completion_height,
+    );
 
     // Draw completions with scrolling
     for (visual_i, actual_i) in (offset..offset + visible_count).enumerate() {
@@ -998,7 +1007,14 @@ impl Prompt {
         } else {
           stripe_secondary
         };
-        surface.draw_rounded_rect(item_x, y, item_width, COMPLETION_ITEM_HEIGHT, item_radius, stripe_color);
+        surface.draw_rounded_rect(
+          item_x,
+          y,
+          item_width,
+          COMPLETION_ITEM_HEIGHT,
+          item_radius,
+          stripe_color,
+        );
 
         // Draw selection background with animation (like picker)
         if is_selected {
@@ -1007,7 +1023,14 @@ impl Prompt {
 
           let mut fill_color = selected_fill;
           fill_color.a = (fill_color.a * (0.82 + 0.18 * selection_ease)).clamp(0.0, 1.0);
-          surface.draw_rounded_rect(item_x, y, item_width, COMPLETION_ITEM_HEIGHT, item_radius, fill_color);
+          surface.draw_rounded_rect(
+            item_x,
+            y,
+            item_width,
+            COMPLETION_ITEM_HEIGHT,
+            item_radius,
+            fill_color,
+          );
 
           // Draw outline with variable thickness (like picker)
           let bottom_thickness = (COMPLETION_ITEM_HEIGHT * 0.035).clamp(0.6, 1.2);
@@ -1043,7 +1066,8 @@ impl Prompt {
             let pulse_ease = 1.0 - (1.0 - selection_t) * (1.0 - selection_t);
             let center_x = item_x + item_width * 0.5;
             let center_y = y + COMPLETION_ITEM_HEIGHT * 0.52;
-            let pulse_radius = item_width.max(COMPLETION_ITEM_HEIGHT) * (0.42 + 0.35 * (1.0 - pulse_ease));
+            let pulse_radius =
+              item_width.max(COMPLETION_ITEM_HEIGHT) * (0.42 + 0.35 * (1.0 - pulse_ease));
             let pulse_alpha = (1.0 - pulse_ease) * 0.18;
             let glow_color = Self::glow_from_base(selected_outline);
             surface.draw_rounded_rect_glow(
@@ -1346,13 +1370,13 @@ mod tests {
         vec![
           Completion {
             range: 0..,
-            text: "quit".to_string(),
-            doc: None,
+            text:  "quit".to_string(),
+            doc:   None,
           },
           Completion {
             range: 0..,
-            text: "query".to_string(),
-            doc: None,
+            text:  "query".to_string(),
+            doc:   None,
           },
         ]
       } else {

@@ -30,33 +30,66 @@ use url::Url;
 
 use crate::{
   core::{
-    auto_pairs, comment, document::Document, grapheme, history::UndoKind, indent, info::Info, line_ending::{
+    Tendril,
+    ViewId,
+    auto_pairs,
+    comment,
+    document::Document,
+    grapheme,
+    history::UndoKind,
+    indent,
+    info::Info,
+    line_ending::{
       get_line_ending_of_str,
       line_end_char_index,
-    }, match_brackets, movement::{
-      self, move_horizontally, move_vertically, move_vertically_visual, Direction, Movement
-    }, position::{
-      char_idx_at_visual_offset, Position
-    }, search::{
+    },
+    match_brackets,
+    movement::{
+      self,
+      Direction,
+      Movement,
+      move_horizontally,
+      move_vertically,
+      move_vertically_visual,
+    },
+    position::{
+      Position,
+      char_idx_at_visual_offset,
+    },
+    search::{
       self,
       CharMatcher,
-    }, selection::{
+    },
+    selection::{
       Range,
       Selection,
-    }, surround, text_annotations::TextAnnotations, text_format::TextFormat, textobject, transaction::{
+    },
+    surround,
+    text_annotations::TextAnnotations,
+    text_format::TextFormat,
+    textobject,
+    transaction::{
       Deletion,
       Transaction,
-    }, view::{
+    },
+    view::{
       Align,
       View,
-    }, Tendril, ViewId
-  }, current, current_ref, editor::{
+    },
+  },
+  current,
+  current_ref,
+  editor::{
     Action,
     Editor,
-  }, event::PostInsertChar, keymap::{
+  },
+  event::PostInsertChar,
+  keymap::{
     KeyBinding,
     Mode,
-  }, view, view_mut
+  },
+  view,
+  view_mut,
 };
 
 type MoveFn =
@@ -3507,6 +3540,41 @@ pub fn goto_last_modified_file(cx: &mut Context) {
   } else {
     cx.editor.set_error("no last modified buffer")
   }
+}
+
+pub fn goto_next_buffer(cx: &mut Context) {
+  goto_buffer(cx.editor, Direction::Forward, cx.count());
+}
+
+pub fn goto_previous_buffer(cx: &mut Context) {
+    goto_buffer(cx.editor, Direction::Backward, cx.count());
+}
+
+
+fn goto_buffer(editor: &mut Editor, direction: Direction, count: usize) {
+  let current = view!(editor).doc;
+
+  let id = match direction {
+    Direction::Forward => {
+      let iter = editor.documents.keys();
+      // skip 'count' times past current buffer
+      iter.cycle().skip_while(|id| *id != &current).nth(count)
+    },
+    Direction::Backward => {
+      let iter = editor.documents.keys();
+      // skip 'count' times past current buffer
+      iter
+        .rev()
+        .cycle()
+        .skip_while(|id| *id != &current)
+        .nth(count)
+    },
+  }
+  .unwrap();
+
+  let id = *id;
+
+  editor.switch(id, Action::Replace);
 }
 
 // Re-export LSP commands

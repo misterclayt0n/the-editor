@@ -1501,7 +1501,7 @@ impl Client {
   pub fn document_symbols(
     &self,
     text_document: lsp::TextDocumentIdentifier,
-  ) -> Option<impl Future<Output = Result<Option<lsp::DocumentSymbolResponse>>>> {
+  ) -> Option<BoxFuture<'static, Result<Option<lsp::DocumentSymbolResponse>>>> {
     let capabilities = self.capabilities.get().unwrap();
 
     // Return early if the server does not support document symbols.
@@ -1516,7 +1516,7 @@ impl Client {
       partial_result_params: lsp::PartialResultParams::default(),
     };
 
-    Some(self.call::<lsp::request::DocumentSymbolRequest>(params))
+    Some(Box::pin(self.call::<lsp::request::DocumentSymbolRequest>(params)))
   }
 
   pub fn prepare_rename(

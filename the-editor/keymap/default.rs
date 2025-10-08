@@ -112,6 +112,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
     "space" => { "Space"
       "f" => file_picker,
+      "s" => document_symbols,
       "k" => hover,
       "a" => code_action,
       "r" => rename_symbol,

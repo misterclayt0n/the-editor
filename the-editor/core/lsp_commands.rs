@@ -655,3 +655,209 @@ fn apply_workspace_edit(
 
   Ok(())
 }
+/// Flat symbol for picker display
+#[derive(Debug, Clone)]
+struct FlatSymbol {
+  name:            String,
+  kind:            lsp_types::SymbolKind,
+  range:           lsp_types::Range,
+  uri:             lsp_types::Url,
+  offset_encoding: OffsetEncoding,
+}
+
+/// Convert SymbolKind to display string
+fn symbol_kind_to_string(kind: lsp_types::SymbolKind) -> String {
+  match kind {
+    lsp_types::SymbolKind::FILE => "File",
+    lsp_types::SymbolKind::MODULE => "Module",
+    lsp_types::SymbolKind::NAMESPACE => "Namespace",
+    lsp_types::SymbolKind::PACKAGE => "Package",
+    lsp_types::SymbolKind::CLASS => "Class",
+    lsp_types::SymbolKind::METHOD => "Method",
+    lsp_types::SymbolKind::PROPERTY => "Property",
+    lsp_types::SymbolKind::FIELD => "Field",
+    lsp_types::SymbolKind::CONSTRUCTOR => "Constructor",
+    lsp_types::SymbolKind::ENUM => "Enum",
+    lsp_types::SymbolKind::INTERFACE => "Interface",
+    lsp_types::SymbolKind::FUNCTION => "Function",
+    lsp_types::SymbolKind::VARIABLE => "Variable",
+    lsp_types::SymbolKind::CONSTANT => "Constant",
+    lsp_types::SymbolKind::STRING => "String",
+    lsp_types::SymbolKind::NUMBER => "Number",
+    lsp_types::SymbolKind::BOOLEAN => "Boolean",
+    lsp_types::SymbolKind::ARRAY => "Array",
+    lsp_types::SymbolKind::OBJECT => "Object",
+    lsp_types::SymbolKind::KEY => "Key",
+    lsp_types::SymbolKind::NULL => "Null",
+    lsp_types::SymbolKind::ENUM_MEMBER => "EnumMember",
+    lsp_types::SymbolKind::STRUCT => "Struct",
+    lsp_types::SymbolKind::EVENT => "Event",
+    lsp_types::SymbolKind::OPERATOR => "Operator",
+    lsp_types::SymbolKind::TYPE_PARAMETER => "TypeParam",
+    _ => "Unknown",
+  }
+  .to_string()
+}
+
+/// Document symbols picker - navigate within current file by symbols
+pub fn document_symbols(cx: &mut Context) {
+  // Helper function to flatten hierarchical DocumentSymbol
+  fn flatten_document_symbol(
+    symbols: &mut Vec<FlatSymbol>,
+    uri: lsp_types::Url,
+    symbol: lsp_types::DocumentSymbol,
+    offset_encoding: OffsetEncoding,
+  ) {
+    symbols.push(FlatSymbol {
+      name:            symbol.name.clone(),
+      kind:            symbol.kind,
+      range:           symbol.selection_range,
+      uri:             uri.clone(),
+      offset_encoding,
+    });
+
+    if let Some(children) = symbol.children {
+      for child in children {
+        flatten_document_symbol(symbols, uri.clone(), child, offset_encoding);
+      }
+    }
+  }
+
+  let (_view, doc) = current_ref!(cx.editor);
+
+  //Get current document URL
+  let current_url = doc.url();
+
+  // Collect all document symbols from language servers
+  let requests: Vec<_> = doc
+    .language_servers_with_feature(LanguageServerFeature::DocumentSymbols)
+    .filter_map(|language_server| {
+      let offset_encoding = language_server.offset_encoding();
+      language_server
+        .document_symbols(doc.identifier())
+        .map(|future| (future, offset_encoding))
+    })
+    .collect();
+
+  // Check for URL after collecting requests (can't call set_error before)
+  let Some(current_url) = current_url else {
+    return; // Silently fail if no URL - shouldn't happen for valid documents
+  };
+
+  let current_url_clone = current_url.clone();
+
+  cx.jobs.callback(async move {
+    let mut all_symbols = Vec::new();
+
+    for (future, offset_encoding) in requests {
+      match future.await {
+        Ok(Some(response)) => {
+          match response {
+            lsp_types::DocumentSymbolResponse::Flat(symbols) => {
+              for symbol in symbols {
+                all_symbols.push(FlatSymbol {
+                  name:            symbol.name,
+                  kind:            symbol.kind,
+                  range:           symbol.location.range,
+                  uri:             symbol.location.uri.clone(),
+                  offset_encoding,
+                });
+              }
+            }
+            lsp_types::DocumentSymbolResponse::Nested(symbols) => {
+              for symbol in symbols {
+                flatten_document_symbol(
+                  &mut all_symbols,
+                  current_url_clone.clone(),
+                  symbol,
+                  offset_encoding,
+                );
+              }
+            }
+          }
+        }
+        Ok(None) => {}
+        Err(err) => {
+          log::error!("Error requesting document symbols: {err}");
+        }
+      }
+    }
+
+    let call = move |editor: &mut crate::editor::Editor, compositor: &mut Compositor| {
+      if all_symbols.is_empty() {
+        editor.set_status("No symbols found");
+        return;
+      }
+
+      // Create picker columns
+      use crate::ui::components::{
+        Column,
+        Picker,
+        PickerAction,
+      };
+
+      let columns = vec![
+        Column::new("Kind", |symbol: &FlatSymbol, _: &()| {
+          symbol_kind_to_string(symbol.kind)
+        }),
+        Column::new("Symbol", |symbol: &FlatSymbol, _: &()| symbol.name.clone()),
+        Column::new("Line", |symbol: &FlatSymbol, _: &()| {
+          format!("{}", symbol.range.start.line + 1)
+        }),
+      ];
+
+      // Create action handler to jump to symbol
+      let action_handler = std::sync::Arc::new(
+        move |symbol: &FlatSymbol, _: &(), _action: PickerAction| {
+          // Clone symbol to move into the closure
+          let symbol = symbol.clone();
+
+          // Jump to the symbol location
+          crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+            // Get the current view
+            let view = editor.tree.get_mut(editor.tree.focus);
+            let doc = editor.documents.get_mut(&view.doc).unwrap();
+
+            // Convert LSP range to editor range
+            if let Some(range) =
+              lsp_range_to_range(doc.text(), symbol.range, symbol.offset_encoding)
+            {
+              // Set selection to the symbol location
+              doc.set_selection(view.id, Selection::single(range.anchor, range.head));
+
+              // Align view to center the symbol
+              align_view(doc, view, Align::Center);
+            }
+          });
+
+          true // Close picker
+        },
+      );
+
+      let picker = Picker::new(
+        columns,
+        1, // Primary column is "Symbol"
+        all_symbols,
+        (), // No editor data needed
+        |_| {}, // Dummy on_select
+      )
+      .with_action_handler(action_handler)
+      .with_preview(|symbol: &FlatSymbol| {
+        // Return path and line range for preview with selection
+        symbol.uri.to_file_path().ok().map(|path| {
+          (
+            path,
+            Some((
+              symbol.range.start.line as usize,
+              symbol.range.end.line as usize,
+            )),
+          )
+        })
+      });
+
+      compositor.push(Box::new(picker));
+    };
+
+    Ok(Callback::EditorCompositor(Box::new(call)))
+  });
+}

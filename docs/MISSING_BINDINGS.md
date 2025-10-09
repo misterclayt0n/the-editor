@@ -5,7 +5,6 @@ This document is just so I can have a little basis btw
 
 #### Left Bracket ([)
 
-• "D"     -> goto_first_diag
 • "g"     -> goto_prev_change
 • "G"     -> goto_first_change
 • "f"     -> goto_prev_function
@@ -20,7 +19,6 @@ This document is just so I can have a little basis btw
 
 #### Right Bracket (])
 
-• "D"     -> goto_last_diag
 • "g"     -> goto_next_change
 • "G"     -> goto_last_change
 • "f"     -> goto_next_function

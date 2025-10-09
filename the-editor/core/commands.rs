@@ -3916,42 +3916,44 @@ pub fn split_selection(cx: &mut Context) {
   cx.editor.set_mode(Mode::Command);
 
   // Create prompt with callback
-  let prompt = crate::ui::components::Prompt::new(String::new()).with_callback(|cx, input, event| {
-    use crate::ui::components::prompt::PromptEvent;
+  let prompt =
+    crate::ui::components::Prompt::new(String::new()).with_callback(|cx, input, event| {
+      use crate::ui::components::prompt::PromptEvent;
 
-    // Handle events
-    match event {
-      PromptEvent::Update | PromptEvent::Validate => {
-        if matches!(event, PromptEvent::Validate) {
-          // Clear custom mode string on validation
-          cx.editor.clear_custom_mode_str();
-        }
+      // Handle events
+      match event {
+        PromptEvent::Update | PromptEvent::Validate => {
+          if matches!(event, PromptEvent::Validate) {
+            // Clear custom mode string on validation
+            cx.editor.clear_custom_mode_str();
+          }
 
-        // Skip empty input
-        if input.is_empty() {
-          return;
-        }
-
-        // Parse regex
-        let regex = match the_editor_stdx::rope::Regex::new(input) {
-          Ok(regex) => regex,
-          Err(err) => {
-            cx.editor.set_error(format!("Invalid regex: {}", err));
+          // Skip empty input
+          if input.is_empty() {
             return;
           }
-        };
 
-        let (view, doc) = current!(cx.editor);
-        let text = doc.text().slice(..);
-        let selection = crate::core::selection::split_on_matches(text, doc.selection(view.id), &regex);
-        doc.set_selection(view.id, selection);
+          // Parse regex
+          let regex = match the_editor_stdx::rope::Regex::new(input) {
+            Ok(regex) => regex,
+            Err(err) => {
+              cx.editor.set_error(format!("Invalid regex: {}", err));
+              return;
+            },
+          };
+
+          let (view, doc) = current!(cx.editor);
+          let text = doc.text().slice(..);
+          let selection =
+            crate::core::selection::split_on_matches(text, doc.selection(view.id), &regex);
+          doc.set_selection(view.id, selection);
+        },
+        PromptEvent::Abort => {
+          // Clear custom mode string on abort
+          cx.editor.clear_custom_mode_str();
+        },
       }
-      PromptEvent::Abort => {
-        // Clear custom mode string on abort
-        cx.editor.clear_custom_mode_str();
-      }
-    }
-  });
+    });
 
   // Push prompt to compositor with statusline slide animation
   cx.callback.push(Box::new(|compositor, _cx| {
@@ -4094,6 +4096,30 @@ pub fn select_prev_sibling(cx: &mut Context) {
 
 pub fn move_parent_node_start(cx: &mut Context) {
   move_node_bound_impl(cx, Direction::Backward, Movement::Move)
+}
+
+pub fn goto_first_diag(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  let selection = match doc.diagnostics().first() {
+    Some(diag) => Selection::single(diag.range.start, diag.range.end),
+    None => return,
+  };
+  doc.set_selection(view.id, selection);
+  view
+    .diagnostics_handler
+    .immediately_show_diagnostic(doc, view.id);
+}
+
+pub fn goto_last_diag(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  let selection = match doc.diagnostics().last() {
+    Some(diag) => Selection::single(diag.range.start, diag.range.end),
+    None => return,
+  };
+  doc.set_selection(view.id, selection);
+  view
+    .diagnostics_handler
+    .immediately_show_diagnostic(doc, view.id);
 }
 
 // Re-export LSP commands

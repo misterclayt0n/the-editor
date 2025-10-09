@@ -104,6 +104,8 @@ use crate::{
   view_mut,
 };
 
+use the_editor_vcs::Hunk;
+
 type MoveFn =
   fn(RopeSlice, Range, Direction, usize, Movement, &TextFormat, &mut TextAnnotations) -> Range;
 
@@ -4120,6 +4122,79 @@ pub fn goto_last_diag(cx: &mut Context) {
   view
     .diagnostics_handler
     .immediately_show_diagnostic(doc, view.id);
+}
+
+pub fn goto_next_change(cx: &mut Context) {
+  goto_next_change_impl(cx, Direction::Forward)
+}
+
+pub fn goto_prev_change(cx: &mut Context) {
+  goto_next_change_impl(cx, Direction::Backward)
+}
+
+fn goto_next_change_impl(cx: &mut Context, direction: Direction) {
+  let count = cx.count() as u32 - 1;
+  let motion = move |editor: &mut Editor| {
+    let (view, doc) = current!(editor);
+    let doc_text = doc.text().slice(..);
+    let diff_handle = if let Some(diff_handle) = doc.diff_handle() {
+      diff_handle
+    } else {
+      editor.set_status("Diff is not available in current buffer");
+      return;
+    };
+
+    let selection = doc.selection(view.id).clone().transform(|range| {
+      let cursor_line = range.cursor_line(doc_text) as u32;
+
+      let diff = diff_handle.load();
+      let hunk_idx = match direction {
+        Direction::Forward => {
+          diff
+            .next_hunk(cursor_line)
+            .map(|idx| (idx + count).min(diff.len() - 1))
+        },
+        Direction::Backward => {
+          diff
+            .prev_hunk(cursor_line)
+            .map(|idx| idx.saturating_sub(count))
+        },
+      };
+      let Some(hunk_idx) = hunk_idx else {
+        return range;
+      };
+      let hunk = diff.nth_hunk(hunk_idx);
+      let new_range = hunk_range(hunk, doc_text);
+      if editor.mode == Mode::Select {
+        let head = if new_range.head < range.anchor {
+          new_range.anchor
+        } else {
+          new_range.head
+        };
+
+        Range::new(range.anchor, head)
+      } else {
+        new_range.with_direction(direction)
+      }
+    });
+
+    doc.set_selection(view.id, selection)
+  };
+  cx.editor.apply_motion(motion);
+}
+
+/// Returns the [Range] for a [Hunk] in the given text.
+/// Additions and modifications cover the added and modified ranges.
+/// Deletions are represented as the point at the start of the deletion hunk.
+fn hunk_range(hunk: Hunk, text: RopeSlice) -> Range {
+  let anchor = text.line_to_char(hunk.after.start as usize);
+  let head = if hunk.after.is_empty() {
+    anchor + 1
+  } else {
+    text.line_to_char(hunk.after.end as usize)
+  };
+
+  Range::new(anchor, head)
 }
 
 // Re-export LSP commands

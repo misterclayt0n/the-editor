@@ -1,4 +1,9 @@
-use std::borrow::Cow;
+use std::{
+  borrow::Cow,
+  cmp::Reverse,
+};
+
+use crate::core::line_ending::rope_is_line_ending;
 
 use ropey::{
   RopeSlice,
@@ -27,9 +32,11 @@ use crate::core::{
     Range,
     Selection,
   },
+  syntax,
   syntax::Syntax,
   text_annotations::TextAnnotations,
   text_format::TextFormat,
+  textobject::TextObject,
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -533,4 +540,159 @@ fn find_parent_start<'tree>(node: &Node<'tree>) -> Option<Node<'tree>> {
   }
 
   Some(node.into_owned())
+}
+
+pub fn goto_treesitter_object(
+  slice: RopeSlice,
+  range: Range,
+  object_name: &str,
+  dir: Direction,
+  slice_tree: &Node,
+  syntax: &Syntax,
+  loader: &syntax::Loader,
+  count: usize,
+) -> Range {
+  let textobject_query = loader.textobject_query(syntax.root_language());
+  let get_range = move |range: Range| -> Option<Range> {
+    let byte_pos = slice.char_to_byte(range.cursor(slice));
+
+    let movement_cap = format!("{}.{}", object_name, TextObject::Movement);
+    let around_cap = format!("{}.{}", object_name, TextObject::Around);
+    let inside_cap = format!("{}.{}", object_name, TextObject::Inside);
+    let nodes = textobject_query?.capture_nodes_any(
+      [
+        movement_cap.as_str(),
+        around_cap.as_str(),
+        inside_cap.as_str(),
+      ],
+      slice_tree,
+      slice,
+    )?;
+
+    let node = match dir {
+      Direction::Forward => {
+        nodes
+          .filter(|n| n.start_byte() > byte_pos)
+          .min_by_key(|n| (n.start_byte(), Reverse(n.end_byte())))?
+      },
+      Direction::Backward => {
+        nodes
+          .filter(|n| n.end_byte() < byte_pos)
+          .max_by_key(|n| (n.end_byte(), Reverse(n.start_byte())))?
+      },
+    };
+
+    let len = slice.len_bytes();
+    let start_byte = node.start_byte();
+    let end_byte = node.end_byte();
+    if start_byte >= len || end_byte >= len {
+      return None;
+    }
+
+    let start_char = slice.byte_to_char(start_byte);
+    let end_char = slice.byte_to_char(end_byte);
+
+    // head of range should be at beginning
+    Some(Range::new(start_char, end_char))
+  };
+  let mut last_range = range;
+  for _ in 0..count {
+    match get_range(last_range) {
+      Some(r) if r != last_range => last_range = r,
+      _ => break,
+    }
+  }
+  last_range
+}
+
+pub fn move_prev_paragraph(
+  slice: RopeSlice,
+  range: Range,
+  count: usize,
+  behavior: Movement,
+) -> Range {
+  let mut line = range.cursor_line(slice);
+  let first_char = slice.line_to_char(line) == range.cursor(slice);
+  let prev_line_empty = rope_is_line_ending(slice.line(line.saturating_sub(1)));
+  let curr_line_empty = rope_is_line_ending(slice.line(line));
+  let prev_empty_to_line = prev_line_empty && !curr_line_empty;
+
+  // skip character before paragraph boundary
+  if prev_empty_to_line && !first_char {
+    line += 1;
+  }
+  let mut lines = slice.lines_at(line);
+  lines.reverse();
+  let mut lines = lines.map(rope_is_line_ending).peekable();
+  let mut last_line = line;
+  for _ in 0..count {
+    while lines.next_if(|&e| e).is_some() {
+      line -= 1;
+    }
+    while lines.next_if(|&e| !e).is_some() {
+      line -= 1;
+    }
+    if line == last_line {
+      break;
+    }
+    last_line = line;
+  }
+
+  let head = slice.line_to_char(line);
+  let anchor = if behavior == Movement::Move {
+    // exclude first character after paragraph boundary
+    if prev_empty_to_line && first_char {
+      range.cursor(slice)
+    } else {
+      range.head
+    }
+  } else {
+    range.put_cursor(slice, head, true).anchor
+  };
+  Range::new(anchor, head)
+}
+
+pub fn move_next_paragraph(
+  slice: RopeSlice,
+  range: Range,
+  count: usize,
+  behavior: Movement,
+) -> Range {
+  let mut line = range.cursor_line(slice);
+  let last_char =
+    prev_grapheme_boundary(slice, slice.line_to_char(line + 1)) == range.cursor(slice);
+  let curr_line_empty = rope_is_line_ending(slice.line(line));
+  let next_line_empty =
+    rope_is_line_ending(slice.line(slice.len_lines().saturating_sub(1).min(line + 1)));
+  let curr_empty_to_line = curr_line_empty && !next_line_empty;
+
+  // skip character after paragraph boundary
+  if curr_empty_to_line && last_char {
+    line += 1;
+  }
+  let mut lines = slice.lines_at(line).map(rope_is_line_ending).peekable();
+  let mut last_line = line;
+  for _ in 0..count {
+    while lines.next_if(|&e| !e).is_some() {
+      line += 1;
+    }
+    while lines.next_if(|&e| e).is_some() {
+      line += 1;
+    }
+    if line == last_line {
+      break;
+    }
+    last_line = line;
+  }
+  let head = slice.line_to_char(line);
+  let anchor = if behavior == Movement::Move {
+    if curr_empty_to_line && last_char {
+      range.head
+    } else {
+      range.cursor(slice)
+    }
+  } else {
+    range.put_cursor(slice, head, true).anchor
+  };
+  Range::new(anchor, head)
 }

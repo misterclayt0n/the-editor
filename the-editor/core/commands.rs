@@ -26,6 +26,7 @@ use the_editor_stdx::{
   },
   rope::RopeSliceExt,
 };
+use the_editor_vcs::Hunk;
 use url::Url;
 
 use crate::{
@@ -103,8 +104,6 @@ use crate::{
   view,
   view_mut,
 };
-
-use the_editor_vcs::Hunk;
 
 type MoveFn =
   fn(RopeSlice, Range, Direction, usize, Movement, &TextFormat, &mut TextAnnotations) -> Range;
@@ -4198,31 +4197,186 @@ fn hunk_range(hunk: Hunk, text: RopeSlice) -> Range {
 }
 
 pub fn goto_first_change(cx: &mut Context) {
-    goto_first_change_impl(cx, false);
+  goto_first_change_impl(cx, false);
 }
 
 pub fn goto_last_change(cx: &mut Context) {
-    goto_first_change_impl(cx, true);
+  goto_first_change_impl(cx, true);
 }
 
 fn goto_first_change_impl(cx: &mut Context, reverse: bool) {
-    let editor = &mut cx.editor;
-    let (view, doc) = current!(editor);
-    if let Some(handle) = doc.diff_handle() {
-        let hunk = {
-            let diff = handle.load();
-            let idx = if reverse {
-                diff.len().saturating_sub(1)
-            } else {
-                0
-            };
-            diff.nth_hunk(idx)
-        };
-        if hunk != Hunk::NONE {
-            let range = hunk_range(hunk, doc.text().slice(..));
-            doc.set_selection(view.id, Selection::single(range.anchor, range.head));
-        }
+  let editor = &mut cx.editor;
+  let (view, doc) = current!(editor);
+  if let Some(handle) = doc.diff_handle() {
+    let hunk = {
+      let diff = handle.load();
+      let idx = if reverse {
+        diff.len().saturating_sub(1)
+      } else {
+        0
+      };
+      diff.nth_hunk(idx)
+    };
+    if hunk != Hunk::NONE {
+      let range = hunk_range(hunk, doc.text().slice(..));
+      doc.set_selection(view.id, Selection::single(range.anchor, range.head));
     }
+  }
+}
+
+fn goto_ts_object_impl(cx: &mut Context, object: &'static str, direction: Direction) {
+  let count = cx.count();
+  let motion = move |editor: &mut Editor| {
+    let (view, doc) = current!(editor);
+    let loader = editor.syn_loader.load();
+    if let Some(syntax) = doc.syntax() {
+      let text = doc.text().slice(..);
+      let root = syntax.tree().root_node();
+
+      let selection = doc.selection(view.id).clone().transform(|range| {
+        let new_range = movement::goto_treesitter_object(
+          text, range, object, direction, &root, syntax, &loader, count,
+        );
+
+        if editor.mode == Mode::Select {
+          let head = if new_range.head < range.anchor {
+            new_range.anchor
+          } else {
+            new_range.head
+          };
+
+          Range::new(range.anchor, head)
+        } else {
+          new_range.with_direction(direction)
+        }
+      });
+
+      doc.set_selection(view.id, selection);
+    } else {
+      editor.set_status("Syntax-tree is not available in current buffer");
+    }
+  };
+  cx.editor.apply_motion(motion);
+}
+
+pub fn goto_next_function(cx: &mut Context) {
+  goto_ts_object_impl(cx, "function", Direction::Forward)
+}
+
+pub fn goto_prev_function(cx: &mut Context) {
+  goto_ts_object_impl(cx, "function", Direction::Backward)
+}
+
+pub fn goto_next_class(cx: &mut Context) {
+  goto_ts_object_impl(cx, "class", Direction::Forward)
+}
+
+pub fn goto_prev_class(cx: &mut Context) {
+  goto_ts_object_impl(cx, "class", Direction::Backward)
+}
+
+pub fn goto_next_parameter(cx: &mut Context) {
+  goto_ts_object_impl(cx, "parameter", Direction::Forward)
+}
+
+pub fn goto_prev_parameter(cx: &mut Context) {
+  goto_ts_object_impl(cx, "parameter", Direction::Backward)
+}
+
+pub fn goto_next_comment(cx: &mut Context) {
+  goto_ts_object_impl(cx, "comment", Direction::Forward)
+}
+
+pub fn goto_prev_comment(cx: &mut Context) {
+  goto_ts_object_impl(cx, "comment", Direction::Backward)
+}
+
+pub fn goto_next_test(cx: &mut Context) {
+  goto_ts_object_impl(cx, "test", Direction::Forward)
+}
+
+pub fn goto_prev_test(cx: &mut Context) {
+  goto_ts_object_impl(cx, "test", Direction::Backward)
+}
+
+pub fn goto_next_xml_element(cx: &mut Context) {
+  goto_ts_object_impl(cx, "xml-element", Direction::Forward)
+}
+
+pub fn goto_prev_xml_element(cx: &mut Context) {
+  goto_ts_object_impl(cx, "xml-element", Direction::Backward)
+}
+
+pub fn goto_next_entry(cx: &mut Context) {
+  goto_ts_object_impl(cx, "entry", Direction::Forward)
+}
+
+pub fn goto_prev_entry(cx: &mut Context) {
+  goto_ts_object_impl(cx, "entry", Direction::Backward)
+}
+
+pub fn goto_prev_paragraph(cx: &mut Context) {
+  goto_para_impl(cx, movement::move_prev_paragraph)
+}
+
+pub fn goto_next_paragraph(cx: &mut Context) {
+  goto_para_impl(cx, movement::move_next_paragraph)
+}
+
+fn goto_para_impl<F>(cx: &mut Context, move_fn: F)
+where
+  F: Fn(RopeSlice, Range, usize, Movement) -> Range + 'static,
+{
+  let count = cx.count();
+  let motion = move |editor: &mut Editor| {
+    let (view, doc) = current!(editor);
+    let text = doc.text().slice(..);
+    let behavior = if editor.mode == Mode::Select {
+      Movement::Extend
+    } else {
+      Movement::Move
+    };
+
+    let selection = doc
+      .selection(view.id)
+      .clone()
+      .transform(|range| move_fn(text, range, count, behavior));
+    doc.set_selection(view.id, selection);
+  };
+  cx.editor.apply_motion(motion)
+}
+
+pub fn add_newline_above(cx: &mut Context) {
+  add_newline_impl(cx, Open::Above);
+}
+
+pub fn add_newline_below(cx: &mut Context) {
+  add_newline_impl(cx, Open::Below)
+}
+
+fn add_newline_impl(cx: &mut Context, open: Open) {
+  let count = cx.count();
+  let (view, doc) = current!(cx.editor);
+  let selection = doc.selection(view.id);
+  let text = doc.text();
+  let slice = text.slice(..);
+
+  let changes = selection.into_iter().map(|range| {
+    let (start, end) = range.line_range(slice);
+    let line = match open {
+      Open::Above => start,
+      Open::Below => end + 1,
+    };
+    let pos = text.line_to_char(line);
+    (
+      pos,
+      pos,
+      Some(doc.line_ending.as_str().repeat(count).into()),
+    )
+  });
+
+  let transaction = Transaction::change(text, changes);
+  doc.apply(&transaction, view.id);
 }
 
 // Re-export LSP commands

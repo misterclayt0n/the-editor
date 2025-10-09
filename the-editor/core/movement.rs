@@ -3,7 +3,7 @@ use std::{
   cmp::Reverse,
 };
 
-use crate::core::line_ending::rope_is_line_ending;
+use std::iter;
 
 use ropey::{
   RopeSlice,
@@ -23,6 +23,7 @@ use crate::core::{
     nth_prev_grapheme_boundary,
     prev_grapheme_boundary,
   },
+  line_ending::rope_is_line_ending,
   position::{
     char_idx_at_visual_block_offset,
     char_idx_at_visual_offset,
@@ -704,8 +705,27 @@ pub fn move_next_paragraph(
 /// Returns none if all characters satisfy the predicate.
 pub fn skip_while<F>(slice: RopeSlice, pos: usize, fun: F) -> Option<usize>
 where
-    F: Fn(char) -> bool,
+  F: Fn(char) -> bool,
 {
-    let mut chars = slice.chars_at(pos).enumerate();
-    chars.find_map(|(i, c)| if !fun(c) { Some(pos + i) } else { None })
+  let mut chars = slice.chars_at(pos).enumerate();
+  chars.find_map(|(i, c)| if !fun(c) { Some(pos + i) } else { None })
+}
+
+#[inline]
+/// Returns first index that doesn't satisfy a given predicate when
+/// retreating the character index, saturating if all elements satisfy
+/// the condition.
+pub fn backwards_skip_while<F>(slice: RopeSlice, pos: usize, fun: F) -> Option<usize>
+where
+  F: Fn(char) -> bool,
+{
+  let mut chars_starting_from_next = slice.chars_at(pos);
+  let mut backwards = iter::from_fn(|| chars_starting_from_next.prev()).enumerate();
+  backwards.find_map(|(i, c)| {
+    if !fun(c) {
+      Some(pos.saturating_sub(i))
+    } else {
+      None
+    }
+  })
 }

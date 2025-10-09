@@ -4725,8 +4725,8 @@ fn join_selections_impl(cx: &mut Context, select_space: bool) {
     changes.reserve(lines.len());
 
     let first_line_idx = slice.line_to_char(start);
-    let first_line_idx =
-      movement::skip_while(slice, first_line_idx, |ch| matches!(ch, ' ' | '\t')).unwrap_or(first_line_idx);
+    let first_line_idx = movement::skip_while(slice, first_line_idx, |ch| matches!(ch, ' ' | '\t'))
+      .unwrap_or(first_line_idx);
     let first_line = slice.slice(first_line_idx..);
     let mut current_comment_token = comment_tokens
       .iter()
@@ -4797,6 +4797,196 @@ fn join_selections_impl(cx: &mut Context, select_space: bool) {
   };
 
   doc.apply(&transaction, view.id);
+}
+
+pub fn keep_selections(cx: &mut Context) {
+  keep_or_remove_selections_impl(cx, false)
+}
+
+pub fn remove_selections(cx: &mut Context) {
+  keep_or_remove_selections_impl(cx, true)
+}
+
+fn keep_or_remove_selections_impl(cx: &mut Context, remove: bool) {
+  // keep or remove selections matching regex
+
+  // Set custom mode string
+  cx.editor.set_custom_mode_str(if remove {
+    "REMOVE".to_string()
+  } else {
+    "KEEP".to_string()
+  });
+
+  // Set mode to Command so prompt is shown
+  cx.editor.set_mode(Mode::Command);
+
+  // Capture the original selection before starting the prompt
+  let (view, doc) = current_ref!(cx.editor);
+  let original_selection = doc.selection(view.id).clone();
+
+  // Create prompt with callback
+  let prompt =
+    crate::ui::components::Prompt::new(String::new()).with_callback(move |cx, input, event| {
+      use crate::ui::components::prompt::PromptEvent;
+
+      // Handle events
+      match event {
+        PromptEvent::Update | PromptEvent::Validate => {
+          if matches!(event, PromptEvent::Validate) {
+            // Clear custom mode string on validation
+            cx.editor.clear_custom_mode_str();
+          }
+
+          // Skip empty input
+          if input.is_empty() {
+            return;
+          }
+
+          // Parse regex
+          let regex = match the_editor_stdx::rope::Regex::new(input) {
+            Ok(regex) => regex,
+            Err(err) => {
+              cx.editor.set_error(format!("Invalid regex: {}", err));
+              return;
+            },
+          };
+
+          let (view, doc) = current!(cx.editor);
+          let text = doc.text().slice(..);
+
+          // Apply keep_or_remove_matches on the original selection
+          if let Some(selection) = crate::core::selection::keep_or_remove_matches(
+            text,
+            &original_selection,
+            &regex,
+            remove,
+          ) {
+            doc.set_selection(view.id, selection);
+          } else if matches!(event, PromptEvent::Validate) {
+            cx.editor.set_error("No selections remaining");
+          }
+        },
+        PromptEvent::Abort => {
+          // Clear custom mode string on abort
+          cx.editor.clear_custom_mode_str();
+        },
+      }
+    });
+
+  cx.callback.push(Box::new(|compositor, _cx| {
+    // Find the statusline and trigger slide animation
+    for layer in compositor.layers.iter_mut() {
+      if let Some(statusline) = layer
+        .as_any_mut()
+        .downcast_mut::<crate::ui::components::statusline::StatusLine>()
+      {
+        statusline.slide_for_prompt(true);
+        break;
+      }
+    }
+
+    compositor.push(Box::new(prompt));
+  }));
+}
+
+#[allow(deprecated)]
+pub fn align_selections(cx: &mut Context) {
+  use crate::core::position::visual_coords_at_pos;
+
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+  let selection = doc.selection(view.id);
+
+  let tab_width = doc.tab_width();
+  let mut column_widths: Vec<Vec<_>> = Vec::new();
+  let mut last_line = text.len_lines() + 1;
+  let mut col = 0;
+
+  for range in selection {
+    let coords = visual_coords_at_pos(text, range.head, tab_width);
+    let anchor_coords = visual_coords_at_pos(text, range.anchor, tab_width);
+
+    if coords.row != anchor_coords.row {
+      cx.editor
+        .set_error("align cannot work with multi line selections");
+      return;
+    }
+
+    col = if coords.row == last_line { col + 1 } else { 0 };
+
+    if col >= column_widths.len() {
+      column_widths.push(Vec::new());
+    }
+    column_widths[col].push((range.from(), coords.col));
+
+    last_line = coords.row;
+  }
+
+  let mut changes = Vec::with_capacity(selection.len());
+
+  // Account for changes on each row
+  let len = column_widths.first().map(|cols| cols.len()).unwrap_or(0);
+  let mut offs = vec![0; len];
+
+  for col in column_widths {
+    let max_col = col
+      .iter()
+      .enumerate()
+      .map(|(row, (_, cursor))| *cursor + offs[row])
+      .max()
+      .unwrap_or(0);
+
+    for (row, (insert_pos, last_col)) in col.into_iter().enumerate() {
+      let ins_count = max_col - (last_col + offs[row]);
+
+      if ins_count == 0 {
+        continue;
+      }
+
+      offs[row] += ins_count;
+
+      changes.push((insert_pos, insert_pos, Some(" ".repeat(ins_count).into())));
+    }
+  }
+
+  // The changeset has to be sorted
+  changes.sort_unstable_by_key(|(from, ..)| *from);
+
+  let transaction = Transaction::change(doc.text(), changes.into_iter());
+  doc.apply(&transaction, view.id);
+  exit_select_mode(cx);
+}
+
+pub fn trim_selections(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+
+  let ranges: SmallVec<[Range; 1]> = doc
+    .selection(view.id)
+    .iter()
+    .filter_map(|range| {
+      if range.is_empty() || range.slice(text).chars().all(|ch| ch.is_whitespace()) {
+        return None;
+      }
+      let mut start = range.from();
+      let mut end = range.to();
+      start = movement::skip_while(text, start, |x| x.is_whitespace()).unwrap_or(start);
+      end = movement::backwards_skip_while(text, end, |x| x.is_whitespace()).unwrap_or(end);
+      Some(Range::new(start, end).with_direction(range.direction()))
+    })
+    .collect();
+
+  if !ranges.is_empty() {
+    let primary = doc.selection(view.id).primary();
+    let idx = ranges
+      .iter()
+      .position(|range| range.overlaps(&primary))
+      .unwrap_or(ranges.len() - 1);
+    doc.set_selection(view.id, Selection::new(ranges, idx));
+  } else {
+    collapse_selection(cx);
+    keep_primary_selection(cx);
+  };
 }
 
 // Re-export LSP commands

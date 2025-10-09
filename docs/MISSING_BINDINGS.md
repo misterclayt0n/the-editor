@@ -6,12 +6,6 @@ This document is just so I can have a little basis btw
 #### Editing
 
 • "="   -> format_selections
-• "J"   -> join_selections
-• "A-J" -> join_selections_space
-• "K"   -> keep_selections
-• "A-K" -> remove_selections
-• "&"   -> align_selections
-• "_"   -> trim_selections
 
 #### Selection Rotation
 

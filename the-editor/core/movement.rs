@@ -696,3 +696,16 @@ pub fn move_next_paragraph(
   };
   Range::new(anchor, head)
 }
+
+#[inline]
+/// Returns first index that doesn't satisfy a given predicate when
+/// advancing the character index.
+///
+/// Returns none if all characters satisfy the predicate.
+pub fn skip_while<F>(slice: RopeSlice, pos: usize, fun: F) -> Option<usize>
+where
+    F: Fn(char) -> bool,
+{
+    let mut chars = slice.chars_at(pos).enumerate();
+    chars.find_map(|(i, c)| if !fun(c) { Some(pos + i) } else { None })
+}

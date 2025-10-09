@@ -4456,7 +4456,7 @@ pub fn search_selection_detect_word_boundaries(cx: &mut Context) {
 }
 
 pub fn search_selection(cx: &mut Context) {
-    search_selection_impl(cx, false)
+  search_selection_impl(cx, false)
 }
 
 fn searcher(cx: &mut Context, direction: Direction) {
@@ -4690,6 +4690,113 @@ fn search_impl(
     doc.set_selection(view.id, selection);
     view.ensure_cursor_in_view_center(doc, scrolloff);
   };
+}
+
+pub fn join_selections(cx: &mut Context) {
+  join_selections_impl(cx, false)
+}
+
+pub fn join_selections_space(cx: &mut Context) {
+  join_selections_impl(cx, true)
+}
+
+fn join_selections_impl(cx: &mut Context, select_space: bool) {
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text();
+  let slice = text.slice(..);
+
+  let comment_tokens = doc
+    .language_config()
+    .and_then(|config| config.comment_tokens.as_deref())
+    .unwrap_or(&[]);
+  // Sort by length to handle Rust's /// vs //
+  let mut comment_tokens: Vec<&str> = comment_tokens.iter().map(|x| x.as_str()).collect();
+  comment_tokens.sort_unstable_by_key(|x| std::cmp::Reverse(x.len()));
+
+  let mut changes = Vec::new();
+
+  for selection in doc.selection(view.id) {
+    let (start, mut end) = selection.line_range(slice);
+    if start == end {
+      end = (end + 1).min(text.len_lines() - 1);
+    }
+    let lines = start..end;
+
+    changes.reserve(lines.len());
+
+    let first_line_idx = slice.line_to_char(start);
+    let first_line_idx =
+      movement::skip_while(slice, first_line_idx, |ch| matches!(ch, ' ' | '\t')).unwrap_or(first_line_idx);
+    let first_line = slice.slice(first_line_idx..);
+    let mut current_comment_token = comment_tokens
+      .iter()
+      .find(|token| first_line.starts_with(token));
+
+    for line in lines {
+      let start = line_end_char_index(&slice, line);
+      let mut end = text.line_to_char(line + 1);
+      end = movement::skip_while(slice, end, |ch| matches!(ch, ' ' | '\t')).unwrap_or(end);
+      let slice_from_end = slice.slice(end..);
+      if let Some(token) = comment_tokens
+        .iter()
+        .find(|token| slice_from_end.starts_with(token))
+      {
+        if Some(token) == current_comment_token {
+          end += token.chars().count();
+          end = movement::skip_while(slice, end, |ch| matches!(ch, ' ' | '\t')).unwrap_or(end);
+        } else {
+          // update current token, but don't delete this one.
+          current_comment_token = Some(token);
+        }
+      }
+
+      let separator = if end == line_end_char_index(&slice, line + 1) {
+        // the joining line contains only space-characters => don't include a whitespace
+        // when joining
+        None
+      } else {
+        Some(Tendril::from(" "))
+      };
+      changes.push((start, end, separator));
+    }
+  }
+
+  // nothing to do, bail out early to avoid crashes later
+  if changes.is_empty() {
+    return;
+  }
+
+  changes.sort_unstable_by_key(|(from, _to, _text)| *from);
+  changes.dedup();
+
+  // select inserted spaces
+  let transaction = if select_space {
+    let mut offset: usize = 0;
+    let ranges: SmallVec<_> = changes
+      .iter()
+      .filter_map(|change| {
+        if change.2.is_some() {
+          let range = Range::point(change.0 - offset);
+          offset += change.1 - change.0 - 1; // -1 adjusts for the replacement of the range by a space
+          Some(range)
+        } else {
+          offset += change.1 - change.0;
+          None
+        }
+      })
+      .collect();
+    let t = Transaction::change(text, changes.into_iter());
+    if ranges.is_empty() {
+      t
+    } else {
+      let selection = Selection::new(ranges, 0);
+      t.with_selection(selection)
+    }
+  } else {
+    Transaction::change(text, changes.into_iter())
+  };
+
+  doc.apply(&transaction, view.id);
 }
 
 // Re-export LSP commands

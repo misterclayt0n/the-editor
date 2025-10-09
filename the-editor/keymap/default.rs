@@ -193,6 +193,11 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "N"   => search_prev,
     "*"   => search_selection_detect_word_boundaries,
     "A-*" => search_selection,
+    
+    "J"   => join_selections,
+    "A-J" => join_selections_space,
+    "K"   => keep_selections,
+    "A-K" => remove_selections,
   });
 
   let insert = crate::keymap!({ "Insert"

@@ -44,8 +44,7 @@ use crate::{
       self,
       CharMatcher,
     }, selection::{
-      Range,
-      Selection,
+      self, Range, Selection
     }, surround, text_annotations::{
       Overlay,
       TextAnnotations,
@@ -56,13 +55,22 @@ use crate::{
       Align,
       View,
     }, Tendril, ViewId
-  }, current, current_ref, doc, doc_mut, editor::{
+  },
+  current,
+  current_ref,
+  doc,
+  doc_mut,
+  editor::{
     Action,
     Editor,
-  }, event::PostInsertChar, keymap::{
+  },
+  event::PostInsertChar,
+  keymap::{
     KeyBinding,
     Mode,
-  }, view, view_mut
+  },
+  view,
+  view_mut,
 };
 
 type MoveFn =
@@ -1195,50 +1203,51 @@ pub fn select_regex(cx: &mut Context) {
   };
 
   // Create prompt with callback
-  let prompt = crate::ui::components::Prompt::new(String::new()).with_callback(move |cx, input, event| {
-    use crate::ui::components::prompt::PromptEvent;
+  let prompt =
+    crate::ui::components::Prompt::new(String::new()).with_callback(move |cx, input, event| {
+      use crate::ui::components::prompt::PromptEvent;
 
-    // Handle events
-    match event {
-      PromptEvent::Update | PromptEvent::Validate => {
-        if matches!(event, PromptEvent::Validate) {
-          // Clear custom mode string on validation
-          cx.editor.clear_custom_mode_str();
-        }
+      // Handle events
+      match event {
+        PromptEvent::Update | PromptEvent::Validate => {
+          if matches!(event, PromptEvent::Validate) {
+            // Clear custom mode string on validation
+            cx.editor.clear_custom_mode_str();
+          }
 
-        // Skip empty input
-        if input.is_empty() {
-          return;
-        }
-
-        // Parse regex
-        let regex = match the_editor_stdx::rope::Regex::new(input) {
-          Ok(regex) => regex,
-          Err(err) => {
-            cx.editor.set_error(format!("Invalid regex: {}", err));
+          // Skip empty input
+          if input.is_empty() {
             return;
           }
-        };
 
-        let (view, doc) = current!(cx.editor);
-        let text = doc.text().slice(..);
+          // Parse regex
+          let regex = match the_editor_stdx::rope::Regex::new(input) {
+            Ok(regex) => regex,
+            Err(err) => {
+              cx.editor.set_error(format!("Invalid regex: {}", err));
+              return;
+            },
+          };
 
-        // Use the captured original search selection
-        // Apply select_on_matches
-        if let Some(new_selection) =
-          crate::core::selection::select_on_matches(text, &search_selection, &regex)
-        {
-          doc.set_selection(view.id, new_selection);
-        } else if matches!(event, PromptEvent::Validate) {
-          cx.editor.set_error("No matches found");
-        }
+          let (view, doc) = current!(cx.editor);
+          let text = doc.text().slice(..);
+
+          // Use the captured original search selection
+          // Apply select_on_matches
+          if let Some(new_selection) =
+            crate::core::selection::select_on_matches(text, &search_selection, &regex)
+          {
+            doc.set_selection(view.id, new_selection);
+          } else if matches!(event, PromptEvent::Validate) {
+            cx.editor.set_error("No matches found");
+          }
+        },
+        PromptEvent::Abort => {
+          // Clear custom mode string on abort
+          cx.editor.clear_custom_mode_str();
+        },
       }
-      PromptEvent::Abort => {
-        // Clear custom mode string on abort
-        cx.editor.clear_custom_mode_str();
-      }
-    }
-  });
+    });
 
   // Push prompt to compositor with statusline slide animation
   cx.callback.push(Box::new(|compositor, _cx| {
@@ -3847,6 +3856,13 @@ pub fn goto_word(cx: &mut Context) {
 
 pub fn extend_to_word(cx: &mut Context) {
   jump_to_word(cx, Movement::Extend)
+}
+
+pub fn split_selection_on_newline(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+  let selection = selection::split_on_newline(text, doc.selection(view.id));
+  doc.set_selection(view.id, selection);
 }
 
 // Re-export LSP commands

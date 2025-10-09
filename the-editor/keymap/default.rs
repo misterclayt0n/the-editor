@@ -140,6 +140,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     },
     
     "s" => select_regex,
+    "A-s" => split_selection_on_newline,
 
     "[" => { "Left bracket"
       "d" => goto_prev_diag,

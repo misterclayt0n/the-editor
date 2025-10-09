@@ -3,15 +3,6 @@ This document is just so I can have a little basis btw
 
 ### Normal Mode
 
-#### Search
-
-• "/"   -> search
-• "?"   -> rsearch
-• "n"   -> search_next
-• "N"   -> search_prev
-• "*"   -> search_selection_detect_word_boundaries
-• "A-*" -> search_selection
-
 #### Editing
 
 • "="   -> format_selections

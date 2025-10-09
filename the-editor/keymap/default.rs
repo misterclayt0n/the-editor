@@ -186,6 +186,13 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "x"     => goto_next_xml_element,
       "space" => add_newline_below,
     },
+    
+    "/"   => search,
+    "?"   => rsearch,
+    "n"   => search_next,
+    "N"   => search_prev,
+    "*"   => search_selection_detect_word_boundaries,
+    "A-*" => search_selection,
   });
 
   let insert = crate::keymap!({ "Insert"

@@ -30,31 +30,60 @@ use url::Url;
 
 use crate::{
   core::{
-    auto_pairs, chars::char_is_word, comment, document::Document, grapheme::{
+    Tendril,
+    ViewId,
+    auto_pairs,
+    chars::char_is_word,
+    comment,
+    document::Document,
+    grapheme::{
       self,
       next_grapheme_boundary,
-    }, history::UndoKind, indent, info::Info, line_ending::{
+    },
+    history::UndoKind,
+    indent,
+    info::Info,
+    line_ending::{
       get_line_ending_of_str,
       line_end_char_index,
-    }, match_brackets, movement::{
-      self, move_horizontally, move_vertically, move_vertically_visual, Direction, Movement
-    }, position::{
-      char_idx_at_visual_offset, Position
-    }, search::{
+    },
+    match_brackets,
+    movement::{
+      self,
+      Direction,
+      Movement,
+      move_horizontally,
+      move_vertically,
+      move_vertically_visual,
+    },
+    position::{
+      Position,
+      char_idx_at_visual_offset,
+    },
+    search::{
       self,
       CharMatcher,
-    }, selection::{
-      self, Range, Selection
-    }, surround, text_annotations::{
+    },
+    selection::{
+      self,
+      Range,
+      Selection,
+    },
+    surround,
+    text_annotations::{
       Overlay,
       TextAnnotations,
-    }, text_format::TextFormat, textobject, transaction::{
+    },
+    text_format::TextFormat,
+    textobject,
+    transaction::{
       Deletion,
       Transaction,
-    }, view::{
+    },
+    view::{
       Align,
       View,
-    }, Tendril, ViewId
+    },
   },
   current,
   current_ref,
@@ -3862,6 +3891,12 @@ pub fn split_selection_on_newline(cx: &mut Context) {
   let (view, doc) = current!(cx.editor);
   let text = doc.text().slice(..);
   let selection = selection::split_on_newline(text, doc.selection(view.id));
+  doc.set_selection(view.id, selection);
+}
+
+pub fn merge_selections(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  let selection = doc.selection(view.id).clone().merge_ranges();
   doc.set_selection(view.id, selection);
 }
 

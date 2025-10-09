@@ -139,8 +139,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "h" => select_references,
     },
     
-    "s" => select_regex,
-    "A-s" => split_selection_on_newline,
+    "s"       => select_regex,
+    "A-s"     => split_selection_on_newline,
+    "A-minus" => merge_selections,
 
     "[" => { "Left bracket"
       "d" => goto_prev_diag,

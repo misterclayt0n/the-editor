@@ -16,6 +16,7 @@ use the_editor_stdx::{
     RopeSliceExt,
   },
 };
+use tree_house::tree_sitter::Node;
 
 use crate::core::{
   grapheme::{
@@ -46,6 +47,12 @@ impl Range {
       head,
       old_visual_pos: None,
     }
+  }
+
+  pub fn from_node(node: Node, text: RopeSlice, direction: Direction) -> Self {
+    let from = text.byte_to_char(node.start_byte() as usize);
+    let to = text.byte_to_char(node.end_byte() as usize);
+    Range::new(from, to).with_direction(direction)
   }
 
   // Helpers.

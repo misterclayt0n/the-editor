@@ -3,23 +3,6 @@ This document is just so I can have a little basis btw
 
 ### Normal Mode
 
-#### Selection Operations
-
-• "A-s"              -> split_selection_on_newline
-• "A-minus"          -> merge_selections
-• "A-_"              -> merge_consecutive_selections
-• "S"                -> split_selection
-• ";"                -> collapse_selection
-• "A-;"              -> flip_selections
-• "A-o" | "A-up"     -> expand_selection
-• "A-i" | "A-down"   -> shrink_selection
-• "A-I" | "A-S-down" -> select_all_children
-• "A-p" | "A-left"   -> select_prev_sibling
-• "A-n" | "A-right"  -> select_next_sibling
-• "A-e"              -> move_parent_node_end
-• "A-b"              -> move_parent_node_start
-• "A-a"              -> select_all_siblings
-
 #### Left Bracket ([)
 
 • "D"     -> goto_first_diag

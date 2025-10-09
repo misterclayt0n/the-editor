@@ -56,6 +56,7 @@ use crate::{
       move_vertically,
       move_vertically_visual,
     },
+    object,
     position::{
       Position,
       char_idx_at_visual_offset,
@@ -70,6 +71,7 @@ use crate::{
       Selection,
     },
     surround,
+    syntax::Syntax,
     text_annotations::{
       Overlay,
       TextAnnotations,
@@ -3898,6 +3900,200 @@ pub fn merge_selections(cx: &mut Context) {
   let (view, doc) = current!(cx.editor);
   let selection = doc.selection(view.id).clone().merge_ranges();
   doc.set_selection(view.id, selection);
+}
+
+pub fn merge_consecutive_selections(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  let selection = doc.selection(view.id).clone().merge_consecutive_ranges();
+  doc.set_selection(view.id, selection);
+}
+
+pub fn split_selection(cx: &mut Context) {
+  // Set custom mode string
+  cx.editor.set_custom_mode_str("SPLIT".to_string());
+
+  // Set mode to Command so prompt is shown
+  cx.editor.set_mode(Mode::Command);
+
+  // Create prompt with callback
+  let prompt = crate::ui::components::Prompt::new(String::new()).with_callback(|cx, input, event| {
+    use crate::ui::components::prompt::PromptEvent;
+
+    // Handle events
+    match event {
+      PromptEvent::Update | PromptEvent::Validate => {
+        if matches!(event, PromptEvent::Validate) {
+          // Clear custom mode string on validation
+          cx.editor.clear_custom_mode_str();
+        }
+
+        // Skip empty input
+        if input.is_empty() {
+          return;
+        }
+
+        // Parse regex
+        let regex = match the_editor_stdx::rope::Regex::new(input) {
+          Ok(regex) => regex,
+          Err(err) => {
+            cx.editor.set_error(format!("Invalid regex: {}", err));
+            return;
+          }
+        };
+
+        let (view, doc) = current!(cx.editor);
+        let text = doc.text().slice(..);
+        let selection = crate::core::selection::split_on_matches(text, doc.selection(view.id), &regex);
+        doc.set_selection(view.id, selection);
+      }
+      PromptEvent::Abort => {
+        // Clear custom mode string on abort
+        cx.editor.clear_custom_mode_str();
+      }
+    }
+  });
+
+  // Push prompt to compositor with statusline slide animation
+  cx.callback.push(Box::new(|compositor, _cx| {
+    // Find the statusline and trigger slide animation
+    for layer in compositor.layers.iter_mut() {
+      if let Some(statusline) = layer
+        .as_any_mut()
+        .downcast_mut::<crate::ui::components::statusline::StatusLine>()
+      {
+        statusline.slide_for_prompt(true);
+        break;
+      }
+    }
+
+    compositor.push(Box::new(prompt));
+  }));
+}
+
+pub fn collapse_selection(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+
+  let selection = doc.selection(view.id).clone().transform(|range| {
+    let pos = range.cursor(text);
+    Range::new(pos, pos)
+  });
+  doc.set_selection(view.id, selection);
+}
+
+pub fn flip_selections(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+
+  let selection = doc
+    .selection(view.id)
+    .clone()
+    .transform(|range| range.flip());
+  doc.set_selection(view.id, selection);
+}
+
+pub fn expand_selection(cx: &mut Context) {
+  let motion = |editor: &mut Editor| {
+    let (view, doc) = current!(editor);
+
+    if let Some(syntax) = doc.syntax() {
+      let text = doc.text().slice(..);
+
+      let current_selection = doc.selection(view.id);
+      let selection = object::expand_selection(syntax, text, current_selection.clone());
+
+      // check if selection is different from the last one
+      if *current_selection != selection {
+        // save current selection so it can be restored using shrink_selection
+        view.object_selections.push(current_selection.clone());
+
+        doc.set_selection(view.id, selection);
+      }
+    }
+  };
+  cx.editor.apply_motion(motion);
+}
+
+pub fn shrink_selection(cx: &mut Context) {
+  let motion = |editor: &mut Editor| {
+    let (view, doc) = current!(editor);
+    let current_selection = doc.selection(view.id);
+    // try to restore previous selection
+    if let Some(prev_selection) = view.object_selections.pop() {
+      if current_selection.contains(&prev_selection) {
+        doc.set_selection(view.id, prev_selection);
+        return;
+      } else {
+        // clear existing selection as they can't be shrunk to anyway
+        view.object_selections.clear();
+      }
+    }
+    // if not previous selection, shrink to first child
+    if let Some(syntax) = doc.syntax() {
+      let text = doc.text().slice(..);
+      let selection = object::shrink_selection(syntax, text, current_selection.clone());
+      doc.set_selection(view.id, selection);
+    }
+  };
+  cx.editor.apply_motion(motion);
+}
+
+fn select_all_impl<F>(editor: &mut Editor, select_fn: F)
+where
+  F: Fn(&Syntax, RopeSlice, Selection) -> Selection,
+{
+  let (view, doc) = current!(editor);
+
+  if let Some(syntax) = doc.syntax() {
+    let text = doc.text().slice(..);
+    let current_selection = doc.selection(view.id);
+    let selection = select_fn(syntax, text, current_selection.clone());
+    doc.set_selection(view.id, selection);
+  }
+}
+
+fn select_sibling_impl<F>(cx: &mut Context, sibling_fn: F)
+where
+  F: Fn(&Syntax, RopeSlice, Selection) -> Selection + 'static,
+{
+  let motion = move |editor: &mut Editor| {
+    let (view, doc) = current!(editor);
+
+    if let Some(syntax) = doc.syntax() {
+      let text = doc.text().slice(..);
+      let current_selection = doc.selection(view.id);
+      let selection = sibling_fn(syntax, text, current_selection.clone());
+      doc.set_selection(view.id, selection);
+    }
+  };
+  cx.editor.apply_motion(motion);
+}
+
+pub fn select_all_children(cx: &mut Context) {
+  let motion = |editor: &mut Editor| {
+    select_all_impl(editor, object::select_all_children);
+  };
+
+  cx.editor.apply_motion(motion);
+}
+
+pub fn select_all_siblings(cx: &mut Context) {
+  let motion = |editor: &mut Editor| {
+    select_all_impl(editor, object::select_all_siblings);
+  };
+
+  cx.editor.apply_motion(motion);
+}
+
+pub fn select_next_sibling(cx: &mut Context) {
+  select_sibling_impl(cx, object::select_next_sibling)
+}
+
+pub fn select_prev_sibling(cx: &mut Context) {
+  select_sibling_impl(cx, object::select_prev_sibling)
+}
+
+pub fn move_parent_node_start(cx: &mut Context) {
+  move_node_bound_impl(cx, Direction::Backward, Movement::Move)
 }
 
 // Re-export LSP commands

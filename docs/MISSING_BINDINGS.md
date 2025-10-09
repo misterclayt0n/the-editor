@@ -7,14 +7,6 @@ This document is just so I can have a little basis btw
 
 • "="   -> format_selections
 
-#### Selection Rotation
-
-• "("   -> rotate_selections_backward
-• ")"   -> rotate_selections_forward
-• "A-(" -> rotate_selection_contents_backward
-• "A-)" -> rotate_selection_contents_forward
-• "A-:" -> ensure_selections_forward
-
 #### Paging (in Normal mode)
 
 • "C-b" | "pageup"   -> page_up

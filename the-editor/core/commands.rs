@@ -4989,6 +4989,97 @@ pub fn trim_selections(cx: &mut Context) {
   };
 }
 
+fn rotate_selections(cx: &mut Context, direction: Direction) {
+  let count = cx.count();
+  let (view, doc) = current!(cx.editor);
+  let mut selection = doc.selection(view.id).clone();
+  let index = selection.primary_index();
+  let len = selection.len();
+  selection.set_primary_index(match direction {
+    Direction::Forward => (index + count) % len,
+    Direction::Backward => (index + (len.saturating_sub(count) % len)) % len,
+  });
+  doc.set_selection(view.id, selection);
+}
+
+pub fn rotate_selections_forward(cx: &mut Context) {
+  rotate_selections(cx, Direction::Forward)
+}
+
+pub fn rotate_selections_backward(cx: &mut Context) {
+  rotate_selections(cx, Direction::Backward)
+}
+
+#[derive(Debug)]
+enum ReorderStrategy {
+    RotateForward,
+    RotateBackward,
+    Reverse,
+}
+
+pub fn rotate_selection_contents_forward(cx: &mut Context) {
+  reorder_selection_contents(cx, ReorderStrategy::RotateForward)
+}
+
+pub fn rotate_selection_contents_backward(cx: &mut Context) {
+  reorder_selection_contents(cx, ReorderStrategy::RotateBackward)
+}
+
+fn reorder_selection_contents(cx: &mut Context, strategy: ReorderStrategy) {
+  let count = cx.count;
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+
+  let selection = doc.selection(view.id);
+
+  let mut ranges: Vec<_> = selection
+    .slices(text)
+    .map(|fragment| fragment.chunks().collect())
+    .collect();
+
+  let rotate_by = count.map_or(1, |count| count.get().min(ranges.len()));
+
+  let primary_index = match strategy {
+    ReorderStrategy::RotateForward => {
+      ranges.rotate_right(rotate_by);
+      // Like `usize::wrapping_add`, but provide a custom range from `0` to
+      // `ranges.len()`
+      (selection.primary_index() + ranges.len() + rotate_by) % ranges.len()
+    },
+    ReorderStrategy::RotateBackward => {
+      ranges.rotate_left(rotate_by);
+      // Like `usize::wrapping_sub`, but provide a custom range from `0` to
+      // `ranges.len()`
+      (selection.primary_index() + ranges.len() - rotate_by) % ranges.len()
+    },
+    ReorderStrategy::Reverse => {
+      if rotate_by % 2 == 0 {
+        // nothing changed, if we reverse something an even
+        // amount of times, the output will be the same
+        return;
+      }
+      ranges.reverse();
+      // -1 to turn 1-based len into 0-based index
+      (ranges.len() - 1) - selection.primary_index()
+    },
+  };
+
+  let transaction = Transaction::change(
+    doc.text(),
+    selection
+      .ranges()
+      .iter()
+      .zip(ranges)
+      .map(|(range, fragment)| (range.from(), range.to(), Some(fragment))),
+  );
+
+  doc.set_selection(
+    view.id,
+    Selection::new(selection.ranges().into(), primary_index),
+  );
+  doc.apply(&transaction, view.id);
+}
+
 // Re-export LSP commands
 pub use super::lsp_commands::{
   code_action,

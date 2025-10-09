@@ -200,6 +200,11 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "A-K" => remove_selections,
     "&"   => align_selections,
     "_"   => trim_selections,
+    
+    "("   => rotate_selections_backward,
+    ")"   => rotate_selections_forward,
+    "A-(" => rotate_selection_contents_backward,
+    "A-)" => rotate_selection_contents_forward,
   });
 
   let insert = crate::keymap!({ "Insert"

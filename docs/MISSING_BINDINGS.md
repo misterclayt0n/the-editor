@@ -5,7 +5,6 @@ This document is just so I can have a little basis btw
 
 #### Left Bracket ([)
 
-• "G"     -> goto_first_change
 • "f"     -> goto_prev_function
 • "t"     -> goto_prev_class
 • "a"     -> goto_prev_parameter
@@ -18,7 +17,6 @@ This document is just so I can have a little basis btw
 
 #### Right Bracket (])
 
-• "G"     -> goto_last_change
 • "f"     -> goto_next_function
 • "t"     -> goto_next_class
 • "a"     -> goto_next_parameter

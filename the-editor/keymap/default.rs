@@ -159,12 +159,14 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "d" => goto_prev_diag,
       "D" => goto_first_diag,
       "g" => goto_prev_change,
+      "G" => goto_first_change,
     },
 
     "]" => { "Right bracket"
       "d" => goto_next_diag,
       "D" => goto_last_diag,
       "g" => goto_next_change,
+      "G" => goto_last_change,
     },
   });
 

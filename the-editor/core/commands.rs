@@ -4197,6 +4197,34 @@ fn hunk_range(hunk: Hunk, text: RopeSlice) -> Range {
   Range::new(anchor, head)
 }
 
+pub fn goto_first_change(cx: &mut Context) {
+    goto_first_change_impl(cx, false);
+}
+
+pub fn goto_last_change(cx: &mut Context) {
+    goto_first_change_impl(cx, true);
+}
+
+fn goto_first_change_impl(cx: &mut Context, reverse: bool) {
+    let editor = &mut cx.editor;
+    let (view, doc) = current!(editor);
+    if let Some(handle) = doc.diff_handle() {
+        let hunk = {
+            let diff = handle.load();
+            let idx = if reverse {
+                diff.len().saturating_sub(1)
+            } else {
+                0
+            };
+            diff.nth_hunk(idx)
+        };
+        if hunk != Hunk::NONE {
+            let range = hunk_range(hunk, doc.text().slice(..));
+            doc.set_selection(view.id, Selection::single(range.anchor, range.head));
+        }
+    }
+}
+
 // Re-export LSP commands
 pub use super::lsp_commands::{
   code_action,

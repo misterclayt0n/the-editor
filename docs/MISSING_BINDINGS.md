@@ -7,13 +7,6 @@ This document is just so I can have a little basis btw
 
 • "="   -> format_selections
 
-#### Paging (in Normal mode)
-
-• "C-b" | "pageup"   -> page_up
-• "C-f" | "pagedown" -> page_down
-• "C-u"              -> page_cursor_half_up
-• "C-d"              -> page_cursor_half_down
-
 #### Window Management (C-w)
 
 • "C-w" | "w"           -> rotate_view

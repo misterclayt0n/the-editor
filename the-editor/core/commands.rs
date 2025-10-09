@@ -5012,9 +5012,9 @@ pub fn rotate_selections_backward(cx: &mut Context) {
 
 #[derive(Debug)]
 enum ReorderStrategy {
-    RotateForward,
-    RotateBackward,
-    Reverse,
+  RotateForward,
+  RotateBackward,
+  Reverse,
 }
 
 pub fn rotate_selection_contents_forward(cx: &mut Context) {
@@ -5078,6 +5078,54 @@ fn reorder_selection_contents(cx: &mut Context, strategy: ReorderStrategy) {
     Selection::new(selection.ranges().into(), primary_index),
   );
   doc.apply(&transaction, view.id);
+}
+
+pub fn page_up(cx: &mut Context) {
+  let view = view!(cx.editor);
+  let offset = view.inner_height();
+  scroll(cx, offset, Direction::Backward, false);
+}
+
+pub fn page_down(cx: &mut Context) {
+  let view = view!(cx.editor);
+  let offset = view.inner_height();
+  scroll(cx, offset, Direction::Forward, false);
+}
+
+pub fn half_page_up(cx: &mut Context) {
+  let view = view!(cx.editor);
+  let offset = view.inner_height() / 2;
+  scroll(cx, offset, Direction::Backward, false);
+}
+
+pub fn half_page_down(cx: &mut Context) {
+  let view = view!(cx.editor);
+  let offset = view.inner_height() / 2;
+  scroll(cx, offset, Direction::Forward, false);
+}
+
+pub fn page_cursor_up(cx: &mut Context) {
+  let view = view!(cx.editor);
+  let offset = view.inner_height();
+  scroll(cx, offset, Direction::Backward, true);
+}
+
+pub fn page_cursor_down(cx: &mut Context) {
+  let view = view!(cx.editor);
+  let offset = view.inner_height();
+  scroll(cx, offset, Direction::Forward, true);
+}
+
+pub fn page_cursor_half_up(cx: &mut Context) {
+  let view = view!(cx.editor);
+  let offset = view.inner_height() / 2;
+  scroll(cx, offset, Direction::Backward, true);
+}
+
+pub fn page_cursor_half_down(cx: &mut Context) {
+  let view = view!(cx.editor);
+  let offset = view.inner_height() / 2;
+  scroll(cx, offset, Direction::Forward, true);
 }
 
 // Re-export LSP commands

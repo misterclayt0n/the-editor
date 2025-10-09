@@ -62,7 +62,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
     "C-b"       => toggle_debug_panel,
     "C-n"       => toggle_button,
-    "C-d"       => toggle_statusline,
+    "C-s"       => toggle_statusline,
     "C-g"       => toggle_line_numbers,
     "C-t"       => toggle_diff_gutter,
     "C-="       => increase_font_size,
@@ -205,6 +205,11 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     ")"   => rotate_selections_forward,
     "A-(" => rotate_selection_contents_backward,
     "A-)" => rotate_selection_contents_forward,
+    
+    "C-b" | "pageup"   => page_up,
+    "C-f" | "pagedown" => page_down,
+    "C-u"              => page_cursor_half_up,
+    "C-d"              => page_cursor_half_down,
   });
 
   let insert = crate::keymap!({ "Insert"

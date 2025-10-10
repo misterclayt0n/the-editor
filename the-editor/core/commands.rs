@@ -1314,7 +1314,7 @@ pub fn select_regex(cx: &mut Context) {
   }));
 }
 
-pub fn file_picker(cx: &mut Context) {
+fn push_file_picker_with_root(cx: &mut Context, root: std::path::PathBuf) {
   use std::{
     path::PathBuf,
     sync::{
@@ -1323,16 +1323,14 @@ pub fn file_picker(cx: &mut Context) {
     },
   };
 
-  let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
   let selected_file = Arc::new(Mutex::new(None::<PathBuf>));
-  let selected_file_clone = selected_file.clone();
 
   cx.callback.push(Box::new(move |compositor, _cx| {
-    let picker = crate::ui::file_picker(cwd, move |path: &PathBuf| {
-      *selected_file.lock().unwrap() = Some(path.clone());
+    let selected_for_picker = Arc::clone(&selected_file);
+    let picker = crate::ui::file_picker(root.clone(), move |path: &PathBuf| {
+      *selected_for_picker.lock().unwrap() = Some(path.clone());
     });
 
-    // Create a wrapper picker that will open the file when closed
     struct PickerWrapper {
       picker:        crate::ui::components::Picker<PathBuf, crate::ui::FilePickerData>,
       selected_file: Arc<Mutex<Option<PathBuf>>>,
@@ -1346,15 +1344,11 @@ pub fn file_picker(cx: &mut Context) {
       ) -> crate::ui::compositor::EventResult {
         let result = self.picker.handle_event(event, ctx);
 
-        // If the picker is closing, check if a file was selected and open it
         if let crate::ui::compositor::EventResult::Consumed(Some(callback)) = result {
           let selected = self.selected_file.lock().unwrap().take();
           return crate::ui::compositor::EventResult::Consumed(Some(Box::new(
             move |compositor, ctx| {
-              // First execute the picker's close callback
               callback(compositor, ctx);
-
-              // Then open the selected file if any
               if let Some(path) = selected {
                 use crate::editor::Action;
                 if let Err(e) = ctx.editor.open(&path, Action::Replace) {
@@ -1391,9 +1385,14 @@ pub fn file_picker(cx: &mut Context) {
 
     compositor.push(Box::new(PickerWrapper {
       picker,
-      selected_file: selected_file_clone,
+      selected_file: Arc::clone(&selected_file),
     }));
   }));
+}
+
+pub fn file_picker(cx: &mut Context) {
+  let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+  push_file_picker_with_root(cx, cwd);
 }
 
 pub fn buffer_picker(cx: &mut Context) {
@@ -1952,6 +1951,18 @@ pub fn global_search(cx: &mut Context) {
     compositor.push(Box::new(picker));
   }));
 }
+
+pub fn file_picker_in_current_directory(cx: &mut Context) {
+  let cwd = the_editor_stdx::env::current_working_dir();
+  if !cwd.exists() {
+    cx.editor
+      .set_error("Current working directory does not exist".to_string());
+    return;
+  }
+
+  push_file_picker_with_root(cx, cwd);
+}
+
 // Inserts at the start of each selection.
 pub fn insert_mode(cx: &mut Context) {
   enter_insert_mode(cx);

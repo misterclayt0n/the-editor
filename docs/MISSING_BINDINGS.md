@@ -1,6 +1,8 @@
 ## Missing Keybindings from Helix
 This document is just so I can have a little basis btw
 
+The bindings left are mostly the ones I don't care about btw. Apart from the command_palette
+
 ### Normal Mode
 
 #### Editing
@@ -9,7 +11,6 @@ This document is just so I can have a little basis btw
 
 #### Space submenu
 
-• "F"   -> file_picker_in_current_directory
 • "e"   -> file_explorer
 • "E"   -> file_explorer_in_current_buffer_directory
 • "'"   -> last_picker
@@ -17,7 +18,6 @@ This document is just so I can have a little basis btw
 • "c"   -> toggle_comments
 • "C"   -> toggle_block_comments
 • "A-c" -> toggle_line_comments
-• "/"   -> global_search
 • "?"   -> command_palette
 
 #### View submenu (z and Z)

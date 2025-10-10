@@ -1999,6 +1999,11 @@ pub fn goto_line_start(cx: &mut Context) {
   )
 }
 
+pub fn extend_to_line_start(cx: &mut Context) {
+    let (view, doc) = current!(cx.editor);
+    goto_line_start_impl(view, doc, Movement::Extend)
+}
+
 fn goto_line_start_impl(view: &mut View, doc: &mut Document, movement: Movement) {
   let text = doc.text().slice(..);
 
@@ -2023,6 +2028,11 @@ pub fn goto_line_end(cx: &mut Context) {
       Movement::Move
     },
   )
+}
+
+pub fn extend_to_line_end(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  goto_line_end_impl(view, doc, Movement::Extend)
 }
 
 pub fn goto_line_end_newline(cx: &mut Context) {
@@ -2164,6 +2174,10 @@ fn goto_next_tabstop_impl(cx: &mut Context, direction: Direction) {
 
 pub fn move_parent_node_end(cx: &mut Context) {
   move_node_bound_impl(cx, Direction::Forward, Movement::Move)
+}
+
+pub fn extend_parent_node_end(cx: &mut Context) {
+  move_node_bound_impl(cx, Direction::Forward, Movement::Extend)
 }
 
 fn move_node_bound_impl(cx: &mut Context, dir: Direction, movement: Movement) {
@@ -4108,6 +4122,10 @@ pub fn move_parent_node_start(cx: &mut Context) {
   move_node_bound_impl(cx, Direction::Backward, Movement::Move)
 }
 
+pub fn extend_parent_node_start(cx: &mut Context) {
+  move_node_bound_impl(cx, Direction::Backward, Movement::Extend)
+}
+
 pub fn goto_first_diag(cx: &mut Context) {
   let (view, doc) = current!(cx.editor);
   let selection = match doc.diagnostics().first() {
@@ -4394,6 +4412,14 @@ pub fn search_next(cx: &mut Context) {
 
 pub fn search_prev(cx: &mut Context) {
   search_next_or_prev_impl(cx, Movement::Move, Direction::Backward);
+}
+
+pub fn extend_search_next(cx: &mut Context) {
+  search_next_or_prev_impl(cx, Movement::Extend, Direction::Forward);
+}
+
+pub fn extend_search_prev(cx: &mut Context) {
+  search_next_or_prev_impl(cx, Movement::Extend, Direction::Backward);
 }
 
 fn search_next_or_prev_impl(cx: &mut Context, movement: Movement, direction: Direction) {

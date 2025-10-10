@@ -298,6 +298,18 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "B"         => extend_prev_long_word_start,
     "E"         => extend_next_long_word_end,
 
+    
+    "A-e"       => extend_parent_node_end,
+    "A-b"       => extend_parent_node_start,
+
+    "n"         => extend_search_next,
+    "N"         => extend_search_prev,
+    
+    "home"      => extend_to_line_start,
+    "end"       => extend_to_line_end,
+    
+    "v"         => normal_mode,
+
     "g" => { "Goto"
       "g" => extend_to_file_start,
       "|" => extend_to_column,

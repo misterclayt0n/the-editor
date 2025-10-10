@@ -49,16 +49,6 @@ This document is just so I can have a little basis btw
 
 ### Select Mode
 
-#### Selection Extension
-
-• "A-e"  -> extend_parent_node_end
-• "A-b"  -> extend_parent_node_start
-• "n"    -> extend_search_next
-• "N"    -> extend_search_prev
-• "home" -> extend_to_line_start
-• "end"  -> extend_to_line_end
-• "v"    -> normal_mode (toggle back)
-
 #### Goto submenu in Select mode
 
 • "w" -> extend_to_word

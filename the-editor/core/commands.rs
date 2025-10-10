@@ -32,33 +32,66 @@ use url::Url;
 
 use crate::{
   core::{
-    auto_pairs, chars::char_is_word, comment, document::Document, grapheme::{
+    Tendril,
+    ViewId,
+    auto_pairs,
+    chars::char_is_word,
+    comment,
+    document::Document,
+    grapheme::{
       self,
       next_grapheme_boundary,
-    }, history::UndoKind, indent, info::Info, line_ending::{
+    },
+    history::UndoKind,
+    indent,
+    info::Info,
+    line_ending::{
       get_line_ending_of_str,
       line_end_char_index,
-    }, match_brackets, movement::{
-      self, move_horizontally, move_vertically, move_vertically_visual, Direction, Movement
-    }, object, position::{
-      char_idx_at_visual_offset, Position
-    }, search::{
+    },
+    match_brackets,
+    movement::{
+      self,
+      Direction,
+      Movement,
+      move_horizontally,
+      move_vertically,
+      move_vertically_visual,
+    },
+    object,
+    position::{
+      Position,
+      char_idx_at_visual_offset,
+    },
+    search::{
       self,
       CharMatcher,
-    }, selection::{
+    },
+    selection::{
       self,
       Range,
       Selection,
-    }, surround, syntax::{config::BlockCommentToken, Syntax}, text_annotations::{
+    },
+    surround,
+    syntax::{
+      Syntax,
+      config::BlockCommentToken,
+    },
+    text_annotations::{
       Overlay,
       TextAnnotations,
-    }, text_format::TextFormat, textobject, transaction::{
+    },
+    text_format::TextFormat,
+    textobject,
+    transaction::{
       Deletion,
       Transaction,
-    }, tree, view::{
+    },
+    tree,
+    view::{
       Align,
       View,
-    }, Tendril, ViewId
+    },
   },
   current,
   current_ref,
@@ -5293,6 +5326,50 @@ pub fn toggle_comments(cx: &mut Context) {
     // not block commented at all and don't have any tokens
     comment::toggle_line_comments(doc, selection, line_token)
   })
+}
+
+pub fn jump_forward(cx: &mut Context) {
+  let count = cx.count();
+  let config = cx.editor.config();
+  let view = view_mut!(cx.editor);
+  let doc_id = view.doc;
+
+  if let Some((id, selection)) = view.jumps.forward(count) {
+    view.doc = *id;
+    let selection = selection.clone();
+    let (view, doc) = current!(cx.editor); // refetch doc
+
+    if doc.id() != doc_id {
+      view.add_to_history(doc_id);
+    }
+
+    doc.set_selection(view.id, selection);
+    // Document we switch to might not have been opened in the view before
+    doc.ensure_view_init(view.id);
+    view.ensure_cursor_in_view_center(doc, config.scrolloff);
+  };
+}
+
+pub fn jump_backward(cx: &mut Context) {
+  let count = cx.count();
+  let config = cx.editor.config();
+  let (view, doc) = current!(cx.editor);
+  let doc_id = doc.id();
+
+  if let Some((id, selection)) = view.jumps.backward(view.id, doc, count) {
+    view.doc = *id;
+    let selection = selection.clone();
+    let (view, doc) = current!(cx.editor); // refetch doc
+
+    if doc.id() != doc_id {
+      view.add_to_history(doc_id);
+    }
+
+    doc.set_selection(view.id, selection);
+    // Document we switch to might not have been opened in the view before
+    doc.ensure_view_init(view.id);
+    view.ensure_cursor_in_view_center(doc, config.scrolloff);
+  };
 }
 
 // Re-export LSP commands

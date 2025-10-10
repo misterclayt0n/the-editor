@@ -235,7 +235,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       },
     },
     
-    "C-c" => toggle_comments,
+    "C-c"         => toggle_comments,
+    "C-i" | "tab" => jump_forward, // tab == <C-i>
+    "C-o"         => jump_backward,
   });
 
   let insert = crate::keymap!({ "Insert"

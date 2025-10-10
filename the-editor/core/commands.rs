@@ -32,63 +32,33 @@ use url::Url;
 
 use crate::{
   core::{
-    Tendril,
-    ViewId,
-    auto_pairs,
-    chars::char_is_word,
-    comment,
-    document::Document,
-    grapheme::{
+    auto_pairs, chars::char_is_word, comment, document::Document, grapheme::{
       self,
       next_grapheme_boundary,
-    },
-    history::UndoKind,
-    indent,
-    info::Info,
-    line_ending::{
+    }, history::UndoKind, indent, info::Info, line_ending::{
       get_line_ending_of_str,
       line_end_char_index,
-    },
-    match_brackets,
-    movement::{
-      self,
-      Direction,
-      Movement,
-      move_horizontally,
-      move_vertically,
-      move_vertically_visual,
-    },
-    object,
-    position::{
-      Position,
-      char_idx_at_visual_offset,
-    },
-    search::{
+    }, match_brackets, movement::{
+      self, move_horizontally, move_vertically, move_vertically_visual, Direction, Movement
+    }, object, position::{
+      char_idx_at_visual_offset, Position
+    }, search::{
       self,
       CharMatcher,
-    },
-    selection::{
+    }, selection::{
       self,
       Range,
       Selection,
-    },
-    surround,
-    syntax::Syntax,
-    text_annotations::{
+    }, surround, syntax::{config::BlockCommentToken, Syntax}, text_annotations::{
       Overlay,
       TextAnnotations,
-    },
-    text_format::TextFormat,
-    textobject,
-    transaction::{
+    }, text_format::TextFormat, textobject, transaction::{
       Deletion,
       Transaction,
-    },
-    tree,
-    view::{
+    }, tree, view::{
       Align,
       View,
-    },
+    }, Tendril, ViewId
   },
   current,
   current_ref,
@@ -5233,6 +5203,96 @@ pub fn swap_view_up(cx: &mut Context) {
 
 pub fn swap_view_down(cx: &mut Context) {
   cx.editor.swap_split_in_direction(tree::Direction::Down)
+}
+
+type CommentTransactionFn = fn(
+  line_token: Option<&str>,
+  block_tokens: Option<&[BlockCommentToken]>,
+  doc: &Rope,
+  selection: &Selection,
+) -> Transaction;
+
+fn toggle_comments_impl(cx: &mut Context, comment_transaction: CommentTransactionFn) {
+  let (view, doc) = current!(cx.editor);
+  let line_token: Option<&str> = doc
+    .language_config()
+    .and_then(|lc| lc.comment_tokens.as_ref())
+    .and_then(|tc| tc.first())
+    .map(|tc| tc.as_str());
+  let block_tokens: Option<&[BlockCommentToken]> = doc
+    .language_config()
+    .and_then(|lc| lc.block_comment_tokens.as_ref())
+    .map(|tc| &tc[..]);
+
+  let transaction =
+    comment_transaction(line_token, block_tokens, doc.text(), doc.selection(view.id));
+
+  doc.apply(&transaction, view.id);
+  exit_select_mode(cx);
+}
+
+/// commenting behavior:
+/// 1. only line comment tokens -> line comment
+/// 2. each line block commented -> uncomment all lines
+/// 3. whole selection block commented -> uncomment selection
+/// 4. all lines not commented and block tokens -> comment uncommented lines
+/// 5. no comment tokens and not block commented -> line comment
+pub fn toggle_comments(cx: &mut Context) {
+  toggle_comments_impl(cx, |line_token, block_tokens, doc, selection| {
+    let text = doc.slice(..);
+
+    // only have line comment tokens
+    if line_token.is_some() && block_tokens.is_none() {
+      return comment::toggle_line_comments(doc, selection, line_token);
+    }
+
+    let split_lines = comment::split_lines_of_selection(text, selection);
+
+    let default_block_tokens = &[BlockCommentToken::default()];
+    let block_comment_tokens = block_tokens.unwrap_or(default_block_tokens);
+
+    let (line_commented, line_comment_changes) =
+      comment::find_block_comments(block_comment_tokens, text, &split_lines);
+
+    // block commented by line would also be block commented so check this first
+    if line_commented {
+      return comment::create_block_comment_transaction(
+        doc,
+        &split_lines,
+        line_commented,
+        line_comment_changes,
+      )
+      .0;
+    }
+
+    let (block_commented, comment_changes) =
+      comment::find_block_comments(block_comment_tokens, text, selection);
+
+    // check if selection has block comments
+    if block_commented {
+      return comment::create_block_comment_transaction(
+        doc,
+        selection,
+        block_commented,
+        comment_changes,
+      )
+      .0;
+    }
+
+    // not commented and only have block comment tokens
+    if line_token.is_none() && block_tokens.is_some() {
+      return comment::create_block_comment_transaction(
+        doc,
+        &split_lines,
+        line_commented,
+        line_comment_changes,
+      )
+      .0;
+    }
+
+    // not block commented at all and don't have any tokens
+    comment::toggle_line_comments(doc, selection, line_token)
+  })
 }
 
 // Re-export LSP commands

@@ -43,7 +43,6 @@ This document is just so I can have a little basis btw
 
 #### Misc
 
-• "C-c"         -> toggle_comments
 • "C-i" | "tab" -> jump_forward
 • "C-o"         -> jump_backward
 • "C-s"         -> save_selection

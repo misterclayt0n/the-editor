@@ -234,6 +234,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
           "C-v" | "v" => vsplit_new,
       },
     },
+    
+    "C-c" => toggle_comments,
   });
 
   let insert = crate::keymap!({ "Insert"

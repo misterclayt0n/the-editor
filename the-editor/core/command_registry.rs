@@ -5,14 +5,12 @@ use std::{
 };
 
 use anyhow::{
-  Result,
-  anyhow,
+  anyhow, bail, Result
 };
 
 use super::commands::Context;
 use crate::{
-  editor::Editor,
-  ui::components::prompt::Completion,
+  doc, editor::{Action, Editor}, ui::components::prompt::Completion
 };
 
 /// Type alias for a command function that takes a context and arguments
@@ -48,7 +46,8 @@ impl CommandCompleter {
     }
   }
 
-  /// Use specific completers for specific positions, with fallback for extra args
+  /// Use specific completers for specific positions, with fallback for extra
+  /// args
   pub const fn positional(positional: &'static [Completer], variadic: Completer) -> Self {
     Self {
       positional,
@@ -183,10 +182,12 @@ impl CommandRegistry {
       return self
         .command_names()
         .into_iter()
-        .map(|name| Completion {
-          range: 0..,
-          text:  name.to_string(),
-          doc:   self.get(name).map(|cmd| cmd.doc.to_string()),
+        .map(|name| {
+          Completion {
+            range: 0..,
+            text:  name.to_string(),
+            doc:   self.get(name).map(|cmd| cmd.doc.to_string()),
+          }
         })
         .collect();
     }
@@ -212,10 +213,12 @@ impl CommandRegistry {
         .command_names()
         .into_iter()
         .filter(|name| name.to_lowercase().contains(&input_lower))
-        .map(|name| Completion {
-          range: 0..,
-          text:  name.to_string(),
-          doc:   self.get(name).map(|cmd| cmd.doc.to_string()),
+        .map(|name| {
+          Completion {
+            range: 0..,
+            text:  name.to_string(),
+            doc:   self.get(name).map(|cmd| cmd.doc.to_string()),
+          }
         })
         .collect()
     } else {
@@ -464,10 +467,12 @@ pub mod completers {
     theme_names
       .into_iter()
       .filter(|name| name.to_lowercase().contains(&input_lower))
-      .map(|name| Completion {
-        range: 0..,
-        text:  name,
-        doc:   None,
+      .map(|name| {
+        Completion {
+          range: 0..,
+          text:  name,
+          doc:   None,
+        }
       })
       .collect()
   }
@@ -481,10 +486,12 @@ pub mod completers {
       .command_names()
       .into_iter()
       .filter(|name| name.to_lowercase().contains(&input_lower))
-      .map(|name| Completion {
-        range: 0..,
-        text:  name.to_string(),
-        doc:   None,
+      .map(|name| {
+        Completion {
+          range: 0..,
+          text:  name.to_string(),
+          doc:   None,
+        }
       })
       .collect()
   }
@@ -702,7 +709,8 @@ fn format(cx: &mut Context, _args: &[&str]) -> Result<()> {
   cx.jobs.callback(async move {
     let transaction_result = format_future.await;
 
-    let callback = move |editor: &mut crate::editor::Editor, _compositor: &mut crate::ui::compositor::Compositor| {
+    let callback = move |editor: &mut crate::editor::Editor,
+                         _compositor: &mut crate::ui::compositor::Compositor| {
       // Check if document and view still exist
       let Some(doc) = editor.documents.get_mut(&doc_id) else {
         return;
@@ -731,17 +739,52 @@ fn format(cx: &mut Context, _args: &[&str]) -> Result<()> {
             log::info!("Discarded formatting changes because the document changed");
             editor.set_status("Formatting discarded (document changed)".to_string());
           }
-        }
+        },
         Err(err) => {
           log::error!("Formatting failed: {:?}", err);
           editor.set_error(format!("Formatting failed: {:?}", err));
-        }
+        },
       }
     };
 
-    Ok(crate::ui::job::Callback::EditorCompositor(Box::new(callback)))
+    Ok(crate::ui::job::Callback::EditorCompositor(Box::new(
+      callback,
+    )))
   });
 
+  Ok(())
+}
+
+/// Results in an error if there are modified buffers remaining and sets editor
+/// error, otherwise returns `Ok(())`. If the current document is unmodified,
+/// and there are modified documents, switches focus to one of them.
+pub(super) fn buffers_remaining_impl(editor: &mut Editor) -> anyhow::Result<()> {
+  let modified_ids: Vec<_> = editor
+    .documents()
+    .filter(|doc| doc.is_modified())
+    .map(|doc| doc.id())
+    .collect();
+
+  if let Some(first) = modified_ids.first() {
+    let current = doc!(editor);
+    // If the current document is unmodified, and there are modified
+    // documents, switch focus to the first modified doc.
+    if !modified_ids.contains(&current.id()) {
+      editor.switch(*first, Action::Replace);
+    }
+
+    let modified_names: Vec<_> = modified_ids
+      .iter()
+      .map(|doc_id| doc!(editor, doc_id).display_name())
+      .collect();
+
+    bail!(
+      "{} unsaved buffer{} remaining: {:?}",
+      modified_names.len(),
+      if modified_names.len() == 1 { "" } else { "s" },
+      modified_names,
+    );
+  }
   Ok(())
 }
 

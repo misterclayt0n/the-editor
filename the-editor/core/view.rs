@@ -238,11 +238,14 @@ impl View {
   }
 
   pub fn inner_area(&self, doc: &Document) -> Rect {
-    self.area.clip_left(self.gutter_offset(doc)).clip_bottom(1) // -1 for statusline
+    // Don't clip_bottom here - the tree's area is already clipped for the global statusline
+    // Unlike Helix which renders one statusline per view, we have a single global statusline
+    self.area.clip_left(self.gutter_offset(doc))
   }
 
   pub fn inner_height(&self) -> usize {
-    self.area.clip_bottom(1).height.into() // -1 for statusline
+    // Don't clip_bottom here - the tree's area is already clipped for the global statusline
+    self.area.height.into()
   }
 
   pub fn inner_width(&self, doc: &Document) -> u16 {

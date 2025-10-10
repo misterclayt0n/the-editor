@@ -210,6 +210,30 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "C-f" | "pagedown" => page_down,
     "C-u"              => page_cursor_half_up,
     "C-d"              => page_cursor_half_down,
+    
+    "C-w" => { "Window"
+      "C-w" | "w"           => rotate_view,
+      "C-s" | "s"           => hsplit,
+      "C-v" | "v"           => vsplit,
+      "C-t" | "t"           => transpose_view,
+      "f"                   => goto_file_hsplit,
+      "F"                   => goto_file_vsplit,
+      "C-q" | "q"           => wclose,
+      "C-o" | "o"           => wonly,
+      "C-h" | "h" | "left"  => jump_view_left,
+      "C-j" | "j" | "down"  => jump_view_down,
+      "C-k" | "k" | "up"    => jump_view_up,
+      "C-l" | "l" | "right" => jump_view_right,
+      "L"                   => swap_view_right,
+      "K"                   => swap_view_up,
+      "H"                   => swap_view_left,
+      "J"                   => swap_view_down,
+      
+      "n" => { "New split scratch buffer"
+          "C-s" | "s" => hsplit_new,
+          "C-v" | "v" => vsplit_new,
+      },
+    },
   });
 
   let insert = crate::keymap!({ "Insert"

@@ -84,6 +84,7 @@ use crate::{
       Deletion,
       Transaction,
     },
+    tree,
     view::{
       Align,
       View,
@@ -5126,6 +5127,112 @@ pub fn page_cursor_half_down(cx: &mut Context) {
   let view = view!(cx.editor);
   let offset = view.inner_height() / 2;
   scroll(cx, offset, Direction::Forward, true);
+}
+
+pub fn jump_view_right(cx: &mut Context) {
+  cx.editor.focus_direction(tree::Direction::Right)
+}
+
+pub fn jump_view_left(cx: &mut Context) {
+  cx.editor.focus_direction(tree::Direction::Left)
+}
+
+pub fn jump_view_up(cx: &mut Context) {
+  cx.editor.focus_direction(tree::Direction::Up)
+}
+
+pub fn jump_view_down(cx: &mut Context) {
+  cx.editor.focus_direction(tree::Direction::Down)
+}
+
+pub fn hsplit(cx: &mut Context) {
+  split(cx.editor, Action::HorizontalSplit);
+}
+
+pub fn hsplit_new(cx: &mut Context) {
+  cx.editor.new_file(Action::HorizontalSplit);
+}
+
+pub fn vsplit(cx: &mut Context) {
+  split(cx.editor, Action::VerticalSplit);
+}
+
+pub fn vsplit_new(cx: &mut Context) {
+  cx.editor.new_file(Action::VerticalSplit);
+}
+
+fn split(editor: &mut Editor, action: Action) {
+  let (view, doc) = current!(editor);
+  let id = doc.id();
+  let selection = doc.selection(view.id).clone();
+  let offset = doc.view_offset(view.id);
+
+  editor.switch(id, action);
+
+  // match the selection in the previous view
+  let (view, doc) = current!(editor);
+  doc.set_selection(view.id, selection);
+  // match the view scroll offset (switch doesn't handle this fully
+  // since the selection is only matched after the split)
+  doc.set_view_offset(view.id, offset);
+}
+
+pub fn rotate_view(cx: &mut Context) {
+  cx.editor.focus_next()
+}
+
+pub fn transpose_view(cx: &mut Context) {
+  cx.editor.transpose_view()
+}
+
+pub fn goto_file_hsplit(cx: &mut Context) {
+  goto_file_impl(cx, Action::HorizontalSplit);
+}
+
+pub fn goto_file_vsplit(cx: &mut Context) {
+  goto_file_impl(cx, Action::VerticalSplit);
+}
+
+pub fn wclose(cx: &mut Context) {
+  if cx.editor.tree.views().count() == 1 {
+    if let Err(err) = crate::core::command_registry::buffers_remaining_impl(cx.editor) {
+      cx.editor.set_error(err.to_string());
+      return;
+    }
+  }
+  let view_id = view!(cx.editor).id;
+  // close current split
+  cx.editor.close(view_id);
+}
+
+pub fn wonly(cx: &mut Context) {
+  let views = cx
+    .editor
+    .tree
+    .views()
+    .map(|(v, focus)| (v.id, focus))
+    .collect::<Vec<_>>();
+  for (view_id, focus) in views {
+    if !focus {
+      cx.editor.close(view_id);
+    }
+  }
+}
+
+pub fn swap_view_right(cx: &mut Context) {
+  cx.editor.swap_split_in_direction(tree::Direction::Right)
+}
+
+pub fn swap_view_left(cx: &mut Context) {
+  cx.editor.swap_split_in_direction(tree::Direction::Left)
+}
+
+pub fn swap_view_up(cx: &mut Context) {
+  cx.editor.swap_split_in_direction(tree::Direction::Up)
+}
+
+pub fn swap_view_down(cx: &mut Context) {
+  cx.editor.swap_split_in_direction(tree::Direction::Down)
 }
 
 // Re-export LSP commands

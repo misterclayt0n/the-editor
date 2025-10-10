@@ -601,6 +601,10 @@ impl Component for EditorView {
   }
 
   fn render(&mut self, area: Rect, renderer: &mut Surface, cx: &mut Context) {
+    // Separator dimensions (used for clipping and rendering)
+    const SEPARATOR_WIDTH_PX: f32 = 2.0;
+    const SEPARATOR_HEIGHT_PX: f32 = 2.0;
+
     let font_size = cx
       .editor
       .font_size_override
@@ -609,9 +613,10 @@ impl Component for EditorView {
     renderer.configure_font(&font_family, font_size);
     let font_width = renderer.cell_width().max(1.0);
 
+    // Calculate tree area from renderer dimensions
     let available_height = (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM);
     let available_height = available_height.max(font_size);
-    let content_rows = ((available_height / (font_size + LINE_SPACING))
+    let total_rows = ((available_height / (font_size + LINE_SPACING))
       .floor()
       .max(1.0)) as u16;
 
@@ -619,7 +624,11 @@ impl Component for EditorView {
     let available_width = renderer.width() as f32;
     let available_width = available_width.max(font_width);
     let area_width = (available_width / font_width).floor().max(1.0) as u16;
-    let target_area = Rect::new(0, 0, area_width, content_rows.saturating_add(1));
+
+    // Reserve space at bottom for statusline (clip_bottom reserves 1 row)
+    // The statusline is rendered as an overlay by the compositor, but we need to
+    // prevent views from rendering underneath it
+    let target_area = Rect::new(0, 0, area_width, total_rows).clip_bottom(1);
 
     // Resize tree if needed
     if cx.editor.tree.resize(target_area) {
@@ -675,7 +684,7 @@ impl Component for EditorView {
       .unwrap_or(Color::new(0.1, 0.1, 0.15, 1.0));
     renderer.set_background_color(background_color);
 
-    let mut normal = normal_style
+    let normal_base = normal_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::rgb(0.85, 0.85, 0.9));
@@ -691,13 +700,25 @@ impl Component for EditorView {
     // If no cursor colors are specified at all, default to reversed behavior (adaptive cursor)
     let use_adaptive_cursor = cursor_reversed || (cursor_fg_from_theme.is_none() && cursor_bg_from_theme.is_none());
 
-    let mut selection_bg = selection_style
+    let selection_bg_base = selection_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::rgba(0.3, 0.5, 0.8, 0.3));
 
+    // Collect all views to render
+    let focus_view_id = cx.editor.tree.focus;
+    let views_to_render: Vec<_> = cx.editor.tree.traverse().map(|(id, _)| id).collect();
+
+    // Render each view
+    for current_view_id in views_to_render {
+      let is_focused = current_view_id == focus_view_id;
+
+      // Clone colors for this view (will be modified by zoom animation)
+      let mut normal = normal_base;
+      let mut selection_bg = selection_bg_base;
+
     // Get current view and document
-    let focus_view = cx.editor.tree.focus;
+    let focus_view = current_view_id;
 
     // Update zoom animation
     let zoom_anim_speed = 20.0; // Fast animation (completes in ~0.05s)
@@ -724,7 +745,19 @@ impl Component for EditorView {
     normal.a *= zoom_alpha;
     selection_bg.a *= zoom_alpha;
 
-    let base_y = VIEW_PADDING_TOP + zoom_offset_y;
+    // Calculate base coordinates from view's area (convert cell coords to pixels)
+    let view_offset_x = view.area.x as f32 * font_width;
+    let view_offset_y = view.area.y as f32 * (font_size + LINE_SPACING);
+    let base_y = view_offset_y + VIEW_PADDING_TOP + zoom_offset_y;
+
+    // Calculate visible lines for THIS view based on its height
+    // view.area.height is already in rows/cells
+    let content_rows = view.area.height;
+
+    // Calculate bottom edge for clipping (to prevent text from rendering into separator)
+    let has_horizontal_split_below = view.area.y + view.area.height < cx.editor.tree.area().height;
+    let view_bottom_edge_px = view_offset_y + (view.area.height as f32 * (font_size + LINE_SPACING))
+      - if has_horizontal_split_below { SEPARATOR_HEIGHT_PX } else { 0.0 };
 
     let doc_id = view.doc;
 
@@ -760,7 +793,7 @@ impl Component for EditorView {
     // Calculate gutter offset using GutterManager
     let gutter_width = self.gutter_manager.total_width(view, doc);
     let gutter_offset = gutter_width as f32 * font_width;
-    let base_x = VIEW_PADDING_LEFT + gutter_offset;
+    let base_x = view_offset_x + VIEW_PADDING_LEFT + gutter_offset;
 
     let cursor_pos = selection.primary().cursor(doc_text.slice(..));
 
@@ -953,6 +986,9 @@ impl Component for EditorView {
     // Debug per document (track by document ID)
     let viewport_cols = viewport.width as usize;
 
+    // Calculate view's right edge in pixels for clipping
+    let view_right_edge_px = view_offset_x + (view.area.width as f32 * font_width);
+
     // Helper: check if document position range overlaps any selection
     let is_selected = |start: usize, len: usize| -> bool {
       if len == 0 {
@@ -1123,7 +1159,7 @@ impl Component for EditorView {
           view,
           &cx.editor.theme,
           renderer,
-          VIEW_PADDING_LEFT,
+          view_offset_x + VIEW_PADDING_LEFT,
           y,
           font_width,
           font_size,
@@ -1197,8 +1233,8 @@ impl Component for EditorView {
         },
       };
 
-      // Draw cursor if at this position
-      if is_cursor_here {
+      // Draw cursor if at this position (only for focused view)
+      if is_cursor_here && is_focused {
         let cursor_w = width_cols.max(1) as f32 * font_width;
         // Cursor animation: lerp toward target (x, y)
         let (anim_x, anim_y) = if self.cursor_anim_enabled {
@@ -1242,11 +1278,19 @@ impl Component for EditorView {
           color
         };
 
+        // Clip cursor to stay within view bounds (both horizontal and vertical)
+        let max_cursor_width = (view_right_edge_px - anim_x).max(0.0);
+        let clipped_cursor_w = cursor_w.min(max_cursor_width);
+
+        let cursor_height = font_size + CURSOR_HEIGHT_EXTENSION;
+        let max_cursor_height = (view_bottom_edge_px - anim_y).max(0.0);
+        let clipped_cursor_h = cursor_height.min(max_cursor_height);
+
         self.command_batcher.add_command(RenderCommand::Cursor {
           x:      anim_x,
           y:      anim_y,
-          width:  cursor_w.min((viewport_cols - rel_col) as f32 * font_width),
-          height: font_size + CURSOR_HEIGHT_EXTENSION,
+          width:  clipped_cursor_w,
+          height: clipped_cursor_h,
           color:  cursor_bg_color,
         });
       }
@@ -1290,8 +1334,13 @@ impl Component for EditorView {
               normal
             };
 
-            // Add to line batch for efficient rendering
-            line_batch.push((x, y, g.to_string(), fg));
+            // Add to line batch for efficient rendering, but only if within view bounds
+            // Check if text would be within view (not bleeding into separator bars)
+            let text_end_x = x + (draw_cols as f32 * font_width);
+            let text_bottom_y = y + font_size;
+            if x < view_right_edge_px && text_end_x <= view_right_edge_px && text_bottom_y <= view_bottom_edge_px {
+              line_batch.push((x, y, g.to_string(), fg));
+            }
           }
         },
       }
@@ -1311,8 +1360,8 @@ impl Component for EditorView {
     }
 
     // If the document is empty or we didn't render any graphemes, at least render
-    // the cursor
-    if grapheme_count == 0 {
+    // the cursor (only for focused view)
+    if grapheme_count == 0 && is_focused {
       // Render cursor at position 0 for empty document
       let x = base_x;
       let y = base_y;
@@ -1343,9 +1392,87 @@ impl Component for EditorView {
     }
     } // End scope - drop doc borrow before rendering completion
 
-    // Execute all batched commands
+    } // End view rendering loop
+
+    // Execute all batched commands for all views
     self.command_batcher.execute(renderer);
 
+    // Render split separators
+    self.render_split_separators(renderer, cx, font_width, font_size);
+
+    // Render completion and signature help popups on top (only for focused view)
+    self.render_popups(area, renderer, cx);
+
+    // Clear dirty regions after successful render
+    self.dirty_region.clear();
+  }
+
+  fn cursor(&self, _area: Rect, _ctx: &Editor) -> (Option<Position>, CursorKind) {
+    // TODO: Get cursor position from the current view
+    (None, CursorKind::Hidden)
+  }
+}
+
+impl EditorView {
+  /// Render split separator bars between views
+  fn render_split_separators(
+    &mut self,
+    renderer: &mut Surface,
+    cx: &Context,
+    font_width: f32,
+    font_size: f32,
+  ) {
+    // Get separator color from theme
+    let theme = &cx.editor.theme;
+    let separator_style = theme.get("ui.window");
+    let separator_color = separator_style
+      .bg
+      .or(separator_style.fg)
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::rgba(0.3, 0.3, 0.4, 0.8));
+
+    // Render separator lines between views
+    // The tree's recalculate() already accounts for 1-char gaps in vertical splits
+    // We need to fill those gaps with separator visuals
+    // Separator dimensions are defined at the top of the render() function
+
+    // Separator constants for this function scope
+    const SEPARATOR_WIDTH_PX: f32 = 2.0;
+    const SEPARATOR_HEIGHT_PX: f32 = 2.0;
+
+    for (view, _) in cx.editor.tree.views() {
+      let area = view.area;
+      // Check if there's a view to the right (for vertical splits)
+      // This is a simple heuristic - render a vertical line at the right edge if not at screen edge
+      if area.x + area.width < cx.editor.tree.area().width {
+        // Render vertical separator bar at the right edge
+        // Center the thin separator in the gap
+        let gap_center_x = (area.x + area.width) as f32 * font_width + (font_width / 2.0);
+        let x = gap_center_x - (SEPARATOR_WIDTH_PX / 2.0);
+        let y = area.y as f32 * (font_size + LINE_SPACING);
+        let width = SEPARATOR_WIDTH_PX;
+        let height = area.height as f32 * (font_size + LINE_SPACING);
+
+        renderer.draw_rect(x, y, width, height, separator_color);
+      }
+
+      // Check if there's a view below (for horizontal splits)
+      if area.y + area.height < cx.editor.tree.area().height {
+        // Render horizontal separator bar at the bottom edge
+        // NOTE: Horizontal splits have NO gap in the tree layout (unlike vertical splits),
+        // We reserve SEPARATOR_HEIGHT_PX at the bottom of each view for the separator
+        let x = area.x as f32 * font_width;
+        let y = (area.y + area.height) as f32 * (font_size + LINE_SPACING) - SEPARATOR_HEIGHT_PX;
+        let width = area.width as f32 * font_width;
+        let height = SEPARATOR_HEIGHT_PX;
+
+        renderer.draw_rect(x, y, width, height, separator_color);
+      }
+    }
+  }
+
+  /// Render completion and signature help popups for the focused view
+  fn render_popups(&mut self, area: Rect, renderer: &mut Surface, cx: &mut Context) {
     // Render completion popup on top if active
     if let Some(ref mut completion) = self.completion {
       // Position completion popup
@@ -1358,13 +1485,5 @@ impl Component for EditorView {
     if let Some(ref mut sig_help) = self.signature_help {
       sig_help.render(area, renderer, cx);
     }
-
-    // Clear dirty regions after successful render
-    self.dirty_region.clear();
-  }
-
-  fn cursor(&self, _area: Rect, _ctx: &Editor) -> (Option<Position>, CursorKind) {
-    // TODO: Get cursor position from the current view
-    (None, CursorKind::Hidden)
   }
 }

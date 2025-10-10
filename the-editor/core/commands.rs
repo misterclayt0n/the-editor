@@ -4522,12 +4522,6 @@ fn searcher(cx: &mut Context, direction: Direction) {
       // Handle events
       match event {
         PromptEvent::Update | PromptEvent::Validate => {
-          if matches!(event, PromptEvent::Validate) {
-            cx.editor.registers.last_search_register = reg;
-            // Clear custom mode string on validation
-            cx.editor.clear_custom_mode_str();
-          }
-
           // Skip empty input
           if input.is_empty() {
             return;
@@ -4541,6 +4535,17 @@ fn searcher(cx: &mut Context, direction: Direction) {
               return;
             },
           };
+
+          // Store the search query in the register on validation
+          if matches!(event, PromptEvent::Validate) {
+            if let Err(err) = cx.editor.registers.push(reg, input.to_string()) {
+              cx.editor.set_error(err.to_string());
+              return;
+            }
+            cx.editor.registers.last_search_register = reg;
+            // Clear custom mode string on validation
+            cx.editor.clear_custom_mode_str();
+          }
 
           search_impl(
             &mut cx.editor,

@@ -9,14 +9,15 @@ use crate::{
   },
   theme::Theme,
   ui::{
+    UI_FONT_WIDTH,
     compositor::Surface,
     text_decorations::Decoration,
-    UI_FONT_WIDTH,
   },
 };
 
 /// Inlay hints decoration that shows LSP inlay hints aligned to the right
-/// Only displays hints when the cursor is positioned exactly at the hint's anchor character
+/// Only displays hints when the cursor is positioned exactly at the hint's
+/// anchor character
 pub struct InlayHints<'a> {
   // All inlay hint annotations
   type_hints:      &'a [InlineAnnotation],
@@ -85,9 +86,9 @@ impl<'a> InlayHints<'a> {
       .unwrap_or(Color::rgba(0.6, 0.6, 0.6, 0.8));
 
     InlayHints {
-      type_hints:      &hints.type_inlay_hints,
+      type_hints: &hints.type_inlay_hints,
       parameter_hints: &hints.parameter_inlay_hints,
-      other_hints:     &hints.other_inlay_hints,
+      other_hints: &hints.other_inlay_hints,
       type_color,
       parameter_color,
       other_color,
@@ -96,12 +97,12 @@ impl<'a> InlayHints<'a> {
       base_y,
       line_height,
       viewport_width,
-      type_idx:         0,
-      parameter_idx:    0,
-      other_idx:        0,
-      pending_hints:    Vec::new(),
+      type_idx: 0,
+      parameter_idx: 0,
+      other_idx: 0,
+      pending_hints: Vec::new(),
       current_doc_line: 0,
-      last_col:         0,
+      last_col: 0,
     }
   }
 
@@ -279,7 +280,8 @@ impl Decoration for InlayHints<'_> {
   fn decorate_line(&mut self, surface: &mut Surface, pos: (usize, u16)) {
     let (doc_line, visual_line) = pos;
 
-    // If switching to a new document line, render any pending hints from previous line
+    // If switching to a new document line, render any pending hints from previous
+    // line
     if doc_line != self.current_doc_line && !self.pending_hints.is_empty() {
       self.render_pending_hints(surface, visual_line.saturating_sub(1), self.last_col);
     }

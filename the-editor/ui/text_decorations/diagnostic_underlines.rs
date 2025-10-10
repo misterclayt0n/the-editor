@@ -92,7 +92,14 @@ impl<'a> DiagnosticUnderlines<'a> {
     }
   }
 
-  fn draw_underline(&self, surface: &mut Surface, start_col: usize, end_col: usize, row: u16, severity: Severity) {
+  fn draw_underline(
+    &self,
+    surface: &mut Surface,
+    start_col: usize,
+    end_col: usize,
+    row: u16,
+    severity: Severity,
+  ) {
     if start_col >= end_col {
       return; // No underline to draw
     }
@@ -100,11 +107,13 @@ impl<'a> DiagnosticUnderlines<'a> {
     let color = self.severity_color(severity);
 
     // Y position: place the underline character at the same baseline as the text
-    // The text rendering system will position the "▁" character correctly relative to baseline
+    // The text rendering system will position the "▁" character correctly relative
+    // to baseline
     let base_y_for_line = self.base_y + (row as f32) * self.line_height;
 
     // Draw individual "▁" characters for each column, matching how text is rendered
-    // This ensures perfect alignment since we're using the same font rendering system
+    // This ensures perfect alignment since we're using the same font rendering
+    // system
     for col in start_col..end_col {
       let x = self.base_x + (col as f32) * self.font_width;
       surface.draw_decoration_grapheme("▁", color, x, base_y_for_line);
@@ -152,12 +161,18 @@ impl Decoration for DiagnosticUnderlines<'_> {
         // We're inside a diagnostic range
         if let Some((_, end_col, current_severity)) = &mut self.current_underline {
           // Update the end column
-          let vis_col = grapheme.visual_pos.col.saturating_sub(self.horizontal_offset);
+          let vis_col = grapheme
+            .visual_pos
+            .col
+            .saturating_sub(self.horizontal_offset);
           *end_col = vis_col + grapheme.raw.width();
           *current_severity = (*current_severity).max(diag.severity());
         } else {
           // Start a new underline
-          let vis_col = grapheme.visual_pos.col.saturating_sub(self.horizontal_offset);
+          let vis_col = grapheme
+            .visual_pos
+            .col
+            .saturating_sub(self.horizontal_offset);
           self.current_underline = Some((vis_col, vis_col + grapheme.raw.width(), diag.severity()));
         }
 

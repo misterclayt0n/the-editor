@@ -83,15 +83,15 @@ impl Styles {
 
 /// Inline diagnostics decoration for rendering diagnostic messages
 pub struct InlineDiagnostics<'a> {
-  state:               InlineDiagnosticAccumulator<'a>,
-  eol_diagnostics:     crate::core::diagnostics::DiagnosticFilter,
-  styles:              Styles,
-  base_x:              f32,
-  base_y:              f32,
-  line_height:         f32,
-  font_width:          f32,
-  viewport_width:      u16,
-  horizontal_offset:   usize,
+  state:             InlineDiagnosticAccumulator<'a>,
+  eol_diagnostics:   crate::core::diagnostics::DiagnosticFilter,
+  styles:            Styles,
+  base_x:            f32,
+  base_y:            f32,
+  line_height:       f32,
+  font_width:        f32,
+  viewport_width:    u16,
+  horizontal_offset: usize,
 }
 
 impl<'a> InlineDiagnostics<'a> {
@@ -215,7 +215,8 @@ impl<'a> InlineDiagnostics<'a> {
     for grapheme in formatter {
       last_row = grapheme.visual_pos.row;
       let x = self.base_x + ((text_col + grapheme.visual_pos.col as u16) as f32) * self.font_width;
-      let y = self.base_y + ((*current_row + grapheme.visual_pos.row as u16) as f32) * self.line_height;
+      let y =
+        self.base_y + ((*current_row + grapheme.visual_pos.row as u16) as f32) * self.line_height;
 
       // Convert grapheme to string for rendering
       let grapheme_str = match &grapheme.raw {
@@ -242,7 +243,12 @@ impl<'a> InlineDiagnostics<'a> {
   }
 
   /// Draw multiple diagnostics stacked together
-  fn draw_multi_diagnostics(&self, surface: &mut Surface, stack: &mut Vec<(&Diagnostic, u16)>, row: &mut u16) {
+  fn draw_multi_diagnostics(
+    &self,
+    surface: &mut Surface,
+    stack: &mut Vec<(&Diagnostic, u16)>,
+    row: &mut u16,
+  ) {
     let Some(&(last_diag, last_anchor)) = stack.last() else {
       return;
     };
@@ -308,7 +314,13 @@ impl<'a> InlineDiagnostics<'a> {
   }
 
   /// Draw all diagnostics in the stack
-  fn draw_diagnostics(&self, surface: &mut Surface, stack: &mut Vec<(&Diagnostic, u16)>, first_row: u16, current_row: &mut u16) {
+  fn draw_diagnostics(
+    &self,
+    surface: &mut Surface,
+    stack: &mut Vec<(&Diagnostic, u16)>,
+    first_row: u16,
+    current_row: &mut u16,
+  ) {
     let mut stack_iter = stack.drain(..).rev().peekable();
     let mut last_anchor = self.viewport_width;
 
@@ -365,14 +377,16 @@ impl Decoration for InlineDiagnostics<'_> {
           .iter()
           .filter(|(diag, _)| eol_filter <= diag.severity());
         match filter {
-          DiagnosticFilter::Enable(inline_filter) => eol_diagnostics
-            .filter(|(diag, _)| inline_filter > diag.severity())
-            .max_by_key(|(diagnostic, _)| diagnostic.severity()),
+          DiagnosticFilter::Enable(inline_filter) => {
+            eol_diagnostics
+              .filter(|(diag, _)| inline_filter > diag.severity())
+              .max_by_key(|(diagnostic, _)| diagnostic.severity())
+          },
           DiagnosticFilter::Disable => {
             eol_diagnostics.max_by_key(|(diagnostic, _)| diagnostic.severity())
-          }
+          },
         }
-      }
+      },
       DiagnosticFilter::Disable => None,
     };
 
@@ -388,8 +402,9 @@ impl Decoration for InlineDiagnostics<'_> {
     }
 
     // Check if there's enough space to render inline diagnostics
-    // Like Helix, we need a minimum viewport width to render the arrows and messages
-    // Require at least 60 columns for inline diagnostics to look reasonable
+    // Like Helix, we need a minimum viewport width to render the arrows and
+    // messages Require at least 60 columns for inline diagnostics to look
+    // reasonable
     const MIN_VIEWPORT_WIDTH_FOR_INLINE: u16 = 60;
     if self.viewport_width < MIN_VIEWPORT_WIDTH_FOR_INLINE {
       // Not enough space - clear the stack and only show the underlines

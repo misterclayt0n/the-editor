@@ -5,12 +5,19 @@ use std::{
 };
 
 use anyhow::{
-  anyhow, bail, Result
+  Result,
+  anyhow,
+  bail,
 };
 
 use super::commands::Context;
 use crate::{
-  doc, editor::{Action, Editor}, ui::components::prompt::Completion
+  doc,
+  editor::{
+    Action,
+    Editor,
+  },
+  ui::components::prompt::Completion,
 };
 
 /// Type alias for a command function that takes a context and arguments

@@ -48,9 +48,9 @@ pub enum CachedPreview {
 /// Preview data prepared for rendering (to avoid borrow issues)
 enum PreviewData {
   Document {
-    lines: Vec<String>,
+    lines:       Vec<String>,
     /// Syntax highlights: (highlight, byte_range)
-    highlights: Vec<(crate::core::syntax::Highlight, std::ops::Range<usize>)>,
+    highlights:  Vec<(crate::core::syntax::Highlight, std::ops::Range<usize>)>,
     /// Offset of the first line in the document (for scrolled views)
     line_offset: usize,
     /// Byte offset of the first line in the document
@@ -87,14 +87,14 @@ pub type ColumnFormatFn<T, D> = for<'a> fn(&'a T, &'a D) -> String;
 
 /// A column in the picker table
 pub struct Column<T, D> {
-  pub name:          Arc<str>,
-  pub format:        ColumnFormatFn<T, D>,
+  pub name:           Arc<str>,
+  pub format:         ColumnFormatFn<T, D>,
   /// Whether this column should be used for nucleo matching/filtering
-  pub filter:        bool,
+  pub filter:         bool,
   /// Whether this column is hidden (data-only, not displayed)
-  pub hidden:        bool,
-  /// Whether to truncate from the start (true) or end (false) when text is too long
-  /// Useful for file paths where you want to see the filename at the end
+  pub hidden:         bool,
+  /// Whether to truncate from the start (true) or end (false) when text is too
+  /// long Useful for file paths where you want to see the filename at the end
   pub truncate_start: bool,
 }
 
@@ -102,10 +102,10 @@ impl<T, D> Column<T, D> {
   /// Create a new column with the given name and format function
   pub fn new(name: impl Into<Arc<str>>, format: ColumnFormatFn<T, D>) -> Self {
     Self {
-      name:           name.into(),
+      name: name.into(),
       format,
-      filter:         true,
-      hidden:         false,
+      filter: true,
+      hidden: false,
       truncate_start: false,
     }
   }
@@ -153,12 +153,14 @@ pub type ActionHandler<T, D> = Arc<dyn Fn(&T, &D, PickerAction) -> bool + Send +
 
 /// Callback for dynamic queries that fetch items based on the query string
 /// Takes the query string and an injector to add items asynchronously
-/// This is useful for LSP workspace symbols, where we query the server as the user types
+/// This is useful for LSP workspace symbols, where we query the server as the
+/// user types
 pub type DynQueryCallback<T, D> = Arc<dyn Fn(String, Injector<T, D>) + Send + Sync>;
 
 /// Preview handler for custom preview loading (can be async)
 /// Takes a PathBuf and Context, returns an optional CachedPreview
-pub type PreviewHandler = Arc<dyn Fn(&std::path::Path, &Context) -> Option<CachedPreview> + Send + Sync>;
+pub type PreviewHandler =
+  Arc<dyn Fn(&std::path::Path, &Context) -> Option<CachedPreview> + Send + Sync>;
 
 /// A filter in the query
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -324,8 +326,9 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   height_smooth:            Option<f32>,
   height_anim_active:       bool,
   /// Preview callback to get file path from item, optionally with line range
-  /// Returns (PathBuf, Option<(start_line, end_line)>) where lines are 0-indexed
-  preview_fn:               Option<Arc<dyn Fn(&T) -> Option<(PathBuf, Option<(usize, usize)>)> + Send + Sync>>,
+  /// Returns (PathBuf, Option<(start_line, end_line)>) where lines are
+  /// 0-indexed
+  preview_fn: Option<Arc<dyn Fn(&T) -> Option<(PathBuf, Option<(usize, usize)>)> + Send + Sync>>,
   /// Custom preview handler for loading previews
   preview_handler:          Option<PreviewHandler>,
   /// Cache of loaded previews
@@ -459,8 +462,9 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
   }
 
   /// Set the preview callback to enable file preview
-  /// The callback returns an optional tuple of (PathBuf, Option<(start_line, end_line)>)
-  /// where line numbers are 0-indexed and the range will be highlighted in the preview
+  /// The callback returns an optional tuple of (PathBuf, Option<(start_line,
+  /// end_line)>) where line numbers are 0-indexed and the range will be
+  /// highlighted in the preview
   pub fn with_preview<F>(mut self, preview_fn: F) -> Self
   where
     F: Fn(&T) -> Option<(PathBuf, Option<(usize, usize)>)> + Send + Sync + 'static,
@@ -471,7 +475,8 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
 
   /// Set a custom preview handler for loading previews
   /// This allows customizing how previews are loaded, including async loading
-  /// The handler receives the file path and context, and returns a CachedPreview
+  /// The handler receives the file path and context, and returns a
+  /// CachedPreview
   pub fn with_preview_handler(mut self, handler: PreviewHandler) -> Self {
     self.preview_handler = Some(handler);
     self
@@ -499,8 +504,9 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
   }
 
   /// Set the history register to store selected items
-  /// Selected items will be pushed to this register, allowing access to picker history
-  /// The format function converts items to strings for storage in the register
+  /// Selected items will be pushed to this register, allowing access to picker
+  /// history The format function converts items to strings for storage in the
+  /// register
   pub fn with_history_register<F>(mut self, register: char, format: F) -> Self
   where
     F: Fn(&T, &D) -> String + Send + Sync + 'static,
@@ -535,14 +541,17 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
         ctx.editor.syn_loader.clone(),
       );
 
-      // Set the same language as the original document to get proper syntax highlighting
+      // Set the same language as the original document to get proper syntax
+      // highlighting
       if let Some(ref lang) = doc.language {
         let loader = ctx.editor.syn_loader.load();
         temp_doc.set_language(Some(lang.clone()), &loader);
       }
 
       // Cache it (it will be replaced on next call if document changes)
-      self.preview_cache.insert(path.clone(), CachedPreview::Document(Box::new(temp_doc)));
+      self
+        .preview_cache
+        .insert(path.clone(), CachedPreview::Document(Box::new(temp_doc)));
       return Some((&self.preview_cache[&path], line_range));
     }
 
@@ -569,7 +578,11 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
             .filter_map(|entry| entry.ok())
             .map(|entry| {
               let file_name = entry.file_name().to_string_lossy().to_string();
-              let is_dir = entry.file_type().ok().map(|ft| ft.is_dir()).unwrap_or(false);
+              let is_dir = entry
+                .file_type()
+                .ok()
+                .map(|ft| ft.is_dir())
+                .unwrap_or(false);
               if is_dir {
                 format!("{}/", file_name)
               } else {
@@ -615,7 +628,8 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
             true, // detect language
             ctx.editor.config.clone(),
             ctx.editor.syn_loader.clone(),
-          ).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+          )
+          .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
           Ok(CachedPreview::Document(Box::new(doc)))
         } else {
@@ -796,9 +810,7 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
         String::new()
       } else {
         // Get column-specific pattern, or empty if no filters apply
-        parsed
-          .pattern_for_column(&column.name)
-          .unwrap_or_default()
+        parsed.pattern_for_column(&column.name).unwrap_or_default()
       };
 
       self.matcher.pattern.reparse(
@@ -837,8 +849,9 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       }
     }
 
-    // Clear existing items and bump version
+    // Clear existing items and bump version so background injectors stop
     self.version.fetch_add(1, Ordering::Relaxed);
+    self.matcher.restart(false);
     self.last_dyn_query = self.query.clone();
 
     // Call the dynamic query callback
@@ -930,7 +943,12 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     }
 
     // Convert char position back to byte position
-    self.query_cursor = self.query.chars().take(char_idx).map(|c| c.len_utf8()).sum();
+    self.query_cursor = self
+      .query
+      .chars()
+      .take(char_idx)
+      .map(|c| c.len_utf8())
+      .sum();
   }
 
   fn move_word_forward(&mut self) {
@@ -958,7 +976,12 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     }
 
     // Convert char position back to byte position
-    self.query_cursor = self.query.chars().take(char_idx).map(|c| c.len_utf8()).sum();
+    self.query_cursor = self
+      .query
+      .chars()
+      .take(char_idx)
+      .map(|c| c.len_utf8())
+      .sum();
   }
 
   fn delete_word_backward(&mut self) {
@@ -1013,9 +1036,10 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
 
     // Add to history if configured (format immediately to avoid borrow issues)
     let history_entry = if self.history_register.is_some() {
-      self.history_format.as_ref().map(|format_fn| {
-        format_fn(item, &self.editor_data)
-      })
+      self
+        .history_format
+        .as_ref()
+        .map(|format_fn| format_fn(item, &self.editor_data))
     } else {
       None
     };
@@ -1158,7 +1182,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
     // Emacs-style keybindings (like Helix)
     match (key.code, key.ctrl, key.alt, key.shift) {
       // Escape / Ctrl+c - close
-      (Key::Escape, _, _, _) | (Key::Char('c'), true, _, _) => {
+      (Key::Escape, ..) | (Key::Char('c'), true, ..) => {
         self.close();
         let callback = Box::new(
           |compositor: &mut crate::ui::compositor::Compositor, _ctx: &mut Context| {
@@ -1215,12 +1239,12 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
       // Query text editing (Emacs-style)
       // Ctrl+b / Left - backward char
-      (Key::Char('b'), true, _, _) | (Key::Left, false, false, false) => {
+      (Key::Char('b'), true, ..) | (Key::Left, false, false, false) => {
         self.move_cursor_left();
         EventResult::Consumed(None)
       },
       // Ctrl+f / Right - forward char
-      (Key::Char('f'), true, _, _) | (Key::Right, false, false, false) => {
+      (Key::Char('f'), true, ..) | (Key::Right, false, false, false) => {
         self.move_cursor_right();
         EventResult::Consumed(None)
       },
@@ -1235,17 +1259,17 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         EventResult::Consumed(None)
       },
       // Ctrl+a - start of query line
-      (Key::Char('a'), true, _, _) => {
+      (Key::Char('a'), true, ..) => {
         self.query_cursor = 0;
         EventResult::Consumed(None)
       },
       // Ctrl+e - end of query line
-      (Key::Char('e'), true, _, _) => {
+      (Key::Char('e'), true, ..) => {
         self.query_cursor = self.query.len();
         EventResult::Consumed(None)
       },
       // Ctrl+h / Backspace - delete char backwards
-      (Key::Char('h'), true, _, _) | (Key::Backspace, false, false, _) => {
+      (Key::Char('h'), true, ..) | (Key::Backspace, false, false, _) => {
         self.delete_char_backwards();
         EventResult::Consumed(None)
       },
@@ -1255,50 +1279,50 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         EventResult::Consumed(None)
       },
       // Ctrl+w / Alt+Backspace / Ctrl+Backspace - delete word backward
-      (Key::Char('w'), true, _, _) | (Key::Backspace, _, true, _) | (Key::Backspace, true, _, _) => {
+      (Key::Char('w'), true, ..) | (Key::Backspace, _, true, _) | (Key::Backspace, true, ..) => {
         self.delete_word_backward();
         EventResult::Consumed(None)
       },
       // Alt+d / Alt+Delete / Ctrl+Delete - delete word forward
-      (Key::Char('d'), _, true, _) | (Key::Delete, _, true, _) | (Key::Delete, true, _, _) => {
+      (Key::Char('d'), _, true, _) | (Key::Delete, _, true, _) | (Key::Delete, true, ..) => {
         self.delete_word_forward();
         EventResult::Consumed(None)
       },
       // Ctrl+k - kill to end of query
-      (Key::Char('k'), true, _, _) => {
+      (Key::Char('k'), true, ..) => {
         self.kill_to_end();
         EventResult::Consumed(None)
       },
 
       // List navigation
       // Ctrl+p / Up / Shift+Tab - move up
-      (Key::Char('p'), true, _, _) | (Key::Up, false, false, false) | (Key::Tab, _, _, true) => {
+      (Key::Char('p'), true, ..) | (Key::Up, false, false, false) | (Key::Tab, _, _, true) => {
         self.move_up();
         EventResult::Consumed(None)
       },
       // Ctrl+n / Down / Tab - move down
-      (Key::Char('n'), true, _, _) | (Key::Down, false, false, false) | (Key::Tab, _, _, false) => {
+      (Key::Char('n'), true, ..) | (Key::Down, false, false, false) | (Key::Tab, _, _, false) => {
         self.move_down();
         EventResult::Consumed(None)
       },
       // Ctrl+u / PageUp - page up
-      (Key::Char('u'), true, _, _) | (Key::PageUp, _, _, _) => {
+      (Key::Char('u'), true, ..) | (Key::PageUp, ..) => {
         self.page_up();
         EventResult::Consumed(None)
       },
-      // Ctrl+d / PageDown - page down (note: conflicts with delete forward, but Ctrl+d for page down is more common in pickers)
-      // We handle delete forward with just Delete key above
-      (Key::Char('d'), true, _, _) | (Key::PageDown, _, _, _) => {
+      // Ctrl+d / PageDown - page down (note: conflicts with delete forward, but Ctrl+d for page
+      // down is more common in pickers) We handle delete forward with just Delete key above
+      (Key::Char('d'), true, ..) | (Key::PageDown, ..) => {
         self.page_down();
         EventResult::Consumed(None)
       },
       // Home - to start
-      (Key::Home, _, _, _) => {
+      (Key::Home, ..) => {
         self.to_start();
         EventResult::Consumed(None)
       },
       // End - to end
-      (Key::End, _, _, _) => {
+      (Key::End, ..) => {
         self.to_end();
         EventResult::Consumed(None)
       },
@@ -1380,10 +1404,14 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
     // Now extract preview data with mutable access for highlights
     let (preview_data, preview_line) = {
       let preview_fn = self.preview_fn.as_ref();
-      let selected_result = preview_fn.and_then(|f| {
-        let snapshot = self.matcher.snapshot();
-        snapshot.get_matched_item(self.cursor).map(|item| (f)(item.data))
-      }).flatten();
+      let selected_result = preview_fn
+        .and_then(|f| {
+          let snapshot = self.matcher.snapshot();
+          snapshot
+            .get_matched_item(self.cursor)
+            .map(|item| (f)(item.data))
+        })
+        .flatten();
 
       let (path, line_range) = if let Some((p, l)) = selected_result {
         (p, l)
@@ -1401,18 +1429,19 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
               let max_preview_lines = 200; // Maximum lines to load for preview
 
               // Determine which range of lines to load based on line_range
-              let (preview_start, preview_end) = if let Some((target_start, target_end)) = line_range {
-                // Calculate context around the target range
-                let target_middle = target_start + (target_end.saturating_sub(target_start)) / 2;
-                let half_context = max_preview_lines / 2;
+              let (preview_start, preview_end) =
+                if let Some((target_start, target_end)) = line_range {
+                  // Calculate context around the target range
+                  let target_middle = target_start + (target_end.saturating_sub(target_start)) / 2;
+                  let half_context = max_preview_lines / 2;
 
-                let start = target_middle.saturating_sub(half_context);
-                let end = (start + max_preview_lines).min(total_lines);
-                (start, end)
-              } else {
-                // No target range, load from the beginning
-                (0, total_lines.min(max_preview_lines))
-              };
+                  let start = target_middle.saturating_sub(half_context);
+                  let end = (start + max_preview_lines).min(total_lines);
+                  (start, end)
+                } else {
+                  // No target range, load from the beginning
+                  (0, total_lines.min(max_preview_lines))
+                };
 
               let lines: Vec<String> = (preview_start..preview_end)
                 .map(|i| text.line(i).to_string())
@@ -1426,7 +1455,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 text.len_bytes()
               };
 
-              let highlights = doc.get_viewport_highlights(start_byte..end_byte, &ctx.editor.syn_loader.load())
+              let highlights = doc
+                .get_viewport_highlights(start_byte..end_byte, &ctx.editor.syn_loader.load())
                 .unwrap_or_default();
 
               PreviewData::Document {
@@ -1635,7 +1665,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       picker_bg,
     );
 
-    // Calculate mask width for overlay region (covers picker and preview if visible)
+    // Calculate mask width for overlay region (covers picker and preview if
+    // visible)
     let mask_width = if self.preview_anim > 0.0 {
       // Mask covers both picker and preview panels
       total_width * scale
@@ -1646,778 +1677,793 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
     // Render picker content in overlay mode with automatic masking
     surface.with_overlay_region(x, y, mask_width, height_scaled, |surface| {
-
-    // Apply alpha to border color
-    let border_color_anim = Color::new(
-      border_color.r,
-      border_color.g,
-      border_color.b,
-      border_color.a * alpha * 0.95,
-    );
-
-    // Draw rounded border outline (button-style)
-    surface.draw_rounded_rect_stroke(
-      x,
-      y,
-      picker_width_scaled,
-      height_scaled,
-      corner_radius,
-      border_thickness,
-      border_color_anim,
-    );
-
-    // Apply alpha to text colors
-    let query_color_anim = Color::new(
-      query_color.r,
-      query_color.g,
-      query_color.b,
-      query_color.a * alpha,
-    );
-    let count_color_anim = Color::new(
-      count_color.r,
-      count_color.g,
-      count_color.b,
-      count_color.a * alpha,
-    );
-    let text_color_anim = Color::new(
-      text_color.r,
-      text_color.g,
-      text_color.b,
-      text_color.a * alpha,
-    );
-    let selected_fg_anim = Color::new(
-      selected_fg.r,
-      selected_fg.g,
-      selected_fg.b,
-      selected_fg.a * alpha,
-    );
-    let sep_color_anim = Color::new(sep_color.r, sep_color.g, sep_color.b, sep_color.a * alpha);
-
-    // Calculate count_width early for layout
-    let count_text = format!(
-      "{}/{}",
-      snapshot.matched_item_count(),
-      snapshot.item_count()
-    );
-    let count_width = count_text.len() as f32 * UI_FONT_WIDTH;
-
-    // Draw input prompt box with colored border and matching background
-    // The box should span the full width to include both input and count
-    let prompt_box_padding = 8.0; // Increased internal padding
-    let prompt_box_x = x + 8.0 - prompt_box_padding;
-    let prompt_box_y = y + 8.0 - prompt_box_padding;
-    let prompt_box_width = picker_width_scaled - 16.0 + prompt_box_padding * 2.0; // Full width
-    let prompt_box_height = line_height + prompt_box_padding * 2.0; // Account for vertical padding
-    let prompt_box_radius = 6.0; // Slightly larger radius
-
-    // Draw input box background (same as border color but more transparent)
-    let input_box_bg = Color::new(
-      border_color.r,
-      border_color.g,
-      border_color.b,
-      0.15 * alpha, // Subtle background tint
-    );
-    surface.draw_rounded_rect(
-      prompt_box_x,
-      prompt_box_y,
-      prompt_box_width,
-      prompt_box_height,
-      prompt_box_radius,
-      input_box_bg,
-    );
-
-    // Draw input box border
-    let input_box_border = Color::new(
-      border_color.r,
-      border_color.g,
-      border_color.b,
-      border_color.a * alpha * 0.6,
-    );
-    surface.draw_rounded_rect_stroke(
-      prompt_box_x,
-      prompt_box_y,
-      prompt_box_width,
-      prompt_box_height,
-      prompt_box_radius,
-      1.0,
-      input_box_border,
-    );
-
-    // Draw search query with prompt and cursor (similar to command prompt)
-    let prompt_prefix = "› ";
-    let full_text = format!("{}{}", prompt_prefix, self.query);
-    let prompt_x = x + 8.0;
-    let prompt_y = y + 8.0;
-    let prefix_len = prompt_prefix.chars().count();
-
-    // Get cursor colors from theme
-    let cursor_style = theme.get("ui.cursor");
-    let cursor_bg = cursor_style
-      .bg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(1.0, 1.0, 1.0, 1.0));
-    let cursor_fg = cursor_style
-      .fg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.0, 0.0, 0.0, 1.0));
-
-    // Calculate visible cursor column
-    let visible_cursor_col = prefix_len + self.query_cursor;
-
-    // Cursor animation
-    let target_x = prompt_x + visible_cursor_col as f32 * UI_FONT_WIDTH;
-    let cursor_lerp_factor = ctx.editor.config().cursor_lerp_factor;
-    let cursor_anim_enabled = ctx.editor.config().cursor_anim_enabled;
-
-    let anim_x = if cursor_anim_enabled {
-      let mut sx = self.query_cursor_pos_smooth.unwrap_or(target_x);
-      let dx = target_x - sx;
-      sx += dx * cursor_lerp_factor;
-      self.query_cursor_pos_smooth = Some(sx);
-      self.query_cursor_anim_active = dx.abs() > 0.5;
-      sx
-    } else {
-      self.query_cursor_anim_active = false;
-      self.query_cursor_pos_smooth = Some(target_x);
-      target_x
-    };
-
-    // Draw cursor background
-    const CURSOR_HEIGHT_EXTENSION: f32 = 4.0;
-    let cursor_bg_anim = Color::new(cursor_bg.r, cursor_bg.g, cursor_bg.b, cursor_bg.a * alpha);
-    surface.draw_rect(
-      anim_x,
-      prompt_y,
-      UI_FONT_WIDTH,
-      UI_FONT_SIZE + CURSOR_HEIGHT_EXTENSION,
-      cursor_bg_anim,
-    );
-
-    // Render text character by character (like prompt does)
-    for (i, ch) in full_text.chars().enumerate() {
-      let char_x = prompt_x + i as f32 * UI_FONT_WIDTH;
-      let color = if i == visible_cursor_col {
-        // Use cursor foreground color for character under cursor
-        Color::new(cursor_fg.r, cursor_fg.g, cursor_fg.b, cursor_fg.a * alpha)
-      } else {
-        query_color_anim
-      };
-
-      surface.draw_text(TextSection {
-        position: (char_x, prompt_y),
-        texts:    vec![TextSegment {
-          content: ch.to_string(),
-          style:   TextStyle {
-            color,
-            ..Default::default()
-          },
-        }],
-      });
-    }
-
-    // Draw match count (count_text and count_width already calculated above)
-    surface.draw_text(TextSection {
-      position: (x + picker_width_scaled - count_width - 16.0, y + 8.0),
-      texts:    vec![TextSegment {
-        content: count_text,
-        style:   TextStyle {
-          color: count_color_anim,
-          ..Default::default()
-        },
-      }],
-    });
-
-    // Draw separator
-    let sep_y = y + header_height * scale;
-    surface.draw_rect(
-      x + 4.0,
-      sep_y,
-      picker_width_scaled - 8.0,
-      1.0,
-      sep_color_anim,
-    );
-
-    // Draw results
-    let results_y = sep_y + 8.0;
-    // Use scroll_offset for rendering (VSCode-style independent scrolling)
-    let offset = self.scroll_offset;
-    let end = (offset + self.completion_height as u32).min(len);
-
-    // Increased padding for button-like items (made fatter)
-    let item_padding_x = 12.0;
-    let item_padding_y = 8.0;
-    let item_height = line_height * scale + item_padding_y * 2.0;
-    let item_gap = 3.0; // Small gap between items
-
-    // Cache layout info for mouse hit testing
-    self.cached_layout = Some(PickerLayout {
-      x,
-      y,
-      picker_width: picker_width_scaled,
-      height: height_scaled,
-      results_y,
-      item_height,
-      item_gap,
-      offset,
-      visible_count: (end - offset).min(self.completion_height as u32),
-    });
-
-    for (i, item_idx) in (offset..end).enumerate() {
-      if let Some(item) = snapshot.get_matched_item(item_idx) {
-        let item_y = results_y + i as f32 * (item_height + item_gap);
-        let is_selected = item_idx == self.cursor;
-        let is_hovered = self.hovered_item == Some(item_idx);
-
-        // Button-like item with rounded corners
-        let item_x = x + 8.0;
-        let item_width = picker_width_scaled - 16.0;
-        let item_radius = 4.0;
-
-        let selection_gap = (item_height * 0.12).clamp(1.5, item_height * 0.35);
-        let selection_height = (item_height - selection_gap).max(item_height * 0.55);
-        let selection_y = item_y;
-
-        // Alternating stripe background to hint at row separation
-        let stripe_primary = Self::mix_rgb(picker_bg, button_fill_color, 0.28);
-        let stripe_secondary = Self::mix_rgb(picker_bg, button_fill_color, 0.18);
-        let mut stripe_color = if item_idx % 2 == 0 {
-          Self::adjust_lightness(stripe_primary, 0.02)
-        } else {
-          Self::adjust_lightness(stripe_secondary, -0.015)
-        };
-        stripe_color.a = (picker_bg.a * 0.92).clamp(0.0, 1.0);
-        surface.draw_rounded_rect(
-          item_x,
-          item_y,
-          item_width,
-          item_height,
-          item_radius,
-          stripe_color,
-        );
-
-        if is_selected {
-          let selection_t = self.selection_anim.clamp(0.0, 1.0);
-          let selection_ease = selection_t * selection_t * (3.0 - 2.0 * selection_t);
-
-          let mut fill_color = picker_selected_fill;
-          fill_color.a = (fill_color.a * (0.82 + 0.18 * selection_ease)).clamp(0.0, 1.0);
-          surface.draw_rounded_rect(
-            item_x,
-            selection_y,
-            item_width,
-            selection_height,
-            item_radius,
-            fill_color,
-          );
-
-          let mut outline_color = picker_selected_outline;
-          outline_color.a = (outline_color.a * alpha).clamp(0.0, 1.0);
-
-          let bottom_thickness = (selection_height * 0.035).clamp(0.6, 1.2);
-          let side_thickness = (bottom_thickness * 1.55).min(bottom_thickness + 1.6);
-          let top_thickness = (bottom_thickness * 2.2).min(bottom_thickness + 2.4);
-          surface.draw_rounded_rect_stroke_fade(
-            item_x,
-            selection_y,
-            item_width,
-            selection_height,
-            item_radius,
-            top_thickness,
-            side_thickness,
-            bottom_thickness,
-            outline_color,
-          );
-
-          let top_center_x = item_x + item_width * 0.5;
-          let glow_color = Self::glow_rgb_from_base(picker_selected_outline);
-          let glow_strength = (alpha * (0.85 + 0.15 * selection_ease)).clamp(0.0, 1.0);
-          Button::draw_hover_layers(
-            surface,
-            item_x,
-            selection_y,
-            item_width,
-            selection_height,
-            item_radius,
-            picker_selected_outline,
-            glow_strength,
-          );
-
-          if self.selection_anim < 1.0 {
-            let pulse_ease = 1.0 - (1.0 - selection_t) * (1.0 - selection_t);
-            let center_y = selection_y + selection_height * 0.52;
-            let pulse_radius =
-              item_width.max(selection_height) * (0.42 + 0.35 * (1.0 - pulse_ease));
-            let pulse_alpha = (1.0 - pulse_ease) * 0.18 * alpha;
-            surface.draw_rounded_rect_glow(
-              item_x,
-              selection_y,
-              item_width,
-              selection_height,
-              item_radius,
-              top_center_x,
-              center_y,
-              pulse_radius,
-              Color::new(glow_color.r, glow_color.g, glow_color.b, pulse_alpha),
-            );
-          }
-        } else if is_hovered {
-          let mut hover_bg = Self::mix_rgb(stripe_color, picker_selected_outline, 0.15);
-          hover_bg.a = (hover_bg.a + 0.05 * alpha).clamp(0.0, 1.0);
-          surface.draw_rounded_rect(
-            item_x,
-            selection_y,
-            item_width,
-            selection_height,
-            item_radius,
-            hover_bg,
-          );
-
-          if let Some((hover_x, hover_y)) = self.hover_pos {
-            let clamped_x = hover_x.clamp(item_x, item_x + item_width);
-            let clamped_y = hover_y.clamp(selection_y, selection_y + selection_height);
-            let glow_color = Color::new(
-              picker_selected_outline.r,
-              picker_selected_outline.g,
-              picker_selected_outline.b,
-              0.1 * alpha,
-            );
-            surface.draw_rounded_rect_glow(
-              item_x,
-              selection_y,
-              item_width,
-              selection_height,
-              item_radius,
-              clamped_x,
-              clamped_y,
-              item_width.max(selection_height) * 0.9,
-              glow_color,
-            );
-          }
-        }
-
-        // Format item text from all visible columns
-        let mut display_text = String::new();
-        for (i, column) in self.columns.iter().filter(|c| !c.hidden).enumerate() {
-          if i > 0 {
-            display_text.push_str("  ");
-          }
-          display_text.push_str(&(column.format)(item.data, &self.editor_data));
-        }
-
-        // Skip rendering text if empty (should not happen, but safety check)
-        if display_text.is_empty() {
-          continue;
-        }
-
-        let prefix = "  ";
-
-        // Position text with padding
-        let text_x = item_x + item_padding_x;
-        let text_y = item_y + item_padding_y;
-
-        // Calculate available width for text (excluding padding)
-        let available_width = item_width - (item_padding_x * 2.0);
-        let prefix_width = prefix.len() as f32 * UI_FONT_WIDTH;
-        let text_available_width = available_width - prefix_width;
-        let max_chars = (text_available_width / UI_FONT_WIDTH).floor() as usize;
-
-        // Truncate text if it's too long
-        // Check if primary column uses truncate_start
-        let truncate_from_start = self.columns.iter()
-          .find(|c| c.filter && !c.hidden)
-          .map(|c| c.truncate_start)
-          .unwrap_or(false);
-
-        let truncated_text = if max_chars > 3 && display_text.chars().count() > max_chars {
-          let truncate_to = max_chars.saturating_sub(3);
-          if truncate_from_start {
-            // Truncate from start: "...filename"
-            let char_count = display_text.chars().count();
-            let start_idx = char_count.saturating_sub(truncate_to);
-            let truncated: String = display_text.chars().skip(start_idx).collect();
-            format!("...{}", truncated)
-          } else {
-            // Truncate from end: "filename..."
-            let truncated: String = display_text.chars().take(truncate_to).collect();
-            format!("{}...", truncated)
-          }
-        } else {
-          display_text
-        };
-
-        // Draw text in single color
-        let item_color = if is_selected {
-          selected_fg_anim
-        } else {
-          text_color_anim
-        };
-
-        surface.draw_text(TextSection {
-          position: (text_x, text_y),
-          texts:    vec![
-            TextSegment {
-              content: prefix.to_string(),
-              style:   TextStyle {
-                color: item_color,
-                ..Default::default()
-              },
-            },
-            TextSegment {
-              content: truncated_text,
-              style:   TextStyle {
-                color: item_color,
-                ..Default::default()
-              },
-            },
-          ],
-        });
-      }
-    }
-
-    // Draw preview panel with animation
-    if self.preview_anim > 0.0 {
-      let preview_ease = self.preview_anim * self.preview_anim * (3.0 - 2.0 * self.preview_anim); // Smoothstep
-
-      let preview_gap = 12.0; // Padding between picker and preview
-      let preview_x = x + picker_width_scaled + preview_gap;
-      let preview_width = (total_width - picker_width - preview_gap) * scale;
-
-      // Apply alpha to preview
-      let preview_alpha = alpha * preview_ease;
-      let bg_color_preview = Color::new(
-        bg_color.r,
-        bg_color.g,
-        bg_color.b,
-        bg_color.a * preview_alpha,
-      );
-      let border_color_preview = Color::new(
+      // Apply alpha to border color
+      let border_color_anim = Color::new(
         border_color.r,
         border_color.g,
         border_color.b,
-        border_color.a * preview_alpha,
-      );
-      let text_color_preview = Color::new(
-        text_color.r,
-        text_color.g,
-        text_color.b,
-        text_color.a * preview_alpha,
+        border_color.a * alpha * 0.95,
       );
 
-      // Draw preview background with rounded corners
-      surface.draw_rounded_rect(
-        preview_x,
-        y,
-        preview_width,
-        height_scaled,
-        corner_radius,
-        bg_color_preview,
-      );
-
-      // Draw preview border (button-style outline)
+      // Draw rounded border outline (button-style)
       surface.draw_rounded_rect_stroke(
-        preview_x,
+        x,
         y,
-        preview_width,
+        picker_width_scaled,
         height_scaled,
         corner_radius,
         border_thickness,
-        border_color_preview,
+        border_color_anim,
       );
 
-      // Render preview content with clipping
-      if let Some(preview) = &preview_data {
-        match preview {
-          PreviewData::Document { lines, highlights, line_offset, byte_offset } => {
-            // Render document content with clipping region
-            let padding = 12.0;
-            let line_height = UI_FONT_SIZE + 4.0;
-            let content_x = preview_x + padding;
-            let content_y = y + padding;
-            let content_width = preview_width - (padding * 2.0);
-            let content_height = height_scaled - (padding * 2.0);
+      // Apply alpha to text colors
+      let query_color_anim = Color::new(
+        query_color.r,
+        query_color.g,
+        query_color.b,
+        query_color.a * alpha,
+      );
+      let count_color_anim = Color::new(
+        count_color.r,
+        count_color.g,
+        count_color.b,
+        count_color.a * alpha,
+      );
+      let text_color_anim = Color::new(
+        text_color.r,
+        text_color.g,
+        text_color.b,
+        text_color.a * alpha,
+      );
+      let selected_fg_anim = Color::new(
+        selected_fg.r,
+        selected_fg.g,
+        selected_fg.b,
+        selected_fg.a * alpha,
+      );
+      let sep_color_anim = Color::new(sep_color.r, sep_color.g, sep_color.b, sep_color.a * alpha);
 
-            // Calculate how many lines we can show
-            let max_lines = (content_height / line_height).floor() as usize;
+      // Calculate count_width early for layout
+      let count_text = format!(
+        "{}/{}",
+        snapshot.matched_item_count(),
+        snapshot.item_count()
+      );
+      let count_width = count_text.len() as f32 * UI_FONT_WIDTH;
 
-            // If we have a preview line range, center the middle of the range in the view
-            // Note: lines are in document coordinates, but lines vector is offset by line_offset
-            let start_line = if let Some((range_start, range_end)) = preview_line {
-              // Adjust target range to be relative to our loaded lines
-              let relative_start = range_start.saturating_sub(*line_offset);
-              let relative_end = range_end.saturating_sub(*line_offset);
+      // Draw input prompt box with colored border and matching background
+      // The box should span the full width to include both input and count
+      let prompt_box_padding = 8.0; // Increased internal padding
+      let prompt_box_x = x + 8.0 - prompt_box_padding;
+      let prompt_box_y = y + 8.0 - prompt_box_padding;
+      let prompt_box_width = picker_width_scaled - 16.0 + prompt_box_padding * 2.0; // Full width
+      let prompt_box_height = line_height + prompt_box_padding * 2.0; // Account for vertical padding
+      let prompt_box_radius = 6.0; // Slightly larger radius
 
-              // Calculate the middle of the range
-              let range_height = relative_end.saturating_sub(relative_start);
-              let middle_line = relative_start + range_height / 2;
-              // Center the middle line, but ensure we don't go below 0
-              let half_visible = max_lines / 2;
-              middle_line.saturating_sub(half_visible).min(lines.len().saturating_sub(max_lines))
-            } else {
-              0
-            };
+      // Draw input box background (same as border color but more transparent)
+      let input_box_bg = Color::new(
+        border_color.r,
+        border_color.g,
+        border_color.b,
+        0.15 * alpha, // Subtle background tint
+      );
+      surface.draw_rounded_rect(
+        prompt_box_x,
+        prompt_box_y,
+        prompt_box_width,
+        prompt_box_height,
+        prompt_box_radius,
+        input_box_bg,
+      );
 
-            let end_line = (start_line + max_lines).min(lines.len());
-            let lines_to_show = end_line - start_line;
+      // Draw input box border
+      let input_box_border = Color::new(
+        border_color.r,
+        border_color.g,
+        border_color.b,
+        border_color.a * alpha * 0.6,
+      );
+      surface.draw_rounded_rect_stroke(
+        prompt_box_x,
+        prompt_box_y,
+        prompt_box_width,
+        prompt_box_height,
+        prompt_box_radius,
+        1.0,
+        input_box_border,
+      );
 
-            // Calculate max characters per line based on available width
-            let max_chars = (content_width / UI_FONT_WIDTH).floor() as usize;
+      // Draw search query with prompt and cursor (similar to command prompt)
+      let prompt_prefix = "› ";
+      let full_text = format!("{}{}", prompt_prefix, self.query);
+      let prompt_x = x + 8.0;
+      let prompt_y = y + 8.0;
+      let prefix_len = prompt_prefix.chars().count();
 
-            // Use overlay region for clipping
-            // Capture byte_offset for use in closure
-            let doc_byte_start = *byte_offset;
-            surface.with_overlay_region(
-              preview_x + padding,
-              y + padding,
-              content_width,
-              content_height,
-              |surface| {
-                let mut relative_byte_offset: usize = lines.iter().take(start_line).map(|s| s.len()).sum();
+      // Get cursor colors from theme
+      let cursor_style = theme.get("ui.cursor");
+      let cursor_bg = cursor_style
+        .bg
+        .map(crate::ui::theme_color_to_renderer_color)
+        .unwrap_or(Color::new(1.0, 1.0, 1.0, 1.0));
+      let cursor_fg = cursor_style
+        .fg
+        .map(crate::ui::theme_color_to_renderer_color)
+        .unwrap_or(Color::new(0.0, 0.0, 0.0, 1.0));
 
-                for (visible_idx, line_str) in lines.iter().skip(start_line).enumerate().take(lines_to_show) {
-                  let line_idx = start_line + visible_idx; // Index within lines vector
-                  let doc_line_idx = line_idx + line_offset; // Actual line number in document
+      // Calculate visible cursor column
+      let visible_cursor_col = prefix_len + self.query_cursor;
 
-                  // Calculate text baseline position (following same pattern as hover/completion)
-                  let text_y = content_y + UI_FONT_SIZE + visible_idx as f32 * line_height;
+      // Cursor animation
+      let target_x = prompt_x + visible_cursor_col as f32 * UI_FONT_WIDTH;
+      let cursor_lerp_factor = ctx.editor.config().cursor_lerp_factor;
+      let cursor_anim_enabled = ctx.editor.config().cursor_anim_enabled;
 
-                  // Draw highlight background for lines in the target range (use doc coordinates)
-                  let should_highlight = if let Some((range_start, range_end)) = preview_line {
-                    doc_line_idx >= range_start && doc_line_idx <= range_end
-                  } else {
-                    false
-                  };
-
-                  if should_highlight {
-                    let highlight_color = Color::new(
-                      border_color_preview.r,
-                      border_color_preview.g,
-                      border_color_preview.b,
-                      0.15 * preview_alpha,
-                    );
-                    // Draw highlight slightly above baseline, matching completion component
-                    surface.draw_rect(
-                      content_x,
-                      text_y - 2.0,
-                      content_width,
-                      line_height,
-                      highlight_color,
-                    );
-                  }
-                  // Trim trailing whitespace
-                  let trimmed = line_str.trim_end();
-                  let line_byte_len = line_str.len();
-
-                  // Calculate byte range for this line (relative to lines vector)
-                  let line_start_byte = relative_byte_offset;
-                  let line_end_byte = relative_byte_offset + line_byte_len;
-
-                  // Build text segments with syntax highlighting
-                  let mut segments = Vec::new();
-                  let mut current_char_idx = 0;
-                  let mut current_byte_in_line = 0;
-
-                  // Truncate if line is too long
-                  let max_display_chars = max_chars.saturating_sub(3);
-                  let should_truncate = trimmed.chars().count() > max_display_chars;
-
-                  for ch in trimmed.chars() {
-                    if should_truncate && current_char_idx >= max_display_chars {
-                      // Add ellipsis and stop
-                      segments.push(TextSegment {
-                        content: "...".to_string(),
-                        style: TextStyle {
-                          size: UI_FONT_SIZE,
-                          color: text_color_preview,
-                        },
-                      });
-                      break;
-                    }
-
-                    // Calculate byte position (relative to lines vector)
-                    let relative_byte_pos = line_start_byte + current_byte_in_line;
-                    // Convert to absolute document byte position for highlight lookup
-                    let doc_byte_pos = doc_byte_start + relative_byte_pos;
-
-                    // Find active highlight for this byte position
-                    let mut active_color = text_color_preview;
-                    for (highlight, range) in highlights.iter() {
-                      if range.contains(&doc_byte_pos) {
-                        // Apply theme color for this highlight
-                        let hl_style = theme.highlight(*highlight);
-                        if let Some(fg) = hl_style.fg {
-                          active_color = crate::ui::theme_color_to_renderer_color(fg);
-                          active_color.a *= preview_alpha;
-                        }
-                        break;
-                      }
-                    }
-
-                    // Check if we can merge with previous segment (same color)
-                    if let Some(last_seg) = segments.last_mut() {
-                      // Compare colors (approximately)
-                      let colors_match = (last_seg.style.color.r - active_color.r).abs() < 0.001
-                        && (last_seg.style.color.g - active_color.g).abs() < 0.001
-                        && (last_seg.style.color.b - active_color.b).abs() < 0.001;
-
-                      if colors_match {
-                        // Merge with previous segment
-                        last_seg.content.push(ch);
-                      } else {
-                        // Start new segment
-                        segments.push(TextSegment {
-                          content: ch.to_string(),
-                          style: TextStyle {
-                            size: UI_FONT_SIZE,
-                            color: active_color,
-                          },
-                        });
-                      }
-                    } else {
-                      // First segment
-                      segments.push(TextSegment {
-                        content: ch.to_string(),
-                        style: TextStyle {
-                          size: UI_FONT_SIZE,
-                          color: active_color,
-                        },
-                      });
-                    }
-
-                    current_char_idx += 1;
-                    current_byte_in_line += ch.len_utf8();
-                  }
-
-                  // Render the line with all segments
-                  if !segments.is_empty() {
-                    surface.draw_text(TextSection {
-                      position: (content_x, text_y),
-                      texts: segments,
-                    });
-                  }
-
-                  relative_byte_offset = line_end_byte;
-                }
-              },
-            );
-          },
-          PreviewData::Directory { entries } => {
-            // Render directory listing
-            let padding = 12.0;
-            let line_height = UI_FONT_SIZE + 4.0;
-            let content_x = preview_x + padding;
-            let content_y = y + padding;
-            let content_width = preview_width - (padding * 2.0);
-            let content_height = height_scaled - (padding * 2.0);
-
-            // Calculate how many entries we can show
-            let max_entries = (content_height / line_height).floor() as usize;
-            let entries_to_show = max_entries.min(entries.len());
-
-            // Calculate max characters per line based on available width
-            let max_chars = (content_width / UI_FONT_WIDTH).floor() as usize;
-
-            // Use overlay region for clipping
-            surface.with_overlay_region(
-              preview_x + padding,
-              y + padding,
-              content_width,
-              content_height,
-              |surface| {
-                for (idx, entry) in entries.iter().take(entries_to_show).enumerate() {
-                  let text_y = content_y + UI_FONT_SIZE + idx as f32 * line_height;
-
-                  let is_dir = entry.ends_with('/');
-
-                  // Use different colors for directories vs files
-                  let entry_color = if is_dir {
-                    // Directories: light blue
-                    let mut dir_color = Color::rgb(0.5, 0.7, 1.0);
-                    dir_color.a *= preview_alpha;
-                    dir_color
-                  } else {
-                    text_color_preview
-                  };
-
-                  // Truncate if entry name is too long
-                  let max_display_chars = max_chars.saturating_sub(3);
-                  let should_truncate = entry.chars().count() > max_display_chars;
-
-                  let display_text = if should_truncate {
-                    let truncated: String = entry.chars().take(max_display_chars).collect();
-                    format!("{}...", truncated)
-                  } else {
-                    entry.clone()
-                  };
-
-                  surface.draw_text(TextSection {
-                    position: (content_x, text_y),
-                    texts: vec![TextSegment {
-                      content: display_text,
-                      style: TextStyle {
-                        size: UI_FONT_SIZE,
-                        color: entry_color,
-                      },
-                    }],
-                  });
-                }
-
-                // Show count if there are more entries
-                if entries.len() > entries_to_show {
-                  let remaining = entries.len() - entries_to_show;
-                  let more_text = format!("... and {} more", remaining);
-                  let text_y = content_y + UI_FONT_SIZE + entries_to_show as f32 * line_height;
-
-                  surface.draw_text(TextSection {
-                    position: (content_x, text_y),
-                    texts: vec![TextSegment {
-                      content: more_text,
-                      style: TextStyle {
-                        size: UI_FONT_SIZE,
-                        color: text_color_preview,
-                      },
-                    }],
-                  });
-                }
-              },
-            );
-          },
-          PreviewData::Placeholder(placeholder) => {
-            // Show placeholder text centered
-            let text_width = placeholder.len() as f32 * surface.cell_width();
-            let text_x = preview_x + (preview_width - text_width) / 2.0;
-            let text_y = y + height_scaled / 2.0;
-
-            surface.draw_text(TextSection {
-              position: (text_x, text_y),
-              texts:    vec![TextSegment {
-                content: placeholder.to_string(),
-                style:   TextStyle {
-                  size: UI_FONT_SIZE,
-                  color: text_color_preview,
-                },
-              }],
-            });
-          },
-        }
+      let anim_x = if cursor_anim_enabled {
+        let mut sx = self.query_cursor_pos_smooth.unwrap_or(target_x);
+        let dx = target_x - sx;
+        sx += dx * cursor_lerp_factor;
+        self.query_cursor_pos_smooth = Some(sx);
+        self.query_cursor_anim_active = dx.abs() > 0.5;
+        sx
       } else {
-        // No preview available - show placeholder
-        let placeholder = "No preview";
-        let text_width = placeholder.len() as f32 * surface.cell_width();
-        let text_x = preview_x + (preview_width - text_width) / 2.0;
-        let text_y = y + height_scaled / 2.0;
+        self.query_cursor_anim_active = false;
+        self.query_cursor_pos_smooth = Some(target_x);
+        target_x
+      };
+
+      // Draw cursor background
+      const CURSOR_HEIGHT_EXTENSION: f32 = 4.0;
+      let cursor_bg_anim = Color::new(cursor_bg.r, cursor_bg.g, cursor_bg.b, cursor_bg.a * alpha);
+      surface.draw_rect(
+        anim_x,
+        prompt_y,
+        UI_FONT_WIDTH,
+        UI_FONT_SIZE + CURSOR_HEIGHT_EXTENSION,
+        cursor_bg_anim,
+      );
+
+      // Render text character by character (like prompt does)
+      for (i, ch) in full_text.chars().enumerate() {
+        let char_x = prompt_x + i as f32 * UI_FONT_WIDTH;
+        let color = if i == visible_cursor_col {
+          // Use cursor foreground color for character under cursor
+          Color::new(cursor_fg.r, cursor_fg.g, cursor_fg.b, cursor_fg.a * alpha)
+        } else {
+          query_color_anim
+        };
 
         surface.draw_text(TextSection {
-          position: (text_x, text_y),
+          position: (char_x, prompt_y),
           texts:    vec![TextSegment {
-            content: placeholder.to_string(),
+            content: ch.to_string(),
             style:   TextStyle {
-              size: UI_FONT_SIZE,
-              color: text_color_preview,
+              color,
+              ..Default::default()
             },
           }],
         });
       }
-    }
+
+      // Draw match count (count_text and count_width already calculated above)
+      surface.draw_text(TextSection {
+        position: (x + picker_width_scaled - count_width - 16.0, y + 8.0),
+        texts:    vec![TextSegment {
+          content: count_text,
+          style:   TextStyle {
+            color: count_color_anim,
+            ..Default::default()
+          },
+        }],
+      });
+
+      // Draw separator
+      let sep_y = y + header_height * scale;
+      surface.draw_rect(
+        x + 4.0,
+        sep_y,
+        picker_width_scaled - 8.0,
+        1.0,
+        sep_color_anim,
+      );
+
+      // Draw results
+      let results_y = sep_y + 8.0;
+      // Use scroll_offset for rendering (VSCode-style independent scrolling)
+      let offset = self.scroll_offset;
+      let end = (offset + self.completion_height as u32).min(len);
+
+      // Increased padding for button-like items (made fatter)
+      let item_padding_x = 12.0;
+      let item_padding_y = 8.0;
+      let item_height = line_height * scale + item_padding_y * 2.0;
+      let item_gap = 3.0; // Small gap between items
+
+      // Cache layout info for mouse hit testing
+      self.cached_layout = Some(PickerLayout {
+        x,
+        y,
+        picker_width: picker_width_scaled,
+        height: height_scaled,
+        results_y,
+        item_height,
+        item_gap,
+        offset,
+        visible_count: (end - offset).min(self.completion_height as u32),
+      });
+
+      for (i, item_idx) in (offset..end).enumerate() {
+        if let Some(item) = snapshot.get_matched_item(item_idx) {
+          let item_y = results_y + i as f32 * (item_height + item_gap);
+          let is_selected = item_idx == self.cursor;
+          let is_hovered = self.hovered_item == Some(item_idx);
+
+          // Button-like item with rounded corners
+          let item_x = x + 8.0;
+          let item_width = picker_width_scaled - 16.0;
+          let item_radius = 4.0;
+
+          let selection_gap = (item_height * 0.12).clamp(1.5, item_height * 0.35);
+          let selection_height = (item_height - selection_gap).max(item_height * 0.55);
+          let selection_y = item_y;
+
+          // Alternating stripe background to hint at row separation
+          let stripe_primary = Self::mix_rgb(picker_bg, button_fill_color, 0.28);
+          let stripe_secondary = Self::mix_rgb(picker_bg, button_fill_color, 0.18);
+          let mut stripe_color = if item_idx % 2 == 0 {
+            Self::adjust_lightness(stripe_primary, 0.02)
+          } else {
+            Self::adjust_lightness(stripe_secondary, -0.015)
+          };
+          stripe_color.a = (picker_bg.a * 0.92).clamp(0.0, 1.0);
+          surface.draw_rounded_rect(
+            item_x,
+            item_y,
+            item_width,
+            item_height,
+            item_radius,
+            stripe_color,
+          );
+
+          if is_selected {
+            let selection_t = self.selection_anim.clamp(0.0, 1.0);
+            let selection_ease = selection_t * selection_t * (3.0 - 2.0 * selection_t);
+
+            let mut fill_color = picker_selected_fill;
+            fill_color.a = (fill_color.a * (0.82 + 0.18 * selection_ease)).clamp(0.0, 1.0);
+            surface.draw_rounded_rect(
+              item_x,
+              selection_y,
+              item_width,
+              selection_height,
+              item_radius,
+              fill_color,
+            );
+
+            let mut outline_color = picker_selected_outline;
+            outline_color.a = (outline_color.a * alpha).clamp(0.0, 1.0);
+
+            let bottom_thickness = (selection_height * 0.035).clamp(0.6, 1.2);
+            let side_thickness = (bottom_thickness * 1.55).min(bottom_thickness + 1.6);
+            let top_thickness = (bottom_thickness * 2.2).min(bottom_thickness + 2.4);
+            surface.draw_rounded_rect_stroke_fade(
+              item_x,
+              selection_y,
+              item_width,
+              selection_height,
+              item_radius,
+              top_thickness,
+              side_thickness,
+              bottom_thickness,
+              outline_color,
+            );
+
+            let top_center_x = item_x + item_width * 0.5;
+            let glow_color = Self::glow_rgb_from_base(picker_selected_outline);
+            let glow_strength = (alpha * (0.85 + 0.15 * selection_ease)).clamp(0.0, 1.0);
+            Button::draw_hover_layers(
+              surface,
+              item_x,
+              selection_y,
+              item_width,
+              selection_height,
+              item_radius,
+              picker_selected_outline,
+              glow_strength,
+            );
+
+            if self.selection_anim < 1.0 {
+              let pulse_ease = 1.0 - (1.0 - selection_t) * (1.0 - selection_t);
+              let center_y = selection_y + selection_height * 0.52;
+              let pulse_radius =
+                item_width.max(selection_height) * (0.42 + 0.35 * (1.0 - pulse_ease));
+              let pulse_alpha = (1.0 - pulse_ease) * 0.18 * alpha;
+              surface.draw_rounded_rect_glow(
+                item_x,
+                selection_y,
+                item_width,
+                selection_height,
+                item_radius,
+                top_center_x,
+                center_y,
+                pulse_radius,
+                Color::new(glow_color.r, glow_color.g, glow_color.b, pulse_alpha),
+              );
+            }
+          } else if is_hovered {
+            let mut hover_bg = Self::mix_rgb(stripe_color, picker_selected_outline, 0.15);
+            hover_bg.a = (hover_bg.a + 0.05 * alpha).clamp(0.0, 1.0);
+            surface.draw_rounded_rect(
+              item_x,
+              selection_y,
+              item_width,
+              selection_height,
+              item_radius,
+              hover_bg,
+            );
+
+            if let Some((hover_x, hover_y)) = self.hover_pos {
+              let clamped_x = hover_x.clamp(item_x, item_x + item_width);
+              let clamped_y = hover_y.clamp(selection_y, selection_y + selection_height);
+              let glow_color = Color::new(
+                picker_selected_outline.r,
+                picker_selected_outline.g,
+                picker_selected_outline.b,
+                0.1 * alpha,
+              );
+              surface.draw_rounded_rect_glow(
+                item_x,
+                selection_y,
+                item_width,
+                selection_height,
+                item_radius,
+                clamped_x,
+                clamped_y,
+                item_width.max(selection_height) * 0.9,
+                glow_color,
+              );
+            }
+          }
+
+          // Format item text from all visible columns
+          let mut display_text = String::new();
+          for (i, column) in self.columns.iter().filter(|c| !c.hidden).enumerate() {
+            if i > 0 {
+              display_text.push_str("  ");
+            }
+            display_text.push_str(&(column.format)(item.data, &self.editor_data));
+          }
+
+          // Skip rendering text if empty (should not happen, but safety check)
+          if display_text.is_empty() {
+            continue;
+          }
+
+          let prefix = "  ";
+
+          // Position text with padding
+          let text_x = item_x + item_padding_x;
+          let text_y = item_y + item_padding_y;
+
+          // Calculate available width for text (excluding padding)
+          let available_width = item_width - (item_padding_x * 2.0);
+          let prefix_width = prefix.len() as f32 * UI_FONT_WIDTH;
+          let text_available_width = available_width - prefix_width;
+          let max_chars = (text_available_width / UI_FONT_WIDTH).floor() as usize;
+
+          // Truncate text if it's too long
+          // Check if primary column uses truncate_start
+          let truncate_from_start = self
+            .columns
+            .iter()
+            .find(|c| c.filter && !c.hidden)
+            .map(|c| c.truncate_start)
+            .unwrap_or(false);
+
+          let truncated_text = if max_chars > 3 && display_text.chars().count() > max_chars {
+            let truncate_to = max_chars.saturating_sub(3);
+            if truncate_from_start {
+              // Truncate from start: "...filename"
+              let char_count = display_text.chars().count();
+              let start_idx = char_count.saturating_sub(truncate_to);
+              let truncated: String = display_text.chars().skip(start_idx).collect();
+              format!("...{}", truncated)
+            } else {
+              // Truncate from end: "filename..."
+              let truncated: String = display_text.chars().take(truncate_to).collect();
+              format!("{}...", truncated)
+            }
+          } else {
+            display_text
+          };
+
+          // Draw text in single color
+          let item_color = if is_selected {
+            selected_fg_anim
+          } else {
+            text_color_anim
+          };
+
+          surface.draw_text(TextSection {
+            position: (text_x, text_y),
+            texts:    vec![
+              TextSegment {
+                content: prefix.to_string(),
+                style:   TextStyle {
+                  color: item_color,
+                  ..Default::default()
+                },
+              },
+              TextSegment {
+                content: truncated_text,
+                style:   TextStyle {
+                  color: item_color,
+                  ..Default::default()
+                },
+              },
+            ],
+          });
+        }
+      }
+
+      // Draw preview panel with animation
+      if self.preview_anim > 0.0 {
+        let preview_ease = self.preview_anim * self.preview_anim * (3.0 - 2.0 * self.preview_anim); // Smoothstep
+
+        let preview_gap = 12.0; // Padding between picker and preview
+        let preview_x = x + picker_width_scaled + preview_gap;
+        let preview_width = (total_width - picker_width - preview_gap) * scale;
+
+        // Apply alpha to preview
+        let preview_alpha = alpha * preview_ease;
+        let bg_color_preview = Color::new(
+          bg_color.r,
+          bg_color.g,
+          bg_color.b,
+          bg_color.a * preview_alpha,
+        );
+        let border_color_preview = Color::new(
+          border_color.r,
+          border_color.g,
+          border_color.b,
+          border_color.a * preview_alpha,
+        );
+        let text_color_preview = Color::new(
+          text_color.r,
+          text_color.g,
+          text_color.b,
+          text_color.a * preview_alpha,
+        );
+
+        // Draw preview background with rounded corners
+        surface.draw_rounded_rect(
+          preview_x,
+          y,
+          preview_width,
+          height_scaled,
+          corner_radius,
+          bg_color_preview,
+        );
+
+        // Draw preview border (button-style outline)
+        surface.draw_rounded_rect_stroke(
+          preview_x,
+          y,
+          preview_width,
+          height_scaled,
+          corner_radius,
+          border_thickness,
+          border_color_preview,
+        );
+
+        // Render preview content with clipping
+        if let Some(preview) = &preview_data {
+          match preview {
+            PreviewData::Document {
+              lines,
+              highlights,
+              line_offset,
+              byte_offset,
+            } => {
+              // Render document content with clipping region
+              let padding = 12.0;
+              let line_height = UI_FONT_SIZE + 4.0;
+              let content_x = preview_x + padding;
+              let content_y = y + padding;
+              let content_width = preview_width - (padding * 2.0);
+              let content_height = height_scaled - (padding * 2.0);
+
+              // Calculate how many lines we can show
+              let max_lines = (content_height / line_height).floor() as usize;
+
+              // If we have a preview line range, center the middle of the range in the view
+              // Note: lines are in document coordinates, but lines vector is offset by
+              // line_offset
+              let start_line = if let Some((range_start, range_end)) = preview_line {
+                // Adjust target range to be relative to our loaded lines
+                let relative_start = range_start.saturating_sub(*line_offset);
+                let relative_end = range_end.saturating_sub(*line_offset);
+
+                // Calculate the middle of the range
+                let range_height = relative_end.saturating_sub(relative_start);
+                let middle_line = relative_start + range_height / 2;
+                // Center the middle line, but ensure we don't go below 0
+                let half_visible = max_lines / 2;
+                middle_line
+                  .saturating_sub(half_visible)
+                  .min(lines.len().saturating_sub(max_lines))
+              } else {
+                0
+              };
+
+              let end_line = (start_line + max_lines).min(lines.len());
+              let lines_to_show = end_line - start_line;
+
+              // Calculate max characters per line based on available width
+              let max_chars = (content_width / UI_FONT_WIDTH).floor() as usize;
+
+              // Use overlay region for clipping
+              // Capture byte_offset for use in closure
+              let doc_byte_start = *byte_offset;
+              surface.with_overlay_region(
+                preview_x + padding,
+                y + padding,
+                content_width,
+                content_height,
+                |surface| {
+                  let mut relative_byte_offset: usize =
+                    lines.iter().take(start_line).map(|s| s.len()).sum();
+
+                  for (visible_idx, line_str) in lines
+                    .iter()
+                    .skip(start_line)
+                    .enumerate()
+                    .take(lines_to_show)
+                  {
+                    let line_idx = start_line + visible_idx; // Index within lines vector
+                    let doc_line_idx = line_idx + line_offset; // Actual line number in document
+
+                    // Calculate text baseline position (following same pattern as hover/completion)
+                    let text_y = content_y + UI_FONT_SIZE + visible_idx as f32 * line_height;
+
+                    // Draw highlight background for lines in the target range (use doc coordinates)
+                    let should_highlight = if let Some((range_start, range_end)) = preview_line {
+                      doc_line_idx >= range_start && doc_line_idx <= range_end
+                    } else {
+                      false
+                    };
+
+                    if should_highlight {
+                      let highlight_color = Color::new(
+                        border_color_preview.r,
+                        border_color_preview.g,
+                        border_color_preview.b,
+                        0.15 * preview_alpha,
+                      );
+                      // Draw highlight slightly above baseline, matching completion component
+                      surface.draw_rect(
+                        content_x,
+                        text_y - 2.0,
+                        content_width,
+                        line_height,
+                        highlight_color,
+                      );
+                    }
+                    // Trim trailing whitespace
+                    let trimmed = line_str.trim_end();
+                    let line_byte_len = line_str.len();
+
+                    // Calculate byte range for this line (relative to lines vector)
+                    let line_start_byte = relative_byte_offset;
+                    let line_end_byte = relative_byte_offset + line_byte_len;
+
+                    // Build text segments with syntax highlighting
+                    let mut segments = Vec::new();
+                    let mut current_char_idx = 0;
+                    let mut current_byte_in_line = 0;
+
+                    // Truncate if line is too long
+                    let max_display_chars = max_chars.saturating_sub(3);
+                    let should_truncate = trimmed.chars().count() > max_display_chars;
+
+                    for ch in trimmed.chars() {
+                      if should_truncate && current_char_idx >= max_display_chars {
+                        // Add ellipsis and stop
+                        segments.push(TextSegment {
+                          content: "...".to_string(),
+                          style:   TextStyle {
+                            size:  UI_FONT_SIZE,
+                            color: text_color_preview,
+                          },
+                        });
+                        break;
+                      }
+
+                      // Calculate byte position (relative to lines vector)
+                      let relative_byte_pos = line_start_byte + current_byte_in_line;
+                      // Convert to absolute document byte position for highlight lookup
+                      let doc_byte_pos = doc_byte_start + relative_byte_pos;
+
+                      // Find active highlight for this byte position
+                      let mut active_color = text_color_preview;
+                      for (highlight, range) in highlights.iter() {
+                        if range.contains(&doc_byte_pos) {
+                          // Apply theme color for this highlight
+                          let hl_style = theme.highlight(*highlight);
+                          if let Some(fg) = hl_style.fg {
+                            active_color = crate::ui::theme_color_to_renderer_color(fg);
+                            active_color.a *= preview_alpha;
+                          }
+                          break;
+                        }
+                      }
+
+                      // Check if we can merge with previous segment (same color)
+                      if let Some(last_seg) = segments.last_mut() {
+                        // Compare colors (approximately)
+                        let colors_match = (last_seg.style.color.r - active_color.r).abs() < 0.001
+                          && (last_seg.style.color.g - active_color.g).abs() < 0.001
+                          && (last_seg.style.color.b - active_color.b).abs() < 0.001;
+
+                        if colors_match {
+                          // Merge with previous segment
+                          last_seg.content.push(ch);
+                        } else {
+                          // Start new segment
+                          segments.push(TextSegment {
+                            content: ch.to_string(),
+                            style:   TextStyle {
+                              size:  UI_FONT_SIZE,
+                              color: active_color,
+                            },
+                          });
+                        }
+                      } else {
+                        // First segment
+                        segments.push(TextSegment {
+                          content: ch.to_string(),
+                          style:   TextStyle {
+                            size:  UI_FONT_SIZE,
+                            color: active_color,
+                          },
+                        });
+                      }
+
+                      current_char_idx += 1;
+                      current_byte_in_line += ch.len_utf8();
+                    }
+
+                    // Render the line with all segments
+                    if !segments.is_empty() {
+                      surface.draw_text(TextSection {
+                        position: (content_x, text_y),
+                        texts:    segments,
+                      });
+                    }
+
+                    relative_byte_offset = line_end_byte;
+                  }
+                },
+              );
+            },
+            PreviewData::Directory { entries } => {
+              // Render directory listing
+              let padding = 12.0;
+              let line_height = UI_FONT_SIZE + 4.0;
+              let content_x = preview_x + padding;
+              let content_y = y + padding;
+              let content_width = preview_width - (padding * 2.0);
+              let content_height = height_scaled - (padding * 2.0);
+
+              // Calculate how many entries we can show
+              let max_entries = (content_height / line_height).floor() as usize;
+              let entries_to_show = max_entries.min(entries.len());
+
+              // Calculate max characters per line based on available width
+              let max_chars = (content_width / UI_FONT_WIDTH).floor() as usize;
+
+              // Use overlay region for clipping
+              surface.with_overlay_region(
+                preview_x + padding,
+                y + padding,
+                content_width,
+                content_height,
+                |surface| {
+                  for (idx, entry) in entries.iter().take(entries_to_show).enumerate() {
+                    let text_y = content_y + UI_FONT_SIZE + idx as f32 * line_height;
+
+                    let is_dir = entry.ends_with('/');
+
+                    // Use different colors for directories vs files
+                    let entry_color = if is_dir {
+                      // Directories: light blue
+                      let mut dir_color = Color::rgb(0.5, 0.7, 1.0);
+                      dir_color.a *= preview_alpha;
+                      dir_color
+                    } else {
+                      text_color_preview
+                    };
+
+                    // Truncate if entry name is too long
+                    let max_display_chars = max_chars.saturating_sub(3);
+                    let should_truncate = entry.chars().count() > max_display_chars;
+
+                    let display_text = if should_truncate {
+                      let truncated: String = entry.chars().take(max_display_chars).collect();
+                      format!("{}...", truncated)
+                    } else {
+                      entry.clone()
+                    };
+
+                    surface.draw_text(TextSection {
+                      position: (content_x, text_y),
+                      texts:    vec![TextSegment {
+                        content: display_text,
+                        style:   TextStyle {
+                          size:  UI_FONT_SIZE,
+                          color: entry_color,
+                        },
+                      }],
+                    });
+                  }
+
+                  // Show count if there are more entries
+                  if entries.len() > entries_to_show {
+                    let remaining = entries.len() - entries_to_show;
+                    let more_text = format!("... and {} more", remaining);
+                    let text_y = content_y + UI_FONT_SIZE + entries_to_show as f32 * line_height;
+
+                    surface.draw_text(TextSection {
+                      position: (content_x, text_y),
+                      texts:    vec![TextSegment {
+                        content: more_text,
+                        style:   TextStyle {
+                          size:  UI_FONT_SIZE,
+                          color: text_color_preview,
+                        },
+                      }],
+                    });
+                  }
+                },
+              );
+            },
+            PreviewData::Placeholder(placeholder) => {
+              // Show placeholder text centered
+              let text_width = placeholder.len() as f32 * surface.cell_width();
+              let text_x = preview_x + (preview_width - text_width) / 2.0;
+              let text_y = y + height_scaled / 2.0;
+
+              surface.draw_text(TextSection {
+                position: (text_x, text_y),
+                texts:    vec![TextSegment {
+                  content: placeholder.to_string(),
+                  style:   TextStyle {
+                    size:  UI_FONT_SIZE,
+                    color: text_color_preview,
+                  },
+                }],
+              });
+            },
+          }
+        } else {
+          // No preview available - show placeholder
+          let placeholder = "No preview";
+          let text_width = placeholder.len() as f32 * surface.cell_width();
+          let text_x = preview_x + (preview_width - text_width) / 2.0;
+          let text_y = y + height_scaled / 2.0;
+
+          surface.draw_text(TextSection {
+            position: (text_x, text_y),
+            texts:    vec![TextSegment {
+              content: placeholder.to_string(),
+              style:   TextStyle {
+                size:  UI_FONT_SIZE,
+                color: text_color_preview,
+              },
+            }],
+          });
+        }
+      }
     }); // End overlay region
   }
 
@@ -2470,8 +2516,8 @@ mod tests {
 
   #[test]
   fn test_column_without_filtering_disables_filtering() {
-    let column =
-      Column::<TestItem, TestData>::new("Name", |item, _data| item.name.clone()).without_filtering();
+    let column = Column::<TestItem, TestData>::new("Name", |item, _data| item.name.clone())
+      .without_filtering();
 
     assert_eq!(column.name.as_ref(), "Name");
     assert!(!column.filter, "Column should not be filterable");
@@ -2526,7 +2572,9 @@ mod tests {
   fn test_picker_new_with_multiple_columns() {
     let columns = vec![
       Column::new("Name", |item: &TestItem, _data: &()| item.name.clone()),
-      Column::new("Value", |item: &TestItem, _data: &()| item.value.to_string()),
+      Column::new("Value", |item: &TestItem, _data: &()| {
+        item.value.to_string()
+      }),
     ];
 
     let items = vec![TestItem {
@@ -2545,7 +2593,9 @@ mod tests {
     let columns = vec![
       Column::new("Name", |item: &TestItem, _data: &()| item.name.clone()),
       Column::hidden("Hidden"),
-      Column::new("Value", |item: &TestItem, _data: &()| item.value.to_string()),
+      Column::new("Value", |item: &TestItem, _data: &()| {
+        item.value.to_string()
+      }),
     ];
 
     let items = vec![TestItem {
@@ -2563,7 +2613,10 @@ mod tests {
   fn test_picker_with_non_filterable_column() {
     let columns = vec![
       Column::new("Name", |item: &TestItem, _data: &()| item.name.clone()),
-      Column::new("Value", |item: &TestItem, _data: &()| item.value.to_string()).without_filtering(),
+      Column::new("Value", |item: &TestItem, _data: &()| {
+        item.value.to_string()
+      })
+      .without_filtering(),
     ];
 
     let items = vec![TestItem {
@@ -2582,7 +2635,10 @@ mod tests {
   fn test_picker_panics_with_no_filterable_columns() {
     let columns = vec![
       Column::new("Name", |item: &TestItem, _data: &()| item.name.clone()).without_filtering(),
-      Column::new("Value", |item: &TestItem, _data: &()| item.value.to_string()).without_filtering(),
+      Column::new("Value", |item: &TestItem, _data: &()| {
+        item.value.to_string()
+      })
+      .without_filtering(),
     ];
 
     let _picker = Picker::new(columns, 0, Vec::<TestItem>::new(), (), |_item| {});
@@ -2889,16 +2945,18 @@ mod tests {
     let action_log = Arc::new(Mutex::new(Vec::new()));
     let action_log_clone = action_log.clone();
 
-    let handler = Arc::new(move |item: &TestItem, data: &CustomData, action: PickerAction| {
-      action_log_clone.lock().unwrap().push((
-        item.name.clone(),
-        data.prefix.clone(),
-        action,
-      ));
-      true
-    });
+    let handler = Arc::new(
+      move |item: &TestItem, data: &CustomData, action: PickerAction| {
+        action_log_clone
+          .lock()
+          .unwrap()
+          .push((item.name.clone(), data.prefix.clone(), action));
+        true
+      },
+    );
 
-    let mut picker = Picker::new(columns, 0, items, editor_data, |_| {}).with_action_handler(handler);
+    let mut picker =
+      Picker::new(columns, 0, items, editor_data, |_| {}).with_action_handler(handler);
 
     picker.matcher.tick(10);
 
@@ -2908,7 +2966,11 @@ mod tests {
     assert_eq!(log.len(), 1);
     assert_eq!(
       log[0],
-      ("test".to_string(), "data_".to_string(), PickerAction::Primary)
+      (
+        "test".to_string(),
+        "data_".to_string(),
+        PickerAction::Primary
+      )
     );
   }
 
@@ -2924,41 +2986,38 @@ mod tests {
     let parsed = ParsedQuery::parse("foo");
     assert!(!parsed.is_empty());
     assert_eq!(parsed.filters.len(), 1);
-    assert_eq!(parsed.filters[0], QueryFilter::AllColumns("foo".to_string()));
+    assert_eq!(
+      parsed.filters[0],
+      QueryFilter::AllColumns("foo".to_string())
+    );
   }
 
   #[test]
   fn test_query_parser_column_specific() {
     let parsed = ParsedQuery::parse("name:foo");
     assert_eq!(parsed.filters.len(), 1);
-    assert_eq!(
-      parsed.filters[0],
-      QueryFilter::Column {
-        name:    "name".to_string(),
-        pattern: "foo".to_string(),
-      }
-    );
+    assert_eq!(parsed.filters[0], QueryFilter::Column {
+      name:    "name".to_string(),
+      pattern: "foo".to_string(),
+    });
   }
 
   #[test]
   fn test_query_parser_multiple_filters() {
     let parsed = ParsedQuery::parse("name:foo bar type:baz");
     assert_eq!(parsed.filters.len(), 3);
+    assert_eq!(parsed.filters[0], QueryFilter::Column {
+      name:    "name".to_string(),
+      pattern: "foo".to_string(),
+    });
     assert_eq!(
-      parsed.filters[0],
-      QueryFilter::Column {
-        name:    "name".to_string(),
-        pattern: "foo".to_string(),
-      }
+      parsed.filters[1],
+      QueryFilter::AllColumns("bar".to_string())
     );
-    assert_eq!(parsed.filters[1], QueryFilter::AllColumns("bar".to_string()));
-    assert_eq!(
-      parsed.filters[2],
-      QueryFilter::Column {
-        name:    "type".to_string(),
-        pattern: "baz".to_string(),
-      }
-    );
+    assert_eq!(parsed.filters[2], QueryFilter::Column {
+      name:    "type".to_string(),
+      pattern: "baz".to_string(),
+    });
   }
 
   #[test]
@@ -3001,13 +3060,10 @@ mod tests {
     // Only first colon is used as separator
     let parsed = ParsedQuery::parse("url:http://example.com");
     assert_eq!(parsed.filters.len(), 1);
-    assert_eq!(
-      parsed.filters[0],
-      QueryFilter::Column {
-        name:    "url".to_string(),
-        pattern: "http://example.com".to_string(),
-      }
-    );
+    assert_eq!(parsed.filters[0], QueryFilter::Column {
+      name:    "url".to_string(),
+      pattern: "http://example.com".to_string(),
+    });
   }
 
   #[test]
@@ -3052,7 +3108,9 @@ mod tests {
   fn test_picker_query_filtering_column_specific() {
     let columns = vec![
       Column::new("Name", |item: &TestItem, _data: &()| item.name.clone()),
-      Column::new("Value", |item: &TestItem, _data: &()| item.value.to_string()),
+      Column::new("Value", |item: &TestItem, _data: &()| {
+        item.value.to_string()
+      }),
     ];
 
     let items = vec![
@@ -3183,7 +3241,10 @@ mod tests {
     picker.trigger_dynamic_query();
 
     let new_version = picker.version.load(Ordering::Relaxed);
-    assert!(new_version > initial_version, "Version should increment when dynamic query triggers");
+    assert!(
+      new_version > initial_version,
+      "Version should increment when dynamic query triggers"
+    );
   }
 
   #[test]

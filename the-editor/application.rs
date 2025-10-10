@@ -95,8 +95,16 @@ impl App {
     }
   }
 
-  fn handle_language_server_message(&mut self, server_id: crate::lsp::LanguageServerId, call: crate::lsp::Call) {
-    use crate::lsp::{Call, MethodCall, Notification};
+  fn handle_language_server_message(
+    &mut self,
+    server_id: crate::lsp::LanguageServerId,
+    call: crate::lsp::Call,
+  ) {
+    use crate::lsp::{
+      Call,
+      MethodCall,
+      Notification,
+    };
 
     match call {
       Call::Notification(notification) => {
@@ -141,24 +149,34 @@ impl App {
         }
       },
       Call::MethodCall(method_call) => {
-        let crate::lsp::jsonrpc::MethodCall { method, params, id, .. } = method_call;
+        let crate::lsp::jsonrpc::MethodCall {
+          method, params, id, ..
+        } = method_call;
 
         // Parse the method call and generate a reply
         let reply = match MethodCall::parse(&method, params) {
           Err(crate::lsp::Error::Unhandled) => {
-            log::error!("Language server method not found: {} (id: {:?})", method, id);
+            log::error!(
+              "Language server method not found: {} (id: {:?})",
+              method,
+              id
+            );
             Err(crate::lsp::jsonrpc::Error {
-              code: crate::lsp::jsonrpc::ErrorCode::MethodNotFound,
+              code:    crate::lsp::jsonrpc::ErrorCode::MethodNotFound,
               message: format!("Method not found: {}", method),
-              data: None,
+              data:    None,
             })
           },
           Err(err) => {
-            log::error!("Failed to parse language server method call {}: {:?}", method, err);
+            log::error!(
+              "Failed to parse language server method call {}: {:?}",
+              method,
+              err
+            );
             Err(crate::lsp::jsonrpc::Error {
-              code: crate::lsp::jsonrpc::ErrorCode::ParseError,
+              code:    crate::lsp::jsonrpc::ErrorCode::ParseError,
               message: format!("Malformed method call: {}", method),
-              data: None,
+              data:    None,
             })
           },
           Ok(MethodCall::WorkDoneProgressCreate(_params)) => {
@@ -169,19 +187,27 @@ impl App {
             // Get the language server to get its offset encoding
             if let Some(language_server) = self.editor.language_server_by_id(server_id) {
               let offset_encoding = language_server.offset_encoding();
-              let result = self.editor.apply_workspace_edit(offset_encoding, &params.edit);
+              let result = self
+                .editor
+                .apply_workspace_edit(offset_encoding, &params.edit);
 
               use crate::lsp::lsp::types::ApplyWorkspaceEditResponse;
-              Ok(serde_json::to_value(ApplyWorkspaceEditResponse {
-                applied: result.is_ok(),
-                failure_reason: result.as_ref().err().map(|err| err.kind.to_string()),
-                failed_change: result.as_ref().err().map(|err| err.failed_change_idx as u32),
-              }).unwrap())
+              Ok(
+                serde_json::to_value(ApplyWorkspaceEditResponse {
+                  applied:        result.is_ok(),
+                  failure_reason: result.as_ref().err().map(|err| err.kind.to_string()),
+                  failed_change:  result
+                    .as_ref()
+                    .err()
+                    .map(|err| err.failed_change_idx as u32),
+                })
+                .unwrap(),
+              )
             } else {
               Err(crate::lsp::jsonrpc::Error {
-                code: crate::lsp::jsonrpc::ErrorCode::InvalidRequest,
+                code:    crate::lsp::jsonrpc::ErrorCode::InvalidRequest,
                 message: "Language server not found".to_string(),
-                data: None,
+                data:    None,
               })
             }
           },
@@ -206,9 +232,9 @@ impl App {
               Ok(serde_json::to_value(result).unwrap())
             } else {
               Err(crate::lsp::jsonrpc::Error {
-                code: crate::lsp::jsonrpc::ErrorCode::InvalidRequest,
+                code:    crate::lsp::jsonrpc::ErrorCode::InvalidRequest,
                 message: "Language server not found".to_string(),
-                data: None,
+                data:    None,
               })
             }
           },
@@ -227,9 +253,9 @@ impl App {
             // Other method calls we don't handle yet
             log::warn!("Unimplemented language server method: {}", method);
             Err(crate::lsp::jsonrpc::Error {
-              code: crate::lsp::jsonrpc::ErrorCode::MethodNotFound,
+              code:    crate::lsp::jsonrpc::ErrorCode::MethodNotFound,
               message: format!("Method not implemented: {}", method),
-              data: None,
+              data:    None,
             })
           },
         };
@@ -288,7 +314,9 @@ impl Application for App {
 
     // Process any pending job callbacks before rendering
     while let Ok(callback) = self.jobs.callbacks.try_recv() {
-      self.jobs.handle_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback)));
+      self
+        .jobs
+        .handle_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback)));
     }
 
     // Process any pending status messages

@@ -13,14 +13,14 @@ use crate::{
     position::Position,
   },
   ui::{
-    compositor::Surface,
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
+    compositor::Surface,
   },
 };
 
-pub mod diagnostics;
 pub mod diagnostic_underlines;
+pub mod diagnostics;
 pub mod inlay_hints;
 
 /// Decorations are the primary mechanism for extending the text rendering.
@@ -33,17 +33,19 @@ pub mod inlay_hints;
 /// the rendering infrastructure.
 ///
 /// To reserve space for virtual text lines (which is then filled by this trait)
-/// emit appropriate [`LineAnnotation`](crate::core::text_annotations::LineAnnotation)s
+/// emit appropriate
+/// [`LineAnnotation`](crate::core::text_annotations::LineAnnotation)s
 pub trait Decoration {
   /// Called **before** a **visual** line is rendered. A visual line does not
   /// necessarily correspond to a single line in a document as soft wrapping can
   /// spread a single document line across multiple visual lines.
   ///
   /// This function is called before text is rendered as any decorations should
-  /// never overlap the document text. That means that setting the foreground color
-  /// here is (essentially) useless as the text color is overwritten by the
-  /// rendered text. This _of course_ doesn't apply when rendering inside virtual lines
-  /// below the line reserved by `LineAnnotation`s as no text will be rendered here.
+  /// never overlap the document text. That means that setting the foreground
+  /// color here is (essentially) useless as the text color is overwritten by
+  /// the rendered text. This _of course_ doesn't apply when rendering inside
+  /// virtual lines below the line reserved by `LineAnnotation`s as no text
+  /// will be rendered here.
   fn decorate_line(&mut self, _surface: &mut Surface, _pos: (usize, u16)) {
     // pos: (doc_line, visual_line)
   }
@@ -52,16 +54,18 @@ pub trait Decoration {
   /// necessarily correspond to a single line in a document as soft wrapping can
   /// spread a single document line across multiple visual lines.
   ///
-  /// This function is called after text is rendered so that decorations can collect
-  /// horizontal positions on the line (see [`Decoration::decorate_grapheme`]) first and
-  /// use those positions while rendering virtual text.
+  /// This function is called after text is rendered so that decorations can
+  /// collect horizontal positions on the line (see
+  /// [`Decoration::decorate_grapheme`]) first and use those positions while
+  /// rendering virtual text.
   ///
-  /// **Note**: To avoid overlapping decorations in the virtual lines, each decoration
-  /// must return the number of virtual text lines it has taken up. Each `Decoration` receives
-  /// an offset `virt_off` based on these return values where it can render virtual text.
+  /// **Note**: To avoid overlapping decorations in the virtual lines, each
+  /// decoration must return the number of virtual text lines it has taken up.
+  /// Each `Decoration` receives an offset `virt_off` based on these return
+  /// values where it can render virtual text.
   ///
-  /// That means that a `render_virt_lines` implementation that returns `X` can render virtual text
-  /// in the following area:
+  /// That means that a `render_virt_lines` implementation that returns `X` can
+  /// render virtual text in the following area:
   /// ```no_compile
   /// let start = inner.y + pos.visual_line + virt_off;
   /// start .. start + X
@@ -137,7 +141,8 @@ impl<'a> DecorationManager<'a> {
     }
   }
 
-  /// Call decorate_grapheme on all decorations that are interested in this grapheme
+  /// Call decorate_grapheme on all decorations that are interested in this
+  /// grapheme
   pub fn decorate_grapheme(&mut self, grapheme: &FormattedGrapheme) {
     for (decoration, hook_char_idx) in &mut self.decorations {
       loop {
@@ -165,7 +170,12 @@ impl<'a> DecorationManager<'a> {
   /// Render virtual lines for all decorations
   ///
   /// Returns the total number of virtual lines rendered
-  pub fn render_virtual_lines(&mut self, surface: &mut Surface, pos: (usize, u16), line_width: usize) -> u16 {
+  pub fn render_virtual_lines(
+    &mut self,
+    surface: &mut Surface,
+    pos: (usize, u16),
+    line_width: usize,
+  ) -> u16 {
     let mut virt_off = Position::new(1, line_width); // start at 1 to render in first virtual line slot
     let mut total_lines = 0u16;
 

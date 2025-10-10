@@ -1,7 +1,14 @@
 use ropey::RopeSlice;
 use tree_house::TreeCursor;
 
-use crate::core::{movement::Direction, selection::{Range, Selection}, syntax::Syntax};
+use crate::core::{
+  movement::Direction,
+  selection::{
+    Range,
+    Selection,
+  },
+  syntax::Syntax,
+};
 
 pub fn expand_selection(syntax: &Syntax, text: RopeSlice, selection: Selection) -> Selection {
   let cursor = &mut syntax.walk();

@@ -25,12 +25,12 @@ mod editor;
 mod event;
 mod expansion;
 pub mod handlers;
+mod increment;
 mod input;
 pub mod keymap;
 mod lsp;
 mod snippets;
 mod ui;
-mod increment;
 
 fn main() -> anyhow::Result<()> {
   // Register all event types and hooks up front.

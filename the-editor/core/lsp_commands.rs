@@ -1,7 +1,7 @@
 use futures_util::{
+  StreamExt,
   future::BoxFuture,
   stream::FuturesOrdered,
-  StreamExt,
 };
 
 use crate::{
@@ -49,13 +49,12 @@ fn lsp_location_to_location(
   }
 }
 
-fn jump_to_location(
-  editor: &mut crate::editor::Editor,
-  location: &Location,
-  action: Action,
-) {
+fn jump_to_location(editor: &mut crate::editor::Editor, location: &Location, action: Action) {
   let Some(path) = location.uri.to_file_path().ok() else {
-    editor.set_error(format!("Unable to convert URI to filepath: {:?}", location.uri));
+    editor.set_error(format!(
+      "Unable to convert URI to filepath: {:?}",
+      location.uri
+    ));
     return;
   };
 
@@ -107,15 +106,18 @@ fn goto_impl(
       let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
       // Define column: format location as "path:line"
-      let columns = vec![Column::new("Location", |location: &Location, _cwd: &std::path::PathBuf| {
-        let path = location.uri.to_file_path().ok();
-        let path_str = if let Some(p) = &path {
-          p.strip_prefix(&_cwd).unwrap_or(p).display().to_string()
-        } else {
-          location.uri.to_string()
-        };
-        format!("{}:{}", path_str, location.range.start.line + 1)
-      })];
+      let columns = vec![Column::new(
+        "Location",
+        |location: &Location, _cwd: &std::path::PathBuf| {
+          let path = location.uri.to_file_path().ok();
+          let path_str = if let Some(p) = &path {
+            p.strip_prefix(&_cwd).unwrap_or(p).display().to_string()
+          } else {
+            location.uri.to_string()
+          };
+          format!("{}:{}", path_str, location.range.start.line + 1)
+        },
+      )];
 
       let editor_data = cwd.clone();
 
@@ -151,7 +153,13 @@ fn goto_impl(
       .with_preview(|location: &Location| {
         // Return path and line range (LSP lines are already 0-indexed)
         location.uri.to_file_path().ok().map(|path| {
-          (path, Some((location.range.start.line as usize, location.range.end.line as usize)))
+          (
+            path,
+            Some((
+              location.range.start.line as usize,
+              location.range.end.line as usize,
+            )),
+          )
         })
       });
 
@@ -160,7 +168,8 @@ fn goto_impl(
   }
 }
 
-/// Generic helper function for goto requests (definition, declaration, type definition, etc.)
+/// Generic helper function for goto requests (definition, declaration, type
+/// definition, etc.)
 fn goto_single_impl<P>(
   cx: &mut Context,
   feature: LanguageServerFeature,
@@ -189,9 +198,7 @@ fn goto_single_impl<P>(
   cx.jobs.callback(async move {
     let mut futures: FuturesOrdered<_> = requests
       .into_iter()
-      .map(|(future, offset_encoding)| async move {
-        anyhow::Ok((future.await?, offset_encoding))
-      })
+      .map(|(future, offset_encoding)| async move { anyhow::Ok((future.await?, offset_encoding)) })
       .collect();
 
     let mut locations = Vec::new();
@@ -204,16 +211,16 @@ fn goto_single_impl<P>(
               locations.push(lsp_location_to_location(lsp_location, offset_encoding));
             },
             Some(lsp_types::GotoDefinitionResponse::Array(lsp_locations)) => {
-              locations.extend(lsp_locations.into_iter().map(|location| {
-                lsp_location_to_location(location, offset_encoding)
-              }));
+              locations.extend(
+                lsp_locations
+                  .into_iter()
+                  .map(|location| lsp_location_to_location(location, offset_encoding)),
+              );
             },
             Some(lsp_types::GotoDefinitionResponse::Link(lsp_locations)) => {
               locations.extend(lsp_locations.into_iter().map(|location_link| {
-                let location = lsp_types::Location::new(
-                  location_link.target_uri,
-                  location_link.target_range,
-                );
+                let location =
+                  lsp_types::Location::new(location_link.target_uri, location_link.target_range);
                 lsp_location_to_location(location, offset_encoding)
               }));
             },
@@ -292,9 +299,7 @@ pub fn goto_reference(cx: &mut Context) {
   cx.jobs.callback(async move {
     let mut futures: FuturesOrdered<_> = requests
       .into_iter()
-      .map(|(future, offset_encoding)| async move {
-        anyhow::Ok((future.await?, offset_encoding))
-      })
+      .map(|(future, offset_encoding)| async move { anyhow::Ok((future.await?, offset_encoding)) })
       .collect();
 
     let mut locations = Vec::new();
@@ -340,27 +345,18 @@ pub fn code_action(cx: &mut Context) {
       let offset_encoding = language_server.offset_encoding();
 
       // Convert selection to LSP range
-      let range = crate::lsp::util::range_to_lsp_range(
-        doc.text(),
-        selection,
-        offset_encoding,
-      );
+      let range = crate::lsp::util::range_to_lsp_range(doc.text(), selection, offset_encoding);
 
       // Get diagnostics overlapping the selection
       let diagnostics: Vec<lsp_types::Diagnostic> = doc
         .diagnostics()
         .iter()
         .filter(|diag| {
-          let diag_range =
-            crate::core::selection::Range::new(diag.range.start, diag.range.end);
+          let diag_range = crate::core::selection::Range::new(diag.range.start, diag.range.end);
           selection.overlaps(&diag_range)
         })
         .map(|diag| {
-          crate::lsp::util::diagnostic_to_lsp_diagnostic(
-            doc.text(),
-            diag,
-            offset_encoding,
-          )
+          crate::lsp::util::diagnostic_to_lsp_diagnostic(doc.text(), diag, offset_encoding)
         })
         .collect();
 
@@ -375,7 +371,8 @@ pub fn code_action(cx: &mut Context) {
     .collect();
 
   if requests.is_empty() {
-    cx.editor.set_error("No language server with code action support");
+    cx.editor
+      .set_error("No language server with code action support");
     return;
   }
 
@@ -388,17 +385,19 @@ pub fn code_action(cx: &mut Context) {
           // Filter out disabled actions
           let enabled_actions: Vec<_> = actions
             .into_iter()
-            .filter(|action| match action {
-              lsp_types::CodeActionOrCommand::CodeAction(action) => action.disabled.is_none(),
-              _ => true,
+            .filter(|action| {
+              match action {
+                lsp_types::CodeActionOrCommand::CodeAction(action) => action.disabled.is_none(),
+                _ => true,
+              }
             })
             .collect();
           all_actions.extend(enabled_actions);
-        }
-        Ok(None) => {}
+        },
+        Ok(None) => {},
         Err(err) => {
           log::error!("Error requesting code actions: {err}");
-        }
+        },
       }
     }
 
@@ -424,7 +423,8 @@ pub fn rename_symbol(cx: &mut Context) {
     .next()
     .is_none()
   {
-    cx.editor.set_error("No language server with rename symbol support");
+    cx.editor
+      .set_error("No language server with rename symbol support");
     return;
   }
 
@@ -470,7 +470,8 @@ pub fn rename_symbol(cx: &mut Context) {
             .language_servers_with_feature(LanguageServerFeature::RenameSymbol)
             .next()
           else {
-            cx.editor.set_error("No language server with rename symbol support");
+            cx.editor
+              .set_error("No language server with rename symbol support");
             return;
           };
 
@@ -478,9 +479,11 @@ pub fn rename_symbol(cx: &mut Context) {
           let pos = doc.position(view.id, offset_encoding);
 
           // Call rename_symbol
-          let Some(future) = language_server.rename_symbol(doc.identifier(), pos, input.to_string())
+          let Some(future) =
+            language_server.rename_symbol(doc.identifier(), pos, input.to_string())
           else {
-            cx.editor.set_error("Language server does not support rename");
+            cx.editor
+              .set_error("Language server does not support rename");
             return;
           };
 
@@ -489,32 +492,36 @@ pub fn rename_symbol(cx: &mut Context) {
           log::info!("rename_symbol: calling LSP with new name: {}", input);
           match block_on(future) {
             Ok(Some(workspace_edit)) => {
-              log::info!("rename_symbol: received workspace edit: {:?}", workspace_edit);
+              log::info!(
+                "rename_symbol: received workspace edit: {:?}",
+                workspace_edit
+              );
               if let Err(err) = apply_workspace_edit(cx.editor, &workspace_edit) {
                 log::error!("rename_symbol: failed to apply workspace edit: {}", err);
-                cx.editor.set_error(format!("Failed to apply rename: {}", err));
+                cx.editor
+                  .set_error(format!("Failed to apply rename: {}", err));
               } else {
                 log::info!("rename_symbol: workspace edit applied successfully");
                 cx.editor.set_status("Symbol renamed");
               }
-            }
+            },
             Ok(None) => {
               log::warn!("rename_symbol: LSP returned no workspace edit");
               cx.editor.set_status("No changes from rename");
-            }
+            },
             Err(err) => {
               log::error!("rename_symbol: LSP error: {}", err);
               cx.editor.set_error(format!("Rename failed: {}", err));
-            }
+            },
           }
-        }
+        },
         crate::ui::components::prompt::PromptEvent::Abort => {
           // Clear custom mode string on abort
           cx.editor.clear_custom_mode_str();
-        }
+        },
         crate::ui::components::prompt::PromptEvent::Update => {
           // Nothing to do on update
-        }
+        },
       }
     });
 
@@ -573,7 +580,12 @@ fn apply_workspace_edit(
         if let Some(range) = lsp_range_to_range(text, edit.range, offset_encoding) {
           let transaction = crate::core::transaction::Transaction::change(
             text,
-            [(range.anchor, range.head, Some(edit.new_text.as_str().into()))].into_iter(),
+            [(
+              range.anchor,
+              range.head,
+              Some(edit.new_text.as_str().into()),
+            )]
+            .into_iter(),
           );
 
           doc.apply(&transaction, editor.tree.focus);
@@ -600,11 +612,13 @@ fn apply_workspace_edit(
         // This is a workaround - we'd need to handle this differently
         // but for rename operations, we typically only get Edits variant
         return Err(anyhow::anyhow!("Unsupported document changes format"));
-      }
+      },
     };
 
     for text_doc_edit in text_edits {
-      let path = text_doc_edit.text_document.uri
+      let path = text_doc_edit
+        .text_document
+        .uri
         .to_file_path()
         .map_err(|_| anyhow::anyhow!("Invalid file path"))?;
 
@@ -629,10 +643,10 @@ fn apply_workspace_edit(
         match edit {
           lsp_types::OneOf::Left(text_edit) => {
             text_edits_vec.push(text_edit);
-          }
+          },
           lsp_types::OneOf::Right(annotated_edit) => {
             text_edits_vec.push(&annotated_edit.text_edit);
-          }
+          },
         }
       }
 
@@ -644,7 +658,12 @@ fn apply_workspace_edit(
         if let Some(range) = lsp_range_to_range(text, edit.range, offset_encoding) {
           let transaction = crate::core::transaction::Transaction::change(
             text,
-            [(range.anchor, range.head, Some(edit.new_text.as_str().into()))].into_iter(),
+            [(
+              range.anchor,
+              range.head,
+              Some(edit.new_text.as_str().into()),
+            )]
+            .into_iter(),
           );
 
           doc.apply(&transaction, editor.tree.focus);
@@ -709,10 +728,10 @@ pub fn document_symbols(cx: &mut Context) {
     offset_encoding: OffsetEncoding,
   ) {
     symbols.push(FlatSymbol {
-      name:            symbol.name.clone(),
-      kind:            symbol.kind,
-      range:           symbol.selection_range,
-      uri:             uri.clone(),
+      name: symbol.name.clone(),
+      kind: symbol.kind,
+      range: symbol.selection_range,
+      uri: uri.clone(),
       offset_encoding,
     });
 
@@ -725,7 +744,7 @@ pub fn document_symbols(cx: &mut Context) {
 
   let (_view, doc) = current_ref!(cx.editor);
 
-  //Get current document URL
+  // Get current document URL
   let current_url = doc.url();
 
   // Collect all document symbols from language servers
@@ -756,14 +775,14 @@ pub fn document_symbols(cx: &mut Context) {
             lsp_types::DocumentSymbolResponse::Flat(symbols) => {
               for symbol in symbols {
                 all_symbols.push(FlatSymbol {
-                  name:            symbol.name,
-                  kind:            symbol.kind,
-                  range:           symbol.location.range,
-                  uri:             symbol.location.uri.clone(),
+                  name: symbol.name,
+                  kind: symbol.kind,
+                  range: symbol.location.range,
+                  uri: symbol.location.uri.clone(),
                   offset_encoding,
                 });
               }
-            }
+            },
             lsp_types::DocumentSymbolResponse::Nested(symbols) => {
               for symbol in symbols {
                 flatten_document_symbol(
@@ -773,13 +792,13 @@ pub fn document_symbols(cx: &mut Context) {
                   offset_encoding,
                 );
               }
-            }
+            },
           }
-        }
-        Ok(None) => {}
+        },
+        Ok(None) => {},
         Err(err) => {
           log::error!("Error requesting document symbols: {err}");
-        }
+        },
       }
     }
 
@@ -807,8 +826,8 @@ pub fn document_symbols(cx: &mut Context) {
       ];
 
       // Create action handler to jump to symbol
-      let action_handler = std::sync::Arc::new(
-        move |symbol: &FlatSymbol, _: &(), _action: PickerAction| {
+      let action_handler =
+        std::sync::Arc::new(move |symbol: &FlatSymbol, _: &(), _action: PickerAction| {
           // Clone symbol to move into the closure
           let symbol = symbol.clone();
 
@@ -831,14 +850,13 @@ pub fn document_symbols(cx: &mut Context) {
           });
 
           true // Close picker
-        },
-      );
+        });
 
       let picker = Picker::new(
         columns,
         1, // Primary column is "Symbol"
         all_symbols,
-        (), // No editor data needed
+        (),     // No editor data needed
         |_| {}, // Dummy on_select
       )
       .with_action_handler(action_handler)
@@ -878,7 +896,8 @@ pub fn workspace_symbols(cx: &mut Context) {
     .collect();
 
   if requests.is_empty() {
-    cx.editor.set_error("No language server with workspace symbols support");
+    cx.editor
+      .set_error("No language server with workspace symbols support");
     return;
   }
 
@@ -892,24 +911,24 @@ pub fn workspace_symbols(cx: &mut Context) {
             lsp_types::WorkspaceSymbolResponse::Flat(symbols) => {
               for symbol in symbols {
                 all_symbols.push(FlatSymbol {
-                  name:            symbol.name,
-                  kind:            symbol.kind,
-                  range:           symbol.location.range,
-                  uri:             symbol.location.uri.clone(),
+                  name: symbol.name,
+                  kind: symbol.kind,
+                  range: symbol.location.range,
+                  uri: symbol.location.uri.clone(),
                   offset_encoding,
                 });
               }
-            }
+            },
             lsp_types::WorkspaceSymbolResponse::Nested(_) => {
               // Nested workspace symbols are rare, skip for now
               log::warn!("Nested workspace symbols not supported");
-            }
+            },
           }
-        }
-        Ok(None) => {}
+        },
+        Ok(None) => {},
         Err(err) => {
           log::error!("Error requesting workspace symbols: {err}");
-        }
+        },
       }
     }
 
@@ -970,7 +989,7 @@ pub fn workspace_symbols(cx: &mut Context) {
               Err(_) => {
                 editor.set_error(format!("Invalid URI: {}", symbol.uri));
                 return;
-              }
+              },
             };
 
             // Open the file
@@ -979,7 +998,7 @@ pub fn workspace_symbols(cx: &mut Context) {
               Err(err) => {
                 editor.set_error(format!("Failed to open file: {}", err));
                 return;
-              }
+              },
             };
 
             // Get the view and document
@@ -1058,32 +1077,43 @@ pub fn document_diagnostics(cx: &mut Context) {
     };
 
     let columns = vec![
-      Column::new("Severity", |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
-        match diag.severity {
-          Some(Severity::Error) => "ERROR",
-          Some(Severity::Warning) => "WARN",
-          Some(Severity::Info) => "INFO",
-          Some(Severity::Hint) => "HINT",
-          None => "",
-        }
-        .to_string()
-      }),
-      Column::new("Source", |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
-        diag.source.clone().unwrap_or_default()
-      }),
-      Column::new("Code", |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
-        match &diag.code {
-          Some(crate::core::diagnostics::NumberOrString::Number(n)) => n.to_string(),
-          Some(crate::core::diagnostics::NumberOrString::String(s)) => s.clone(),
-          None => String::new(),
-        }
-      }),
-      Column::new("Line", |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
-        format!("{}", diag.line + 1)
-      }),
-      Column::new("Message", |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
-        diag.message.clone()
-      }),
+      Column::new(
+        "Severity",
+        |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
+          match diag.severity {
+            Some(Severity::Error) => "ERROR",
+            Some(Severity::Warning) => "WARN",
+            Some(Severity::Info) => "INFO",
+            Some(Severity::Hint) => "HINT",
+            None => "",
+          }
+          .to_string()
+        },
+      ),
+      Column::new(
+        "Source",
+        |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
+          diag.source.clone().unwrap_or_default()
+        },
+      ),
+      Column::new(
+        "Code",
+        |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
+          match &diag.code {
+            Some(crate::core::diagnostics::NumberOrString::Number(n)) => n.to_string(),
+            Some(crate::core::diagnostics::NumberOrString::String(s)) => s.clone(),
+            None => String::new(),
+          }
+        },
+      ),
+      Column::new(
+        "Line",
+        |diag: &crate::core::diagnostics::Diagnostic, _: &()| format!("{}", diag.line + 1),
+      ),
+      Column::new(
+        "Message",
+        |diag: &crate::core::diagnostics::Diagnostic, _: &()| diag.message.clone(),
+      ),
     ];
 
     // Create action handler to jump to diagnostic
@@ -1120,12 +1150,10 @@ pub fn document_diagnostics(cx: &mut Context) {
     .with_preview(move |diag: &crate::core::diagnostics::Diagnostic| {
       // Return path and line range for preview with selection
       doc_url.as_ref().and_then(|url| {
-        url.to_file_path().ok().map(|path| {
-          (
-            path,
-            Some((diag.line, diag.line)),
-          )
-        })
+        url
+          .to_file_path()
+          .ok()
+          .map(|path| (path, Some((diag.line, diag.line))))
       })
     });
 
@@ -1197,7 +1225,9 @@ pub fn workspace_diagnostics(cx: &mut Context) {
         }
         .to_string()
       }),
-      Column::new("File", |item: &DiagnosticItem, _: &()| item.file_name.clone()),
+      Column::new("File", |item: &DiagnosticItem, _: &()| {
+        item.file_name.clone()
+      }),
       Column::new("Line", |item: &DiagnosticItem, _: &()| {
         format!("{}", item.diagnostic.line + 1)
       }),
@@ -1211,41 +1241,53 @@ pub fn workspace_diagnostics(cx: &mut Context) {
           None => String::new(),
         }
       }),
-      Column::new("Message", |item: &DiagnosticItem, _: &()| item.diagnostic.message.clone()),
+      Column::new("Message", |item: &DiagnosticItem, _: &()| {
+        item.diagnostic.message.clone()
+      }),
     ];
 
     // Create action handler to jump to diagnostic
-    let action_handler = std::sync::Arc::new(move |item: &DiagnosticItem, _: &(), _action: PickerAction| {
-      // Clone item to move into the closure
-      let item = item.clone();
+    let action_handler = std::sync::Arc::new(
+      move |item: &DiagnosticItem, _: &(), _action: PickerAction| {
+        // Clone item to move into the closure
+        let item = item.clone();
 
-      // Jump to the diagnostic location
-      crate::ui::job::dispatch_blocking(move |editor, _compositor| {
-        // First, ensure the document is open
-        let doc_id = editor.documents.get(&item.doc_id).map(|_| item.doc_id).or_else(|| {
-          // Document might have been closed, try to open it
-          item.path.as_ref().and_then(|path| {
-            editor.open(path, crate::editor::Action::Replace).ok()
-          })
+        // Jump to the diagnostic location
+        crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+          // First, ensure the document is open
+          let doc_id = editor
+            .documents
+            .get(&item.doc_id)
+            .map(|_| item.doc_id)
+            .or_else(|| {
+              // Document might have been closed, try to open it
+              item
+                .path
+                .as_ref()
+                .and_then(|path| editor.open(path, crate::editor::Action::Replace).ok())
+            });
+
+          if let Some(doc_id) = doc_id {
+            // Focus the document
+            let view_id = editor.tree.focus;
+            let view = editor.tree.get_mut(view_id);
+            view.doc = doc_id;
+
+            // Set selection to the diagnostic location
+            let doc = editor.documents.get_mut(&doc_id).unwrap();
+            doc.set_selection(
+              view_id,
+              Selection::single(item.diagnostic.range.start, item.diagnostic.range.end),
+            );
+
+            // Align view to center the diagnostic
+            align_view(doc, editor.tree.get_mut(view_id), Align::Center);
+          }
         });
 
-        if let Some(doc_id) = doc_id {
-          // Focus the document
-          let view_id = editor.tree.focus;
-          let view = editor.tree.get_mut(view_id);
-          view.doc = doc_id;
-
-          // Set selection to the diagnostic location
-          let doc = editor.documents.get_mut(&doc_id).unwrap();
-          doc.set_selection(view_id, Selection::single(item.diagnostic.range.start, item.diagnostic.range.end));
-
-          // Align view to center the diagnostic
-          align_view(doc, editor.tree.get_mut(view_id), Align::Center);
-        }
-      });
-
-      true // Close picker
-    });
+        true // Close picker
+      },
+    );
 
     let picker = Picker::new(
       columns,
@@ -1278,7 +1320,7 @@ pub fn select_references(cx: &mut Context) {
     None => {
       cx.editor.set_error("Document has no URL");
       return;
-    }
+    },
   };
 
   // Collect all the futures with their offset encodings
@@ -1294,7 +1336,8 @@ pub fn select_references(cx: &mut Context) {
     .collect();
 
   if requests.is_empty() {
-    cx.editor.set_error("No language server with goto reference support");
+    cx.editor
+      .set_error("No language server with goto reference support");
     return;
   }
 
@@ -1304,9 +1347,7 @@ pub fn select_references(cx: &mut Context) {
   cx.jobs.callback(async move {
     let mut futures: FuturesOrdered<_> = requests
       .into_iter()
-      .map(|(future, offset_encoding)| async move {
-        anyhow::Ok((future.await?, offset_encoding))
-      })
+      .map(|(future, offset_encoding)| async move { anyhow::Ok((future.await?, offset_encoding)) })
       .collect();
 
     let mut locations = Vec::new();
@@ -1333,7 +1374,7 @@ pub fn select_references(cx: &mut Context) {
         None => {
           editor.set_error("Document closed");
           return;
-        }
+        },
       };
 
       // Filter to only locations in the current file

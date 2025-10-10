@@ -915,15 +915,17 @@ impl Renderer {
       let mask_instances: Vec<RectInstance> = self
         .stencil_mask_rects
         .iter()
-        .map(|(mask_x, mask_y, mask_width, mask_height)| RectInstance {
-          position:      [*mask_x, *mask_y],
-          size:          [*mask_width, *mask_height],
-          color:         [0.0, 0.0, 0.0, 0.0], // Invisible, we're only writing to stencil
-          corner_radius: 0.0,
-          _pad0:         [0.0, 0.0],
-          glow_center:   [0.0, 0.0],
-          glow_radius:   0.0,
-          effect_kind:   0.0,
+        .map(|(mask_x, mask_y, mask_width, mask_height)| {
+          RectInstance {
+            position:      [*mask_x, *mask_y],
+            size:          [*mask_width, *mask_height],
+            color:         [0.0, 0.0, 0.0, 0.0], // Invisible, we're only writing to stencil
+            corner_radius: 0.0,
+            _pad0:         [0.0, 0.0],
+            glow_center:   [0.0, 0.0],
+            glow_radius:   0.0,
+            effect_kind:   0.0,
+          }
         })
         .collect();
 
@@ -1197,7 +1199,8 @@ impl Renderer {
   }
 
   /// Draw a single decoration grapheme at the specified position
-  /// This is a convenience method for rendering single characters with a specific color
+  /// This is a convenience method for rendering single characters with a
+  /// specific color
   pub fn draw_decoration_grapheme(&mut self, grapheme: &str, color: Color, x: f32, y: f32) {
     self.draw_text(TextSection {
       position: (x, y),
@@ -1572,8 +1575,8 @@ impl Renderer {
     self.stencil_mask_rects.push((x, y, width, height));
   }
 
-  /// Enable overlay text mode. Text rendered in this mode will ignore stencil masks.
-  /// Private: used internally by `with_overlay_region`.
+  /// Enable overlay text mode. Text rendered in this mode will ignore stencil
+  /// masks. Private: used internally by `with_overlay_region`.
   fn begin_overlay_text(&mut self) {
     self.is_overlay_mode = true;
   }
@@ -1591,12 +1594,14 @@ impl Renderer {
   /// editor from drawing into it), and all drawing within the callback will be
   /// in overlay mode (bypassing the mask).
   ///
-  /// This is the preferred API for UI components that need to overlap the editor.
+  /// This is the preferred API for UI components that need to overlap the
+  /// editor.
   pub fn with_overlay_region<F>(&mut self, x: f32, y: f32, width: f32, height: f32, f: F)
   where
     F: FnOnce(&mut Self),
   {
-    // Add this overlay region to the stencil mask (supports multiple overlays per frame)
+    // Add this overlay region to the stencil mask (supports multiple overlays per
+    // frame)
     self.add_stencil_mask_rect(x, y, width, height);
     self.begin_overlay_text();
 

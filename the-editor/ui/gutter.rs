@@ -56,7 +56,8 @@ pub trait Gutter: Send + Sync {
 
   /// Handle an event (e.g., mouse click on this gutter)
   ///
-  /// Position is in gutter-local coordinates (column within this gutter's width)
+  /// Position is in gutter-local coordinates (column within this gutter's
+  /// width)
   fn handle_event(
     &mut self,
     _event: &Event,
@@ -276,7 +277,10 @@ impl Gutter for LineNumberGutter {
         .unwrap_or(Color::rgb(0.5, 0.5, 0.6))
     };
 
-    Some((format!("{:>width$}", display_num, width = self.width(_view, _doc)), color))
+    Some((
+      format!("{:>width$}", display_num, width = self.width(_view, _doc)),
+      color,
+    ))
   }
 
   fn toggle(&mut self) {
@@ -334,38 +338,46 @@ impl Gutter for DiagnosticGutter {
 
     use crate::core::diagnostics::Severity;
     let (symbol, color) = match diag.severity {
-      Some(Severity::Error) => (
-        "●",
-        theme
-          .get("error")
-          .fg
-          .map(crate::ui::theme_color_to_renderer_color)
-          .unwrap_or(Color::rgb(0.9, 0.3, 0.3)),
-      ),
-      Some(Severity::Warning) | None => (
-        "●",
-        theme
-          .get("warning")
-          .fg
-          .map(crate::ui::theme_color_to_renderer_color)
-          .unwrap_or(Color::rgb(0.9, 0.7, 0.3)),
-      ),
-      Some(Severity::Info) => (
-        "●",
-        theme
-          .get("info")
-          .fg
-          .map(crate::ui::theme_color_to_renderer_color)
-          .unwrap_or(Color::rgb(0.3, 0.7, 0.9)),
-      ),
-      Some(Severity::Hint) => (
-        "●",
-        theme
-          .get("hint")
-          .fg
-          .map(crate::ui::theme_color_to_renderer_color)
-          .unwrap_or(Color::rgb(0.5, 0.8, 0.5)),
-      ),
+      Some(Severity::Error) => {
+        (
+          "●",
+          theme
+            .get("error")
+            .fg
+            .map(crate::ui::theme_color_to_renderer_color)
+            .unwrap_or(Color::rgb(0.9, 0.3, 0.3)),
+        )
+      },
+      Some(Severity::Warning) | None => {
+        (
+          "●",
+          theme
+            .get("warning")
+            .fg
+            .map(crate::ui::theme_color_to_renderer_color)
+            .unwrap_or(Color::rgb(0.9, 0.7, 0.3)),
+        )
+      },
+      Some(Severity::Info) => {
+        (
+          "●",
+          theme
+            .get("info")
+            .fg
+            .map(crate::ui::theme_color_to_renderer_color)
+            .unwrap_or(Color::rgb(0.3, 0.7, 0.9)),
+        )
+      },
+      Some(Severity::Hint) => {
+        (
+          "●",
+          theme
+            .get("hint")
+            .fg
+            .map(crate::ui::theme_color_to_renderer_color)
+            .unwrap_or(Color::rgb(0.5, 0.8, 0.5)),
+        )
+      },
     };
 
     Some((symbol.to_string(), color))

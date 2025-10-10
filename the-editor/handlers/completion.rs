@@ -39,7 +39,12 @@ pub struct LspCompletionItem {
 impl LspCompletionItem {
   /// Get the text to use for fuzzy filtering
   pub fn filter_text(&self) -> &str {
-    self.item.filter_text.as_ref().unwrap_or(&self.item.label).as_str()
+    self
+      .item
+      .filter_text
+      .as_ref()
+      .unwrap_or(&self.item.label)
+      .as_str()
   }
 
   /// Check if this item is preselected

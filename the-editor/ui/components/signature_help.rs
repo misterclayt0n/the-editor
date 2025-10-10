@@ -10,7 +10,13 @@ use crate::{
   ui::{
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
-    compositor::{Component, Context, Event, EventResult, Surface},
+    compositor::{
+      Component,
+      Context,
+      Event,
+      EventResult,
+      Surface,
+    },
   },
 };
 
@@ -20,15 +26,15 @@ const MAX_POPUP_WIDTH: usize = 80; // characters
 /// Signature help popup component
 pub struct SignatureHelp {
   /// Language for syntax highlighting
-  language:          String,
+  language:         String,
   /// Active signature index
-  active_signature:  usize,
+  active_signature: usize,
   /// All available signatures
-  signatures:        Vec<crate::handlers::signature_help::Signature>,
+  signatures:       Vec<crate::handlers::signature_help::Signature>,
   /// Animation progress (0.0 = just appeared, 1.0 = fully visible)
-  anim_progress:     f32,
+  anim_progress:    f32,
   /// Whether the popup is visible
-  visible:           bool,
+  visible:          bool,
 }
 
 impl SignatureHelp {
@@ -121,7 +127,11 @@ impl Component for SignatureHelp {
     let popup_width = (sig_width + padding * 4.0).max(300.0).min(800.0);
 
     // Calculate height - add extra line if there's documentation
-    let num_lines = if sig.signature_doc.is_some() { 2.0 } else { 1.0 };
+    let num_lines = if sig.signature_doc.is_some() {
+      2.0
+    } else {
+      1.0
+    };
     let popup_height = (num_lines * line_height) + (padding * 2.0);
 
     // Calculate cursor position
@@ -140,7 +150,10 @@ impl Component for SignatureHelp {
       let anchor_line = text.char_to_line(view_offset.anchor.min(text.len_chars()));
 
       // Calculate screen coordinates
-      let font_size = ctx.editor.font_size_override.unwrap_or(ctx.editor.config().font_size);
+      let font_size = ctx
+        .editor
+        .font_size_override
+        .unwrap_or(ctx.editor.config().font_size);
       let font_width = surface.cell_width().max(1.0);
       let gutter_width = 6;
       let gutter_offset = gutter_width as f32 * font_width;
@@ -168,7 +181,14 @@ impl Component for SignatureHelp {
 
     // Draw background
     let corner_radius = 6.0;
-    surface.draw_rounded_rect(anim_x, anim_y, anim_width, anim_height, corner_radius, bg_color);
+    surface.draw_rounded_rect(
+      anim_x,
+      anim_y,
+      anim_width,
+      anim_height,
+      corner_radius,
+      bg_color,
+    );
 
     // Draw border
     let mut border_color = Color::new(0.3, 0.3, 0.35, 0.8);
@@ -210,7 +230,8 @@ impl Component for SignatureHelp {
           });
         }
 
-        // For highlighted text, we can use a lighter color since we can't set background
+        // For highlighted text, we can use a lighter color since we can't set
+        // background
         section.texts.push(TextSegment {
           content: highlighted.to_string(),
           style:   TextStyle {
@@ -245,7 +266,8 @@ impl Component for SignatureHelp {
 
   fn handle_event(&mut self, _event: &Event, _ctx: &mut Context) -> EventResult {
     // Don't consume any events - let them bubble up to the editor
-    // The editor will handle mode switches (Escape) and close the signature help automatically
+    // The editor will handle mode switches (Escape) and close the signature help
+    // automatically
     EventResult::Ignored(None)
   }
 

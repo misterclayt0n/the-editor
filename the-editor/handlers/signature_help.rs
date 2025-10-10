@@ -2,7 +2,6 @@
 ///
 /// Shows a popup with function signature and parameter information when typing
 /// inside function calls in insert mode.
-
 use the_editor_event::AsyncHook;
 use the_editor_lsp_types::types as lsp;
 use the_editor_stdx::rope::RopeSliceExt;
@@ -87,7 +86,8 @@ impl AsyncHook for SignatureHelpHandler {
 }
 
 async fn request_signature_help(invoked: SignatureHelpInvoked) {
-  // Create a oneshot channel to get the signature help future from the main thread
+  // Create a oneshot channel to get the signature help future from the main
+  // thread
   let (tx, rx) = tokio::sync::oneshot::channel();
 
   crate::ui::job::dispatch_blocking(move |editor, _compositor| {
@@ -133,9 +133,9 @@ async fn request_signature_help(invoked: SignatureHelpInvoked) {
 /// A single signature with optional active parameter range
 #[derive(Debug, Clone)]
 pub struct Signature {
-  pub signature:           String,
-  pub signature_doc:       Option<String>,
-  pub active_param_range:  Option<(usize, usize)>,
+  pub signature:          String,
+  pub signature_doc:      Option<String>,
+  pub active_param_range: Option<(usize, usize)>,
 }
 
 /// Calculate the active parameter range for highlighting
@@ -180,6 +180,7 @@ pub fn register_hooks(handlers: &crate::handlers::Handlers) {
     register_hook,
     send_blocking,
   };
+
   use crate::{
     event::{
       DocumentDidChange,
@@ -199,11 +200,13 @@ pub fn register_hooks(handlers: &crate::handlers::Handlers) {
       (Mode::Insert, _) => {
         send_blocking(&tx_mode, SignatureHelpEvent::Cancel);
         // Also clear the UI signature help popup immediately
-        event.cx.callback.push(Box::new(|compositor: &mut crate::ui::compositor::Compositor, _| {
-          if let Some(editor_view) = compositor.find::<crate::ui::EditorView>() {
-            editor_view.clear_signature_help();
-          }
-        }));
+        event.cx.callback.push(Box::new(
+          |compositor: &mut crate::ui::compositor::Compositor, _| {
+            if let Some(editor_view) = compositor.find::<crate::ui::EditorView>() {
+              editor_view.clear_signature_help();
+            }
+          },
+        ));
       },
       (_, Mode::Insert) => {
         if event.cx.editor.config().lsp.auto_signature_help {
@@ -244,7 +247,10 @@ pub fn register_hooks(handlers: &crate::handlers::Handlers) {
       let cursor = doc.selection(view.id).primary().cursor(text);
       text = text.slice(..cursor);
 
-      if triggers.iter().any(|trigger| text.ends_with(trigger.as_str())) {
+      if triggers
+        .iter()
+        .any(|trigger| text.ends_with(trigger.as_str()))
+      {
         send_blocking(&tx, SignatureHelpEvent::Trigger);
       }
     }
@@ -270,5 +276,3 @@ pub fn register_hooks(handlers: &crate::handlers::Handlers) {
     Ok(())
   });
 }
-
-

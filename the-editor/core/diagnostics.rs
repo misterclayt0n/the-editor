@@ -416,8 +416,9 @@ impl LineAnnotation for InlineDiagnostics<'_> {
     self.state.compute_line_diagnostics();
 
     // Check if there's enough space to render inline diagnostics
-    // Like Helix, we need a minimum viewport width to render the arrows and messages
-    // Require at least 60 columns for inline diagnostics to look reasonable
+    // Like Helix, we need a minimum viewport width to render the arrows and
+    // messages Require at least 60 columns for inline diagnostics to look
+    // reasonable
     const MIN_VIEWPORT_WIDTH_FOR_INLINE: u16 = 60;
     if self.width < MIN_VIEWPORT_WIDTH_FOR_INLINE {
       // Not enough space - clear the stack and don't reserve any virtual lines

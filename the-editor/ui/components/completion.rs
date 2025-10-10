@@ -242,7 +242,7 @@ impl Completion {
           self.filtered.clear();
           return;
         }
-      }
+      },
     }
 
     self.score(c.is_some());
@@ -276,7 +276,7 @@ impl Completion {
           Some(new_score) => {
             *score = new_score as u32;
             true
-          }
+          },
           None => false,
         }
       });
@@ -311,12 +311,18 @@ impl Completion {
 
   /// Get the currently selected completion item
   pub fn selection(&self) -> Option<&CompletionItem> {
-    self.filtered.get(self.cursor).map(|&(idx, _)| &self.items[idx as usize])
+    self
+      .filtered
+      .get(self.cursor)
+      .map(|&(idx, _)| &self.items[idx as usize])
   }
 
   /// Get the currently selected completion item mutably
   pub fn selection_mut(&mut self) -> Option<&mut CompletionItem> {
-    self.filtered.get(self.cursor).map(|&(idx, _)| &mut self.items[idx as usize])
+    self
+      .filtered
+      .get(self.cursor)
+      .map(|&(idx, _)| &mut self.items[idx as usize])
   }
 
   /// Check if the completion list is empty
@@ -350,7 +356,11 @@ impl Completion {
   }
 
   /// Replace items from a specific provider
-  pub fn replace_provider_items(&mut self, provider: CompletionProvider, new_items: Vec<CompletionItem>) {
+  pub fn replace_provider_items(
+    &mut self,
+    provider: CompletionProvider,
+    new_items: Vec<CompletionItem>,
+  ) {
     // Remove old items from this provider
     self.items.retain(|item| item.provider() != provider);
 
@@ -410,9 +420,11 @@ impl Completion {
     let (detail, doc) = match item {
       CompletionItem::Lsp(lsp_item) => {
         let detail = lsp_item.item.detail.as_deref();
-        let doc = lsp_item.item.documentation.as_ref().and_then(|d| match d {
-          lsp::Documentation::String(s) => Some(s.as_str()),
-          lsp::Documentation::MarkupContent(content) => Some(content.value.as_str()),
+        let doc = lsp_item.item.documentation.as_ref().and_then(|d| {
+          match d {
+            lsp::Documentation::String(s) => Some(s.as_str()),
+            lsp::Documentation::MarkupContent(content) => Some(content.value.as_str()),
+          }
         });
         (detail, doc)
       },
@@ -487,7 +499,15 @@ impl Completion {
     // Draw border
     let mut border_color = Color::new(0.3, 0.3, 0.35, 0.8);
     border_color.a *= alpha;
-    surface.draw_rounded_rect_stroke(doc_x, doc_y, doc_width, doc_height, corner_radius, 1.0, border_color);
+    surface.draw_rounded_rect_stroke(
+      doc_x,
+      doc_y,
+      doc_width,
+      doc_height,
+      corner_radius,
+      1.0,
+      border_color,
+    );
 
     // Render documentation content
     let mut y_offset = doc_y + DOC_PADDING;
@@ -518,7 +538,10 @@ impl Completion {
       let max_chars_per_line = ((doc_width - DOC_PADDING * 2.0) / (font_size * 0.6)) as usize;
       let lines = wrap_text(doc_text, max_chars_per_line);
 
-      for line in lines.iter().take(((doc_height - y_offset + doc_y - DOC_PADDING) / line_height) as usize) {
+      for line in lines
+        .iter()
+        .take(((doc_height - y_offset + doc_y - DOC_PADDING) / line_height) as usize)
+      {
         surface.draw_text(TextSection {
           position: (doc_x + DOC_PADDING, y_offset),
           texts:    vec![TextSegment {
@@ -569,17 +592,19 @@ impl Completion {
   /// Check if an LSP item is deprecated
   fn is_deprecated(item: &lsp::CompletionItem) -> bool {
     item.deprecated.unwrap_or(false)
-      || item
-        .tags
-        .as_ref()
-        .map_or(false, |tags| tags.contains(&lsp::CompletionItemTag::DEPRECATED))
+      || item.tags.as_ref().map_or(false, |tags| {
+        tags.contains(&lsp::CompletionItemTag::DEPRECATED)
+      })
   }
 
   /// Apply the selected completion item
   fn apply_completion(&self, ctx: &mut Context, item: &CompletionItem) {
-    use crate::core::transaction::Transaction;
-    use crate::lsp::util::lsp_pos_to_pos;
     use the_editor_lsp_types::types as lsp;
+
+    use crate::{
+      core::transaction::Transaction,
+      lsp::util::lsp_pos_to_pos,
+    };
 
     // For LSP items, get the offset encoding before borrowing editor
     let offset_encoding = match item {
@@ -604,8 +629,12 @@ impl Completion {
 
         // Get the text edit from the LSP item
         // IMPORTANT: Use current cursor position as end, not the LSP's range end,
-        // because the user may have typed more characters while the completion was pending
-        let cursor = doc.selection(view.id).primary().cursor(doc.text().slice(..));
+        // because the user may have typed more characters while the completion was
+        // pending
+        let cursor = doc
+          .selection(view.id)
+          .primary()
+          .cursor(doc.text().slice(..));
 
         let (start, end, text) = match &lsp_item.item.text_edit {
           Some(lsp::CompletionTextEdit::Edit(edit)) => {
@@ -630,7 +659,11 @@ impl Completion {
           None => {
             // No text edit provided, fall back to inserting from trigger_offset to cursor
             let start = self.trigger_offset;
-            let text = lsp_item.item.insert_text.as_ref().unwrap_or(&lsp_item.item.label);
+            let text = lsp_item
+              .item
+              .insert_text
+              .as_ref()
+              .unwrap_or(&lsp_item.item.label);
             (start, cursor, text.clone())
           },
         };
@@ -640,8 +673,9 @@ impl Completion {
           lsp_item.item.insert_text_format,
           Some(lsp::InsertTextFormat::SNIPPET)
         ) {
-          // For now, do a simple strip of snippet syntax since we don't have full snippet support yet
-          // This handles common cases like ${1:} -> empty string, ${1:text} -> text
+          // For now, do a simple strip of snippet syntax since we don't have full snippet
+          // support yet This handles common cases like ${1:} -> empty string,
+          // ${1:text} -> text
           strip_snippet_syntax(&text)
         } else {
           (text, None)
@@ -651,7 +685,10 @@ impl Completion {
         let should_trigger_signature_help = cursor_offset.is_some() && final_text.contains('(');
 
         // Create and apply main completion transaction
-        let transaction = Transaction::change(doc.text(), [(start, end, Some(final_text.into()))].iter().cloned());
+        let transaction = Transaction::change(
+          doc.text(),
+          [(start, end, Some(final_text.into()))].iter().cloned(),
+        );
         doc.apply(&transaction, view.id);
 
         // If snippet had a cursor position, move cursor there
@@ -661,30 +698,38 @@ impl Completion {
           doc.set_selection(view.id, selection);
         }
 
-        // If we moved the cursor and the completion text contains '(', trigger signature help
+        // If we moved the cursor and the completion text contains '(', trigger
+        // signature help
         if should_trigger_signature_help {
           use the_editor_event::send_blocking;
+
           use crate::handlers::lsp::SignatureHelpEvent;
-          send_blocking(&ctx.editor.handlers.signature_hints, SignatureHelpEvent::Trigger);
+          send_blocking(
+            &ctx.editor.handlers.signature_hints,
+            SignatureHelpEvent::Trigger,
+          );
         }
 
         // Apply additional text edits (e.g., auto-imports)
         if let Some(ref additional_edits) = lsp_item.item.additional_text_edits {
           if !additional_edits.is_empty() {
-            log::info!("Applying {} additional text edits for auto-import", additional_edits.len());
+            log::info!(
+              "Applying {} additional text edits for auto-import",
+              additional_edits.len()
+            );
 
             // Convert LSP text edits to transaction
             let text = doc.text();
             let mut changes = Vec::new();
 
             for edit in additional_edits {
-              let start = lsp_pos_to_pos(text, edit.range.start, offset_encoding)
-                .unwrap_or_else(|| {
+              let start =
+                lsp_pos_to_pos(text, edit.range.start, offset_encoding).unwrap_or_else(|| {
                   log::error!("Invalid additional edit start position");
                   0
                 });
-              let end = lsp_pos_to_pos(text, edit.range.end, offset_encoding)
-                .unwrap_or_else(|| {
+              let end =
+                lsp_pos_to_pos(text, edit.range.end, offset_encoding).unwrap_or_else(|| {
                   log::error!("Invalid additional edit end position");
                   start
                 });
@@ -700,11 +745,19 @@ impl Completion {
       },
       CompletionItem::Other(other) => {
         // For non-LSP completions, replace from trigger to cursor with the label
-        let cursor = doc.selection(view.id).primary().cursor(doc.text().slice(..));
+        let cursor = doc
+          .selection(view.id)
+          .primary()
+          .cursor(doc.text().slice(..));
         let start = self.trigger_offset;
         let end = cursor;
 
-        let transaction = Transaction::change(doc.text(), [(start, end, Some(other.label.clone().into()))].iter().cloned());
+        let transaction = Transaction::change(
+          doc.text(),
+          [(start, end, Some(other.label.clone().into()))]
+            .iter()
+            .cloned(),
+        );
         doc.apply(&transaction, view.id);
       },
     }
@@ -724,39 +777,39 @@ impl Component for Completion {
 
     match (key.code, key.ctrl, key.alt, key.shift) {
       // Up - move up
-      (Key::Up, _, _, _) | (Key::Char('p'), true, _, _) => {
+      (Key::Up, ..) | (Key::Char('p'), true, ..) => {
         self.move_up(1);
         self.trigger_resolve();
         EventResult::Consumed(None)
-      }
+      },
       // Down - move down
-      (Key::Down, _, _, _) | (Key::Char('n'), true, _, _) => {
+      (Key::Down, ..) | (Key::Char('n'), true, ..) => {
         self.move_down(1);
         self.trigger_resolve();
         EventResult::Consumed(None)
-      }
+      },
       // PageUp - page up
-      (Key::PageUp, _, _, _) | (Key::Char('u'), true, _, _) => {
+      (Key::PageUp, ..) | (Key::Char('u'), true, ..) => {
         self.move_up(MAX_VISIBLE_ITEMS / 2);
         self.trigger_resolve();
         EventResult::Consumed(None)
-      }
+      },
       // PageDown - page down
-      (Key::PageDown, _, _, _) | (Key::Char('d'), true, _, _) => {
+      (Key::PageDown, ..) | (Key::Char('d'), true, ..) => {
         self.move_down(MAX_VISIBLE_ITEMS / 2);
         self.trigger_resolve();
         EventResult::Consumed(None)
-      }
+      },
       // Home - to start
-      (Key::Home, _, _, _) => {
+      (Key::Home, ..) => {
         self.cursor = 0;
         self.scroll_offset = 0;
         self.doc_resolved = false;
         self.trigger_resolve();
         EventResult::Consumed(None)
-      }
+      },
       // End - to end
-      (Key::End, _, _, _) => {
+      (Key::End, ..) => {
         if !self.filtered.is_empty() {
           self.cursor = self.filtered.len() - 1;
           self.ensure_cursor_in_view();
@@ -764,20 +817,20 @@ impl Component for Completion {
           self.trigger_resolve();
         }
         EventResult::Consumed(None)
-      }
+      },
       // Escape - don't consume, let editor handle mode switch
       // The editor_view will close completion and switch to normal mode
-      (Key::Escape, _, _, _) => EventResult::Ignored(None),
+      (Key::Escape, ..) => EventResult::Ignored(None),
       // Ctrl+c - explicitly close completion without mode switch
       // Return a callback to signal we want to close (editor_view handles it)
-      (Key::Char('c'), true, _, _) => {
+      (Key::Char('c'), true, ..) => {
         EventResult::Consumed(Some(Box::new(|_compositor, _ctx| {
           // Empty callback - just signals completion should close
           // EditorView will set self.completion = None
         })))
-      }
+      },
       // Enter / Tab - accept completion
-      (Key::Enter, _, _, _) | (Key::Tab, _, _, false) => {
+      (Key::Enter, ..) | (Key::Tab, _, _, false) => {
         if let Some(item) = self.selection() {
           // Apply the selected completion
           self.apply_completion(ctx, item);
@@ -787,7 +840,7 @@ impl Component for Completion {
           // Empty callback - just signals completion should close
           // EditorView will set self.completion = None
         })))
-      }
+      },
       _ => EventResult::Ignored(None),
     }
   }
@@ -894,7 +947,10 @@ impl Component for Completion {
       let anchor_line = text.char_to_line(view_offset.anchor.min(text.len_chars()));
 
       // Calculate screen coordinates
-      let font_size = ctx.editor.font_size_override.unwrap_or(ctx.editor.config().font_size);
+      let font_size = ctx
+        .editor
+        .font_size_override
+        .unwrap_or(ctx.editor.config().font_size);
       let font_width = surface.cell_width().max(1.0);
       let gutter_width = 6; // Approximate gutter width
       let gutter_offset = gutter_width as f32 * font_width;
@@ -923,12 +979,27 @@ impl Component for Completion {
 
     // Draw background
     let corner_radius = 6.0;
-    surface.draw_rounded_rect(anim_x, anim_y, anim_width, anim_height, corner_radius, bg_color);
+    surface.draw_rounded_rect(
+      anim_x,
+      anim_y,
+      anim_width,
+      anim_height,
+      corner_radius,
+      bg_color,
+    );
 
     // Draw border (with animated alpha)
     let mut border_color = Color::new(0.3, 0.3, 0.35, 0.8);
     border_color.a *= alpha;
-    surface.draw_rounded_rect_stroke(anim_x, anim_y, anim_width, anim_height, corner_radius, 1.0, border_color);
+    surface.draw_rounded_rect_stroke(
+      anim_x,
+      anim_y,
+      anim_width,
+      anim_height,
+      corner_radius,
+      1.0,
+      border_color,
+    );
 
     // Render items (using animated transforms)
     surface.with_overlay_region(anim_x, anim_y, anim_width, anim_height, |surface| {
@@ -938,12 +1009,20 @@ impl Component for Completion {
         let is_selected = self.scroll_offset + row == self.cursor;
 
         let (label, kind, deprecated) = match item {
-          CompletionItem::Lsp(lsp_item) => (
-            lsp_item.item.label.as_str(),
-            Self::format_kind(lsp_item.item.kind),
-            Self::is_deprecated(&lsp_item.item),
-          ),
-          CompletionItem::Other(other) => (other.label.as_str(), other.kind.as_deref().unwrap_or(""), false),
+          CompletionItem::Lsp(lsp_item) => {
+            (
+              lsp_item.item.label.as_str(),
+              Self::format_kind(lsp_item.item.kind),
+              Self::is_deprecated(&lsp_item.item),
+            )
+          },
+          CompletionItem::Other(other) => {
+            (
+              other.label.as_str(),
+              other.kind.as_deref().unwrap_or(""),
+              false,
+            )
+          },
         };
 
         let item_y = anim_y + item_padding + (row as f32 * line_height * scale);
@@ -971,7 +1050,12 @@ impl Component for Completion {
         };
 
         let kind_color = if is_selected {
-          let mut c = Color::new(selected_fg.r * 0.7, selected_fg.g * 0.7, selected_fg.b * 0.7, 1.0);
+          let mut c = Color::new(
+            selected_fg.r * 0.7,
+            selected_fg.g * 0.7,
+            selected_fg.b * 0.7,
+            1.0,
+          );
           c.a *= alpha;
           c
         } else {

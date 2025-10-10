@@ -1,9 +1,8 @@
 use std::{
   borrow::Cow,
   cmp::Reverse,
+  iter,
 };
-
-use std::iter;
 
 use ropey::{
   RopeSlice,

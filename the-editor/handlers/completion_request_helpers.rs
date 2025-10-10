@@ -1,8 +1,7 @@
 /// Helper functions for completion management
 ///
-/// These functions are used by hooks to manage completion state in a centralized way,
-/// following Helix's architecture pattern.
-
+/// These functions are used by hooks to manage completion state in a
+/// centralized way, following Helix's architecture pattern.
 use crate::{
   core::{
     chars::char_is_word,
@@ -43,7 +42,8 @@ pub fn update_completion_filter(cx: &mut commands::Context, c: Option<char>) {
         // we should request updated completions from the server
 
         // Check if any active completions are marked as incomplete
-        let has_incomplete = cx.editor
+        let has_incomplete = cx
+          .editor
           .handlers
           .completions
           .active_completions
@@ -53,8 +53,9 @@ pub fn update_completion_filter(cx: &mut commands::Context, c: Option<char>) {
           .any(|context| context.is_incomplete);
 
         if has_incomplete {
-          // TODO: Call request_incomplete_completion_list when we have TaskController support
-          // For now, just log that we would re-request
+          // TODO: Call request_incomplete_completion_list when we have
+          // TaskController support For now, just log that we would
+          // re-request
         }
       }
     }
@@ -101,11 +102,14 @@ pub fn trigger_auto_completion(editor: &Editor, trigger_char_only: bool) {
   });
 
   if is_trigger_char {
-    editor.handlers.completions.event(CompletionEvent::TriggerChar {
-      cursor,
-      doc: doc.id,
-      view: view.id,
-    });
+    editor
+      .handlers
+      .completions
+      .event(CompletionEvent::TriggerChar {
+        cursor,
+        doc: doc.id,
+        view: view.id,
+      });
     return;
   }
 
@@ -122,11 +126,14 @@ pub fn trigger_auto_completion(editor: &Editor, trigger_char_only: bool) {
     let trigger_length = 2;
 
     if word_char_count >= trigger_length {
-      editor.handlers.completions.event(CompletionEvent::AutoTrigger {
-        cursor,
-        doc: doc.id,
-        view: view.id,
-      });
+      editor
+        .handlers
+        .completions
+        .event(CompletionEvent::AutoTrigger {
+          cursor,
+          doc: doc.id,
+          view: view.id,
+        });
     }
   }
 }

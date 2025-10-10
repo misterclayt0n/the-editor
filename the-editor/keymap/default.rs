@@ -140,8 +140,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "P" => paste_clipboard_before,
       "R" => replace_selections_with_clipboard,
       "h" => select_references,
+      "/" => global_search,
     },
-    
+
     "s"                => select_regex,
     "A-s"              => split_selection_on_newline,
     "A-minus"          => merge_selections,
@@ -189,31 +190,31 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "x"     => goto_next_xml_element,
       "space" => add_newline_below,
     },
-    
+
     "/"   => search,
     "?"   => rsearch,
     "n"   => search_next,
     "N"   => search_prev,
     "*"   => search_selection_detect_word_boundaries,
     "A-*" => search_selection,
-    
+
     "J"   => join_selections,
     "A-J" => join_selections_space,
     "K"   => keep_selections,
     "A-K" => remove_selections,
     "&"   => align_selections,
     "_"   => trim_selections,
-    
+
     "("   => rotate_selections_backward,
     ")"   => rotate_selections_forward,
     "A-(" => rotate_selection_contents_backward,
     "A-)" => rotate_selection_contents_forward,
-    
+
     "C-b" | "pageup"   => page_up,
     "C-f" | "pagedown" => page_down,
     "C-u"              => page_cursor_half_up,
     "C-d"              => page_cursor_half_down,
-    
+
     "C-w" => { "Window"
       "C-w" | "w"           => rotate_view,
       "C-s" | "s"           => hsplit,
@@ -231,13 +232,13 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "K"                   => swap_view_up,
       "H"                   => swap_view_left,
       "J"                   => swap_view_down,
-      
+
       "n" => { "New split scratch buffer"
           "C-s" | "s" => hsplit_new,
           "C-v" | "v" => vsplit_new,
       },
     },
-    
+
     "C-c"         => toggle_comments,
     "C-i" | "tab" => jump_forward, // tab == <C-i>
     "C-o"         => jump_backward,
@@ -300,16 +301,16 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "W"         => extend_next_long_word_start,
     "B"         => extend_prev_long_word_start,
     "E"         => extend_next_long_word_end,
-    
+
     "A-e"       => extend_parent_node_end,
     "A-b"       => extend_parent_node_start,
 
     "n"         => extend_search_next,
     "N"         => extend_search_prev,
-    
+
     "home"      => extend_to_line_start,
     "end"       => extend_to_line_end,
-    
+
     "v"         => normal_mode,
 
     "g" => { "Goto"

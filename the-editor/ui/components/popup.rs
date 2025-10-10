@@ -88,7 +88,7 @@ impl<T: Component> Popup<T> {
     let mut x = cursor_x.saturating_sub(width / 2); // Center horizontally on cursor
     let mut y = match self.bias {
       PositionBias::Above => cursor_y.saturating_sub(height + 1), // 1 line above cursor
-      PositionBias::Below => cursor_y + 2,                         // 2 lines below cursor
+      PositionBias::Below => cursor_y + 2,                        // 2 lines below cursor
     };
 
     // Clamp to viewport

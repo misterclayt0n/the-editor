@@ -996,10 +996,7 @@ fn start_client(
     // Dispatch event to inform hooks that the language server is initialized
     crate::ui::job::dispatch(move |editor, _compositor| {
       use crate::event::LanguageServerInitialized;
-      the_editor_event::dispatch(LanguageServerInitialized {
-        editor,
-        server_id,
-      });
+      the_editor_event::dispatch(LanguageServerInitialized { editor, server_id });
     })
     .await;
   });

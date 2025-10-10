@@ -120,6 +120,9 @@ pub fn show_signature_help(
   invoked: crate::handlers::lsp::SignatureHelpInvoked,
   response: Option<the_editor_lsp_types::types::SignatureHelp>,
 ) {
+  use the_editor_event::send_blocking;
+  use the_editor_lsp_types::types as lsp;
+
   use crate::handlers::{
     lsp::{
       SignatureHelpEvent,
@@ -130,8 +133,6 @@ pub fn show_signature_help(
       active_param_range,
     },
   };
-  use the_editor_event::send_blocking;
-  use the_editor_lsp_types::types as lsp;
 
   let config = &editor.config();
 
@@ -179,9 +180,11 @@ pub fn show_signature_help(
       let active_param_range_val = active_param_range(&s, response.active_parameter);
 
       let signature_doc = if config.lsp.display_signature_help_docs {
-        s.documentation.map(|doc| match doc {
-          lsp::Documentation::String(s) => s,
-          lsp::Documentation::MarkupContent(markup) => markup.value,
+        s.documentation.map(|doc| {
+          match doc {
+            lsp::Documentation::String(s) => s,
+            lsp::Documentation::MarkupContent(markup) => markup.value,
+          }
         })
       } else {
         None
@@ -219,48 +222,51 @@ where
   use ignore::WalkBuilder;
 
   // Define column: format path relative to root
-  let columns = vec![components::Column::new("File", |path: &std::path::PathBuf, data: &FilePickerData| {
-    // Format the path relative to root, stripping the root prefix
-    path
-      .strip_prefix(&data.root)
-      .ok()
-      .and_then(|p| p.to_str())
-      .map(|s| s.to_string())
-      .unwrap_or_else(|| path.display().to_string())
-  })];
+  let columns = vec![components::Column::new(
+    "File",
+    |path: &std::path::PathBuf, data: &FilePickerData| {
+      // Format the path relative to root, stripping the root prefix
+      path
+        .strip_prefix(&data.root)
+        .ok()
+        .and_then(|p| p.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| path.display().to_string())
+    },
+  )];
 
-  let editor_data = FilePickerData {
-    root: root.clone(),
-  };
+  let editor_data = FilePickerData { root: root.clone() };
 
   // Create action handler that supports open, hsplit, and vsplit
-  let action_handler = std::sync::Arc::new(move |path: &std::path::PathBuf, _data: &FilePickerData, action: components::PickerAction| {
-    match action {
-      components::PickerAction::Primary => {
-        // Primary action: open file normally
-        on_select(path);
-        true // Close picker
-      },
-      components::PickerAction::Secondary => {
-        // Secondary action: open in horizontal split (mocked for now)
-        // TODO: Implement actual horizontal split once window management is ready
-        eprintln!("[MOCK] Would open {:?} in horizontal split", path);
-        on_select(path); // For now, just open normally
-        true // Close picker
-      },
-      components::PickerAction::Tertiary => {
-        // Tertiary action: open in vertical split (mocked for now)
-        // TODO: Implement actual vertical split once window management is ready
-        eprintln!("[MOCK] Would open {:?} in vertical split", path);
-        on_select(path); // For now, just open normally
-        true // Close picker
-      },
-    }
-  });
+  let action_handler = std::sync::Arc::new(
+    move |path: &std::path::PathBuf, _data: &FilePickerData, action: components::PickerAction| {
+      match action {
+        components::PickerAction::Primary => {
+          // Primary action: open file normally
+          on_select(path);
+          true // Close picker
+        },
+        components::PickerAction::Secondary => {
+          // Secondary action: open in horizontal split (mocked for now)
+          // TODO: Implement actual horizontal split once window management is ready
+          eprintln!("[MOCK] Would open {:?} in horizontal split", path);
+          on_select(path); // For now, just open normally
+          true // Close picker
+        },
+        components::PickerAction::Tertiary => {
+          // Tertiary action: open in vertical split (mocked for now)
+          // TODO: Implement actual vertical split once window management is ready
+          eprintln!("[MOCK] Would open {:?} in vertical split", path);
+          on_select(path); // For now, just open normally
+          true // Close picker
+        },
+      }
+    },
+  );
 
   let picker = components::Picker::new(
     columns,
-    0, // primary column index
+    0,          // primary column index
     Vec::new(), // no initial items (will be injected asynchronously)
     editor_data,
     |_| {}, // Dummy on_select since we're using action_handler

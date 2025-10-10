@@ -90,7 +90,9 @@ impl<'t> OverlayHighlighter<'t> {
       HighlightEvent::Push => self.style,
     };
 
-    self.style = highlights.fold(base, |acc, highlight| acc.patch(self.theme.highlight(highlight)));
+    self.style = highlights.fold(base, |acc, highlight| {
+      acc.patch(self.theme.highlight(highlight))
+    });
     self.update_pos();
   }
 
@@ -100,26 +102,26 @@ impl<'t> OverlayHighlighter<'t> {
 }
 
 pub struct EditorView {
-  pub keymaps:          Keymaps,
-  on_next_key:          Option<(OnKeyCallback, OnKeyCallbackKind)>,
+  pub keymaps:               Keymaps,
+  on_next_key:               Option<(OnKeyCallback, OnKeyCallbackKind)>,
   // Track last command for macro replay
-  last_insert:          (MappableCommand, Vec<KeyBinding>),
+  last_insert:               (MappableCommand, Vec<KeyBinding>),
   // Rendering optimizations
-  dirty_region:         DirtyRegion,
-  command_batcher:      CommandBatcher,
-  last_cursor_pos:      Option<usize>,
-  last_selection_hash:  u64,
+  dirty_region:              DirtyRegion,
+  command_batcher:           CommandBatcher,
+  last_cursor_pos:           Option<usize>,
+  last_selection_hash:       u64,
   // Cursor animation state
-  cursor_anim_enabled:  bool,
-  cursor_lerp_factor:   f32,
-  cursor_pos_smooth:    Option<(f32, f32)>,
-  cursor_anim_active:   bool,
+  cursor_anim_enabled:       bool,
+  cursor_lerp_factor:        f32,
+  cursor_pos_smooth:         Option<(f32, f32)>,
+  cursor_anim_active:        bool,
   // Zoom animation state
-  zoom_anim_active:     bool,
+  zoom_anim_active:          bool,
   // Gutter management
-  pub gutter_manager:   GutterManager,
+  pub gutter_manager:        GutterManager,
   // Completion popup
-  pub(crate) completion: Option<crate::ui::components::Completion>,
+  pub(crate) completion:     Option<crate::ui::components::Completion>,
   // Signature help popup
   pub(crate) signature_help: Option<crate::ui::components::SignatureHelp>,
 }
@@ -323,12 +325,16 @@ impl<'h, 'r, 't> SyntaxHighlighter<'h, 'r, 't> {
 
 impl Component for EditorView {
   fn should_update(&self) -> bool {
-    // Redraw only when needed: dirty regions, cursor animation, zoom animation, or popup animations
+    // Redraw only when needed: dirty regions, cursor animation, zoom animation, or
+    // popup animations
     self.dirty_region.needs_redraw()
       || (self.cursor_anim_enabled && self.cursor_anim_active)
       || self.zoom_anim_active
       || self.completion.as_ref().is_some_and(|c| c.is_animating())
-      || self.signature_help.as_ref().is_some_and(|s| s.is_animating())
+      || self
+        .signature_help
+        .as_ref()
+        .is_some_and(|s| s.is_animating())
   }
 
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
@@ -620,7 +626,8 @@ impl Component for EditorView {
       .floor()
       .max(1.0)) as u16;
 
-    // Don't subtract visual padding from viewport width - it's only for rendering offset
+    // Don't subtract visual padding from viewport width - it's only for rendering
+    // offset
     let available_width = renderer.width() as f32;
     let available_width = available_width.max(font_width);
     let area_width = (available_width / font_width).floor().max(1.0) as u16;
@@ -694,11 +701,17 @@ impl Component for EditorView {
     let cursor_reversed = cursor_style.add_modifier.contains(Modifier::REVERSED);
 
     // Cursor colors from theme
-    let cursor_fg_from_theme = cursor_style.fg.map(crate::ui::theme_color_to_renderer_color);
-    let cursor_bg_from_theme = cursor_style.bg.map(crate::ui::theme_color_to_renderer_color);
+    let cursor_fg_from_theme = cursor_style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color);
+    let cursor_bg_from_theme = cursor_style
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color);
 
-    // If no cursor colors are specified at all, default to reversed behavior (adaptive cursor)
-    let use_adaptive_cursor = cursor_reversed || (cursor_fg_from_theme.is_none() && cursor_bg_from_theme.is_none());
+    // If no cursor colors are specified at all, default to reversed behavior
+    // (adaptive cursor)
+    let use_adaptive_cursor =
+      cursor_reversed || (cursor_fg_from_theme.is_none() && cursor_bg_from_theme.is_none());
 
     let selection_bg_base = selection_style
       .bg
@@ -717,248 +730,69 @@ impl Component for EditorView {
       let mut normal = normal_base;
       let mut selection_bg = selection_bg_base;
 
-    // Get current view and document
-    let focus_view = current_view_id;
+      // Get current view and document
+      let focus_view = current_view_id;
 
-    // Update zoom animation
-    let zoom_anim_speed = 20.0; // Fast animation (completes in ~0.05s)
-    {
-      let view = cx.editor.tree.get_mut(focus_view);
-      if view.zoom_anim < 1.0 {
-        view.zoom_anim = (view.zoom_anim + cx.dt * zoom_anim_speed).min(1.0);
-        self.zoom_anim_active = true;
-      } else {
-        self.zoom_anim_active = false;
-      }
-    }
-
-    let view = cx.editor.tree.get(focus_view);
-    let zoom_t = view.zoom_anim;
-    let zoom_ease = zoom_t * zoom_t * (3.0 - 2.0 * zoom_t); // Smoothstep easing
-
-    // Apply slide-up + fade effect with more pronounced motion
-    // Alpha fades in quickly, but slide is more dramatic
-    let zoom_alpha = zoom_ease.powf(0.7); // Faster fade-in
-    let zoom_offset_y = (1.0 - zoom_ease) * 50.0; // Start 50px below, slide to normal position
-
-    // Apply zoom alpha to all colors for fade-in effect
-    normal.a *= zoom_alpha;
-    selection_bg.a *= zoom_alpha;
-
-    // Calculate base coordinates from view's area (convert cell coords to pixels)
-    let view_offset_x = view.area.x as f32 * font_width;
-    let view_offset_y = view.area.y as f32 * (font_size + LINE_SPACING);
-    let base_y = view_offset_y + VIEW_PADDING_TOP + zoom_offset_y;
-
-    // Calculate visible lines for THIS view based on its height
-    // view.area.height is already in rows/cells
-    let content_rows = view.area.height;
-
-    // Calculate bottom edge for clipping (to prevent text from rendering into separator)
-    let has_horizontal_split_below = view.area.y + view.area.height < cx.editor.tree.area().height;
-    let view_bottom_edge_px = view_offset_y + (view.area.height as f32 * (font_size + LINE_SPACING))
-      - if has_horizontal_split_below { SEPARATOR_HEIGHT_PX } else { 0.0 };
-
-    let doc_id = view.doc;
-
-    // Get cached highlights early while we can still mutably borrow doc
-    // (We'll compute the exact range later, but pre-cache a larger range)
-    let cached_highlights_opt = {
-      let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
-      let text = doc.text();
-      let view_offset = doc.view_offset(focus_view);
-      let row = text.char_to_line(view_offset.anchor.min(text.len_chars()));
-      let visible_lines = content_rows as usize;
-
-      // Calculate byte range for visible viewport with some margin
-      let start_line = row.saturating_sub(10);
-      let end_line = (row + visible_lines + 10).min(text.len_lines());
-      let start_byte = text.line_to_byte(start_line);
-      let end_byte = if end_line < text.len_lines() {
-        text.line_to_byte(end_line)
-      } else {
-        text.len_bytes()
-      };
-
-      let loader = cx.editor.syn_loader.load();
-      doc.get_viewport_highlights(start_byte..end_byte, &loader)
-    };
-
-    // Wrap main rendering in scope to drop borrows before rendering completion
-    {
-      let doc = &cx.editor.documents[&doc_id];
-      let doc_text = doc.text();
-      let selection = doc.selection(focus_view);
-
-    // Calculate gutter offset using GutterManager
-    let gutter_width = self.gutter_manager.total_width(view, doc);
-    let gutter_offset = gutter_width as f32 * font_width;
-    let base_x = view_offset_x + VIEW_PADDING_LEFT + gutter_offset;
-
-    let cursor_pos = selection.primary().cursor(doc_text.slice(..));
-
-    // Check if cursor or selection changed
-    let selection_hash = {
-      use std::{
-        collections::hash_map::DefaultHasher,
-        hash::{
-          Hash,
-          Hasher,
-        },
-      };
-      let mut hasher = DefaultHasher::new();
-      for range in selection.ranges() {
-        range.from().hash(&mut hasher);
-        range.to().hash(&mut hasher);
-      }
-      hasher.finish()
-    };
-
-    let cursor_changed = self.last_cursor_pos != Some(cursor_pos);
-    let selection_changed = self.last_selection_hash != selection_hash;
-
-    if cursor_changed || selection_changed {
-      // Only mark cursor-related areas as dirty, not entire viewport
-      if let Some(old_cursor) = self.last_cursor_pos {
-        // Mark old cursor line dirty
-        let old_line = if old_cursor < doc_text.len_chars() {
-          doc_text.char_to_line(old_cursor)
+      // Update zoom animation
+      let zoom_anim_speed = 20.0; // Fast animation (completes in ~0.05s)
+      {
+        let view = cx.editor.tree.get_mut(focus_view);
+        if view.zoom_anim < 1.0 {
+          view.zoom_anim = (view.zoom_anim + cx.dt * zoom_anim_speed).min(1.0);
+          self.zoom_anim_active = true;
         } else {
-          doc_text.len_lines().saturating_sub(1)
-        };
-        self.dirty_region.mark_line_dirty(old_line);
+          self.zoom_anim_active = false;
+        }
       }
-      // Mark new cursor line dirty
-      let new_line = if cursor_pos < doc_text.len_chars() {
-        doc_text.char_to_line(cursor_pos)
-      } else {
-        doc_text.len_lines().saturating_sub(1)
-      };
-      self.dirty_region.mark_line_dirty(new_line);
 
-      self.last_cursor_pos = Some(cursor_pos);
-      self.last_selection_hash = selection_hash;
-    }
+      let view = cx.editor.tree.get(focus_view);
+      let zoom_t = view.zoom_anim;
+      let zoom_ease = zoom_t * zoom_t * (3.0 - 2.0 * zoom_t); // Smoothstep easing
 
-    // Get viewport information
-    let viewport = view.inner_area(doc);
-    let visible_lines = content_rows as usize;
-    let cached_highlights = cached_highlights_opt;
+      // Apply slide-up + fade effect with more pronounced motion
+      // Alpha fades in quickly, but slide is more dramatic
+      let zoom_alpha = zoom_ease.powf(0.7); // Faster fade-in
+      let zoom_offset_y = (1.0 - zoom_ease) * 50.0; // Start 50px below, slide to normal position
 
-    let text_fmt = doc.text_format(viewport.width, None);
-    let annotations = view.text_annotations(doc, Some(theme));
-    let view_offset = doc.view_offset(focus_view);
+      // Apply zoom alpha to all colors for fade-in effect
+      normal.a *= zoom_alpha;
+      selection_bg.a *= zoom_alpha;
 
-    let (top_char_idx, _) = char_idx_at_visual_offset(
-      doc_text.slice(..),
-      view_offset.anchor,
-      view_offset.vertical_offset as isize,
-      view_offset.horizontal_offset,
-      &text_fmt,
-      &annotations,
-    );
+      // Calculate base coordinates from view's area (convert cell coords to pixels)
+      let view_offset_x = view.area.x as f32 * font_width;
+      let view_offset_y = view.area.y as f32 * (font_size + LINE_SPACING);
+      let base_y = view_offset_y + VIEW_PADDING_TOP + zoom_offset_y;
 
-    // Collect overlay highlights (e.g., jump labels) for the visible range
-    let mut overlay_highlighter = {
-      let start_char = top_char_idx;
-      let end_char = (start_char + (visible_lines * viewport.width as usize)).min(doc_text.len_chars());
-      let overlay_highlights_data = annotations.collect_overlay_highlights(start_char..end_char);
-      OverlayHighlighter::new(vec![overlay_highlights_data], theme)
-    };
+      // Calculate visible lines for THIS view based on its height
+      // view.area.height is already in rows/cells
+      let content_rows = view.area.height;
 
-    // Compute row offset
-    let row_off = visual_offset_from_block(
-      doc_text.slice(..),
-      top_char_idx,
-      top_char_idx,
-      &text_fmt,
-      &annotations,
-    )
-    .0
-    .row;
+      // Calculate bottom edge for clipping (to prevent text from rendering into
+      // separator)
+      let has_horizontal_split_below =
+        view.area.y + view.area.height < cx.editor.tree.area().height;
+      let view_bottom_edge_px = view_offset_y
+        + (view.area.height as f32 * (font_size + LINE_SPACING))
+        - if has_horizontal_split_below {
+          SEPARATOR_HEIGHT_PX
+        } else {
+          0.0
+        };
 
-    // Update viewport bounds in dirty region tracker
-    self
-      .dirty_region
-      .set_viewport(row_off, row_off + visible_lines);
+      let doc_id = view.doc;
 
-    // For now, disable frame timing optimization as it's blocking renders
-    // TODO: Fix frame timer logic
-    // Always render when we have changes to show
+      // Get cached highlights early while we can still mutably borrow doc
+      // (We'll compute the exact range later, but pre-cache a larger range)
+      let cached_highlights_opt = {
+        let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
+        let text = doc.text();
+        let view_offset = doc.view_offset(focus_view);
+        let row = text.char_to_line(view_offset.anchor.min(text.len_chars()));
+        let visible_lines = content_rows as usize;
 
-    // Create document formatter
-    let formatter = DocumentFormatter::new_at_prev_checkpoint(
-      doc_text.slice(..),
-      &text_fmt,
-      &annotations,
-      top_char_idx,
-    );
-
-    // Create decoration manager for inline diagnostics
-    let mut decoration_manager = crate::ui::text_decorations::DecorationManager::new();
-
-    // Add diagnostic underlines decoration
-    let underlines = crate::ui::text_decorations::diagnostic_underlines::DiagnosticUnderlines::new(
-      doc,
-      &cx.editor.theme,
-      base_x,
-      base_y,
-      font_size + LINE_SPACING,
-      font_width,
-      font_size,
-      view_offset.horizontal_offset,
-    );
-    decoration_manager.add_decoration(underlines);
-
-    // Add inline diagnostics decoration if enabled
-    let inline_diagnostics_config = cx.editor.config().inline_diagnostics.clone();
-    let eol_diagnostics = cx.editor.config().end_of_line_diagnostics;
-    if !inline_diagnostics_config.disabled() {
-      let inline_diag = crate::ui::text_decorations::diagnostics::InlineDiagnostics::new(
-        doc,
-        &cx.editor.theme,
-        cursor_pos,
-        inline_diagnostics_config,
-        eol_diagnostics,
-        base_x,
-        base_y,
-        font_size + LINE_SPACING,
-        font_width,
-        viewport.width,
-        view_offset.horizontal_offset,
-      );
-      decoration_manager.add_decoration(inline_diag);
-    }
-
-    // Add inlay hints decoration if available
-    if let Some(hints) = doc.inlay_hints(focus_view) {
-      let inlay_hints_decoration = crate::ui::text_decorations::inlay_hints::InlayHints::new(
-        hints,
-        &cx.editor.theme,
-        cursor_pos,
-        viewport.width,
-        base_x,
-        base_y,
-        font_size + LINE_SPACING,
-      );
-      decoration_manager.add_decoration(inlay_hints_decoration);
-    }
-
-    // Prepare decorations for rendering
-    decoration_manager.prepare_for_rendering(top_char_idx);
-
-    // Create syntax highlighter - use cached highlights if available, otherwise
-    // create live highlighter
-    let syn_loader = cx.editor.syn_loader.load();
-    let syntax_highlighter = if cached_highlights.is_none() {
-      // No cached highlights, create live highlighter as fallback
-      doc.syntax().map(|syntax| {
-        let text = doc_text.slice(..);
-        let row = text.char_to_line(top_char_idx.min(text.len_chars()));
-
-        // Calculate byte range for visible viewport
-        let start_line = row;
-        let end_line = (row + visible_lines).min(text.len_lines());
+        // Calculate byte range for visible viewport with some margin
+        let start_line = row.saturating_sub(10);
+        let end_line = (row + visible_lines + 10).min(text.len_lines());
         let start_byte = text.line_to_byte(start_line);
         let end_byte = if end_line < text.len_lines() {
           text.line_to_byte(end_line)
@@ -966,432 +800,633 @@ impl Component for EditorView {
           text.len_bytes()
         };
 
-        let range = start_byte as u32..end_byte as u32;
-        syntax.highlighter(text, &syn_loader, range)
-      })
-    } else {
-      // We have cached highlights, don't create a live highlighter
-      None
-    };
+        let loader = cx.editor.syn_loader.load();
+        doc.get_viewport_highlights(start_byte..end_byte, &loader)
+      };
 
-    let text_style = normal_style;
+      // Wrap main rendering in scope to drop borrows before rendering completion
+      {
+        let doc = &cx.editor.documents[&doc_id];
+        let doc_text = doc.text();
+        let selection = doc.selection(focus_view);
 
-    let mut syntax_hl = SyntaxHighlighter::new(
-      syntax_highlighter,
-      doc_text.slice(..),
-      &cx.editor.theme,
-      text_style,
-    );
+        // Calculate gutter offset using GutterManager
+        let gutter_width = self.gutter_manager.total_width(view, doc);
+        let gutter_offset = gutter_width as f32 * font_width;
+        let base_x = view_offset_x + VIEW_PADDING_LEFT + gutter_offset;
 
-    // Debug per document (track by document ID)
-    let viewport_cols = viewport.width as usize;
+        let cursor_pos = selection.primary().cursor(doc_text.slice(..));
 
-    // Calculate view's right edge in pixels for clipping
-    let view_right_edge_px = view_offset_x + (view.area.width as f32 * font_width);
+        // Check if cursor or selection changed
+        let selection_hash = {
+          use std::{
+            collections::hash_map::DefaultHasher,
+            hash::{
+              Hash,
+              Hasher,
+            },
+          };
+          let mut hasher = DefaultHasher::new();
+          for range in selection.ranges() {
+            range.from().hash(&mut hasher);
+            range.to().hash(&mut hasher);
+          }
+          hasher.finish()
+        };
 
-    // Helper: check if document position range overlaps any selection
-    let is_selected = |start: usize, len: usize| -> bool {
-      if len == 0 {
-        return false;
-      }
-      let end = start + len;
-      selection
-        .ranges()
-        .iter()
-        .any(|r| r.from() < end && r.to() > start)
-    };
+        let cursor_changed = self.last_cursor_pos != Some(cursor_pos);
+        let selection_changed = self.last_selection_hash != selection_hash;
 
-    let mut current_row = usize::MAX;
-    let mut current_doc_line = usize::MAX;
-    let mut last_doc_line_end_row = 0; // Track the last visual row of the previous doc_line
-    let mut grapheme_count = 0;
-    let mut line_batch = Vec::new(); // Batch characters on the same line
-    let mut rendered_gutter_lines = std::collections::HashSet::new(); // Track which lines have gutters rendered
-    let mut line_end_x = std::collections::HashMap::new(); // Track the rightmost x position for each doc line
-    let mut current_line_max_x = base_x; // Track max x for current line
-
-    // EOL diagnostics are now handled by the decoration system
-
-    // Helper to flush a line batch
-    let flush_line_batch = |batch: &mut Vec<(f32, f32, String, Color)>,
-                            batcher: &mut CommandBatcher,
-                            font_width: f32,
-                            font_size: f32| {
-      if batch.is_empty() {
-        return;
-      }
-
-      // Group consecutive characters with same style
-      let mut i = 0;
-      while i < batch.len() {
-        let (x, y, _, color) = batch[i].clone();
-        let mut text = batch[i].2.clone();
-        let mut j = i + 1;
-
-        // Track the expected position for next character
-        let mut expected_x = x + font_width;
-
-        // Merge consecutive characters with same color at adjacent positions
-        while j < batch.len() {
-          let (next_x, _, _, next_color) = &batch[j];
-          // Check if next character is adjacent and same color (compare RGBA components)
-          if (next_x - expected_x).abs() < 1.0
-            && next_color.r == color.r
-            && next_color.g == color.g
-            && next_color.b == color.b
-            && next_color.a == color.a
-          {
-            text.push_str(&batch[j].2);
-            expected_x = next_x + font_width;
-            j += 1;
+        if cursor_changed || selection_changed {
+          // Only mark cursor-related areas as dirty, not entire viewport
+          if let Some(old_cursor) = self.last_cursor_pos {
+            // Mark old cursor line dirty
+            let old_line = if old_cursor < doc_text.len_chars() {
+              doc_text.char_to_line(old_cursor)
+            } else {
+              doc_text.len_lines().saturating_sub(1)
+            };
+            self.dirty_region.mark_line_dirty(old_line);
+          }
+          // Mark new cursor line dirty
+          let new_line = if cursor_pos < doc_text.len_chars() {
+            doc_text.char_to_line(cursor_pos)
           } else {
+            doc_text.len_lines().saturating_sub(1)
+          };
+          self.dirty_region.mark_line_dirty(new_line);
+
+          self.last_cursor_pos = Some(cursor_pos);
+          self.last_selection_hash = selection_hash;
+        }
+
+        // Get viewport information
+        let viewport = view.inner_area(doc);
+        let visible_lines = content_rows as usize;
+        let cached_highlights = cached_highlights_opt;
+
+        let text_fmt = doc.text_format(viewport.width, None);
+        let annotations = view.text_annotations(doc, Some(theme));
+        let view_offset = doc.view_offset(focus_view);
+
+        let (top_char_idx, _) = char_idx_at_visual_offset(
+          doc_text.slice(..),
+          view_offset.anchor,
+          view_offset.vertical_offset as isize,
+          view_offset.horizontal_offset,
+          &text_fmt,
+          &annotations,
+        );
+
+        // Collect overlay highlights (e.g., jump labels) for the visible range
+        let mut overlay_highlighter = {
+          let start_char = top_char_idx;
+          let end_char =
+            (start_char + (visible_lines * viewport.width as usize)).min(doc_text.len_chars());
+          let overlay_highlights_data =
+            annotations.collect_overlay_highlights(start_char..end_char);
+          OverlayHighlighter::new(vec![overlay_highlights_data], theme)
+        };
+
+        // Compute row offset
+        let row_off = visual_offset_from_block(
+          doc_text.slice(..),
+          top_char_idx,
+          top_char_idx,
+          &text_fmt,
+          &annotations,
+        )
+        .0
+        .row;
+
+        // Update viewport bounds in dirty region tracker
+        self
+          .dirty_region
+          .set_viewport(row_off, row_off + visible_lines);
+
+        // For now, disable frame timing optimization as it's blocking renders
+        // TODO: Fix frame timer logic
+        // Always render when we have changes to show
+
+        // Create document formatter
+        let formatter = DocumentFormatter::new_at_prev_checkpoint(
+          doc_text.slice(..),
+          &text_fmt,
+          &annotations,
+          top_char_idx,
+        );
+
+        // Create decoration manager for inline diagnostics
+        let mut decoration_manager = crate::ui::text_decorations::DecorationManager::new();
+
+        // Add diagnostic underlines decoration
+        let underlines =
+          crate::ui::text_decorations::diagnostic_underlines::DiagnosticUnderlines::new(
+            doc,
+            &cx.editor.theme,
+            base_x,
+            base_y,
+            font_size + LINE_SPACING,
+            font_width,
+            font_size,
+            view_offset.horizontal_offset,
+          );
+        decoration_manager.add_decoration(underlines);
+
+        // Add inline diagnostics decoration if enabled
+        let inline_diagnostics_config = cx.editor.config().inline_diagnostics.clone();
+        let eol_diagnostics = cx.editor.config().end_of_line_diagnostics;
+        if !inline_diagnostics_config.disabled() {
+          let inline_diag = crate::ui::text_decorations::diagnostics::InlineDiagnostics::new(
+            doc,
+            &cx.editor.theme,
+            cursor_pos,
+            inline_diagnostics_config,
+            eol_diagnostics,
+            base_x,
+            base_y,
+            font_size + LINE_SPACING,
+            font_width,
+            viewport.width,
+            view_offset.horizontal_offset,
+          );
+          decoration_manager.add_decoration(inline_diag);
+        }
+
+        // Add inlay hints decoration if available
+        if let Some(hints) = doc.inlay_hints(focus_view) {
+          let inlay_hints_decoration = crate::ui::text_decorations::inlay_hints::InlayHints::new(
+            hints,
+            &cx.editor.theme,
+            cursor_pos,
+            viewport.width,
+            base_x,
+            base_y,
+            font_size + LINE_SPACING,
+          );
+          decoration_manager.add_decoration(inlay_hints_decoration);
+        }
+
+        // Prepare decorations for rendering
+        decoration_manager.prepare_for_rendering(top_char_idx);
+
+        // Create syntax highlighter - use cached highlights if available, otherwise
+        // create live highlighter
+        let syn_loader = cx.editor.syn_loader.load();
+        let syntax_highlighter = if cached_highlights.is_none() {
+          // No cached highlights, create live highlighter as fallback
+          doc.syntax().map(|syntax| {
+            let text = doc_text.slice(..);
+            let row = text.char_to_line(top_char_idx.min(text.len_chars()));
+
+            // Calculate byte range for visible viewport
+            let start_line = row;
+            let end_line = (row + visible_lines).min(text.len_lines());
+            let start_byte = text.line_to_byte(start_line);
+            let end_byte = if end_line < text.len_lines() {
+              text.line_to_byte(end_line)
+            } else {
+              text.len_bytes()
+            };
+
+            let range = start_byte as u32..end_byte as u32;
+            syntax.highlighter(text, &syn_loader, range)
+          })
+        } else {
+          // We have cached highlights, don't create a live highlighter
+          None
+        };
+
+        let text_style = normal_style;
+
+        let mut syntax_hl = SyntaxHighlighter::new(
+          syntax_highlighter,
+          doc_text.slice(..),
+          &cx.editor.theme,
+          text_style,
+        );
+
+        // Debug per document (track by document ID)
+        let viewport_cols = viewport.width as usize;
+
+        // Calculate view's right edge in pixels for clipping
+        let view_right_edge_px = view_offset_x + (view.area.width as f32 * font_width);
+
+        // Helper: check if document position range overlaps any selection
+        let is_selected = |start: usize, len: usize| -> bool {
+          if len == 0 {
+            return false;
+          }
+          let end = start + len;
+          selection
+            .ranges()
+            .iter()
+            .any(|r| r.from() < end && r.to() > start)
+        };
+
+        let mut current_row = usize::MAX;
+        let mut current_doc_line = usize::MAX;
+        let mut last_doc_line_end_row = 0; // Track the last visual row of the previous doc_line
+        let mut grapheme_count = 0;
+        let mut line_batch = Vec::new(); // Batch characters on the same line
+        let mut rendered_gutter_lines = std::collections::HashSet::new(); // Track which lines have gutters rendered
+        let mut line_end_x = std::collections::HashMap::new(); // Track the rightmost x position for each doc line
+        let mut current_line_max_x = base_x; // Track max x for current line
+
+        // EOL diagnostics are now handled by the decoration system
+
+        // Helper to flush a line batch
+        let flush_line_batch = |batch: &mut Vec<(f32, f32, String, Color)>,
+                                batcher: &mut CommandBatcher,
+                                font_width: f32,
+                                font_size: f32| {
+          if batch.is_empty() {
+            return;
+          }
+
+          // Group consecutive characters with same style
+          let mut i = 0;
+          while i < batch.len() {
+            let (x, y, _, color) = batch[i].clone();
+            let mut text = batch[i].2.clone();
+            let mut j = i + 1;
+
+            // Track the expected position for next character
+            let mut expected_x = x + font_width;
+
+            // Merge consecutive characters with same color at adjacent positions
+            while j < batch.len() {
+              let (next_x, _, _, next_color) = &batch[j];
+              // Check if next character is adjacent and same color (compare RGBA components)
+              if (next_x - expected_x).abs() < 1.0
+                && next_color.r == color.r
+                && next_color.g == color.g
+                && next_color.b == color.b
+                && next_color.a == color.a
+              {
+                text.push_str(&batch[j].2);
+                expected_x = next_x + font_width;
+                j += 1;
+              } else {
+                break;
+              }
+            }
+
+            // Render the merged text
+            batcher.add_command(RenderCommand::Text {
+              section: TextSection::simple(x, y, text, font_size, color),
+            });
+
+            i = j;
+          }
+          batch.clear();
+        };
+
+        // Render document graphemes using command batcher
+        for g in formatter {
+          grapheme_count += 1;
+          // Skip visual lines before the top row of the viewport
+          if g.visual_pos.row < row_off {
+            continue;
+          }
+
+          let rel_row = g.visual_pos.row - row_off;
+          if rel_row >= visible_lines {
             break;
+          }
+
+          // For now, disable per-line dirty checking as it's causing rendering issues
+          // We'll still benefit from batching and frame timing
+          // TODO: Re-enable once we properly track all dirty regions
+
+          // Horizontal scrolling
+          let abs_col = g.visual_pos.col;
+          let width_cols = g.raw.width();
+          let h_off = view_offset.horizontal_offset;
+
+          // Skip if grapheme is left of viewport
+          if abs_col + width_cols <= h_off {
+            continue;
+          }
+
+          // Compute on-screen column
+          let rel_col = abs_col.saturating_sub(h_off);
+          if rel_col >= viewport_cols {
+            continue;
+          }
+
+          // Handle partial width at left edge
+          let left_clip = h_off.saturating_sub(abs_col);
+          let mut draw_cols = width_cols.saturating_sub(left_clip);
+          let remaining_cols = viewport_cols.saturating_sub(rel_col);
+          if draw_cols > remaining_cols {
+            draw_cols = remaining_cols;
+          }
+
+          // Track current row and flush batch on line change
+          if rel_row != current_row {
+            flush_line_batch(
+              &mut line_batch,
+              &mut self.command_batcher,
+              font_width,
+              font_size,
+            );
+            current_row = rel_row;
+          }
+
+          let x = base_x + (rel_col as f32) * font_width;
+          let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING);
+
+          // Render gutter for this line if we haven't already
+          let doc_line = doc_text.char_to_line(g.char_idx.min(doc_text.len_chars()));
+
+          // Call decoration hooks for line changes
+          if doc_line != current_doc_line {
+            // Render end-of-line diagnostic for previous line before switching
+            if current_doc_line != usize::MAX {
+              // Render virtual lines for the previous line using the last visual row it ended
+              // on
+              decoration_manager.render_virtual_lines(
+                renderer,
+                (current_doc_line, last_doc_line_end_row as u16),
+                viewport_cols,
+              );
+            }
+
+            // Decorate the new line
+            decoration_manager.decorate_line(renderer, (doc_line, rel_row as u16));
+            current_doc_line = doc_line;
+            last_doc_line_end_row = rel_row; // Initialize for the new doc_line
+            current_line_max_x = base_x; // Reset for new line
+          } else {
+            // Still on the same doc_line, update the last row we saw content on
+            last_doc_line_end_row = rel_row;
+          }
+
+          // Track the rightmost x position on this line
+          current_line_max_x = current_line_max_x.max(x + (draw_cols as f32) * font_width);
+
+          // Call decoration hook for this grapheme
+          decoration_manager.decorate_grapheme(&g);
+          if rendered_gutter_lines.insert(doc_line) {
+            // This is the first time we're rendering this doc line, so render its gutter
+            let cursor_line = doc_text.char_to_line(cursor_pos.min(doc_text.len_chars()));
+            let selected = doc_line == cursor_line;
+
+            let line_info = crate::ui::gutter::GutterLineInfo {
+              doc_line,
+              visual_line: rel_row,
+              selected,
+              first_visual_line: g.visual_pos.col == 0, // First visual line if at column 0
+            };
+
+            self.gutter_manager.render_line(
+              &line_info,
+              cx.editor,
+              doc,
+              view,
+              &cx.editor.theme,
+              renderer,
+              view_offset_x + VIEW_PADDING_LEFT,
+              y,
+              font_width,
+              font_size,
+              normal,
+            );
+          }
+
+          // Add selection background command
+          let doc_len = g.doc_chars();
+          if is_selected(g.char_idx, doc_len) {
+            self.command_batcher.add_command(RenderCommand::Selection {
+              x,
+              y,
+              width: (draw_cols as f32) * font_width,
+              height: font_size + LINE_SPACING,
+              color: selection_bg,
+            });
+          }
+
+          // Check if this is the cursor position
+          let is_cursor_here = g.char_idx == cursor_pos;
+
+          // Advance overlay highlighter
+          while g.char_idx >= overlay_highlighter.pos {
+            overlay_highlighter.advance();
+          }
+
+          // Get text color - check for overlay/virtual text first, then syntax
+          // highlighting
+          use crate::core::doc_formatter::GraphemeSource;
+          let syntax_fg = match g.source {
+            GraphemeSource::VirtualText { highlight } => {
+              // Use overlay highlight if present
+              highlight.and_then(|h| cx.editor.theme.highlight(h).fg)
+            },
+            GraphemeSource::Document { .. } => {
+              // Get syntax highlighting color for document text, then patch with overlay
+              let mut active_style = if let Some(ref highlights) = cached_highlights {
+                // Use cached highlights - find active highlights at this byte position
+                let byte_pos = doc_text.char_to_byte(g.char_idx);
+                let mut style = text_style;
+
+                for (highlight, range) in highlights {
+                  if range.contains(&byte_pos) {
+                    let hl_style = cx.editor.theme.highlight(*highlight);
+                    style = style.patch(hl_style);
+                  }
+                }
+
+                style
+              } else {
+                // Use live highlighter
+                let mut advance_count = 0;
+                while g.char_idx >= syntax_hl.pos {
+                  syntax_hl.advance();
+                  advance_count += 1;
+                  if advance_count > 100 {
+                    eprintln!(
+                      "WARNING: Too many advances at char_idx {}, breaking",
+                      g.char_idx
+                    );
+                    break;
+                  }
+                }
+                syntax_hl.style
+              };
+
+              // Patch with overlay highlights (e.g., jump labels)
+              active_style = active_style.patch(overlay_highlighter.style());
+
+              active_style.fg
+            },
+          };
+
+          // Draw cursor if at this position (only for focused view)
+          if is_cursor_here && is_focused {
+            let cursor_w = width_cols.max(1) as f32 * font_width;
+            // Cursor animation: lerp toward target (x, y)
+            let (anim_x, anim_y) = if self.cursor_anim_enabled {
+              let (mut sx, mut sy) = self.cursor_pos_smooth.unwrap_or((x, y));
+              let dx = x - sx;
+              let dy = y - sy;
+              // Time-based lerp: much faster for snappier cursor while typing
+              let lerp_t = 1.0 - (1.0 - self.cursor_lerp_factor).powf(cx.dt * 800.0);
+              sx += dx * lerp_t;
+              sy += dy * lerp_t;
+              self.cursor_pos_smooth = Some((sx, sy));
+              // Mark animation active if still far from target
+              self.cursor_anim_active = (dx * dx + dy * dy).sqrt() > 0.5;
+              (sx, sy)
+            } else {
+              self.cursor_anim_active = false;
+              self.cursor_pos_smooth = Some((x, y));
+              (x, y)
+            };
+
+            // Determine cursor background color
+            let cursor_bg_color = if use_adaptive_cursor {
+              // Adaptive/reversed: use character's syntax color as bg
+              if let Some(color) = syntax_fg {
+                let mut color = crate::ui::theme_color_to_renderer_color(color);
+                color.a *= zoom_alpha;
+                color
+              } else {
+                let mut color = normal;
+                color.a *= zoom_alpha;
+                color
+              }
+            } else if let Some(mut bg) = cursor_bg_from_theme {
+              // Explicit bg from theme
+              bg.a *= zoom_alpha;
+              bg
+            } else {
+              // Should not reach here, but default to cyan
+              let mut color = Color::rgb(0.2, 0.8, 0.7);
+              color.a *= zoom_alpha;
+              color
+            };
+
+            // Clip cursor to stay within view bounds (both horizontal and vertical)
+            let max_cursor_width = (view_right_edge_px - anim_x).max(0.0);
+            let clipped_cursor_w = cursor_w.min(max_cursor_width);
+
+            let cursor_height = font_size + CURSOR_HEIGHT_EXTENSION;
+            let max_cursor_height = (view_bottom_edge_px - anim_y).max(0.0);
+            let clipped_cursor_h = cursor_height.min(max_cursor_height);
+
+            self.command_batcher.add_command(RenderCommand::Cursor {
+              x:      anim_x,
+              y:      anim_y,
+              width:  clipped_cursor_w,
+              height: clipped_cursor_h,
+              color:  cursor_bg_color,
+            });
+          }
+
+          // Add text command
+          match g.raw {
+            Grapheme::Newline => {
+              // Store the line end x position for this doc line
+              line_end_x.insert(doc_line, current_line_max_x);
+              // End of line, no text to draw
+            },
+            Grapheme::Tab { .. } => {
+              // Tabs are rendered as spacing, no text to draw
+            },
+            Grapheme::Other { ref g } => {
+              if left_clip == 0 {
+                // Determine foreground color
+                let fg = if is_cursor_here {
+                  if use_adaptive_cursor {
+                    // Adaptive/reversed: use background color as fg
+                    let mut bg = background_color;
+                    bg.a *= zoom_alpha;
+                    bg
+                  } else if let Some(mut cursor_fg) = cursor_fg_from_theme {
+                    // Explicit fg color in theme
+                    cursor_fg.a *= zoom_alpha;
+                    cursor_fg
+                  } else if let Some(color) = syntax_fg {
+                    // No explicit fg: use character's syntax color (inverted cursor effect)
+                    let mut color = crate::ui::theme_color_to_renderer_color(color);
+                    color.a *= zoom_alpha;
+                    color
+                  } else {
+                    normal
+                  }
+                } else if let Some(color) = syntax_fg {
+                  let mut color = crate::ui::theme_color_to_renderer_color(color);
+                  color.a *= zoom_alpha; // Apply zoom fade
+                  color
+                } else {
+                  normal
+                };
+
+                // Add to line batch for efficient rendering, but only if within view bounds
+                // Check if text would be within view (not bleeding into separator bars)
+                let text_end_x = x + (draw_cols as f32 * font_width);
+                let text_bottom_y = y + font_size;
+                if x < view_right_edge_px
+                  && text_end_x <= view_right_edge_px
+                  && text_bottom_y <= view_bottom_edge_px
+                {
+                  line_batch.push((x, y, g.to_string(), fg));
+                }
+              }
+            },
           }
         }
 
-        // Render the merged text
-        batcher.add_command(RenderCommand::Text {
-          section: TextSection::simple(x, y, text, font_size, color),
-        });
-
-        i = j;
-      }
-      batch.clear();
-    };
-
-    // Render document graphemes using command batcher
-    for g in formatter {
-      grapheme_count += 1;
-      // Skip visual lines before the top row of the viewport
-      if g.visual_pos.row < row_off {
-        continue;
-      }
-
-      let rel_row = g.visual_pos.row - row_off;
-      if rel_row >= visible_lines {
-        break;
-      }
-
-      // For now, disable per-line dirty checking as it's causing rendering issues
-      // We'll still benefit from batching and frame timing
-      // TODO: Re-enable once we properly track all dirty regions
-
-      // Horizontal scrolling
-      let abs_col = g.visual_pos.col;
-      let width_cols = g.raw.width();
-      let h_off = view_offset.horizontal_offset;
-
-      // Skip if grapheme is left of viewport
-      if abs_col + width_cols <= h_off {
-        continue;
-      }
-
-      // Compute on-screen column
-      let rel_col = abs_col.saturating_sub(h_off);
-      if rel_col >= viewport_cols {
-        continue;
-      }
-
-      // Handle partial width at left edge
-      let left_clip = h_off.saturating_sub(abs_col);
-      let mut draw_cols = width_cols.saturating_sub(left_clip);
-      let remaining_cols = viewport_cols.saturating_sub(rel_col);
-      if draw_cols > remaining_cols {
-        draw_cols = remaining_cols;
-      }
-
-      // Track current row and flush batch on line change
-      if rel_row != current_row {
+        // Flush any remaining batch
         flush_line_batch(
           &mut line_batch,
           &mut self.command_batcher,
           font_width,
           font_size,
         );
-        current_row = rel_row;
-      }
 
-      let x = base_x + (rel_col as f32) * font_width;
-      let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING);
-
-      // Render gutter for this line if we haven't already
-      let doc_line = doc_text.char_to_line(g.char_idx.min(doc_text.len_chars()));
-
-      // Call decoration hooks for line changes
-      if doc_line != current_doc_line {
-        // Render end-of-line diagnostic for previous line before switching
+        // Render virtual lines for the last line
         if current_doc_line != usize::MAX {
-          // Render virtual lines for the previous line using the last visual row it ended on
-          decoration_manager.render_virtual_lines(renderer, (current_doc_line, last_doc_line_end_row as u16), viewport_cols);
+          decoration_manager.render_virtual_lines(
+            renderer,
+            (current_doc_line, last_doc_line_end_row as u16),
+            viewport_cols,
+          );
         }
 
-        // Decorate the new line
-        decoration_manager.decorate_line(renderer, (doc_line, rel_row as u16));
-        current_doc_line = doc_line;
-        last_doc_line_end_row = rel_row; // Initialize for the new doc_line
-        current_line_max_x = base_x; // Reset for new line
-      } else {
-        // Still on the same doc_line, update the last row we saw content on
-        last_doc_line_end_row = rel_row;
-      }
+        // If the document is empty or we didn't render any graphemes, at least render
+        // the cursor (only for focused view)
+        if grapheme_count == 0 && is_focused {
+          // Render cursor at position 0 for empty document
+          let x = base_x;
+          let y = base_y;
 
-      // Track the rightmost x position on this line
-      current_line_max_x = current_line_max_x.max(x + (draw_cols as f32) * font_width);
-
-      // Call decoration hook for this grapheme
-      decoration_manager.decorate_grapheme(&g);
-      if rendered_gutter_lines.insert(doc_line) {
-        // This is the first time we're rendering this doc line, so render its gutter
-        let cursor_line = doc_text.char_to_line(cursor_pos.min(doc_text.len_chars()));
-        let selected = doc_line == cursor_line;
-
-        let line_info = crate::ui::gutter::GutterLineInfo {
-          doc_line,
-          visual_line: rel_row,
-          selected,
-          first_visual_line: g.visual_pos.col == 0, // First visual line if at column 0
-        };
-
-        self.gutter_manager.render_line(
-          &line_info,
-          cx.editor,
-          doc,
-          view,
-          &cx.editor.theme,
-          renderer,
-          view_offset_x + VIEW_PADDING_LEFT,
-          y,
-          font_width,
-          font_size,
-          normal,
-        );
-      }
-
-      // Add selection background command
-      let doc_len = g.doc_chars();
-      if is_selected(g.char_idx, doc_len) {
-        self.command_batcher.add_command(RenderCommand::Selection {
-          x,
-          y,
-          width: (draw_cols as f32) * font_width,
-          height: font_size + LINE_SPACING,
-          color: selection_bg,
-        });
-      }
-
-      // Check if this is the cursor position
-      let is_cursor_here = g.char_idx == cursor_pos;
-
-      // Advance overlay highlighter
-      while g.char_idx >= overlay_highlighter.pos {
-        overlay_highlighter.advance();
-      }
-
-      // Get text color - check for overlay/virtual text first, then syntax highlighting
-      use crate::core::doc_formatter::GraphemeSource;
-      let syntax_fg = match g.source {
-        GraphemeSource::VirtualText { highlight } => {
-          // Use overlay highlight if present
-          highlight.and_then(|h| cx.editor.theme.highlight(h).fg)
-        },
-        GraphemeSource::Document { .. } => {
-          // Get syntax highlighting color for document text, then patch with overlay
-          let mut active_style = if let Some(ref highlights) = cached_highlights {
-            // Use cached highlights - find active highlights at this byte position
-            let byte_pos = doc_text.char_to_byte(g.char_idx);
-            let mut style = text_style;
-
-            for (highlight, range) in highlights {
-              if range.contains(&byte_pos) {
-                let hl_style = cx.editor.theme.highlight(*highlight);
-                style = style.patch(hl_style);
-              }
-            }
-
-            style
-          } else {
-            // Use live highlighter
-            let mut advance_count = 0;
-            while g.char_idx >= syntax_hl.pos {
-              syntax_hl.advance();
-              advance_count += 1;
-              if advance_count > 100 {
-                eprintln!(
-                  "WARNING: Too many advances at char_idx {}, breaking",
-                  g.char_idx
-                );
-                break;
-              }
-            }
-            syntax_hl.style
-          };
-
-          // Patch with overlay highlights (e.g., jump labels)
-          active_style = active_style.patch(overlay_highlighter.style());
-
-          active_style.fg
-        },
-      };
-
-      // Draw cursor if at this position (only for focused view)
-      if is_cursor_here && is_focused {
-        let cursor_w = width_cols.max(1) as f32 * font_width;
-        // Cursor animation: lerp toward target (x, y)
-        let (anim_x, anim_y) = if self.cursor_anim_enabled {
-          let (mut sx, mut sy) = self.cursor_pos_smooth.unwrap_or((x, y));
-          let dx = x - sx;
-          let dy = y - sy;
-          // Time-based lerp: much faster for snappier cursor while typing
-          let lerp_t = 1.0 - (1.0 - self.cursor_lerp_factor).powf(cx.dt * 800.0);
-          sx += dx * lerp_t;
-          sy += dy * lerp_t;
-          self.cursor_pos_smooth = Some((sx, sy));
-          // Mark animation active if still far from target
-          self.cursor_anim_active = (dx * dx + dy * dy).sqrt() > 0.5;
-          (sx, sy)
-        } else {
-          self.cursor_anim_active = false;
-          self.cursor_pos_smooth = Some((x, y));
-          (x, y)
-        };
-
-        // Determine cursor background color
-        let cursor_bg_color = if use_adaptive_cursor {
-          // Adaptive/reversed: use character's syntax color as bg
-          if let Some(color) = syntax_fg {
-            let mut color = crate::ui::theme_color_to_renderer_color(color);
-            color.a *= zoom_alpha;
-            color
-          } else {
+          // Use default cursor bg for empty document
+          let cursor_bg_color = if use_adaptive_cursor {
+            // For empty document with adaptive cursor, use normal text color
             let mut color = normal;
             color.a *= zoom_alpha;
             color
-          }
-        } else if let Some(mut bg) = cursor_bg_from_theme {
-          // Explicit bg from theme
-          bg.a *= zoom_alpha;
-          bg
-        } else {
-          // Should not reach here, but default to cyan
-          let mut color = Color::rgb(0.2, 0.8, 0.7);
-          color.a *= zoom_alpha;
-          color
-        };
+          } else if let Some(mut bg) = cursor_bg_from_theme {
+            bg.a *= zoom_alpha;
+            bg
+          } else {
+            // Should not reach here, but default to cyan
+            let mut color = Color::rgb(0.2, 0.8, 0.7);
+            color.a *= zoom_alpha;
+            color
+          };
 
-        // Clip cursor to stay within view bounds (both horizontal and vertical)
-        let max_cursor_width = (view_right_edge_px - anim_x).max(0.0);
-        let clipped_cursor_w = cursor_w.min(max_cursor_width);
-
-        let cursor_height = font_size + CURSOR_HEIGHT_EXTENSION;
-        let max_cursor_height = (view_bottom_edge_px - anim_y).max(0.0);
-        let clipped_cursor_h = cursor_height.min(max_cursor_height);
-
-        self.command_batcher.add_command(RenderCommand::Cursor {
-          x:      anim_x,
-          y:      anim_y,
-          width:  clipped_cursor_w,
-          height: clipped_cursor_h,
-          color:  cursor_bg_color,
-        });
-      }
-
-      // Add text command
-      match g.raw {
-        Grapheme::Newline => {
-          // Store the line end x position for this doc line
-          line_end_x.insert(doc_line, current_line_max_x);
-          // End of line, no text to draw
-        },
-        Grapheme::Tab { .. } => {
-          // Tabs are rendered as spacing, no text to draw
-        },
-        Grapheme::Other { ref g } => {
-          if left_clip == 0 {
-            // Determine foreground color
-            let fg = if is_cursor_here {
-              if use_adaptive_cursor {
-                // Adaptive/reversed: use background color as fg
-                let mut bg = background_color;
-                bg.a *= zoom_alpha;
-                bg
-              } else if let Some(mut cursor_fg) = cursor_fg_from_theme {
-                // Explicit fg color in theme
-                cursor_fg.a *= zoom_alpha;
-                cursor_fg
-              } else if let Some(color) = syntax_fg {
-                // No explicit fg: use character's syntax color (inverted cursor effect)
-                let mut color = crate::ui::theme_color_to_renderer_color(color);
-                color.a *= zoom_alpha;
-                color
-              } else {
-                normal
-              }
-            } else if let Some(color) = syntax_fg {
-              let mut color = crate::ui::theme_color_to_renderer_color(color);
-              color.a *= zoom_alpha; // Apply zoom fade
-              color
-            } else {
-              normal
-            };
-
-            // Add to line batch for efficient rendering, but only if within view bounds
-            // Check if text would be within view (not bleeding into separator bars)
-            let text_end_x = x + (draw_cols as f32 * font_width);
-            let text_bottom_y = y + font_size;
-            if x < view_right_edge_px && text_end_x <= view_right_edge_px && text_bottom_y <= view_bottom_edge_px {
-              line_batch.push((x, y, g.to_string(), fg));
-            }
-          }
-        },
-      }
-    }
-
-    // Flush any remaining batch
-    flush_line_batch(
-      &mut line_batch,
-      &mut self.command_batcher,
-      font_width,
-      font_size,
-    );
-
-    // Render virtual lines for the last line
-    if current_doc_line != usize::MAX {
-      decoration_manager.render_virtual_lines(renderer, (current_doc_line, last_doc_line_end_row as u16), viewport_cols);
-    }
-
-    // If the document is empty or we didn't render any graphemes, at least render
-    // the cursor (only for focused view)
-    if grapheme_count == 0 && is_focused {
-      // Render cursor at position 0 for empty document
-      let x = base_x;
-      let y = base_y;
-
-      // Use default cursor bg for empty document
-      let cursor_bg_color = if use_adaptive_cursor {
-        // For empty document with adaptive cursor, use normal text color
-        let mut color = normal;
-        color.a *= zoom_alpha;
-        color
-      } else if let Some(mut bg) = cursor_bg_from_theme {
-        bg.a *= zoom_alpha;
-        bg
-      } else {
-        // Should not reach here, but default to cyan
-        let mut color = Color::rgb(0.2, 0.8, 0.7);
-        color.a *= zoom_alpha;
-        color
-      };
-
-      self.command_batcher.add_command(RenderCommand::Cursor {
-        x,
-        y,
-        width: font_width,
-        height: font_size + CURSOR_HEIGHT_EXTENSION,
-        color: cursor_bg_color,
-      });
-    }
-    } // End scope - drop doc borrow before rendering completion
-
+          self.command_batcher.add_command(RenderCommand::Cursor {
+            x,
+            y,
+            width: font_width,
+            height: font_size + CURSOR_HEIGHT_EXTENSION,
+            color: cursor_bg_color,
+          });
+        }
+      } // End scope - drop doc borrow before rendering completion
     } // End view rendering loop
 
     // Execute all batched commands for all views
@@ -1443,7 +1478,8 @@ impl EditorView {
     for (view, _) in cx.editor.tree.views() {
       let area = view.area;
       // Check if there's a view to the right (for vertical splits)
-      // This is a simple heuristic - render a vertical line at the right edge if not at screen edge
+      // This is a simple heuristic - render a vertical line at the right edge if not
+      // at screen edge
       if area.x + area.width < cx.editor.tree.area().width {
         // Render vertical separator bar at the right edge
         // Center the thin separator in the gap
@@ -1459,8 +1495,9 @@ impl EditorView {
       // Check if there's a view below (for horizontal splits)
       if area.y + area.height < cx.editor.tree.area().height {
         // Render horizontal separator bar at the bottom edge
-        // NOTE: Horizontal splits have NO gap in the tree layout (unlike vertical splits),
-        // We reserve SEPARATOR_HEIGHT_PX at the bottom of each view for the separator
+        // NOTE: Horizontal splits have NO gap in the tree layout (unlike vertical
+        // splits), We reserve SEPARATOR_HEIGHT_PX at the bottom of each view
+        // for the separator
         let x = area.x as f32 * font_width;
         let y = (area.y + area.height) as f32 * (font_size + LINE_SPACING) - SEPARATOR_HEIGHT_PX;
         let width = area.width as f32 * font_width;

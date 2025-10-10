@@ -238,13 +238,15 @@ impl View {
   }
 
   pub fn inner_area(&self, doc: &Document) -> Rect {
-    // Don't clip_bottom here - the tree's area is already clipped for the global statusline
-    // Unlike Helix which renders one statusline per view, we have a single global statusline
+    // Don't clip_bottom here - the tree's area is already clipped for the global
+    // statusline Unlike Helix which renders one statusline per view, we have a
+    // single global statusline
     self.area.clip_left(self.gutter_offset(doc))
   }
 
   pub fn inner_height(&self) -> usize {
-    // Don't clip_bottom here - the tree's area is already clipped for the global statusline
+    // Don't clip_bottom here - the tree's area is already clipped for the global
+    // statusline
     self.area.height.into()
   }
 

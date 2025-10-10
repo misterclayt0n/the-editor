@@ -18,7 +18,6 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
-
 use parking_lot::Mutex;
 use ropey::Rope;
 use serde::Deserialize;
@@ -1411,11 +1410,9 @@ impl Client {
       _ => return None,
     }
 
-    Some(Box::pin(self.goto_request::<lsp::request::GotoDeclaration>(
-      text_document,
-      position,
-      work_done_token,
-    )))
+    Some(Box::pin(
+      self.goto_request::<lsp::request::GotoDeclaration>(text_document, position, work_done_token),
+    ))
   }
 
   pub fn goto_type_definition(
@@ -1435,11 +1432,13 @@ impl Client {
       _ => return None,
     }
 
-    Some(Box::pin(self.goto_request::<lsp::request::GotoTypeDefinition>(
-      text_document,
-      position,
-      work_done_token,
-    )))
+    Some(Box::pin(
+      self.goto_request::<lsp::request::GotoTypeDefinition>(
+        text_document,
+        position,
+        work_done_token,
+      ),
+    ))
   }
 
   pub fn goto_implementation(
@@ -1459,11 +1458,13 @@ impl Client {
       _ => return None,
     }
 
-    Some(Box::pin(self.goto_request::<lsp::request::GotoImplementation>(
-      text_document,
-      position,
-      work_done_token,
-    )))
+    Some(Box::pin(
+      self.goto_request::<lsp::request::GotoImplementation>(
+        text_document,
+        position,
+        work_done_token,
+      ),
+    ))
   }
 
   pub fn goto_reference(
@@ -1516,7 +1517,9 @@ impl Client {
       partial_result_params: lsp::PartialResultParams::default(),
     };
 
-    Some(Box::pin(self.call::<lsp::request::DocumentSymbolRequest>(params)))
+    Some(Box::pin(
+      self.call::<lsp::request::DocumentSymbolRequest>(params),
+    ))
   }
 
   pub fn prepare_rename(
@@ -1561,7 +1564,9 @@ impl Client {
       partial_result_params: lsp::PartialResultParams::default(),
     };
 
-    Some(Box::pin(self.call::<lsp::request::WorkspaceSymbolRequest>(params)))
+    Some(Box::pin(
+      self.call::<lsp::request::WorkspaceSymbolRequest>(params),
+    ))
   }
 
   pub fn code_actions(
@@ -1589,7 +1594,9 @@ impl Client {
       partial_result_params: lsp::PartialResultParams::default(),
     };
 
-    Some(Box::pin(self.call::<lsp::request::CodeActionRequest>(params)))
+    Some(Box::pin(
+      self.call::<lsp::request::CodeActionRequest>(params),
+    ))
   }
 
   pub fn rename_symbol(

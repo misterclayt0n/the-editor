@@ -1,9 +1,8 @@
-///! Async completion request handler with debouncing
-///!
-///! This module handles completion requests from the editor, debounces them
-///! appropriately, and coordinates LSP completion requests across multiple
-///! language servers.
-
+/// ! Async completion request handler with debouncing
+/// !
+/// ! This module handles completion requests from the editor, debounces them
+/// ! appropriately, and coordinates LSP completion requests across multiple
+/// ! language servers.
 use std::time::Duration;
 
 use the_editor_event::{
@@ -116,7 +115,7 @@ impl AsyncHook for CompletionRequestHook {
         } else {
           None
         }
-      }
+      },
       CompletionEvent::TriggerChar { cursor, doc, view } => {
         // Cancel any pending trigger and set new trigger char request
         self.pending_trigger = Some(PendingTrigger {
@@ -126,7 +125,7 @@ impl AsyncHook for CompletionRequestHook {
           kind: TriggerKind::TriggerChar,
         });
         Some(Instant::now() + TRIGGER_CHAR_DEBOUNCE)
-      }
+      },
       CompletionEvent::ManualTrigger { cursor, doc, view } => {
         // Manual triggers should fire immediately without debouncing
         // We can't return None because that would wait for the next event
@@ -138,7 +137,7 @@ impl AsyncHook for CompletionRequestHook {
           kind: TriggerKind::Manual,
         });
         Some(Instant::now()) // Expire immediately
-      }
+      },
       CompletionEvent::DeleteText { cursor } => {
         // If we deleted before the trigger position, cancel
         if matches!(self.pending_trigger.or(self.in_flight), Some(PendingTrigger{ cursor: trigger_cursor, .. }) if cursor < trigger_cursor)
@@ -147,13 +146,13 @@ impl AsyncHook for CompletionRequestHook {
           // TODO: Cancel in-flight request via TaskController
         }
         None
-      }
+      },
       CompletionEvent::Cancel => {
         // Cancel pending trigger
         self.pending_trigger = None;
         // TODO: Cancel in-flight request via TaskController
         None
-      }
+      },
     }
   }
 
@@ -168,7 +167,8 @@ impl AsyncHook for CompletionRequestHook {
   }
 }
 
-/// Synchronous entry point for requesting completions (called from dispatch_blocking)
+/// Synchronous entry point for requesting completions (called from
+/// dispatch_blocking)
 fn request_completions_sync(
   trigger: PendingTrigger,
   editor: &mut Editor,
@@ -201,8 +201,9 @@ fn request_completions_sync(
   }
 
   // IMPORTANT: Update trigger position to current cursor
-  // This matches Helix's behavior - send the CURRENT position, not the old trigger position
-  // Language servers need this for incomplete completion lists and proper filtering
+  // This matches Helix's behavior - send the CURRENT position, not the old
+  // trigger position Language servers need this for incomplete completion lists
+  // and proper filtering
   let trigger_offset = cursor;
 
   // Determine trigger kind and character for LSP
@@ -210,18 +211,19 @@ fn request_completions_sync(
     TriggerKind::Manual => (lsp::CompletionTriggerKind::INVOKED, None),
     TriggerKind::TriggerChar => {
       // Find the trigger character
-      let trigger_char = doc
-        .language_servers()
-        .find_map(|ls| {
-          ls.capabilities()
-            .completion_provider
-            .as_ref()
-            .and_then(|cap| cap.trigger_characters.as_ref())
-            .and_then(|chars| {
-              let trigger_text = text.slice(..cursor);
-              chars.iter().find(|ch| trigger_text.ends_with(ch.as_str())).cloned()
-            })
-        });
+      let trigger_char = doc.language_servers().find_map(|ls| {
+        ls.capabilities()
+          .completion_provider
+          .as_ref()
+          .and_then(|cap| cap.trigger_characters.as_ref())
+          .and_then(|chars| {
+            let trigger_text = text.slice(..cursor);
+            chars
+              .iter()
+              .find(|ch| trigger_text.ends_with(ch.as_str()))
+              .cloned()
+          })
+      });
       (lsp::CompletionTriggerKind::TRIGGER_CHARACTER, trigger_char)
     },
     TriggerKind::Auto => (lsp::CompletionTriggerKind::INVOKED, None),
@@ -231,7 +233,6 @@ fn request_completions_sync(
   let mut completion_futures = Vec::new();
 
   {
-
     // Get document URI and LSP position
     let uri_str = doc.uri().map(|u| u.to_string());
     let Some(uri_str) = uri_str else {
@@ -252,17 +253,20 @@ fn request_completions_sync(
     // Convert cursor position to LSP position
     let pos = crate::lsp::util::pos_to_lsp_pos(text, cursor, OffsetEncoding::Utf16);
 
-    // Collect completion futures from each language server (now 'static thanks to BoxFuture)
+    // Collect completion futures from each language server (now 'static thanks to
+    // BoxFuture)
     for client in doc.language_servers() {
       let server_id = client.id();
       let context = lsp::CompletionContext {
-        trigger_kind: lsp_trigger_kind,
+        trigger_kind:      lsp_trigger_kind,
         trigger_character: lsp_trigger_char.clone(),
       };
 
       // Get the boxed 'static future
       if let Some(completion_future) = client.completion(
-        lsp::TextDocumentIdentifier { uri: lsp_uri.clone() },
+        lsp::TextDocumentIdentifier {
+          uri: lsp_uri.clone(),
+        },
         pos,
         None,
         context,
@@ -316,7 +320,8 @@ fn request_completions_sync(
     // Dispatch back to main thread to show completion
     crate::ui::job::dispatch(move |editor, compositor| {
       show_completion(editor, compositor, items, trigger_offset, doc_id);
-    }).await;
+    })
+    .await;
   });
 }
 
@@ -355,12 +360,12 @@ async fn request_completions_async(
             lsp::CompletionResponse::List(list) => list.items,
           };
           Some((server_id, items))
-        }
+        },
         Ok(None) => None,
         Err(err) => {
           log::warn!("Completion request failed for {:?}: {}", server_id, err);
           None
-        }
+        },
       }
     };
 
@@ -446,7 +451,8 @@ pub fn register_completion_hooks(handlers: &Handlers) {
 
     // If completion is already active, update the filter
     if event.cx.editor.last_completion.is_some() {
-      // Check if we should clear last_completion immediately to prevent race conditions
+      // Check if we should clear last_completion immediately to prevent race
+      // conditions
       if !crate::core::chars::char_is_word(c) {
         event.cx.editor.last_completion = None;
       }
@@ -484,30 +490,33 @@ pub fn register_completion_hooks(handlers: &Handlers) {
           "delete_char_backward" => {
             // Update filter with None to simulate backspace
             update_completion_filter(event.cx, None);
-          }
+          },
           "delete_word_forward" | "delete_char_forward" | "completion" => {
             // These commands don't close completion
-          }
+          },
           _ => {
             // Any other command closes completion
             clear_completions(event.cx);
-          }
+          },
         }
       } else {
         // No completion active, send events for delete operations
         match event.command {
           "delete_char_backward" | "delete_word_forward" | "delete_char_forward" => {
             let (view, doc) = crate::current!(event.cx.editor);
-            let primary_cursor = doc.selection(view.id).primary().cursor(doc.text().slice(..));
+            let primary_cursor = doc
+              .selection(view.id)
+              .primary()
+              .cursor(doc.text().slice(..));
             completions_command.event(CompletionEvent::DeleteText {
               cursor: primary_cursor,
             });
-          }
+          },
           // Don't cancel for these commands
-          "completion" | "insert_mode" | "append_mode" => {}
+          "completion" | "insert_mode" | "append_mode" => {},
           _ => {
             completions_command.event(CompletionEvent::Cancel);
-          }
+          },
         }
       }
     }

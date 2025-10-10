@@ -450,7 +450,12 @@ pub fn register_hooks(_handlers: &Handlers) {
     let language_id = doc.language_id().map(ToOwned::to_owned).unwrap_or_default();
 
     for language_server in doc.language_servers() {
-      language_server.text_document_did_open(url.clone(), doc.version(), doc.text(), language_id.clone());
+      language_server.text_document_did_open(
+        url.clone(),
+        doc.version(),
+        doc.text(),
+        language_id.clone(),
+      );
     }
 
     Ok(())

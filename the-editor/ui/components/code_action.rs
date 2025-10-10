@@ -86,8 +86,11 @@ impl CodeActionMenu {
         // Execute the command
         log::info!("Executing command: {}", command.command);
         // TODO: Implement workspace command execution
-        cx.editor.set_status(format!("Command execution not yet implemented: {}", command.command));
-      }
+        cx.editor.set_status(format!(
+          "Command execution not yet implemented: {}",
+          command.command
+        ));
+      },
       lsp::CodeActionOrCommand::CodeAction(action) => {
         // Apply the workspace edit if present
         if let Some(ref edit) = action.edit {
@@ -99,7 +102,7 @@ impl CodeActionMenu {
           log::info!("Executing command: {}", command.command);
           // TODO: Implement workspace command execution
         }
-      }
+      },
     }
 
     Ok(())
@@ -146,7 +149,12 @@ impl CodeActionMenu {
           if let Some(range) = lsp_range_to_range(text, edit.range, offset_encoding) {
             let transaction = Transaction::change(
               text,
-              [(range.anchor, range.head, Some(edit.new_text.as_str().into()))].into_iter(),
+              [(
+                range.anchor,
+                range.head,
+                Some(edit.new_text.as_str().into()),
+              )]
+              .into_iter(),
             );
 
             doc.apply(&transaction, cx.editor.tree.focus);
@@ -163,12 +171,7 @@ impl CodeActionMenu {
 }
 
 impl Component for CodeActionMenu {
-  fn render(
-    &mut self,
-    area: Rect,
-    surface: &mut Surface,
-    cx: &mut Context,
-  ) {
+  fn render(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context) {
     // Animate entrance
     let anim_speed = 12.0;
     if self.anim_progress < 1.0 {
@@ -289,27 +292,28 @@ impl Component for CodeActionMenu {
     use the_editor_renderer::Key;
 
     match (key.code, key.ctrl, key.alt, key.shift) {
-      (Key::Escape, _, _, _) => {
+      (Key::Escape, ..) => {
         EventResult::Consumed(Some(Box::new(|compositor, _| {
           compositor.remove(Self::ID);
         })))
-      }
-      (Key::Enter, _, _, _) => {
+      },
+      (Key::Enter, ..) => {
         if let Err(err) = self.apply_code_action(cx) {
-          cx.editor.set_error(format!("Failed to apply code action: {}", err));
+          cx.editor
+            .set_error(format!("Failed to apply code action: {}", err));
         }
         EventResult::Consumed(Some(Box::new(|compositor, _| {
           compositor.remove(Self::ID);
         })))
-      }
-      (Key::Up, _, _, _) | (Key::Char('k'), false, _, _) => {
+      },
+      (Key::Up, ..) | (Key::Char('k'), false, ..) => {
         self.move_cursor(-1);
         EventResult::Consumed(None)
-      }
-      (Key::Down, _, _, _) | (Key::Char('j'), false, _, _) => {
+      },
+      (Key::Down, ..) | (Key::Char('j'), false, ..) => {
         self.move_cursor(1);
         EventResult::Consumed(None)
-      }
+      },
       _ => EventResult::Ignored(None),
     }
   }

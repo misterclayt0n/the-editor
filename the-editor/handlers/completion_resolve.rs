@@ -1,13 +1,16 @@
 /// Handler for resolving incomplete completion items
 ///
 /// From the LSP spec:
-/// > If computing full completion items is expensive, servers can additionally provide a
-/// > handler for the completion item resolve request. A typical use case is for example:
-/// > the `textDocument/completion` request doesn't fill in the `documentation` property
+/// > If computing full completion items is expensive, servers can additionally
+/// > provide a
+/// > handler for the completion item resolve request. A typical use case is for
+/// > example:
+/// > the `textDocument/completion` request doesn't fill in the `documentation`
+/// > property
 /// > for returned completion items since it is expensive to compute.
-/// > When the item is selected in the user interface then a 'completionItem/resolve' request
+/// > When the item is selected in the user interface then a
+/// > 'completionItem/resolve' request
 /// > is sent with the selected completion item as a parameter.
-
 use std::sync::Arc;
 
 use the_editor_event::{
@@ -45,8 +48,9 @@ impl ResolveHandler {
     }
   }
 
-  /// Ensure that a completion item is resolved (has documentation, detail, etc.)
-  /// If not resolved, this will trigger an async request to the LSP server
+  /// Ensure that a completion item is resolved (has documentation, detail,
+  /// etc.) If not resolved, this will trigger an async request to the LSP
+  /// server
   pub fn ensure_item_resolved(&mut self, item: &mut LspCompletionItem) {
     if item.resolved {
       return;
@@ -55,15 +59,16 @@ impl ResolveHandler {
     // Check if item actually needs resolution
     // An item is considered fully resolved if it has non-empty documentation,
     // detail, and additional_text_edits
-    let is_resolved = item
-      .item
-      .documentation
-      .as_ref()
-      .is_some_and(|docs| match docs {
+    let is_resolved = item.item.documentation.as_ref().is_some_and(|docs| {
+      match docs {
         lsp::Documentation::String(text) => !text.is_empty(),
         lsp::Documentation::MarkupContent(markup) => !markup.value.is_empty(),
-      })
-      && item.item.detail.as_ref().is_some_and(|detail| !detail.is_empty())
+      }
+    }) && item
+      .item
+      .detail
+      .as_ref()
+      .is_some_and(|detail| !detail.is_empty())
       && item
         .item
         .additional_text_edits
@@ -111,7 +116,8 @@ impl AsyncHook for ResolveTimeout {
   type Event = ResolveRequest;
 
   fn handle_event(&mut self, request: Self::Event, timeout: Option<Instant>) -> Option<Instant> {
-    // If we already have a pending request for this same item, keep the current timeout
+    // If we already have a pending request for this same item, keep the current
+    // timeout
     if self
       .next_request
       .as_ref()
@@ -161,7 +167,10 @@ impl ResolveRequest {
 
     crate::ui::job::dispatch_blocking(move |editor, _compositor| {
       let Some(ls) = editor.language_server_by_id(provider) else {
-        log::warn!("Language server {:?} not found for completion resolve", provider);
+        log::warn!(
+          "Language server {:?} not found for completion resolve",
+          provider
+        );
         let _ = tx.send(None);
         return;
       };
@@ -190,11 +199,13 @@ impl ResolveRequest {
 
     // Await the resolution
     let resolved = match resolve_future.await {
-      Ok(item) => CompletionItem::Lsp(LspCompletionItem {
-        item,
-        resolved: true,
-        ..*self.item
-      }),
+      Ok(item) => {
+        CompletionItem::Lsp(LspCompletionItem {
+          item,
+          resolved: true,
+          ..*self.item
+        })
+      },
       Err(err) => {
         log::error!("Completion resolve request failed: {}", err);
         // Mark as resolved so we don't keep trying

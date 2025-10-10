@@ -108,7 +108,9 @@ impl Component for Hover {
       .unwrap_or(0) as f32
       * surface.cell_width();
 
-    let popup_width = (max_line_width + padding * 2.0).max(200.0).min(MAX_POPUP_WIDTH);
+    let popup_width = (max_line_width + padding * 2.0)
+      .max(200.0)
+      .min(MAX_POPUP_WIDTH);
     let popup_height = (num_lines as f32 * line_height) + (padding * 2.0);
 
     // Calculate cursor position
@@ -127,7 +129,10 @@ impl Component for Hover {
       let anchor_line = text.char_to_line(view_offset.anchor.min(text.len_chars()));
 
       // Calculate screen coordinates
-      let font_size = ctx.editor.font_size_override.unwrap_or(ctx.editor.config().font_size);
+      let font_size = ctx
+        .editor
+        .font_size_override
+        .unwrap_or(ctx.editor.config().font_size);
       let font_width = surface.cell_width().max(1.0);
       let gutter_width = 6;
       let gutter_offset = gutter_width as f32 * font_width;
@@ -155,7 +160,14 @@ impl Component for Hover {
 
     // Draw background
     let corner_radius = 6.0;
-    surface.draw_rounded_rect(anim_x, anim_y, anim_width, anim_height, corner_radius, bg_color);
+    surface.draw_rounded_rect(
+      anim_x,
+      anim_y,
+      anim_width,
+      anim_height,
+      corner_radius,
+      bg_color,
+    );
 
     // Draw border
     let mut border_color = Color::new(0.3, 0.3, 0.35, 0.8);
@@ -230,11 +242,13 @@ fn hover_contents_to_string(contents: lsp::HoverContents) -> String {
 
   match contents {
     lsp::HoverContents::Scalar(contents) => marked_string_to_markdown(contents),
-    lsp::HoverContents::Array(contents) => contents
-      .into_iter()
-      .map(marked_string_to_markdown)
-      .collect::<Vec<_>>()
-      .join("\n\n"),
+    lsp::HoverContents::Array(contents) => {
+      contents
+        .into_iter()
+        .map(marked_string_to_markdown)
+        .collect::<Vec<_>>()
+        .join("\n\n")
+    },
     lsp::HoverContents::Markup(contents) => contents.value,
   }
 }

@@ -9,14 +9,14 @@ pub mod prompt;
 pub mod signature_help;
 pub mod statusline;
 
+// Completion, SignatureHelp, Hover, and CodeActionMenu are used internally by
+// the editor
+pub(crate) use code_action::CodeActionMenu;
+pub(crate) use completion::Completion;
 pub use picker::{
   Column,
   Picker,
   PickerAction,
 };
 pub use prompt::Prompt;
-
-// Completion, SignatureHelp, Hover, and CodeActionMenu are used internally by the editor
-pub(crate) use code_action::CodeActionMenu;
-pub(crate) use completion::Completion;
 pub(crate) use signature_help::SignatureHelp;

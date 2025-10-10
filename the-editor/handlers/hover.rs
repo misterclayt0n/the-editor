@@ -1,7 +1,7 @@
 /// Handler for LSP hover information
 ///
-/// Shows a popup with type information and documentation when space+k is pressed
-
+/// Shows a popup with type information and documentation when space+k is
+/// pressed
 use the_editor_lsp_types::types as lsp;
 
 /// Request hover information from language server

@@ -1194,7 +1194,65 @@ impl Component for EditorView {
           // We'll still benefit from batching and frame timing
           // TODO: Re-enable once we properly track all dirty regions
 
-          // Horizontal scrolling
+          // Calculate y position early (needed for gutter rendering)
+          let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING);
+
+          // Get doc_line early, before horizontal scrolling checks
+          let doc_line = doc_text.char_to_line(g.char_idx.min(doc_text.len_chars()));
+
+          // IMPORTANT: Render gutter BEFORE checking horizontal scrolling
+          // This ensures gutters are always visible even when content is scrolled horizontally
+          if doc_line != current_doc_line {
+            // Render end-of-line diagnostic for previous line before switching
+            if current_doc_line != usize::MAX {
+              // Render virtual lines for the previous line using the last visual row it ended
+              // on
+              decoration_manager.render_virtual_lines(
+                renderer,
+                (current_doc_line, last_doc_line_end_row as u16),
+                viewport_cols,
+              );
+            }
+
+            // Decorate the new line
+            decoration_manager.decorate_line(renderer, (doc_line, rel_row as u16));
+            current_doc_line = doc_line;
+            last_doc_line_end_row = rel_row; // Initialize for the new doc_line
+            current_line_max_x = base_x; // Reset for new line
+          } else {
+            // Still on the same doc_line, update the last row we saw content on
+            last_doc_line_end_row = rel_row;
+          }
+
+          // Render gutter for this line if we haven't already
+          if rendered_gutter_lines.insert(doc_line) {
+            // This is the first time we're rendering this doc line, so render its gutter
+            let cursor_line = doc_text.char_to_line(cursor_pos.min(doc_text.len_chars()));
+            let selected = doc_line == cursor_line;
+
+            let line_info = crate::ui::gutter::GutterLineInfo {
+              doc_line,
+              visual_line: rel_row,
+              selected,
+              first_visual_line: g.visual_pos.col == 0, // First visual line if at column 0
+            };
+
+            self.gutter_manager.render_line(
+              &line_info,
+              cx.editor,
+              doc,
+              view,
+              &cx.editor.theme,
+              renderer,
+              gutter_x,
+              y,
+              font_width,
+              font_size,
+              normal,
+            );
+          }
+
+          // NOW check horizontal scrolling (after gutter is rendered)
           let abs_col = g.visual_pos.col;
           let width_cols = g.raw.width();
           let h_off = view_offset.horizontal_offset;
@@ -1230,65 +1288,12 @@ impl Component for EditorView {
           }
 
           let x = base_x + (rel_col as f32) * font_width;
-          let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING);
-
-          // Render gutter for this line if we haven't already
-          let doc_line = doc_text.char_to_line(g.char_idx.min(doc_text.len_chars()));
-
-          // Call decoration hooks for line changes
-          if doc_line != current_doc_line {
-            // Render end-of-line diagnostic for previous line before switching
-            if current_doc_line != usize::MAX {
-              // Render virtual lines for the previous line using the last visual row it ended
-              // on
-              decoration_manager.render_virtual_lines(
-                renderer,
-                (current_doc_line, last_doc_line_end_row as u16),
-                viewport_cols,
-              );
-            }
-
-            // Decorate the new line
-            decoration_manager.decorate_line(renderer, (doc_line, rel_row as u16));
-            current_doc_line = doc_line;
-            last_doc_line_end_row = rel_row; // Initialize for the new doc_line
-            current_line_max_x = base_x; // Reset for new line
-          } else {
-            // Still on the same doc_line, update the last row we saw content on
-            last_doc_line_end_row = rel_row;
-          }
 
           // Track the rightmost x position on this line
           current_line_max_x = current_line_max_x.max(x + (draw_cols as f32) * font_width);
 
           // Call decoration hook for this grapheme
           decoration_manager.decorate_grapheme(&g);
-          if rendered_gutter_lines.insert(doc_line) {
-            // This is the first time we're rendering this doc line, so render its gutter
-            let cursor_line = doc_text.char_to_line(cursor_pos.min(doc_text.len_chars()));
-            let selected = doc_line == cursor_line;
-
-            let line_info = crate::ui::gutter::GutterLineInfo {
-              doc_line,
-              visual_line: rel_row,
-              selected,
-              first_visual_line: g.visual_pos.col == 0, // First visual line if at column 0
-            };
-
-            self.gutter_manager.render_line(
-              &line_info,
-              cx.editor,
-              doc,
-              view,
-              &cx.editor.theme,
-              renderer,
-              gutter_x,
-              y,
-              font_width,
-              font_size,
-              normal,
-            );
-          }
 
           // Add selection background command
           let doc_len = g.doc_chars();

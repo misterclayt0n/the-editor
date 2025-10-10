@@ -245,6 +245,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "!"           => shell_insert_output,
     "A-!"         => shell_append_output,
     "$"           => shell_keep_pipe,
+    "C-a"         => increment,
+    "C-x"         => decrement,
   });
 
   let insert = crate::keymap!({ "Insert"

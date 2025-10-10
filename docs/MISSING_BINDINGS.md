@@ -44,8 +44,6 @@ This document is just so I can have a little basis btw
 #### Misc
 
 • "C-z"         -> suspend
-• "C-a"         -> increment
-• "C-x"         -> decrement
 
 ---
 

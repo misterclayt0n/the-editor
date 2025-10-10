@@ -5429,8 +5429,8 @@ pub fn shell_keep_pipe(cx: &mut Context) {
   cx.editor.set_mode(crate::keymap::Mode::Command);
 
   // Create prompt with callback
-  let prompt = crate::ui::components::Prompt::new(String::new())
-    .with_callback(move |cx, input, event| {
+  let prompt =
+    crate::ui::components::Prompt::new(String::new()).with_callback(move |cx, input, event| {
       match event {
         PromptEvent::Validate => {
           // Clear custom mode string on validation
@@ -5503,8 +5503,8 @@ fn shell_prompt(cx: &mut Context, mode_str: &str, behavior: ShellBehavior) {
   cx.editor.set_mode(crate::keymap::Mode::Command);
 
   // Create prompt with callback
-  let prompt = crate::ui::components::Prompt::new(String::new())
-    .with_callback(move |cx, input, event| {
+  let prompt =
+    crate::ui::components::Prompt::new(String::new()).with_callback(move |cx, input, event| {
       match event {
         PromptEvent::Validate => {
           // Clear custom mode string on validation
@@ -5628,73 +5628,144 @@ fn shell_impl(shell: &[String], cmd: &str, input: Option<Rope>) -> anyhow::Resul
 }
 
 async fn shell_impl_async(
-    shell: &[String],
-    cmd: &str,
-    input: Option<Rope>,
+  shell: &[String],
+  cmd: &str,
+  input: Option<Rope>,
 ) -> anyhow::Result<Tendril> {
-    use std::process::Stdio;
-    use tokio::process::Command;
-    ensure!(!shell.is_empty(), "No shell set");
+  use std::process::Stdio;
 
-    let mut process = Command::new(&shell[0]);
-    process
-        .args(&shell[1..])
-        .arg(cmd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+  use tokio::process::Command;
+  ensure!(!shell.is_empty(), "No shell set");
 
-    if input.is_some() || cfg!(windows) {
-        process.stdin(Stdio::piped());
-    } else {
-        process.stdin(Stdio::null());
+  let mut process = Command::new(&shell[0]);
+  process
+    .args(&shell[1..])
+    .arg(cmd)
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+
+  if input.is_some() || cfg!(windows) {
+    process.stdin(Stdio::piped());
+  } else {
+    process.stdin(Stdio::null());
+  }
+
+  let mut process = match process.spawn() {
+    Ok(process) => process,
+    Err(e) => {
+      log::error!("Failed to start shell: {}", e);
+      return Err(e.into());
+    },
+  };
+  let output = if let Some(mut stdin) = process.stdin.take() {
+    let input_task = tokio::spawn(async move {
+      if let Some(input) = input {
+        // Write rope chunks to stdin
+        use tokio::io::AsyncWriteExt;
+        for chunk in input.chunks() {
+          stdin.write_all(chunk.as_bytes()).await?;
+        }
+      }
+      anyhow::Ok(())
+    });
+    let (output, _) = tokio::join! {
+        process.wait_with_output(),
+        input_task,
+    };
+    output?
+  } else {
+    // Process has no stdin, so we just take the output
+    process.wait_with_output().await?
+  };
+
+  let output = if !output.status.success() {
+    if output.stderr.is_empty() {
+      match output.status.code() {
+        Some(exit_code) => bail!("Shell command failed: status {}", exit_code),
+        None => bail!("Shell command failed"),
+      }
     }
+    String::from_utf8_lossy(&output.stderr)
+    // Prioritize `stderr` output over `stdout`
+  } else if !output.stderr.is_empty() {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    log::debug!("Command printed to stderr: {stderr}");
+    stderr
+  } else {
+    String::from_utf8_lossy(&output.stdout)
+  };
 
-    let mut process = match process.spawn() {
-        Ok(process) => process,
-        Err(e) => {
-            log::error!("Failed to start shell: {}", e);
-            return Err(e.into());
-        }
-    };
-    let output = if let Some(mut stdin) = process.stdin.take() {
-        let input_task = tokio::spawn(async move {
-            if let Some(input) = input {
-                // Write rope chunks to stdin
-                use tokio::io::AsyncWriteExt;
-                for chunk in input.chunks() {
-                    stdin.write_all(chunk.as_bytes()).await?;
-                }
-            }
-            anyhow::Ok(())
-        });
-        let (output, _) = tokio::join! {
-            process.wait_with_output(),
-            input_task,
-        };
-        output?
-    } else {
-        // Process has no stdin, so we just take the output
-        process.wait_with_output().await?
-    };
+  Ok(Tendril::from(output))
+}
 
-    let output = if !output.status.success() {
-        if output.stderr.is_empty() {
-            match output.status.code() {
-                Some(exit_code) => bail!("Shell command failed: status {}", exit_code),
-                None => bail!("Shell command failed"),
-            }
-        }
-        String::from_utf8_lossy(&output.stderr)
-        // Prioritize `stderr` output over `stdout`
-    } else if !output.stderr.is_empty() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::debug!("Command printed to stderr: {stderr}");
-        stderr
-    } else {
-        String::from_utf8_lossy(&output.stdout)
-    };
+enum IncrementDirection {
+  Increase,
+  Decrease,
+}
 
-    Ok(Tendril::from(output))
+/// Increment objects within selections by count.
+pub fn increment(cx: &mut Context) {
+  increment_impl(cx, IncrementDirection::Increase);
+}
+
+/// Decrement objects within selections by count.
+pub fn decrement(cx: &mut Context) {
+  increment_impl(cx, IncrementDirection::Decrease);
+}
+
+/// Increment objects within selections by `amount`.
+/// A negative `amount` will decrement objects within selections.
+fn increment_impl(cx: &mut Context, increment_direction: IncrementDirection) {
+  let sign = match increment_direction {
+    IncrementDirection::Increase => 1,
+    IncrementDirection::Decrease => -1,
+  };
+  let mut amount = sign * cx.count() as i64;
+  // If the register is `#` then increase or decrease the `amount` by 1 per
+  // element
+  let increase_by = if cx.register == Some('#') { sign } else { 0 };
+
+  let (view, doc) = current!(cx.editor);
+  let selection = doc.selection(view.id);
+  let text = doc.text().slice(..);
+
+  let mut new_selection_ranges = SmallVec::new();
+  let mut cumulative_length_diff: i128 = 0;
+  let mut changes = vec![];
+
+  for range in selection {
+    let selected_text: Cow<str> = range.fragment(text);
+    let new_from = ((range.from() as i128) + cumulative_length_diff) as usize;
+    let incremented = [crate::increment::integer, crate::increment::date_time]
+      .iter()
+      .find_map(|incrementor| incrementor(selected_text.as_ref(), amount));
+
+    amount += increase_by;
+
+    match incremented {
+      None => {
+        let new_range = Range::new(
+          new_from,
+          (range.to() as i128 + cumulative_length_diff) as usize,
+        );
+        new_selection_ranges.push(new_range);
+      },
+      Some(new_text) => {
+        let new_range = Range::new(new_from, new_from + new_text.len());
+        cumulative_length_diff += new_text.len() as i128 - selected_text.len() as i128;
+        new_selection_ranges.push(new_range);
+        changes.push((range.from(), range.to(), Some(new_text.into())));
+      },
+    }
+  }
+
+  if !changes.is_empty() {
+    let new_selection = Selection::new(new_selection_ranges, selection.primary_index());
+    let transaction = Transaction::change(doc.text(), changes.into_iter());
+    let transaction = transaction.with_selection(new_selection);
+    doc.apply(&transaction, view.id);
+    exit_select_mode(cx);
+  }
 }
 
 // Re-export LSP commands

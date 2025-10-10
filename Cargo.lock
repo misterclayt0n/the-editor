@@ -383,6 +383,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chrono"
+version = "0.4.42"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "145052bdd345b87320e369255277e3fb5152762ad123a901ef5c262dd38fe8d2"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "clru"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3457,6 +3466,7 @@ dependencies = [
  "arc-swap",
  "bitflags 2.9.3",
  "chardetng",
+ "chrono",
  "encoding_rs",
  "foldhash",
  "futures-executor",

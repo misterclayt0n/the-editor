@@ -66,6 +66,7 @@ use crate::{
       DiagnosticProvider,
     },
     editor_config::EditorConfig,
+    expansion,
     history::{
       History,
       State,
@@ -111,7 +112,6 @@ use crate::{
     Editor,
     EditorConfig as AppEditorConfig,
   },
-  core::expansion,
   event::{
     DocumentDidChange,
     SelectionDidChange,

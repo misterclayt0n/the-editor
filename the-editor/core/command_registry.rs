@@ -21,17 +21,20 @@ use super::{
   commands::Context,
   expansion,
 };
-use crate::ui::components::prompt::PromptEvent;
 use crate::{
   doc,
   editor::{
     Action,
     Editor,
   },
-  ui::components::prompt::Completion,
+  ui::components::prompt::{
+    Completion,
+    PromptEvent,
+  },
 };
 
-/// Type alias for a command function that takes a context, parsed arguments, and prompt event
+/// Type alias for a command function that takes a context, parsed arguments,
+/// and prompt event
 pub type CommandFn = fn(&mut Context, Args, PromptEvent) -> Result<()>;
 
 /// Type alias for a completer function
@@ -145,7 +148,9 @@ impl TypableCommand {
         (1, Some(1)) => writeln!(doc, "<arg> (required)").unwrap(),
         (0, None) => writeln!(doc, "[args...] (zero or more)").unwrap(),
         (1, None) => writeln!(doc, "<arg> [args...] (one or more)").unwrap(),
-        (min, Some(max)) if min == max => writeln!(doc, "{} argument{}", min, if min == 1 { "" } else { "s" }).unwrap(),
+        (min, Some(max)) if min == max => {
+          writeln!(doc, "{} argument{}", min, if min == 1 { "" } else { "s" }).unwrap()
+        },
         (min, Some(max)) => writeln!(doc, "{}-{} arguments", min, max).unwrap(),
         (min, None) => writeln!(doc, "{} or more arguments", min).unwrap(),
       }
@@ -156,7 +161,9 @@ impl TypableCommand {
       writeln!(doc, "Flags:").unwrap();
 
       // Calculate max flag name length for alignment
-      let max_flag_len = self.signature.flags
+      let max_flag_len = self
+        .signature
+        .flags
         .iter()
         .map(|flag| {
           let name_len = flag.name.len();
@@ -241,7 +248,8 @@ impl CommandRegistry {
   }
 
   /// Execute a command with the given name and arguments string
-  /// The args_line is parsed according to the command's signature with variable expansion
+  /// The args_line is parsed according to the command's signature with variable
+  /// expansion
   pub fn execute(
     &self,
     cx: &mut Context,
@@ -252,9 +260,16 @@ impl CommandRegistry {
     match self.get(name) {
       Some(command) => {
         // Parse arguments according to command signature with expansion
-        let args = Args::parse(args_line, command.signature, event == PromptEvent::Validate, |token| {
-          expansion::expand(cx.editor, token).map_err(|e| Box::from(e.to_string()) as Box<dyn std::error::Error>)
-        }).map_err(|e| anyhow!("{}", e))?;
+        let args = Args::parse(
+          args_line,
+          command.signature,
+          event == PromptEvent::Validate,
+          |token| {
+            expansion::expand(cx.editor, token)
+              .map_err(|e| Box::from(e.to_string()) as Box<dyn std::error::Error>)
+          },
+        )
+        .map_err(|e| anyhow!("{}", e))?;
 
         command.execute(cx, args, event)
       },
@@ -357,7 +372,10 @@ impl CommandRegistry {
             // Get the text being completed
             let (arg_input, arg_start_offset) = match &last_token {
               Some(token) if !token.is_terminated => {
-                (token.content.as_ref(), first_word.len() + 1 + token.content_start)
+                (
+                  token.content.as_ref(),
+                  first_word.len() + 1 + token.content_start,
+                )
               },
               _ => ("", input.len()),
             };
@@ -385,14 +403,16 @@ impl CommandRegistry {
             };
 
             // Fuzzy match flag names
-            cmd.signature.flags
+            cmd
+              .signature
+              .flags
               .iter()
               .filter(|flag| flag.name.contains(flag_input))
               .map(|flag| {
                 Completion {
                   range: flag_start_offset..,
-                  text: format!("--{}", flag.name),
-                  doc: Some(flag.doc.to_string()),
+                  text:  format!("--{}", flag.name),
+                  doc:   Some(flag.doc.to_string()),
                 }
               })
               .collect()
@@ -402,7 +422,10 @@ impl CommandRegistry {
             if let Some(completions) = flag.completions {
               let (arg_input, arg_start_offset) = match &last_token {
                 Some(token) if !token.is_terminated => {
-                  (token.content.as_ref(), first_word.len() + 1 + token.content_start)
+                  (
+                    token.content.as_ref(),
+                    first_word.len() + 1 + token.content_start,
+                  )
                 },
                 _ => ("", input.len()),
               };
@@ -413,8 +436,8 @@ impl CommandRegistry {
                 .map(|val| {
                   Completion {
                     range: arg_start_offset..,
-                    text: val.to_string(),
-                    doc: None,
+                    text:  val.to_string(),
+                    doc:   None,
                   }
                 })
                 .collect()
@@ -1069,7 +1092,8 @@ fn show_help(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
       let doc = cmd.generate_doc();
       cx.editor.set_status(doc);
     } else {
-      cx.editor.set_error(format!("unknown command: {}", &args[0]));
+      cx.editor
+        .set_error(format!("unknown command: {}", &args[0]));
     }
   }
 
@@ -1330,8 +1354,10 @@ fn write_all(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
   if errors.is_empty() {
     cx.editor.set_status("All buffers written".to_string());
   } else {
-    cx.editor
-      .set_error(format!("Failed to save some buffers: {}", errors.join(", ")));
+    cx.editor.set_error(format!(
+      "Failed to save some buffers: {}",
+      errors.join(", ")
+    ));
   }
 
   Ok(())
@@ -1358,8 +1384,10 @@ fn write_all_quit(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<(
   }
 
   if !errors.is_empty() {
-    cx.editor
-      .set_error(format!("Failed to save some buffers: {}", errors.join(", ")));
+    cx.editor.set_error(format!(
+      "Failed to save some buffers: {}",
+      errors.join(", ")
+    ));
     return Ok(());
   }
 
@@ -1432,19 +1460,25 @@ fn lsp_restart(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
   }
 
   // Collect document IDs that need language server refresh
-  let language_servers_to_match = language_servers.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+  let language_servers_to_match = language_servers
+    .iter()
+    .map(|s| s.to_string())
+    .collect::<Vec<_>>();
   let document_ids_to_refresh: Vec<_> = cx
     .editor
     .documents()
-    .filter_map(|doc| match doc.language_config() {
-      Some(doc_config)
-        if doc_config.language_servers.iter().any(|ls| {
-          language_servers_to_match.contains(&ls.name.to_string())
-        }) =>
-      {
-        Some(doc.id())
-      },
-      _ => None,
+    .filter_map(|doc| {
+      match doc.language_config() {
+        Some(doc_config)
+          if doc_config
+            .language_servers
+            .iter()
+            .any(|ls| language_servers_to_match.contains(&ls.name.to_string())) =>
+        {
+          Some(doc.id())
+        },
+        _ => None,
+      }
     })
     .collect();
 
@@ -1454,7 +1488,8 @@ fn lsp_restart(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
   }
 
   if errors.is_empty() {
-    cx.editor.set_status("Language server(s) restarted".to_string());
+    cx.editor
+      .set_status("Language server(s) restarted".to_string());
     Ok(())
   } else {
     Err(anyhow!(
@@ -1474,7 +1509,10 @@ fn lsp_stop(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
   let (_view, doc) = current!(cx.editor);
 
   // Get the list of language servers running for this document
-  let language_servers: Vec<_> = doc.language_servers().map(|ls| ls.name().to_string()).collect();
+  let language_servers: Vec<_> = doc
+    .language_servers()
+    .map(|ls| ls.name().to_string())
+    .collect();
 
   // If args provided, use those; otherwise stop all servers
   let language_servers = if args.is_empty() {
@@ -1506,7 +1544,8 @@ fn lsp_stop(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
     }
   }
 
-  cx.editor.set_status("Language server(s) stopped".to_string());
+  cx.editor
+    .set_status("Language server(s) stopped".to_string());
   Ok(())
 }
 
@@ -1552,7 +1591,9 @@ fn goto_line_number(cx: &mut Context, args: Args, event: PromptEvent) -> Result<
         let text = doc.text();
 
         // Convert to 0-indexed
-        let line = line.saturating_sub(1).min(text.len_lines().saturating_sub(1));
+        let line = line
+          .saturating_sub(1)
+          .min(text.len_lines().saturating_sub(1));
 
         // Get position at start of line - find the start character of the line
         let line_start = text.line_to_char(line);
@@ -1684,7 +1725,10 @@ mod tests {
 
   #[test]
   fn test_args_parsing_basic() {
-    use crate::core::command_line::{Args, Signature};
+    use crate::core::command_line::{
+      Args,
+      Signature,
+    };
 
     // Test parsing simple positional arguments
     let sig = Signature {
@@ -1692,9 +1736,7 @@ mod tests {
       ..Signature::DEFAULT
     };
 
-    let args = Args::parse("arg1 arg2 arg3", sig, true, |token| {
-      Ok(token.content)
-    }).unwrap();
+    let args = Args::parse("arg1 arg2 arg3", sig, true, |token| Ok(token.content)).unwrap();
 
     assert_eq!(args.len(), 3);
     assert_eq!(&args[0], "arg1");
@@ -1704,14 +1746,18 @@ mod tests {
 
   #[test]
   fn test_args_parsing_quoted() {
-    use crate::core::command_line::{Args, Signature};
+    use crate::core::command_line::{
+      Args,
+      Signature,
+    };
 
     // Test parsing quoted arguments
     let sig = Signature::DEFAULT;
 
     let args = Args::parse(r#""quoted arg" 'another one' normal"#, sig, true, |token| {
       Ok(token.content)
-    }).unwrap();
+    })
+    .unwrap();
 
     assert_eq!(args.len(), 3);
     assert_eq!(&args[0], "quoted arg");
@@ -1721,19 +1767,23 @@ mod tests {
 
   #[test]
   fn test_args_parsing_flags() {
-    use crate::core::command_line::{Args, Flag, Signature};
+    use crate::core::command_line::{
+      Args,
+      Flag,
+      Signature,
+    };
 
     const FLAGS: &[Flag] = &[
       Flag {
-        name: "force",
-        alias: Some('f'),
-        doc: "Force operation",
+        name:        "force",
+        alias:       Some('f'),
+        doc:         "Force operation",
         completions: None,
       },
       Flag {
-        name: "verbose",
-        alias: Some('v'),
-        doc: "Verbose output",
+        name:        "verbose",
+        alias:       Some('v'),
+        doc:         "Verbose output",
         completions: None,
       },
     ];
@@ -1744,9 +1794,7 @@ mod tests {
       ..Signature::DEFAULT
     };
 
-    let args = Args::parse("--force arg1 -v arg2", sig, true, |token| {
-      Ok(token.content)
-    }).unwrap();
+    let args = Args::parse("--force arg1 -v arg2", sig, true, |token| Ok(token.content)).unwrap();
 
     assert_eq!(args.len(), 2);
     assert_eq!(&args[0], "arg1");
@@ -1757,16 +1805,18 @@ mod tests {
 
   #[test]
   fn test_args_parsing_flag_with_argument() {
-    use crate::core::command_line::{Args, Flag, Signature};
+    use crate::core::command_line::{
+      Args,
+      Flag,
+      Signature,
+    };
 
-    const FLAGS: &[Flag] = &[
-      Flag {
-        name: "output",
-        alias: Some('o'),
-        doc: "Output file",
-        completions: Some(&["file.txt", "output.txt"]),
-      },
-    ];
+    const FLAGS: &[Flag] = &[Flag {
+      name:        "output",
+      alias:       Some('o'),
+      doc:         "Output file",
+      completions: Some(&["file.txt", "output.txt"]),
+    }];
 
     let sig = Signature {
       positionals: (0, None),
@@ -1776,7 +1826,8 @@ mod tests {
 
     let args = Args::parse("--output file.txt input.txt", sig, true, |token| {
       Ok(token.content)
-    }).unwrap();
+    })
+    .unwrap();
 
     assert_eq!(args.len(), 1);
     assert_eq!(&args[0], "input.txt");
@@ -1785,20 +1836,21 @@ mod tests {
 
   #[test]
   fn test_command_documentation_generation() {
-    use crate::core::command_line::{Flag, Signature};
+    use crate::core::command_line::{
+      Flag,
+      Signature,
+    };
 
     fn test_cmd(_cx: &mut Context, _args: Args, _event: PromptEvent) -> Result<()> {
       Ok(())
     }
 
-    const FLAGS: &[Flag] = &[
-      Flag {
-        name: "force",
-        alias: Some('f'),
-        doc: "Force the operation",
-        completions: None,
-      },
-    ];
+    const FLAGS: &[Flag] = &[Flag {
+      name:        "force",
+      alias:       Some('f'),
+      doc:         "Force the operation",
+      completions: None,
+    }];
 
     let cmd = TypableCommand::new(
       "write",
@@ -1825,7 +1877,10 @@ mod tests {
 
   #[test]
   fn test_args_wrong_positional_count() {
-    use crate::core::command_line::{Args, Signature};
+    use crate::core::command_line::{
+      Args,
+      Signature,
+    };
 
     // Require exactly 1 positional argument
     let sig = Signature {
@@ -1834,32 +1889,31 @@ mod tests {
     };
 
     // Try to parse with no arguments - should fail in validation mode
-    let result = Args::parse("", sig, true, |token| {
-      Ok(token.content)
-    });
+    let result = Args::parse("", sig, true, |token| Ok(token.content));
 
     assert!(result.is_err());
 
     // Try to parse with too many arguments - should fail
-    let result = Args::parse("arg1 arg2", sig, true, |token| {
-      Ok(token.content)
-    });
+    let result = Args::parse("arg1 arg2", sig, true, |token| Ok(token.content));
 
     assert!(result.is_err());
   }
 
   #[test]
   fn test_args_completion_state() {
-    use crate::core::command_line::{Args, CompletionState, Flag, Signature};
+    use crate::core::command_line::{
+      Args,
+      CompletionState,
+      Flag,
+      Signature,
+    };
 
-    const FLAGS: &[Flag] = &[
-      Flag {
-        name: "output",
-        alias: Some('o'),
-        doc: "Output file",
-        completions: Some(&["file.txt"]),
-      },
-    ];
+    const FLAGS: &[Flag] = &[Flag {
+      name:        "output",
+      alias:       Some('o'),
+      doc:         "Output file",
+      completions: Some(&["file.txt"]),
+    }];
 
     let sig = Signature {
       positionals: (0, None),

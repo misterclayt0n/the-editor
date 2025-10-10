@@ -72,9 +72,35 @@ The entry point is `the-editor/main.rs`, which:
 
 - **`ui/compositor.rs`**: Component trait and compositor for layering UI elements (editor views, prompts, pickers)
 - **`ui/editor_view.rs`**: Main editor view rendering (text, cursors, gutters, diagnostics)
-- **`ui/components/`**: Reusable UI components (statusline, picker, prompt, debug panel, buttons)
+- **`ui/components/`**: Reusable UI components (statusline, picker, prompt, buttons)
 - **`application.rs`**: `App` struct implementing the `Application` trait, handling input events and frame rendering
 - **Renderer architecture**: `the-renderer` provides a `Renderer` that handles text layout with `wgpu_text`, rectangle drawing, and blur effects. It exposes an `Application` trait with `init()`, `render()`, `handle_event()`, `resize()`, and `wants_redraw()`.
+
+### Layout Engine
+
+- **`core/layout.rs`**: Flexible layout system for positioning UI elements without hardcoded coordinates
+- **Layout types**: `Layout::horizontal()` and `Layout::vertical()` for splitting areas
+- **Constraints**: `Length`, `Percentage`, `Fill`, `Ratio`, `Min`, `Max` for flexible sizing
+- **Helpers**: `center()` and `align()` functions for positioning popups and widgets
+- **Usage**: See `docs/LAYOUT_USAGE.md` and `examples/layout_examples.rs` for patterns
+- **Migration**: Replaces hardcoded `Rect::new(x, y, w, h)` with responsive, composable layouts
+
+Example:
+```rust
+use crate::core::layout::{Layout, Constraint, align, Alignment};
+
+// Split screen: header (1 line), body (fill), footer (1 line)
+let chunks = Layout::vertical()
+    .constraints(vec![
+        Constraint::Length(1),
+        Constraint::Fill(1),
+        Constraint::Length(1),
+    ])
+    .split(screen);
+
+// Position button in top-right corner
+let button_rect = align(screen, 8, 2, Alignment::End);
+```
 
 ### LSP Integration
 

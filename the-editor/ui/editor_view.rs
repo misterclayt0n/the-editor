@@ -18,6 +18,11 @@ use crate::{
       CursorKind,
       Rect,
     },
+    layout::{
+      Constraint as LayoutConstraint,
+      Layout as UiLayout,
+      center,
+    },
     position::{
       Position,
       char_idx_at_visual_offset,
@@ -642,7 +647,15 @@ impl Component for EditorView {
       let scrolloff = cx.editor.config().scrolloff;
       let view_ids: Vec<_> = cx.editor.tree.views().map(|(view, _)| view.id).collect();
       for view_id in view_ids {
+        // Calculate actual gutter width for this view (accounts for disabled gutters)
+        let gutter_width = {
+          let view = cx.editor.tree.get(view_id);
+          let doc = &cx.editor.documents[&view.doc];
+          (self.gutter_manager.total_width(view, doc) as u16).min(view.area.width)
+        };
+
         let view = cx.editor.tree.get_mut(view_id);
+        view.rendered_gutter_width = Some(gutter_width);
         let doc = cx.editor.documents.get_mut(&view.doc).unwrap();
         view.sync_changes(doc);
         view.ensure_cursor_in_view(doc, scrolloff);
@@ -655,10 +668,19 @@ impl Component for EditorView {
     {
       let focus_view = cx.editor.tree.focus;
       let scrolloff = cx.editor.config().scrolloff;
+
+      // Calculate actual gutter width for focused view (accounts for disabled gutters)
+      let gutter_width = {
+        let view = cx.editor.tree.get(focus_view);
+        let doc = &cx.editor.documents[&view.doc];
+        (self.gutter_manager.total_width(view, doc) as u16).min(view.area.width)
+      };
+
       let view_id_doc;
       {
         // Limit the mutable borrow scope
         let view = cx.editor.tree.get_mut(focus_view);
+        view.rendered_gutter_width = Some(gutter_width);
         let doc = cx.editor.documents.get_mut(&view.doc).unwrap();
         view_id_doc = view.doc;
         if !view.is_cursor_in_view(doc, scrolloff) {
@@ -722,6 +744,18 @@ impl Component for EditorView {
     let focus_view_id = cx.editor.tree.focus;
     let views_to_render: Vec<_> = cx.editor.tree.traverse().map(|(id, _)| id).collect();
 
+    // Update rendered_gutter_width for all views before rendering
+    // This ensures cursor positioning logic uses the correct gutter width
+    for &view_id in &views_to_render {
+      let gutter_width = {
+        let view = cx.editor.tree.get(view_id);
+        let doc = &cx.editor.documents[&view.doc];
+        (self.gutter_manager.total_width(view, doc) as u16).min(view.area.width)
+      };
+      let view = cx.editor.tree.get_mut(view_id);
+      view.rendered_gutter_width = Some(gutter_width);
+    }
+
     // Render each view
     for current_view_id in views_to_render {
       let is_focused = current_view_id == focus_view_id;
@@ -771,6 +805,7 @@ impl Component for EditorView {
       // separator)
       let has_horizontal_split_below =
         view.area.y + view.area.height < cx.editor.tree.area().height;
+      let has_vertical_split_right = view.area.x + view.area.width < cx.editor.tree.area().width;
       let view_bottom_edge_px = view_offset_y
         + (view.area.height as f32 * (font_size + LINE_SPACING))
         - if has_horizontal_split_below {
@@ -778,6 +813,20 @@ impl Component for EditorView {
         } else {
           0.0
         };
+
+      let scissor_width = (view.area.width as f32 * font_width)
+        - if has_vertical_split_right {
+          SEPARATOR_WIDTH_PX
+        } else {
+          0.0
+        };
+      let scissor_height = view_bottom_edge_px - view_offset_y;
+      renderer.push_scissor_rect(
+        view_offset_x,
+        view_offset_y,
+        scissor_width.max(0.0),
+        scissor_height.max(0.0),
+      );
 
       let doc_id = view.doc;
 
@@ -804,16 +853,57 @@ impl Component for EditorView {
         doc.get_viewport_highlights(start_byte..end_byte, &loader)
       };
 
+      let gutter_cols = {
+        let doc = &cx.editor.documents[&doc_id];
+        (self.gutter_manager.total_width(view, doc) as u16).min(view.area.width)
+      };
+
+      let (gutter_rect, mut content_rect) = if gutter_cols > 0 {
+        let layout = UiLayout::horizontal().constraints(vec![
+          LayoutConstraint::Length(gutter_cols),
+          LayoutConstraint::Fill(1),
+        ]);
+        let mut chunks = layout.split(view.area).into_iter();
+        (
+          chunks.next().unwrap_or(Rect::new(
+            view.area.x,
+            view.area.y,
+            gutter_cols,
+            view.area.height,
+          )),
+          chunks.next().unwrap_or(Rect::new(
+            view.area.x + gutter_cols,
+            view.area.y,
+            view.area.width.saturating_sub(gutter_cols),
+            view.area.height,
+          )),
+        )
+      } else {
+        (
+          Rect::new(view.area.x, view.area.y, 0, view.area.height),
+          Rect::new(view.area.x, view.area.y, view.area.width, view.area.height),
+        )
+      };
+
+      if content_rect.width == 0 {
+        content_rect.width = 1;
+      }
+
+      let viewport = Rect::new(
+        content_rect.x,
+        content_rect.y,
+        content_rect.width,
+        content_rect.height,
+      );
+
       // Wrap main rendering in scope to drop borrows before rendering completion
       {
         let doc = &cx.editor.documents[&doc_id];
         let doc_text = doc.text();
         let selection = doc.selection(focus_view);
 
-        // Calculate gutter offset using GutterManager
-        let gutter_width = self.gutter_manager.total_width(view, doc);
-        let gutter_offset = gutter_width as f32 * font_width;
-        let base_x = view_offset_x + VIEW_PADDING_LEFT + gutter_offset;
+        let gutter_x = gutter_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
+        let base_x = content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
 
         let cursor_pos = selection.primary().cursor(doc_text.slice(..));
 
@@ -860,9 +950,8 @@ impl Component for EditorView {
           self.last_selection_hash = selection_hash;
         }
 
-        // Get viewport information
-        let viewport = view.inner_area(doc);
-        let visible_lines = content_rows as usize;
+        // Get viewport information for scrolling calculations (already derived above)
+        let visible_lines = viewport.height as usize;
         let cached_highlights = cached_highlights_opt;
 
         let text_fmt = doc.text_format(viewport.width, None);
@@ -1009,8 +1098,14 @@ impl Component for EditorView {
         // Debug per document (track by document ID)
         let viewport_cols = viewport.width as usize;
 
-        // Calculate view's right edge in pixels for clipping
-        let view_right_edge_px = view_offset_x + (view.area.width as f32 * font_width);
+        // Calculate view's right edge in pixels for clipping (accounting for vertical
+        // separator)
+        let view_right_edge_px = (content_rect.x + content_rect.width) as f32 * font_width
+          - if has_vertical_split_right {
+            SEPARATOR_WIDTH_PX
+          } else {
+            0.0
+          };
 
         // Helper: check if document position range overlaps any selection
         let is_selected = |start: usize, len: usize| -> bool {
@@ -1187,7 +1282,7 @@ impl Component for EditorView {
               view,
               &cx.editor.theme,
               renderer,
-              view_offset_x + VIEW_PADDING_LEFT,
+              gutter_x,
               y,
               font_width,
               font_size,
@@ -1427,10 +1522,11 @@ impl Component for EditorView {
           });
         }
       } // End scope - drop doc borrow before rendering completion
-    } // End view rendering loop
 
-    // Execute all batched commands for all views
-    self.command_batcher.execute(renderer);
+      // Execute draw commands while the view's clipping rect is active.
+      self.command_batcher.execute(renderer);
+      renderer.pop_scissor_rect();
+    } // End view rendering loop
 
     // Render split separators
     self.render_split_separators(renderer, cx, font_width, font_size);
@@ -1512,9 +1608,8 @@ impl EditorView {
   fn render_popups(&mut self, area: Rect, renderer: &mut Surface, cx: &mut Context) {
     // Render completion popup on top if active
     if let Some(ref mut completion) = self.completion {
-      // Position completion popup
-      // TODO: Calculate proper position based on cursor location
-      let popup_area = Rect::new(0, 0, 60, 15);
+      // Position completion popup centered in viewport
+      let popup_area = center(area, 60, 15);
       completion.render(popup_area, renderer, cx);
     }
 

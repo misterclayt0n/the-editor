@@ -946,11 +946,9 @@ impl Renderer {
 
       // Now we can safely use the buffer
       let mask_buffer = self.mask_instance_buffer.as_ref().unwrap();
-      self.queue.write_buffer(
-        mask_buffer,
-        0,
-        bytemuck::cast_slice(&mask_instances),
-      );
+      self
+        .queue
+        .write_buffer(mask_buffer, 0, bytemuck::cast_slice(&mask_instances));
 
       // Render pass that writes to stencil
       let mut mask_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1167,9 +1165,10 @@ impl Renderer {
   /// small text segments.
   /// BUGGY: Text batching with position offset handling
   ///
-  /// BUG: When batching text at different X positions on the same line (lines 1186-1187),
-  /// the code just appends text segments without accounting for position differences.
-  /// This causes text to render at wrong positions, creating overlapping/garbled text.
+  /// BUG: When batching text at different X positions on the same line (lines
+  /// 1186-1187), the code just appends text segments without accounting for
+  /// position differences. This causes text to render at wrong positions,
+  /// creating overlapping/garbled text.
   ///
   /// Example of the bug:
   /// - Text "func" at x=10
@@ -1178,8 +1177,8 @@ impl Renderer {
   /// - Renders as "funcmain" starting at x=10 (wrong!)
   /// - Should render "func" at x=10, "main" at x=50
   ///
-  /// To fix: Either don't batch text at different positions, or insert proper spacing/padding
-  /// to account for position offsets between text segments.
+  /// To fix: Either don't batch text at different positions, or insert proper
+  /// spacing/padding to account for position offsets between text segments.
   pub fn draw_text_batched(&mut self, section: TextSection) {
     if section.texts.is_empty() {
       return;
@@ -1223,7 +1222,8 @@ impl Renderer {
     }
   }
 
-  /// Draw text using glyphon buffers (immediate mode - batching disabled due to bugs)
+  /// Draw text using glyphon buffers (immediate mode - batching disabled due to
+  /// bugs)
   pub fn draw_text(&mut self, section: TextSection) {
     // NOTE: Batching is currently buggy (doesn't handle position offsets correctly)
     // Use immediate mode until batching logic is fixed

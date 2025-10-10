@@ -3,6 +3,7 @@ use the_editor_renderer::Key;
 use crate::{
   core::{
     graphics::Rect,
+    layout::center,
     position::Position,
   },
   ui::compositor::{
@@ -72,12 +73,7 @@ impl<T: Component> Popup<T> {
 
     // If no cursor position, center in viewport
     let Some(cursor) = cursor_pos else {
-      return Rect::new(
-        viewport.x + (viewport.width.saturating_sub(width)) / 2,
-        viewport.y + (viewport.height.saturating_sub(height)) / 2,
-        width,
-        height,
-      );
+      return center(viewport, width, height);
     };
 
     // Position relative to cursor

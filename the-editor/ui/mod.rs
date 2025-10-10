@@ -1,11 +1,4 @@
-use the_editor_renderer::{
-  Color,
-  KeyPress,
-  MouseEvent,
-  Renderer,
-};
-
-use crate::core::graphics::Rect;
+use the_editor_renderer::Color;
 
 pub mod components;
 pub mod compositor;

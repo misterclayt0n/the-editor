@@ -19,6 +19,7 @@ pub mod diff;
 pub mod doc_formatter;
 pub mod document;
 pub mod editor_config;
+pub mod expansion;
 pub mod fuzzy;
 pub mod global_search;
 pub mod grapheme;
@@ -26,6 +27,7 @@ pub mod graphics;
 pub mod history;
 pub mod indent;
 pub mod info;
+pub mod layout;
 pub mod line_ending;
 pub mod lsp_commands;
 pub mod macros;
@@ -46,7 +48,6 @@ pub mod transaction;
 pub mod tree;
 pub mod uri;
 pub mod view;
-pub mod expansion;
 
 /// This type basically optimizes small string operations by doing expensive
 /// operations in heap, and using inline storage for small strings to avoid heap

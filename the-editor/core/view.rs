@@ -201,6 +201,10 @@ pub struct View {
   /// Animation factor for document opening (0.0 = just opened, 1.0 = fully
   /// loaded)
   pub zoom_anim:           f32,
+  /// The actual rendered gutter width (accounts for enabled/disabled gutters).
+  /// Set by the renderer. If None, falls back to calculating from gutters
+  /// config.
+  pub rendered_gutter_width: Option<u16>,
 }
 
 impl fmt::Debug for View {
@@ -227,6 +231,7 @@ impl View {
       doc_revisions: HashMap::new(),
       diagnostics_handler: DiagnosticsHandler::new(),
       zoom_anim: 1.0, // Start fully loaded for existing views
+      rendered_gutter_width: None,
     }
   }
 
@@ -259,6 +264,12 @@ impl View {
   }
 
   pub fn gutter_offset(&self, doc: &Document) -> u16 {
+    // Use the rendered gutter width if available (accounts for disabled gutters),
+    // otherwise fall back to calculating from the config
+    if let Some(width) = self.rendered_gutter_width {
+      return width.min(self.area.width);
+    }
+
     let total_width = self
       .gutters
       .layout

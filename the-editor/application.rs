@@ -70,9 +70,16 @@ impl App {
     compositor.push(statusline);
 
     // NOTE: This is a test button btw.
+    // Use layout engine to position button in top-right corner
+    use crate::core::layout::{
+      Alignment,
+      align,
+    };
+    let button_rect = align(area, 8, 2, Alignment::End);
+
     let button = Box::new(
       Button::new("Run")
-                .with_rect(Rect::new(100, 1, 8, 2)) // Top-right.
+                .with_rect(button_rect) // Layout-calculated position instead of hardcoded
                 .color(the_editor_renderer::Color::rgb(0.6, 0.6, 0.8))
                 .visible(false)
                 .on_click(|| println!("Button clicked!")),

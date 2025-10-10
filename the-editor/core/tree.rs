@@ -3,6 +3,10 @@ use slotmap::HopSlotMap;
 use crate::core::{
   ViewId,
   graphics::Rect,
+  layout::{
+    Constraint as LayoutConstraint,
+    Layout as UiLayout,
+  },
   view::View,
 };
 
@@ -393,47 +397,28 @@ impl Tree {
 
           match container.layout {
             Layout::Horizontal => {
-              let len = container.children.len();
+              if container.children.is_empty() {
+                continue;
+              }
 
-              let height = area.height / len as u16;
+              let constraints = vec![LayoutConstraint::Fill(1); container.children.len()];
+              let layout = UiLayout::vertical().constraints(constraints);
+              let areas = layout.split(container.area);
 
-              let mut child_y = area.y;
-
-              for (i, child) in container.children.iter().enumerate() {
-                let mut area = Rect::new(container.area.x, child_y, container.area.width, height);
-                child_y += height;
-
-                // last child takes the remaining width because we can get uneven
-                // space from rounding
-                if i == len - 1 {
-                  area.height = container.area.y + container.area.height - area.y;
-                }
-
+              for (child, area) in container.children.iter().zip(areas) {
                 self.stack.push((*child, area));
               }
             },
             Layout::Vertical => {
-              let len = container.children.len();
-              let len_u16 = len as u16;
+              if container.children.is_empty() {
+                continue;
+              }
 
-              let inner_gap = 1u16;
-              let total_gap = inner_gap * len_u16.saturating_sub(2);
+              let constraints = vec![LayoutConstraint::Fill(1); container.children.len()];
+              let layout = UiLayout::horizontal().constraints(constraints).spacing(1);
+              let areas = layout.split(container.area);
 
-              let used_area = area.width.saturating_sub(total_gap);
-              let width = used_area / len_u16;
-
-              let mut child_x = area.x;
-
-              for (i, child) in container.children.iter().enumerate() {
-                let mut area = Rect::new(child_x, container.area.y, width, container.area.height);
-                child_x += width + inner_gap;
-
-                // last child takes the remaining width because we can get uneven
-                // space from rounding
-                if i == len - 1 {
-                  area.width = container.area.x + container.area.width - area.x;
-                }
-
+              for (child, area) in container.children.iter().zip(areas) {
                 self.stack.push((*child, area));
               }
             },

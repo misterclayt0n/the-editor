@@ -683,6 +683,30 @@ impl CommandRegistry {
         ..Signature::DEFAULT
       },
     ));
+
+    self.register(TypableCommand::new(
+      "lsp-restart",
+      &[],
+      "Restart language server(s) for current document",
+      lsp_restart,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, None),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "lsp-stop",
+      &[],
+      "Stop language server(s) for current document",
+      lsp_stop,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, None),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 
@@ -1350,6 +1374,140 @@ fn write_all_quit(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<(
 
   // Exit the application
   std::process::exit(0);
+}
+
+fn lsp_restart(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  use crate::doc;
+
+  // Get editor configuration first
+  let editor_config = cx.editor.config();
+  let root_dirs = &editor_config.workspace_lsp_roots;
+  let enable_snippets = editor_config.lsp.snippets;
+
+  // Get document and language config (immutable borrows only)
+  let current_doc = doc!(cx.editor);
+  let config = current_doc
+    .language_config()
+    .ok_or_else(|| anyhow!("LSP not defined for the current document"))?;
+  let doc_path = current_doc.path();
+
+  // Get the list of language servers configured for this document
+  let language_servers: Vec<_> = config
+    .language_servers
+    .iter()
+    .map(|ls| ls.name.as_str())
+    .collect();
+
+  // If args provided, use those; otherwise restart all servers
+  let language_servers = if args.is_empty() {
+    language_servers
+  } else {
+    let (valid, invalid): (Vec<_>, Vec<_>) = args
+      .iter()
+      .map(|arg| arg.as_ref())
+      .partition(|name| language_servers.contains(name));
+    if !invalid.is_empty() {
+      let s = if invalid.len() == 1 { "" } else { "s" };
+      bail!("Unknown language server{}: {}", s, invalid.join(", "));
+    }
+    valid
+  };
+
+  // Restart each language server
+  let mut errors = Vec::new();
+  for server in language_servers.iter() {
+    match cx
+      .editor
+      .language_servers
+      .restart_server(server, config, doc_path, root_dirs, enable_snippets)
+      .transpose()
+    {
+      Err(err) => errors.push(err.to_string()),
+      _ => {},
+    }
+  }
+
+  // Collect document IDs that need language server refresh
+  let language_servers_to_match = language_servers.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+  let document_ids_to_refresh: Vec<_> = cx
+    .editor
+    .documents()
+    .filter_map(|doc| match doc.language_config() {
+      Some(doc_config)
+        if doc_config.language_servers.iter().any(|ls| {
+          language_servers_to_match.contains(&ls.name.to_string())
+        }) =>
+      {
+        Some(doc.id())
+      },
+      _ => None,
+    })
+    .collect();
+
+  // Refresh language servers for affected documents
+  for document_id in document_ids_to_refresh {
+    cx.editor.refresh_language_servers(document_id);
+  }
+
+  if errors.is_empty() {
+    cx.editor.set_status("Language server(s) restarted".to_string());
+    Ok(())
+  } else {
+    Err(anyhow!(
+      "Error restarting language servers: {}",
+      errors.join(", ")
+    ))
+  }
+}
+
+fn lsp_stop(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  use crate::current;
+
+  let (_view, doc) = current!(cx.editor);
+
+  // Get the list of language servers running for this document
+  let language_servers: Vec<_> = doc.language_servers().map(|ls| ls.name().to_string()).collect();
+
+  // If args provided, use those; otherwise stop all servers
+  let language_servers = if args.is_empty() {
+    language_servers
+  } else {
+    let (valid, invalid): (Vec<_>, Vec<_>) = args
+      .iter()
+      .map(|arg| arg.to_string())
+      .partition(|name| language_servers.contains(name));
+    if !invalid.is_empty() {
+      let s = if invalid.len() == 1 { "" } else { "s" };
+      bail!("Unknown language server{}: {}", s, invalid.join(", "));
+    }
+    valid
+  };
+
+  // Stop each language server
+  for ls_name in &language_servers {
+    cx.editor.language_servers.stop(ls_name);
+
+    // Remove from all documents and clear diagnostics
+    let doc_ids: Vec<_> = cx.editor.documents().map(|d| d.id()).collect();
+    for doc_id in doc_ids {
+      let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
+      if let Some(client) = doc.remove_language_server_by_name(ls_name) {
+        // Clear diagnostics for this language server
+        doc.clear_diagnostics_for_language_server(client.id());
+      }
+    }
+  }
+
+  cx.editor.set_status("Language server(s) stopped".to_string());
+  Ok(())
 }
 
 fn goto_line_number(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {

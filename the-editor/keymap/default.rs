@@ -238,6 +238,13 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "C-c"         => toggle_comments,
     "C-i" | "tab" => jump_forward, // tab == <C-i>
     "C-o"         => jump_backward,
+    "C-s"         => save_selection,
+    "\""          => select_register,
+    "|"           => shell_pipe,
+    "A-|"         => shell_pipe_to,
+    "!"           => shell_insert_output,
+    "A-!"         => shell_append_output,
+    "$"           => shell_keep_pipe,
   });
 
   let insert = crate::keymap!({ "Insert"

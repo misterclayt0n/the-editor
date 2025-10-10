@@ -154,4 +154,153 @@ impl DirtyRegion {
   pub fn needs_redraw(&self) -> bool {
     self.full_redraw || !self.dirty_lines.is_empty()
   }
+
+  /// Get all dirty lines within the viewport
+  pub fn get_dirty_lines_in_viewport(&self) -> Vec<usize> {
+    if self.full_redraw {
+      // Return all lines in viewport
+      (self.viewport_start..=self.viewport_end).collect()
+    } else {
+      // Return only dirty lines within viewport
+      self
+        .dirty_lines
+        .iter()
+        .filter(|&&line| line >= self.viewport_start && line <= self.viewport_end)
+        .copied()
+        .collect()
+    }
+  }
+
+  /// Optimize dirty lines by merging adjacent lines into ranges
+  pub fn optimize(&mut self) {
+    if self.full_redraw || self.dirty_lines.is_empty() {
+      return;
+    }
+
+    self.dirty_lines.sort_unstable();
+    self.dirty_lines.dedup();
+  }
+
+  /// Get viewport bounds
+  pub fn viewport_bounds(&self) -> (usize, usize) {
+    (self.viewport_start, self.viewport_end)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_dirty_region_starts_with_full_redraw() {
+    let region = DirtyRegion::new();
+    assert!(region.full_redraw);
+    assert!(region.needs_redraw());
+  }
+
+  #[test]
+  fn test_mark_line_dirty() {
+    let mut region = DirtyRegion::new();
+    region.clear(); // Clear initial full redraw
+
+    assert!(!region.needs_redraw());
+
+    region.mark_line_dirty(5);
+    assert!(region.needs_redraw());
+    assert!(region.is_line_dirty(5));
+    assert!(!region.is_line_dirty(4));
+  }
+
+  #[test]
+  fn test_mark_range_dirty() {
+    let mut region = DirtyRegion::new();
+    region.clear();
+
+    region.mark_range_dirty(10, 15);
+    for line in 10..=15 {
+      assert!(region.is_line_dirty(line));
+    }
+    assert!(!region.is_line_dirty(9));
+    assert!(!region.is_line_dirty(16));
+  }
+
+  #[test]
+  fn test_too_many_dirty_lines_triggers_full_redraw() {
+    let mut region = DirtyRegion::new();
+    region.clear();
+
+    // Mark 101 lines dirty - should trigger full redraw at 100
+    region.mark_range_dirty(0, 100);
+    assert!(region.full_redraw);
+  }
+
+  #[test]
+  fn test_viewport_change_marks_all_dirty() {
+    let mut region = DirtyRegion::new();
+    region.clear();
+    assert!(!region.full_redraw);
+
+    // First viewport set - changes from (0,0) to (0,50)
+    region.set_viewport(0, 50);
+    assert!(region.full_redraw); // Viewport changed, marks dirty
+
+    region.clear();
+
+    // Setting same viewport doesn't mark dirty
+    region.set_viewport(0, 50);
+    assert!(!region.full_redraw);
+
+    // Changing viewport marks dirty
+    region.set_viewport(10, 60);
+    assert!(region.full_redraw);
+  }
+
+  #[test]
+  fn test_clear_resets_dirty_state() {
+    let mut region = DirtyRegion::new();
+    region.mark_line_dirty(5);
+
+    region.clear();
+    assert!(!region.full_redraw);
+    assert!(!region.needs_redraw());
+  }
+
+  #[test]
+  fn test_get_dirty_lines_in_viewport() {
+    let mut region = DirtyRegion::new();
+    region.clear();
+    region.set_viewport(10, 20);
+    region.clear(); // Clear the full redraw from viewport change
+
+    region.mark_line_dirty(5); // Outside viewport
+    region.mark_line_dirty(15); // Inside viewport
+    region.mark_line_dirty(25); // Outside viewport
+
+    let dirty_in_viewport = region.get_dirty_lines_in_viewport();
+    assert_eq!(dirty_in_viewport, vec![15]);
+  }
+
+  #[test]
+  fn test_full_redraw_returns_all_viewport_lines() {
+    let mut region = DirtyRegion::new();
+    region.set_viewport(5, 10);
+
+    let dirty_in_viewport = region.get_dirty_lines_in_viewport();
+    assert_eq!(dirty_in_viewport, (5..=10).collect::<Vec<_>>());
+  }
+
+  #[test]
+  fn test_optimize_sorts_and_deduplicates() {
+    let mut region = DirtyRegion::new();
+    region.clear();
+
+    region.mark_line_dirty(15);
+    region.mark_line_dirty(10);
+    region.mark_line_dirty(15); // Duplicate
+    region.mark_line_dirty(12);
+
+    region.optimize();
+
+    assert_eq!(region.dirty_lines, vec![10, 12, 15]);
+  }
 }

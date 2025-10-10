@@ -1,7 +1,6 @@
 pub mod button;
 pub mod code_action;
 pub mod completion;
-pub mod debug_panel;
 pub mod hover;
 pub mod picker;
 pub mod popup;

@@ -17,13 +17,11 @@ use glyphon::{
 #[derive(Clone, Debug)]
 pub struct ShapedTextKey {
   /// The text content
-  pub text:          String,
+  pub text:    String,
   /// Font metrics (size and line height)
-  pub metrics:       (u32, u32), // Store as fixed point
+  pub metrics: (u32, u32), // Store as fixed point
   /// Text color as RGBA bytes
-  pub color:         [u8; 4],
-  /// Position hash for spatial caching
-  pub position_hash: u64,
+  pub color:   [u8; 4],
 }
 
 impl Hash for ShapedTextKey {
@@ -31,16 +29,12 @@ impl Hash for ShapedTextKey {
     self.text.hash(state);
     self.metrics.hash(state);
     self.color.hash(state);
-    self.position_hash.hash(state);
   }
 }
 
 impl PartialEq for ShapedTextKey {
   fn eq(&self, other: &Self) -> bool {
-    self.text == other.text
-      && self.metrics == other.metrics
-      && self.color == other.color
-      && self.position_hash == other.position_hash
+    self.text == other.text && self.metrics == other.metrics && self.color == other.color
   }
 }
 
@@ -182,5 +176,188 @@ impl ShapedTextCache {
     self.entries.clear();
     self.hits = 0;
     self.misses = 0;
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_cache_key_equality_ignores_position() {
+    // Same text, color, and metrics should be equal regardless of position
+    let key1 = ShapedTextKey {
+      text:    "Hello".to_string(),
+      metrics: (1400, 1680),
+      color:   [255, 255, 255, 255],
+    };
+
+    let key2 = ShapedTextKey {
+      text:    "Hello".to_string(),
+      metrics: (1400, 1680),
+      color:   [255, 255, 255, 255],
+    };
+
+    assert_eq!(key1, key2);
+  }
+
+  #[test]
+  fn test_cache_key_different_text() {
+    let key1 = ShapedTextKey {
+      text:    "Hello".to_string(),
+      metrics: (1400, 1680),
+      color:   [255, 255, 255, 255],
+    };
+
+    let key2 = ShapedTextKey {
+      text:    "World".to_string(),
+      metrics: (1400, 1680),
+      color:   [255, 255, 255, 255],
+    };
+
+    assert_ne!(key1, key2);
+  }
+
+  #[test]
+  fn test_cache_key_different_color() {
+    let key1 = ShapedTextKey {
+      text:    "Hello".to_string(),
+      metrics: (1400, 1680),
+      color:   [255, 255, 255, 255],
+    };
+
+    let key2 = ShapedTextKey {
+      text:    "Hello".to_string(),
+      metrics: (1400, 1680),
+      color:   [255, 0, 0, 255],
+    };
+
+    assert_ne!(key1, key2);
+  }
+
+  #[test]
+  fn test_cache_eviction() {
+    let mut cache = ShapedTextCache::new(2); // Small cache for testing
+
+    let key1 = ShapedTextKey {
+      text:    "First".to_string(),
+      metrics: (1400, 1680),
+      color:   [255, 255, 255, 255],
+    };
+
+    let key2 = ShapedTextKey {
+      text:    "Second".to_string(),
+      metrics: (1400, 1680),
+      color:   [255, 255, 255, 255],
+    };
+
+    let key3 = ShapedTextKey {
+      text:    "Third".to_string(),
+      metrics: (1400, 1680),
+      color:   [255, 255, 255, 255],
+    };
+
+    // Add two entries
+    let mut font_system = FontSystem::new();
+    let metrics = Metrics::new(14.0, 16.8);
+
+    cache.get_or_shape(key1.clone(), &mut font_system, metrics, 100.0, 100.0);
+    cache.next_frame(); // Advance frame so key1 is older
+    cache.get_or_shape(key2.clone(), &mut font_system, metrics, 100.0, 100.0);
+
+    assert_eq!(cache.entries.len(), 2);
+    assert_eq!(cache.misses, 2);
+
+    cache.next_frame(); // Advance frame again
+    // Add third entry - should evict least recently used (key1)
+    cache.get_or_shape(key3.clone(), &mut font_system, metrics, 100.0, 100.0);
+
+    // Cache should still be at max size
+    assert_eq!(cache.entries.len(), 2);
+
+    // First key should have been evicted (oldest frame)
+    assert!(!cache.entries.contains_key(&key1));
+    assert!(cache.entries.contains_key(&key2));
+    assert!(cache.entries.contains_key(&key3));
+  }
+
+  #[test]
+  fn test_cache_hit_tracking() {
+    let mut cache = ShapedTextCache::new(10);
+    let mut font_system = FontSystem::new();
+    let metrics = Metrics::new(14.0, 16.8);
+
+    let key = ShapedTextKey {
+      text:    "Test".to_string(),
+      metrics: (1400, 1680),
+      color:   [255, 255, 255, 255],
+    };
+
+    // First access is a miss
+    cache.get_or_shape(key.clone(), &mut font_system, metrics, 100.0, 100.0);
+    assert_eq!(cache.hits, 0);
+    assert_eq!(cache.misses, 1);
+
+    // Second access is a hit
+    cache.get_or_shape(key.clone(), &mut font_system, metrics, 100.0, 100.0);
+    assert_eq!(cache.hits, 1);
+    assert_eq!(cache.misses, 1);
+
+    // Third access is a hit
+    cache.get_or_shape(key.clone(), &mut font_system, metrics, 100.0, 100.0);
+    assert_eq!(cache.hits, 2);
+    assert_eq!(cache.misses, 1);
+  }
+
+  #[test]
+  fn test_cache_frame_tracking() {
+    let mut cache = ShapedTextCache::new(10);
+    let mut font_system = FontSystem::new();
+    let metrics = Metrics::new(14.0, 16.8);
+
+    let key = ShapedTextKey {
+      text:    "Test".to_string(),
+      metrics: (1400, 1680),
+      color:   [255, 255, 255, 255],
+    };
+
+    cache.get_or_shape(key.clone(), &mut font_system, metrics, 100.0, 100.0);
+
+    let entry = cache.entries.get(&key).unwrap();
+    assert_eq!(entry.last_used_frame, 0);
+
+    // Advance frame
+    cache.next_frame();
+    assert_eq!(cache.current_frame, 1);
+
+    // Access again
+    cache.get_or_shape(key.clone(), &mut font_system, metrics, 100.0, 100.0);
+
+    let entry = cache.entries.get(&key).unwrap();
+    assert_eq!(entry.last_used_frame, 1);
+  }
+
+  #[test]
+  fn test_cache_invalidation() {
+    let mut cache = ShapedTextCache::new(10);
+    let mut font_system = FontSystem::new();
+    let metrics = Metrics::new(14.0, 16.8);
+
+    let key = ShapedTextKey {
+      text:    "Test".to_string(),
+      metrics: (1400, 1680),
+      color:   [255, 255, 255, 255],
+    };
+
+    cache.get_or_shape(key.clone(), &mut font_system, metrics, 100.0, 100.0);
+    assert_eq!(cache.entries.len(), 1);
+
+    let gen_before = cache.current_generation;
+
+    // Invalidate cache
+    cache.invalidate();
+
+    assert_eq!(cache.entries.len(), 0);
+    assert_eq!(cache.current_generation, gen_before + 1);
   }
 }

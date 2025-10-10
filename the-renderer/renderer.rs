@@ -159,10 +159,15 @@ pub struct Renderer {
   stencil_mask_rects: Vec<(f32, f32, f32, f32)>, // (x, y, width, height)
 
   // Rectangle pipeline resources.
-  rect_render_pipeline: wgpu::RenderPipeline,
-  rect_vertex_buffer:   wgpu::Buffer,
-  rect_uniform_buffer:  wgpu::Buffer,
-  rect_bind_group:      wgpu::BindGroup,
+  rect_render_pipeline:   wgpu::RenderPipeline,
+  rect_vertex_buffer:     wgpu::Buffer,
+  rect_uniform_buffer:    wgpu::Buffer,
+  rect_bind_group:        wgpu::BindGroup,
+  // Reusable instance buffers for performance
+  rect_instance_buffer:   Option<wgpu::Buffer>,
+  rect_instance_capacity: usize,
+  mask_instance_buffer:   Option<wgpu::Buffer>,
+  mask_instance_capacity: usize,
 
   // Text metrics / font tracking.
   font_family: String,
@@ -658,6 +663,10 @@ impl Renderer {
       rect_vertex_buffer,
       rect_uniform_buffer,
       rect_bind_group,
+      rect_instance_buffer: None,
+      rect_instance_capacity: 0,
+      mask_instance_buffer: None,
+      mask_instance_capacity: 0,
       font_family: default_family,
       font_size: 16.0,
       cell_width: 8.0,
@@ -871,13 +880,16 @@ impl Renderer {
 
     // Draw instanced rectangles
     if !self.rect_instances.is_empty() {
-      let instance_buffer = self
-        .device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-          label:    Some("Rectangle Instance Buffer"),
-          contents: bytemuck::cast_slice(&self.rect_instances),
-          usage:    wgpu::BufferUsages::VERTEX,
-        });
+      // Get or create buffer with sufficient capacity
+      self.get_or_create_rect_instance_buffer(self.rect_instances.len());
+
+      // Now we can safely use the buffer
+      let instance_buffer = self.rect_instance_buffer.as_ref().unwrap();
+      self.queue.write_buffer(
+        instance_buffer,
+        0,
+        bytemuck::cast_slice(&self.rect_instances),
+      );
 
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label:                    Some("Rectangle Render Pass"),
@@ -929,13 +941,16 @@ impl Renderer {
         })
         .collect();
 
-      let mask_buffer = self
-        .device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-          label:    Some("Stencil Mask Instance Buffer"),
-          contents: bytemuck::cast_slice(&mask_instances),
-          usage:    wgpu::BufferUsages::VERTEX,
-        });
+      // Get or create buffer with sufficient capacity
+      self.get_or_create_mask_instance_buffer(mask_instances.len());
+
+      // Now we can safely use the buffer
+      let mask_buffer = self.mask_instance_buffer.as_ref().unwrap();
+      self.queue.write_buffer(
+        mask_buffer,
+        0,
+        bytemuck::cast_slice(&mask_instances),
+      );
 
       // Render pass that writes to stencil
       let mut mask_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1150,6 +1165,21 @@ impl Renderer {
   /// Batch multiple text segments for efficient rendering.
   /// Call this instead of draw_text for better performance when rendering many
   /// small text segments.
+  /// BUGGY: Text batching with position offset handling
+  ///
+  /// BUG: When batching text at different X positions on the same line (lines 1186-1187),
+  /// the code just appends text segments without accounting for position differences.
+  /// This causes text to render at wrong positions, creating overlapping/garbled text.
+  ///
+  /// Example of the bug:
+  /// - Text "func" at x=10
+  /// - Text "main" at x=50
+  /// - Batch merges them as ["func", "main"] at x=10
+  /// - Renders as "funcmain" starting at x=10 (wrong!)
+  /// - Should render "func" at x=10, "main" at x=50
+  ///
+  /// To fix: Either don't batch text at different positions, or insert proper spacing/padding
+  /// to account for position offsets between text segments.
   pub fn draw_text_batched(&mut self, section: TextSection) {
     if section.texts.is_empty() {
       return;
@@ -1168,6 +1198,7 @@ impl Renderer {
           // Same position, just append
           batch.texts.extend(section.texts);
         } else {
+          // BUG: This doesn't account for position difference!
           // Different x position on same line - merge with appropriate spacing
           batch.texts.extend(section.texts);
         }
@@ -1192,9 +1223,15 @@ impl Renderer {
     }
   }
 
-  /// Draw text using glyphon buffers (immediate mode)
+  /// Draw text using glyphon buffers (immediate mode - batching disabled due to bugs)
   pub fn draw_text(&mut self, section: TextSection) {
-    // For compatibility, immediately draw without batching
+    // NOTE: Batching is currently buggy (doesn't handle position offsets correctly)
+    // Use immediate mode until batching logic is fixed
+    self.draw_text_internal(section);
+  }
+
+  /// Draw text immediately without batching
+  pub fn draw_text_immediate(&mut self, section: TextSection) {
     self.draw_text_internal(section);
   }
 
@@ -1238,29 +1275,19 @@ impl Renderer {
     // Get first color for cache key
     let first_color = section.texts[0].style.color;
 
-    // Create cache key
+    // Create cache key (position-independent for better cache reuse)
     let cache_key = crate::text_cache::ShapedTextKey {
-      text:          full_text.clone(),
-      metrics:       (
+      text:    full_text.clone(),
+      metrics: (
         (self.font_size * 100.0) as u32,
         (self.cell_height * 100.0) as u32,
       ),
-      color:         [
+      color:   [
         (first_color.r * 255.0) as u8,
         (first_color.g * 255.0) as u8,
         (first_color.b * 255.0) as u8,
         (first_color.a * 255.0) as u8,
       ],
-      position_hash: {
-        use std::hash::{
-          Hash,
-          Hasher,
-        };
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        section.position.0.to_bits().hash(&mut hasher);
-        section.position.1.to_bits().hash(&mut hasher);
-        hasher.finish()
-      },
     };
 
     let base_metrics = Metrics::new(self.font_size, self.cell_height);
@@ -1666,6 +1693,18 @@ impl Renderer {
     // Flush any pending text batch
     self.flush_text_batch();
 
+    // Prepare instance buffer before getting view/encoder
+    let has_rect_instances = !self.rect_instances.is_empty();
+    if has_rect_instances {
+      self.get_or_create_rect_instance_buffer(self.rect_instances.len());
+      let instance_buffer = self.rect_instance_buffer.as_ref().unwrap();
+      self.queue.write_buffer(
+        instance_buffer,
+        0,
+        bytemuck::cast_slice(&self.rect_instances),
+      );
+    }
+
     let view = self
       .current_view
       .as_ref()
@@ -1678,14 +1717,8 @@ impl Renderer {
 
     // Render all pending rectangles to the current frame
     // (Text will be rendered normally in end_frame)
-    if !self.rect_instances.is_empty() {
-      let instance_buffer = self
-        .device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-          label:    Some("Rectangle Instance Buffer (Pre-blur)"),
-          contents: bytemuck::cast_slice(&self.rect_instances),
-          usage:    wgpu::BufferUsages::VERTEX,
-        });
+    if has_rect_instances {
+      let instance_buffer = self.rect_instance_buffer.as_ref().unwrap();
 
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label:                    Some("Pre-blur Rectangle Pass"),
@@ -1861,6 +1894,42 @@ impl Renderer {
     }
 
     Ok(())
+  }
+
+  /// Get or create a rect instance buffer with sufficient capacity
+  fn get_or_create_rect_instance_buffer(&mut self, required_count: usize) {
+    // Check if we need to create or resize the buffer
+    if self.rect_instance_buffer.is_none() || self.rect_instance_capacity < required_count {
+      // Allocate with 50% headroom to reduce reallocations
+      let new_capacity = (required_count as f32 * 1.5).ceil() as usize;
+      let buffer_size = (new_capacity * std::mem::size_of::<RectInstance>()) as u64;
+
+      self.rect_instance_buffer = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+        label:              Some("Rect Instance Buffer"),
+        size:               buffer_size,
+        usage:              wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+      }));
+      self.rect_instance_capacity = new_capacity;
+    }
+  }
+
+  /// Get or create a mask instance buffer with sufficient capacity
+  fn get_or_create_mask_instance_buffer(&mut self, required_count: usize) {
+    // Check if we need to create or resize the buffer
+    if self.mask_instance_buffer.is_none() || self.mask_instance_capacity < required_count {
+      // Allocate with 50% headroom to reduce reallocations
+      let new_capacity = (required_count as f32 * 1.5).ceil() as usize;
+      let buffer_size = (new_capacity * std::mem::size_of::<RectInstance>()) as u64;
+
+      self.mask_instance_buffer = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+        label:              Some("Mask Instance Buffer"),
+        size:               buffer_size,
+        usage:              wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+      }));
+      self.mask_instance_capacity = new_capacity;
+    }
   }
 }
 

@@ -75,44 +75,6 @@ pub fn theme_color_to_renderer_color(theme_color: crate::core::graphics::Color) 
   }
 }
 
-/// Core trait for UI components.
-pub trait Component {
-  /// Render the component using the renderer.
-  fn render(&mut self, renderer: &mut Renderer, rect: Rect);
-
-  /// Handle input events, returns true if the event was consumed.
-  fn handle_input(&mut self, _key: &KeyPress) -> bool {
-    false
-  }
-
-  /// Handle mouse events (position/mouse buttons).
-  /// Default does nothing and returns false (not consumed).
-  fn handle_mouse(&mut self, _mouse: &MouseEvent, _rect: Rect) -> bool {
-    false
-  }
-
-  /// Get the preferred size for this component.
-  fn preferred_size(&self) -> Option<(u16, u16)> {
-    None
-  }
-
-  /// Whether this component is currently visible.
-  fn is_visible(&self) -> bool {
-    true
-  }
-
-  /// Set visibility of this component.
-  fn set_visible(&mut self, visible: bool);
-
-  /// Enable downcasting to concrete types
-  fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
-
-  /// Whether the component is currently animating and needs redraws.
-  fn is_animating(&self) -> bool {
-    false
-  }
-}
-
 /// Show signature help popup
 pub fn show_signature_help(
   editor: &mut crate::editor::Editor,

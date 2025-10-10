@@ -632,16 +632,15 @@ impl Prompt {
       return Ok(());
     }
 
-    // Parse command and arguments
-    let parts: Vec<&str> = input.split_whitespace().collect();
-    let command = parts[0];
-    let args = &parts[1..];
+    // Split command from arguments
+    use crate::core::command_line;
+    let (command, args_line, _) = command_line::split(input);
 
     // Clone the command registry to avoid borrowing issues
     let registry = cx.editor.command_registry.clone();
 
-    // Execute through command registry
-    registry.execute(cx, command, args)
+    // Execute through command registry with PromptEvent::Validate
+    registry.execute(cx, command, args_line, PromptEvent::Validate)
   }
 
   // Private methods
@@ -1213,9 +1212,11 @@ impl Component for Prompt {
         // Execute command before creating the closure
         let trimmed = self.input.trim().to_string();
         if !trimmed.is_empty() {
-          let parts: Vec<&str> = trimmed.split_whitespace().collect();
-          let command = parts[0].to_string();
-          let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+          use crate::core::command_line;
+
+          let (command, args_line, _) = command_line::split(&trimmed);
+          let command = command.to_string();
+          let args_line = args_line.to_string();
 
           // Store command info for execution in the callback
           // We'll execute it in the callback to avoid lifetime issues
@@ -1236,8 +1237,7 @@ impl Component for Prompt {
               jobs:                 cx.jobs,
             };
 
-            let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            let result = registry.execute(&mut cmd_cx, &command, &args_refs);
+            let result = registry.execute(&mut cmd_cx, &command, &args_line, PromptEvent::Validate);
 
             // Process any callbacks from the command first
             let callbacks = cmd_cx.callback;

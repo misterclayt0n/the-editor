@@ -23,7 +23,6 @@ mod application;
 mod core;
 mod editor;
 mod event;
-mod expansion;
 pub mod handlers;
 mod increment;
 mod input;

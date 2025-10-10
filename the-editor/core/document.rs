@@ -111,11 +111,11 @@ use crate::{
     Editor,
     EditorConfig as AppEditorConfig,
   },
+  core::expansion,
   event::{
     DocumentDidChange,
     SelectionDidChange,
   },
-  expansion,
   lsp::{
     Client,
     LanguageServerId,

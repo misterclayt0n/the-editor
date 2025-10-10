@@ -10,7 +10,18 @@ use anyhow::{
   bail,
 };
 
-use super::commands::Context;
+use super::{
+  command_line::{
+    Args,
+    CompletionState,
+    Signature,
+    Token,
+    Tokenizer,
+  },
+  commands::Context,
+  expansion,
+};
+use crate::ui::components::prompt::PromptEvent;
 use crate::{
   doc,
   editor::{
@@ -20,8 +31,8 @@ use crate::{
   ui::components::prompt::Completion,
 };
 
-/// Type alias for a command function that takes a context and arguments
-pub type CommandFn = fn(&mut Context, &[&str]) -> Result<()>;
+/// Type alias for a command function that takes a context, parsed arguments, and prompt event
+pub type CommandFn = fn(&mut Context, Args, PromptEvent) -> Result<()>;
 
 /// Type alias for a completer function
 /// Takes the editor and current input, returns completions
@@ -81,6 +92,8 @@ pub struct TypableCommand {
   pub fun:       CommandFn,
   /// Completion configuration for arguments
   pub completer: CommandCompleter,
+  /// Command signature (positional args, flags, etc.)
+  pub signature: Signature,
 }
 
 impl TypableCommand {
@@ -91,6 +104,7 @@ impl TypableCommand {
     doc: &'static str,
     fun: CommandFn,
     completer: CommandCompleter,
+    signature: Signature,
   ) -> Self {
     Self {
       name,
@@ -98,12 +112,85 @@ impl TypableCommand {
       doc,
       fun,
       completer,
+      signature,
     }
   }
 
-  /// Execute the command with given context and arguments
-  pub fn execute(&self, cx: &mut Context, args: &[&str]) -> Result<()> {
-    (self.fun)(cx, args)
+  /// Execute the command with given context, parsed arguments, and prompt event
+  pub fn execute(&self, cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+    (self.fun)(cx, args, event)
+  }
+
+  /// Generate comprehensive documentation for this command
+  pub fn generate_doc(&self) -> String {
+    use std::fmt::Write;
+
+    let mut doc = String::new();
+
+    // Command name and basic doc
+    writeln!(doc, ":{} - {}", self.name, self.doc).unwrap();
+
+    // Aliases
+    if !self.aliases.is_empty() {
+      writeln!(doc, "Aliases: {}", self.aliases.join(", ")).unwrap();
+    }
+
+    // Positional arguments
+    let (min, max) = self.signature.positionals;
+    if min > 0 || max.is_some() {
+      write!(doc, "Arguments: ").unwrap();
+      match (min, max) {
+        (0, Some(0)) => writeln!(doc, "none").unwrap(),
+        (0, Some(1)) => writeln!(doc, "[arg] (optional)").unwrap(),
+        (1, Some(1)) => writeln!(doc, "<arg> (required)").unwrap(),
+        (0, None) => writeln!(doc, "[args...] (zero or more)").unwrap(),
+        (1, None) => writeln!(doc, "<arg> [args...] (one or more)").unwrap(),
+        (min, Some(max)) if min == max => writeln!(doc, "{} argument{}", min, if min == 1 { "" } else { "s" }).unwrap(),
+        (min, Some(max)) => writeln!(doc, "{}-{} arguments", min, max).unwrap(),
+        (min, None) => writeln!(doc, "{} or more arguments", min).unwrap(),
+      }
+    }
+
+    // Flags
+    if !self.signature.flags.is_empty() {
+      writeln!(doc, "Flags:").unwrap();
+
+      // Calculate max flag name length for alignment
+      let max_flag_len = self.signature.flags
+        .iter()
+        .map(|flag| {
+          let name_len = flag.name.len();
+          let alias_len = if flag.alias.is_some() { 3 } else { 0 }; // "/-X"
+          let arg_len = if flag.completions.is_some() { 6 } else { 0 }; // " <arg>"
+          name_len + alias_len + arg_len
+        })
+        .max()
+        .unwrap_or(0);
+
+      for flag in self.signature.flags {
+        write!(doc, "  --{}", flag.name).unwrap();
+        let mut current_len = flag.name.len();
+
+        // Add alias if present
+        if let Some(alias) = flag.alias {
+          write!(doc, "/-{}", alias).unwrap();
+          current_len += 3;
+        }
+
+        // Add argument placeholder if flag takes an argument
+        if flag.completions.is_some() {
+          write!(doc, " <arg>").unwrap();
+          current_len += 6;
+        }
+
+        // Padding for alignment
+        let padding = max_flag_len - current_len;
+        write!(doc, "{:width$}  {}", "", flag.doc, width = padding).unwrap();
+        writeln!(doc).unwrap();
+      }
+    }
+
+    doc
   }
 }
 
@@ -153,10 +240,24 @@ impl CommandRegistry {
     self.commands.get(name).map(|cmd| cmd.as_ref())
   }
 
-  /// Execute a command with the given name and arguments
-  pub fn execute(&self, cx: &mut Context, name: &str, args: &[&str]) -> Result<()> {
+  /// Execute a command with the given name and arguments string
+  /// The args_line is parsed according to the command's signature with variable expansion
+  pub fn execute(
+    &self,
+    cx: &mut Context,
+    name: &str,
+    args_line: &str,
+    event: PromptEvent,
+  ) -> Result<()> {
     match self.get(name) {
-      Some(command) => command.execute(cx, args),
+      Some(command) => {
+        // Parse arguments according to command signature with expansion
+        let args = Args::parse(args_line, command.signature, event == PromptEvent::Validate, |token| {
+          expansion::expand(cx.editor, token).map_err(|e| Box::from(e.to_string()) as Box<dyn std::error::Error>)
+        }).map_err(|e| anyhow!("{}", e))?;
+
+        command.execute(cx, args, event)
+      },
       None => Err(anyhow!("command not found: {}", name)),
     }
   }
@@ -231,39 +332,97 @@ impl CommandRegistry {
     } else {
       // Complete arguments for the command
       if let Some(cmd) = self.get(first_word) {
-        // Calculate which argument we're completing
-        let arg_index = if input.ends_with(char::is_whitespace) {
-          parts.len() - 1 // Starting a new argument
-        } else {
-          parts.len() - 2 // Completing current argument
-        };
+        // Split command from args using command_line parser
+        let (_, args_line, _) = super::command_line::split(input);
 
-        // Get the completer for this argument position
-        let completer = cmd.completer.get(arg_index);
+        // Parse arguments to determine completion state
+        // Use non-validating mode so we can get partial parses for completion
+        let mut args = Args::new(cmd.signature, false);
+        let mut tokenizer = Tokenizer::new(args_line, false);
+        let mut last_token: Option<Token> = None;
 
-        // Get the current argument text (what we're completing)
-        let arg_input = if input.ends_with(char::is_whitespace) {
-          ""
-        } else {
-          parts.last().copied().unwrap_or("")
-        };
-
-        // Calculate the offset where the argument starts
-        let arg_start_offset = if arg_input.is_empty() {
-          input.len()
-        } else {
-          input.len() - arg_input.len()
-        };
-
-        // Run the completer and adjust ranges
-        let mut completions = completer(editor, arg_input);
-
-        // Adjust completion ranges to account for the command prefix
-        for completion in &mut completions {
-          completion.range = arg_start_offset..;
+        // Parse all tokens to build up args state
+        while let Ok(Some(token)) = args.read_token(&mut tokenizer) {
+          last_token = Some(token.clone());
+          let _ = args.push(token.content);
         }
 
-        completions
+        // Check completion state to determine what to complete
+        match args.completion_state() {
+          CompletionState::Positional => {
+            // Complete positional argument
+            let arg_index = args.len();
+            let completer = cmd.completer.get(arg_index);
+
+            // Get the text being completed
+            let (arg_input, arg_start_offset) = match &last_token {
+              Some(token) if !token.is_terminated => {
+                (token.content.as_ref(), first_word.len() + 1 + token.content_start)
+              },
+              _ => ("", input.len()),
+            };
+
+            // Run completer and adjust ranges
+            let mut completions = completer(editor, arg_input);
+            for completion in &mut completions {
+              completion.range = arg_start_offset..;
+            }
+            completions
+          },
+          CompletionState::Flag(_) => {
+            // Complete flag names
+            if cmd.signature.flags.is_empty() {
+              return Vec::new();
+            }
+
+            let (flag_input, flag_start_offset) = match &last_token {
+              Some(token) if !token.is_terminated => {
+                let input = token.content.as_ref();
+                let trimmed = input.trim_start_matches('-');
+                (trimmed, first_word.len() + 1 + token.content_start)
+              },
+              _ => ("", input.len()),
+            };
+
+            // Fuzzy match flag names
+            cmd.signature.flags
+              .iter()
+              .filter(|flag| flag.name.contains(flag_input))
+              .map(|flag| {
+                Completion {
+                  range: flag_start_offset..,
+                  text: format!("--{}", flag.name),
+                  doc: Some(flag.doc.to_string()),
+                }
+              })
+              .collect()
+          },
+          CompletionState::FlagArgument(flag) => {
+            // Complete flag argument
+            if let Some(completions) = flag.completions {
+              let (arg_input, arg_start_offset) = match &last_token {
+                Some(token) if !token.is_terminated => {
+                  (token.content.as_ref(), first_word.len() + 1 + token.content_start)
+                },
+                _ => ("", input.len()),
+              };
+
+              completions
+                .iter()
+                .filter(|val| val.contains(arg_input))
+                .map(|val| {
+                  Completion {
+                    range: arg_start_offset..,
+                    text: val.to_string(),
+                    doc: None,
+                  }
+                })
+                .collect()
+            } else {
+              Vec::new()
+            }
+          },
+        }
       } else {
         // Unknown command - no completions
         Vec::new()
@@ -279,6 +438,10 @@ impl CommandRegistry {
       "Close the editor",
       quit,
       CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
     ));
 
     self.register(TypableCommand::new(
@@ -287,6 +450,10 @@ impl CommandRegistry {
       "Force close the editor without saving",
       force_quit,
       CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
     ));
 
     self.register(TypableCommand::new(
@@ -295,6 +462,10 @@ impl CommandRegistry {
       "Write buffer to file",
       write_buffer,
       CommandCompleter::all(completers::filename),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
     ));
 
     self.register(TypableCommand::new(
@@ -303,6 +474,10 @@ impl CommandRegistry {
       "Write buffer to file and close the editor",
       write_quit,
       CommandCompleter::all(completers::filename),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
     ));
 
     self.register(TypableCommand::new(
@@ -311,6 +486,10 @@ impl CommandRegistry {
       "Open a file for editing",
       open_file,
       CommandCompleter::all(completers::filename),
+      Signature {
+        positionals: (1, None),
+        ..Signature::DEFAULT
+      },
     ));
 
     self.register(TypableCommand::new(
@@ -319,6 +498,10 @@ impl CommandRegistry {
       "Create a new buffer",
       new_file,
       CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
     ));
 
     self.register(TypableCommand::new(
@@ -327,6 +510,10 @@ impl CommandRegistry {
       "Close the current buffer",
       buffer_close,
       CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
     ));
 
     self.register(TypableCommand::new(
@@ -335,6 +522,10 @@ impl CommandRegistry {
       "Go to next buffer",
       buffer_next,
       CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
     ));
 
     self.register(TypableCommand::new(
@@ -343,6 +534,10 @@ impl CommandRegistry {
       "Go to previous buffer",
       buffer_previous,
       CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
     ));
 
     self.register(TypableCommand::new(
@@ -351,6 +546,10 @@ impl CommandRegistry {
       "Show help for commands",
       show_help,
       CommandCompleter::all(completers::command),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
     ));
 
     self.register(TypableCommand::new(
@@ -359,6 +558,10 @@ impl CommandRegistry {
       "Change the editor theme (show current theme if no name specified)",
       theme,
       CommandCompleter::all(completers::theme),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
     ));
 
     self.register(TypableCommand::new(
@@ -367,6 +570,10 @@ impl CommandRegistry {
       "Format the current buffer using formatter or language server",
       format,
       CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
     ));
   }
 }
@@ -506,7 +713,11 @@ pub mod completers {
 
 // Built-in command implementations
 
-fn quit(cx: &mut Context, _args: &[&str]) -> Result<()> {
+fn quit(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
   if cx.editor.documents.values().any(|doc| doc.is_modified()) {
     cx.editor
       .set_error("unsaved changes, use :q! to force quit".to_string());
@@ -515,11 +726,19 @@ fn quit(cx: &mut Context, _args: &[&str]) -> Result<()> {
   std::process::exit(0);
 }
 
-fn force_quit(_cx: &mut Context, _args: &[&str]) -> Result<()> {
+fn force_quit(_cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
   std::process::exit(0);
 }
 
-fn write_buffer(cx: &mut Context, args: &[&str]) -> Result<()> {
+fn write_buffer(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
   use std::path::PathBuf;
 
   use crate::current;
@@ -530,7 +749,7 @@ fn write_buffer(cx: &mut Context, args: &[&str]) -> Result<()> {
   let path = if args.is_empty() {
     doc.path().map(|p| p.to_path_buf())
   } else {
-    Some(PathBuf::from(args[0]))
+    Some(PathBuf::from(&args[0]))
   };
 
   if let Some(path) = path {
@@ -549,8 +768,12 @@ fn write_buffer(cx: &mut Context, args: &[&str]) -> Result<()> {
   Ok(())
 }
 
-fn write_quit(cx: &mut Context, args: &[&str]) -> Result<()> {
-  write_buffer(cx, args)?;
+fn write_quit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  write_buffer(cx, args, PromptEvent::Validate)?;
 
   // Only quit if write was successful (no error was set)
   if cx.editor.documents.values().all(|doc| !doc.is_modified()) {
@@ -560,13 +783,17 @@ fn write_quit(cx: &mut Context, args: &[&str]) -> Result<()> {
   Ok(())
 }
 
-fn open_file(cx: &mut Context, args: &[&str]) -> Result<()> {
+fn open_file(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
   if args.is_empty() {
     cx.editor.set_error("expected file path".to_string());
     return Ok(());
   }
 
-  let path = std::path::PathBuf::from(args[0]);
+  let path = std::path::PathBuf::from(&args[0]);
   match cx.editor.open(&path, crate::editor::Action::Load) {
     Ok(_) => {
       cx.editor.set_status(format!("opened: {}", path.display()));
@@ -579,13 +806,21 @@ fn open_file(cx: &mut Context, args: &[&str]) -> Result<()> {
   Ok(())
 }
 
-fn new_file(cx: &mut Context, _args: &[&str]) -> Result<()> {
+fn new_file(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
   cx.editor.new_file(crate::editor::Action::Load);
   cx.editor.set_status("new buffer created".to_string());
   Ok(())
 }
 
-fn buffer_close(cx: &mut Context, _args: &[&str]) -> Result<()> {
+fn buffer_close(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
   use crate::view_mut;
 
   let view_id = view_mut!(cx.editor).id;
@@ -618,7 +853,11 @@ fn buffer_close(cx: &mut Context, _args: &[&str]) -> Result<()> {
   Ok(())
 }
 
-fn buffer_next(cx: &mut Context, _args: &[&str]) -> Result<()> {
+fn buffer_next(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
   // Simplified buffer switching - in a real implementation you'd maintain a
   // buffer list
   cx.editor
@@ -626,7 +865,11 @@ fn buffer_next(cx: &mut Context, _args: &[&str]) -> Result<()> {
   Ok(())
 }
 
-fn buffer_previous(cx: &mut Context, _args: &[&str]) -> Result<()> {
+fn buffer_previous(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
   // Simplified buffer switching - in a real implementation you'd maintain a
   // buffer list
   cx.editor
@@ -634,31 +877,68 @@ fn buffer_previous(cx: &mut Context, _args: &[&str]) -> Result<()> {
   Ok(())
 }
 
-fn show_help(cx: &mut Context, args: &[&str]) -> Result<()> {
-  if args.is_empty() {
-    // Show general help
-    let help_text = "Available commands:\n:quit, :q - Close the editor\n:quit!, :q! - Force close \
-                     without saving\n:write, :w [file] - Write buffer to file\n:write-quit, :wq, \
-                     :x - Write and quit\n:open, :o, :e, :edit <file> - Open a file\n:new, :n - \
-                     Create new buffer\n:buffer-close, :bc - Close current buffer\n:theme <name> \
-                     - Change the editor theme\n:help, :h [command] - Show help";
+fn show_help(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
 
-    cx.editor.set_status(help_text.to_string());
+  if args.is_empty() {
+    // Show list of all commands
+    let mut help_text = String::from("Available commands (use :help <command> for details):\n");
+
+    let mut commands = cx.editor.command_registry.command_names();
+    commands.sort();
+    commands.dedup();
+
+    for cmd_name in commands {
+      if let Some(cmd) = cx.editor.command_registry.get(cmd_name) {
+        help_text.push_str(&format!("  :{} - {}\n", cmd.name, cmd.doc));
+      }
+    }
+
+    cx.editor.set_status(help_text);
   } else {
-    // Show help for specific command
-    if let Some(cmd) = cx.editor.command_registry.get(args[0]) {
-      cx.editor.set_status(format!("{}: {}", cmd.name, cmd.doc));
+    // Show detailed help for specific command using generated documentation
+    if let Some(cmd) = cx.editor.command_registry.get(&args[0]) {
+      let doc = cmd.generate_doc();
+      cx.editor.set_status(doc);
     } else {
-      cx.editor.set_error(format!("unknown command: {}", args[0]));
+      cx.editor.set_error(format!("unknown command: {}", &args[0]));
     }
   }
 
   Ok(())
 }
 
-fn theme(cx: &mut Context, args: &[&str]) -> Result<()> {
+fn theme(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
   let config = cx.editor.config();
   let true_color = config.true_color;
+
+  match event {
+    PromptEvent::Abort => {
+      // Restore previous theme
+      // TODO: Store and restore previous theme
+      return Ok(());
+    },
+    PromptEvent::Update => {
+      // Preview theme while typing
+      if args.is_empty() {
+        return Ok(());
+      }
+
+      let theme_name = &args[0];
+      if let Ok(theme) = cx.editor.theme_loader.load(theme_name) {
+        if true_color || theme.is_16_color() {
+          cx.editor.theme = theme;
+        }
+      }
+
+      return Ok(());
+    },
+    PromptEvent::Validate => {
+      // Apply theme permanently
+    },
+  }
 
   if args.is_empty() {
     // Show current theme name
@@ -667,7 +947,7 @@ fn theme(cx: &mut Context, args: &[&str]) -> Result<()> {
     return Ok(());
   }
 
-  let theme_name = args[0];
+  let theme_name = &args[0];
 
   // Try to load the theme
   match cx.editor.theme_loader.load(theme_name) {
@@ -692,7 +972,11 @@ fn theme(cx: &mut Context, args: &[&str]) -> Result<()> {
   Ok(())
 }
 
-fn format(cx: &mut Context, _args: &[&str]) -> Result<()> {
+fn format(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
   use crate::current;
 
   // Get IDs first before any borrows
@@ -815,7 +1099,7 @@ mod tests {
 
   #[test]
   fn test_typable_command() {
-    fn test_cmd(_cx: &mut Context, _args: &[&str]) -> Result<()> {
+    fn test_cmd(_cx: &mut Context, _args: Args, _event: PromptEvent) -> Result<()> {
       Ok(())
     }
 
@@ -825,10 +1109,204 @@ mod tests {
       "Test command",
       test_cmd,
       CommandCompleter::none(),
+      Signature::DEFAULT,
     );
 
     assert_eq!(cmd.name, "test");
     assert_eq!(cmd.aliases, &["t"]);
     assert_eq!(cmd.doc, "Test command");
+  }
+
+  #[test]
+  fn test_args_parsing_basic() {
+    use crate::core::command_line::{Args, Signature};
+
+    // Test parsing simple positional arguments
+    let sig = Signature {
+      positionals: (1, Some(3)),
+      ..Signature::DEFAULT
+    };
+
+    let args = Args::parse("arg1 arg2 arg3", sig, true, |token| {
+      Ok(token.content)
+    }).unwrap();
+
+    assert_eq!(args.len(), 3);
+    assert_eq!(&args[0], "arg1");
+    assert_eq!(&args[1], "arg2");
+    assert_eq!(&args[2], "arg3");
+  }
+
+  #[test]
+  fn test_args_parsing_quoted() {
+    use crate::core::command_line::{Args, Signature};
+
+    // Test parsing quoted arguments
+    let sig = Signature::DEFAULT;
+
+    let args = Args::parse(r#""quoted arg" 'another one' normal"#, sig, true, |token| {
+      Ok(token.content)
+    }).unwrap();
+
+    assert_eq!(args.len(), 3);
+    assert_eq!(&args[0], "quoted arg");
+    assert_eq!(&args[1], "another one");
+    assert_eq!(&args[2], "normal");
+  }
+
+  #[test]
+  fn test_args_parsing_flags() {
+    use crate::core::command_line::{Args, Flag, Signature};
+
+    const FLAGS: &[Flag] = &[
+      Flag {
+        name: "force",
+        alias: Some('f'),
+        doc: "Force operation",
+        completions: None,
+      },
+      Flag {
+        name: "verbose",
+        alias: Some('v'),
+        doc: "Verbose output",
+        completions: None,
+      },
+    ];
+
+    let sig = Signature {
+      positionals: (0, None),
+      flags: FLAGS,
+      ..Signature::DEFAULT
+    };
+
+    let args = Args::parse("--force arg1 -v arg2", sig, true, |token| {
+      Ok(token.content)
+    }).unwrap();
+
+    assert_eq!(args.len(), 2);
+    assert_eq!(&args[0], "arg1");
+    assert_eq!(&args[1], "arg2");
+    assert!(args.has_flag("force"));
+    assert!(args.has_flag("verbose"));
+  }
+
+  #[test]
+  fn test_args_parsing_flag_with_argument() {
+    use crate::core::command_line::{Args, Flag, Signature};
+
+    const FLAGS: &[Flag] = &[
+      Flag {
+        name: "output",
+        alias: Some('o'),
+        doc: "Output file",
+        completions: Some(&["file.txt", "output.txt"]),
+      },
+    ];
+
+    let sig = Signature {
+      positionals: (0, None),
+      flags: FLAGS,
+      ..Signature::DEFAULT
+    };
+
+    let args = Args::parse("--output file.txt input.txt", sig, true, |token| {
+      Ok(token.content)
+    }).unwrap();
+
+    assert_eq!(args.len(), 1);
+    assert_eq!(&args[0], "input.txt");
+    assert_eq!(args.get_flag("output"), Some("file.txt"));
+  }
+
+  #[test]
+  fn test_command_documentation_generation() {
+    use crate::core::command_line::{Flag, Signature};
+
+    fn test_cmd(_cx: &mut Context, _args: Args, _event: PromptEvent) -> Result<()> {
+      Ok(())
+    }
+
+    const FLAGS: &[Flag] = &[
+      Flag {
+        name: "force",
+        alias: Some('f'),
+        doc: "Force the operation",
+        completions: None,
+      },
+    ];
+
+    let cmd = TypableCommand::new(
+      "write",
+      &["w"],
+      "Write buffer to file",
+      test_cmd,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(1)),
+        flags: FLAGS,
+        ..Signature::DEFAULT
+      },
+    );
+
+    let doc = cmd.generate_doc();
+
+    // Check that doc contains command name, doc string, aliases, and flags
+    assert!(doc.contains(":write"));
+    assert!(doc.contains("Write buffer to file"));
+    assert!(doc.contains("Aliases: w"));
+    assert!(doc.contains("--force"));
+    assert!(doc.contains("Force the operation"));
+  }
+
+  #[test]
+  fn test_args_wrong_positional_count() {
+    use crate::core::command_line::{Args, Signature};
+
+    // Require exactly 1 positional argument
+    let sig = Signature {
+      positionals: (1, Some(1)),
+      ..Signature::DEFAULT
+    };
+
+    // Try to parse with no arguments - should fail in validation mode
+    let result = Args::parse("", sig, true, |token| {
+      Ok(token.content)
+    });
+
+    assert!(result.is_err());
+
+    // Try to parse with too many arguments - should fail
+    let result = Args::parse("arg1 arg2", sig, true, |token| {
+      Ok(token.content)
+    });
+
+    assert!(result.is_err());
+  }
+
+  #[test]
+  fn test_args_completion_state() {
+    use crate::core::command_line::{Args, CompletionState, Flag, Signature};
+
+    const FLAGS: &[Flag] = &[
+      Flag {
+        name: "output",
+        alias: Some('o'),
+        doc: "Output file",
+        completions: Some(&["file.txt"]),
+      },
+    ];
+
+    let sig = Signature {
+      positionals: (0, None),
+      flags: FLAGS,
+      ..Signature::DEFAULT
+    };
+
+    // Test completion state when typing a positional
+    let args = Args::new(sig, false);
+    match args.completion_state() {
+      CompletionState::Positional => {},
+      _ => panic!("Expected Positional state"),
+    }
   }
 }

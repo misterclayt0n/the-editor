@@ -124,6 +124,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
     "space" => { "Space"
       "f" => file_picker,
+      "b" => buffer_picker,
+      "j" => jumplist_picker,
+      "g" => changed_file_picker,
       "s" => document_symbols,
       "S" => workspace_symbols,
       "d" => document_diagnostics,
@@ -297,7 +300,6 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "W"         => extend_next_long_word_start,
     "B"         => extend_prev_long_word_start,
     "E"         => extend_next_long_word_end,
-
     
     "A-e"       => extend_parent_node_end,
     "A-b"       => extend_parent_node_start,

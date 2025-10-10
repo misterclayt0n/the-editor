@@ -1389,6 +1389,315 @@ pub fn file_picker(cx: &mut Context) {
   }));
 }
 
+pub fn buffer_picker(cx: &mut Context) {
+  use std::path::{Path, PathBuf};
+  use crate::core::DocumentId;
+  use crate::core::document::SCRATCH_BUFFER_NAME;
+
+  let current = view!(cx.editor).doc;
+
+  struct BufferMeta {
+    id:          DocumentId,
+    path:        Option<PathBuf>,
+    is_modified: bool,
+    is_current:  bool,
+    focused_at:  std::time::Instant,
+  }
+
+  let new_meta = |doc: &Document| {
+    BufferMeta {
+      id:          doc.id(),
+      path:        doc.path().cloned(),
+      is_modified: doc.is_modified(),
+      is_current:  doc.id() == current,
+      focused_at:  doc.focused_at,
+    }
+  };
+
+  let mut items = cx
+    .editor
+    .documents
+    .values()
+    .map(new_meta)
+    .collect::<Vec<BufferMeta>>();
+
+  // mru
+  items.sort_unstable_by_key(|item| std::cmp::Reverse(item.focused_at));
+
+  use crate::ui::components::{Column, Picker};
+
+  let columns = [
+    Column::new("id", |meta: &BufferMeta, _| meta.id.to_string()),
+    Column::new("flags", |meta: &BufferMeta, _| {
+      let mut flags = String::new();
+      if meta.is_modified {
+        flags.push('+');
+      }
+      if meta.is_current {
+        flags.push('*');
+      }
+      flags
+    }),
+    Column::new("path", |meta: &BufferMeta, _| {
+      let path = meta
+        .path
+        .as_deref()
+        .map(the_editor_stdx::path::get_relative_path);
+      path
+        .as_deref()
+        .and_then(Path::to_str)
+        .unwrap_or(SCRATCH_BUFFER_NAME)
+        .to_string()
+    }),
+  ];
+  use crate::ui::components::PickerAction;
+  use crate::editor::Action;
+
+  let action_handler = std::sync::Arc::new(move |meta: &BufferMeta, _: &(), picker_action: PickerAction| {
+    let doc_id = meta.id;
+    let action = match picker_action {
+      PickerAction::Primary => Action::Replace,
+      PickerAction::Secondary => Action::HorizontalSplit,
+      PickerAction::Tertiary => Action::VerticalSplit,
+    };
+
+    crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+      editor.switch(doc_id, action);
+    });
+
+    true // Close picker
+  });
+
+  let picker = Picker::new(columns, 2, items, (), |_| {})
+    .with_action_handler(action_handler)
+    .with_preview(|meta: &BufferMeta| {
+      // Return the document's actual path for preview
+      meta.path.as_ref().map(|path| {
+        (path.clone(), None)
+      })
+    });
+
+  cx.callback.push(Box::new(move |compositor, _cx| {
+    compositor.push(Box::new(picker));
+  }));
+}
+
+pub fn jumplist_picker(cx: &mut Context) {
+  use std::path::{Path, PathBuf};
+  use crate::core::DocumentId;
+  use crate::core::document::SCRATCH_BUFFER_NAME;
+  use crate::ui::components::{Column, Picker};
+
+  struct JumpMeta {
+    id:         DocumentId,
+    path:       Option<PathBuf>,
+    selection:  Selection,
+    text:       String,
+    line:       usize,
+    is_current: bool,
+  }
+
+  for (view, _) in cx.editor.tree.views_mut() {
+    for doc_id in view.jumps.iter().map(|e| e.0).collect::<Vec<_>>().iter() {
+      let doc = doc_mut!(cx.editor, doc_id);
+      view.sync_changes(doc);
+    }
+  }
+
+  let new_meta = |view: &View, doc_id: DocumentId, selection: Selection| {
+    let doc = &cx.editor.documents.get(&doc_id);
+    let (text, line) = doc.map_or(("".into(), 0), |d| {
+      let text = selection
+        .fragments(d.text().slice(..))
+        .map(Cow::into_owned)
+        .collect::<Vec<_>>()
+        .join(" ");
+      let line = selection.primary().cursor_line(d.text().slice(..));
+      (text, line)
+    });
+
+    JumpMeta {
+      id: doc_id,
+      path: doc.and_then(|d| d.path().cloned()),
+      selection,
+      text,
+      line,
+      is_current: view.doc == doc_id,
+    }
+  };
+
+  let columns = [
+    Column::new("id", |item: &JumpMeta, _| item.id.to_string()),
+    Column::new("path", |item: &JumpMeta, _| {
+      let path = item
+        .path
+        .as_deref()
+        .map(the_editor_stdx::path::get_relative_path);
+      path
+        .as_deref()
+        .and_then(Path::to_str)
+        .unwrap_or(SCRATCH_BUFFER_NAME)
+        .to_string()
+    }),
+    Column::new("flags", |item: &JumpMeta, _| {
+      let mut flags = Vec::new();
+      if item.is_current {
+        flags.push("*");
+      }
+
+      if flags.is_empty() {
+        "".to_string()
+      } else {
+        format!(" ({})", flags.join(""))
+      }
+    }),
+    Column::new("contents", |item: &JumpMeta, _| item.text.clone()),
+  ];
+
+  use crate::ui::components::PickerAction;
+  use crate::editor::Action;
+
+  let action_handler = std::sync::Arc::new(move |meta: &JumpMeta, _: &(), picker_action: PickerAction| {
+    let doc_id = meta.id;
+    let selection = meta.selection.clone();
+    let action = match picker_action {
+      PickerAction::Primary => Action::Replace,
+      PickerAction::Secondary => Action::HorizontalSplit,
+      PickerAction::Tertiary => Action::VerticalSplit,
+    };
+
+    crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+      editor.switch(doc_id, action);
+      let config = editor.config();
+      let view = editor.tree.get_mut(editor.tree.focus);
+      let doc = editor.documents.get_mut(&doc_id).unwrap();
+      doc.set_selection(view.id, selection);
+      view.ensure_cursor_in_view_center(doc, config.scrolloff);
+    });
+
+    true // Close picker
+  });
+
+  let picker = Picker::new(
+    columns,
+    1, // path
+    cx.editor.tree.views().flat_map(|(view, _)| {
+      view
+        .jumps
+        .iter()
+        .rev()
+        .map(|(doc_id, selection)| new_meta(view, *doc_id, selection.clone()))
+    }),
+    (),
+    |_| {},
+  )
+  .with_action_handler(action_handler)
+  .with_preview(|meta: &JumpMeta| {
+    // Return the document's actual path and the line from the jump
+    meta.path.as_ref().map(|path| {
+      (path.clone(), Some((meta.line, meta.line)))
+    })
+  });
+
+  cx.callback.push(Box::new(move |compositor, _cx| {
+    compositor.push(Box::new(picker));
+  }));
+}
+
+pub fn changed_file_picker(cx: &mut Context) {
+    use std::path::PathBuf;
+    use the_editor_vcs::FileChange;
+    use crate::ui::components::{Column, Picker};
+
+    pub struct FileChangeData {
+        cwd: PathBuf,
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if !cwd.exists() {
+        cx.editor
+            .set_error("Current working directory does not exist".to_string());
+        return;
+    }
+
+    let columns = [
+        Column::new("change", |change: &FileChange, _data: &FileChangeData| {
+            match change {
+                FileChange::Untracked { .. } => "+ untracked".to_string(),
+                FileChange::Modified { .. } => "~ modified".to_string(),
+                FileChange::Conflict { .. } => "x conflict".to_string(),
+                FileChange::Deleted { .. } => "- deleted".to_string(),
+                FileChange::Renamed { .. } => "> renamed".to_string(),
+            }
+        }),
+        Column::new("path", |change: &FileChange, data: &FileChangeData| {
+            let display_path = |path: &PathBuf| {
+                path.strip_prefix(&data.cwd)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string()
+            };
+            match change {
+                FileChange::Untracked { path } => display_path(path),
+                FileChange::Modified { path } => display_path(path),
+                FileChange::Conflict { path } => display_path(path),
+                FileChange::Deleted { path } => display_path(path),
+                FileChange::Renamed { from_path, to_path } => {
+                    format!("{} -> {}", display_path(from_path), display_path(to_path))
+                }
+            }
+        }),
+    ];
+
+    use crate::ui::components::PickerAction;
+    use crate::editor::Action;
+
+    let action_handler = std::sync::Arc::new(move |meta: &FileChange, _: &FileChangeData, picker_action: PickerAction| {
+        let path_to_open = meta.path().to_path_buf();
+        let action = match picker_action {
+            PickerAction::Primary => Action::Replace,
+            PickerAction::Secondary => Action::HorizontalSplit,
+            PickerAction::Tertiary => Action::VerticalSplit,
+        };
+
+        crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+            if let Err(e) = editor.open(&path_to_open, action) {
+                editor.set_error(format!("Failed to open {}: {}", path_to_open.display(), e));
+            }
+        });
+
+        true // Close picker
+    });
+
+    let picker = Picker::new(
+        columns,
+        1, // path
+        [],
+        FileChangeData {
+            cwd: cwd.clone(),
+        },
+        |_| {},
+    )
+    .with_action_handler(action_handler)
+    .with_preview(|meta: &FileChange| Some((meta.path().to_path_buf(), None)));
+    let injector = picker.injector();
+
+    cx.editor
+        .diff_providers
+        .clone()
+        .for_each_changed_file(cwd, move |change| match change {
+            Ok(change) => injector.push(change).is_ok(),
+            Err(err) => {
+                log::error!("Failed to get file changes: {}", err);
+                true
+            }
+        });
+
+    cx.callback.push(Box::new(move |compositor, _cx| {
+        compositor.push(Box::new(picker));
+    }));
+}
+
 // Inserts at the start of each selection.
 pub fn insert_mode(cx: &mut Context) {
   enter_insert_mode(cx);
@@ -2000,8 +2309,8 @@ pub fn goto_line_start(cx: &mut Context) {
 }
 
 pub fn extend_to_line_start(cx: &mut Context) {
-    let (view, doc) = current!(cx.editor);
-    goto_line_start_impl(view, doc, Movement::Extend)
+  let (view, doc) = current!(cx.editor);
+  goto_line_start_impl(view, doc, Movement::Extend)
 }
 
 fn goto_line_start_impl(view: &mut View, doc: &mut Document, movement: Movement) {

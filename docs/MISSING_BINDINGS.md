@@ -12,9 +12,6 @@ This document is just so I can have a little basis btw
 • "F"   -> file_picker_in_current_directory
 • "e"   -> file_explorer
 • "E"   -> file_explorer_in_current_buffer_directory
-• "b"   -> buffer_picker
-• "j"   -> jumplist_picker
-• "g"   -> changed_file_picker
 • "'"   -> last_picker
 • "w"   -> Window submenu (duplicate of C-w)
 • "c"   -> toggle_comments
@@ -44,16 +41,6 @@ This document is just so I can have a little basis btw
 #### Misc
 
 • "C-z"         -> suspend
-
----
-
-### Select Mode
-
-#### Goto submenu in Select mode
-
-• "w" -> extend_to_word
-
----
 
 ### Insert Mode
 

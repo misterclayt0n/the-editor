@@ -983,58 +983,86 @@ impl Renderer {
     }
 
     if !self.text_commands.is_empty() {
-      self
-        .text_renderer
-        .prepare(
-          &self.device,
-          &self.queue,
-          &mut self.font_system,
-          &mut self.text_atlas,
-          &self.viewport,
-          self
-            .text_commands
-            .iter()
-            .filter(|command| {
-              // Check if text is within the active scissor rect (if any)
-              if let Some(&(scissor_x, scissor_y, scissor_width, scissor_height)) =
-                self.scissor_rect_stack.last()
-              {
-                let text_x = command.position.0;
-                let text_y = command.position.1;
-                let text_width = (command.bounds.right - command.bounds.left) as f32;
-                let text_height = (command.bounds.bottom - command.bounds.top) as f32;
+      // Prepare text areas for rendering
+      let text_areas: Vec<_> = self
+        .text_commands
+        .iter()
+        .filter(|command| {
+          // Check if text is within the active scissor rect (if any)
+          if let Some(&(scissor_x, scissor_y, scissor_width, scissor_height)) =
+            self.scissor_rect_stack.last()
+          {
+            let text_x = command.position.0;
+            let text_y = command.position.1;
+            let text_width = (command.bounds.right - command.bounds.left) as f32;
+            let text_height = (command.bounds.bottom - command.bounds.top) as f32;
 
-                // Check if text intersects with scissor rect
-                !(text_x + text_width < scissor_x
-                  || text_x > scissor_x + scissor_width
-                  || text_y + text_height < scissor_y
-                  || text_y > scissor_y + scissor_height)
-              } else {
-                // No scissor rect active, render all text
-                true
+            // Check if text intersects with scissor rect
+            !(text_x + text_width < scissor_x
+              || text_x > scissor_x + scissor_width
+              || text_y + text_height < scissor_y
+              || text_y > scissor_y + scissor_height)
+          } else {
+            // No scissor rect active, render all text
+            true
+          }
+        })
+        .filter_map(|command| {
+          // Get buffer from cache
+          self
+            .shaped_text_cache
+            .entries
+            .get(&command.cache_key)
+            .map(|entry| {
+              TextArea {
+                buffer:        &entry.buffer,
+                left:          command.position.0,
+                top:           command.position.1,
+                scale:         1.0,
+                bounds:        command.bounds,
+                default_color: GlyphColor::rgba(255, 255, 255, 255),
+                custom_glyphs: &[],
               }
             })
-            .filter_map(|command| {
-              // Get buffer from cache
-              self
-                .shaped_text_cache
-                .entries
-                .get(&command.cache_key)
-                .map(|entry| {
-                  TextArea {
-                    buffer:        &entry.buffer,
-                    left:          command.position.0,
-                    top:           command.position.1,
-                    scale:         1.0,
-                    bounds:        command.bounds,
-                    default_color: GlyphColor::rgba(255, 255, 255, 255),
-                    custom_glyphs: &[],
-                  }
-                })
-            }),
-          &mut self.swash_cache,
-        )
-        .map_err(|e| RendererError::TextRendering(e.to_string()))?;
+        })
+        .collect();
+
+      // Try to prepare text, with atlas recovery on failure
+      let prepare_result = self.text_renderer.prepare(
+        &self.device,
+        &self.queue,
+        &mut self.font_system,
+        &mut self.text_atlas,
+        &self.viewport,
+        text_areas.iter().map(|ta| ta.clone()),
+        &mut self.swash_cache,
+      );
+
+      if let Err(e) = prepare_result {
+        let error_msg = e.to_string();
+        // Check if atlas is full
+        if error_msg.contains("glyph texture atlas is full") {
+          log::warn!("Glyph texture atlas full, trimming and retrying...");
+          // Trim unused glyphs from atlas
+          self.text_atlas.trim();
+          // Retry prepare after trimming
+          self
+            .text_renderer
+            .prepare(
+              &self.device,
+              &self.queue,
+              &mut self.font_system,
+              &mut self.text_atlas,
+              &self.viewport,
+              text_areas.iter().map(|ta| ta.clone()),
+              &mut self.swash_cache,
+            )
+            .map_err(|e| RendererError::TextRendering(e.to_string()))?;
+        } else {
+          // Other error, propagate it
+          return Err(RendererError::TextRendering(error_msg));
+        }
+      }
 
       // Always attach stencil buffer (text renderer pipeline expects it)
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1072,35 +1100,66 @@ impl Renderer {
 
     // Render overlay text (UI text that ignores stencil masking)
     if !self.overlay_text_commands.is_empty() {
-      self
-        .overlay_text_renderer
-        .prepare(
-          &self.device,
-          &self.queue,
-          &mut self.font_system,
-          &mut self.text_atlas,
-          &self.viewport,
-          self.overlay_text_commands.iter().filter_map(|command| {
-            // Get buffer from cache
-            self
-              .shaped_text_cache
-              .entries
-              .get(&command.cache_key)
-              .map(|entry| {
-                TextArea {
-                  buffer:        &entry.buffer,
-                  left:          command.position.0,
-                  top:           command.position.1,
-                  scale:         1.0,
-                  bounds:        command.bounds,
-                  default_color: GlyphColor::rgba(255, 255, 255, 255),
-                  custom_glyphs: &[],
-                }
-              })
-          }),
-          &mut self.swash_cache,
-        )
-        .map_err(|e| RendererError::TextRendering(e.to_string()))?;
+      // Prepare overlay text areas
+      let overlay_text_areas: Vec<_> = self
+        .overlay_text_commands
+        .iter()
+        .filter_map(|command| {
+          // Get buffer from cache
+          self
+            .shaped_text_cache
+            .entries
+            .get(&command.cache_key)
+            .map(|entry| {
+              TextArea {
+                buffer:        &entry.buffer,
+                left:          command.position.0,
+                top:           command.position.1,
+                scale:         1.0,
+                bounds:        command.bounds,
+                default_color: GlyphColor::rgba(255, 255, 255, 255),
+                custom_glyphs: &[],
+              }
+            })
+        })
+        .collect();
+
+      // Try to prepare overlay text, with atlas recovery on failure
+      let prepare_result = self.overlay_text_renderer.prepare(
+        &self.device,
+        &self.queue,
+        &mut self.font_system,
+        &mut self.text_atlas,
+        &self.viewport,
+        overlay_text_areas.iter().map(|ta| ta.clone()),
+        &mut self.swash_cache,
+      );
+
+      if let Err(e) = prepare_result {
+        let error_msg = e.to_string();
+        // Check if atlas is full
+        if error_msg.contains("glyph texture atlas is full") {
+          log::warn!("Glyph texture atlas full (overlay), trimming and retrying...");
+          // Trim unused glyphs from atlas
+          self.text_atlas.trim();
+          // Retry prepare after trimming
+          self
+            .overlay_text_renderer
+            .prepare(
+              &self.device,
+              &self.queue,
+              &mut self.font_system,
+              &mut self.text_atlas,
+              &self.viewport,
+              overlay_text_areas.iter().map(|ta| ta.clone()),
+              &mut self.swash_cache,
+            )
+            .map_err(|e| RendererError::TextRendering(e.to_string()))?;
+        } else {
+          // Other error, propagate it
+          return Err(RendererError::TextRendering(error_msg));
+        }
+      }
 
       // Render overlay text without stencil (overlay text renderer has no stencil
       // configured)

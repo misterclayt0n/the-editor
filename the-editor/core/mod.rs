@@ -5,6 +5,7 @@ use smartstring::{
   SmartString,
 };
 
+pub mod animation;
 pub mod auto_pairs;
 pub mod case_conversion;
 pub mod chars;

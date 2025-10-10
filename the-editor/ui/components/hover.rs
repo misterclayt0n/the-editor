@@ -26,9 +26,9 @@ const MAX_POPUP_WIDTH: f32 = 600.0;
 /// Hover popup component showing LSP hover information
 pub struct Hover {
   /// Hover contents: (server_name, hover_markdown)
-  contents:      Vec<(String, String)>,
-  /// Animation progress (0.0 = just appeared, 1.0 = fully visible)
-  anim_progress: f32,
+  contents:  Vec<(String, String)>,
+  /// Appearance animation
+  animation: crate::core::animation::AnimationHandle<f32>,
 }
 
 impl Hover {
@@ -44,9 +44,13 @@ impl Hover {
       })
       .collect();
 
+    // Create appearance animation using popup preset
+    let (duration, easing) = crate::core::animation::presets::POPUP;
+    let animation = crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
+
     Self {
       contents,
-      anim_progress: 0.0,
+      animation,
     }
   }
 }
@@ -57,15 +61,9 @@ impl Component for Hover {
       return;
     }
 
-    // Update animation progress
-    const ANIM_SPEED: f32 = 30.0;
-    if self.anim_progress < 1.0 {
-      self.anim_progress = (self.anim_progress + ctx.dt * ANIM_SPEED).min(1.0);
-    }
-
-    // Smoothstep easing
-    let t = self.anim_progress;
-    let eased_t = t * t * (3.0 - 2.0 * t);
+    // Update animation with declarative system
+    self.animation.update(ctx.dt);
+    let eased_t = *self.animation.current();
 
     // Animation effects
     let alpha = eased_t;
@@ -221,7 +219,7 @@ impl Component for Hover {
   }
 
   fn is_animating(&self) -> bool {
-    self.anim_progress < 1.0
+    !self.animation.is_complete()
   }
 }
 

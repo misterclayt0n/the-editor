@@ -297,34 +297,29 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   /// Whether picker is visible
   visible:                  bool,
   /// Number of visible rows
-  completion_height:        u16,
-  /// Animation lerp factor (0.0 = just opened, 1.0 = fully visible)
-  anim_lerp:                f32,
-  /// Preview panel animation lerp (0.0 = hidden, 1.0 = fully visible)
-  preview_anim:             f32,
-  /// Whether we've done initial preview setup (to skip animation on first
-  /// render)
-  preview_initialized:      bool,
+  completion_height:   u16,
+  /// Entrance animation
+  entrance_anim:       crate::core::animation::AnimationHandle<f32>,
+  /// Preview panel fade animation
+  preview_anim:        Option<crate::core::animation::AnimationHandle<f32>>,
   /// Hovered item index (for hover effects)
-  hovered_item:             Option<u32>,
+  hovered_item:        Option<u32>,
   /// Mouse position for hover effects
-  hover_pos:                Option<(f32, f32)>,
+  hover_pos:           Option<(f32, f32)>,
   /// Cached layout info for mouse hit testing
-  cached_layout:            Option<PickerLayout>,
+  cached_layout:       Option<PickerLayout>,
   /// Previous cursor position for smooth animation
-  prev_cursor:              u32,
-  /// Selection animation lerp (0.0 = at prev_cursor, 1.0 = at cursor)
-  selection_anim:           f32,
-  /// Input cursor animation state
-  query_cursor_pos_smooth:  Option<f32>,
-  query_cursor_anim_active: bool,
+  prev_cursor:         u32,
+  /// Selection animation
+  selection_anim:      crate::core::animation::AnimationHandle<f32>,
+  /// Input cursor animation
+  query_cursor_anim:   Option<crate::core::animation::AnimationHandle<f32>>,
   /// Scroll offset for independent scrolling (VSCode-style)
-  scroll_offset:            u32,
+  scroll_offset:       u32,
   /// Whether nucleo is still processing matches
-  matcher_running:          bool,
-  /// Animated height for smooth size transitions
-  height_smooth:            Option<f32>,
-  height_anim_active:       bool,
+  matcher_running:     bool,
+  /// Height animation for smooth size transitions
+  height_anim:         Option<crate::core::animation::AnimationHandle<f32>>,
   /// Preview callback to get file path from item, optionally with line range
   /// Returns (PathBuf, Option<(start_line, end_line)>) where lines are
   /// 0-indexed
@@ -349,6 +344,8 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   history_format:           Option<Arc<dyn Fn(&T, &D) -> String + Send + Sync>>,
   /// Pending items to add to history (flushed during render)
   pending_history:          Vec<String>,
+  /// Whether preview animation has been initialized
+  preview_initialized:      bool,
 }
 
 #[derive(Clone)]
@@ -413,20 +410,23 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       on_close: None,
       visible: true,
       completion_height: 0,
-      anim_lerp: 0.0,
-      preview_anim: 0.0,
-      preview_initialized: false,
+      entrance_anim: {
+        let (duration, easing) = crate::core::animation::presets::POPUP;
+        crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing)
+      },
+      preview_anim: None,
       hovered_item: None,
       hover_pos: None,
       cached_layout: None,
       prev_cursor: 0,
-      selection_anim: 1.0,
-      query_cursor_pos_smooth: None,
-      query_cursor_anim_active: false,
+      selection_anim: {
+        let (duration, easing) = crate::core::animation::presets::FAST;
+        crate::core::animation::AnimationHandle::new(1.0, 1.0, duration, easing)
+      },
+      query_cursor_anim: None,
       scroll_offset: 0,
       matcher_running: false,
-      height_smooth: None,
-      height_anim_active: false,
+      height_anim: None,
       preview_fn: None,
       preview_handler: None,
       preview_cache: HashMap::new(),
@@ -438,6 +438,7 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       history_register: None,
       history_format: None,
       pending_history: Vec::new(),
+      preview_initialized: false,
     }
   }
 
@@ -697,7 +698,9 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     } else {
       self.cursor.saturating_sub(1)
     };
-    self.selection_anim = 0.0; // Start animation
+    // Restart selection animation
+    let (duration, easing) = crate::core::animation::presets::FAST;
+    self.selection_anim = crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
 
     // Auto-scroll to keep cursor in view
     self.ensure_cursor_in_view();
@@ -711,7 +714,9 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     }
     self.prev_cursor = self.cursor;
     self.cursor = (self.cursor + 1) % len;
-    self.selection_anim = 0.0; // Start animation
+    // Restart selection animation
+    let (duration, easing) = crate::core::animation::presets::FAST;
+    self.selection_anim = crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
 
     // Auto-scroll to keep cursor in view
     self.ensure_cursor_in_view();
@@ -748,7 +753,9 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       .cursor
       .saturating_sub(page_size)
       .min(len.saturating_sub(1));
-    self.selection_anim = 0.0; // Start animation
+    // Restart selection animation
+    let (duration, easing) = crate::core::animation::presets::FAST;
+    self.selection_anim = crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
 
     // Auto-scroll to keep cursor in view
     self.ensure_cursor_in_view();
@@ -763,7 +770,9 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     let page_size = self.completion_height.max(1) as u32;
     self.prev_cursor = self.cursor;
     self.cursor = (self.cursor + page_size).min(len.saturating_sub(1));
-    self.selection_anim = 0.0; // Start animation
+    // Restart selection animation
+    let (duration, easing) = crate::core::animation::presets::FAST;
+    self.selection_anim = crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
 
     // Auto-scroll to keep cursor in view
     self.ensure_cursor_in_view();
@@ -776,7 +785,9 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     }
     self.prev_cursor = self.cursor;
     self.cursor = 0;
-    self.selection_anim = 0.0; // Start animation
+    // Restart selection animation
+    let (duration, easing) = crate::core::animation::presets::FAST;
+    self.selection_anim = crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
     self.ensure_cursor_in_view();
   }
 
@@ -787,7 +798,9 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     }
     self.prev_cursor = self.cursor;
     self.cursor = len.saturating_sub(1);
-    self.selection_anim = 0.0; // Start animation
+    // Restart selection animation
+    let (duration, easing) = crate::core::animation::presets::FAST;
+    self.selection_anim = crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
     self.ensure_cursor_in_view();
   }
 
@@ -1150,7 +1163,9 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 if self.cursor != global_item_idx {
                   self.prev_cursor = self.cursor;
                   self.cursor = global_item_idx;
-                  self.selection_anim = 0.0; // Start animation
+                  // Restart selection animation
+    let (duration, easing) = crate::core::animation::presets::FAST;
+    self.selection_anim = crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
                 }
                 self.select();
                 let callback = Box::new(
@@ -1356,17 +1371,11 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       }
     }
 
-    // Animate lerp factor for smooth entrance
-    let anim_speed = 12.0; // Speed of animation
-    if self.anim_lerp < 1.0 {
-      self.anim_lerp = (self.anim_lerp + ctx.dt * anim_speed).min(1.0);
-    }
+    // Update entrance animation
+    self.entrance_anim.update(ctx.dt);
 
-    // Animate selection changes
-    let selection_anim_speed = 15.0;
-    if self.selection_anim < 1.0 {
-      self.selection_anim = (self.selection_anim + ctx.dt * selection_anim_speed).min(1.0);
-    }
+    // Update selection animation
+    self.selection_anim.update(ctx.dt);
 
     // Determine if we should show preview panel based on actual available width
     // Need enough room for both panels + gap (minimum ~1200px for comfortable
@@ -1374,19 +1383,39 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
     let min_width_for_preview = 1200.0;
     let should_show_preview = area.width as f32 > min_width_for_preview;
 
-    // Initialize preview state on first render (no animation)
+    // Initialize or update preview animation
+    let target_preview_value = if should_show_preview { 1.0 } else { 0.0 };
     if !self.preview_initialized {
-      self.preview_anim = if should_show_preview { 1.0 } else { 0.0 };
+      // On first render, start at target (no animation)
+      let (duration, easing) = crate::core::animation::presets::FAST;
+      self.preview_anim = Some(crate::core::animation::AnimationHandle::new(
+        target_preview_value,
+        target_preview_value,
+        duration,
+        easing,
+      ));
       self.preview_initialized = true;
     } else {
-      // Animate preview panel appearance/disappearance on resize
-      let preview_anim_speed = 8.0;
-      if should_show_preview {
-        // Fade in
-        self.preview_anim = (self.preview_anim + ctx.dt * preview_anim_speed).min(1.0);
-      } else {
-        // Fade out
-        self.preview_anim = (self.preview_anim - ctx.dt * preview_anim_speed).max(0.0);
+      // Animate to new target if it changed
+      match &mut self.preview_anim {
+        Some(anim) => {
+          if (*anim.target() - target_preview_value).abs() > 0.01 {
+            // Target changed, retarget animation
+            anim.retarget(target_preview_value);
+          }
+          anim.update(ctx.dt);
+        },
+        None => {
+          // Create animation if it doesn't exist
+          let (duration, easing) = crate::core::animation::presets::FAST;
+          let current = if should_show_preview { 0.0 } else { 1.0 };
+          self.preview_anim = Some(crate::core::animation::AnimationHandle::new(
+            current,
+            target_preview_value,
+            duration,
+            easing,
+          ));
+        },
       }
     }
 
@@ -1576,8 +1605,13 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
     // When preview is visible (1.0), picker takes half width
     let picker_width_full = total_width;
     let picker_width_split = total_width * 0.5;
+    let preview_anim_value = self
+      .preview_anim
+      .as_ref()
+      .map(|a| *a.current())
+      .unwrap_or(0.0);
     let picker_width =
-      picker_width_full + (picker_width_split - picker_width_full) * self.preview_anim;
+      picker_width_full + (picker_width_split - picker_width_full) * preview_anim_value;
 
     let line_height = UI_FONT_SIZE + 4.0;
 
@@ -1610,31 +1644,27 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
     let height = header_height + rows_height + bottom_padding;
 
     // Smooth height animation for size changes
-    let height_lerp_speed = 30.0;
-    let animated_height = if let Some(current_smooth) = self.height_smooth {
-      let target = height;
-      let diff = target - current_smooth;
-
-      if diff.abs() > 0.5 {
-        let lerp_factor = 1.0 - (-ctx.dt * height_lerp_speed).exp();
-        let new_smooth = current_smooth + diff * lerp_factor;
-        self.height_smooth = Some(new_smooth);
-        self.height_anim_active = true;
-        new_smooth
-      } else {
-        self.height_smooth = Some(target);
-        self.height_anim_active = false;
-        target
-      }
-    } else {
-      self.height_smooth = Some(height);
-      self.height_anim_active = false;
-      height
+    let animated_height = match &mut self.height_anim {
+      Some(anim) => {
+        // Check if target changed
+        if (*anim.target() - height).abs() > 0.5 {
+          anim.retarget(height);
+        }
+        anim.update(ctx.dt);
+        *anim.current()
+      },
+      None => {
+        // Initialize animation
+        let (duration, easing) = crate::core::animation::presets::FAST;
+        self.height_anim = Some(crate::core::animation::AnimationHandle::new(
+          height, height, duration, easing,
+        ));
+        height
+      },
     };
 
-    // Apply animation lerp with easing
-    let t = self.anim_lerp;
-    let ease = t * t * (3.0 - 2.0 * t); // Smoothstep easing
+    // Apply animation lerp with easing (entrance animation already applies easing)
+    let ease = *self.entrance_anim.current();
 
     // Center the picker (use total_width for centering calculation)
     let target_x = area.x as f32 + (area.width as f32 - total_width) / 2.0;
@@ -1667,7 +1697,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
     // Calculate mask width for overlay region (covers picker and preview if
     // visible)
-    let mask_width = if self.preview_anim > 0.0 {
+    let mask_width = if preview_anim_value > 0.0 {
       // Mask covers both picker and preview panels
       total_width * scale
     } else {
@@ -1796,19 +1826,27 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
       // Cursor animation
       let target_x = prompt_x + visible_cursor_col as f32 * UI_FONT_WIDTH;
-      let cursor_lerp_factor = ctx.editor.config().cursor_lerp_factor;
       let cursor_anim_enabled = ctx.editor.config().cursor_anim_enabled;
 
       let anim_x = if cursor_anim_enabled {
-        let mut sx = self.query_cursor_pos_smooth.unwrap_or(target_x);
-        let dx = target_x - sx;
-        sx += dx * cursor_lerp_factor;
-        self.query_cursor_pos_smooth = Some(sx);
-        self.query_cursor_anim_active = dx.abs() > 0.5;
-        sx
+        match &mut self.query_cursor_anim {
+          Some(anim) => {
+            if (*anim.target() - target_x).abs() > 0.5 {
+              anim.retarget(target_x);
+            }
+            anim.update(ctx.dt);
+            *anim.current()
+          },
+          None => {
+            let (duration, easing) = crate::core::animation::presets::CURSOR;
+            self.query_cursor_anim = Some(crate::core::animation::AnimationHandle::new(
+              target_x, target_x, duration, easing,
+            ));
+            target_x
+          },
+        }
       } else {
-        self.query_cursor_anim_active = false;
-        self.query_cursor_pos_smooth = Some(target_x);
+        self.query_cursor_anim = None;
         target_x
       };
 
@@ -1926,8 +1964,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
           );
 
           if is_selected {
-            let selection_t = self.selection_anim.clamp(0.0, 1.0);
-            let selection_ease = selection_t * selection_t * (3.0 - 2.0 * selection_t);
+            let selection_ease = *self.selection_anim.current();
 
             let mut fill_color = picker_selected_fill;
             fill_color.a = (fill_color.a * (0.82 + 0.18 * selection_ease)).clamp(0.0, 1.0);
@@ -1972,8 +2009,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
               glow_strength,
             );
 
-            if self.selection_anim < 1.0 {
-              let pulse_ease = 1.0 - (1.0 - selection_t) * (1.0 - selection_t);
+            if !self.selection_anim.is_complete() {
+              let pulse_ease = 1.0 - (1.0 - selection_ease) * (1.0 - selection_ease);
               let center_y = selection_y + selection_height * 0.52;
               let pulse_radius =
                 item_width.max(selection_height) * (0.42 + 0.35 * (1.0 - pulse_ease));
@@ -2107,8 +2144,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       }
 
       // Draw preview panel with animation
-      if self.preview_anim > 0.0 {
-        let preview_ease = self.preview_anim * self.preview_anim * (3.0 - 2.0 * self.preview_anim); // Smoothstep
+      if preview_anim_value > 0.0 {
+        let preview_ease = preview_anim_value * preview_anim_value * (3.0 - 2.0 * preview_anim_value); // Smoothstep
 
         let preview_gap = 12.0; // Padding between picker and preview
         let preview_x = x + picker_width_scaled + preview_gap;
@@ -2473,12 +2510,24 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
   fn should_update(&self) -> bool {
     // Request redraws while any animation is active or matcher is processing
-    self.anim_lerp < 1.0
-      || self.preview_anim > 0.0 && self.preview_anim < 1.0
-      || self.selection_anim < 1.0
-      || self.query_cursor_anim_active
+    !self.entrance_anim.is_complete()
+      || self
+        .preview_anim
+        .as_ref()
+        .map(|a| !a.is_complete())
+        .unwrap_or(false)
+      || !self.selection_anim.is_complete()
+      || self
+        .query_cursor_anim
+        .as_ref()
+        .map(|a| !a.is_complete())
+        .unwrap_or(false)
       || self.matcher_running
-      || self.height_anim_active
+      || self
+        .height_anim
+        .as_ref()
+        .map(|a| !a.is_complete())
+        .unwrap_or(false)
   }
 }
 

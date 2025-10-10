@@ -201,8 +201,8 @@ pub struct Completion {
   scroll_offset:   usize,
   /// Whether documentation has been resolved for current selection
   doc_resolved:    bool,
-  /// Animation progress (0.0 = just appeared, 1.0 = fully visible)
-  anim_progress:   f32,
+  /// Appearance animation
+  animation:       crate::core::animation::AnimationHandle<f32>,
   /// Handler for resolving incomplete completion items
   resolve_handler: ResolveHandler,
 }
@@ -212,6 +212,10 @@ impl Completion {
 
   /// Create a new completion popup
   pub fn new(items: Vec<CompletionItem>, trigger_offset: usize, filter: String) -> Self {
+    // Create appearance animation using popup preset
+    let (duration, easing) = crate::core::animation::presets::POPUP;
+    let animation = crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
+
     let mut completion = Self {
       items,
       filtered: Vec::new(),
@@ -223,7 +227,7 @@ impl Completion {
       replace_mode: false,
       scroll_offset: 0,
       doc_resolved: false,
-      anim_progress: 0.0, // Start animation from 0
+      animation,
       resolve_handler: ResolveHandler::new(),
     };
 
@@ -850,15 +854,9 @@ impl Component for Completion {
       return;
     }
 
-    // Update animation progress (fast lerp, completes in ~0.1s)
-    const ANIM_SPEED: f32 = 30.0; // Higher = faster
-    if self.anim_progress < 1.0 {
-      self.anim_progress = (self.anim_progress + ctx.dt * ANIM_SPEED).min(1.0);
-    }
-
-    // Smoothstep easing for smooth animation
-    let t = self.anim_progress;
-    let eased_t = t * t * (3.0 - 2.0 * t);
+    // Update animation with declarative system
+    self.animation.update(ctx.dt);
+    let eased_t = *self.animation.current();
 
     // Animation effects:
     // - Fade in (alpha)
@@ -1127,6 +1125,6 @@ impl Component for Completion {
   }
 
   fn is_animating(&self) -> bool {
-    self.anim_progress < 1.0
+    !self.animation.is_complete()
   }
 }

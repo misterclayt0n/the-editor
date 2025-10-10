@@ -116,11 +116,8 @@ pub struct EditorView {
   command_batcher:           CommandBatcher,
   last_cursor_pos:           Option<usize>,
   last_selection_hash:       u64,
-  // Cursor animation state
-  cursor_anim_enabled:       bool,
-  cursor_lerp_factor:        f32,
-  cursor_pos_smooth:         Option<(f32, f32)>,
-  cursor_anim_active:        bool,
+  // Cursor animation
+  cursor_animation:          Option<crate::core::animation::AnimationHandle<(f32, f32)>>,
   // Zoom animation state
   zoom_anim_active:          bool,
   // Gutter management
@@ -142,10 +139,7 @@ impl EditorView {
       command_batcher: CommandBatcher::new(),
       last_cursor_pos: None,
       last_selection_hash: 0,
-      cursor_anim_enabled: true,
-      cursor_lerp_factor: 0.25,
-      cursor_pos_smooth: None,
-      cursor_anim_active: false,
+      cursor_animation: None,
       zoom_anim_active: false,
       gutter_manager: GutterManager::with_defaults(),
       completion: None,
@@ -333,7 +327,10 @@ impl Component for EditorView {
     // Redraw only when needed: dirty regions, cursor animation, zoom animation, or
     // popup animations
     self.dirty_region.needs_redraw()
-      || (self.cursor_anim_enabled && self.cursor_anim_active)
+      || self
+        .cursor_animation
+        .as_ref()
+        .is_some_and(|anim| !anim.is_complete())
       || self.zoom_anim_active
       || self.completion.as_ref().is_some_and(|c| c.is_animating())
       || self
@@ -692,12 +689,7 @@ impl Component for EditorView {
       let _ = view_id_doc; // keep variable to ensure scope is closed
     }
 
-    // Sync cursor animation config from editor config
-    {
-      let conf = cx.editor.config();
-      self.cursor_anim_enabled = conf.cursor_anim_enabled;
-      self.cursor_lerp_factor = conf.cursor_lerp_factor;
-    }
+    // Cursor animation config is now read directly from editor config when needed
 
     // Get theme colors
     let theme = &cx.editor.theme;
@@ -1365,22 +1357,29 @@ impl Component for EditorView {
           // Draw cursor if at this position (only for focused view)
           if is_cursor_here && is_focused {
             let cursor_w = width_cols.max(1) as f32 * font_width;
-            // Cursor animation: lerp toward target (x, y)
-            let (anim_x, anim_y) = if self.cursor_anim_enabled {
-              let (mut sx, mut sy) = self.cursor_pos_smooth.unwrap_or((x, y));
-              let dx = x - sx;
-              let dy = y - sy;
-              // Time-based lerp: much faster for snappier cursor while typing
-              let lerp_t = 1.0 - (1.0 - self.cursor_lerp_factor).powf(cx.dt * 800.0);
-              sx += dx * lerp_t;
-              sy += dy * lerp_t;
-              self.cursor_pos_smooth = Some((sx, sy));
-              // Mark animation active if still far from target
-              self.cursor_anim_active = (dx * dx + dy * dy).sqrt() > 0.5;
-              (sx, sy)
+            // Cursor animation using the animation system
+            let (anim_x, anim_y) = if cx.editor.config().cursor_anim_enabled {
+              // Check if we need to start or retarget the animation
+              if let Some(ref mut anim) = self.cursor_animation {
+                // Check if target position changed
+                if anim.target() != &(x, y) {
+                  // Retarget to new position
+                  anim.retarget((x, y));
+                }
+                // Update animation with time delta
+                anim.update(cx.dt);
+                *anim.current()
+              } else {
+                // No animation exists, create one using cursor preset
+                let (duration, easing) = crate::core::animation::presets::CURSOR;
+                let anim = crate::core::animation::AnimationHandle::new((x, y), (x, y), duration, easing);
+                let current = *anim.current();
+                self.cursor_animation = Some(anim);
+                current
+              }
             } else {
-              self.cursor_anim_active = false;
-              self.cursor_pos_smooth = Some((x, y));
+              // Animation disabled, use exact position
+              self.cursor_animation = None;
               (x, y)
             };
 

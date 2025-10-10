@@ -31,8 +31,8 @@ pub struct SignatureHelp {
   active_signature: usize,
   /// All available signatures
   signatures:       Vec<crate::handlers::signature_help::Signature>,
-  /// Animation progress (0.0 = just appeared, 1.0 = fully visible)
-  anim_progress:    f32,
+  /// Appearance animation
+  animation:        crate::core::animation::AnimationHandle<f32>,
   /// Whether the popup is visible
   visible:          bool,
 }
@@ -45,11 +45,15 @@ impl SignatureHelp {
     active_signature: usize,
     signatures: Vec<crate::handlers::signature_help::Signature>,
   ) -> Self {
+    // Create appearance animation using popup preset
+    let (duration, easing) = crate::core::animation::presets::POPUP;
+    let animation = crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
+
     Self {
       language,
       active_signature,
       signatures,
-      anim_progress: 0.0,
+      animation,
       visible: true,
     }
   }
@@ -63,9 +67,10 @@ impl SignatureHelp {
     self.language = language;
     self.active_signature = active_signature;
     self.signatures = signatures;
-    // Reset animation if signatures changed
-    if self.anim_progress >= 1.0 {
-      self.anim_progress = 0.8; // Quick re-animation
+    // Reset animation if signatures changed (quick re-animation from 80%)
+    if self.animation.is_complete() {
+      let (duration, easing) = crate::core::animation::presets::FAST;
+      self.animation = crate::core::animation::AnimationHandle::new(0.8, 1.0, duration, easing);
     }
   }
 }
@@ -76,15 +81,9 @@ impl Component for SignatureHelp {
       return;
     }
 
-    // Update animation progress (fast lerp, similar to completion)
-    const ANIM_SPEED: f32 = 30.0;
-    if self.anim_progress < 1.0 {
-      self.anim_progress = (self.anim_progress + ctx.dt * ANIM_SPEED).min(1.0);
-    }
-
-    // Smoothstep easing
-    let t = self.anim_progress;
-    let eased_t = t * t * (3.0 - 2.0 * t);
+    // Update animation with declarative system
+    self.animation.update(ctx.dt);
+    let eased_t = *self.animation.current();
 
     // Animation effects
     let alpha = eased_t;
@@ -280,6 +279,6 @@ impl Component for SignatureHelp {
   }
 
   fn is_animating(&self) -> bool {
-    self.anim_progress < 1.0
+    !self.animation.is_complete()
   }
 }

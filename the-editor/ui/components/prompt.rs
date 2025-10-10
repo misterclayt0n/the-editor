@@ -1188,8 +1188,26 @@ impl Component for Prompt {
     }
 
     // No custom callback - fall back to command execution
+    // Special handling for numeric input - treat as :goto command
+    let trimmed = self.input.trim();
+    let is_numeric = !trimmed.is_empty() && trimmed.parse::<usize>().is_ok();
+
     match prompt_event {
       PromptEvent::Abort => {
+        // If it's a numeric input, send Abort to goto command
+        if is_numeric {
+          let registry = cx.editor.command_registry.clone();
+          let mut cmd_cx = CommandContext {
+            editor:               cx.editor,
+            count:                None,
+            register:             None,
+            callback:             Vec::new(),
+            on_next_key_callback: None,
+            jobs:                 cx.jobs,
+          };
+          let _ = registry.execute(&mut cmd_cx, "goto", trimmed, PromptEvent::Abort);
+        }
+
         // Close the prompt and slide statusline back
         EventResult::Consumed(Some(Box::new(|compositor, cx| {
           // Switch back to Normal mode
@@ -1214,9 +1232,13 @@ impl Component for Prompt {
         if !trimmed.is_empty() {
           use crate::core::command_line;
 
-          let (command, args_line, _) = command_line::split(&trimmed);
-          let command = command.to_string();
-          let args_line = args_line.to_string();
+          // Check if it's numeric input - treat as :goto command
+          let (command, args_line) = if trimmed.parse::<usize>().is_ok() {
+            ("goto".to_string(), trimmed.clone())
+          } else {
+            let (command, args_line, _) = command_line::split(&trimmed);
+            (command.to_string(), args_line.to_string())
+          };
 
           // Store command info for execution in the callback
           // We'll execute it in the callback to avoid lifetime issues
@@ -1286,7 +1308,22 @@ impl Component for Prompt {
           })))
         }
       },
-      PromptEvent::Update => EventResult::Consumed(None),
+      PromptEvent::Update => {
+        // If it's numeric input, send Update to goto command for preview
+        if is_numeric {
+          let registry = cx.editor.command_registry.clone();
+          let mut cmd_cx = CommandContext {
+            editor:               cx.editor,
+            count:                None,
+            register:             None,
+            callback:             Vec::new(),
+            on_next_key_callback: None,
+            jobs:                 cx.jobs,
+          };
+          let _ = registry.execute(&mut cmd_cx, "goto", trimmed, PromptEvent::Update);
+        }
+        EventResult::Consumed(None)
+      },
     }
   }
 

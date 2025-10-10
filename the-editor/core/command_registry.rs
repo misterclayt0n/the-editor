@@ -575,6 +575,114 @@ impl CommandRegistry {
         ..Signature::DEFAULT
       },
     ));
+
+    self.register(TypableCommand::new(
+      "write!",
+      &["w!"],
+      "Force write buffer to file (creates directories)",
+      force_write,
+      CommandCompleter::all(completers::filename),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "buffer-close!",
+      &["bc!", "bclose!"],
+      "Force close the current buffer without saving",
+      force_buffer_close,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "quit-all",
+      &["qa", "qall"],
+      "Close all views and quit",
+      quit_all,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "quit-all!",
+      &["qa!", "qall!"],
+      "Force close all views and quit without saving",
+      force_quit_all,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "vsplit",
+      &["vs", "vsp"],
+      "Open file in vertical split (current buffer if no file)",
+      vsplit,
+      CommandCompleter::all(completers::filename),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "hsplit",
+      &["hs", "sp", "split"],
+      "Open file in horizontal split (current buffer if no file)",
+      hsplit,
+      CommandCompleter::all(completers::filename),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "write-all",
+      &["wa", "wall"],
+      "Write all modified buffers to disk",
+      write_all,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "write-all-quit",
+      &["wqa", "wqall", "xa", "xall"],
+      "Write all modified buffers and quit",
+      write_all_quit,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "goto",
+      &["g"],
+      "Go to line number (with preview)",
+      goto_line_number,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (1, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 
@@ -735,6 +843,40 @@ fn force_quit(_cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> 
 }
 
 fn write_buffer(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  use std::path::PathBuf;
+
+  use crate::current;
+
+  let (view, doc) = current!(cx.editor);
+  let doc_id = view.doc;
+
+  let path = if args.is_empty() {
+    doc.path().map(|p| p.to_path_buf())
+  } else {
+    Some(PathBuf::from(&args[0]))
+  };
+
+  if let Some(path) = path {
+    match cx.editor.save(doc_id, Some(path.clone()), false) {
+      Ok(_) => {
+        cx.editor.set_status(format!("written: {}", path.display()));
+      },
+      Err(err) => {
+        cx.editor.set_error(format!("failed to save: {}", err));
+      },
+    }
+  } else {
+    cx.editor.set_error("no file name".to_string());
+  }
+
+  Ok(())
+}
+
+fn force_write(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
   if event != PromptEvent::Validate {
     return Ok(());
   }
@@ -1042,6 +1184,271 @@ fn format(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
       callback,
     )))
   });
+
+  Ok(())
+}
+
+fn force_buffer_close(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  use crate::current;
+
+  let (view, _doc) = current!(cx.editor);
+  let doc_id = view.doc;
+
+  // Force close by ignoring unsaved changes
+  match cx.editor.close_document(doc_id, true) {
+    Ok(_) => {},
+    Err(_) => {
+      // Ignore close errors when forcing
+    },
+  }
+
+  Ok(())
+}
+
+fn quit_all(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  // Check for unsaved buffers
+  buffers_remaining_impl(cx.editor)?;
+
+  // Close all views
+  let view_ids: Vec<_> = cx.editor.tree.views().map(|(view, _)| view.id).collect();
+  for view_id in view_ids {
+    cx.editor.close(view_id);
+  }
+
+  // Exit the application
+  std::process::exit(0);
+}
+
+fn force_quit_all(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  // Close all views without checking for unsaved buffers
+  let view_ids: Vec<_> = cx.editor.tree.views().map(|(view, _)| view.id).collect();
+  for view_id in view_ids {
+    cx.editor.close(view_id);
+  }
+
+  // Exit the application
+  std::process::exit(0);
+}
+
+fn vsplit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  use crate::editor::Action;
+
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  if args.is_empty() {
+    // Split with current buffer
+    use crate::current;
+    let (view, _doc) = current!(cx.editor);
+    let doc_id = view.doc;
+    cx.editor.switch(doc_id, Action::VerticalSplit);
+  } else {
+    // Open file in split
+    open_impl(cx, args, Action::VerticalSplit)?;
+  }
+
+  Ok(())
+}
+
+fn hsplit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  use crate::editor::Action;
+
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  if args.is_empty() {
+    // Split with current buffer
+    use crate::current;
+    let (view, _doc) = current!(cx.editor);
+    let doc_id = view.doc;
+    cx.editor.switch(doc_id, Action::HorizontalSplit);
+  } else {
+    // Open file in split
+    open_impl(cx, args, Action::HorizontalSplit)?;
+  }
+
+  Ok(())
+}
+
+fn write_all(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  let doc_ids: Vec<_> = cx
+    .editor
+    .documents()
+    .filter(|doc| doc.is_modified() && doc.path().is_some())
+    .map(|doc| doc.id())
+    .collect();
+
+  let mut errors = Vec::new();
+  for doc_id in doc_ids {
+    if let Err(err) = cx.editor.save::<std::path::PathBuf>(doc_id, None, false) {
+      errors.push(format!("{}", err));
+    }
+  }
+
+  if errors.is_empty() {
+    cx.editor.set_status("All buffers written".to_string());
+  } else {
+    cx.editor
+      .set_error(format!("Failed to save some buffers: {}", errors.join(", ")));
+  }
+
+  Ok(())
+}
+
+fn write_all_quit(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  // Write all and then quit all
+  let doc_ids: Vec<_> = cx
+    .editor
+    .documents()
+    .filter(|doc| doc.is_modified() && doc.path().is_some())
+    .map(|doc| doc.id())
+    .collect();
+
+  let mut errors = Vec::new();
+  for doc_id in doc_ids {
+    if let Err(err) = cx.editor.save::<std::path::PathBuf>(doc_id, None, false) {
+      errors.push(format!("{}", err));
+    }
+  }
+
+  if !errors.is_empty() {
+    cx.editor
+      .set_error(format!("Failed to save some buffers: {}", errors.join(", ")));
+    return Ok(());
+  }
+
+  // Check for unsaved buffers
+  buffers_remaining_impl(cx.editor)?;
+
+  // Close all views
+  let view_ids: Vec<_> = cx.editor.tree.views().map(|(view, _)| view.id).collect();
+  for view_id in view_ids {
+    cx.editor.close(view_id);
+  }
+
+  // Exit the application
+  std::process::exit(0);
+}
+
+fn goto_line_number(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  use crate::current;
+
+  match event {
+    PromptEvent::Abort => {
+      // Restore original selection
+      if let Some(last_selection) = cx.editor.last_selection.take() {
+        let (view, doc) = current!(cx.editor);
+        doc.set_selection(view.id, last_selection);
+      }
+    },
+    PromptEvent::Validate => {
+      // Save to jumplist
+      if let Some(last_selection) = cx.editor.last_selection.take() {
+        let (view, doc) = current!(cx.editor);
+        view.jumps.push((doc.id(), last_selection));
+      }
+    },
+    PromptEvent::Update => {
+      if args.is_empty() {
+        // Restore original selection if no input
+        if let Some(last_selection) = cx.editor.last_selection.as_ref() {
+          let (view, doc) = current!(cx.editor);
+          doc.set_selection(view.id, last_selection.clone());
+        }
+        return Ok(());
+      }
+
+      // Save original selection on first update
+      if cx.editor.last_selection.is_none() {
+        let (view, doc) = current!(cx.editor);
+        cx.editor.last_selection = Some(doc.selection(view.id).clone());
+      }
+
+      // Parse line number and navigate
+      if let Ok(line) = args[0].parse::<usize>() {
+        use crate::core::selection::Selection;
+
+        let (view, doc) = current!(cx.editor);
+        let text = doc.text();
+
+        // Convert to 0-indexed
+        let line = line.saturating_sub(1).min(text.len_lines().saturating_sub(1));
+
+        // Get position at start of line - find the start character of the line
+        let line_start = text.line_to_char(line);
+
+        // Create selection at the line
+        let selection = Selection::single(line_start, line_start);
+        doc.set_selection(view.id, selection);
+
+        // Ensure cursor in view
+        crate::core::view::align_view(doc, view, crate::core::view::Align::Center);
+      }
+    },
+  }
+
+  Ok(())
+}
+
+/// Helper function to open a file with a specific action
+fn open_impl(cx: &mut Context, args: Args, action: crate::editor::Action) -> Result<()> {
+  use std::path::PathBuf;
+
+  let path = PathBuf::from(&args[0]);
+
+  // Expand tilde to home directory
+  let path = if path.starts_with("~") {
+    if let Ok(home) = std::env::var("HOME") {
+      PathBuf::from(home).join(path.strip_prefix("~").unwrap())
+    } else {
+      path
+    }
+  } else {
+    path
+  };
+
+  // Make path absolute if it's relative
+  let path = if path.is_relative() {
+    std::env::current_dir()?.join(path)
+  } else {
+    path
+  };
+
+  match cx.editor.open(&path, action) {
+    Ok(doc_id) => {
+      cx.editor.set_status(format!("opened: {}", path.display()));
+      // Set focus to the new document
+      let view_id = cx.editor.tree.focus;
+      let view = cx.editor.tree.get_mut(view_id);
+      view.doc = doc_id;
+    },
+    Err(err) => {
+      cx.editor
+        .set_error(format!("failed to open {}: {}", path.display(), err));
+    },
+  }
 
   Ok(())
 }

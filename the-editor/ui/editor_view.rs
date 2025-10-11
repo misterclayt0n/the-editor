@@ -666,7 +666,8 @@ impl Component for EditorView {
       let focus_view = cx.editor.tree.focus;
       let scrolloff = cx.editor.config().scrolloff;
 
-      // Calculate actual gutter width for focused view (accounts for disabled gutters)
+      // Calculate actual gutter width for focused view (accounts for disabled
+      // gutters)
       let gutter_width = {
         let view = cx.editor.tree.get(focus_view);
         let doc = &cx.editor.documents[&view.doc];
@@ -1193,7 +1194,8 @@ impl Component for EditorView {
           let doc_line = doc_text.char_to_line(g.char_idx.min(doc_text.len_chars()));
 
           // IMPORTANT: Render gutter BEFORE checking horizontal scrolling
-          // This ensures gutters are always visible even when content is scrolled horizontally
+          // This ensures gutters are always visible even when content is scrolled
+          // horizontally
           if doc_line != current_doc_line {
             // Render end-of-line diagnostic for previous line before switching
             if current_doc_line != usize::MAX {
@@ -1372,7 +1374,8 @@ impl Component for EditorView {
               } else {
                 // No animation exists, create one using cursor preset
                 let (duration, easing) = crate::core::animation::presets::CURSOR;
-                let anim = crate::core::animation::AnimationHandle::new((x, y), (x, y), duration, easing);
+                let anim =
+                  crate::core::animation::AnimationHandle::new((x, y), (x, y), duration, easing);
                 let current = *anim.current();
                 self.cursor_animation = Some(anim);
                 current

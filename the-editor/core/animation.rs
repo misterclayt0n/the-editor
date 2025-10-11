@@ -428,7 +428,8 @@ mod tests {
 
   #[test]
   fn test_animation_handle() {
-    let mut handle = AnimationHandle::new(0.0_f32, 10.0_f32, Duration::from_secs(1), Easing::Linear);
+    let mut handle =
+      AnimationHandle::new(0.0_f32, 10.0_f32, Duration::from_secs(1), Easing::Linear);
 
     assert_eq!(*handle.current(), 0.0);
     assert!(!handle.is_complete());
@@ -443,7 +444,8 @@ mod tests {
 
   #[test]
   fn test_animation_retarget() {
-    let mut handle = AnimationHandle::new(0.0_f32, 10.0_f32, Duration::from_secs(1), Easing::Linear);
+    let mut handle =
+      AnimationHandle::new(0.0_f32, 10.0_f32, Duration::from_secs(1), Easing::Linear);
 
     handle.update(0.5);
     assert!((handle.current() - 5.0).abs() < 0.001);

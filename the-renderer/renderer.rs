@@ -60,6 +60,14 @@ struct RectInstance {
   effect_kind:   f32,
 }
 
+struct PendingBlurRect {
+  rect:             (f32, f32, f32, f32),
+  corner_radius:    f32,
+  blur_strength:    f32,
+  blur_opacity:     f32,
+  background_color: Color,
+}
+
 /// Vertex data for a rectangle (using instanced rendering)
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -78,8 +86,12 @@ struct RectUniforms {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct BlurUniforms {
-  direction:  [f32; 2],
-  resolution: [f32; 2],
+  direction:   [f32; 2],
+  resolution:  [f32; 2],
+  opacity:     f32,
+  _padding:    f32, // Alignment padding
+  rect_origin: [f32; 2],
+  rect_size:   [f32; 2],
 }
 
 struct TextCommand {
@@ -143,9 +155,10 @@ pub struct Renderer {
   background_color: Color,
 
   // Pending draw data for the current frame.
-  rect_instances:        Vec<RectInstance>,
-  text_commands:         Vec<TextCommand>,
-  overlay_text_commands: Vec<TextCommand>, // Text that ignores stencil mask (for UI overlays)
+  rect_instances:         Vec<RectInstance>,
+  overlay_rect_instances: Vec<RectInstance>,
+  text_commands:          Vec<TextCommand>,
+  overlay_text_commands:  Vec<TextCommand>, // Text that ignores stencil mask (for UI overlays)
 
   // Text batching for performance
   pending_text_batch: Option<(TextSection, f32, f32)>, // Accumulate text segments
@@ -194,6 +207,7 @@ pub struct Renderer {
   intermediate_texture_2: Option<wgpu::Texture>,
   intermediate_view_2:    Option<wgpu::TextureView>,
   blur_vertex_buffer:     wgpu::Buffer,
+  pending_blur_rects:     Vec<PendingBlurRect>,
 }
 
 impl Renderer {
@@ -481,7 +495,7 @@ impl Renderer {
           },
           wgpu::BindGroupLayoutEntry {
             binding:    2,
-            visibility: wgpu::ShaderStages::FRAGMENT,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
             ty:         wgpu::BindingType::Buffer {
               ty:                 wgpu::BufferBindingType::Uniform,
               has_dynamic_offset: false,
@@ -653,6 +667,7 @@ impl Renderer {
       stencil_view,
       background_color: Color::new(0.1, 0.1, 0.15, 1.0),
       rect_instances: Vec::new(),
+      overlay_rect_instances: Vec::new(),
       text_commands: Vec::new(),
       overlay_text_commands: Vec::new(),
       scissor_rect_stack: Vec::new(),
@@ -687,6 +702,7 @@ impl Renderer {
       intermediate_view_1: None,
       intermediate_texture_2: None,
       intermediate_view_2: None,
+      pending_blur_rects: Vec::new(),
     };
 
     renderer.recalculate_metrics();
@@ -809,6 +825,8 @@ impl Renderer {
     self.current_view = Some(view);
     self.current_encoder = Some(encoder);
     self.rect_instances.clear();
+    self.overlay_rect_instances.clear();
+    self.pending_blur_rects.clear();
 
     // Advance frame counter for cache LRU tracking
     self.shaped_text_cache.next_frame();
@@ -844,7 +862,7 @@ impl Renderer {
       .current_output
       .take()
       .ok_or_else(|| RendererError::Runtime("end_frame called without begin_frame".into()))?;
-    let view = self
+    let mut view = self
       .current_view
       .take()
       .ok_or_else(|| RendererError::Runtime("end_frame called without begin_frame".into()))?;
@@ -1098,6 +1116,116 @@ impl Renderer {
         .map_err(|e| RendererError::TextRendering(e.to_string()))?;
     }
 
+    // Capture the fully rendered editor background (without overlays) so blur
+    // passes can sample the current buffer content rather than the previous
+    // frame's composite.
+    self.ensure_intermediate_textures();
+    if let Some(dest_texture) = self.intermediate_texture_1.as_ref() {
+      encoder.copy_texture_to_texture(
+        wgpu::TexelCopyTextureInfo {
+          texture:   &output.texture,
+          mip_level: 0,
+          origin:    wgpu::Origin3d::ZERO,
+          aspect:    wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyTextureInfo {
+          texture:   dest_texture,
+          mip_level: 0,
+          origin:    wgpu::Origin3d::ZERO,
+          aspect:    wgpu::TextureAspect::All,
+        },
+        wgpu::Extent3d {
+          width:                 self.config.width,
+          height:                self.config.height,
+          depth_or_array_layers: 1,
+        },
+      );
+    }
+
+    let pending_blurs = std::mem::take(&mut self.pending_blur_rects);
+
+    if !pending_blurs.is_empty() {
+      // Temporarily hand ownership of the encoder/view back to self so
+      // apply_blur can reuse the existing command encoder.
+      self.current_encoder = Some(encoder);
+      self.current_view = Some(view);
+
+      for pending in pending_blurs {
+        if let Err(e) = self.apply_blur(
+          pending.rect.0,
+          pending.rect.1,
+          pending.rect.2,
+          pending.rect.3,
+          pending.blur_strength,
+          pending.blur_opacity,
+        ) {
+          log::error!("Failed to draw blurred background: {e:?}");
+        }
+
+        self.overlay_rect_instances.push(RectInstance {
+          position:      [pending.rect.0, pending.rect.1],
+          size:          [pending.rect.2, pending.rect.3],
+          color:         color_to_linear(pending.background_color),
+          corner_radius: pending.corner_radius,
+          _pad0:         [0.0, 0.0],
+          glow_center:   [0.0, 0.0],
+          glow_radius:   0.0,
+          effect_kind:   0.0,
+        });
+      }
+
+      encoder = self
+        .current_encoder
+        .take()
+        .expect("encoder should be available after blur processing");
+      view = self
+        .current_view
+        .take()
+        .expect("view should be available after blur processing");
+    }
+
+    if !self.overlay_rect_instances.is_empty() {
+      self.get_or_create_rect_instance_buffer(self.overlay_rect_instances.len());
+
+      let instance_buffer = self.rect_instance_buffer.as_ref().unwrap();
+      self.queue.write_buffer(
+        instance_buffer,
+        0,
+        bytemuck::cast_slice(&self.overlay_rect_instances),
+      );
+
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label:                    Some("Overlay Rectangle Render Pass"),
+        color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
+          view:           &view,
+          resolve_target: None,
+          ops:            wgpu::Operations {
+            load:  wgpu::LoadOp::Load,
+            store: wgpu::StoreOp::Store,
+          },
+        })],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+          view:        &self.stencil_view,
+          depth_ops:   None,
+          stencil_ops: Some(wgpu::Operations {
+            load:  wgpu::LoadOp::Load,
+            store: wgpu::StoreOp::Store,
+          }),
+        }),
+        timestamp_writes:         None,
+        occlusion_query_set:      None,
+      });
+
+      pass.set_pipeline(&self.rect_render_pipeline);
+      pass.set_bind_group(0, &self.rect_bind_group, &[]);
+      pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(..));
+      pass.set_vertex_buffer(1, instance_buffer.slice(..));
+      pass.draw(0..4, 0..self.overlay_rect_instances.len() as u32);
+      drop(pass);
+
+      self.overlay_rect_instances.clear();
+    }
+
     // Render overlay text (UI text that ignores stencil masking)
     if !self.overlay_text_commands.is_empty() {
       // Prepare overlay text areas
@@ -1182,30 +1310,6 @@ impl Renderer {
         .overlay_text_renderer
         .render(&self.text_atlas, &self.viewport, &mut pass)
         .map_err(|e| RendererError::TextRendering(e.to_string()))?;
-    }
-
-    // Copy final frame to intermediate texture for blur effect on next frame
-    self.ensure_intermediate_textures();
-    if let Some(dest_texture) = self.intermediate_texture_1.as_ref() {
-      encoder.copy_texture_to_texture(
-        wgpu::TexelCopyTextureInfo {
-          texture:   &output.texture,
-          mip_level: 0,
-          origin:    wgpu::Origin3d::ZERO,
-          aspect:    wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyTextureInfo {
-          texture:   dest_texture,
-          mip_level: 0,
-          origin:    wgpu::Origin3d::ZERO,
-          aspect:    wgpu::TextureAspect::All,
-        },
-        wgpu::Extent3d {
-          width:                 self.config.width,
-          height:                self.config.height,
-          depth_or_array_layers: 1,
-        },
-      );
     }
 
     self.queue.submit(std::iter::once(encoder.finish()));
@@ -1450,9 +1554,17 @@ impl Renderer {
     }
   }
 
+  fn push_rect_instance(&mut self, instance: RectInstance) {
+    if self.is_overlay_mode {
+      self.overlay_rect_instances.push(instance);
+    } else {
+      self.rect_instances.push(instance);
+    }
+  }
+
   /// Draw a rectangle at the specified position with the given size and color
   pub fn draw_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: Color) {
-    self.rect_instances.push(RectInstance {
+    self.push_rect_instance(RectInstance {
       position:      [x, y],
       size:          [width, height],
       color:         color_to_linear(color),
@@ -1474,7 +1586,7 @@ impl Renderer {
     corner_radius: f32,
     color: Color,
   ) {
-    self.rect_instances.push(RectInstance {
+    self.push_rect_instance(RectInstance {
       position: [x, y],
       size: [width, height],
       color: color_to_linear(color),
@@ -1500,7 +1612,7 @@ impl Renderer {
     radius: f32,
     color: Color,
   ) {
-    self.rect_instances.push(RectInstance {
+    self.push_rect_instance(RectInstance {
       position: [x, y],
       size: [width, height],
       color: color_to_linear(color),
@@ -1524,7 +1636,7 @@ impl Renderer {
     thickness: f32,
     color: Color,
   ) {
-    self.rect_instances.push(RectInstance {
+    self.push_rect_instance(RectInstance {
       position: [x, y],
       size: [width, height],
       color: color_to_linear(color),
@@ -1551,7 +1663,7 @@ impl Renderer {
     bottom_thickness: f32,
     color: Color,
   ) {
-    self.rect_instances.push(RectInstance {
+    self.push_rect_instance(RectInstance {
       position: [x, y],
       size: [width, height],
       color: color_to_linear(color),
@@ -1698,6 +1810,20 @@ impl Renderer {
     self.end_overlay_text();
   }
 
+  /// Render overlay content without masking the underlying editor text.
+  ///
+  /// This behaves like `with_overlay_region` but skips writing to the stencil
+  /// buffer, which allows background blur effects to still sample the editor
+  /// contents beneath the overlay.
+  pub fn with_overlay<F>(&mut self, f: F)
+  where
+    F: FnOnce(&mut Self),
+  {
+    self.begin_overlay_text();
+    f(self);
+    self.end_overlay_text();
+  }
+
   /// Ensure intermediate textures are created for the current viewport size
   fn ensure_intermediate_textures(&mut self) {
     let width = self.config.width;
@@ -1738,77 +1864,38 @@ impl Renderer {
       });
       let view_2 = texture_2.create_view(&wgpu::TextureViewDescriptor::default());
 
+      // Initialize texture_1 with current background color so it's not garbage data
+      // This ensures the first blur has something to work with
+      let mut init_encoder = self
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+          label: Some("Intermediate Texture Init Encoder"),
+        });
+
+      {
+        let _clear_pass = init_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+          label:                    Some("Clear Intermediate Texture"),
+          color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
+            view:           &view_1,
+            resolve_target: None,
+            ops:            wgpu::Operations {
+              load:  wgpu::LoadOp::Clear(linear_clear_color(self.background_color)),
+              store: wgpu::StoreOp::Store,
+            },
+          })],
+          depth_stencil_attachment: None,
+          timestamp_writes:         None,
+          occlusion_query_set:      None,
+        });
+      }
+
+      self.queue.submit(std::iter::once(init_encoder.finish()));
+
       self.intermediate_texture_1 = Some(texture_1);
       self.intermediate_view_1 = Some(view_1);
       self.intermediate_texture_2 = Some(texture_2);
       self.intermediate_view_2 = Some(view_2);
     }
-  }
-
-  /// Prepare for blur by rendering pending rectangles
-  /// Uses the previous frame's content (saved in end_frame) for blur
-  /// This creates a one-frame delay but avoids TextRenderer conflicts
-  pub fn capture_for_blur(&mut self) -> Result<()> {
-    // Flush any pending text batch
-    self.flush_text_batch();
-
-    // Prepare instance buffer before getting view/encoder
-    let has_rect_instances = !self.rect_instances.is_empty();
-    if has_rect_instances {
-      self.get_or_create_rect_instance_buffer(self.rect_instances.len());
-      let instance_buffer = self.rect_instance_buffer.as_ref().unwrap();
-      self.queue.write_buffer(
-        instance_buffer,
-        0,
-        bytemuck::cast_slice(&self.rect_instances),
-      );
-    }
-
-    let view = self
-      .current_view
-      .as_ref()
-      .ok_or_else(|| RendererError::Runtime("No view available".into()))?;
-
-    let encoder = self
-      .current_encoder
-      .as_mut()
-      .ok_or_else(|| RendererError::Runtime("No encoder available".into()))?;
-
-    // Render all pending rectangles to the current frame
-    // (Text will be rendered normally in end_frame)
-    if has_rect_instances {
-      let instance_buffer = self.rect_instance_buffer.as_ref().unwrap();
-
-      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label:                    Some("Pre-blur Rectangle Pass"),
-        color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
-          view,
-          resolve_target: None,
-          ops: wgpu::Operations {
-            load:  wgpu::LoadOp::Load,
-            store: wgpu::StoreOp::Store,
-          },
-        })],
-        depth_stencil_attachment: None,
-        timestamp_writes:         None,
-        occlusion_query_set:      None,
-      });
-
-      pass.set_pipeline(&self.rect_render_pipeline);
-      pass.set_bind_group(0, &self.rect_bind_group, &[]);
-      pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(..));
-      pass.set_vertex_buffer(1, instance_buffer.slice(..));
-      pass.draw(0..4, 0..self.rect_instances.len() as u32);
-
-      // Clear rect instances so they don't render again in end_frame
-      drop(pass);
-      self.rect_instances.clear();
-    }
-
-    // Note: intermediate_texture_1 already contains the previous frame's content
-    // from the copy that happened in end_frame(), so blur will use that
-
-    Ok(())
   }
 
   /// Apply Gaussian blur to the captured frame and render to specified rect
@@ -1819,6 +1906,7 @@ impl Renderer {
     width: f32,
     height: f32,
     blur_strength: f32,
+    opacity: f32,
   ) -> Result<()> {
     self.ensure_intermediate_textures();
 
@@ -1843,6 +1931,10 @@ impl Renderer {
       .ok_or_else(|| RendererError::Runtime("No current view".into()))?;
 
     let resolution = [self.config.width as f32, self.config.height as f32];
+    let full_rect_origin = [0.0, 0.0];
+    let full_rect_size = resolution;
+    let blur_rect_origin = [x, y];
+    let blur_rect_size = [width, height];
 
     // First pass: Horizontal blur (texture 1 -> texture 2)
     {
@@ -1868,6 +1960,10 @@ impl Renderer {
       let uniforms = BlurUniforms {
         direction: [blur_strength, 0.0], // Horizontal
         resolution,
+        opacity,
+        _padding: 0.0,
+        rect_origin: full_rect_origin,
+        rect_size: full_rect_size,
       };
       self.queue.write_buffer(
         &self.blur_uniform_buffer,
@@ -1920,6 +2016,10 @@ impl Renderer {
       let uniforms = BlurUniforms {
         direction: [0.0, blur_strength], // Vertical
         resolution,
+        opacity,
+        _padding: 0.0,
+        rect_origin: blur_rect_origin,
+        rect_size: blur_rect_size,
       };
       self.queue.write_buffer(
         &self.blur_uniform_buffer,
@@ -1946,12 +2046,85 @@ impl Renderer {
       pass.set_bind_group(0, &bind_group, &[]);
       pass.set_vertex_buffer(0, self.blur_vertex_buffer.slice(..));
 
-      // Set viewport to render only to the specified rect
-      pass.set_viewport(x, y, width, height, 0.0, 1.0);
-
       pass.draw(0..3, 0..1);
     }
 
+    Ok(())
+  }
+
+  /// Draw a blurred background with opacity control
+  /// This is a convenience wrapper around apply_blur for common use cases
+  ///
+  /// # Arguments
+  /// * `x`, `y`, `width`, `height` - Rectangle to apply blur to
+  /// * `blur_strength` - Blur intensity (0.5 - 2.0 typical range, where 1.0 is
+  ///   standard)
+  /// * `opacity` - Opacity of the blurred result (0.0 - 1.0)
+  ///
+  /// # Example
+  /// ```ignore
+  /// surface.draw_blurred_background(100.0, 100.0, 400.0, 300.0, 1.5, 0.95)?;
+  /// ```
+  pub fn draw_blurred_background(
+    &mut self,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    blur_strength: f32,
+    opacity: f32,
+  ) -> Result<()> {
+    self.apply_blur(x, y, width, height, blur_strength, opacity)
+  }
+
+  /// Draw a blurred rounded rectangle (common pattern for popups)
+  /// This combines a blurred background with a semi-transparent colored
+  /// overlay.
+  ///
+  /// This method:
+  /// 1. Captures the current frame (including all rendered text and rectangles)
+  /// 2. Submits GPU commands to ensure capture is complete
+  /// 3. Applies a two-pass Gaussian blur to the captured content
+  /// 4. Draws the blurred result in the specified rectangle
+  /// 5. Draws a semi-transparent colored rectangle on top as an overlay
+  ///
+  /// # Arguments
+  /// * `x`, `y`, `width`, `height` - Rectangle dimensions
+  /// * `corner_radius` - Radius for rounded corners
+  /// * `blur_strength` - Blur intensity (0.5 - 2.0 typical range, 1.0 is
+  ///   standard)
+  /// * `blur_opacity` - Opacity of the blur effect (0.0 - 1.0)
+  /// * `background_color` - Semi-transparent color overlay on top of blur
+  ///
+  /// # Example
+  /// ```ignore
+  /// // Draw a blurred dark popup background
+  /// surface.draw_blurred_rounded_rect(
+  ///     100.0, 100.0, 400.0, 300.0,
+  ///     8.0,  // corner_radius
+  ///     1.5,  // blur_strength
+  ///     0.9,  // blur_opacity
+  ///     Color::new(0.12, 0.12, 0.15, 0.85), // dark semi-transparent overlay
+  /// )?;
+  /// ```
+  pub fn draw_blurred_rounded_rect(
+    &mut self,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    corner_radius: f32,
+    blur_strength: f32,
+    blur_opacity: f32,
+    background_color: Color,
+  ) -> Result<()> {
+    self.pending_blur_rects.push(PendingBlurRect {
+      rect: (x, y, width, height),
+      corner_radius,
+      blur_strength,
+      blur_opacity,
+      background_color,
+    });
     Ok(())
   }
 

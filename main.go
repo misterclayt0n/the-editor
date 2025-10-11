@@ -3,12 +3,9 @@ package main
 import "fmt"
 
 func main() {
-	a := hello()
-	fmt.Println("hello wrodl")
-	fmt.Println(a)
-	// hello
+	fmt.Println("hello world")
 }
 
-func hello() int {
-	return 1
+func hello(a int, b int) int {
+	 return a + b
 }

@@ -5,9 +5,12 @@ import "fmt"
 // hi
 
 func main() {
-	fmt.Println("hello world")
+	a := hello()
+	fmt.Println("hello wrodl")
+	fmt.Println(a)
+	// hello
 }
 
-func hello(a int, b int) int {
-	 return a + b
+func hello() int {
+	return 1
 }

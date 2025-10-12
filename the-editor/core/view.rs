@@ -186,10 +186,10 @@ pub struct View {
   pub jumps:               JumpList,
   pub docs_access_history: Vec<DocumentId>,
 
-  pub last_modified_docs:    [Option<DocumentId>; 2],
-  pub object_selections:     Vec<Selection>,
-  pub gutters:               GutterConfig,
-  doc_revisions:             HashMap<DocumentId, usize>,
+  pub last_modified_docs:  [Option<DocumentId>; 2],
+  pub object_selections:   Vec<Selection>,
+  pub gutters:             GutterConfig,
+  doc_revisions:           HashMap<DocumentId, usize>,
   // HACKS: there should really only be a global diagnostics handler (the
   // non-focused views should just not have different handling for the cursor
   // line). For that we would need accces to editor everywhere (we want to use
@@ -197,10 +197,10 @@ pub struct View {
   // Document into entity component like structure. That is a huge refactor
   // left to future work. For now we treat all views as focused and give them
   // each their own handler.
-  pub diagnostics_handler:   DiagnosticsHandler,
+  pub diagnostics_handler: DiagnosticsHandler,
   /// Animation factor for document opening (0.0 = just opened, 1.0 = fully
   /// loaded)
-  pub zoom_anim:             f32,
+  pub zoom_anim:           f32,
   /// The actual rendered gutter width (accounts for enabled/disabled gutters).
   /// Set by the renderer. If None, falls back to calculating from gutters
   /// config.

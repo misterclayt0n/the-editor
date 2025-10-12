@@ -273,79 +273,79 @@ impl<T, D> Injector<T, D> {
 /// Generic picker component for fuzzy finding
 pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   /// Nucleo matcher for fuzzy finding
-  matcher:               Nucleo<T>,
+  matcher:                  Nucleo<T>,
   /// Columns for the picker table
-  columns:               Arc<[Column<T, D>]>,
+  columns:                  Arc<[Column<T, D>]>,
   /// Primary column index (default for filtering)
-  primary_column:        usize,
+  primary_column:           usize,
   /// Editor data passed to column formatters
-  editor_data:           Arc<D>,
+  editor_data:              Arc<D>,
   /// Current cursor position in results
-  cursor:                u32,
+  cursor:                   u32,
   /// Search query
-  query:                 String,
+  query:                    String,
   /// Cursor position in query
-  query_cursor:          usize,
+  query_cursor:             usize,
   /// Version counter for invalidating background tasks
-  version:               Arc<AtomicUsize>,
+  version:                  Arc<AtomicUsize>,
   /// Callback when item is selected (deprecated, use action_handler instead)
-  on_select:             Box<dyn Fn(&T) + Send>,
+  on_select:                Box<dyn Fn(&T) + Send>,
   /// Action handler for picker actions (open, split, etc.)
-  action_handler:        Option<ActionHandler<T, D>>,
+  action_handler:           Option<ActionHandler<T, D>>,
   /// Callback when picker is closed
-  on_close:              Option<Box<dyn FnOnce() + Send>>,
+  on_close:                 Option<Box<dyn FnOnce() + Send>>,
   /// Whether picker is visible
-  visible:               bool,
+  visible:                  bool,
   /// Number of visible rows
-  completion_height:     u16,
+  completion_height:   u16,
   /// Entrance animation
-  entrance_anim:         crate::core::animation::AnimationHandle<f32>,
+  entrance_anim:       crate::core::animation::AnimationHandle<f32>,
   /// Preview panel fade animation
-  preview_anim:          Option<crate::core::animation::AnimationHandle<f32>>,
+  preview_anim:        Option<crate::core::animation::AnimationHandle<f32>>,
   /// Hovered item index (for hover effects)
-  hovered_item:          Option<u32>,
+  hovered_item:        Option<u32>,
   /// Mouse position for hover effects
-  hover_pos:             Option<(f32, f32)>,
+  hover_pos:           Option<(f32, f32)>,
   /// Cached layout info for mouse hit testing
-  cached_layout:         Option<PickerLayout>,
+  cached_layout:       Option<PickerLayout>,
   /// Previous cursor position for smooth animation
-  prev_cursor:           u32,
+  prev_cursor:         u32,
   /// Selection animation
-  selection_anim:        crate::core::animation::AnimationHandle<f32>,
+  selection_anim:      crate::core::animation::AnimationHandle<f32>,
   /// Input cursor animation
-  query_cursor_anim:     Option<crate::core::animation::AnimationHandle<f32>>,
+  query_cursor_anim:   Option<crate::core::animation::AnimationHandle<f32>>,
   /// Scroll offset for independent scrolling (VSCode-style)
-  scroll_offset:         u32,
+  scroll_offset:       u32,
   /// Whether nucleo is still processing matches
-  matcher_running:       bool,
+  matcher_running:     bool,
   /// Height animation for smooth size transitions
-  height_anim:           Option<crate::core::animation::AnimationHandle<f32>>,
+  height_anim:         Option<crate::core::animation::AnimationHandle<f32>>,
   /// Preview callback to get file path from item, optionally with line range
   /// Returns (PathBuf, Option<(start_line, end_line)>) where lines are
   /// 0-indexed
   preview_fn: Option<Arc<dyn Fn(&T) -> Option<(PathBuf, Option<(usize, usize)>)> + Send + Sync>>,
   /// Custom preview handler for loading previews
-  preview_handler:       Option<PreviewHandler>,
+  preview_handler:          Option<PreviewHandler>,
   /// Cache of loaded previews
-  preview_cache:         HashMap<PathBuf, CachedPreview>,
+  preview_cache:            HashMap<PathBuf, CachedPreview>,
   /// Reusable buffer for binary detection
-  read_buffer:           Vec<u8>,
+  read_buffer:              Vec<u8>,
   /// Dynamic query callback for async item fetching
-  dyn_query_callback:    Option<DynQueryCallback<T, D>>,
+  dyn_query_callback:       Option<DynQueryCallback<T, D>>,
   /// Debounce timer for dynamic queries (milliseconds)
-  dyn_query_debounce_ms: u64,
+  dyn_query_debounce_ms:    u64,
   /// Time when query was last changed (for debouncing)
-  last_query_change:     Option<std::time::Instant>,
+  last_query_change:        Option<std::time::Instant>,
   /// Last query that was sent to dynamic callback
-  last_dyn_query:        String,
+  last_dyn_query:           String,
   /// Register to store picker history (selected items)
-  history_register:      Option<char>,
+  history_register:         Option<char>,
   /// Format function to convert items to strings for history register
-  history_format:        Option<Arc<dyn Fn(&T, &D) -> String + Send + Sync>>,
+  history_format:           Option<Arc<dyn Fn(&T, &D) -> String + Send + Sync>>,
   /// Pending items to add to history (flushed during render)
-  pending_history:       Vec<String>,
+  pending_history:          Vec<String>,
   /// Whether preview animation has been initialized
-  preview_initialized:   bool,
+  preview_initialized:      bool,
 }
 
 #[derive(Clone)]
@@ -1164,9 +1164,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                   self.prev_cursor = self.cursor;
                   self.cursor = global_item_idx;
                   // Restart selection animation
-                  let (duration, easing) = crate::core::animation::presets::FAST;
-                  self.selection_anim =
-                    crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
+    let (duration, easing) = crate::core::animation::presets::FAST;
+    self.selection_anim = crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
                 }
                 self.select();
                 let callback = Box::new(
@@ -1685,19 +1684,29 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
     let corner_radius = (height_scaled * 0.02).min(8.0);
     let border_thickness = 1.0;
 
-    // Render picker content in overlay mode without masking the underlying
-    // buffer so the blur can sample the live editor contents each frame.
-    surface.with_overlay(|surface| {
-      let picker_bg = Color::new(bg_color.r * 0.9, bg_color.g * 0.9, bg_color.b * 0.9, alpha);
-      surface.draw_rounded_rect(
-        x,
-        y,
-        picker_width_scaled,
-        height_scaled,
-        corner_radius,
-        picker_bg,
-      );
+    // Draw opaque picker background first (before enabling overlay text mode)
+    let picker_bg = Color::new(bg_color.r, bg_color.g, bg_color.b, alpha);
+    surface.draw_rounded_rect(
+      x,
+      y,
+      picker_width_scaled,
+      height_scaled,
+      corner_radius,
+      picker_bg,
+    );
 
+    // Calculate mask width for overlay region (covers picker and preview if
+    // visible)
+    let mask_width = if preview_anim_value > 0.0 {
+      // Mask covers both picker and preview panels
+      total_width * scale
+    } else {
+      // Mask covers only picker panel
+      picker_width_scaled
+    };
+
+    // Render picker content in overlay mode with automatic masking
+    surface.with_overlay_region(x, y, mask_width, height_scaled, |surface| {
       // Apply alpha to border color
       let border_color_anim = Color::new(
         border_color.r,
@@ -2136,8 +2145,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
       // Draw preview panel with animation
       if preview_anim_value > 0.0 {
-        let preview_ease =
-          preview_anim_value * preview_anim_value * (3.0 - 2.0 * preview_anim_value); // Smoothstep
+        let preview_ease = preview_anim_value * preview_anim_value * (3.0 - 2.0 * preview_anim_value); // Smoothstep
 
         let preview_gap = 12.0; // Padding between picker and preview
         let preview_x = x + picker_width_scaled + preview_gap;
@@ -2146,10 +2154,10 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         // Apply alpha to preview
         let preview_alpha = alpha * preview_ease;
         let bg_color_preview = Color::new(
-          bg_color.r * 0.9, // Match picker's darkening
-          bg_color.g * 0.9,
-          bg_color.b * 0.9,
-          preview_alpha,
+          bg_color.r,
+          bg_color.g,
+          bg_color.b,
+          bg_color.a * preview_alpha,
         );
         let border_color_preview = Color::new(
           border_color.r,
@@ -2164,6 +2172,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
           text_color.a * preview_alpha,
         );
 
+        // Draw preview background with rounded corners
         surface.draw_rounded_rect(
           preview_x,
           y,
@@ -2233,106 +2242,121 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
               // Use overlay region for clipping
               // Capture byte_offset for use in closure
               let doc_byte_start = *byte_offset;
-              surface.with_overlay(|surface| {
-                let mut relative_byte_offset: usize =
-                  lines.iter().take(start_line).map(|s| s.len()).sum();
+              surface.with_overlay_region(
+                preview_x + padding,
+                y + padding,
+                content_width,
+                content_height,
+                |surface| {
+                  let mut relative_byte_offset: usize =
+                    lines.iter().take(start_line).map(|s| s.len()).sum();
 
-                for (visible_idx, line_str) in lines
-                  .iter()
-                  .skip(start_line)
-                  .enumerate()
-                  .take(lines_to_show)
-                {
-                  let line_idx = start_line + visible_idx; // Index within lines vector
-                  let doc_line_idx = line_idx + line_offset; // Actual line number in document
+                  for (visible_idx, line_str) in lines
+                    .iter()
+                    .skip(start_line)
+                    .enumerate()
+                    .take(lines_to_show)
+                  {
+                    let line_idx = start_line + visible_idx; // Index within lines vector
+                    let doc_line_idx = line_idx + line_offset; // Actual line number in document
 
-                  // Calculate text baseline position (following same pattern as hover/completion)
-                  let text_y = content_y + UI_FONT_SIZE + visible_idx as f32 * line_height;
+                    // Calculate text baseline position (following same pattern as hover/completion)
+                    let text_y = content_y + UI_FONT_SIZE + visible_idx as f32 * line_height;
 
-                  // Draw highlight background for lines in the target range (use doc coordinates)
-                  let should_highlight = if let Some((range_start, range_end)) = preview_line {
-                    doc_line_idx >= range_start && doc_line_idx <= range_end
-                  } else {
-                    false
-                  };
+                    // Draw highlight background for lines in the target range (use doc coordinates)
+                    let should_highlight = if let Some((range_start, range_end)) = preview_line {
+                      doc_line_idx >= range_start && doc_line_idx <= range_end
+                    } else {
+                      false
+                    };
 
-                  if should_highlight {
-                    let highlight_color = Color::new(
-                      border_color_preview.r,
-                      border_color_preview.g,
-                      border_color_preview.b,
-                      0.15 * preview_alpha,
-                    );
-                    // Draw highlight slightly above baseline, matching completion component
-                    surface.draw_rect(
-                      content_x,
-                      text_y - 2.0,
-                      content_width,
-                      line_height,
-                      highlight_color,
-                    );
-                  }
-                  // Trim trailing whitespace
-                  let trimmed = line_str.trim_end();
-                  let line_byte_len = line_str.len();
-
-                  // Calculate byte range for this line (relative to lines vector)
-                  let line_start_byte = relative_byte_offset;
-                  let line_end_byte = relative_byte_offset + line_byte_len;
-
-                  // Build text segments with syntax highlighting
-                  let mut segments = Vec::new();
-                  let mut current_char_idx = 0;
-                  let mut current_byte_in_line = 0;
-
-                  // Truncate if line is too long
-                  let max_display_chars = max_chars.saturating_sub(3);
-                  let should_truncate = trimmed.chars().count() > max_display_chars;
-
-                  for ch in trimmed.chars() {
-                    if should_truncate && current_char_idx >= max_display_chars {
-                      // Add ellipsis and stop
-                      segments.push(TextSegment {
-                        content: "...".to_string(),
-                        style:   TextStyle {
-                          size:  UI_FONT_SIZE,
-                          color: text_color_preview,
-                        },
-                      });
-                      break;
+                    if should_highlight {
+                      let highlight_color = Color::new(
+                        border_color_preview.r,
+                        border_color_preview.g,
+                        border_color_preview.b,
+                        0.15 * preview_alpha,
+                      );
+                      // Draw highlight slightly above baseline, matching completion component
+                      surface.draw_rect(
+                        content_x,
+                        text_y - 2.0,
+                        content_width,
+                        line_height,
+                        highlight_color,
+                      );
                     }
+                    // Trim trailing whitespace
+                    let trimmed = line_str.trim_end();
+                    let line_byte_len = line_str.len();
 
-                    // Calculate byte position (relative to lines vector)
-                    let relative_byte_pos = line_start_byte + current_byte_in_line;
-                    // Convert to absolute document byte position for highlight lookup
-                    let doc_byte_pos = doc_byte_start + relative_byte_pos;
+                    // Calculate byte range for this line (relative to lines vector)
+                    let line_start_byte = relative_byte_offset;
+                    let line_end_byte = relative_byte_offset + line_byte_len;
 
-                    // Find active highlight for this byte position
-                    let mut active_color = text_color_preview;
-                    for (highlight, range) in highlights.iter() {
-                      if range.contains(&doc_byte_pos) {
-                        // Apply theme color for this highlight
-                        let hl_style = theme.highlight(*highlight);
-                        if let Some(fg) = hl_style.fg {
-                          active_color = crate::ui::theme_color_to_renderer_color(fg);
-                          active_color.a *= preview_alpha;
-                        }
+                    // Build text segments with syntax highlighting
+                    let mut segments = Vec::new();
+                    let mut current_char_idx = 0;
+                    let mut current_byte_in_line = 0;
+
+                    // Truncate if line is too long
+                    let max_display_chars = max_chars.saturating_sub(3);
+                    let should_truncate = trimmed.chars().count() > max_display_chars;
+
+                    for ch in trimmed.chars() {
+                      if should_truncate && current_char_idx >= max_display_chars {
+                        // Add ellipsis and stop
+                        segments.push(TextSegment {
+                          content: "...".to_string(),
+                          style:   TextStyle {
+                            size:  UI_FONT_SIZE,
+                            color: text_color_preview,
+                          },
+                        });
                         break;
                       }
-                    }
 
-                    // Check if we can merge with previous segment (same color)
-                    if let Some(last_seg) = segments.last_mut() {
-                      // Compare colors (approximately)
-                      let colors_match = (last_seg.style.color.r - active_color.r).abs() < 0.001
-                        && (last_seg.style.color.g - active_color.g).abs() < 0.001
-                        && (last_seg.style.color.b - active_color.b).abs() < 0.001;
+                      // Calculate byte position (relative to lines vector)
+                      let relative_byte_pos = line_start_byte + current_byte_in_line;
+                      // Convert to absolute document byte position for highlight lookup
+                      let doc_byte_pos = doc_byte_start + relative_byte_pos;
 
-                      if colors_match {
-                        // Merge with previous segment
-                        last_seg.content.push(ch);
+                      // Find active highlight for this byte position
+                      let mut active_color = text_color_preview;
+                      for (highlight, range) in highlights.iter() {
+                        if range.contains(&doc_byte_pos) {
+                          // Apply theme color for this highlight
+                          let hl_style = theme.highlight(*highlight);
+                          if let Some(fg) = hl_style.fg {
+                            active_color = crate::ui::theme_color_to_renderer_color(fg);
+                            active_color.a *= preview_alpha;
+                          }
+                          break;
+                        }
+                      }
+
+                      // Check if we can merge with previous segment (same color)
+                      if let Some(last_seg) = segments.last_mut() {
+                        // Compare colors (approximately)
+                        let colors_match = (last_seg.style.color.r - active_color.r).abs() < 0.001
+                          && (last_seg.style.color.g - active_color.g).abs() < 0.001
+                          && (last_seg.style.color.b - active_color.b).abs() < 0.001;
+
+                        if colors_match {
+                          // Merge with previous segment
+                          last_seg.content.push(ch);
+                        } else {
+                          // Start new segment
+                          segments.push(TextSegment {
+                            content: ch.to_string(),
+                            style:   TextStyle {
+                              size:  UI_FONT_SIZE,
+                              color: active_color,
+                            },
+                          });
+                        }
                       } else {
-                        // Start new segment
+                        // First segment
                         segments.push(TextSegment {
                           content: ch.to_string(),
                           style:   TextStyle {
@@ -2341,32 +2365,23 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                           },
                         });
                       }
-                    } else {
-                      // First segment
-                      segments.push(TextSegment {
-                        content: ch.to_string(),
-                        style:   TextStyle {
-                          size:  UI_FONT_SIZE,
-                          color: active_color,
-                        },
+
+                      current_char_idx += 1;
+                      current_byte_in_line += ch.len_utf8();
+                    }
+
+                    // Render the line with all segments
+                    if !segments.is_empty() {
+                      surface.draw_text(TextSection {
+                        position: (content_x, text_y),
+                        texts:    segments,
                       });
                     }
 
-                    current_char_idx += 1;
-                    current_byte_in_line += ch.len_utf8();
+                    relative_byte_offset = line_end_byte;
                   }
-
-                  // Render the line with all segments
-                  if !segments.is_empty() {
-                    surface.draw_text(TextSection {
-                      position: (content_x, text_y),
-                      texts:    segments,
-                    });
-                  }
-
-                  relative_byte_offset = line_end_byte;
-                }
-              });
+                },
+              );
             },
             PreviewData::Directory { entries } => {
               // Render directory listing
@@ -2384,64 +2399,70 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
               // Calculate max characters per line based on available width
               let max_chars = (content_width / UI_FONT_WIDTH).floor() as usize;
 
-              // Render directory entries in overlay mode without masking
-              surface.with_overlay(|surface| {
-                for (idx, entry) in entries.iter().take(entries_to_show).enumerate() {
-                  let text_y = content_y + UI_FONT_SIZE + idx as f32 * line_height;
+              // Use overlay region for clipping
+              surface.with_overlay_region(
+                preview_x + padding,
+                y + padding,
+                content_width,
+                content_height,
+                |surface| {
+                  for (idx, entry) in entries.iter().take(entries_to_show).enumerate() {
+                    let text_y = content_y + UI_FONT_SIZE + idx as f32 * line_height;
 
-                  let is_dir = entry.ends_with('/');
+                    let is_dir = entry.ends_with('/');
 
-                  // Use different colors for directories vs files
-                  let entry_color = if is_dir {
-                    // Directories: light blue
-                    let mut dir_color = Color::rgb(0.5, 0.7, 1.0);
-                    dir_color.a *= preview_alpha;
-                    dir_color
-                  } else {
-                    text_color_preview
-                  };
+                    // Use different colors for directories vs files
+                    let entry_color = if is_dir {
+                      // Directories: light blue
+                      let mut dir_color = Color::rgb(0.5, 0.7, 1.0);
+                      dir_color.a *= preview_alpha;
+                      dir_color
+                    } else {
+                      text_color_preview
+                    };
 
-                  // Truncate if entry name is too long
-                  let max_display_chars = max_chars.saturating_sub(3);
-                  let should_truncate = entry.chars().count() > max_display_chars;
+                    // Truncate if entry name is too long
+                    let max_display_chars = max_chars.saturating_sub(3);
+                    let should_truncate = entry.chars().count() > max_display_chars;
 
-                  let display_text = if should_truncate {
-                    let truncated: String = entry.chars().take(max_display_chars).collect();
-                    format!("{}...", truncated)
-                  } else {
-                    entry.clone()
-                  };
+                    let display_text = if should_truncate {
+                      let truncated: String = entry.chars().take(max_display_chars).collect();
+                      format!("{}...", truncated)
+                    } else {
+                      entry.clone()
+                    };
 
-                  surface.draw_text(TextSection {
-                    position: (content_x, text_y),
-                    texts:    vec![TextSegment {
-                      content: display_text,
-                      style:   TextStyle {
-                        size:  UI_FONT_SIZE,
-                        color: entry_color,
-                      },
-                    }],
-                  });
-                }
+                    surface.draw_text(TextSection {
+                      position: (content_x, text_y),
+                      texts:    vec![TextSegment {
+                        content: display_text,
+                        style:   TextStyle {
+                          size:  UI_FONT_SIZE,
+                          color: entry_color,
+                        },
+                      }],
+                    });
+                  }
 
-                // Show count if there are more entries
-                if entries.len() > entries_to_show {
-                  let remaining = entries.len() - entries_to_show;
-                  let more_text = format!("... and {} more", remaining);
-                  let text_y = content_y + UI_FONT_SIZE + entries_to_show as f32 * line_height;
+                  // Show count if there are more entries
+                  if entries.len() > entries_to_show {
+                    let remaining = entries.len() - entries_to_show;
+                    let more_text = format!("... and {} more", remaining);
+                    let text_y = content_y + UI_FONT_SIZE + entries_to_show as f32 * line_height;
 
-                  surface.draw_text(TextSection {
-                    position: (content_x, text_y),
-                    texts:    vec![TextSegment {
-                      content: more_text,
-                      style:   TextStyle {
-                        size:  UI_FONT_SIZE,
-                        color: text_color_preview,
-                      },
-                    }],
-                  });
-                }
-              });
+                    surface.draw_text(TextSection {
+                      position: (content_x, text_y),
+                      texts:    vec![TextSegment {
+                        content: more_text,
+                        style:   TextStyle {
+                          size:  UI_FONT_SIZE,
+                          color: text_color_preview,
+                        },
+                      }],
+                    });
+                  }
+                },
+              );
             },
             PreviewData::Placeholder(placeholder) => {
               // Show placeholder text centered

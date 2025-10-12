@@ -247,10 +247,90 @@ pub struct PulseSample {
   pub energy:  f32,
 }
 
+/// Visual effect triggered by the noop command (easter egg)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoopEffectKind {
+  Insert,
+  Delete,
+}
+
+#[derive(Debug, Clone)]
+pub struct NoopEffect {
+  /// Screen X coordinate (in pixels) where the effect should be rendered
+  pub screen_x:   f32,
+  /// Screen Y coordinate (in pixels) where the effect should be rendered
+  pub screen_y:   f32,
+  /// Type of effect (insert = laser, delete = explosion)
+  pub kind:       NoopEffectKind,
+  /// The actual character/grapheme being animated
+  pub grapheme:   String,
+  /// Time when the effect was triggered
+  pub started_at: Instant,
+}
+
+impl NoopEffect {
+  const DURATION: Duration = Duration::from_millis(800);
+
+  pub fn new(screen_x: f32, screen_y: f32, kind: NoopEffectKind, grapheme: String) -> Self {
+    Self {
+      screen_x,
+      screen_y,
+      kind,
+      grapheme,
+      started_at: Instant::now(),
+    }
+  }
+
+  /// Returns a progress value from 0.0 to 1.0 if the effect is still active,
+  /// or None if it has expired.
+  pub fn progress(&self, now: Instant) -> Option<f32> {
+    let elapsed = now.saturating_duration_since(self.started_at);
+    if elapsed >= Self::DURATION {
+      return None;
+    }
+    Some(elapsed.as_secs_f32() / Self::DURATION.as_secs_f32())
+  }
+}
+
 #[derive(Debug, Clone)]
 pub struct ViewData {
   pub view_position:   ViewPosition,
   pub selection_pulse: Option<SelectionPulse>,
+  pub noop_effects:    Vec<NoopEffect>,
+  pub screen_shake:    Option<ScreenShake>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScreenShake {
+  pub started_at: Instant,
+  pub intensity:  f32,
+}
+
+impl ScreenShake {
+  const DURATION: Duration = Duration::from_millis(300);
+
+  pub fn new(intensity: f32) -> Self {
+    Self {
+      started_at: Instant::now(),
+      intensity,
+    }
+  }
+
+  pub fn sample(&self, now: Instant) -> Option<(f32, f32)> {
+    let elapsed = now.saturating_duration_since(self.started_at);
+    if elapsed >= Self::DURATION {
+      return None;
+    }
+
+    let progress = elapsed.as_secs_f32() / Self::DURATION.as_secs_f32();
+    let decay = 1.0 - progress;
+    let frequency = 30.0;
+
+    let x = (elapsed.as_secs_f32() * frequency).sin() * self.intensity * decay;
+    let y = (elapsed.as_secs_f32() * frequency * 1.3).cos() * self.intensity * decay;
+
+    Some((x, y))
+  }
 }
 
 impl Default for ViewData {
@@ -258,6 +338,8 @@ impl Default for ViewData {
     Self {
       view_position:   ViewPosition::default(),
       selection_pulse: None,
+      noop_effects:    Vec::new(),
+      screen_shake:    None,
     }
   }
 }

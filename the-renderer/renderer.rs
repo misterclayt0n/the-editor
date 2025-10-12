@@ -58,6 +58,8 @@ struct RectInstance {
   glow_center:   [f32; 2],
   glow_radius:   f32,
   effect_kind:   f32,
+  effect_time:   f32,      // Animation progress [0..1]
+  _pad1:         [f32; 3], // Padding to align to 16 bytes
 }
 
 /// Vertex data for a rectangle (using instanced rendering)
@@ -382,6 +384,11 @@ impl Renderer {
               wgpu::VertexAttribute {
                 offset:          56,
                 shader_location: 7,
+                format:          wgpu::VertexFormat::Float32,
+              },
+              wgpu::VertexAttribute {
+                offset:          60,
+                shader_location: 8,
                 format:          wgpu::VertexFormat::Float32,
               },
             ],
@@ -937,6 +944,8 @@ impl Renderer {
             glow_center:   [0.0, 0.0],
             glow_radius:   0.0,
             effect_kind:   0.0,
+            effect_time:   0.0,
+            _pad1:         [0.0, 0.0, 0.0],
           }
         })
         .collect();
@@ -1461,6 +1470,8 @@ impl Renderer {
       glow_center:   [0.0, 0.0],
       glow_radius:   0.0,
       effect_kind:   0.0,
+      effect_time:   0.0,
+      _pad1:         [0.0, 0.0, 0.0],
     });
   }
 
@@ -1483,6 +1494,8 @@ impl Renderer {
       glow_center: [0.0, 0.0],
       glow_radius: 0.0,
       effect_kind: 0.0,
+      effect_time: 0.0,
+      _pad1: [0.0, 0.0, 0.0],
     });
   }
 
@@ -1509,6 +1522,8 @@ impl Renderer {
       glow_center: [center_x - x, center_y - y],
       glow_radius: radius,
       effect_kind: 1.0,
+      effect_time: 0.0,
+      _pad1: [0.0, 0.0, 0.0],
     });
   }
 
@@ -1533,6 +1548,8 @@ impl Renderer {
       glow_center: [0.0, 0.0],
       glow_radius: thickness.max(0.5),
       effect_kind: 2.0,
+      effect_time: 0.0,
+      _pad1: [0.0, 0.0, 0.0],
     });
   }
 
@@ -1560,6 +1577,37 @@ impl Renderer {
       glow_center: [top_thickness.max(0.0), bottom_thickness.max(0.0)],
       glow_radius: side_thickness.max(0.0),
       effect_kind: 3.0,
+      effect_time: 0.0,
+      _pad1: [0.0, 0.0, 0.0],
+    });
+  }
+
+  /// Draw a custom shader effect (explosion or laser)
+  /// effect_kind: 4.0 = explosion, 5.0 = laser
+  /// effect_time: animation progress from 0.0 to 1.0
+  #[allow(clippy::too_many_arguments)]
+  pub fn draw_effect(
+    &mut self,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    effect_kind: f32,
+    effect_time: f32,
+    radius: f32,
+    color: Color,
+  ) {
+    self.rect_instances.push(RectInstance {
+      position: [x, y],
+      size: [width, height],
+      color: color_to_linear(color),
+      corner_radius: 0.0,
+      _pad0: [0.0, 0.0],
+      glow_center: [0.0, 0.0],
+      glow_radius: radius,
+      effect_kind,
+      effect_time,
+      _pad1: [0.0, 0.0, 0.0],
     });
   }
 

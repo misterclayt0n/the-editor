@@ -1323,6 +1323,43 @@ impl Document {
       .and_then(|data| data.selection_pulse.as_ref())
   }
 
+  pub fn add_noop_effect(&mut self, view_id: ViewId, effect: crate::core::view::NoopEffect) {
+    self.view_data_mut(view_id).noop_effects.push(effect);
+  }
+
+  pub fn noop_effects(&self, view_id: ViewId) -> &[crate::core::view::NoopEffect] {
+    self
+      .view_data
+      .get(&view_id)
+      .map(|data| data.noop_effects.as_slice())
+      .unwrap_or(&[])
+  }
+
+  pub fn clear_expired_noop_effects(&mut self, view_id: ViewId, now: std::time::Instant) {
+    if let Some(data) = self.view_data.get_mut(&view_id) {
+      data
+        .noop_effects
+        .retain(|effect| effect.progress(now).is_some());
+    }
+  }
+
+  pub fn set_screen_shake(&mut self, view_id: ViewId, shake: crate::core::view::ScreenShake) {
+    self.view_data_mut(view_id).screen_shake = Some(shake);
+  }
+
+  pub fn screen_shake(&self, view_id: ViewId) -> Option<&crate::core::view::ScreenShake> {
+    self
+      .view_data
+      .get(&view_id)
+      .and_then(|data| data.screen_shake.as_ref())
+  }
+
+  pub fn clear_screen_shake(&mut self, view_id: ViewId) {
+    if let Some(data) = self.view_data.get_mut(&view_id) {
+      data.screen_shake = None;
+    }
+  }
+
   /// Select text within the [`Document`].
   pub fn set_selection(&mut self, view_id: ViewId, selection: Selection) {
     // TODO: use a transaction?

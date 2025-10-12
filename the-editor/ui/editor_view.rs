@@ -124,6 +124,7 @@ pub struct EditorView {
   // Zoom animation state
   zoom_anim_active:          bool,
   selection_pulse_animating: bool,
+  noop_effect_animating:     bool,
   // Gutter management
   pub gutter_manager:        GutterManager,
   // Completion popup
@@ -146,6 +147,7 @@ impl EditorView {
       cursor_animation: None,
       zoom_anim_active: false,
       selection_pulse_animating: false,
+      noop_effect_animating: false,
       gutter_manager: GutterManager::with_defaults(),
       completion: None,
       signature_help: None,
@@ -338,6 +340,7 @@ impl Component for EditorView {
         .is_some_and(|anim| !anim.is_complete())
       || self.zoom_anim_active
       || self.selection_pulse_animating
+      || self.noop_effect_animating
       || self.completion.as_ref().is_some_and(|c| c.is_animating())
       || self
         .signature_help
@@ -804,7 +807,7 @@ impl Component for EditorView {
       // Calculate base coordinates from view's area (convert cell coords to pixels)
       let view_offset_x = view.area.x as f32 * font_width;
       let view_offset_y = view.area.y as f32 * (font_size + LINE_SPACING);
-      let base_y = view_offset_y + VIEW_PADDING_TOP + zoom_offset_y;
+      let mut base_y = view_offset_y + VIEW_PADDING_TOP + zoom_offset_y;
 
       // Calculate visible lines for THIS view based on its height
       // view.area.height is already in rows/cells
@@ -937,7 +940,22 @@ impl Component for EditorView {
         }
 
         let gutter_x = gutter_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
-        let base_x = content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
+        let mut base_x = content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
+
+        // Apply screen shake if active
+        let (shake_offset_x, shake_offset_y) = if let Some(shake) = doc.screen_shake(focus_view) {
+          if let Some((x, y)) = shake.sample(now) {
+            pulses_active_any = true;
+            (x, y)
+          } else {
+            (0.0, 0.0)
+          }
+        } else {
+          (0.0, 0.0)
+        };
+
+        base_x += shake_offset_x;
+        base_y += shake_offset_y;
 
         let cursor_pos = selection.primary().cursor(doc_text.slice(..));
 
@@ -1577,12 +1595,290 @@ impl Component for EditorView {
         }
       }
 
+      // Render all noop effects (explosions/lasers at multiple positions)
+      if let Some(doc) = cx.editor.documents.get(&doc_id) {
+        let effects: Vec<_> = doc.noop_effects(focus_view).to_vec();
+
+        // Calculate screen shake offset for effects
+        let (shake_offset_x, shake_offset_y) = if let Some(shake) = doc.screen_shake(focus_view) {
+          shake.sample(now).unwrap_or((0.0, 0.0))
+        } else {
+          (0.0, 0.0)
+        };
+
+        if !effects.is_empty() {
+          let view_offset = doc.view_offset(focus_view);
+
+          for effect in &effects {
+            if let Some(progress) = effect.progress(now) {
+              // Effect stores visual row/col (stored as screen_x/screen_y)
+              let visual_row = effect.screen_x as usize; // screen_x is actually row
+              let visual_col = effect.screen_y as usize; // screen_y is actually col
+
+              // Convert visual row/col to screen row/col
+              let screen_row = visual_row as isize - view_offset.vertical_offset as isize;
+              let screen_col = visual_col.saturating_sub(view_offset.horizontal_offset);
+
+              if screen_row >= 0 && screen_row < viewport.height as isize {
+                // Convert screen row/col to pixel coordinates
+                let mut effect_base_x = content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
+                let mut effect_base_y = (content_rect.y + screen_row as u16) as f32
+                  * (font_size + LINE_SPACING)
+                  + VIEW_PADDING_TOP;
+                effect_base_x += shake_offset_x;
+                effect_base_y += shake_offset_y;
+                let effect_x = effect_base_x + screen_col as f32 * font_width;
+                let effect_y = effect_base_y;
+                let effect_center_x = effect_x + font_width * 0.5;
+                let effect_center_y = effect_y + font_size * 0.6;
+
+                // Render noop effects (delete/insert)
+                use crate::core::view::NoopEffectKind;
+                match effect.kind {
+                  NoopEffectKind::Delete => {
+                    let num_sparks = 8;
+                    let max_distance = font_width * 2.6;
+                    let decay = (1.0 - progress).powf(0.6);
+
+                    // Compact flash to emphasise the origin
+                    if progress < 0.2 {
+                      let flash_strength = (0.2 - progress) / 0.2;
+                      let flash_size = font_width * (1.6 + flash_strength * 0.9);
+                      self.command_batcher.add_command(RenderCommand::Rect {
+                        x:      effect_center_x - flash_size / 2.0,
+                        y:      effect_center_y - flash_size / 2.0,
+                        width:  flash_size,
+                        height: flash_size,
+                        color:  Color::rgba(1.0, 0.85, 0.4, flash_strength * 0.7),
+                      });
+                    }
+
+                    // Glowing ember at the center
+                    let core_size = font_width * (0.28 + (1.0 - progress) * 0.35);
+                    let core_alpha = (0.85 - progress).max(0.0);
+                    self.command_batcher.add_command(RenderCommand::Rect {
+                      x:      effect_center_x - core_size / 2.0,
+                      y:      effect_center_y - core_size / 2.0,
+                      width:  core_size,
+                      height: core_size,
+                      color:  Color::rgba(1.0, 0.72, 0.33, core_alpha),
+                    });
+
+                    // Soft halo expanding outward
+                    let halo_alpha = (1.0 - progress).powf(1.5) * 0.4;
+                    if halo_alpha > 0.0 {
+                      let halo_size = core_size * (2.6 + progress * 1.4);
+                      self.command_batcher.add_command(RenderCommand::Rect {
+                        x:      effect_center_x - halo_size / 2.0,
+                        y:      effect_center_y - halo_size / 2.0,
+                        width:  halo_size,
+                        height: halo_size,
+                        color:  Color::rgba(1.0, 0.55, 0.2, halo_alpha),
+                      });
+                    }
+
+                    // Sparks travelling outward with subtle trailing embers
+                    for spark_idx in 0..num_sparks {
+                      let angle = (spark_idx as f32 / num_sparks as f32) * std::f32::consts::TAU;
+                      let speed_variation = 0.7 + (spark_idx as f32 * 0.41).sin() * 0.25;
+                      let distance = progress.powf(0.85) * max_distance * speed_variation;
+                      let spark_x = effect_center_x + angle.cos() * distance;
+                      let spark_y = effect_center_y + angle.sin() * distance;
+
+                      let spark_size = font_width * (0.18 + decay * 0.35);
+                      let spark_color = Color::rgba(1.0, 0.55 + decay * 0.25, 0.25, decay * 0.9);
+
+                      self.command_batcher.add_command(RenderCommand::Rect {
+                        x:      spark_x - spark_size / 2.0,
+                        y:      spark_y - spark_size / 2.0,
+                        width:  spark_size,
+                        height: spark_size,
+                        color:  spark_color,
+                      });
+
+                      // trailing embers following each spark
+                      for trail_step in 1..=3 {
+                        let trail_progress = progress - trail_step as f32 * 0.05;
+                        if trail_progress <= 0.0 {
+                          break;
+                        }
+
+                        let trail_distance =
+                          trail_progress.powf(0.85) * max_distance * speed_variation;
+                        let trail_x = effect_center_x + angle.cos() * trail_distance;
+                        let trail_y = effect_center_y + angle.sin() * trail_distance;
+                        let trail_alpha = decay * (0.6 / trail_step as f32);
+
+                        self.command_batcher.add_command(RenderCommand::Rect {
+                          x:      trail_x - spark_size / 2.0,
+                          y:      trail_y - spark_size / 2.0,
+                          width:  spark_size,
+                          height: spark_size,
+                          color:  Color::rgba(0.9, 0.4, 0.15, trail_alpha),
+                        });
+                      }
+                    }
+                  },
+                  NoopEffectKind::Insert => {
+                    let launch_duration = 0.35;
+                    let burst_phase =
+                      ((progress - launch_duration) / (1.0 - launch_duration)).clamp(0.0, 1.0);
+                    let launch_progress = (progress / launch_duration).clamp(0.0, 1.0);
+
+                    // Rocket travels upward from below the line before bursting
+                    let start_y = effect_center_y + font_size * 1.0;
+                    let rocket_y =
+                      start_y - (start_y - effect_center_y) * launch_progress.powf(0.75);
+                    let rocket_x = effect_center_x;
+
+                    if progress < launch_duration {
+                      // Rocket head
+                      let rocket_alpha = (1.0 - progress).powf(0.4);
+                      let rocket_size = font_width * 0.18;
+                      self.command_batcher.add_command(RenderCommand::Rect {
+                        x:      rocket_x - rocket_size / 2.0,
+                        y:      rocket_y - rocket_size / 2.0,
+                        width:  rocket_size,
+                        height: rocket_size,
+                        color:  Color::rgba(0.9, 0.95, 1.0, rocket_alpha * 0.9),
+                      });
+
+                      // Rocket glow
+                      let glow_size = font_width * (0.4 + launch_progress * 0.8);
+                      self.command_batcher.add_command(RenderCommand::Rect {
+                        x:      rocket_x - glow_size / 2.0,
+                        y:      rocket_y - glow_size / 2.0,
+                        width:  glow_size,
+                        height: glow_size,
+                        color:  Color::rgba(0.5, 0.85, 1.0, rocket_alpha * 0.6),
+                      });
+
+                      // Trailing sparks along the path
+                      for step in 0..5 {
+                        let t = step as f32 / 5.0;
+                        let tail_alpha = (0.8 - t).max(0.0) * rocket_alpha;
+                        if tail_alpha <= 0.0 {
+                          continue;
+                        }
+                        let tail_y = start_y - (start_y - rocket_y) * t;
+                        let offset = (step as f32 * 1.2).sin() * font_width * 0.08;
+                        let tail_size = font_width * (0.18 - t * 0.08);
+                        self.command_batcher.add_command(RenderCommand::Rect {
+                          x:      rocket_x + offset - tail_size / 2.0,
+                          y:      tail_y - tail_size / 2.0,
+                          width:  tail_size,
+                          height: tail_size,
+                          color:  Color::rgba(0.4, 0.8, 1.0, tail_alpha * 0.7),
+                        });
+                      }
+                    }
+
+                    if burst_phase > 0.0 {
+                      let burst_strength = (1.0 - burst_phase).powf(0.4);
+                      let burst_radius = font_width * (0.4 + burst_phase.powf(0.65) * 2.6);
+
+                      // Core burst halo
+                      let halo_alpha = (1.0 - burst_phase).powf(1.2) * 0.5;
+                      let halo_size = burst_radius * 0.9;
+                      self.command_batcher.add_command(RenderCommand::Rect {
+                        x:      effect_center_x - halo_size / 2.0,
+                        y:      effect_center_y - halo_size / 2.0,
+                        width:  halo_size,
+                        height: halo_size,
+                        color:  Color::rgba(0.6, 0.9, 1.0, halo_alpha),
+                      });
+
+                      // Firework petals
+                      let petals = 14;
+                      for i in 0..petals {
+                        let angle = (i as f32 / petals as f32) * std::f32::consts::TAU
+                          + burst_phase * std::f32::consts::PI;
+                        let distance = burst_radius * (0.7 + (i as f32 * 1.37).sin() * 0.2);
+                        let spark_x = effect_center_x + angle.cos() * distance;
+                        let spark_y = effect_center_y + angle.sin() * distance;
+
+                        let spark_size = font_width * (0.22 + burst_strength * 0.18);
+                        let spark_alpha = (1.0 - burst_phase).powf(0.8) * 0.8;
+                        self.command_batcher.add_command(RenderCommand::Rect {
+                          x:      spark_x - spark_size / 2.0,
+                          y:      spark_y - spark_size / 2.0,
+                          width:  spark_size,
+                          height: spark_size,
+                          color:  Color::rgba(0.45, 0.95, 1.0, spark_alpha),
+                        });
+
+                        // Petal trails
+                        for trail_step in 1..=3 {
+                          let trail_factor = 1.0 - trail_step as f32 * 0.25;
+                          if trail_factor <= 0.0 {
+                            continue;
+                          }
+                          let trail_distance = distance * trail_factor;
+                          let trail_angle = angle - trail_step as f32 * 0.12;
+                          let trail_x = effect_center_x + trail_angle.cos() * trail_distance;
+                          let trail_y = effect_center_y + trail_angle.sin() * trail_distance;
+                          let trail_alpha = spark_alpha * (0.55 / trail_step as f32);
+
+                          self.command_batcher.add_command(RenderCommand::Rect {
+                            x:      trail_x - spark_size / 2.5,
+                            y:      trail_y - spark_size / 2.5,
+                            width:  spark_size / 1.6,
+                            height: spark_size / 1.6,
+                            color:  Color::rgba(0.35, 0.9, 1.0, trail_alpha.max(0.0)),
+                          });
+                        }
+                      }
+
+                      // Glitter that lingers near the burst
+                      let glitter_points = 10;
+                      for g in 0..glitter_points {
+                        let theta = (g as f32 * 1.73 + burst_phase * 6.0).sin();
+                        let radial = burst_radius * 0.6 * (g as f32 * 0.37).cos().abs();
+                        let jitter = (g as f32 * 2.1).sin() * font_width * 0.1;
+                        let glitter_x = effect_center_x + theta * radial + jitter;
+                        let glitter_y = effect_center_y + theta.cos() * radial * 0.7;
+                        let glitter_size = font_width * 0.12;
+                        let glitter_alpha = (1.0 - burst_phase).powf(0.5) * 0.35;
+                        if glitter_alpha > 0.0 {
+                          self.command_batcher.add_command(RenderCommand::Rect {
+                            x:      glitter_x - glitter_size / 2.0,
+                            y:      glitter_y - glitter_size / 2.0,
+                            width:  glitter_size,
+                            height: glitter_size,
+                            color:  Color::rgba(0.75, 0.95, 1.0, glitter_alpha),
+                          });
+                        }
+                      }
+                    }
+                  },
+                }
+
+                // Mark that noop effects are active
+                pulses_active_any = true;
+              }
+            }
+          }
+        }
+      }
+
+      // Clean up expired effects and screen shake (after doc borrow is dropped)
+      if let Some(doc_mut) = cx.editor.documents.get_mut(&doc_id) {
+        doc_mut.clear_expired_noop_effects(focus_view, now);
+
+        if let Some(shake) = doc_mut.screen_shake(focus_view) {
+          if shake.sample(now).is_none() {
+            doc_mut.clear_screen_shake(focus_view);
+          }
+        }
+      }
+
       // Execute draw commands while the view's clipping rect is active.
       self.command_batcher.execute(renderer);
       renderer.pop_scissor_rect();
     } // End view rendering loop
 
     self.selection_pulse_animating = pulses_active_any;
+    self.noop_effect_animating = pulses_active_any;
 
     // Render split separators
     self.render_split_separators(renderer, cx, font_width, font_size);

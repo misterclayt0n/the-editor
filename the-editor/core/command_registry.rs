@@ -730,6 +730,18 @@ impl CommandRegistry {
         ..Signature::DEFAULT
       },
     ));
+
+    self.register(TypableCommand::new(
+      "noop",
+      &[],
+      "Toggle visual effects mode for inserts/deletes",
+      noop,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 
@@ -1682,6 +1694,26 @@ pub(super) fn buffers_remaining_impl(editor: &mut Editor) -> anyhow::Result<()> 
       modified_names,
     );
   }
+  Ok(())
+}
+
+fn noop(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  // Toggle noop effect mode
+  cx.editor.noop_effect_pending = !cx.editor.noop_effect_pending;
+
+  if cx.editor.noop_effect_pending {
+    cx.editor.set_status(
+      "Noop effect mode enabled - all inserts/deletes will trigger visual effects".to_string(),
+    );
+  } else {
+    cx.editor
+      .set_status("Noop effect mode disabled".to_string());
+  }
+
   Ok(())
 }
 

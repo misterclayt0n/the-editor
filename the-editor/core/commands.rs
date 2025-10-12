@@ -868,6 +868,45 @@ pub fn insert_char(cx: &mut Context, c: char) {
     doc.apply(&t, view.id);
   }
 
+  // Check if noop effect should be triggered
+  if cx.editor.noop_effect_pending {
+    use crate::core::position::visual_offset_from_block;
+
+    let (row, col) = {
+      let cursor_char_pos = doc
+        .selection(view.id)
+        .primary()
+        .cursor(doc.text().slice(..));
+      let text = doc.text().slice(..);
+      let view_offset = doc.view_offset(view.id);
+      let viewport = view.inner_area(doc);
+      let text_fmt = doc.text_format(viewport.width, None);
+      let annotations = view.text_annotations(doc, None);
+
+      let (visual_pos, _) = visual_offset_from_block(
+        text,
+        view_offset.anchor,
+        cursor_char_pos,
+        &text_fmt,
+        &annotations,
+      );
+
+      (visual_pos.row, visual_pos.col)
+    };
+
+    doc.add_noop_effect(
+      view.id,
+      crate::core::view::NoopEffect::new(
+        row as f32, // Store row as screen_x temporarily
+        col as f32, // Store col as screen_y temporarily
+        crate::core::view::NoopEffectKind::Insert,
+        c.to_string(),
+      ),
+    );
+    // Screen shake for insert (mild)
+    doc.set_screen_shake(view.id, crate::core::view::ScreenShake::new(2.0));
+  }
+
   the_editor_event::dispatch(PostInsertChar { c, cx });
 }
 
@@ -946,8 +985,82 @@ pub fn delete_char_backward(cx: &mut Context) {
       }
     }
   });
+
+  // Collect effect data (screen positions and graphemes) BEFORE deletion
+  let effect_data = if cx.editor.noop_effect_pending {
+    use crate::core::position::visual_offset_from_block;
+
+    let (view, doc) = current!(cx.editor);
+    let text = doc.text().slice(..);
+    let view_offset = doc.view_offset(view.id);
+    let viewport = view.inner_area(doc);
+    let text_fmt = doc.text_format(viewport.width, None);
+    let annotations = view.text_annotations(doc, None);
+
+    let mut data = Vec::new();
+
+    for range in doc.selection(view.id).ranges() {
+      let start = range.from().min(text.len_chars());
+      let end = range.to().min(text.len_chars());
+
+      let target_char_pos = if start != end {
+        start
+      } else {
+        let cursor = range.cursor(text);
+        if cursor == 0 {
+          continue;
+        }
+        nth_prev_grapheme_boundary(text, cursor, 1)
+      };
+
+      if target_char_pos >= text.len_chars() {
+        continue;
+      }
+
+      let grapheme = text
+        .slice(target_char_pos..text.len_chars())
+        .chars()
+        .next()
+        .unwrap_or(' ')
+        .to_string();
+
+      let (visual_pos, _) = visual_offset_from_block(
+        text,
+        view_offset.anchor,
+        target_char_pos,
+        &text_fmt,
+        &annotations,
+      );
+
+      data.push((visual_pos.row, visual_pos.col, grapheme));
+    }
+    Some(data)
+  } else {
+    None
+  };
+
   let (view, doc) = current!(cx.editor);
   doc.apply(&transaction, view.id);
+
+  // Spawn effects AFTER deletion (visual positions were collected before)
+  if let Some(data) = effect_data {
+    // We need to convert visual row/col to screen coordinates
+    // This requires knowing the view area and font metrics
+    // For now, store them as visual positions and convert in rendering
+    // Actually, let's just store as (row, col) in the effect and convert later
+    for (row, col, grapheme) in data {
+      doc.add_noop_effect(
+        view.id,
+        crate::core::view::NoopEffect::new(
+          row as f32, // Store row as screen_x temporarily
+          col as f32, // Store col as screen_y temporarily
+          crate::core::view::NoopEffectKind::Delete,
+          grapheme,
+        ),
+      );
+    }
+    doc.set_screen_shake(view.id, crate::core::view::ScreenShake::new(8.0));
+  }
 
   // Dispatch PostCommand event after command execution
   the_editor_event::dispatch(crate::event::PostCommand {
@@ -958,6 +1071,56 @@ pub fn delete_char_backward(cx: &mut Context) {
 
 pub fn delete_char_forward(cx: &mut Context) {
   let count = cx.count();
+
+  // Collect effect data (screen positions and graphemes) BEFORE deletion
+  let effect_data = if cx.editor.noop_effect_pending {
+    use crate::core::position::visual_offset_from_block;
+
+    let (view, doc) = current!(cx.editor);
+    let text = doc.text().slice(..);
+    let view_offset = doc.view_offset(view.id);
+    let viewport = view.inner_area(doc);
+    let text_fmt = doc.text_format(viewport.width, None);
+    let annotations = view.text_annotations(doc, None);
+
+    let mut data = Vec::new();
+
+    for range in doc.selection(view.id).ranges() {
+      let start = range.from().min(text.len_chars());
+      let end = range.to().min(text.len_chars());
+
+      let target_char_pos = if start != end {
+        start
+      } else {
+        range.cursor(text)
+      };
+
+      if target_char_pos >= text.len_chars() {
+        continue;
+      }
+
+      let grapheme = text
+        .slice(target_char_pos..text.len_chars())
+        .chars()
+        .next()
+        .unwrap_or(' ')
+        .to_string();
+
+      let (visual_pos, _) = visual_offset_from_block(
+        text,
+        view_offset.anchor,
+        target_char_pos,
+        &text_fmt,
+        &annotations,
+      );
+
+      data.push((visual_pos.row, visual_pos.col, grapheme));
+    }
+    Some(data)
+  } else {
+    None
+  };
+
   delete_by_selection_insert_mode(
     cx,
     |text, range| {
@@ -965,7 +1128,24 @@ pub fn delete_char_forward(cx: &mut Context) {
       (pos, grapheme::nth_next_grapheme_boundary(text, pos, count))
     },
     Direction::Forward,
-  )
+  );
+
+  // Spawn effects AFTER deletion (visual positions were collected before)
+  if let Some(data) = effect_data {
+    let (view, doc) = current!(cx.editor);
+    for (row, col, grapheme) in data {
+      doc.add_noop_effect(
+        view.id,
+        crate::core::view::NoopEffect::new(
+          row as f32, // Store row as screen_x temporarily
+          col as f32, // Store col as screen_y temporarily
+          crate::core::view::NoopEffectKind::Delete,
+          grapheme,
+        ),
+      );
+    }
+    doc.set_screen_shake(view.id, crate::core::view::ScreenShake::new(8.0));
+  }
 }
 
 fn exclude_cursor(text: RopeSlice, range: Range, cursor: Range) -> Range {
@@ -6374,6 +6554,21 @@ fn increment_impl(cx: &mut Context, increment_direction: IncrementDirection) {
     let transaction = transaction.with_selection(new_selection);
     doc.apply(&transaction, view.id);
     exit_select_mode(cx);
+  }
+}
+
+/// A command that does nothing, but can be used as an easter egg to trigger
+/// effects. In Helix, this is just a placeholder command. Here, we use it to
+/// toggle a mode where all insert/delete operations trigger visual effects.
+pub fn noop(cx: &mut Context) {
+  // Toggle the noop effect mode
+  cx.editor.noop_effect_pending = !cx.editor.noop_effect_pending;
+
+  if cx.editor.noop_effect_pending {
+    cx.editor.set_status("Noop effect mode enabled".to_string());
+  } else {
+    cx.editor
+      .set_status("Noop effect mode disabled".to_string());
   }
 }
 

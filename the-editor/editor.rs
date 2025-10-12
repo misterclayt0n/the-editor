@@ -376,11 +376,14 @@ pub struct Editor {
   pub input_handler: InputHandler,
 
   // Command mode support
-  pub command_prompt:     Option<crate::ui::components::Prompt>,
-  pub command_registry:   crate::core::command_registry::CommandRegistry,
-  pub command_history:    Vec<String>,
+  pub command_prompt:      Option<crate::ui::components::Prompt>,
+  pub command_registry:    crate::core::command_registry::CommandRegistry,
+  pub command_history:     Vec<String>,
   // Font size override (for runtime zooming)
-  pub font_size_override: Option<f32>,
+  pub font_size_override:  Option<f32>,
+  /// Flag to indicate that the next insert/delete operation should trigger
+  /// a visual effect (easter egg from the noop command).
+  pub noop_effect_pending: bool,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -1848,6 +1851,7 @@ impl Editor {
       command_registry: crate::core::command_registry::CommandRegistry::new(),
       command_history: Vec::new(),
       font_size_override: None,
+      noop_effect_pending: false,
     };
 
     let scopes = editor.theme.scopes().to_vec();

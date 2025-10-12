@@ -5,10 +5,8 @@ import "fmt"
 // hi
 
 func main() {
-	a := hello()
-	fmt.Println("hello wrodl")
+	a := hello() 
 	fmt.Println(a)
-	// hello
 }
 
 func hello() int {

@@ -100,6 +100,7 @@ use crate::{
     tree,
     view::{
       Align,
+      SelectionPulseKind,
       View,
       align_view,
     },
@@ -1286,6 +1287,7 @@ pub fn select_regex(cx: &mut Context) {
             crate::core::selection::select_on_matches(text, &search_selection, &regex)
           {
             doc.set_selection(view.id, new_selection);
+            doc.trigger_selection_pulse(view.id, SelectionPulseKind::FilteredSelection);
           } else if matches!(event, PromptEvent::Validate) {
             cx.editor.set_error("No matches found");
           }
@@ -5301,6 +5303,7 @@ fn search_impl(
     };
 
     doc.set_selection(view.id, selection);
+    doc.trigger_selection_pulse(view.id, SelectionPulseKind::SearchMatch);
     view.ensure_cursor_in_view_center(doc, scrolloff);
   };
 }
@@ -5475,6 +5478,7 @@ fn keep_or_remove_selections_impl(cx: &mut Context, remove: bool) {
             remove,
           ) {
             doc.set_selection(view.id, selection);
+            doc.trigger_selection_pulse(view.id, SelectionPulseKind::FilteredSelection);
           } else if matches!(event, PromptEvent::Validate) {
             cx.editor.set_error("No selections remaining");
           }

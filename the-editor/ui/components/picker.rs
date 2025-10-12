@@ -273,79 +273,79 @@ impl<T, D> Injector<T, D> {
 /// Generic picker component for fuzzy finding
 pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   /// Nucleo matcher for fuzzy finding
-  matcher:                  Nucleo<T>,
+  matcher:               Nucleo<T>,
   /// Columns for the picker table
-  columns:                  Arc<[Column<T, D>]>,
+  columns:               Arc<[Column<T, D>]>,
   /// Primary column index (default for filtering)
-  primary_column:           usize,
+  primary_column:        usize,
   /// Editor data passed to column formatters
-  editor_data:              Arc<D>,
+  editor_data:           Arc<D>,
   /// Current cursor position in results
-  cursor:                   u32,
+  cursor:                u32,
   /// Search query
-  query:                    String,
+  query:                 String,
   /// Cursor position in query
-  query_cursor:             usize,
+  query_cursor:          usize,
   /// Version counter for invalidating background tasks
-  version:                  Arc<AtomicUsize>,
+  version:               Arc<AtomicUsize>,
   /// Callback when item is selected (deprecated, use action_handler instead)
-  on_select:                Box<dyn Fn(&T) + Send>,
+  on_select:             Box<dyn Fn(&T) + Send>,
   /// Action handler for picker actions (open, split, etc.)
-  action_handler:           Option<ActionHandler<T, D>>,
+  action_handler:        Option<ActionHandler<T, D>>,
   /// Callback when picker is closed
-  on_close:                 Option<Box<dyn FnOnce() + Send>>,
+  on_close:              Option<Box<dyn FnOnce() + Send>>,
   /// Whether picker is visible
-  visible:                  bool,
+  visible:               bool,
   /// Number of visible rows
-  completion_height:   u16,
+  completion_height:     u16,
   /// Entrance animation
-  entrance_anim:       crate::core::animation::AnimationHandle<f32>,
+  entrance_anim:         crate::core::animation::AnimationHandle<f32>,
   /// Preview panel fade animation
-  preview_anim:        Option<crate::core::animation::AnimationHandle<f32>>,
+  preview_anim:          Option<crate::core::animation::AnimationHandle<f32>>,
   /// Hovered item index (for hover effects)
-  hovered_item:        Option<u32>,
+  hovered_item:          Option<u32>,
   /// Mouse position for hover effects
-  hover_pos:           Option<(f32, f32)>,
+  hover_pos:             Option<(f32, f32)>,
   /// Cached layout info for mouse hit testing
-  cached_layout:       Option<PickerLayout>,
+  cached_layout:         Option<PickerLayout>,
   /// Previous cursor position for smooth animation
-  prev_cursor:         u32,
+  prev_cursor:           u32,
   /// Selection animation
-  selection_anim:      crate::core::animation::AnimationHandle<f32>,
+  selection_anim:        crate::core::animation::AnimationHandle<f32>,
   /// Input cursor animation
-  query_cursor_anim:   Option<crate::core::animation::AnimationHandle<f32>>,
+  query_cursor_anim:     Option<crate::core::animation::AnimationHandle<f32>>,
   /// Scroll offset for independent scrolling (VSCode-style)
-  scroll_offset:       u32,
+  scroll_offset:         u32,
   /// Whether nucleo is still processing matches
-  matcher_running:     bool,
+  matcher_running:       bool,
   /// Height animation for smooth size transitions
-  height_anim:         Option<crate::core::animation::AnimationHandle<f32>>,
+  height_anim:           Option<crate::core::animation::AnimationHandle<f32>>,
   /// Preview callback to get file path from item, optionally with line range
   /// Returns (PathBuf, Option<(start_line, end_line)>) where lines are
   /// 0-indexed
   preview_fn: Option<Arc<dyn Fn(&T) -> Option<(PathBuf, Option<(usize, usize)>)> + Send + Sync>>,
   /// Custom preview handler for loading previews
-  preview_handler:          Option<PreviewHandler>,
+  preview_handler:       Option<PreviewHandler>,
   /// Cache of loaded previews
-  preview_cache:            HashMap<PathBuf, CachedPreview>,
+  preview_cache:         HashMap<PathBuf, CachedPreview>,
   /// Reusable buffer for binary detection
-  read_buffer:              Vec<u8>,
+  read_buffer:           Vec<u8>,
   /// Dynamic query callback for async item fetching
-  dyn_query_callback:       Option<DynQueryCallback<T, D>>,
+  dyn_query_callback:    Option<DynQueryCallback<T, D>>,
   /// Debounce timer for dynamic queries (milliseconds)
-  dyn_query_debounce_ms:    u64,
+  dyn_query_debounce_ms: u64,
   /// Time when query was last changed (for debouncing)
-  last_query_change:        Option<std::time::Instant>,
+  last_query_change:     Option<std::time::Instant>,
   /// Last query that was sent to dynamic callback
-  last_dyn_query:           String,
+  last_dyn_query:        String,
   /// Register to store picker history (selected items)
-  history_register:         Option<char>,
+  history_register:      Option<char>,
   /// Format function to convert items to strings for history register
-  history_format:           Option<Arc<dyn Fn(&T, &D) -> String + Send + Sync>>,
+  history_format:        Option<Arc<dyn Fn(&T, &D) -> String + Send + Sync>>,
   /// Pending items to add to history (flushed during render)
-  pending_history:          Vec<String>,
+  pending_history:       Vec<String>,
   /// Whether preview animation has been initialized
-  preview_initialized:      bool,
+  preview_initialized:   bool,
 }
 
 #[derive(Clone)]
@@ -1164,8 +1164,9 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                   self.prev_cursor = self.cursor;
                   self.cursor = global_item_idx;
                   // Restart selection animation
-    let (duration, easing) = crate::core::animation::presets::FAST;
-    self.selection_anim = crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
+                  let (duration, easing) = crate::core::animation::presets::FAST;
+                  self.selection_anim =
+                    crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing);
                 }
                 self.select();
                 let callback = Box::new(
@@ -2145,7 +2146,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
       // Draw preview panel with animation
       if preview_anim_value > 0.0 {
-        let preview_ease = preview_anim_value * preview_anim_value * (3.0 - 2.0 * preview_anim_value); // Smoothstep
+        let preview_ease =
+          preview_anim_value * preview_anim_value * (3.0 - 2.0 * preview_anim_value); // Smoothstep
 
         let preview_gap = 12.0; // Padding between picker and preview
         let preview_x = x + picker_width_scaled + preview_gap;

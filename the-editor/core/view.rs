@@ -4,6 +4,10 @@ use std::{
     VecDeque,
   },
   fmt,
+  time::{
+    Duration,
+    Instant,
+  },
 };
 
 use ropey::RopeSlice;
@@ -173,9 +177,89 @@ pub struct ViewPosition {
 }
 
 // NOTE: This wrapper probably does not need to exist.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionPulseKind {
+  SearchMatch,
+  FilteredSelection,
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectionPulse {
+  started_at: Instant,
+  duration:   Duration,
+  kind:       SelectionPulseKind,
+}
+
+impl SelectionPulse {
+  const SEARCH_DURATION: Duration = Duration::from_millis(2100);
+  const FILTER_DURATION: Duration = Duration::from_millis(2400);
+  const FADE_OUT_DURATION: Duration = Duration::from_millis(420);
+
+  pub fn new(kind: SelectionPulseKind) -> Self {
+    Self {
+      started_at: Instant::now(),
+      duration: Self::duration_for(kind),
+      kind,
+    }
+  }
+
+  pub fn kind(&self) -> SelectionPulseKind {
+    self.kind
+  }
+
+  pub fn duration(&self) -> Duration {
+    self.duration
+  }
+
+  pub fn sample(&self, now: Instant) -> Option<PulseSample> {
+    let elapsed = now.saturating_duration_since(self.started_at);
+    let total_duration = self.duration + Self::FADE_OUT_DURATION;
+
+    if elapsed >= total_duration {
+      return None;
+    }
+
+    let energy = if elapsed <= self.duration {
+      1.0
+    } else {
+      let fade_elapsed = elapsed - self.duration;
+      let fade_window = Self::FADE_OUT_DURATION.as_secs_f32().max(f32::EPSILON);
+      (1.0 - fade_elapsed.as_secs_f32() / fade_window).clamp(0.0, 1.0)
+    };
+
+    Some(PulseSample {
+      elapsed: elapsed.as_secs_f32(),
+      energy,
+    })
+  }
+
+  fn duration_for(kind: SelectionPulseKind) -> Duration {
+    match kind {
+      SelectionPulseKind::SearchMatch => Self::SEARCH_DURATION,
+      SelectionPulseKind::FilteredSelection => Self::FILTER_DURATION,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PulseSample {
+  pub elapsed: f32,
+  pub energy:  f32,
+}
+
+#[derive(Debug, Clone)]
 pub struct ViewData {
-  pub view_position: ViewPosition,
+  pub view_position:   ViewPosition,
+  pub selection_pulse: Option<SelectionPulse>,
+}
+
+impl Default for ViewData {
+  fn default() -> Self {
+    Self {
+      view_position:   ViewPosition::default(),
+      selection_pulse: None,
+    }
+  }
 }
 
 #[derive(Clone)]
@@ -186,10 +270,10 @@ pub struct View {
   pub jumps:               JumpList,
   pub docs_access_history: Vec<DocumentId>,
 
-  pub last_modified_docs:  [Option<DocumentId>; 2],
-  pub object_selections:   Vec<Selection>,
-  pub gutters:             GutterConfig,
-  doc_revisions:           HashMap<DocumentId, usize>,
+  pub last_modified_docs:    [Option<DocumentId>; 2],
+  pub object_selections:     Vec<Selection>,
+  pub gutters:               GutterConfig,
+  doc_revisions:             HashMap<DocumentId, usize>,
   // HACKS: there should really only be a global diagnostics handler (the
   // non-focused views should just not have different handling for the cursor
   // line). For that we would need accces to editor everywhere (we want to use
@@ -197,10 +281,10 @@ pub struct View {
   // Document into entity component like structure. That is a huge refactor
   // left to future work. For now we treat all views as focused and give them
   // each their own handler.
-  pub diagnostics_handler: DiagnosticsHandler,
+  pub diagnostics_handler:   DiagnosticsHandler,
   /// Animation factor for document opening (0.0 = just opened, 1.0 = fully
   /// loaded)
-  pub zoom_anim:           f32,
+  pub zoom_anim:             f32,
   /// The actual rendered gutter width (accounts for enabled/disabled gutters).
   /// Set by the renderer. If None, falls back to calculating from gutters
   /// config.

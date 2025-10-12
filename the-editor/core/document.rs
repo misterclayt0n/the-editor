@@ -103,6 +103,8 @@ use crate::{
       Transaction,
     },
     view::{
+      SelectionPulse,
+      SelectionPulseKind,
       View,
       ViewData,
       ViewPosition,
@@ -1298,12 +1300,33 @@ impl Document {
     Ok(())
   }
 
+  fn store_selection(&mut self, view_id: ViewId, selection: Selection) {
+    self.view_data_mut(view_id).selection_pulse = None;
+    let ensured = selection.ensure_invariants(self.text().slice(..));
+    self.selections.insert(view_id, ensured);
+  }
+
+  pub fn trigger_selection_pulse(&mut self, view_id: ViewId, kind: SelectionPulseKind) {
+    self.view_data_mut(view_id).selection_pulse = Some(SelectionPulse::new(kind));
+  }
+
+  pub fn clear_selection_pulse(&mut self, view_id: ViewId) {
+    if let Some(data) = self.view_data.get_mut(&view_id) {
+      data.selection_pulse = None;
+    }
+  }
+
+  pub fn selection_pulse(&self, view_id: ViewId) -> Option<&SelectionPulse> {
+    self
+      .view_data
+      .get(&view_id)
+      .and_then(|data| data.selection_pulse.as_ref())
+  }
+
   /// Select text within the [`Document`].
   pub fn set_selection(&mut self, view_id: ViewId, selection: Selection) {
     // TODO: use a transaction?
-    self
-      .selections
-      .insert(view_id, selection.ensure_invariants(self.text().slice(..)));
+    self.store_selection(view_id, selection);
     the_editor_event::dispatch(SelectionDidChange {
       doc:  self,
       view: view_id,
@@ -1603,10 +1626,7 @@ impl Document {
     // if specified, the current selection should instead be replaced by
     // transaction.selection
     if let Some(selection) = transaction.selection() {
-      self.selections.insert(
-        view_id,
-        selection.clone().ensure_invariants(self.text.slice(..)),
-      );
+      self.store_selection(view_id, selection.clone());
       the_editor_event::dispatch(SelectionDidChange {
         doc:  self,
         view: view_id,

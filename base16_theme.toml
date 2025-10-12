@@ -23,6 +23,7 @@
 "ui.popup"                  = { modifiers = [ "reversed" ] }
 "ui.selection"              = { bg = "blue", fg = "black" }
 "ui.selection.primary"      = { bg = "blue", fg = "white" }
+"ui.selection.glow"         = { bg = "cyan", fg = "black" }
 "ui.statusline"             = { bg = "white", fg = "black" }
 "ui.statusline.inactive"    = { bg = "white", fg = "gray" }
 "ui.statusline.insert"      = { bg = "green", fg = "black" }

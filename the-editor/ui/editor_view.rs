@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use the_editor_renderer::{
   Color,
   TextSection,
@@ -28,6 +30,7 @@ use crate::{
       char_idx_at_visual_offset,
       visual_offset_from_block,
     },
+    view::SelectionPulseKind,
   },
   editor::Editor,
   keymap::{
@@ -120,6 +123,7 @@ pub struct EditorView {
   cursor_animation:          Option<crate::core::animation::AnimationHandle<(f32, f32)>>,
   // Zoom animation state
   zoom_anim_active:          bool,
+  selection_pulse_animating: bool,
   // Gutter management
   pub gutter_manager:        GutterManager,
   // Completion popup
@@ -141,6 +145,7 @@ impl EditorView {
       last_selection_hash: 0,
       cursor_animation: None,
       zoom_anim_active: false,
+      selection_pulse_animating: false,
       gutter_manager: GutterManager::with_defaults(),
       completion: None,
       signature_help: None,
@@ -332,6 +337,7 @@ impl Component for EditorView {
         .as_ref()
         .is_some_and(|anim| !anim.is_complete())
       || self.zoom_anim_active
+      || self.selection_pulse_animating
       || self.completion.as_ref().is_some_and(|c| c.is_animating())
       || self
         .signature_help
@@ -666,7 +672,8 @@ impl Component for EditorView {
       let focus_view = cx.editor.tree.focus;
       let scrolloff = cx.editor.config().scrolloff;
 
-      // Calculate actual gutter width for focused view (accounts for disabled gutters)
+      // Calculate actual gutter width for focused view (accounts for disabled
+      // gutters)
       let gutter_width = {
         let view = cx.editor.tree.get(focus_view);
         let doc = &cx.editor.documents[&view.doc];
@@ -696,6 +703,7 @@ impl Component for EditorView {
     let background_style = theme.get("ui.background");
     let normal_style = theme.get("ui.text");
     let selection_style = theme.get("ui.selection");
+    let selection_glow_style = theme.get("ui.selection.glow");
     let cursor_style = theme.get("ui.cursor");
 
     // Convert theme colors
@@ -732,9 +740,15 @@ impl Component for EditorView {
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::rgba(0.3, 0.5, 0.8, 0.3));
 
+    let selection_glow_base = selection_glow_style
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color);
+
     // Collect all views to render
     let focus_view_id = cx.editor.tree.focus;
     let views_to_render: Vec<_> = cx.editor.tree.traverse().map(|(id, _)| id).collect();
+    let now = Instant::now();
+    let mut pulses_active_any = false;
 
     // Update rendered_gutter_width for all views before rendering
     // This ensures cursor positioning logic uses the correct gutter width
@@ -754,7 +768,7 @@ impl Component for EditorView {
 
       // Clone colors for this view (will be modified by zoom animation)
       let mut normal = normal_base;
-      let mut selection_bg = selection_bg_base;
+      let mut selection_base = selection_bg_base;
 
       // Get current view and document
       let focus_view = current_view_id;
@@ -782,7 +796,10 @@ impl Component for EditorView {
 
       // Apply zoom alpha to all colors for fade-in effect
       normal.a *= zoom_alpha;
-      selection_bg.a *= zoom_alpha;
+      selection_base.a *= zoom_alpha;
+
+      let mut selection_glow = selection_glow_base.unwrap_or(selection_bg_base);
+      selection_glow.a *= zoom_alpha;
 
       // Calculate base coordinates from view's area (convert cell coords to pixels)
       let view_offset_x = view.area.x as f32 * font_width;
@@ -888,11 +905,36 @@ impl Component for EditorView {
         content_rect.height,
       );
 
+      let mut clear_pulse = false;
+
       // Wrap main rendering in scope to drop borrows before rendering completion
       {
         let doc = &cx.editor.documents[&doc_id];
         let doc_text = doc.text();
         let selection = doc.selection(focus_view);
+
+        let mut selection_fill_color = selection_base;
+
+        if let Some(pulse) = doc.selection_pulse(focus_view) {
+          if let Some(sample) = pulse.sample(now) {
+            let (frequency, mix_bias, alpha_floor) = match pulse.kind() {
+              SelectionPulseKind::SearchMatch => (std::f32::consts::TAU, 1.1, 0.38),
+              SelectionPulseKind::FilteredSelection => (std::f32::consts::TAU * 0.75, 1.25, 0.32),
+            };
+            let wave = (sample.elapsed * frequency).sin().mul_add(0.5, 0.5);
+            let amplitude = sample.energy;
+            let blend = (wave * mix_bias * amplitude).clamp(0.0, 1.0);
+            let mut blended = selection_base.lerp(selection_glow, blend);
+            let alpha_wave = alpha_floor + (1.0 - alpha_floor) * wave * amplitude;
+            blended.a = selection_base.a * alpha_wave;
+            selection_fill_color = blended;
+            if amplitude > 0.0 {
+              pulses_active_any = true;
+            }
+          } else {
+            clear_pulse = true;
+          }
+        }
 
         let gutter_x = gutter_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
         let base_x = content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
@@ -1193,7 +1235,8 @@ impl Component for EditorView {
           let doc_line = doc_text.char_to_line(g.char_idx.min(doc_text.len_chars()));
 
           // IMPORTANT: Render gutter BEFORE checking horizontal scrolling
-          // This ensures gutters are always visible even when content is scrolled horizontally
+          // This ensures gutters are always visible even when content is scrolled
+          // horizontally
           if doc_line != current_doc_line {
             // Render end-of-line diagnostic for previous line before switching
             if current_doc_line != usize::MAX {
@@ -1295,7 +1338,7 @@ impl Component for EditorView {
               y,
               width: (draw_cols as f32) * font_width,
               height: font_size + LINE_SPACING,
-              color: selection_bg,
+              color: selection_fill_color,
             });
           }
 
@@ -1372,7 +1415,8 @@ impl Component for EditorView {
               } else {
                 // No animation exists, create one using cursor preset
                 let (duration, easing) = crate::core::animation::presets::CURSOR;
-                let anim = crate::core::animation::AnimationHandle::new((x, y), (x, y), duration, easing);
+                let anim =
+                  crate::core::animation::AnimationHandle::new((x, y), (x, y), duration, easing);
                 let current = *anim.current();
                 self.cursor_animation = Some(anim);
                 current
@@ -1527,10 +1571,18 @@ impl Component for EditorView {
         }
       } // End scope - drop doc borrow before rendering completion
 
+      if clear_pulse {
+        if let Some(doc) = cx.editor.documents.get_mut(&doc_id) {
+          doc.clear_selection_pulse(focus_view);
+        }
+      }
+
       // Execute draw commands while the view's clipping rect is active.
       self.command_batcher.execute(renderer);
       renderer.pop_scissor_rect();
     } // End view rendering loop
+
+    self.selection_pulse_animating = pulses_active_any;
 
     // Render split separators
     self.render_split_separators(renderer, cx, font_width, font_size);

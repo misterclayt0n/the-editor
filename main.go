@@ -2,6 +2,8 @@ package main
 
 import "fmt"
 
+// hi
+
 func main() {
 	fmt.Println("hello world")
 }

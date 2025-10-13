@@ -2484,8 +2484,85 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
+  use std::collections::HashMap;
+
   use super::*;
-  use crate::core::transaction::Transaction;
+  use crate::{
+    core::{
+      selection::Selection,
+      syntax::{
+        self,
+        config::Configuration as SyntaxConfig,
+      },
+      transaction::Transaction,
+      view::View,
+    },
+    editor::GutterConfig,
+  };
+
+  fn doc_for_testing(initial: &str) -> (Document, View) {
+    let config: Arc<dyn DynAccess<AppEditorConfig>> =
+      Arc::new(ArcSwap::from_pointee(AppEditorConfig::default()));
+
+    let syntax_loader = syntax::Loader::new(SyntaxConfig {
+      language:        Vec::new(),
+      language_server: HashMap::new(),
+    })
+    .expect("syntax loader");
+    let syn_loader = Arc::new(ArcSwap::from_pointee(syntax_loader));
+
+    let mut doc = Document::from(Rope::from(initial), None, Arc::clone(&config), syn_loader);
+    let mut view = View::new(doc.id(), GutterConfig::default());
+    doc.ensure_view_init(view.id);
+    (doc, view)
+  }
+
+  #[test]
+  fn undo_redo_separate_commits() {
+    let (mut doc, mut view) = doc_for_testing("");
+
+    let insert_abc = Transaction::insert(doc.text(), doc.selection(view.id), "abc".into());
+    doc.apply(&insert_abc, view.id);
+    doc.append_changes_to_history(&mut view);
+
+    let end = doc.text().len_chars();
+    doc.set_selection(view.id, Selection::point(end));
+    let insert_def = Transaction::insert(doc.text(), doc.selection(view.id), "DEF".into());
+    doc.apply(&insert_def, view.id);
+    doc.append_changes_to_history(&mut view);
+
+    assert_eq!(doc.text().to_string(), "abcDEF");
+
+    assert!(doc.undo(&mut view));
+    assert_eq!(doc.text().to_string(), "abc");
+
+    assert!(doc.undo(&mut view));
+    assert_eq!(doc.text().to_string(), "");
+
+    assert!(doc.redo(&mut view));
+    assert_eq!(doc.text().to_string(), "abc");
+
+    assert!(doc.redo(&mut view));
+    assert_eq!(doc.text().to_string(), "abcDEF");
+  }
+
+  #[test]
+  fn undo_without_intermediate_commit_reverts_all_changes() {
+    let (mut doc, mut view) = doc_for_testing("");
+
+    let insert_abc = Transaction::insert(doc.text(), doc.selection(view.id), "abc".into());
+    doc.apply(&insert_abc, view.id);
+
+    let end = doc.text().len_chars();
+    doc.set_selection(view.id, Selection::point(end));
+    let insert_def = Transaction::insert(doc.text(), doc.selection(view.id), "DEF".into());
+    doc.apply(&insert_def, view.id);
+
+    assert_eq!(doc.text().to_string(), "abcDEF");
+
+    assert!(doc.undo(&mut view));
+    assert_eq!(doc.text().to_string(), "");
+  }
 
   #[test]
   fn test_calculate_changed_line_range_insert() {

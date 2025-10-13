@@ -578,23 +578,39 @@ impl Component for EditorView {
             cx.editor.selected_register = new_register;
             cx.editor.count = new_count;
 
-            // Mark affected lines as dirty after command execution
-            let focus_view = cx.editor.tree.focus;
-            let view = cx.editor.tree.get(focus_view);
-            let doc = &cx.editor.documents[&view.doc];
-            let new_cursor_pos = doc
-              .selection(focus_view)
-              .primary()
-              .cursor(doc.text().slice(..));
-            let new_line = if new_cursor_pos < doc.text().len_chars() {
-              doc.text().char_to_line(new_cursor_pos)
-            } else {
-              doc.text().len_lines().saturating_sub(1)
+            // Ensure cursor visibility and commit history for non-insert commands
+            let mode_after = cx.editor.mode();
+            let scrolloff = cx.editor.config().scrolloff;
+            let (start_line, end_line) = {
+              let (view, doc) = crate::current!(cx.editor);
+              let text = doc.text();
+              let text_slice = text.slice(..);
+              let cursor_pos = doc.selection(view.id).primary().cursor(text_slice);
+              let len_lines = text.len_lines();
+              let len_chars = text.len_chars();
+              let current_line = if len_chars == 0 {
+                0
+              } else if cursor_pos < len_chars {
+                text.char_to_line(cursor_pos)
+              } else {
+                len_lines.saturating_sub(1)
+              };
+
+              view.ensure_cursor_in_view(doc, scrolloff);
+
+              if mode_after != Mode::Insert {
+                doc.append_changes_to_history(view);
+              }
+
+              let start = current_line.saturating_sub(1);
+              let end = if len_lines == 0 {
+                0
+              } else {
+                (current_line + 1).min(len_lines.saturating_sub(1))
+              };
+              (start, end)
             };
 
-            // Mark lines as dirty (conservative approach - mark a range around cursor)
-            let start_line = new_line.saturating_sub(1);
-            let end_line = (new_line + 1).min(doc.text().len_lines().saturating_sub(1));
             self.dirty_region.mark_range_dirty(start_line, end_line);
 
             // Process callbacks

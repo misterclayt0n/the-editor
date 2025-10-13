@@ -1378,6 +1378,11 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
     // Update selection animation
     self.selection_anim.update(ctx.dt);
 
+    // Ensure renderer metrics match the UI font before we do any width math
+    let ui_font_family = surface.current_font_family().to_owned();
+    surface.configure_font(&ui_font_family, UI_FONT_SIZE);
+    let cell_width = surface.cell_width();
+
     // Determine if we should show preview panel based on actual available width
     // Need enough room for both panels + gap (minimum ~1200px for comfortable
     // split)
@@ -1878,7 +1883,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
             content: ch.to_string(),
             style:   TextStyle {
               color,
-              ..Default::default()
+              size: UI_FONT_SIZE,
             },
           }],
         });
@@ -1891,7 +1896,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
           content: count_text,
           style:   TextStyle {
             color: count_color_anim,
-            ..Default::default()
+            size:  UI_FONT_SIZE,
           },
         }],
       });
@@ -2085,9 +2090,9 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
           // Calculate available width for text (excluding padding)
           let available_width = item_width - (item_padding_x * 2.0);
-          let prefix_width = prefix.len() as f32 * UI_FONT_WIDTH;
+          let prefix_width = prefix.len() as f32 * cell_width;
           let text_available_width = available_width - prefix_width;
-          let max_chars = (text_available_width / UI_FONT_WIDTH).floor() as usize;
+          let max_chars = (text_available_width / cell_width).floor() as usize;
 
           // Truncate text if it's too long
           // Check if primary column uses truncate_start
@@ -2129,14 +2134,14 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 content: prefix.to_string(),
                 style:   TextStyle {
                   color: item_color,
-                  ..Default::default()
+                  size:  UI_FONT_SIZE,
                 },
               },
               TextSegment {
                 content: truncated_text,
                 style:   TextStyle {
                   color: item_color,
-                  ..Default::default()
+                  size:  UI_FONT_SIZE,
                 },
               },
             ],
@@ -2239,7 +2244,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
               let lines_to_show = end_line - start_line;
 
               // Calculate max characters per line based on available width
-              let max_chars = (content_width / UI_FONT_WIDTH).floor() as usize;
+              let max_chars = (content_width / cell_width).floor() as usize;
 
               // Use overlay region for clipping
               // Capture byte_offset for use in closure
@@ -2399,7 +2404,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
               let entries_to_show = max_entries.min(entries.len());
 
               // Calculate max characters per line based on available width
-              let max_chars = (content_width / UI_FONT_WIDTH).floor() as usize;
+              let max_chars = (content_width / cell_width).floor() as usize;
 
               // Use overlay region for clipping
               surface.with_overlay_region(
@@ -2468,7 +2473,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
             },
             PreviewData::Placeholder(placeholder) => {
               // Show placeholder text centered
-              let text_width = placeholder.len() as f32 * surface.cell_width();
+              let text_width = placeholder.len() as f32 * cell_width;
               let text_x = preview_x + (preview_width - text_width) / 2.0;
               let text_y = y + height_scaled / 2.0;
 
@@ -2487,7 +2492,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         } else {
           // No preview available - show placeholder
           let placeholder = "No preview";
-          let text_width = placeholder.len() as f32 * surface.cell_width();
+          let text_width = placeholder.len() as f32 * cell_width;
           let text_x = preview_x + (preview_width - text_width) / 2.0;
           let text_y = y + height_scaled / 2.0;
 

@@ -16,6 +16,7 @@ use crate::{
   core::{
     DocumentId,
     ViewId,
+    animation::selection::SelectionPulse,
     diagnostics::InlineDiagnostics,
     document::{
       Document,
@@ -177,76 +178,6 @@ pub struct ViewPosition {
 }
 
 // NOTE: This wrapper probably does not need to exist.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SelectionPulseKind {
-  SearchMatch,
-  FilteredSelection,
-}
-
-#[derive(Debug, Clone)]
-pub struct SelectionPulse {
-  started_at: Instant,
-  duration:   Duration,
-  kind:       SelectionPulseKind,
-}
-
-impl SelectionPulse {
-  const SEARCH_DURATION: Duration = Duration::from_millis(2100);
-  const FILTER_DURATION: Duration = Duration::from_millis(2400);
-  const FADE_OUT_DURATION: Duration = Duration::from_millis(420);
-
-  pub fn new(kind: SelectionPulseKind) -> Self {
-    Self {
-      started_at: Instant::now(),
-      duration: Self::duration_for(kind),
-      kind,
-    }
-  }
-
-  pub fn kind(&self) -> SelectionPulseKind {
-    self.kind
-  }
-
-  pub fn duration(&self) -> Duration {
-    self.duration
-  }
-
-  pub fn sample(&self, now: Instant) -> Option<PulseSample> {
-    let elapsed = now.saturating_duration_since(self.started_at);
-    let total_duration = self.duration + Self::FADE_OUT_DURATION;
-
-    if elapsed >= total_duration {
-      return None;
-    }
-
-    let energy = if elapsed <= self.duration {
-      1.0
-    } else {
-      let fade_elapsed = elapsed - self.duration;
-      let fade_window = Self::FADE_OUT_DURATION.as_secs_f32().max(f32::EPSILON);
-      (1.0 - fade_elapsed.as_secs_f32() / fade_window).clamp(0.0, 1.0)
-    };
-
-    Some(PulseSample {
-      elapsed: elapsed.as_secs_f32(),
-      energy,
-    })
-  }
-
-  fn duration_for(kind: SelectionPulseKind) -> Duration {
-    match kind {
-      SelectionPulseKind::SearchMatch => Self::SEARCH_DURATION,
-      SelectionPulseKind::FilteredSelection => Self::FILTER_DURATION,
-    }
-  }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PulseSample {
-  pub elapsed: f32,
-  pub energy:  f32,
-}
-
 /// Visual effect triggered by the noop command (easter egg)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoopEffectKind {

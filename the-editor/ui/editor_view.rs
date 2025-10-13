@@ -8,6 +8,9 @@ use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
   core::{
+    animation::selection::{
+      self as selection_anim,
+    },
     commands::{
       self,
       MappableCommand,
@@ -30,7 +33,6 @@ use crate::{
       char_idx_at_visual_offset,
       visual_offset_from_block,
     },
-    view::SelectionPulseKind,
   },
   editor::Editor,
   keymap::{
@@ -920,18 +922,10 @@ impl Component for EditorView {
 
         if let Some(pulse) = doc.selection_pulse(focus_view) {
           if let Some(sample) = pulse.sample(now) {
-            let (frequency, mix_bias, alpha_floor) = match pulse.kind() {
-              SelectionPulseKind::SearchMatch => (std::f32::consts::TAU, 1.1, 0.38),
-              SelectionPulseKind::FilteredSelection => (std::f32::consts::TAU * 0.75, 1.25, 0.32),
-            };
-            let wave = (sample.elapsed * frequency).sin().mul_add(0.5, 0.5);
-            let amplitude = sample.energy;
-            let blend = (wave * mix_bias * amplitude).clamp(0.0, 1.0);
-            let mut blended = selection_base.lerp(selection_glow, blend);
-            let alpha_wave = alpha_floor + (1.0 - alpha_floor) * wave * amplitude;
-            blended.a = selection_base.a * alpha_wave;
-            selection_fill_color = blended;
-            if amplitude > 0.0 {
+            let frame =
+              selection_anim::evaluate_glow(pulse.kind(), selection_base, selection_glow, sample);
+            selection_fill_color = frame.color;
+            if frame.active {
               pulses_active_any = true;
             }
           } else {

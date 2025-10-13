@@ -38,6 +38,7 @@ use crate::{
   core::{
     Tendril,
     ViewId,
+    animation::selection::SelectionPulseKind,
     auto_pairs,
     chars::char_is_word,
     comment,
@@ -100,7 +101,6 @@ use crate::{
     tree,
     view::{
       Align,
-      SelectionPulseKind,
       View,
       align_view,
     },
@@ -3129,36 +3129,54 @@ pub fn yank_main_selection_to_clipboard(cx: &mut Context) {
 }
 
 fn yank_primary_selection_impl(editor: &mut Editor, register: char) {
-  let (view, doc) = current!(editor);
-  let text = doc.text().slice(..);
+  let result = {
+    let (view, doc) = current!(editor);
+    let text = doc.text().slice(..);
 
-  let selection = doc.selection(view.id).primary().fragment(text).to_string();
+    let selection = doc.selection(view.id).primary().fragment(text).to_string();
 
-  match editor.registers.write(register, vec![selection]) {
-    Ok(_) => editor.set_status(format!("yanked primary selection to register {register}",)),
-    Err(err) => editor.set_error(err.to_string()),
+    match editor.registers.write(register, vec![selection]) {
+      Ok(_) => {
+        doc.trigger_selection_pulse(view.id, SelectionPulseKind::YankHighlight);
+        Ok(format!("yanked primary selection to register {register}",))
+      },
+      Err(err) => Err(err.to_string()),
+    }
+  };
+
+  match result {
+    Ok(status) => editor.set_status(status),
+    Err(err) => editor.set_error(err),
   }
 }
 
 fn yank_impl(editor: &mut Editor, register: char) {
-  let (view, doc) = current!(editor);
-  let text = doc.text().slice(..);
+  let result = {
+    let (view, doc) = current!(editor);
+    let text = doc.text().slice(..);
 
-  let values: Vec<String> = doc
-    .selection(view.id)
-    .fragments(text)
-    .map(Cow::into_owned)
-    .collect();
-  let selections = values.len();
+    let values: Vec<String> = doc
+      .selection(view.id)
+      .fragments(text)
+      .map(Cow::into_owned)
+      .collect();
+    let selections = values.len();
 
-  match editor.registers.write(register, values) {
-    Ok(_) => {
-      editor.set_status(format!(
-        "yanked {selections} selection{} to register {register}",
-        if selections == 1 { "" } else { "s" }
-      ))
-    },
-    Err(err) => editor.set_error(err.to_string()),
+    match editor.registers.write(register, values) {
+      Ok(_) => {
+        doc.trigger_selection_pulse(view.id, SelectionPulseKind::YankHighlight);
+        Ok(format!(
+          "yanked {selections} selection{} to register {register}",
+          if selections == 1 { "" } else { "s" }
+        ))
+      },
+      Err(err) => Err(err.to_string()),
+    }
+  };
+
+  match result {
+    Ok(status) => editor.set_status(status),
+    Err(err) => editor.set_error(err),
   }
 }
 

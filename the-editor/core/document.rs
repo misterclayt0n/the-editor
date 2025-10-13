@@ -58,6 +58,10 @@ use crate::{
   core::{
     DocumentId,
     ViewId,
+    animation::selection::{
+      SelectionPulse,
+      SelectionPulseKind,
+    },
     auto_pairs::AutoPairs,
     chars::char_is_word,
     command_line::Token,
@@ -103,8 +107,6 @@ use crate::{
       Transaction,
     },
     view::{
-      SelectionPulse,
-      SelectionPulseKind,
       View,
       ViewData,
       ViewPosition,

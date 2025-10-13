@@ -1,4 +1,9 @@
-use std::time::Duration;
+use std::time::{
+  Duration,
+  Instant,
+};
+
+use the_editor_renderer::Color;
 
 /// Animation configuration presets for common use cases
 pub mod presets {
@@ -27,6 +32,129 @@ pub mod presets {
 
   /// Popup animation (180ms, EaseOutCubic)
   pub const POPUP: (Duration, Easing) = (Duration::from_millis(180), Easing::EaseOutCubic);
+}
+
+pub mod selection {
+  use std::f32::consts::TAU;
+
+  use super::*;
+
+  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  pub enum SelectionPulseKind {
+    SearchMatch,
+    FilteredSelection,
+    YankHighlight,
+  }
+
+  #[derive(Debug, Clone, Copy)]
+  pub struct PulseSample {
+    pub elapsed: f32,
+    pub energy:  f32,
+  }
+
+  #[derive(Debug, Clone)]
+  pub struct SelectionPulse {
+    started_at: Instant,
+    duration:   Duration,
+    kind:       SelectionPulseKind,
+  }
+
+  impl SelectionPulse {
+    const SEARCH_DURATION: Duration = Duration::from_millis(2100);
+    const FILTER_DURATION: Duration = Duration::from_millis(2400);
+    const YANK_DURATION: Duration = Duration::from_millis(100);
+    const FADE_OUT_DURATION: Duration = Duration::from_millis(420);
+
+    pub fn new(kind: SelectionPulseKind) -> Self {
+      Self {
+        started_at: Instant::now(),
+        duration: Self::duration_for(kind),
+        kind,
+      }
+    }
+
+    pub fn kind(&self) -> SelectionPulseKind {
+      self.kind
+    }
+
+    pub fn duration(&self) -> Duration {
+      self.duration
+    }
+
+    pub fn sample(&self, now: Instant) -> Option<PulseSample> {
+      let elapsed = now.saturating_duration_since(self.started_at);
+      let total_duration = self.duration + Self::FADE_OUT_DURATION;
+
+      if elapsed >= total_duration {
+        return None;
+      }
+
+      let energy = if elapsed <= self.duration {
+        1.0
+      } else {
+        let fade_elapsed = elapsed - self.duration;
+        let fade_window = Self::FADE_OUT_DURATION.as_secs_f32().max(f32::EPSILON);
+        (1.0 - fade_elapsed.as_secs_f32() / fade_window).clamp(0.0, 1.0)
+      };
+
+      Some(PulseSample {
+        elapsed: elapsed.as_secs_f32(),
+        energy,
+      })
+    }
+
+    fn duration_for(kind: SelectionPulseKind) -> Duration {
+      match kind {
+        SelectionPulseKind::SearchMatch => Self::SEARCH_DURATION,
+        SelectionPulseKind::FilteredSelection => Self::FILTER_DURATION,
+        SelectionPulseKind::YankHighlight => Self::YANK_DURATION,
+      }
+    }
+  }
+
+  #[derive(Debug, Clone, Copy)]
+  pub struct GlowFrame {
+    pub color:  Color,
+    pub active: bool,
+  }
+
+  pub fn evaluate_glow(
+    kind: SelectionPulseKind,
+    base: Color,
+    glow: Color,
+    sample: PulseSample,
+  ) -> GlowFrame {
+    let (frequency, mix_bias, alpha_floor, glow_override) = match kind {
+      SelectionPulseKind::SearchMatch => (TAU, 1.1, 0.38, None),
+      SelectionPulseKind::FilteredSelection => (TAU * 0.75, 1.25, 0.32, None),
+      SelectionPulseKind::YankHighlight => {
+        (
+          TAU * 1.35,
+          1.4,
+          0.42,
+          Some(Color::rgba(1.0, 0.86, 0.4, (glow.a * 1.2).min(1.0))),
+        )
+      },
+    };
+
+    let wave = (sample.elapsed * frequency).sin().mul_add(0.5, 0.5);
+    let amplitude = sample.energy;
+    let blend = (wave * mix_bias * amplitude).clamp(0.0, 1.0);
+    let glow_target = glow_override.unwrap_or(glow);
+    let mut blended = base.lerp(glow_target, blend);
+    let alpha_wave = alpha_floor + (1.0 - alpha_floor) * wave * amplitude;
+    let alpha_source = if glow_override.is_some() {
+      base.a.max(glow_target.a)
+    } else {
+      base.a
+    };
+    blended.a = alpha_source * alpha_wave;
+
+    GlowFrame {
+      color:  blended,
+      active: amplitude > 0.0,
+    }
+  }
 }
 
 /// Easing functions for animations
@@ -156,9 +284,9 @@ impl Animatable for (usize, usize) {
 }
 
 // Implement for Color (from the-renderer)
-impl Animatable for the_editor_renderer::Color {
+impl Animatable for Color {
   fn lerp(&self, target: &Self, t: f32) -> Self {
-    the_editor_renderer::Color {
+    Color {
       r: self.r.lerp(&target.r, t),
       g: self.g.lerp(&target.g, t),
       b: self.b.lerp(&target.b, t),

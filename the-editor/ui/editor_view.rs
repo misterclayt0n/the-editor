@@ -133,6 +133,9 @@ pub struct EditorView {
   pub(crate) completion:     Option<crate::ui::components::Completion>,
   // Signature help popup
   pub(crate) signature_help: Option<crate::ui::components::SignatureHelp>,
+  // Cached font metrics for mouse handling (updated during render)
+  cached_cell_width:         f32,
+  cached_cell_height:        f32,
 }
 
 impl EditorView {
@@ -153,6 +156,8 @@ impl EditorView {
       gutter_manager: GutterManager::with_defaults(),
       completion: None,
       signature_help: None,
+      cached_cell_width: 12.0,  // Default, will be updated during render
+      cached_cell_height: 24.0, // Default, will be updated during render
     }
   }
 
@@ -631,6 +636,8 @@ impl Component for EditorView {
           },
         }
       },
+      Event::Mouse(mouse) => self.handle_mouse_event(mouse, cx),
+      Event::Scroll(_) => EventResult::Ignored(None),
       _ => EventResult::Ignored(None),
     }
   }
@@ -647,6 +654,10 @@ impl Component for EditorView {
     let font_family = renderer.current_font_family().to_string();
     renderer.configure_font(&font_family, font_size);
     let font_width = renderer.cell_width().max(1.0);
+
+    // Cache font metrics for mouse handling
+    self.cached_cell_width = font_width;
+    self.cached_cell_height = font_size + LINE_SPACING;
 
     // Calculate tree area from renderer dimensions
     let available_height = (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM);
@@ -1979,5 +1990,114 @@ impl EditorView {
     if let Some(ref mut sig_help) = self.signature_help {
       sig_help.render(area, renderer, cx);
     }
+  }
+
+  /// Handle mouse events (clicks, drags, etc.)
+  fn handle_mouse_event(
+    &mut self,
+    mouse: &the_editor_renderer::MouseEvent,
+    cx: &mut Context,
+  ) -> EventResult {
+    // For now, only handle left button press (no drag yet)
+    if let Some(the_editor_renderer::MouseButton::Left) = mouse.button {
+      if mouse.pressed {
+        // Convert screen coordinates to document position
+        if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
+          // Get scrolloff config before mutable borrows
+          let scrolloff = cx.editor.config().scrolloff;
+
+          // Get the view and document
+          let view = cx.editor.tree.get(view_id);
+          let doc_id = view.doc;
+          let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
+
+          // Create a new selection at the clicked position
+          let selection = crate::core::selection::Selection::point(doc_pos);
+          doc.set_selection(view_id, selection);
+
+          // Ensure cursor remains visible
+          let view = cx.editor.tree.get_mut(view_id);
+          view.ensure_cursor_in_view(doc, scrolloff);
+
+          // Switch focus to the clicked view if different
+          if cx.editor.tree.focus != view_id {
+            cx.editor.tree.focus = view_id;
+          }
+
+          return EventResult::Consumed(None);
+        }
+      }
+    }
+
+    EventResult::Ignored(None)
+  }
+
+  /// Convert screen pixel coordinates to document position
+  /// Returns (ViewId, document_char_index) if click was within a view
+  fn screen_coords_to_doc_pos(
+    &self,
+    mouse_pos: (f32, f32),
+    cx: &Context,
+  ) -> Option<(crate::core::ViewId, usize)> {
+    let (mouse_x, mouse_y) = mouse_pos;
+
+    // Use cached font metrics from render
+    let cell_width = self.cached_cell_width;
+    let cell_height = self.cached_cell_height;
+
+    // Convert pixel coordinates to cell coordinates
+    let mouse_col = (mouse_x / cell_width) as u16;
+    let mouse_row = (mouse_y / cell_height) as u16;
+
+    // Find which view was clicked
+    for (view, _) in cx.editor.tree.views() {
+      // Check if mouse is within view bounds
+      if mouse_col < view.area.x
+        || mouse_col >= view.area.x + view.area.width
+        || mouse_row < view.area.y
+        || mouse_row >= view.area.y + view.area.height
+      {
+        continue;
+      }
+
+      // Found the view! Now convert to document position
+      let doc = &cx.editor.documents[&view.doc];
+      let text = doc.text();
+
+      // Calculate position relative to view's content area (excluding gutter)
+      let gutter_width = view.rendered_gutter_width.unwrap_or(0);
+      if mouse_col < view.area.x + gutter_width {
+        // Click was in the gutter, ignore for now
+        continue;
+      }
+
+      let rel_col = mouse_col - (view.area.x + gutter_width);
+      let rel_row = mouse_row - view.area.y;
+
+      // Get view offset (scroll position)
+      let view_offset = doc.view_offset(view.id);
+
+      // Calculate visual position accounting for scroll
+      let visual_row = rel_row as isize + view_offset.vertical_offset as isize;
+      let visual_col = rel_col as usize + view_offset.horizontal_offset;
+
+      // Convert visual position to document character index
+      let viewport = view.inner_area(doc);
+      let text_fmt = doc.text_format(viewport.width, None);
+      let annotations = view.text_annotations(doc, None);
+
+      let (doc_pos, _) = char_idx_at_visual_offset(
+        text.slice(..),
+        view_offset.anchor,
+        visual_row - view_offset.vertical_offset as isize,
+        visual_col,
+        &text_fmt,
+        &annotations,
+      );
+
+      return Some((view.id, doc_pos));
+    }
+
+    None
   }
 }

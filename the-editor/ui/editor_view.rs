@@ -139,6 +139,10 @@ pub struct EditorView {
   // Mouse drag state for selection
   mouse_pressed:             bool,
   mouse_drag_anchor:         Option<usize>, // Document char index where drag started
+  // Multi-click detection (double/triple-click)
+  last_click_time:           Option<std::time::Instant>,
+  last_click_pos:            Option<(f32, f32)>,
+  click_count:               u8,
 }
 
 impl EditorView {
@@ -163,6 +167,9 @@ impl EditorView {
       cached_cell_height: 24.0, // Default, will be updated during render
       mouse_pressed: false,
       mouse_drag_anchor: None,
+      last_click_time: None,
+      last_click_pos: None,
+      click_count: 0,
     }
   }
 
@@ -2006,22 +2013,73 @@ impl EditorView {
     match mouse.button {
       Some(the_editor_renderer::MouseButton::Left) => {
         if mouse.pressed {
-          // Mouse button pressed - start drag
+          // Detect multi-click (double/triple-click)
+          let now = std::time::Instant::now();
+          let is_multi_click = if let (Some(last_time), Some(last_pos)) =
+            (self.last_click_time, self.last_click_pos)
+          {
+            let time_delta = now.duration_since(last_time);
+            let pos_delta = ((mouse.position.0 - last_pos.0).powi(2)
+              + (mouse.position.1 - last_pos.1).powi(2))
+            .sqrt();
+
+            // Within 500ms and 5 pixels = multi-click
+            time_delta.as_millis() < 500 && pos_delta < 5.0
+          } else {
+            false
+          };
+
+          if is_multi_click {
+            self.click_count = (self.click_count + 1).min(3); // Cap at triple-click
+          } else {
+            self.click_count = 1;
+          }
+
+          self.last_click_time = Some(now);
+          self.last_click_pos = Some(mouse.position);
+
+          // Handle click based on count
           if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
-            // Get scrolloff config before mutable borrows
             let scrolloff = cx.editor.config().scrolloff;
 
-            // Mark drag as started
+            // Mark drag as started (for potential drag after click)
             self.mouse_pressed = true;
             self.mouse_drag_anchor = Some(doc_pos);
 
-            // Get the view and document
             let view = cx.editor.tree.get(view_id);
             let doc_id = view.doc;
             let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
 
-            // Create initial selection at clicked position
-            let selection = crate::core::selection::Selection::point(doc_pos);
+            // Create selection based on click count
+            let selection = match self.click_count {
+              1 => {
+                // Single click - point selection
+                crate::core::selection::Selection::point(doc_pos)
+              },
+              2 => {
+                // Double-click - select word
+                let text = doc.text();
+                let range = crate::core::selection::Range::point(doc_pos);
+                let word_range = crate::core::textobject::textobject_word(
+                  text.slice(..),
+                  range,
+                  crate::core::textobject::TextObject::Around,
+                  1,
+                  false, // short word (not WORD)
+                );
+                crate::core::selection::Selection::single(word_range.anchor, word_range.head)
+              },
+              3 => {
+                // Triple-click - select line
+                let text = doc.text();
+                let line = text.char_to_line(doc_pos.min(text.len_chars()));
+                let start = text.line_to_char(line);
+                let end = text.line_to_char((line + 1).min(text.len_lines()));
+                crate::core::selection::Selection::single(start, end)
+              },
+              _ => crate::core::selection::Selection::point(doc_pos),
+            };
+
             doc.set_selection(view_id, selection);
 
             // Ensure cursor remains visible
@@ -2042,25 +2100,59 @@ impl EditorView {
           return EventResult::Consumed(None);
         }
       },
+      Some(the_editor_renderer::MouseButton::Middle) => {
+        // Middle-click - paste from clipboard
+        if mouse.pressed {
+          if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
+            // Switch focus to clicked view
+            if cx.editor.tree.focus != view_id {
+              cx.editor.tree.focus = view_id;
+            }
+
+            // Move cursor to click position
+            let scrolloff = cx.editor.config().scrolloff;
+            let view = cx.editor.tree.get(view_id);
+            let doc_id = view.doc;
+            let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
+
+            let selection = crate::core::selection::Selection::point(doc_pos);
+            doc.set_selection(view_id, selection);
+
+            let view = cx.editor.tree.get_mut(view_id);
+            view.ensure_cursor_in_view(doc, scrolloff);
+
+            // Paste from clipboard ('+' register)
+            let mut cmd_cx = commands::Context {
+              register:             Some('+'),
+              count:                cx.editor.count,
+              editor:               cx.editor,
+              on_next_key_callback: None,
+              callback:             Vec::new(),
+              jobs:                 cx.jobs,
+            };
+
+            commands::paste_after(&mut cmd_cx);
+
+            return EventResult::Consumed(None);
+          }
+        }
+      },
       None => {
-        // Mouse motion without button press - check if we're dragging
-        if self.mouse_pressed {
+        // Mouse motion without button - check if we're dragging
+        if self.mouse_pressed && self.click_count == 1 {
+          // Only drag for single-click (not double/triple)
           if let Some(anchor) = self.mouse_drag_anchor {
             if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
-              // Get scrolloff config before mutable borrows
               let scrolloff = cx.editor.config().scrolloff;
 
-              // Get the view and document
               let view = cx.editor.tree.get(view_id);
               let doc_id = view.doc;
               let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
 
               // Create range selection from anchor to current position
-              // Selection::single creates a directional selection (anchor -> head)
               let selection = crate::core::selection::Selection::single(anchor, doc_pos);
               doc.set_selection(view_id, selection);
 
-              // Ensure cursor remains visible
               let view = cx.editor.tree.get_mut(view_id);
               view.ensure_cursor_in_view(doc, scrolloff);
 
@@ -2109,9 +2201,30 @@ impl EditorView {
 
       // Calculate position relative to view's content area (excluding gutter)
       let gutter_width = view.rendered_gutter_width.unwrap_or(0);
+
+      // Handle gutter click - select the entire line
       if mouse_col < view.area.x + gutter_width {
-        // Click was in the gutter, ignore for now
-        continue;
+        let rel_row = mouse_row - view.area.y;
+        let view_offset = doc.view_offset(view.id);
+
+        // Calculate which document line was clicked
+        let visual_row = rel_row as usize + view_offset.vertical_offset;
+        let viewport = view.inner_area(doc);
+        let text_fmt = doc.text_format(viewport.width, None);
+        let annotations = view.text_annotations(doc, None);
+
+        // Get the character position at the start of this visual row
+        let (char_pos, _) = char_idx_at_visual_offset(
+          text.slice(..),
+          view_offset.anchor,
+          visual_row as isize - view_offset.vertical_offset as isize,
+          0,
+          &text_fmt,
+          &annotations,
+        );
+
+        // Return start of line for gutter clicks
+        return Some((view.id, char_pos));
       }
 
       let rel_col = mouse_col - (view.area.x + gutter_width);
@@ -2137,6 +2250,10 @@ impl EditorView {
         &text_fmt,
         &annotations,
       );
+
+      // Clamp to valid document range (char_idx_at_visual_offset usually handles this,
+      // but we ensure it for edge cases like clicking way past EOF)
+      let doc_pos = doc_pos.min(text.len_chars());
 
       return Some((view.id, doc_pos));
     }

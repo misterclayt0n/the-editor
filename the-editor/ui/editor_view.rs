@@ -136,6 +136,9 @@ pub struct EditorView {
   // Cached font metrics for mouse handling (updated during render)
   cached_cell_width:         f32,
   cached_cell_height:        f32,
+  // Mouse drag state for selection
+  mouse_pressed:             bool,
+  mouse_drag_anchor:         Option<usize>, // Document char index where drag started
 }
 
 impl EditorView {
@@ -158,6 +161,8 @@ impl EditorView {
       signature_help: None,
       cached_cell_width: 12.0,  // Default, will be updated during render
       cached_cell_height: 24.0, // Default, will be updated during render
+      mouse_pressed: false,
+      mouse_drag_anchor: None,
     }
   }
 
@@ -1998,35 +2003,73 @@ impl EditorView {
     mouse: &the_editor_renderer::MouseEvent,
     cx: &mut Context,
   ) -> EventResult {
-    // For now, only handle left button press (no drag yet)
-    if let Some(the_editor_renderer::MouseButton::Left) = mouse.button {
-      if mouse.pressed {
-        // Convert screen coordinates to document position
-        if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
-          // Get scrolloff config before mutable borrows
-          let scrolloff = cx.editor.config().scrolloff;
+    match mouse.button {
+      Some(the_editor_renderer::MouseButton::Left) => {
+        if mouse.pressed {
+          // Mouse button pressed - start drag
+          if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
+            // Get scrolloff config before mutable borrows
+            let scrolloff = cx.editor.config().scrolloff;
 
-          // Get the view and document
-          let view = cx.editor.tree.get(view_id);
-          let doc_id = view.doc;
-          let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
+            // Mark drag as started
+            self.mouse_pressed = true;
+            self.mouse_drag_anchor = Some(doc_pos);
 
-          // Create a new selection at the clicked position
-          let selection = crate::core::selection::Selection::point(doc_pos);
-          doc.set_selection(view_id, selection);
+            // Get the view and document
+            let view = cx.editor.tree.get(view_id);
+            let doc_id = view.doc;
+            let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
 
-          // Ensure cursor remains visible
-          let view = cx.editor.tree.get_mut(view_id);
-          view.ensure_cursor_in_view(doc, scrolloff);
+            // Create initial selection at clicked position
+            let selection = crate::core::selection::Selection::point(doc_pos);
+            doc.set_selection(view_id, selection);
 
-          // Switch focus to the clicked view if different
-          if cx.editor.tree.focus != view_id {
-            cx.editor.tree.focus = view_id;
+            // Ensure cursor remains visible
+            let view = cx.editor.tree.get_mut(view_id);
+            view.ensure_cursor_in_view(doc, scrolloff);
+
+            // Switch focus to the clicked view if different
+            if cx.editor.tree.focus != view_id {
+              cx.editor.tree.focus = view_id;
+            }
+
+            return EventResult::Consumed(None);
           }
-
+        } else {
+          // Mouse button released - end drag
+          self.mouse_pressed = false;
+          self.mouse_drag_anchor = None;
           return EventResult::Consumed(None);
         }
-      }
+      },
+      None => {
+        // Mouse motion without button press - check if we're dragging
+        if self.mouse_pressed {
+          if let Some(anchor) = self.mouse_drag_anchor {
+            if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
+              // Get scrolloff config before mutable borrows
+              let scrolloff = cx.editor.config().scrolloff;
+
+              // Get the view and document
+              let view = cx.editor.tree.get(view_id);
+              let doc_id = view.doc;
+              let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
+
+              // Create range selection from anchor to current position
+              // Selection::single creates a directional selection (anchor -> head)
+              let selection = crate::core::selection::Selection::single(anchor, doc_pos);
+              doc.set_selection(view_id, selection);
+
+              // Ensure cursor remains visible
+              let view = cx.editor.tree.get_mut(view_id);
+              view.ensure_cursor_in_view(doc, scrolloff);
+
+              return EventResult::Consumed(None);
+            }
+          }
+        }
+      },
+      _ => {},
     }
 
     EventResult::Ignored(None)

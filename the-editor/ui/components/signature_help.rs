@@ -99,7 +99,7 @@ impl Component for SignatureHelp {
     let mut bg_color = bg_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.12, 0.12, 0.15, 0.98));
+      .unwrap_or(Color::new(0.12, 0.12, 0.15, 1.0));
     let mut text_color = text_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
@@ -133,7 +133,7 @@ impl Component for SignatureHelp {
     };
     let popup_height = (num_lines * line_height) + (padding * 2.0);
 
-    // Calculate cursor position
+    // Calculate fresh cursor position (not cached) with correct split offset
     let (cursor_x, cursor_y) = {
       let (view, doc) = crate::current_ref!(ctx.editor);
       let text = doc.text();
@@ -148,35 +148,69 @@ impl Component for SignatureHelp {
       let view_offset = doc.view_offset(view.id);
       let anchor_line = text.char_to_line(view_offset.anchor.min(text.len_chars()));
 
-      // Calculate screen coordinates
+      // Calculate screen row/col accounting for scroll
+      let rel_row = line.saturating_sub(anchor_line);
+      let screen_col = col.saturating_sub(view_offset.horizontal_offset);
+
+      // Check if cursor is visible
+      if rel_row >= view.inner_height() {
+        // Cursor scrolled out of view vertically
+        return;
+      }
+
+      // Get font metrics
       let font_size = ctx
         .editor
         .font_size_override
         .unwrap_or(ctx.editor.config().font_size);
       let font_width = surface.cell_width().max(1.0);
-      let gutter_width = 6;
-      let gutter_offset = gutter_width as f32 * font_width;
+      const LINE_SPACING: f32 = 4.0;
+      let line_height = font_size + LINE_SPACING;
 
-      const VIEW_PADDING_LEFT: f32 = 10.0;
-      const VIEW_PADDING_TOP: f32 = 10.0;
-      const LINE_SPACING: f32 = 2.0;
+      // Get view's screen offset (handles splits correctly)
+      let inner = view.inner_area(doc);
+      let view_x = inner.x as f32 * font_width;
+      let view_y = inner.y as f32 * line_height;
 
-      let base_x = VIEW_PADDING_LEFT + gutter_offset;
-      let base_y = VIEW_PADDING_TOP;
-
-      let rel_row = line.saturating_sub(anchor_line);
-      let x = base_x + (col as f32) * font_width;
+      // Calculate final screen position
+      let x = view_x + (screen_col as f32 * font_width);
       // Position ABOVE the cursor line (unlike completion which goes below)
-      let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING) - popup_height - 4.0;
+      let y = view_y + (rel_row as f32 * line_height) - popup_height - 4.0;
 
       (x, y)
     };
 
+    // Get viewport dimensions for bounds checking
+    let viewport_width = surface.width() as f32;
+    let viewport_height = surface.height() as f32;
+
     // Apply animation transforms
-    let anim_y = cursor_y - slide_offset; // Slide from above
     let anim_width = popup_width * scale;
     let anim_height = popup_height * scale;
-    let anim_x = cursor_x - (popup_width - anim_width) / 2.0;
+
+    // Try to position above cursor first (signature help prefers above)
+    let mut popup_y = cursor_y - slide_offset;
+
+    // Ensure popup fits within viewport
+    if popup_y < 0.0 || popup_y + anim_height > viewport_height {
+      // Try positioning below cursor instead
+      let y_below = cursor_y + slide_offset;
+      if y_below >= 0.0 && y_below + anim_height <= viewport_height {
+        popup_y = y_below;
+      } else {
+        // Not enough space in preferred positions, clamp to viewport
+        popup_y = popup_y.max(0.0).min((viewport_height - anim_height).max(0.0));
+      }
+    }
+
+    // Center the scaled popup at the cursor position, then clamp to viewport
+    let mut popup_x = cursor_x - (popup_width - anim_width) / 2.0;
+
+    // Clamp X to viewport bounds
+    popup_x = popup_x.max(0.0).min(viewport_width - anim_width);
+
+    let anim_x = popup_x;
+    let anim_y = popup_y;
 
     // Draw background
     let corner_radius = 6.0;

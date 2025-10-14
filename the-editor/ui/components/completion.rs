@@ -453,28 +453,51 @@ impl Completion {
     const MIN_DOC_HEIGHT: f32 = 100.0;
     const DOC_PADDING: f32 = 8.0;
 
-    // Try to position documentation to the right of completion
+    // Calculate available space on each side
     let space_on_right = window_width - (completion_x + completion_width);
+    let space_on_left = completion_x;
+    let space_below = window_height - (completion_y + completion_height);
 
-    let (doc_x, doc_y, doc_width, doc_height) = if space_on_right >= MIN_DOC_WIDTH {
-      // Position to the right
-      let doc_x = completion_x + completion_width + 8.0;
+    const SPACING: f32 = 8.0;
+
+    // Determine best placement and calculate dimensions
+    let (doc_x, doc_y, doc_width, doc_height) = if space_on_right >= MIN_DOC_WIDTH + SPACING {
+      // Position to the right - available space is from completion edge to window edge
+      let available_width = space_on_right - SPACING;
+      let doc_width = available_width.min(MAX_DOC_WIDTH);
+      let doc_x = completion_x + completion_width + SPACING;
       let doc_y = completion_y;
-      let doc_width = space_on_right.min(MAX_DOC_WIDTH) - 16.0;
-      let doc_height = completion_height.max(MIN_DOC_HEIGHT);
+      let doc_height = completion_height.max(MIN_DOC_HEIGHT).min(window_height - doc_y);
       (doc_x, doc_y, doc_width, doc_height)
-    } else {
+    } else if space_on_left >= MIN_DOC_WIDTH + SPACING {
+      // Position to the left
+      let available_width = space_on_left - SPACING;
+      let doc_width = available_width.min(MAX_DOC_WIDTH);
+      let doc_x = completion_x - doc_width - SPACING;
+      let doc_y = completion_y;
+      let doc_height = completion_height.max(MIN_DOC_HEIGHT).min(window_height - doc_y);
+      (doc_x, doc_y, doc_width, doc_height)
+    } else if space_below >= MIN_DOC_HEIGHT + SPACING {
       // Position below completion
       let doc_x = completion_x;
-      let doc_y = completion_y + completion_height + 8.0;
-      let doc_width = completion_width.max(MIN_DOC_WIDTH).min(MAX_DOC_WIDTH);
-      let space_below = window_height - doc_y;
-      let doc_height = space_below.min(completion_height.max(MIN_DOC_HEIGHT));
+      let doc_y = completion_y + completion_height + SPACING;
+      let doc_width = completion_width.max(MIN_DOC_WIDTH).min(MAX_DOC_WIDTH).min(window_width - doc_x);
+      let available_height = space_below - SPACING;
+      let doc_height = available_height.min(MIN_DOC_HEIGHT * 2.0);
       (doc_x, doc_y, doc_width, doc_height)
+    } else {
+      // Not enough space anywhere, don't render
+      return;
     };
 
-    // Don't render if there's not enough space
-    if doc_width < 100.0 || doc_height < 50.0 {
+    // Final safety check - ensure we're within viewport
+    if doc_x < 0.0
+      || doc_y < 0.0
+      || doc_x + doc_width > window_width
+      || doc_y + doc_height > window_height
+      || doc_width < 100.0
+      || doc_height < 50.0
+    {
       return;
     }
 
@@ -483,82 +506,83 @@ impl Completion {
     let bg_style = theme.get("ui.popup");
     let text_style = theme.get("ui.text");
 
-    let mut bg_color = bg_style
+    // Background should be opaque (don't apply animation alpha to background)
+    let bg_color = bg_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.12, 0.12, 0.15, 0.98));
+      .unwrap_or(Color::new(0.12, 0.12, 0.15, 1.0));
+
+    // Apply animation alpha only to text
     let mut text_color = text_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
-
-    // Apply animation alpha
-    bg_color.a *= alpha;
     text_color.a *= alpha;
 
-    // Draw background
-    let corner_radius = 6.0;
-    surface.draw_rounded_rect(doc_x, doc_y, doc_width, doc_height, corner_radius, bg_color);
+    surface.with_overlay_region(doc_x, doc_y, doc_width, doc_height, |surface| {
+      // Draw background
+      let corner_radius = 6.0;
+      surface.draw_rounded_rect(doc_x, doc_y, doc_width, doc_height, corner_radius, bg_color);
 
-    // Draw border
-    let mut border_color = Color::new(0.3, 0.3, 0.35, 0.8);
-    border_color.a *= alpha;
-    surface.draw_rounded_rect_stroke(
-      doc_x,
-      doc_y,
-      doc_width,
-      doc_height,
-      corner_radius,
-      1.0,
-      border_color,
-    );
+      // Draw border (keep it opaque)
+      let border_color = Color::new(0.3, 0.3, 0.35, 0.8);
+      surface.draw_rounded_rect_stroke(
+        doc_x,
+        doc_y,
+        doc_width,
+        doc_height,
+        corner_radius,
+        1.0,
+        border_color,
+      );
 
-    // Render documentation content
-    let mut y_offset = doc_y + DOC_PADDING;
-    let font_size = UI_FONT_SIZE;
-    let line_height = font_size + 4.0;
+      // Render documentation content
+      let mut y_offset = doc_y + DOC_PADDING;
+      let font_size = UI_FONT_SIZE;
+      let line_height = font_size + 4.0;
 
-    // Render detail (in a code-like style if present)
-    if let Some(detail_text) = detail {
-      let mut detail_color = Color::new(0.7, 0.8, 0.9, 1.0);
-      detail_color.a *= alpha;
+      // Render detail (in a code-like style if present)
+      if let Some(detail_text) = detail {
+        let mut detail_color = Color::new(0.7, 0.8, 0.9, 1.0);
+        detail_color.a *= alpha;
 
-      surface.draw_text(TextSection {
-        position: (doc_x + DOC_PADDING, y_offset),
-        texts:    vec![TextSegment {
-          content: detail_text.to_string(),
-          style:   TextStyle {
-            size:  font_size,
-            color: detail_color,
-          },
-        }],
-      });
-      y_offset += line_height * 2.0; // Extra spacing after detail
-    }
-
-    // Render documentation text (wrapped)
-    if let Some(doc_text) = doc {
-      // Simple line wrapping - split into words and wrap at doc_width
-      let max_chars_per_line = ((doc_width - DOC_PADDING * 2.0) / (font_size * 0.6)) as usize;
-      let lines = wrap_text(doc_text, max_chars_per_line);
-
-      for line in lines
-        .iter()
-        .take(((doc_height - y_offset + doc_y - DOC_PADDING) / line_height) as usize)
-      {
         surface.draw_text(TextSection {
           position: (doc_x + DOC_PADDING, y_offset),
           texts:    vec![TextSegment {
-            content: line.to_string(),
+            content: detail_text.to_string(),
             style:   TextStyle {
               size:  font_size,
-              color: text_color,
+              color: detail_color,
             },
           }],
         });
-        y_offset += line_height;
+        y_offset += line_height * 2.0; // Extra spacing after detail
       }
-    }
+
+      // Render documentation text (wrapped)
+      if let Some(doc_text) = doc {
+        // Simple line wrapping - split into words and wrap at doc_width
+        let max_chars_per_line = ((doc_width - DOC_PADDING * 2.0) / (font_size * 0.6)) as usize;
+        let lines = wrap_text(doc_text, max_chars_per_line);
+
+        for line in lines
+          .iter()
+          .take(((doc_height - y_offset + doc_y - DOC_PADDING) / line_height) as usize)
+        {
+          surface.draw_text(TextSection {
+            position: (doc_x + DOC_PADDING, y_offset),
+            texts:    vec![TextSegment {
+              content: line.to_string(),
+              style:   TextStyle {
+                size:  font_size,
+                color: text_color,
+              },
+            }],
+          });
+          y_offset += line_height;
+        }
+      }
+    });
   }
 
   /// Format a completion item kind to a display string
@@ -872,27 +896,28 @@ impl Component for Completion {
     let text_style = theme.get("ui.text");
     let selected_style = theme.get("ui.menu.selected");
 
-    let mut bg_color = bg_style
+    // Background colors stay opaque for solid appearance
+    let bg_color = bg_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.12, 0.12, 0.15, 0.98));
+      .unwrap_or(Color::new(0.12, 0.12, 0.15, 1.0));
+    let selected_bg = selected_style
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.25, 0.3, 0.45, 1.0));
+
+    // Text colors fade in with animation
     let mut text_color = text_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
-    let mut selected_bg = selected_style
-      .bg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.25, 0.3, 0.45, 1.0));
     let mut selected_fg = selected_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(1.0, 1.0, 1.0, 1.0));
 
-    // Apply animation alpha to all colors
-    bg_color.a *= alpha;
+    // Apply animation alpha only to text
     text_color.a *= alpha;
-    selected_bg.a *= alpha;
     selected_fg.a *= alpha;
 
     // Calculate layout
@@ -927,9 +952,7 @@ impl Component for Completion {
     }
     menu_width = menu_width.min(MAX_MENU_WIDTH as f32 * UI_FONT_WIDTH);
 
-    // Calculate cursor position from trigger_offset
-    // For now, use current cursor position as approximation
-    // TODO: Calculate exact position based on trigger_offset when cursor has moved
+    // Calculate fresh cursor position (not cached) with correct split offset
     let (cursor_x, cursor_y) = {
       let (view, doc) = crate::current_ref!(ctx.editor);
       let text = doc.text();
@@ -944,36 +967,68 @@ impl Component for Completion {
       let view_offset = doc.view_offset(view.id);
       let anchor_line = text.char_to_line(view_offset.anchor.min(text.len_chars()));
 
-      // Calculate screen coordinates
+      // Calculate screen row/col accounting for scroll
+      let rel_row = line.saturating_sub(anchor_line);
+      let screen_col = col.saturating_sub(view_offset.horizontal_offset);
+
+      // Check if cursor is visible
+      if rel_row >= view.inner_height() {
+        // Cursor scrolled out of view vertically
+        return;
+      }
+
+      // Get font metrics
       let font_size = ctx
         .editor
         .font_size_override
         .unwrap_or(ctx.editor.config().font_size);
       let font_width = surface.cell_width().max(1.0);
-      let gutter_width = 6; // Approximate gutter width
-      let gutter_offset = gutter_width as f32 * font_width;
+      const LINE_SPACING: f32 = 4.0;
+      let line_height = font_size + LINE_SPACING;
 
-      const VIEW_PADDING_LEFT: f32 = 10.0;
-      const VIEW_PADDING_TOP: f32 = 10.0;
-      const LINE_SPACING: f32 = 2.0;
+      // Get view's screen offset (handles splits correctly)
+      let inner = view.inner_area(doc);
+      let view_x = inner.x as f32 * font_width;
+      let view_y = inner.y as f32 * line_height;
 
-      let base_x = VIEW_PADDING_LEFT + gutter_offset;
-      let base_y = VIEW_PADDING_TOP;
-
-      let rel_row = line.saturating_sub(anchor_line);
-      let x = base_x + (col as f32) * font_width;
-      // Position below the cursor line
-      let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING) + font_size + LINE_SPACING;
+      // Calculate final screen position
+      let x = view_x + (screen_col as f32 * font_width);
+      let y = view_y + (rel_row as f32 * line_height) + line_height;
 
       (x, y)
     };
 
+    // Get viewport dimensions for bounds checking
+    let viewport_width = surface.width() as f32;
+    let viewport_height = surface.height() as f32;
+
     // Apply animation transforms
-    let anim_y = cursor_y + slide_offset;
     let anim_width = menu_width * scale;
     let anim_height = menu_height * scale;
-    // Center the scaled popup at the cursor position
-    let anim_x = cursor_x - (menu_width - anim_width) / 2.0;
+
+    // Try to position below cursor first
+    let mut popup_y = cursor_y + slide_offset;
+
+    // Check if popup would overflow bottom of viewport
+    if popup_y + anim_height > viewport_height {
+      // Try positioning above cursor instead
+      let y_above = cursor_y - anim_height - slide_offset;
+      if y_above >= 0.0 {
+        popup_y = y_above;
+      } else {
+        // Not enough space above or below, clamp to viewport
+        popup_y = popup_y.max(0.0).min(viewport_height - anim_height);
+      }
+    }
+
+    // Center the scaled popup at the cursor position, then clamp to viewport
+    let mut popup_x = cursor_x - (menu_width - anim_width) / 2.0;
+
+    // Clamp X to viewport bounds
+    popup_x = popup_x.max(0.0).min(viewport_width - anim_width);
+
+    let anim_x = popup_x;
+    let anim_y = popup_y;
 
     // Draw background
     let corner_radius = 6.0;
@@ -986,9 +1041,8 @@ impl Component for Completion {
       bg_color,
     );
 
-    // Draw border (with animated alpha)
-    let mut border_color = Color::new(0.3, 0.3, 0.35, 0.8);
-    border_color.a *= alpha;
+    // Draw border (keep it opaque)
+    let border_color = Color::new(0.3, 0.3, 0.35, 0.8);
     surface.draw_rounded_rect_stroke(
       anim_x,
       anim_y,
@@ -1092,8 +1146,8 @@ impl Component for Completion {
     if let Some(selected_item) = self.selection() {
       self.render_documentation(
         selected_item,
-        cursor_x,
-        cursor_y,
+        anim_x,
+        anim_y,
         anim_width,
         anim_height,
         alpha,

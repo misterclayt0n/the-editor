@@ -255,13 +255,28 @@ impl Renderer {
       })
       .unwrap_or(wgpu::PresentMode::Fifo);
 
+    // Select an opaque alpha mode (prefer Opaque, then fallback to others)
+    let alpha_mode = surface_caps
+      .alpha_modes
+      .iter()
+      .copied()
+      .find(|m| *m == CompositeAlphaMode::Opaque)
+      .or_else(|| {
+        surface_caps
+          .alpha_modes
+          .iter()
+          .copied()
+          .find(|m| *m == CompositeAlphaMode::Inherit || *m == CompositeAlphaMode::PreMultiplied)
+      })
+      .unwrap_or(surface_caps.alpha_modes[0]);
+
     let config = wgpu::SurfaceConfiguration {
       usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
       format: surface_format,
       width: size.width.max(1),
       height: size.height.max(1),
       present_mode,
-      alpha_mode: CompositeAlphaMode::Auto,
+      alpha_mode,
       view_formats: vec![],
       desired_maximum_frame_latency: 2,
     };

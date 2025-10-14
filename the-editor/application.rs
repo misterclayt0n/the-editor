@@ -50,6 +50,10 @@ pub struct App {
   pending_scroll_lines: f32,
   pending_scroll_cols:  f32,
 
+  // Trackpad fractional scroll accumulation (separate from animation)
+  trackpad_scroll_lines: f32,
+  trackpad_scroll_cols:  f32,
+
   // Delta time tracking for time-based animations
   last_frame_time: std::time::Instant,
 }
@@ -98,6 +102,8 @@ impl App {
       scroll_min_step_cols: conf.scroll_min_step_cols,
       pending_scroll_lines: 0.0,
       pending_scroll_cols: 0.0,
+      trackpad_scroll_lines: 0.0,
+      trackpad_scroll_cols: 0.0,
       last_frame_time: std::time::Instant::now(),
     }
   }
@@ -531,8 +537,9 @@ impl Application for App {
     }
 
     // Keep redrawing while a scroll animation is active.
+    // Use same threshold as animate_scroll to prevent micro-animations
     if self.smooth_scroll_enabled
-      && (self.pending_scroll_lines.abs() > 0.01 || self.pending_scroll_cols.abs() > 0.01)
+      && (self.pending_scroll_lines.abs() > 0.1 || self.pending_scroll_cols.abs() > 0.1)
     {
       return true;
     }
@@ -558,34 +565,101 @@ impl Application for App {
 
 impl App {
   fn handle_scroll(&mut self, delta: ScrollDelta, renderer: &mut Renderer) {
-    // Convert incoming delta to logical lines/columns
-    // Positive wheel y in winit is typically scroll up; map to negative lines
-    // (toward file top)
-    let (d_cols, d_lines) = match delta {
+    match delta {
+      // Mouse wheel: discrete line-based scrolling
+      // Use smooth scrolling animation for these
       ScrollDelta::Lines { x, y } => {
         let config_lines = self.editor.config().scroll_lines.max(1) as f32;
-        (-x * 4.0, -y * config_lines)
+        let d_cols = -x * 4.0;
+        let d_lines = -y * config_lines;
+
+        // Accumulate into pending animation deltas for smooth scrolling
+        self.pending_scroll_lines += d_lines;
+        self.pending_scroll_cols += d_cols;
+
+        // Nudge a redraw loop
+        the_editor_event::request_redraw();
       },
+
+      // Trackpad: continuous pixel-based scrolling
+      // Already smooth from OS, accumulate fractional lines and apply when ready
       ScrollDelta::Pixels { x, y } => {
         let line_h = renderer.cell_height().max(1.0);
         let col_w = renderer.cell_width().max(1.0);
-        (-x / col_w, -y / line_h)
+
+        // Apply same multiplier as mouse wheel for consistent scroll speed
+        let config_lines = self.editor.config().scroll_lines.max(1) as f32;
+        let d_cols = (-x / col_w) * 4.0;  // Same horizontal multiplier as mouse wheel
+        let d_lines = (-y / line_h) * config_lines;
+
+        // Accumulate fractional scrolling
+        self.trackpad_scroll_lines += d_lines;
+        self.trackpad_scroll_cols += d_cols;
+
+        // Extract integer part to scroll
+        let lines_to_scroll = self.trackpad_scroll_lines.trunc() as i32;
+        let cols_to_scroll = self.trackpad_scroll_cols.trunc() as i32;
+
+        // Keep fractional remainder for next event
+        self.trackpad_scroll_lines -= lines_to_scroll as f32;
+        self.trackpad_scroll_cols -= cols_to_scroll as f32;
+
+        // Apply accumulated scroll immediately if we have at least 1 line/col
+        if lines_to_scroll != 0 || cols_to_scroll != 0 {
+          self.apply_scroll_immediate(lines_to_scroll, cols_to_scroll);
+        }
       },
-    };
+    }
+  }
 
-    // Accumulate into pending animation deltas
-    self.pending_scroll_lines += d_lines;
-    self.pending_scroll_cols += d_cols;
+  /// Apply scroll immediately without animation (for trackpad)
+  fn apply_scroll_immediate(&mut self, lines: i32, cols: i32) {
+    use crate::core::movement::Direction;
 
-    // Nudge a redraw loop
-    the_editor_event::request_redraw();
+    if lines != 0 {
+      let direction = if lines > 0 {
+        Direction::Forward
+      } else {
+        Direction::Backward
+      };
+
+      let mut cmd_cx = commands::Context {
+        register:             self.editor.selected_register,
+        count:                self.editor.count,
+        editor:               &mut self.editor,
+        on_next_key_callback: None,
+        callback:             Vec::new(),
+        jobs:                 &mut self.jobs,
+      };
+
+      commands::scroll(&mut cmd_cx, lines.unsigned_abs() as usize, direction, false);
+    }
+
+    if cols != 0 {
+      let focus_view = self.editor.tree.focus;
+      let view = self.editor.tree.get(focus_view);
+      let doc_id = view.doc;
+      let doc = self.editor.documents.get_mut(&doc_id).unwrap();
+      let mut vp = doc.view_offset(focus_view);
+
+      if cols >= 0 {
+        vp.horizontal_offset = vp.horizontal_offset.saturating_add(cols as usize);
+      } else {
+        vp.horizontal_offset = vp.horizontal_offset.saturating_sub((-cols) as usize);
+      }
+
+      doc.set_view_offset(focus_view, vp);
+    }
   }
 
   fn animate_scroll(&mut self, _renderer: &mut Renderer) {
     // Vertical: apply a fraction of pending lines via commands::scroll
     let apply_axis = |pending: &mut f32| -> i32 {
       let remaining = *pending;
-      if remaining.abs() < 0.01 {
+      // Use higher threshold to stop micro-animations faster
+      if remaining.abs() < 0.1 {
+        // Close enough to zero, snap to zero and stop animating
+        *pending = 0.0;
         return 0;
       }
       let step_f = remaining * self.scroll_lerp_factor;
@@ -643,7 +717,7 @@ impl App {
     // Horizontal: adjust view_offset.horizontal_offset directly
     // We use a separate min step for columns as columns tend to be smaller
     let remaining_h = self.pending_scroll_cols;
-    if remaining_h.abs() >= 0.01 {
+    if remaining_h.abs() >= 0.1 {
       let step_f = remaining_h * self.scroll_lerp_factor;
       let min_step = self.scroll_min_step_cols.copysign(remaining_h);
       let mut step = if step_f.abs() < self.scroll_min_step_cols.abs() {
@@ -679,6 +753,9 @@ impl App {
       vp.horizontal_offset = new_h;
       doc.set_view_offset(focus_view, vp);
       self.pending_scroll_cols -= step_i as f32;
+    } else {
+      // Below threshold, snap to zero to stop animation
+      self.pending_scroll_cols = 0.0;
     }
   }
 }

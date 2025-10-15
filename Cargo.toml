@@ -25,8 +25,10 @@ dead_code        = "allow"
 unused_variables = "warn"
 
 [workspace.dependencies]
+agent-client-protocol    = "0.4"
 anyhow                   = "1.0"
 arc-swap                 = "1"
+async-trait              = "0.1"
 bitflags                 = "2.9"
 bytemuck                 = { features = [ "derive" ], version = "1.20" }
 chardetng                = "0.1"
@@ -58,6 +60,7 @@ smartstring              = "1.0.1"
 tempfile                 = "3.20.0"
 thiserror                = "2.0"
 tokio-stream             = "0.1.17"
+tokio-util               = { version = "0.7", features = ["compat"] }
 toml                     = "0.9"
 tree-house               = { default-features = false, git = "https://github.com/misterclayt0n/tree-house" }
 unicode-general-category = "1.0"

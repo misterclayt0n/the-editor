@@ -16,8 +16,10 @@ term          = [  ]
 unicode-lines = [ "ropey/unicode_lines" ]
 
 [dependencies]
+agent-client-protocol.workspace    = true
 anyhow.workspace                   = true
 arc-swap                           = "1.7.1"
+async-trait.workspace              = true
 bitflags                           = "2.4"
 chardetng.workspace                = true
 chrono                             = { default-features = false, features = [ "alloc", "std" ], version = "0.4" }
@@ -44,6 +46,7 @@ tempfile.workspace                 = true
 thiserror.workspace                = true
 tokio.workspace                    = true
 tokio-stream.workspace             = true
+tokio-util.workspace               = true
 toml.workspace                     = true
 tree-house.workspace               = true
 unicode-general-category.workspace = true

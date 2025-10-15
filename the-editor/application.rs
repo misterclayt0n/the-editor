@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use the_editor_renderer::{
   Application,
   InputEvent,
@@ -40,6 +42,10 @@ pub struct App {
   pub jobs:          Jobs,
   pub input_handler: InputHandler,
 
+  // LocalSet for polling !Send futures (ACP)
+  local_set:     Rc<tokio::task::LocalSet>,
+  runtime_handle: tokio::runtime::Handle,
+
   // Smooth scrolling configuration and state
   smooth_scroll_enabled: bool,
   scroll_lerp_factor:    f32, // fraction of remaining distance per frame (0..1)
@@ -59,7 +65,11 @@ pub struct App {
 }
 
 impl App {
-  pub fn new(editor: Editor) -> Self {
+  pub fn new(
+    editor: Editor,
+    local_set: Rc<tokio::task::LocalSet>,
+    runtime_handle: tokio::runtime::Handle,
+  ) -> Self {
     let area = Rect::new(0, 0, 120, 40); // Default size, will be updated on resize.
     let mut compositor = Compositor::new(area);
 
@@ -96,6 +106,8 @@ impl App {
       editor,
       jobs: Jobs::new(),
       input_handler: InputHandler::new(mode),
+      local_set,
+      runtime_handle,
       smooth_scroll_enabled: conf.smooth_scroll_enabled,
       scroll_lerp_factor: conf.scroll_lerp_factor,
       scroll_min_step_lines: conf.scroll_min_step_lines,
@@ -313,6 +325,19 @@ impl Application for App {
     // The renderer's begin_frame/end_frame are handled by the main loop.
     // We just need to draw our content here.
 
+    // Poll the LocalSet to make progress on !Send futures (ACP)
+    // This is essential for spawn_local tasks to actually execute
+    // We use run_until with a minimal future to tick the LocalSet once
+    let local_set = self.local_set.clone();
+    self.runtime_handle.block_on(async move {
+      local_set
+        .run_until(async {
+          // Just yield once to let queued tasks make progress
+          tokio::task::yield_now().await;
+        })
+        .await;
+    });
+
     // Process any pending LSP messages
     while let Some((server_id, call)) = self.editor.try_poll_lsp_message() {
       self.handle_language_server_message(server_id, call);
@@ -331,6 +356,18 @@ impl Application for App {
         .jobs
         .handle_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback)));
     }
+
+    // Process any pending local job callbacks (for !Send futures like ACP)
+    // Drain all callbacks from the Vec
+    let local_cbs = self.jobs.local_callbacks.borrow_mut().drain(..).collect::<Vec<_>>();
+    for callback in local_cbs {
+      self
+        .jobs
+        .handle_local_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback)));
+    }
+
+    // Process any pending ACP session notifications
+    self.process_acp_notifications();
 
     // Process any pending status messages
     while let Ok(status) = self.jobs.status_messages.try_recv() {
@@ -765,5 +802,138 @@ impl App {
       // Below threshold, snap to zero to stop animation
       self.pending_scroll_cols = 0.0;
     }
+  }
+
+  fn process_acp_notifications(&mut self) {
+    use crate::acp::{
+      SessionNotification,
+      acp::SessionUpdate,
+    };
+
+    // Drain all notifications from the queue
+    let notifications = self
+      .editor
+      .acp_sessions
+      .notifications()
+      .borrow_mut()
+      .drain(..)
+      .collect::<Vec<_>>();
+
+    if !notifications.is_empty() {
+      log::info!("ACP App: Processing {} notifications", notifications.len());
+    }
+
+    // Process each notification
+    for notification in notifications {
+      let SessionNotification { session_id, update } = notification;
+      log::info!("ACP App: Processing notification for session {:?}", session_id);
+
+      // Convert the update into a message and append to document
+      match update {
+        SessionUpdate::AgentMessageChunk { content } => {
+          let text = Self::extract_content_text(&content);
+          log::info!("ACP App: AgentMessageChunk - {} chars", text.len());
+          // Append to document for this session
+          self.append_to_session_document(&session_id, &text);
+        },
+        SessionUpdate::UserMessageChunk { content } => {
+          let text = Self::extract_content_text(&content);
+          log::info!("ACP App: UserMessageChunk - {} chars", text.len());
+          // Could track user messages too, but for now we focus on agent messages
+          log::debug!("User message chunk: {}", text);
+        },
+        SessionUpdate::AgentThoughtChunk { content } => {
+          // Append thinking to document
+          let thought = Self::extract_content_text(&content);
+          log::info!("ACP App: AgentThoughtChunk - {} chars", thought.len());
+          self.append_to_session_document(&session_id, &format!("[Thinking: {}]\n", thought));
+        },
+        SessionUpdate::ToolCall(tool_call) => {
+          let text = format!("[Tool Call: {}]\n", tool_call.title);
+          log::info!("ACP App: ToolCall - {}", tool_call.title);
+          self.append_to_session_document(&session_id, &text);
+        },
+        SessionUpdate::ToolCallUpdate(_) | SessionUpdate::Plan(_) => {
+          // These could be rendered specially in the future
+          log::debug!("ACP App: Received session update: {:?}", update);
+        },
+        SessionUpdate::CurrentModeUpdate { .. } | SessionUpdate::AvailableCommandsUpdate { .. } => {
+          // Metadata updates
+          log::debug!("ACP App: Received metadata update: {:?}", update);
+        },
+      }
+    }
+  }
+
+  fn extract_content_text(content: &crate::acp::acp::ContentBlock) -> String {
+    use crate::acp::acp::ContentBlock;
+    match content {
+      ContentBlock::Text(text_content) => text_content.text.clone(),
+      ContentBlock::Image(_) => "<image>".into(),
+      ContentBlock::Audio(_) => "<audio>".into(),
+      ContentBlock::ResourceLink(resource_link) => format!("<link: {}>", resource_link.uri),
+      ContentBlock::Resource(_) => "<resource>".into(),
+    }
+  }
+
+  fn append_to_session_document(&mut self, session_id: &crate::acp::acp::SessionId, text: &str) {
+    log::info!("ACP App: append_to_session_document - {} chars for session {:?}", text.len(), session_id);
+
+    // We need to look up the doc_id synchronously
+    // Since RegistryState is behind an async Mutex, we can't directly access it here
+    // Instead, we'll spawn a callback_local job that can do the async lookup and append
+    let registry = self.editor.acp_sessions.handle();
+    let session_id_clone = session_id.clone();
+    let text_owned = text.to_string();
+
+    // Spawn a local callback to append text
+    self.jobs.callback_local(async move {
+      log::info!("ACP App: Inside append callback_local, looking up doc_id");
+      // Get the document ID for this session
+      if let Some(doc_id) = registry.get_doc_id_by_session(&session_id_clone).await {
+        log::info!("ACP App: Found doc_id {:?}, returning editor callback", doc_id);
+        // Return a callback to append text to the document
+        Ok(Some(crate::ui::job::LocalCallback::Editor(Box::new(
+          move |editor| {
+            use crate::core::{
+              selection::Selection,
+              transaction::Transaction,
+            };
+
+            log::info!("ACP App: Inside editor callback, appending to doc {:?}", doc_id);
+
+            // Get the document and append text
+            if let Some(doc) = editor.documents.get_mut(&doc_id) {
+              // Get the end of the document
+              let len = doc.text().len_chars();
+              log::info!("ACP App: Document has {} chars, appending {} chars", len, text_owned.len());
+
+              // Find a view that's displaying this document
+              let view_id = editor.tree.views()
+                .find(|(view, _)| view.doc == doc_id)
+                .map(|(view, _)| view.id)
+                .unwrap_or_else(|| {
+                  // If no view is found, get any view ID from the document's selections
+                  doc.selections().keys().next().copied().unwrap_or_default()
+                });
+
+              log::info!("ACP App: Using view_id {:?} for append", view_id);
+
+              // Create a selection at the end of the document
+              let selection = Selection::single(len, len);
+              // Insert text at the end
+              let transaction = Transaction::insert(doc.text(), &selection, text_owned.clone().into());
+              doc.apply(&transaction, view_id);
+              log::info!("ACP App: Text appended successfully");
+            } else {
+              log::warn!("ACP App: Document {:?} not found in editor", doc_id);
+            }
+          },
+        ))))
+      } else {
+        log::warn!("ACP App: No doc_id found for session {:?}", session_id_clone);
+        Ok(None)
+      }
+    });
   }
 }

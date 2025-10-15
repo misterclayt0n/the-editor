@@ -320,6 +320,7 @@ pub struct Editor {
   pub language_servers:  crate::lsp::Registry,
   pub diagnostics:       Diagnostics,
   pub diff_providers:    DiffProviderRegistry,
+  pub acp_sessions:      crate::acp::Registry,
 
   // pub debug_adapters: dap::registry::Registry,
   // pub breakpoints:    HashMap<PathBuf, Vec<Breakpoint>>,
@@ -1819,6 +1820,7 @@ impl Editor {
       language_servers,
       diagnostics: Diagnostics::new(),
       diff_providers: DiffProviderRegistry::default(),
+      acp_sessions: crate::acp::Registry::new(vec![crate::acp::AgentConfig::default()]),
       // debug_adapters: dap::registry::Registry::new(),
       // breakpoints: HashMap::new(),
       syn_loader,

@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+  rc::Rc,
+  sync::Arc,
+};
 
 use arc_swap::{
   ArcSwap,
@@ -19,6 +22,7 @@ use crate::{
   handlers::Handlers,
 };
 
+mod acp;
 mod application;
 mod core;
 mod editor;
@@ -41,6 +45,13 @@ fn main() -> anyhow::Result<()> {
     .build()?;
   // Enter the runtime before constructing handlers that spawn tasks.
   let guard = rt.enter();
+
+  // Create a LocalSet for !Send futures (required by ACP)
+  // This will run on the main thread alongside the multi-threaded runtime
+  let local_set = Rc::new(tokio::task::LocalSet::new());
+
+  // Enter the LocalSet context so spawn_local works throughout the application
+  let _local_guard = local_set.enter();
 
   // Prepare theme loader.
   let mut theme_parent_dirs = vec![the_editor_loader::config_dir()];
@@ -101,8 +112,8 @@ fn main() -> anyhow::Result<()> {
     editor.new_file(Action::VerticalSplit);
   }
 
-  // Create the application wrapper
-  let app = crate::application::App::new(editor);
+  // Create the application wrapper with LocalSet and runtime handle
+  let app = crate::application::App::new(editor, local_set, rt.handle().clone());
 
   // Build window configuration from editor config
   let window_config =

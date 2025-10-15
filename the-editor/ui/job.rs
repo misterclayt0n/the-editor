@@ -1,8 +1,14 @@
+use std::{
+  cell::RefCell,
+  rc::Rc,
+};
+
 use futures_util::{
   future::{
     BoxFuture,
     Future,
     FutureExt,
+    LocalBoxFuture,
   },
   stream::{
     FuturesUnordered,
@@ -29,6 +35,10 @@ use crate::{
 pub type EditorCompositorCallback = Box<dyn FnOnce(&mut Editor, &mut Compositor) + Send>;
 pub type EditorCallback = Box<dyn FnOnce(&mut Editor) + Send>;
 
+// For LocalSet jobs (!Send)
+pub type LocalEditorCompositorCallback = Box<dyn FnOnce(&mut Editor, &mut Compositor)>;
+pub type LocalEditorCallback = Box<dyn FnOnce(&mut Editor)>;
+
 runtime_local! {
     static JOB_QUEUE: OnceCell<Sender<Callback>> = OnceCell::new();
 }
@@ -54,7 +64,13 @@ pub enum Callback {
   Editor(EditorCallback),
 }
 
+pub enum LocalCallback {
+  EditorCompositor(LocalEditorCompositorCallback),
+  Editor(LocalEditorCallback),
+}
+
 pub type JobFuture = BoxFuture<'static, anyhow::Result<Option<Callback>>>;
+pub type LocalJobFuture = LocalBoxFuture<'static, anyhow::Result<Option<LocalCallback>>>;
 
 pub struct Job {
   pub future: BoxFuture<'static, anyhow::Result<Option<Callback>>>,
@@ -62,11 +78,19 @@ pub struct Job {
   pub wait:   bool,
 }
 
+pub struct LocalJob {
+  pub future: LocalJobFuture,
+  /// Do we need to wait for this job to finish before exiting?
+  pub wait:   bool,
+}
+
 pub struct Jobs {
   /// jobs that need to complete before we exit.
-  pub wait_futures:    FuturesUnordered<JobFuture>,
-  pub callbacks:       Receiver<Callback>,
-  pub status_messages: Receiver<StatusMessage>,
+  pub wait_futures:      FuturesUnordered<JobFuture>,
+  pub callbacks:         Receiver<Callback>,
+  /// Local callbacks stored in an Rc<RefCell<>> since they're !Send and only accessed from main thread
+  pub local_callbacks:   Rc<RefCell<Vec<LocalCallback>>>,
+  pub status_messages:   Receiver<StatusMessage>,
 }
 
 impl Job {
@@ -92,6 +116,29 @@ impl Job {
   }
 }
 
+impl LocalJob {
+  pub fn new<F: Future<Output = anyhow::Result<()>> + 'static>(f: F) -> Self {
+    Self {
+      future: f.map(|r| r.map(|()| None)).boxed_local(),
+      wait:   false,
+    }
+  }
+
+  pub fn with_callback<F: Future<Output = anyhow::Result<Option<LocalCallback>>> + 'static>(
+    f: F,
+  ) -> Self {
+    Self {
+      future: f.boxed_local(),
+      wait:   false,
+    }
+  }
+
+  pub fn wait_before_exiting(mut self) -> Self {
+    self.wait = true;
+    self
+  }
+}
+
 impl Jobs {
   #[allow(clippy::new_without_default)]
   pub fn new() -> Self {
@@ -101,6 +148,7 @@ impl Jobs {
     Self {
       wait_futures: FuturesUnordered::new(),
       callbacks: rx,
+      local_callbacks: Rc::new(RefCell::new(Vec::new())),
       status_messages,
     }
   }
@@ -111,6 +159,19 @@ impl Jobs {
 
   pub fn callback<F: Future<Output = anyhow::Result<Callback>> + Send + 'static>(&mut self, f: F) {
     self.add(Job::with_callback(f));
+  }
+
+  /// Spawn a local job (for !Send futures like ACP operations)
+  pub fn spawn_local<F: Future<Output = anyhow::Result<()>> + 'static>(&mut self, f: F) {
+    self.add_local(LocalJob::new(f));
+  }
+
+  /// Add a callback job for local futures
+  pub fn callback_local<F: Future<Output = anyhow::Result<Option<LocalCallback>>> + 'static>(
+    &mut self,
+    f: F,
+  ) {
+    self.add_local(LocalJob::with_callback(f));
   }
 
   pub fn handle_callback(
@@ -133,6 +194,26 @@ impl Jobs {
     }
   }
 
+  pub fn handle_local_callback(
+    &self,
+    editor: &mut Editor,
+    compositor: &mut Compositor,
+    call: anyhow::Result<Option<LocalCallback>>,
+  ) {
+    match call {
+      Ok(None) => {},
+      Ok(Some(call)) => {
+        match call {
+          LocalCallback::EditorCompositor(call) => call(editor, compositor),
+          LocalCallback::Editor(call) => call(editor),
+        }
+      },
+      Err(e) => {
+        editor.set_error(format!("Async job failed: {}", e));
+      },
+    }
+  }
+
   pub fn add(&self, j: Job) {
     if j.wait {
       self.wait_futures.push(j.future);
@@ -145,6 +226,23 @@ impl Jobs {
         }
       });
     }
+  }
+
+  pub fn add_local(&self, j: LocalJob) {
+    // Clone the Rc to pass into the spawn_local closure
+    let local_callbacks = self.local_callbacks.clone();
+
+    // Local jobs must use spawn_local
+    tokio::task::spawn_local(async move {
+      match j.future.await {
+        Ok(Some(cb)) => {
+          // Push the callback to the Vec
+          local_callbacks.borrow_mut().push(cb);
+        },
+        Ok(None) => (),
+        Err(err) => the_editor_event::status::report(err).await,
+      }
+    });
   }
 
   /// Blocks until all the jobs that need to be waited on are done.

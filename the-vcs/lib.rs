@@ -70,6 +70,12 @@ impl DiffProviderRegistry {
     })
   }
 
+  /// Get the workspace root (repository working directory) for a given file path.
+  /// Returns None if the file is not in a VCS repository.
+  pub fn get_workspace_root(&self, file: &Path) -> Option<PathBuf> {
+    self.providers.iter().find_map(|provider| provider.get_workspace_root(file))
+  }
+
   /// Fire-and-forget changed file iteration. Runs everything in a background
   /// task. Keeps iteration until `on_change` returns `false`.
   pub fn for_each_changed_file(
@@ -129,6 +135,14 @@ impl DiffProvider {
       #[cfg(feature = "git")]
       Self::Git => git::get_current_head_name(_file),
       Self::None => bail!("No diff support compiled in"),
+    }
+  }
+
+  fn get_workspace_root(&self, _file: &Path) -> Option<PathBuf> {
+    match self {
+      #[cfg(feature = "git")]
+      Self::Git => git::get_workspace_root(_file),
+      Self::None => None,
     }
   }
 

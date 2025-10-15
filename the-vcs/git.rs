@@ -92,6 +92,17 @@ pub fn get_current_head_name(file: &Path) -> Result<Arc<ArcSwap<Box<str>>>> {
   Ok(Arc::new(ArcSwap::from_pointee(name.into_boxed_str())))
 }
 
+/// Get the workspace root (git repository working directory) for a given file path.
+/// Returns None if the file is not in a git repository.
+pub fn get_workspace_root(file: &Path) -> Option<std::path::PathBuf> {
+  debug_assert!(file.is_absolute());
+  let file = gix::path::realpath(file).ok()?;
+
+  let repo_dir = get_repo_dir(&file).ok()?;
+  let repo = open_repo(repo_dir).ok()?.to_thread_local();
+  repo.workdir().map(|p| p.to_path_buf())
+}
+
 pub fn for_each_changed_file(cwd: &Path, f: impl Fn(Result<FileChange>) -> bool) -> Result<()> {
   status(&open_repo(cwd)?.to_thread_local(), f)
 }

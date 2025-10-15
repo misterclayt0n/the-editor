@@ -216,15 +216,45 @@ impl Component for StatusLine {
       // Buffer name
       let path = doc.path();
       let modified = doc.is_modified();
-      let name = path
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("[No Name]");
-      let display_name = if modified {
-        format!("{}*", name)
+
+      // Compute display name based on workspace context
+      let display_name = if let Some(path) = path {
+        // Try to get workspace root
+        if let Some(workspace_root) = cx.editor.diff_providers.get_workspace_root(path) {
+          // File is inside a workspace - show relative path from workspace root
+          if let Ok(rel_path) = path.strip_prefix(&workspace_root) {
+            let path_str = rel_path.to_str().unwrap_or("[Invalid Path]");
+            if modified {
+              format!("{}*", path_str)
+            } else {
+              path_str.to_string()
+            }
+          } else {
+            // Shouldn't happen, but fallback to full path with ~
+            let folded = the_editor_stdx::path::fold_home_dir(path);
+            let path_str = folded.to_str().unwrap_or("[Invalid Path]");
+            if modified {
+              format!("{}*", path_str)
+            } else {
+              path_str.to_string()
+            }
+          }
+        } else {
+          // File is outside workspace - show full path with ~ abbreviation
+          let folded = the_editor_stdx::path::fold_home_dir(path);
+          let path_str = folded.to_str().unwrap_or("[Invalid Path]");
+          if modified {
+            format!("{}*", path_str)
+          } else {
+            path_str.to_string()
+          }
+        }
+      } else if modified {
+        "[No Name]*".to_string()
       } else {
-        name.to_string()
+        "[No Name]".to_string()
       };
+
       let buffer_width = Self::draw_text(surface, x, bar_y, &display_name, text_color);
       x += buffer_width + SEGMENT_SPACING;
 

@@ -262,12 +262,12 @@ impl Prompt {
       },
       // Tab - next completion
       (Key::Tab, _, _, false) => {
-        self.change_completion_selection_forward();
+        self.change_completion_selection_forward(editor);
         PromptEvent::Update
       },
       // Shift+Tab - previous completion
       (Key::Tab, _, _, true) => {
-        self.change_completion_selection_backward();
+        self.change_completion_selection_backward(editor);
         PromptEvent::Update
       },
       // Ctrl+q - exit selection
@@ -785,7 +785,7 @@ impl Prompt {
   }
 
   /// Move to next completion (Tab)
-  fn change_completion_selection_forward(&mut self) {
+  fn change_completion_selection_forward(&mut self, editor: &Editor) {
     if self.completions.is_empty() {
       return;
     }
@@ -811,10 +811,15 @@ impl Prompt {
     }
 
     self.apply_completion(index);
+
+    // If we completed a directory path, recalculate completions for progressive navigation
+    if self.should_recalculate_after_completion() {
+      self.recalculate_completions(editor);
+    }
   }
 
   /// Move to previous completion (Shift+Tab)
-  fn change_completion_selection_backward(&mut self) {
+  fn change_completion_selection_backward(&mut self, editor: &Editor) {
     if self.completions.is_empty() {
       return;
     }
@@ -846,6 +851,11 @@ impl Prompt {
     }
 
     self.apply_completion(index);
+
+    // If we completed a directory path, recalculate completions for progressive navigation
+    if self.should_recalculate_after_completion() {
+      self.recalculate_completions(editor);
+    }
   }
 
   /// Apply the completion at the given index to the input
@@ -859,6 +869,12 @@ impl Prompt {
       self.cursor = self.input.len();
       self.scroll_offset = 0; // Reset scroll
     }
+  }
+
+  /// Check if we should recalculate completions after applying a completion
+  /// This is true for directory paths (ending with /) to enable progressive navigation
+  fn should_recalculate_after_completion(&self) -> bool {
+    self.input.ends_with(std::path::MAIN_SEPARATOR)
   }
 
   /// Exit completion selection mode

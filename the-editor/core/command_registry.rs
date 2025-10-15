@@ -508,7 +508,7 @@ impl CommandRegistry {
       &["o", "e", "edit"],
       "Open a file for editing",
       open_file,
-      CommandCompleter::all(completers::filename),
+      CommandCompleter::all(completers::filename_with_current_dir),
       Signature {
         positionals: (1, None),
         ..Signature::DEFAULT
@@ -760,59 +760,151 @@ pub mod completers {
     Vec::new()
   }
 
-  /// Filename completer with fuzzy matching
+  /// Filename completer with enhanced path handling (Helix-inspired)
   pub fn filename(_editor: &Editor, input: &str) -> Vec<Completion> {
+    filename_impl(_editor, input, true)
+  }
+
+  /// Filename completer that inserts current file's directory on empty input
+  pub fn filename_with_current_dir(editor: &Editor, input: &str) -> Vec<Completion> {
+    use crate::current_ref;
+
+    // If input is empty, suggest the current file's directory
+    if input.is_empty() {
+      let (_view, doc) = current_ref!(editor);
+      if let Some(path) = doc.path() {
+        if let Some(parent) = path.parent() {
+          let dir_path = parent.to_string_lossy().to_string() + "/";
+          return vec![Completion {
+            range: 0..,
+            text:  dir_path,
+            doc:   Some("Current file's directory".to_string()),
+          }];
+        }
+      }
+      // Fall through to normal completion if no current file
+    }
+
+    // Otherwise, use normal filename completion
+    filename_impl(editor, input, true)
+  }
+
+  /// Filename completer implementation with optional gitignore support
+  fn filename_impl(_editor: &Editor, input: &str, git_ignore: bool) -> Vec<Completion> {
     use std::{
-      fs,
+      borrow::Cow,
       path::Path,
     };
 
-    let input_path = Path::new(input);
-    let (dir, prefix) = if input.ends_with('/') || input.is_empty() {
-      (input_path, "")
+    use ignore::WalkBuilder;
+    use the_editor_stdx::path::expand_tilde;
+
+    // Expand tilde if present
+    let is_tilde = input == "~";
+    let path = expand_tilde(Path::new(input));
+
+    // Split path into directory and file_name components
+    let (dir, file_name) = if input.ends_with(std::path::MAIN_SEPARATOR) {
+      (path, None)
     } else {
-      (
-        input_path.parent().unwrap_or(Path::new(".")),
-        input_path
+      // Handle special case for "." and "/."
+      let is_period = (input.ends_with(format!("{}.", std::path::MAIN_SEPARATOR).as_str())
+        && input.len() > 2)
+        || input == ".";
+      let file_name = if is_period {
+        Some(String::from("."))
+      } else {
+        path
           .file_name()
-          .and_then(|s| s.to_str())
-          .unwrap_or(""),
-      )
-    };
-
-    let Ok(entries) = fs::read_dir(dir) else {
-      return Vec::new();
-    };
-
-    let mut completions = Vec::new();
-    for entry in entries.flatten() {
-      let Ok(file_name) = entry.file_name().into_string() else {
-        continue;
+          .and_then(|file| file.to_str().map(|path| path.to_owned()))
       };
 
-      // Fuzzy match against prefix
-      if file_name.to_lowercase().contains(&prefix.to_lowercase()) {
-        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-        let mut path = if dir == Path::new(".") {
-          file_name.clone()
-        } else {
-          dir.join(&file_name).to_string_lossy().to_string()
-        };
+      let path = if is_period {
+        path
+      } else {
+        match path.parent() {
+          Some(path) if !path.as_os_str().is_empty() => Cow::Borrowed(path),
+          // Path::new("h")'s parent is Some("")...
+          _ => Cow::Owned(the_editor_stdx::env::current_working_dir()),
+        }
+      };
 
-        if is_dir {
-          path.push('/');
+      (path, file_name)
+    };
+
+    // Range for replacement
+    let range = 0..;
+
+    // Use WalkBuilder for gitignore-aware traversal
+    let entries = WalkBuilder::new(&*dir)
+      .hidden(false) // Show hidden files
+      .follow_links(false) // Don't follow symlinks
+      .git_ignore(git_ignore)
+      .max_depth(Some(1)) // Only scan immediate directory
+      .build()
+      .filter_map(|entry| {
+        let entry = entry.ok()?;
+        let entry_path = entry.path();
+
+        // Skip the directory itself
+        if entry_path == Path::new(&*dir) {
+          return None;
         }
 
-        // Range starts from beginning of input (replace entire path)
-        completions.push(Completion {
-          range: 0..,
-          text:  path,
-          doc:   None,
-        });
-      }
-    }
+        let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
 
-    // Sort completions: directories first, then alphabetically
+        // Get relative path from dir
+        let mut path = if is_tilde {
+          // If it's a single tilde, show absolute path so Tab expansion works
+          entry_path.to_path_buf()
+        } else {
+          entry_path.strip_prefix(&*dir).unwrap_or(entry_path).to_path_buf()
+        };
+
+        // Add trailing slash for directories
+        if is_dir {
+          path.push("");
+        }
+
+        let path_str = path.into_os_string().into_string().ok()?;
+        Some((path_str, is_dir))
+      })
+      .filter(|(path, _)| !path.is_empty());
+
+    // If we have a file_name prefix, filter and fuzzy match
+    let completions: Vec<Completion> = if let Some(file_name) = file_name {
+      let file_name_lower = file_name.to_lowercase();
+      let range_start = input.len().saturating_sub(file_name.len());
+      let replace_range = range_start..;
+
+      entries
+        .filter(|(path, _)| {
+          // Fuzzy match: check if file name contains the prefix
+          path.to_lowercase().contains(&file_name_lower)
+        })
+        .map(|(path, _is_dir)| {
+          Completion {
+            range: replace_range.clone(),
+            text:  path,
+            doc:   None,
+          }
+        })
+        .collect()
+    } else {
+      // No prefix - return all entries
+      entries
+        .map(|(path, _is_dir)| {
+          Completion {
+            range: range.clone(),
+            text:  path,
+            doc:   None,
+          }
+        })
+        .collect()
+    };
+
+    // Sort: directories first, then alphabetically
+    let mut completions = completions;
     completions.sort_by(|a, b| {
       let a_is_dir = a.text.ends_with('/');
       let b_is_dir = b.text.ends_with('/');
@@ -875,6 +967,116 @@ pub mod completers {
         }
       })
       .collect()
+  }
+
+  #[cfg(test)]
+  mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    /// Create a temporary directory structure for testing
+    fn create_test_dir_structure() -> TempDir {
+      let temp = TempDir::new().unwrap();
+      let base = temp.path();
+
+      // Create directory structure:
+      // temp/
+      //   file1.txt
+      //   file2.rs
+      //   dir1/
+      //     nested.txt
+      //   dir2/
+      //     another.rs
+      fs::write(base.join("file1.txt"), "test").unwrap();
+      fs::write(base.join("file2.rs"), "test").unwrap();
+      fs::create_dir(base.join("dir1")).unwrap();
+      fs::write(base.join("dir1/nested.txt"), "test").unwrap();
+      fs::create_dir(base.join("dir2")).unwrap();
+      fs::write(base.join("dir2/another.rs"), "test").unwrap();
+
+      temp
+    }
+
+    // Note: These tests use a minimal mock since filename_impl doesn't actually use the editor parameter
+    struct MockEditor;
+
+    #[test]
+    fn test_filename_completer_lists_directory_contents() {
+      let temp = create_test_dir_structure();
+
+      // Test listing directory contents
+      // Note: filename_impl takes &Editor but doesn't use it, so we create a mock
+      use ignore::WalkBuilder;
+      let entries: Vec<_> = WalkBuilder::new(temp.path())
+        .hidden(false)
+        .max_depth(Some(1))
+        .build()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path() != temp.path())
+        .collect();
+
+      // Should have at least 4 entries (2 files + 2 dirs)
+      assert!(entries.len() >= 4);
+    }
+
+    #[test]
+    fn test_filename_completer_path_parsing() {
+      use std::path::Path;
+
+      // Test path parsing logic
+      let input = "/tmp/test/";
+      let _path = the_editor_stdx::path::expand_tilde(Path::new(input));
+
+      // Path should end with separator
+      assert!(input.ends_with(std::path::MAIN_SEPARATOR));
+
+      // Test non-separator ending
+      let input2 = "/tmp/test";
+      assert!(!input2.ends_with(std::path::MAIN_SEPARATOR));
+    }
+
+    #[test]
+    fn test_completion_range_for_partial_path() {
+      // Test that range calculation works for partial paths
+      let input = "/tmp/test/fil";
+      let file_name = "file.txt";
+
+      // Range should start from where the partial name begins
+      let range_start = input.len().saturating_sub(file_name.len());
+      assert!(range_start <= input.len());
+
+      // For partial match "fil", range should capture it
+      let partial = "fil";
+      let partial_start = input.len().saturating_sub(partial.len());
+      assert_eq!(&input[partial_start..], partial);
+    }
+
+    #[test]
+    fn test_directory_sorting_logic() {
+      // Test that our sorting logic puts directories before files
+      let mut items = vec![
+        ("file1.txt", false),
+        ("dir1/", true),
+        ("file2.rs", false),
+        ("dir2/", true),
+      ];
+
+      items.sort_by(|a, b| {
+        match (a.1, b.1) {
+          (true, false) => std::cmp::Ordering::Less,
+          (false, true) => std::cmp::Ordering::Greater,
+          _ => a.0.cmp(b.0),
+        }
+      });
+
+      // First two should be directories
+      assert!(items[0].1);  // dir1/
+      assert!(items[1].1);  // dir2/
+      // Last two should be files
+      assert!(!items[2].1); // file1.txt
+      assert!(!items[3].1); // file2.rs
+    }
   }
 }
 

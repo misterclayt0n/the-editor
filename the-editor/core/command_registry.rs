@@ -383,7 +383,11 @@ impl CommandRegistry {
             // Run completer and adjust ranges
             let mut completions = completer(editor, arg_input);
             for completion in &mut completions {
-              completion.range = arg_start_offset..;
+              // Adjust the range by adding the offset
+              // The completer returns ranges relative to arg_input,
+              // we need to make them relative to the full input
+              let relative_start = completion.range.start;
+              completion.range = (arg_start_offset + relative_start)..;
             }
             completions
           },
@@ -833,7 +837,8 @@ pub mod completers {
     };
 
     // Range for replacement
-    let range = 0..;
+    // When input ends with /, we want to append to it (not replace from beginning)
+    let range_for_no_prefix = input.len()..;
 
     // Use WalkBuilder for gitignore-aware traversal
     let entries = WalkBuilder::new(&*dir)
@@ -891,11 +896,11 @@ pub mod completers {
         })
         .collect()
     } else {
-      // No prefix - return all entries
+      // No prefix - return all entries (append to current path)
       entries
         .map(|(path, _is_dir)| {
           Completion {
-            range: range.clone(),
+            range: range_for_no_prefix.clone(),
             text:  path,
             doc:   None,
           }
@@ -974,6 +979,122 @@ pub mod completers {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    // Test wrapper for filename_impl that doesn't require an Editor
+    fn filename_impl_for_test(input: &str, git_ignore: bool) -> Vec<Completion> {
+      use std::{
+        borrow::Cow,
+        path::Path,
+      };
+
+      use ignore::WalkBuilder;
+      use the_editor_stdx::path::expand_tilde;
+
+      // Copied logic from filename_impl
+      let is_tilde = input == "~";
+      let path = expand_tilde(Path::new(input));
+
+      let (dir, file_name) = if input.ends_with(std::path::MAIN_SEPARATOR) {
+        (path, None)
+      } else {
+        let is_period = (input.ends_with(format!("{}.", std::path::MAIN_SEPARATOR).as_str())
+          && input.len() > 2)
+          || input == ".";
+        let file_name = if is_period {
+          Some(String::from("."))
+        } else {
+          path
+            .file_name()
+            .and_then(|file| file.to_str().map(|path| path.to_owned()))
+        };
+
+        let path = if is_period {
+          path
+        } else {
+          match path.parent() {
+            Some(path) if !path.as_os_str().is_empty() => Cow::Borrowed(path),
+            _ => Cow::Owned(the_editor_stdx::env::current_working_dir()),
+          }
+        };
+
+        (path, file_name)
+      };
+
+      let range_for_no_prefix = input.len()..;
+
+      let entries = WalkBuilder::new(&*dir)
+        .hidden(false)
+        .follow_links(false)
+        .git_ignore(git_ignore)
+        .max_depth(Some(1))
+        .build()
+        .filter_map(|entry| {
+          let entry = entry.ok()?;
+          let entry_path = entry.path();
+
+          if entry_path == Path::new(&*dir) {
+            return None;
+          }
+
+          let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
+
+          let mut path = if is_tilde {
+            entry_path.to_path_buf()
+          } else {
+            entry_path.strip_prefix(&*dir).unwrap_or(entry_path).to_path_buf()
+          };
+
+          if is_dir {
+            path.push("");
+          }
+
+          let path_str = path.into_os_string().into_string().ok()?;
+          Some((path_str, is_dir))
+        })
+        .filter(|(path, _)| !path.is_empty());
+
+      let completions: Vec<Completion> = if let Some(file_name) = file_name {
+        let file_name_lower = file_name.to_lowercase();
+        let range_start = input.len().saturating_sub(file_name.len());
+        let replace_range = range_start..;
+
+        entries
+          .filter(|(path, _)| {
+            path.to_lowercase().contains(&file_name_lower)
+          })
+          .map(|(path, _is_dir)| {
+            Completion {
+              range: replace_range.clone(),
+              text:  path,
+              doc:   None,
+            }
+          })
+          .collect()
+      } else {
+        entries
+          .map(|(path, _is_dir)| {
+            Completion {
+              range: range_for_no_prefix.clone(),
+              text:  path,
+              doc:   None,
+            }
+          })
+          .collect()
+      };
+
+      let mut completions = completions;
+      completions.sort_by(|a, b| {
+        let a_is_dir = a.text.ends_with('/');
+        let b_is_dir = b.text.ends_with('/');
+        match (a_is_dir, b_is_dir) {
+          (true, false) => std::cmp::Ordering::Less,
+          (false, true) => std::cmp::Ordering::Greater,
+          _ => a.text.cmp(&b.text),
+        }
+      });
+
+      completions
+    }
 
     /// Create a temporary directory structure for testing
     fn create_test_dir_structure() -> TempDir {
@@ -1076,6 +1197,62 @@ pub mod completers {
       // Last two should be files
       assert!(!items[2].1); // file1.txt
       assert!(!items[3].1); // file2.rs
+    }
+
+    #[test]
+    fn test_directory_path_composition() {
+      // This test verifies that completing directories composes paths correctly
+      // e.g., "runtime/" + "queries" should become "runtime/queries"
+      let temp = create_test_dir_structure();
+
+      // Add a nested directory structure: dir1/subdir/
+      fs::create_dir(temp.path().join("dir1/subdir")).unwrap();
+      fs::write(temp.path().join("dir1/subdir/nested.txt"), "test").unwrap();
+
+      // Test 1: Get completions for temp directory
+      let path_str = temp.path().to_str().unwrap();
+      let input = format!("{}/", path_str);
+
+      // Note: We'll call filename_impl_for_test which doesn't need an editor
+      let completions = filename_impl_for_test(&input, false);
+
+      // Should have dir1/ in completions
+      let dir1_completion = completions.iter().find(|c| c.text == "dir1/").expect("dir1/ not found");
+
+      println!("Input: {}", input);
+      println!("dir1/ completion range: {:?}", dir1_completion.range);
+      println!("dir1/ completion text: {}", dir1_completion.text);
+
+      // When we apply this completion, it should append to the input
+      // Range should be from input.len() onwards (to append)
+      assert_eq!(dir1_completion.range.start, input.len(),
+        "Range should start at end of input to append, not replace");
+
+      // Test 2: Now simulate being inside dir1/
+      let input2 = format!("{}/dir1/", path_str);
+      let completions2 = filename_impl_for_test(&input2, false);
+
+      // Should have subdir/ in completions
+      let subdir_completion = completions2.iter().find(|c| c.text == "subdir/").expect("subdir/ not found");
+
+      println!("\nInput: {}", input2);
+      println!("subdir/ completion range: {:?}", subdir_completion.range);
+      println!("subdir/ completion text: {}", subdir_completion.text);
+
+      // When we apply this completion, it should append to dir1/
+      assert_eq!(subdir_completion.range.start, input2.len(),
+        "Range should start at end of input2 to append subdir/ to dir1/");
+
+      // Simulate applying the completion
+      let mut result = input2.clone();
+      result.replace_range(subdir_completion.range.clone(), &subdir_completion.text);
+
+      println!("Result after applying completion: {}", result);
+      println!("Expected: {}/dir1/subdir/", path_str);
+
+      // The result should be the full path: temp/dir1/subdir/
+      assert!(result.ends_with("/dir1/subdir/"),
+        "Result should be 'dir1/subdir/' appended to parent path, got: {}", result);
     }
   }
 }
@@ -1197,7 +1374,7 @@ fn open_file(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
   }
 
   let path = std::path::PathBuf::from(&args[0]);
-  match cx.editor.open(&path, crate::editor::Action::Load) {
+  match cx.editor.open(&path, crate::editor::Action::Replace) {
     Ok(_) => {
       cx.editor.set_status(format!("opened: {}", path.display()));
     },

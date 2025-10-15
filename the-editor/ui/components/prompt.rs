@@ -172,12 +172,37 @@ impl Prompt {
 
     // Emacs-style keybindings (like Helix)
     match (key.code, key.ctrl, key.alt, key.shift) {
-      // Enter - execute
+      // Enter - insert selected completion or execute
       (Key::Enter, ..) => {
-        if !self.input.trim().is_empty() {
-          self.add_to_history(self.input.clone());
+        // If we have a completion selected, insert it
+        if self.selection.is_some() && !self.completions.is_empty() {
+          // Apply the selected completion
+          if let Some(index) = self.selection {
+            self.apply_completion(index);
+
+            // If we completed a directory path, recalculate for progressive navigation
+            if self.should_recalculate_after_completion() {
+              self.recalculate_completions(editor);
+            }
+
+            // Clear selection after applying
+            self.selection = None;
+
+            PromptEvent::Update
+          } else {
+            // Fallback to validation if something went wrong
+            if !self.input.trim().is_empty() {
+              self.add_to_history(self.input.clone());
+            }
+            PromptEvent::Validate
+          }
+        } else {
+          // No completion selected - execute the command
+          if !self.input.trim().is_empty() {
+            self.add_to_history(self.input.clone());
+          }
+          PromptEvent::Validate
         }
-        PromptEvent::Validate
       },
       // Escape / Ctrl+c - abort
       (Key::Escape, ..) | (Key::Char('c'), true, ..) => {
@@ -250,23 +275,23 @@ impl Prompt {
         self.recalculate_completions(editor);
         PromptEvent::Update
       },
-      // Ctrl+p / Up - history previous
-      (Key::Char('p'), true, ..) | (Key::Up, false, false, false) => {
+      // Up - history previous
+      (Key::Up, false, false, false) => {
         self.history_previous();
         PromptEvent::Update
       },
-      // Ctrl+n / Down - history next
-      (Key::Char('n'), true, ..) | (Key::Down, false, false, false) => {
+      // Down - history next
+      (Key::Down, false, false, false) => {
         self.history_next();
         PromptEvent::Update
       },
-      // Tab - next completion
-      (Key::Tab, _, _, false) => {
+      // Ctrl+n - next completion
+      (Key::Char('n'), true, false, false) => {
         self.change_completion_selection_forward(editor);
         PromptEvent::Update
       },
-      // Shift+Tab - previous completion
-      (Key::Tab, _, _, true) => {
+      // Ctrl+p - previous completion
+      (Key::Char('p'), true, false, false) => {
         self.change_completion_selection_backward(editor);
         PromptEvent::Update
       },
@@ -784,8 +809,8 @@ impl Prompt {
     }
   }
 
-  /// Move to next completion (Tab)
-  fn change_completion_selection_forward(&mut self, editor: &Editor) {
+  /// Move to next completion (Ctrl+N)
+  fn change_completion_selection_forward(&mut self, _editor: &Editor) {
     if self.completions.is_empty() {
       return;
     }
@@ -810,16 +835,12 @@ impl Prompt {
       self.completion_scroll = index;
     }
 
-    self.apply_completion(index);
-
-    // If we completed a directory path, recalculate completions for progressive navigation
-    if self.should_recalculate_after_completion() {
-      self.recalculate_completions(editor);
-    }
+    // Don't apply completion here - only update selection
+    // Completion is applied when Enter is pressed
   }
 
-  /// Move to previous completion (Shift+Tab)
-  fn change_completion_selection_backward(&mut self, editor: &Editor) {
+  /// Move to previous completion (Ctrl+P)
+  fn change_completion_selection_backward(&mut self, _editor: &Editor) {
     if self.completions.is_empty() {
       return;
     }
@@ -850,12 +871,8 @@ impl Prompt {
       self.completion_scroll = index;
     }
 
-    self.apply_completion(index);
-
-    // If we completed a directory path, recalculate completions for progressive navigation
-    if self.should_recalculate_after_completion() {
-      self.recalculate_completions(editor);
-    }
+    // Don't apply completion here - only update selection
+    // Completion is applied when Enter is pressed
   }
 
   /// Apply the completion at the given index to the input

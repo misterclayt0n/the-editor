@@ -1,7 +1,17 @@
+use std::{
+  collections::HashMap,
+  time::Duration,
+};
+
 use slotmap::HopSlotMap;
 
 use crate::core::{
   ViewId,
+  animation::{
+    AnimationHandle,
+    Easing,
+    presets,
+  },
   graphics::Rect,
   layout::{
     Constraint as LayoutConstraint,
@@ -9,6 +19,43 @@ use crate::core::{
   },
   view::View,
 };
+
+// Helper struct to track area animations for views
+#[derive(Debug)]
+struct AreaAnimation {
+  x:      AnimationHandle<f32>,
+  y:      AnimationHandle<f32>,
+  width:  AnimationHandle<f32>,
+  height: AnimationHandle<f32>,
+}
+
+impl AreaAnimation {
+  fn new(from: Rect, to: Rect, duration: Duration, easing: Easing) -> Self {
+    Self {
+      x:      AnimationHandle::new(from.x as f32, to.x as f32, duration, easing),
+      y:      AnimationHandle::new(from.y as f32, to.y as f32, duration, easing),
+      width:  AnimationHandle::new(from.width as f32, to.width as f32, duration, easing),
+      height: AnimationHandle::new(from.height as f32, to.height as f32, duration, easing),
+    }
+  }
+
+  fn update(&mut self, dt: f32) -> bool {
+    let x_done = self.x.update(dt);
+    let y_done = self.y.update(dt);
+    let width_done = self.width.update(dt);
+    let height_done = self.height.update(dt);
+    x_done && y_done && width_done && height_done
+  }
+
+  fn current(&self) -> Rect {
+    Rect {
+      x:      *self.x.current() as u16,
+      y:      *self.y.current() as u16,
+      width:  (*self.width.current() as u16).max(1),
+      height: (*self.height.current() as u16).max(1),
+    }
+  }
+}
 
 // the dimensions are recomputed on window resize/tree change.
 //
@@ -24,6 +71,9 @@ pub struct Tree {
 
   // used for traversals
   stack: Vec<(ViewId, Rect)>,
+
+  // split animations: maps view IDs to their area animations
+  area_animations: HashMap<ViewId, AreaAnimation>,
 }
 
 #[derive(Debug)]
@@ -109,6 +159,7 @@ impl Tree {
       area,
       nodes,
       stack: Vec::new(),
+      area_animations: HashMap::new(),
     }
   }
 
@@ -153,6 +204,19 @@ impl Tree {
   pub fn split(&mut self, view: View, layout: Layout) -> ViewId {
     let focus = self.focus;
     let parent = self.nodes[focus].parent;
+
+    // Store old areas before split for animation
+    let old_areas: HashMap<ViewId, Rect> = self
+      .nodes
+      .iter()
+      .filter_map(|(id, node)| {
+        if let Content::View(view) = &node.content {
+          Some((id, view.area))
+        } else {
+          None
+        }
+      })
+      .collect();
 
     let node = Node::view(view);
     let node = self.nodes.insert(node);
@@ -219,6 +283,46 @@ impl Tree {
 
     // recalculate all the sizes
     self.recalculate();
+
+    // Set up animations for all views that changed size/position
+    let (duration, easing) = presets::FAST;
+    for (id, node) in &self.nodes {
+      if let Content::View(view) = &node.content {
+        if let Some(&old_area) = old_areas.get(&id) {
+          // Existing view that changed area - animate from old to new
+          if old_area != view.area {
+            self
+              .area_animations
+              .insert(id, AreaAnimation::new(old_area, view.area, duration, easing));
+          }
+        } else {
+          // New view - animate from zero width/height
+          let start_area = match layout {
+            Layout::Horizontal => {
+              // For horizontal splits, start with zero height
+              Rect {
+                x:      view.area.x,
+                y:      view.area.y,
+                width:  view.area.width,
+                height: 0,
+              }
+            },
+            Layout::Vertical => {
+              // For vertical splits, start with zero width
+              Rect {
+                x:      view.area.x,
+                y:      view.area.y,
+                width:  0,
+                height: view.area.height,
+              }
+            },
+          };
+          self
+            .area_animations
+            .insert(id, AreaAnimation::new(start_area, view.area, duration, easing));
+        }
+      }
+    }
 
     node
   }
@@ -654,6 +758,27 @@ impl Tree {
 
   pub fn area(&self) -> Rect {
     self.area
+  }
+
+  /// Update all active area animations with the given delta time.
+  /// Returns true if any animations are still active.
+  pub fn update_animations(&mut self, dt: f32) -> bool {
+    self.area_animations.retain(|_, anim| !anim.update(dt));
+    !self.area_animations.is_empty()
+  }
+
+  /// Get the current animated area for a view, or its actual area if no animation is active.
+  pub fn get_animated_area(&self, view_id: ViewId) -> Option<Rect> {
+    if let Some(anim) = self.area_animations.get(&view_id) {
+      Some(anim.current())
+    } else {
+      self.try_get(view_id).map(|view| view.area)
+    }
+  }
+
+  /// Check if there are any active area animations.
+  pub fn has_active_animations(&self) -> bool {
+    !self.area_animations.is_empty()
   }
 }
 

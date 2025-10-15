@@ -243,7 +243,7 @@ impl Easing {
 }
 
 /// Trait for types that can be animated (interpolated)
-pub trait Animatable: Clone {
+pub trait Animatable: Clone + std::fmt::Debug {
   /// Linear interpolation between self and target
   /// t is in the range [0.0, 1.0] where 0.0 = self, 1.0 = target
   fn lerp(&self, target: &Self, t: f32) -> Self;
@@ -296,6 +296,7 @@ impl Animatable for Color {
 }
 
 /// Represents an active animation
+#[derive(Debug)]
 pub struct Animation<T: Animatable> {
   /// Starting value
   start:    T,
@@ -453,6 +454,7 @@ impl AnimationManager {
 }
 
 /// Typed animation handle that provides type-safe access to animation values
+#[derive(Debug)]
 pub struct AnimationHandle<T: Animatable + 'static> {
   animation: Animation<T>,
 }

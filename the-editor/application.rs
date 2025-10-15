@@ -350,6 +350,9 @@ impl Application for App {
     // Update theme transition animation
     let _theme_animating = self.editor.update_theme_transition(dt);
 
+    // Update split animations
+    let _split_animating = self.editor.tree.update_animations(dt);
+
     // Create context for rendering.
     let mut cx = Context {
       editor: &mut self.editor,
@@ -533,6 +536,11 @@ impl Application for App {
 
     // Keep redrawing while a theme transition is active.
     if self.editor.is_theme_transitioning() {
+      return true;
+    }
+
+    // Keep redrawing while split animations are active.
+    if self.editor.tree.has_active_animations() {
       return true;
     }
 

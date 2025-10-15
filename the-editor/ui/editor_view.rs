@@ -845,29 +845,36 @@ impl Component for EditorView {
       let mut selection_glow = selection_glow_base.unwrap_or(selection_bg_base);
       selection_glow.a *= zoom_alpha;
 
+      // Get animated area for smooth split transitions
+      let view_area = cx
+        .editor
+        .tree
+        .get_animated_area(focus_view)
+        .unwrap_or(view.area);
+
       // Calculate base coordinates from view's area (convert cell coords to pixels)
-      let view_offset_x = view.area.x as f32 * font_width;
-      let view_offset_y = view.area.y as f32 * (font_size + LINE_SPACING);
+      let view_offset_x = view_area.x as f32 * font_width;
+      let view_offset_y = view_area.y as f32 * (font_size + LINE_SPACING);
       let mut base_y = view_offset_y + VIEW_PADDING_TOP + zoom_offset_y;
 
       // Calculate visible lines for THIS view based on its height
       // view.area.height is already in rows/cells
-      let content_rows = view.area.height;
+      let content_rows = view_area.height;
 
       // Calculate bottom edge for clipping (to prevent text from rendering into
       // separator)
       let has_horizontal_split_below =
-        view.area.y + view.area.height < cx.editor.tree.area().height;
-      let has_vertical_split_right = view.area.x + view.area.width < cx.editor.tree.area().width;
+        view_area.y + view_area.height < cx.editor.tree.area().height;
+      let has_vertical_split_right = view_area.x + view_area.width < cx.editor.tree.area().width;
       let view_bottom_edge_px = view_offset_y
-        + (view.area.height as f32 * (font_size + LINE_SPACING))
+        + (view_area.height as f32 * (font_size + LINE_SPACING))
         - if has_horizontal_split_below {
           SEPARATOR_HEIGHT_PX
         } else {
           0.0
         };
 
-      let scissor_width = (view.area.width as f32 * font_width)
+      let scissor_width = (view_area.width as f32 * font_width)
         - if has_vertical_split_right {
           SEPARATOR_WIDTH_PX
         } else {
@@ -908,7 +915,7 @@ impl Component for EditorView {
 
       let gutter_cols = {
         let doc = &cx.editor.documents[&doc_id];
-        (self.gutter_manager.total_width(view, doc) as u16).min(view.area.width)
+        (self.gutter_manager.total_width(view, doc) as u16).min(view_area.width)
       };
 
       let (gutter_rect, mut content_rect) = if gutter_cols > 0 {
@@ -916,25 +923,25 @@ impl Component for EditorView {
           LayoutConstraint::Length(gutter_cols),
           LayoutConstraint::Fill(1),
         ]);
-        let mut chunks = layout.split(view.area).into_iter();
+        let mut chunks = layout.split(view_area).into_iter();
         (
           chunks.next().unwrap_or(Rect::new(
-            view.area.x,
-            view.area.y,
+            view_area.x,
+            view_area.y,
             gutter_cols,
-            view.area.height,
+            view_area.height,
           )),
           chunks.next().unwrap_or(Rect::new(
-            view.area.x + gutter_cols,
-            view.area.y,
-            view.area.width.saturating_sub(gutter_cols),
-            view.area.height,
+            view_area.x + gutter_cols,
+            view_area.y,
+            view_area.width.saturating_sub(gutter_cols),
+            view_area.height,
           )),
         )
       } else {
         (
-          Rect::new(view.area.x, view.area.y, 0, view.area.height),
-          Rect::new(view.area.x, view.area.y, view.area.width, view.area.height),
+          Rect::new(view_area.x, view_area.y, 0, view_area.height),
+          Rect::new(view_area.x, view_area.y, view_area.width, view_area.height),
         )
       };
 

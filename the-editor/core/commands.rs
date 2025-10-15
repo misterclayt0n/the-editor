@@ -1388,10 +1388,10 @@ pub fn command_mode(cx: &mut Context) {
   });
 
   // Create prompt with completion function
-  let prompt =
+  let mut prompt =
     crate::ui::components::prompt::Prompt::new(String::new()).with_completion(completion_fn);
 
-  cx.callback.push(Box::new(|compositor, _cx| {
+  cx.callback.push(Box::new(|compositor, cx| {
     // Find the statusline and trigger slide animation
     for layer in compositor.layers.iter_mut() {
       if let Some(statusline) = layer
@@ -1402,6 +1402,9 @@ pub fn command_mode(cx: &mut Context) {
         break;
       }
     }
+
+    // Initialize completions so they appear immediately
+    prompt.init_completions(cx.editor);
 
     compositor.push(Box::new(prompt));
   }));

@@ -775,6 +775,15 @@ impl Prompt {
     }
   }
 
+  /// Initialize completions (call when prompt is first shown)
+  /// This allows completions to appear immediately without typing
+  pub fn init_completions(&mut self, editor: &Editor) {
+    if let Some(ref completion_fn) = self.completion_fn {
+      self.completions = completion_fn(editor, &self.input);
+      self.completion_list_anim_t = 0.0; // Start animation
+    }
+  }
+
   /// Move to next completion (Tab)
   fn change_completion_selection_forward(&mut self) {
     if self.completions.is_empty() {

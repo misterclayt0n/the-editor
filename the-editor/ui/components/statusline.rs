@@ -78,16 +78,6 @@ impl StatusLine {
     }
   }
 
-  /// Get theme key for current mode
-  fn mode_theme_key(mode: Mode) -> &'static str {
-    match mode {
-      Mode::Normal => "ui.statusline",
-      Mode::Insert => "ui.statusline.insert",
-      Mode::Select => "ui.statusline.select",
-      Mode::Command => "ui.statusline",
-    }
-  }
-
   /// Measure text width without drawing
   fn measure_text(text: &str) -> f32 {
     let est_char_w = FONT_SIZE * 0.6;
@@ -114,24 +104,20 @@ impl Component for StatusLine {
     let theme = &cx.editor.theme;
     let mode = cx.editor.mode();
 
-    // Get theme colors for current mode
-    let statusline_style = theme.get(Self::mode_theme_key(mode));
-    let inactive_style = theme.get("ui.statusline.inactive");
+    // Use constant statusline colors (no mode-specific changes)
+    let statusline_style = theme.get("ui.statusline");
 
+    // Background color - constant
     let bg_color = statusline_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.12, 0.12, 0.13, 1.0));
 
-    let mode_color = statusline_style
+    // Text color - constant (same for mode and all other text)
+    let text_color = statusline_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.85, 0.85, 0.9, 1.0));
-
-    let text_color = inactive_style
-      .fg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.6, 0.6, 0.6, 0.9));
 
     // Update vertical animation (time-based) - 5x faster
     const ANIM_SPEED: f32 = 0.12; // Animation speed per frame (at 60fps)
@@ -210,7 +196,7 @@ impl Component for StatusLine {
         .custom_mode_str
         .as_deref()
         .unwrap_or_else(|| Self::mode_text(mode));
-      let mode_width = Self::draw_text(surface, x, bar_y, mode_text, mode_color);
+      let mode_width = Self::draw_text(surface, x, bar_y, mode_text, text_color);
       x += mode_width + SEGMENT_SPACING;
 
       // Buffer name

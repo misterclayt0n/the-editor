@@ -5,6 +5,8 @@ use the_editor_renderer::{
   TextSegment,
   TextStyle,
 };
+use ropey::Rope;
+use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
   core::graphics::Rect,
@@ -95,13 +97,14 @@ impl Component for Hover {
     let padding = 12.0;
     let line_height = UI_FONT_SIZE + 4.0;
 
-    // Wrap text and calculate dimensions
-    let lines = wrap_text(markdown, MAX_POPUP_WIDTH, surface.cell_width());
-    let num_lines = lines.len().min(20); // Limit to 20 lines
-    let max_line_width = lines
+    // Parse markdown and build renderable lines (with syntax highlighted code blocks)
+    let render_lines = build_hover_render_lines(markdown, surface.cell_width(), &ctx);
+
+    let num_lines = render_lines.len().min(20); // Limit to 20 lines
+    let max_line_width = render_lines
       .iter()
       .take(num_lines)
-      .map(|l| l.len())
+      .map(|segments| segments.iter().map(|seg| seg.content.chars().count()).sum::<usize>())
       .max()
       .unwrap_or(0) as f32
       * surface.cell_width();
@@ -219,16 +222,10 @@ impl Component for Hover {
       let text_x = anim_x + padding;
       let mut text_y = anim_y + padding + UI_FONT_SIZE; // Add font size for baseline
 
-      for line in lines.iter().take(num_lines) {
+      for segments in render_lines.iter().take(num_lines) {
         let section = TextSection {
           position: (text_x, text_y),
-          texts:    vec![TextSegment {
-            content: line.clone(),
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
-              color: text_color,
-            },
-          }],
+          texts:    segments.clone(),
         };
 
         surface.draw_text(section);
@@ -315,4 +312,207 @@ fn wrap_text(text: &str, max_width: f32, char_width: f32) -> Vec<String> {
   }
 
   lines
+}
+
+/// Build hover render lines with basic markdown handling and syntax-highlighted code blocks.
+/// Returns a vector where each item is a line represented by pre-styled text segments.
+fn build_hover_render_lines(markdown: &str, cell_width: f32, ctx: &Context) -> Vec<Vec<TextSegment>> {
+  // Theme-derived base text color
+  let theme = &ctx.editor.theme;
+  let text_style = theme.get("ui.text");
+  let base_text_color = text_style
+    .fg
+    .map(crate::ui::theme_color_to_renderer_color)
+    .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
+
+  // Collect lines of segments
+  let mut render_lines: Vec<Vec<TextSegment>> = Vec::new();
+
+  // Simple fenced code block parser
+  let mut in_fence = false;
+  let mut fence_lang: Option<String> = None;
+  let mut fence_buf: Vec<String> = Vec::new();
+
+  for raw_line in markdown.lines() {
+    // Handle fence start/end
+    if raw_line.starts_with("```") {
+      if in_fence {
+        // End of fence: highlight accumulated code
+        let code = fence_buf.join("\n");
+        render_lines.extend(highlight_code_block_lines(
+          fence_lang.as_deref(),
+          &code,
+          ctx,
+        ));
+        // Add an empty spacer line after code block
+        render_lines.push(vec![TextSegment {
+          content: String::new(),
+          style:   TextStyle { size: UI_FONT_SIZE, color: base_text_color },
+        }]);
+        // Reset state
+        in_fence = false;
+        fence_lang = None;
+        fence_buf.clear();
+      } else {
+        // Start of fence
+        in_fence = true;
+        let lang = raw_line.trim_start_matches("```").trim();
+        fence_lang = if lang.is_empty() { None } else { Some(lang.to_string()) };
+      }
+      continue;
+    }
+
+    if in_fence {
+      fence_buf.push(raw_line.to_string());
+      continue;
+    }
+
+    // Plain text: word-wrap into multiple lines
+    for line in wrap_text(raw_line, MAX_POPUP_WIDTH, cell_width) {
+      render_lines.push(vec![TextSegment {
+        content: line,
+        style:   TextStyle { size: UI_FONT_SIZE, color: base_text_color },
+      }]);
+    }
+  }
+
+  // If EOF reached while inside a fence, flush as code
+  if in_fence {
+    let code = fence_buf.join("\n");
+    render_lines.extend(highlight_code_block_lines(
+      fence_lang.as_deref(),
+      &code,
+      ctx,
+    ));
+  }
+
+  render_lines
+}
+
+/// Highlight a code block into per-line segments. Falls back to plain code style on failure.
+fn highlight_code_block_lines(lang_hint: Option<&str>, code: &str, ctx: &Context) -> Vec<Vec<TextSegment>> {
+  let theme = &ctx.editor.theme;
+  let code_style = theme.get("markup.raw");
+  let default_code_color = code_style
+    .fg
+    .map(crate::ui::theme_color_to_renderer_color)
+    .unwrap_or(Color::new(0.8, 0.8, 0.8, 1.0));
+
+  // Prepare rope
+  let rope = Rope::from(code);
+  let slice = rope.slice(..);
+
+  // Resolve language from hint
+  let loader = ctx.editor.syn_loader.load();
+  let language = lang_hint
+    .and_then(|name| loader.language_for_name(name.to_string()))
+    .or_else(|| loader.language_for_match(slice));
+
+  // Attempt to create syntax and collect highlights
+  let spans = language
+    .and_then(|lang| crate::core::syntax::Syntax::new(slice, lang, &loader).ok())
+    .map(|syntax| syntax.collect_highlights(slice, &loader, 0..slice.len_bytes()))
+    .unwrap_or_else(Vec::new);
+
+  // Convert highlight spans to per-line colored segments
+  let mut lines: Vec<Vec<TextSegment>> = Vec::new();
+  let total_lines = rope.len_lines();
+
+  // Precompute spans in char indices with resolved colors
+  let mut char_spans: Vec<(usize, usize, Color)> = Vec::with_capacity(spans.len());
+  for (hl, byte_range) in spans.into_iter() {
+    let style = theme.highlight(hl);
+    let color = style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(default_code_color);
+    let start_char = slice.byte_to_char(slice.floor_char_boundary(byte_range.start));
+    let end_char = slice.byte_to_char(slice.ceil_char_boundary(byte_range.end));
+    if start_char < end_char {
+      char_spans.push((start_char, end_char, color));
+    }
+  }
+  char_spans.sort_by_key(|(s, _e, _)| *s);
+
+  for line_idx in 0..total_lines {
+    let line_slice = rope.line(line_idx);
+    let mut line_string = line_slice.to_string();
+    if line_string.ends_with('\n') {
+      line_string.pop(); // remove trailing newline for rendering
+    }
+    let line_start_char = rope.line_to_char(line_idx);
+    let line_end_char = line_start_char + line_string.chars().count();
+
+    // Collect spans that intersect this line
+    let mut segments: Vec<TextSegment> = Vec::new();
+    let mut cursor = line_start_char;
+
+    for (s, e, color) in char_spans.iter().cloned() {
+      if e <= line_start_char || s >= line_end_char {
+        continue;
+      }
+      let seg_start = s.max(line_start_char);
+      let seg_end = e.min(line_end_char);
+
+      // Push preceding plain segment if any
+      if seg_start > cursor {
+        let prefix = slice_chars_to_string(&line_string, cursor - line_start_char, seg_start - line_start_char);
+        if !prefix.is_empty() {
+          segments.push(TextSegment {
+            content: prefix,
+            style:   TextStyle {
+              size:  UI_FONT_SIZE,
+              color: default_code_color,
+            },
+          });
+        }
+      }
+
+      // Push highlighted segment
+      let content = slice_chars_to_string(&line_string, seg_start - line_start_char, seg_end - line_start_char);
+      if !content.is_empty() {
+        segments.push(TextSegment {
+          content,
+          style: TextStyle { size: UI_FONT_SIZE, color },
+        });
+      }
+      cursor = seg_end;
+    }
+
+    // Trailing plain segment
+    if cursor < line_end_char {
+      let tail = slice_chars_to_string(&line_string, cursor - line_start_char, line_end_char - line_start_char);
+      if !tail.is_empty() {
+        segments.push(TextSegment {
+          content: tail,
+          style:   TextStyle { size: UI_FONT_SIZE, color: default_code_color },
+        });
+      }
+    }
+
+    // If no segments were produced (e.g. no spans), push the whole line as plain code
+    if segments.is_empty() {
+      segments.push(TextSegment {
+        content: line_string,
+        style:   TextStyle { size: UI_FONT_SIZE, color: default_code_color },
+      });
+    }
+
+    lines.push(segments);
+  }
+
+  lines
+}
+
+/// Helper: slice a string by character indices [start, end) and return owned String
+fn slice_chars_to_string(s: &str, start: usize, end: usize) -> String {
+  if start >= end || start >= s.chars().count() {
+    return String::new();
+  }
+  let mut buf = String::with_capacity(end.saturating_sub(start));
+  for (i, ch) in s.chars().enumerate() {
+    if i >= end { break; }
+    if i >= start { buf.push(ch); }
+  }
+  buf
 }

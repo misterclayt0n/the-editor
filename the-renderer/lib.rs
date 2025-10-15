@@ -38,6 +38,9 @@ pub use text::{
 };
 use winit::window::WindowId;
 
+// Re-export winit for cursor icon access
+pub use winit;
+
 /// Configuration for window creation.
 #[derive(Debug, Clone)]
 pub struct WindowConfig {
@@ -457,6 +460,13 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
               && let Some(win) = &self.window
             {
               win.request_redraw();
+            }
+
+            // Apply any pending cursor icon changes
+            if let Some(icon) = renderer.take_cursor_icon() {
+              if let Some(win) = &self.window {
+                win.set_cursor(icon);
+              }
             }
           }
         },

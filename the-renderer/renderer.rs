@@ -196,6 +196,9 @@ pub struct Renderer {
   intermediate_texture_2: Option<wgpu::Texture>,
   intermediate_view_2:    Option<wgpu::TextureView>,
   blur_vertex_buffer:     wgpu::Buffer,
+
+  // Cursor icon tracking
+  pending_cursor_icon: Option<winit::window::CursorIcon>,
 }
 
 impl Renderer {
@@ -709,6 +712,7 @@ impl Renderer {
       intermediate_view_1: None,
       intermediate_texture_2: None,
       intermediate_view_2: None,
+      pending_cursor_icon: None,
     };
 
     renderer.recalculate_metrics();
@@ -2052,6 +2056,21 @@ impl Renderer {
       }));
       self.mask_instance_capacity = new_capacity;
     }
+  }
+
+  /// Set the cursor icon to be applied after the current frame
+  pub fn set_cursor_icon(&mut self, icon: winit::window::CursorIcon) {
+    self.pending_cursor_icon = Some(icon);
+  }
+
+  /// Clear the cursor icon (reset to default)
+  pub fn reset_cursor_icon(&mut self) {
+    self.pending_cursor_icon = Some(winit::window::CursorIcon::Default);
+  }
+
+  /// Take the pending cursor icon, leaving None in its place
+  pub(crate) fn take_cursor_icon(&mut self) -> Option<winit::window::CursorIcon> {
+    self.pending_cursor_icon.take()
   }
 }
 

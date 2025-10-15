@@ -121,9 +121,11 @@ pub enum Direction {
 
 #[derive(Debug)]
 pub struct Container {
-  layout:   Layout,
-  children: Vec<ViewId>,
-  area:     Rect,
+  layout:       Layout,
+  children:     Vec<ViewId>,
+  area:         Rect,
+  /// Custom sizes for children (in cells). None means use Fill behavior.
+  child_sizes:  Vec<Option<u16>>,
 }
 
 impl Container {
@@ -132,6 +134,7 @@ impl Container {
       layout,
       children: Vec::new(),
       area: Rect::default(),
+      child_sizes: Vec::new(),
     }
   }
 }
@@ -192,6 +195,7 @@ impl Tree {
     };
 
     container.children.insert(pos, node);
+    container.child_sizes.insert(pos, None);
     // focus the new node
     self.focus = node;
 
@@ -242,6 +246,7 @@ impl Tree {
         pos + 1
       };
       container.children.insert(pos, node);
+      container.child_sizes.insert(pos, None);
       self.nodes[node].parent = parent;
     } else {
       let mut split = Node::container(layout);
@@ -256,7 +261,9 @@ impl Tree {
         _ => unreachable!(),
       };
       container.children.push(focus);
+      container.child_sizes.push(None);
       container.children.push(node);
+      container.child_sizes.push(None);
       self.nodes[focus].parent = split;
       self.nodes[node].parent = split;
 
@@ -358,6 +365,7 @@ impl Tree {
       self.nodes[new].parent = parent;
     } else {
       container.children.remove(pos);
+      container.child_sizes.remove(pos);
     }
   }
 
@@ -505,7 +513,17 @@ impl Tree {
                 continue;
               }
 
-              let constraints = vec![LayoutConstraint::Fill(1); container.children.len()];
+              // Build constraints based on child_sizes
+              let constraints: Vec<LayoutConstraint> = container
+                .child_sizes
+                .iter()
+                .map(|size| {
+                  size
+                    .map(|s| LayoutConstraint::Length(s))
+                    .unwrap_or(LayoutConstraint::Fill(1))
+                })
+                .collect();
+
               let layout = UiLayout::vertical().constraints(constraints);
               let areas = layout.split(container.area);
 
@@ -518,7 +536,17 @@ impl Tree {
                 continue;
               }
 
-              let constraints = vec![LayoutConstraint::Fill(1); container.children.len()];
+              // Build constraints based on child_sizes
+              let constraints: Vec<LayoutConstraint> = container
+                .child_sizes
+                .iter()
+                .map(|size| {
+                  size
+                    .map(|s| LayoutConstraint::Length(s))
+                    .unwrap_or(LayoutConstraint::Fill(1))
+                })
+                .collect();
+
               let layout = UiLayout::horizontal().constraints(constraints).spacing(1);
               let areas = layout.split(container.area);
 
@@ -779,6 +807,98 @@ impl Tree {
   /// Check if there are any active area animations.
   pub fn has_active_animations(&self) -> bool {
     !self.area_animations.is_empty()
+  }
+
+  /// Resize a split separator by adjusting the view's size
+  /// vertical: true for vertical separators (adjust width), false for horizontal (adjust height)
+  /// delta_cells: positive to grow, negative to shrink (in cell units)
+  pub fn resize_split(&mut self, view_id: ViewId, vertical: bool, delta_cells: i32) {
+    if delta_cells == 0 {
+      return;
+    }
+
+    // Find the appropriate container and child to resize
+    // We need to traverse up the tree to find a container that matches our resize direction
+    let mut current_id = view_id;
+    let target_layout = if vertical {
+      Layout::Vertical
+    } else {
+      Layout::Horizontal
+    };
+
+    loop {
+      // Get the node's parent
+      let parent = match self.nodes.get(current_id) {
+        Some(node) => node.parent,
+        None => return,
+      };
+
+      // Can't resize root
+      if parent == self.root && parent == current_id {
+        return;
+      }
+
+      // Get parent container
+      let container = match &self.nodes[parent].content {
+        Content::Container(c) => c,
+        _ => return,
+      };
+
+      // Check if this container's layout matches our resize direction
+      if container.layout == target_layout {
+        // Found the right container! Resize current_id within this container
+        let pos = match container.children.iter().position(|&id| id == current_id) {
+          Some(p) => p,
+          None => return,
+        };
+
+        // Get current size from the node's area
+        let current_size = match &self.nodes[current_id].content {
+          Content::View(v) => {
+            if vertical {
+              v.area.width
+            } else {
+              v.area.height
+            }
+          },
+          Content::Container(c) => {
+            if vertical {
+              c.area.width
+            } else {
+              c.area.height
+            }
+          },
+        };
+
+        // Calculate new size
+        let new_size = (current_size as i32 + delta_cells).max(5) as u16;
+
+        // Update child_sizes in the parent container
+        let container_mut = match &mut self.nodes[parent].content {
+          Content::Container(c) => c,
+          _ => return,
+        };
+
+        // Ensure child_sizes vec is properly sized
+        while container_mut.child_sizes.len() < container_mut.children.len() {
+          container_mut.child_sizes.push(None);
+        }
+
+        container_mut.child_sizes[pos] = Some(new_size);
+
+        // Recalculate layout
+        self.recalculate();
+        return;
+      }
+
+      // Move up to parent and try again
+      current_id = parent;
+
+      // Prevent infinite loop at root
+      if current_id == self.root {
+        return;
+      }
+    }
   }
 }
 

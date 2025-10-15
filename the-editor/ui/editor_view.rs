@@ -136,6 +136,7 @@ pub struct EditorView {
   // Cached font metrics for mouse handling (updated during render)
   cached_cell_width:         f32,
   cached_cell_height:        f32,
+  cached_font_size:          f32, // Font size corresponding to cached metrics
   // Mouse drag state for selection
   mouse_pressed:             bool,
   mouse_drag_anchor:         Option<usize>, // Document char index where drag started
@@ -143,6 +144,31 @@ pub struct EditorView {
   last_click_time:           Option<std::time::Instant>,
   last_click_pos:            Option<(f32, f32)>,
   click_count:               u8,
+  // Split separator interaction
+  hovered_separator:  Option<SeparatorInfo>,
+  dragging_separator: Option<SeparatorDrag>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SeparatorInfo {
+  /// Which view this separator is attached to
+  view_id:    crate::core::ViewId,
+  /// Is this a vertical (true) or horizontal (false) separator
+  vertical:   bool,
+  /// Position in pixels (x for vertical, y for horizontal)
+  position:   f32,
+  /// View area bounds for hit testing
+  view_x:     u16,
+  view_y:     u16,
+  view_width: u16,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SeparatorDrag {
+  separator:         SeparatorInfo,
+  start_mouse_px:    f32, // Mouse position when drag started (x or y depending on separator type)
+  start_split_px:    f32, // Initial separator position in pixels
+  accumulated_cells: i32, // Total cells we've already applied
 }
 
 impl EditorView {
@@ -165,11 +191,14 @@ impl EditorView {
       signature_help: None,
       cached_cell_width: 12.0,  // Default, will be updated during render
       cached_cell_height: 24.0, // Default, will be updated during render
+      cached_font_size: 18.0,   // Default, will be updated during render
       mouse_pressed: false,
       mouse_drag_anchor: None,
       last_click_time: None,
       last_click_pos: None,
       click_count: 0,
+      hovered_separator: None,
+      dragging_separator: None,
     }
   }
 
@@ -365,6 +394,7 @@ impl Component for EditorView {
         .signature_help
         .as_ref()
         .is_some_and(|s| s.is_animating())
+      || self.dragging_separator.is_some()
   }
 
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
@@ -648,7 +678,11 @@ impl Component for EditorView {
           },
         }
       },
-      Event::Mouse(mouse) => self.handle_mouse_event(mouse, cx),
+      Event::Mouse(mouse) => {
+        // Note: We don't have access to the renderer here, so cursor icon changes
+        // are handled during the next render() call
+        self.handle_mouse_event(mouse, cx)
+      },
       Event::Scroll(_) => EventResult::Ignored(None),
       _ => EventResult::Ignored(None),
     }
@@ -670,6 +704,7 @@ impl Component for EditorView {
     // Cache font metrics for mouse handling
     self.cached_cell_width = font_width;
     self.cached_cell_height = font_size + LINE_SPACING;
+    self.cached_font_size = font_size;
 
     // Calculate tree area from renderer dimensions
     let available_height = (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM);
@@ -1920,6 +1955,23 @@ impl Component for EditorView {
     self.selection_pulse_animating = pulses_active_any;
     self.noop_effect_animating = pulses_active_any;
 
+    // Update cursor icon based on separator hover state
+    match &self.hovered_separator {
+      Some(sep) => {
+        if sep.vertical {
+          // Vertical separator - use horizontal resize cursor
+          renderer.set_cursor_icon(the_editor_renderer::winit::window::CursorIcon::ColResize);
+        } else {
+          // Horizontal separator - use vertical resize cursor
+          renderer.set_cursor_icon(the_editor_renderer::winit::window::CursorIcon::RowResize);
+        }
+      },
+      None => {
+        // Reset to default cursor
+        renderer.reset_cursor_icon();
+      },
+    }
+
     // Render split separators
     self.render_split_separators(renderer, cx, font_width, font_size);
 
@@ -1954,11 +2006,6 @@ impl EditorView {
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::rgba(0.3, 0.3, 0.4, 0.8));
 
-    // Render separator lines between views
-    // The tree's recalculate() already accounts for 1-char gaps in vertical splits
-    // We need to fill those gaps with separator visuals
-    // Separator dimensions are defined at the top of the render() function
-
     // Separator constants for this function scope
     const SEPARATOR_WIDTH_PX: f32 = 2.0;
     const SEPARATOR_HEIGHT_PX: f32 = 2.0;
@@ -1966,8 +2013,6 @@ impl EditorView {
     for (view, _) in cx.editor.tree.views() {
       let area = view.area;
       // Check if there's a view to the right (for vertical splits)
-      // This is a simple heuristic - render a vertical line at the right edge if not
-      // at screen edge
       if area.x + area.width < cx.editor.tree.area().width {
         // Render vertical separator bar at the right edge
         // Center the thin separator in the gap
@@ -1983,15 +2028,12 @@ impl EditorView {
       // Check if there's a view below (for horizontal splits)
       if area.y + area.height < cx.editor.tree.area().height {
         // Render horizontal separator bar at the bottom edge
-        // NOTE: Horizontal splits have NO gap in the tree layout (unlike vertical
-        // splits), We reserve SEPARATOR_HEIGHT_PX at the bottom of each view
-        // for the separator
         let x = area.x as f32 * font_width;
-        let y = (area.y + area.height) as f32 * (font_size + LINE_SPACING) - SEPARATOR_HEIGHT_PX;
+        let sep_y = (area.y + area.height) as f32 * (font_size + LINE_SPACING) - SEPARATOR_HEIGHT_PX;
         let width = area.width as f32 * font_width;
         let height = SEPARATOR_HEIGHT_PX;
 
-        renderer.draw_rect(x, y, width, height, separator_color);
+        renderer.draw_rect(x, sep_y, width, height, separator_color);
       }
     }
   }
@@ -2020,6 +2062,23 @@ impl EditorView {
     match mouse.button {
       Some(the_editor_renderer::MouseButton::Left) => {
         if mouse.pressed {
+          // Check if clicking on a separator first
+          if let Some(separator) = self.detect_separator_hover(mouse.position, cx) {
+            // Start separator drag
+            let start_coord = if separator.vertical {
+              mouse.position.0
+            } else {
+              mouse.position.1
+            };
+            self.dragging_separator = Some(SeparatorDrag {
+              separator,
+              start_mouse_px: start_coord,
+              start_split_px: separator.position,
+              accumulated_cells: 0,
+            });
+            return EventResult::Consumed(None);
+          }
+
           // Detect multi-click (double/triple-click)
           let now = std::time::Instant::now();
           let is_multi_click = if let (Some(last_time), Some(last_pos)) =
@@ -2104,6 +2163,7 @@ impl EditorView {
           // Mouse button released - end drag
           self.mouse_pressed = false;
           self.mouse_drag_anchor = None;
+          self.dragging_separator = None; // End separator drag
           return EventResult::Consumed(None);
         }
       },
@@ -2145,7 +2205,48 @@ impl EditorView {
         }
       },
       None => {
-        // Mouse motion without button - check if we're dragging
+        // Mouse motion without button
+
+        // Check if we're dragging a separator
+        if let Some(mut drag) = self.dragging_separator {
+          // Apply separator drag
+          let mouse_coord = if drag.separator.vertical {
+            mouse.position.0
+          } else {
+            mouse.position.1
+          };
+          let delta_px = mouse_coord - drag.start_mouse_px;
+          let (cell_width, cell_height) = self.get_current_cell_metrics(cx);
+
+          // Calculate new separator position
+          let font_metric = if drag.separator.vertical {
+            cell_width
+          } else {
+            cell_height
+          };
+
+          let total_delta_cells = (delta_px / font_metric).round() as i32;
+
+          // Only apply the incremental change (what we haven't applied yet)
+          let incremental_delta = total_delta_cells - drag.accumulated_cells;
+
+          if incremental_delta != 0 {
+            // Perform the resize
+            cx.editor.tree.resize_split(
+              drag.separator.view_id,
+              drag.separator.vertical,
+              incremental_delta,
+            );
+
+            // Update accumulated cells
+            drag.accumulated_cells = total_delta_cells;
+            self.dragging_separator = Some(drag);
+          }
+
+          return EventResult::Consumed(None);
+        }
+
+        // Check if we're dragging text selection
         if self.mouse_pressed && self.click_count == 1 {
           // Only drag for single-click (not double/triple)
           if let Some(anchor) = self.mouse_drag_anchor {
@@ -2167,6 +2268,9 @@ impl EditorView {
             }
           }
         }
+
+        // Update separator hover state
+        self.hovered_separator = self.detect_separator_hover(mouse.position, cx);
       },
       _ => {},
     }
@@ -2182,10 +2286,7 @@ impl EditorView {
     cx: &Context,
   ) -> Option<(crate::core::ViewId, usize)> {
     let (mouse_x, mouse_y) = mouse_pos;
-
-    // Use cached font metrics from render
-    let cell_width = self.cached_cell_width;
-    let cell_height = self.cached_cell_height;
+    let (cell_width, cell_height) = self.get_current_cell_metrics(cx);
 
     // Convert pixel coordinates to cell coordinates
     let mouse_col = (mouse_x / cell_width) as u16;
@@ -2263,6 +2364,96 @@ impl EditorView {
       let doc_pos = doc_pos.min(text.len_chars());
 
       return Some((view.id, doc_pos));
+    }
+
+    None
+  }
+
+  /// Get current cell metrics, recalculating if font size has changed
+  /// Returns (cell_width, cell_height) accounting for any font size changes
+  fn get_current_cell_metrics(&self, cx: &Context) -> (f32, f32) {
+    let current_font_size = cx
+      .editor
+      .font_size_override
+      .unwrap_or(cx.editor.config().font_size);
+
+    // If font size has changed since last render, recalculate metrics
+    if (current_font_size - self.cached_font_size).abs() > 0.1 {
+      // Font size changed - estimate new metrics
+      // Cell height is exact: font_size + LINE_SPACING
+      let new_cell_height = current_font_size + LINE_SPACING;
+      // Cell width scales approximately proportionally with font size
+      let scale = current_font_size / self.cached_font_size;
+      let new_cell_width = self.cached_cell_width * scale;
+      (new_cell_width, new_cell_height)
+    } else {
+      // Use cached metrics
+      (self.cached_cell_width, self.cached_cell_height)
+    }
+  }
+
+  /// Detect if mouse is hovering over a split separator
+  /// Returns separator info if hovering, None otherwise
+  fn detect_separator_hover(
+    &self,
+    mouse_pos: (f32, f32),
+    cx: &Context,
+  ) -> Option<SeparatorInfo> {
+    const SEPARATOR_WIDTH_PX: f32 = 2.0;
+    const SEPARATOR_HEIGHT_PX: f32 = 2.0;
+    const SEPARATOR_HOVER_THRESHOLD: f32 = 6.0; // Wider hit area for easier interaction
+
+    let (mouse_x, mouse_y) = mouse_pos;
+    let (font_width, cell_height) = self.get_current_cell_metrics(cx);
+
+    // Check all views for nearby separators
+    for (view, _) in cx.editor.tree.views() {
+      let area = view.area;
+
+      // Check for vertical separator (right edge of view)
+      if area.x + area.width < cx.editor.tree.area().width {
+        let gap_center_x = (area.x + area.width) as f32 * font_width + (font_width / 2.0);
+        let sep_y = area.y as f32 * cell_height;
+        let sep_height = area.height as f32 * cell_height;
+
+        // Check if mouse is near this vertical separator
+        if mouse_y >= sep_y
+          && mouse_y <= sep_y + sep_height
+          && (mouse_x - gap_center_x).abs() < SEPARATOR_HOVER_THRESHOLD
+        {
+          return Some(SeparatorInfo {
+            view_id: view.id,
+            vertical: true,
+            position: gap_center_x,
+            view_x: area.x,
+            view_y: area.y,
+            view_width: area.width,
+          });
+        }
+      }
+
+      // Check for horizontal separator (bottom edge of view)
+      if area.y + area.height < cx.editor.tree.area().height {
+        let sep_x = area.x as f32 * font_width;
+        let sep_y = (area.y + area.height) as f32 * cell_height - SEPARATOR_HEIGHT_PX;
+        let sep_width = area.width as f32 * font_width;
+
+        // Check if mouse is near this horizontal separator
+        let sep_center_y = sep_y + (SEPARATOR_HEIGHT_PX / 2.0);
+        if mouse_x >= sep_x
+          && mouse_x <= sep_x + sep_width
+          && (mouse_y - sep_center_y).abs() < SEPARATOR_HOVER_THRESHOLD
+        {
+          return Some(SeparatorInfo {
+            view_id: view.id,
+            vertical: false,
+            position: sep_center_y,
+            view_x: area.x,
+            view_y: area.y,
+            view_width: area.width,
+          });
+        }
+      }
     }
 
     None

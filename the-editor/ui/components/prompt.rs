@@ -600,20 +600,29 @@ impl Prompt {
         .map(crate::ui::theme_color_to_renderer_color)
         .unwrap_or(Color::rgb(0.1, 0.1, 0.15));
 
-      // Render the visible text character by character
-      for (i, ch) in full_text.chars().enumerate() {
-        let x = base_x + PADDING + i as f32 * UI_FONT_WIDTH;
-        let color = if i == visible_cursor_col {
-          cursor_fg // Use theme cursor foreground color
-        } else {
-          Color::WHITE
-        };
+      // Render the full text in one call to avoid positioning issues
+      let text_x = base_x + PADDING;
+      surface.draw_text(TextSection::simple(
+        text_x,
+        text_y,
+        &full_text,
+        UI_FONT_SIZE,
+        Color::WHITE,
+      ));
+
+      // If cursor is within visible text, render the cursor character again on top with cursor
+      // color This ensures the text layout is consistent while still showing the
+      // cursor-colored character
+      let chars: Vec<char> = full_text.chars().collect();
+      if visible_cursor_col < chars.len() {
+        let cursor_char = chars[visible_cursor_col].to_string();
+        let cursor_x = text_x + visible_cursor_col as f32 * UI_FONT_WIDTH;
         surface.draw_text(TextSection::simple(
-          x,
+          cursor_x,
           text_y,
-          ch.to_string(),
+          &cursor_char,
           UI_FONT_SIZE,
-          color,
+          cursor_fg,
         ));
       }
 

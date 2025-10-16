@@ -98,6 +98,12 @@ hint    = "silver"
 info    = "delta"
 warning = "lightning"
 
+# ACP (Agent Client Protocol) message highlighting
+"acp.user"     = { fg = "delta" }
+"acp.agent"    = { fg = "mint" }
+"acp.thinking" = { fg = "sirocco", modifiers = ["italic"] }
+"acp.tool"     = { fg = "honey" }
+
 [palette]
 bossanova = "#452859"
 comet     = "#5a5977"

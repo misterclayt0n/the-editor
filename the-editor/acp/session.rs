@@ -33,12 +33,12 @@ pub enum MessageRole {
   Tool,
 }
 
-/// Tracks which lines belong to which message role (for syntax highlighting)
+/// Tracks which byte ranges belong to which message role (for syntax highlighting)
 #[derive(Debug, Clone)]
 pub struct MessageSpan {
   pub role:       MessageRole,
-  pub start_line: usize,
-  pub end_line:   usize,
+  pub start_byte: usize,
+  pub end_byte:   usize,
 }
 
 /// Tracks permissions granted for a session
@@ -144,9 +144,9 @@ pub struct Session {
   pub state:               SessionState,
   /// Line currently being written by agent (for gutter emoji)
   pub current_line:        Option<usize>,
-  /// Track which lines belong to which role (for syntax highlighting)
+  /// Track which byte ranges belong to which role (for syntax highlighting)
   pub message_spans:       Vec<MessageSpan>,
-  /// Start line of current message being written
+  /// Start byte offset of current message being written
   pub current_span_start:  Option<usize>,
   /// Name of tool being executed (if ExecutingTool state)
   pub current_tool_name:   Option<String>,
@@ -181,5 +181,38 @@ impl Session {
   /// Get the conversation history
   pub fn history(&self) -> &[Message] {
     &self.history
+  }
+
+  /// Start tracking a new message span
+  pub fn start_message_span(&mut self, role: MessageRole, start_byte: usize) {
+    self.current_span_start = Some(start_byte);
+    log::debug!("ACP: Started {} message span at byte {}", match role {
+      MessageRole::User => "user",
+      MessageRole::Agent => "agent",
+      MessageRole::Thinking => "thinking",
+      MessageRole::Tool => "tool",
+    }, start_byte);
+  }
+
+  /// Finish the current message span
+  pub fn finish_message_span(&mut self, role: MessageRole, end_byte: usize) {
+    if let Some(start_byte) = self.current_span_start.take() {
+      self.message_spans.push(MessageSpan {
+        role,
+        start_byte,
+        end_byte,
+      });
+      log::debug!("ACP: Finished {} message span: {} - {}", match role {
+        MessageRole::User => "user",
+        MessageRole::Agent => "agent",
+        MessageRole::Thinking => "thinking",
+        MessageRole::Tool => "tool",
+      }, start_byte, end_byte);
+    }
+  }
+
+  /// Get all message spans (for rendering highlights)
+  pub fn message_spans(&self) -> &[MessageSpan] {
+    &self.message_spans
   }
 }

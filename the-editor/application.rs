@@ -841,17 +841,12 @@ impl App {
             use crate::acp::session::SessionState;
             let _ = registry.update_session(&session_id_clone, |session| {
               session.state = SessionState::Streaming;
-              // If this is the first chunk, record span start
-              if session.current_span_start.is_none() {
-                // We'll update this with actual line number in the append callback
-                session.current_span_start = Some(0);
-              }
             }).await;
             Ok(None)
           });
 
           // Append to document for this session
-          self.append_to_session_document(&session_id, &text);
+          self.append_to_session_document(&session_id, &text, crate::acp::session::MessageRole::Agent);
         },
         SessionUpdate::UserMessageChunk { content } => {
           let text = Self::extract_content_text(&content);
@@ -874,7 +869,7 @@ impl App {
           // Append thinking to document
           let thought = Self::extract_content_text(&content);
           log::info!("ACP App: AgentThoughtChunk - {} chars", thought.len());
-          self.append_to_session_document(&session_id, &format!("[Thinking: {}]\n", thought));
+          self.append_to_session_document(&session_id, &format!("[Thinking: {}]\n", thought), crate::acp::session::MessageRole::Thinking);
         },
         SessionUpdate::ToolCall(tool_call) => {
           // Update session state to ExecutingTool
@@ -892,7 +887,7 @@ impl App {
 
           let text = format!("[Tool Call: {}]\n", tool_call.title);
           log::info!("ACP App: ToolCall - {}", tool_call.title);
-          self.append_to_session_document(&session_id, &text);
+          self.append_to_session_document(&session_id, &text, crate::acp::session::MessageRole::Tool);
         },
         SessionUpdate::ToolCallUpdate(_) | SessionUpdate::Plan(_) => {
           // These could be rendered specially in the future
@@ -917,7 +912,7 @@ impl App {
     }
   }
 
-  fn append_to_session_document(&mut self, session_id: &crate::acp::acp::SessionId, text: &str) {
+  fn append_to_session_document(&mut self, session_id: &crate::acp::acp::SessionId, text: &str, role: crate::acp::session::MessageRole) {
     log::info!("ACP App: append_to_session_document - {} chars for session {:?}", text.len(), session_id);
 
     // We need to look up the doc_id synchronously
@@ -933,9 +928,14 @@ impl App {
       // Get the document ID for this session
       if let Some(doc_id) = registry.get_doc_id_by_session(&session_id_clone).await {
         log::info!("ACP App: Found doc_id {:?}, returning editor callback", doc_id);
+
+        // Clone registry for the callback
+        let registry_for_callback = registry.clone();
+        let session_id_for_callback = session_id_clone.clone();
+
         // Return a callback to append text to the document
-        Ok(Some(crate::ui::job::LocalCallback::Editor(Box::new(
-          move |editor| {
+        Ok(Some(crate::ui::job::LocalCallback::EditorCompositor(Box::new(
+          move |editor, _compositor| {
             use crate::core::{
               selection::Selection,
               transaction::Transaction,
@@ -945,7 +945,11 @@ impl App {
 
             // Get the document and append text
             if let Some(doc) = editor.documents.get_mut(&doc_id) {
-              // Get the end of the document
+              // Get the current byte position (start of new content)
+              let start_byte = doc.text().len_bytes();
+              log::info!("ACP App: Starting append at byte {}", start_byte);
+
+              // Get the end of the document in chars
               let len = doc.text().len_chars();
               log::info!("ACP App: Document has {} chars, appending {} chars", len, text_owned.len());
 
@@ -965,7 +969,27 @@ impl App {
               // Insert text at the end
               let transaction = Transaction::insert(doc.text(), &selection, text_owned.clone().into());
               doc.apply(&transaction, view_id);
-              log::info!("ACP App: Text appended successfully");
+
+              // Get the end byte position after appending
+              let end_byte = doc.text().len_bytes();
+              log::info!("ACP App: Text appended successfully, end byte: {}", end_byte);
+
+              // Store the message span directly in the document for rendering
+              doc.acp_message_spans.push((role, start_byte..end_byte));
+              log::debug!("ACP: Added message span {:?} from {} to {} in document", role, start_byte, end_byte);
+
+              // Also update the session's message spans for persistence
+              let registry_clone = registry_for_callback.clone();
+              let session_id_clone = session_id_for_callback.clone();
+              tokio::task::spawn_local(async move {
+                let _ = registry_clone.update_session(&session_id_clone, |session| {
+                  session.message_spans.push(crate::acp::session::MessageSpan {
+                    role,
+                    start_byte,
+                    end_byte,
+                  });
+                }).await;
+              });
             } else {
               log::warn!("ACP App: Document {:?} not found in editor", doc_id);
             }

@@ -37,8 +37,14 @@ pub fn acp_new_session(cx: &mut Context) {
       Ok(session_id) => {
         log::info!("ACP: Session created successfully: {}", session_id.0);
         let message = format!("Created ACP session: {}", session_id.0);
+        let session_id_str = session_id.0.to_string();
         Ok(Some(LocalCallback::Editor(Box::new(move |editor| {
           editor.set_status(message);
+          // Set the session ID in the document
+          if let Some(doc) = editor.documents.get_mut(&doc_id) {
+            doc.acp_session_id = Some(session_id_str.clone());
+            log::info!("ACP: Set session ID in document");
+          }
         }))))
       },
       Err(err) => {

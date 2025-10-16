@@ -231,6 +231,10 @@ pub struct Document {
   wrap_indicator_override:            Option<String>,
   /// Whether this document is an ACP session buffer (for UI rendering decisions)
   pub is_acp_buffer:                  bool,
+  /// ACP session ID (if this is an ACP buffer)
+  pub acp_session_id:                 Option<String>,
+  /// Message spans for ACP syntax highlighting (role → byte ranges)
+  pub acp_message_spans:              Vec<(crate::acp::session::MessageRole, std::ops::Range<usize>)>,
 }
 
 /// Inlay hints for a single `(Document, View)` combo.
@@ -705,6 +709,8 @@ impl Document {
       soft_wrap_override: None,
       wrap_indicator_override: None,
       is_acp_buffer: false,
+      acp_session_id: None,
+      acp_message_spans: Vec::new(),
     }
   }
 

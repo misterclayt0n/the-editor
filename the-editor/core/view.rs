@@ -596,6 +596,11 @@ impl View {
   ) -> TextAnnotations<'a> {
     let mut text_annotations = TextAnnotations::default();
 
+    // Add ACP message highlighting overlays if this is an ACP buffer
+    // Note: We can't use add_overlay for syntax highlighting - that's for grapheme replacement
+    // ACP highlighting will be applied directly in the rendering pipeline via OverlayHighlighter
+    // TODO: Implement proper ACP syntax highlighting in the rendering pipeline
+
     if let Some(labels) = doc.jump_labels.get(&self.id) {
       let style = theme.and_then(|t| t.find_highlight("ui.virtual.jump-label"));
       text_annotations.add_overlay(labels, style);

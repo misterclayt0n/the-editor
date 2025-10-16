@@ -111,6 +111,10 @@ use crate::{
       Range,
       Selection,
     },
+    special_buffer::{
+      SpecialBufferKind,
+      SpecialBuffers,
+    },
     syntax::{
       self,
       config::{
@@ -321,6 +325,7 @@ pub struct Editor {
   pub diagnostics:       Diagnostics,
   pub diff_providers:    DiffProviderRegistry,
   pub acp_sessions:      crate::acp::Registry,
+  pub special_buffers:   SpecialBuffers,
 
   // pub debug_adapters: dap::registry::Registry,
   // pub breakpoints:    HashMap<PathBuf, Vec<Breakpoint>>,
@@ -1821,6 +1826,7 @@ impl Editor {
       diagnostics: Diagnostics::new(),
       diff_providers: DiffProviderRegistry::default(),
       acp_sessions: crate::acp::Registry::new(vec![crate::acp::AgentConfig::default()]),
+      special_buffers: SpecialBuffers::default(),
       // debug_adapters: dap::registry::Registry::new(),
       // breakpoints: HashMap::new(),
       syn_loader,
@@ -1884,6 +1890,41 @@ impl Editor {
       }
       self.last_motion = Some(motion);
     }
+  }
+
+  pub fn mark_special_buffer(&mut self, doc_id: DocumentId, kind: SpecialBufferKind) {
+    if let Some(doc) = self.documents.get_mut(&doc_id) {
+      doc.set_special_buffer_kind(Some(kind));
+    }
+    self.special_buffers.register(doc_id, kind);
+    self.touch_special_buffer(doc_id);
+  }
+
+  pub fn clear_special_buffer(&mut self, doc_id: DocumentId) {
+    if let Some(doc) = self.documents.get_mut(&doc_id) {
+      doc.set_special_buffer_kind(None);
+    }
+    self.special_buffers.unregister(doc_id);
+  }
+
+  pub fn touch_special_buffer(&mut self, doc_id: DocumentId) {
+    self.special_buffers.mark_active(doc_id);
+  }
+
+  pub fn special_buffer_kind(&self, doc_id: DocumentId) -> Option<SpecialBufferKind> {
+    self.special_buffers.kind_of(doc_id)
+  }
+
+  pub fn last_special_buffer(&self, kind: SpecialBufferKind) -> Option<DocumentId> {
+    self.special_buffers.last_for(kind)
+  }
+
+  pub fn set_special_buffer_running(&mut self, doc_id: DocumentId, running: bool) {
+    self.special_buffers.set_running(doc_id, running);
+  }
+
+  pub fn is_special_buffer_running(&self, doc_id: DocumentId) -> bool {
+    self.special_buffers.is_running(doc_id)
   }
   /// Current editing mode for the [`Editor`].
   pub fn mode(&self) -> Mode {
@@ -2350,17 +2391,20 @@ impl Editor {
 
   fn replace_document_in_view(&mut self, current_view: ViewId, doc_id: DocumentId) {
     let scrolloff = self.config().scrolloff;
-    let view = self.tree.get_mut(current_view);
+    {
+      let view = self.tree.get_mut(current_view);
 
-    view.doc = doc_id;
-    view.zoom_anim = 0.0; // Trigger zoom animation for new document
-    let doc = doc_mut!(self, &doc_id);
+      view.doc = doc_id;
+      view.zoom_anim = 0.0; // Trigger zoom animation for new document
+      let doc = doc_mut!(self, &doc_id);
 
-    doc.ensure_view_init(view.id);
-    view.sync_changes(doc);
-    doc.mark_as_focused();
+      doc.ensure_view_init(view.id);
+      view.sync_changes(doc);
+      doc.mark_as_focused();
 
-    view.ensure_cursor_in_view(doc, scrolloff)
+      view.ensure_cursor_in_view(doc, scrolloff);
+    }
+    self.touch_special_buffer(doc_id);
   }
 
   pub fn switch(&mut self, id: DocumentId, action: Action) {
@@ -2403,6 +2447,12 @@ impl Editor {
           // Copy `doc.id` into a variable before calling `self.documents.remove`, which
           // requires a mutable borrow, invalidating direct access to `doc.id`.
           let id = doc.id;
+          #[allow(dropping_references)]
+          {
+            drop(doc);
+            drop(view);
+          }
+          self.clear_special_buffer(id);
           self.documents.remove(&id);
 
           // Remove the scratch buffer from any jumplists
@@ -2437,6 +2487,7 @@ impl Editor {
         let doc = doc_mut!(self, &id);
         doc.ensure_view_init(view_id);
         doc.mark_as_focused();
+        self.touch_special_buffer(id);
         return;
       },
       Action::HorizontalSplit | Action::VerticalSplit => {
@@ -2457,6 +2508,7 @@ impl Editor {
         let doc = doc_mut!(self, &id);
         doc.ensure_view_init(view_id);
         doc.mark_as_focused();
+        self.touch_special_buffer(id);
         focus_lost
       },
     };
@@ -2625,6 +2677,7 @@ impl Editor {
       }
     }
 
+    self.clear_special_buffer(doc_id);
     let doc = self.documents.remove(&doc_id).unwrap();
 
     // If the document we removed was visible in all views, we will have no more
@@ -2648,6 +2701,7 @@ impl Editor {
       let doc = doc_mut!(self, &doc_id);
       doc.ensure_view_init(view_id);
       doc.mark_as_focused();
+      self.touch_special_buffer(doc_id);
     }
 
     self._refresh();
@@ -2718,6 +2772,7 @@ impl Editor {
       let view = view!(self, view_id);
       let doc = doc_mut!(self, &view.doc);
       doc.mark_as_focused();
+      self.touch_special_buffer(view.doc);
       let focus_lost = self.tree.get(prev_id).doc;
       dispatch(DocumentFocusLost {
         editor: self,

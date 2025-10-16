@@ -32,7 +32,8 @@ This document tracks typable commands (`:command`) that need to be implemented i
 5. ❌ `:indent-style` / `:line-ending` - File formatting options
 6. ✅ `:lsp-restart` / `:lsp-stop` - LSP management
 7. ❌ `:set-language` - Manual language override
-8. ❌ Shell commands (`:pipe`, `:insert-output`, `:append-output`, `:run-shell-command`)
+8. 🚧 Shell commands (`:pipe`, `:insert-output`, `:append-output`, `:run-shell-command`)
+   - `:sh` / `:shell` streams asynchronously into `*compilation*`; legacy pipeline commands pending
 9. ❌ `:change-current-directory` / `:show-directory` - Directory navigation
 10. ❌ `:write-quit!` - Force write and quit
 11. ❌ `:write-buffer-close` / `:write-buffer-close!` - Write and close buffer

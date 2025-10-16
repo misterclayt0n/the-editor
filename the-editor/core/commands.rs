@@ -9,6 +9,7 @@ use std::{
 };
 
 use anyhow::{
+  Context as _,
   anyhow,
   bail,
   ensure,
@@ -36,11 +37,13 @@ use url::Url;
 
 use crate::{
   core::{
+    DocumentId,
     Tendril,
     ViewId,
     animation::selection::SelectionPulseKind,
     auto_pairs,
     chars::char_is_word,
+    command_line::Args,
     comment,
     document::Document,
     global_search::{
@@ -130,6 +133,12 @@ pub type OnKeyCallback = Box<dyn FnOnce(&mut Context, KeyPress) + 'static>;
 // NOTE: For now we're only adding Context to this callback but I can see how we
 // might need to trigger UI elements from this tho.
 // Import compositor types
+use tokio::io::{
+  AsyncBufReadExt,
+  AsyncRead,
+  BufReader,
+};
+
 use crate::ui::compositor;
 
 // Callback now takes both Compositor and Context like in Helix
@@ -1586,27 +1595,30 @@ pub fn buffer_picker(cx: &mut Context) {
   use crate::core::{
     DocumentId,
     document::SCRATCH_BUFFER_NAME,
+    special_buffer::SpecialBufferKind,
   };
 
   let current = view!(cx.editor).doc;
 
   struct BufferMeta {
-    id:            DocumentId,
-    path:          Option<PathBuf>,
-    is_modified:   bool,
-    is_current:    bool,
-    is_acp_buffer: bool,
-    focused_at:    std::time::Instant,
+    id:             DocumentId,
+    path:           Option<PathBuf>,
+    is_modified:    bool,
+    is_current:     bool,
+    special_buffer: Option<SpecialBufferKind>,
+    is_running:     bool,
+    focused_at:     std::time::Instant,
   }
 
   let new_meta = |doc: &Document| {
     BufferMeta {
-      id:            doc.id(),
-      path:          doc.path().cloned(),
-      is_modified:   doc.is_modified(),
-      is_current:    doc.id() == current,
-      is_acp_buffer: doc.is_acp_buffer,
-      focused_at:    doc.focused_at,
+      id:             doc.id(),
+      path:           doc.path().cloned(),
+      is_modified:    doc.is_modified(),
+      is_current:     doc.id() == current,
+      special_buffer: doc.special_buffer_kind(),
+      is_running:     cx.editor.is_special_buffer_running(doc.id()),
+      focused_at:     doc.focused_at,
     }
   };
 
@@ -1635,14 +1647,17 @@ pub fn buffer_picker(cx: &mut Context) {
       if meta.is_current {
         flags.push('*');
       }
+      if meta.is_running {
+        flags.push('!');
+      }
       flags
     }),
     Column::new("path", |meta: &BufferMeta, _| {
       if let Some(path) = meta.path.as_deref() {
         let rel_path = the_editor_stdx::path::get_relative_path(path);
         rel_path.to_str().unwrap_or("[Invalid Path]").to_string()
-      } else if meta.is_acp_buffer {
-        crate::core::document::ACP_BUFFER_NAME.to_string()
+      } else if let Some(kind) = meta.special_buffer {
+        kind.display_name().to_string()
       } else {
         SCRATCH_BUFFER_NAME.to_string()
       }
@@ -6504,6 +6519,247 @@ async fn shell_impl_async(
   };
 
   Ok(Tendril::from(output))
+}
+
+#[derive(Clone, Copy)]
+enum ShellStream {
+  Stdout,
+  Stderr,
+}
+
+fn first_view_id_for_doc(editor: &Editor, doc_id: DocumentId) -> Option<ViewId> {
+  editor
+    .tree
+    .views()
+    .find(|(view, _)| view.doc == doc_id)
+    .map(|(view, _)| view.id)
+}
+
+fn replace_document_text(editor: &mut Editor, doc_id: DocumentId, text: &str) {
+  if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
+    if let Some(doc) = editor.documents.get_mut(&doc_id) {
+      let len = doc.text().len_chars();
+      let selection = Selection::point(text.chars().count());
+      let transaction =
+        Transaction::change(doc.text(), std::iter::once((0, len, Some(text.into()))))
+          .with_selection(selection);
+      doc.apply(&transaction, view_id);
+    }
+  }
+}
+
+fn append_document_text(editor: &mut Editor, doc_id: DocumentId, text: &str) {
+  if text.is_empty() {
+    return;
+  }
+  if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
+    if let Some(doc) = editor.documents.get_mut(&doc_id) {
+      let end = doc.text().len_chars();
+      let selection = doc.selection(view_id).clone();
+      let transaction =
+        Transaction::change(doc.text(), std::iter::once((end, end, Some(text.into()))))
+          .with_selection(selection);
+      doc.apply(&transaction, view_id);
+    }
+  }
+}
+
+fn resolve_compilation_buffer(editor: &mut Editor, current_doc_id: DocumentId) -> DocumentId {
+  use crate::{
+    core::special_buffer::SpecialBufferKind,
+    editor::Action,
+  };
+
+  if editor.special_buffer_kind(current_doc_id) == Some(SpecialBufferKind::Compilation) {
+    editor.touch_special_buffer(current_doc_id);
+    return current_doc_id;
+  }
+
+  if let Some(last_id) = editor.last_special_buffer(SpecialBufferKind::Compilation) {
+    if editor.documents.contains_key(&last_id) {
+      editor.touch_special_buffer(last_id);
+      return last_id;
+    }
+    editor.clear_special_buffer(last_id);
+  }
+
+  let doc_id = editor.new_file(Action::HorizontalSplit);
+  editor.mark_special_buffer(doc_id, SpecialBufferKind::Compilation);
+  doc_id
+}
+
+fn format_exit_status(status: &std::process::ExitStatus) -> String {
+  if status.success() {
+    "[process exited successfully]\n".to_string()
+  } else if let Some(code) = status.code() {
+    format!("[process exited with status {code}]\n")
+  } else {
+    "[process terminated by signal]\n".to_string()
+  }
+}
+
+fn forward_shell_stream<R>(
+  reader: R,
+  doc_id: DocumentId,
+  stream: ShellStream,
+) -> tokio::task::JoinHandle<anyhow::Result<()>>
+where
+  R: AsyncRead + Unpin + Send + 'static,
+{
+  tokio::spawn(async move {
+    let mut lines = BufReader::new(reader).lines();
+    while let Some(line) = lines.next_line().await? {
+      let mut text = line;
+      text.push('\n');
+      if matches!(stream, ShellStream::Stderr) {
+        text = format!("[stderr] {text}");
+      }
+      crate::ui::job::dispatch({
+        let text = text.clone();
+        move |editor, _| {
+          append_document_text(editor, doc_id, &text);
+        }
+      })
+      .await;
+    }
+    Ok(())
+  })
+}
+
+async fn run_shell_process(
+  shell: Vec<String>,
+  command: String,
+  doc_id: DocumentId,
+) -> anyhow::Result<std::process::ExitStatus> {
+  use std::process::Stdio;
+
+  use tokio::process::Command;
+
+  ensure!(!shell.is_empty(), "No shell set");
+
+  let mut process = Command::new(&shell[0]);
+  process
+    .args(&shell[1..])
+    .arg(&command)
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+
+  let mut child = process.spawn().context("Failed to spawn shell command")?;
+
+  let stdout_handle = child
+    .stdout
+    .take()
+    .map(|stdout| forward_shell_stream(stdout, doc_id, ShellStream::Stdout));
+  let stderr_handle = child
+    .stderr
+    .take()
+    .map(|stderr| forward_shell_stream(stderr, doc_id, ShellStream::Stderr));
+
+  let status = child
+    .wait()
+    .await
+    .context("Failed to await shell command")?;
+
+  if let Some(handle) = stdout_handle {
+    handle.await.context("stdout task failed")??;
+  }
+  if let Some(handle) = stderr_handle {
+    handle.await.context("stderr task failed")??;
+  }
+
+  Ok(status)
+}
+
+fn run_shell_in_compilation_buffer(
+  editor: &mut Editor,
+  jobs: &mut crate::ui::job::Jobs,
+  current_doc_id: DocumentId,
+  command: String,
+) -> anyhow::Result<DocumentId> {
+  let doc_id = resolve_compilation_buffer(editor, current_doc_id);
+  editor.touch_special_buffer(doc_id);
+
+  if editor.is_special_buffer_running(doc_id) {
+    bail!("A shell command is already running in the compilation buffer");
+  }
+
+  let header = format!("$ {}\n\n", command);
+  replace_document_text(editor, doc_id, &header);
+
+  let shell = editor.config().shell.clone();
+  editor.set_special_buffer_running(doc_id, true);
+
+  let job_command = command.clone();
+  jobs.spawn(async move {
+    let result = run_shell_process(shell, job_command.clone(), doc_id).await;
+
+    match result {
+      Ok(status) => {
+        let exit_text = format_exit_status(&status);
+        let status_message = format!("Command finished ({})", job_command);
+        crate::ui::job::dispatch(move |editor, _| {
+          append_document_text(editor, doc_id, &exit_text);
+          editor.set_status(status_message);
+          editor.set_special_buffer_running(doc_id, false);
+        })
+        .await;
+      },
+      Err(err) => {
+        let error_line = format!("[error] {err}\n");
+        let status_message = format!("Command failed ({job_command}): {err}");
+        log::error!("shell command failed: {err}");
+        crate::ui::job::dispatch(move |editor, _| {
+          append_document_text(editor, doc_id, &error_line);
+          editor.set_error(status_message);
+          editor.set_special_buffer_running(doc_id, false);
+        })
+        .await;
+      },
+    }
+
+    Ok(())
+  });
+
+  Ok(doc_id)
+}
+
+fn spawn_shell_command_context(cx: &mut Context, command: String) -> anyhow::Result<DocumentId> {
+  let current_doc_id = {
+    let view = view!(cx.editor);
+    view.doc
+  };
+  run_shell_in_compilation_buffer(cx.editor, cx.jobs, current_doc_id, command)
+}
+
+pub fn cmd_shell_spawn(
+  cx: &mut Context,
+  args: Args,
+  event: crate::ui::components::prompt::PromptEvent,
+) -> anyhow::Result<()> {
+  use crate::ui::components::prompt::PromptEvent;
+
+  if !matches!(event, PromptEvent::Validate) {
+    return Ok(());
+  }
+
+  let command = args.join(" ");
+  let command = command.trim();
+  if command.is_empty() {
+    return Ok(());
+  }
+  let command = command.to_string();
+
+  match spawn_shell_command_context(cx, command.clone()) {
+    Ok(_) => {
+      cx.editor.set_status(format!("Running ({command})"));
+      Ok(())
+    },
+    Err(err) => {
+      let message = err.to_string();
+      cx.editor.set_error(message);
+      Err(err)
+    },
+  }
 }
 
 enum IncrementDirection {

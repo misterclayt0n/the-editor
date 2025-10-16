@@ -39,6 +39,7 @@ pub mod position;
 pub mod registers;
 pub mod search;
 pub mod selection;
+pub mod special_buffer;
 pub mod surround;
 pub mod syntax;
 pub mod text_annotations;

@@ -99,7 +99,7 @@ impl GutterManager {
   /// Create the default gutter configuration
   pub fn with_defaults() -> Self {
     let mut manager = Self::new();
-    manager.add_gutter(Box::new(AcpStateGutter::new()));      // ACP state (leftmost)
+    manager.add_gutter(Box::new(AcpStateGutter::new())); // ACP state (leftmost)
     manager.add_gutter(Box::new(DiagnosticGutter::new()));
     manager.add_gutter(Box::new(SpacerGutter::new()));
     manager.add_gutter(Box::new(LineNumberGutter::new()));
@@ -568,7 +568,7 @@ impl AcpStateGutter {
 
 impl Gutter for AcpStateGutter {
   fn width(&self, _view: &View, _doc: &Document) -> usize {
-    2  // Emoji width (some emojis are double-width)
+    2 // Emoji width (some emojis are double-width)
   }
 
   fn render_line(
@@ -580,7 +580,7 @@ impl Gutter for AcpStateGutter {
     theme: &Theme,
   ) -> Option<(String, Color)> {
     // Only render on ACP buffers
-    if !doc.is_acp_buffer {
+    if !doc.is_acp_buffer() {
       return None;
     }
 
@@ -603,7 +603,7 @@ impl Gutter for AcpStateGutter {
       SessionState::Thinking => ("⏳", "acp.gutter.thinking"),
       SessionState::Streaming => ("✍", "acp.gutter.streaming"),
       SessionState::ExecutingTool => ("🔧", "acp.gutter.tool"),
-      SessionState::Idle => return None,  // Don't show anything when idle
+      SessionState::Idle => return None, // Don't show anything when idle
     };
 
     // Get color from theme with fallback

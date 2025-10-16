@@ -4,6 +4,7 @@ use crate::{
   core::{
     command_line::Args,
     commands::Context,
+    special_buffer::SpecialBufferKind,
   },
   editor::Action,
   ui::{
@@ -21,10 +22,9 @@ pub fn acp_new_session(cx: &mut Context) {
   log::info!("ACP: Created new document with id {:?}", doc_id);
 
   // Mark the document as an ACP buffer
-  if let Some(doc) = cx.editor.document_mut(doc_id) {
-    doc.is_acp_buffer = true;
-    log::info!("ACP: Marked document {:?} as ACP buffer", doc_id);
-  }
+  cx.editor
+    .mark_special_buffer(doc_id, SpecialBufferKind::Acp);
+  log::info!("ACP: Marked document {:?} as ACP buffer", doc_id);
 
   // Get registry handle for async operations
   let registry = cx.editor.acp_sessions.handle();
@@ -72,10 +72,7 @@ pub fn acp_send_prompt(cx: &mut Context) {
   let text = doc.text();
 
   // Get text from primary selection
-  let prompt_text = selection
-    .primary()
-    .fragment(text.slice(..))
-    .to_string();
+  let prompt_text = selection.primary().fragment(text.slice(..)).to_string();
 
   log::info!("ACP: Prompt text length: {} chars", prompt_text.len());
 
@@ -109,13 +106,16 @@ pub fn acp_send_prompt(cx: &mut Context) {
     // Create the prompt content
     let content = vec![crate::acp::acp::ContentBlock::Text(
       crate::acp::acp::TextContent {
-        text: prompt_text.clone(),
+        text:        prompt_text.clone(),
         annotations: None,
-        meta: None,
+        meta:        None,
       },
     )];
 
-    log::info!("ACP: Sending prompt with {} chars to session", prompt_text.len());
+    log::info!(
+      "ACP: Sending prompt with {} chars to session",
+      prompt_text.len()
+    );
 
     // Send the prompt
     match registry.send_prompt(&session_id, content).await {

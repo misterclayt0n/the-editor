@@ -88,6 +88,7 @@ use crate::{
       Range,
       Selection,
     },
+    special_buffer::SpecialBufferKind,
     syntax::{
       self,
       Syntax,
@@ -135,7 +136,6 @@ use crate::{
 pub const BUF_SIZE: usize = 8192;
 pub const DEFAULT_INDENT: IndentStyle = IndentStyle::Tabs;
 pub const SCRATCH_BUFFER_NAME: &str = "[scratch]";
-pub const ACP_BUFFER_NAME: &str = "*acp*";
 const DEFAULT_TAB_WIDTH: usize = 2;
 
 #[derive(Debug)]
@@ -184,6 +184,21 @@ pub struct DocumentSavedEvent {
   pub text:      Rope,
 }
 
+#[derive(Debug, Clone)]
+pub struct SpecialBufferMetadata {
+  kind: SpecialBufferKind,
+}
+
+impl SpecialBufferMetadata {
+  pub const fn new(kind: SpecialBufferKind) -> Self {
+    Self { kind }
+  }
+
+  pub const fn kind(&self) -> SpecialBufferKind {
+    self.kind
+  }
+}
+
 pub struct Document {
   pub id:                             DocumentId,
   text:                               Rope,
@@ -229,12 +244,13 @@ pub struct Document {
   soft_wrap_override:                 Option<bool>,
   /// Per-document wrap indicator override. None = use global/language config
   wrap_indicator_override:            Option<String>,
-  /// Whether this document is an ACP session buffer (for UI rendering decisions)
-  pub is_acp_buffer:                  bool,
+  /// Whether this document is an ACP session buffer (for UI rendering
+  /// decisions)
+  pub special_buffer:                 Option<SpecialBufferMetadata>,
   /// ACP session ID (if this is an ACP buffer)
   pub acp_session_id:                 Option<String>,
   /// Message spans for ACP syntax highlighting (role → byte ranges)
-  pub acp_message_spans:              Vec<(crate::acp::session::MessageRole, std::ops::Range<usize>)>,
+  pub acp_message_spans: Vec<(crate::acp::session::MessageRole, std::ops::Range<usize>)>,
   /// Cached ACP session state for gutter rendering (avoids async lookups)
   pub acp_gutter_state:               Option<AcpGutterState>,
 }
@@ -718,7 +734,7 @@ impl Document {
       highlight_cache: None,
       soft_wrap_override: None,
       wrap_indicator_override: None,
-      is_acp_buffer: false,
+      special_buffer: None,
       acp_session_id: None,
       acp_message_spans: Vec::new(),
       acp_gutter_state: None,
@@ -2194,6 +2210,33 @@ impl Document {
     self.view_data_mut(view_id).view_position = new_offset;
   }
 
+  pub fn special_buffer_kind(&self) -> Option<SpecialBufferKind> {
+    self
+      .special_buffer
+      .as_ref()
+      .map(SpecialBufferMetadata::kind)
+  }
+
+  pub fn is_special_buffer(&self) -> bool {
+    self.special_buffer.is_some()
+  }
+
+  pub fn is_special_buffer_kind(&self, kind: SpecialBufferKind) -> bool {
+    self.special_buffer_kind() == Some(kind)
+  }
+
+  pub fn set_special_buffer_kind(&mut self, kind: Option<SpecialBufferKind>) {
+    self.special_buffer = kind.map(SpecialBufferMetadata::new);
+  }
+
+  pub fn is_acp_buffer(&self) -> bool {
+    self.is_special_buffer_kind(SpecialBufferKind::Acp)
+  }
+
+  pub fn is_compilation_buffer(&self) -> bool {
+    self.is_special_buffer_kind(SpecialBufferKind::Compilation)
+  }
+
   pub fn relative_path(&self) -> Option<&Path> {
     self
       .relative_path
@@ -2209,11 +2252,10 @@ impl Document {
   pub fn display_name(&self) -> Cow<'_, str> {
     self.relative_path().map_or_else(
       || {
-        if self.is_acp_buffer {
-          ACP_BUFFER_NAME.into()
-        } else {
-          SCRATCH_BUFFER_NAME.into()
-        }
+        self.special_buffer_kind().map_or_else(
+          || SCRATCH_BUFFER_NAME.into(),
+          |kind| kind.display_name().into(),
+        )
       },
       |path| path.to_string_lossy(),
     )
@@ -2577,7 +2619,7 @@ mod tests {
     let syn_loader = Arc::new(ArcSwap::from_pointee(syntax_loader));
 
     let mut doc = Document::from(Rope::from(initial), None, Arc::clone(&config), syn_loader);
-    let mut view = View::new(doc.id(), GutterConfig::default());
+    let view = View::new(doc.id(), GutterConfig::default());
     doc.ensure_view_init(view.id);
     (doc, view)
   }

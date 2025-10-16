@@ -235,13 +235,15 @@ impl Component for StatusLine {
             path_str.to_string()
           }
         }
-      } else if doc.is_acp_buffer {
-        // ACP session buffer
-        if modified {
-          format!("{}*", crate::core::document::ACP_BUFFER_NAME)
-        } else {
-          crate::core::document::ACP_BUFFER_NAME.to_string()
+      } else if let Some(kind) = doc.special_buffer_kind() {
+        let mut label = kind.display_name().to_string();
+        if cx.editor.is_special_buffer_running(view.doc) {
+          label.push_str(" !");
         }
+        if modified {
+          label.push('*');
+        }
+        label
       } else if modified {
         "[No Name]*".to_string()
       } else {

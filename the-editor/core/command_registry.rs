@@ -604,6 +604,18 @@ impl CommandRegistry {
     ));
 
     self.register(TypableCommand::new(
+      "sh",
+      &["shell", "shell-command"],
+      "Run shell command asynchronously and stream output to the compilation buffer",
+      crate::core::commands::cmd_shell_spawn,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, None),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
       "write!",
       &["w!"],
       "Force write buffer to file (creates directories)",
@@ -1013,9 +1025,11 @@ pub mod completers {
 
   #[cfg(test)]
   mod tests {
-    use super::*;
     use std::fs;
+
     use tempfile::TempDir;
+
+    use super::*;
 
     // Test wrapper for filename_impl that doesn't require an Editor
     fn filename_impl_for_test(input: &str, git_ignore: bool) -> Vec<Completion> {
@@ -1078,7 +1092,10 @@ pub mod completers {
           let mut path = if is_tilde {
             entry_path.to_path_buf()
           } else {
-            entry_path.strip_prefix(&*dir).unwrap_or(entry_path).to_path_buf()
+            entry_path
+              .strip_prefix(&*dir)
+              .unwrap_or(entry_path)
+              .to_path_buf()
           };
 
           if is_dir {
@@ -1096,9 +1113,7 @@ pub mod completers {
         let replace_range = range_start..;
 
         entries
-          .filter(|(path, _)| {
-            path.to_lowercase().contains(&file_name_lower)
-          })
+          .filter(|(path, _)| path.to_lowercase().contains(&file_name_lower))
           .map(|(path, _is_dir)| {
             Completion {
               range: replace_range.clone(),
@@ -1156,7 +1171,8 @@ pub mod completers {
       temp
     }
 
-    // Note: These tests use a minimal mock since filename_impl doesn't actually use the editor parameter
+    // Note: These tests use a minimal mock since filename_impl doesn't actually use
+    // the editor parameter
     struct MockEditor;
 
     #[test]
@@ -1229,8 +1245,8 @@ pub mod completers {
       });
 
       // First two should be directories
-      assert!(items[0].1);  // dir1/
-      assert!(items[1].1);  // dir2/
+      assert!(items[0].1); // dir1/
+      assert!(items[1].1); // dir2/
       // Last two should be files
       assert!(!items[2].1); // file1.txt
       assert!(!items[3].1); // file2.rs
@@ -1254,7 +1270,10 @@ pub mod completers {
       let completions = filename_impl_for_test(&input, false);
 
       // Should have dir1/ in completions
-      let dir1_completion = completions.iter().find(|c| c.text == "dir1/").expect("dir1/ not found");
+      let dir1_completion = completions
+        .iter()
+        .find(|c| c.text == "dir1/")
+        .expect("dir1/ not found");
 
       println!("Input: {}", input);
       println!("dir1/ completion range: {:?}", dir1_completion.range);
@@ -1262,23 +1281,32 @@ pub mod completers {
 
       // When we apply this completion, it should append to the input
       // Range should be from input.len() onwards (to append)
-      assert_eq!(dir1_completion.range.start, input.len(),
-        "Range should start at end of input to append, not replace");
+      assert_eq!(
+        dir1_completion.range.start,
+        input.len(),
+        "Range should start at end of input to append, not replace"
+      );
 
       // Test 2: Now simulate being inside dir1/
       let input2 = format!("{}/dir1/", path_str);
       let completions2 = filename_impl_for_test(&input2, false);
 
       // Should have subdir/ in completions
-      let subdir_completion = completions2.iter().find(|c| c.text == "subdir/").expect("subdir/ not found");
+      let subdir_completion = completions2
+        .iter()
+        .find(|c| c.text == "subdir/")
+        .expect("subdir/ not found");
 
       println!("\nInput: {}", input2);
       println!("subdir/ completion range: {:?}", subdir_completion.range);
       println!("subdir/ completion text: {}", subdir_completion.text);
 
       // When we apply this completion, it should append to dir1/
-      assert_eq!(subdir_completion.range.start, input2.len(),
-        "Range should start at end of input2 to append subdir/ to dir1/");
+      assert_eq!(
+        subdir_completion.range.start,
+        input2.len(),
+        "Range should start at end of input2 to append subdir/ to dir1/"
+      );
 
       // Simulate applying the completion
       let mut result = input2.clone();
@@ -1288,8 +1316,11 @@ pub mod completers {
       println!("Expected: {}/dir1/subdir/", path_str);
 
       // The result should be the full path: temp/dir1/subdir/
-      assert!(result.ends_with("/dir1/subdir/"),
-        "Result should be 'dir1/subdir/' appended to parent path, got: {}", result);
+      assert!(
+        result.ends_with("/dir1/subdir/"),
+        "Result should be 'dir1/subdir/' appended to parent path, got: {}",
+        result
+      );
     }
   }
 }

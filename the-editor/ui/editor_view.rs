@@ -145,8 +145,8 @@ pub struct EditorView {
   last_click_pos:            Option<(f32, f32)>,
   click_count:               u8,
   // Split separator interaction
-  hovered_separator:  Option<SeparatorInfo>,
-  dragging_separator: Option<SeparatorDrag>,
+  hovered_separator:         Option<SeparatorInfo>,
+  dragging_separator:        Option<SeparatorDrag>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1099,12 +1099,15 @@ impl Component for EditorView {
           let start_char = top_char_idx;
           let end_char =
             (start_char + (visible_lines * viewport.width as usize)).min(doc_text.len_chars());
-          let mut overlay_highlights = vec![annotations.collect_overlay_highlights(start_char..end_char)];
+          let mut overlay_highlights =
+            vec![annotations.collect_overlay_highlights(start_char..end_char)];
 
           // Add ACP message highlighting if this is an ACP buffer
-          if doc.is_acp_buffer && !doc.acp_message_spans.is_empty() {
-            use crate::acp::session::MessageRole;
-            use crate::core::syntax::OverlayHighlights;
+          if doc.is_acp_buffer() && !doc.acp_message_spans.is_empty() {
+            use crate::{
+              acp::session::MessageRole,
+              core::syntax::OverlayHighlights,
+            };
 
             let start_byte = doc_text.char_to_byte(start_char);
             let end_byte = doc_text.char_to_byte(end_char);
@@ -2061,7 +2064,8 @@ impl EditorView {
       if area.y + area.height < cx.editor.tree.area().height {
         // Render horizontal separator bar at the bottom edge
         let x = area.x as f32 * font_width;
-        let sep_y = (area.y + area.height) as f32 * (font_size + LINE_SPACING) - SEPARATOR_HEIGHT_PX;
+        let sep_y =
+          (area.y + area.height) as f32 * (font_size + LINE_SPACING) - SEPARATOR_HEIGHT_PX;
         let width = area.width as f32 * font_width;
         let height = SEPARATOR_HEIGHT_PX;
 
@@ -2391,8 +2395,8 @@ impl EditorView {
         &annotations,
       );
 
-      // Clamp to valid document range (char_idx_at_visual_offset usually handles this,
-      // but we ensure it for edge cases like clicking way past EOF)
+      // Clamp to valid document range (char_idx_at_visual_offset usually handles
+      // this, but we ensure it for edge cases like clicking way past EOF)
       let doc_pos = doc_pos.min(text.len_chars());
 
       return Some((view.id, doc_pos));
@@ -2426,11 +2430,7 @@ impl EditorView {
 
   /// Detect if mouse is hovering over a split separator
   /// Returns separator info if hovering, None otherwise
-  fn detect_separator_hover(
-    &self,
-    mouse_pos: (f32, f32),
-    cx: &Context,
-  ) -> Option<SeparatorInfo> {
+  fn detect_separator_hover(&self, mouse_pos: (f32, f32), cx: &Context) -> Option<SeparatorInfo> {
     const SEPARATOR_WIDTH_PX: f32 = 2.0;
     const SEPARATOR_HEIGHT_PX: f32 = 2.0;
     const SEPARATOR_HOVER_THRESHOLD: f32 = 6.0; // Wider hit area for easier interaction
@@ -2454,11 +2454,11 @@ impl EditorView {
           && (mouse_x - gap_center_x).abs() < SEPARATOR_HOVER_THRESHOLD
         {
           return Some(SeparatorInfo {
-            view_id: view.id,
-            vertical: true,
-            position: gap_center_x,
-            view_x: area.x,
-            view_y: area.y,
+            view_id:    view.id,
+            vertical:   true,
+            position:   gap_center_x,
+            view_x:     area.x,
+            view_y:     area.y,
             view_width: area.width,
           });
         }
@@ -2477,11 +2477,11 @@ impl EditorView {
           && (mouse_y - sep_center_y).abs() < SEPARATOR_HOVER_THRESHOLD
         {
           return Some(SeparatorInfo {
-            view_id: view.id,
-            vertical: false,
-            position: sep_center_y,
-            view_x: area.x,
-            view_y: area.y,
+            view_id:    view.id,
+            vertical:   false,
+            position:   sep_center_y,
+            view_x:     area.x,
+            view_y:     area.y,
             view_width: area.width,
           });
         }

@@ -192,6 +192,52 @@ auto-start = false
 - Use different text styles for different message types
 - Add metadata to documents for ACP sessions
 
+#### 4.1 Model-Aware Buffer Names
+
+**Current State**: ACP buffers display as `*acp*` (simple static name)
+
+**Goal**: Display the actual model name in the buffer name
+
+**Benefits**:
+- Immediately see which model you're talking to
+- Distinguish between multiple concurrent sessions with different models
+- Better UX when switching between sessions
+
+**Implementation Details**:
+
+The ACP protocol provides model information via `SessionModelState` (requires "unstable" feature):
+```rust
+pub struct SessionModelState {
+  pub current_model_id: ModelId,
+  pub available_models: Vec<ModelInfo>,
+  pub meta: Option<serde_json::Value>,
+}
+
+pub struct ModelInfo {
+  pub model_id: ModelId,
+  pub name: String,  // Human-readable name like "Claude 3.5 Sonnet"
+  pub description: Option<String>,
+  pub meta: Option<serde_json::Value>,
+}
+```
+
+**Steps**:
+1. Enable "unstable" feature flag for the ACP crate
+2. Store model info in the `Session` struct (currently not stored)
+3. Add a custom display name to `Document` or link document to session for dynamic lookup
+4. Update `Document::display_name()` to show model name for ACP buffers
+5. Handle model changes mid-session (if protocol supports it)
+
+**Display Format Options**:
+- `*acp: Claude 3.5 Sonnet*`
+- `*claude-sonnet-3.5*`
+- `*acp: claude-code*` (fallback to agent name if model unavailable)
+
+**Related Code**:
+- `acp/session.rs` - Add model info storage
+- `acp/mod.rs` - Extract model info from `NewSessionResponse.models` (line 149)
+- `core/document.rs:2192-2203` - Update `display_name()` logic
+
 ### 5. Session Persistence
 
 **Goal**: Save and restore conversation history

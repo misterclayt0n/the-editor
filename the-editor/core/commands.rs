@@ -1581,10 +1581,7 @@ pub fn file_picker(cx: &mut Context) {
 }
 
 pub fn buffer_picker(cx: &mut Context) {
-  use std::path::{
-    Path,
-    PathBuf,
-  };
+  use std::path::PathBuf;
 
   use crate::core::{
     DocumentId,
@@ -1594,20 +1591,22 @@ pub fn buffer_picker(cx: &mut Context) {
   let current = view!(cx.editor).doc;
 
   struct BufferMeta {
-    id:          DocumentId,
-    path:        Option<PathBuf>,
-    is_modified: bool,
-    is_current:  bool,
-    focused_at:  std::time::Instant,
+    id:            DocumentId,
+    path:          Option<PathBuf>,
+    is_modified:   bool,
+    is_current:    bool,
+    is_acp_buffer: bool,
+    focused_at:    std::time::Instant,
   }
 
   let new_meta = |doc: &Document| {
     BufferMeta {
-      id:          doc.id(),
-      path:        doc.path().cloned(),
-      is_modified: doc.is_modified(),
-      is_current:  doc.id() == current,
-      focused_at:  doc.focused_at,
+      id:            doc.id(),
+      path:          doc.path().cloned(),
+      is_modified:   doc.is_modified(),
+      is_current:    doc.id() == current,
+      is_acp_buffer: doc.is_acp_buffer,
+      focused_at:    doc.focused_at,
     }
   };
 
@@ -1639,15 +1638,14 @@ pub fn buffer_picker(cx: &mut Context) {
       flags
     }),
     Column::new("path", |meta: &BufferMeta, _| {
-      let path = meta
-        .path
-        .as_deref()
-        .map(the_editor_stdx::path::get_relative_path);
-      path
-        .as_deref()
-        .and_then(Path::to_str)
-        .unwrap_or(SCRATCH_BUFFER_NAME)
-        .to_string()
+      if let Some(path) = meta.path.as_deref() {
+        let rel_path = the_editor_stdx::path::get_relative_path(path);
+        rel_path.to_str().unwrap_or("[Invalid Path]").to_string()
+      } else if meta.is_acp_buffer {
+        crate::core::document::ACP_BUFFER_NAME.to_string()
+      } else {
+        SCRATCH_BUFFER_NAME.to_string()
+      }
     }),
   ];
   use crate::{

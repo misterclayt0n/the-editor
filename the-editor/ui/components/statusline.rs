@@ -235,6 +235,13 @@ impl Component for StatusLine {
             path_str.to_string()
           }
         }
+      } else if doc.is_acp_buffer {
+        // ACP session buffer
+        if modified {
+          format!("{}*", crate::core::document::ACP_BUFFER_NAME)
+        } else {
+          crate::core::document::ACP_BUFFER_NAME.to_string()
+        }
       } else if modified {
         "[No Name]*".to_string()
       } else {

@@ -134,7 +134,8 @@ use crate::{
 
 pub const BUF_SIZE: usize = 8192;
 pub const DEFAULT_INDENT: IndentStyle = IndentStyle::Tabs;
-pub const SCRATCH_BUFFER_NAME: &str = "bosta";
+pub const SCRATCH_BUFFER_NAME: &str = "[scratch]";
+pub const ACP_BUFFER_NAME: &str = "*acp*";
 const DEFAULT_TAB_WIDTH: usize = 2;
 
 #[derive(Debug)]
@@ -2189,9 +2190,16 @@ impl Document {
   }
 
   pub fn display_name(&self) -> Cow<'_, str> {
-    self
-      .relative_path()
-      .map_or_else(|| SCRATCH_BUFFER_NAME.into(), |path| path.to_string_lossy())
+    self.relative_path().map_or_else(
+      || {
+        if self.is_acp_buffer {
+          ACP_BUFFER_NAME.into()
+        } else {
+          SCRATCH_BUFFER_NAME.into()
+        }
+      },
+      |path| path.to_string_lossy(),
+    )
   }
 
   // transact(Fn) ?

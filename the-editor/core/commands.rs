@@ -6593,6 +6593,17 @@ pub fn noop(cx: &mut Context) {
   }
 }
 
+pub fn toggle_soft_wrap(cx: &mut Context) {
+  let (_, doc) = current!(cx.editor);
+  let enabled = doc.toggle_soft_wrap();
+  let status = if enabled {
+    "Soft wrap enabled"
+  } else {
+    "Soft wrap disabled"
+  };
+  cx.editor.set_status(status.to_string());
+}
+
 // Re-export LSP commands
 pub use super::lsp_commands::{
   code_action,

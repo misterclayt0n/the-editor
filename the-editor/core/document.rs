@@ -223,6 +223,11 @@ pub struct Document {
   /// Cache for syntax highlight results to avoid re-querying tree-sitter every
   /// frame
   highlight_cache:                    Option<syntax::HighlightCache>,
+  /// Per-document soft wrap override. None = use global/language config, Some =
+  /// override
+  soft_wrap_override:                 Option<bool>,
+  /// Per-document wrap indicator override. None = use global/language config
+  wrap_indicator_override:            Option<String>,
 }
 
 /// Inlay hints for a single `(Document, View)` combo.
@@ -694,6 +699,8 @@ impl Document {
       color_swatch_controller: TaskController::new(),
       syn_loader,
       highlight_cache: None,
+      soft_wrap_override: None,
+      wrap_indicator_override: None,
     }
   }
 
@@ -2425,8 +2432,9 @@ impl Document {
       .language
       .as_ref()
       .and_then(|config| config.soft_wrap.as_ref());
-    let enable_soft_wrap = language_soft_wrap
-      .and_then(|soft_wrap| soft_wrap.enable)
+    let enable_soft_wrap = self
+      .soft_wrap_override
+      .or_else(|| language_soft_wrap.and_then(|soft_wrap| soft_wrap.enable))
       .or(editor_soft_wrap.enable)
       .unwrap_or(false);
     let max_wrap = language_soft_wrap
@@ -2437,8 +2445,10 @@ impl Document {
       .and_then(|soft_wrap| soft_wrap.max_indent_retain)
       .or(editor_soft_wrap.max_indent_retain)
       .unwrap_or(40);
-    let wrap_indicator = language_soft_wrap
-      .and_then(|soft_wrap| soft_wrap.wrap_indicator.clone())
+    let wrap_indicator = self
+      .wrap_indicator_override
+      .clone()
+      .or_else(|| language_soft_wrap.and_then(|soft_wrap| soft_wrap.wrap_indicator.clone()))
       .or_else(|| config.soft_wrap.wrap_indicator.clone())
       .unwrap_or_else(|| "↪ ".into());
     let tab_width = self.tab_width() as u16;
@@ -2454,6 +2464,33 @@ impl Document {
       wrap_indicator_highlight: theme.and_then(|theme| theme.find_highlight("ui.virtual.wrap")),
       soft_wrap_at_text_width,
     }
+  }
+
+  /// Toggle soft wrap for this document.
+  /// Returns the new state (true = enabled, false = disabled).
+  pub fn toggle_soft_wrap(&mut self) -> bool {
+    let config = self.config.load();
+    let editor_soft_wrap = &config.soft_wrap;
+    let language_soft_wrap = self
+      .language
+      .as_ref()
+      .and_then(|config| config.soft_wrap.as_ref());
+
+    // Determine the current effective state
+    let current_state = self
+      .soft_wrap_override
+      .or_else(|| language_soft_wrap.and_then(|soft_wrap| soft_wrap.enable))
+      .or(editor_soft_wrap.enable)
+      .unwrap_or(false);
+
+    // Toggle to opposite state
+    let new_state = !current_state;
+    self.soft_wrap_override = Some(new_state);
+
+    // Set wrap indicator to empty string (no arrow)
+    self.wrap_indicator_override = Some(String::new());
+
+    new_state
   }
 
   /// Set the inlay hints for this document and `view_id`.

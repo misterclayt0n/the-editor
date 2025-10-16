@@ -65,6 +65,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "C-s"       => toggle_statusline,
     "C-g"       => toggle_line_numbers,
     "C-t"       => toggle_diff_gutter,
+    "A-w"       => toggle_soft_wrap,
     "C-="       => increase_font_size,
     "C-minus"   => decrease_font_size,
 

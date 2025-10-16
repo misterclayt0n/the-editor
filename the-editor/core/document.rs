@@ -228,6 +228,8 @@ pub struct Document {
   soft_wrap_override:                 Option<bool>,
   /// Per-document wrap indicator override. None = use global/language config
   wrap_indicator_override:            Option<String>,
+  /// Whether this document is an ACP session buffer (for UI rendering decisions)
+  pub is_acp_buffer:                  bool,
 }
 
 /// Inlay hints for a single `(Document, View)` combo.
@@ -701,6 +703,7 @@ impl Document {
       highlight_cache: None,
       soft_wrap_override: None,
       wrap_indicator_override: None,
+      is_acp_buffer: false,
     }
   }
 

@@ -20,6 +20,12 @@ pub fn acp_new_session(cx: &mut Context) {
   let doc_id = cx.editor.new_file(Action::VerticalSplit);
   log::info!("ACP: Created new document with id {:?}", doc_id);
 
+  // Mark the document as an ACP buffer
+  if let Some(doc) = cx.editor.document_mut(doc_id) {
+    doc.is_acp_buffer = true;
+    log::info!("ACP: Marked document {:?} as ACP buffer", doc_id);
+  }
+
   // Get registry handle for async operations
   let registry = cx.editor.acp_sessions.handle();
   log::info!("ACP: Got registry handle, spawning local job");

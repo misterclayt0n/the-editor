@@ -833,6 +833,23 @@ impl App {
         SessionUpdate::AgentMessageChunk { content } => {
           let text = Self::extract_content_text(&content);
           log::info!("ACP App: AgentMessageChunk - {} chars", text.len());
+
+          // Update session state to Streaming
+          let registry = self.editor.acp_sessions.handle();
+          let session_id_clone = session_id.clone();
+          self.jobs.callback_local(async move {
+            use crate::acp::session::SessionState;
+            let _ = registry.update_session(&session_id_clone, |session| {
+              session.state = SessionState::Streaming;
+              // If this is the first chunk, record span start
+              if session.current_span_start.is_none() {
+                // We'll update this with actual line number in the append callback
+                session.current_span_start = Some(0);
+              }
+            }).await;
+            Ok(None)
+          });
+
           // Append to document for this session
           self.append_to_session_document(&session_id, &text);
         },
@@ -843,12 +860,36 @@ impl App {
           log::debug!("User message chunk: {}", text);
         },
         SessionUpdate::AgentThoughtChunk { content } => {
+          // Update session state to Thinking
+          let registry = self.editor.acp_sessions.handle();
+          let session_id_clone = session_id.clone();
+          self.jobs.callback_local(async move {
+            use crate::acp::session::SessionState;
+            let _ = registry.update_session(&session_id_clone, |session| {
+              session.state = SessionState::Thinking;
+            }).await;
+            Ok(None)
+          });
+
           // Append thinking to document
           let thought = Self::extract_content_text(&content);
           log::info!("ACP App: AgentThoughtChunk - {} chars", thought.len());
           self.append_to_session_document(&session_id, &format!("[Thinking: {}]\n", thought));
         },
         SessionUpdate::ToolCall(tool_call) => {
+          // Update session state to ExecutingTool
+          let registry = self.editor.acp_sessions.handle();
+          let session_id_clone = session_id.clone();
+          let tool_name = tool_call.title.clone();
+          self.jobs.callback_local(async move {
+            use crate::acp::session::SessionState;
+            let _ = registry.update_session(&session_id_clone, |session| {
+              session.state = SessionState::ExecutingTool;
+              session.current_tool_name = Some(tool_name.clone());
+            }).await;
+            Ok(None)
+          });
+
           let text = format!("[Tool Call: {}]\n", tool_call.title);
           log::info!("ACP App: ToolCall - {}", tool_call.title);
           self.append_to_session_document(&session_id, &text);

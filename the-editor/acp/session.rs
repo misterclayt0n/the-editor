@@ -9,6 +9,38 @@ use agent_client_protocol::SessionId;
 use super::Agent;
 use crate::core::DocumentId;
 
+/// Current state of an ACP session
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionState {
+  Idle,
+  Thinking,
+  Streaming,
+  ExecutingTool,
+}
+
+impl Default for SessionState {
+  fn default() -> Self {
+    Self::Idle
+  }
+}
+
+/// Role of a message in the conversation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageRole {
+  User,
+  Agent,
+  Thinking,
+  Tool,
+}
+
+/// Tracks which lines belong to which message role (for syntax highlighting)
+#[derive(Debug, Clone)]
+pub struct MessageSpan {
+  pub role:       MessageRole,
+  pub start_line: usize,
+  pub end_line:   usize,
+}
+
 /// Tracks permissions granted for a session
 #[derive(Debug, Clone, Default)]
 pub struct PermissionTracker {
@@ -102,12 +134,22 @@ impl Message {
 
 /// Represents an active ACP session
 pub struct Session {
-  pub session_id:  SessionId,
-  pub agent:       Arc<Agent>,
-  pub doc_id:      DocumentId,
-  pub permissions: PermissionTracker,
-  pub history:     Vec<Message>,
-  pub is_active:   bool,
+  pub session_id:          SessionId,
+  pub agent:               Arc<Agent>,
+  pub doc_id:              DocumentId,
+  pub permissions:         PermissionTracker,
+  pub history:             Vec<Message>,
+  pub is_active:           bool,
+  /// Current state of the session (for UI indicators)
+  pub state:               SessionState,
+  /// Line currently being written by agent (for gutter emoji)
+  pub current_line:        Option<usize>,
+  /// Track which lines belong to which role (for syntax highlighting)
+  pub message_spans:       Vec<MessageSpan>,
+  /// Start line of current message being written
+  pub current_span_start:  Option<usize>,
+  /// Name of tool being executed (if ExecutingTool state)
+  pub current_tool_name:   Option<String>,
 }
 
 impl Session {
@@ -123,6 +165,11 @@ impl Session {
       permissions,
       history: Vec::new(),
       is_active: true,
+      state: SessionState::default(),
+      current_line: None,
+      message_spans: Vec::new(),
+      current_span_start: None,
+      current_tool_name: None,
     }
   }
 

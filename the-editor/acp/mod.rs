@@ -397,4 +397,18 @@ impl RegistryHandle {
     let state = self.state.lock().await;
     state.sessions.get(session_id).map(|s| s.doc_id)
   }
+
+  /// Update session state with a callback
+  pub async fn update_session<F>(&self, session_id: &SessionId, f: F) -> Result<()>
+  where
+    F: FnOnce(&mut Session),
+  {
+    let mut state = self.state.lock().await;
+    if let Some(session) = state.sessions.get_mut(session_id) {
+      f(session);
+      Ok(())
+    } else {
+      Err(Error::SessionNotFound(session_id.0.to_string()))
+    }
+  }
 }

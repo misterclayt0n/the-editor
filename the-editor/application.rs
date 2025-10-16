@@ -845,7 +845,7 @@ impl App {
             Ok(None)
           });
 
-          // Append to document for this session
+          // Append to document for this session (this will also update gutter state)
           self.append_to_session_document(&session_id, &text, crate::acp::session::MessageRole::Agent);
         },
         SessionUpdate::UserMessageChunk { content } => {
@@ -866,7 +866,7 @@ impl App {
             Ok(None)
           });
 
-          // Append thinking to document
+          // Append thinking to document (this will also update gutter state)
           let thought = Self::extract_content_text(&content);
           log::info!("ACP App: AgentThoughtChunk - {} chars", thought.len());
           self.append_to_session_document(&session_id, &format!("[Thinking: {}]\n", thought), crate::acp::session::MessageRole::Thinking);
@@ -887,6 +887,7 @@ impl App {
 
           let text = format!("[Tool Call: {}]\n", tool_call.title);
           log::info!("ACP App: ToolCall - {}", tool_call.title);
+          // Append to document (this will also update gutter state with tool name)
           self.append_to_session_document(&session_id, &text, crate::acp::session::MessageRole::Tool);
         },
         SessionUpdate::ToolCallUpdate(_) | SessionUpdate::Plan(_) => {
@@ -978,7 +979,27 @@ impl App {
               doc.acp_message_spans.push((role, start_byte..end_byte));
               log::debug!("ACP: Added message span {:?} from {} to {} in document", role, start_byte, end_byte);
 
-              // Also update the session's message spans for persistence
+              // Calculate current line number for gutter display
+              let current_line = doc.text().char_to_line(doc.text().byte_to_char(start_byte));
+              log::debug!("ACP: Current line for gutter: {}", current_line);
+
+              // Update document's gutter state directly based on the role
+              // Map role to session state for gutter display
+              use crate::acp::session::{MessageRole, SessionState};
+              let session_state = match role {
+                MessageRole::Agent => SessionState::Streaming,
+                MessageRole::Thinking => SessionState::Thinking,
+                MessageRole::Tool => SessionState::ExecutingTool,
+                MessageRole::User => SessionState::Idle,  // Shouldn't happen but handle it
+              };
+
+              doc.acp_gutter_state = Some(crate::core::document::AcpGutterState {
+                state: session_state,
+                current_line: Some(current_line),
+                tool_name: None,  // We don't have tool name here, will be updated separately
+              });
+
+              // Also update the session's message spans and current_line for persistence
               let registry_clone = registry_for_callback.clone();
               let session_id_clone = session_id_for_callback.clone();
               tokio::task::spawn_local(async move {
@@ -988,6 +1009,7 @@ impl App {
                     start_byte,
                     end_byte,
                   });
+                  session.current_line = Some(current_line);
                 }).await;
               });
             } else {

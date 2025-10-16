@@ -235,6 +235,16 @@ pub struct Document {
   pub acp_session_id:                 Option<String>,
   /// Message spans for ACP syntax highlighting (role → byte ranges)
   pub acp_message_spans:              Vec<(crate::acp::session::MessageRole, std::ops::Range<usize>)>,
+  /// Cached ACP session state for gutter rendering (avoids async lookups)
+  pub acp_gutter_state:               Option<AcpGutterState>,
+}
+
+/// Cached ACP session state for efficient gutter rendering
+#[derive(Debug, Clone)]
+pub struct AcpGutterState {
+  pub state:        crate::acp::session::SessionState,
+  pub current_line: Option<usize>,
+  pub tool_name:    Option<String>,
 }
 
 /// Inlay hints for a single `(Document, View)` combo.
@@ -711,6 +721,7 @@ impl Document {
       is_acp_buffer: false,
       acp_session_id: None,
       acp_message_spans: Vec::new(),
+      acp_gutter_state: None,
     }
   }
 

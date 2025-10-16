@@ -104,6 +104,11 @@ warning = "lightning"
 "acp.thinking" = { fg = "sirocco", modifiers = ["italic"] }
 "acp.tool"     = { fg = "honey" }
 
+# ACP gutter state colors
+"acp.gutter.thinking"  = { fg = "honey" }      # Yellow ⏳
+"acp.gutter.streaming" = { fg = "mint" }       # Green ✍
+"acp.gutter.tool"      = { fg = "delta" }      # Purple 🔧
+
 [palette]
 bossanova = "#452859"
 comet     = "#5a5977"

@@ -204,27 +204,39 @@ impl ParsedQuery {
     ParsedQuery { filters }
   }
 
-  /// Get the pattern for a specific column name
-  /// Returns None if no filter applies to this column
+  /// Get the pattern for a specific column name using only column-specific filters
+  /// Returns None if no column-specific filter applies to this column
   pub fn pattern_for_column(&self, column_name: &str) -> Option<String> {
     let mut patterns = Vec::new();
 
     for filter in &self.filters {
-      match filter {
-        QueryFilter::AllColumns(pattern) => {
+      if let QueryFilter::Column { name, pattern } = filter {
+        if name == column_name {
           patterns.push(pattern.as_str());
-        },
-        QueryFilter::Column { name, pattern } if name == column_name => {
-          patterns.push(pattern.as_str());
-        },
-        _ => {},
+        }
       }
     }
 
     if patterns.is_empty() {
       None
     } else {
-      // Combine patterns with space (nucleo will OR them)
+      Some(patterns.join(" "))
+    }
+  }
+
+  /// Get the combined pattern for global (all column) filters
+  pub fn global_pattern(&self) -> Option<String> {
+    let mut patterns = Vec::new();
+
+    for filter in &self.filters {
+      if let QueryFilter::AllColumns(pattern) = filter {
+        patterns.push(pattern.as_str());
+      }
+    }
+
+    if patterns.is_empty() {
+      None
+    } else {
       Some(patterns.join(" "))
     }
   }
@@ -814,17 +826,53 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     // Parse the query into filters
     let parsed = ParsedQuery::parse(&self.query);
 
+    let global_pattern = if parsed.is_empty() {
+      None
+    } else {
+      parsed.global_pattern()
+    };
+
+    let primary_filter_column_index = if self
+      .columns
+      .get(self.primary_column)
+      .map(|column| column.filter)
+      .unwrap_or(false)
+    {
+      Some(self.primary_column)
+    } else {
+      self
+        .columns
+        .iter()
+        .enumerate()
+        .find(|(_, column)| column.filter)
+        .map(|(index, _)| index)
+    };
+
     // Update pattern for each filterable column
     let mut column_idx = 0;
-    for column in self.columns.iter().filter(|c| c.filter) {
-      // Get the pattern for this specific column
-      let pattern = if parsed.is_empty() {
-        // Empty query - match everything
-        String::new()
-      } else {
-        // Get column-specific pattern, or empty if no filters apply
-        parsed.pattern_for_column(&column.name).unwrap_or_default()
-      };
+    for (index, column) in self.columns.iter().enumerate() {
+      if !column.filter {
+        continue;
+      }
+
+      let mut pattern = String::new();
+
+      if !parsed.is_empty() {
+        if let Some(column_pattern) = parsed.pattern_for_column(&column.name) {
+          pattern.push_str(&column_pattern);
+        }
+
+        if Some(index) == primary_filter_column_index {
+          if let Some(global_pattern) = global_pattern.as_ref() {
+            if !global_pattern.is_empty() {
+              if !pattern.is_empty() {
+                pattern.push(' ');
+              }
+              pattern.push_str(global_pattern);
+            }
+          }
+        }
+      }
 
       self.matcher.pattern.reparse(
         column_idx,
@@ -3077,7 +3125,7 @@ mod tests {
   }
 
   #[test]
-  fn test_query_parser_pattern_for_column() {
+  fn test_query_parser_patterns() {
     let parsed = ParsedQuery::parse("name:foo bar name:baz");
 
     // name column should get both "foo" and "baz"
@@ -3087,13 +3135,18 @@ mod tests {
     assert!(pattern.contains("foo"));
     assert!(pattern.contains("baz"));
 
-    // non-existent column should get "bar" (all-columns filter)
+    // non-existent column should not receive column-specific patterns
     let other_pattern = parsed.pattern_for_column("other");
-    assert_eq!(other_pattern, Some("bar".to_string()));
+    assert_eq!(other_pattern, None);
+
+    // Global filters should be available separately
+    let global_pattern = parsed.global_pattern();
+    assert_eq!(global_pattern, Some("bar".to_string()));
 
     // Column with no filters
     let parsed2 = ParsedQuery::parse("name:foo");
     assert_eq!(parsed2.pattern_for_column("other"), None);
+    assert_eq!(parsed2.global_pattern(), None);
   }
 
   #[test]
@@ -3190,6 +3243,37 @@ mod tests {
 
     let snapshot = picker.matcher.snapshot();
     // Should match at least the "foo" item
+    assert!(snapshot.matched_item_count() >= 1);
+  }
+
+  #[test]
+  fn test_picker_global_filter_targets_primary_column() {
+    let columns = vec![
+      Column::new("Id", |item: &TestItem, _data: &()| item.value.to_string()),
+      Column::new("Name", |item: &TestItem, _data: &()| item.name.clone()),
+    ];
+
+    let items = vec![
+      TestItem {
+        name:  "alpha".to_string(),
+        value: 1,
+      },
+      TestItem {
+        name:  "beta".to_string(),
+        value: 2,
+      },
+    ];
+
+    // Primary column is "Name"
+    let mut picker = Picker::new(columns, 1, items, (), |_| {});
+    picker.matcher.tick(10);
+
+    // Global query should match against the primary column only
+    picker.query = "alp".to_string();
+    picker.update_query();
+    picker.matcher.tick(10);
+
+    let snapshot = picker.matcher.snapshot();
     assert!(snapshot.matched_item_count() >= 1);
   }
 

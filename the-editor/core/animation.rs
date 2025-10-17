@@ -159,6 +159,82 @@ pub mod selection {
   }
 }
 
+/// Breathing animation module for continuous alpha pulsing
+pub mod breathing {
+  use std::f32::consts::TAU;
+
+  use super::*;
+
+  /// Continuous breathing animation that pulses alpha value
+  /// Used for indicating ongoing processes like LSP loading
+  #[derive(Debug, Clone)]
+  pub struct BreathingAnimation {
+    started_at: Instant,
+    cycle_duration: Duration,
+    min_alpha: f32,
+    max_alpha: f32,
+  }
+
+  impl BreathingAnimation {
+    /// Default cycle duration for breathing animations (1.5 seconds)
+    pub const DEFAULT_CYCLE_DURATION: Duration = Duration::from_millis(1500);
+
+    /// Default minimum alpha (30% opacity at lowest point)
+    pub const DEFAULT_MIN_ALPHA: f32 = 0.3;
+
+    /// Default maximum alpha (100% opacity at highest point)
+    pub const DEFAULT_MAX_ALPHA: f32 = 1.0;
+
+    /// Create a new breathing animation with default parameters
+    pub fn new() -> Self {
+      Self {
+        started_at: Instant::now(),
+        cycle_duration: Self::DEFAULT_CYCLE_DURATION,
+        min_alpha: Self::DEFAULT_MIN_ALPHA,
+        max_alpha: Self::DEFAULT_MAX_ALPHA,
+      }
+    }
+
+    /// Create a breathing animation with custom parameters
+    pub fn with_params(cycle_duration: Duration, min_alpha: f32, max_alpha: f32) -> Self {
+      Self {
+        started_at: Instant::now(),
+        cycle_duration,
+        min_alpha: min_alpha.clamp(0.0, 1.0),
+        max_alpha: max_alpha.clamp(0.0, 1.0),
+      }
+    }
+
+    /// Sample the current alpha value based on elapsed time
+    /// Returns a value between min_alpha and max_alpha following a sine wave
+    /// The wave starts at maximum alpha for a smooth appearance
+    pub fn sample(&self, now: Instant) -> f32 {
+      let elapsed = now.saturating_duration_since(self.started_at).as_secs_f32();
+      let cycle_secs = self.cycle_duration.as_secs_f32().max(f32::EPSILON);
+
+      // Sine wave from 0 to 1, offset by π/2 to start at peak (1.0)
+      // sin(π/2) = 1, so wave starts at 1.0 and smoothly decreases
+      let phase = (elapsed * TAU) / cycle_secs + std::f32::consts::FRAC_PI_2;
+      let wave = phase.sin().mul_add(0.5, 0.5);
+
+      // Map to alpha range
+      self.min_alpha + (self.max_alpha - self.min_alpha) * wave
+    }
+
+    /// Apply the breathing animation to a color
+    pub fn apply_to_color(&self, base_color: Color, now: Instant) -> Color {
+      let alpha = self.sample(now);
+      Color::new(base_color.r, base_color.g, base_color.b, alpha)
+    }
+  }
+
+  impl Default for BreathingAnimation {
+    fn default() -> Self {
+      Self::new()
+    }
+  }
+}
+
 /// Easing functions for animations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Easing {

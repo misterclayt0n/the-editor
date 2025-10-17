@@ -1,11 +1,20 @@
+use std::{
+  collections::HashMap,
+  time::Instant,
+};
+
 use the_editor_renderer::{
   Color,
   TextSection,
 };
 
 use crate::{
-  core::graphics::Rect,
+  core::{
+    animation::breathing::BreathingAnimation,
+    graphics::Rect,
+  },
   keymap::Mode,
+  lsp::LanguageServerId,
   ui::compositor::{
     Component,
     Context,
@@ -34,6 +43,8 @@ pub struct StatusLine {
   status_msg_anim_t:  f32,            // Fade-in animation for status messages
   status_msg_slide_x: f32,            // Horizontal slide position
   last_status_msg:    Option<String>, // Track last message to detect changes
+  // LSP loading breathing animations with last-seen timestamps for stability
+  lsp_breathing_anims: HashMap<LanguageServerId, (BreathingAnimation, Instant)>,
 }
 
 impl StatusLine {
@@ -49,6 +60,7 @@ impl StatusLine {
       status_msg_anim_t:  0.0, // Start invisible
       status_msg_slide_x: 0.0,
       last_status_msg:    None,
+      lsp_breathing_anims: HashMap::new(),
     }
   }
 
@@ -364,32 +376,95 @@ impl Component for StatusLine {
       }
 
       // Right side: LSP | GIT BRANCH (right-aligned)
-      let mut right_segments = Vec::new();
+      let mut right_x = surface.width() as f32 - SEGMENT_PADDING_X + self.slide_offset;
 
-      // LSP status - show active language servers
-      if !doc.language_servers.is_empty() {
-        let lsp_names: Vec<_> = doc.language_servers.keys().map(|s| s.as_str()).collect();
-        let lsp_text = lsp_names.join(",");
-        right_segments.push(lsp_text);
-      }
-
-      // Git branch
+      // Git branch (render first, right-most)
       if let Some(branch) = doc.version_control_head() {
-        right_segments.push(format!("{}", branch.as_ref()));
+        let branch_text = format!("{}", branch.as_ref());
+        let branch_width = Self::measure_text(&branch_text);
+        right_x -= branch_width;
+        Self::draw_text(surface, right_x, bar_y, &branch_text, text_color);
+        right_x -= Self::measure_text(" | ");
       }
 
-      // Render right-aligned segments (also offset)
-      if !right_segments.is_empty() {
-        let combined_text = right_segments.join(" | ");
-        let text_width = Self::measure_text(&combined_text);
-        let right_x = surface.width() as f32 - text_width - SEGMENT_PADDING_X + self.slide_offset;
-        Self::draw_text(surface, right_x, bar_y, &combined_text, text_color);
+      // LSP status - show active language servers with breathing animation when loading
+      if !doc.language_servers.is_empty() {
+        let now = std::time::Instant::now();
+
+        // Collect LSP server names and IDs
+        let lsp_servers: Vec<_> = doc
+          .language_servers
+          .iter()
+          .map(|(name, client)| (name.as_str(), client.id()))
+          .collect();
+
+        // Update breathing animations with hysteresis to prevent flickering
+        // Animations persist for a grace period after progress stops to handle transient states
+        const ANIMATION_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_millis(500);
+
+        // Update timestamps for currently progressing servers
+        for (_server_name, server_id) in &lsp_servers {
+          if cx.editor.lsp_progress.is_progressing(*server_id) {
+            self
+              .lsp_breathing_anims
+              .entry(*server_id)
+              .and_modify(|(_, last_seen)| *last_seen = now)
+              .or_insert_with(|| (BreathingAnimation::new(), now));
+          }
+        }
+
+        // Remove animations only after grace period or if server no longer in document
+        let current_server_ids: std::collections::HashSet<_> =
+          lsp_servers.iter().map(|(_, id)| *id).collect();
+        self.lsp_breathing_anims.retain(|id, (_, last_seen)| {
+          // Keep if: server is in document AND either still progressing or within grace period
+          current_server_ids.contains(id) && now.saturating_duration_since(*last_seen) < ANIMATION_GRACE_PERIOD
+        });
+
+        // Render LSP names
+        let lsp_text = lsp_servers
+          .iter()
+          .map(|(name, _)| *name)
+          .collect::<Vec<_>>()
+          .join(",");
+        let lsp_width = Self::measure_text(&lsp_text);
+        right_x -= lsp_width;
+
+        // Determine the color based on whether any server is loading
+        let lsp_color = if lsp_servers.iter().any(|(_, id)| self.lsp_breathing_anims.contains_key(id)) {
+          // At least one server is loading - apply breathing effect
+          // Get the first loading server's animation for simplicity
+          // (in practice, all servers will breathe together for visual consistency)
+          let (anim, _) = lsp_servers
+            .iter()
+            .find_map(|(_, id)| self.lsp_breathing_anims.get(id))
+            .unwrap();
+
+          // Get theme color for loading LSP (with fallback to statusline color)
+          let base_color = theme
+            .get("ui.statusline.lsp.loading")
+            .fg
+            .or_else(|| theme.get("ui.statusline").fg)
+            .map(crate::ui::theme_color_to_renderer_color)
+            .unwrap_or(text_color);
+
+          // Apply breathing animation to alpha only
+          anim.apply_to_color(base_color, now)
+        } else {
+          // No servers loading - use normal color
+          text_color
+        };
+
+        Self::draw_text(surface, right_x, bar_y, &lsp_text, lsp_color);
       }
     }); // End overlay region
   }
 
   fn should_update(&self) -> bool {
     // Keep updating while any animation is running
-    self.anim_t < 1.0 || self.slide_anim_t < 1.0 || self.status_msg_anim_t < 1.0
+    self.anim_t < 1.0
+      || self.slide_anim_t < 1.0
+      || self.status_msg_anim_t < 1.0
+      || !self.lsp_breathing_anims.is_empty() // Keep updating while LSP is loading
   }
 }

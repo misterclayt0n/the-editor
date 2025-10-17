@@ -160,6 +160,25 @@ impl App {
                   params.diagnostics,
                 );
               },
+              crate::lsp::Notification::ProgressMessage(params) => {
+                use crate::lsp::lsp::types::ProgressParamsValue;
+                match params.value {
+                  ProgressParamsValue::WorkDone(progress) => {
+                    use crate::lsp::lsp::types::WorkDoneProgress;
+                    match progress {
+                      WorkDoneProgress::Begin(work) => {
+                        self.editor.lsp_progress.begin(server_id, params.token, work);
+                      },
+                      WorkDoneProgress::Report(work) => {
+                        self.editor.lsp_progress.update(server_id, params.token, work);
+                      },
+                      WorkDoneProgress::End(_work) => {
+                        self.editor.lsp_progress.end_progress(server_id, &params.token);
+                      },
+                    }
+                  },
+                }
+              },
               _ => {
                 log::debug!("Received LSP notification: {:?}", notification);
               },
@@ -204,8 +223,9 @@ impl App {
               data:    None,
             })
           },
-          Ok(MethodCall::WorkDoneProgressCreate(_params)) => {
-            // Just acknowledge the progress creation
+          Ok(MethodCall::WorkDoneProgressCreate(params)) => {
+            // Track the progress creation
+            self.editor.lsp_progress.create(server_id, params.token);
             Ok(serde_json::Value::Null)
           },
           Ok(MethodCall::ApplyWorkspaceEdit(params)) => {
@@ -578,6 +598,11 @@ impl Application for App {
 
     // Keep redrawing while split animations are active.
     if self.editor.tree.has_active_animations() {
+      return true;
+    }
+
+    // Keep redrawing while any LSP is loading (for breathing animation).
+    if self.editor.lsp_progress.has_active_progress() {
       return true;
     }
 

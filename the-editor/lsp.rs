@@ -827,6 +827,11 @@ impl LspProgressMap {
     self.0.get(&id).map(|it| !it.is_empty()).unwrap_or_default()
   }
 
+  /// Returns true if any language server has active progress
+  pub fn has_active_progress(&self) -> bool {
+    self.0.values().any(|tokens| !tokens.is_empty())
+  }
+
   /// Returns last progress status for a given server with `id` and `token`.
   pub fn progress(&self, id: LanguageServerId, token: &ProgressToken) -> Option<&ProgressStatus> {
     self.0.get(&id).and_then(|values| values.get(token))

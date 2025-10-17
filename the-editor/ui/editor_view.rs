@@ -2367,6 +2367,9 @@ impl EditorView {
           &annotations,
         );
 
+        // Clamp to valid document range
+        let char_pos = char_pos.min(text.len_chars());
+
         // Return start of line for gutter clicks
         return Some((view.id, char_pos));
       }

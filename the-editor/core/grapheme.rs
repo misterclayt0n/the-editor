@@ -224,6 +224,9 @@ pub fn prev_grapheme_boundary(slice: RopeSlice, char_idx: usize) -> usize {
 #[must_use]
 #[inline]
 pub fn ensure_grapheme_boundary_next(slice: RopeSlice, char_idx: usize) -> usize {
+  // Clamp to valid range
+  let char_idx = char_idx.min(slice.len_chars());
+
   if char_idx == 0 {
     char_idx
   } else {
@@ -236,6 +239,9 @@ pub fn ensure_grapheme_boundary_next(slice: RopeSlice, char_idx: usize) -> usize
 #[must_use]
 #[inline]
 pub fn ensure_grapheme_boundary_prev(slice: RopeSlice, char_idx: usize) -> usize {
+  // Clamp to valid range
+  let char_idx = char_idx.min(slice.len_chars());
+
   if char_idx == slice.len_chars() {
     char_idx
   } else {

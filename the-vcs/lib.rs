@@ -70,10 +70,13 @@ impl DiffProviderRegistry {
     })
   }
 
-  /// Get the workspace root (repository working directory) for a given file path.
-  /// Returns None if the file is not in a VCS repository.
+  /// Get the workspace root (repository working directory) for a given file
+  /// path. Returns None if the file is not in a VCS repository.
   pub fn get_workspace_root(&self, file: &Path) -> Option<PathBuf> {
-    self.providers.iter().find_map(|provider| provider.get_workspace_root(file))
+    self
+      .providers
+      .iter()
+      .find_map(|provider| provider.get_workspace_root(file))
   }
 
   /// Fire-and-forget changed file iteration. Runs everything in a background

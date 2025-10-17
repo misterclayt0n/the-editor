@@ -36,10 +36,9 @@ pub use text::{
   TextSegment,
   TextStyle,
 };
-use winit::window::WindowId;
-
 // Re-export winit for cursor icon access
 pub use winit;
+use winit::window::WindowId;
 
 /// Configuration for window creation.
 #[derive(Debug, Clone)]

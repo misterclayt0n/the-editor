@@ -220,6 +220,25 @@ impl Context<'_> {
   pub fn take_on_next_key(&mut self) -> Option<(OnKeyCallback, OnKeyCallbackKind)> {
     self.on_next_key_callback.take()
   }
+
+  pub fn block_try_flush_writes(&mut self) -> anyhow::Result<()> {
+    {
+      let editor = &mut *self.editor;
+      let jobs = &mut *self.jobs;
+      tokio::task::block_in_place(move || {
+        tokio::runtime::Handle::current().block_on(jobs.finish(editor, None))
+      })?;
+    }
+
+    {
+      let editor = &mut *self.editor;
+      tokio::task::block_in_place(move || {
+        tokio::runtime::Handle::current().block_on(editor.flush_writes())
+      })?
+    }
+
+    Ok(())
+  }
 }
 
 // Store a jump on the jumplist.
@@ -6760,12 +6779,8 @@ pub fn shell_command(cx: &mut Context) {
 
           let command = input.trim().to_string();
 
-          match run_shell_in_compilation_buffer(
-            cx.editor,
-            cx.jobs,
-            current_doc_id,
-            command.clone(),
-          ) {
+          match run_shell_in_compilation_buffer(cx.editor, cx.jobs, current_doc_id, command.clone())
+          {
             Ok(_) => {
               cx.editor.set_status(format!("Running: {}", command));
             },

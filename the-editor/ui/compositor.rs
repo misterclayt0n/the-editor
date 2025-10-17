@@ -51,7 +51,21 @@ impl Context<'_> {
   /// Waits on all pending jobs, and then tries to flush all pending write
   /// operations for all documents.
   pub fn block_try_flush_writes(&mut self) -> anyhow::Result<()> {
-    // TODO: Implement job finishing and write flushing
+    {
+      let editor = &mut *self.editor;
+      let jobs = &mut *self.jobs;
+      tokio::task::block_in_place(move || {
+        tokio::runtime::Handle::current().block_on(jobs.finish(editor, None))
+      })?;
+    }
+
+    {
+      let editor = &mut *self.editor;
+      tokio::task::block_in_place(move || {
+        tokio::runtime::Handle::current().block_on(editor.flush_writes())
+      })?
+    }
+
     Ok(())
   }
 }

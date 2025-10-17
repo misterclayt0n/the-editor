@@ -1332,6 +1332,8 @@ fn quit(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
     return Ok(());
   }
 
+  cx.block_try_flush_writes()?;
+
   if cx.editor.documents.values().any(|doc| doc.is_modified()) {
     cx.editor
       .set_error("unsaved changes, use :q! to force quit".to_string());
@@ -1340,10 +1342,12 @@ fn quit(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
   std::process::exit(0);
 }
 
-fn force_quit(_cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+fn force_quit(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
   if event != PromptEvent::Validate {
     return Ok(());
   }
+
+  cx.block_try_flush_writes()?;
 
   std::process::exit(0);
 }
@@ -1422,8 +1426,8 @@ fn write_quit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
   }
 
   write_buffer(cx, args, PromptEvent::Validate)?;
+  cx.block_try_flush_writes()?;
 
-  // Only quit if write was successful (no error was set)
   if cx.editor.documents.values().all(|doc| !doc.is_modified()) {
     std::process::exit(0);
   }
@@ -1721,6 +1725,8 @@ fn quit_all(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
     return Ok(());
   }
 
+  cx.block_try_flush_writes()?;
+
   // Check for unsaved buffers
   buffers_remaining_impl(cx.editor)?;
 
@@ -1738,6 +1744,8 @@ fn force_quit_all(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<(
   if event != PromptEvent::Validate {
     return Ok(());
   }
+
+  cx.block_try_flush_writes()?;
 
   // Close all views without checking for unsaved buffers
   let view_ids: Vec<_> = cx.editor.tree.views().map(|(view, _)| view.id).collect();
@@ -1849,6 +1857,8 @@ fn write_all_quit(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<(
     ));
     return Ok(());
   }
+
+  cx.block_try_flush_writes()?;
 
   // Check for unsaved buffers
   buffers_remaining_impl(cx.editor)?;

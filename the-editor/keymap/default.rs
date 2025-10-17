@@ -250,6 +250,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "A-|"         => shell_pipe_to,
     "!"           => shell_insert_output,
     "A-!"         => shell_append_output,
+    "@"         => shell_command,
     "$"           => shell_keep_pipe,
     "C-a"         => increment,
     "C-x"         => decrement,

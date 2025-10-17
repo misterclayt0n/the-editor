@@ -6731,6 +6731,78 @@ fn spawn_shell_command_context(cx: &mut Context, command: String) -> anyhow::Res
   run_shell_in_compilation_buffer(cx.editor, cx.jobs, current_doc_id, command)
 }
 
+pub fn shell_command(cx: &mut Context) {
+  // Set custom mode string
+  cx.editor.set_custom_mode_str("SHELL".to_string());
+
+  // Set mode to Command so prompt is shown
+  cx.editor.set_mode(Mode::Command);
+
+  // Capture the current document ID
+  let current_doc_id = {
+    let view = view!(cx.editor);
+    view.doc
+  };
+
+  // Create prompt with callback
+  let prompt =
+    crate::ui::components::Prompt::new(String::new()).with_callback(move |cx, input, event| {
+      use crate::ui::components::prompt::PromptEvent;
+
+      // Handle events
+      match event {
+        PromptEvent::Validate => {
+          // Skip empty input
+          if input.is_empty() {
+            cx.editor.clear_custom_mode_str();
+            return;
+          }
+
+          let command = input.trim().to_string();
+
+          match run_shell_in_compilation_buffer(
+            cx.editor,
+            cx.jobs,
+            current_doc_id,
+            command.clone(),
+          ) {
+            Ok(_) => {
+              cx.editor.set_status(format!("Running: {}", command));
+            },
+            Err(err) => {
+              cx.editor.set_error(err.to_string());
+            },
+          }
+
+          // Clear custom mode string on validation
+          cx.editor.clear_custom_mode_str();
+        },
+        PromptEvent::Abort => {
+          // Clear custom mode string on abort
+          cx.editor.clear_custom_mode_str();
+        },
+        PromptEvent::Update => {
+          // Do nothing during updates
+        },
+      }
+    });
+
+  cx.callback.push(Box::new(|compositor, _cx| {
+    // Find the statusline and trigger slide animation
+    for layer in compositor.layers.iter_mut() {
+      if let Some(statusline) = layer
+        .as_any_mut()
+        .downcast_mut::<crate::ui::components::statusline::StatusLine>()
+      {
+        statusline.slide_for_prompt(true);
+        break;
+      }
+    }
+
+    compositor.push(Box::new(prompt));
+  }));
+}
+
 pub fn cmd_shell_spawn(
   cx: &mut Context,
   args: Args,

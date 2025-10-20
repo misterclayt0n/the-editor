@@ -13,6 +13,7 @@ use crate::core::DocumentId;
 pub enum SpecialBufferKind {
   Acp,
   Compilation,
+  FileManager,
 }
 
 impl SpecialBufferKind {
@@ -20,12 +21,14 @@ impl SpecialBufferKind {
     match self {
       SpecialBufferKind::Acp => ACP_BUFFER_NAME,
       SpecialBufferKind::Compilation => COMPILATION_BUFFER_NAME,
+      SpecialBufferKind::FileManager => FILE_MANAGER_BUFFER_NAME,
     }
   }
 }
 
 pub const ACP_BUFFER_NAME: &str = "*acp*";
 pub const COMPILATION_BUFFER_NAME: &str = "*compilation*";
+pub const FILE_MANAGER_BUFFER_NAME: &str = "*files*";
 
 impl fmt::Display for SpecialBufferKind {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

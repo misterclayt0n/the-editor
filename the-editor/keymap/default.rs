@@ -122,6 +122,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "j" => move_line_down,
       "." => goto_last_modification,
       "w" => goto_word,
+      "H" => file_manager_toggle_hidden,
     },
 
     "space" => { "Space"
@@ -145,6 +146,10 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "h" => select_references,
       "/" => global_search,
     },
+
+    // File manager specific bindings (these only act if buffer is file manager)
+    "-"                => file_manager_parent,
+    "ret"              => file_manager_enter,
 
     "s"                => select_regex,
     "A-s"              => split_selection_on_newline,

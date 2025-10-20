@@ -186,12 +186,49 @@ pub struct DocumentSavedEvent {
 
 #[derive(Debug, Clone)]
 pub struct SpecialBufferMetadata {
-  kind: SpecialBufferKind,
+  kind:                SpecialBufferKind,
+  pub file_manager:    Option<FileManagerMetadata>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileManagerMetadata {
+  pub current_path:   PathBuf,
+  pub show_hidden:    bool,
+  pub original_state: Vec<FileManagerEntryState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FileManagerEntryState {
+  pub name:    String,
+  pub is_dir:  bool,
+}
+
+impl FileManagerEntryState {
+  pub fn new(name: impl Into<String>, is_dir: bool) -> Self {
+    Self {
+      name:   name.into(),
+      is_dir,
+    }
+  }
 }
 
 impl SpecialBufferMetadata {
   pub const fn new(kind: SpecialBufferKind) -> Self {
-    Self { kind }
+    Self {
+      kind,
+      file_manager: None,
+    }
+  }
+
+  pub fn new_with_file_manager(path: PathBuf, show_hidden: bool) -> Self {
+    Self {
+      kind:         SpecialBufferKind::FileManager,
+      file_manager: Some(FileManagerMetadata {
+        current_path:   path,
+        show_hidden,
+        original_state: Vec::new(),
+      }),
+    }
   }
 
   pub const fn kind(&self) -> SpecialBufferKind {
@@ -1756,6 +1793,21 @@ impl Document {
     self.apply_inner(transaction, view_id, false)
   }
 
+  /// Replace the entire document text with new content
+  /// This is useful for special buffers that need to regenerate their content
+  pub fn replace_all_text(&mut self, new_text: Rope, view_id: ViewId) {
+    use crate::core::Tendril;
+
+    // Create a transaction that deletes everything and inserts new text
+    let len = self.text.len_chars();
+    let text_content: String = new_text.slice(..).into();
+    let tendril: Tendril = text_content.into();
+    let transaction = Transaction::change(&self.text, [(0, len, Some(tendril))].into_iter());
+
+    // Apply without adding to history since this is a special buffer refresh
+    self.apply_temporary(&transaction, view_id);
+  }
+
   fn undo_redo_impl(&mut self, view: &mut View, undo: bool) -> bool {
     if undo {
       self.append_changes_to_history(view);
@@ -2226,7 +2278,36 @@ impl Document {
   }
 
   pub fn set_special_buffer_kind(&mut self, kind: Option<SpecialBufferKind>) {
-    self.special_buffer = kind.map(SpecialBufferMetadata::new);
+    match kind {
+      Some(kind) => {
+        match self.special_buffer.as_mut() {
+          Some(metadata) => {
+            metadata.kind = kind;
+            if kind != SpecialBufferKind::FileManager {
+              metadata.file_manager = None;
+            }
+          },
+          None => {
+            self.special_buffer = Some(SpecialBufferMetadata::new(kind));
+          },
+        }
+      },
+      None => {
+        self.special_buffer = None;
+      },
+    }
+  }
+
+  pub fn special_buffer_metadata(&self) -> Option<&SpecialBufferMetadata> {
+    self.special_buffer.as_ref()
+  }
+
+  pub fn special_buffer_metadata_mut(&mut self) -> Option<&mut SpecialBufferMetadata> {
+    self.special_buffer.as_mut()
+  }
+
+  pub fn set_special_buffer_metadata(&mut self, metadata: SpecialBufferMetadata) {
+    self.special_buffer = Some(metadata);
   }
 
   pub fn is_acp_buffer(&self) -> bool {
@@ -2235,6 +2316,10 @@ impl Document {
 
   pub fn is_compilation_buffer(&self) -> bool {
     self.is_special_buffer_kind(SpecialBufferKind::Compilation)
+  }
+
+  pub fn is_file_manager_buffer(&self) -> bool {
+    self.is_special_buffer_kind(SpecialBufferKind::FileManager)
   }
 
   pub fn relative_path(&self) -> Option<&Path> {

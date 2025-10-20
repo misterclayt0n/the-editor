@@ -6966,3 +6966,81 @@ pub use super::lsp_commands::{
   workspace_diagnostics,
   workspace_symbols,
 };
+
+// File manager specific commands
+
+pub fn file_manager_parent(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  let view_id = view.id;
+
+  if !doc.is_file_manager_buffer() {
+    return;
+  }
+
+  let current_path = crate::file_manager::buffer::current_path(doc);
+  if let Some(path) = current_path {
+    if let Some(parent) = path.parent() {
+      if let Err(err) = crate::file_manager::navigate_to(doc, parent.to_path_buf(), view_id) {
+        cx.editor.set_error(format!("Failed to navigate to parent: {}", err));
+      }
+    }
+  }
+}
+
+pub fn file_manager_enter(cx: &mut Context) {
+  use crate::editor::Action;
+
+  let (view, doc) = current!(cx.editor);
+  let view_id = view.id;
+
+  if !doc.is_file_manager_buffer() {
+    return;
+  }
+
+  // Get the current line
+  let text = doc.text();
+  let selection = doc.selection(view_id);
+  let line_idx = selection.primary().cursor_line(text.slice(..));
+
+  // Skip the first line (parent directory marker)
+  if line_idx == 0 {
+    // Navigate to parent
+    file_manager_parent(cx);
+    return;
+  }
+
+  let line = text.line(line_idx).to_string();
+
+  if let Some(entry) = crate::file_manager::format::parse_line(&line) {
+    if let Some(dir) = crate::file_manager::buffer::current_path(doc) {
+      let target_path = dir.join(&entry.name);
+
+      if entry.is_dir || target_path.is_dir() {
+        if let Err(err) = crate::file_manager::navigate_to(doc, target_path, view_id) {
+          cx.editor.set_error(format!("Failed to navigate: {}", err));
+        }
+      } else {
+        // Open file
+        match cx.editor.open(&target_path, Action::Replace) {
+          Ok(_) => {},
+          Err(err) => {
+            cx.editor.set_error(format!("Failed to open file: {}", err));
+          },
+        }
+      }
+    }
+  }
+}
+
+pub fn file_manager_toggle_hidden(cx: &mut Context) {
+  let (view, doc) = current!(cx.editor);
+  let view_id = view.id;
+
+  if !doc.is_file_manager_buffer() {
+    return;
+  }
+
+  if let Err(err) = crate::file_manager::toggle_hidden_files(doc, view_id) {
+    cx.editor.set_error(format!("Failed to toggle hidden files: {}", err));
+  }
+}

@@ -1,3 +1,5 @@
+#![recursion_limit = "512"]
+
 use std::{
   rc::Rc,
   sync::Arc,
@@ -27,6 +29,7 @@ mod application;
 mod core;
 mod editor;
 mod event;
+mod file_manager;
 pub mod handlers;
 mod increment;
 mod input;

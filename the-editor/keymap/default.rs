@@ -68,6 +68,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "A-w"       => toggle_soft_wrap,
     "C-="       => increase_font_size,
     "C-minus"   => decrease_font_size,
+    "C-0"       => default_font_size,
 
     "%"         => select_all,
     "x"         => extend_line_below,

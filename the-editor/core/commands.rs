@@ -4137,6 +4137,12 @@ pub fn decrease_font_size(cx: &mut Context) {
   cx.editor.set_status(format!("Font size: {}", new_size));
 }
 
+pub fn default_font_size(cx: &mut Context) {
+  let default_size = cx.editor.config().font_size;
+  cx.editor.font_size_override = Some(default_size);
+  cx.editor.set_status(format!("Fallback to default font size: {}", default_size));
+}
+
 pub fn parse_macro(keys_str: &str) -> anyhow::Result<Vec<KeyBinding>> {
   use anyhow::Context;
   let mut keys_res: anyhow::Result<_> = Ok(Vec::new());

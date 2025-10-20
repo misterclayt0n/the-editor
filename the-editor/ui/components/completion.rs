@@ -156,9 +156,32 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
   for word in text.split_whitespace() {
     let word_len = word.len();
 
-    if current_width + word_len + 1 > max_width && !current_line.is_empty() {
+    // Break long tokens that exceed the available width
+    if word_len > max_width {
+      if !current_line.is_empty() {
+        lines.push(std::mem::take(&mut current_line));
+        current_width = 0;
+      }
+
+      let mut chunk = String::new();
+      for ch in word.chars() {
+        if chunk.chars().count() >= max_width {
+          lines.push(std::mem::take(&mut chunk));
+        }
+        chunk.push(ch);
+      }
+      if !chunk.is_empty() {
+        current_line = chunk;
+        current_width = current_line.chars().count();
+      }
+      continue;
+    }
+
+    if current_width + word_len + (current_width != 0) as usize > max_width
+      && !current_line.is_empty()
+    {
       // Start new line
-      lines.push(current_line);
+      lines.push(std::mem::take(&mut current_line));
       current_line = word.to_string();
       current_width = word_len;
     } else {
@@ -177,6 +200,38 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
   }
 
   lines
+}
+
+fn truncate_to_width(text: &str, max_width: f32) -> String {
+  if max_width <= 0.0 {
+    return String::new();
+  }
+
+  let max_chars = (max_width / UI_FONT_WIDTH).floor() as usize;
+  if max_chars == 0 {
+    return String::new();
+  }
+
+  let mut chars = text.chars();
+  let count = text.chars().count();
+  if count <= max_chars {
+    return text.to_string();
+  }
+
+  if max_chars == 1 {
+    return "…".to_string();
+  }
+
+  let mut truncated = String::with_capacity(max_chars);
+  for _ in 0..(max_chars - 1) {
+    if let Some(ch) = chars.next() {
+      truncated.push(ch);
+    } else {
+      break;
+    }
+  }
+  truncated.push('…');
+  truncated
 }
 
 /// Completion popup component
@@ -268,7 +323,8 @@ impl Completion {
       false,
     );
 
-    let mut matcher = nucleo::Matcher::new(Config::DEFAULT.match_paths());
+    let mut matcher = nucleo::Matcher::new(Config::DEFAULT);
+    matcher.config.prefer_prefix = true;
     let mut buf = Vec::new();
 
     if incremental {
@@ -947,7 +1003,7 @@ impl Component for Completion {
     }
 
     // Second pass: determine menu width based on aligned layout
-    let kind_column_offset = max_label_width + 20.0; // Extra spacing before kind
+    let mut kind_column_offset = max_label_width + 20.0; // Extra spacing before kind
     let mut menu_width: f32 = 250.0; // minimum width
     for &(idx, _) in self.filtered.iter().take(20) {
       let item = &self.items[idx as usize];
@@ -959,6 +1015,10 @@ impl Component for Completion {
       menu_width = menu_width.max(item_width);
     }
     menu_width = menu_width.min(MAX_MENU_WIDTH as f32 * UI_FONT_WIDTH);
+    let max_kind_offset = (menu_width - 32.0).max(0.0);
+    if kind_column_offset > max_kind_offset {
+      kind_column_offset = max_kind_offset;
+    }
 
     // Calculate fresh cursor position (not cached) with correct split offset
     let (cursor_x, cursor_y) = {
@@ -1063,6 +1123,8 @@ impl Component for Completion {
 
     // Render items (using animated transforms)
     surface.with_overlay_region(anim_x, anim_y, anim_width, anim_height, |surface| {
+      surface.push_scissor_rect(anim_x, anim_y, anim_width, anim_height);
+
       let visible_range = self.scroll_offset..self.scroll_offset + visible_items;
       for (row, &(idx, _score)) in self.filtered[visible_range.clone()].iter().enumerate() {
         let item = &self.items[idx as usize];
@@ -1124,11 +1186,16 @@ impl Component for Completion {
           c
         };
 
+        let available_label_width = (kind_column_offset - 12.0).max(0.0);
+        let label_text = truncate_to_width(label, available_label_width);
+        let available_kind_width = (menu_width - kind_column_offset - 16.0).max(0.0);
+        let kind_text = truncate_to_width(kind, available_kind_width);
+
         // Draw label
         surface.draw_text(TextSection {
           position: (anim_x + 8.0 * scale, item_y),
           texts:    vec![TextSegment {
-            content: label.to_string(),
+            content: label_text,
             style:   TextStyle {
               size:  UI_FONT_SIZE * scale,
               color: label_color,
@@ -1140,7 +1207,7 @@ impl Component for Completion {
         surface.draw_text(TextSection {
           position: (anim_x + 8.0 * scale + kind_column_offset * scale, item_y),
           texts:    vec![TextSegment {
-            content: kind.to_string(),
+            content: kind_text,
             style:   TextStyle {
               size:  UI_FONT_SIZE * scale,
               color: kind_color,
@@ -1148,6 +1215,8 @@ impl Component for Completion {
           }],
         });
       }
+
+      surface.pop_scissor_rect();
     });
 
     // Render documentation panel for selected item

@@ -255,7 +255,7 @@ fn request_completions_sync(
 
     // Collect completion futures from each language server (now 'static thanks to
     // BoxFuture)
-    for client in doc.language_servers() {
+    for (priority_index, client) in doc.language_servers().enumerate() {
       let server_id = client.id();
       let context = lsp::CompletionContext {
         trigger_kind:      lsp_trigger_kind,
@@ -271,7 +271,7 @@ fn request_completions_sync(
         None,
         context,
       ) {
-        completion_futures.push((server_id, completion_future));
+        completion_futures.push((server_id, completion_future, priority_index as i8));
       }
     }
   } // Drop editor borrow here
@@ -286,21 +286,26 @@ fn request_completions_sync(
     let timeout = tokio::time::sleep(Duration::from_millis(1000));
     tokio::pin!(timeout);
 
-    for (server_id, completion_future) in completion_futures {
+    for (server_id, completion_future, priority) in completion_futures {
       tokio::select! {
         result = completion_future => {
           match result {
             Ok(Some(response)) => {
-              let lsp_items: Vec<lsp::CompletionItem> = match response {
+              let mut lsp_items: Vec<lsp::CompletionItem> = match response {
                 lsp::CompletionResponse::Array(items) => items,
                 lsp::CompletionResponse::List(list) => list.items,
               };
+              lsp_items.sort_by(|a, b| {
+                let sort_a = a.sort_text.as_deref().unwrap_or(&a.label);
+                let sort_b = b.sort_text.as_deref().unwrap_or(&b.label);
+                sort_a.cmp(sort_b)
+              });
               for lsp_item in lsp_items {
                 items.push(CompletionItem::Lsp(LspCompletionItem {
                   item: lsp_item,
                   provider: server_id,
                   resolved: false,
-                  provider_priority: 0,
+                  provider_priority: -(priority as i8),
                 }));
               }
             },

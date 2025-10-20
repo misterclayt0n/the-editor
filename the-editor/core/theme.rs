@@ -88,6 +88,8 @@ impl Loader {
       warn!("Theme '{}': {}", name, warning);
     }
 
+    warn!("")
+
     Ok(theme)
   }
 

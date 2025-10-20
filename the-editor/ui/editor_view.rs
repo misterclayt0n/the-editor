@@ -211,7 +211,7 @@ impl EditorView {
     &mut self,
     editor: &Editor,
     items: Vec<crate::handlers::completion::CompletionItem>,
-    trigger_offset: usize,
+    _trigger_offset: usize,
   ) -> Option<Rect> {
     use crate::ui::components::Completion;
 
@@ -220,14 +220,18 @@ impl EditorView {
     let text = doc.text();
     let cursor = doc.selection(view.id).primary().cursor(text.slice(..));
 
-    // Calculate filter string from trigger offset to cursor
-    let filter = if cursor >= trigger_offset {
-      text.slice(trigger_offset..cursor).to_string()
-    } else {
-      String::new()
-    };
+    let slice = text.slice(..);
+    let word_prefix_len = slice
+      .chars_at(cursor)
+      .reversed()
+      .take_while(|&ch| crate::core::chars::char_is_word(ch))
+      .count();
+    let start_offset = cursor.saturating_sub(word_prefix_len);
 
-    let completion = Completion::new(items, trigger_offset, filter);
+    // Calculate filter string from trigger offset to cursor
+    let filter = text.slice(start_offset..cursor).to_string();
+
+    let completion = Completion::new(items, start_offset, filter);
 
     if completion.is_empty() {
       // Skip if we got no completion results

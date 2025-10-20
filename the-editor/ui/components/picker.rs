@@ -204,8 +204,8 @@ impl ParsedQuery {
     ParsedQuery { filters }
   }
 
-  /// Get the pattern for a specific column name using only column-specific filters
-  /// Returns None if no column-specific filter applies to this column
+  /// Get the pattern for a specific column name using only column-specific
+  /// filters Returns None if no column-specific filter applies to this column
   pub fn pattern_for_column(&self, column_name: &str) -> Option<String> {
     let mut patterns = Vec::new();
 

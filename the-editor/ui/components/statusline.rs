@@ -31,18 +31,18 @@ const FONT_SIZE: f32 = 13.0;
 /// StatusLine component with RAD Debugger aesthetics
 /// Emacs-style: shows mode and buffer as plain text with color coding
 pub struct StatusLine {
-  visible:            bool,
-  target_visible:     bool, // Animation target
-  anim_t:             f32,  // Animation progress 0.0 -> 1.0
-  status_bar_y:       f32,  // Current animated Y position
+  visible:             bool,
+  target_visible:      bool, // Animation target
+  anim_t:              f32,  // Animation progress 0.0 -> 1.0
+  status_bar_y:        f32,  // Current animated Y position
   // Horizontal slide for prompt
-  slide_offset:       f32,  // Current horizontal offset
-  should_slide:       bool, // Whether we should be slid for prompt
-  slide_anim_t:       f32,  // Slide animation progress 0.0 -> 1.0
+  slide_offset:        f32,  // Current horizontal offset
+  should_slide:        bool, // Whether we should be slid for prompt
+  slide_anim_t:        f32,  // Slide animation progress 0.0 -> 1.0
   // Status message animation
-  status_msg_anim_t:  f32,            // Fade-in animation for status messages
-  status_msg_slide_x: f32,            // Horizontal slide position
-  last_status_msg:    Option<String>, // Track last message to detect changes
+  status_msg_anim_t:   f32, // Fade-in animation for status messages
+  status_msg_slide_x:  f32, // Horizontal slide position
+  last_status_msg:     Option<String>, // Track last message to detect changes
   // LSP loading breathing animations with last-seen timestamps for stability
   lsp_breathing_anims: HashMap<LanguageServerId, (BreathingAnimation, Instant)>,
 }
@@ -50,16 +50,16 @@ pub struct StatusLine {
 impl StatusLine {
   pub fn new() -> Self {
     Self {
-      visible:            true,
-      target_visible:     true,
-      anim_t:             1.0, // Start fully visible
-      status_bar_y:       0.0, // Will be calculated on first render
-      slide_offset:       0.0,
-      should_slide:       false,
-      slide_anim_t:       1.0, // Start at rest
-      status_msg_anim_t:  0.0, // Start invisible
-      status_msg_slide_x: 0.0,
-      last_status_msg:    None,
+      visible:             true,
+      target_visible:      true,
+      anim_t:              1.0, // Start fully visible
+      status_bar_y:        0.0, // Will be calculated on first render
+      slide_offset:        0.0,
+      should_slide:        false,
+      slide_anim_t:        1.0, // Start at rest
+      status_msg_anim_t:   0.0, // Start invisible
+      status_msg_slide_x:  0.0,
+      last_status_msg:     None,
       lsp_breathing_anims: HashMap::new(),
     }
   }
@@ -387,7 +387,8 @@ impl Component for StatusLine {
         right_x -= Self::measure_text(" | ");
       }
 
-      // LSP status - show active language servers with breathing animation when loading
+      // LSP status - show active language servers with breathing animation when
+      // loading
       if !doc.language_servers.is_empty() {
         let now = std::time::Instant::now();
 
@@ -399,7 +400,8 @@ impl Component for StatusLine {
           .collect();
 
         // Update breathing animations with hysteresis to prevent flickering
-        // Animations persist for a grace period after progress stops to handle transient states
+        // Animations persist for a grace period after progress stops to handle
+        // transient states
         const ANIMATION_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_millis(500);
 
         // Update timestamps for currently progressing servers
@@ -417,8 +419,10 @@ impl Component for StatusLine {
         let current_server_ids: std::collections::HashSet<_> =
           lsp_servers.iter().map(|(_, id)| *id).collect();
         self.lsp_breathing_anims.retain(|id, (_, last_seen)| {
-          // Keep if: server is in document AND either still progressing or within grace period
-          current_server_ids.contains(id) && now.saturating_duration_since(*last_seen) < ANIMATION_GRACE_PERIOD
+          // Keep if: server is in document AND either still progressing or within grace
+          // period
+          current_server_ids.contains(id)
+            && now.saturating_duration_since(*last_seen) < ANIMATION_GRACE_PERIOD
         });
 
         // Render LSP names
@@ -431,7 +435,10 @@ impl Component for StatusLine {
         right_x -= lsp_width;
 
         // Determine the color based on whether any server is loading
-        let lsp_color = if lsp_servers.iter().any(|(_, id)| self.lsp_breathing_anims.contains_key(id)) {
+        let lsp_color = if lsp_servers
+          .iter()
+          .any(|(_, id)| self.lsp_breathing_anims.contains_key(id))
+        {
           // At least one server is loading - apply breathing effect
           // Get the first loading server's animation for simplicity
           // (in practice, all servers will breathe together for visual consistency)

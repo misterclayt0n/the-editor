@@ -199,7 +199,9 @@ impl Component for SignatureHelp {
         popup_y = y_below;
       } else {
         // Not enough space in preferred positions, clamp to viewport
-        popup_y = popup_y.max(0.0).min((viewport_height - anim_height).max(0.0));
+        popup_y = popup_y
+          .max(0.0)
+          .min((viewport_height - anim_height).max(0.0));
       }
     }
 

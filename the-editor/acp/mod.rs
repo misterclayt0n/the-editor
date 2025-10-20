@@ -10,13 +10,13 @@ use std::{
   sync::Arc,
 };
 
-pub use agent_client_protocol as acp;
 use acp::{
   Agent as _,
   ClientSideConnection,
   SessionId,
   SessionUpdate,
 };
+pub use agent_client_protocol as acp;
 use thiserror::Error;
 use tokio::sync::Mutex;
 
@@ -93,9 +93,9 @@ struct RegistryState {
 /// Registry for managing ACP agents and sessions
 pub struct Registry {
   /// Mutable state protected by mutex for async access
-  state:        Arc<Mutex<RegistryState>>,
+  state:         Arc<Mutex<RegistryState>>,
   /// Agent configurations
-  configs:      Vec<AgentConfig>,
+  configs:       Vec<AgentConfig>,
   /// Notification queue for session updates (thread-local, !Send)
   notifications: Rc<RefCell<Vec<SessionNotification>>>,
 }
@@ -116,8 +116,8 @@ impl Registry {
   /// Get a handle to the registry for async operations
   pub fn handle(&self) -> RegistryHandle {
     RegistryHandle {
-      state:        self.state.clone(),
-      configs:      self.configs.clone(),
+      state:         self.state.clone(),
+      configs:       self.configs.clone(),
       notifications: self.notifications.clone(),
     }
   }
@@ -131,8 +131,8 @@ impl Registry {
 /// Handle for async operations on the Registry
 #[derive(Clone)]
 pub struct RegistryHandle {
-  state:        Arc<Mutex<RegistryState>>,
-  configs:      Vec<AgentConfig>,
+  state:         Arc<Mutex<RegistryState>>,
+  configs:       Vec<AgentConfig>,
   notifications: Rc<RefCell<Vec<SessionNotification>>>,
 }
 
@@ -184,7 +184,11 @@ impl RegistryHandle {
     config: AgentConfig,
     notifications: Rc<RefCell<Vec<SessionNotification>>>,
   ) -> Result<Agent> {
-    log::info!("ACP Registry: spawn_agent - command: {}, args: {:?}", config.command, config.args);
+    log::info!(
+      "ACP Registry: spawn_agent - command: {}, args: {:?}",
+      config.command,
+      config.args
+    );
 
     // Spawn the agent process
     let mut child = tokio::process::Command::new(&config.command)
@@ -194,7 +198,11 @@ impl RegistryHandle {
       .kill_on_drop(true)
       .spawn()
       .map_err(|e| {
-        log::error!("ACP Registry: Failed to spawn process '{}': {}", config.command, e);
+        log::error!(
+          "ACP Registry: Failed to spawn process '{}': {}",
+          config.command,
+          e
+        );
         Error::SpawnError(format!("Failed to spawn {}: {}", config.command, e))
       })?;
 
@@ -225,10 +233,9 @@ impl RegistryHandle {
     // Create the connection
     // Note: spawn_local will be used within a LocalSet context
     log::info!("ACP Registry: Creating ClientSideConnection");
-    let (connection, handle_io) =
-      ClientSideConnection::new(client, outgoing, incoming, |fut| {
-        tokio::task::spawn_local(fut);
-      });
+    let (connection, handle_io) = ClientSideConnection::new(client, outgoing, incoming, |fut| {
+      tokio::task::spawn_local(fut);
+    });
 
     let connection = Arc::new(connection);
     log::info!("ACP Registry: ClientSideConnection created");
@@ -268,13 +275,20 @@ impl RegistryHandle {
     agent_name: &str,
     doc_id: crate::core::DocumentId,
   ) -> Result<SessionId> {
-    log::info!("ACP Registry: new_session - agent: {}, doc_id: {:?}", agent_name, doc_id);
+    log::info!(
+      "ACP Registry: new_session - agent: {}, doc_id: {:?}",
+      agent_name,
+      doc_id
+    );
 
     let agent = self.get_or_spawn_agent(agent_name).await?;
 
     // Request a new session from the agent
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    log::info!("ACP Registry: Requesting new session from agent, cwd: {:?}", cwd);
+    log::info!(
+      "ACP Registry: Requesting new session from agent, cwd: {:?}",
+      cwd
+    );
 
     let response = agent
       .connection
@@ -296,7 +310,10 @@ impl RegistryHandle {
       let mut state = self.state.lock().await;
       state.sessions.insert(session_id.clone(), session);
       state.doc_to_session.insert(doc_id, session_id.clone());
-      log::info!("ACP Registry: Session tracked, {} active sessions", state.sessions.len());
+      log::info!(
+        "ACP Registry: Session tracked, {} active sessions",
+        state.sessions.len()
+      );
     }
 
     Ok(session_id)
@@ -308,17 +325,18 @@ impl RegistryHandle {
     session_id: &SessionId,
     prompt: Vec<acp::ContentBlock>,
   ) -> Result<acp::PromptResponse> {
-    log::info!("ACP Registry: send_prompt - session_id: {:?}, {} content blocks", session_id, prompt.len());
+    log::info!(
+      "ACP Registry: send_prompt - session_id: {:?}, {} content blocks",
+      session_id,
+      prompt.len()
+    );
 
     let agent = {
       let state = self.state.lock().await;
-      let session = state
-        .sessions
-        .get(session_id)
-        .ok_or_else(|| {
-          log::error!("ACP Registry: Session {:?} not found", session_id);
-          Error::SessionNotFound(session_id.0.to_string())
-        })?;
+      let session = state.sessions.get(session_id).ok_or_else(|| {
+        log::error!("ACP Registry: Session {:?} not found", session_id);
+        Error::SessionNotFound(session_id.0.to_string())
+      })?;
       session.agent.clone()
     };
 
@@ -338,10 +356,7 @@ impl RegistryHandle {
   }
 
   /// Get session ID by document ID
-  pub async fn get_session_id_by_doc(
-    &self,
-    doc_id: crate::core::DocumentId,
-  ) -> Option<SessionId> {
+  pub async fn get_session_id_by_doc(&self, doc_id: crate::core::DocumentId) -> Option<SessionId> {
     let state = self.state.lock().await;
     state.doc_to_session.get(&doc_id).cloned()
   }
@@ -364,7 +379,9 @@ impl RegistryHandle {
   pub async fn shutdown_agent(&self, agent_name: &str) {
     let mut state = self.state.lock().await;
     // Remove all sessions for this agent
-    state.sessions.retain(|_, session| session.agent.name != agent_name);
+    state
+      .sessions
+      .retain(|_, session| session.agent.name != agent_name);
 
     // Remove the agent
     state.agents.remove(agent_name);
@@ -393,7 +410,10 @@ impl RegistryHandle {
   }
 
   /// Get the document ID for a session
-  pub async fn get_doc_id_by_session(&self, session_id: &SessionId) -> Option<crate::core::DocumentId> {
+  pub async fn get_doc_id_by_session(
+    &self,
+    session_id: &SessionId,
+  ) -> Option<crate::core::DocumentId> {
     let state = self.state.lock().await;
     state.sessions.get(session_id).map(|s| s.doc_id)
   }

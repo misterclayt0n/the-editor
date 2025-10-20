@@ -33,7 +33,8 @@ pub enum MessageRole {
   Tool,
 }
 
-/// Tracks which byte ranges belong to which message role (for syntax highlighting)
+/// Tracks which byte ranges belong to which message role (for syntax
+/// highlighting)
 #[derive(Debug, Clone)]
 pub struct MessageSpan {
   pub role:       MessageRole,
@@ -134,22 +135,22 @@ impl Message {
 
 /// Represents an active ACP session
 pub struct Session {
-  pub session_id:          SessionId,
-  pub agent:               Arc<Agent>,
-  pub doc_id:              DocumentId,
-  pub permissions:         PermissionTracker,
-  pub history:             Vec<Message>,
-  pub is_active:           bool,
+  pub session_id:         SessionId,
+  pub agent:              Arc<Agent>,
+  pub doc_id:             DocumentId,
+  pub permissions:        PermissionTracker,
+  pub history:            Vec<Message>,
+  pub is_active:          bool,
   /// Current state of the session (for UI indicators)
-  pub state:               SessionState,
+  pub state:              SessionState,
   /// Line currently being written by agent (for gutter emoji)
-  pub current_line:        Option<usize>,
+  pub current_line:       Option<usize>,
   /// Track which byte ranges belong to which role (for syntax highlighting)
-  pub message_spans:       Vec<MessageSpan>,
+  pub message_spans:      Vec<MessageSpan>,
   /// Start byte offset of current message being written
-  pub current_span_start:  Option<usize>,
+  pub current_span_start: Option<usize>,
   /// Name of tool being executed (if ExecutingTool state)
-  pub current_tool_name:   Option<String>,
+  pub current_tool_name:  Option<String>,
 }
 
 impl Session {
@@ -186,12 +187,16 @@ impl Session {
   /// Start tracking a new message span
   pub fn start_message_span(&mut self, role: MessageRole, start_byte: usize) {
     self.current_span_start = Some(start_byte);
-    log::debug!("ACP: Started {} message span at byte {}", match role {
-      MessageRole::User => "user",
-      MessageRole::Agent => "agent",
-      MessageRole::Thinking => "thinking",
-      MessageRole::Tool => "tool",
-    }, start_byte);
+    log::debug!(
+      "ACP: Started {} message span at byte {}",
+      match role {
+        MessageRole::User => "user",
+        MessageRole::Agent => "agent",
+        MessageRole::Thinking => "thinking",
+        MessageRole::Tool => "tool",
+      },
+      start_byte
+    );
   }
 
   /// Finish the current message span
@@ -202,12 +207,17 @@ impl Session {
         start_byte,
         end_byte,
       });
-      log::debug!("ACP: Finished {} message span: {} - {}", match role {
-        MessageRole::User => "user",
-        MessageRole::Agent => "agent",
-        MessageRole::Thinking => "thinking",
-        MessageRole::Tool => "tool",
-      }, start_byte, end_byte);
+      log::debug!(
+        "ACP: Finished {} message span: {} - {}",
+        match role {
+          MessageRole::User => "user",
+          MessageRole::Agent => "agent",
+          MessageRole::Thinking => "thinking",
+          MessageRole::Tool => "tool",
+        },
+        start_byte,
+        end_byte
+      );
     }
   }
 

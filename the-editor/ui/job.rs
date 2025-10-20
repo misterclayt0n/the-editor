@@ -86,11 +86,12 @@ pub struct LocalJob {
 
 pub struct Jobs {
   /// jobs that need to complete before we exit.
-  pub wait_futures:      FuturesUnordered<JobFuture>,
-  pub callbacks:         Receiver<Callback>,
-  /// Local callbacks stored in an Rc<RefCell<>> since they're !Send and only accessed from main thread
-  pub local_callbacks:   Rc<RefCell<Vec<LocalCallback>>>,
-  pub status_messages:   Receiver<StatusMessage>,
+  pub wait_futures:    FuturesUnordered<JobFuture>,
+  pub callbacks:       Receiver<Callback>,
+  /// Local callbacks stored in an Rc<RefCell<>> since they're !Send and only
+  /// accessed from main thread
+  pub local_callbacks: Rc<RefCell<Vec<LocalCallback>>>,
+  pub status_messages: Receiver<StatusMessage>,
 }
 
 impl Job {

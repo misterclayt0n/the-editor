@@ -462,12 +462,15 @@ impl Completion {
 
     // Determine best placement and calculate dimensions
     let (doc_x, doc_y, doc_width, doc_height) = if space_on_right >= MIN_DOC_WIDTH + SPACING {
-      // Position to the right - available space is from completion edge to window edge
+      // Position to the right - available space is from completion edge to window
+      // edge
       let available_width = space_on_right - SPACING;
       let doc_width = available_width.min(MAX_DOC_WIDTH);
       let doc_x = completion_x + completion_width + SPACING;
       let doc_y = completion_y;
-      let doc_height = completion_height.max(MIN_DOC_HEIGHT).min(window_height - doc_y);
+      let doc_height = completion_height
+        .max(MIN_DOC_HEIGHT)
+        .min(window_height - doc_y);
       (doc_x, doc_y, doc_width, doc_height)
     } else if space_on_left >= MIN_DOC_WIDTH + SPACING {
       // Position to the left
@@ -475,13 +478,18 @@ impl Completion {
       let doc_width = available_width.min(MAX_DOC_WIDTH);
       let doc_x = completion_x - doc_width - SPACING;
       let doc_y = completion_y;
-      let doc_height = completion_height.max(MIN_DOC_HEIGHT).min(window_height - doc_y);
+      let doc_height = completion_height
+        .max(MIN_DOC_HEIGHT)
+        .min(window_height - doc_y);
       (doc_x, doc_y, doc_width, doc_height)
     } else if space_below >= MIN_DOC_HEIGHT + SPACING {
       // Position below completion
       let doc_x = completion_x;
       let doc_y = completion_y + completion_height + SPACING;
-      let doc_width = completion_width.max(MIN_DOC_WIDTH).min(MAX_DOC_WIDTH).min(window_width - doc_x);
+      let doc_width = completion_width
+        .max(MIN_DOC_WIDTH)
+        .min(MAX_DOC_WIDTH)
+        .min(window_width - doc_x);
       let available_height = space_below - SPACING;
       let doc_height = available_height.min(MIN_DOC_HEIGHT * 2.0);
       (doc_x, doc_y, doc_width, doc_height)

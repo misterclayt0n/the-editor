@@ -121,11 +121,11 @@ pub enum Direction {
 
 #[derive(Debug)]
 pub struct Container {
-  layout:       Layout,
-  children:     Vec<ViewId>,
-  area:         Rect,
+  layout:      Layout,
+  children:    Vec<ViewId>,
+  area:        Rect,
   /// Custom sizes for children (in cells). None means use Fill behavior.
-  child_sizes:  Vec<Option<u16>>,
+  child_sizes: Vec<Option<u16>>,
 }
 
 impl Container {
@@ -298,9 +298,10 @@ impl Tree {
         if let Some(&old_area) = old_areas.get(&id) {
           // Existing view that changed area - animate from old to new
           if old_area != view.area {
-            self
-              .area_animations
-              .insert(id, AreaAnimation::new(old_area, view.area, duration, easing));
+            self.area_animations.insert(
+              id,
+              AreaAnimation::new(old_area, view.area, duration, easing),
+            );
           }
         } else {
           // New view - animate from zero width/height
@@ -324,9 +325,10 @@ impl Tree {
               }
             },
           };
-          self
-            .area_animations
-            .insert(id, AreaAnimation::new(start_area, view.area, duration, easing));
+          self.area_animations.insert(
+            id,
+            AreaAnimation::new(start_area, view.area, duration, easing),
+          );
         }
       }
     }
@@ -795,7 +797,8 @@ impl Tree {
     !self.area_animations.is_empty()
   }
 
-  /// Get the current animated area for a view, or its actual area if no animation is active.
+  /// Get the current animated area for a view, or its actual area if no
+  /// animation is active.
   pub fn get_animated_area(&self, view_id: ViewId) -> Option<Rect> {
     if let Some(anim) = self.area_animations.get(&view_id) {
       Some(anim.current())
@@ -810,15 +813,17 @@ impl Tree {
   }
 
   /// Resize a split separator by adjusting the view's size
-  /// vertical: true for vertical separators (adjust width), false for horizontal (adjust height)
-  /// delta_cells: positive to grow, negative to shrink (in cell units)
+  /// vertical: true for vertical separators (adjust width), false for
+  /// horizontal (adjust height) delta_cells: positive to grow, negative to
+  /// shrink (in cell units)
   pub fn resize_split(&mut self, view_id: ViewId, vertical: bool, delta_cells: i32) {
     if delta_cells == 0 {
       return;
     }
 
     // Find the appropriate container and child to resize
-    // We need to traverse up the tree to find a container that matches our resize direction
+    // We need to traverse up the tree to find a container that matches our resize
+    // direction
     let mut current_id = view_id;
     let target_layout = if vertical {
       Layout::Vertical

@@ -635,9 +635,9 @@ impl Prompt {
         Color::WHITE,
       ));
 
-      // If cursor is within visible text, render the cursor character again on top with cursor
-      // color This ensures the text layout is consistent while still showing the
-      // cursor-colored character
+      // If cursor is within visible text, render the cursor character again on top
+      // with cursor color This ensures the text layout is consistent while
+      // still showing the cursor-colored character
       let chars: Vec<char> = full_text.chars().collect();
       if visible_cursor_col < chars.len() {
         let cursor_char = chars[visible_cursor_col].to_string();
@@ -889,7 +889,8 @@ impl Prompt {
   }
 
   /// Check if we should recalculate completions after applying a completion
-  /// This is true for directory paths (ending with /) to enable progressive navigation
+  /// This is true for directory paths (ending with /) to enable progressive
+  /// navigation
   fn should_recalculate_after_completion(&self) -> bool {
     self.input.ends_with(std::path::MAIN_SEPARATOR)
   }

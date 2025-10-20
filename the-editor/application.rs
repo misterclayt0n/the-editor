@@ -43,7 +43,7 @@ pub struct App {
   pub input_handler: InputHandler,
 
   // LocalSet for polling !Send futures (ACP)
-  local_set:     Rc<tokio::task::LocalSet>,
+  local_set:      Rc<tokio::task::LocalSet>,
   runtime_handle: tokio::runtime::Handle,
 
   // Smooth scrolling configuration and state
@@ -167,13 +167,22 @@ impl App {
                     use crate::lsp::lsp::types::WorkDoneProgress;
                     match progress {
                       WorkDoneProgress::Begin(work) => {
-                        self.editor.lsp_progress.begin(server_id, params.token, work);
+                        self
+                          .editor
+                          .lsp_progress
+                          .begin(server_id, params.token, work);
                       },
                       WorkDoneProgress::Report(work) => {
-                        self.editor.lsp_progress.update(server_id, params.token, work);
+                        self
+                          .editor
+                          .lsp_progress
+                          .update(server_id, params.token, work);
                       },
                       WorkDoneProgress::End(_work) => {
-                        self.editor.lsp_progress.end_progress(server_id, &params.token);
+                        self
+                          .editor
+                          .lsp_progress
+                          .end_progress(server_id, &params.token);
                       },
                     }
                   },
@@ -379,7 +388,12 @@ impl Application for App {
 
     // Process any pending local job callbacks (for !Send futures like ACP)
     // Drain all callbacks from the Vec
-    let local_cbs = self.jobs.local_callbacks.borrow_mut().drain(..).collect::<Vec<_>>();
+    let local_cbs = self
+      .jobs
+      .local_callbacks
+      .borrow_mut()
+      .drain(..)
+      .collect::<Vec<_>>();
     for callback in local_cbs {
       self
         .jobs
@@ -659,7 +673,7 @@ impl App {
 
         // Apply same multiplier as mouse wheel for consistent scroll speed
         let config_lines = self.editor.config().scroll_lines.max(1) as f32;
-        let d_cols = (-x / col_w) * 4.0;  // Same horizontal multiplier as mouse wheel
+        let d_cols = (-x / col_w) * 4.0; // Same horizontal multiplier as mouse wheel
         let d_lines = (-y / line_h) * config_lines;
 
         // Accumulate fractional scrolling
@@ -851,7 +865,10 @@ impl App {
     // Process each notification
     for notification in notifications {
       let SessionNotification { session_id, update } = notification;
-      log::info!("ACP App: Processing notification for session {:?}", session_id);
+      log::info!(
+        "ACP App: Processing notification for session {:?}",
+        session_id
+      );
 
       // Convert the update into a message and append to document
       match update {
@@ -864,14 +881,20 @@ impl App {
           let session_id_clone = session_id.clone();
           self.jobs.callback_local(async move {
             use crate::acp::session::SessionState;
-            let _ = registry.update_session(&session_id_clone, |session| {
-              session.state = SessionState::Streaming;
-            }).await;
+            let _ = registry
+              .update_session(&session_id_clone, |session| {
+                session.state = SessionState::Streaming;
+              })
+              .await;
             Ok(None)
           });
 
           // Append to document for this session (this will also update gutter state)
-          self.append_to_session_document(&session_id, &text, crate::acp::session::MessageRole::Agent);
+          self.append_to_session_document(
+            &session_id,
+            &text,
+            crate::acp::session::MessageRole::Agent,
+          );
         },
         SessionUpdate::UserMessageChunk { content } => {
           let text = Self::extract_content_text(&content);
@@ -885,16 +908,22 @@ impl App {
           let session_id_clone = session_id.clone();
           self.jobs.callback_local(async move {
             use crate::acp::session::SessionState;
-            let _ = registry.update_session(&session_id_clone, |session| {
-              session.state = SessionState::Thinking;
-            }).await;
+            let _ = registry
+              .update_session(&session_id_clone, |session| {
+                session.state = SessionState::Thinking;
+              })
+              .await;
             Ok(None)
           });
 
           // Append thinking to document (this will also update gutter state)
           let thought = Self::extract_content_text(&content);
           log::info!("ACP App: AgentThoughtChunk - {} chars", thought.len());
-          self.append_to_session_document(&session_id, &format!("[Thinking: {}]\n", thought), crate::acp::session::MessageRole::Thinking);
+          self.append_to_session_document(
+            &session_id,
+            &format!("[Thinking: {}]\n", thought),
+            crate::acp::session::MessageRole::Thinking,
+          );
         },
         SessionUpdate::ToolCall(tool_call) => {
           // Update session state to ExecutingTool
@@ -903,17 +932,23 @@ impl App {
           let tool_name = tool_call.title.clone();
           self.jobs.callback_local(async move {
             use crate::acp::session::SessionState;
-            let _ = registry.update_session(&session_id_clone, |session| {
-              session.state = SessionState::ExecutingTool;
-              session.current_tool_name = Some(tool_name.clone());
-            }).await;
+            let _ = registry
+              .update_session(&session_id_clone, |session| {
+                session.state = SessionState::ExecutingTool;
+                session.current_tool_name = Some(tool_name.clone());
+              })
+              .await;
             Ok(None)
           });
 
           let text = format!("[Tool Call: {}]\n", tool_call.title);
           log::info!("ACP App: ToolCall - {}", tool_call.title);
           // Append to document (this will also update gutter state with tool name)
-          self.append_to_session_document(&session_id, &text, crate::acp::session::MessageRole::Tool);
+          self.append_to_session_document(
+            &session_id,
+            &text,
+            crate::acp::session::MessageRole::Tool,
+          );
         },
         SessionUpdate::ToolCallUpdate(_) | SessionUpdate::Plan(_) => {
           // These could be rendered specially in the future
@@ -938,12 +973,22 @@ impl App {
     }
   }
 
-  fn append_to_session_document(&mut self, session_id: &crate::acp::acp::SessionId, text: &str, role: crate::acp::session::MessageRole) {
-    log::info!("ACP App: append_to_session_document - {} chars for session {:?}", text.len(), session_id);
+  fn append_to_session_document(
+    &mut self,
+    session_id: &crate::acp::acp::SessionId,
+    text: &str,
+    role: crate::acp::session::MessageRole,
+  ) {
+    log::info!(
+      "ACP App: append_to_session_document - {} chars for session {:?}",
+      text.len(),
+      session_id
+    );
 
     // We need to look up the doc_id synchronously
-    // Since RegistryState is behind an async Mutex, we can't directly access it here
-    // Instead, we'll spawn a callback_local job that can do the async lookup and append
+    // Since RegistryState is behind an async Mutex, we can't directly access it
+    // here Instead, we'll spawn a callback_local job that can do the async
+    // lookup and append
     let registry = self.editor.acp_sessions.handle();
     let session_id_clone = session_id.clone();
     let text_owned = text.to_string();
@@ -953,21 +998,27 @@ impl App {
       log::info!("ACP App: Inside append callback_local, looking up doc_id");
       // Get the document ID for this session
       if let Some(doc_id) = registry.get_doc_id_by_session(&session_id_clone).await {
-        log::info!("ACP App: Found doc_id {:?}, returning editor callback", doc_id);
+        log::info!(
+          "ACP App: Found doc_id {:?}, returning editor callback",
+          doc_id
+        );
 
         // Clone registry for the callback
         let registry_for_callback = registry.clone();
         let session_id_for_callback = session_id_clone.clone();
 
         // Return a callback to append text to the document
-        Ok(Some(crate::ui::job::LocalCallback::EditorCompositor(Box::new(
-          move |editor, _compositor| {
+        Ok(Some(crate::ui::job::LocalCallback::EditorCompositor(
+          Box::new(move |editor, _compositor| {
             use crate::core::{
               selection::Selection,
               transaction::Transaction,
             };
 
-            log::info!("ACP App: Inside editor callback, appending to doc {:?}", doc_id);
+            log::info!(
+              "ACP App: Inside editor callback, appending to doc {:?}",
+              doc_id
+            );
 
             // Get the document and append text
             if let Some(doc) = editor.documents.get_mut(&doc_id) {
@@ -977,10 +1028,16 @@ impl App {
 
               // Get the end of the document in chars
               let len = doc.text().len_chars();
-              log::info!("ACP App: Document has {} chars, appending {} chars", len, text_owned.len());
+              log::info!(
+                "ACP App: Document has {} chars, appending {} chars",
+                len,
+                text_owned.len()
+              );
 
               // Find a view that's displaying this document
-              let view_id = editor.tree.views()
+              let view_id = editor
+                .tree
+                .views()
                 .find(|(view, _)| view.doc == doc_id)
                 .map(|(view, _)| view.id)
                 .unwrap_or_else(|| {
@@ -993,16 +1050,25 @@ impl App {
               // Create a selection at the end of the document
               let selection = Selection::single(len, len);
               // Insert text at the end
-              let transaction = Transaction::insert(doc.text(), &selection, text_owned.clone().into());
+              let transaction =
+                Transaction::insert(doc.text(), &selection, text_owned.clone().into());
               doc.apply(&transaction, view_id);
 
               // Get the end byte position after appending
               let end_byte = doc.text().len_bytes();
-              log::info!("ACP App: Text appended successfully, end byte: {}", end_byte);
+              log::info!(
+                "ACP App: Text appended successfully, end byte: {}",
+                end_byte
+              );
 
               // Store the message span directly in the document for rendering
               doc.acp_message_spans.push((role, start_byte..end_byte));
-              log::debug!("ACP: Added message span {:?} from {} to {} in document", role, start_byte, end_byte);
+              log::debug!(
+                "ACP: Added message span {:?} from {} to {} in document",
+                role,
+                start_byte,
+                end_byte
+              );
 
               // Calculate current line number for gutter display
               let current_line = doc.text().char_to_line(doc.text().byte_to_char(start_byte));
@@ -1010,40 +1076,50 @@ impl App {
 
               // Update document's gutter state directly based on the role
               // Map role to session state for gutter display
-              use crate::acp::session::{MessageRole, SessionState};
+              use crate::acp::session::{
+                MessageRole,
+                SessionState,
+              };
               let session_state = match role {
                 MessageRole::Agent => SessionState::Streaming,
                 MessageRole::Thinking => SessionState::Thinking,
                 MessageRole::Tool => SessionState::ExecutingTool,
-                MessageRole::User => SessionState::Idle,  // Shouldn't happen but handle it
+                MessageRole::User => SessionState::Idle, // Shouldn't happen but handle it
               };
 
               doc.acp_gutter_state = Some(crate::core::document::AcpGutterState {
-                state: session_state,
+                state:        session_state,
                 current_line: Some(current_line),
-                tool_name: None,  // We don't have tool name here, will be updated separately
+                tool_name:    None, // We don't have tool name here, will be updated separately
               });
 
               // Also update the session's message spans and current_line for persistence
               let registry_clone = registry_for_callback.clone();
               let session_id_clone = session_id_for_callback.clone();
               tokio::task::spawn_local(async move {
-                let _ = registry_clone.update_session(&session_id_clone, |session| {
-                  session.message_spans.push(crate::acp::session::MessageSpan {
-                    role,
-                    start_byte,
-                    end_byte,
-                  });
-                  session.current_line = Some(current_line);
-                }).await;
+                let _ = registry_clone
+                  .update_session(&session_id_clone, |session| {
+                    session
+                      .message_spans
+                      .push(crate::acp::session::MessageSpan {
+                        role,
+                        start_byte,
+                        end_byte,
+                      });
+                    session.current_line = Some(current_line);
+                  })
+                  .await;
               });
             } else {
               log::warn!("ACP App: Document {:?} not found in editor", doc_id);
             }
-          },
-        ))))
+          }),
+        )))
       } else {
-        log::warn!("ACP App: No doc_id found for session {:?}", session_id_clone);
+        log::warn!(
+          "ACP App: No doc_id found for session {:?}",
+          session_id_clone
+        );
         Ok(None)
       }
     });

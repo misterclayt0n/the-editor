@@ -169,10 +169,10 @@ pub mod breathing {
   /// Used for indicating ongoing processes like LSP loading
   #[derive(Debug, Clone)]
   pub struct BreathingAnimation {
-    started_at: Instant,
+    started_at:     Instant,
     cycle_duration: Duration,
-    min_alpha: f32,
-    max_alpha: f32,
+    min_alpha:      f32,
+    max_alpha:      f32,
   }
 
   impl BreathingAnimation {
@@ -188,10 +188,10 @@ pub mod breathing {
     /// Create a new breathing animation with default parameters
     pub fn new() -> Self {
       Self {
-        started_at: Instant::now(),
+        started_at:     Instant::now(),
         cycle_duration: Self::DEFAULT_CYCLE_DURATION,
-        min_alpha: Self::DEFAULT_MIN_ALPHA,
-        max_alpha: Self::DEFAULT_MAX_ALPHA,
+        min_alpha:      Self::DEFAULT_MIN_ALPHA,
+        max_alpha:      Self::DEFAULT_MAX_ALPHA,
       }
     }
 

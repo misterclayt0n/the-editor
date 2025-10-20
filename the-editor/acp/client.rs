@@ -60,7 +60,11 @@ impl acp::Client for EditorClient {
     // TODO: Later, check if file is open in editor and read from document
     match tokio::fs::read_to_string(&args.path).await {
       Ok(content) => {
-        log::info!("ACP Client: Successfully read file: {:?} ({} bytes)", args.path, content.len());
+        log::info!(
+          "ACP Client: Successfully read file: {:?} ({} bytes)",
+          args.path,
+          content.len()
+        );
         Ok(acp::ReadTextFileResponse {
           content,
           meta: None,
@@ -77,17 +81,25 @@ impl acp::Client for EditorClient {
     &'a self,
     args: acp::SessionNotification,
   ) -> Result<(), acp::Error> {
-    log::info!("ACP Client: session_notification - session_id: {:?}, update type: {:?}",
-               args.session_id, std::mem::discriminant(&args.update));
+    log::info!(
+      "ACP Client: session_notification - session_id: {:?}, update type: {:?}",
+      args.session_id,
+      std::mem::discriminant(&args.update)
+    );
 
     // Push the notification to the queue for processing in the main loop
-    self.notifications.borrow_mut().push(super::SessionNotification {
-      session_id: args.session_id.clone(),
-      update:     args.update,
-    });
+    self
+      .notifications
+      .borrow_mut()
+      .push(super::SessionNotification {
+        session_id: args.session_id.clone(),
+        update:     args.update,
+      });
 
-    log::info!("ACP Client: Notification queued, {} total in queue",
-               self.notifications.borrow().len());
+    log::info!(
+      "ACP Client: Notification queued, {} total in queue",
+      self.notifications.borrow().len()
+    );
     Ok(())
   }
 }

@@ -21,6 +21,7 @@ use crate::{
 
 pub mod diagnostic_underlines;
 pub mod diagnostics;
+pub mod fade;
 pub mod inlay_hints;
 
 /// Decorations are the primary mechanism for extending the text rendering.

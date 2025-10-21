@@ -7044,3 +7044,47 @@ pub fn file_manager_toggle_hidden(cx: &mut Context) {
     cx.editor.set_error(format!("Failed to toggle hidden files: {}", err));
   }
 }
+
+// Context fade commands
+
+pub fn toggle_fade_mode(cx: &mut Context) {
+  cx.editor.fade_mode.enabled = !cx.editor.fade_mode.enabled;
+  eprintln!("[FADE DEBUG] Toggle fade mode: enabled={}", cx.editor.fade_mode.enabled);
+  
+  if cx.editor.fade_mode.enabled {
+    // Update relevant ranges based on current selection
+    update_fade_ranges(cx);
+    cx.editor.set_status("Fade mode enabled");
+  } else {
+    // Clear the relevant ranges
+    cx.editor.fade_mode.relevant_ranges = None;
+    cx.editor.set_status("Fade mode disabled");
+  }
+}
+
+/// Update the fade mode's relevant ranges based on current selection
+pub fn update_fade_ranges(cx: &mut Context) {
+  if !cx.editor.fade_mode.enabled {
+    return;
+  }
+  
+  let (view, doc) = current!(cx.editor);
+  
+  if let Some(syntax) = doc.syntax() {
+    eprintln!("[FADE DEBUG] Syntax available, computing ranges");
+    let text = doc.text().slice(..);
+    let selection = doc.selection(view.id);
+    
+    let ranges = cx.editor.fade_mode.analyzer.compute_relevant_ranges(
+      text,
+      selection,
+      syntax,
+    );
+    
+    cx.editor.fade_mode.relevant_ranges = Some(ranges);
+  } else {
+    eprintln!("[FADE DEBUG] No syntax available!");
+    // No syntax highlighting available, disable fade
+    cx.editor.fade_mode.relevant_ranges = None;
+  }
+}

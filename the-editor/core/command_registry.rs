@@ -807,6 +807,22 @@ impl CommandRegistry {
         ..Signature::DEFAULT
       },
     ));
+
+    // Context fade commands
+    self.register(TypableCommand::new(
+      "fade",
+      &[],
+      "Toggle fade mode to highlight code context",
+      |cx, _args, _event| {
+        crate::core::commands::toggle_fade_mode(cx);
+        Ok(())
+      },
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 

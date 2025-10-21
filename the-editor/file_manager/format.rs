@@ -109,18 +109,27 @@ pub fn parse_line(line: &str) -> Option<FileManagerEntryState> {
     return None;
   }
 
-  // The formatted line always ends with a single space followed by the name
-  let (name_part, is_dir) = if let Some((_, name)) = line.rsplit_once(' ') {
-    let is_dir = name.ends_with('/');
-    let name = name.strip_suffix('/').unwrap_or(name).to_string();
-    (name, is_dir)
-  } else {
-    let is_dir = line.ends_with('/');
-    let name = line.strip_suffix('/').unwrap_or(line).to_string();
-    (name, is_dir)
-  };
+  // Parse ls -l format: "perms links user group size mon day time name"
+  // Example: "-rw-r--r--  1 user users   1234 Oct 10 15:20 my file.txt"
+  // The date/time is in format "Mon DD HH:MM", so we look for the pattern
+  // after the time (HH:MM) which is followed by a space and the filename
+  
+  // Find the time pattern (HH:MM) and take everything after it
+  if let Some(time_pos) = line.rfind(|c: char| c == ':') {
+    // Skip past the minutes (2 digits) after the colon
+    let after_time = time_pos + 3; // ":MM " - colon + 2 digits + space
+    if after_time < line.len() {
+      let name = line[after_time..].trim();
+      let is_dir = name.ends_with('/');
+      let name_clean = name.strip_suffix('/').unwrap_or(name).to_string();
+      return Some(FileManagerEntryState::new(name_clean, is_dir));
+    }
+  }
 
-  Some(FileManagerEntryState::new(name_part, is_dir))
+  // Fallback for lines without time (shouldn't happen in normal ls -l output)
+  let is_dir = line.ends_with('/');
+  let name = line.strip_suffix('/').unwrap_or(line).to_string();
+  Some(FileManagerEntryState::new(name, is_dir))
 }
 
 /// Parse the entire buffer content into a list of filenames

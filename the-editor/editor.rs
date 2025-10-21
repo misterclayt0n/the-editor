@@ -80,6 +80,7 @@ use crate::{
     auto_pairs::AutoPairs,
     chars::char_is_whitespace,
     clipboard::ClipboardProvider,
+
     diagnostics::{
       DiagnosticFilter,
       DiagnosticProvider,
@@ -391,6 +392,30 @@ pub struct Editor {
   /// Flag to indicate that the next insert/delete operation should trigger
   /// a visual effect (easter egg from the noop command).
   pub noop_effect_pending: bool,
+  
+  /// Fade mode state for highlighting code context
+  pub fade_mode: FadeMode,
+}
+
+/// State for the context-aware code fading feature
+#[derive(Debug, Clone)]
+pub struct FadeMode {
+  /// Whether fade mode is currently active
+  pub enabled: bool,
+  /// The ranges of code that should remain visible (not faded)
+  pub relevant_ranges: Option<crate::core::context_fade::RelevantRanges>,
+  /// The analyzer used to compute relevant ranges
+  pub analyzer: crate::core::context_fade::ContextAnalyzer,
+}
+
+impl Default for FadeMode {
+  fn default() -> Self {
+    Self {
+      enabled: false,
+      relevant_ranges: None,
+      analyzer: crate::core::context_fade::ContextAnalyzer::default(),
+    }
+  }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -1862,6 +1887,7 @@ impl Editor {
       command_history: Vec::new(),
       font_size_override: None,
       noop_effect_pending: false,
+      fade_mode: FadeMode::default(),
     };
 
     let scopes = editor.theme.scopes().to_vec();

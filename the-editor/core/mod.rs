@@ -15,6 +15,7 @@ pub mod command_registry;
 pub mod commands;
 pub mod comment;
 pub mod config;
+pub mod context_fade;
 pub mod diagnostics;
 pub mod diff;
 pub mod doc_formatter;

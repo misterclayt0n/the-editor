@@ -1222,6 +1222,14 @@ impl Component for EditorView {
           decoration_manager.add_decoration(inlay_hints_decoration);
         }
 
+        // Add fade decoration if fade mode is enabled
+        if cx.editor.fade_mode.enabled {
+          if let Some(relevant_ranges) = cx.editor.fade_mode.relevant_ranges.clone() {
+            let fade_decoration = crate::ui::text_decorations::fade::FadeDecoration::new(relevant_ranges);
+            decoration_manager.add_decoration(fade_decoration);
+          }
+        }
+
         // Prepare decorations for rendering
         decoration_manager.prepare_for_rendering(top_char_idx);
 
@@ -1599,6 +1607,9 @@ impl Component for EditorView {
             });
           }
 
+          // Store char_idx before match (g gets shadowed inside Grapheme::Other)
+          let grapheme_char_idx = g.char_idx;
+
           // Add text command
           match g.raw {
             Grapheme::Newline => {
@@ -1636,6 +1647,25 @@ impl Component for EditorView {
                   color
                 } else {
                   normal
+                };
+
+                // Apply fade effect if fade mode is enabled
+                let fg = if cx.editor.fade_mode.enabled {
+                  if let Some(ref relevant_ranges) = cx.editor.fade_mode.relevant_ranges {
+                    if !relevant_ranges.contains(grapheme_char_idx) {
+                      // This position is not relevant, apply fade
+                      let fade_alpha = 0.3; // 30% opacity for faded text
+                      let mut faded = fg;
+                      faded.a *= fade_alpha;
+                      faded
+                    } else {
+                      fg
+                    }
+                  } else {
+                    fg
+                  }
+                } else {
+                  fg
                 };
 
                 // Add to line batch for efficient rendering, but only if within view bounds

@@ -1026,18 +1026,24 @@ pub mod completers {
 
   /// Theme name completer
   pub fn theme(_editor: &Editor, input: &str) -> Vec<Completion> {
-    use std::path::PathBuf;
-
     use crate::core::theme;
 
-    // Get theme directories from runtime paths
-    let runtime_dirs = vec![PathBuf::from("runtime/themes")];
+    // Search all theme directories in priority order:
+    // 1. User config directory (~/.config/the-editor/themes)
+    // 2. Runtime directories (built-in themes)
+    let mut theme_dirs = vec![the_editor_loader::config_dir()];
+    theme_dirs.extend(the_editor_loader::runtime_dirs().iter().cloned());
 
     let mut theme_names: Vec<String> = Vec::new();
-    for dir in &runtime_dirs {
-      let names = theme::Loader::read_names(dir);
+    for dir in &theme_dirs {
+      let theme_dir = dir.join("themes");
+      let names = theme::Loader::read_names(&theme_dir);
       theme_names.extend(names);
     }
+
+    // Add default themes
+    theme_names.push("default".to_string());
+    theme_names.push("base16_default".to_string());
 
     theme_names.sort();
     theme_names.dedup();

@@ -823,6 +823,30 @@ impl CommandRegistry {
         ..Signature::DEFAULT
       },
     ));
+
+    self.register(TypableCommand::new(
+      "change-current-directory",
+      &["cd"],
+      "Change the current working directory",
+      change_current_directory,
+      CommandCompleter::positional(&[completers::directory], completers::none),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "show-directory",
+      &["pwd"],
+      "Show the current working directory",
+      show_current_directory,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 
@@ -1049,6 +1073,123 @@ pub mod completers {
         }
       })
       .collect()
+  }
+
+  /// Directory completer - only shows directories (not files)
+  pub fn directory(_editor: &Editor, input: &str) -> Vec<Completion> {
+    use std::{
+      borrow::Cow,
+      path::Path,
+    };
+
+    use ignore::WalkBuilder;
+    use the_editor_stdx::path::expand_tilde;
+
+    // Expand tilde if present
+    let is_tilde = input == "~";
+    let path = expand_tilde(Path::new(input));
+
+    // Split path into directory and file_name components
+    let (dir, file_name) = if input.ends_with(std::path::MAIN_SEPARATOR) {
+      (path, None)
+    } else {
+      let is_period = (input.ends_with(format!("{}.", std::path::MAIN_SEPARATOR).as_str())
+        && input.len() > 2)
+        || input == ".";
+      let file_name = if is_period {
+        Some(String::from("."))
+      } else {
+        path
+          .file_name()
+          .and_then(|file| file.to_str().map(|path| path.to_owned()))
+      };
+
+      let path = if is_period {
+        path
+      } else {
+        match path.parent() {
+          Some(path) if !path.as_os_str().is_empty() => Cow::Borrowed(path),
+          _ => Cow::Owned(the_editor_stdx::env::current_working_dir()),
+        }
+      };
+
+      (path, file_name)
+    };
+
+    // Range for replacement
+    let range_for_no_prefix = input.len()..;
+
+    // Use WalkBuilder for gitignore-aware traversal
+    let entries = WalkBuilder::new(&*dir)
+      .hidden(false)
+      .follow_links(false)
+      .git_ignore(false)
+      .max_depth(Some(1))
+      .build()
+      .filter_map(|entry| {
+        let entry = entry.ok()?;
+        let entry_path = entry.path();
+
+        // Skip the directory itself
+        if entry_path == Path::new(&*dir) {
+          return None;
+        }
+
+        // Only include directories
+        let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
+        if !is_dir {
+          return None;
+        }
+
+        // Get relative path from dir
+        let mut path = if is_tilde {
+          entry_path.to_path_buf()
+        } else {
+          entry_path.strip_prefix(&*dir).unwrap_or(entry_path).to_path_buf()
+        };
+
+        // Add trailing slash for directories
+        path.push("");
+
+        let path_str = path.into_os_string().into_string().ok()?;
+        Some(path_str)
+      })
+      .filter(|path| !path.is_empty());
+
+    // If we have a file_name prefix, filter and fuzzy match
+    let completions: Vec<Completion> = if let Some(file_name) = file_name {
+      let file_name_lower = file_name.to_lowercase();
+      let range_start = input.len().saturating_sub(file_name.len());
+      let replace_range = range_start..;
+
+      entries
+        .filter(|path| path.to_lowercase().contains(&file_name_lower))
+        .map(|path| {
+          Completion {
+            range: replace_range.clone(),
+            text:  path,
+            doc:   None,
+          }
+        })
+        .collect()
+    } else {
+      // No prefix - return all entries (append to current path)
+      entries
+        .map(|path| {
+          Completion {
+            range: range_for_no_prefix.clone(),
+            text:  path,
+            doc:   None,
+          }
+        })
+        .collect()
+    };
+
+    // Sort alphabetically
+    let mut completions = completions;
+    completions.sort_by(|a, b| a.text.cmp(&b.text));
+
+    completions
   }
 
   #[cfg(test)]
@@ -2353,6 +2494,67 @@ fn noop(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
   } else {
     cx.editor
       .set_status("Noop effect mode disabled".to_string());
+  }
+
+  Ok(())
+}
+
+fn change_current_directory(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  use std::path::PathBuf;
+
+  use the_editor_stdx::path::expand_tilde;
+
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  let dir = match args.first().map(AsRef::as_ref) {
+    Some("-") => {
+      // Switch to previous working directory
+      cx
+        .editor
+        .get_last_cwd()
+        .map(|path| std::borrow::Cow::Owned(path.to_path_buf()))
+        .ok_or_else(|| anyhow!("No previous working directory"))?
+    },
+    Some(path) => expand_tilde(std::path::Path::new(path)),
+    None => {
+      // No argument - go to home directory
+      let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| anyhow!("Could not determine home directory"))?;
+      std::borrow::Cow::Owned(PathBuf::from(home))
+    },
+  };
+
+  cx.editor.set_cwd(&dir).map_err(|err| {
+    anyhow!(
+      "Could not change working directory to '{}': {}",
+      dir.display(),
+      err
+    )
+  })?;
+
+  cx.editor.set_status(format!(
+    "Current working directory is now {}",
+    the_editor_stdx::env::current_working_dir().display()
+  ));
+
+  Ok(())
+}
+
+fn show_current_directory(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  let cwd = the_editor_stdx::env::current_working_dir();
+  let message = format!("Current working directory is {}", cwd.display());
+
+  if cwd.exists() {
+    cx.editor.set_status(message);
+  } else {
+    cx.editor.set_error(format!("{} (deleted)", message));
   }
 
   Ok(())

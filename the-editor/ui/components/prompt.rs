@@ -301,6 +301,16 @@ impl Prompt {
         self.exit_selection();
         PromptEvent::Update
       },
+      // Tab - next completion and insert
+      (Key::Tab, false, false, false) => {
+        self.change_completion_selection_forward_and_insert(editor);
+        PromptEvent::Update
+      },
+      // Shift+Tab - previous completion and insert
+      (Key::Tab, false, false, true) => {
+        self.change_completion_selection_backward_and_insert(editor);
+        PromptEvent::Update
+      },
       // Regular character input
       (Key::Char(c), false, false, _) => {
         self.insert_char(c);
@@ -889,6 +899,38 @@ impl Prompt {
     }
   }
 
+  /// Navigate to next completion and insert it (Tab key behavior)
+  fn change_completion_selection_forward_and_insert(&mut self, editor: &Editor) {
+    // First navigate to select the next completion
+    self.change_completion_selection_forward(editor);
+
+    // Then apply it immediately
+    if let Some(idx) = self.selection {
+      self.apply_completion(idx);
+
+      // If this is a directory path, recalculate completions for progressive navigation
+      if self.should_recalculate_after_completion() {
+        self.recalculate_completions(editor);
+      }
+    }
+  }
+
+  /// Navigate to previous completion and insert it (Shift+Tab key behavior)
+  fn change_completion_selection_backward_and_insert(&mut self, editor: &Editor) {
+    // First navigate to select the previous completion
+    self.change_completion_selection_backward(editor);
+
+    // Then apply it immediately
+    if let Some(idx) = self.selection {
+      self.apply_completion(idx);
+
+      // If this is a directory path, recalculate completions for progressive navigation
+      if self.should_recalculate_after_completion() {
+        self.recalculate_completions(editor);
+      }
+    }
+  }
+
   /// Check if we should recalculate completions after applying a completion
   /// This is true for directory paths (ending with /) to enable progressive
   /// navigation
@@ -1368,25 +1410,32 @@ impl Component for Prompt {
         }
       },
       PromptEvent::Update => {
-        // Execute command with Update event for preview functionality
+        // Only execute preview-enabled commands on Update events
+        // This prevents accidental execution of commands like :quit while typing
         if !trimmed.is_empty() {
           let (command, args_line) = if trimmed.parse::<usize>().is_ok() {
+            // Numeric input is treated as goto command for line preview
             ("goto".to_string(), trimmed.to_string())
           } else {
             let (command, args_line, _) = command_line::split(trimmed);
             (command.to_string(), args_line.to_string())
           };
 
-          let registry = cx.editor.command_registry.clone();
-          let mut cmd_cx = CommandContext {
-            editor:               cx.editor,
-            count:                None,
-            register:             None,
-            callback:             Vec::new(),
-            on_next_key_callback: None,
-            jobs:                 cx.jobs,
-          };
-          let _ = registry.execute(&mut cmd_cx, &command, &args_line, PromptEvent::Update);
+          // Whitelist of commands that support preview on Update events
+          let preview_enabled_commands = ["theme", "goto"];
+
+          if preview_enabled_commands.contains(&command.as_str()) {
+            let registry = cx.editor.command_registry.clone();
+            let mut cmd_cx = CommandContext {
+              editor:               cx.editor,
+              count:                None,
+              register:             None,
+              callback:             Vec::new(),
+              on_next_key_callback: None,
+              jobs:                 cx.jobs,
+            };
+            let _ = registry.execute(&mut cmd_cx, &command, &args_line, PromptEvent::Update);
+          }
         }
         EventResult::Consumed(None)
       },

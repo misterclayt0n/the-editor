@@ -13,6 +13,7 @@ use the_editor_renderer::{
 
 use crate::{
   core::{
+    command_line,
     commands::Context as CommandContext,
     graphics::{
       CursorKind,
@@ -1242,12 +1243,18 @@ impl Component for Prompt {
     // No custom callback - fall back to command execution
     // Special handling for numeric input - treat as :goto command
     let trimmed = self.input.trim();
-    let is_numeric = !trimmed.is_empty() && trimmed.parse::<usize>().is_ok();
 
     match prompt_event {
       PromptEvent::Abort => {
-        // If it's a numeric input, send Abort to goto command
-        if is_numeric {
+        // Execute command's Abort handler if we have input
+        if !trimmed.is_empty() {
+          let (command, args_line) = if trimmed.parse::<usize>().is_ok() {
+            ("goto".to_string(), trimmed.to_string())
+          } else {
+            let (command, args_line, _) = command_line::split(trimmed);
+            (command.to_string(), args_line.to_string())
+          };
+
           let registry = cx.editor.command_registry.clone();
           let mut cmd_cx = CommandContext {
             editor:               cx.editor,
@@ -1257,7 +1264,7 @@ impl Component for Prompt {
             on_next_key_callback: None,
             jobs:                 cx.jobs,
           };
-          let _ = registry.execute(&mut cmd_cx, "goto", trimmed, PromptEvent::Abort);
+          let _ = registry.execute(&mut cmd_cx, &command, &args_line, PromptEvent::Abort);
         }
 
         // Close the prompt and slide statusline back
@@ -1361,8 +1368,15 @@ impl Component for Prompt {
         }
       },
       PromptEvent::Update => {
-        // If it's numeric input, send Update to goto command for preview
-        if is_numeric {
+        // Execute command with Update event for preview functionality
+        if !trimmed.is_empty() {
+          let (command, args_line) = if trimmed.parse::<usize>().is_ok() {
+            ("goto".to_string(), trimmed.to_string())
+          } else {
+            let (command, args_line, _) = command_line::split(trimmed);
+            (command.to_string(), args_line.to_string())
+          };
+
           let registry = cx.editor.command_registry.clone();
           let mut cmd_cx = CommandContext {
             editor:               cx.editor,
@@ -1372,7 +1386,7 @@ impl Component for Prompt {
             on_next_key_callback: None,
             jobs:                 cx.jobs,
           };
-          let _ = registry.execute(&mut cmd_cx, "goto", trimmed, PromptEvent::Update);
+          let _ = registry.execute(&mut cmd_cx, &command, &args_line, PromptEvent::Update);
         }
         EventResult::Consumed(None)
       },

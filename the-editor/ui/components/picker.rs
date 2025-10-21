@@ -306,6 +306,10 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   action_handler:        Option<ActionHandler<T, D>>,
   /// Callback when picker is closed
   on_close:              Option<Box<dyn FnOnce() + Send>>,
+  /// Callback when item is hovered (receives Some(&T) on hover, None on unhover)
+  on_hover:              Option<Arc<dyn Fn(Option<&T>) + Send + Sync>>,
+  /// Last hovered item index (for detecting hover changes)
+  last_hovered:          Option<u32>,
   /// Whether picker is visible
   visible:               bool,
   /// Number of visible rows
@@ -420,6 +424,8 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       on_select: Box::new(on_select),
       action_handler: None,
       on_close: None,
+      on_hover: None,
+      last_hovered: None,
       visible: true,
       completion_height: 0,
       entrance_anim: {
@@ -471,6 +477,16 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     F: FnOnce() + Send + 'static,
   {
     self.on_close = Some(Box::new(callback));
+    self
+  }
+
+  /// Set the hover callback
+  /// Called with Some(&T) when hovering over an item, None when hover leaves
+  pub fn on_hover<F>(mut self, callback: F) -> Self
+  where
+    F: Fn(Option<&T>) + Send + Sync + 'static,
+  {
+    self.on_hover = Some(Arc::new(callback));
     self
   }
 
@@ -1079,8 +1095,24 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     self.update_query();
   }
 
+  /// Update hover state and trigger callback if changed
+  fn update_hover(&mut self, new_hovered: Option<u32>) {
+    // Only trigger callback if hover state actually changed
+    if self.last_hovered != new_hovered {
+      if let Some(ref callback) = self.on_hover {
+        let snapshot = self.matcher.snapshot();
+        let item = new_hovered.and_then(|idx| snapshot.get_matched_item(idx).map(|m| m.data));
+        callback(item);
+      }
+      self.last_hovered = new_hovered;
+    }
+  }
+
   /// Close the picker
   fn close(&mut self) {
+    // Clear hover state on close
+    self.update_hover(None);
+
     self.visible = false;
     self.version.fetch_add(1, Ordering::Relaxed);
     if let Some(callback) = self.on_close.take() {
@@ -1202,6 +1234,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
             // Update hovered item
             self.hovered_item = Some(global_item_idx);
+            self.update_hover(Some(global_item_idx));
 
             // Handle click
             if let Some(button) = mouse.button {
@@ -1227,14 +1260,17 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
             }
           } else {
             self.hovered_item = None;
+            self.update_hover(None);
           }
         } else {
           self.hovered_item = None;
+          self.update_hover(None);
         }
 
         return EventResult::Consumed(None);
       } else {
         self.hovered_item = None;
+        self.update_hover(None);
         self.hover_pos = None;
       }
     }

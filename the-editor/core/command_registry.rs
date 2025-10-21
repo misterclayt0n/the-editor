@@ -1895,19 +1895,20 @@ fn theme(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
   match event {
     PromptEvent::Abort => {
       // Restore previous theme
-      // TODO: Store and restore previous theme
+      cx.editor.unset_theme_preview();
       return Ok(());
     },
     PromptEvent::Update => {
       // Preview theme while typing
       if args.is_empty() {
+        cx.editor.unset_theme_preview();
         return Ok(());
       }
 
       let theme_name = &args[0];
       if let Ok(theme) = cx.editor.theme_loader.load(theme_name) {
         if true_color || theme.is_16_color() {
-          cx.editor.theme = theme;
+          cx.editor.set_theme_preview(theme);
         }
       }
 

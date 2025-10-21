@@ -2105,13 +2105,30 @@ impl Editor {
 
     // Check if theme transitions are enabled
     let config = self.config();
-    let enable_transition = config.theme_transition_enabled && matches!(preview, ThemeAction::Set);
+    let enable_transition = config.theme_transition_enabled;
 
     match preview {
       ThemeAction::Preview => {
-        let last_theme = std::mem::replace(&mut self.theme, theme);
-        // only insert on first preview: this will be the last theme the user has saved
-        self.last_theme.get_or_insert(last_theme);
+        // Save the current theme on first preview (before any changes)
+        // This preserves the original theme to restore on abort
+        if self.last_theme.is_none() {
+          self.last_theme = Some(self.theme.clone());
+        }
+
+        if enable_transition {
+          // Start transition animation for preview
+          let from_theme = self.theme.clone();
+          self.theme_transition = Some(ThemeTransition {
+            from_theme,
+            to_theme:            theme,
+            progress:            0.0,
+            cached_interpolated: None,
+            last_cached_at:      -1.0, // Force initial cache creation
+          });
+        } else {
+          // Instant theme change for preview
+          self.theme = theme;
+        }
       },
       ThemeAction::Set => {
         self.last_theme = None;

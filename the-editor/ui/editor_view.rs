@@ -33,6 +33,7 @@ use crate::{
       char_idx_at_visual_offset,
       visual_offset_from_block,
     },
+    tree::Direction,
   },
   editor::Editor,
   keymap::{
@@ -2080,10 +2081,13 @@ impl EditorView {
     const SEPARATOR_WIDTH_PX: f32 = 2.0;
     const SEPARATOR_HEIGHT_PX: f32 = 2.0;
 
-    for (view, _) in cx.editor.tree.views() {
+    let tree = &cx.editor.tree;
+    for (view, _) in tree.views() {
       let area = view.area;
-      // Check if there's a view to the right (for vertical splits)
-      if area.x + area.width < cx.editor.tree.area().width {
+      let has_vertical_neighbor = tree
+        .find_split_in_direction(view.id, Direction::Right)
+        .is_some();
+      if has_vertical_neighbor {
         // Render vertical separator bar at the right edge
         // Center the thin separator in the gap
         let gap_center_x = (area.x + area.width) as f32 * font_width + (font_width / 2.0);
@@ -2095,8 +2099,10 @@ impl EditorView {
         renderer.draw_rect(x, y, width, height, separator_color);
       }
 
-      // Check if there's a view below (for horizontal splits)
-      if area.y + area.height < cx.editor.tree.area().height {
+      let has_horizontal_neighbor = tree
+        .find_split_in_direction(view.id, Direction::Down)
+        .is_some();
+      if has_horizontal_neighbor {
         // Render horizontal separator bar at the bottom edge
         let x = area.x as f32 * font_width;
         let sep_y =
@@ -2477,11 +2483,14 @@ impl EditorView {
     let (font_width, cell_height) = self.get_current_cell_metrics(cx);
 
     // Check all views for nearby separators
-    for (view, _) in cx.editor.tree.views() {
+    let tree = &cx.editor.tree;
+    for (view, _) in tree.views() {
       let area = view.area;
 
-      // Check for vertical separator (right edge of view)
-      if area.x + area.width < cx.editor.tree.area().width {
+      if tree
+        .find_split_in_direction(view.id, Direction::Right)
+        .is_some()
+      {
         let gap_center_x = (area.x + area.width) as f32 * font_width + (font_width / 2.0);
         let sep_y = area.y as f32 * cell_height;
         let sep_height = area.height as f32 * cell_height;
@@ -2502,8 +2511,10 @@ impl EditorView {
         }
       }
 
-      // Check for horizontal separator (bottom edge of view)
-      if area.y + area.height < cx.editor.tree.area().height {
+      if tree
+        .find_split_in_direction(view.id, Direction::Down)
+        .is_some()
+      {
         let sep_x = area.x as f32 * font_width;
         let sep_y = (area.y + area.height) as f32 * cell_height - SEPARATOR_HEIGHT_PX;
         let sep_width = area.width as f32 * font_width;

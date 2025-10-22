@@ -147,11 +147,6 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "/" => global_search,
     },
 
-    // File manager specific bindings (these only act if buffer is file manager)
-    "-"                => file_manager_parent,
-    "ret"              => file_manager_enter,
-    "."                => file_manager_toggle_hidden,
-
     "s"                => select_regex,
     "A-s"              => split_selection_on_newline,
     "A-minus"          => merge_selections,

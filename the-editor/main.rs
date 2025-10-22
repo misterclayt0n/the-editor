@@ -29,7 +29,6 @@ mod application;
 mod core;
 mod editor;
 mod event;
-mod file_manager;
 pub mod handlers;
 mod increment;
 mod input;
@@ -51,7 +50,8 @@ fn main() -> anyhow::Result<()> {
 
   // Create a LocalSet for !Send futures (required by ACP)
   // NOTE: We specifically use Rc<LocalSet> (not Arc) because LocalSet is !Send
-  // and must stay on a single thread. We'll handle polling carefully to avoid blocking.
+  // and must stay on a single thread. We'll handle polling carefully to avoid
+  // blocking.
   let local_set = Rc::new(tokio::task::LocalSet::new());
 
   // Enter the LocalSet context so spawn_local works throughout the application
@@ -122,9 +122,8 @@ fn main() -> anyhow::Result<()> {
   let app = crate::application::App::new(editor, local_set, rt.handle().clone());
 
   // Build window configuration from editor config
-  let window_config =
-    the_editor_renderer::WindowConfig::new("The Editor", 1024, 768)
-      .with_decorations(config.editor.window_decorations);
+  let window_config = the_editor_renderer::WindowConfig::new("The Editor", 1024, 768)
+    .with_decorations(config.editor.window_decorations);
 
   let result = the_editor_renderer::run(window_config, app)
     .map_err(|e| anyhow::anyhow!("Failed to run renderer: {}", e));

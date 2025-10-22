@@ -520,18 +520,6 @@ impl CommandRegistry {
     ));
 
     self.register(TypableCommand::new(
-      "files",
-      &[],
-      "Open file manager buffer for the current directory",
-      files_command,
-      CommandCompleter::all(completers::filename_with_current_dir),
-      Signature {
-        positionals: (0, Some(1)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
       "new",
       &["n"],
       "Create a new buffer",
@@ -1151,7 +1139,10 @@ pub mod completers {
         let mut path = if is_tilde {
           entry_path.to_path_buf()
         } else {
-          entry_path.strip_prefix(&*dir).unwrap_or(entry_path).to_path_buf()
+          entry_path
+            .strip_prefix(&*dir)
+            .unwrap_or(entry_path)
+            .to_path_buf()
         };
 
         // Add trailing slash for directories
@@ -1527,84 +1518,6 @@ fn force_quit(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
   std::process::exit(0);
 }
 
-fn handle_file_manager_save(cx: &mut Context) -> Result<()> {
-  let (_view, doc) = crate::current!(cx.editor);
-
-  // Get current directory from file manager metadata
-  let current_path = crate::file_manager::buffer::current_path(doc);
-  if current_path.is_none() {
-    cx.editor.set_error("File manager: no current directory".to_string());
-    return Ok(());
-  }
-  let directory = current_path.unwrap();
-
-  // Compute operations
-  let operations = match crate::file_manager::compute_operations(doc) {
-    Ok(ops) => ops,
-    Err(err) => {
-      log::error!("File manager: failed to compute operations: {err}");
-      cx.editor
-        .set_status("File manager: failed to compute operations (see logs)".to_string());
-      return Ok(());
-    },
-  };
-
-  if operations.is_empty() {
-    cx.editor.set_status("File manager: no changes to apply".to_string());
-    return Ok(());
-  }
-
-  // Format summary
-  let summary = crate::file_manager::format_operations_summary(&operations);
-
-  // Show confirmation prompt
-  cx.editor.set_status(format!("File manager operations:\n{}\nExecute? (y/n)", summary));
-
-  // For now, we'll just show the summary and not execute
-  // In a full implementation, we'd need to add a confirmation dialog component
-  // TODO: Add proper confirmation dialog with callbacks
-
-  // Execute operations immediately for now (skip confirmation)
-  match crate::file_manager::execute_operations(&directory, &operations) {
-    Ok(results) => {
-      let mut errors = Vec::new();
-      for (op, result) in results {
-        if let Err(err) = result {
-          errors.push(format!("{}: {}", op.description(), err));
-        }
-      }
-
-      if errors.is_empty() {
-        cx.editor.set_status(format!("File manager: {} operations completed", operations.len()));
-        // Refresh the buffer
-        let (view, doc) = crate::current!(cx.editor);
-        let view_id = view.id;
-        if let Err(err) = crate::file_manager::refresh_buffer(doc, view_id) {
-          log::error!("File manager: failed to refresh buffer: {err}");
-          cx
-            .editor
-            .set_status("File manager: failed to refresh buffer (see logs)".to_string());
-        }
-      } else {
-        for error in &errors {
-          log::error!("File manager operation error: {error}");
-        }
-        cx
-          .editor
-          .set_status("File manager: some operations failed (see logs)".to_string());
-      }
-    },
-    Err(err) => {
-      log::error!("File manager: failed to execute operations: {err}");
-      cx
-        .editor
-        .set_status("File manager: failed to execute operations (see logs)".to_string());
-    },
-  }
-
-  Ok(())
-}
-
 fn write_buffer(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
   if event != PromptEvent::Validate {
     return Ok(());
@@ -1616,11 +1529,6 @@ fn write_buffer(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> 
 
   let (view, doc) = current!(cx.editor);
   let doc_id = view.doc;
-
-  // Special handling for file manager buffers
-  if doc.is_file_manager_buffer() {
-    return handle_file_manager_save(cx);
-  }
 
   let path = if args.is_empty() {
     doc.path().map(|p| p.to_path_buf())
@@ -1711,79 +1619,6 @@ fn open_file(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
     Err(err) => {
       cx.editor.set_error(format!("failed to open: {}", err));
     },
-  }
-
-  Ok(())
-}
-
-fn files_command(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
-  if event != PromptEvent::Validate {
-    return Ok(());
-  }
-
-  use crate::{
-    core::special_buffer::SpecialBufferKind,
-    editor::Action,
-    file_manager,
-  };
-
-  // Determine the directory to open
-  let path = if args.is_empty() {
-    // Use current file's directory or cwd
-    let (_, doc) = crate::current!(cx.editor);
-    doc
-      .path()
-      .and_then(|p| p.parent())
-      .map(|p| p.to_path_buf())
-      .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
-  } else {
-    std::path::PathBuf::from(&args[0])
-  };
-
-  // Get the current view ID
-  let view_id = cx.editor.tree.focus;
-
-  // Check if there's already a file manager buffer open
-  if let Some(doc_id) = cx.editor.special_buffers.last_for(SpecialBufferKind::FileManager) {
-    // Navigate to the new path in the existing buffer
-    if let Some(doc) = cx.editor.documents.get_mut(&doc_id) {
-      match file_manager::navigate_to(doc, path.clone(), view_id) {
-        Ok(_) => {
-          // Focus the existing file manager buffer
-          cx.editor.switch(doc_id, Action::Replace);
-          cx
-            .editor
-            .set_status(format!("file manager: {}", path.display()));
-          return Ok(());
-        },
-        Err(err) => {
-          // Failed to navigate, create new buffer
-          log::warn!("Failed to navigate file manager: {}", err);
-        },
-      }
-    }
-  }
-
-  // Create new file manager buffer
-  let doc_id = cx.editor.new_file(Action::Replace);
-
-  // Set up the file manager buffer
-  if let Some(doc) = cx.editor.documents.get_mut(&doc_id) {
-    match file_manager::refresh_to_path(doc, path.clone(), false, view_id) {
-      Ok(_) => {
-        cx.editor.mark_special_buffer(doc_id, SpecialBufferKind::FileManager);
-        cx
-          .editor
-          .set_status(format!("file manager: {}", path.display()));
-      },
-      Err(err) => {
-        cx
-          .editor
-          .set_error(format!("failed to open file manager: {}", err));
-        // Close the buffer if initialization failed
-        let _ = cx.editor.close_document(doc_id, true);
-      },
-    }
   }
 
   Ok(())
@@ -2518,8 +2353,7 @@ fn change_current_directory(cx: &mut Context, args: Args, event: PromptEvent) ->
   let dir = match args.first().map(AsRef::as_ref) {
     Some("-") => {
       // Switch to previous working directory
-      cx
-        .editor
+      cx.editor
         .get_last_cwd()
         .map(|path| std::borrow::Cow::Owned(path.to_path_buf()))
         .ok_or_else(|| anyhow!("No previous working directory"))?

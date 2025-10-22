@@ -306,7 +306,8 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   action_handler:        Option<ActionHandler<T, D>>,
   /// Callback when picker is closed
   on_close:              Option<Box<dyn FnOnce() + Send>>,
-  /// Callback when item is hovered (receives Some(&T) on hover, None on unhover)
+  /// Callback when item is hovered (receives Some(&T) on hover, None on
+  /// unhover)
   on_hover:              Option<Arc<dyn Fn(Option<&T>) + Send + Sync>>,
   /// Last hovered item index (for detecting hover changes)
   last_hovered:          Option<u32>,

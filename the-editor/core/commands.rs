@@ -3233,24 +3233,20 @@ pub fn paste_clipboard_before(cx: &mut Context) {
 }
 
 pub fn paste_after(cx: &mut Context) {
-  paste(
-    cx.editor,
-    cx.register
-      .unwrap_or(cx.editor.config().default_yank_register),
-    Paste::After,
-    cx.count(),
-  );
+  let register = cx
+    .register
+    .unwrap_or(cx.editor.config().default_yank_register);
+
+  paste(cx.editor, register, Paste::After, cx.count());
   exit_select_mode(cx);
 }
 
 pub fn paste_before(cx: &mut Context) {
-  paste(
-    cx.editor,
-    cx.register
-      .unwrap_or(cx.editor.config().default_yank_register),
-    Paste::Before,
-    cx.count(),
-  );
+  let register = cx
+    .register
+    .unwrap_or(cx.editor.config().default_yank_register);
+
+  paste(cx.editor, register, Paste::Before, cx.count());
   exit_select_mode(cx);
 }
 
@@ -4140,7 +4136,8 @@ pub fn decrease_font_size(cx: &mut Context) {
 pub fn default_font_size(cx: &mut Context) {
   let default_size = cx.editor.config().font_size;
   cx.editor.font_size_override = Some(default_size);
-  cx.editor.set_status(format!("Fallback to default font size: {}", default_size));
+  cx.editor
+    .set_status(format!("Fallback to default font size: {}", default_size));
 }
 
 pub fn parse_macro(keys_str: &str) -> anyhow::Result<Vec<KeyBinding>> {
@@ -6967,90 +6964,15 @@ pub use super::lsp_commands::{
   workspace_symbols,
 };
 
-// File manager specific commands
-
-pub fn file_manager_parent(cx: &mut Context) {
-  let (view, doc) = current!(cx.editor);
-  let view_id = view.id;
-
-  if !doc.is_file_manager_buffer() {
-    return;
-  }
-
-  let current_path = crate::file_manager::buffer::current_path(doc);
-  if let Some(path) = current_path {
-    if let Some(parent) = path.parent() {
-      if let Err(err) = crate::file_manager::navigate_to(doc, parent.to_path_buf(), view_id) {
-        cx.editor.set_error(format!("Failed to navigate to parent: {}", err));
-      }
-    }
-  }
-}
-
-pub fn file_manager_enter(cx: &mut Context) {
-  use crate::editor::Action;
-
-  let (view, doc) = current!(cx.editor);
-  let view_id = view.id;
-
-  if !doc.is_file_manager_buffer() {
-    return;
-  }
-
-  // Get the current line
-  let text = doc.text();
-  let selection = doc.selection(view_id);
-  let line_idx = selection.primary().cursor_line(text.slice(..));
-
-  // Skip the first line (parent directory marker)
-  if line_idx == 0 {
-    // Navigate to parent
-    file_manager_parent(cx);
-    return;
-  }
-
-  let line = text.line(line_idx).to_string();
-
-  if let Some(entry) = crate::file_manager::format::parse_line(&line) {
-    if let Some(dir) = crate::file_manager::buffer::current_path(doc) {
-      let target_path = dir.join(&entry.name);
-
-      if entry.is_dir || target_path.is_dir() {
-        if let Err(err) = crate::file_manager::navigate_to(doc, target_path, view_id) {
-          cx.editor.set_error(format!("Failed to navigate: {}", err));
-        }
-      } else {
-        // Open file
-        match cx.editor.open(&target_path, Action::Replace) {
-          Ok(_) => {},
-          Err(err) => {
-            cx.editor.set_error(format!("Failed to open file: {}", err));
-          },
-        }
-      }
-    }
-  }
-}
-
-pub fn file_manager_toggle_hidden(cx: &mut Context) {
-  let (view, doc) = current!(cx.editor);
-  let view_id = view.id;
-
-  if !doc.is_file_manager_buffer() {
-    return;
-  }
-
-  if let Err(err) = crate::file_manager::toggle_hidden_files(doc, view_id) {
-    cx.editor.set_error(format!("Failed to toggle hidden files: {}", err));
-  }
-}
-
 // Context fade commands
 
 pub fn toggle_fade_mode(cx: &mut Context) {
   cx.editor.fade_mode.enabled = !cx.editor.fade_mode.enabled;
-  eprintln!("[FADE DEBUG] Toggle fade mode: enabled={}", cx.editor.fade_mode.enabled);
-  
+  eprintln!(
+    "[FADE DEBUG] Toggle fade mode: enabled={}",
+    cx.editor.fade_mode.enabled
+  );
+
   if cx.editor.fade_mode.enabled {
     // Update relevant ranges based on current selection
     update_fade_ranges(cx);
@@ -7067,20 +6989,20 @@ pub fn update_fade_ranges(cx: &mut Context) {
   if !cx.editor.fade_mode.enabled {
     return;
   }
-  
+
   let (view, doc) = current!(cx.editor);
-  
+
   if let Some(syntax) = doc.syntax() {
     eprintln!("[FADE DEBUG] Syntax available, computing ranges");
     let text = doc.text().slice(..);
     let selection = doc.selection(view.id);
-    
-    let ranges = cx.editor.fade_mode.analyzer.compute_relevant_ranges(
-      text,
-      selection,
-      syntax,
-    );
-    
+
+    let ranges = cx
+      .editor
+      .fade_mode
+      .analyzer
+      .compute_relevant_ranges(text, selection, syntax);
+
     cx.editor.fade_mode.relevant_ranges = Some(ranges);
   } else {
     eprintln!("[FADE DEBUG] No syntax available!");

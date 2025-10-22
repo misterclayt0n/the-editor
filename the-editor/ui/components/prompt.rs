@@ -908,7 +908,8 @@ impl Prompt {
     if let Some(idx) = self.selection {
       self.apply_completion(idx);
 
-      // If this is a directory path, recalculate completions for progressive navigation
+      // If this is a directory path, recalculate completions for progressive
+      // navigation
       if self.should_recalculate_after_completion() {
         self.recalculate_completions(editor);
       }
@@ -924,7 +925,8 @@ impl Prompt {
     if let Some(idx) = self.selection {
       self.apply_completion(idx);
 
-      // If this is a directory path, recalculate completions for progressive navigation
+      // If this is a directory path, recalculate completions for progressive
+      // navigation
       if self.should_recalculate_after_completion() {
         self.recalculate_completions(editor);
       }

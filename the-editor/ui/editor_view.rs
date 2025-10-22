@@ -1225,7 +1225,8 @@ impl Component for EditorView {
         // Add fade decoration if fade mode is enabled
         if cx.editor.fade_mode.enabled {
           if let Some(relevant_ranges) = cx.editor.fade_mode.relevant_ranges.clone() {
-            let fade_decoration = crate::ui::text_decorations::fade::FadeDecoration::new(relevant_ranges);
+            let fade_decoration =
+              crate::ui::text_decorations::fade::FadeDecoration::new(relevant_ranges);
             decoration_manager.add_decoration(fade_decoration);
           }
         }

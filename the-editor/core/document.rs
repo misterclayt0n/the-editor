@@ -186,52 +186,12 @@ pub struct DocumentSavedEvent {
 
 #[derive(Debug, Clone)]
 pub struct SpecialBufferMetadata {
-  kind:                SpecialBufferKind,
-  pub file_manager:    Option<FileManagerMetadata>,
-}
-
-#[derive(Debug, Clone)]
-pub struct FileManagerMetadata {
-  pub current_path:   PathBuf,
-  pub show_hidden:    bool,
-  pub original_state: Vec<FileManagerEntryState>,
-  /// Cursor line position per directory (keyed by canonical path string)
-  pub cursor_positions: std::collections::HashMap<String, usize>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct FileManagerEntryState {
-  pub name:    String,
-  pub is_dir:  bool,
-}
-
-impl FileManagerEntryState {
-  pub fn new(name: impl Into<String>, is_dir: bool) -> Self {
-    Self {
-      name:   name.into(),
-      is_dir,
-    }
-  }
+  kind: SpecialBufferKind,
 }
 
 impl SpecialBufferMetadata {
   pub const fn new(kind: SpecialBufferKind) -> Self {
-    Self {
-      kind,
-      file_manager: None,
-    }
-  }
-
-  pub fn new_with_file_manager(path: PathBuf, show_hidden: bool) -> Self {
-    Self {
-      kind:         SpecialBufferKind::FileManager,
-      file_manager: Some(FileManagerMetadata {
-        current_path:   path,
-        show_hidden,
-        original_state: Vec::new(),
-        cursor_positions: HashMap::new(),
-      }),
-    }
+    Self { kind }
   }
 
   pub const fn kind(&self) -> SpecialBufferKind {
@@ -2286,9 +2246,6 @@ impl Document {
         match self.special_buffer.as_mut() {
           Some(metadata) => {
             metadata.kind = kind;
-            if kind != SpecialBufferKind::FileManager {
-              metadata.file_manager = None;
-            }
           },
           None => {
             self.special_buffer = Some(SpecialBufferMetadata::new(kind));
@@ -2319,10 +2276,6 @@ impl Document {
 
   pub fn is_compilation_buffer(&self) -> bool {
     self.is_special_buffer_kind(SpecialBufferKind::Compilation)
-  }
-
-  pub fn is_file_manager_buffer(&self) -> bool {
-    self.is_special_buffer_kind(SpecialBufferKind::FileManager)
   }
 
   pub fn relative_path(&self) -> Option<&Path> {

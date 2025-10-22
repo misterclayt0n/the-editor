@@ -80,7 +80,6 @@ use crate::{
     auto_pairs::AutoPairs,
     chars::char_is_whitespace,
     clipboard::ClipboardProvider,
-
     diagnostics::{
       DiagnosticFilter,
       DiagnosticProvider,
@@ -392,7 +391,7 @@ pub struct Editor {
   /// Flag to indicate that the next insert/delete operation should trigger
   /// a visual effect (easter egg from the noop command).
   pub noop_effect_pending: bool,
-  
+
   /// Fade mode state for highlighting code context
   pub fade_mode: FadeMode,
 }
@@ -401,19 +400,19 @@ pub struct Editor {
 #[derive(Debug, Clone)]
 pub struct FadeMode {
   /// Whether fade mode is currently active
-  pub enabled: bool,
+  pub enabled:         bool,
   /// The ranges of code that should remain visible (not faded)
   pub relevant_ranges: Option<crate::core::context_fade::RelevantRanges>,
   /// The analyzer used to compute relevant ranges
-  pub analyzer: crate::core::context_fade::ContextAnalyzer,
+  pub analyzer:        crate::core::context_fade::ContextAnalyzer,
 }
 
 impl Default for FadeMode {
   fn default() -> Self {
     Self {
-      enabled: false,
+      enabled:         false,
       relevant_ranges: None,
-      analyzer: crate::core::context_fade::ContextAnalyzer::default(),
+      analyzer:        crate::core::context_fade::ContextAnalyzer::default(),
     }
   }
 }
@@ -2120,10 +2119,10 @@ impl Editor {
           let from_theme = self.theme.clone();
           self.theme_transition = Some(ThemeTransition {
             from_theme,
-            to_theme:            theme,
-            progress:            0.0,
+            to_theme: theme,
+            progress: 0.0,
             cached_interpolated: None,
-            last_cached_at:      -1.0, // Force initial cache creation
+            last_cached_at: -1.0, // Force initial cache creation
           });
         } else {
           // Instant theme change for preview

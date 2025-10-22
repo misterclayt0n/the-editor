@@ -195,6 +195,8 @@ pub struct FileManagerMetadata {
   pub current_path:   PathBuf,
   pub show_hidden:    bool,
   pub original_state: Vec<FileManagerEntryState>,
+  /// Cursor line position per directory (keyed by canonical path string)
+  pub cursor_positions: std::collections::HashMap<String, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -227,6 +229,7 @@ impl SpecialBufferMetadata {
         current_path:   path,
         show_hidden,
         original_state: Vec::new(),
+        cursor_positions: HashMap::new(),
       }),
     }
   }

@@ -92,10 +92,26 @@ pub fn refresh_buffer(doc: &mut Document, view_id: crate::core::ViewId) -> Resul
 
 /// Navigate to a different directory
 pub fn navigate_to(doc: &mut Document, path: PathBuf, view_id: crate::core::ViewId) -> Result<()> {
+  // Get current path and cursor line before accessing metadata mutably
+  let current_path = doc
+    .special_buffer_metadata()
+    .and_then(|m| m.file_manager.as_ref())
+    .map(|fm| fm.current_path.clone())
+    .context("Not a file manager buffer")?;
+
+  let text = doc.text();
+  let selection = doc.selection(view_id);
+  let cursor_line = selection.primary().cursor_line(text.slice(..));
+
+  // Now we can safely get mutable access to metadata
   let metadata = doc
     .special_buffer_metadata_mut()
     .and_then(|m| m.file_manager.as_mut())
     .context("Not a file manager buffer")?;
+
+  // Save current cursor position
+  let current_path_key = current_path.to_string_lossy().to_string();
+  metadata.cursor_positions.insert(current_path_key, cursor_line);
 
   // Canonicalize the new path
   let path = path.canonicalize().context("Failed to canonicalize path")?;
@@ -105,24 +121,81 @@ pub fn navigate_to(doc: &mut Document, path: PathBuf, view_id: crate::core::View
   }
 
   // Update current path
-  metadata.current_path = path;
+  metadata.current_path = path.clone();
 
   // Refresh buffer with new path
-  refresh_buffer(doc, view_id)
+  refresh_buffer(doc, view_id)?;
+
+  // Restore cursor position for the new directory
+  let new_path_key = path.to_string_lossy().to_string();
+  let saved_line = doc
+    .special_buffer_metadata()
+    .and_then(|m| m.file_manager.as_ref())
+    .and_then(|fm| fm.cursor_positions.get(&new_path_key).copied());
+
+  if let Some(saved_line) = saved_line {
+    let text = doc.text();
+    // Clamp the saved line to the number of lines in the document
+    let line_count = text.len_lines();
+    let target_line = saved_line.min(line_count.saturating_sub(1));
+
+    // Create a selection at the target line
+    let pos = text.line_to_char(target_line);
+    let selection = crate::core::selection::Selection::point(pos);
+    doc.set_selection(view_id, selection);
+  }
+
+  Ok(())
 }
 
 /// Toggle hidden files visibility
 pub fn toggle_hidden_files(doc: &mut Document, view_id: crate::core::ViewId) -> Result<()> {
+  // Get current path and cursor line before accessing metadata mutably
+  let current_path = doc
+    .special_buffer_metadata()
+    .and_then(|m| m.file_manager.as_ref())
+    .map(|fm| fm.current_path.clone())
+    .context("Not a file manager buffer")?;
+
+  let text = doc.text();
+  let selection = doc.selection(view_id);
+  let cursor_line = selection.primary().cursor_line(text.slice(..));
+
+  // Now we can safely get mutable access to metadata
   let metadata = doc
     .special_buffer_metadata_mut()
     .and_then(|m| m.file_manager.as_mut())
     .context("Not a file manager buffer")?;
 
+  // Save current cursor position
+  let current_path_key = current_path.to_string_lossy().to_string();
+  metadata.cursor_positions.insert(current_path_key.clone(), cursor_line);
+
   // Toggle show_hidden
   metadata.show_hidden = !metadata.show_hidden;
 
   // Refresh buffer
-  refresh_buffer(doc, view_id)
+  refresh_buffer(doc, view_id)?;
+
+  // Restore cursor position after refresh
+  let saved_line = doc
+    .special_buffer_metadata()
+    .and_then(|m| m.file_manager.as_ref())
+    .and_then(|fm| fm.cursor_positions.get(&current_path_key).copied());
+
+  if let Some(saved_line) = saved_line {
+    let text = doc.text();
+    // Clamp the saved line to the number of lines in the document
+    let line_count = text.len_lines();
+    let target_line = saved_line.min(line_count.saturating_sub(1));
+
+    // Create a selection at the target line
+    let pos = text.line_to_char(target_line);
+    let selection = crate::core::selection::Selection::point(pos);
+    doc.set_selection(view_id, selection);
+  }
+
+  Ok(())
 }
 
 /// Get the current directory path from a file manager buffer

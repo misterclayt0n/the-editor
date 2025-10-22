@@ -120,7 +120,7 @@ fn main() -> anyhow::Result<()> {
 
   // Build window configuration from editor config
   let window_config =
-    the_editor_renderer::WindowConfig::new("The Editor - Modern Text Editor", 1024, 768)
+    the_editor_renderer::WindowConfig::new("The Editor", 1024, 768)
       .with_decorations(config.editor.window_decorations);
 
   let result = the_editor_renderer::run(window_config, app)

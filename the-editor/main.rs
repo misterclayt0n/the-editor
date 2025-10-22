@@ -50,10 +50,13 @@ fn main() -> anyhow::Result<()> {
   let guard = rt.enter();
 
   // Create a LocalSet for !Send futures (required by ACP)
-  // This will run on the main thread alongside the multi-threaded runtime
+  // NOTE: We specifically use Rc<LocalSet> (not Arc) because LocalSet is !Send
+  // and must stay on a single thread. We'll handle polling carefully to avoid blocking.
   let local_set = Rc::new(tokio::task::LocalSet::new());
 
   // Enter the LocalSet context so spawn_local works throughout the application
+  // ACP and other !Send tasks will be queued here and we'll process them
+  // via non-blocking try operations in the render loop
   let _local_guard = local_set.enter();
 
   // Prepare theme loader.

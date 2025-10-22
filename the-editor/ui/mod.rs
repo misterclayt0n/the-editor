@@ -260,3 +260,103 @@ where
 
   picker
 }
+
+/// File explorer metadata shared with picker columns
+pub struct FileExplorerData {
+  pub root: std::path::PathBuf,
+}
+
+/// Selection variants produced by the file explorer picker
+#[derive(Debug, Clone)]
+pub enum FileExplorerSelection {
+  /// Open the target path with the given picker action
+  Open {
+    path:   std::path::PathBuf,
+    action: components::PickerAction,
+  },
+  /// Enter the selected directory (the path is already normalized)
+  Enter(std::path::PathBuf),
+}
+
+fn directory_content(path: &std::path::Path) -> std::io::Result<Vec<(std::path::PathBuf, bool)>> {
+  let mut entries: Vec<_> = std::fs::read_dir(path)?
+    .flatten()
+    .map(|entry| {
+      let entry_path = entry.path();
+      let is_dir = entry
+        .file_type()
+        .map(|file_type| file_type.is_dir())
+        .unwrap_or_else(|_| entry_path.is_dir());
+      (entry_path, is_dir)
+    })
+    .collect();
+
+  entries.sort_by(|(path_a, is_dir_a), (path_b, is_dir_b)| {
+    (!*is_dir_a, path_a).cmp(&(!*is_dir_b, path_b))
+  });
+
+  if path.parent().is_some() {
+    entries.insert(0, (path.join(".."), true));
+  }
+
+  Ok(entries)
+}
+
+/// Create a file explorer picker rooted at the provided directory
+pub fn file_explorer<F>(
+  root: std::path::PathBuf,
+  on_select: F,
+) -> std::io::Result<components::Picker<(std::path::PathBuf, bool), FileExplorerData>>
+where
+  F: Fn(FileExplorerSelection) + Send + Sync + 'static,
+{
+  use std::sync::Arc;
+
+  let root = the_editor_stdx::path::normalize(root);
+  let data = FileExplorerData { root: root.clone() };
+
+  let columns = vec![components::Column::new(
+    "Path",
+    |(path, is_dir): &(std::path::PathBuf, bool), data: &FileExplorerData| {
+      let display = path
+        .strip_prefix(&data.root)
+        .unwrap_or(path)
+        .to_string_lossy();
+
+      if *is_dir {
+        format!("{}/", display)
+      } else {
+        display.to_string()
+      }
+    },
+  )];
+
+  let items = directory_content(&root)?;
+
+  let on_select = Arc::new(on_select);
+  let selection_handler = {
+    let on_select = Arc::clone(&on_select);
+    Arc::new(
+      move |(path, is_dir): &(std::path::PathBuf, bool),
+            _data: &FileExplorerData,
+            action: components::PickerAction| {
+        if *is_dir {
+          let normalized = the_editor_stdx::path::normalize(path);
+          on_select(FileExplorerSelection::Enter(normalized));
+        } else {
+          on_select(FileExplorerSelection::Open {
+            path: path.clone(),
+            action,
+          });
+        }
+        true
+      },
+    )
+  };
+
+  let picker = components::Picker::new(columns, 0, items, data, |_| {})
+    .with_action_handler(selection_handler)
+    .with_preview(|(path, _is_dir): &(std::path::PathBuf, bool)| Some((path.clone(), None)));
+
+  Ok(picker)
+}

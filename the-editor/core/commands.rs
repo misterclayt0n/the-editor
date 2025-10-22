@@ -21,6 +21,7 @@ use ropey::{
   RopeSlice,
 };
 use smallvec::SmallVec;
+use the_editor_loader::find_workspace;
 use the_editor_renderer::{
   Key,
   KeyPress,
@@ -1603,6 +1604,117 @@ fn push_file_picker_with_root(cx: &mut Context, root: std::path::PathBuf) {
   }));
 }
 
+struct FileExplorerComponent {
+  picker:    crate::ui::components::Picker<(std::path::PathBuf, bool), crate::ui::FileExplorerData>,
+  selection: std::sync::Arc<std::sync::Mutex<Option<crate::ui::FileExplorerSelection>>>,
+}
+
+impl FileExplorerComponent {
+  fn new(root: std::path::PathBuf) -> std::io::Result<Self> {
+    let selection = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let selection_for_picker = selection.clone();
+
+    let picker = crate::ui::file_explorer(root, move |choice| {
+      if let Ok(mut guard) = selection_for_picker.lock() {
+        *guard = Some(choice);
+      }
+    })?;
+
+    Ok(Self { picker, selection })
+  }
+}
+
+impl crate::ui::compositor::Component for FileExplorerComponent {
+  fn handle_event(
+    &mut self,
+    event: &crate::ui::compositor::Event,
+    ctx: &mut crate::ui::compositor::Context,
+  ) -> crate::ui::compositor::EventResult {
+    let result = self.picker.handle_event(event, ctx);
+
+    if let crate::ui::compositor::EventResult::Consumed(Some(callback)) = result {
+      let selection = self
+        .selection
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take());
+
+      return crate::ui::compositor::EventResult::Consumed(Some(Box::new(
+        move |compositor, ctx| {
+          callback(compositor, ctx);
+
+          if let Some(choice) = selection {
+            match choice {
+              crate::ui::FileExplorerSelection::Open { path, action } => {
+                use crate::editor::Action;
+
+                let editor_action = match action {
+                  crate::ui::components::PickerAction::Primary => Action::Replace,
+                  crate::ui::components::PickerAction::Secondary => Action::HorizontalSplit,
+                  crate::ui::components::PickerAction::Tertiary => Action::VerticalSplit,
+                };
+
+                if let Err(err) = ctx.editor.open(&path, editor_action) {
+                  ctx
+                    .editor
+                    .set_error(format!("Failed to open {}: {}", path.display(), err));
+                }
+              },
+              crate::ui::FileExplorerSelection::Enter(new_root) => {
+                match FileExplorerComponent::new(new_root) {
+                  Ok(component) => {
+                    compositor.push(Box::new(component));
+                  },
+                  Err(err) => {
+                    ctx
+                      .editor
+                      .set_error(format!("Failed to read directory: {}", err));
+                  },
+                }
+              },
+            }
+          }
+        },
+      )));
+    }
+
+    result
+  }
+
+  fn render(
+    &mut self,
+    area: crate::core::graphics::Rect,
+    surface: &mut crate::ui::compositor::Surface,
+    ctx: &mut crate::ui::compositor::Context,
+  ) {
+    self.picker.render(area, surface, ctx);
+  }
+
+  fn cursor(
+    &self,
+    area: crate::core::graphics::Rect,
+    editor: &crate::editor::Editor,
+  ) -> (
+    Option<crate::core::position::Position>,
+    crate::core::graphics::CursorKind,
+  ) {
+    self.picker.cursor(area, editor)
+  }
+}
+
+fn push_file_explorer_with_root(cx: &mut Context, root: std::path::PathBuf) {
+  cx.callback.push(Box::new(move |compositor, ctx| {
+    match FileExplorerComponent::new(root.clone()) {
+      Ok(component) => compositor.push(Box::new(component)),
+      Err(err) => {
+        ctx
+          .editor
+          .set_error(format!("Failed to read directory: {}", err))
+      },
+    }
+  }));
+}
+
 pub fn file_picker(cx: &mut Context) {
   let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
   push_file_picker_with_root(cx, cwd);
@@ -2178,6 +2290,54 @@ pub fn file_picker_in_current_directory(cx: &mut Context) {
   }
 
   push_file_picker_with_root(cx, cwd);
+}
+
+pub fn file_explorer(cx: &mut Context) {
+  let (workspace, _is_cwd) = find_workspace();
+  if !workspace.exists() {
+    cx.editor
+      .set_error("Workspace directory does not exist".to_string());
+    return;
+  }
+
+  push_file_explorer_with_root(cx, workspace);
+}
+
+pub fn file_explorer_in_current_buffer_directory(cx: &mut Context) {
+  let doc_dir = doc!(cx.editor)
+    .path()
+    .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
+
+  let target = match doc_dir {
+    Some(path) => path,
+    None => {
+      let cwd = the_editor_stdx::env::current_working_dir();
+      if !cwd.exists() {
+        cx.editor.set_error(
+          "Current buffer has no parent and current working directory does not exist".to_string(),
+        );
+        return;
+      }
+      cx.editor.set_error(
+        "Current buffer has no parent, opening file explorer in current working directory"
+          .to_string(),
+      );
+      cwd
+    },
+  };
+
+  push_file_explorer_with_root(cx, target);
+}
+
+pub fn file_explorer_in_current_directory(cx: &mut Context) {
+  let cwd = the_editor_stdx::env::current_working_dir();
+  if !cwd.exists() {
+    cx.editor
+      .set_error("Current working directory does not exist".to_string());
+    return;
+  }
+
+  push_file_explorer_with_root(cx, cwd);
 }
 
 // Inserts at the start of each selection.

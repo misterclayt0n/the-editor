@@ -11,8 +11,6 @@ The bindings left are mostly the ones I don't care about btw. Apart from the com
 
 #### Space submenu
 
-• "e"   -> file_explorer
-• "E"   -> file_explorer_in_current_buffer_directory
 • "'"   -> last_picker
 • "w"   -> Window submenu (duplicate of C-w)
 • "c"   -> toggle_comments

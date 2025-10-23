@@ -355,19 +355,32 @@ impl Tree {
 
     self.nodes.remove(child);
 
-    let container = self.container_mut(parent);
-    let pos = container
-      .children
-      .iter()
-      .position(|&item| item == child)
-      .unwrap();
+    let mut replacement_id = None;
+    {
+      let container = self.container_mut(parent);
+      let pos = container
+        .children
+        .iter()
+        .position(|&item| item == child)
+        .unwrap();
 
-    if let Some(new) = replacement {
-      container.children[pos] = new;
+      if let Some(new) = replacement {
+        container.children[pos] = new;
+        replacement_id = Some(new);
+      } else {
+        container.children.remove(pos);
+        container.child_sizes.remove(pos);
+      }
+
+      if container.children.len() == 1 {
+        if let Some(size) = container.child_sizes.get_mut(0) {
+          *size = None;
+        }
+      }
+    }
+
+    if let Some(new) = replacement_id {
       self.nodes[new].parent = parent;
-    } else {
-      container.children.remove(pos);
-      container.child_sizes.remove(pos);
     }
   }
 

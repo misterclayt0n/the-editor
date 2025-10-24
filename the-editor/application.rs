@@ -42,6 +42,9 @@ pub struct App {
   pub jobs:          Jobs,
   pub input_handler: InputHandler,
 
+  // GlobalConfig pointer for runtime updates
+  pub config_ptr: std::sync::Arc<arc_swap::ArcSwap<crate::core::config::Config>>,
+
   // LocalSet for polling !Send futures (ACP)
   local_set:      Rc<tokio::task::LocalSet>,
   runtime_handle: tokio::runtime::Handle,
@@ -98,6 +101,7 @@ impl App {
     editor: Editor,
     local_set: Rc<tokio::task::LocalSet>,
     runtime_handle: tokio::runtime::Handle,
+    config_ptr: std::sync::Arc<arc_swap::ArcSwap<crate::core::config::Config>>,
   ) -> Self {
     let area = Rect::new(0, 0, 120, 40); // Default size, will be updated on resize.
     let mut compositor = Compositor::new(area);
@@ -133,6 +137,7 @@ impl App {
     Self {
       compositor,
       editor,
+      config_ptr,
       jobs: Jobs::new(),
       input_handler: InputHandler::new(mode),
       local_set,
@@ -147,6 +152,59 @@ impl App {
       trackpad_scroll_cols: 0.0,
       last_frame_time: std::time::Instant::now(),
       frame_counter: 0,
+    }
+  }
+
+  fn handle_config_events(&mut self, config_event: crate::editor::ConfigEvent) {
+    use crate::editor::ConfigEvent;
+
+    match config_event {
+      ConfigEvent::Refresh => {
+        // Reload configuration from disk
+        if let Ok(new_config) = crate::core::config::Config::load_user() {
+          // Store old config before updating
+          let old_editor_config = self.editor.config().clone();
+
+          // Store the new config in the global config pointer
+          self.config_ptr.store(std::sync::Arc::new(new_config.clone()));
+
+          // Update theme if specified
+          if let Some(theme_name) = &new_config.theme {
+            if let Ok(new_theme) = self.editor.theme_loader.load(theme_name) {
+              self.editor.set_theme(new_theme);
+            }
+          } else {
+            // Use default theme
+            let default_theme =
+              self.editor.theme_loader.default_theme(self.editor.config().true_color);
+            self.editor.set_theme(default_theme);
+          }
+
+          // Refresh editor configuration
+          self.editor.refresh_config(&old_editor_config);
+
+          // Re-detect .editorconfig for all documents
+          for doc in self.editor.documents.values_mut() {
+            doc.detect_editor_config();
+          }
+
+          // Reset view positions for scrolloff changes
+          let scrolloff = self.editor.config().scrolloff;
+          for (view, _) in self.editor.tree.views() {
+            if let Some(doc) = self.editor.documents.get_mut(&view.doc) {
+              view.ensure_cursor_in_view(doc, scrolloff);
+            }
+          }
+
+          self.editor.set_status("Configuration reloaded".to_string());
+        } else {
+          self.editor.set_status("Failed to reload configuration".to_string());
+        }
+      },
+      ConfigEvent::Update(_new_config) => {
+        // Configuration update already applied
+        self.editor.set_status("Configuration updated".to_string());
+      },
     }
   }
 
@@ -391,6 +449,11 @@ impl Application for App {
     // We use throttled polling (every 6th frame) to avoid the freezes that were
     // happening when polling on every single frame
     self.poll_local_set_minimal();
+
+    // Process any pending config events
+    while let Some(config_event) = self.editor.try_poll_config_event() {
+      self.handle_config_events(config_event);
+    }
 
     // Process any pending LSP messages
     while let Some((server_id, call)) = self.editor.try_poll_lsp_message() {

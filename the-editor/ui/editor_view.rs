@@ -1304,7 +1304,68 @@ impl Component for EditorView {
         let mut line_end_x = std::collections::HashMap::new(); // Track the rightmost x position for each doc line
         let mut current_line_max_x = base_x; // Track max x for current line
 
+        // Indent guides tracking
+        let mut last_line_indent_level = 0usize;
+        let mut is_in_indent_area = true;
+        let indent_guides_config = cx.editor.config().indent_guides.clone();
+        let indent_width = doc.indent_width();
+        let indent_guide_char = indent_guides_config.character.to_string();
+        let indent_guide_style = cx
+          .editor
+          .theme
+          .try_get("ui.virtual.indent-guide")
+          .unwrap_or_else(|| cx.editor.theme.get("ui.virtual.whitespace"));
+        let indent_guide_color = indent_guide_style
+          .fg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::rgb(0.3, 0.3, 0.35));
+
         // EOL diagnostics are now handled by the decoration system
+
+        // Helper to draw indent guides for a line
+        let draw_indent_guides = |last_indent: usize,
+                                   rel_row: usize,
+                                   batcher: &mut CommandBatcher,
+                                   font_width: f32,
+                                   font_size: f32,
+                                   base_y: f32| {
+          if !indent_guides_config.render || last_indent == 0 || indent_width == 0 {
+            return;
+          }
+
+          let h_off = view_offset.horizontal_offset;
+          let skip_levels = indent_guides_config.skip_levels as usize;
+
+          // Calculate starting indent level accounting for horizontal scroll
+          let starting_indent = (h_off / indent_width) + skip_levels;
+          let end_indent = (last_indent / indent_width).min(
+            (h_off + viewport_cols) / indent_width.max(1) + indent_width
+          );
+
+          if starting_indent >= end_indent {
+            return;
+          }
+
+          let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING);
+
+          // Draw guides at each indent level
+          for i in starting_indent..end_indent {
+            let guide_x = base_x + ((i * indent_width).saturating_sub(h_off) as f32) * font_width;
+
+            // Only draw if visible in viewport
+            if guide_x >= base_x && guide_x < base_x + (viewport_cols as f32) * font_width {
+              batcher.add_command(RenderCommand::Text {
+                section: TextSection::simple(
+                  guide_x,
+                  y,
+                  indent_guide_char.clone(),
+                  font_size,
+                  indent_guide_color,
+                ),
+              });
+            }
+          }
+        };
 
         // Helper to flush a line batch
         let flush_line_batch = |batch: &mut Vec<(f32, f32, String, Color)>,
@@ -1380,6 +1441,18 @@ impl Component for EditorView {
           // This ensures gutters are always visible even when content is scrolled
           // horizontally
           if doc_line != current_doc_line {
+            // Draw indent guides for the previous line before switching
+            if current_doc_line != usize::MAX && last_doc_line_end_row < visible_lines {
+              draw_indent_guides(
+                last_line_indent_level,
+                last_doc_line_end_row,
+                &mut self.command_batcher,
+                font_width,
+                font_size,
+                base_y,
+              );
+            }
+
             // Render end-of-line diagnostic for previous line before switching
             if current_doc_line != usize::MAX {
               // Render virtual lines for the previous line using the last visual row it ended
@@ -1396,6 +1469,10 @@ impl Component for EditorView {
             current_doc_line = doc_line;
             last_doc_line_end_row = rel_row; // Initialize for the new doc_line
             current_line_max_x = base_x; // Reset for new line
+
+            // Reset indent tracking for new line (but keep last_line_indent_level from previous line)
+            // This allows guides to persist on empty/less-indented lines within a block
+            is_in_indent_area = true;
           } else {
             // Still on the same doc_line, update the last row we saw content on
             last_doc_line_end_row = rel_row;
@@ -1427,6 +1504,24 @@ impl Component for EditorView {
               font_size,
               normal,
             );
+          }
+
+          // Track indent level for indent guides
+          if is_in_indent_area {
+            match &g.raw {
+              Grapheme::Tab { .. } => {
+                last_line_indent_level = g.visual_pos.col + 1;
+              },
+              Grapheme::Other { g: ch } => {
+                if ch.chars().all(char::is_whitespace) {
+                  last_line_indent_level = g.visual_pos.col + 1;
+                } else {
+                  last_line_indent_level = g.visual_pos.col;
+                  is_in_indent_area = false;
+                }
+              },
+              _ => {}
+            }
           }
 
           // NOW check horizontal scrolling (after gutter is rendered)
@@ -1692,6 +1787,18 @@ impl Component for EditorView {
           font_width,
           font_size,
         );
+
+        // Draw indent guides for the last line
+        if current_doc_line != usize::MAX && last_doc_line_end_row < visible_lines {
+          draw_indent_guides(
+            last_line_indent_level,
+            last_doc_line_end_row,
+            &mut self.command_batcher,
+            font_width,
+            font_size,
+            base_y,
+          );
+        }
 
         // Render virtual lines for the last line
         if current_doc_line != usize::MAX {

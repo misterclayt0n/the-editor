@@ -3072,6 +3072,10 @@ impl Editor {
 
   /// Try to poll for a save event without blocking.
   /// Returns Some if a save completed, None otherwise.
+  pub fn try_poll_config_event(&mut self) -> Option<ConfigEvent> {
+    self.config_events.1.try_recv().ok()
+  }
+
   pub fn try_poll_save(&mut self) -> Option<DocumentSavedEvent> {
     use std::task::{
       Context,

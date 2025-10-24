@@ -2459,36 +2459,13 @@ fn config_open_workspace(cx: &mut Context, _args: Args, event: PromptEvent) -> R
 }
 
 fn config_reload(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
-  use anyhow::anyhow;
-
   if event != PromptEvent::Validate {
     return Ok(());
   }
 
-  let new_config = crate::core::config::Config::load_user()
-    .map_err(|e| anyhow!("Failed to reload config: {:?}", e))?;
-
-  // Reload the theme based on the config's theme name.
-  if let Some(theme_name) = &new_config.theme {
-    match cx.editor.theme_loader.load(theme_name) {
-     Ok(new_theme) => {
-       cx.editor.set_theme(new_theme);
-     }
-     Err(e) => {
-       return Err(anyhow!("Failed to load theme '{}': {}", theme_name, e));
-     }
-   }
-  } else {
-   // Use default theme if none specified.
-   let default_theme = cx.editor.theme_loader.default_theme(cx.editor.config().true_color);
-   cx.editor.set_theme(default_theme);
-  }
-  
-  // Send update event to reload the editor config
-  // NOTE: The full config update may not be applied due to architectural limitations,
-  // but the theme will be updated above
-  cx.editor.config_events.0.send(crate::editor::ConfigEvent::Update(Box::new(new_config.editor)))?;
-  cx.editor.set_status("Configuration reloaded".to_string());
+  // Send a refresh event to reload configuration from disk
+  // The application will handle loading the config and updating all components
+  cx.editor.config_events.0.send(crate::editor::ConfigEvent::Refresh)?;
   Ok(())
 }
 

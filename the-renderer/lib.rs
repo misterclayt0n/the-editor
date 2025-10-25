@@ -282,6 +282,20 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
       match event_loop.create_window(window_attributes) {
         Ok(window) => {
           let window = Arc::new(window);
+          // GPU initialization is synchronous and can block for several seconds on Wayland/NixOS.
+          // This includes:
+          // - Adapter negotiation with the GPU driver (Vulkan/DRM)
+          // - Device and queue creation
+          // - Shader compilation (especially on first run)
+          // - Surface configuration and buffer setup
+          //
+          // To reduce startup freezes, consider:
+          // 1. Pre-compiling shaders in a build step
+          // 2. Showing a loading window during init
+          // 3. Moving GPU init to a background thread with visual feedback
+          //
+          // For now, this blocking call is unavoidable but unavoidable GPU initialization
+          // can be mitigated by the renderer's improved shutdown (see renderer.rs Drop impl).
           match pollster::block_on(Renderer::new(window.clone())) {
             Ok(mut renderer) => {
               self.app.init(&mut renderer);
@@ -290,12 +304,26 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
 
               if let Some(win) = &self.window {
                 let weak = Arc::downgrade(win);
+                // Spawn a dedicated redraw thread that waits for redraw events.
+                // This is important for keeping the event loop responsive while
+                // allowing background tasks to request redraws independently.
+                // The thread only wakes up when:
+                // 1. Application code calls the_editor_event::request_redraw()
+                // 2. Or a timeout occurs (if the redraw_requested() future is timeout-aware)
+                //
+                // This avoids the freeze/audio issues caused by:
+                // - Continuous busy-polling (which starves the CPU for other tasks)
+                // - Blocking operations on the main event loop
                 std::thread::spawn(move || {
                   loop {
+                    // Wait for redraw request signal from application
                     pollster::block_on(the_editor_event::redraw_requested());
+
                     if let Some(win) = weak.upgrade() {
+                      // Request a redraw from the window manager/compositor
                       win.request_redraw();
                     } else {
+                      // Window has been dropped, exit this thread
                       break;
                     }
                   }

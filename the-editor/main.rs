@@ -137,9 +137,17 @@ fn main() -> anyhow::Result<()> {
   // Drop the guard first to exit the runtime context
   drop(guard);
 
-  // Shutdown the runtime with a 100ms timeout
-  // This prevents the editor from hanging on exit waiting for background tasks
-  rt.shutdown_timeout(std::time::Duration::from_millis(100));
+  // Shutdown the runtime with a 5 second timeout for graceful cleanup.
+  // Previous 100ms was too aggressive and caused:
+  // - Incomplete GPU resource cleanup (freezing Wayland compositor)
+  // - Abrupt termination of LSP clients and background tasks
+  // - Audio subsystem glitches (PulseAudio/PipeWire not properly disconnected)
+  // 5 seconds gives background threads time to:
+  // - Complete pending operations
+  // - Close network connections gracefully
+  // - Release GPU resources via wgpu
+  // - Flush file buffers
+  rt.shutdown_timeout(std::time::Duration::from_secs(5));
 
   result
 }

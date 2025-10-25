@@ -7,13 +7,14 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Image rendering.
 - [x] Local search in buffer (https://x.com/neogoose_btw/status/1981778716721393859/photo/1).
 - [ ] End of line diagnostics.
-- [ ] Buffer line .
-- [ ] VCS .
+- [ ] Buffer line
+- [ ] VCS
   - [ ] First class jujutsu support (jujutsu will have priority over git).
   - [ ] Git blame (this will likely only support git btw).
-- [ ] Configuration:.
+- [ ] Configuration
   - [ ] Custom font loading.
-- [ ] Embed ghostty? .
+- [ ] Embed ghostty?
+- [ ] File tree
 
 When it comes to ghostty, `libghostty` is not stable as an API yet, and the correct decision would be to wait until it's stable, but sometimes the heart speaks for itself you know.
 

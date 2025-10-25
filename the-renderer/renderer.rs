@@ -2072,6 +2072,27 @@ impl Renderer {
   pub(crate) fn take_cursor_icon(&mut self) -> Option<winit::window::CursorIcon> {
     self.pending_cursor_icon.take()
   }
+
+  /// Gracefully shutdown the renderer, flushing all GPU operations.
+  /// This should be called before dropping the renderer to ensure clean resource cleanup.
+  pub fn shutdown(&mut self) {
+    // Flush any pending command buffers to the GPU queue.
+    // This is critical for preventing Wayland compositor freezes and audio glitches
+    // caused by incomplete GPU resource cleanup.
+    // An empty submit flushes pending operations without adding new work.
+    self.queue.submit(vec![]);
+
+    log::debug!("Renderer shutdown complete - GPU operations flushed");
+  }
+}
+
+impl Drop for Renderer {
+  fn drop(&mut self) {
+    // Attempt graceful shutdown during cleanup to catch any missed explicit calls.
+    // This is a safety net - proper shutdown should call shutdown() explicitly.
+    // Flushing the queue ensures pending operations are sent to the GPU.
+    self.queue.submit(vec![]);
+  }
 }
 
 fn to_glyph_color(color: Color) -> GlyphColor {

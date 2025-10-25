@@ -147,6 +147,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "R" => replace_selections_with_clipboard,
       "h" => select_references,
       "/" => global_search,
+      "l" => local_search,
     },
 
     "s"                => select_regex,

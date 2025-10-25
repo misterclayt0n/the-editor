@@ -2281,6 +2281,185 @@ pub fn global_search(cx: &mut Context) {
   }));
 }
 
+pub fn local_search(cx: &mut Context) {
+  use std::{
+    sync::Arc,
+    thread,
+  };
+
+  use crate::{
+    editor::Action,
+    ui::components::{
+      Column,
+      Picker,
+      PickerAction,
+      picker::Injector,
+    },
+  };
+
+  #[derive(Clone)]
+  struct LocalSearchResult {
+    line_num: usize,        // 0-indexed line number
+    line_text: String,      // Full line content
+    match_start: usize,     // Byte offset of match in line
+    match_end: usize,       // Byte offset of match end in line
+  }
+
+  struct LocalSearchConfig {
+    smart_case: bool,
+    document_text: Arc<Rope>,
+  }
+
+  let current_doc = doc!(cx.editor);
+  let document_text = current_doc.text().clone();
+  let doc_path = current_doc.path().cloned();
+
+  let editor_config = cx.editor.config();
+  let config = Arc::new(LocalSearchConfig {
+    smart_case: editor_config.search.smart_case,
+    document_text: Arc::new(document_text),
+  });
+
+  let columns = [Column::new(
+    "match",
+    |item: &LocalSearchResult, _config: &Arc<LocalSearchConfig>| {
+      let line_num = (item.line_num + 1).to_string();
+      let max_line_num_length: usize = 8;
+      let padding_length = max_line_num_length.saturating_sub(line_num.len());
+      let padding = " ".repeat(padding_length);
+
+      // Display: line_number: line_content
+      format!("{}{}  {}", line_num, padding, item.line_text.trim())
+    },
+  )];
+
+  let reg = cx.register.unwrap_or('/');
+  cx.editor.registers.last_search_register = reg;
+
+  let query_callback = {
+    let config = Arc::clone(&config);
+    Arc::new(
+      move |query: String, injector: Injector<LocalSearchResult, Arc<LocalSearchConfig>>| {
+        let query = query.trim().to_string();
+        if query.is_empty() {
+          return;
+        }
+
+        let config = Arc::clone(&config);
+        let injector = injector.clone();
+        let document_text = Arc::clone(&config.document_text);
+
+        thread::spawn(move || {
+          for (line_idx, line) in document_text.lines().enumerate() {
+            let line_str = line.to_string();
+
+            // Simple case-insensitive substring search for fuzzy matching
+            // nucleo will handle the actual fuzzy matching on the formatted column
+            if line_str.to_lowercase().contains(&query.to_lowercase())
+              || query.chars().all(|c| {
+                line_str.to_lowercase().contains(&c.to_lowercase().to_string())
+              })
+            {
+              // Find the match position for accurate selection
+              let match_start = line_str
+                .to_lowercase()
+                .find(&query.to_lowercase())
+                .unwrap_or(0);
+              let match_end = (match_start + query.len()).min(line_str.len());
+
+              let result = LocalSearchResult {
+                line_num: line_idx,
+                line_text: line_str,
+                match_start,
+                match_end,
+              };
+
+              if injector.push(result).is_err() {
+                break; // Picker was closed or reset
+              }
+            }
+          }
+        });
+      },
+    )
+  };
+
+  let action_handler = Arc::new(
+    move |item: &LocalSearchResult,
+          _config: &Arc<LocalSearchConfig>,
+          picker_action: PickerAction|
+          -> bool {
+      let line_num = item.line_num;
+      let match_start_byte = item.match_start;
+      let match_end_byte = item.match_end;
+      let action = match picker_action {
+        PickerAction::Primary => Action::Replace,
+        PickerAction::Secondary => Action::HorizontalSplit,
+        PickerAction::Tertiary => Action::VerticalSplit,
+      };
+
+      crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+        let view_id = editor.tree.focus;
+        let doc_id = editor.tree.get(view_id).doc;
+        if let Some(doc) = editor.documents.get_mut(&doc_id) {
+          let text = doc.text();
+          if line_num < text.len_lines() {
+            // Convert byte offsets to char positions
+            let line_start_char = text.line_to_char(line_num);
+            let line_text = text.line(line_num);
+            let line_str = line_text.to_string();
+
+            // Convert byte offsets to char offsets
+            let match_start_char = line_start_char
+              + line_str[..match_start_byte.min(line_str.len())]
+                .chars()
+                .count();
+            let match_end_char = line_start_char
+              + line_str[..match_end_byte.min(line_str.len())]
+                .chars()
+                .count();
+
+            let view_id = editor.tree.focus;
+            let view = editor.tree.get_mut(view_id);
+            doc.set_selection(view.id, Selection::single(match_start_char, match_end_char));
+
+            if action.align_view(view, doc.id()) {
+              align_view(doc, view, Align::Center);
+            }
+          }
+        }
+      });
+
+      true // Close picker after selection
+    },
+  );
+
+  let picker = Picker::new(
+    columns,
+    0,
+    Vec::<LocalSearchResult>::new(),
+    Arc::clone(&config),
+    |_| {},
+  )
+  .with_action_handler(action_handler)
+  .with_preview(move |item: &LocalSearchResult| {
+    // Preview shows the current document with the matched line highlighted
+    doc_path.as_ref().map(|path| {
+      // Return the document path and the matched line range (0-indexed)
+      (path.clone(), Some((item.line_num, item.line_num)))
+    })
+  })
+  .with_history_register(reg, |item: &LocalSearchResult, _config: &Arc<LocalSearchConfig>| {
+    format!("{}  {}", item.line_num + 1, item.line_text.trim())
+  })
+  .with_dynamic_query(query_callback)
+  .with_debounce(275);
+
+  cx.callback.push(Box::new(move |compositor, _cx| {
+    compositor.push(Box::new(picker));
+  }));
+}
+
 pub fn file_picker_in_current_directory(cx: &mut Context) {
   let cwd = the_editor_stdx::env::current_working_dir();
   if !cwd.exists() {

@@ -5,7 +5,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Full ACP integration (tho I'm not sure what that means yet).
   - [ ] Remove ACP gutter (no reason for it to exist).
 - [ ] Image rendering.
-- [ ] Local search in buffer (https://x.com/neogoose_btw/status/1981778716721393859/photo/1).
+- [x] Local search in buffer (https://x.com/neogoose_btw/status/1981778716721393859/photo/1).
 - [ ] End of line diagnostics.
 - [ ] Buffer line .
 - [ ] VCS .

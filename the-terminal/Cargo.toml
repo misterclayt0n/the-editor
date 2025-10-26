@@ -1,0 +1,15 @@
+[package]
+name = "the-terminal"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[build-dependencies]
+# We'll use a build script to compile the Zig ghostty-vt module

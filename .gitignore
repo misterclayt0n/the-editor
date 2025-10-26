@@ -1,3 +1,13 @@
+# Rust build artifacts
 /target
+Cargo.lock
+
+# Nix build artifacts
 result*
+
+# Editor runtime files
 runtime/grammars
+
+# Zig build artifacts (Zig crates only)
+.zig-cache/
+zig-out/

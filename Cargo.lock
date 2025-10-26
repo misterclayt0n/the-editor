@@ -3851,6 +3851,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "the-terminal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "tempfile",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -20,6 +20,7 @@ use crate::{
     KeyBinding,
     Keymaps,
   },
+  terminal_manager::TerminalManager,
   ui::{
     components::{
       button::Button,
@@ -37,10 +38,11 @@ use crate::{
 };
 
 pub struct App {
-  pub compositor:    Compositor,
-  pub editor:        Editor,
-  pub jobs:          Jobs,
-  pub input_handler: InputHandler,
+  pub compositor:       Compositor,
+  pub editor:           Editor,
+  pub jobs:             Jobs,
+  pub input_handler:    InputHandler,
+  pub terminal_manager: TerminalManager,
 
   // GlobalConfig pointer for runtime updates
   pub config_ptr: std::sync::Arc<arc_swap::ArcSwap<crate::core::config::Config>>,
@@ -140,6 +142,7 @@ impl App {
       config_ptr,
       jobs: Jobs::new(),
       input_handler: InputHandler::new(mode),
+      terminal_manager: TerminalManager::new(),
       local_set,
       runtime_handle,
       smooth_scroll_enabled: conf.smooth_scroll_enabled,
@@ -450,6 +453,11 @@ impl Application for App {
     // happening when polling on every single frame
     self.poll_local_set_minimal();
 
+    // Handle pending actions from the editor (e.g., spawn terminal)
+    if let Some(action) = self.editor.pending_action.take() {
+      self.handle_pending_action(action);
+    }
+
     // Process any pending config events
     while let Some(config_event) = self.editor.try_poll_config_event() {
       self.handle_config_events(config_event);
@@ -736,6 +744,30 @@ impl Application for App {
 }
 
 impl App {
+  fn handle_pending_action(&mut self, action: crate::editor::Action) {
+    use crate::editor::Action;
+    use crate::ui::components::TerminalView;
+
+    match action {
+      Action::SpawnTerminal => {
+        // Spawn terminal with default dimensions
+        match TerminalView::new(80, 24, None, self.terminal_manager.count() as u32) {
+          Ok(terminal) => {
+            // Add terminal to compositor
+            self.compositor.push(Box::new(terminal));
+            self.editor.set_status("Terminal spawned (Ctrl+Shift+T spawns another)");
+          },
+          Err(e) => {
+            self.editor.set_error(format!("Failed to spawn terminal: {}", e));
+          },
+        }
+      },
+      _ => {
+        // Other actions not yet implemented
+      },
+    }
+  }
+
   fn handle_scroll(&mut self, delta: ScrollDelta, renderer: &mut Renderer) {
     match delta {
       // Mouse wheel: discrete line-based scrolling

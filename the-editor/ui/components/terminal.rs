@@ -158,7 +158,7 @@ impl TerminalView {
           b"\t".to_vec()
         }
       }
-      Key::Backspace => b"\x08".to_vec(),
+      Key::Backspace => b"\x7f".to_vec(),
       Key::Delete => b"\x1b[3~".to_vec(),
       Key::Enter => b"\r".to_vec(),
       Key::Escape => b"\x1b".to_vec(),
@@ -247,11 +247,16 @@ impl Component for TerminalView {
           let x = area.x as f32 + (col as f32 * cell_width);
           let y = area.y as f32 + (row as f32 * cell_height);
 
+          // Extract basic style from cell
+          // The style field contains the style_id (0 = default style)
+          // For basic terminal functionality, render all text in white
+          // TODO: Look up style from style map and apply colors, bold, italic, etc.
+          let fg_color = Color::WHITE;
+
           // Build text segment for the character
-          let segment = TextSegment::new(ch.to_string()).with_color(Color::WHITE);
+          let segment = TextSegment::new(ch.to_string()).with_color(fg_color);
           let section = TextSection::new(x, y).add_text(segment);
 
-          // TODO: Extract style from cell (colors, bold, etc.) and apply
           surface.draw_text_immediate(section);
         }
       }

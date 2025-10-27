@@ -144,9 +144,9 @@ export fn ghostty_terminal_get_cell(term: ?*const GhosttyTerminal, pt: CPoint) C
         const actual_cell = cell.cell;
         return CCell{
             .codepoint = actual_cell.content.codepoint,
-            .cluster = 0, // Not exposed in page.Cell
-            .style = 0,    // Not exposed in page.Cell
-            .hyperlink_id = 0,  // Not exposed in page.Cell
+            .cluster = 0, // Not directly exposed
+            .style = actual_cell.style_id,    // Style ID from the cell
+            .hyperlink_id = if (actual_cell.hyperlink) actual_cell.hyperlink_id else 0,
         };
     }
 

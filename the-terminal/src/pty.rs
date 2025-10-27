@@ -111,6 +111,10 @@ impl PtySession {
             log::error!("PTY write error: {}", e);
             break;
           }
+          if let Err(e) = writer.flush().await {
+            log::error!("PTY flush error: {}", e);
+            break;
+          }
         }
       });
     }

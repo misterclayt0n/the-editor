@@ -394,6 +394,9 @@ pub struct Editor {
 
   /// Fade mode state for highlighting code context
   pub fade_mode: FadeMode,
+
+  /// Pending action to be executed by the App
+  pub pending_action: Option<Action>,
 }
 
 /// State for the context-aware code fading feature
@@ -423,6 +426,7 @@ pub enum Action {
   Replace,
   HorizontalSplit,
   VerticalSplit,
+  SpawnTerminal,
 }
 
 impl Action {
@@ -1887,6 +1891,7 @@ impl Editor {
       font_size_override: None,
       noop_effect_pending: false,
       fade_mode: FadeMode::default(),
+      pending_action: None,
     };
 
     let scopes = editor.theme.scopes().to_vec();
@@ -2464,6 +2469,10 @@ impl Editor {
     }
 
     let focust_lost = match action {
+      Action::SpawnTerminal => {
+        // SpawnTerminal doesn't switch documents, just return without focus lost
+        return;
+      },
       Action::Replace => {
         let (view, doc) = current_ref!(self);
         // If the current view is an empty scratch buffer and is not displayed in any

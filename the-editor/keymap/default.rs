@@ -148,6 +148,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "h" => select_references,
       "/" => global_search,
       "l" => local_search,
+      "t" => spawn_terminal,
     },
 
     "s"                => select_regex,

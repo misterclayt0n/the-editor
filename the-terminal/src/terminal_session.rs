@@ -67,15 +67,9 @@ impl TerminalSession {
   /// This should be called frequently, typically once per frame.
   pub fn update(&mut self) {
     while let Some(data) = self.pty.try_recv_output() {
-      // Convert bytes to string, handling UTF-8 errors gracefully
-      match String::from_utf8_lossy(&data) {
-        std::borrow::Cow::Borrowed(s) => {
-          let _ = self.terminal.print_string(s);
-        }
-        std::borrow::Cow::Owned(s) => {
-          let _ = self.terminal.print_string(&s);
-        }
-      }
+      // Write raw bytes directly to the terminal
+      // The terminal's Stream parser will handle VT100/ANSI escape sequences
+      let _ = self.terminal.write(&data);
     }
   }
 

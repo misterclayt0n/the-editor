@@ -33,9 +33,34 @@ impl Terminal {
         Ok(Self { inner })
     }
 
-    /// Write a UTF-8 string to the terminal.
+    /// Write raw bytes to the terminal, parsing VT100/ANSI escape sequences.
     ///
-    /// The string will be processed as VT escape sequences and regular text.
+    /// This is the correct method to use for PTY output. It will parse
+    /// escape sequences (colors, cursor movement, etc.) and update the
+    /// terminal state accordingly.
+    ///
+    /// # Arguments
+    /// * `data` - Raw bytes from PTY (may contain escape sequences)
+    ///
+    /// # Errors
+    /// Returns an error if the write fails.
+    pub fn write(&mut self, data: &[u8]) -> anyhow::Result<()> {
+        let success = unsafe {
+            ffi::ghostty_terminal_write(self.inner, data.as_ptr(), data.len())
+        };
+
+        if !success {
+            return Err(anyhow::anyhow!("Failed to write to terminal"));
+        }
+
+        Ok(())
+    }
+
+    /// Write a UTF-8 string to the terminal WITHOUT parsing escape sequences.
+    ///
+    /// DEPRECATED: Use `write()` for PTY output.
+    /// This function only renders literal text and should not be used
+    /// for PTY output as it will display escape sequences as literal characters.
     ///
     /// # Arguments
     /// * `s` - UTF-8 string to write

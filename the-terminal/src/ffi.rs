@@ -47,10 +47,17 @@ unsafe extern "C" {
     /// Free a terminal instance.
     pub fn ghostty_terminal_free(term: *mut GhosttyTerminal);
 
-    /// Print a UTF-8 string to the terminal.
+    /// Print a UTF-8 string to the terminal WITHOUT parsing escape sequences.
     ///
-    /// The string will be processed as VT escape sequences and regular characters.
+    /// DEPRECATED: Use ghostty_terminal_write for PTY output.
+    /// This function only renders literal text.
     pub fn ghostty_terminal_print_string(term: *mut GhosttyTerminal, s: *const u8, len: usize) -> bool;
+
+    /// Write raw bytes to the terminal, parsing VT100/ANSI escape sequences.
+    ///
+    /// This is the correct function to use for PTY output. It will parse
+    /// escape sequences and update the terminal state accordingly.
+    pub fn ghostty_terminal_write(term: *mut GhosttyTerminal, data: *const u8, len: usize) -> bool;
 
     /// Get the width (columns) of the terminal.
     pub fn ghostty_terminal_cols(term: *const GhosttyTerminal) -> c_uint;

@@ -245,8 +245,13 @@ impl Component for TerminalView {
     let (term_rows, term_cols) = (grid.rows(), grid.cols());
 
     // Render grid cells
-    for row in 0..term_rows.min(area.height) {
-      for col in 0..term_cols.min(area.width) {
+    // Clamp rendering to the calculated dimensions to avoid overflow
+    // if the terminal hasn't resized yet
+    let render_rows = term_rows.min(new_rows);
+    let render_cols = term_cols.min(new_cols);
+
+    for row in 0..render_rows {
+      for col in 0..render_cols {
         let cell = grid.get(row, col);
 
         // Get character to render

@@ -61,6 +61,13 @@ impl PtySession {
 
     // Spawn shell process attached to PTY
     let mut cmd = PtyCommand::new(&shell_path);
+
+    // Set terminal environment variables so the shell knows it's in a proper terminal
+    // TERM tells programs what terminal capabilities are available
+    cmd.env("TERM", "xterm-256color");
+    // COLORTERM indicates true color (24-bit) support
+    cmd.env("COLORTERM", "truecolor");
+
     let child = cmd.spawn(&pty.pts()?)?;
 
     // Create channels for I/O

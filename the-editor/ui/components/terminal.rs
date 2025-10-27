@@ -205,23 +205,14 @@ impl Component for TerminalView {
 
         EventResult::Consumed(None)
       }
-      Event::Resize(cols, rows) => {
-        // Resize the terminal
-        if let Err(e) = self.session.borrow_mut().resize(*rows, *cols) {
-          log::error!("Failed to resize terminal: {}", e);
-        }
-        self.last_cols = *cols;
-        self.last_rows = *rows;
-        self.dirty = true;
-        EventResult::Consumed(None)
-      }
       _ => EventResult::Ignored(None),
     }
   }
 
   fn should_update(&self) -> bool {
-    // Always redraw if marked dirty, or if shell is producing output
-    self.dirty || !self.is_alive()
+    // Always redraw while the shell is alive (PTY output may arrive at any time)
+    // This ensures we continuously poll for output and render it
+    self.is_alive() || self.dirty
   }
 
   fn render(&mut self, area: Rect, surface: &mut Surface, _ctx: &mut Context) {
@@ -229,13 +220,29 @@ impl Component for TerminalView {
     self.session.borrow_mut().update();
     self.dirty = false;
 
-    let session_borrow = self.session.borrow();
-    let grid = session_borrow.terminal().grid();
-    let (term_rows, term_cols) = (grid.rows(), grid.cols());
-
     // Get font metrics from renderer
     let cell_width = surface.cell_width();
     let cell_height = surface.cell_height();
+
+    // Calculate terminal dimensions based on available area
+    let new_cols = (area.width as f32 / cell_width).floor() as u16;
+    let new_rows = (area.height as f32 / cell_height).floor() as u16;
+
+    // Resize terminal if dimensions changed
+    if new_cols != self.last_cols || new_rows != self.last_rows {
+      if new_cols > 0 && new_rows > 0 {
+        if let Err(e) = self.session.borrow_mut().resize(new_rows, new_cols) {
+          log::error!("Failed to resize terminal: {}", e);
+        } else {
+          self.last_cols = new_cols;
+          self.last_rows = new_rows;
+        }
+      }
+    }
+
+    let session_borrow = self.session.borrow();
+    let grid = session_borrow.terminal().grid();
+    let (term_rows, term_cols) = (grid.rows(), grid.cols());
 
     // Render grid cells
     for row in 0..term_rows.min(area.height) {
@@ -288,8 +295,9 @@ impl Component for TerminalView {
   }
 
   fn required_size(&mut self, _viewport: (u16, u16)) -> Option<(u16, u16)> {
-    let (cols, rows) = self.size();
-    Some((cols, rows))
+    // Return None to indicate we can fill any size
+    // The terminal will dynamically resize based on the area given in render()
+    None
   }
 
   fn type_name(&self) -> &'static str {

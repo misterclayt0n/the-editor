@@ -91,6 +91,26 @@ impl Terminal {
         (pos.row as u16, pos.col as u16)
     }
 
+    /// Resize the terminal to new dimensions.
+    ///
+    /// # Arguments
+    /// * `cols` - New width in columns
+    /// * `rows` - New height in rows
+    ///
+    /// # Errors
+    /// Returns an error if the resize operation fails.
+    pub fn resize(&mut self, cols: u16, rows: u16) -> anyhow::Result<()> {
+        let success = unsafe {
+            ffi::ghostty_terminal_resize(self.inner, cols as u32, rows as u32)
+        };
+
+        if !success {
+            return Err(anyhow::anyhow!("Failed to resize terminal"));
+        }
+
+        Ok(())
+    }
+
     /// Get a view of the entire terminal grid.
     pub fn grid(&self) -> Grid<'_> {
         Grid {

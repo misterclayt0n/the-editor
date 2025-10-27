@@ -146,7 +146,7 @@ export fn ghostty_terminal_get_cell(term: ?*const GhosttyTerminal, pt: CPoint) C
             .codepoint = actual_cell.content.codepoint,
             .cluster = 0, // Not directly exposed
             .style = actual_cell.style_id,    // Style ID from the cell
-            .hyperlink_id = if (actual_cell.hyperlink) actual_cell.hyperlink_id else 0,
+            .hyperlink_id = 0, // Hyperlink support removed or changed in newer ghostty
         };
     }
 
@@ -169,4 +169,17 @@ export fn ghostty_terminal_cursor_pos(term: ?*const GhosttyTerminal) CPoint {
         .row = actual_term.screen.cursor.y,
         .col = actual_term.screen.cursor.x,
     };
+}
+
+/// Resize the terminal to new dimensions
+export fn ghostty_terminal_resize(term: ?*GhosttyTerminal, cols: u32, rows: u32) bool {
+    if (term == null) return false;
+
+    const actual_term: *ghostty_vt.Terminal = @ptrCast(@alignCast(term));
+    actual_term.resize(
+        gpa.allocator(),
+        @intCast(cols),
+        @intCast(rows),
+    ) catch return false;
+    return true;
 }

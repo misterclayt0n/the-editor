@@ -69,6 +69,11 @@ unsafe extern "C" {
 
     /// Get the current cursor position.
     pub fn ghostty_terminal_cursor_pos(term: *const GhosttyTerminal) -> GhosttyPoint;
+
+    /// Resize the terminal to new dimensions.
+    ///
+    /// Returns true on success, false on failure.
+    pub fn ghostty_terminal_resize(term: *mut GhosttyTerminal, cols: c_uint, rows: c_uint) -> bool;
 }
 
 #[cfg(test)]

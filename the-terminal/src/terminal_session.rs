@@ -116,17 +116,12 @@ impl TerminalSession {
   ///
   /// This updates both the Terminal emulation size and the PTY size,
   /// sending SIGWINCH to the shell process.
-  ///
-  /// # Note
-  /// The Terminal struct does not yet support resizing.
-  /// Once `ghostty_terminal_resize()` is implemented in the FFI wrapper,
-  /// this method can fully resize the terminal state.
   pub fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
+    // Resize Terminal emulation
+    self.terminal.resize(cols, rows)?;
+
     // Resize PTY (sends SIGWINCH to shell)
     self.pty.resize(rows, cols)?;
-
-    // TODO: Resize Terminal once FFI wrapper supports it
-    // self.terminal.resize(cols, rows)?;
 
     Ok(())
   }

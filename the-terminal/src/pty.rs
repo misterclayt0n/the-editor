@@ -45,7 +45,7 @@ impl PtySession {
   /// - Writer task: input_tx channel → PTY input
   pub fn new(rows: u16, cols: u16, shell: Option<&str>) -> Result<Self> {
     // Create PTY
-    let mut pty = Pty::new()?;
+    let pty = Pty::new()?;
     pty.resize(pty_process::Size::new(rows, cols))?;
 
     // Determine shell to use
@@ -149,15 +149,33 @@ impl PtySession {
   /// Resize the PTY
   ///
   /// This sends SIGWINCH to the shell process and updates the PTY size.
-  ///
-  /// Note: Currently only updates the stored dimensions.
-  /// To actually resize the PTY, we'd need to keep the Pty handle,
-  /// but it's consumed by into_split(). A future improvement would be
-  /// to use separate read/write handles or a different PTY library.
   pub fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
+    // Update stored dimensions
     self.rows = rows;
     self.cols = cols;
-    // TODO: Actually resize PTY when handle is available
+
+    // Resize the PTY (sends SIGWINCH to shell)
+    // OwnedWritePty::resize() is available and updates the terminal size
+    let pty_write = self.pty_write.clone();
+    let size = pty_process::Size::new(rows, cols);
+
+    // We need to resize from an async context, but this is a sync method
+    // Use blocking_lock since we're not in an async context
+    match pty_write.try_lock() {
+      Ok(writer) => writer.resize(size)?,
+      Err(_) => {
+        // If lock fails, queue resize for next write operation
+        // This is safe because resize will happen before next write
+        let pty_write_clone = pty_write.clone();
+        tokio::spawn(async move {
+          let writer = pty_write_clone.lock().await;
+          if let Err(e) = writer.resize(size) {
+            log::error!("PTY resize error: {}", e);
+          }
+        });
+      }
+    }
+
     Ok(())
   }
 

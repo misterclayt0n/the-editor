@@ -35,6 +35,7 @@ mod input;
 pub mod keymap;
 mod lsp;
 mod snippets;
+mod terminal_manager;
 mod ui;
 
 fn main() -> anyhow::Result<()> {

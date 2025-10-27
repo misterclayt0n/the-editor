@@ -7,6 +7,7 @@ pub mod popup;
 pub mod prompt;
 pub mod signature_help;
 pub mod statusline;
+pub mod terminal;
 
 // Completion, SignatureHelp, Hover, and CodeActionMenu are used internally by
 // the editor
@@ -19,3 +20,4 @@ pub use picker::{
 };
 pub use prompt::Prompt;
 pub(crate) use signature_help::SignatureHelp;
+pub use terminal::TerminalView;

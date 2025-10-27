@@ -7,6 +7,8 @@ version.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 log = { workspace = true }
+pty-process = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

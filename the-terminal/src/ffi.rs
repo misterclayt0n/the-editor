@@ -3,7 +3,7 @@
 //! These are the raw C function declarations from libghostty-vt.
 //! They are unsafe and should be wrapped by safe types in the terminal module.
 
-use std::ffi::c_uint;
+use std::ffi::{c_uint, c_void};
 
 /// Opaque terminal structure from libghostty
 #[repr(C)]
@@ -36,6 +36,12 @@ pub struct GhosttyPoint {
     pub row: i32,
     pub col: i32,
 }
+
+/// Callback function type for terminal responses
+///
+/// This callback is invoked when the terminal needs to send data back to the PTY,
+/// such as cursor position reports or other terminal queries.
+pub type ResponseCallback = extern "C" fn(ctx: *mut c_void, data: *const u8, len: usize);
 
 unsafe extern "C" {
     /// Initialize a new terminal with the given options.
@@ -81,6 +87,17 @@ unsafe extern "C" {
     ///
     /// Returns true on success, false on failure.
     pub fn ghostty_terminal_resize(term: *mut GhosttyTerminal, cols: c_uint, rows: c_uint) -> bool;
+
+    /// Set the callback for terminal responses.
+    ///
+    /// This enables bidirectional communication between the terminal and PTY.
+    /// The callback will be invoked when the terminal needs to send responses
+    /// (e.g., cursor position reports, color queries).
+    pub fn ghostty_terminal_set_callback(
+        term: *mut GhosttyTerminal,
+        callback: ResponseCallback,
+        ctx: *mut c_void,
+    );
 }
 
 #[cfg(test)]

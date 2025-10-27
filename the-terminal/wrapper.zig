@@ -32,6 +32,11 @@ pub const GhosttyTerminal = extern struct {
     _: [8]u8,
 };
 
+// Callback function type for sending responses back to the PTY
+// This is called when the terminal needs to send data back to the shell
+// (e.g., cursor position reports, color queries, etc.)
+pub const ResponseCallback = *const fn (ctx: ?*anyopaque, data: [*]const u8, len: usize) callconv(.c) void;
+
 // Minimal stream handler that forwards Stream callbacks to Terminal
 // The Stream parser uses @hasDecl to check which methods exist, so we implement
 // all the critical VT100/ANSI handlers needed for a functional terminal.
@@ -40,6 +45,15 @@ pub const GhosttyTerminal = extern struct {
 // to Terminal's methods (e.g., cursorUp), similar to Ghostty's StreamHandler.
 const MinimalHandler = struct {
     terminal: *ghostty_vt.Terminal,
+    callback: ?ResponseCallback,   // Direct callback field
+    callback_ctx: ?*anyopaque,     // Direct context field
+
+    /// Send a response back to the PTY (e.g., cursor position report)
+    inline fn writeResponse(self: *MinimalHandler, data: []const u8) void {
+        if (self.callback) |cb| {
+            cb(self.callback_ctx, data.ptr, data.len);
+        }
+    }
 
     // ===== Printable Characters =====
 
@@ -278,6 +292,54 @@ const MinimalHandler = struct {
     pub inline fn setProtectedMode(self: *MinimalHandler, mode: ghostty_vt.ProtectedMode) !void {
         self.terminal.setProtectedMode(mode);
     }
+
+    // ===== Device Status Report (CRITICAL - prevents shell freezes) =====
+
+    pub fn deviceStatusReport(
+        self: *MinimalHandler,
+        req: ghostty_vt.device_status.Request,
+    ) !void {
+        switch (req) {
+            .operating_status => {
+                // Report terminal is OK (0n = no malfunction)
+                self.writeResponse("\x1B[0n");
+            },
+            .cursor_position => {
+                // Report cursor position as ESC[{row};{col}R
+                // This is CRITICAL - shells send ESC[6n and wait for this response
+                const pos = self.terminal.screen.cursor;
+                var buf: [32]u8 = undefined;
+                const resp = std.fmt.bufPrint(&buf, "\x1B[{d};{d}R", .{
+                    pos.y + 1, // VT100 uses 1-indexed positions
+                    pos.x + 1,
+                }) catch return;
+                self.writeResponse(resp);
+            },
+            else => {
+                // Ignore other DSR requests for now
+            },
+        }
+    }
+
+    // ===== OSC Handlers (prevent warnings) =====
+
+    pub fn changeWindowTitle(self: *MinimalHandler, title: []const u8) !void {
+        // Store title if needed, but for now just prevent the warning
+        _ = self;
+        _ = title;
+    }
+
+    pub fn reportPwd(self: *MinimalHandler, url: []const u8) !void {
+        // Could parse and store pwd for later use, but for now just prevent warning
+        _ = self;
+        _ = url;
+    }
+
+    pub fn endOfCommand(self: *MinimalHandler, exit_code: ?u8) !void {
+        // Shell integration - record command exit status
+        _ = self;
+        _ = exit_code;
+    }
 };
 
 // Internal wrapper that combines Terminal with its Stream parser
@@ -325,7 +387,12 @@ export fn ghostty_terminal_new(opts: *const CTerminalOptions) ?*GhosttyTerminal 
     errdefer wrapper.terminal.deinit(gpa.allocator());
 
     // Initialize the handler that wraps the terminal
-    wrapper.handler = MinimalHandler{ .terminal = &wrapper.terminal };
+    // Callback fields are null initially, will be set via ghostty_terminal_set_callback
+    wrapper.handler = MinimalHandler{
+        .terminal = &wrapper.terminal,
+        .callback = null,
+        .callback_ctx = null,
+    };
 
     // Initialize the stream with our handler
     wrapper.stream = ghostty_vt.Stream(*MinimalHandler).init(&wrapper.handler);
@@ -460,4 +527,21 @@ export fn ghostty_terminal_resize(term: ?*GhosttyTerminal, cols: u32, rows: u32)
         @intCast(rows),
     ) catch return false;
     return true;
+}
+
+/// Set the callback for terminal responses (e.g., cursor position reports)
+///
+/// This must be called after ghostty_terminal_new() to enable bidirectional communication.
+/// The callback will be invoked whenever the terminal needs to send data back to the PTY.
+export fn ghostty_terminal_set_callback(
+    term: ?*GhosttyTerminal,
+    callback: ResponseCallback,
+    ctx: ?*anyopaque,
+) void {
+    if (term == null) return;
+
+    const wrapper: *TerminalWrapper = @ptrCast(@alignCast(term));
+    // Set callback fields directly on the handler
+    wrapper.handler.callback = callback;
+    wrapper.handler.callback_ctx = ctx;
 }

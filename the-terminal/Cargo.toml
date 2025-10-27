@@ -6,6 +6,7 @@ version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+crossbeam = { workspace = true }
 log = { workspace = true }
 pty-process = { workspace = true }
 tokio = { workspace = true }

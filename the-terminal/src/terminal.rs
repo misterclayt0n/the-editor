@@ -1,7 +1,9 @@
 //! Safe Rust wrapper around libghostty-vt terminal emulation.
 
+use std::ffi::c_void;
+
 use crate::ffi::{
-    self, GhosttyPoint, GhosttyTerminal, GhosttyTerminalOptions,
+    self, GhosttyPoint, GhosttyTerminal, GhosttyTerminalOptions, ResponseCallback,
 };
 
 /// A safe wrapper around a ghostty terminal instance.
@@ -142,6 +144,20 @@ impl Terminal {
             terminal: self,
             rows: self.rows(),
             cols: self.cols(),
+        }
+    }
+
+    /// Set a callback for terminal responses (e.g., cursor position reports).
+    ///
+    /// This enables bidirectional communication: the terminal can send responses
+    /// back to the PTY when it receives queries from the shell.
+    ///
+    /// # Safety
+    /// The callback must be thread-safe and must not call back into the Terminal.
+    /// The context pointer will be passed to the callback on every invocation.
+    pub unsafe fn set_response_callback_raw(&mut self, callback: ResponseCallback, ctx: *mut c_void) {
+        unsafe {
+            ffi::ghostty_terminal_set_callback(self.inner, callback, ctx);
         }
     }
 }

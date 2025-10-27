@@ -836,7 +836,6 @@ impl CommandRegistry {
       },
     ));
 
-    
     self.register(TypableCommand::new(
       "config-open",
       &[],
@@ -848,7 +847,7 @@ impl CommandRegistry {
         ..Signature::DEFAULT
       },
     ));
-    
+
     self.register(TypableCommand::new(
       "config-open-workspace",
       &[],
@@ -860,7 +859,7 @@ impl CommandRegistry {
         ..Signature::DEFAULT
       },
     ));
-    
+
     self.register(TypableCommand::new(
       "config-reload",
       &[],
@@ -2444,7 +2443,8 @@ fn config_open(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> 
   }
 
   let config_path = crate::editor::Editor::config_file_path();
-  cx.editor.open(&config_path, crate::editor::Action::Replace)?;
+  cx.editor
+    .open(&config_path, crate::editor::Action::Replace)?;
   Ok(())
 }
 
@@ -2454,7 +2454,8 @@ fn config_open_workspace(cx: &mut Context, _args: Args, event: PromptEvent) -> R
   }
 
   let config_path = crate::editor::Editor::workspace_config_file_path();
-  cx.editor.open(&config_path, crate::editor::Action::Replace)?;
+  cx.editor
+    .open(&config_path, crate::editor::Action::Replace)?;
   Ok(())
 }
 
@@ -2465,7 +2466,10 @@ fn config_reload(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()
 
   // Send a refresh event to reload configuration from disk
   // The application will handle loading the config and updating all components
-  cx.editor.config_events.0.send(crate::editor::ConfigEvent::Refresh)?;
+  cx.editor
+    .config_events
+    .0
+    .send(crate::editor::ConfigEvent::Refresh)?;
   Ok(())
 }
 

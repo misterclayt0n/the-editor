@@ -9,6 +9,10 @@
 const std = @import("std");
 const ghostty_vt = @import("ghostty-vt");
 
+pub const std_options = std.Options{
+    .log_level = .warn,
+};
+
 // Type definitions for C compatibility
 pub const CPoint = extern struct {
     row: i32,
@@ -26,6 +30,36 @@ pub const CTerminalOptions = extern struct {
     cols: u32,
     rows: u32,
 };
+
+pub const CColor = extern struct {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+    is_set: bool,
+};
+
+pub const CCellExt = extern struct {
+    codepoint: u32,
+    cluster: u32,
+    style: u64,
+    hyperlink_id: u32,
+    fg: CColor,
+    bg: CColor,
+    underline: CColor,
+    flags: u32,
+    width: u8,
+};
+
+fn makeColor(rgb: ghostty_vt.color.RGB, is_set: bool) CColor {
+    return CColor{
+        .r = rgb.r,
+        .g = rgb.g,
+        .b = rgb.b,
+        .a = 255,
+        .is_set = is_set,
+    };
+}
 
 // Opaque type for FFI - use a larger type to ensure proper alignment
 pub const GhosttyTerminal = extern struct {
@@ -335,6 +369,35 @@ const MinimalHandler = struct {
         _ = url;
     }
 
+    pub fn promptStart(self: *MinimalHandler, aid: ?[]const u8, redraw: bool) !void {
+        _ = aid;
+        self.terminal.markSemanticPrompt(.prompt);
+        self.terminal.flags.shell_redraws_prompt = redraw;
+    }
+
+    pub fn promptContinuation(self: *MinimalHandler, aid: ?[]const u8) !void {
+        _ = aid;
+        self.terminal.markSemanticPrompt(.prompt_continuation);
+    }
+
+    pub fn promptEnd(self: *MinimalHandler) !void {
+        self.terminal.markSemanticPrompt(.input);
+    }
+
+    pub fn endOfInput(self: *MinimalHandler) !void {
+        self.terminal.markSemanticPrompt(.command);
+    }
+
+    pub fn startHyperlink(self: *MinimalHandler, uri: []const u8, id: ?[]const u8) !void {
+        _ = self;
+        _ = uri;
+        _ = id;
+    }
+
+    pub fn endHyperlink(self: *MinimalHandler) !void {
+        _ = self;
+    }
+
     pub fn endOfCommand(self: *MinimalHandler, exit_code: ?u8) !void {
         // Shell integration - record command exit status
         _ = self;
@@ -501,6 +564,111 @@ export fn ghostty_terminal_get_cell(term: ?*const GhosttyTerminal, pt: CPoint) C
         .style = 0,
         .hyperlink_id = 0,
     };
+}
+
+/// Extended cell information including resolved colors and attributes
+export fn ghostty_terminal_get_cell_ext(
+    term: ?*const GhosttyTerminal,
+    pt: CPoint,
+    out_cell: *CCellExt,
+) bool {
+    if (term == null) {
+        out_cell.* = CCellExt{
+            .codepoint = 0,
+            .cluster = 0,
+            .style = 0,
+            .hyperlink_id = 0,
+            .fg = makeColor(.{}, false),
+            .bg = makeColor(.{}, false),
+            .underline = makeColor(.{}, false),
+            .flags = 0,
+            .width = 1,
+        };
+        return false;
+    }
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+    const point: ghostty_vt.Point = .{
+        .viewport = .{
+            .x = @intCast(pt.col),
+            .y = @intCast(pt.row),
+        },
+    };
+
+    if (wrapper.terminal.screen.pages.getCell(point)) |cell| {
+        const page_ptr: *const ghostty_vt.Page = &cell.node.data;
+        const actual_cell = cell.cell;
+
+        var style_value: ghostty_vt.Style = .{};
+        if (actual_cell.style_id != 0) {
+            style_value = page_ptr.styles.get(page_ptr.memory, actual_cell.style_id).*;
+        }
+
+        const palette = &wrapper.terminal.color_palette.colors;
+        const default_fg = palette[@intFromEnum(ghostty_vt.color.Name.white)];
+        const default_bg = palette[@intFromEnum(ghostty_vt.color.Name.black)];
+
+        var fg_rgb = style_value.fg(.{
+            .default = default_fg,
+            .palette = palette,
+            .bold = null,
+        });
+        var bg_rgb = style_value.bg(actual_cell, palette) orelse default_bg;
+
+        if (style_value.flags.inverse or wrapper.terminal.modes.get(.reverse_colors)) {
+            const tmp = fg_rgb;
+            fg_rgb = bg_rgb;
+            bg_rgb = tmp;
+        }
+
+        const underline_rgb = style_value.underlineColor(palette);
+
+        var flags: u32 = 0;
+        if (style_value.flags.bold) flags |= 1 << 0;
+        if (style_value.flags.italic) flags |= 1 << 1;
+        if (style_value.flags.faint) flags |= 1 << 2;
+        if (style_value.flags.inverse) flags |= 1 << 3;
+        if (style_value.flags.blink) flags |= 1 << 4;
+        if (style_value.flags.strikethrough) flags |= 1 << 5;
+        if (style_value.flags.overline) flags |= 1 << 6;
+        if (style_value.flags.underline != .none) flags |= 1 << 7;
+
+        var underline_color = makeColor(.{}, false);
+        if (underline_rgb) |u| {
+            underline_color = makeColor(u, true);
+        }
+
+        const width: u8 = switch (actual_cell.wide) {
+            .wide => 2,
+            else => 1,
+        };
+
+        out_cell.* = .{
+            .codepoint = actual_cell.codepoint(),
+            .cluster = 0,
+            .style = actual_cell.style_id,
+            .hyperlink_id = 0,
+            .fg = makeColor(fg_rgb, true),
+            .bg = makeColor(bg_rgb, true),
+            .underline = underline_color,
+            .flags = flags,
+            .width = width,
+        };
+        return true;
+    }
+
+    out_cell.* = CCellExt{
+        .codepoint = 0,
+        .cluster = 0,
+        .style = 0,
+        .hyperlink_id = 0,
+        .fg = makeColor(.{}, false),
+        .bg = makeColor(.{}, false),
+        .underline = makeColor(.{}, false),
+        .flags = 0,
+        .width = 1,
+    };
+    return false;
 }
 
 /// Get the current cursor position

@@ -6,8 +6,8 @@
 //!
 //! # Architecture
 //!
-//! TerminalView implements the Component trait and can be managed by the Compositor.
-//! It wraps a TerminalSession which combines:
+//! TerminalView implements the Component trait and can be managed by the
+//! Compositor. It wraps a TerminalSession which combines:
 //! - Terminal (VT100 emulation from ghostty-vt via FFI)
 //! - PtySession (process management and I/O)
 //!
@@ -28,15 +28,30 @@
 
 use std::cell::RefCell;
 
+use the_editor_renderer::{
+  Color,
+  TextSection,
+  TextSegment,
+};
 use the_terminal::TerminalSession;
-use the_editor_renderer::{Color, TextSection, TextSegment};
 
 use crate::{
-  core::graphics::{CursorKind, Rect},
-  core::position::Position,
+  core::{
+    graphics::{
+      CursorKind,
+      Rect,
+    },
+    position::Position,
+  },
   editor::Editor,
   keymap::KeyBinding,
-  ui::compositor::{Component, Context, Event, EventResult, Surface},
+  ui::compositor::{
+    Component,
+    Context,
+    Event,
+    EventResult,
+    Surface,
+  },
 };
 
 /// A terminal view component that displays and manages a PTY session
@@ -119,7 +134,7 @@ impl TerminalView {
         } else {
           b"\x1b[A".to_vec()
         }
-      }
+      },
       Key::Down => {
         if ctrl {
           b"\x1b[1;5B".to_vec()
@@ -128,7 +143,7 @@ impl TerminalView {
         } else {
           b"\x1b[B".to_vec()
         }
-      }
+      },
       Key::Left => {
         if ctrl {
           b"\x1b[1;5D".to_vec()
@@ -137,7 +152,7 @@ impl TerminalView {
         } else {
           b"\x1b[D".to_vec()
         }
-      }
+      },
       Key::Right => {
         if ctrl {
           b"\x1b[1;5C".to_vec()
@@ -146,7 +161,7 @@ impl TerminalView {
         } else {
           b"\x1b[C".to_vec()
         }
-      }
+      },
       Key::Home => b"\x1b[H".to_vec(),
       Key::End => b"\x1b[F".to_vec(),
       Key::PageUp => b"\x1b[5~".to_vec(),
@@ -157,7 +172,7 @@ impl TerminalView {
         } else {
           b"\t".to_vec()
         }
-      }
+      },
       Key::Backspace => b"\x7f".to_vec(),
       Key::Delete => b"\x1b[3~".to_vec(),
       Key::Enter => b"\r".to_vec(),
@@ -170,19 +185,19 @@ impl TerminalView {
           match c {
             'a'..='z' => bytes.push((c as u8) - b'a' + 1),
             'A'..='Z' => bytes.push((c as u8) - b'A' + 1),
-            '[' => bytes.push(0x1b),
+            '[' => bytes.push(0x1B),
             _ => bytes.extend_from_slice(c.to_string().as_bytes()),
           }
         } else if alt {
           // Alt+key produces ESC key
-          bytes.push(0x1b);
+          bytes.push(0x1B);
           bytes.extend_from_slice(c.to_string().as_bytes());
         } else {
           bytes.extend_from_slice(c.to_string().as_bytes());
         }
 
         bytes
-      }
+      },
       _ => Vec::new(), // Other keys ignored for now
     }
   }
@@ -204,7 +219,7 @@ impl Component for TerminalView {
         }
 
         EventResult::Consumed(None)
-      }
+      },
       _ => EventResult::Ignored(None),
     }
   }
@@ -259,11 +274,13 @@ impl Component for TerminalView {
           let x = area.x as f32 + (col as f32 * cell_width);
           let y = area.y as f32 + (row as f32 * cell_height);
 
-          // Extract basic style from cell
-          // The style field contains the style_id (0 = default style)
-          // For basic terminal functionality, render all text in white
-          // TODO: Look up style from style map and apply colors, bold, italic, etc.
-          let fg_color = Color::WHITE;
+          let fg = cell.fg;
+          let fg_color = Color::rgba(
+            fg.r as f32 / 255.0,
+            fg.g as f32 / 255.0,
+            fg.b as f32 / 255.0,
+            1.0,
+          );
 
           // Build text segment for the character
           let segment = TextSegment::new(ch.to_string()).with_color(fg_color);
@@ -283,7 +300,13 @@ impl Component for TerminalView {
       let cursor_height = cell_height;
 
       // Draw cursor as a semi-transparent rectangle
-      surface.draw_rect(cursor_x, cursor_y, cursor_width, cursor_height, Color::new(0.8, 0.8, 0.8, 0.5));
+      surface.draw_rect(
+        cursor_x,
+        cursor_y,
+        cursor_width,
+        cursor_height,
+        Color::new(0.8, 0.8, 0.8, 0.5),
+      );
     }
   }
 
@@ -292,7 +315,10 @@ impl Component for TerminalView {
     let (cursor_row, cursor_col) = session_borrow.terminal().cursor_pos();
 
     if cursor_row < area.height && cursor_col < area.width {
-      let pos = Position::new(area.y as usize + cursor_row as usize, area.x as usize + cursor_col as usize);
+      let pos = Position::new(
+        area.y as usize + cursor_row as usize,
+        area.x as usize + cursor_col as usize,
+      );
       (Some(pos), CursorKind::Block)
     } else {
       (None, CursorKind::Hidden)
@@ -335,19 +361,19 @@ mod tests {
     use the_editor_renderer::Key;
 
     let key = KeyBinding {
-      code: Key::Up,
+      code:  Key::Up,
       shift: false,
-      ctrl: false,
-      alt: false,
+      ctrl:  false,
+      alt:   false,
     };
     let bytes = TerminalView::key_to_bytes(&key);
     assert_eq!(bytes, b"\x1b[A");
 
     let key = KeyBinding {
-      code: Key::Down,
+      code:  Key::Down,
       shift: false,
-      ctrl: false,
-      alt: false,
+      ctrl:  false,
+      alt:   false,
     };
     let bytes = TerminalView::key_to_bytes(&key);
     assert_eq!(bytes, b"\x1b[B");
@@ -358,10 +384,10 @@ mod tests {
     use the_editor_renderer::Key;
 
     let key = KeyBinding {
-      code: Key::Char('c'),
+      code:  Key::Char('c'),
       shift: false,
-      ctrl: true,
-      alt: false,
+      ctrl:  true,
+      alt:   false,
     };
     let bytes = TerminalView::key_to_bytes(&key);
     assert_eq!(bytes, vec![3]); // Ctrl+C = 0x03
@@ -372,10 +398,10 @@ mod tests {
     use the_editor_renderer::Key;
 
     let key = KeyBinding {
-      code: Key::Char('a'),
+      code:  Key::Char('a'),
       shift: false,
-      ctrl: false,
-      alt: false,
+      ctrl:  false,
+      alt:   false,
     };
     let bytes = TerminalView::key_to_bytes(&key);
     assert_eq!(bytes, b"a");

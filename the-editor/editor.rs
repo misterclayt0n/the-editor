@@ -2970,20 +2970,18 @@ impl Editor {
     }
   }
 
-   
   /// Get the user configuration file path
   pub fn config_file_path() -> PathBuf {
     let dir = the_editor_loader::config_dir();
     dir.join("config.toml")
-    
   }
-  
+
   /// Get the workspace configuration file path.
   pub fn workspace_config_file_path() -> PathBuf {
     let (workspace_root, _) = the_editor_loader::find_workspace();
     workspace_root.join(".helix").join("config.toml")
   }
-   
+
   /// Closes language servers with timeout. The default timeout is 10000 ms, use
   /// `timeout` parameter to override this.
   pub async fn close_language_servers(

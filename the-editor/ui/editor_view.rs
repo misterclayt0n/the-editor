@@ -1324,11 +1324,11 @@ impl Component for EditorView {
 
         // Helper to draw indent guides for a line
         let draw_indent_guides = |last_indent: usize,
-                                   rel_row: usize,
-                                   batcher: &mut CommandBatcher,
-                                   font_width: f32,
-                                   font_size: f32,
-                                   base_y: f32| {
+                                  rel_row: usize,
+                                  batcher: &mut CommandBatcher,
+                                  font_width: f32,
+                                  font_size: f32,
+                                  base_y: f32| {
           if !indent_guides_config.render || last_indent == 0 || indent_width == 0 {
             return;
           }
@@ -1338,9 +1338,8 @@ impl Component for EditorView {
 
           // Calculate starting indent level accounting for horizontal scroll
           let starting_indent = (h_off / indent_width) + skip_levels;
-          let end_indent = (last_indent / indent_width).min(
-            (h_off + viewport_cols) / indent_width.max(1) + indent_width
-          );
+          let end_indent = (last_indent / indent_width)
+            .min((h_off + viewport_cols) / indent_width.max(1) + indent_width);
 
           if starting_indent >= end_indent {
             return;
@@ -1470,8 +1469,9 @@ impl Component for EditorView {
             last_doc_line_end_row = rel_row; // Initialize for the new doc_line
             current_line_max_x = base_x; // Reset for new line
 
-            // Reset indent tracking for new line (but keep last_line_indent_level from previous line)
-            // This allows guides to persist on empty/less-indented lines within a block
+            // Reset indent tracking for new line (but keep last_line_indent_level from
+            // previous line) This allows guides to persist on
+            // empty/less-indented lines within a block
             is_in_indent_area = true;
           } else {
             // Still on the same doc_line, update the last row we saw content on
@@ -1520,7 +1520,7 @@ impl Component for EditorView {
                   is_in_indent_area = false;
                 }
               },
-              _ => {}
+              _ => {},
             }
           }
 

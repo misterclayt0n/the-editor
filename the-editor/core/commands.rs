@@ -2299,14 +2299,14 @@ pub fn local_search(cx: &mut Context) {
 
   #[derive(Clone)]
   struct LocalSearchResult {
-    line_num: usize,        // 0-indexed line number
-    line_text: String,      // Full line content
-    match_start: usize,     // Byte offset of match in line
-    match_end: usize,       // Byte offset of match end in line
+    line_num:    usize,  // 0-indexed line number
+    line_text:   String, // Full line content
+    match_start: usize,  // Byte offset of match in line
+    match_end:   usize,  // Byte offset of match end in line
   }
 
   struct LocalSearchConfig {
-    smart_case: bool,
+    smart_case:    bool,
     document_text: Arc<Rope>,
   }
 
@@ -2316,7 +2316,7 @@ pub fn local_search(cx: &mut Context) {
 
   let editor_config = cx.editor.config();
   let config = Arc::new(LocalSearchConfig {
-    smart_case: editor_config.search.smart_case,
+    smart_case:    editor_config.search.smart_case,
     document_text: Arc::new(document_text),
   });
 
@@ -2357,7 +2357,9 @@ pub fn local_search(cx: &mut Context) {
             // nucleo will handle the actual fuzzy matching on the formatted column
             if line_str.to_lowercase().contains(&query.to_lowercase())
               || query.chars().all(|c| {
-                line_str.to_lowercase().contains(&c.to_lowercase().to_string())
+                line_str
+                  .to_lowercase()
+                  .contains(&c.to_lowercase().to_string())
               })
             {
               // Find the match position for accurate selection
@@ -2449,9 +2451,12 @@ pub fn local_search(cx: &mut Context) {
       (path.clone(), Some((item.line_num, item.line_num)))
     })
   })
-  .with_history_register(reg, |item: &LocalSearchResult, _config: &Arc<LocalSearchConfig>| {
-    format!("{}  {}", item.line_num + 1, item.line_text.trim())
-  })
+  .with_history_register(
+    reg,
+    |item: &LocalSearchResult, _config: &Arc<LocalSearchConfig>| {
+      format!("{}  {}", item.line_num + 1, item.line_text.trim())
+    },
+  )
   .with_dynamic_query(query_callback)
   .with_debounce(275);
 

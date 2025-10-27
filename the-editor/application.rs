@@ -169,7 +169,9 @@ impl App {
           let old_editor_config = self.editor.config().clone();
 
           // Store the new config in the global config pointer
-          self.config_ptr.store(std::sync::Arc::new(new_config.clone()));
+          self
+            .config_ptr
+            .store(std::sync::Arc::new(new_config.clone()));
 
           // Update theme if specified
           if let Some(theme_name) = &new_config.theme {
@@ -178,8 +180,10 @@ impl App {
             }
           } else {
             // Use default theme
-            let default_theme =
-              self.editor.theme_loader.default_theme(self.editor.config().true_color);
+            let default_theme = self
+              .editor
+              .theme_loader
+              .default_theme(self.editor.config().true_color);
             self.editor.set_theme(default_theme);
           }
 
@@ -201,7 +205,9 @@ impl App {
 
           self.editor.set_status("Configuration reloaded".to_string());
         } else {
-          self.editor.set_status("Failed to reload configuration".to_string());
+          self
+            .editor
+            .set_status("Failed to reload configuration".to_string());
         }
       },
       ConfigEvent::Update(_new_config) => {
@@ -745,8 +751,10 @@ impl Application for App {
 
 impl App {
   fn handle_pending_action(&mut self, action: crate::editor::Action) {
-    use crate::editor::Action;
-    use crate::ui::components::TerminalView;
+    use crate::{
+      editor::Action,
+      ui::components::TerminalView,
+    };
 
     match action {
       Action::SpawnTerminal => {
@@ -755,10 +763,14 @@ impl App {
           Ok(terminal) => {
             // Add terminal to compositor
             self.compositor.push(Box::new(terminal));
-            self.editor.set_status("Terminal spawned (Ctrl+Shift+T spawns another)");
+            self
+              .editor
+              .set_status("Terminal spawned (Ctrl+Shift+T spawns another)");
           },
           Err(e) => {
-            self.editor.set_error(format!("Failed to spawn terminal: {}", e));
+            self
+              .editor
+              .set_error(format!("Failed to spawn terminal: {}", e));
           },
         }
       },

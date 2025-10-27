@@ -282,8 +282,8 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
       match event_loop.create_window(window_attributes) {
         Ok(window) => {
           let window = Arc::new(window);
-          // GPU initialization is synchronous and can block for several seconds on Wayland/NixOS.
-          // This includes:
+          // GPU initialization is synchronous and can block for several seconds on
+          // Wayland/NixOS. This includes:
           // - Adapter negotiation with the GPU driver (Vulkan/DRM)
           // - Device and queue creation
           // - Shader compilation (especially on first run)
@@ -295,7 +295,8 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
           // 3. Moving GPU init to a background thread with visual feedback
           //
           // For now, this blocking call is unavoidable but unavoidable GPU initialization
-          // can be mitigated by the renderer's improved shutdown (see renderer.rs Drop impl).
+          // can be mitigated by the renderer's improved shutdown (see renderer.rs Drop
+          // impl).
           match pollster::block_on(Renderer::new(window.clone())) {
             Ok(mut renderer) => {
               self.app.init(&mut renderer);

@@ -2074,7 +2074,8 @@ impl Renderer {
   }
 
   /// Gracefully shutdown the renderer, flushing all GPU operations.
-  /// This should be called before dropping the renderer to ensure clean resource cleanup.
+  /// This should be called before dropping the renderer to ensure clean
+  /// resource cleanup.
   pub fn shutdown(&mut self) {
     // Flush any pending command buffers to the GPU queue.
     // This is critical for preventing Wayland compositor freezes and audio glitches

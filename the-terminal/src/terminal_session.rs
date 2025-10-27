@@ -1,12 +1,21 @@
 //! Complete terminal session combining VT emulation and PTY management
 //!
-//! This module provides `TerminalSession` which wraps both the Terminal (VT emulation)
-//! and PtySession (process management) into a single cohesive interface.
+//! This module provides `TerminalSession` which wraps both the Terminal (VT
+//! emulation) and PtySession (process management) into a single cohesive
+//! interface.
 
-use crate::{Terminal, pty::PtySession};
+use std::{
+  ffi::c_void,
+  sync::Arc,
+};
+
 use anyhow::Result;
 use crossbeam::queue::ArrayQueue;
-use std::{ffi::c_void, sync::Arc};
+
+use crate::{
+  Terminal,
+  pty::PtySession,
+};
 
 /// A complete terminal session: VT100 emulation + PTY process
 ///
@@ -22,19 +31,19 @@ use std::{ffi::c_void, sync::Arc};
 ///
 /// // In your render loop:
 /// loop {
-///     // Update terminal with any pending PTY output
-///     session.update();
+///   // Update terminal with any pending PTY output
+///   session.update();
 ///
-///     // Get terminal state for rendering
-///     let grid = session.terminal().grid();
-///     // ... render grid to UI
+///   // Get terminal state for rendering
+///   let grid = session.terminal().grid();
+///   // ... render grid to UI
 ///
-///     // Handle user input
-///     session.send_input(b"echo hello\n".to_vec())?;
+///   // Handle user input
+///   session.send_input(b"echo hello\n".to_vec())?;
 ///
-///     if !session.is_alive() {
-///         break; // Shell exited
-///     }
+///   if !session.is_alive() {
+///     break; // Shell exited
+///   }
 /// }
 /// # Ok(())
 /// # }
@@ -44,7 +53,7 @@ pub struct TerminalSession {
   terminal: Terminal,
 
   /// PTY session with shell process
-  pty:      PtySession,
+  pty: PtySession,
 
   /// Lock-free queue for terminal responses (e.g., cursor position reports)
   /// Bounded to prevent unbounded memory growth. Callbacks push here,
@@ -95,22 +104,28 @@ impl TerminalSession {
     })
   }
 
-  /// Callback invoked by the terminal when it needs to send responses to the PTY
+  /// Callback invoked by the terminal when it needs to send responses to the
+  /// PTY
   ///
   /// # Safety
   /// This is called from Zig FFI and must be thread-safe.
   /// The ctx pointer is an Arc<ArrayQueue> from Arc::into_raw.
   /// ArrayQueue is lock-free so this is safe to call from any thread.
   extern "C" fn response_callback(ctx: *mut c_void, data: *const u8, len: usize) {
-    // SAFETY: ctx is a pointer to ArrayQueue<Vec<u8>> obtained via Arc::into_raw in new().
-    // We reborrow the queue without adjusting the strong count; ownership stays with the Arc in TerminalSession.
+    // SAFETY: ctx is a pointer to ArrayQueue<Vec<u8>> obtained via Arc::into_raw in
+    // new(). We reborrow the queue without adjusting the strong count;
+    // ownership stays with the Arc in TerminalSession.
     let queue = unsafe { &*(ctx as *const ArrayQueue<Vec<u8>>) };
 
     // Convert the slice to a Vec
     let response = unsafe { std::slice::from_raw_parts(data, len).to_vec() };
 
     // Debug: log what we're sending
-    log::debug!("Terminal response ({} bytes): {:?}", len, String::from_utf8_lossy(&response));
+    log::debug!(
+      "Terminal response ({} bytes): {:?}",
+      len,
+      String::from_utf8_lossy(&response)
+    );
 
     // Push to queue, drop if full (backpressure)
     // This is lock-free and safe from any thread
@@ -138,7 +153,7 @@ impl TerminalSession {
             log::warn!("Failed to send terminal response to PTY: {}", e);
             break; // Stop if PTY is closed
           }
-        }
+        },
         None => break, // Queue empty
       }
     }
@@ -154,7 +169,8 @@ impl TerminalSession {
   /// Send input to the PTY (keyboard input from user)
   ///
   /// # Arguments
-  /// * `data` - Bytes to send to shell (e.g., keyboard input or VT100 sequences)
+  /// * `data` - Bytes to send to shell (e.g., keyboard input or VT100
+  ///   sequences)
   ///
   /// # Example
   /// ```no_run

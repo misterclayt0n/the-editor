@@ -3,11 +3,24 @@
 //! This module handles spawning a shell process in a pseudo-terminal,
 //! managing I/O between the shell and the terminal emulator.
 
-use anyhow::Result;
-use pty_process::{Command as PtyCommand, Pty, OwnedWritePty};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{mpsc, Mutex};
+
+use anyhow::Result;
+use pty_process::{
+  Command as PtyCommand,
+  OwnedWritePty,
+  Pty,
+};
+use tokio::{
+  io::{
+    AsyncReadExt,
+    AsyncWriteExt,
+  },
+  sync::{
+    Mutex,
+    mpsc,
+  },
+};
 
 /// Represents a PTY session with a running shell process
 ///
@@ -19,17 +32,17 @@ pub struct PtySession {
   pty_write: Arc<Mutex<OwnedWritePty>>,
 
   /// Child process handle
-  child:    tokio::process::Child,
+  child: tokio::process::Child,
 
   /// Receiver for PTY output (bytes from shell)
   output_rx: mpsc::UnboundedReceiver<Vec<u8>>,
 
   /// Sender for PTY input (bytes to shell)
-  input_tx:  mpsc::UnboundedSender<Vec<u8>>,
+  input_tx: mpsc::UnboundedSender<Vec<u8>>,
 
   /// Current dimensions
-  rows:     u16,
-  cols:     u16,
+  rows: u16,
+  cols: u16,
 }
 
 impl PtySession {
@@ -38,7 +51,8 @@ impl PtySession {
   /// # Arguments
   /// * `rows` - Number of rows in the terminal
   /// * `cols` - Number of columns in the terminal
-  /// * `shell` - Shell command to run (e.g., "/bin/bash"). If None, uses $SHELL or /bin/bash
+  /// * `shell` - Shell command to run (e.g., "/bin/bash"). If None, uses $SHELL
+  ///   or /bin/bash
   ///
   /// # Spawns background tasks
   /// - Reader task: PTY output → output_rx channel
@@ -62,8 +76,8 @@ impl PtySession {
     // Spawn shell process attached to PTY
     let mut cmd = PtyCommand::new(&shell_path);
 
-    // Set terminal environment variables so the shell knows it's in a proper terminal
-    // TERM tells programs what terminal capabilities are available
+    // Set terminal environment variables so the shell knows it's in a proper
+    // terminal TERM tells programs what terminal capabilities are available
     cmd.env("TERM", "xterm-256color");
     // COLORTERM indicates true color (24-bit) support
     cmd.env("COLORTERM", "truecolor");
@@ -89,7 +103,7 @@ impl PtySession {
               // EOF - shell process exited
               log::debug!("PTY EOF reached");
               break;
-            }
+            },
             Ok(n) => {
               let data = buf[..n].to_vec();
               if output_tx.send(data).is_err() {
@@ -97,11 +111,11 @@ impl PtySession {
                 log::debug!("Output channel closed");
                 break;
               }
-            }
+            },
             Err(e) => {
               log::error!("PTY read error: {}", e);
               break;
-            }
+            },
           }
         }
       });
@@ -139,7 +153,8 @@ impl PtySession {
   /// Try to receive PTY output (non-blocking)
   ///
   /// Returns Some(bytes) if data is available, None if no data pending.
-  /// This should be called frequently (e.g., every frame) to keep up with shell output.
+  /// This should be called frequently (e.g., every frame) to keep up with shell
+  /// output.
   pub fn try_recv_output(&mut self) -> Option<Vec<u8>> {
     self.output_rx.try_recv().ok()
   }
@@ -149,7 +164,9 @@ impl PtySession {
   /// # Arguments
   /// * `data` - Bytes to send (typically VT100 escape sequences or text)
   pub fn send_input(&self, data: Vec<u8>) -> Result<()> {
-    self.input_tx.send(data)
+    self
+      .input_tx
+      .send(data)
       .map_err(|_| anyhow::anyhow!("Failed to send input to PTY"))
   }
 
@@ -180,7 +197,7 @@ impl PtySession {
             log::error!("PTY resize error: {}", e);
           }
         });
-      }
+      },
     }
 
     Ok(())

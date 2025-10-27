@@ -4,25 +4,26 @@
 //! for spawning, switching, and closing terminals.
 
 use std::collections::HashMap;
+
 use crate::ui::components::TerminalView;
 
 /// Manages multiple terminal instances
 pub struct TerminalManager {
   /// Active terminal sessions, mapped by ID
-  terminals: HashMap<u32, TerminalView>,
+  terminals:       HashMap<u32, TerminalView>,
   /// Currently focused terminal ID
   active_terminal: Option<u32>,
   /// Counter for generating unique terminal IDs
-  next_id: u32,
+  next_id:         u32,
 }
 
 impl TerminalManager {
   /// Create a new terminal manager
   pub fn new() -> Self {
     Self {
-      terminals: HashMap::new(),
+      terminals:       HashMap::new(),
       active_terminal: None,
-      next_id: 0,
+      next_id:         0,
     }
   }
 
@@ -45,7 +46,9 @@ impl TerminalManager {
 
   /// Get a mutable reference to the currently active terminal
   pub fn active_mut(&mut self) -> Option<&mut TerminalView> {
-    self.active_terminal.and_then(|id| self.terminals.get_mut(&id))
+    self
+      .active_terminal
+      .and_then(|id| self.terminals.get_mut(&id))
   }
 
   /// Switch to a different terminal by ID

@@ -5,7 +5,8 @@
     nixpkgs.url     = "github:NixOS/nixpkgs/nixpkgs-unstable";
     crane.url       = "github:ipetkov/crane";
     flake-utils.url = "github:numtide/flake-utils";
-    fenix.url       = "github:nix-community/fenix";    
+    fenix.url       = "github:nix-community/fenix";
+    ghostty.url     = "github:mitchellh/ghostty";
   };
 
   outputs =
@@ -14,6 +15,7 @@
       crane,
       flake-utils,
       fenix,
+      ghostty,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -46,7 +48,10 @@
         ];
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
-        
+
+        # Get ghostty from the flake input
+        ghosttyPkg = ghostty.packages.${system}.default;
+
         # Custom filter that includes Cargo files, Rust files, and assets.
         src = lib.cleanSourceWith {
           src = ./.;
@@ -69,10 +74,22 @@
           buildInputs = lib.optionals pkgs.stdenv.isLinux systemLibsLinux
             ++ lib.optionals pkgs.stdenv.isDarwin [
               pkgs.libiconv
+            ]
+            ++ [
+              # Add ghostty library dependency for terminal crate linking
+              ghosttyPkg
+            ];
+
+          nativeBuildInputs = [
+            # Zig is needed to build the-terminal wrapper
+            pkgs.zig_0_15
           ];
 
           # Set HELIX_DEFAULT_RUNTIME at compile time so tests can find runtime/ directory
           HELIX_DEFAULT_RUNTIME = "${src}/runtime";
+
+          # Set library path for ghostty-vt linking
+          LD_LIBRARY_PATH = "${ghosttyPkg}/lib";
         };
 
         # Build dependencies separately for better caching.
@@ -86,6 +103,15 @@
             inherit cargoArtifacts;
             pname = "the-editor";
             cargoExtraArgs = "--features unicode-lines";
+
+            # Build the Zig wrapper before Rust compilation
+            preBuild = ''
+              mkdir -p the-terminal/zig-out
+              cd the-terminal
+              export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-cache
+              ${pkgs.zig_0_15}/bin/zig build -Doptimize=ReleaseSafe --prefix $PWD/zig-out
+              cd ..
+            '';
           }
         );
         
@@ -153,6 +179,8 @@
         devShells.default = pkgs.mkShell {
           buildInputs = [
             rustToolchain
+            pkgs.zig_0_15
+            pkgs.tree-sitter
           ] ++ lib.optionals pkgs.stdenv.isLinux systemLibsLinux
             ++ lib.optionals pkgs.stdenv.isDarwin [
               pkgs.libiconv
@@ -164,11 +192,24 @@
               export LD_LIBRARY_PATH=${lib.makeLibraryPath (systemLibsLinux ++ (with pkgs; [
                 vulkan-loader
                 libGL
-              ]))}:$LD_LIBRARY_PATH
+              ]))}:${ghosttyPkg}/lib:$LD_LIBRARY_PATH
             ''}
-            
+
+            ${lib.optionalString pkgs.stdenv.isDarwin ''
+              export LD_LIBRARY_PATH=${ghosttyPkg}/lib:$LD_LIBRARY_PATH
+            ''}
+
             # Use local target directory for incremental compilation.
             export CARGO_TARGET_DIR="target"
+
+            # Configure Zig cache directory
+            export ZIG_GLOBAL_CACHE_DIR="$PWD/.zig-cache"
+
+            # Auto-build Zig wrapper if it doesn't exist
+            if [ ! -f the-terminal/zig-out/lib/libghostty_wrapper.a ]; then
+              echo "Building Zig wrapper library..."
+              (cd the-terminal && zig build)
+            fi
           '';
         };
       }

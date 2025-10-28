@@ -33,7 +33,11 @@ use the_editor_renderer::{
   TextSection,
   TextSegment,
 };
-use the_terminal::TerminalSession;
+use the_terminal::{
+  TerminalSession,
+  ffi::GhosttyCellExt,
+  terminal::Cell,
+};
 
 use crate::{
   core::{
@@ -100,7 +104,7 @@ impl TerminalView {
 
   /// Check if the terminal shell is still alive
   pub fn is_alive(&self) -> bool {
-    self.session.borrow_mut().is_alive()
+    self.session.borrow().is_alive()
   }
 
   /// Get the terminal's unique ID
@@ -225,19 +229,22 @@ impl Component for TerminalView {
   }
 
   fn should_update(&self) -> bool {
-    // Always redraw while the shell is alive (PTY output may arrive at any time)
-    // This ensures we continuously poll for output and render it
-    self.is_alive() || self.dirty
+    // Check if terminal needs redraw (PTY read thread sets this flag)
+    self.session.borrow().needs_redraw() || self.dirty
   }
 
   fn render(&mut self, area: Rect, surface: &mut Surface, _ctx: &mut Context) {
-    // Update terminal with any pending PTY output
-    self.session.borrow_mut().update();
-    self.dirty = false;
-
-    // Get font metrics from renderer
+    // Get font metrics from renderer and update cached cell size
     let cell_width = surface.cell_width();
     let cell_height = surface.cell_height();
+
+    // Update session metadata (cell size)
+    {
+      let mut session = self.session.borrow_mut();
+      session.set_cell_pixel_size(cell_width, cell_height);
+      session.process_responses(); // Send queued responses back to shell
+    }
+    self.dirty = false;
 
     // Calculate terminal dimensions based on available area
     let new_cols = (area.width as f32 / cell_width).floor() as u16;
@@ -255,8 +262,15 @@ impl Component for TerminalView {
       }
     }
 
+    // CRITICAL: Atomically get and clear dirty rows to prevent race conditions
+    // This must be done in a single operation while holding the terminal lock
+    // to prevent the PTY thread from setting new dirty bits between read and clear.
     let session_borrow = self.session.borrow();
-    let grid = session_borrow.terminal().grid();
+    let dirty_rows = session_borrow.get_and_clear_dirty_rows();
+
+    // Lock terminal for rendering (separate lock, dirty bits already cleared)
+    let term_guard = session_borrow.lock_terminal();
+    let grid = term_guard.grid();
     let (term_rows, term_cols) = (grid.rows(), grid.cols());
 
     // Render grid cells
@@ -268,7 +282,27 @@ impl Component for TerminalView {
     // Batch contiguous runs of identical color within each row.
     let line_height = cell_height;
 
-    for row in 0..render_rows {
+    // Determine which rows to render:
+    // - If dirty_rows is empty (initial render, post-resize, full render flag),
+    //   render all rows
+    // - Otherwise, render only dirty rows for performance
+    let is_full_render = dirty_rows.is_empty();
+    let rows_to_render: Vec<u16> = if is_full_render {
+      (0..render_rows).collect()
+    } else {
+      dirty_rows
+        .iter()
+        .copied()
+        .filter(|&r| r < render_rows as u32)
+        .map(|r| r as u16)
+        .collect()
+    };
+
+    // Preallocate buffer for row cell data to avoid per-cell FFI calls
+    let mut raw_row = vec![GhosttyCellExt::default(); render_cols as usize];
+
+    // Render rows as contiguous color runs
+    for row in rows_to_render {
       let row_y = area.y as f32 + (row as f32 * line_height);
       let mut run_text = String::with_capacity(render_cols as usize);
       let mut run_color: Option<(u8, u8, u8)> = None;
@@ -305,8 +339,15 @@ impl Component for TerminalView {
         buffer.reserve(render_cols as usize);
       };
 
-      for col in 0..render_cols {
-        let cell = grid.get(row, col);
+      let _ = term_guard.copy_row_ext(row, raw_row.as_mut_slice());
+
+      for (col_idx, cell_ext) in raw_row.iter().enumerate() {
+        let col = col_idx as u16;
+        if col >= render_cols {
+          break;
+        }
+
+        let cell: Cell = (*cell_ext).into();
         let mut ch = cell.character().unwrap_or(' ');
         if ch == '\0' {
           ch = ' ';
@@ -340,7 +381,7 @@ impl Component for TerminalView {
     }
 
     // Render cursor if visible
-    let (cursor_row, cursor_col) = session_borrow.terminal().cursor_pos();
+    let (cursor_row, cursor_col) = term_guard.cursor_pos();
     if cursor_row < term_rows && cursor_col < term_cols {
       let cursor_x = area.x as f32 + (cursor_col as f32 * cell_width);
       let cursor_y = area.y as f32 + (cursor_row as f32 * cell_height);
@@ -356,11 +397,21 @@ impl Component for TerminalView {
         Color::new(0.8, 0.8, 0.8, 0.5),
       );
     }
+
+    // Drop the terminal guard to release the lock
+    drop(term_guard);
+
+    // Clear flags (dirty bits already cleared atomically above)
+    if is_full_render {
+      session_borrow.clear_full_render_flag();
+    }
+    session_borrow.clear_redraw_flag();
   }
 
   fn cursor(&self, area: Rect, _ctx: &Editor) -> (Option<Position>, CursorKind) {
     let session_borrow = self.session.borrow();
-    let (cursor_row, cursor_col) = session_borrow.terminal().cursor_pos();
+    let term_guard = session_borrow.lock_terminal();
+    let (cursor_row, cursor_col) = term_guard.cursor_pos();
 
     if cursor_row < area.height && cursor_col < area.width {
       let pos = Position::new(

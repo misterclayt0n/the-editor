@@ -3018,6 +3018,10 @@ impl Editor {
 
     if let Some(detached) = self.take_detached_terminal(pane) {
       let session = Rc::clone(&detached.session);
+
+      // Mark terminal for full render on reattachment to clear stale dirty state
+      session.borrow().mark_needs_full_render();
+
       match self
         .tree
         .insert_terminal_pane(anchor, session, detached.id, pane.layout())

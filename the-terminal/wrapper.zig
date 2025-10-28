@@ -8,6 +8,10 @@
 
 const std = @import("std");
 const ghostty_vt = @import("ghostty-vt");
+const modes = ghostty_vt.modes;
+const SizeReportStyle = ghostty_vt.SizeReportStyle;
+const osc = ghostty_vt.osc;
+const DCS = ghostty_vt.DCS;
 
 pub const std_options = std.Options{
     .log_level = .warn,
@@ -61,6 +65,18 @@ fn makeColor(rgb: ghostty_vt.color.RGB, is_set: bool) CColor {
     };
 }
 
+const EMPTY_CELL_EXT = CCellExt{
+    .codepoint = 0,
+    .cluster = 0,
+    .style = 0,
+    .hyperlink_id = 0,
+    .fg = makeColor(.{}, false),
+    .bg = makeColor(.{}, false),
+    .underline = makeColor(.{}, false),
+    .flags = 0,
+    .width = 0,
+};
+
 // Opaque type for FFI - use a larger type to ensure proper alignment
 pub const GhosttyTerminal = extern struct {
     _: [8]u8,
@@ -79,8 +95,9 @@ pub const ResponseCallback = *const fn (ctx: ?*anyopaque, data: [*]const u8, len
 // to Terminal's methods (e.g., cursorUp), similar to Ghostty's StreamHandler.
 const MinimalHandler = struct {
     terminal: *ghostty_vt.Terminal,
-    callback: ?ResponseCallback,   // Direct callback field
-    callback_ctx: ?*anyopaque,     // Direct context field
+    wrapper: *TerminalWrapper,
+    callback: ?ResponseCallback, // Direct callback field
+    callback_ctx: ?*anyopaque, // Direct context field
 
     /// Send a response back to the PTY (e.g., cursor position report)
     inline fn writeResponse(self: *MinimalHandler, data: []const u8) void {
@@ -292,6 +309,22 @@ const MinimalHandler = struct {
         self.terminal.modes.set(mode, enabled);
     }
 
+    pub fn requestMode(self: *MinimalHandler, mode_raw: u16, ansi: bool) !void {
+        const code: u8 = blk: {
+            const mode = modes.modeFromInt(mode_raw, ansi) orelse break :blk 0;
+            if (self.terminal.modes.get(mode)) break :blk 1;
+            break :blk 2;
+        };
+
+        var buf: [32]u8 = undefined;
+        const resp = std.fmt.bufPrint(
+            &buf,
+            "\x1B[{s}{};{}$y",
+            .{ if (ansi) "" else "?", mode_raw, code },
+        ) catch return;
+        self.writeResponse(resp);
+    }
+
     // ===== Character Sets =====
 
     pub inline fn configureCharset(
@@ -355,6 +388,25 @@ const MinimalHandler = struct {
         }
     }
 
+    pub fn sendSizeReport(self: *MinimalHandler, style: SizeReportStyle) void {
+        const cols: u32 = @intCast(self.terminal.cols);
+        const rows: u32 = @intCast(self.terminal.rows);
+        const cell_w: u32 = if (self.wrapper.cell_width_px == 0) 1 else self.wrapper.cell_width_px;
+        const cell_h: u32 = if (self.wrapper.cell_height_px == 0) 1 else self.wrapper.cell_height_px;
+
+        var buf: [64]u8 = undefined;
+        const response: ?[]u8 = switch (style) {
+            .csi_14_t => std.fmt.bufPrint(&buf, "\x1B[4;{d};{d}t", .{ rows * cell_h, cols * cell_w }) catch return,
+            .csi_16_t => std.fmt.bufPrint(&buf, "\x1B[6;{d};{d}t", .{ cell_h, cell_w }) catch return,
+            .csi_18_t => std.fmt.bufPrint(&buf, "\x1B[8;{d};{d}t", .{ rows, cols }) catch return,
+            .csi_21_t => null,
+        };
+
+        if (response) |resp| {
+            self.writeResponse(resp);
+        }
+    }
+
     // ===== OSC Handlers (prevent warnings) =====
 
     pub fn changeWindowTitle(self: *MinimalHandler, title: []const u8) !void {
@@ -403,6 +455,67 @@ const MinimalHandler = struct {
         _ = self;
         _ = exit_code;
     }
+
+    pub fn handleColorOperation(
+        self: *MinimalHandler,
+        op: osc.color.Operation,
+        requests: *const osc.color.List,
+        terminator: osc.Terminator,
+    ) !void {
+        if (requests.count() == 0) return;
+
+        var it = requests.constIterator(0);
+        while (it.next()) |req| {
+            switch (req.*) {
+                .set => |set| switch (set.target) {
+                    .dynamic => |dynamic| switch (dynamic) {
+                        .background => {
+                            self.wrapper.background_color = .{
+                                set.color.r,
+                                set.color.g,
+                                set.color.b,
+                            };
+                        },
+                        else => {},
+                    },
+                    else => {},
+                },
+                .query => |target| {
+                    if (op != .osc_11) continue;
+                    const color_bytes = switch (target) {
+                        .dynamic => |dynamic| switch (dynamic) {
+                            .background => self.wrapper.background_color,
+                            else => continue,
+                        },
+                        else => continue,
+                    };
+
+                    var buf: [64]u8 = undefined;
+                    const resp = std.fmt.bufPrint(
+                        &buf,
+                        "\x1B]11;rgb:{x:0>2}/{x:0>2}/{x:0>2}{s}",
+                        .{ color_bytes[0], color_bytes[1], color_bytes[2], terminator.string() },
+                    ) catch continue;
+                    self.writeResponse(resp);
+                },
+                else => {},
+            }
+        }
+    }
+
+    pub fn dcsHook(self: *MinimalHandler, _header: DCS) !void {
+        _ = self;
+        _ = _header;
+    }
+
+    pub fn dcsPut(self: *MinimalHandler, _byte: u8) !void {
+        _ = self;
+        _ = _byte;
+    }
+
+    pub fn dcsUnhook(self: *MinimalHandler) !void {
+        _ = self;
+    }
 };
 
 // Internal wrapper that combines Terminal with its Stream parser
@@ -410,7 +523,74 @@ const TerminalWrapper = struct {
     terminal: ghostty_vt.Terminal,
     handler: MinimalHandler,
     stream: ghostty_vt.Stream(*MinimalHandler),
+    cell_width_px: u16,
+    cell_height_px: u16,
+    background_color: [3]u8,
 };
+
+fn populateCellExt(
+    wrapper: *const TerminalWrapper,
+    page_ptr: *const ghostty_vt.Page,
+    cell: *const ghostty_vt.page.Cell,
+    out_cell: *CCellExt,
+) void {
+    var style_value: ghostty_vt.Style = .{};
+    if (cell.*.style_id != 0) {
+        style_value = page_ptr.styles.get(page_ptr.memory, cell.*.style_id).*;
+    }
+
+    const palette = &wrapper.terminal.color_palette.colors;
+    const default_fg = palette[@intFromEnum(ghostty_vt.color.Name.white)];
+    const default_bg = palette[@intFromEnum(ghostty_vt.color.Name.black)];
+
+    var fg_rgb = style_value.fg(.{
+        .default = default_fg,
+        .palette = palette,
+        .bold = null,
+    });
+    var bg_rgb = style_value.bg(cell, palette) orelse default_bg;
+
+    if (style_value.flags.inverse or wrapper.terminal.modes.get(.reverse_colors)) {
+        const tmp = fg_rgb;
+        fg_rgb = bg_rgb;
+        bg_rgb = tmp;
+    }
+
+    const underline_rgb = style_value.underlineColor(palette);
+
+    var flags: u32 = 0;
+    if (style_value.flags.bold) flags |= 1 << 0;
+    if (style_value.flags.italic) flags |= 1 << 1;
+    if (style_value.flags.faint) flags |= 1 << 2;
+    if (style_value.flags.inverse) flags |= 1 << 3;
+    if (style_value.flags.blink) flags |= 1 << 4;
+    if (style_value.flags.strikethrough) flags |= 1 << 5;
+    if (style_value.flags.overline) flags |= 1 << 6;
+    if (style_value.flags.underline != .none) flags |= 1 << 7;
+
+    var underline_color = makeColor(.{}, false);
+    if (underline_rgb) |u| {
+        underline_color = makeColor(u, true);
+    }
+
+    const width: u8 = switch (cell.*.wide) {
+        .wide => 2,
+        .spacer_tail, .spacer_head => 0,
+        else => 1,
+    };
+
+    out_cell.* = .{
+        .codepoint = cell.codepoint(),
+        .cluster = 0,
+        .style = cell.*.style_id,
+        .hyperlink_id = 0,
+        .fg = makeColor(fg_rgb, true),
+        .bg = makeColor(bg_rgb, true),
+        .underline = underline_color,
+        .flags = flags,
+        .width = width,
+    };
+}
 
 // Global allocator with thread-safe support
 var gpa = std.heap.GeneralPurposeAllocator(.{
@@ -453,12 +633,16 @@ export fn ghostty_terminal_new(opts: *const CTerminalOptions) ?*GhosttyTerminal 
     // Callback fields are null initially, will be set via ghostty_terminal_set_callback
     wrapper.handler = MinimalHandler{
         .terminal = &wrapper.terminal,
+        .wrapper = wrapper,
         .callback = null,
         .callback_ctx = null,
     };
 
     // Initialize the stream with our handler
     wrapper.stream = ghostty_vt.Stream(*MinimalHandler).init(&wrapper.handler);
+    wrapper.cell_width_px = 0;
+    wrapper.cell_height_px = 0;
+    wrapper.background_color = .{ 0, 0, 0 };
 
     allocations.append(gpa.allocator(), wrapper) catch return null;
 
@@ -496,6 +680,21 @@ export fn ghostty_terminal_print_string(term: ?*GhosttyTerminal, s: [*]const u8,
     const wrapper: *TerminalWrapper = @ptrCast(@alignCast(term));
     wrapper.terminal.printString(s[0..len]) catch return false;
     return true;
+}
+
+export fn ghostty_terminal_set_cell_pixel_size(term: ?*GhosttyTerminal, width: u16, height: u16) void {
+    if (term == null) return;
+
+    const wrapper: *TerminalWrapper = @ptrCast(@alignCast(term));
+    wrapper.cell_width_px = if (width == 0) 1 else width;
+    wrapper.cell_height_px = if (height == 0) 1 else height;
+}
+
+export fn ghostty_terminal_set_background_color(term: ?*GhosttyTerminal, r: u8, g: u8, b: u8) void {
+    if (term == null) return;
+
+    const wrapper: *TerminalWrapper = @ptrCast(@alignCast(term));
+    wrapper.background_color = .{ r, g, b };
 }
 
 /// Write raw bytes to the terminal, parsing VT100/ANSI escape sequences
@@ -553,7 +752,7 @@ export fn ghostty_terminal_get_cell(term: ?*const GhosttyTerminal, pt: CPoint) C
             // (codepoint, codepoint_grapheme, color_palette, color_rgb)
             .codepoint = actual_cell.codepoint(),
             .cluster = 0, // Not directly exposed
-            .style = actual_cell.style_id,    // Style ID from the cell
+            .style = actual_cell.style_id, // Style ID from the cell
             .hyperlink_id = 0, // Hyperlink support removed or changed in newer ghostty
         };
     }
@@ -597,78 +796,56 @@ export fn ghostty_terminal_get_cell_ext(
 
     if (wrapper.terminal.screen.pages.getCell(point)) |cell| {
         const page_ptr: *const ghostty_vt.Page = &cell.node.data;
-        const actual_cell = cell.cell;
-
-        var style_value: ghostty_vt.Style = .{};
-        if (actual_cell.style_id != 0) {
-            style_value = page_ptr.styles.get(page_ptr.memory, actual_cell.style_id).*;
-        }
-
-        const palette = &wrapper.terminal.color_palette.colors;
-        const default_fg = palette[@intFromEnum(ghostty_vt.color.Name.white)];
-        const default_bg = palette[@intFromEnum(ghostty_vt.color.Name.black)];
-
-        var fg_rgb = style_value.fg(.{
-            .default = default_fg,
-            .palette = palette,
-            .bold = null,
-        });
-        var bg_rgb = style_value.bg(actual_cell, palette) orelse default_bg;
-
-        if (style_value.flags.inverse or wrapper.terminal.modes.get(.reverse_colors)) {
-            const tmp = fg_rgb;
-            fg_rgb = bg_rgb;
-            bg_rgb = tmp;
-        }
-
-        const underline_rgb = style_value.underlineColor(palette);
-
-        var flags: u32 = 0;
-        if (style_value.flags.bold) flags |= 1 << 0;
-        if (style_value.flags.italic) flags |= 1 << 1;
-        if (style_value.flags.faint) flags |= 1 << 2;
-        if (style_value.flags.inverse) flags |= 1 << 3;
-        if (style_value.flags.blink) flags |= 1 << 4;
-        if (style_value.flags.strikethrough) flags |= 1 << 5;
-        if (style_value.flags.overline) flags |= 1 << 6;
-        if (style_value.flags.underline != .none) flags |= 1 << 7;
-
-        var underline_color = makeColor(.{}, false);
-        if (underline_rgb) |u| {
-            underline_color = makeColor(u, true);
-        }
-
-        const width: u8 = switch (actual_cell.wide) {
-            .wide => 2,
-            else => 1,
-        };
-
-        out_cell.* = .{
-            .codepoint = actual_cell.codepoint(),
-            .cluster = 0,
-            .style = actual_cell.style_id,
-            .hyperlink_id = 0,
-            .fg = makeColor(fg_rgb, true),
-            .bg = makeColor(bg_rgb, true),
-            .underline = underline_color,
-            .flags = flags,
-            .width = width,
-        };
+        populateCellExt(wrapper, page_ptr, cell.cell, out_cell);
         return true;
     }
 
-    out_cell.* = CCellExt{
-        .codepoint = 0,
-        .cluster = 0,
-        .style = 0,
-        .hyperlink_id = 0,
-        .fg = makeColor(.{}, false),
-        .bg = makeColor(.{}, false),
-        .underline = makeColor(.{}, false),
-        .flags = 0,
-        .width = 1,
-    };
+    out_cell.* = EMPTY_CELL_EXT;
     return false;
+}
+
+/// Copy an entire row of extended cell information into an output buffer.
+/// Returns the number of cells written, clamped to the provided max_len.
+export fn ghostty_terminal_copy_row_cells_ext(
+    term: ?*const GhosttyTerminal,
+    row_index: u32,
+    out_cells: [*]CCellExt,
+    max_len: usize,
+) usize {
+    if (term == null or max_len == 0) return 0;
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+    if (row_index >= wrapper.terminal.rows) return 0;
+
+    var pin = wrapper.terminal.screen.pages.pin(.{
+        .viewport = .{
+            .x = 0,
+            .y = @intCast(row_index),
+        },
+    }) orelse return 0;
+
+    pin.x = 0;
+
+    const page_ptr: *const ghostty_vt.Page = &pin.node.data;
+    const cells = pin.cells(.all);
+
+    const visible_cols: usize = @intCast(wrapper.terminal.cols);
+    const available: usize = @min(cells.len, visible_cols);
+    const limit = @min(available, max_len);
+
+    var i: usize = 0;
+    while (i < limit) : (i += 1) {
+        populateCellExt(wrapper, page_ptr, &cells[i], &out_cells[i]);
+    }
+
+    // Zero any remaining slots if we're truncating the row so that callers don't
+    // accidentally read stale data.
+    var j = limit;
+    while (j < max_len) : (j += 1) {
+        out_cells[j] = EMPTY_CELL_EXT;
+    }
+
+    return limit;
 }
 
 /// Get the current cursor position
@@ -712,4 +889,138 @@ export fn ghostty_terminal_set_callback(
     // Set callback fields directly on the handler
     wrapper.handler.callback = callback;
     wrapper.handler.callback_ctx = ctx;
+}
+
+/// Get the dirty rows in the terminal
+///
+/// This returns a dynamically allocated array of row indices that need to be re-rendered.
+/// The caller must free the returned array using ghostty_terminal_free_dirty_rows().
+///
+/// Returns: Pointer to array of u32 row indices, or null if no rows are dirty or on error
+/// out_count: Set to the number of dirty rows
+export fn ghostty_terminal_get_dirty_rows(
+    term: ?*const GhosttyTerminal,
+    out_count: *usize,
+) ?[*]u32 {
+    if (term == null) {
+        out_count.* = 0;
+        return null;
+    }
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+    const screen = &wrapper.terminal.screen;
+
+    // Count dirty rows first
+    var dirty_count: usize = 0;
+    var row: usize = 0;
+
+    // Iterate through visible rows in viewport
+    while (row < wrapper.terminal.rows) : (row += 1) {
+        const point: ghostty_vt.Point = .{
+            .viewport = .{
+                .x = 0,
+                .y = @intCast(row),
+            },
+        };
+
+        if (screen.pages.getCell(point)) |cell| {
+            // Check if this row is dirty using the Cell's isDirty method
+            if (cell.isDirty()) {
+                dirty_count += 1;
+            }
+        }
+    }
+
+    if (dirty_count == 0) {
+        out_count.* = 0;
+        return null;
+    }
+
+    // Allocate array for dirty rows
+    const dirty_rows = gpa.allocator().alloc(u32, dirty_count) catch {
+        out_count.* = 0;
+        return null;
+    };
+
+    // Fill array with dirty row indices
+    var idx: usize = 0;
+    row = 0;
+    while (row < wrapper.terminal.rows and idx < dirty_count) : (row += 1) {
+        const point: ghostty_vt.Point = .{
+            .viewport = .{
+                .x = 0,
+                .y = @intCast(row),
+            },
+        };
+
+        if (screen.pages.getCell(point)) |cell| {
+            if (cell.isDirty()) {
+                dirty_rows[idx] = @intCast(row);
+                idx += 1;
+            }
+        }
+    }
+
+    out_count.* = dirty_count;
+    return dirty_rows.ptr;
+}
+
+/// Free the dirty rows array returned by ghostty_terminal_get_dirty_rows()
+export fn ghostty_terminal_free_dirty_rows(rows: ?[*]u32, count: usize) void {
+    if (rows) |ptr| {
+        const slice = ptr[0..count];
+        gpa.allocator().free(slice);
+    }
+}
+
+/// Clear all dirty bits in the terminal
+///
+/// This should be called after rendering all dirty rows to reset the dirty state.
+/// Check if the terminal needs a full rebuild
+///
+/// Returns true if terminal-level or screen-level dirty flags are set,
+/// indicating that a full screen rebuild is needed (not just dirty rows).
+/// This matches Ghostty's own logic for determining full vs incremental renders.
+export fn ghostty_terminal_needs_full_rebuild(term: ?*const GhosttyTerminal) bool {
+    if (term == null) return false;
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+
+    // Check terminal-level dirty flags (e.g., from eraseDisplay, resize, etc.)
+    // Use @typeInfo to get the backing integer type dynamically (same as Ghostty's renderer)
+    {
+        const Int = @typeInfo(ghostty_vt.Terminal.Dirty).@"struct".backing_integer.?;
+        const v: Int = @bitCast(wrapper.terminal.flags.dirty);
+        if (v > 0) return true;
+    }
+
+    // Check screen-level dirty flags
+    {
+        const Int = @typeInfo(ghostty_vt.Screen.Dirty).@"struct".backing_integer.?;
+        const v: Int = @bitCast(wrapper.terminal.screen.dirty);
+        if (v > 0) return true;
+    }
+
+    return false;
+}
+
+export fn ghostty_terminal_clear_dirty(term: ?*GhosttyTerminal) void {
+    if (term == null) return;
+
+    const wrapper: *TerminalWrapper = @ptrCast(@alignCast(term));
+
+    // CRITICAL: Clear terminal-level and screen-level dirty flags
+    // These are set by operations like eraseDisplay, resize, mode changes, etc.
+    // Ghostty clears these BEFORE rendering (generic.zig:1216-1218)
+    wrapper.terminal.flags.dirty = .{};
+    wrapper.terminal.screen.dirty = .{};
+
+    // Also clear row-level dirty bits
+    const screen = &wrapper.terminal.screen;
+    var it = screen.pages.pageIterator(.right_down, .{ .screen = .{} }, null);
+
+    while (it.next()) |chunk| {
+        var dirty_set = chunk.node.data.dirtyBitSet();
+        dirty_set.unsetAll();
+    }
 }

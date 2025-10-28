@@ -5,6 +5,10 @@ use the_editor_renderer::{
   TextSection,
 };
 use the_editor_stdx::rope::RopeSliceExt;
+use the_terminal::{
+  ffi::GhosttyCellExt,
+  terminal::Cell,
+};
 
 use crate::{
   core::{
@@ -20,6 +24,7 @@ use crate::{
     doc_formatter::DocumentFormatter,
     grapheme::Grapheme,
     graphics::{
+      Color as ThemeColor,
       CursorKind,
       Rect,
     },
@@ -71,6 +76,81 @@ struct OverlayHighlighter<'t> {
   pos:   usize,
   theme: &'t crate::core::theme::Theme,
   style: crate::core::graphics::Style,
+}
+
+pub(crate) fn theme_color_to_rgb(color: ThemeColor) -> Option<(u8, u8, u8)> {
+  use ThemeColor::*;
+
+  match color {
+    Reset => None,
+    Black => Some((0, 0, 0)),
+    Red => Some((205, 0, 0)),
+    Green => Some((0, 205, 0)),
+    Yellow => Some((205, 205, 0)),
+    Blue => Some((0, 0, 205)),
+    Magenta => Some((205, 0, 205)),
+    Cyan => Some((0, 205, 205)),
+    Gray => Some((127, 127, 127)),
+    LightRed => Some((255, 0, 0)),
+    LightGreen => Some((0, 255, 0)),
+    LightYellow => Some((255, 255, 0)),
+    LightBlue => Some((92, 92, 255)),
+    LightMagenta => Some((255, 0, 255)),
+    LightCyan => Some((0, 255, 255)),
+    LightGray => Some((229, 229, 229)),
+    White => Some((255, 255, 255)),
+    Rgb(r, g, b) => Some((r, g, b)),
+    Indexed(i) => Some(ansi256_to_rgb(i)),
+  }
+}
+
+fn ansi256_to_rgb(index: u8) -> (u8, u8, u8) {
+  const ANSI_BASE: [(u8, u8, u8); 16] = [
+    (0, 0, 0),
+    (205, 0, 0),
+    (0, 205, 0),
+    (205, 205, 0),
+    (0, 0, 238),
+    (205, 0, 205),
+    (0, 205, 205),
+    (229, 229, 229),
+    (127, 127, 127),
+    (255, 0, 0),
+    (0, 255, 0),
+    (255, 255, 0),
+    (92, 92, 255),
+    (255, 0, 255),
+    (0, 255, 255),
+    (255, 255, 255),
+  ];
+
+  match index {
+    0..=15 => ANSI_BASE[index as usize],
+    16..=231 => {
+      let idx = index - 16;
+      let r = idx / 36;
+      let g = (idx % 36) / 6;
+      let b = idx % 6;
+      (
+        ansi_component_to_rgb(r),
+        ansi_component_to_rgb(g),
+        ansi_component_to_rgb(b),
+      )
+    },
+    _ => {
+      let level = 8 + (index as u16 - 232) * 10;
+      let clamped = level.min(255) as u8;
+      (clamped, clamped, clamped)
+    },
+  }
+}
+
+fn ansi_component_to_rgb(component: u8) -> u8 {
+  if component == 0 {
+    0
+  } else {
+    55 + component * 40
+  }
 }
 
 impl<'t> OverlayHighlighter<'t> {
@@ -2404,8 +2484,21 @@ impl EditorView {
         None => continue,
       };
 
-      // Update terminal with any pending PTY output
-      terminal.session.borrow_mut().update();
+      let background_rgb = cx
+        .editor
+        .theme
+        .try_get("ui.background")
+        .and_then(|style| style.bg)
+        .and_then(theme_color_to_rgb);
+
+      // Update session metadata (cell size, background color)
+      {
+        let mut session = terminal.session.borrow_mut();
+        session.set_cell_pixel_size(font_width, font_size + LINE_SPACING);
+        if let Some((r, g, b)) = background_rgb {
+          session.set_background_color(r, g, b);
+        }
+      }
 
       // Calculate terminal dimensions in cells
       let new_cols = term_area.width;
@@ -2421,9 +2514,15 @@ impl EditorView {
         }
       }
 
-      // Get terminal grid for rendering
+      // CRITICAL: Atomically get and clear dirty rows to prevent race conditions
+      // This must be done in a single operation while holding the terminal lock
+      // to prevent the PTY thread from setting new dirty bits between read and clear.
       let session_borrow = terminal.session.borrow();
-      let grid = session_borrow.terminal().grid();
+      let dirty_rows = session_borrow.get_and_clear_dirty_rows();
+
+      // Lock terminal for rendering (separate lock, dirty bits already cleared)
+      let term_guard = session_borrow.lock_terminal();
+      let grid = term_guard.grid();
       let (grid_rows, grid_cols) = (grid.rows(), grid.cols());
 
       // Clamp rendering to avoid overflow
@@ -2432,8 +2531,26 @@ impl EditorView {
 
       let line_height = font_size + LINE_SPACING;
 
-      // Render each row as contiguous color runs to reduce draw calls.
-      for row in 0..render_rows {
+      // Determine which rows to render:
+      // - If dirty_rows is empty (initial render, post-resize, full render flag),
+      //   render all rows
+      // - Otherwise, render only dirty rows for performance
+      let is_full_render = dirty_rows.is_empty();
+      let rows_to_render: Vec<u16> = if is_full_render {
+        (0..render_rows).collect()
+      } else {
+        dirty_rows
+          .iter()
+          .copied()
+          .filter(|&r| r < render_rows as u32)
+          .map(|r| r as u16)
+          .collect()
+      };
+
+      let mut raw_row = vec![GhosttyCellExt::default(); render_cols as usize];
+
+      // Render rows as contiguous color runs to reduce draw calls
+      for row in rows_to_render {
         let row_y = term_y + (row as f32 * line_height);
         let mut run_text = String::with_capacity(render_cols as usize);
         let mut run_color: Option<(u8, u8, u8)> = None;
@@ -2470,8 +2587,15 @@ impl EditorView {
           buffer.reserve(render_cols as usize);
         };
 
-        for col in 0..render_cols {
-          let cell = grid.get(row, col);
+        let _ = term_guard.copy_row_ext(row, raw_row.as_mut_slice());
+
+        for (col_idx, cell_ext) in raw_row.iter().enumerate() {
+          let col = col_idx as u16;
+          if col >= render_cols {
+            break;
+          }
+
+          let cell: Cell = (*cell_ext).into();
           let mut ch = cell.character().unwrap_or(' ');
           if ch == '\0' {
             ch = ' ';
@@ -2505,7 +2629,7 @@ impl EditorView {
       }
 
       // Render cursor if visible
-      let (cursor_row, cursor_col) = session_borrow.terminal().cursor_pos();
+      let (cursor_row, cursor_col) = term_guard.cursor_pos();
       if cursor_row < grid_rows && cursor_col < grid_cols {
         let cursor_x = term_x + (cursor_col as f32 * font_width);
         let cursor_y = term_y + (cursor_row as f32 * (font_size + LINE_SPACING));
@@ -2519,6 +2643,15 @@ impl EditorView {
           Color::new(0.8, 0.8, 0.8, 0.5),
         );
       }
+
+      // Drop the terminal guard to release the lock
+      drop(term_guard);
+
+      // Clear flags (dirty bits already cleared atomically above)
+      if is_full_render {
+        session_borrow.clear_full_render_flag();
+      }
+      session_borrow.clear_redraw_flag();
     }
   }
 

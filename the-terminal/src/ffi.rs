@@ -35,6 +35,18 @@ pub struct GhosttyColor {
   pub is_set: bool,
 }
 
+impl Default for GhosttyColor {
+  fn default() -> Self {
+    Self {
+      r:      0,
+      g:      0,
+      b:      0,
+      a:      0,
+      is_set: false,
+    }
+  }
+}
+
 /// Extended cell information including resolved colors and attributes
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -48,6 +60,22 @@ pub struct GhosttyCellExt {
   pub underline:    GhosttyColor,
   pub flags:        u32,
   pub width:        u8,
+}
+
+impl Default for GhosttyCellExt {
+  fn default() -> Self {
+    Self {
+      codepoint:    0,
+      cluster:      0,
+      style:        0,
+      hyperlink_id: 0,
+      fg:           GhosttyColor::default(),
+      bg:           GhosttyColor::default(),
+      underline:    GhosttyColor::default(),
+      flags:        0,
+      width:        0,
+    }
+  }
 }
 
 /// Terminal size options
@@ -117,6 +145,15 @@ unsafe extern "C" {
     out: *mut GhosttyCellExt,
   ) -> bool;
 
+  /// Copy an entire row worth of extended cell data into the provided buffer.
+  /// Returns the number of valid entries written.
+  pub fn ghostty_terminal_copy_row_cells_ext(
+    term: *const GhosttyTerminal,
+    row: c_uint,
+    out_cells: *mut GhosttyCellExt,
+    max_len: usize,
+  ) -> usize;
+
   /// Get the current cursor position.
   pub fn ghostty_terminal_cursor_pos(term: *const GhosttyTerminal) -> GhosttyPoint;
 
@@ -135,6 +172,44 @@ unsafe extern "C" {
     callback: ResponseCallback,
     ctx: *mut c_void,
   );
+
+  /// Update cached cell pixel dimensions for query responses.
+  pub fn ghostty_terminal_set_cell_pixel_size(term: *mut GhosttyTerminal, width: u16, height: u16);
+
+  /// Update cached background color for OSC queries.
+  pub fn ghostty_terminal_set_background_color(term: *mut GhosttyTerminal, r: u8, g: u8, b: u8);
+
+  /// Check if terminal needs a full rebuild.
+  ///
+  /// Returns true if terminal-level or screen-level dirty flags are set,
+  /// indicating operations like eraseDisplay, resize, or mode changes that
+  /// require a full screen rebuild (not just dirty rows).
+  ///
+  /// This must be checked BEFORE get_dirty_rows() to properly handle full
+  /// screen operations like those triggered by nushell's prompt redraws.
+  pub fn ghostty_terminal_needs_full_rebuild(term: *const GhosttyTerminal) -> bool;
+
+  /// Get dirty rows in the terminal.
+  ///
+  /// Returns a pointer to an array of u32 row indices that need re-rendering.
+  /// The caller must free the array using ghostty_terminal_free_dirty_rows().
+  ///
+  /// # Safety
+  /// The returned pointer must be freed with ghostty_terminal_free_dirty_rows()
+  /// with the same count value.
+  pub fn ghostty_terminal_get_dirty_rows(
+    term: *const GhosttyTerminal,
+    out_count: *mut usize,
+  ) -> *mut u32;
+
+  /// Free the dirty rows array returned by ghostty_terminal_get_dirty_rows().
+  pub fn ghostty_terminal_free_dirty_rows(rows: *mut u32, count: usize);
+
+  /// Clear all dirty bits in the terminal.
+  ///
+  /// This should be called after rendering all dirty rows to reset the dirty
+  /// state.
+  pub fn ghostty_terminal_clear_dirty(term: *mut GhosttyTerminal);
 }
 
 #[cfg(test)]

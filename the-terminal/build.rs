@@ -23,7 +23,9 @@ fn main() {
     "cargo:rustc-link-search=native={}",
     wrapper_lib_path.display()
   );
+  println!("cargo:rustc-link-arg=-Wl,--whole-archive");
   println!("cargo:rustc-link-lib=static=ghostty_wrapper");
+  println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
 
   // Find libghostty-vt from either:
   // 1. LD_LIBRARY_PATH (set by Nix)

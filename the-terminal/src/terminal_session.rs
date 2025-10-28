@@ -3,10 +3,20 @@
 //! This module provides `TerminalSession` which wraps both the Terminal (VT
 //! emulation) and PtySession (process management) into a single cohesive
 //! interface.
+//!
+//! Architecture: Terminal state is wrapped in Arc<Mutex<>> to allow safe access
+//! from the dedicated PTY read thread and the main/render thread.
 
 use std::{
   ffi::c_void,
-  sync::Arc,
+  sync::{
+    Arc,
+    Mutex,
+    atomic::{
+      AtomicBool,
+      Ordering,
+    },
+  },
 };
 
 use anyhow::Result;
@@ -14,7 +24,10 @@ use crossbeam::queue::ArrayQueue;
 
 use crate::{
   Terminal,
-  pty::PtySession,
+  pty::{
+    OutputCallback,
+    PtySession,
+  },
 };
 
 /// A complete terminal session: VT100 emulation + PTY process
@@ -22,6 +35,12 @@ use crate::{
 /// This combines:
 /// - `Terminal`: Parses VT100 escape sequences and maintains terminal state
 /// - `PtySession`: Manages the shell process and I/O
+///
+/// Architecture:
+/// - Terminal state is in Arc<Mutex<>> for thread-safe access
+/// - PTY read thread writes directly to terminal via callback
+/// - Main thread locks terminal for rendering and sending responses
+/// - Redraw flag signals when terminal needs re-rendering
 ///
 /// Usage pattern:
 /// ```no_run
@@ -31,12 +50,15 @@ use crate::{
 ///
 /// // In your render loop:
 /// loop {
-///   // Update terminal with any pending PTY output
-///   session.update();
-///
-///   // Get terminal state for rendering
-///   let grid = session.terminal().grid();
-///   // ... render grid to UI
+///   // Check if terminal needs redraw
+///   if session.needs_redraw() {
+///     // Lock and render terminal state
+///     let terminal = session.lock_terminal();
+///     let grid = terminal.grid();
+///     // ... render grid to UI
+///     drop(terminal); // Release lock
+///     session.clear_redraw_flag();
+///   }
 ///
 ///   // Handle user input
 ///   session.send_input(b"echo hello\n".to_vec())?;
@@ -49,20 +71,36 @@ use crate::{
 /// # }
 /// ```
 pub struct TerminalSession {
-  /// VT100 terminal emulator
-  terminal: Terminal,
+  /// VT100 terminal emulator (thread-safe)
+  /// Accessed by PTY read thread (via callback) and main thread (for rendering)
+  terminal: Arc<Mutex<Terminal>>,
 
   /// PTY session with shell process
   pty: PtySession,
 
   /// Lock-free queue for terminal responses (e.g., cursor position reports)
   /// Bounded to prevent unbounded memory growth. Callbacks push here,
-  /// update() drains and sends to PTY.
+  /// process_responses() drains and sends to PTY.
   response_queue: Arc<ArrayQueue<Vec<u8>>>,
 
   /// Raw pointer to callback context (Arc<ArrayQueue>)
   /// Must be cleaned up in Drop by reconstructing the Arc
   callback_ctx_ptr: *mut c_void,
+
+  /// Flag indicating terminal needs redraw
+  /// Set by PTY read thread when data arrives, cleared by render thread
+  needs_redraw: Arc<AtomicBool>,
+
+  /// Flag indicating terminal needs a full render (all rows)
+  /// Set when terminal is reattached, resized, or state becomes stale
+  /// Cleared after performing full render
+  needs_full_render: Arc<AtomicBool>,
+
+  /// Last cell size in pixels (width, height)
+  cell_pixel_size: (u16, u16),
+
+  /// Background color reported for OSC queries
+  background_color: (u8, u8, u8),
 }
 
 impl TerminalSession {
@@ -74,7 +112,6 @@ impl TerminalSession {
   /// * `shell` - Optional shell command. If None, uses $SHELL or /bin/bash
   pub fn new(rows: u16, cols: u16, shell: Option<&str>) -> Result<Self> {
     let mut terminal = Terminal::new(cols, rows)?;
-    let pty = PtySession::new(rows, cols, shell)?;
 
     // Create bounded queue for terminal responses (capacity 64, matching ghostty)
     // This is lock-free and can be safely called from any thread
@@ -96,11 +133,44 @@ impl TerminalSession {
       terminal.set_response_callback_raw(Self::response_callback, queue_ptr);
     }
 
+    // Wrap terminal in Arc<Mutex<>> for thread-safe access
+    let terminal = Arc::new(Mutex::new(terminal));
+
+    // Create redraw flag
+    let needs_redraw = Arc::new(AtomicBool::new(false));
+
+    // Create full render flag (initially true for first render)
+    let needs_full_render = Arc::new(AtomicBool::new(true));
+
+    // Create output callback that writes to terminal
+    // This will be called from the PTY read thread
+    let terminal_for_callback = Arc::clone(&terminal);
+    let needs_redraw_for_callback = Arc::clone(&needs_redraw);
+    let output_callback: OutputCallback = Arc::new(move |data: &[u8]| {
+      // Lock terminal and write data
+      if let Ok(mut term) = terminal_for_callback.lock() {
+        if let Err(e) = term.write(data) {
+          log::error!("Terminal write error: {}", e);
+        }
+        // Set redraw flag
+        needs_redraw_for_callback.store(true, Ordering::Release);
+      } else {
+        log::error!("Failed to lock terminal for write");
+      }
+    });
+
+    // Create PTY with output callback
+    let pty = PtySession::new(rows, cols, shell, output_callback)?;
+
     Ok(Self {
       terminal,
       pty,
       response_queue,
       callback_ctx_ptr: queue_ptr,
+      needs_redraw,
+      needs_full_render,
+      cell_pixel_size: (0, 0),
+      background_color: (0, 0, 0),
     })
   }
 
@@ -134,18 +204,19 @@ impl TerminalSession {
     }
   }
 
-  /// Update terminal with pending PTY output
+  /// Process pending terminal responses and send them to PTY
   ///
-  /// Reads any available data from the PTY and feeds it to the Terminal
-  /// emulator to parse VT100 sequences and update grid state.
+  /// Terminal responses (e.g., cursor position reports, OSC queries) are queued
+  /// by the terminal emulator and need to be sent back to the shell.
   ///
-  /// This should be called frequently, typically once per frame.
-  pub fn update(&mut self) {
-    // First, drain response queue and send to PTY
-    // Rate limit to prevent infinite loops (max 16 responses per frame)
-    const MAX_RESPONSES_PER_FRAME: usize = 16;
+  /// This should be called periodically, but is less critical than in the old
+  /// architecture since PTY output is now processed in a dedicated thread.
+  pub fn process_responses(&mut self) {
+    // Drain response queue and send to PTY
+    // Rate limit to prevent infinite loops (max 16 responses per call)
+    const MAX_RESPONSES_PER_CALL: usize = 16;
 
-    for _ in 0..MAX_RESPONSES_PER_FRAME {
+    for _ in 0..MAX_RESPONSES_PER_CALL {
       match self.response_queue.pop() {
         Some(response) => {
           // Send response to PTY input (shell's stdin)
@@ -157,12 +228,119 @@ impl TerminalSession {
         None => break, // Queue empty
       }
     }
+  }
 
-    // Then process PTY output as before
-    while let Some(data) = self.pty.try_recv_output() {
-      // Write raw bytes directly to the terminal
-      // The terminal's Stream parser will handle VT100/ANSI escape sequences
-      let _ = self.terminal.write(&data);
+  /// Check if terminal needs redraw
+  ///
+  /// Returns true if PTY output has been processed since last
+  /// clear_redraw_flag()
+  pub fn needs_redraw(&self) -> bool {
+    self.needs_redraw.load(Ordering::Acquire)
+  }
+
+  /// Clear the redraw flag
+  ///
+  /// Should be called after rendering the terminal
+  pub fn clear_redraw_flag(&self) {
+    self.needs_redraw.store(false, Ordering::Release);
+  }
+
+  /// Check if terminal needs a full render (all rows)
+  ///
+  /// Returns true if terminal was resized, reattached, or needs state reset
+  pub fn needs_full_render(&self) -> bool {
+    self.needs_full_render.load(Ordering::Acquire)
+  }
+
+  /// Mark terminal as needing a full render
+  ///
+  /// Call this when terminal is reattached after being detached,
+  /// or when dirty state may be stale/inconsistent
+  pub fn mark_needs_full_render(&self) {
+    self.needs_full_render.store(true, Ordering::Release);
+  }
+
+  /// Clear the full render flag
+  ///
+  /// Should be called after performing a full render
+  pub fn clear_full_render_flag(&self) {
+    self.needs_full_render.store(false, Ordering::Release);
+  }
+
+  /// Lock the terminal for reading/rendering
+  ///
+  /// Returns a mutex guard that provides access to the terminal state.
+  /// The lock is released when the guard is dropped.
+  pub fn lock_terminal(&self) -> std::sync::MutexGuard<'_, Terminal> {
+    self.terminal.lock().unwrap()
+  }
+
+  /// Get the list of dirty rows that need re-rendering
+  ///
+  /// This is a convenience method that locks the terminal and returns the
+  /// list of dirty row indices.
+  pub fn get_dirty_rows(&self) -> Vec<u32> {
+    if let Ok(term) = self.terminal.lock() {
+      term.get_dirty_rows()
+    } else {
+      Vec::new()
+    }
+  }
+
+  /// Atomically get dirty rows and clear them in one operation
+  ///
+  /// This is the preferred method for rendering as it prevents race conditions
+  /// between reading dirty state and clearing it. The PTY thread cannot set new
+  /// dirty bits between these operations.
+  ///
+  /// Returns an empty Vec when a full rebuild is needed (either from Ghostty's
+  /// terminal-level dirty flags or our own needs_full_render flag). The caller
+  /// should render all rows in this case.
+  ///
+  /// CRITICAL FIX: This now checks Ghostty's terminal-level dirty flags (set by
+  /// eraseDisplay, resize, etc.) BEFORE checking row-level dirty bits. This is
+  /// the root cause fix for nushell performance - nushell's prompt redraws
+  /// trigger eraseDisplay which sets terminal.flags.dirty.clear, not
+  /// row-level bits.
+  ///
+  /// CRITICAL: This prevents the race condition where:
+  /// 1. Render thread reads dirty rows
+  /// 2. PTY thread sets new dirty bits
+  /// 3. Render thread clears ALL dirty bits (including new ones from step 2)
+  /// 4. Next frame misses the updates from step 2
+  pub fn get_and_clear_dirty_rows(&self) -> Vec<u32> {
+    if let Ok(mut term) = self.terminal.lock() {
+      // CRITICAL: Check Ghostty's terminal-level dirty flags FIRST
+      // These are set by operations like eraseDisplay, resize, mode changes
+      // If set, we need to render all rows, not just row-level dirty bits
+      let needs_ghostty_rebuild = term.needs_full_rebuild();
+      let needs_our_rebuild = self.needs_full_render();
+
+      if needs_ghostty_rebuild || needs_our_rebuild {
+        // Full render needed - clear ALL dirty state and return empty vec
+        term.clear_dirty(); // Clears terminal-level AND row-level dirty bits
+        if needs_our_rebuild {
+          self.clear_full_render_flag();
+        }
+        return Vec::new(); // Signals full render to caller
+      }
+
+      // Incremental render - get and clear only row-level dirty bits
+      let dirty_rows = term.get_dirty_rows();
+      term.clear_dirty();
+      dirty_rows
+    } else {
+      Vec::new()
+    }
+  }
+
+  /// Clear the dirty bits after rendering
+  ///
+  /// This is a convenience method that locks the terminal and clears all
+  /// dirty bits. Should be called after rendering all dirty rows.
+  pub fn clear_dirty_bits(&self) {
+    if let Ok(mut term) = self.terminal.lock() {
+      term.clear_dirty();
     }
   }
 
@@ -186,27 +364,15 @@ impl TerminalSession {
     self.pty.send_input(data)
   }
 
-  /// Get the terminal emulator
-  ///
-  /// Use this to access the terminal grid for rendering.
-  pub fn terminal(&self) -> &Terminal {
-    &self.terminal
-  }
-
-  /// Get mutable reference to terminal
-  ///
-  /// Usually not needed - use `terminal()` for read-only access.
-  pub fn terminal_mut(&mut self) -> &mut Terminal {
-    &mut self.terminal
-  }
-
   /// Resize the terminal and PTY
   ///
   /// This updates both the Terminal emulation size and the PTY size,
   /// sending SIGWINCH to the shell process.
   pub fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
-    // Resize Terminal emulation
-    self.terminal.resize(cols, rows)?;
+    // Resize Terminal emulation (lock required)
+    if let Ok(mut term) = self.terminal.lock() {
+      term.resize(cols, rows)?;
+    }
 
     // Resize PTY (sends SIGWINCH to shell)
     self.pty.resize(rows, cols)?;
@@ -222,13 +388,40 @@ impl TerminalSession {
   /// Check if the shell process is still alive
   ///
   /// Returns false when the shell has exited.
-  pub fn is_alive(&mut self) -> bool {
+  pub fn is_alive(&self) -> bool {
     self.pty.is_alive()
   }
 
   /// Kill the shell process
   pub async fn kill(&mut self) -> Result<()> {
     self.pty.kill().await
+  }
+
+  /// Update cached cell metrics (in pixels) used for reporting queries.
+  pub fn set_cell_pixel_size(&mut self, width: f32, height: f32) {
+    let clamp = |value: f32| -> u16 {
+      let rounded = value.round().max(1.0);
+      rounded.min(u16::MAX as f32) as u16
+    };
+
+    let width_px = clamp(width);
+    let height_px = clamp(height);
+    self.cell_pixel_size = (width_px, height_px);
+
+    // Update terminal (lock required)
+    if let Ok(mut term) = self.terminal.lock() {
+      term.set_cell_pixel_size(width_px, height_px);
+    }
+  }
+
+  /// Update the background color used to answer OSC color queries.
+  pub fn set_background_color(&mut self, r: u8, g: u8, b: u8) {
+    self.background_color = (r, g, b);
+
+    // Update terminal (lock required)
+    if let Ok(mut term) = self.terminal.lock() {
+      term.set_background_color(r, g, b);
+    }
   }
 }
 

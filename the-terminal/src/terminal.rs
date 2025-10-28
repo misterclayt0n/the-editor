@@ -111,21 +111,7 @@ impl Terminal {
     }
     let cell_ext = unsafe { cell_ext.assume_init() };
 
-    let fg = Rgb::from_color(cell_ext.fg).unwrap_or(Rgb::WHITE);
-    let bg = Rgb::from_color(cell_ext.bg);
-    let underline = Rgb::from_color(cell_ext.underline);
-
-    Cell {
-      codepoint: cell_ext.codepoint,
-      cluster: cell_ext.cluster,
-      style: cell_ext.style,
-      hyperlink_id: cell_ext.hyperlink_id,
-      fg,
-      bg,
-      underline,
-      flags: CellFlags(cell_ext.flags),
-      width: cell_ext.width.max(1),
-    }
+    Cell::from(cell_ext)
   }
 
   /// Get the current cursor position.
@@ -152,12 +138,40 @@ impl Terminal {
     Ok(())
   }
 
+  /// Inform the terminal of the cell size in pixels for window queries.
+  pub fn set_cell_pixel_size(&mut self, width_px: u16, height_px: u16) {
+    unsafe { ffi::ghostty_terminal_set_cell_pixel_size(self.inner, width_px, height_px) };
+  }
+
+  /// Set the background color reported for OSC queries.
+  pub fn set_background_color(&mut self, r: u8, g: u8, b: u8) {
+    unsafe { ffi::ghostty_terminal_set_background_color(self.inner, r, g, b) };
+  }
+
   /// Get a view of the entire terminal grid.
   pub fn grid(&self) -> Grid<'_> {
     Grid {
       terminal: self,
       rows:     self.rows(),
       cols:     self.cols(),
+    }
+  }
+
+  /// Copy extended cell data for a specific row into the provided buffer.
+  ///
+  /// Returns the number of valid cells written, capped at `buffer.len()`.
+  pub fn copy_row_ext(&self, row: u16, buffer: &mut [ffi::GhosttyCellExt]) -> usize {
+    if buffer.is_empty() {
+      return 0;
+    }
+
+    unsafe {
+      ffi::ghostty_terminal_copy_row_cells_ext(
+        self.inner,
+        row as u32,
+        buffer.as_mut_ptr(),
+        buffer.len(),
+      )
     }
   }
 
@@ -172,6 +186,87 @@ impl Terminal {
   pub unsafe fn set_response_callback_raw(&mut self, callback: ResponseCallback, ctx: *mut c_void) {
     unsafe {
       ffi::ghostty_terminal_set_callback(self.inner, callback, ctx);
+    }
+  }
+
+  /// Check if the terminal needs a full rebuild.
+  ///
+  /// Returns true if terminal-level or screen-level dirty flags are set,
+  /// indicating operations like `eraseDisplay` (clear screen), resize,
+  /// or mode changes that require rendering all rows.
+  ///
+  /// CRITICAL: This must be checked BEFORE `get_dirty_rows()` to properly
+  /// handle full-screen operations. When this returns true, you should render
+  /// all rows and call `clear_dirty()`, rather than using `get_dirty_rows()`.
+  ///
+  /// This is the root cause fix for nushell performance issues - nushell sends
+  /// frequent `eraseDisplay` sequences which set terminal-level dirty flags,
+  /// not row-level dirty bits.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use the_terminal::Terminal;
+  /// # let mut term = Terminal::new(80, 24).unwrap();
+  /// if term.needs_full_rebuild() {
+  ///   // Render all rows
+  ///   term.clear_dirty();
+  /// } else {
+  ///   // Render only dirty rows
+  ///   let dirty_rows = term.get_dirty_rows();
+  ///   term.clear_dirty();
+  /// }
+  /// ```
+  pub fn needs_full_rebuild(&self) -> bool {
+    unsafe { ffi::ghostty_terminal_needs_full_rebuild(self.inner) }
+  }
+
+  /// Get the list of dirty rows that need re-rendering.
+  ///
+  /// Returns a Vec of row indices that have changed since the last call to
+  /// `clear_dirty()`. This allows for efficient incremental rendering by only
+  /// updating rows that have actually changed.
+  ///
+  /// IMPORTANT: Check `needs_full_rebuild()` FIRST. If it returns true,
+  /// you should render all rows instead of using this method.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use the_terminal::Terminal;
+  /// # let mut term = Terminal::new(80, 24).unwrap();
+  /// let dirty_rows = term.get_dirty_rows();
+  /// for row in dirty_rows {
+  ///   // Re-render only this row
+  /// }
+  /// term.clear_dirty();
+  /// ```
+  pub fn get_dirty_rows(&self) -> Vec<u32> {
+    let mut count: usize = 0;
+    let rows_ptr = unsafe { ffi::ghostty_terminal_get_dirty_rows(self.inner, &mut count) };
+
+    if rows_ptr.is_null() || count == 0 {
+      return Vec::new();
+    }
+
+    // Copy the array into a Vec
+    let slice = unsafe { std::slice::from_raw_parts(rows_ptr, count) };
+    let result = slice.to_vec();
+
+    // Free the array allocated by Zig
+    unsafe {
+      ffi::ghostty_terminal_free_dirty_rows(rows_ptr, count);
+    }
+
+    result
+  }
+
+  /// Clear all dirty bits in the terminal.
+  ///
+  /// This should be called after rendering all dirty rows to reset the dirty
+  /// state. After calling this, `get_dirty_rows()` will return an empty Vec
+  /// until new changes occur.
+  pub fn clear_dirty(&mut self) {
+    unsafe {
+      ffi::ghostty_terminal_clear_dirty(self.inner);
     }
   }
 }
@@ -261,6 +356,26 @@ impl Cell {
   /// Check if this cell is empty (space or null).
   pub fn is_empty(&self) -> bool {
     self.codepoint == 0 || self.codepoint == 32 // space
+  }
+}
+
+impl From<ffi::GhosttyCellExt> for Cell {
+  fn from(ext: ffi::GhosttyCellExt) -> Self {
+    let fg = Rgb::from_color(ext.fg).unwrap_or(Rgb::WHITE);
+    let bg = Rgb::from_color(ext.bg);
+    let underline = Rgb::from_color(ext.underline);
+
+    Self {
+      codepoint: ext.codepoint,
+      cluster: ext.cluster,
+      style: ext.style,
+      hyperlink_id: ext.hyperlink_id,
+      fg,
+      bg,
+      underline,
+      flags: CellFlags(ext.flags),
+      width: ext.width,
+    }
   }
 }
 

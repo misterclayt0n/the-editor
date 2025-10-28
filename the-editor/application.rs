@@ -83,31 +83,6 @@ pub struct App {
 }
 
 impl App {
-  /// Poll LocalSet with minimal blocking using try_recv patterns.
-  /// This allows !Send futures (ACP, local callbacks) to make progress without
-  /// freezing the render thread, which was the source of the freezes.
-  fn poll_local_set_minimal(&mut self) {
-    // Strategy: Use a timeout-based non-blocking poll
-    // We'll create a future that times out immediately and see if tasks can run
-    // This is a compromise between full blocking and no polling at all
-
-    if self.frame_counter % 6 == 0 {
-      // Poll LocalSet only every 6th frame (~10 times per second at 60 FPS)
-      // This gives tasks reasonable progress opportunity without freezing the UI
-      let rt_handle = self.runtime_handle.clone();
-
-      // Use a timeout-based approach to poll with bounded blocking time
-      // The key is to be very quick - just yield and return
-      let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // Try to make very minimal progress without heavy blocking
-        rt_handle.block_on(async {
-          // Minimal work: just a single yield to let scheduler run
-          tokio::task::yield_now().await;
-        });
-      }));
-    }
-  }
-
   pub fn new(
     editor: Editor,
     local_set: Rc<tokio::task::LocalSet>,
@@ -573,10 +548,11 @@ impl Application for App {
     // Increment frame counter
     self.frame_counter = self.frame_counter.wrapping_add(1);
 
-    // Poll LocalSet minimally to allow !Send futures to make progress
-    // We use throttled polling (every 6th frame) to avoid the freezes that were
-    // happening when polling on every single frame
-    self.poll_local_set_minimal();
+    // Process pending terminal responses
+    // This sends queued responses (e.g., cursor position reports) back to the shell
+    for (_, terminal) in self.editor.tree.terminals() {
+      terminal.session.borrow_mut().process_responses();
+    }
 
     // Handle pending actions from the editor (e.g., spawn terminal)
     if let Some(action) = self.editor.pending_action.take() {
@@ -904,6 +880,16 @@ impl Application for App {
       && (self.pending_scroll_lines.abs() > 0.1 || self.pending_scroll_cols.abs() > 0.1)
     {
       return true;
+    }
+
+    // Check if any terminal needs redraw
+    // Terminals continuously process PTY output in dedicated threads, so we need
+    // to keep redrawing while any terminal is alive
+    for (_, terminal) in self.editor.tree.terminals() {
+      let session = terminal.session.borrow();
+      if session.needs_redraw() {
+        return true;
+      }
     }
 
     // Then check if any component needs updates.

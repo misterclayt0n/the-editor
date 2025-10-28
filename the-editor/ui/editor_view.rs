@@ -2430,29 +2430,78 @@ impl EditorView {
       let render_rows = grid_rows.min(new_rows);
       let render_cols = grid_cols.min(new_cols);
 
-      // Render each cell in the terminal grid
+      let line_height = font_size + LINE_SPACING;
+
+      // Render each row as contiguous color runs to reduce draw calls.
       for row in 0..render_rows {
+        let row_y = term_y + (row as f32 * line_height);
+        let mut run_text = String::with_capacity(render_cols as usize);
+        let mut run_color: Option<(u8, u8, u8)> = None;
+        let mut run_start_col = 0u16;
+
+        let flush_run = |renderer: &mut Surface,
+                         start_col: u16,
+                         color: Option<(u8, u8, u8)>,
+                         buffer: &mut String| {
+          if buffer.is_empty() {
+            return;
+          }
+          while buffer.ends_with(' ') {
+            buffer.pop();
+          }
+          if buffer.is_empty() {
+            return;
+          }
+          let Some((r, g, b)) = color else {
+            buffer.clear();
+            return;
+          };
+
+          let fg_color = Color::rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0);
+          let text = std::mem::take(buffer);
+          let x = term_x + (start_col as f32 * font_width);
+          let mut section = TextSection::new(x, row_y);
+          section = section.add_text(
+            TextSegment::new(text)
+              .with_color(fg_color)
+              .with_size(font_size),
+          );
+          renderer.draw_text(section);
+          buffer.reserve(render_cols as usize);
+        };
+
         for col in 0..render_cols {
           let cell = grid.get(row, col);
+          let mut ch = cell.character().unwrap_or(' ');
+          if ch == '\0' {
+            ch = ' ';
+          }
 
-          if let Some(ch) = cell.character() {
-            let x = term_x + (col as f32 * font_width);
-            let y = term_y + (row as f32 * (font_size + LINE_SPACING));
+          let rgb = (cell.fg.r, cell.fg.g, cell.fg.b);
 
-            let fg = cell.fg;
-            let fg_color = Color::rgba(
-              fg.r as f32 / 255.0,
-              fg.g as f32 / 255.0,
-              fg.b as f32 / 255.0,
-              1.0,
-            );
+          if run_color.map(|current| current != rgb).unwrap_or(true) {
+            flush_run(renderer, run_start_col, run_color, &mut run_text);
+            run_color = Some(rgb);
+            run_start_col = col;
+          }
 
-            let segment = TextSegment::new(ch.to_string()).with_color(fg_color);
-            let section = TextSection::new(x, y).add_text(segment);
+          let cell_width = cell.width;
+          let is_wide_continuation = cell_width == 0;
+          if is_wide_continuation {
+            continue;
+          }
 
-            renderer.draw_text_immediate(section);
+          run_text.push(ch);
+
+          let glyph_width = usize::from(cell_width.max(1));
+          if glyph_width > 1 {
+            for _ in 1..glyph_width {
+              run_text.push(' ');
+            }
           }
         }
+
+        flush_run(renderer, run_start_col, run_color, &mut run_text);
       }
 
       // Render cursor if visible

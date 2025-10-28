@@ -265,30 +265,78 @@ impl Component for TerminalView {
     let render_rows = term_rows.min(new_rows);
     let render_cols = term_cols.min(new_cols);
 
+    // Batch contiguous runs of identical color within each row.
+    let line_height = cell_height;
+
     for row in 0..render_rows {
+      let row_y = area.y as f32 + (row as f32 * line_height);
+      let mut run_text = String::with_capacity(render_cols as usize);
+      let mut run_color: Option<(u8, u8, u8)> = None;
+      let mut run_start_col = 0u16;
+
+      let flush_run = |surface: &mut Surface,
+                       start_col: u16,
+                       color: Option<(u8, u8, u8)>,
+                       buffer: &mut String| {
+        if buffer.is_empty() {
+          return;
+        }
+        while buffer.ends_with(' ') {
+          buffer.pop();
+        }
+        if buffer.is_empty() {
+          return;
+        }
+        let Some((r, g, b)) = color else {
+          buffer.clear();
+          return;
+        };
+
+        let fg_color = Color::rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0);
+        let text = std::mem::take(buffer);
+        let x = area.x as f32 + (start_col as f32 * cell_width);
+        let mut section = TextSection::new(x, row_y);
+        section = section.add_text(
+          TextSegment::new(text)
+            .with_color(fg_color)
+            .with_size(cell_height),
+        );
+        surface.draw_text(section);
+        buffer.reserve(render_cols as usize);
+      };
+
       for col in 0..render_cols {
         let cell = grid.get(row, col);
+        let mut ch = cell.character().unwrap_or(' ');
+        if ch == '\0' {
+          ch = ' ';
+        }
 
-        // Get character to render
-        if let Some(ch) = cell.character() {
-          let x = area.x as f32 + (col as f32 * cell_width);
-          let y = area.y as f32 + (row as f32 * cell_height);
+        let rgb = (cell.fg.r, cell.fg.g, cell.fg.b);
 
-          let fg = cell.fg;
-          let fg_color = Color::rgba(
-            fg.r as f32 / 255.0,
-            fg.g as f32 / 255.0,
-            fg.b as f32 / 255.0,
-            1.0,
-          );
+        if run_color.map(|current| current != rgb).unwrap_or(true) {
+          flush_run(surface, run_start_col, run_color, &mut run_text);
+          run_color = Some(rgb);
+          run_start_col = col;
+        }
 
-          // Build text segment for the character
-          let segment = TextSegment::new(ch.to_string()).with_color(fg_color);
-          let section = TextSection::new(x, y).add_text(segment);
+        let cell_width = cell.width;
+        let is_wide_continuation = cell_width == 0;
+        if is_wide_continuation {
+          continue;
+        }
 
-          surface.draw_text_immediate(section);
+        run_text.push(ch);
+
+        let glyph_width = usize::from(cell_width.max(1));
+        if glyph_width > 1 {
+          for _ in 1..glyph_width {
+            run_text.push(' ');
+          }
         }
       }
+
+      flush_run(surface, run_start_col, run_color, &mut run_text);
     }
 
     // Render cursor if visible

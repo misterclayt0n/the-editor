@@ -66,6 +66,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "C-g"       => toggle_line_numbers,
     "C-t"       => toggle_diff_gutter,
     "A-w"       => toggle_soft_wrap,
+    "A-j"       => toggle_terminal_bottom,
+    "A-l"       => toggle_terminal_right,
     "C-="       => increase_font_size,
     "C-minus"   => decrease_font_size,
     "C-0"       => default_font_size,
@@ -279,6 +281,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "tab"                               => smart_tab,
     "S-tab"                             => insert_tab,
 
+    "A-j"                               => toggle_terminal_bottom,
+    "A-l"                               => toggle_terminal_right,
+
     "up"                                => move_visual_line_up,
     "down"                              => move_visual_line_down,
     "left"                              => move_char_left,
@@ -330,6 +335,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "j" => extend_line_down,
       "w" => extend_to_word,
     },
+
+    "A-j" => toggle_terminal_bottom,
+    "A-l" => toggle_terminal_right,
   }));
 
   // Command mode: inherits from Normal, but blocks most keys for text input

@@ -1,6 +1,9 @@
 use std::{
   borrow::Cow,
-  cell::Cell,
+  cell::{
+    Cell,
+    RefCell,
+  },
   collections::{
     BTreeMap,
     HashMap,
@@ -20,6 +23,7 @@ use std::{
     PathBuf,
   },
   pin::Pin,
+  rc::Rc,
   sync::Arc,
   time::Duration,
 };
@@ -58,6 +62,7 @@ use serde::{
 use the_editor_event::dispatch;
 use the_editor_stdx::path::canonicalize;
 use the_editor_vcs::DiffProviderRegistry;
+use the_terminal::TerminalSession;
 use tokio::{
   sync::mpsc::{
     UnboundedReceiver,
@@ -302,16 +307,21 @@ fn create_interpolated_theme(from: &Theme, to: &Theme, t: f32) -> Theme {
 
 pub struct Editor {
   /// Current editing mode.
-  pub mode:             Mode,
+  pub mode:                 Mode,
   /// Custom mode string override (e.g., "RENAME" for rename symbol)
   /// If set, this is displayed in the statusline instead of the mode name
-  pub custom_mode_str:  Option<String>,
-  pub tree:             Tree,
+  pub custom_mode_str:      Option<String>,
+  pub tree:                 Tree,
   /// Most recently focused document view. Used when a terminal currently
   /// holds focus so view-oriented operations still have a fallback.
-  last_view_focus:      Option<ViewId>,
-  pub next_document_id: DocumentId,
-  pub documents:        BTreeMap<DocumentId, Document>,
+  last_view_focus:          Option<ViewId>,
+  /// Tracked terminal panes for quick toggling.
+  terminal_bottom:          Option<ViewId>,
+  terminal_right:           Option<ViewId>,
+  detached_terminal_bottom: Option<DetachedTerminal>,
+  detached_terminal_right:  Option<DetachedTerminal>,
+  pub next_document_id:     DocumentId,
+  pub documents:            BTreeMap<DocumentId, Document>,
 
   // We Flatten<> to resolve the inner DocumentSavedEventFuture. For that we need a stream of
   // streams, hence the Once<>. https://stackoverflow.com/a/66875668
@@ -428,13 +438,23 @@ impl Default for FadeMode {
   }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum TerminalPane {
+  Bottom,
+  Right,
+}
+
+#[derive(Clone, Copy)]
 pub enum Action {
   Load,
   Replace,
   HorizontalSplit,
   VerticalSplit,
   SpawnTerminal,
+  SpawnTerminalInPane {
+    anchor: ViewId,
+    pane:   TerminalPane,
+  },
 }
 
 impl Action {
@@ -442,6 +462,27 @@ impl Action {
   pub fn align_view(&self, view: &View, new_doc: DocumentId) -> bool {
     !matches!((self, view.doc == new_doc), (Action::Load, false))
   }
+}
+
+impl TerminalPane {
+  pub fn layout(self) -> crate::core::tree::Layout {
+    match self {
+      TerminalPane::Bottom => crate::core::tree::Layout::Horizontal,
+      TerminalPane::Right => crate::core::tree::Layout::Vertical,
+    }
+  }
+
+  pub fn display_name(self) -> &'static str {
+    match self {
+      TerminalPane::Bottom => "bottom terminal",
+      TerminalPane::Right => "side terminal",
+    }
+  }
+}
+
+struct DetachedTerminal {
+  session: Rc<RefCell<TerminalSession>>,
+  id:      u32,
 }
 
 pub type Motion = Box<dyn Fn(&mut Editor)>;
@@ -1850,6 +1891,10 @@ impl Editor {
       custom_mode_str: None,
       tree: Tree::new(area),
       last_view_focus: None,
+      terminal_bottom: None,
+      terminal_right: None,
+      detached_terminal_bottom: None,
+      detached_terminal_right: None,
       next_document_id: DocumentId::default(),
       documents: BTreeMap::new(),
       saves: HashMap::new(),
@@ -2480,7 +2525,7 @@ impl Editor {
     }
 
     let focust_lost = match action {
-      Action::SpawnTerminal => {
+      Action::SpawnTerminal | Action::SpawnTerminalInPane { .. } => {
         // SpawnTerminal doesn't switch documents, just return without focus lost
         return;
       },
@@ -2693,6 +2738,12 @@ impl Editor {
       doc.remove_view(id);
     }
     self.tree.remove(id);
+    if self.terminal_bottom.is_some_and(|pane| pane == id) {
+      self.terminal_bottom = None;
+    }
+    if self.terminal_right.is_some_and(|pane| pane == id) {
+      self.terminal_right = None;
+    }
     self._refresh();
   }
 
@@ -2886,6 +2937,113 @@ impl Editor {
       }
     }
     id
+  }
+
+  fn terminal_pane_slot(&mut self, pane: TerminalPane) -> &mut Option<ViewId> {
+    match pane {
+      TerminalPane::Bottom => &mut self.terminal_bottom,
+      TerminalPane::Right => &mut self.terminal_right,
+    }
+  }
+
+  fn terminal_pane_slot_ref(&self, pane: TerminalPane) -> Option<ViewId> {
+    match pane {
+      TerminalPane::Bottom => self.terminal_bottom,
+      TerminalPane::Right => self.terminal_right,
+    }
+  }
+
+  fn store_detached_terminal(&mut self, pane: TerminalPane, terminal: DetachedTerminal) {
+    match pane {
+      TerminalPane::Bottom => self.detached_terminal_bottom = Some(terminal),
+      TerminalPane::Right => self.detached_terminal_right = Some(terminal),
+    }
+  }
+
+  fn take_detached_terminal(&mut self, pane: TerminalPane) -> Option<DetachedTerminal> {
+    match pane {
+      TerminalPane::Bottom => self.detached_terminal_bottom.take(),
+      TerminalPane::Right => self.detached_terminal_right.take(),
+    }
+  }
+
+  fn clear_detached_terminal(&mut self, pane: TerminalPane) {
+    match pane {
+      TerminalPane::Bottom => self.detached_terminal_bottom = None,
+      TerminalPane::Right => self.detached_terminal_right = None,
+    }
+  }
+
+  pub fn register_terminal_pane(&mut self, pane: TerminalPane, view_id: ViewId) {
+    *self.terminal_pane_slot(pane) = Some(view_id);
+  }
+
+  pub fn clear_terminal_pane(&mut self, pane: TerminalPane) {
+    *self.terminal_pane_slot(pane) = None;
+  }
+
+  pub fn toggle_terminal_pane(&mut self, pane: TerminalPane) {
+    // If the pane already exists, close it.
+    if let Some(existing) = self.terminal_pane_slot_ref(pane) {
+      if self.tree.contains(existing) {
+        let fallback = self.focused_view_id();
+        if let Some(terminal) = self.tree.detach_terminal(existing) {
+          let terminal = *terminal;
+          self.store_detached_terminal(pane, DetachedTerminal {
+            session: terminal.session,
+            id:      terminal.id,
+          });
+        } else {
+          self.clear_detached_terminal(pane);
+          self.tree.remove(existing);
+        }
+        self.clear_terminal_pane(pane);
+        if let Some(view_id) = fallback {
+          self.focus(view_id);
+        }
+        self.set_status(match pane {
+          TerminalPane::Bottom => "Closed bottom terminal",
+          TerminalPane::Right => "Closed side terminal",
+        });
+        return;
+      }
+      // Terminal disappeared externally, clear the slot and fall through to spawn.
+      self.clear_terminal_pane(pane);
+    }
+
+    let Some(anchor) = self.focused_view_id() else {
+      self.set_error("No active view available to host a terminal split");
+      return;
+    };
+
+    if let Some(detached) = self.take_detached_terminal(pane) {
+      let session = Rc::clone(&detached.session);
+      match self
+        .tree
+        .insert_terminal_pane(anchor, session, detached.id, pane.layout())
+      {
+        Some(view_id) => {
+          self.register_terminal_pane(pane, view_id);
+          self.set_status(match pane {
+            TerminalPane::Bottom => "Reopened bottom terminal",
+            TerminalPane::Right => "Reopened side terminal",
+          });
+        },
+        None => {
+          // Re-insertion failed; preserve the detached terminal for later attempts.
+          self.store_detached_terminal(pane, detached);
+          self.set_error("Failed to restore terminal split");
+        },
+      }
+      return;
+    }
+
+    self.pending_action = Some(Action::SpawnTerminalInPane { anchor, pane });
+
+    self.set_status(match pane {
+      TerminalPane::Bottom => "Opening bottom terminal…",
+      TerminalPane::Right => "Opening side terminal…",
+    });
   }
 
   pub fn focus_next(&mut self) {

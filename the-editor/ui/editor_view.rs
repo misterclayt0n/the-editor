@@ -148,6 +148,7 @@ pub struct EditorView {
   // Split separator interaction
   hovered_separator:         Option<SeparatorInfo>,
   dragging_separator:        Option<SeparatorDrag>,
+  terminal_meta_pending:     bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -200,6 +201,7 @@ impl EditorView {
       click_count: 0,
       hovered_separator: None,
       dragging_separator: None,
+      terminal_meta_pending: false,
     }
   }
 
@@ -405,14 +407,41 @@ impl Component for EditorView {
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
     match event {
       Event::Key(key) => {
-        // Check if focused node is a terminal - if so, route input to it
+        // Check if focused node is a terminal.
         let focus_id = cx.editor.tree.focus;
-        if let Some(terminal) = cx.editor.tree.get_terminal_mut(focus_id) {
-          // Convert key to bytes for terminal input
-          let bytes = Self::key_to_terminal_bytes(key);
-          if !bytes.is_empty() {
-            if let Err(e) = terminal.session.borrow().send_input(bytes) {
-              log::error!("Failed to send input to terminal: {}", e);
+        if cx.editor.tree.get_terminal(focus_id).is_some() {
+          use the_editor_renderer::Key;
+
+          let mut prepend_escape = false;
+
+          if self.terminal_meta_pending {
+            self.terminal_meta_pending = false;
+            if let Some(cmd_fn) = Self::terminal_toggle_command(key.code, true) {
+              return self.execute_editor_command(cmd_fn, cx);
+            } else {
+              prepend_escape = true;
+            }
+          }
+
+          if key.code == Key::Escape && !key.alt && !key.ctrl && !key.shift {
+            self.terminal_meta_pending = true;
+            return EventResult::Consumed(None);
+          }
+
+          if let Some(cmd_fn) = Self::terminal_toggle_command(key.code, key.alt) {
+            return self.execute_editor_command(cmd_fn, cx);
+          }
+
+          if let Some(terminal) = cx.editor.tree.get_terminal_mut(focus_id) {
+            let mut bytes = Vec::new();
+            if prepend_escape {
+              bytes.push(0x1B);
+            }
+            bytes.extend(Self::key_to_terminal_bytes(key));
+            if !bytes.is_empty() {
+              if let Err(e) = terminal.session.borrow().send_input(bytes) {
+                log::error!("Failed to send input to terminal: {}", e);
+              }
             }
           }
           return EventResult::Consumed(None);
@@ -2188,6 +2217,65 @@ impl Component for EditorView {
 }
 
 impl EditorView {
+  fn terminal_toggle_command(
+    code: the_editor_renderer::Key,
+    alt: bool,
+  ) -> Option<fn(&mut commands::Context)> {
+    use the_editor_renderer::Key;
+
+    if !alt {
+      return None;
+    }
+
+    match code {
+      Key::Char('j') | Key::Char('J') => Some(commands::toggle_terminal_bottom),
+      Key::Char('l') | Key::Char('L') => Some(commands::toggle_terminal_right),
+      _ => None,
+    }
+  }
+
+  fn execute_editor_command(
+    &mut self,
+    cmd_fn: fn(&mut commands::Context),
+    cx: &mut Context,
+  ) -> EventResult {
+    cx.editor.clear_status();
+
+    let mut cmd_cx = commands::Context {
+      register:             cx.editor.selected_register,
+      count:                cx.editor.count,
+      editor:               cx.editor,
+      on_next_key_callback: None,
+      callback:             Vec::new(),
+      jobs:                 cx.jobs,
+    };
+
+    cmd_fn(&mut cmd_cx);
+
+    if let Some(on_next_key) = cmd_cx.on_next_key_callback {
+      self.on_next_key = Some(on_next_key);
+    }
+
+    let new_register = cmd_cx.register;
+    let new_count = cmd_cx.count;
+    let callbacks = cmd_cx.callback;
+
+    cx.editor.selected_register = new_register;
+    cx.editor.count = new_count;
+
+    self.dirty_region.mark_all_dirty();
+
+    if callbacks.is_empty() {
+      EventResult::Consumed(None)
+    } else {
+      EventResult::Consumed(Some(Box::new(move |compositor, cx| {
+        for callback in callbacks {
+          callback(compositor, cx);
+        }
+      })))
+    }
+  }
+
   /// Convert a KeyBinding to bytes for terminal PTY input
   fn key_to_terminal_bytes(key: &KeyBinding) -> Vec<u8> {
     use the_editor_renderer::Key;

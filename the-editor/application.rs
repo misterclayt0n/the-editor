@@ -1,4 +1,7 @@
-use std::rc::Rc;
+use std::{
+  cell::RefCell,
+  rc::Rc,
+};
 
 use the_editor_renderer::{
   Application,
@@ -14,7 +17,10 @@ use crate::{
     graphics::Rect,
     movement::Direction,
   },
-  editor::Editor,
+  editor::{
+    Editor,
+    TerminalPane,
+  },
   input::InputHandler,
   keymap::{
     KeyBinding,
@@ -71,6 +77,9 @@ pub struct App {
   // Throttle LocalSet polling to reduce overhead
   // Only poll every N frames to avoid blocking on every single frame
   frame_counter: u32,
+
+  // Track whether the next key press should be treated as a meta prefix for terminal shortcuts
+  terminal_meta_pending: bool,
 }
 
 impl App {
@@ -155,6 +164,7 @@ impl App {
       trackpad_scroll_cols: 0.0,
       last_frame_time: std::time::Instant::now(),
       frame_counter: 0,
+      terminal_meta_pending: false,
     }
   }
 
@@ -425,6 +435,14 @@ impl App {
   }
 }
 
+fn terminal_toggle_target(code: Key) -> Option<TerminalPane> {
+  match code {
+    Key::Char('j') | Key::Char('J') => Some(TerminalPane::Bottom),
+    Key::Char('l') | Key::Char('L') => Some(TerminalPane::Right),
+    _ => None,
+  }
+}
+
 /// Convert InputEvent to bytes for terminal PTY
 ///
 /// This handles special keys and VT100 escape sequences.
@@ -644,14 +662,58 @@ impl Application for App {
     // If a terminal is focused, route keyboard input directly to it
     let focus_id = self.editor.tree.focus;
     if let Some(terminal) = self.editor.tree.get_terminal_mut(focus_id) {
-      // Convert InputEvent to bytes and send to terminal
+      if let InputEvent::Keyboard(key_press) = &event {
+        if !key_press.pressed {
+          return true;
+        }
+
+        let mut prepend_escape = false;
+
+        if self.terminal_meta_pending {
+          self.terminal_meta_pending = false;
+          if let Some(pane) = terminal_toggle_target(key_press.code) {
+            self.editor.toggle_terminal_pane(pane);
+            return true;
+          }
+          prepend_escape = true;
+        }
+
+        if key_press.code == Key::Escape && !key_press.alt && !key_press.ctrl && !key_press.shift {
+          self.terminal_meta_pending = true;
+          return true;
+        }
+
+        if key_press.alt {
+          if let Some(pane) = terminal_toggle_target(key_press.code) {
+            self.editor.toggle_terminal_pane(pane);
+            return true;
+          }
+        }
+
+        if let Some(mut bytes) = input_event_to_terminal_bytes(&event) {
+          if prepend_escape {
+            let mut with_escape = Vec::with_capacity(bytes.len() + 1);
+            with_escape.push(0x1B);
+            with_escape.extend(bytes);
+            bytes = with_escape;
+          }
+
+          if let Err(e) = terminal.session.borrow().send_input(bytes) {
+            log::error!("Failed to write to terminal PTY: {}", e);
+          }
+        }
+
+        return true;
+      }
+
       if let Some(bytes) = input_event_to_terminal_bytes(&event) {
-        let session = terminal.session.get_mut();
-        if let Err(e) = session.send_input(bytes) {
+        if let Err(e) = terminal.session.borrow().send_input(bytes) {
           log::error!("Failed to write to terminal PTY: {}", e);
         }
-        return true; // Event consumed by terminal
+        return true;
       }
+    } else {
+      self.terminal_meta_pending = false;
     }
 
     // Check if EditorView has a pending on_next_key callback.
@@ -878,9 +940,56 @@ impl App {
         // Spawn terminal session with default dimensions (80x24)
         match TerminalSession::new(24, 80, None) {
           Ok(session) => {
+            let session = Rc::new(RefCell::new(session));
             // Insert terminal into the tree
             self.editor.tree.insert_terminal(session, id);
             self.editor.set_status("Terminal spawned in split");
+          },
+          Err(e) => {
+            self
+              .editor
+              .set_error(format!("Failed to spawn terminal: {}", e));
+          },
+        }
+      },
+      Action::SpawnTerminalInPane { mut anchor, pane } => {
+        use the_terminal::TerminalSession;
+
+        if !self.editor.tree.contains(anchor) {
+          anchor = match self.editor.focused_view_id() {
+            Some(id) => id,
+            None => {
+              self
+                .editor
+                .set_error("No view available to host a terminal split");
+              return;
+            },
+          };
+        }
+
+        let id = self.editor.next_terminal_id;
+        self.editor.next_terminal_id += 1;
+
+        match TerminalSession::new(24, 80, None) {
+          Ok(session) => {
+            let session = Rc::new(RefCell::new(session));
+            match self
+              .editor
+              .tree
+              .insert_terminal_pane(anchor, session, id, pane.layout())
+            {
+              Some(view_id) => {
+                self.editor.register_terminal_pane(pane, view_id);
+                self
+                  .editor
+                  .set_status(format!("Opened {}", pane.display_name()));
+              },
+              None => {
+                self
+                  .editor
+                  .set_error("Failed to place terminal in requested split");
+              },
+            }
           },
           Err(e) => {
             self

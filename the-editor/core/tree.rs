@@ -1,6 +1,7 @@
 use std::{
   cell::RefCell,
   collections::HashMap,
+  rc::Rc,
   time::Duration,
 };
 
@@ -106,11 +107,11 @@ impl Node {
     }
   }
 
-  pub fn terminal(session: TerminalSession, id: u32) -> Self {
+  pub fn terminal(session: Rc<RefCell<TerminalSession>>, id: u32) -> Self {
     Self {
       parent:  ViewId::default(),
       content: Content::Terminal(Box::new(TerminalNode {
-        session: RefCell::new(session),
+        session,
         id,
         area: Rect::default(),
       })),
@@ -163,7 +164,7 @@ impl Default for Container {
 pub struct TerminalNode {
   /// The terminal session (wrapped in RefCell for interior mutability during
   /// rendering)
-  pub session: RefCell<TerminalSession>,
+  pub session: Rc<RefCell<TerminalSession>>,
   /// Terminal's unique identifier
   pub id:      u32,
   /// Current area occupied by this terminal
@@ -241,7 +242,7 @@ impl Tree {
   }
 
   /// Insert a terminal node into the tree (similar to insert but for terminals)
-  pub fn insert_terminal(&mut self, session: TerminalSession, id: u32) -> ViewId {
+  pub fn insert_terminal(&mut self, session: Rc<RefCell<TerminalSession>>, id: u32) -> ViewId {
     let focus = self.focus;
     let parent = self.nodes[focus].parent;
     let mut node = Node::terminal(session, id);
@@ -277,6 +278,96 @@ impl Tree {
     self.recalculate();
 
     node_id
+  }
+
+  /// Insert a terminal node by splitting around a specific anchor with the
+  /// desired layout.
+  pub fn insert_terminal_pane(
+    &mut self,
+    anchor: ViewId,
+    session: Rc<RefCell<TerminalSession>>,
+    id: u32,
+    layout: Layout,
+  ) -> Option<ViewId> {
+    if !self.contains(anchor) {
+      return None;
+    }
+
+    let parent = self.nodes[anchor].parent;
+    let mut node = Node::terminal(session, id);
+    node.parent = parent;
+    let node_id = self.nodes.insert(node);
+
+    let container = match &mut self.nodes[parent] {
+      Node {
+        content: Content::Container(container),
+        ..
+      } => container,
+      _ => return None,
+    };
+
+    if container.layout == layout {
+      // Insert after the anchor when the parent already matches the desired layout.
+      let pos = if container.children.is_empty() {
+        0
+      } else {
+        container
+          .children
+          .iter()
+          .position(|&child| child == anchor)
+          .map(|pos| pos + 1)
+          .unwrap_or(container.children.len())
+      };
+      container.children.insert(pos, node_id);
+      container.child_sizes.insert(pos, None);
+      self.nodes[node_id].parent = parent;
+    } else {
+      // Create a new container with the requested layout and replace the anchor.
+      let mut split = Node::container(layout);
+      split.parent = parent;
+      let split_id = self.nodes.insert(split);
+
+      let split_container = match &mut self.nodes[split_id] {
+        Node {
+          content: Content::Container(container),
+          ..
+        } => container,
+        _ => return None,
+      };
+
+      split_container.children.push(anchor);
+      split_container.child_sizes.push(None);
+      split_container.children.push(node_id);
+      split_container.child_sizes.push(None);
+
+      self.nodes[anchor].parent = split_id;
+      self.nodes[node_id].parent = split_id;
+
+      if let Node {
+        content: Content::Container(parent_container),
+        ..
+      } = &mut self.nodes[parent]
+      {
+        if let Some(pos) = parent_container
+          .children
+          .iter()
+          .position(|&child| child == anchor)
+        {
+          parent_container.children[pos] = split_id;
+        } else {
+          parent_container.children.push(split_id);
+          parent_container.child_sizes.push(None);
+        }
+      } else {
+        return None;
+      }
+    }
+
+    // Focus the new terminal node and recalculate tree layout.
+    self.focus = node_id;
+    self.recalculate();
+
+    Some(node_id)
   }
 
   pub fn split(&mut self, view: View, layout: Layout) -> ViewId {
@@ -424,10 +515,10 @@ impl Tree {
     }
   }
 
-  fn remove_or_replace(&mut self, child: ViewId, replacement: Option<ViewId>) {
+  fn remove_or_replace(&mut self, child: ViewId, replacement: Option<ViewId>) -> Option<Node> {
     let parent = self.nodes[child].parent;
 
-    self.nodes.remove(child);
+    let removed = self.nodes.remove(child)?;
 
     let mut replacement_id = None;
     {
@@ -456,6 +547,8 @@ impl Tree {
     if let Some(new) = replacement_id {
       self.nodes[new].parent = parent;
     }
+
+    Some(removed)
   }
 
   pub fn remove(&mut self, index: ViewId) {
@@ -467,17 +560,58 @@ impl Tree {
     let parent = self.nodes[index].parent;
     let parent_is_root = parent == self.root;
 
-    self.remove_or_replace(index, None);
+    let _ = self.remove_or_replace(index, None);
 
     let parent_container = self.container_mut(parent);
     if parent_container.children.len() == 1 && !parent_is_root {
       // Lets merge the only child back to its grandparent so that Views
       // are equally spaced.
       let sibling = parent_container.children.pop().unwrap();
-      self.remove_or_replace(parent, Some(sibling));
+      let _ = self.remove_or_replace(parent, Some(sibling));
     }
 
     self.recalculate()
+  }
+
+  /// Detach a terminal node from the tree while returning its session.
+  pub fn detach_terminal(&mut self, id: ViewId) -> Option<Box<TerminalNode>> {
+    let node = self.nodes.get(id)?;
+    if !matches!(node.content, Content::Terminal(_)) {
+      return None;
+    }
+
+    if self.focus == id {
+      self.focus = self.prev();
+    }
+
+    let parent = node.parent;
+    let parent_is_root = parent == self.root;
+
+    let removed = self.remove_or_replace(id, None)?;
+
+    let terminal = match removed.content {
+      Content::Terminal(terminal) => terminal,
+      _ => unreachable!("detach_terminal called on non-terminal node"),
+    };
+
+    if !parent_is_root {
+      let maybe_sibling = {
+        let container = self.container_mut(parent);
+        if container.children.len() == 1 {
+          Some(container.children[0])
+        } else {
+          None
+        }
+      };
+
+      if let Some(sibling) = maybe_sibling {
+        let _ = self.remove_or_replace(parent, Some(sibling));
+      }
+    }
+
+    self.recalculate();
+
+    Some(terminal)
   }
 
   pub fn views(&self) -> impl Iterator<Item = (&View, bool)> {

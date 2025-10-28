@@ -307,6 +307,9 @@ pub struct Editor {
   /// If set, this is displayed in the statusline instead of the mode name
   pub custom_mode_str:  Option<String>,
   pub tree:             Tree,
+  /// Most recently focused document view. Used when a terminal currently
+  /// holds focus so view-oriented operations still have a fallback.
+  last_view_focus:      Option<ViewId>,
   pub next_document_id: DocumentId,
   pub documents:        BTreeMap<DocumentId, Document>,
 
@@ -397,6 +400,11 @@ pub struct Editor {
 
   /// Pending action to be executed by the App
   pub pending_action: Option<Action>,
+
+  /// Terminal manager for integrated terminal support
+  pub terminal_manager: crate::terminal_manager::TerminalManager,
+  /// Counter for generating unique terminal IDs
+  pub next_terminal_id: u32,
 }
 
 /// State for the context-aware code fading feature
@@ -1841,6 +1849,7 @@ impl Editor {
       mode: Mode::Normal,
       custom_mode_str: None,
       tree: Tree::new(area),
+      last_view_focus: None,
       next_document_id: DocumentId::default(),
       documents: BTreeMap::new(),
       saves: HashMap::new(),
@@ -1892,6 +1901,8 @@ impl Editor {
       noop_effect_pending: false,
       fade_mode: FadeMode::default(),
       pending_action: None,
+      terminal_manager: crate::terminal_manager::TerminalManager::new(),
+      next_terminal_id: 0,
     };
 
     let scopes = editor.theme.scopes().to_vec();
@@ -2615,8 +2626,11 @@ impl Editor {
       self.syn_loader.clone(),
     );
     let doc_id = self.new_file_from_document(action, doc);
+    let view_id = self
+      .focused_view_id()
+      .expect("expected an active view before piping stdin");
     let doc = doc_mut!(self, &doc_id);
-    let view = view_mut!(self);
+    let view = self.tree.get_mut(view_id);
     doc.ensure_view_init(view.id);
     let transaction = crate::core::transaction::Transaction::insert(
       doc.text(),
@@ -2815,23 +2829,63 @@ impl Editor {
     // within view
     if prev_id != view_id {
       self.enter_normal_mode();
-      self.ensure_cursor_in_view(view_id);
 
-      // Update jumplist selections with new document changes.
-      for (view, _focused) in self.tree.views_mut() {
-        let doc = doc_mut!(self, &view.doc);
-        view.sync_changes(doc);
+      // Only process view-specific logic if focusing on a view (not a terminal)
+      if let Some(view) = self.tree.try_get(view_id) {
+        self.last_view_focus = Some(view_id);
+        let doc_id = view.doc;
+
+        self.ensure_cursor_in_view(view_id);
+
+        // Update jumplist selections with new document changes.
+        for (view, _focused) in self.tree.views_mut() {
+          let doc = doc_mut!(self, &view.doc);
+          view.sync_changes(doc);
+        }
+
+        let doc = doc_mut!(self, &doc_id);
+        doc.mark_as_focused();
+        self.touch_special_buffer(doc_id);
+
+        // Dispatch focus lost event only if previous focus was also a view
+        if let Some(prev_view) = self.tree.try_get(prev_id) {
+          let focus_lost = prev_view.doc;
+          dispatch(DocumentFocusLost {
+            editor: self,
+            doc:    focus_lost,
+          });
+        }
       }
-      let view = view!(self, view_id);
-      let doc = doc_mut!(self, &view.doc);
-      doc.mark_as_focused();
-      self.touch_special_buffer(view.doc);
-      let focus_lost = self.tree.get(prev_id).doc;
-      dispatch(DocumentFocusLost {
-        editor: self,
-        doc:    focus_lost,
-      });
+      // If focusing on a terminal, we just change focus without view-specific
+      // logic
     }
+  }
+
+  /// Returns the currently focused document view if one exists.
+  /// Falls back to the last focused view when a terminal holds focus.
+  pub fn focused_view_id(&self) -> Option<ViewId> {
+    if self.tree.try_get(self.tree.focus).is_some() {
+      Some(self.tree.focus)
+    } else if let Some(id) = self.last_view_focus {
+      if self.tree.try_get(id).is_some() {
+        Some(id)
+      } else {
+        self.tree.views().next().map(|(view, _)| view.id)
+      }
+    } else {
+      self.tree.views().next().map(|(view, _)| view.id)
+    }
+  }
+
+  /// Mutable variant that also refreshes the cached last focused view.
+  pub fn focused_view_id_mut(&mut self) -> Option<ViewId> {
+    let id = self.focused_view_id();
+    if let Some(id) = id {
+      if self.tree.try_get(id).is_some() {
+        self.last_view_focus = Some(id);
+      }
+    }
+    id
   }
 
   pub fn focus_next(&mut self) {
@@ -3139,7 +3193,15 @@ impl Editor {
     }
 
     self.set_mode(Mode::Normal);
-    let (view, doc) = current!(self);
+    let focus_id = self.tree.focus;
+    let Some(doc_id) = self.tree.try_get(focus_id).map(|view| view.doc) else {
+      // No document view is focused (likely a terminal), so there's nothing
+      // view-specific to clean up.
+      return;
+    };
+
+    let view = self.tree.get_mut(focus_id);
+    let doc = self.documents.get_mut(&doc_id).unwrap();
 
     try_restore_indent(doc, view);
 

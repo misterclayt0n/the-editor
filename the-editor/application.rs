@@ -425,6 +425,104 @@ impl App {
   }
 }
 
+/// Convert InputEvent to bytes for terminal PTY
+///
+/// This handles special keys and VT100 escape sequences.
+/// Returns None if the event should not be sent to terminal.
+fn input_event_to_terminal_bytes(event: &InputEvent) -> Option<Vec<u8>> {
+  match event {
+    InputEvent::Keyboard(key_press) => {
+      // Only handle key presses, not releases
+      if !key_press.pressed {
+        return None;
+      }
+
+      let key = &key_press.code;
+      let ctrl = key_press.ctrl;
+      let alt = key_press.alt;
+      let shift = key_press.shift;
+
+      // Handle special keys with escape sequences
+      match key {
+        Key::Up => {
+          if ctrl {
+            Some(b"\x1b[1;5A".to_vec())
+          } else if alt {
+            Some(b"\x1b[1;3A".to_vec())
+          } else {
+            Some(b"\x1b[A".to_vec())
+          }
+        },
+        Key::Down => {
+          if ctrl {
+            Some(b"\x1b[1;5B".to_vec())
+          } else if alt {
+            Some(b"\x1b[1;3B".to_vec())
+          } else {
+            Some(b"\x1b[B".to_vec())
+          }
+        },
+        Key::Left => {
+          if ctrl {
+            Some(b"\x1b[1;5D".to_vec())
+          } else if alt {
+            Some(b"\x1b[1;3D".to_vec())
+          } else {
+            Some(b"\x1b[D".to_vec())
+          }
+        },
+        Key::Right => {
+          if ctrl {
+            Some(b"\x1b[1;5C".to_vec())
+          } else if alt {
+            Some(b"\x1b[1;3C".to_vec())
+          } else {
+            Some(b"\x1b[C".to_vec())
+          }
+        },
+        Key::Home => Some(b"\x1b[H".to_vec()),
+        Key::End => Some(b"\x1b[F".to_vec()),
+        Key::PageUp => Some(b"\x1b[5~".to_vec()),
+        Key::PageDown => Some(b"\x1b[6~".to_vec()),
+        Key::Tab => {
+          if shift {
+            Some(b"\x1b[Z".to_vec()) // Shift+Tab
+          } else {
+            Some(b"\t".to_vec())
+          }
+        },
+        Key::Backspace => Some(b"\x7f".to_vec()),
+        Key::Delete => Some(b"\x1b[3~".to_vec()),
+        Key::Enter => Some(b"\r".to_vec()),
+        Key::Escape => Some(b"\x1b".to_vec()),
+        Key::Char(c) => {
+          let mut bytes = Vec::new();
+
+          if ctrl {
+            // Ctrl+key produces control character
+            match c {
+              'a'..='z' => bytes.push((*c as u8) - b'a' + 1),
+              'A'..='Z' => bytes.push((*c as u8) - b'A' + 1),
+              '[' => bytes.push(0x1B),
+              _ => bytes.extend_from_slice(c.to_string().as_bytes()),
+            }
+          } else if alt {
+            // Alt+key produces ESC key
+            bytes.push(0x1B);
+            bytes.extend_from_slice(c.to_string().as_bytes());
+          } else {
+            bytes.extend_from_slice(c.to_string().as_bytes());
+          }
+
+          Some(bytes)
+        },
+        _ => None, // Other keys ignored for now
+      }
+    },
+    _ => None, // Mouse events, etc. not handled yet
+  }
+}
+
 impl Application for App {
   fn init(&mut self, renderer: &mut Renderer) {
     println!("Application initialized!");
@@ -440,9 +538,12 @@ impl Application for App {
     }
 
     // Ensure the active view has an initial cursor/selection.
+    // Only do this if a view is focused (not a terminal or container)
     use crate::core::selection::Selection;
-    let (view, doc) = crate::current!(self.editor);
-    doc.set_selection(view.id, Selection::point(0));
+    if crate::focus_is_view!(self.editor) {
+      let (view, doc) = crate::current!(self.editor);
+      doc.set_selection(view.id, Selection::point(0));
+    }
   }
 
   fn render(&mut self, renderer: &mut Renderer) {
@@ -540,6 +641,19 @@ impl Application for App {
   }
 
   fn handle_event(&mut self, event: InputEvent, _renderer: &mut Renderer) -> bool {
+    // If a terminal is focused, route keyboard input directly to it
+    let focus_id = self.editor.tree.focus;
+    if let Some(terminal) = self.editor.tree.get_terminal_mut(focus_id) {
+      // Convert InputEvent to bytes and send to terminal
+      if let Some(bytes) = input_event_to_terminal_bytes(&event) {
+        let session = terminal.session.get_mut();
+        if let Err(e) = session.send_input(bytes) {
+          log::error!("Failed to write to terminal PTY: {}", e);
+        }
+        return true; // Event consumed by terminal
+      }
+    }
+
     // Check if EditorView has a pending on_next_key callback.
     // This happens for commands like 'r' that wait for the next character.
     let pending_char = self.compositor.layers.iter().any(|layer| {
@@ -751,21 +865,22 @@ impl Application for App {
 
 impl App {
   fn handle_pending_action(&mut self, action: crate::editor::Action) {
-    use crate::{
-      editor::Action,
-      ui::components::TerminalView,
-    };
+    use crate::editor::Action;
 
     match action {
       Action::SpawnTerminal => {
-        // Spawn terminal with default dimensions
-        match TerminalView::new(80, 24, None, self.terminal_manager.count() as u32) {
-          Ok(terminal) => {
-            // Add terminal to compositor
-            self.compositor.push(Box::new(terminal));
-            self
-              .editor
-              .set_status("Terminal spawned (Ctrl+Shift+T spawns another)");
+        use the_terminal::TerminalSession;
+
+        // Get next terminal ID
+        let id = self.editor.next_terminal_id;
+        self.editor.next_terminal_id += 1;
+
+        // Spawn terminal session with default dimensions (80x24)
+        match TerminalSession::new(24, 80, None) {
+          Ok(session) => {
+            // Insert terminal into the tree
+            self.editor.tree.insert_terminal(session, id);
+            self.editor.set_status("Terminal spawned in split");
           },
           Err(e) => {
             self
@@ -853,18 +968,20 @@ impl App {
 
     if cols != 0 {
       let focus_view = self.editor.tree.focus;
-      let view = self.editor.tree.get(focus_view);
-      let doc_id = view.doc;
-      let doc = self.editor.documents.get_mut(&doc_id).unwrap();
-      let mut vp = doc.view_offset(focus_view);
+      // Only scroll if focused on a view, not a terminal
+      if let Some(view) = self.editor.tree.try_get(focus_view) {
+        let doc_id = view.doc;
+        let doc = self.editor.documents.get_mut(&doc_id).unwrap();
+        let mut vp = doc.view_offset(focus_view);
 
-      if cols >= 0 {
-        vp.horizontal_offset = vp.horizontal_offset.saturating_add(cols as usize);
-      } else {
-        vp.horizontal_offset = vp.horizontal_offset.saturating_sub((-cols) as usize);
+        if cols >= 0 {
+          vp.horizontal_offset = vp.horizontal_offset.saturating_add(cols as usize);
+        } else {
+          vp.horizontal_offset = vp.horizontal_offset.saturating_sub((-cols) as usize);
+        }
+
+        doc.set_view_offset(focus_view, vp);
       }
-
-      doc.set_view_offset(focus_view, vp);
     }
   }
 
@@ -955,19 +1072,20 @@ impl App {
         step_i
       };
 
-      // Apply to focused view
+      // Apply to focused view (only if it's a view, not a terminal)
       let focus_view = self.editor.tree.focus;
-      let view = self.editor.tree.get(focus_view);
-      let doc_id = view.doc;
-      let doc = self.editor.documents.get_mut(&doc_id).unwrap();
-      let mut vp = doc.view_offset(focus_view);
-      let new_h = if step_i >= 0 {
-        vp.horizontal_offset.saturating_add(step_i as usize)
-      } else {
-        vp.horizontal_offset.saturating_sub((-step_i) as usize)
-      };
-      vp.horizontal_offset = new_h;
-      doc.set_view_offset(focus_view, vp);
+      if let Some(view) = self.editor.tree.try_get(focus_view) {
+        let doc_id = view.doc;
+        let doc = self.editor.documents.get_mut(&doc_id).unwrap();
+        let mut vp = doc.view_offset(focus_view);
+        let new_h = if step_i >= 0 {
+          vp.horizontal_offset.saturating_add(step_i as usize)
+        } else {
+          vp.horizontal_offset.saturating_sub((-step_i) as usize)
+        };
+        vp.horizontal_offset = new_h;
+        doc.set_view_offset(focus_view, vp);
+      }
       self.pending_scroll_cols -= step_i as f32;
     } else {
       // Below threshold, snap to zero to stop animation

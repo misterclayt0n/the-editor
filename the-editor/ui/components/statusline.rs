@@ -195,7 +195,21 @@ impl Component for StatusLine {
     // Render statusline content in overlay mode with automatic masking
     let viewport_width = surface.width() as f32;
     surface.with_overlay_region(0.0, bar_y, viewport_width, STATUS_BAR_HEIGHT, |surface| {
-      let view = cx.editor.tree.get(cx.editor.tree.focus);
+      // Check if focused on a terminal instead of a view
+      let focus_id = cx.editor.tree.focus;
+      if cx.editor.tree.get_terminal(focus_id).is_some() {
+        // Render terminal statusline
+        let mut x = SEGMENT_PADDING_X + self.slide_offset;
+        let mode_text = "TERMINAL";
+        let mode_width = Self::draw_text(surface, x, bar_y, mode_text, text_color);
+        x += mode_width + SEGMENT_SPACING;
+
+        let term_info = "Integrated Terminal";
+        Self::draw_text(surface, x, bar_y, term_info, text_color);
+        return;
+      }
+
+      let view = cx.editor.tree.get(focus_id);
       let doc = cx.editor.documents.get(&view.doc).unwrap();
 
       // Left side: MODE | FILE | % | SELECTION

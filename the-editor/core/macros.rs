@@ -10,6 +10,9 @@
 
 /// Get the current view and document mutably as a tuple.
 /// Returns `(&mut View, &mut Document)`
+///
+/// # Panics
+/// Panics if the focused node is a terminal, not a view.
 #[macro_export]
 macro_rules! current {
   ($editor:expr) => {{
@@ -23,7 +26,10 @@ macro_rules! current {
 #[macro_export]
 macro_rules! current_ref {
   ($editor:expr) => {{
-    let view = $editor.tree.get($editor.tree.focus);
+    let view_id = $editor
+      .focused_view_id()
+      .expect("no active document view available");
+    let view = $editor.tree.get(view_id);
     let doc = &$editor.documents[&view.doc];
     (view, doc)
   }};
@@ -39,18 +45,40 @@ macro_rules! doc_mut {
 
 /// Get the current view mutably.
 /// Returns `&mut View`
+///
+/// # Panics
+/// Panics if the node is a terminal or if the ID doesn't exist.
 #[macro_export]
 macro_rules! view_mut {
   ($editor:expr, $id:expr) => {{ $editor.tree.get_mut($id) }};
-  ($editor:expr) => {{ $editor.tree.get_mut($editor.tree.focus) }};
+  ($editor:expr) => {{
+    let view_id = $editor
+      .focused_view_id()
+      .expect("no active document view available");
+    $editor.tree.get_mut(view_id)
+  }};
 }
 
 /// Get the current view immutably
 /// Returns `&View`
+///
+/// # Panics
+/// Panics if the node is a terminal or if the ID doesn't exist.
 #[macro_export]
 macro_rules! view {
   ($editor:expr, $id:expr) => {{ $editor.tree.get($id) }};
-  ($editor:expr) => {{ $editor.tree.get($editor.tree.focus) }};
+  ($editor:expr) => {{
+    let view_id = $editor
+      .focused_view_id()
+      .expect("no active document view available");
+    $editor.tree.get(view_id)
+  }};
+}
+
+/// Check if the focused node is a view (not a terminal)
+#[macro_export]
+macro_rules! focus_is_view {
+  ($editor:expr) => {{ $editor.tree.try_get($editor.tree.focus).is_some() }};
 }
 
 #[macro_export]

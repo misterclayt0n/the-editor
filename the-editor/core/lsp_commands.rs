@@ -834,7 +834,10 @@ pub fn document_symbols(cx: &mut Context) {
           // Jump to the symbol location
           crate::ui::job::dispatch_blocking(move |editor, _compositor| {
             // Get the current view
-            let view = editor.tree.get_mut(editor.tree.focus);
+            let Some(view_id) = editor.focused_view_id_mut() else {
+              return;
+            };
+            let view = editor.tree.get_mut(view_id);
             let doc = editor.documents.get_mut(&view.doc).unwrap();
 
             // Convert LSP range to editor range
@@ -1002,7 +1005,10 @@ pub fn workspace_symbols(cx: &mut Context) {
             };
 
             // Get the view and document
-            let view = editor.tree.get_mut(editor.tree.focus);
+            let Some(view_id) = editor.focused_view_id_mut() else {
+              return;
+            };
+            let view = editor.tree.get_mut(view_id);
             let doc = editor.documents.get_mut(&doc_id).unwrap();
 
             // Convert LSP range to editor range
@@ -1125,7 +1131,10 @@ pub fn document_diagnostics(cx: &mut Context) {
         // Jump to the diagnostic location
         crate::ui::job::dispatch_blocking(move |editor, _compositor| {
           // Get the current view and document
-          let view = editor.tree.get_mut(editor.tree.focus);
+          let Some(view_id) = editor.focused_view_id_mut() else {
+            return;
+          };
+          let view = editor.tree.get_mut(view_id);
           let doc = editor.documents.get_mut(&view.doc).unwrap();
 
           // Set selection to the diagnostic location

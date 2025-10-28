@@ -1929,7 +1929,10 @@ pub fn jumplist_picker(cx: &mut Context) {
       crate::ui::job::dispatch_blocking(move |editor, _compositor| {
         editor.switch(doc_id, action);
         let config = editor.config();
-        let view = editor.tree.get_mut(editor.tree.focus);
+        let Some(view_id) = editor.focused_view_id_mut() else {
+          return;
+        };
+        let view = editor.tree.get_mut(view_id);
         let doc = editor.documents.get_mut(&doc_id).unwrap();
         doc.set_selection(view.id, selection);
         view.ensure_cursor_in_view_center(doc, config.scrolloff);

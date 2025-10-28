@@ -405,6 +405,19 @@ impl Component for EditorView {
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
     match event {
       Event::Key(key) => {
+        // Check if focused node is a terminal - if so, route input to it
+        let focus_id = cx.editor.tree.focus;
+        if let Some(terminal) = cx.editor.tree.get_terminal_mut(focus_id) {
+          // Convert key to bytes for terminal input
+          let bytes = Self::key_to_terminal_bytes(key);
+          if !bytes.is_empty() {
+            if let Err(e) = terminal.session.borrow().send_input(bytes) {
+              log::error!("Failed to send input to terminal: {}", e);
+            }
+          }
+          return EventResult::Consumed(None);
+        }
+
         // Clear status on any key press
         cx.editor.clear_status();
 
@@ -752,32 +765,37 @@ impl Component for EditorView {
     }
 
     // Ensure cursor is kept within the viewport including scrolloff padding
+    // (only for document views, not terminals)
     {
       let focus_view = cx.editor.tree.focus;
-      let scrolloff = cx.editor.config().scrolloff;
 
-      // Calculate actual gutter width for focused view (accounts for disabled
-      // gutters)
-      let gutter_width = {
-        let view = cx.editor.tree.get(focus_view);
-        let doc = &cx.editor.documents[&view.doc];
-        (self.gutter_manager.total_width(view, doc) as u16).min(view.area.width)
-      };
+      // Only process if focused node is a view, not a terminal
+      if cx.editor.tree.try_get(focus_view).is_some() {
+        let scrolloff = cx.editor.config().scrolloff;
 
-      let view_id_doc;
-      {
-        // Limit the mutable borrow scope
-        let view = cx.editor.tree.get_mut(focus_view);
-        view.rendered_gutter_width = Some(gutter_width);
-        let doc = cx.editor.documents.get_mut(&view.doc).unwrap();
-        view_id_doc = view.doc;
-        if !view.is_cursor_in_view(doc, scrolloff) {
-          view.ensure_cursor_in_view(doc, scrolloff);
-          // Viewport changed, force a redraw of visible content
-          self.dirty_region.mark_all_dirty();
+        // Calculate actual gutter width for focused view (accounts for disabled
+        // gutters)
+        let gutter_width = {
+          let view = cx.editor.tree.get(focus_view);
+          let doc = &cx.editor.documents[&view.doc];
+          (self.gutter_manager.total_width(view, doc) as u16).min(view.area.width)
+        };
+
+        let view_id_doc;
+        {
+          // Limit the mutable borrow scope
+          let view = cx.editor.tree.get_mut(focus_view);
+          view.rendered_gutter_width = Some(gutter_width);
+          let doc = cx.editor.documents.get_mut(&view.doc).unwrap();
+          view_id_doc = view.doc;
+          if !view.is_cursor_in_view(doc, scrolloff) {
+            view.ensure_cursor_in_view(doc, scrolloff);
+            // Viewport changed, force a redraw of visible content
+            self.dirty_region.mark_all_dirty();
+          }
         }
+        let _ = view_id_doc; // keep variable to ensure scope is closed
       }
-      let _ = view_id_doc; // keep variable to ensure scope is closed
     }
 
     // Cursor animation config is now read directly from editor config when needed
@@ -2150,6 +2168,9 @@ impl Component for EditorView {
       },
     }
 
+    // Render terminals
+    self.render_terminals(renderer, cx, font_width, font_size);
+
     // Render split separators
     self.render_split_separators(renderer, cx, font_width, font_size);
 
@@ -2167,6 +2188,203 @@ impl Component for EditorView {
 }
 
 impl EditorView {
+  /// Convert a KeyBinding to bytes for terminal PTY input
+  fn key_to_terminal_bytes(key: &KeyBinding) -> Vec<u8> {
+    use the_editor_renderer::Key;
+
+    let key_code = key.code;
+    let ctrl = key.ctrl;
+    let alt = key.alt;
+    let shift = key.shift;
+
+    // Handle special keys with escape sequences
+    match key_code {
+      Key::Up => {
+        if ctrl {
+          b"\x1b[1;5A".to_vec()
+        } else if alt {
+          b"\x1b[1;3A".to_vec()
+        } else {
+          b"\x1b[A".to_vec()
+        }
+      },
+      Key::Down => {
+        if ctrl {
+          b"\x1b[1;5B".to_vec()
+        } else if alt {
+          b"\x1b[1;3B".to_vec()
+        } else {
+          b"\x1b[B".to_vec()
+        }
+      },
+      Key::Left => {
+        if ctrl {
+          b"\x1b[1;5D".to_vec()
+        } else if alt {
+          b"\x1b[1;3D".to_vec()
+        } else {
+          b"\x1b[D".to_vec()
+        }
+      },
+      Key::Right => {
+        if ctrl {
+          b"\x1b[1;5C".to_vec()
+        } else if alt {
+          b"\x1b[1;3C".to_vec()
+        } else {
+          b"\x1b[C".to_vec()
+        }
+      },
+      Key::Home => b"\x1b[H".to_vec(),
+      Key::End => b"\x1b[F".to_vec(),
+      Key::PageUp => b"\x1b[5~".to_vec(),
+      Key::PageDown => b"\x1b[6~".to_vec(),
+      Key::Tab => {
+        if shift {
+          b"\x1b[Z".to_vec() // Shift+Tab
+        } else {
+          b"\t".to_vec()
+        }
+      },
+      Key::Backspace => b"\x7f".to_vec(),
+      Key::Delete => b"\x1b[3~".to_vec(),
+      Key::Enter => b"\r".to_vec(),
+      Key::Escape => b"\x1b".to_vec(),
+      Key::Char(c) => {
+        let mut bytes = Vec::new();
+
+        if ctrl {
+          // Ctrl+key produces control character
+          match c {
+            'a'..='z' => bytes.push((c as u8) - b'a' + 1),
+            'A'..='Z' => bytes.push((c as u8) - b'A' + 1),
+            '[' => bytes.push(0x1B),
+            _ => bytes.extend_from_slice(c.to_string().as_bytes()),
+          }
+        } else if alt {
+          // Alt+key produces ESC key
+          bytes.push(0x1B);
+          bytes.extend_from_slice(c.to_string().as_bytes());
+        } else {
+          bytes.extend_from_slice(c.to_string().as_bytes());
+        }
+
+        bytes
+      },
+      _ => Vec::new(), // Other keys ignored for now
+    }
+  }
+
+  /// Render all terminal nodes in the tree
+  fn render_terminals(
+    &mut self,
+    renderer: &mut Surface,
+    cx: &mut Context,
+    font_width: f32,
+    font_size: f32,
+  ) {
+    use the_editor_renderer::{
+      Color,
+      TextSection,
+      TextSegment,
+    };
+
+    const LINE_SPACING: f32 = 2.0;
+
+    // Collect terminal IDs to avoid borrowing issues
+    let terminal_ids: Vec<_> = cx.editor.tree.terminals().map(|(id, _)| id).collect();
+
+    for term_id in terminal_ids {
+      // Get terminal area (might be animated)
+      let term_area = cx
+        .editor
+        .tree
+        .get_animated_area(term_id)
+        .or_else(|| cx.editor.tree.get_terminal_mut(term_id).map(|t| t.area));
+
+      let Some(term_area) = term_area else {
+        continue;
+      };
+
+      // Calculate pixel coordinates from cell coordinates
+      let term_x = term_area.x as f32 * font_width;
+      let term_y = term_area.y as f32 * (font_size + LINE_SPACING);
+
+      // Get mutable reference to terminal
+      let terminal = match cx.editor.tree.get_terminal_mut(term_id) {
+        Some(t) => t,
+        None => continue,
+      };
+
+      // Update terminal with any pending PTY output
+      terminal.session.borrow_mut().update();
+
+      // Calculate terminal dimensions in cells
+      let new_cols = term_area.width;
+      let new_rows = term_area.height;
+
+      // Resize terminal if dimensions changed
+      let (current_rows, current_cols) = terminal.session.borrow().size();
+      if new_cols != current_cols || new_rows != current_rows {
+        if new_cols > 0 && new_rows > 0 {
+          if let Err(e) = terminal.session.borrow_mut().resize(new_rows, new_cols) {
+            log::error!("Failed to resize terminal {}: {}", terminal.id, e);
+          }
+        }
+      }
+
+      // Get terminal grid for rendering
+      let session_borrow = terminal.session.borrow();
+      let grid = session_borrow.terminal().grid();
+      let (grid_rows, grid_cols) = (grid.rows(), grid.cols());
+
+      // Clamp rendering to avoid overflow
+      let render_rows = grid_rows.min(new_rows);
+      let render_cols = grid_cols.min(new_cols);
+
+      // Render each cell in the terminal grid
+      for row in 0..render_rows {
+        for col in 0..render_cols {
+          let cell = grid.get(row, col);
+
+          if let Some(ch) = cell.character() {
+            let x = term_x + (col as f32 * font_width);
+            let y = term_y + (row as f32 * (font_size + LINE_SPACING));
+
+            let fg = cell.fg;
+            let fg_color = Color::rgba(
+              fg.r as f32 / 255.0,
+              fg.g as f32 / 255.0,
+              fg.b as f32 / 255.0,
+              1.0,
+            );
+
+            let segment = TextSegment::new(ch.to_string()).with_color(fg_color);
+            let section = TextSection::new(x, y).add_text(segment);
+
+            renderer.draw_text_immediate(section);
+          }
+        }
+      }
+
+      // Render cursor if visible
+      let (cursor_row, cursor_col) = session_borrow.terminal().cursor_pos();
+      if cursor_row < grid_rows && cursor_col < grid_cols {
+        let cursor_x = term_x + (cursor_col as f32 * font_width);
+        let cursor_y = term_y + (cursor_row as f32 * (font_size + LINE_SPACING));
+
+        // Draw cursor as a semi-transparent rectangle
+        renderer.draw_rect(
+          cursor_x,
+          cursor_y,
+          font_width,
+          font_size + LINE_SPACING,
+          Color::new(0.8, 0.8, 0.8, 0.5),
+        );
+      }
+    }
+  }
+
   /// Render split separator bars between views
   fn render_split_separators(
     &mut self,
@@ -2288,58 +2506,63 @@ impl EditorView {
           self.last_click_time = Some(now);
           self.last_click_pos = Some(mouse.position);
 
-          // Handle click based on count
-          if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
-            let scrolloff = cx.editor.config().scrolloff;
-
-            // Mark drag as started (for potential drag after click)
-            self.mouse_pressed = true;
-            self.mouse_drag_anchor = Some(doc_pos);
-
-            let view = cx.editor.tree.get(view_id);
-            let doc_id = view.doc;
-            let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
-
-            // Create selection based on click count
-            let selection = match self.click_count {
-              1 => {
-                // Single click - point selection
-                crate::core::selection::Selection::point(doc_pos)
-              },
-              2 => {
-                // Double-click - select word
-                let text = doc.text();
-                let range = crate::core::selection::Range::point(doc_pos);
-                let word_range = crate::core::textobject::textobject_word(
-                  text.slice(..),
-                  range,
-                  crate::core::textobject::TextObject::Around,
-                  1,
-                  false, // short word (not WORD)
-                );
-                crate::core::selection::Selection::single(word_range.anchor, word_range.head)
-              },
-              3 => {
-                // Triple-click - select line
-                let text = doc.text();
-                let line = text.char_to_line(doc_pos.min(text.len_chars()));
-                let start = text.line_to_char(line);
-                let end = text.line_to_char((line + 1).min(text.len_lines()));
-                crate::core::selection::Selection::single(start, end)
-              },
-              _ => crate::core::selection::Selection::point(doc_pos),
-            };
-
-            doc.set_selection(view_id, selection);
-
-            // Ensure cursor remains visible
-            let view = cx.editor.tree.get_mut(view_id);
-            view.ensure_cursor_in_view(doc, scrolloff);
-
-            // Switch focus to the clicked view if different
-            if cx.editor.tree.focus != view_id {
-              cx.editor.tree.focus = view_id;
+          // First check which node (view or terminal) was clicked
+          if let Some(node_id) = self.screen_coords_to_node(mouse.position, cx) {
+            // Switch focus to the clicked node if different
+            if cx.editor.tree.focus != node_id {
+              cx.editor.focus(node_id);
             }
+
+            // If it's a view, handle text selection
+            if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
+              let scrolloff = cx.editor.config().scrolloff;
+
+              // Mark drag as started (for potential drag after click)
+              self.mouse_pressed = true;
+              self.mouse_drag_anchor = Some(doc_pos);
+
+              let view = cx.editor.tree.get(view_id);
+              let doc_id = view.doc;
+              let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
+
+              // Create selection based on click count
+              let selection = match self.click_count {
+                1 => {
+                  // Single click - point selection
+                  crate::core::selection::Selection::point(doc_pos)
+                },
+                2 => {
+                  // Double-click - select word
+                  let text = doc.text();
+                  let range = crate::core::selection::Range::point(doc_pos);
+                  let word_range = crate::core::textobject::textobject_word(
+                    text.slice(..),
+                    range,
+                    crate::core::textobject::TextObject::Around,
+                    1,
+                    false, // short word (not WORD)
+                  );
+                  crate::core::selection::Selection::single(word_range.anchor, word_range.head)
+                },
+                3 => {
+                  // Triple-click - select line
+                  let text = doc.text();
+                  let line = text.char_to_line(doc_pos.min(text.len_chars()));
+                  let start = text.line_to_char(line);
+                  let end = text.line_to_char((line + 1).min(text.len_lines()));
+                  crate::core::selection::Selection::single(start, end)
+                },
+                _ => crate::core::selection::Selection::point(doc_pos),
+              };
+
+              doc.set_selection(view_id, selection);
+
+              // Ensure cursor remains visible
+              let view = cx.editor.tree.get_mut(view_id);
+              view.ensure_cursor_in_view(doc, scrolloff);
+            }
+            // If it's a terminal, we've already switched focus above
+            // TODO: Future enhancement - send mouse events to terminal
 
             return EventResult::Consumed(None);
           }
@@ -2352,37 +2575,42 @@ impl EditorView {
         }
       },
       Some(the_editor_renderer::MouseButton::Middle) => {
-        // Middle-click - paste from clipboard
+        // Middle-click - paste from clipboard (only works on views, not terminals)
         if mouse.pressed {
-          if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
-            // Switch focus to clicked view
-            if cx.editor.tree.focus != view_id {
-              cx.editor.tree.focus = view_id;
+          // First check which node was clicked
+          if let Some(node_id) = self.screen_coords_to_node(mouse.position, cx) {
+            // Switch focus to clicked node
+            if cx.editor.tree.focus != node_id {
+              cx.editor.focus(node_id);
             }
 
-            // Move cursor to click position
-            let scrolloff = cx.editor.config().scrolloff;
-            let view = cx.editor.tree.get(view_id);
-            let doc_id = view.doc;
-            let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
+            // Only paste if it's a view (not a terminal)
+            if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
+              // Move cursor to click position
+              let scrolloff = cx.editor.config().scrolloff;
+              let view = cx.editor.tree.get(view_id);
+              let doc_id = view.doc;
+              let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
 
-            let selection = crate::core::selection::Selection::point(doc_pos);
-            doc.set_selection(view_id, selection);
+              let selection = crate::core::selection::Selection::point(doc_pos);
+              doc.set_selection(view_id, selection);
 
-            let view = cx.editor.tree.get_mut(view_id);
-            view.ensure_cursor_in_view(doc, scrolloff);
+              let view = cx.editor.tree.get_mut(view_id);
+              view.ensure_cursor_in_view(doc, scrolloff);
 
-            // Paste from clipboard ('+' register)
-            let mut cmd_cx = commands::Context {
-              register:             Some('+'),
-              count:                cx.editor.count,
-              editor:               cx.editor,
-              on_next_key_callback: None,
-              callback:             Vec::new(),
-              jobs:                 cx.jobs,
-            };
+              // Paste from clipboard ('+' register)
+              let mut cmd_cx = commands::Context {
+                register:             Some('+'),
+                count:                cx.editor.count,
+                editor:               cx.editor,
+                on_next_key_callback: None,
+                callback:             Vec::new(),
+                jobs:                 cx.jobs,
+              };
 
-            commands::paste_after(&mut cmd_cx);
+              commands::paste_after(&mut cmd_cx);
+            }
+            // If terminal was clicked, we've already switched focus
 
             return EventResult::Consumed(None);
           }
@@ -2460,6 +2688,45 @@ impl EditorView {
     }
 
     EventResult::Ignored(None)
+  }
+
+  /// Detect which node (view or terminal) was clicked
+  /// Returns ViewId if click was within any node
+  fn screen_coords_to_node(
+    &self,
+    mouse_pos: (f32, f32),
+    cx: &Context,
+  ) -> Option<crate::core::ViewId> {
+    let (mouse_x, mouse_y) = mouse_pos;
+    let (cell_width, cell_height) = self.get_current_cell_metrics(cx);
+
+    // Convert pixel coordinates to cell coordinates
+    let mouse_col = (mouse_x / cell_width) as u16;
+    let mouse_row = (mouse_y / cell_height) as u16;
+
+    // Check views first
+    for (view, _) in cx.editor.tree.views() {
+      if mouse_col >= view.area.x
+        && mouse_col < view.area.x + view.area.width
+        && mouse_row >= view.area.y
+        && mouse_row < view.area.y + view.area.height
+      {
+        return Some(view.id);
+      }
+    }
+
+    // Check terminals
+    for (term_id, term_node) in cx.editor.tree.terminals() {
+      if mouse_col >= term_node.area.x
+        && mouse_col < term_node.area.x + term_node.area.width
+        && mouse_row >= term_node.area.y
+        && mouse_row < term_node.area.y + term_node.area.height
+      {
+        return Some(term_id);
+      }
+    }
+
+    None
   }
 
   /// Convert screen pixel coordinates to document position

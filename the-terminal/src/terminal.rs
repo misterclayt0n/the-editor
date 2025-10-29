@@ -269,6 +269,102 @@ impl Terminal {
       ffi::ghostty_terminal_clear_dirty(self.inner);
     }
   }
+
+  /// Pin a row for zero-copy iteration.
+  ///
+  /// Returns a Pin handle that provides direct access to cell data without
+  /// copying. The caller must drop the Pin when done (via RAII).
+  ///
+  /// # Arguments
+  /// * `row` - Row index (0-based, viewport coordinates)
+  ///
+  /// # Returns
+  /// Some(Pin) if row is valid, None if out of bounds
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use the_terminal::Terminal;
+  /// # let term = Terminal::new(80, 24).unwrap();
+  /// if let Some(pin) = term.pin_row(0) {
+  ///     for col in 0..pin.cell_count() {
+  ///         if let Some(cell_ext) = pin.get_cell_ext(&term, col) {
+  ///             // Use cell_ext without copying
+  ///         }
+  ///     }
+  /// }
+  /// ```
+  pub fn pin_row(&self, row: u16) -> Option<Pin> {
+    let pin_ptr = unsafe { ffi::ghostty_terminal_pin_row(self.inner, row as u32) };
+
+    if pin_ptr.is_null() {
+      return None;
+    }
+
+    Some(Pin { ptr: pin_ptr })
+  }
+}
+
+/// RAII wrapper for a pinned terminal row.
+///
+/// Provides zero-copy access to cell data. The pin is automatically freed
+/// when dropped.
+pub struct Pin {
+  ptr: *mut ffi::GhosttyPin,
+}
+
+impl Pin {
+  /// Get the number of cells in this pinned row.
+  ///
+  /// This is typically the terminal width in columns.
+  pub fn cell_count(&self, terminal: &Terminal) -> usize {
+    let mut count: usize = 0;
+    unsafe {
+      let cells_ptr = ffi::ghostty_terminal_pin_cells(terminal.inner, self.ptr, &mut count);
+      if cells_ptr.is_null() {
+        return 0;
+      }
+    }
+    count
+  }
+
+  /// Get a cell's extended information (colors, attributes) at a specific index.
+  ///
+  /// This resolves colors and attributes on-demand, avoiding the cost of
+  /// resolving data for cells that won't be rendered.
+  ///
+  /// # Arguments
+  /// * `terminal` - Reference to the terminal (needed for palette access)
+  /// * `col` - Column index (0 to cell_count()-1)
+  ///
+  /// # Returns
+  /// Some(Cell) if index is valid, None otherwise
+  pub fn get_cell_ext(&self, terminal: &Terminal, col: usize) -> Option<Cell> {
+    let mut cell_ext = std::mem::MaybeUninit::<ffi::GhosttyCellExt>::uninit();
+
+    let success = unsafe {
+      ffi::ghostty_terminal_pin_populate_cell_ext(
+        terminal.inner,
+        self.ptr,
+        col,
+        cell_ext.as_mut_ptr(),
+      )
+    };
+
+    if !success {
+      return None;
+    }
+
+    let cell_ext = unsafe { cell_ext.assume_init() };
+    Some(Cell::from(cell_ext))
+  }
+}
+
+impl Drop for Pin {
+  fn drop(&mut self) {
+    unsafe {
+      ffi::ghostty_terminal_pin_free(self.ptr);
+    }
+  }
 }
 
 impl Drop for Terminal {
@@ -349,25 +445,22 @@ pub struct Cell {
 
 /// A snapshot of the terminal screen for zero-copy rendering.
 ///
-/// This structure contains a clone of essential terminal state that can be
-/// created quickly while holding a lock, allowing the lock to be released
-/// immediately. Rendering then proceeds without blocking the PTY thread.
+/// This structure contains ONLY metadata about terminal state - no cell data.
+/// Cell data is accessed directly during rendering using pin-based iteration
+/// to achieve true zero-copy performance.
 ///
-/// This implements the "clone-and-release" pattern from Ghostty for minimal
-/// lock contention.
+/// This implements Ghostty's "clone-and-release" pattern: snapshot metadata
+/// under lock (microseconds), then render without lock using pins.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScreenSnapshot {
   /// Cursor position (row, col)
-  pub cursor_pos:            (u16, u16),
+  pub cursor_pos:         (u16, u16),
   /// Terminal dimensions (rows, cols)
-  pub size:                  (u16, u16),
+  pub size:               (u16, u16),
   /// Dirty rows that need re-rendering
-  pub dirty_rows:            Vec<u32>,
+  pub dirty_rows:         Vec<u32>,
   /// True if full render is needed
-  pub needs_full_rebuild:    bool,
-  /// Cached row data for rendering without additional FFI calls
-  /// Maps row index to vector of cells
-  rows: std::collections::HashMap<u16, Vec<ffi::GhosttyCellExt>>,
+  pub needs_full_rebuild: bool,
 }
 
 impl Cell {
@@ -466,18 +559,19 @@ impl<'a> Grid<'a> {
 }
 
 impl ScreenSnapshot {
-  /// Create a snapshot of the terminal screen state.
+  /// Create a snapshot of the terminal screen metadata.
   ///
-  /// This captures cursor position, size, dirty rows, and caches row data.
-  /// The snapshot is created quickly while the terminal lock is held.
+  /// This captures ONLY cursor position, size, and dirty rows - NO cell data.
+  /// Cell data is accessed later during rendering using pin-based iteration.
+  ///
+  /// Lock hold time: ~1-10 microseconds (just copying metadata).
   ///
   /// # Arguments
   /// * `terminal` - Reference to the terminal to snapshot
-  /// * `row_buffer` - Pre-allocated buffer for row cell data
   ///
   /// # Returns
-  /// A new ScreenSnapshot ready for rendering
-  pub fn from_terminal(terminal: &Terminal, mut row_buffer: Vec<ffi::GhosttyCellExt>) -> Self {
+  /// A new ScreenSnapshot containing only metadata
+  pub fn from_terminal(terminal: &Terminal) -> Self {
     let size = (terminal.rows(), terminal.cols());
     let cursor_pos = terminal.cursor_pos();
     let needs_full_rebuild = terminal.needs_full_rebuild();
@@ -487,37 +581,12 @@ impl ScreenSnapshot {
       terminal.get_dirty_rows()
     };
 
-    // Pre-cache only dirty rows to minimize memory and copy time
-    let mut rows = std::collections::HashMap::new();
-    let rows_to_cache = if dirty_rows.is_empty() {
-      // Full render: cache all rows
-      (0..size.0).map(|r| r as u32).collect::<Vec<_>>()
-    } else {
-      dirty_rows.clone()
-    };
-
-    for row_idx in rows_to_cache {
-      if row_idx >= size.0 as u32 {
-        break;
-      }
-      row_buffer.clear();
-      row_buffer.resize(size.1 as usize, ffi::GhosttyCellExt::default());
-      let count = terminal.copy_row_ext(row_idx as u16, &mut row_buffer);
-      rows.insert(row_idx as u16, row_buffer[..count].to_vec());
-    }
-
     Self {
       cursor_pos,
       size,
       dirty_rows,
       needs_full_rebuild,
-      rows,
     }
-  }
-
-  /// Get a cached row of cells, if available.
-  pub fn get_row(&self, row: u16) -> Option<&Vec<ffi::GhosttyCellExt>> {
-    self.rows.get(&row)
   }
 
   /// Get terminal dimensions from snapshot

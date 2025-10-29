@@ -100,6 +100,12 @@ pub struct GhosttyPoint {
 /// PTY, such as cursor position reports or other terminal queries.
 pub type ResponseCallback = extern "C" fn(ctx: *mut c_void, data: *const u8, len: usize);
 
+/// Opaque pin handle for zero-copy row iteration
+#[repr(C)]
+pub struct GhosttyPin {
+  _private: [u8; 0],
+}
+
 unsafe extern "C" {
   /// Initialize a new terminal with the given options.
   ///
@@ -210,6 +216,75 @@ unsafe extern "C" {
   /// This should be called after rendering all dirty rows to reset the dirty
   /// state.
   pub fn ghostty_terminal_clear_dirty(term: *mut GhosttyTerminal);
+
+  // ===== PIN-BASED ZERO-COPY ITERATION =====
+
+  /// Pin a specific row in the terminal viewport for zero-copy access.
+  ///
+  /// Returns an opaque pin handle that provides direct access to cell data.
+  /// The caller MUST call ghostty_terminal_pin_free() when done.
+  ///
+  /// # Arguments
+  /// * `term` - Terminal instance
+  /// * `row` - Row index (0-based, viewport coordinates)
+  ///
+  /// # Returns
+  /// Opaque pin handle, or null if row is out of bounds
+  ///
+  /// # Safety
+  /// The pin must be freed with ghostty_terminal_pin_free().
+  /// The pin is only valid while the terminal is alive.
+  pub fn ghostty_terminal_pin_row(term: *const GhosttyTerminal, row: c_uint) -> *mut GhosttyPin;
+
+  /// Get direct pointer to cell array from a pinned row.
+  ///
+  /// Returns a pointer to the internal cell array. The pointer is valid
+  /// until ghostty_terminal_pin_free() is called.
+  ///
+  /// # Arguments
+  /// * `term` - Terminal instance
+  /// * `pin` - Pin handle from ghostty_terminal_pin_row()
+  /// * `out_count` - Output parameter for number of cells
+  ///
+  /// # Returns
+  /// Pointer to internal cell array (ghostty_vt.page.Cell), or null if invalid
+  ///
+  /// # Safety
+  /// The returned pointer is only valid until ghostty_terminal_pin_free().
+  /// Do NOT dereference the cells directly - use ghostty_terminal_pin_populate_cell_ext().
+  pub fn ghostty_terminal_pin_cells(
+    term: *const GhosttyTerminal,
+    pin: *mut GhosttyPin,
+    out_count: *mut usize,
+  ) -> *const c_void;
+
+  /// Populate a CCellExt from a pin's internal cell.
+  ///
+  /// This converts a ghostty internal cell to the FFI-safe CCellExt struct,
+  /// resolving colors and attributes.
+  ///
+  /// # Arguments
+  /// * `term` - Terminal instance
+  /// * `pin` - Pin handle from ghostty_terminal_pin_row()
+  /// * `cell_index` - Index into the cell array (0 to count-1)
+  /// * `out_cell` - Output CCellExt struct
+  ///
+  /// # Returns
+  /// true on success, false if indices are invalid
+  pub fn ghostty_terminal_pin_populate_cell_ext(
+    term: *const GhosttyTerminal,
+    pin: *mut GhosttyPin,
+    cell_index: usize,
+    out_cell: *mut GhosttyCellExt,
+  ) -> bool;
+
+  /// Free a pin handle.
+  ///
+  /// MUST be called for every pin returned by ghostty_terminal_pin_row().
+  ///
+  /// # Safety
+  /// The pin must not be used after calling this function.
+  pub fn ghostty_terminal_pin_free(pin: *mut GhosttyPin);
 }
 
 #[cfg(test)]

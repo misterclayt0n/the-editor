@@ -438,27 +438,25 @@ impl TerminalSession {
     }
   }
 
-  /// Create a snapshot of the terminal screen for rendering.
+  /// Create a snapshot of the terminal screen metadata.
   ///
-  /// This implements the "clone-and-release" pattern from Ghostty:
-  /// 1. Acquires lock and creates snapshot quickly
+  /// This implements Ghostty's "clone-and-release" pattern for metadata only:
+  /// 1. Acquires lock and creates snapshot (ONLY metadata, no cell data)
   /// 2. Clears dirty bits atomically
   /// 3. Releases lock immediately
-  /// 4. Rendering proceeds without blocking PTY thread
+  /// 4. Rendering proceeds without lock using pin-based iteration
+  ///
+  /// Lock hold time: ~1-10 microseconds (just copying metadata).
   ///
   /// Returns None if terminal lock is poisoned.
   pub fn create_screen_snapshot(&self) -> Option<crate::terminal::ScreenSnapshot> {
-    if let Ok(term) = self.terminal.lock() {
-      // Pre-allocate row buffer with typical terminal width (80 cols)
-      let row_buffer = vec![Default::default(); 80];
-      let snapshot = crate::terminal::ScreenSnapshot::from_terminal(&term, row_buffer);
+    if let Ok(mut term) = self.terminal.lock() {
+      // Create snapshot (ONLY metadata - cursor, size, dirty rows)
+      let snapshot = crate::terminal::ScreenSnapshot::from_terminal(&term);
 
       // Atomically clear dirty bits after snapshotting
-      // SAFETY: We're still holding the lock, so this is safe
-      drop(term); // Explicitly drop the guard
-      if let Ok(mut term) = self.terminal.lock() {
-        term.clear_dirty();
-      }
+      // This prevents race conditions with PTY thread
+      term.clear_dirty();
 
       Some(snapshot)
     } else {

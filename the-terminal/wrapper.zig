@@ -1024,3 +1024,131 @@ export fn ghostty_terminal_clear_dirty(term: ?*GhosttyTerminal) void {
         dirty_set.unsetAll();
     }
 }
+
+// ===== PIN-BASED ZERO-COPY ITERATION =====
+//
+// Pins provide direct access to terminal page memory without copying.
+// This is how Ghostty achieves zero-copy rendering.
+//
+// Usage pattern from Rust:
+//   1. Create pin for row: ghostty_terminal_pin_row()
+//   2. Get direct pointer to cells: ghostty_terminal_pin_cells()
+//   3. Read cells directly (zero-copy)
+//   4. Free pin: ghostty_terminal_pin_free()
+
+/// Opaque pin handle for FFI
+pub const GhosttyPin = extern struct {
+    _: [8]u8,
+};
+
+/// Pin a specific row in the terminal viewport.
+///
+/// Returns an opaque handle that provides zero-copy access to cell data.
+/// The caller MUST call ghostty_terminal_pin_free() when done.
+///
+/// Returns null if row is out of bounds or terminal is invalid.
+export fn ghostty_terminal_pin_row(
+    term: ?*const GhosttyTerminal,
+    row: u32,
+) ?*GhosttyPin {
+    if (term == null) return null;
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+    if (row >= wrapper.terminal.rows) return null;
+
+    // Pin the row in viewport coordinates
+    const point: ghostty_vt.Point = .{
+        .viewport = .{
+            .x = 0,
+            .y = @intCast(row),
+        },
+    };
+
+    const pin = wrapper.terminal.screen.pages.pin(point) orelse return null;
+
+    // Allocate heap memory for the pin (so it survives this function)
+    const pin_ptr = gpa.allocator().create(ghostty_vt.PageList.Pin) catch return null;
+    pin_ptr.* = pin;
+
+    return @ptrCast(@alignCast(pin_ptr));
+}
+
+/// Get direct pointer to cell array from a pinned row.
+///
+/// Returns a pointer to the cell array and writes the count to out_count.
+/// The returned pointer is valid until ghostty_terminal_pin_free() is called.
+///
+/// CRITICAL: The returned cells are ghostty internal cells, NOT CCellExt.
+/// Use ghostty_terminal_pin_populate_cell_ext() to convert cells.
+///
+/// Returns null if pin is invalid.
+export fn ghostty_terminal_pin_cells(
+    term: ?*const GhosttyTerminal,
+    pin: ?*GhosttyPin,
+    out_count: *usize,
+) ?[*]const ghostty_vt.page.Cell {
+    if (term == null or pin == null) {
+        out_count.* = 0;
+        return null;
+    }
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+    const pin_ptr: *ghostty_vt.PageList.Pin = @ptrCast(@alignCast(pin));
+
+    // Get cells from the pinned row
+    const cells = pin_ptr.cells(.all);
+
+    // Limit to visible columns
+    const visible_cols: usize = @intCast(wrapper.terminal.cols);
+    const count = @min(cells.len, visible_cols);
+
+    out_count.* = count;
+    return cells.ptr;
+}
+
+/// Populate a CCellExt from a pin's internal cell.
+///
+/// This converts a ghostty internal cell to the FFI-safe CCellExt struct,
+/// resolving colors and attributes.
+///
+/// # Arguments
+/// * term - Terminal instance
+/// * pin - Pin handle
+/// * cell_index - Index into the cell array from ghostty_terminal_pin_cells()
+/// * out_cell - Output CCellExt struct
+///
+/// Returns true on success, false if indices are invalid.
+export fn ghostty_terminal_pin_populate_cell_ext(
+    term: ?*const GhosttyTerminal,
+    pin: ?*GhosttyPin,
+    cell_index: usize,
+    out_cell: *CCellExt,
+) bool {
+    if (term == null or pin == null) {
+        out_cell.* = EMPTY_CELL_EXT;
+        return false;
+    }
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+    const pin_ptr: *ghostty_vt.PageList.Pin = @ptrCast(@alignCast(pin));
+
+    const cells = pin_ptr.cells(.all);
+    if (cell_index >= cells.len) {
+        out_cell.* = EMPTY_CELL_EXT;
+        return false;
+    }
+
+    const page_ptr: *const ghostty_vt.Page = &pin_ptr.node.data;
+    populateCellExt(wrapper, page_ptr, &cells[cell_index], out_cell);
+    return true;
+}
+
+/// Free a pin handle.
+///
+/// MUST be called for every pin returned by ghostty_terminal_pin_row().
+export fn ghostty_terminal_pin_free(pin: ?*GhosttyPin) void {
+    if (pin == null) return;
+
+    const pin_ptr: *ghostty_vt.PageList.Pin = @ptrCast(@alignCast(pin));
+    gpa.allocator().destroy(pin_ptr);
+}

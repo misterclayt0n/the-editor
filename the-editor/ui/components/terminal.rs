@@ -36,7 +36,6 @@ use the_editor_renderer::{
 use the_terminal::{
   ScreenSnapshot,
   TerminalSession,
-  terminal::Cell,
 };
 
 use crate::{
@@ -269,20 +268,25 @@ impl Component for TerminalView {
     let new_cols = (area.width as f32 / cell_width).floor() as u16;
     let new_rows = (area.height as f32 / cell_height).floor() as u16;
 
-    // Resize terminal if dimensions changed
-    if new_cols != self.last_cols || new_rows != self.last_rows {
-      if new_cols > 0 && new_rows > 0 {
-        if let Err(e) = self.session.borrow_mut().resize(new_rows, new_cols) {
-          log::error!("Failed to resize terminal: {}", e);
-        } else {
-          self.last_cols = new_cols;
-          self.last_rows = new_rows;
-        }
+    // Add hysteresis to prevent resize thrashing
+    const RESIZE_THRESHOLD: u16 = 2;
+    let cols_diff = new_cols.abs_diff(self.last_cols);
+    let rows_diff = new_rows.abs_diff(self.last_rows);
+
+    if (cols_diff > RESIZE_THRESHOLD || rows_diff > RESIZE_THRESHOLD)
+      && new_cols > 0
+      && new_rows > 0
+    {
+      if let Err(e) = self.session.borrow_mut().resize(new_rows, new_cols) {
+        log::error!("Failed to resize terminal: {}", e);
+      } else {
+        self.last_cols = new_cols;
+        self.last_rows = new_rows;
       }
     }
 
     // CLONE-AND-RELEASE PATTERN (Ghostty optimization)
-    // Create snapshot while holding minimal lock, then release immediately
+    // Create snapshot while holding minimal lock (~1-10 microseconds)
     let session = self.session.borrow();
     let Some(snapshot) = session.create_screen_snapshot() else {
       return;
@@ -320,7 +324,12 @@ impl Component for TerminalView {
         .collect()
     };
 
-    // Render rows as contiguous color runs
+    // Get terminal lock for pin-based rendering
+    // Lock is held ONLY during cell data access via pins
+    let session = self.session.borrow();
+    let terminal_guard = session.lock_terminal();
+
+    // Render rows using pin-based zero-copy iteration
     for row in rows_to_render {
       let row_y = area.y as f32 + (row as f32 * cell_height);
       let mut run_text = String::with_capacity(render_cols as usize);
@@ -358,18 +367,23 @@ impl Component for TerminalView {
         buffer.reserve(render_cols as usize);
       };
 
-      // Get cached row from snapshot (no FFI calls needed)
-      let Some(raw_row) = snapshot.get_row(row) else {
+      // PIN-BASED ZERO-COPY ITERATION
+      // No cell data copying - direct access to terminal page memory
+      let Some(pin) = terminal_guard.pin_row(row) else {
         continue;
       };
 
-      for (col_idx, cell_ext) in raw_row.iter().enumerate() {
-        let col = col_idx as u16;
-        if col >= render_cols {
-          break;
-        }
+      let cell_count = pin.cell_count(&terminal_guard);
+      let cols_to_render = cell_count.min(render_cols as usize);
 
-        let cell: Cell = (*cell_ext).into();
+      for col_idx in 0..cols_to_render {
+        let col = col_idx as u16;
+
+        // Resolve cell colors/attributes on-demand (zero-copy)
+        let Some(cell) = pin.get_cell_ext(&terminal_guard, col_idx) else {
+          continue;
+        };
+
         let mut ch = cell.character().unwrap_or(' ');
         if ch == '\0' {
           ch = ' ';
@@ -401,6 +415,10 @@ impl Component for TerminalView {
 
       flush_run(surface, run_start_col, run_color, &mut run_text);
     }
+
+    // Drop terminal lock before rendering cursor
+    drop(terminal_guard);
+    drop(session);
 
     // Render cursor if visible
     let (cursor_row, cursor_col) = snapshot.cursor_pos;

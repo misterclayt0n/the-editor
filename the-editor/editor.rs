@@ -887,6 +887,15 @@ pub struct TerminalConfig {
   #[serde(default)]
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub args:    Vec<String>,
+  /// Maximum FPS for terminal rendering. Defaults to 120.
+  /// Prevents excessive CPU usage when PTY outputs fast data.
+  /// Valid range: 1-1000 FPS.
+  #[serde(default = "default_max_terminal_fps")]
+  pub max_fps: u32,
+}
+
+fn default_max_terminal_fps() -> u32 {
+  120
 }
 
 #[cfg(windows)]
@@ -903,12 +912,14 @@ pub fn get_terminal_provider() -> Option<TerminalConfig> {
         "cmd".to_string(),
         "/C".to_string(),
       ],
+      max_fps: default_max_terminal_fps(),
     });
   }
 
   Some(TerminalConfig {
     command: "conhost".to_string(),
     args:    vec!["cmd".to_string(), "/C".to_string()],
+    max_fps: default_max_terminal_fps(),
   })
 }
 
@@ -923,6 +934,7 @@ pub fn get_terminal_provider() -> Option<TerminalConfig> {
     return Some(TerminalConfig {
       command: "tmux".to_string(),
       args:    vec!["split-window".to_string()],
+      max_fps: default_max_terminal_fps(),
     });
   }
 
@@ -930,6 +942,7 @@ pub fn get_terminal_provider() -> Option<TerminalConfig> {
     return Some(TerminalConfig {
       command: "wezterm".to_string(),
       args:    vec!["cli".to_string(), "split-pane".to_string()],
+      max_fps: default_max_terminal_fps(),
     });
   }
 

@@ -347,6 +347,29 @@ pub struct Cell {
   pub width:        u8,
 }
 
+/// A snapshot of the terminal screen for zero-copy rendering.
+///
+/// This structure contains a clone of essential terminal state that can be
+/// created quickly while holding a lock, allowing the lock to be released
+/// immediately. Rendering then proceeds without blocking the PTY thread.
+///
+/// This implements the "clone-and-release" pattern from Ghostty for minimal
+/// lock contention.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScreenSnapshot {
+  /// Cursor position (row, col)
+  pub cursor_pos:            (u16, u16),
+  /// Terminal dimensions (rows, cols)
+  pub size:                  (u16, u16),
+  /// Dirty rows that need re-rendering
+  pub dirty_rows:            Vec<u32>,
+  /// True if full render is needed
+  pub needs_full_rebuild:    bool,
+  /// Cached row data for rendering without additional FFI calls
+  /// Maps row index to vector of cells
+  rows: std::collections::HashMap<u16, Vec<ffi::GhosttyCellExt>>,
+}
+
 impl Cell {
   /// Get the character represented by this cell's codepoint.
   pub fn character(&self) -> Option<char> {
@@ -439,6 +462,91 @@ impl<'a> Grid<'a> {
       .map(|row| self.row_string(row))
       .collect::<Vec<_>>()
       .join("\n")
+  }
+}
+
+impl ScreenSnapshot {
+  /// Create a snapshot of the terminal screen state.
+  ///
+  /// This captures cursor position, size, dirty rows, and caches row data.
+  /// The snapshot is created quickly while the terminal lock is held.
+  ///
+  /// # Arguments
+  /// * `terminal` - Reference to the terminal to snapshot
+  /// * `row_buffer` - Pre-allocated buffer for row cell data
+  ///
+  /// # Returns
+  /// A new ScreenSnapshot ready for rendering
+  pub fn from_terminal(terminal: &Terminal, mut row_buffer: Vec<ffi::GhosttyCellExt>) -> Self {
+    let size = (terminal.rows(), terminal.cols());
+    let cursor_pos = terminal.cursor_pos();
+    let needs_full_rebuild = terminal.needs_full_rebuild();
+    let dirty_rows = if needs_full_rebuild {
+      Vec::new() // Empty vec signals full render
+    } else {
+      terminal.get_dirty_rows()
+    };
+
+    // Pre-cache only dirty rows to minimize memory and copy time
+    let mut rows = std::collections::HashMap::new();
+    let rows_to_cache = if dirty_rows.is_empty() {
+      // Full render: cache all rows
+      (0..size.0).map(|r| r as u32).collect::<Vec<_>>()
+    } else {
+      dirty_rows.clone()
+    };
+
+    for row_idx in rows_to_cache {
+      if row_idx >= size.0 as u32 {
+        break;
+      }
+      row_buffer.clear();
+      row_buffer.resize(size.1 as usize, ffi::GhosttyCellExt::default());
+      let count = terminal.copy_row_ext(row_idx as u16, &mut row_buffer);
+      rows.insert(row_idx as u16, row_buffer[..count].to_vec());
+    }
+
+    Self {
+      cursor_pos,
+      size,
+      dirty_rows,
+      needs_full_rebuild,
+      rows,
+    }
+  }
+
+  /// Get a cached row of cells, if available.
+  pub fn get_row(&self, row: u16) -> Option<&Vec<ffi::GhosttyCellExt>> {
+    self.rows.get(&row)
+  }
+
+  /// Get terminal dimensions from snapshot
+  pub fn size(&self) -> (u16, u16) {
+    self.size
+  }
+
+  /// Check if full render is needed
+  pub fn is_full_render(&self) -> bool {
+    self.dirty_rows.is_empty()
+  }
+
+  /// Get the number of dirty rows that need rendering
+  pub fn dirty_row_count(&self) -> usize {
+    if self.dirty_rows.is_empty() {
+      self.size.0 as usize // Full render
+    } else {
+      self.dirty_rows.len()
+    }
+  }
+
+  /// Calculate rendering efficiency metric (0.0 = full render, 1.0 = no changes)
+  /// Useful for deciding whether to do incremental vs full render
+  pub fn render_efficiency(&self) -> f32 {
+    if self.dirty_rows.is_empty() {
+      0.0 // Full render needed
+    } else {
+      1.0 - (self.dirty_rows.len() as f32 / self.size.0.max(1) as f32)
+    }
   }
 }
 

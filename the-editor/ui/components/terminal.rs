@@ -34,8 +34,8 @@ use the_editor_renderer::{
   TextSegment,
 };
 use the_terminal::{
+  ScreenSnapshot,
   TerminalSession,
-  ffi::GhosttyCellExt,
   terminal::Cell,
 };
 
@@ -72,6 +72,13 @@ pub struct TerminalView {
   /// Cache for last rendered dimensions
   last_cols: u16,
   last_rows: u16,
+
+  /// Whether FPS throttling is enabled
+  throttle_enabled: bool,
+
+  /// Last rendered screen snapshot for smart redraw detection
+  /// If the new snapshot equals this, we can skip rendering
+  last_snapshot: Option<Box<ScreenSnapshot>>,
 }
 
 impl TerminalView {
@@ -94,6 +101,8 @@ impl TerminalView {
       dirty: true,
       last_cols: cols,
       last_rows: rows,
+      throttle_enabled: true,
+      last_snapshot: None,
     })
   }
 
@@ -230,7 +239,17 @@ impl Component for TerminalView {
 
   fn should_update(&self) -> bool {
     // Check if terminal needs redraw (PTY read thread sets this flag)
-    self.session.borrow().needs_redraw() || self.dirty
+    if !self.session.borrow().needs_redraw() && !self.dirty {
+      return false;
+    }
+
+    // Apply FPS throttling if enabled
+    if self.throttle_enabled {
+      let mut session = self.session.borrow_mut();
+      session.can_render() // Only render if not throttled
+    } else {
+      true // Always render if throttling disabled
+    }
   }
 
   fn render(&mut self, area: Rect, surface: &mut Surface, _ctx: &mut Context) {
@@ -262,35 +281,38 @@ impl Component for TerminalView {
       }
     }
 
-    // CRITICAL: Atomically get and clear dirty rows to prevent race conditions
-    // This must be done in a single operation while holding the terminal lock
-    // to prevent the PTY thread from setting new dirty bits between read and clear.
-    let session_borrow = self.session.borrow();
-    let dirty_rows = session_borrow.get_and_clear_dirty_rows();
+    // CLONE-AND-RELEASE PATTERN (Ghostty optimization)
+    // Create snapshot while holding minimal lock, then release immediately
+    let session = self.session.borrow();
+    let Some(snapshot) = session.create_screen_snapshot() else {
+      return;
+    };
+    drop(session); // Release borrow immediately after snapshot creation
 
-    // Lock terminal for rendering (separate lock, dirty bits already cleared)
-    let term_guard = session_borrow.lock_terminal();
-    let grid = term_guard.grid();
-    let (term_rows, term_cols) = (grid.rows(), grid.cols());
+    // SMART REDRAW DETECTION: Skip render if nothing changed
+    // Compare with last rendered snapshot to avoid redundant rendering
+    if let Some(ref last) = self.last_snapshot {
+      if **last == snapshot {
+        // Content is identical, skip rendering but keep the redraw flag cleared
+        // This prevents excessive CPU usage when terminal is idle but flag is set
+        return;
+      }
+    }
 
-    // Render grid cells
-    // Clamp rendering to the calculated dimensions to avoid overflow
-    // if the terminal hasn't resized yet
+    // All rendering below happens WITHOUT holding the terminal lock
+    // PTY thread can continue writing to terminal during rendering
+
+    let (term_rows, term_cols) = snapshot.size;
     let render_rows = term_rows.min(new_rows);
     let render_cols = term_cols.min(new_cols);
+    let is_full_render = snapshot.is_full_render();
 
-    // Batch contiguous runs of identical color within each row.
-    let line_height = cell_height;
-
-    // Determine which rows to render:
-    // - If dirty_rows is empty (initial render, post-resize, full render flag),
-    //   render all rows
-    // - Otherwise, render only dirty rows for performance
-    let is_full_render = dirty_rows.is_empty();
+    // Determine which rows to render
     let rows_to_render: Vec<u16> = if is_full_render {
       (0..render_rows).collect()
     } else {
-      dirty_rows
+      snapshot
+        .dirty_rows
         .iter()
         .copied()
         .filter(|&r| r < render_rows as u32)
@@ -298,12 +320,9 @@ impl Component for TerminalView {
         .collect()
     };
 
-    // Preallocate buffer for row cell data to avoid per-cell FFI calls
-    let mut raw_row = vec![GhosttyCellExt::default(); render_cols as usize];
-
     // Render rows as contiguous color runs
     for row in rows_to_render {
-      let row_y = area.y as f32 + (row as f32 * line_height);
+      let row_y = area.y as f32 + (row as f32 * cell_height);
       let mut run_text = String::with_capacity(render_cols as usize);
       let mut run_color: Option<(u8, u8, u8)> = None;
       let mut run_start_col = 0u16;
@@ -339,7 +358,10 @@ impl Component for TerminalView {
         buffer.reserve(render_cols as usize);
       };
 
-      let _ = term_guard.copy_row_ext(row, raw_row.as_mut_slice());
+      // Get cached row from snapshot (no FFI calls needed)
+      let Some(raw_row) = snapshot.get_row(row) else {
+        continue;
+      };
 
       for (col_idx, cell_ext) in raw_row.iter().enumerate() {
         let col = col_idx as u16;
@@ -381,7 +403,7 @@ impl Component for TerminalView {
     }
 
     // Render cursor if visible
-    let (cursor_row, cursor_col) = term_guard.cursor_pos();
+    let (cursor_row, cursor_col) = snapshot.cursor_pos;
     if cursor_row < term_rows && cursor_col < term_cols {
       let cursor_x = area.x as f32 + (cursor_col as f32 * cell_width);
       let cursor_y = area.y as f32 + (cursor_row as f32 * cell_height);
@@ -398,14 +420,14 @@ impl Component for TerminalView {
       );
     }
 
-    // Drop the terminal guard to release the lock
-    drop(term_guard);
-
-    // Clear flags (dirty bits already cleared atomically above)
+    // Clear flags
     if is_full_render {
-      session_borrow.clear_full_render_flag();
+      self.session.borrow().clear_full_render_flag();
     }
-    session_borrow.clear_redraw_flag();
+    self.session.borrow().clear_redraw_flag();
+
+    // CACHE RENDERED STATE for next frame's smart redraw detection
+    self.last_snapshot = Some(Box::new(snapshot));
   }
 
   fn cursor(&self, area: Rect, _ctx: &Editor) -> (Option<Position>, CursorKind) {

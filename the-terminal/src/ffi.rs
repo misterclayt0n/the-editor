@@ -26,7 +26,7 @@ pub struct GhosttyCell {
 
 /// Color with presence flag
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GhosttyColor {
   pub r:      u8,
   pub g:      u8,
@@ -49,7 +49,7 @@ impl Default for GhosttyColor {
 
 /// Extended cell information including resolved colors and attributes
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GhosttyCellExt {
   pub codepoint:    u32,
   pub cluster:      u32,

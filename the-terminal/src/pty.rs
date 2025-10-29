@@ -7,10 +7,7 @@
 //! for continuous PTY output processing independent of UI frame timing.
 
 use std::{
-  os::unix::io::{
-    AsRawFd as _,
-    RawFd,
-  },
+  os::unix::io::RawFd,
   sync::{
     Arc,
     Mutex,

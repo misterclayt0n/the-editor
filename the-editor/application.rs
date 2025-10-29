@@ -925,7 +925,12 @@ impl App {
 
         // Spawn terminal session with default dimensions (80x24)
         match TerminalSession::new(24, 80, None) {
-          Ok(session) => {
+          Ok(mut session) => {
+            // Apply configured max FPS from editor config
+            if let Some(terminal_config) = &self.editor.config().terminal {
+              session.set_max_fps(terminal_config.max_fps);
+            }
+
             let session = Rc::new(RefCell::new(session));
             // Insert terminal into the tree
             self.editor.tree.insert_terminal(session, id);
@@ -957,7 +962,12 @@ impl App {
         self.editor.next_terminal_id += 1;
 
         match TerminalSession::new(24, 80, None) {
-          Ok(session) => {
+          Ok(mut session) => {
+            // Apply configured max FPS from editor config
+            if let Some(terminal_config) = &self.editor.config().terminal {
+              session.set_max_fps(terminal_config.max_fps);
+            }
+
             let session = Rc::new(RefCell::new(session));
             match self
               .editor

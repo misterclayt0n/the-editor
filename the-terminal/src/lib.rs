@@ -9,5 +9,8 @@ pub mod terminal;
 pub mod terminal_session;
 
 pub use pty::PtySession;
-pub use terminal::Terminal;
+pub use terminal::{
+  ScreenSnapshot,
+  Terminal,
+};
 pub use terminal_session::TerminalSession;

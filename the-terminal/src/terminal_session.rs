@@ -17,6 +17,10 @@ use std::{
       Ordering,
     },
   },
+  time::{
+    Duration,
+    Instant,
+  },
 };
 
 use anyhow::Result;
@@ -101,6 +105,14 @@ pub struct TerminalSession {
 
   /// Background color reported for OSC queries
   background_color: (u8, u8, u8),
+
+  /// Last render time for FPS throttling
+  /// Prevents excessive redraws when PTY outputs fast
+  last_render_time: Instant,
+
+  /// Maximum FPS for terminal rendering (default: 120)
+  /// Can be overridden via configuration
+  max_fps: u32,
 }
 
 impl TerminalSession {
@@ -171,6 +183,8 @@ impl TerminalSession {
       needs_full_render,
       cell_pixel_size: (0, 0),
       background_color: (0, 0, 0),
+      last_render_time: Instant::now(),
+      max_fps: 120,
     })
   }
 
@@ -422,6 +436,68 @@ impl TerminalSession {
     if let Ok(mut term) = self.terminal.lock() {
       term.set_background_color(r, g, b);
     }
+  }
+
+  /// Create a snapshot of the terminal screen for rendering.
+  ///
+  /// This implements the "clone-and-release" pattern from Ghostty:
+  /// 1. Acquires lock and creates snapshot quickly
+  /// 2. Clears dirty bits atomically
+  /// 3. Releases lock immediately
+  /// 4. Rendering proceeds without blocking PTY thread
+  ///
+  /// Returns None if terminal lock is poisoned.
+  pub fn create_screen_snapshot(&self) -> Option<crate::terminal::ScreenSnapshot> {
+    if let Ok(term) = self.terminal.lock() {
+      // Pre-allocate row buffer with typical terminal width (80 cols)
+      let row_buffer = vec![Default::default(); 80];
+      let snapshot = crate::terminal::ScreenSnapshot::from_terminal(&term, row_buffer);
+
+      // Atomically clear dirty bits after snapshotting
+      // SAFETY: We're still holding the lock, so this is safe
+      drop(term); // Explicitly drop the guard
+      if let Ok(mut term) = self.terminal.lock() {
+        term.clear_dirty();
+      }
+
+      Some(snapshot)
+    } else {
+      None
+    }
+  }
+
+  /// Check if enough time has passed to render at configured FPS.
+  ///
+  /// This throttles terminal rendering to prevent excessive CPU usage
+  /// when the PTY produces output faster than the display can refresh.
+  /// Implements frame rate limiting similar to Ghostty (default: 120 FPS).
+  ///
+  /// Returns true if rendering should proceed, false if it should be deferred.
+  pub fn can_render(&mut self) -> bool {
+    let now = Instant::now();
+    let min_frame_time = Duration::from_millis(1000 / self.max_fps as u64);
+
+    if now.duration_since(self.last_render_time) >= min_frame_time {
+      self.last_render_time = now;
+      true
+    } else {
+      false
+    }
+  }
+
+  /// Set the maximum FPS for terminal rendering.
+  pub fn set_max_fps(&mut self, fps: u32) {
+    self.max_fps = fps.max(1).min(1000); // Clamp to 1-1000 FPS
+  }
+
+  /// Get the current maximum FPS setting.
+  pub fn max_fps(&self) -> u32 {
+    self.max_fps
+  }
+
+  /// Reset the throttle timer (used after successful renders).
+  pub fn reset_render_timer(&mut self) {
+    self.last_render_time = Instant::now();
   }
 }
 

@@ -321,7 +321,7 @@ impl Component for TerminalView {
     let (term_rows, term_cols) = snapshot.size;
     let render_rows = term_rows.min(new_rows);
     let render_cols = term_cols.min(new_cols);
-    let is_full_render = snapshot_full_render;
+    let is_full_render = force_full_render || snapshot_full_render;
 
     // Determine which rows to render
     let rows_to_render: Vec<u16> = if is_full_render {

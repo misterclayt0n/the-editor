@@ -484,20 +484,31 @@ impl TerminalSession {
     }
   }
 
-  /// Create a snapshot of the terminal screen metadata.
+  /// Create a snapshot of the terminal screen for rendering.
   ///
-  /// This implements Ghostty's "clone-and-release" pattern for metadata only:
-  /// 1. Acquires lock and creates snapshot (ONLY metadata, no cell data)
-  /// 2. Clears dirty bits atomically
-  /// 3. Releases lock immediately
-  /// 4. Rendering proceeds without lock using pin-based iteration
+  /// This implements ghostty's clone-and-release pattern for minimal lock contention.
+  /// Captures cursor position, size, and dirty row indices atomically, then clears
+  /// dirty bits before releasing the lock. Cell data is accessed later via pins.
   ///
-  /// Lock hold time: ~1-10 microseconds (just copying metadata).
+  /// **Lock hold time**: Typically 10-100 microseconds
+  /// - Metadata copy: ~1-10 µs (just integers)
+  /// - Dirty row scan: ~1-50 µs (iterate row dirty bits)
+  /// - Dirty row allocation: ~1-20 µs (Vec allocation)
+  /// - Clear dirty: ~1-10 µs (bitset clear)
+  ///
+  /// **NOTE**: Dirty row allocation (Vec) happens while holding lock.
+  /// This is not ideal but acceptable. Future optimization: use row iterator
+  /// during rendering instead of extracting dirty rows to Vec (see tasks 4-6).
+  ///
+  /// **Correctness**: Atomically snapshots which rows are dirty before clearing,
+  /// ensuring no updates are missed between snapshot and clear operations.
   ///
   /// Returns None if terminal lock is poisoned.
   pub fn create_screen_snapshot(&self) -> Option<crate::terminal::ScreenSnapshot> {
     if let Ok(mut term) = self.terminal.lock() {
       // Create snapshot (ONLY metadata - cursor, size, dirty rows)
+      // NOTE: This allocates Vec for dirty rows while holding lock.
+      // Future: use row iterator pattern (ghostty's approach) instead.
       let snapshot = crate::terminal::ScreenSnapshot::from_terminal(&term);
 
       // Atomically clear dirty bits after snapshotting

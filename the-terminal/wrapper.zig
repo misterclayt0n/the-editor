@@ -963,24 +963,14 @@ export fn ghostty_terminal_get_dirty_rows(
     const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
     const screen = &wrapper.terminal.screen;
 
-    // Count dirty rows first
+    // Use ghostty's row iterator for efficient traversal (same as ghostty's renderer)
+    var row_it = screen.pages.rowIterator(.left_up, .{ .viewport = .{} }, null);
+
+    // First pass: count dirty rows using row-level dirty bits
     var dirty_count: usize = 0;
-    var row: usize = 0;
-
-    // Iterate through visible rows in viewport
-    while (row < wrapper.terminal.rows) : (row += 1) {
-        const point: ghostty_vt.Point = .{
-            .viewport = .{
-                .x = 0,
-                .y = @intCast(row),
-            },
-        };
-
-        if (screen.pages.getCell(point)) |cell| {
-            // Check if this row is dirty using the Cell's isDirty method
-            if (cell.isDirty()) {
-                dirty_count += 1;
-            }
+    while (row_it.next()) |row| {
+        if (row.isDirty()) {
+            dirty_count += 1;
         }
     }
 
@@ -995,23 +985,17 @@ export fn ghostty_terminal_get_dirty_rows(
         return null;
     };
 
-    // Fill array with dirty row indices
+    // Second pass: fill array with dirty row indices
+    // Reset iterator to start from top again
+    row_it = screen.pages.rowIterator(.left_up, .{ .viewport = .{} }, null);
     var idx: usize = 0;
-    row = 0;
-    while (row < wrapper.terminal.rows and idx < dirty_count) : (row += 1) {
-        const point: ghostty_vt.Point = .{
-            .viewport = .{
-                .x = 0,
-                .y = @intCast(row),
-            },
-        };
-
-        if (screen.pages.getCell(point)) |cell| {
-            if (cell.isDirty()) {
-                dirty_rows[idx] = @intCast(row);
-                idx += 1;
-            }
+    var y: u32 = 0;
+    while (row_it.next()) |row| {
+        if (row.isDirty()) {
+            dirty_rows[idx] = y;
+            idx += 1;
         }
+        y += 1;
     }
 
     out_count.* = dirty_count;
@@ -1204,4 +1188,115 @@ export fn ghostty_terminal_pin_free(pin: ?*GhosttyPin) void {
 
     const pin_ptr: *ghostty_vt.PageList.Pin = @ptrCast(@alignCast(pin));
     gpa.allocator().destroy(pin_ptr);
+}
+
+// ==============================================================================
+// ROW ITERATOR (GHOSTTY PATTERN)
+// ==============================================================================
+
+/// Row iterator wrapper for FFI.
+///
+/// This wraps ghostty's PageList.RowIterator and tracks the current row index
+/// for viewport-relative indexing (0 = top of viewport).
+const RowIteratorWrapper = struct {
+    iterator: ghostty_vt.PageList.RowIterator,
+    current_row: u32,
+};
+
+/// Opaque row iterator handle for FFI.
+///
+/// This iterator provides efficient row-by-row traversal of the terminal
+/// viewport, matching ghostty's rendering approach. Each row yields its
+/// index and dirty status without allocating memory for row lists.
+pub const GhosttyRowIterator = extern struct {
+    _: [128]u8, // Enough space for RowIteratorWrapper
+};
+
+/// Create a row iterator for the terminal viewport.
+///
+/// Returns an iterator that yields rows from top to bottom. Each row
+/// includes its index and dirty flag. The iterator handles page boundaries
+/// automatically and supports zero-copy traversal.
+///
+/// **Usage pattern**:
+/// ```
+/// iter = ghostty_terminal_row_iterator_new(term);
+/// while (ghostty_terminal_row_iterator_next(term, iter, &row, &is_dirty)) {
+///     if (is_dirty) {
+///         pin = ghostty_terminal_pin_row(term, row);
+///         // render row...
+///         ghostty_terminal_pin_free(pin);
+///     }
+/// }
+/// ghostty_terminal_row_iterator_free(iter);
+/// ```
+///
+/// Returns null if terminal is invalid or iterator creation fails.
+export fn ghostty_terminal_row_iterator_new(
+    term: ?*const GhosttyTerminal,
+) ?*GhosttyRowIterator {
+    if (term == null) return null;
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+    const screen = &wrapper.terminal.screen;
+
+    // Allocate iterator wrapper on heap
+    const iter_wrapper = gpa.allocator().create(RowIteratorWrapper) catch return null;
+
+    // Initialize row iterator for viewport (top to bottom)
+    iter_wrapper.* = .{
+        .iterator = screen.pages.rowIterator(.left_up, .{ .viewport = .{} }, null),
+        .current_row = 0,
+    };
+
+    return @ptrCast(@alignCast(iter_wrapper));
+}
+
+/// Get the next row from the iterator.
+///
+/// Advances the iterator and returns the next row's index and dirty status.
+/// Returns false when iteration is complete.
+///
+/// **Arguments**:
+/// - `term`: Terminal handle (for validation)
+/// - `iter`: Iterator handle from ghostty_terminal_row_iterator_new()
+/// - `out_row_index`: Receives the row index (0-based from top of viewport)
+/// - `out_is_dirty`: Receives true if the row needs re-rendering
+///
+/// **Returns**: true if a row was yielded, false if iteration is complete
+export fn ghostty_terminal_row_iterator_next(
+    term: ?*const GhosttyTerminal,
+    iter: ?*GhosttyRowIterator,
+    out_row_index: *u32,
+    out_is_dirty: *bool,
+) bool {
+    _ = term; // Not needed for iteration, but kept for API consistency
+
+    if (iter == null) return false;
+
+    const iter_wrapper: *RowIteratorWrapper = @ptrCast(@alignCast(iter));
+
+    // Get next row from iterator
+    if (iter_wrapper.iterator.next()) |row| {
+        // Return current row index and dirty status
+        out_row_index.* = iter_wrapper.current_row;
+        out_is_dirty.* = row.isDirty();
+
+        // Increment row counter for next iteration
+        iter_wrapper.current_row += 1;
+
+        return true;
+    }
+
+    return false;
+}
+
+/// Free a row iterator.
+///
+/// MUST be called for every iterator returned by ghostty_terminal_row_iterator_new().
+export fn ghostty_terminal_row_iterator_free(iter: ?*GhosttyRowIterator) void {
+    if (iter == null) return;
+
+    const iter_wrapper: *RowIteratorWrapper = @ptrCast(@alignCast(iter));
+    gpa.allocator().destroy(iter_wrapper);
 }

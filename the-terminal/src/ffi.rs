@@ -106,6 +106,12 @@ pub struct GhosttyPin {
   _private: [u8; 0],
 }
 
+/// Opaque row iterator type.
+#[repr(C)]
+pub struct GhosttyRowIterator {
+  _private: [u8; 0],
+}
+
 unsafe extern "C" {
   /// Initialize a new terminal with the given options.
   ///
@@ -286,6 +292,48 @@ unsafe extern "C" {
   /// # Safety
   /// The pin must not be used after calling this function.
   pub fn ghostty_terminal_pin_free(pin: *mut GhosttyPin);
+
+  // ==========================================================================
+  // ROW ITERATOR (GHOSTTY PATTERN)
+  // ==========================================================================
+
+  /// Create a row iterator for the terminal viewport.
+  ///
+  /// Returns an iterator that yields rows from top to bottom. Each row
+  /// includes its index and dirty flag, enabling efficient incremental rendering.
+  ///
+  /// The iterator MUST be freed with ghostty_terminal_row_iterator_free().
+  ///
+  /// Returns null if terminal is invalid or iterator creation fails.
+  pub fn ghostty_terminal_row_iterator_new(term: *const GhosttyTerminal) -> *mut GhosttyRowIterator;
+
+  /// Get the next row from the iterator.
+  ///
+  /// Advances the iterator and returns the next row's index and dirty status.
+  /// Returns false when iteration is complete.
+  ///
+  /// # Arguments
+  /// * `term` - Terminal handle (for validation)
+  /// * `iter` - Iterator handle from ghostty_terminal_row_iterator_new()
+  /// * `out_row_index` - Receives the row index (0-based from top)
+  /// * `out_is_dirty` - Receives true if the row needs re-rendering
+  ///
+  /// # Returns
+  /// true if a row was yielded, false if iteration is complete
+  pub fn ghostty_terminal_row_iterator_next(
+    term: *const GhosttyTerminal,
+    iter: *mut GhosttyRowIterator,
+    out_row_index: *mut u32,
+    out_is_dirty: *mut bool,
+  ) -> bool;
+
+  /// Free a row iterator.
+  ///
+  /// MUST be called for every iterator returned by ghostty_terminal_row_iterator_new().
+  ///
+  /// # Safety
+  /// The iterator must not be used after calling this function.
+  pub fn ghostty_terminal_row_iterator_free(iter: *mut GhosttyRowIterator);
 }
 
 #[cfg(test)]

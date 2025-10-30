@@ -302,6 +302,59 @@ impl Terminal {
 
     Some(Pin { ptr: pin_ptr })
   }
+
+  /// Create a row iterator for the terminal viewport.
+  ///
+  /// Returns an iterator that yields (row_index, is_dirty) tuples for each
+  /// row from top to bottom. This is an alternative to `get_dirty_rows()`
+  /// that avoids allocating a Vec, but requires holding the terminal lock
+  /// during iteration.
+  ///
+  /// **When to use**:
+  /// - Processing rows inline while lock is held (fast operations only)
+  /// - Alternative rendering patterns that need row-by-row dirty checks
+  ///
+  /// **When NOT to use**:
+  /// - Snapshot-based rendering (use `get_dirty_rows()` instead)
+  /// - Long processing per row (would block PTY thread)
+  ///
+  /// **Note**: The current snapshot-based rendering in `terminal.rs`
+  /// uses `get_dirty_rows()` because it unlocks BEFORE rendering. Using
+  /// the iterator would require holding the lock during rendering, which
+  /// would block the PTY thread for milliseconds. The Vec allocation
+  /// (~1-20µs) is acceptable vs blocking the PTY.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use the_terminal::Terminal;
+  /// # fn main() -> anyhow::Result<()> {
+  /// let terminal = Terminal::new(80, 24)?;
+  /// let iter = terminal.row_iterator()?;
+  ///
+  /// // IMPORTANT: Lock held during entire iteration!
+  /// for (row, is_dirty) in iter {
+  ///     if is_dirty {
+  ///         // Fast processing only! Don't do I/O or slow operations here.
+  ///         if let Some(pin) = terminal.pin_row(row as u16) {
+  ///             // Quick row processing...
+  ///         }
+  ///     }
+  /// }
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn row_iterator(&self) -> Option<RowIterator> {
+    let iter_ptr = unsafe { ffi::ghostty_terminal_row_iterator_new(self.inner) };
+
+    if iter_ptr.is_null() {
+      return None;
+    }
+
+    Some(RowIterator {
+      ptr:      iter_ptr,
+      terminal: self.inner,
+    })
+  }
 }
 
 /// RAII wrapper for a pinned terminal row.
@@ -367,6 +420,61 @@ impl Drop for Pin {
     }
   }
 }
+
+/// Row iterator for efficient terminal viewport traversal.
+///
+/// This iterator yields (row_index, is_dirty) tuples for each row in the
+/// viewport from top to bottom. It matches ghostty's rendering approach
+/// by checking dirty status inline without allocating a dirty row list.
+///
+/// # Example
+/// ```no_run
+/// # use the_terminal::Terminal;
+/// let terminal = Terminal::new(80, 24)?;
+/// let iter = terminal.row_iterator()?;
+/// for (row, is_dirty) in iter {
+///     if is_dirty {
+///         // Pin and render this row
+///         let pin = terminal.pin_row(row as u16)?;
+///         // ... render cells from pin ...
+///     }
+/// }
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub struct RowIterator {
+  ptr:      *mut ffi::GhosttyRowIterator,
+  terminal: *const ffi::GhosttyTerminal,
+}
+
+impl Iterator for RowIterator {
+  type Item = (u32, bool); // (row_index, is_dirty)
+
+  fn next(&mut self) -> Option<Self::Item> {
+    let mut row_index: u32 = 0;
+    let mut is_dirty: bool = false;
+
+    let has_next = unsafe {
+      ffi::ghostty_terminal_row_iterator_next(self.terminal, self.ptr, &mut row_index, &mut is_dirty)
+    };
+
+    if has_next {
+      Some((row_index, is_dirty))
+    } else {
+      None
+    }
+  }
+}
+
+impl Drop for RowIterator {
+  fn drop(&mut self) {
+    unsafe {
+      ffi::ghostty_terminal_row_iterator_free(self.ptr);
+    }
+  }
+}
+
+// SAFETY: RowIterator holds pointers but they're managed correctly via Drop
+unsafe impl Send for RowIterator {}
 
 impl Drop for Terminal {
   fn drop(&mut self) {

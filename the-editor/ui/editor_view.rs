@@ -2534,7 +2534,7 @@ impl EditorView {
       // surface each frame, so partial (dirty row) repaints would drop lines
       // and cause flicker after toggling panes.
       let session_borrow = terminal.session.borrow();
-      let _ = session_borrow.get_and_clear_dirty_rows();
+      session_borrow.clear_dirty_bits();
 
       // Lock terminal for rendering (separate lock, dirty bits already cleared)
       let term_guard = session_borrow.lock_terminal();

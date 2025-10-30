@@ -2555,7 +2555,35 @@ impl EditorView {
 
       let mut raw_row = vec![GhosttyCellExt::default(); render_cols as usize];
 
-      // FIRST PASS: Render cell backgrounds (selection + explicit backgrounds)
+      // DEBUG: Log terminal rendering coordinates
+      eprintln!(
+        "Terminal render: term_x={:.1}, term_y={:.1}, font_width={:.1}, line_height={:.1}, rows={}, cols={}",
+        term_x, term_y, font_width, line_height, render_rows, render_cols
+      );
+
+      // PASS 0: Render default background (ghostty's approach)
+      // This provides a base layer so cells without explicit backgrounds (bg=None)
+      // naturally show the default color underneath. Matches ghostty's rendering pipeline.
+      let default_bg = term_guard
+        .get_default_background()
+        .or_else(|| background_rgb.map(|(r, g, b)| the_terminal::terminal::Rgb { r, g, b }));
+
+      if let Some(bg) = default_bg {
+        let bg_color = Color::rgba(
+          bg.r as f32 / 255.0,
+          bg.g as f32 / 255.0,
+          bg.b as f32 / 255.0,
+          1.0,
+        );
+
+        // Render full terminal area with default background
+        let term_width = render_cols as f32 * font_width;
+        let term_height = render_rows as f32 * line_height;
+        renderer.draw_rect(term_x, term_y, term_width, term_height, bg_color);
+      }
+
+      // PASS 1: Render cell backgrounds (selection + explicit backgrounds)
+      // Only cells with explicit backgrounds (or selected/inverse) will render on top
       for row in 0..render_rows {
         let row_y = term_y + (row as f32 * line_height);
         let _ = term_guard.copy_row_ext(row, raw_row.as_mut_slice());
@@ -2573,15 +2601,40 @@ impl EditorView {
             continue;
           }
 
-          // Determine background color (priority: selection > explicit bg > inverse)
+          // DEBUG: Log multiple interesting rows
+          if row == render_rows - 1 && col_idx < 5 {
+            eprintln!(
+              "Status bar cell[{}]: selected={}, inverse={}, bg={:?}, fg=({},{},{}), char={:?}",
+              col_idx,
+              cell.selected,
+              cell.flags.contains(CellFlags::INVERSE),
+              cell.bg,
+              cell.fg.r, cell.fg.g, cell.fg.b,
+              cell.character()
+            );
+          }
+          // Log cells in first 5 rows to debug inverse video rendering
+          if row < 5 && col_idx < 10 {
+            eprintln!(
+              "Row {} Col {}: selected={}, inverse={}, fg=({},{},{}), bg={:?}, char={:?}",
+              row, col_idx,
+              cell.selected,
+              cell.flags.contains(CellFlags::INVERSE),
+              cell.fg.r, cell.fg.g, cell.fg.b,
+              cell.bg,
+              cell.character()
+            );
+          }
+
+          // Determine background color
+          // Note: Colors are already swapped in wrapper.zig for inverse cells,
+          // so we just use cell.bg directly (don't swap again!)
           let bg_to_render = if cell.selected {
             // Cell is selected - use foreground as selection background (ghostty default)
-            Some(cell.fg)
-          } else if cell.flags.contains(CellFlags::INVERSE) {
-            // Inverse video: swap fg/bg - use foreground as background
+            eprintln!("SELECTION at row={}, col={}", row, col_idx);
             Some(cell.fg)
           } else {
-            // Normal: use explicit background if set
+            // Normal: use explicit background if set (already swapped for inverse in Zig)
             cell.bg
           };
 
@@ -2597,6 +2650,16 @@ impl EditorView {
 
             // Wide characters get proportionally wider backgrounds
             let bg_width = font_width * (cell.width.max(1) as f32);
+
+            // DEBUG: Log background rendering for status bar
+            if row == render_rows - 1 && col_idx < 5 {
+              eprintln!(
+                "Drawing bg at x={:.1}, y={:.1}, width={:.1}, height={:.1}, color=({},{},{})",
+                cell_x, row_y, bg_width, line_height,
+                bg.r, bg.g, bg.b
+              );
+            }
+
             renderer.draw_rect(cell_x, row_y, bg_width, line_height, bg_color);
           }
         }
@@ -2655,17 +2718,14 @@ impl EditorView {
             ch = ' ';
           }
 
-          // Determine text color (inverse video already swapped in wrapper)
-          // For inverse cells: wrapper swapped fg/bg, so cell.bg contains the original fg
-          // For selected cells: use background color for text (inverted selection)
+          // Determine text color
+          // Note: For inverse cells, wrapper.zig already swapped fg/bg,
+          // so cell.fg now contains the correct text color. Don't swap again!
           let text_color = if cell.selected {
             // Selected: use background (original bg color) for text
             cell.bg.unwrap_or(cell.fg)
-          } else if cell.flags.contains(CellFlags::INVERSE) {
-            // Inverse: use bg (which contains original fg after wrapper swap)
-            cell.bg.unwrap_or(cell.fg)
           } else {
-            // Normal: use fg
+            // Normal and inverse: use fg (already swapped for inverse in wrapper.zig)
             cell.fg
           };
 

@@ -2504,6 +2504,11 @@ impl EditorView {
       let new_cols = term_area.width;
       let new_rows = term_area.height;
 
+      if new_cols == 0 || new_rows == 0 {
+        // Keep dirty flags intact until the pane has a drawable area.
+        continue;
+      }
+
       // Resize terminal if dimensions changed
       let (current_rows, current_cols) = terminal.session.borrow().size();
       if new_cols != current_cols || new_rows != current_rows {
@@ -2514,11 +2519,11 @@ impl EditorView {
         }
       }
 
-      // CRITICAL: Atomically get and clear dirty rows to prevent race conditions
-      // This must be done in a single operation while holding the terminal lock
-      // to prevent the PTY thread from setting new dirty bits between read and clear.
+      // Always repaint the full terminal area. The renderer clears the backing
+      // surface each frame, so partial (dirty row) repaints would drop lines
+      // and cause flicker after toggling panes.
       let session_borrow = terminal.session.borrow();
-      let dirty_rows = session_borrow.get_and_clear_dirty_rows();
+      let _ = session_borrow.get_and_clear_dirty_rows();
 
       // Lock terminal for rendering (separate lock, dirty bits already cleared)
       let term_guard = session_borrow.lock_terminal();
@@ -2531,26 +2536,13 @@ impl EditorView {
 
       let line_height = font_size + LINE_SPACING;
 
-      // Determine which rows to render:
-      // - If dirty_rows is empty (initial render, post-resize, full render flag),
-      //   render all rows
-      // - Otherwise, render only dirty rows for performance
-      let is_full_render = dirty_rows.is_empty();
-      let rows_to_render: Vec<u16> = if is_full_render {
-        (0..render_rows).collect()
-      } else {
-        dirty_rows
-          .iter()
-          .copied()
-          .filter(|&r| r < render_rows as u32)
-          .map(|r| r as u16)
-          .collect()
-      };
+      // Repaint every row to keep the surface populated.
+      let is_full_render = true;
 
       let mut raw_row = vec![GhosttyCellExt::default(); render_cols as usize];
 
       // Render rows as contiguous color runs to reduce draw calls
-      for row in rows_to_render {
+      for row in 0..render_rows {
         let row_y = term_y + (row as f32 * line_height);
         let mut run_text = String::with_capacity(render_cols as usize);
         let mut run_color: Option<(u8, u8, u8)> = None;

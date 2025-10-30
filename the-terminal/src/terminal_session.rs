@@ -149,7 +149,7 @@ impl TerminalSession {
     let terminal = Arc::new(Mutex::new(terminal));
 
     // Create redraw flag
-    let needs_redraw = Arc::new(AtomicBool::new(false));
+    let needs_redraw = Arc::new(AtomicBool::new(true));
 
     // Create full render flag (initially true for first render)
     let needs_full_render = Arc::new(AtomicBool::new(true));
@@ -266,12 +266,21 @@ impl TerminalSession {
     self.needs_full_render.load(Ordering::Acquire)
   }
 
+  /// Mark terminal as needing a redraw.
+  ///
+  /// Useful when the UI state changes (e.g. pane reattachment) and we must
+  /// schedule a frame even if no new PTY output arrived yet.
+  pub fn mark_needs_redraw(&self) {
+    self.needs_redraw.store(true, Ordering::Release);
+  }
+
   /// Mark terminal as needing a full render
   ///
   /// Call this when terminal is reattached after being detached,
   /// or when dirty state may be stale/inconsistent
   pub fn mark_needs_full_render(&self) {
     self.needs_full_render.store(true, Ordering::Release);
+    self.mark_needs_redraw();
   }
 
   /// Clear the full render flag

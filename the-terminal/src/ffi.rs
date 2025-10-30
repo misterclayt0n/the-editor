@@ -251,7 +251,8 @@ unsafe extern "C" {
   ///
   /// # Safety
   /// The returned pointer is only valid until ghostty_terminal_pin_free().
-  /// Do NOT dereference the cells directly - use ghostty_terminal_pin_populate_cell_ext().
+  /// Do NOT dereference the cells directly - use
+  /// ghostty_terminal_pin_populate_cell_ext().
   pub fn ghostty_terminal_pin_cells(
     term: *const GhosttyTerminal,
     pin: *mut GhosttyPin,

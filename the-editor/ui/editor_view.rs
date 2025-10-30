@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use the_editor_event::request_redraw;
 use the_editor_renderer::{
   Color,
   TextSection,
@@ -519,8 +520,18 @@ impl Component for EditorView {
             }
             bytes.extend(Self::key_to_terminal_bytes(key));
             if !bytes.is_empty() {
-              if let Err(e) = terminal.session.borrow().send_input(bytes) {
-                log::error!("Failed to send input to terminal: {}", e);
+              let result = {
+                let session_ref = terminal.session.borrow();
+                session_ref.send_input(bytes)
+              };
+              match result {
+                Ok(()) => {
+                  terminal.session.borrow().mark_needs_redraw();
+                  request_redraw();
+                },
+                Err(e) => {
+                  log::error!("Failed to send input to terminal: {}", e);
+                },
               }
             }
           }

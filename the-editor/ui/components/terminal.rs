@@ -26,8 +26,12 @@
 //! - No way to switch between multiple terminals
 //! - Terminal rendering is basic (no styling/colors yet)
 
-use std::cell::RefCell;
+use std::{
+  cell::RefCell,
+  sync::Arc,
+};
 
+use the_editor_event::request_redraw;
 use the_editor_renderer::{
   Color,
   TextSection,
@@ -93,6 +97,7 @@ impl TerminalView {
   /// Returns an error if terminal session cannot be created.
   pub fn new(cols: u16, rows: u16, shell: Option<&str>, id: u32) -> anyhow::Result<Self> {
     let session = TerminalSession::new(rows, cols, shell)?;
+    session.set_redraw_notifier(Some(Arc::new(|| request_redraw())));
 
     Ok(Self {
       session: RefCell::new(session),
@@ -262,6 +267,7 @@ impl Component for TerminalView {
       session.set_cell_pixel_size(cell_width, cell_height);
       session.process_responses(); // Send queued responses back to shell
     }
+    let had_manual_dirty = self.dirty;
     self.dirty = false;
 
     // Calculate terminal dimensions based on available area
@@ -288,18 +294,24 @@ impl Component for TerminalView {
     // CLONE-AND-RELEASE PATTERN (Ghostty optimization)
     // Create snapshot while holding minimal lock (~1-10 microseconds)
     let session = self.session.borrow();
+    let force_full_render = session.needs_full_render();
     let Some(snapshot) = session.create_screen_snapshot() else {
       return;
     };
     drop(session); // Release borrow immediately after snapshot creation
 
+    let snapshot_full_render = snapshot.is_full_render();
+    let should_compare_snapshots = !force_full_render && !snapshot_full_render && !had_manual_dirty;
+
     // SMART REDRAW DETECTION: Skip render if nothing changed
     // Compare with last rendered snapshot to avoid redundant rendering
-    if let Some(ref last) = self.last_snapshot {
-      if **last == snapshot {
-        // Content is identical, skip rendering but keep the redraw flag cleared
-        // This prevents excessive CPU usage when terminal is idle but flag is set
-        return;
+    if should_compare_snapshots {
+      if let Some(ref last) = self.last_snapshot {
+        if **last == snapshot {
+          // Content is identical, skip rendering but keep the redraw flag cleared
+          // This prevents excessive CPU usage when terminal is idle but flag is set
+          return;
+        }
       }
     }
 
@@ -309,7 +321,7 @@ impl Component for TerminalView {
     let (term_rows, term_cols) = snapshot.size;
     let render_rows = term_rows.min(new_rows);
     let render_cols = term_cols.min(new_cols);
-    let is_full_render = snapshot.is_full_render();
+    let is_full_render = snapshot_full_render;
 
     // Determine which rows to render
     let rows_to_render: Vec<u16> = if is_full_render {

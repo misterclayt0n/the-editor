@@ -286,11 +286,11 @@ impl Terminal {
   /// # use the_terminal::Terminal;
   /// # let term = Terminal::new(80, 24).unwrap();
   /// if let Some(pin) = term.pin_row(0) {
-  ///     for col in 0..pin.cell_count() {
-  ///         if let Some(cell_ext) = pin.get_cell_ext(&term, col) {
-  ///             // Use cell_ext without copying
-  ///         }
+  ///   for col in 0..pin.cell_count() {
+  ///     if let Some(cell_ext) = pin.get_cell_ext(&term, col) {
+  ///       // Use cell_ext without copying
   ///     }
+  ///   }
   /// }
   /// ```
   pub fn pin_row(&self, row: u16) -> Option<Pin> {
@@ -327,7 +327,8 @@ impl Pin {
     count
   }
 
-  /// Get a cell's extended information (colors, attributes) at a specific index.
+  /// Get a cell's extended information (colors, attributes) at a specific
+  /// index.
   ///
   /// This resolves colors and attributes on-demand, avoiding the cost of
   /// resolving data for cells that won't be rendered.
@@ -608,8 +609,8 @@ impl ScreenSnapshot {
     }
   }
 
-  /// Calculate rendering efficiency metric (0.0 = full render, 1.0 = no changes)
-  /// Useful for deciding whether to do incremental vs full render
+  /// Calculate rendering efficiency metric (0.0 = full render, 1.0 = no
+  /// changes) Useful for deciding whether to do incremental vs full render
   pub fn render_efficiency(&self) -> f32 {
     if self.dirty_rows.is_empty() {
       0.0 // Full render needed

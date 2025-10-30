@@ -26,6 +26,8 @@ use std::{
 use anyhow::Result;
 use crossbeam::queue::ArrayQueue;
 
+type RedrawCallback = Arc<dyn Fn() + Send + Sync + 'static>;
+
 use crate::{
   Terminal,
   pty::{
@@ -113,6 +115,9 @@ pub struct TerminalSession {
   /// Maximum FPS for terminal rendering (default: 120)
   /// Can be overridden via configuration
   max_fps: u32,
+
+  /// Optional callback invoked whenever the terminal requests a redraw.
+  redraw_notifier: Arc<Mutex<Option<RedrawCallback>>>,
 }
 
 impl TerminalSession {
@@ -158,6 +163,9 @@ impl TerminalSession {
     // This will be called from the PTY read thread
     let terminal_for_callback = Arc::clone(&terminal);
     let needs_redraw_for_callback = Arc::clone(&needs_redraw);
+    let redraw_notifier = Arc::new(Mutex::new(None::<RedrawCallback>));
+    let redraw_notifier_for_callback = Arc::clone(&redraw_notifier);
+
     let output_callback: OutputCallback = Arc::new(move |data: &[u8]| {
       // Lock terminal and write data
       if let Ok(mut term) = terminal_for_callback.lock() {
@@ -168,6 +176,15 @@ impl TerminalSession {
         needs_redraw_for_callback.store(true, Ordering::Release);
       } else {
         log::error!("Failed to lock terminal for write");
+      }
+
+      // Notify listeners that new output is available
+      let callback = redraw_notifier_for_callback
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(Arc::clone));
+      if let Some(cb) = callback {
+        cb();
       }
     });
 
@@ -185,6 +202,7 @@ impl TerminalSession {
       background_color: (0, 0, 0),
       last_render_time: Instant::now(),
       max_fps: 120,
+      redraw_notifier,
     })
   }
 
@@ -272,6 +290,7 @@ impl TerminalSession {
   /// schedule a frame even if no new PTY output arrived yet.
   pub fn mark_needs_redraw(&self) {
     self.needs_redraw.store(true, Ordering::Release);
+    self.notify_redraw_listeners();
   }
 
   /// Mark terminal as needing a full render
@@ -288,6 +307,24 @@ impl TerminalSession {
   /// Should be called after performing a full render
   pub fn clear_full_render_flag(&self) {
     self.needs_full_render.store(false, Ordering::Release);
+  }
+
+  /// Register or clear a redraw notifier callback.
+  pub fn set_redraw_notifier(&self, notifier: Option<RedrawCallback>) {
+    if let Ok(mut guard) = self.redraw_notifier.lock() {
+      *guard = notifier;
+    }
+  }
+
+  fn notify_redraw_listeners(&self) {
+    let callback = self
+      .redraw_notifier
+      .lock()
+      .ok()
+      .and_then(|guard| guard.as_ref().map(Arc::clone));
+    if let Some(cb) = callback {
+      cb();
+    }
   }
 
   /// Lock the terminal for reading/rendering

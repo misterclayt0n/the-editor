@@ -1,6 +1,7 @@
 use std::{
   cell::RefCell,
   rc::Rc,
+  sync::Arc,
 };
 
 use the_editor_renderer::{
@@ -674,8 +675,18 @@ impl Application for App {
             bytes = with_escape;
           }
 
-          if let Err(e) = terminal.session.borrow().send_input(bytes) {
-            log::error!("Failed to write to terminal PTY: {}", e);
+          let result = {
+            let session_ref = terminal.session.borrow();
+            session_ref.send_input(bytes)
+          };
+          match result {
+            Ok(()) => {
+              terminal.session.borrow().mark_needs_redraw();
+              the_editor_event::request_redraw();
+            },
+            Err(e) => {
+              log::error!("Failed to write to terminal PTY: {}", e);
+            },
           }
         }
 
@@ -683,8 +694,18 @@ impl Application for App {
       }
 
       if let Some(bytes) = input_event_to_terminal_bytes(&event) {
-        if let Err(e) = terminal.session.borrow().send_input(bytes) {
-          log::error!("Failed to write to terminal PTY: {}", e);
+        let result = {
+          let session_ref = terminal.session.borrow();
+          session_ref.send_input(bytes)
+        };
+        match result {
+          Ok(()) => {
+            terminal.session.borrow().mark_needs_redraw();
+            the_editor_event::request_redraw();
+          },
+          Err(e) => {
+            log::error!("Failed to write to terminal PTY: {}", e);
+          },
         }
         return true;
       }
@@ -931,6 +952,8 @@ impl App {
               session.set_max_fps(terminal_config.max_fps);
             }
 
+            session.set_redraw_notifier(Some(Arc::new(|| the_editor_event::request_redraw())));
+
             let session = Rc::new(RefCell::new(session));
             // Insert terminal into the tree
             self.editor.tree.insert_terminal(session, id);
@@ -967,6 +990,8 @@ impl App {
             if let Some(terminal_config) = &self.editor.config().terminal {
               session.set_max_fps(terminal_config.max_fps);
             }
+
+            session.set_redraw_notifier(Some(Arc::new(|| the_editor_event::request_redraw())));
 
             let session = Rc::new(RefCell::new(session));
             match self

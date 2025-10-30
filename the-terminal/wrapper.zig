@@ -476,25 +476,45 @@ const MinimalHandler = struct {
                                 set.color.b,
                             };
                         },
+                        .foreground => {
+                            self.wrapper.foreground_color = .{
+                                set.color.r,
+                                set.color.g,
+                                set.color.b,
+                            };
+                        },
                         else => {},
                     },
                     else => {},
                 },
                 .query => |target| {
-                    if (op != .osc_11) continue;
                     const color_bytes = switch (target) {
                         .dynamic => |dynamic| switch (dynamic) {
-                            .background => self.wrapper.background_color,
+                            .background => if (op == .osc_11)
+                                self.wrapper.background_color
+                            else
+                                continue,
+                            .foreground => if (op == .osc_10)
+                                self.wrapper.foreground_color
+                            else
+                                continue,
                             else => continue,
                         },
+                        else => continue,
+                    };
+
+                    // Respond with the appropriate OSC sequence
+                    const osc_code: []const u8 = switch (op) {
+                        .osc_10 => "10",
+                        .osc_11 => "11",
                         else => continue,
                     };
 
                     var buf: [64]u8 = undefined;
                     const resp = std.fmt.bufPrint(
                         &buf,
-                        "\x1B]11;rgb:{x:0>2}/{x:0>2}/{x:0>2}{s}",
-                        .{ color_bytes[0], color_bytes[1], color_bytes[2], terminator.string() },
+                        "\x1B]{s};rgb:{x:0>2}/{x:0>2}/{x:0>2}{s}",
+                        .{ osc_code, color_bytes[0], color_bytes[1], color_bytes[2], terminator.string() },
                     ) catch continue;
                     self.writeResponse(resp);
                 },
@@ -516,6 +536,32 @@ const MinimalHandler = struct {
     pub fn dcsUnhook(self: *MinimalHandler) !void {
         _ = self;
     }
+
+    // ===== Device Attributes (prevent CSI [ c warnings) =====
+
+    pub fn deviceAttributes(
+        self: *MinimalHandler,
+        req: ghostty_vt.DeviceAttributeReq,
+        params: []const u16,
+    ) !void {
+        _ = params;
+
+        // Report as VT220 with basic capabilities
+        switch (req) {
+            .primary => {
+                // 62 = VT220 conformance level
+                // 22 = Color text support
+                self.writeResponse("\x1B[?62;22c");
+            },
+            .secondary => {
+                // Report version info: VT220, firmware version 1.0
+                self.writeResponse("\x1B[>1;10;0c");
+            },
+            else => {
+                // Ignore tertiary and other requests
+            },
+        }
+    }
 };
 
 // Internal wrapper that combines Terminal with its Stream parser
@@ -526,6 +572,7 @@ const TerminalWrapper = struct {
     cell_width_px: u16,
     cell_height_px: u16,
     background_color: [3]u8,
+    foreground_color: [3]u8,
 };
 
 fn populateCellExt(
@@ -640,9 +687,15 @@ export fn ghostty_terminal_new(opts: *const CTerminalOptions) ?*GhosttyTerminal 
 
     // Initialize the stream with our handler
     wrapper.stream = ghostty_vt.Stream(*MinimalHandler).init(&wrapper.handler);
+
+    // CRITICAL: Set allocator for OSC parser to handle color queries (OSC 10/11)
+    // Without this, OSC 10/11 commands will log warnings and fail
+    wrapper.stream.parser.osc_parser.alloc = gpa.allocator();
+
     wrapper.cell_width_px = 0;
     wrapper.cell_height_px = 0;
     wrapper.background_color = .{ 0, 0, 0 };
+    wrapper.foreground_color = .{ 255, 255, 255 }; // Default to white foreground
 
     allocations.append(gpa.allocator(), wrapper) catch return null;
 

@@ -92,4 +92,8 @@ fn main() {
   // Rerun if wrapper changes
   println!("cargo:rerun-if-changed={}/wrapper.zig", cargo_dir);
   println!("cargo:rerun-if-changed={}/build.zig", cargo_dir);
+  println!(
+    "cargo:rerun-if-changed={}/zig-out/lib/libghostty_wrapper.a",
+    cargo_manifest_dir.display()
+  );
 }

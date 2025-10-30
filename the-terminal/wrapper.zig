@@ -53,6 +53,7 @@ pub const CCellExt = extern struct {
     underline: CColor,
     flags: u32,
     width: u8,
+    selected: bool, // True if this cell is in the current selection
 };
 
 fn makeColor(rgb: ghostty_vt.color.RGB, is_set: bool) CColor {
@@ -75,6 +76,7 @@ const EMPTY_CELL_EXT = CCellExt{
     .underline = makeColor(.{}, false),
     .flags = 0,
     .width = 0,
+    .selected = false,
 };
 
 // Opaque type for FFI - use a larger type to ensure proper alignment
@@ -579,6 +581,8 @@ fn populateCellExt(
     wrapper: *const TerminalWrapper,
     page_ptr: *const ghostty_vt.Page,
     cell: *const ghostty_vt.page.Cell,
+    pin_opt: ?*const ghostty_vt.PageList.Pin,
+    cell_x: usize,
     out_cell: *CCellExt,
 ) void {
     var style_value: ghostty_vt.Style = .{};
@@ -596,6 +600,20 @@ fn populateCellExt(
         .bold = null,
     });
     var bg_rgb = style_value.bg(cell, palette) orelse default_bg;
+
+    // Check if this cell is selected (ghostty's approach)
+    const selected = if (wrapper.terminal.screen.selection) |sel| blk: {
+        if (pin_opt) |pin| {
+            // Create a pin pointing to this specific cell
+            const cell_pin: ghostty_vt.PageList.Pin = .{
+                .node = pin.node,
+                .y = pin.y,
+                .x = @intCast(cell_x),
+            };
+            break :blk sel.contains(&wrapper.terminal.screen, cell_pin);
+        }
+        break :blk false;
+    } else false;
 
     if (style_value.flags.inverse or wrapper.terminal.modes.get(.reverse_colors)) {
         const tmp = fg_rgb;
@@ -636,6 +654,7 @@ fn populateCellExt(
         .underline = underline_color,
         .flags = flags,
         .width = width,
+        .selected = selected,
     };
 }
 
@@ -835,6 +854,7 @@ export fn ghostty_terminal_get_cell_ext(
             .underline = makeColor(.{}, false),
             .flags = 0,
             .width = 1,
+            .selected = false,
         };
         return false;
     }
@@ -849,8 +869,12 @@ export fn ghostty_terminal_get_cell_ext(
 
     if (wrapper.terminal.screen.pages.getCell(point)) |cell| {
         const page_ptr: *const ghostty_vt.Page = &cell.node.data;
-        populateCellExt(wrapper, page_ptr, cell.cell, out_cell);
-        return true;
+        // Create a pin for this cell using the original point coordinates
+        // We need to pin the point to get the PageList.Pin structure for selection checking
+        if (wrapper.terminal.screen.pages.pin(point)) |pin| {
+            populateCellExt(wrapper, page_ptr, cell.cell, &pin, @intCast(pt.col), out_cell);
+            return true;
+        }
     }
 
     out_cell.* = EMPTY_CELL_EXT;
@@ -888,7 +912,7 @@ export fn ghostty_terminal_copy_row_cells_ext(
 
     var i: usize = 0;
     while (i < limit) : (i += 1) {
-        populateCellExt(wrapper, page_ptr, &cells[i], &out_cells[i]);
+        populateCellExt(wrapper, page_ptr, &cells[i], &pin, i, &out_cells[i]);
     }
 
     // Zero any remaining slots if we're truncating the row so that callers don't
@@ -1176,7 +1200,7 @@ export fn ghostty_terminal_pin_populate_cell_ext(
     }
 
     const page_ptr: *const ghostty_vt.Page = &pin_ptr.node.data;
-    populateCellExt(wrapper, page_ptr, &cells[cell_index], out_cell);
+    populateCellExt(wrapper, page_ptr, &cells[cell_index], pin_ptr, cell_index, out_cell);
     return true;
 }
 
@@ -1299,4 +1323,103 @@ export fn ghostty_terminal_row_iterator_free(iter: ?*GhosttyRowIterator) void {
 
     const iter_wrapper: *RowIteratorWrapper = @ptrCast(@alignCast(iter));
     gpa.allocator().destroy(iter_wrapper);
+}
+
+// ==============================================================================
+// TERMINAL MODES (CURSOR VISIBILITY, ETC.)
+// ==============================================================================
+
+/// Query a terminal mode state.
+///
+/// This allows checking if specific terminal modes are enabled, such as:
+/// - Cursor visibility (DEC mode 25 - DECTCEM)
+/// - Application cursor keys (DEC mode 1 - DECCKM)
+/// - Bracketed paste (ANSI mode 2004)
+/// - Etc.
+///
+/// **Arguments**:
+/// - `term`: Terminal handle
+/// - `mode_value`: Numeric mode identifier (e.g., 25 for cursor_visible)
+/// - `ansi`: If true, use ANSI mode space; if false, use DEC private mode space
+///
+/// **Returns**: true if mode is enabled, false if disabled or mode doesn't exist
+///
+/// **Common modes**:
+/// - DEC mode 25 (ansi=false): cursor_visible (DECTCEM)
+/// - DEC mode 1 (ansi=false): application_cursor_keys (DECCKM)
+/// - ANSI mode 2004 (ansi=true): bracketed_paste
+///
+/// **Example** (checking if cursor is visible):
+/// ```
+/// bool visible = ghostty_terminal_get_mode(term, 25, false);
+/// ```
+export fn ghostty_terminal_get_mode(
+    term: ?*const GhosttyTerminal,
+    mode_value: u16,
+    ansi: bool,
+) bool {
+    if (term == null) return false;
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+
+    // Convert mode value to Mode enum
+    const mode = modes.modeFromInt(mode_value, ansi) orelse return false;
+
+    // Query mode state from terminal
+    return wrapper.terminal.modes.get(mode);
+}
+
+/// Get the terminal's default background color.
+///
+/// This is the background color used for cells that don't have an explicit
+/// background color set. Applications can change this with OSC 11 sequences.
+///
+/// **Returns**: RGB color as a CColor struct
+///
+/// **Example**:
+/// ```
+/// CColor bg = ghostty_terminal_get_default_background(term);
+/// // Use bg.r, bg.g, bg.b for rendering
+/// ```
+export fn ghostty_terminal_get_default_background(
+    term: ?*const GhosttyTerminal,
+) CColor {
+    // Default to black if terminal is invalid
+    if (term == null) {
+        return .{ .r = 0, .g = 0, .b = 0, .a = 255, .is_set = true };
+    }
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+
+    return .{
+        .r = wrapper.background_color[0],
+        .g = wrapper.background_color[1],
+        .b = wrapper.background_color[2],
+        .a = 255,
+        .is_set = true,
+    };
+}
+
+/// Check if the viewport is at the bottom of the scrollback.
+///
+/// This is critical for cursor rendering - ghostty only renders the cursor
+/// when the viewport is at the bottom. This prevents rendering the cursor
+/// when scrolled back in history.
+///
+/// **Returns**: true if viewport is at bottom, false otherwise
+///
+/// **Example**:
+/// ```
+/// bool at_bottom = ghostty_terminal_is_viewport_at_bottom(term);
+/// if (at_bottom && cursor_visible) {
+///     // render cursor
+/// }
+/// ```
+export fn ghostty_terminal_is_viewport_at_bottom(
+    term: ?*const GhosttyTerminal,
+) bool {
+    if (term == null) return false;
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+    return wrapper.terminal.screen.viewportIsBottom();
 }

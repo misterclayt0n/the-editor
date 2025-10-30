@@ -8,7 +8,10 @@ use the_editor_renderer::{
 use the_editor_stdx::rope::RopeSliceExt;
 use the_terminal::{
   ffi::GhosttyCellExt,
-  terminal::Cell,
+  terminal::{
+    Cell,
+    CellFlags,
+  },
 };
 
 use crate::{
@@ -2552,6 +2555,54 @@ impl EditorView {
 
       let mut raw_row = vec![GhosttyCellExt::default(); render_cols as usize];
 
+      // FIRST PASS: Render cell backgrounds (selection + explicit backgrounds)
+      for row in 0..render_rows {
+        let row_y = term_y + (row as f32 * line_height);
+        let _ = term_guard.copy_row_ext(row, raw_row.as_mut_slice());
+
+        for (col_idx, cell_ext) in raw_row.iter().enumerate() {
+          let col = col_idx as u16;
+          if col >= render_cols {
+            break;
+          }
+
+          let cell: Cell = (*cell_ext).into();
+
+          // Skip wide character continuation cells (width = 0)
+          if cell.width == 0 {
+            continue;
+          }
+
+          // Determine background color (priority: selection > explicit bg > inverse)
+          let bg_to_render = if cell.selected {
+            // Cell is selected - use foreground as selection background (ghostty default)
+            Some(cell.fg)
+          } else if cell.flags.contains(CellFlags::INVERSE) {
+            // Inverse video: swap fg/bg - use foreground as background
+            Some(cell.fg)
+          } else {
+            // Normal: use explicit background if set
+            cell.bg
+          };
+
+          // Render background if we have a color
+          if let Some(bg) = bg_to_render {
+            let cell_x = term_x + (col_idx as f32 * font_width);
+            let bg_color = Color::rgba(
+              bg.r as f32 / 255.0,
+              bg.g as f32 / 255.0,
+              bg.b as f32 / 255.0,
+              1.0,
+            );
+
+            // Wide characters get proportionally wider backgrounds
+            let bg_width = font_width * (cell.width.max(1) as f32);
+            renderer.draw_rect(cell_x, row_y, bg_width, line_height, bg_color);
+          }
+        }
+      }
+
+      // SECOND PASS: Render text on top of backgrounds
       // Render rows as contiguous color runs to reduce draw calls
       for row in 0..render_rows {
         let row_y = term_y + (row as f32 * line_height);
@@ -2604,7 +2655,21 @@ impl EditorView {
             ch = ' ';
           }
 
-          let rgb = (cell.fg.r, cell.fg.g, cell.fg.b);
+          // Determine text color (inverse video already swapped in wrapper)
+          // For inverse cells: wrapper swapped fg/bg, so cell.bg contains the original fg
+          // For selected cells: use background color for text (inverted selection)
+          let text_color = if cell.selected {
+            // Selected: use background (original bg color) for text
+            cell.bg.unwrap_or(cell.fg)
+          } else if cell.flags.contains(CellFlags::INVERSE) {
+            // Inverse: use bg (which contains original fg after wrapper swap)
+            cell.bg.unwrap_or(cell.fg)
+          } else {
+            // Normal: use fg
+            cell.fg
+          };
+
+          let rgb = (text_color.r, text_color.g, text_color.b);
 
           if run_color.map(|current| current != rgb).unwrap_or(true) {
             flush_run(renderer, run_start_col, run_color, &mut run_text);
@@ -2631,9 +2696,18 @@ impl EditorView {
         flush_run(renderer, run_start_col, run_color, &mut run_text);
       }
 
-      // Render cursor if visible
+      // Render cursor ONLY if visible AND viewport is at bottom (ghostty's approach)
+      // - DECTCEM mode (CSI ?25h/l) controls cursor visibility
+      // - Viewport position check prevents cursor rendering when scrolled back in history
+      let cursor_visible = term_guard.is_cursor_visible();
+      let viewport_at_bottom = term_guard.is_viewport_at_bottom();
       let (cursor_row, cursor_col) = term_guard.cursor_pos();
-      if cursor_row < grid_rows && cursor_col < grid_cols {
+
+      if cursor_visible
+        && viewport_at_bottom
+        && cursor_row < grid_rows
+        && cursor_col < grid_cols
+      {
         let cursor_x = term_x + (cursor_col as f32 * font_width);
         let cursor_y = term_y + (cursor_row as f32 * (font_size + LINE_SPACING));
 

@@ -355,6 +355,108 @@ impl Terminal {
       terminal: self.inner,
     })
   }
+
+  /// Query a terminal mode state.
+  ///
+  /// Checks if a specific terminal mode is enabled. This is used to query
+  /// various terminal behavior flags such as cursor visibility, application
+  /// cursor keys, bracketed paste mode, etc.
+  ///
+  /// # Arguments
+  /// * `mode_value` - Numeric mode identifier (see terminal spec)
+  /// * `ansi` - If true, query ANSI mode space; if false, query DEC private mode
+  ///
+  /// # Returns
+  /// true if the mode is enabled, false if disabled or mode doesn't exist
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use the_terminal::Terminal;
+  /// # let terminal = Terminal::new(80, 24).unwrap();
+  /// // Check if cursor is visible (DEC mode 25)
+  /// let visible = terminal.get_mode(25, false);
+  /// ```
+  pub fn get_mode(&self, mode_value: u16, ansi: bool) -> bool {
+    unsafe { ffi::ghostty_terminal_get_mode(self.inner, mode_value, ansi) }
+  }
+
+  /// Check if the cursor is visible.
+  ///
+  /// This is a convenience wrapper around `get_mode()` that specifically
+  /// checks the DECTCEM (DEC mode 25) cursor visibility state.
+  ///
+  /// Applications can hide the cursor with CSI ?25l and show it with CSI ?25h.
+  /// Many TUI applications hide the cursor during operation and show it again
+  /// when exiting or in specific UI states.
+  ///
+  /// # Returns
+  /// true if cursor should be rendered, false if it should be hidden
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use the_terminal::Terminal;
+  /// # let terminal = Terminal::new(80, 24).unwrap();
+  /// if terminal.is_cursor_visible() {
+  ///     // Render cursor
+  /// }
+  /// ```
+  pub fn is_cursor_visible(&self) -> bool {
+    self.get_mode(25, false) // DEC mode 25 = cursor_visible (DECTCEM)
+  }
+
+  /// Check if the viewport is at the bottom of the scrollback.
+  ///
+  /// This is critical for cursor rendering - ghostty only renders the cursor
+  /// when the viewport is at the bottom. This prevents rendering the cursor
+  /// when scrolled back in history.
+  ///
+  /// Use this in combination with `is_cursor_visible()` to determine if the
+  /// cursor should be rendered:
+  /// ```no_run
+  /// # use the_terminal::Terminal;
+  /// # let terminal = Terminal::new(80, 24).unwrap();
+  /// if terminal.is_cursor_visible() && terminal.is_viewport_at_bottom() {
+  ///     // Render cursor
+  /// }
+  /// ```
+  ///
+  /// # Returns
+  /// true if viewport is at bottom, false otherwise
+  pub fn is_viewport_at_bottom(&self) -> bool {
+    unsafe { ffi::ghostty_terminal_is_viewport_at_bottom(self.inner) }
+  }
+
+  /// Get the terminal's default background color.
+  ///
+  /// Returns the background color used for cells that don't have an explicit
+  /// background color set. This is the "base" color of the terminal that can
+  /// be changed by applications via OSC 11 sequences.
+  ///
+  /// Use this color for cells where `cell.bg.is_none()`.
+  ///
+  /// # Returns
+  /// Option<Rgb> - The default background color, or None if not set
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use the_terminal::Terminal;
+  /// # let terminal = Terminal::new(80, 24).unwrap();
+  /// let default_bg = terminal.get_default_background().unwrap();
+  /// // Use default_bg.r, default_bg.g, default_bg.b
+  /// ```
+  pub fn get_default_background(&self) -> Option<Rgb> {
+    let color = unsafe { ffi::ghostty_terminal_get_default_background(self.inner) };
+
+    if color.is_set {
+      Some(Rgb {
+        r: color.r,
+        g: color.g,
+        b: color.b,
+      })
+    } else {
+      None
+    }
+  }
 }
 
 /// RAII wrapper for a pinned terminal row.
@@ -550,6 +652,7 @@ pub struct Cell {
   pub underline:    Option<Rgb>,
   pub flags:        CellFlags,
   pub width:        u8,
+  pub selected:     bool, // True if this cell is in the current selection
 }
 
 /// A snapshot of the terminal screen for zero-copy rendering.
@@ -600,6 +703,7 @@ impl From<ffi::GhosttyCellExt> for Cell {
       underline,
       flags: CellFlags(ext.flags),
       width: ext.width,
+      selected: ext.selected,
     }
   }
 }

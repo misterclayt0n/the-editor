@@ -341,7 +341,68 @@ impl Component for TerminalView {
     let session = self.session.borrow();
     let terminal_guard = session.lock_terminal();
 
-    // Render rows using pin-based zero-copy iteration
+    // FIRST PASS: Render cell backgrounds (ghostty's approach)
+    // Draw background rectangles before text to ensure proper layering
+    //
+    // NOTE: We only draw cells with explicit backgrounds (cell.bg.is_some()).
+    // Cells without explicit backgrounds use the default terminal background,
+    // which could be optimized by filling the entire area first, but for now
+    // this correctly renders selection highlights, status bar backgrounds, etc.
+    //
+    // TODO: Optimization - fill entire terminal area with default background
+    // first, then only draw cells with non-default backgrounds. This matches
+    // ghostty's approach and would reduce draw calls.
+    for row in &rows_to_render {
+      let row_y = area.y as f32 + (*row as f32 * cell_height);
+
+      let Some(pin) = terminal_guard.pin_row(*row) else {
+        continue;
+      };
+
+      let cell_count = pin.cell_count(&terminal_guard);
+      let cols_to_render = cell_count.min(render_cols as usize);
+
+      for col_idx in 0..cols_to_render {
+        let Some(cell) = pin.get_cell_ext(&terminal_guard, col_idx) else {
+          continue;
+        };
+
+        // Skip wide character continuation cells (width = 0)
+        if cell.width == 0 {
+          continue;
+        }
+
+        // Determine background color (priority: selection > explicit bg)
+        let bg_to_render = if cell.selected {
+          // Cell is selected - use selection background
+          // For now, use foreground color as selection background (ghostty default)
+          // TODO: Make this configurable via selection_background setting
+          Some(cell.fg)
+        } else {
+          // Not selected - use cell's background if set
+          cell.bg
+        };
+
+        // Render background if we have a color to use
+        if let Some(bg) = bg_to_render {
+          let cell_x = area.x as f32 + (col_idx as f32 * cell_width);
+          let bg_color = Color::rgba(
+            bg.r as f32 / 255.0,
+            bg.g as f32 / 255.0,
+            bg.b as f32 / 255.0,
+            1.0,
+          );
+
+          // Draw background rectangle for this cell
+          // Wide characters (width > 1) get proportionally wider backgrounds
+          let bg_width = cell_width * (cell.width.max(1) as f32);
+          surface.draw_rect(cell_x, row_y, bg_width, cell_height, bg_color);
+        }
+      }
+    }
+
+    // SECOND PASS: Render text (existing code)
+    // Text is drawn on top of backgrounds
     for row in rows_to_render {
       let row_y = area.y as f32 + (row as f32 * cell_height);
       let mut run_text = String::with_capacity(render_cols as usize);
@@ -428,13 +489,19 @@ impl Component for TerminalView {
       flush_run(surface, run_start_col, run_color, &mut run_text);
     }
 
+    // Check cursor visibility and viewport position before dropping lock
+    let cursor_visible = terminal_guard.is_cursor_visible();
+    let viewport_at_bottom = terminal_guard.is_viewport_at_bottom();
+
     // Drop terminal lock before rendering cursor
     drop(terminal_guard);
     drop(session);
 
-    // Render cursor if visible
+    // Render cursor ONLY if visible AND viewport is at bottom (ghostty's approach)
+    // - DECTCEM mode (CSI ?25h/l) controls cursor visibility
+    // - Viewport position check prevents cursor rendering when scrolled back in history
     let (cursor_row, cursor_col) = snapshot.cursor_pos;
-    if cursor_row < term_rows && cursor_col < term_cols {
+    if cursor_visible && viewport_at_bottom && cursor_row < term_rows && cursor_col < term_cols {
       let cursor_x = area.x as f32 + (cursor_col as f32 * cell_width);
       let cursor_y = area.y as f32 + (cursor_row as f32 * cell_height);
       let cursor_width = cell_width;

@@ -60,6 +60,7 @@ pub struct GhosttyCellExt {
   pub underline:    GhosttyColor,
   pub flags:        u32,
   pub width:        u8,
+  pub selected:     bool,
 }
 
 impl Default for GhosttyCellExt {
@@ -74,6 +75,7 @@ impl Default for GhosttyCellExt {
       underline:    GhosttyColor::default(),
       flags:        0,
       width:        0,
+      selected:     false,
     }
   }
 }
@@ -334,6 +336,49 @@ unsafe extern "C" {
   /// # Safety
   /// The iterator must not be used after calling this function.
   pub fn ghostty_terminal_row_iterator_free(iter: *mut GhosttyRowIterator);
+
+  // ==========================================================================
+  // TERMINAL MODES
+  // ==========================================================================
+
+  /// Query a terminal mode state.
+  ///
+  /// Checks if a specific terminal mode is enabled, such as cursor visibility,
+  /// application cursor keys, bracketed paste, etc.
+  ///
+  /// # Arguments
+  /// * `term` - Terminal handle
+  /// * `mode_value` - Numeric mode identifier (e.g., 25 for cursor_visible)
+  /// * `ansi` - If true, query ANSI mode space; if false, query DEC private mode
+  ///
+  /// # Returns
+  /// true if mode is enabled, false if disabled or mode doesn't exist
+  ///
+  /// # Common Modes
+  /// * DEC mode 25 (ansi=false): cursor_visible (DECTCEM)
+  /// * DEC mode 1 (ansi=false): application_cursor_keys (DECCKM)
+  /// * ANSI mode 2004 (ansi=true): bracketed_paste
+  pub fn ghostty_terminal_get_mode(term: *const GhosttyTerminal, mode_value: u16, ansi: bool)
+    -> bool;
+
+  /// Get the terminal's default background color.
+  ///
+  /// Returns the background color used for cells without explicit background
+  /// colors. Applications can change this via OSC 11 sequences.
+  ///
+  /// # Returns
+  /// RGB color as a GhosttyColor struct
+  pub fn ghostty_terminal_get_default_background(term: *const GhosttyTerminal) -> GhosttyColor;
+
+  /// Check if the viewport is at the bottom of the scrollback.
+  ///
+  /// This is critical for cursor rendering - ghostty only renders the cursor
+  /// when the viewport is at the bottom. This prevents rendering the cursor
+  /// when scrolled back in history.
+  ///
+  /// # Returns
+  /// true if viewport is at bottom, false otherwise
+  pub fn ghostty_terminal_is_viewport_at_bottom(term: *const GhosttyTerminal) -> bool;
 }
 
 #[cfg(test)]

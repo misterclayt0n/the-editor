@@ -8,10 +8,7 @@ use the_editor_renderer::{
 use the_editor_stdx::rope::RopeSliceExt;
 use the_terminal::{
   ffi::GhosttyCellExt,
-  terminal::{
-    Cell,
-    CellFlags,
-  },
+  terminal::Cell,
 };
 
 use crate::{
@@ -2491,6 +2488,9 @@ impl EditorView {
       // Calculate pixel coordinates from cell coordinates
       let term_x = term_area.x as f32 * font_width;
       let term_y = term_area.y as f32 * (font_size + LINE_SPACING);
+      // Align glyph baselines with Ghostty's cell metrics so characters sit inside
+      // the cell box.
+      let baseline_offset = (renderer.cell_height() - font_size).max(0.0);
 
       // Get mutable reference to terminal
       let terminal = match cx.editor.tree.get_terminal_mut(term_id) {
@@ -2555,15 +2555,10 @@ impl EditorView {
 
       let mut raw_row = vec![GhosttyCellExt::default(); render_cols as usize];
 
-      // DEBUG: Log terminal rendering coordinates
-      eprintln!(
-        "Terminal render: term_x={:.1}, term_y={:.1}, font_width={:.1}, line_height={:.1}, rows={}, cols={}",
-        term_x, term_y, font_width, line_height, render_rows, render_cols
-      );
-
       // PASS 0: Render default background (ghostty's approach)
       // This provides a base layer so cells without explicit backgrounds (bg=None)
-      // naturally show the default color underneath. Matches ghostty's rendering pipeline.
+      // naturally show the default color underneath. Matches ghostty's rendering
+      // pipeline.
       let default_bg = term_guard
         .get_default_background()
         .or_else(|| background_rgb.map(|(r, g, b)| the_terminal::terminal::Rgb { r, g, b }));
@@ -2601,37 +2596,11 @@ impl EditorView {
             continue;
           }
 
-          // DEBUG: Log multiple interesting rows
-          if row == render_rows - 1 && col_idx < 5 {
-            eprintln!(
-              "Status bar cell[{}]: selected={}, inverse={}, bg={:?}, fg=({},{},{}), char={:?}",
-              col_idx,
-              cell.selected,
-              cell.flags.contains(CellFlags::INVERSE),
-              cell.bg,
-              cell.fg.r, cell.fg.g, cell.fg.b,
-              cell.character()
-            );
-          }
-          // Log cells in first 5 rows to debug inverse video rendering
-          if row < 5 && col_idx < 10 {
-            eprintln!(
-              "Row {} Col {}: selected={}, inverse={}, fg=({},{},{}), bg={:?}, char={:?}",
-              row, col_idx,
-              cell.selected,
-              cell.flags.contains(CellFlags::INVERSE),
-              cell.fg.r, cell.fg.g, cell.fg.b,
-              cell.bg,
-              cell.character()
-            );
-          }
-
           // Determine background color
           // Note: Colors are already swapped in wrapper.zig for inverse cells,
           // so we just use cell.bg directly (don't swap again!)
           let bg_to_render = if cell.selected {
             // Cell is selected - use foreground as selection background (ghostty default)
-            eprintln!("SELECTION at row={}, col={}", row, col_idx);
             Some(cell.fg)
           } else {
             // Normal: use explicit background if set (already swapped for inverse in Zig)
@@ -2650,16 +2619,6 @@ impl EditorView {
 
             // Wide characters get proportionally wider backgrounds
             let bg_width = font_width * (cell.width.max(1) as f32);
-
-            // DEBUG: Log background rendering for status bar
-            if row == render_rows - 1 && col_idx < 5 {
-              eprintln!(
-                "Drawing bg at x={:.1}, y={:.1}, width={:.1}, height={:.1}, color=({},{},{})",
-                cell_x, row_y, bg_width, line_height,
-                bg.r, bg.g, bg.b
-              );
-            }
-
             renderer.draw_rect(cell_x, row_y, bg_width, line_height, bg_color);
           }
         }
@@ -2669,6 +2628,7 @@ impl EditorView {
       // Render rows as contiguous color runs to reduce draw calls
       for row in 0..render_rows {
         let row_y = term_y + (row as f32 * line_height);
+        let baseline_y = row_y + baseline_offset;
         let mut run_text = String::with_capacity(render_cols as usize);
         let mut run_color: Option<(u8, u8, u8)> = None;
         let mut run_start_col = 0u16;
@@ -2694,7 +2654,7 @@ impl EditorView {
           let fg_color = Color::rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0);
           let text = std::mem::take(buffer);
           let x = term_x + (start_col as f32 * font_width);
-          let mut section = TextSection::new(x, row_y);
+          let mut section = TextSection::new(x, baseline_y);
           section = section.add_text(
             TextSegment::new(text)
               .with_color(fg_color)
@@ -2758,16 +2718,13 @@ impl EditorView {
 
       // Render cursor ONLY if visible AND viewport is at bottom (ghostty's approach)
       // - DECTCEM mode (CSI ?25h/l) controls cursor visibility
-      // - Viewport position check prevents cursor rendering when scrolled back in history
+      // - Viewport position check prevents cursor rendering when scrolled back in
+      //   history
       let cursor_visible = term_guard.is_cursor_visible();
       let viewport_at_bottom = term_guard.is_viewport_at_bottom();
       let (cursor_row, cursor_col) = term_guard.cursor_pos();
 
-      if cursor_visible
-        && viewport_at_bottom
-        && cursor_row < grid_rows
-        && cursor_col < grid_cols
-      {
+      if cursor_visible && viewport_at_bottom && cursor_row < grid_rows && cursor_col < grid_cols {
         let cursor_x = term_x + (cursor_col as f32 * font_width);
         let cursor_y = term_y + (cursor_row as f32 * (font_size + LINE_SPACING));
 

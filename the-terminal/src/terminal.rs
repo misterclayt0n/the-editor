@@ -333,12 +333,12 @@ impl Terminal {
   ///
   /// // IMPORTANT: Lock held during entire iteration!
   /// for (row, is_dirty) in iter {
-  ///     if is_dirty {
-  ///         // Fast processing only! Don't do I/O or slow operations here.
-  ///         if let Some(pin) = terminal.pin_row(row as u16) {
-  ///             // Quick row processing...
-  ///         }
+  ///   if is_dirty {
+  ///     // Fast processing only! Don't do I/O or slow operations here.
+  ///     if let Some(pin) = terminal.pin_row(row as u16) {
+  ///       // Quick row processing...
   ///     }
+  ///   }
   /// }
   /// # Ok(())
   /// # }
@@ -364,7 +364,8 @@ impl Terminal {
   ///
   /// # Arguments
   /// * `mode_value` - Numeric mode identifier (see terminal spec)
-  /// * `ansi` - If true, query ANSI mode space; if false, query DEC private mode
+  /// * `ansi` - If true, query ANSI mode space; if false, query DEC private
+  ///   mode
   ///
   /// # Returns
   /// true if the mode is enabled, false if disabled or mode doesn't exist
@@ -397,7 +398,7 @@ impl Terminal {
   /// # use the_terminal::Terminal;
   /// # let terminal = Terminal::new(80, 24).unwrap();
   /// if terminal.is_cursor_visible() {
-  ///     // Render cursor
+  ///   // Render cursor
   /// }
   /// ```
   pub fn is_cursor_visible(&self) -> bool {
@@ -416,7 +417,7 @@ impl Terminal {
   /// # use the_terminal::Terminal;
   /// # let terminal = Terminal::new(80, 24).unwrap();
   /// if terminal.is_cursor_visible() && terminal.is_viewport_at_bottom() {
-  ///     // Render cursor
+  ///   // Render cursor
   /// }
   /// ```
   ///
@@ -535,11 +536,11 @@ impl Drop for Pin {
 /// let terminal = Terminal::new(80, 24)?;
 /// let iter = terminal.row_iterator()?;
 /// for (row, is_dirty) in iter {
-///     if is_dirty {
-///         // Pin and render this row
-///         let pin = terminal.pin_row(row as u16)?;
-///         // ... render cells from pin ...
-///     }
+///   if is_dirty {
+///     // Pin and render this row
+///     let pin = terminal.pin_row(row as u16)?;
+///     // ... render cells from pin ...
+///   }
 /// }
 /// # Ok::<(), anyhow::Error>(())
 /// ```
@@ -556,7 +557,12 @@ impl Iterator for RowIterator {
     let mut is_dirty: bool = false;
 
     let has_next = unsafe {
-      ffi::ghostty_terminal_row_iterator_next(self.terminal, self.ptr, &mut row_index, &mut is_dirty)
+      ffi::ghostty_terminal_row_iterator_next(
+        self.terminal,
+        self.ptr,
+        &mut row_index,
+        &mut is_dirty,
+      )
     };
 
     if has_next {

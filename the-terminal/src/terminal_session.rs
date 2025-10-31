@@ -486,9 +486,10 @@ impl TerminalSession {
 
   /// Create a snapshot of the terminal screen for rendering.
   ///
-  /// This implements ghostty's clone-and-release pattern for minimal lock contention.
-  /// Captures cursor position, size, and dirty row indices atomically, then clears
-  /// dirty bits before releasing the lock. Cell data is accessed later via pins.
+  /// This implements ghostty's clone-and-release pattern for minimal lock
+  /// contention. Captures cursor position, size, and dirty row indices
+  /// atomically, then clears dirty bits before releasing the lock. Cell data
+  /// is accessed later via pins.
   ///
   /// **Lock hold time**: Typically 10-100 microseconds
   /// - Metadata copy: ~1-10 µs (just integers)
@@ -500,8 +501,9 @@ impl TerminalSession {
   /// This is not ideal but acceptable. Future optimization: use row iterator
   /// during rendering instead of extracting dirty rows to Vec (see tasks 4-6).
   ///
-  /// **Correctness**: Atomically snapshots which rows are dirty before clearing,
-  /// ensuring no updates are missed between snapshot and clear operations.
+  /// **Correctness**: Atomically snapshots which rows are dirty before
+  /// clearing, ensuring no updates are missed between snapshot and clear
+  /// operations.
   ///
   /// Returns None if terminal lock is poisoned.
   pub fn create_screen_snapshot(&self) -> Option<crate::terminal::ScreenSnapshot> {

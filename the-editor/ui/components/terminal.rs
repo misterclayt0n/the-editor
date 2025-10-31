@@ -499,7 +499,8 @@ impl Component for TerminalView {
 
     // Render cursor ONLY if visible AND viewport is at bottom (ghostty's approach)
     // - DECTCEM mode (CSI ?25h/l) controls cursor visibility
-    // - Viewport position check prevents cursor rendering when scrolled back in history
+    // - Viewport position check prevents cursor rendering when scrolled back in
+    //   history
     let (cursor_row, cursor_col) = snapshot.cursor_pos;
     if cursor_visible && viewport_at_bottom && cursor_row < term_rows && cursor_col < term_cols {
       let cursor_x = area.x as f32 + (cursor_col as f32 * cell_width);

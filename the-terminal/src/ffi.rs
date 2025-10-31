@@ -302,12 +302,14 @@ unsafe extern "C" {
   /// Create a row iterator for the terminal viewport.
   ///
   /// Returns an iterator that yields rows from top to bottom. Each row
-  /// includes its index and dirty flag, enabling efficient incremental rendering.
+  /// includes its index and dirty flag, enabling efficient incremental
+  /// rendering.
   ///
   /// The iterator MUST be freed with ghostty_terminal_row_iterator_free().
   ///
   /// Returns null if terminal is invalid or iterator creation fails.
-  pub fn ghostty_terminal_row_iterator_new(term: *const GhosttyTerminal) -> *mut GhosttyRowIterator;
+  pub fn ghostty_terminal_row_iterator_new(term: *const GhosttyTerminal)
+  -> *mut GhosttyRowIterator;
 
   /// Get the next row from the iterator.
   ///
@@ -331,7 +333,8 @@ unsafe extern "C" {
 
   /// Free a row iterator.
   ///
-  /// MUST be called for every iterator returned by ghostty_terminal_row_iterator_new().
+  /// MUST be called for every iterator returned by
+  /// ghostty_terminal_row_iterator_new().
   ///
   /// # Safety
   /// The iterator must not be used after calling this function.
@@ -349,7 +352,8 @@ unsafe extern "C" {
   /// # Arguments
   /// * `term` - Terminal handle
   /// * `mode_value` - Numeric mode identifier (e.g., 25 for cursor_visible)
-  /// * `ansi` - If true, query ANSI mode space; if false, query DEC private mode
+  /// * `ansi` - If true, query ANSI mode space; if false, query DEC private
+  ///   mode
   ///
   /// # Returns
   /// true if mode is enabled, false if disabled or mode doesn't exist
@@ -358,8 +362,11 @@ unsafe extern "C" {
   /// * DEC mode 25 (ansi=false): cursor_visible (DECTCEM)
   /// * DEC mode 1 (ansi=false): application_cursor_keys (DECCKM)
   /// * ANSI mode 2004 (ansi=true): bracketed_paste
-  pub fn ghostty_terminal_get_mode(term: *const GhosttyTerminal, mode_value: u16, ansi: bool)
-    -> bool;
+  pub fn ghostty_terminal_get_mode(
+    term: *const GhosttyTerminal,
+    mode_value: u16,
+    ansi: bool,
+  ) -> bool;
 
   /// Get the terminal's default background color.
   ///

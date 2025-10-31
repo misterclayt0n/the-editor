@@ -1408,7 +1408,8 @@ impl Renderer {
         let start = cursor;
         cursor += segment.content.len();
 
-        let seg_metrics = Metrics::new(segment.style.size, segment.style.size * LINE_HEIGHT_FACTOR);
+        // Use consistent cell_height for all segments to prevent accumulated positioning errors
+        let seg_metrics = Metrics::new(segment.style.size, self.cell_height);
         let attrs = Attrs::new()
           .family(Family::Name(family.as_str()))
           .metrics(seg_metrics)

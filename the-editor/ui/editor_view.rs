@@ -2468,8 +2468,6 @@ impl EditorView {
       TextSegment,
     };
 
-    const LINE_SPACING: f32 = 2.0;
-
     // Collect terminal IDs to avoid borrowing issues
     let terminal_ids: Vec<_> = cx.editor.tree.terminals().map(|(id, _)| id).collect();
 
@@ -2486,11 +2484,9 @@ impl EditorView {
       };
 
       // Calculate pixel coordinates from cell coordinates
+      // Use renderer's cell_height to match cosmic-text's metrics
       let term_x = term_area.x as f32 * font_width;
-      let term_y = term_area.y as f32 * (font_size + LINE_SPACING);
-      // Align glyph baselines with Ghostty's cell metrics so characters sit inside
-      // the cell box.
-      let baseline_offset = (renderer.cell_height() - font_size).max(0.0);
+      let term_y = term_area.y as f32 * renderer.cell_height();
 
       // Get mutable reference to terminal
       let terminal = match cx.editor.tree.get_terminal_mut(term_id) {
@@ -2508,7 +2504,7 @@ impl EditorView {
       // Update session metadata (cell size, background color)
       {
         let mut session = terminal.session.borrow_mut();
-        session.set_cell_pixel_size(font_width, font_size + LINE_SPACING);
+        session.set_cell_pixel_size(font_width, renderer.cell_height());
         if let Some((r, g, b)) = background_rgb {
           session.set_background_color(r, g, b);
         }
@@ -2548,7 +2544,8 @@ impl EditorView {
       let render_rows = grid_rows.min(new_rows);
       let render_cols = grid_cols.min(new_cols);
 
-      let line_height = font_size + LINE_SPACING;
+      // Use renderer's cell_height for consistent metrics with cosmic-text
+      let line_height = renderer.cell_height();
 
       // Repaint every row to keep the surface populated.
       let is_full_render = true;
@@ -2628,7 +2625,6 @@ impl EditorView {
       // Render rows as contiguous color runs to reduce draw calls
       for row in 0..render_rows {
         let row_y = term_y + (row as f32 * line_height);
-        let baseline_y = row_y + baseline_offset;
         let mut run_text = String::with_capacity(render_cols as usize);
         let mut run_color: Option<(u8, u8, u8)> = None;
         let mut run_start_col = 0u16;
@@ -2654,7 +2650,8 @@ impl EditorView {
           let fg_color = Color::rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0);
           let text = std::mem::take(buffer);
           let x = term_x + (start_col as f32 * font_width);
-          let mut section = TextSection::new(x, baseline_y);
+          // TextArea.top expects the top of the line - cosmic-text handles baseline internally
+          let mut section = TextSection::new(x, row_y);
           section = section.add_text(
             TextSegment::new(text)
               .with_color(fg_color)
@@ -2726,14 +2723,18 @@ impl EditorView {
 
       if cursor_visible && viewport_at_bottom && cursor_row < grid_rows && cursor_col < grid_cols {
         let cursor_x = term_x + (cursor_col as f32 * font_width);
-        let cursor_y = term_y + (cursor_row as f32 * (font_size + LINE_SPACING));
+
+        // Add centering offset to match cosmic-text's vertical text positioning
+        let glyph_height = font_size;
+        let centering_offset = (line_height - glyph_height) / 2.0;
+        let cursor_y = term_y + (cursor_row as f32 * line_height) + centering_offset;
 
         // Draw cursor as a semi-transparent rectangle
         renderer.draw_rect(
           cursor_x,
           cursor_y,
           font_width,
-          font_size + LINE_SPACING,
+          glyph_height,
           Color::new(0.8, 0.8, 0.8, 0.5),
         );
       }

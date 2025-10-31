@@ -31,6 +31,10 @@ use std::{
   sync::Arc,
 };
 
+/// Line height factor matching the renderer's cell height calculation
+/// (cell_height = font_size * LINE_HEIGHT_FACTOR)
+const LINE_HEIGHT_FACTOR: f32 = 1.2;
+
 use the_editor_event::request_redraw;
 use the_editor_renderer::{
   Color,
@@ -261,6 +265,10 @@ impl Component for TerminalView {
     let cell_width = surface.cell_width();
     let cell_height = surface.cell_height();
 
+    // Calculate actual font size from cell height (cell_height = font_size * LINE_HEIGHT_FACTOR)
+    // This ensures text is sized correctly to fit within cells with proper line spacing
+    let font_size = cell_height / LINE_HEIGHT_FACTOR;
+
     // Update session metadata (cell size)
     {
       let mut session = self.session.borrow_mut();
@@ -430,11 +438,12 @@ impl Component for TerminalView {
         let fg_color = Color::rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0);
         let text = std::mem::take(buffer);
         let x = area.x as f32 + (start_col as f32 * cell_width);
+        // TextArea.top is the top of the bounding box - glyphon handles baseline internally
         let mut section = TextSection::new(x, row_y);
         section = section.add_text(
           TextSegment::new(text)
             .with_color(fg_color)
-            .with_size(cell_height),
+            .with_size(font_size),
         );
         surface.draw_text(section);
         buffer.reserve(render_cols as usize);
@@ -504,16 +513,18 @@ impl Component for TerminalView {
     let (cursor_row, cursor_col) = snapshot.cursor_pos;
     if cursor_visible && viewport_at_bottom && cursor_row < term_rows && cursor_col < term_cols {
       let cursor_x = area.x as f32 + (cursor_col as f32 * cell_width);
-      let cursor_y = area.y as f32 + (cursor_row as f32 * cell_height);
-      let cursor_width = cell_width;
-      let cursor_height = cell_height;
+
+      // Add centering offset to match cosmic-text's vertical text positioning
+      let glyph_height = font_size;
+      let centering_offset = (cell_height - glyph_height) / 2.0;
+      let cursor_y = area.y as f32 + (cursor_row as f32 * cell_height) + centering_offset;
 
       // Draw cursor as a semi-transparent rectangle
       surface.draw_rect(
         cursor_x,
         cursor_y,
-        cursor_width,
-        cursor_height,
+        cell_width,
+        glyph_height,
         Color::new(0.8, 0.8, 0.8, 0.5),
       );
     }

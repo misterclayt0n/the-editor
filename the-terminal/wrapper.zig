@@ -308,7 +308,22 @@ const MinimalHandler = struct {
     // ===== Terminal Modes =====
 
     pub inline fn setMode(self: *MinimalHandler, mode: ghostty_vt.Mode, enabled: bool) !void {
-        self.terminal.modes.set(mode, enabled);
+        // Handle alternate screen modes specially (like ghostty does)
+        // These modes require screen buffer swapping, not just flag setting
+        switch (mode) {
+            .alt_screen_legacy => {
+                self.terminal.switchScreenMode(.@"47", enabled);
+            },
+            .alt_screen => {
+                self.terminal.switchScreenMode(.@"1047", enabled);
+            },
+            .alt_screen_save_cursor_clear_enter => {
+                self.terminal.switchScreenMode(.@"1049", enabled);
+            },
+            else => {
+                self.terminal.modes.set(mode, enabled);
+            },
+        }
     }
 
     pub fn requestMode(self: *MinimalHandler, mode_raw: u16, ansi: bool) !void {

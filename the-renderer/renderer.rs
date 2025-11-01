@@ -42,9 +42,98 @@ use crate::{
   TextSection,
   TextSegment,
   TextStyle,
+  powerline_glyphs::PowerlineGlyph,
 };
 
 const LINE_HEIGHT_FACTOR: f32 = 1.2;
+
+/// Atlas for Powerline glyph textures
+struct PowerlineAtlas {
+  textures:   std::collections::HashMap<PowerlineGlyph, wgpu::Texture>,
+  views:      std::collections::HashMap<PowerlineGlyph, wgpu::TextureView>,
+  sampler:    wgpu::Sampler,
+  bind_group: Option<wgpu::BindGroup>,
+}
+
+impl PowerlineAtlas {
+  fn new(device: &wgpu::Device, queue: &wgpu::Queue, cell_width: f32, cell_height: f32) -> Self {
+    use crate::powerline_glyphs;
+
+    let mut textures = std::collections::HashMap::new();
+    let mut views = std::collections::HashMap::new();
+
+    let width = cell_width.ceil() as u32;
+    let height = cell_height.ceil() as u32;
+
+    // Pre-render all Powerline glyphs
+    let glyphs = [
+      PowerlineGlyph::RightTriangle,
+      PowerlineGlyph::LeftTriangle,
+      PowerlineGlyph::RightRounded,
+      PowerlineGlyph::LeftRounded,
+    ];
+
+    for glyph in glyphs {
+      if let Some(pixmap) = powerline_glyphs::render_powerline_glyph(glyph, width, height) {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+          label:              Some("Powerline Glyph"),
+          size:               wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+          },
+          mip_level_count:    1,
+          sample_count:       1,
+          dimension:          wgpu::TextureDimension::D2,
+          format:             wgpu::TextureFormat::Rgba8Unorm,
+          usage:              wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+          view_formats:       &[],
+        });
+
+        queue.write_texture(
+          wgpu::ImageCopyTexture {
+            texture:   &texture,
+            mip_level: 0,
+            origin:    wgpu::Origin3d::ZERO,
+            aspect:    wgpu::TextureAspect::All,
+          },
+          pixmap.data(), // RGBA8 bytes
+          wgpu::ImageDataLayout {
+            offset:         0,
+            bytes_per_row:  Some(4 * width),
+            rows_per_image: Some(height),
+          },
+          wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+          },
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        textures.insert(glyph, texture);
+        views.insert(glyph, view);
+      }
+    }
+
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+      label:         Some("Powerline Sampler"),
+      address_mode_u: wgpu::AddressMode::ClampToEdge,
+      address_mode_v: wgpu::AddressMode::ClampToEdge,
+      address_mode_w: wgpu::AddressMode::ClampToEdge,
+      mag_filter:     wgpu::FilterMode::Linear,
+      min_filter:     wgpu::FilterMode::Linear,
+      ..Default::default()
+    });
+
+    Self {
+      textures,
+      views,
+      sampler,
+      bind_group: None,
+    }
+  }
+}
 
 /// A single rectangle instance to be rendered
 #[repr(C)]
@@ -196,6 +285,9 @@ pub struct Renderer {
   intermediate_texture_2: Option<wgpu::Texture>,
   intermediate_view_2:    Option<wgpu::TextureView>,
   blur_vertex_buffer:     wgpu::Buffer,
+
+  // Powerline glyph atlas
+  powerline_atlas: PowerlineAtlas,
 
   // Cursor icon tracking
   pending_cursor_icon: Option<winit::window::CursorIcon>,
@@ -652,10 +744,21 @@ impl Renderer {
     let stencil_view = stencil_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     // Load default font and configure metrics.
-    const FONT_BYTES: &[u8] = include_bytes!("../assets/JetBrainsMono-Regular.ttf");
+    const FONT_BYTES: &[u8] = include_bytes!("../assets/Iosevka-Regular.ttc");
     let default_family =
       resolve_family_name(FONT_BYTES).unwrap_or_else(|| "JetBrains Mono".to_string());
     font_system.db_mut().load_font_data(FONT_BYTES.to_vec());
+
+    // Create temporary powerline atlas (will be recreated with correct dimensions after metrics calculation)
+    let temp_powerline_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+      label:         Some("Powerline Sampler (temp)"),
+      address_mode_u: wgpu::AddressMode::ClampToEdge,
+      address_mode_v: wgpu::AddressMode::ClampToEdge,
+      address_mode_w: wgpu::AddressMode::ClampToEdge,
+      mag_filter:     wgpu::FilterMode::Linear,
+      min_filter:     wgpu::FilterMode::Linear,
+      ..Default::default()
+    });
 
     let mut renderer = Self {
       surface,
@@ -712,10 +815,24 @@ impl Renderer {
       intermediate_view_1: None,
       intermediate_texture_2: None,
       intermediate_view_2: None,
+      powerline_atlas: PowerlineAtlas {
+        textures:   std::collections::HashMap::new(),
+        views:      std::collections::HashMap::new(),
+        sampler:    temp_powerline_sampler,
+        bind_group: None,
+      },
       pending_cursor_icon: None,
     };
 
     renderer.recalculate_metrics();
+
+    // Recreate powerline atlas with correct cell dimensions
+    renderer.powerline_atlas = PowerlineAtlas::new(
+      &renderer.device,
+      &renderer.queue,
+      renderer.cell_width,
+      renderer.cell_height,
+    );
 
     Ok(renderer)
   }
@@ -1629,6 +1746,48 @@ impl Renderer {
       effect_time,
       _pad1: [0.0, 0.0, 0.0],
     });
+  }
+
+  /// Draw a Powerline separator glyph
+  /// This renders the glyph using tiny-skia and draws it as colored rectangles
+  pub fn draw_powerline_glyph(&mut self, ch: char, x: f32, y: f32, width: f32, height: f32, color: Color) {
+    use crate::powerline_glyphs;
+
+    // Check if this is a known Powerline glyph
+    if let Some(glyph) = PowerlineGlyph::from_char(ch) {
+      let w = width.ceil() as u32;
+      let h = height.ceil() as u32;
+
+      // Render the glyph with tiny-skia
+      if let Some(pixmap) = powerline_glyphs::render_powerline_glyph(glyph, w, h) {
+        // Draw the glyph by sampling pixels and rendering colored rectangles
+        // We only draw pixels with alpha > threshold for efficiency
+        const ALPHA_THRESHOLD: u8 = 32;
+
+        for py in 0..h {
+          for px in 0..w {
+            let pixel_idx = ((py * w + px) * 4) as usize;
+            let pixel_data = pixmap.data();
+
+            if pixel_idx + 3 < pixel_data.len() {
+              let alpha = pixel_data[pixel_idx + 3];
+
+              if alpha > ALPHA_THRESHOLD {
+                // Draw a 1x1 rectangle for this pixel with the glyph's alpha
+                let pixel_x = x + px as f32;
+                let pixel_y = y + py as f32;
+
+                // Blend the color with the glyph's alpha
+                let alpha_f = alpha as f32 / 255.0;
+                let pixel_color = Color::new(color.r, color.g, color.b, color.a * alpha_f);
+
+                self.draw_rect(pixel_x, pixel_y, 1.0, 1.0, pixel_color);
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   /// Configure the monospaced font family and size used for layout calculations

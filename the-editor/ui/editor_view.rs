@@ -2468,6 +2468,11 @@ impl EditorView {
       TextSegment,
     };
 
+    // Helper function for Powerline symbol detection
+    let is_powerline_symbol = |ch: char| -> bool {
+      matches!(ch, '\u{E0B0}'..='\u{E0D4}')
+    };
+
     // Collect terminal IDs to avoid borrowing issues
     let terminal_ids: Vec<_> = cx.editor.tree.terminals().map(|(id, _)| id).collect();
 
@@ -2687,17 +2692,32 @@ impl EditorView {
           };
 
           let rgb = (text_color.r, text_color.g, text_color.b);
+          let cell_width = cell.width;
+          let is_wide_continuation = cell_width == 0;
+          if is_wide_continuation {
+            continue;
+          }
+
+          // Check if this is a Powerline symbol that needs custom rendering
+          if is_powerline_symbol(ch) {
+            // Flush any pending text run before drawing the Powerline symbol
+            flush_run(renderer, run_start_col, run_color, &mut run_text);
+
+            // Draw the Powerline symbol using the renderer's built-in method
+            let x = term_x + (col as f32 * font_width);
+            let fg_color = Color::rgba(rgb.0 as f32 / 255.0, rgb.1 as f32 / 255.0, rgb.2 as f32 / 255.0, 1.0);
+            renderer.draw_powerline_glyph(ch, x, row_y, font_width, line_height, fg_color);
+
+            // Reset run for next text segment
+            run_color = None;
+            run_start_col = col + 1;
+            continue;
+          }
 
           if run_color.map(|current| current != rgb).unwrap_or(true) {
             flush_run(renderer, run_start_col, run_color, &mut run_text);
             run_color = Some(rgb);
             run_start_col = col;
-          }
-
-          let cell_width = cell.width;
-          let is_wide_continuation = cell_width == 0;
-          if is_wide_continuation {
-            continue;
           }
 
           run_text.push(ch);

@@ -7,6 +7,7 @@
 mod color;
 mod error;
 pub mod event;
+mod powerline_glyphs;
 mod renderer;
 mod text;
 mod text_cache;

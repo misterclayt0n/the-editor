@@ -88,6 +88,14 @@ pub struct TerminalView {
   last_snapshot: Option<Box<ScreenSnapshot>>,
 }
 
+/// Check if a character is a Powerline symbol that needs custom rendering
+fn is_powerline_symbol(ch: char) -> bool {
+  matches!(
+    ch,
+    '\u{E0B0}'..='\u{E0D4}' // Powerline symbols range
+  )
+}
+
 impl TerminalView {
   /// Create a new terminal view with specified dimensions
   ///
@@ -413,6 +421,9 @@ impl Component for TerminalView {
     // Text is drawn on top of backgrounds
     for row in rows_to_render {
       let row_y = area.y as f32 + (row as f32 * cell_height);
+      // Store cell dimensions for use in Powerline rendering
+      let grid_cell_width = cell_width;
+      let grid_cell_height = cell_height;
       let mut run_text = String::with_capacity(render_cols as usize);
       let mut run_color: Option<(u8, u8, u8)> = None;
       let mut run_start_col = 0u16;
@@ -472,17 +483,32 @@ impl Component for TerminalView {
         }
 
         let rgb = (cell.fg.r, cell.fg.g, cell.fg.b);
+        let cell_width = cell.width;
+        let is_wide_continuation = cell_width == 0;
+        if is_wide_continuation {
+          continue;
+        }
+
+        // Check if this is a Powerline symbol that needs custom rendering
+        if is_powerline_symbol(ch) {
+          // Flush any pending text run before drawing the Powerline symbol
+          flush_run(surface, run_start_col, run_color, &mut run_text);
+
+          // Draw the Powerline symbol using the renderer's built-in method
+          let x = area.x as f32 + (col as f32 * grid_cell_width);
+          let fg_color = Color::rgba(rgb.0 as f32 / 255.0, rgb.1 as f32 / 255.0, rgb.2 as f32 / 255.0, 1.0);
+          surface.draw_powerline_glyph(ch, x, row_y, grid_cell_width, grid_cell_height, fg_color);
+
+          // Reset run for next text segment
+          run_color = None;
+          run_start_col = col + 1;
+          continue;
+        }
 
         if run_color.map(|current| current != rgb).unwrap_or(true) {
           flush_run(surface, run_start_col, run_color, &mut run_text);
           run_color = Some(rgb);
           run_start_col = col;
-        }
-
-        let cell_width = cell.width;
-        let is_wide_continuation = cell_width == 0;
-        if is_wide_continuation {
-          continue;
         }
 
         run_text.push(ch);

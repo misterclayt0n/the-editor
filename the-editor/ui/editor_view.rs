@@ -69,7 +69,6 @@ const VIEW_PADDING_LEFT: f32 = 0.0; // No visual padding - only scrolloff
 const VIEW_PADDING_TOP: f32 = 0.0;
 const VIEW_PADDING_BOTTOM: f32 = 0.0; // No reservation - statusbar is now an overlay
 const CURSOR_HEIGHT_EXTENSION: f32 = 4.0;
-const LINE_SPACING: f32 = 4.0;
 
 /// Wrapper around syntax::OverlayHighlighter that maintains position and style
 struct OverlayHighlighter<'t> {
@@ -841,13 +840,13 @@ impl Component for EditorView {
 
     // Cache font metrics for mouse handling
     self.cached_cell_width = font_width;
-    self.cached_cell_height = font_size + LINE_SPACING;
+    self.cached_cell_height = renderer.cell_height();
     self.cached_font_size = font_size;
 
     // Calculate tree area from renderer dimensions
     let available_height = (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM);
     let available_height = available_height.max(font_size);
-    let total_rows = ((available_height / (font_size + LINE_SPACING))
+    let total_rows = ((available_height / self.cached_cell_height)
       .floor()
       .max(1.0)) as u16;
 
@@ -1032,7 +1031,7 @@ impl Component for EditorView {
 
       // Calculate base coordinates from view's area (convert cell coords to pixels)
       let view_offset_x = view_area.x as f32 * font_width;
-      let view_offset_y = view_area.y as f32 * (font_size + LINE_SPACING);
+      let view_offset_y = view_area.y as f32 * (self.cached_cell_height);
       let mut base_y = view_offset_y + VIEW_PADDING_TOP + zoom_offset_y;
 
       // Calculate visible lines for THIS view based on its height
@@ -1045,7 +1044,7 @@ impl Component for EditorView {
         view_area.y + view_area.height < cx.editor.tree.area().height;
       let has_vertical_split_right = view_area.x + view_area.width < cx.editor.tree.area().width;
       let view_bottom_edge_px = view_offset_y
-        + (view_area.height as f32 * (font_size + LINE_SPACING))
+        + (view_area.height as f32 * (self.cached_cell_height))
         - if has_horizontal_split_below {
           SEPARATOR_HEIGHT_PX
         } else {
@@ -1320,7 +1319,7 @@ impl Component for EditorView {
             &cx.editor.theme,
             base_x,
             base_y,
-            font_size + LINE_SPACING,
+            self.cached_cell_height,
             font_width,
             font_size,
             view_offset.horizontal_offset,
@@ -1339,7 +1338,7 @@ impl Component for EditorView {
             eol_diagnostics,
             base_x,
             base_y,
-            font_size + LINE_SPACING,
+            self.cached_cell_height,
             font_width,
             viewport.width,
             view_offset.horizontal_offset,
@@ -1356,7 +1355,7 @@ impl Component for EditorView {
             viewport.width,
             base_x,
             base_y,
-            font_size + LINE_SPACING,
+            self.cached_cell_height,
           );
           decoration_manager.add_decoration(inlay_hints_decoration);
         }
@@ -1483,7 +1482,7 @@ impl Component for EditorView {
             return;
           }
 
-          let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING);
+          let y = base_y + (rel_row as f32) * (self.cached_cell_height);
 
           // Draw guides at each indent level
           for i in starting_indent..end_indent {
@@ -1569,7 +1568,7 @@ impl Component for EditorView {
           // TODO: Re-enable once we properly track all dirty regions
 
           // Calculate y position early (needed for gutter rendering)
-          let y = base_y + (rel_row as f32) * (font_size + LINE_SPACING);
+          let y = base_y + (rel_row as f32) * (self.cached_cell_height);
 
           // Get doc_line early, before horizontal scrolling checks
           let doc_line = doc_text.char_to_line(g.char_idx.min(doc_text.len_chars()));
@@ -1712,7 +1711,7 @@ impl Component for EditorView {
               x,
               y,
               width: (draw_cols as f32) * font_width,
-              height: font_size + LINE_SPACING,
+              height: self.cached_cell_height,
               color: selection_fill_color,
             });
           }
@@ -1825,17 +1824,20 @@ impl Component for EditorView {
               color
             };
 
+            // Use full cell height without centering (like terminal does)
+            let cursor_y = anim_y;
+
             // Clip cursor to stay within view bounds (both horizontal and vertical)
             let max_cursor_width = (view_right_edge_px - anim_x).max(0.0);
             let clipped_cursor_w = cursor_w.min(max_cursor_width);
 
-            let cursor_height = font_size + CURSOR_HEIGHT_EXTENSION;
-            let max_cursor_height = (view_bottom_edge_px - anim_y).max(0.0);
+            let cursor_height = self.cached_cell_height;
+            let max_cursor_height = (view_bottom_edge_px - cursor_y).max(0.0);
             let clipped_cursor_h = cursor_height.min(max_cursor_height);
 
             self.command_batcher.add_command(RenderCommand::Cursor {
               x:      anim_x,
-              y:      anim_y,
+              y:      cursor_y,
               width:  clipped_cursor_w,
               height: clipped_cursor_h,
               color:  cursor_bg_color,
@@ -1952,6 +1954,7 @@ impl Component for EditorView {
         if grapheme_count == 0 && is_focused {
           // Render cursor at position 0 for empty document
           let x = base_x;
+          // Use full cell height without centering (like terminal does)
           let y = base_y;
 
           // Use default cursor bg for empty document
@@ -1974,7 +1977,7 @@ impl Component for EditorView {
             x,
             y,
             width: font_width,
-            height: font_size + CURSOR_HEIGHT_EXTENSION,
+            height: self.cached_cell_height,
             color: cursor_bg_color,
           });
         }
@@ -2014,7 +2017,7 @@ impl Component for EditorView {
                 // Convert screen row/col to pixel coordinates
                 let mut effect_base_x = content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
                 let mut effect_base_y = (content_rect.y + screen_row as u16) as f32
-                  * (font_size + LINE_SPACING)
+                  * (self.cached_cell_height)
                   + VIEW_PADDING_TOP;
                 effect_base_x += shake_offset_x;
                 effect_base_y += shake_offset_y;
@@ -2802,9 +2805,9 @@ impl EditorView {
         // Center the thin separator in the gap
         let gap_center_x = (area.x + area.width) as f32 * font_width + (font_width / 2.0);
         let x = gap_center_x - (SEPARATOR_WIDTH_PX / 2.0);
-        let y = area.y as f32 * (font_size + LINE_SPACING);
+        let y = area.y as f32 * (self.cached_cell_height);
         let width = SEPARATOR_WIDTH_PX;
-        let height = area.height as f32 * (font_size + LINE_SPACING);
+        let height = area.height as f32 * (self.cached_cell_height);
 
         renderer.draw_rect(x, y, width, height, separator_color);
       }
@@ -2816,7 +2819,7 @@ impl EditorView {
         // Render horizontal separator bar at the bottom edge
         let x = area.x as f32 * font_width;
         let sep_y =
-          (area.y + area.height) as f32 * (font_size + LINE_SPACING) - SEPARATOR_HEIGHT_PX;
+          (area.y + area.height) as f32 * (self.cached_cell_height) - SEPARATOR_HEIGHT_PX;
         let width = area.width as f32 * font_width;
         let height = SEPARATOR_HEIGHT_PX;
 
@@ -3219,10 +3222,9 @@ impl EditorView {
     // If font size has changed since last render, recalculate metrics
     if (current_font_size - self.cached_font_size).abs() > 0.1 {
       // Font size changed - estimate new metrics
-      // Cell height is exact: font_size + LINE_SPACING
-      let new_cell_height = current_font_size + LINE_SPACING;
-      // Cell width scales approximately proportionally with font size
+      // Cell height scales proportionally with font size
       let scale = current_font_size / self.cached_font_size;
+      let new_cell_height = self.cached_cell_height * scale;
       let new_cell_width = self.cached_cell_width * scale;
       (new_cell_width, new_cell_height)
     } else {

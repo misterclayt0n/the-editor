@@ -539,18 +539,14 @@ impl Component for TerminalView {
     let (cursor_row, cursor_col) = snapshot.cursor_pos;
     if cursor_visible && viewport_at_bottom && cursor_row < term_rows && cursor_col < term_cols {
       let cursor_x = area.x as f32 + (cursor_col as f32 * cell_width);
+      let cursor_y = area.y as f32 + (cursor_row as f32 * cell_height);
 
-      // Add centering offset to match cosmic-text's vertical text positioning
-      let glyph_height = font_size;
-      let centering_offset = (cell_height - glyph_height) / 2.0;
-      let cursor_y = area.y as f32 + (cursor_row as f32 * cell_height) + centering_offset;
-
-      // Draw cursor as a semi-transparent rectangle
+      // Draw cursor as a semi-transparent rectangle using full cell height to cover descenders
       surface.draw_rect(
         cursor_x,
         cursor_y,
         cell_width,
-        glyph_height,
+        cell_height,
         Color::new(0.8, 0.8, 0.8, 0.5),
       );
     }

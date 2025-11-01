@@ -24,7 +24,6 @@ use crate::{
   editor::Editor,
   ui::{
     UI_FONT_SIZE,
-    UI_FONT_WIDTH,
     components::button::Button,
     compositor::{
       Component,
@@ -367,6 +366,14 @@ impl Prompt {
     let base_x = area.x as f32;
     let base_y = area.y as f32;
 
+    // Save current font state before configuring for UI rendering
+    let saved_font = surface.save_font_state();
+
+    // Configure UI font to get accurate metrics
+    let ui_font_family = surface.current_font_family().to_owned();
+    surface.configure_font(&ui_font_family, UI_FONT_SIZE);
+    let cell_width = surface.cell_width();
+
     // Get statusline background color from theme
     let theme = &cx.editor.theme;
     let statusline_style = theme.get("ui.statusline");
@@ -558,13 +565,13 @@ impl Prompt {
         }
       }
 
-      // Calculate text baseline (vertically centered in status bar)
-      let text_y = base_y + (STATUS_BAR_HEIGHT - UI_FONT_SIZE) * 0.5;
+      // Calculate text baseline with fixed padding (like picker)
+      let text_y = base_y + 8.0;
 
       // Calculate visible width (how many characters fit in the prompt box)
       const PADDING: f32 = 12.0;
       let usable_width = prompt_box_width - (PADDING * 2.0) - BORDER_THICKNESS;
-      let visible_chars = (usable_width / UI_FONT_WIDTH) as usize;
+      let visible_chars = (usable_width / cell_width) as usize;
 
       // Account for prefix in visible width
       let prefix_len = self.prefix.chars().count();
@@ -599,7 +606,7 @@ impl Prompt {
       // Only draw cursor if it's within visible area
       if self.cursor >= self.scroll_offset && self.cursor < self.scroll_offset + visible_input_chars
       {
-        let target_x = base_x + PADDING + visible_cursor_col as f32 * UI_FONT_WIDTH;
+        let target_x = base_x + PADDING + visible_cursor_col as f32 * cell_width;
 
         // Cursor animation: lerp toward target position
         let cursor_lerp_factor = cx.editor.config().cursor_lerp_factor;
@@ -624,7 +631,7 @@ impl Prompt {
         surface.draw_rect(
           anim_x,
           text_y,
-          UI_FONT_WIDTH,
+          cell_width,
           UI_FONT_SIZE + CURSOR_HEIGHT_EXTENSION,
           cursor_bg,
         );
@@ -652,7 +659,7 @@ impl Prompt {
       let chars: Vec<char> = full_text.chars().collect();
       if visible_cursor_col < chars.len() {
         let cursor_char = chars[visible_cursor_col].to_string();
-        let cursor_x = text_x + visible_cursor_col as f32 * UI_FONT_WIDTH;
+        let cursor_x = text_x + visible_cursor_col as f32 * cell_width;
         surface.draw_text(TextSection::simple(
           cursor_x,
           text_y,
@@ -665,9 +672,12 @@ impl Prompt {
       // Render completions if visible (above the prompt)
       // Render completions if available
       if !self.completions.is_empty() {
-        self.render_completions_internal(surface, base_y, completion_x, completion_width, cx);
+        self.render_completions_internal(surface, base_y, completion_x, completion_width, cell_width, cx);
       }
     }); // End overlay region
+
+    // Restore original font state
+    surface.restore_font_state(saved_font);
   }
 
   /// Execute the current command
@@ -1015,6 +1025,7 @@ impl Prompt {
     prompt_y: f32,
     completion_x: f32,
     completion_width: f32,
+    cell_width: f32,
     cx: &Context,
   ) {
     if self.completions.is_empty() {
@@ -1187,7 +1198,7 @@ impl Prompt {
 
         // Calculate available width for text
         let available_width = item_width - (ITEM_PADDING_X * 2.0);
-        let max_chars = (available_width / UI_FONT_WIDTH) as usize;
+        let max_chars = (available_width / cell_width) as usize;
 
         // Truncate text if needed
         let display_text = if completion.text.chars().count() > max_chars && max_chars > 2 {

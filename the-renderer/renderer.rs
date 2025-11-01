@@ -185,6 +185,15 @@ struct BufferPool {
   metrics: Metrics,
 }
 
+/// Saved font state for save/restore operations
+#[derive(Clone, Debug)]
+pub struct FontState {
+  pub family:      String,
+  pub size:        f32,
+  pub cell_width:  f32,
+  pub cell_height: f32,
+}
+
 /// Configuration options for the renderer
 #[derive(Debug, Clone)]
 pub struct RendererConfig {
@@ -1795,6 +1804,24 @@ impl Renderer {
     self.font_family = family.to_string();
     self.font_size = size.max(1.0);
     self.recalculate_metrics();
+  }
+
+  /// Save the current font state for later restoration
+  pub fn save_font_state(&self) -> FontState {
+    FontState {
+      family:      self.font_family.clone(),
+      size:        self.font_size,
+      cell_width:  self.cell_width,
+      cell_height: self.cell_height,
+    }
+  }
+
+  /// Restore a previously saved font state
+  pub fn restore_font_state(&mut self, state: FontState) {
+    self.font_family = state.family;
+    self.font_size = state.size;
+    self.cell_width = state.cell_width;
+    self.cell_height = state.cell_height;
   }
 
   /// Configure the font by reading TTF/OTF/TTC bytes and installing them into

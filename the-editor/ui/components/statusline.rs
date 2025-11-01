@@ -113,6 +113,11 @@ impl Default for StatusLine {
 
 impl Component for StatusLine {
   fn render(&mut self, _area: Rect, surface: &mut Surface, cx: &mut Context) {
+    // Save current font state and configure UI font for statusline rendering
+    let saved_font = surface.save_font_state();
+    let ui_font_family = surface.current_font_family().to_owned();
+    surface.configure_font(&ui_font_family, FONT_SIZE);
+
     let theme = &cx.editor.theme;
     let mode = cx.editor.mode();
 
@@ -479,6 +484,9 @@ impl Component for StatusLine {
         Self::draw_text(surface, right_x, bar_y, &lsp_text, lsp_color);
       }
     }); // End overlay region
+
+    // Restore original font state
+    surface.restore_font_state(saved_font);
   }
 
   fn should_update(&self) -> bool {

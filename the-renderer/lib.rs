@@ -28,6 +28,7 @@ pub use event::{
   ScrollDelta,
 };
 pub use renderer::{
+  FontState,
   Renderer,
   RendererConfig,
 };

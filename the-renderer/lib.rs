@@ -145,6 +145,7 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
       NamedKey::Escape => Key::Escape,
       NamedKey::Backspace => Key::Backspace,
       NamedKey::Delete => Key::Delete,
+      NamedKey::Insert => Key::Insert,
       NamedKey::Home => Key::Home,
       NamedKey::End => Key::End,
       NamedKey::PageUp => Key::PageUp,
@@ -153,6 +154,18 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
       NamedKey::ArrowDown => Key::Down,
       NamedKey::ArrowLeft => Key::Left,
       NamedKey::ArrowRight => Key::Right,
+      NamedKey::F1 => Key::F1,
+      NamedKey::F2 => Key::F2,
+      NamedKey::F3 => Key::F3,
+      NamedKey::F4 => Key::F4,
+      NamedKey::F5 => Key::F5,
+      NamedKey::F6 => Key::F6,
+      NamedKey::F7 => Key::F7,
+      NamedKey::F8 => Key::F8,
+      NamedKey::F9 => Key::F9,
+      NamedKey::F10 => Key::F10,
+      NamedKey::F11 => Key::F11,
+      NamedKey::F12 => Key::F12,
       NamedKey::Space => Key::Char(' '),
       _ => return None,
     })
@@ -394,6 +407,7 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
                 shift: modifiers.shift_key(),
                 ctrl: modifiers.control_key(),
                 alt: modifiers.alt_key(),
+                super_: modifiers.super_key(),
               };
               if matches!(key_press.code, event::Key::Char(_)) {
                 key_press.shift = false;

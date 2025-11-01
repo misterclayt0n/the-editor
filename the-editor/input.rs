@@ -49,6 +49,7 @@ pub enum SpecialKey {
   Tab,
   Backspace,
   Delete,
+  Insert,
   Home,
   End,
   PageUp,
@@ -57,6 +58,18 @@ pub enum SpecialKey {
   Down,
   Left,
   Right,
+  F1,
+  F2,
+  F3,
+  F4,
+  F5,
+  F6,
+  F7,
+  F8,
+  F9,
+  F10,
+  F11,
+  F12,
 }
 
 /// Processed input event ready for consumption.
@@ -126,6 +139,16 @@ impl InputProcessor {
     // Check if special keys have modifiers - if so, treat them as modified keys
     let has_modifiers = key_press.ctrl || key_press.alt || key_press.shift;
 
+    // DEBUG: Log raw key press
+    log::debug!(
+      "InputProcessor: key={:?}, shift={}, ctrl={}, alt={}, has_modifiers={}",
+      key_press.code,
+      key_press.shift,
+      key_press.ctrl,
+      key_press.alt,
+      has_modifiers
+    );
+
     // Convert to unified key.
     let unified = match key_press.code {
       Key::Escape => Some(UnifiedKey::Escape),
@@ -167,6 +190,7 @@ impl InputProcessor {
       Key::Tab => Some(UnifiedKey::Special(SpecialKey::Tab)),
       Key::Backspace => Some(UnifiedKey::Special(SpecialKey::Backspace)),
       Key::Delete => Some(UnifiedKey::Special(SpecialKey::Delete)),
+      Key::Insert => Some(UnifiedKey::Special(SpecialKey::Insert)),
       Key::Home => Some(UnifiedKey::Special(SpecialKey::Home)),
       Key::End => Some(UnifiedKey::Special(SpecialKey::End)),
       Key::PageUp => Some(UnifiedKey::Special(SpecialKey::PageUp)),
@@ -175,6 +199,18 @@ impl InputProcessor {
       Key::Down => Some(UnifiedKey::Special(SpecialKey::Down)),
       Key::Left => Some(UnifiedKey::Special(SpecialKey::Left)),
       Key::Right => Some(UnifiedKey::Special(SpecialKey::Right)),
+      Key::F1 => Some(UnifiedKey::Special(SpecialKey::F1)),
+      Key::F2 => Some(UnifiedKey::Special(SpecialKey::F2)),
+      Key::F3 => Some(UnifiedKey::Special(SpecialKey::F3)),
+      Key::F4 => Some(UnifiedKey::Special(SpecialKey::F4)),
+      Key::F5 => Some(UnifiedKey::Special(SpecialKey::F5)),
+      Key::F6 => Some(UnifiedKey::Special(SpecialKey::F6)),
+      Key::F7 => Some(UnifiedKey::Special(SpecialKey::F7)),
+      Key::F8 => Some(UnifiedKey::Special(SpecialKey::F8)),
+      Key::F9 => Some(UnifiedKey::Special(SpecialKey::F9)),
+      Key::F10 => Some(UnifiedKey::Special(SpecialKey::F10)),
+      Key::F11 => Some(UnifiedKey::Special(SpecialKey::F11)),
+      Key::F12 => Some(UnifiedKey::Special(SpecialKey::F12)),
       Key::Char(ch) if key_press.ctrl || key_press.alt || key_press.shift => {
         // Modified character.
         Some(UnifiedKey::Modified {
@@ -250,6 +286,7 @@ impl UnifiedKey {
           SpecialKey::Tab => Key::Tab,
           SpecialKey::Backspace => Key::Backspace,
           SpecialKey::Delete => Key::Delete,
+          SpecialKey::Insert => Key::Insert,
           SpecialKey::Home => Key::Home,
           SpecialKey::End => Key::End,
           SpecialKey::PageUp => Key::PageUp,
@@ -258,6 +295,18 @@ impl UnifiedKey {
           SpecialKey::Down => Key::Down,
           SpecialKey::Left => Key::Left,
           SpecialKey::Right => Key::Right,
+          SpecialKey::F1 => Key::F1,
+          SpecialKey::F2 => Key::F2,
+          SpecialKey::F3 => Key::F3,
+          SpecialKey::F4 => Key::F4,
+          SpecialKey::F5 => Key::F5,
+          SpecialKey::F6 => Key::F6,
+          SpecialKey::F7 => Key::F7,
+          SpecialKey::F8 => Key::F8,
+          SpecialKey::F9 => Key::F9,
+          SpecialKey::F10 => Key::F10,
+          SpecialKey::F11 => Key::F11,
+          SpecialKey::F12 => Key::F12,
         };
         Some(KeyBinding::new(key))
       },
@@ -272,6 +321,7 @@ impl UnifiedKey {
           SpecialKey::Tab => Key::Tab,
           SpecialKey::Backspace => Key::Backspace,
           SpecialKey::Delete => Key::Delete,
+          SpecialKey::Insert => Key::Insert,
           SpecialKey::Home => Key::Home,
           SpecialKey::End => Key::End,
           SpecialKey::PageUp => Key::PageUp,
@@ -280,8 +330,28 @@ impl UnifiedKey {
           SpecialKey::Down => Key::Down,
           SpecialKey::Left => Key::Left,
           SpecialKey::Right => Key::Right,
+          SpecialKey::F1 => Key::F1,
+          SpecialKey::F2 => Key::F2,
+          SpecialKey::F3 => Key::F3,
+          SpecialKey::F4 => Key::F4,
+          SpecialKey::F5 => Key::F5,
+          SpecialKey::F6 => Key::F6,
+          SpecialKey::F7 => Key::F7,
+          SpecialKey::F8 => Key::F8,
+          SpecialKey::F9 => Key::F9,
+          SpecialKey::F10 => Key::F10,
+          SpecialKey::F11 => Key::F11,
+          SpecialKey::F12 => Key::F12,
         };
-        Some(KeyBinding::new(key_code).with_modifiers(*shift, *ctrl, *alt))
+        let binding = KeyBinding::new(key_code).with_modifiers(*shift, *ctrl, *alt);
+        log::debug!(
+          "UnifiedKey::to_key_binding (ModifiedSpecial): key={:?}, shift={}, ctrl={}, alt={}",
+          key_code,
+          shift,
+          ctrl,
+          alt
+        );
+        Some(binding)
       },
     }
   }
@@ -466,6 +536,7 @@ mod tests {
       shift,
       ctrl,
       alt,
+      super_: false,
     }
   }
 

@@ -144,91 +144,47 @@ impl TerminalView {
 
   /// Convert a KeyBinding to bytes for PTY
   ///
-  /// This handles special keys and VT100 escape sequences.
+  /// This uses the comprehensive key encoding system that properly handles
+  /// all modifier combinations, terminal modes, and modern keyboard protocols.
   fn key_to_bytes(key: &KeyBinding) -> Vec<u8> {
-    use the_editor_renderer::Key;
+    use the_editor_renderer::KeyPress;
 
-    let key_code = key.code;
-    let ctrl = key.ctrl;
-    let alt = key.alt;
-    let shift = key.shift;
+    // DEBUG: Log the KeyBinding we received
+    log::debug!(
+      "Terminal key_to_bytes: code={:?}, shift={}, ctrl={}, alt={}",
+      key.code,
+      key.shift,
+      key.ctrl,
+      key.alt
+    );
 
-    // Handle special keys with escape sequences
-    match key_code {
-      Key::Up => {
-        if ctrl {
-          b"\x1b[1;5A".to_vec()
-        } else if alt {
-          b"\x1b[1;3A".to_vec()
-        } else {
-          b"\x1b[A".to_vec()
-        }
-      },
-      Key::Down => {
-        if ctrl {
-          b"\x1b[1;5B".to_vec()
-        } else if alt {
-          b"\x1b[1;3B".to_vec()
-        } else {
-          b"\x1b[B".to_vec()
-        }
-      },
-      Key::Left => {
-        if ctrl {
-          b"\x1b[1;5D".to_vec()
-        } else if alt {
-          b"\x1b[1;3D".to_vec()
-        } else {
-          b"\x1b[D".to_vec()
-        }
-      },
-      Key::Right => {
-        if ctrl {
-          b"\x1b[1;5C".to_vec()
-        } else if alt {
-          b"\x1b[1;3C".to_vec()
-        } else {
-          b"\x1b[C".to_vec()
-        }
-      },
-      Key::Home => b"\x1b[H".to_vec(),
-      Key::End => b"\x1b[F".to_vec(),
-      Key::PageUp => b"\x1b[5~".to_vec(),
-      Key::PageDown => b"\x1b[6~".to_vec(),
-      Key::Tab => {
-        if shift {
-          b"\x1b[Z".to_vec() // Shift+Tab
-        } else {
-          b"\t".to_vec()
-        }
-      },
-      Key::Backspace => b"\x7f".to_vec(),
-      Key::Delete => b"\x1b[3~".to_vec(),
-      Key::Enter => b"\r".to_vec(),
-      Key::Escape => b"\x1b".to_vec(),
-      Key::Char(c) => {
-        let mut bytes = Vec::new();
+    // Convert KeyBinding to KeyPress for the encoder
+    let key_press = KeyPress {
+      code:    key.code,
+      pressed: true, // We only send key presses, not releases
+      shift:   key.shift,
+      ctrl:    key.ctrl,
+      alt:     key.alt,
+      super_:  false, // KeyBinding doesn't track super modifier yet
+    };
 
-        if ctrl {
-          // Ctrl+key produces control character
-          match c {
-            'a'..='z' => bytes.push((c as u8) - b'a' + 1),
-            'A'..='Z' => bytes.push((c as u8) - b'A' + 1),
-            '[' => bytes.push(0x1B),
-            _ => bytes.extend_from_slice(c.to_string().as_bytes()),
-          }
-        } else if alt {
-          // Alt+key produces ESC key
-          bytes.push(0x1B);
-          bytes.extend_from_slice(c.to_string().as_bytes());
-        } else {
-          bytes.extend_from_slice(c.to_string().as_bytes());
-        }
+    // Set up terminal modes for encoding
+    // TODO: In the future, these should be tracked from the terminal's state
+    let modes = crate::key_encode::TerminalModes {
+      cursor_key_application: false, // Normal cursor mode (not application mode)
+      keypad_application:     false, // Normal keypad mode
+      modify_other_keys:      0,     // Disabled for now
+      kitty_flags:            0,     // Disabled for now
+      alt_esc_prefix:         true,  // Enable ESC prefix for Alt combinations
+    };
 
-        bytes
-      },
-      _ => Vec::new(), // Other keys ignored for now
-    }
+    // Use the comprehensive encoder
+    let bytes = crate::key_encode::encode(&key_press, &modes);
+
+    // DEBUG: Log the encoded bytes
+    log::debug!("Terminal encoded {} bytes: {:?}", bytes.len(), bytes);
+
+    bytes
   }
 }
 

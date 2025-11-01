@@ -50,6 +50,7 @@ impl fmt::Display for KeyBinding {
       Key::Backspace => "bs".to_string(),
       Key::Tab => "tab".to_string(),
       Key::Delete => "del".to_string(),
+      Key::Insert => "ins".to_string(),
       Key::Home => "home".to_string(),
       Key::End => "end".to_string(),
       Key::PageUp => "pgup".to_string(),
@@ -58,7 +59,18 @@ impl fmt::Display for KeyBinding {
       Key::Right => "right".to_string(),
       Key::Up => "up".to_string(),
       Key::Down => "down".to_string(),
-      // Key::F(n) => format!("F{}", n), // Not supported in renderer yet
+      Key::F1 => "F1".to_string(),
+      Key::F2 => "F2".to_string(),
+      Key::F3 => "F3".to_string(),
+      Key::F4 => "F4".to_string(),
+      Key::F5 => "F5".to_string(),
+      Key::F6 => "F6".to_string(),
+      Key::F7 => "F7".to_string(),
+      Key::F8 => "F8".to_string(),
+      Key::F9 => "F9".to_string(),
+      Key::F10 => "F10".to_string(),
+      Key::F11 => "F11".to_string(),
+      Key::F12 => "F12".to_string(),
       Key::Other => "other".to_string(),
     };
 

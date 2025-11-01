@@ -1262,6 +1262,7 @@ impl Component for Prompt {
       shift:   key_binding.shift,
       ctrl:    key_binding.ctrl,
       alt:     key_binding.alt,
+      super_:  false,
       pressed: true,
     };
 

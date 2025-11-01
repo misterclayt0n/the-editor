@@ -32,6 +32,7 @@ mod event;
 pub mod handlers;
 mod increment;
 mod input;
+mod key_encode;
 pub mod keymap;
 mod lsp;
 mod snippets;

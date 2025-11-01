@@ -431,89 +431,43 @@ fn input_event_to_terminal_bytes(event: &InputEvent) -> Option<Vec<u8>> {
         return None;
       }
 
-      let key = &key_press.code;
-      let ctrl = key_press.ctrl;
-      let alt = key_press.alt;
-      let shift = key_press.shift;
+      // DEBUG: Log the raw KeyPress we received
+      log::debug!(
+        "input_event_to_terminal_bytes: key={:?}, shift={}, ctrl={}, alt={}",
+        key_press.code,
+        key_press.shift,
+        key_press.ctrl,
+        key_press.alt
+      );
 
-      // Handle special keys with escape sequences
-      match key {
-        Key::Up => {
-          if ctrl {
-            Some(b"\x1b[1;5A".to_vec())
-          } else if alt {
-            Some(b"\x1b[1;3A".to_vec())
-          } else {
-            Some(b"\x1b[A".to_vec())
-          }
-        },
-        Key::Down => {
-          if ctrl {
-            Some(b"\x1b[1;5B".to_vec())
-          } else if alt {
-            Some(b"\x1b[1;3B".to_vec())
-          } else {
-            Some(b"\x1b[B".to_vec())
-          }
-        },
-        Key::Left => {
-          if ctrl {
-            Some(b"\x1b[1;5D".to_vec())
-          } else if alt {
-            Some(b"\x1b[1;3D".to_vec())
-          } else {
-            Some(b"\x1b[D".to_vec())
-          }
-        },
-        Key::Right => {
-          if ctrl {
-            Some(b"\x1b[1;5C".to_vec())
-          } else if alt {
-            Some(b"\x1b[1;3C".to_vec())
-          } else {
-            Some(b"\x1b[C".to_vec())
-          }
-        },
-        Key::Home => Some(b"\x1b[H".to_vec()),
-        Key::End => Some(b"\x1b[F".to_vec()),
-        Key::PageUp => Some(b"\x1b[5~".to_vec()),
-        Key::PageDown => Some(b"\x1b[6~".to_vec()),
-        Key::Tab => {
-          if shift {
-            Some(b"\x1b[Z".to_vec()) // Shift+Tab
-          } else {
-            Some(b"\t".to_vec())
-          }
-        },
-        Key::Backspace => Some(b"\x7f".to_vec()),
-        Key::Delete => Some(b"\x1b[3~".to_vec()),
-        Key::Enter => Some(b"\r".to_vec()),
-        Key::Escape => Some(b"\x1b".to_vec()),
-        Key::Char(c) => {
-          let mut bytes = Vec::new();
+      // Set up terminal modes for encoding
+      let modes = crate::key_encode::TerminalModes {
+        cursor_key_application: false,
+        keypad_application:     false,
+        modify_other_keys:      0,
+        kitty_flags:            0,
+        alt_esc_prefix:         true,
+      };
 
-          if ctrl {
-            // Ctrl+key produces control character
-            match c {
-              'a'..='z' => bytes.push((*c as u8) - b'a' + 1),
-              'A'..='Z' => bytes.push((*c as u8) - b'A' + 1),
-              '[' => bytes.push(0x1B),
-              _ => bytes.extend_from_slice(c.to_string().as_bytes()),
-            }
-          } else if alt {
-            // Alt+key produces ESC key
-            bytes.push(0x1B);
-            bytes.extend_from_slice(c.to_string().as_bytes());
-          } else {
-            bytes.extend_from_slice(c.to_string().as_bytes());
-          }
+      // Use the comprehensive key encoder
+      let bytes = crate::key_encode::encode(key_press, &modes);
 
-          Some(bytes)
-        },
-        _ => None, // Other keys ignored for now
+      // DEBUG: Log encoded bytes
+      log::debug!("input_event_to_terminal_bytes encoded {} bytes: {:?}", bytes.len(), bytes);
+
+      if bytes.is_empty() {
+        None
+      } else {
+        Some(bytes)
       }
     },
-    _ => None, // Mouse events, etc. not handled yet
+    InputEvent::Text(text) => {
+      // Handle composed text from dead keys (e.g., " + space = ")
+      // and IME input
+      log::debug!("input_event_to_terminal_bytes: text=\"{}\"", text);
+      Some(text.as_bytes().to_vec())
+    },
+    _ => None, // Mouse events, scroll, etc. not handled yet
   }
 }
 
@@ -655,10 +609,22 @@ impl Application for App {
           prepend_escape = true;
         }
 
-        if key_press.code == Key::Escape && !key_press.alt && !key_press.ctrl && !key_press.shift {
+        // Use Ctrl+Space as the terminal meta prefix instead of ESC
+        // This allows ESC to be sent directly to terminal apps (vim, helix, etc.)
+        if key_press.code == Key::Char(' ')
+          && key_press.ctrl
+          && !key_press.alt
+          && !key_press.shift
+        {
           self.terminal_meta_pending = true;
           return true;
         }
+
+        // Old ESC-based shortcuts disabled to allow ESC in terminal apps:
+        // if key_press.code == Key::Escape && !key_press.alt && !key_press.ctrl && !key_press.shift {
+        //   self.terminal_meta_pending = true;
+        //   return true;
+        // }
 
         if key_press.alt {
           if let Some(pane) = terminal_toggle_target(key_press.code) {

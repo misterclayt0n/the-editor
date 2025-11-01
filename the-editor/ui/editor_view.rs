@@ -559,6 +559,7 @@ impl Component for EditorView {
             shift:   key.shift,
             ctrl:    key.ctrl,
             alt:     key.alt,
+            super_:  false,
           };
           callback(&mut cmd_cx, key_press);
 
@@ -722,6 +723,7 @@ impl Component for EditorView {
           shift:   key.shift,
           ctrl:    key.ctrl,
           alt:     key.alt,
+          super_:  false,
         };
 
         // Process through keymap for non-insert modes

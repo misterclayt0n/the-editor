@@ -17,8 +17,13 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Basic terminal rendering.
   - [x] Toggle terminal.
   - [x] Maintain terminal render state.
-  - [ ] Improve performance.
-- [ ] File tree
+  - [x] Improve performance.
+  - [ ] Add custom theme support - Still don't know if I pull ghostty theme from the user's ghostty config or if it should be custom. Probably custom since we're not really embedding all of ghostty defaults.
+  - [ ] Focus keybindings.
+  - [ ] Add kitty image protocol (fucking insane btw).
+- [ ] File tree.
+- [ ] Command palette.
+- [ ] "reload-all" prompt command.
 
 When it comes to ghostty, `libghostty` is not stable as an API yet, and the correct decision would be to wait until it's stable, but sometimes the heart speaks for itself you know.
 

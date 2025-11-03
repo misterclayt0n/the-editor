@@ -816,6 +816,47 @@ impl Tree {
     }
   }
 
+  /// Replace a view node with a terminal node in-place
+  pub fn replace_view_with_terminal(
+    &mut self,
+    view_id: ViewId,
+    session: Rc<RefCell<TerminalSession>>,
+    terminal_id: u32,
+  ) -> Option<ViewId> {
+    // Ensure the node exists and is a view
+    if !self.contains(view_id) || !matches!(self.nodes[view_id].content, Content::View(_)) {
+      return None;
+    }
+
+    // Get the parent before we modify anything
+    let parent = self.nodes[view_id].parent;
+
+    // Remove the old view node
+    let _removed = self.nodes.remove(view_id)?;
+
+    // Create the new terminal node with same parent
+    let mut terminal_node = Node::terminal(session, terminal_id);
+    terminal_node.parent = parent;
+
+    // Insert the terminal node
+    let terminal_view_id = self.nodes.insert(terminal_node);
+
+    // Update the parent's child reference
+    if let Node { content: Content::Container(container), .. } = &mut self.nodes[parent] {
+      if let Some(pos) = container.children.iter().position(|&child| child == view_id) {
+        container.children[pos] = terminal_view_id;
+      }
+    }
+
+    // Update focus to the new terminal
+    if self.focus == view_id {
+      self.focus = terminal_view_id;
+    }
+
+    self.recalculate();
+    Some(terminal_view_id)
+  }
+
   // Finds the split in the given direction if it exists
   pub fn find_split_in_direction(&self, id: ViewId, direction: Direction) -> Option<ViewId> {
     let parent = self.nodes[id].parent;

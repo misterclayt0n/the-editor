@@ -455,6 +455,9 @@ pub enum Action {
     anchor: ViewId,
     pane:   TerminalPane,
   },
+  ReplaceViewWithTerminal {
+    view_id: ViewId,
+  },
 }
 
 impl Action {
@@ -2538,8 +2541,8 @@ impl Editor {
     }
 
     let focust_lost = match action {
-      Action::SpawnTerminal | Action::SpawnTerminalInPane { .. } => {
-        // SpawnTerminal doesn't switch documents, just return without focus lost
+      Action::SpawnTerminal | Action::SpawnTerminalInPane { .. } | Action::ReplaceViewWithTerminal { .. } => {
+        // These actions don't switch documents, just return without focus lost
         return;
       },
       Action::Replace => {

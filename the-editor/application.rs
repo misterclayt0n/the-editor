@@ -985,6 +985,56 @@ impl App {
           },
         }
       },
+      Action::ReplaceViewWithTerminal { view_id } => {
+        use the_terminal::TerminalSession;
+
+        // Get the document ID before we replace the view
+        let doc_id = if let Some(view) = self.editor.tree.try_get(view_id) {
+          Some(view.doc)
+        } else {
+          self.editor.set_error("View not found");
+          return;
+        };
+
+        let terminal_id = self.editor.next_terminal_id;
+        self.editor.next_terminal_id += 1;
+
+        match TerminalSession::new(24, 80, None) {
+          Ok(mut session) => {
+            // Apply configured max FPS from editor config
+            if let Some(terminal_config) = &self.editor.config().terminal {
+              session.set_max_fps(terminal_config.max_fps);
+            }
+
+            session.set_redraw_notifier(Some(Arc::new(|| the_editor_event::request_redraw())));
+
+            let session = Rc::new(RefCell::new(session));
+            match self
+              .editor
+              .tree
+              .replace_view_with_terminal(view_id, session, terminal_id)
+            {
+              Some(_terminal_view_id) => {
+                // Remove view data from the document
+                if let Some(doc_id) = doc_id {
+                  if let Some(doc) = self.editor.documents.get_mut(&doc_id) {
+                    doc.remove_view(view_id);
+                  }
+                }
+                self.editor.set_status("Opened terminal");
+              },
+              None => {
+                self.editor.set_error("Failed to replace view with terminal");
+              },
+            }
+          },
+          Err(e) => {
+            self
+              .editor
+              .set_error(format!("Failed to spawn terminal: {}", e));
+          },
+        }
+      },
       _ => {
         // Other actions not yet implemented
       },

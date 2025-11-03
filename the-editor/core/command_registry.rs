@@ -568,6 +568,18 @@ impl CommandRegistry {
     ));
 
     self.register(TypableCommand::new(
+      "terminal",
+      &["term"],
+      "Replace current view with a terminal",
+      terminal,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
       "help",
       &["h"],
       "Show help for commands",
@@ -1675,9 +1687,13 @@ fn buffer_close(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()>
     return Ok(());
   }
 
-  use crate::view_mut;
+  // Check if focused node is a document view (not a terminal)
+  let Some(view_id) = cx.editor.focused_view_id() else {
+    cx.editor
+      .set_error("no active document view to close".to_string());
+    return Ok(());
+  };
 
-  let view_id = view_mut!(cx.editor).id;
   let doc_id = cx
     .editor
     .documents
@@ -1728,6 +1744,23 @@ fn buffer_previous(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<
   // buffer list
   cx.editor
     .set_status("buffer previous (not implemented)".to_string());
+  Ok(())
+}
+
+fn terminal(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  // Check if focused node is a document view (not already a terminal)
+  let Some(view_id) = cx.editor.focused_view_id() else {
+    cx.editor
+      .set_error("no active document view to replace with terminal".to_string());
+    return Ok(());
+  };
+
+  // Set pending action to replace the current view with a terminal
+  cx.editor.pending_action = Some(crate::editor::Action::ReplaceViewWithTerminal { view_id });
   Ok(())
 }
 

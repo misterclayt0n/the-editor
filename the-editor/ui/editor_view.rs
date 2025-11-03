@@ -765,39 +765,42 @@ impl Component for EditorView {
             cx.editor.count = new_count;
 
             // Ensure cursor visibility and commit history for non-insert commands
-            let mode_after = cx.editor.mode();
-            let scrolloff = cx.editor.config().scrolloff;
-            let (start_line, end_line) = {
-              let (view, doc) = crate::current!(cx.editor);
-              let text = doc.text();
-              let text_slice = text.slice(..);
-              let cursor_pos = doc.selection(view.id).primary().cursor(text_slice);
-              let len_lines = text.len_lines();
-              let len_chars = text.len_chars();
-              let current_line = if len_chars == 0 {
-                0
-              } else if cursor_pos < len_chars {
-                text.char_to_line(cursor_pos)
-              } else {
-                len_lines.saturating_sub(1)
+            // Skip this block if focus is on a terminal (not a document view)
+            if cx.editor.focused_view_id().is_some() {
+              let mode_after = cx.editor.mode();
+              let scrolloff = cx.editor.config().scrolloff;
+              let (start_line, end_line) = {
+                let (view, doc) = crate::current!(cx.editor);
+                let text = doc.text();
+                let text_slice = text.slice(..);
+                let cursor_pos = doc.selection(view.id).primary().cursor(text_slice);
+                let len_lines = text.len_lines();
+                let len_chars = text.len_chars();
+                let current_line = if len_chars == 0 {
+                  0
+                } else if cursor_pos < len_chars {
+                  text.char_to_line(cursor_pos)
+                } else {
+                  len_lines.saturating_sub(1)
+                };
+
+                view.ensure_cursor_in_view(doc, scrolloff);
+
+                if mode_after != Mode::Insert {
+                  doc.append_changes_to_history(view);
+                }
+
+                let start = current_line.saturating_sub(1);
+                let end = if len_lines == 0 {
+                  0
+                } else {
+                  (current_line + 1).min(len_lines.saturating_sub(1))
+                };
+                (start, end)
               };
 
-              view.ensure_cursor_in_view(doc, scrolloff);
-
-              if mode_after != Mode::Insert {
-                doc.append_changes_to_history(view);
-              }
-
-              let start = current_line.saturating_sub(1);
-              let end = if len_lines == 0 {
-                0
-              } else {
-                (current_line + 1).min(len_lines.saturating_sub(1))
-              };
-              (start, end)
-            };
-
-            self.dirty_region.mark_range_dirty(start_line, end_line);
+              self.dirty_region.mark_range_dirty(start_line, end_line);
+            }
 
             // Process callbacks
             if !callbacks.is_empty() {

@@ -8,19 +8,23 @@ use std::{
 use slotmap::HopSlotMap;
 use the_terminal::TerminalSession;
 
-use crate::core::{
-  ViewId,
-  animation::{
-    AnimationHandle,
-    Easing,
-    presets,
+use crate::{
+  core::{
+    DocumentId,
+    ViewId,
+    animation::{
+      AnimationHandle,
+      Easing,
+      presets,
+    },
+    graphics::Rect,
+    layout::{
+      Constraint as LayoutConstraint,
+      Layout as UiLayout,
+    },
+    view::View,
   },
-  graphics::Rect,
-  layout::{
-    Constraint as LayoutConstraint,
-    Layout as UiLayout,
-  },
-  view::View,
+  editor::GutterConfig,
 };
 
 // Helper struct to track area animations for views
@@ -107,13 +111,18 @@ impl Node {
     }
   }
 
-  pub fn terminal(session: Rc<RefCell<TerminalSession>>, id: u32) -> Self {
+  pub fn terminal(
+    session: Rc<RefCell<TerminalSession>>,
+    id: u32,
+    replaced_doc: Option<DocumentId>,
+  ) -> Self {
     Self {
       parent:  ViewId::default(),
       content: Content::Terminal(Box::new(TerminalNode {
         session,
         id,
         area: Rect::default(),
+        replaced_doc,
       })),
     }
   }
@@ -164,11 +173,14 @@ impl Default for Container {
 pub struct TerminalNode {
   /// The terminal session (wrapped in RefCell for interior mutability during
   /// rendering)
-  pub session: Rc<RefCell<TerminalSession>>,
+  pub session:      Rc<RefCell<TerminalSession>>,
   /// Terminal's unique identifier
-  pub id:      u32,
+  pub id:           u32,
   /// Current area occupied by this terminal
-  pub area:    Rect,
+  pub area:         Rect,
+  /// The document that was replaced by this terminal (for fullscreen terminals)
+  /// Used to restore the original buffer when terminal exits
+  pub replaced_doc: Option<DocumentId>,
 }
 
 impl std::fmt::Debug for TerminalNode {
@@ -245,7 +257,7 @@ impl Tree {
   pub fn insert_terminal(&mut self, session: Rc<RefCell<TerminalSession>>, id: u32) -> ViewId {
     let focus = self.focus;
     let parent = self.nodes[focus].parent;
-    let mut node = Node::terminal(session, id);
+    let mut node = Node::terminal(session, id, None);
     node.parent = parent;
     let node_id = self.nodes.insert(node);
 
@@ -294,7 +306,7 @@ impl Tree {
     }
 
     let parent = self.nodes[anchor].parent;
-    let mut node = Node::terminal(session, id);
+    let mut node = Node::terminal(session, id, None);
     node.parent = parent;
     let node_id = self.nodes.insert(node);
 
@@ -828,14 +840,19 @@ impl Tree {
       return None;
     }
 
-    // Get the parent before we modify anything
+    // Get the parent and document ID before we modify anything
     let parent = self.nodes[view_id].parent;
+    let replaced_doc = if let Content::View(view) = &self.nodes[view_id].content {
+      Some(view.doc)
+    } else {
+      None
+    };
 
     // Remove the old view node
     let _removed = self.nodes.remove(view_id)?;
 
-    // Create the new terminal node with same parent
-    let mut terminal_node = Node::terminal(session, terminal_id);
+    // Create the new terminal node with same parent and track replaced document
+    let mut terminal_node = Node::terminal(session, terminal_id, replaced_doc);
     terminal_node.parent = parent;
 
     // Insert the terminal node
@@ -855,6 +872,55 @@ impl Tree {
 
     self.recalculate();
     Some(terminal_view_id)
+  }
+
+  /// Replace a terminal node with a view node, restoring the original document
+  ///
+  /// This is used when a terminal exits and we want to restore the buffer that was
+  /// replaced. Returns the new view ID if successful.
+  pub fn replace_terminal_with_view(
+    &mut self,
+    terminal_id: ViewId,
+    doc_id: DocumentId,
+  ) -> Option<ViewId> {
+    // Ensure the node exists and is a terminal
+    if !self.contains(terminal_id)
+      || !matches!(self.nodes[terminal_id].content, Content::Terminal(_))
+    {
+      return None;
+    }
+
+    // Get the parent before we modify anything
+    let parent = self.nodes[terminal_id].parent;
+
+    // Remove the terminal node
+    let _removed = self.nodes.remove(terminal_id)?;
+
+    // Create a new view for the document
+    let view = View::new(doc_id, GutterConfig::default());
+    let mut view_node = Node::view(view);
+    view_node.parent = parent;
+
+    // Insert the view node
+    let view_id = self.nodes.insert(view_node);
+
+    // Update the view's ID to match the one assigned by the tree
+    self.get_mut(view_id).id = view_id;
+
+    // Update the parent's child reference
+    if let Node { content: Content::Container(container), .. } = &mut self.nodes[parent] {
+      if let Some(pos) = container.children.iter().position(|&child| child == terminal_id) {
+        container.children[pos] = view_id;
+      }
+    }
+
+    // Update focus to the new view
+    if self.focus == terminal_id {
+      self.focus = view_id;
+    }
+
+    self.recalculate();
+    Some(view_id)
   }
 
   // Finds the split in the given direction if it exists

@@ -14,6 +14,7 @@ use the_editor_renderer::{
 
 use crate::{
   core::{
+    ViewId,
     commands,
     graphics::Rect,
     movement::Direction,
@@ -503,10 +504,21 @@ impl Application for App {
     // Increment frame counter
     self.frame_counter = self.frame_counter.wrapping_add(1);
 
-    // Process pending terminal responses
+    // Process pending terminal responses and check for exits
     // This sends queued responses (e.g., cursor position reports) back to the shell
-    for (_, terminal) in self.editor.tree.terminals() {
+    let mut exited_terminals = Vec::new();
+    for (view_id, terminal) in self.editor.tree.terminals() {
       terminal.session.borrow_mut().process_responses();
+
+      // Check if terminal has exited
+      if !terminal.session.borrow().is_alive() {
+        exited_terminals.push(view_id);
+      }
+    }
+
+    // Clean up exited terminals
+    for terminal_id in exited_terminals {
+      self.handle_terminal_exit(terminal_id);
     }
 
     // Handle pending actions from the editor (e.g., spawn terminal)
@@ -1039,6 +1051,60 @@ impl App {
         // Other actions not yet implemented
       },
     }
+  }
+
+  fn handle_terminal_exit(&mut self, terminal_id: ViewId) {
+    // Check if this is a tracked terminal pane
+    if let Some(pane) = self.editor.terminal_pane_for_view(terminal_id) {
+      // Tracked pane terminal exited
+      self.editor.clear_terminal_pane(pane);
+      self.editor.tree.remove(terminal_id);
+
+      // Focus another view if available
+      if let Some(fallback_view) = self.editor.focused_view_id() {
+        self.editor.tree.focus = fallback_view;
+      }
+
+      self
+        .editor
+        .set_status(format!("{} exited", pane.display_name()));
+      return;
+    }
+
+    // Fullscreen terminal - try to restore the original document
+    if let Some(terminal) = self.editor.tree.get_terminal(terminal_id) {
+      if let Some(doc_id) = terminal.replaced_doc {
+        // Restore the original document
+        if self.editor.documents.contains_key(&doc_id) {
+          match self.editor.tree.replace_terminal_with_view(terminal_id, doc_id) {
+            Some(view_id) => {
+              // Initialize view data in the document
+              if let Some(doc) = self.editor.documents.get_mut(&doc_id) {
+                doc.ensure_view_init(view_id);
+              }
+
+              self
+                .editor
+                .set_status("Terminal exited, restored buffer".to_string());
+              return;
+            },
+            None => {
+              self.editor.set_error("Failed to restore buffer after terminal exit".to_string());
+            },
+          }
+        }
+      }
+    }
+
+    // Fallback: just remove the terminal
+    self.editor.tree.remove(terminal_id);
+
+    // Focus another view if available
+    if let Some(fallback_view) = self.editor.focused_view_id() {
+      self.editor.tree.focus = fallback_view;
+    }
+
+    self.editor.set_status("Terminal exited".to_string());
   }
 
   fn handle_scroll(&mut self, delta: ScrollDelta, renderer: &mut Renderer) {

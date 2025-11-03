@@ -2998,6 +2998,18 @@ impl Editor {
     *self.terminal_pane_slot(pane) = None;
   }
 
+  /// Check if a terminal view is a tracked pane (bottom or right)
+  /// Returns Some(pane) if it's a tracked pane, None otherwise
+  pub fn terminal_pane_for_view(&self, view_id: ViewId) -> Option<TerminalPane> {
+    if self.terminal_bottom == Some(view_id) {
+      Some(TerminalPane::Bottom)
+    } else if self.terminal_right == Some(view_id) {
+      Some(TerminalPane::Right)
+    } else {
+      None
+    }
+  }
+
   pub fn toggle_terminal_pane(&mut self, pane: TerminalPane) {
     // If the pane already exists, close it.
     if let Some(existing) = self.terminal_pane_slot_ref(pane) {

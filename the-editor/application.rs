@@ -82,6 +82,8 @@ pub struct App {
 
   // Track whether the next key press should be treated as a meta prefix for terminal shortcuts
   terminal_meta_pending: bool,
+  // Track whether Ctrl+W was pressed in terminal, waiting for window command
+  terminal_window_prefix_pending: bool,
 }
 
 impl App {
@@ -142,6 +144,7 @@ impl App {
       last_frame_time: std::time::Instant::now(),
       frame_counter: 0,
       terminal_meta_pending: false,
+      terminal_window_prefix_pending: false,
     }
   }
 
@@ -612,6 +615,28 @@ impl Application for App {
 
         let mut prepend_escape = false;
 
+        // Handle Ctrl+W prefix for window navigation (h/j/k/l)
+        if self.terminal_window_prefix_pending {
+          self.terminal_window_prefix_pending = false;
+
+          // Check for window navigation keys (h/j/k/l or arrow keys)
+          use crate::core::tree::Direction;
+          let direction = match key_press.code {
+            Key::Char('h') | Key::Left => Some(Direction::Left),
+            Key::Char('j') | Key::Down => Some(Direction::Down),
+            Key::Char('k') | Key::Up => Some(Direction::Up),
+            Key::Char('l') | Key::Right => Some(Direction::Right),
+            _ => None,
+          };
+
+          if let Some(dir) = direction {
+            self.editor.focus_direction(dir);
+            return true;
+          }
+
+          // If not a window navigation key, fall through to send to terminal
+        }
+
         if self.terminal_meta_pending {
           self.terminal_meta_pending = false;
           if let Some(pane) = terminal_toggle_target(key_press.code) {
@@ -619,6 +644,16 @@ impl Application for App {
             return true;
           }
           prepend_escape = true;
+        }
+
+        // Intercept Ctrl+W to enable window commands from terminal
+        if key_press.code == Key::Char('w')
+          && key_press.ctrl
+          && !key_press.alt
+          && !key_press.shift
+        {
+          self.terminal_window_prefix_pending = true;
+          return true;
         }
 
         // Use Ctrl+Space as the terminal meta prefix instead of ESC
@@ -689,6 +724,7 @@ impl Application for App {
       }
     } else {
       self.terminal_meta_pending = false;
+      self.terminal_window_prefix_pending = false;
     }
 
     // Check if EditorView has a pending on_next_key callback.

@@ -14,6 +14,7 @@ use std::{
     Mutex,
     atomic::{
       AtomicBool,
+      AtomicU64,
       Ordering,
     },
   },
@@ -118,6 +119,10 @@ pub struct TerminalSession {
 
   /// Optional callback invoked whenever the terminal requests a redraw.
   redraw_notifier: Arc<Mutex<Option<RedrawCallback>>>,
+
+  /// Last time we notified about a redraw (nanoseconds since arbitrary epoch)
+  /// Used to throttle redraw notifications and prevent event system saturation
+  last_notify_time: Arc<AtomicU64>,
 }
 
 impl TerminalSession {
@@ -165,6 +170,8 @@ impl TerminalSession {
     let needs_redraw_for_callback = Arc::clone(&needs_redraw);
     let redraw_notifier = Arc::new(Mutex::new(None::<RedrawCallback>));
     let redraw_notifier_for_callback = Arc::clone(&redraw_notifier);
+    let last_notify_time = Arc::new(AtomicU64::new(0));
+    let last_notify_time_for_callback = Arc::clone(&last_notify_time);
 
     let output_callback: OutputCallback = Arc::new(move |data: &[u8]| {
       // Lock terminal and write data
@@ -178,13 +185,31 @@ impl TerminalSession {
         log::error!("Failed to lock terminal for write");
       }
 
-      // Notify listeners that new output is available
-      let callback = redraw_notifier_for_callback
-        .lock()
-        .ok()
-        .and_then(|guard| guard.as_ref().map(Arc::clone));
-      if let Some(cb) = callback {
-        cb();
+      // Throttle redraw notifications to prevent event system saturation
+      // This is the critical fix for performance with large outputs (ps, etc.)
+      // Similar to Ghostty's 25ms coalescing window, we use 16ms (~60 FPS)
+      const MIN_NOTIFY_INTERVAL_NS: u64 = 16_000_000; // 16ms
+
+      let now = Instant::now().elapsed().as_nanos() as u64;
+      let last = last_notify_time_for_callback.load(Ordering::Relaxed);
+
+      // Only notify if enough time has passed since last notification
+      if now.saturating_sub(last) >= MIN_NOTIFY_INTERVAL_NS {
+        // Try to update the timestamp atomically
+        // If another thread beat us to it, that's fine - they'll notify
+        if last_notify_time_for_callback
+          .compare_exchange(last, now, Ordering::Release, Ordering::Relaxed)
+          .is_ok()
+        {
+          // We won the race - send the notification
+          let callback = redraw_notifier_for_callback
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(Arc::clone));
+          if let Some(cb) = callback {
+            cb();
+          }
+        }
       }
     });
 
@@ -203,6 +228,7 @@ impl TerminalSession {
       last_render_time: Instant::now(),
       max_fps: 120,
       redraw_notifier,
+      last_notify_time,
     })
   }
 

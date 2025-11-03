@@ -1587,3 +1587,31 @@ impl App {
     });
   }
 }
+
+impl Drop for App {
+  fn drop(&mut self) {
+    log::debug!("App dropping, cleaning up terminals");
+
+    // Kill all terminal sessions to ensure clean shutdown
+    // This prevents hanging on PTY read threads during runtime shutdown
+    let terminals: Vec<_> = self.editor.tree.terminals().map(|(id, _)| id).collect();
+
+    if !terminals.is_empty() {
+      log::debug!("Killing {} terminal session(s)", terminals.len());
+
+      for terminal_id in terminals {
+        if let Some(terminal) = self.editor.tree.get_terminal_mut(terminal_id) {
+          // Use the runtime handle to block on the async kill operation
+          if let Err(e) = self
+            .runtime_handle
+            .block_on(terminal.session.borrow_mut().kill())
+          {
+            log::warn!("Failed to kill terminal {:?}: {}", terminal_id, e);
+          }
+        }
+      }
+
+      log::debug!("Terminal cleanup complete");
+    }
+  }
+}

@@ -19,8 +19,11 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Maintain terminal render state.
   - [x] Improve performance.
   - [ ] Add custom theme support - Still don't know if I pull ghostty theme from the user's ghostty config or if it should be custom. Probably custom since we're not really embedding all of ghostty defaults.
-  - [ ] Focus keybindings.
-  - [ ] Add kitty image protocol (fucking insane btw).
+  - [x] Focus keybindings.
+  - [ ] Investigate overall performance (quick benchmark - type `ps` a couple of times and then `clear` the screen).
+  - [ ] Floating terminal panel.
+  - [ ] Render different cursor shapes in the terminal.
+  - [ ] Cursor animations? Like on the rest of the editor?
 - [ ] File tree.
 - [ ] Command palette.
 - [ ] "reload-all" prompt command.

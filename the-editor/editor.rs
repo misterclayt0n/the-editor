@@ -411,8 +411,6 @@ pub struct Editor {
   /// Pending action to be executed by the App
   pub pending_action: Option<Action>,
 
-  /// Terminal manager for integrated terminal support
-  pub terminal_manager: crate::terminal_manager::TerminalManager,
   /// Counter for generating unique terminal IDs
   pub next_terminal_id: u32,
 }
@@ -1962,7 +1960,6 @@ impl Editor {
       noop_effect_pending: false,
       fade_mode: FadeMode::default(),
       pending_action: None,
-      terminal_manager: crate::terminal_manager::TerminalManager::new(),
       next_terminal_id: 0,
     };
 

@@ -28,7 +28,6 @@ use crate::{
     KeyBinding,
     Keymaps,
   },
-  terminal_manager::TerminalManager,
   ui::{
     components::{
       button::Button,
@@ -50,7 +49,6 @@ pub struct App {
   pub editor:           Editor,
   pub jobs:             Jobs,
   pub input_handler:    InputHandler,
-  pub terminal_manager: TerminalManager,
 
   // GlobalConfig pointer for runtime updates
   pub config_ptr: std::sync::Arc<arc_swap::ArcSwap<crate::core::config::Config>>,
@@ -130,7 +128,6 @@ impl App {
       config_ptr,
       jobs: Jobs::new(),
       input_handler: InputHandler::new(mode),
-      terminal_manager: TerminalManager::new(),
       local_set,
       runtime_handle,
       smooth_scroll_enabled: conf.smooth_scroll_enabled,

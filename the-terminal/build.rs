@@ -27,11 +27,16 @@ fn main() {
   println!("cargo:rustc-link-lib=static=ghostty_wrapper");
   println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
 
-  // Find libghostty-vt from either:
-  // 1. LD_LIBRARY_PATH (set by Nix)
-  // 2. Local ghostty project build
-  let ghostty_lib_path = if let Ok(ld_lib_path) = std::env::var("LD_LIBRARY_PATH") {
-    // Try to find libghostty-vt in LD_LIBRARY_PATH (set by Nix)
+  // Find libghostty-vt from:
+  // 1. Vendored pre-built libraries (checked into repo)
+  // 2. LD_LIBRARY_PATH (set by Nix dev shell)
+  let vendored_path = cargo_manifest_dir.join("vendored/linux-x86_64");
+
+  let ghostty_lib_path = if vendored_path.join("libghostty-vt.so").exists() {
+    // Use vendored library (default for most users)
+    vendored_path
+  } else if let Ok(ld_lib_path) = std::env::var("LD_LIBRARY_PATH") {
+    // Try to find libghostty-vt in LD_LIBRARY_PATH (Nix users)
     ld_lib_path
       .split(':')
       .find_map(|path| {
@@ -43,38 +48,17 @@ fn main() {
         }
       })
       .unwrap_or_else(|| {
-        // Fall back to local ghostty build
-        let ghostty_dir = cargo_manifest_dir
-          .parent()
-          .expect("Invalid cargo dir")
-          .parent()
-          .expect("Invalid cargo dir")
-          .join("ghostty");
-        ghostty_dir.join("zig-out/lib")
+        eprintln!("ERROR: libghostty-vt not found in LD_LIBRARY_PATH");
+        eprintln!("Searched paths: {}", ld_lib_path);
+        panic!("Missing libghostty-vt");
       })
   } else {
-    // No LD_LIBRARY_PATH, look for local ghostty
-    let ghostty_dir = cargo_manifest_dir
-      .parent()
-      .expect("Invalid cargo dir")
-      .parent()
-      .expect("Invalid cargo dir")
-      .join("ghostty");
-    ghostty_dir.join("zig-out/lib")
+    eprintln!("ERROR: libghostty-vt not found");
+    eprintln!("Expected location: {}", vendored_path.display());
+    eprintln!("\nThis shouldn't happen if you cloned from git.");
+    eprintln!("The vendored library should be checked into the repository.");
+    panic!("Missing vendored libghostty-vt");
   };
-
-  if !ghostty_lib_path.exists() {
-    eprintln!(
-      "ERROR: libghostty-vt not found at: {}",
-      ghostty_lib_path.display()
-    );
-    eprintln!("This can happen if:");
-    eprintln!("  1. Building locally: build ghostty with 'cd ~/code/ghostty && zig build'");
-    eprintln!(
-      "  2. Building in Nix: the dev shell should provide libghostty-vt via LD_LIBRARY_PATH"
-    );
-    panic!("Missing libghostty-vt");
-  }
 
   println!(
     "cargo:rustc-link-search=native={}",

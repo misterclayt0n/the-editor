@@ -179,6 +179,8 @@ impl TerminalSession {
     let last_notify_time = Arc::new(AtomicU64::new(0));
     let last_notify_time_for_callback = Arc::clone(&last_notify_time);
 
+    let start_time = Instant::now();
+
     let output_callback: OutputCallback = Arc::new(move |data: &[u8]| {
       // Lock terminal and write data
       if let Ok(mut term) = terminal_for_callback.lock() {
@@ -196,7 +198,7 @@ impl TerminalSession {
       // Similar to Ghostty's 25ms coalescing window, we use 16ms (~60 FPS)
       const MIN_NOTIFY_INTERVAL_NS: u64 = 16_000_000; // 16ms
 
-      let now = Instant::now().elapsed().as_nanos() as u64;
+      let now = start_time.elapsed().as_nanos() as u64;
       let last = last_notify_time_for_callback.load(Ordering::Relaxed);
 
       // Only notify if enough time has passed since last notification
@@ -347,6 +349,9 @@ impl TerminalSession {
     if let Ok(mut guard) = self.redraw_notifier.lock() {
       *guard = notifier;
     }
+
+    // Reset throttle so the next PTY write notifies immediately after reattach.
+    self.last_notify_time.store(0, Ordering::Relaxed);
   }
 
   fn notify_redraw_listeners(&self) {

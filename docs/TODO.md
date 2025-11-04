@@ -23,6 +23,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Investigate overall performance (quick benchmark - type `ps` a couple of times and then `clear` the screen).
   - [ ] Floating terminal panel.
   - [ ] Render different cursor shapes in the terminal.
+  - [ ] Mouse support.
   - [ ] Cursor animations? Like on the rest of the editor?
 - [ ] File tree.
 - [ ] Command palette.

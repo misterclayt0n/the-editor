@@ -616,6 +616,30 @@ impl CommandRegistry {
     ));
 
     self.register(TypableCommand::new(
+      "reload",
+      &["rl"],
+      "Reload the current buffer from disk",
+      reload,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "reload-all",
+      &["rla"],
+      "Reload all open buffers from disk",
+      reload_all,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
       "sh",
       &["shell", "shell-command"],
       "Run shell command asynchronously and stream output to the compilation buffer",
@@ -2489,6 +2513,98 @@ fn config_open_workspace(cx: &mut Context, _args: Args, event: PromptEvent) -> R
   let config_path = crate::editor::Editor::workspace_config_file_path();
   cx.editor
     .open(&config_path, crate::editor::Action::Replace)?;
+  Ok(())
+}
+
+fn reload(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  use crate::current;
+
+  let view_id = cx
+    .editor
+    .focused_view_id()
+    .expect("no active document view available");
+
+  let (view, doc) = current!(cx.editor);
+  if let Err(error) = doc.reload(view, &cx.editor.diff_providers) {
+    cx.editor.set_error(format!("{}", error));
+    return Ok(());
+  }
+
+  if let Some(path) = doc.path() {
+    cx.editor
+      .language_servers
+      .file_event_handler
+      .file_changed(path.to_path_buf());
+  }
+
+  cx.editor.ensure_cursor_in_view(view_id);
+  Ok(())
+}
+
+fn reload_all(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  use crate::{
+    doc_mut,
+    view_mut,
+  };
+
+  let view_id = cx
+    .editor
+    .focused_view_id()
+    .expect("no active document view available");
+
+  // Collect all document IDs and their associated view IDs
+  let docs_view_ids: Vec<(crate::core::DocumentId, Vec<crate::core::ViewId>)> = cx
+    .editor
+    .documents
+    .iter()
+    .map(|(doc_id, _doc)| {
+      let view_ids: Vec<_> = cx
+        .editor
+        .tree
+        .views()
+        .filter(|(view, _)| view.doc == *doc_id)
+        .map(|(view, _)| view.id)
+        .collect();
+
+      (*doc_id, view_ids)
+    })
+    .collect();
+
+  for (doc_id, view_ids) in docs_view_ids {
+    // Get the first view for this document, or use the current view
+    let first_view_id = view_ids.first().copied().unwrap_or(view_id);
+    let view = view_mut!(cx.editor, first_view_id);
+    let doc = doc_mut!(cx.editor, &doc_id);
+
+    // Sync changes before reloading
+    view.sync_changes(doc);
+
+    if let Err(error) = doc.reload(view, &cx.editor.diff_providers) {
+      cx.editor.set_error(format!("{}", error));
+      continue;
+    }
+
+    if let Some(path) = doc.path() {
+      cx.editor
+        .language_servers
+        .file_event_handler
+        .file_changed(path.to_path_buf());
+    }
+
+    // Ensure cursor is in view for all views of this document
+    for view_id in view_ids {
+      cx.editor.ensure_cursor_in_view(view_id);
+    }
+  }
+
   Ok(())
 }
 

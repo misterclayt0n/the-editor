@@ -1466,6 +1466,41 @@ export fn ghostty_terminal_get_default_background(
 ///     // render cursor
 /// }
 /// ```
+export fn ghostty_terminal_scroll_viewport_delta(
+    term: ?*GhosttyTerminal,
+    delta_rows: i32,
+) bool {
+    if (term == null) return false;
+
+    const wrapper: *TerminalWrapper = @ptrCast(@alignCast(term));
+    const delta: isize = @intCast(delta_rows);
+
+    wrapper.terminal.scrollViewport(.{ .delta = delta }) catch return false;
+    return true;
+}
+
+/// Scroll the viewport to the top of scrollback.
+export fn ghostty_terminal_scroll_viewport_top(
+    term: ?*GhosttyTerminal,
+) bool {
+    if (term == null) return false;
+
+    const wrapper: *TerminalWrapper = @ptrCast(@alignCast(term));
+    wrapper.terminal.scrollViewport(.{ .top = {} }) catch return false;
+    return true;
+}
+
+/// Scroll the viewport to the bottom (active area).
+export fn ghostty_terminal_scroll_viewport_bottom(
+    term: ?*GhosttyTerminal,
+) bool {
+    if (term == null) return false;
+
+    const wrapper: *TerminalWrapper = @ptrCast(@alignCast(term));
+    wrapper.terminal.scrollViewport(.{ .bottom = {} }) catch return false;
+    return true;
+}
+
 export fn ghostty_terminal_is_viewport_at_bottom(
     term: ?*const GhosttyTerminal,
 ) bool {

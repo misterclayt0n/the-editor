@@ -124,6 +124,7 @@ impl Node {
         area: Rect::default(),
         replaced_doc,
         last_theme_hash: 0,
+        scroll_accumulator: 0.0,
       })),
     }
   }
@@ -174,16 +175,18 @@ impl Default for Container {
 pub struct TerminalNode {
   /// The terminal session (wrapped in RefCell for interior mutability during
   /// rendering)
-  pub session:         Rc<RefCell<TerminalSession>>,
+  pub session:            Rc<RefCell<TerminalSession>>,
   /// Terminal's unique identifier
-  pub id:              u32,
+  pub id:                 u32,
   /// Current area occupied by this terminal
-  pub area:            Rect,
+  pub area:               Rect,
   /// The document that was replaced by this terminal (for fullscreen terminals)
   /// Used to restore the original buffer when terminal exits
-  pub replaced_doc:    Option<DocumentId>,
+  pub replaced_doc:       Option<DocumentId>,
   /// Hash of the last applied terminal theme to avoid redundant updates
-  pub last_theme_hash: u64,
+  pub last_theme_hash:    u64,
+  /// Accumulated fractional scroll from smooth scrolling devices.
+  pub scroll_accumulator: f32,
 }
 
 impl std::fmt::Debug for TerminalNode {

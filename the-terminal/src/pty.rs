@@ -67,15 +67,20 @@ impl PtySession {
   /// # Arguments
   /// * `rows` - Number of rows in the terminal
   /// * `cols` - Number of columns in the terminal
-  /// * `shell` - Shell command with args (e.g., vec!["nu"]) or vec!["bash", "-l"]).
-  ///   If None, uses $SHELL or /bin/bash
+  /// * `shell` - Shell command with args (e.g., vec!["nu"]) or vec!["bash",
+  ///   "-l"]). If None, uses $SHELL or /bin/bash
   /// * `on_output` - Callback invoked when PTY output arrives (called from read
   ///   thread)
   ///
   /// # Spawns background threads/tasks
   /// - Dedicated blocking read thread: Continuously reads PTY, calls callback
   /// - Async writer task: Processes input queue, writes to PTY
-  pub fn new(rows: u16, cols: u16, shell: Option<Vec<String>>, on_output: OutputCallback) -> Result<Self> {
+  pub fn new(
+    rows: u16,
+    cols: u16,
+    shell: Option<Vec<String>>,
+    on_output: OutputCallback,
+  ) -> Result<Self> {
     // Create PTY
     let pty = Pty::new()?;
     pty.resize(pty_process::Size::new(rows, cols))?;

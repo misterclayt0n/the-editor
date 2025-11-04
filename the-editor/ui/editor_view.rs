@@ -3,6 +3,7 @@ use std::time::Instant;
 use the_editor_event::request_redraw;
 use the_editor_renderer::{
   Color,
+  ScrollDelta,
   TextSection,
 };
 use the_editor_stdx::rope::RopeSliceExt;
@@ -524,6 +525,62 @@ impl Component for EditorView {
           }
 
           if let Some(terminal) = cx.editor.tree.get_terminal_mut(focus_id) {
+            if key.shift && !key.ctrl && !key.alt {
+              let mut viewport_rows = terminal.area.height as i32;
+              if viewport_rows <= 0 {
+                viewport_rows = terminal.session.borrow().size().0 as i32;
+              }
+              viewport_rows = viewport_rows.max(1);
+
+              match key.code {
+                Key::PageUp => {
+                  terminal.scroll_accumulator = 0.0;
+                  let result = {
+                    let session_ref = terminal.session.borrow();
+                    session_ref.scroll_viewport_lines(-viewport_rows)
+                  };
+                  if let Err(e) = result {
+                    log::error!("Failed to scroll terminal {}: {}", terminal.id, e);
+                  }
+                  return EventResult::Consumed(None);
+                },
+                Key::PageDown => {
+                  terminal.scroll_accumulator = 0.0;
+                  let result = {
+                    let session_ref = terminal.session.borrow();
+                    session_ref.scroll_viewport_lines(viewport_rows)
+                  };
+                  if let Err(e) = result {
+                    log::error!("Failed to scroll terminal {}: {}", terminal.id, e);
+                  }
+                  return EventResult::Consumed(None);
+                },
+                Key::Home => {
+                  terminal.scroll_accumulator = 0.0;
+                  let result = {
+                    let session_ref = terminal.session.borrow();
+                    session_ref.scroll_viewport_to_top()
+                  };
+                  if let Err(e) = result {
+                    log::error!("Failed to scroll terminal {} to top: {}", terminal.id, e);
+                  }
+                  return EventResult::Consumed(None);
+                },
+                Key::End => {
+                  terminal.scroll_accumulator = 0.0;
+                  let result = {
+                    let session_ref = terminal.session.borrow();
+                    session_ref.scroll_viewport_to_bottom()
+                  };
+                  if let Err(e) = result {
+                    log::error!("Failed to scroll terminal {} to bottom: {}", terminal.id, e);
+                  }
+                  return EventResult::Consumed(None);
+                },
+                _ => {},
+              }
+            }
+
             let mut bytes = Vec::new();
             if prepend_escape {
               bytes.push(0x1B);
@@ -836,7 +893,47 @@ impl Component for EditorView {
         // are handled during the next render() call
         self.handle_mouse_event(mouse, cx)
       },
-      Event::Scroll(_) => EventResult::Ignored(None),
+      Event::Scroll(delta) => {
+        let focus_id = cx.editor.tree.focus;
+        if let Some(terminal) = cx.editor.tree.get_terminal_mut(focus_id) {
+          let line_delta = match *delta {
+            ScrollDelta::Lines { y, .. } => y,
+            ScrollDelta::Pixels { y, .. } => {
+              let cell_height = self.cached_cell_height.max(1.0);
+              y / cell_height
+            },
+          };
+
+          if line_delta != 0.0 {
+            terminal.scroll_accumulator += line_delta;
+            let lines_to_scroll = terminal.scroll_accumulator as i32;
+
+            if lines_to_scroll != 0 {
+              terminal.scroll_accumulator -= lines_to_scroll as f32;
+
+              let viewport_rows = terminal.area.height.max(1) as i32;
+              let max_jump = viewport_rows.max(1);
+              let mut delta_rows = -lines_to_scroll;
+              delta_rows = delta_rows.clamp(-max_jump, max_jump);
+
+              if delta_rows != 0 {
+                let result = {
+                  let session_ref = terminal.session.borrow();
+                  session_ref.scroll_viewport_lines(delta_rows)
+                };
+
+                if let Err(e) = result {
+                  log::error!("Failed to scroll terminal {}: {}", terminal.id, e);
+                }
+              }
+            }
+          }
+
+          return EventResult::Consumed(None);
+        }
+
+        EventResult::Ignored(None)
+      },
       _ => EventResult::Ignored(None),
     }
   }
@@ -2880,7 +2977,7 @@ impl EditorView {
     renderer: &mut Surface,
     cx: &Context,
     font_width: f32,
-    font_size: f32,
+    _font_size: f32,
   ) {
     // Get separator color from theme
     let theme = &cx.editor.theme;

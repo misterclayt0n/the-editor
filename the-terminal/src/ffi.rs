@@ -203,6 +203,18 @@ unsafe extern "C" {
     b: u8,
   ) -> bool;
 
+  /// Scroll the terminal viewport by a delta in rows (negative scrolls up).
+  pub fn ghostty_terminal_scroll_viewport_delta(
+    term: *mut GhosttyTerminal,
+    delta_rows: i32,
+  ) -> bool;
+
+  /// Scroll the terminal viewport to the top of scrollback.
+  pub fn ghostty_terminal_scroll_viewport_top(term: *mut GhosttyTerminal) -> bool;
+
+  /// Scroll the terminal viewport to the bottom (active area).
+  pub fn ghostty_terminal_scroll_viewport_bottom(term: *mut GhosttyTerminal) -> bool;
+
   /// Check if terminal needs a full rebuild.
   ///
   /// Returns true if terminal-level or screen-level dirty flags are set,

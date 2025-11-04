@@ -24,7 +24,10 @@ use std::{
   },
 };
 
-use anyhow::Result;
+use anyhow::{
+  Result,
+  anyhow,
+};
 use crossbeam::queue::ArrayQueue;
 
 type RedrawCallback = Arc<dyn Fn() + Send + Sync + 'static>;
@@ -133,7 +136,8 @@ impl TerminalSession {
   /// # Arguments
   /// * `rows` - Number of terminal rows
   /// * `cols` - Number of terminal columns
-  /// * `shell` - Optional shell command with args. If None, uses $SHELL or /bin/bash
+  /// * `shell` - Optional shell command with args. If None, uses $SHELL or
+  ///   /bin/bash
   pub fn new(rows: u16, cols: u16, shell: Option<Vec<String>>) -> Result<Self> {
     let mut terminal = Terminal::new(cols, rows)?;
 
@@ -431,6 +435,52 @@ impl TerminalSession {
     if let Ok(mut term) = self.terminal.lock() {
       term.clear_dirty();
     }
+  }
+
+  /// Scroll the viewport by a number of rows (negative scrolls up).
+  pub fn scroll_viewport_lines(&self, delta_rows: i32) -> Result<()> {
+    if delta_rows == 0 {
+      return Ok(());
+    }
+
+    {
+      let mut term = self
+        .terminal
+        .lock()
+        .map_err(|_| anyhow!("Terminal mutex poisoned while scrolling"))?;
+      term.scroll_viewport_delta(delta_rows)?;
+    }
+
+    self.mark_needs_full_render();
+    Ok(())
+  }
+
+  /// Scroll the viewport to the top of scrollback.
+  pub fn scroll_viewport_to_top(&self) -> Result<()> {
+    {
+      let mut term = self
+        .terminal
+        .lock()
+        .map_err(|_| anyhow!("Terminal mutex poisoned while scrolling to top"))?;
+      term.scroll_viewport_top()?;
+    }
+
+    self.mark_needs_full_render();
+    Ok(())
+  }
+
+  /// Scroll the viewport to the bottom (active screen).
+  pub fn scroll_viewport_to_bottom(&self) -> Result<()> {
+    {
+      let mut term = self
+        .terminal
+        .lock()
+        .map_err(|_| anyhow!("Terminal mutex poisoned while scrolling to bottom"))?;
+      term.scroll_viewport_bottom()?;
+    }
+
+    self.mark_needs_full_render();
+    Ok(())
   }
 
   /// Send input to the PTY (keyboard input from user)

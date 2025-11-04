@@ -437,6 +437,46 @@ impl Terminal {
     unsafe { ffi::ghostty_terminal_is_viewport_at_bottom(self.inner) }
   }
 
+  /// Scroll the viewport by a delta in rows (negative scrolls up).
+  pub fn scroll_viewport_delta(&mut self, delta_rows: i32) -> anyhow::Result<()> {
+    if delta_rows == 0 {
+      return Ok(());
+    }
+
+    let success = unsafe { ffi::ghostty_terminal_scroll_viewport_delta(self.inner, delta_rows) };
+
+    if !success {
+      return Err(anyhow::anyhow!(
+        "Failed to scroll terminal viewport by {}",
+        delta_rows
+      ));
+    }
+
+    Ok(())
+  }
+
+  /// Scroll the viewport to the top of the scrollback buffer.
+  pub fn scroll_viewport_top(&mut self) -> anyhow::Result<()> {
+    let success = unsafe { ffi::ghostty_terminal_scroll_viewport_top(self.inner) };
+    if !success {
+      return Err(anyhow::anyhow!("Failed to scroll terminal viewport to top"));
+    }
+
+    Ok(())
+  }
+
+  /// Scroll the viewport to the bottom (active screen).
+  pub fn scroll_viewport_bottom(&mut self) -> anyhow::Result<()> {
+    let success = unsafe { ffi::ghostty_terminal_scroll_viewport_bottom(self.inner) };
+    if !success {
+      return Err(anyhow::anyhow!(
+        "Failed to scroll terminal viewport to bottom"
+      ));
+    }
+
+    Ok(())
+  }
+
   /// Get the terminal's default background color.
   ///
   /// Returns the background color used for cells that don't have an explicit

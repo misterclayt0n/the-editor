@@ -145,6 +145,17 @@ fn ansi256_to_rgb(index: u8) -> (u8, u8, u8) {
   }
 }
 
+fn mix_hash(mut hash: u64, value: u64) -> u64 {
+  const CONSTANT: u64 = 0x9E37_79B9_7F4A_7C15;
+  const MULTIPLIER: u64 = 0xBF58_476D_1CE4_E5B9;
+  hash = hash.wrapping_add(CONSTANT).rotate_left(5);
+  hash ^ value.wrapping_mul(MULTIPLIER)
+}
+
+fn rgb_hash((r, g, b): (u8, u8, u8)) -> u64 {
+  ((r as u64) << 16) | ((g as u64) << 8) | (b as u64)
+}
+
 fn ansi_component_to_rgb(component: u8) -> u8 {
   if component == 0 {
     0
@@ -2516,19 +2527,59 @@ impl EditorView {
             .and_then(|style| style.bg)
             .and_then(theme_color_to_rgb)
         });
-      let foreground_rgb = terminal_theme.foreground().and_then(theme_color_to_rgb);
+      let foreground_rgb = terminal_theme
+        .foreground()
+        .and_then(theme_color_to_rgb)
+        .or_else(|| {
+          theme
+            .try_get("ui.text")
+            .and_then(|style| style.fg)
+            .and_then(theme_color_to_rgb)
+        });
+      let palette_colors: Vec<(u16, (u8, u8, u8))> = terminal_theme
+        .palette()
+        .iter()
+        .filter_map(|(index, color)| theme_color_to_rgb(*color).map(|rgb| (*index, rgb)))
+        .collect();
 
-      // Update session metadata (cell size, background color)
+      let mut theme_hash = terminal_theme.fingerprint();
+      if let Some(rgb) = background_rgb {
+        theme_hash = mix_hash(theme_hash, rgb_hash(rgb));
+      }
+      if let Some(rgb) = foreground_rgb {
+        theme_hash = mix_hash(theme_hash, rgb_hash(rgb));
+      }
+      for (index, rgb) in &palette_colors {
+        theme_hash = mix_hash(theme_hash, ((*index as u64) << 32) ^ rgb_hash(*rgb));
+      }
+
       {
         let mut session = terminal.session.borrow_mut();
         session.set_cell_pixel_size(font_width, renderer.cell_height());
-        if let Some((r, g, b)) = background_rgb {
-          session.set_background_color(r, g, b);
-        }
-        if let Some((r, g, b)) = foreground_rgb {
-          session.set_foreground_color(r, g, b);
+        if terminal.last_theme_hash != theme_hash {
+          if let Some((r, g, b)) = background_rgb {
+            session.set_background_color(r, g, b);
+          }
+          if let Some((r, g, b)) = foreground_rgb {
+            session.set_foreground_color(r, g, b);
+          }
+          for (index, (r, g, b)) in &palette_colors {
+            session.set_palette_color(*index, *r, *g, *b);
+          }
+          terminal.last_theme_hash = theme_hash;
         }
       }
+
+      let selection_bg_override = terminal_theme
+        .selection_background()
+        .and_then(theme_color_to_rgb)
+        .map(|(r, g, b)| the_terminal::terminal::Rgb { r, g, b });
+      let selection_fg_override = terminal_theme
+        .selection_foreground()
+        .and_then(theme_color_to_rgb)
+        .map(|(r, g, b)| the_terminal::terminal::Rgb { r, g, b });
+      let cursor_rect_override = terminal_theme.cursor_color().and_then(theme_color_to_rgb);
+      let cursor_text_override = terminal_theme.cursor_text().and_then(theme_color_to_rgb);
 
       // Calculate terminal dimensions in cells
       let new_cols = term_area.width;
@@ -2617,8 +2668,8 @@ impl EditorView {
           // Note: Colors are already swapped in wrapper.zig for inverse cells,
           // so we just use cell.bg directly (don't swap again!)
           let bg_to_render = if cell.selected {
-            // Cell is selected - use foreground as selection background (ghostty default)
-            Some(cell.fg)
+            // Cell is selected - prefer theme override, fall back to ghostty default
+            selection_bg_override.or(Some(cell.fg))
           } else {
             // Normal: use explicit background if set (already swapped for inverse in Zig)
             cell.bg
@@ -2700,8 +2751,8 @@ impl EditorView {
           // Note: For inverse cells, wrapper.zig already swapped fg/bg,
           // so cell.fg now contains the correct text color. Don't swap again!
           let text_color = if cell.selected {
-            // Selected: use background (original bg color) for text
-            cell.bg.unwrap_or(cell.fg)
+            // Selected: use override when provided, otherwise fallback to ghostty default
+            selection_fg_override.or_else(|| cell.bg).unwrap_or(cell.fg)
           } else {
             // Normal and inverse: use fg (already swapped for inverse in wrapper.zig)
             cell.fg
@@ -2770,14 +2821,46 @@ impl EditorView {
         let centering_offset = (line_height - glyph_height) / 2.0;
         let cursor_y = term_y + (cursor_row as f32 * line_height) + centering_offset;
 
-        // Draw cursor as a semi-transparent rectangle
+        let cursor_color = cursor_rect_override
+          .map(|(r, g, b)| Color::rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0));
+
         renderer.draw_rect(
           cursor_x,
           cursor_y,
           font_width,
           glyph_height,
-          Color::new(0.8, 0.8, 0.8, 0.5),
+          cursor_color.unwrap_or_else(|| Color::new(0.8, 0.8, 0.8, 0.5)),
         );
+
+        if let Some((r, g, b)) = cursor_text_override {
+          let _ = term_guard.copy_row_ext(cursor_row, raw_row.as_mut_slice());
+          if let Some(cell_ext) = raw_row.get(cursor_col as usize) {
+            let cell: Cell = (*cell_ext).into();
+            let mut ch = cell.character().unwrap_or(' ');
+            if ch == '\0' {
+              ch = ' ';
+            }
+
+            let fg_color = Color::rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0);
+            let mut text = String::new();
+            text.push(ch);
+            let glyph_width = usize::from(cell.width.max(1));
+            if glyph_width > 1 {
+              for _ in 1..glyph_width {
+                text.push(' ');
+              }
+            }
+            let text_x = term_x + (cursor_col as f32 * font_width);
+            let text_y = term_y + (cursor_row as f32 * line_height);
+            let mut section = TextSection::new(text_x, text_y);
+            section = section.add_text(
+              TextSegment::new(text)
+                .with_color(fg_color)
+                .with_size(font_size),
+            );
+            renderer.draw_text(section);
+          }
+        }
       }
 
       // Drop the terminal guard to release the lock

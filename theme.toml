@@ -110,8 +110,31 @@ warning = "lightning"
 "acp.gutter.tool"      = { fg = "delta" }      # Purple 🔧
 
 [terminal]
-background = "#000000"
-foreground = "#ffffff"
+background = "midnight"
+foreground = "lavender"
+cursor_color = "white"
+cursor_text = "revolver"
+selection_background = "bossanova"
+selection_foreground = "white"
+split_divider_color = "comet"
+
+  [terminal.palette]
+  "0"  = "revolver"
+  "1"  = "apricot"
+  "2"  = "mint"
+  "3"  = "lightning"
+  "4"  = "lavender"
+  "5"  = "lilac"
+  "6"  = "silver"
+  "7"  = "white"
+  "8"  = "comet"
+  "9"  = "apricot"
+  "10" = "mint"
+  "11" = "lightning"
+  "12" = "lavender"
+  "13" = "lilac"
+  "14" = "silver"
+  "15" = "white"
 
 [palette]
 bossanova = "#452859"

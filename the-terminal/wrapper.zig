@@ -799,6 +799,27 @@ export fn ghostty_terminal_set_foreground_color(term: ?*GhosttyTerminal, r: u8, 
     wrapper.foreground_color = .{ r, g, b };
 }
 
+export fn ghostty_terminal_set_palette_color(term: ?*GhosttyTerminal, index: u16, r: u8, g: u8, b: u8) bool {
+    if (term == null) return false;
+
+    const wrapper: *TerminalWrapper = @ptrCast(@alignCast(term));
+    const palette_len = wrapper.terminal.color_palette.colors.len;
+    const idx: usize = @intCast(index);
+    if (idx >= palette_len) return false;
+
+    const rgb = ghostty_vt.color.RGB{
+        .r = r,
+        .g = g,
+        .b = b,
+    };
+
+    wrapper.terminal.default_palette[idx] = rgb;
+    wrapper.terminal.color_palette.colors[idx] = rgb;
+    wrapper.terminal.color_palette.mask.unset(idx);
+    wrapper.terminal.flags.dirty.palette = true;
+    return true;
+}
+
 /// Write raw bytes to the terminal, parsing VT100/ANSI escape sequences
 /// This is the correct function to use for PTY output
 export fn ghostty_terminal_write(term: ?*GhosttyTerminal, data: [*]const u8, len: usize) bool {

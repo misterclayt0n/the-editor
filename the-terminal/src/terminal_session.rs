@@ -522,6 +522,15 @@ impl TerminalSession {
     }
   }
 
+  /// Override a palette entry.
+  pub fn set_palette_color(&mut self, index: u16, r: u8, g: u8, b: u8) {
+    if let Ok(mut term) = self.terminal.lock() {
+      if term.set_palette_color(index, r, g, b) {
+        self.needs_redraw.store(true, Ordering::Release);
+      }
+    }
+  }
+
   /// Create a snapshot of the terminal screen for rendering.
   ///
   /// This implements ghostty's clone-and-release pattern for minimal lock

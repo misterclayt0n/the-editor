@@ -153,6 +153,11 @@ impl Terminal {
     unsafe { ffi::ghostty_terminal_set_foreground_color(self.inner, r, g, b) };
   }
 
+  /// Update a palette color entry.
+  pub fn set_palette_color(&mut self, index: u16, r: u8, g: u8, b: u8) -> bool {
+    unsafe { ffi::ghostty_terminal_set_palette_color(self.inner, index, r, g, b) }
+  }
+
   /// Get a view of the entire terminal grid.
   pub fn grid(&self) -> Grid<'_> {
     Grid {

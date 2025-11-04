@@ -92,6 +92,33 @@
 "variable.builtin"        = { fg = "blue" }
 "warning"                 = { fg = "orange" }
 
+[terminal]
+background = "#161822"
+foreground = "#c7c9d1"
+cursor_color = "#d2d4de"
+cursor_text = "#161822"
+selection_background = "#282d43"
+selection_foreground = "#c7c9d1"
+split_divider_color = "#454d73"
+
+  [terminal.palette]
+  "0"  = "#1e2132"
+  "1"  = "#e27878"
+  "2"  = "#b5bf82"
+  "3"  = "#e2a478"
+  "4"  = "#85a0c7"
+  "5"  = "#a093c7"
+  "6"  = "#89b9c2"
+  "7"  = "#c6c8d1"
+  "8"  = "#6b7089"
+  "9"  = "#e98989"
+  "10" = "#c0ca8e"
+  "11" = "#e9b189"
+  "12" = "#91acd1"
+  "13" = "#ada0d3"
+  "14" = "#95c4ce"
+  "15" = "#d2d4de"
+
 [palette]
 
 orange = "#e2a578"

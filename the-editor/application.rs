@@ -949,8 +949,12 @@ impl App {
         let id = self.editor.next_terminal_id;
         self.editor.next_terminal_id += 1;
 
+        // Get configured shell executable (first element only, no command flags like -c)
+        // The shell config like ["nu", "-c"] is for running commands, not interactive sessions
+        let shell = self.editor.config().shell.first().map(|s| vec![s.clone()]);
+
         // Spawn terminal session with default dimensions (80x24)
-        match TerminalSession::new(24, 80, None) {
+        match TerminalSession::new(24, 80, shell) {
           Ok(mut session) => {
             // Apply configured max FPS from editor config
             if let Some(terminal_config) = &self.editor.config().terminal {
@@ -989,7 +993,11 @@ impl App {
         let id = self.editor.next_terminal_id;
         self.editor.next_terminal_id += 1;
 
-        match TerminalSession::new(24, 80, None) {
+        // Get configured shell executable (first element only, no command flags like -c)
+        // The shell config like ["nu", "-c"] is for running commands, not interactive sessions
+        let shell = self.editor.config().shell.first().map(|s| vec![s.clone()]);
+
+        match TerminalSession::new(24, 80, shell) {
           Ok(mut session) => {
             // Apply configured max FPS from editor config
             if let Some(terminal_config) = &self.editor.config().terminal {
@@ -1038,7 +1046,11 @@ impl App {
         let terminal_id = self.editor.next_terminal_id;
         self.editor.next_terminal_id += 1;
 
-        match TerminalSession::new(24, 80, None) {
+        // Get configured shell executable (first element only, no command flags like -c)
+        // The shell config like ["nu", "-c"] is for running commands, not interactive sessions
+        let shell = self.editor.config().shell.first().map(|s| vec![s.clone()]);
+
+        match TerminalSession::new(24, 80, shell) {
           Ok(mut session) => {
             // Apply configured max FPS from editor config
             if let Some(terminal_config) = &self.editor.config().terminal {

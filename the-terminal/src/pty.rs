@@ -67,32 +67,35 @@ impl PtySession {
   /// # Arguments
   /// * `rows` - Number of rows in the terminal
   /// * `cols` - Number of columns in the terminal
-  /// * `shell` - Shell command to run (e.g., "/bin/bash"). If None, uses $SHELL
-  ///   or /bin/bash
+  /// * `shell` - Shell command with args (e.g., vec!["nu"]) or vec!["bash", "-l"]).
+  ///   If None, uses $SHELL or /bin/bash
   /// * `on_output` - Callback invoked when PTY output arrives (called from read
   ///   thread)
   ///
   /// # Spawns background threads/tasks
   /// - Dedicated blocking read thread: Continuously reads PTY, calls callback
   /// - Async writer task: Processes input queue, writes to PTY
-  pub fn new(rows: u16, cols: u16, shell: Option<&str>, on_output: OutputCallback) -> Result<Self> {
+  pub fn new(rows: u16, cols: u16, shell: Option<Vec<String>>, on_output: OutputCallback) -> Result<Self> {
     // Create PTY
     let pty = Pty::new()?;
     pty.resize(pty_process::Size::new(rows, cols))?;
 
     // Determine shell to use
-    let shell_path = if let Some(s) = shell {
-      s.to_string()
-    } else if let Ok(s) = std::env::var("SHELL") {
+    let shell_cmd = if let Some(s) = shell {
       s
+    } else if let Ok(s) = std::env::var("SHELL") {
+      vec![s]
     } else {
-      "/bin/bash".to_string()
+      vec!["/bin/bash".to_string()]
     };
 
-    log::debug!("Spawning shell: {}", shell_path);
+    log::debug!("Spawning shell: {:?}", shell_cmd);
 
     // Spawn shell process attached to PTY
-    let mut cmd = PtyCommand::new(&shell_path);
+    let mut cmd = PtyCommand::new(&shell_cmd[0]);
+    if shell_cmd.len() > 1 {
+      cmd.args(&shell_cmd[1..]);
+    }
 
     // Set terminal environment variables so the shell knows it's in a proper
     // terminal TERM tells programs what terminal capabilities are available

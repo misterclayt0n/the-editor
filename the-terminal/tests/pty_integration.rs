@@ -20,7 +20,7 @@ fn get_shell() -> &'static str {
 #[tokio::test]
 async fn test_terminal_session_spawn() {
   let shell = get_shell();
-  let mut session = TerminalSession::new(24, 80, Some(shell)).expect("Failed to create session");
+  let session = TerminalSession::new(24, 80, Some(vec![shell.to_string()])).expect("Failed to create session");
 
   assert!(session.is_alive(), "Shell should be alive");
   assert_eq!(session.size(), (24, 80), "Size should match");
@@ -29,7 +29,7 @@ async fn test_terminal_session_spawn() {
 #[tokio::test]
 async fn test_terminal_session_send_input() {
   let shell = get_shell();
-  let session = TerminalSession::new(24, 80, Some(shell)).expect("Failed to create session");
+  let session = TerminalSession::new(24, 80, Some(vec![shell.to_string()])).expect("Failed to create session");
 
   // Should not panic
   session
@@ -40,7 +40,7 @@ async fn test_terminal_session_send_input() {
 #[tokio::test]
 async fn test_terminal_session_echo_output() {
   let shell = get_shell();
-  let mut session = TerminalSession::new(24, 80, Some(shell)).expect("Failed to create session");
+  let session = TerminalSession::new(24, 80, Some(vec![shell.to_string()])).expect("Failed to create session");
 
   // Send echo command
   session
@@ -50,11 +50,9 @@ async fn test_terminal_session_echo_output() {
   // Give the shell time to execute
   tokio::time::sleep(Duration::from_millis(200)).await;
 
-  // Update terminal with output
-  session.update();
-
   // Check if we got any output in the terminal grid
-  let grid = session.terminal().grid();
+  let terminal = session.lock_terminal();
+  let grid = terminal.grid();
   let mut found_char = false;
 
   for row in 0..grid.rows() {
@@ -79,7 +77,7 @@ async fn test_terminal_session_echo_output() {
 #[tokio::test]
 async fn test_terminal_session_resize() {
   let shell = get_shell();
-  let mut session = TerminalSession::new(24, 80, Some(shell)).expect("Failed to create session");
+  let mut session = TerminalSession::new(24, 80, Some(vec![shell.to_string()])).expect("Failed to create session");
 
   session.resize(40, 100).expect("Resize should succeed");
 
@@ -93,7 +91,7 @@ async fn test_terminal_session_resize() {
 #[tokio::test]
 async fn test_terminal_session_multiple_commands() {
   let shell = get_shell();
-  let mut session = TerminalSession::new(24, 80, Some(shell)).expect("Failed to create session");
+  let session = TerminalSession::new(24, 80, Some(vec![shell.to_string()])).expect("Failed to create session");
 
   // Send first command
   session
@@ -101,7 +99,6 @@ async fn test_terminal_session_multiple_commands() {
     .expect("Send input should succeed");
 
   tokio::time::sleep(Duration::from_millis(100)).await;
-  session.update();
 
   // Send second command
   session
@@ -109,7 +106,6 @@ async fn test_terminal_session_multiple_commands() {
     .expect("Send input should succeed");
 
   tokio::time::sleep(Duration::from_millis(100)).await;
-  session.update();
 
   // Should still be alive
   assert!(session.is_alive(), "Shell should still be alive");

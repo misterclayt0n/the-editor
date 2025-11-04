@@ -133,8 +133,8 @@ impl TerminalSession {
   /// # Arguments
   /// * `rows` - Number of terminal rows
   /// * `cols` - Number of terminal columns
-  /// * `shell` - Optional shell command. If None, uses $SHELL or /bin/bash
-  pub fn new(rows: u16, cols: u16, shell: Option<&str>) -> Result<Self> {
+  /// * `shell` - Optional shell command with args. If None, uses $SHELL or /bin/bash
+  pub fn new(rows: u16, cols: u16, shell: Option<Vec<String>>) -> Result<Self> {
     let mut terminal = Terminal::new(cols, rows)?;
 
     // Create bounded queue for terminal responses (capacity 64, matching ghostty)

@@ -28,6 +28,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [ ] Scrollback navigation.
   - [ ] Selection API.
   - [ ] Hyperlink resolution.
+  - [ ] Investigate bug on nushell outputs rendering in the terminal (I kinda have to press something for it to actually render after typing some command).
 - [ ] File tree.
 - [ ] Command palette.
 - [ ] "reload-all" prompt command.

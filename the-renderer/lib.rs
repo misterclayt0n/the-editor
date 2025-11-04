@@ -409,7 +409,12 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
                 alt: modifiers.alt_key(),
                 super_: modifiers.super_key(),
               };
-              if matches!(key_press.code, event::Key::Char(_)) {
+              // Normalize shift for simple character keys (Shift+A → 'A')
+              // but preserve it when combined with Ctrl or Alt (Ctrl+Shift+C != Ctrl+C)
+              if matches!(key_press.code, event::Key::Char(_))
+                && !key_press.ctrl
+                && !key_press.alt
+              {
                 key_press.shift = false;
               }
               handled = self

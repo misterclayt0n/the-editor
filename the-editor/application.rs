@@ -671,6 +671,100 @@ impl Application for App {
           }
         }
 
+        // Intercept Ctrl+Shift+C (copy) and Ctrl+Shift+V (paste) for clipboard operations
+        if key_press.ctrl && key_press.shift && !key_press.alt {
+          match key_press.code {
+            Key::Char('c') | Key::Char('C') => {
+              // Copy terminal selection to clipboard
+              let selection = {
+                let session_ref = terminal.session.borrow();
+                session_ref.selection_text(true)
+              };
+              // Note: terminal reference not used after this point,
+              // so borrow checker allows access to self.editor below
+
+              if let Some(text) = selection {
+                if !text.is_empty() {
+                  if let Err(e) = self.editor.registers.write('+', vec![text.clone()]) {
+                    log::error!("Failed to copy terminal selection to clipboard: {}", e);
+                    self.editor.set_error(format!("Copy failed: {}", e));
+                  } else {
+                    self.editor.set_status("Copied");
+                  }
+                  if let Err(e) = self.editor.registers.write('*', vec![text]) {
+                    log::error!("Failed to copy terminal selection to primary: {}", e);
+                  }
+                } else {
+                  self.editor.set_status("Nothing to copy (empty selection)");
+                }
+              } else {
+                self.editor.set_status("Nothing to copy (no selection)");
+              }
+              return true;
+            },
+            Key::Char('v') | Key::Char('V') => {
+              // Paste from clipboard to terminal
+              // Note: terminal reference not used in this section,
+              // so borrow checker allows access to self.editor below
+              let mut clipboard_text: Option<String> = None;
+
+              if let Some(values) = self.editor.registers.read('+', &self.editor) {
+                let collected: Vec<String> = values.map(|v| v.into_owned()).collect();
+                if !collected.is_empty() {
+                  clipboard_text = Some(collected.join("\n"));
+                }
+              }
+
+              if clipboard_text.is_none() {
+                if let Some(values) = self.editor.registers.read('*', &self.editor) {
+                  let collected: Vec<String> = values.map(|v| v.into_owned()).collect();
+                  if !collected.is_empty() {
+                    clipboard_text = Some(collected.join("\n"));
+                  }
+                }
+              }
+
+              if let Some(text) = clipboard_text {
+                if !text.is_empty() {
+                  // Reacquire terminal to send input
+                  let paste_result = if let Some(terminal) =
+                    self.editor.tree.get_terminal_mut(focus_id)
+                  {
+                    let result = {
+                      let session_ref = terminal.session.borrow();
+                      session_ref.send_input(text.into_bytes())
+                    };
+
+                    if result.is_ok() {
+                      terminal.selection_anchor = None;
+                      terminal.selection_last = None;
+                      terminal.session.borrow().mark_needs_redraw();
+                      the_editor_event::request_redraw();
+                    }
+                    result
+                  } else {
+                    Ok(())
+                  };
+
+                  // Set status after dropping terminal borrow
+                  if let Err(e) = paste_result {
+                    log::error!("Failed to paste to terminal: {}", e);
+                    self.editor.set_error(format!("Paste failed: {}", e));
+                  } else {
+                    self.editor.set_status("Pasted");
+                  }
+                } else {
+                  self.editor.set_status("Nothing to paste (empty)");
+                }
+              } else {
+                self.editor.set_status("Nothing to paste");
+              }
+              return true;
+            },
+            _ => {},
+          }
+        }
+
         if let Some(mut bytes) = input_event_to_terminal_bytes(&event) {
           if prepend_escape {
             let mut with_escape = Vec::with_capacity(bytes.len() + 1);

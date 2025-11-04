@@ -442,6 +442,56 @@ impl TerminalSession {
     }
   }
 
+  /// Set the active selection using viewport coordinates.
+  pub fn set_selection(&self, start: (u32, u32), end: (u32, u32), rectangle: bool) -> Result<()> {
+    let mut term = self
+      .terminal
+      .lock()
+      .map_err(|_| anyhow!("Terminal mutex poisoned while setting selection"))?;
+    term.set_selection_viewport(start, end, rectangle)?;
+    term.clear_dirty();
+    drop(term);
+
+    self.mark_needs_full_render();
+    Ok(())
+  }
+
+  /// Clear the current selection.
+  pub fn clear_selection(&self) {
+    if let Ok(mut term) = self.terminal.lock() {
+      term.clear_selection();
+      term.clear_dirty();
+    }
+    self.mark_needs_full_render();
+  }
+
+  /// Returns true if a selection is active.
+  pub fn has_selection(&self) -> bool {
+    self
+      .terminal
+      .lock()
+      .map(|term| term.has_selection())
+      .unwrap_or(false)
+  }
+
+  /// Retrieve the current selection contents as UTF-8 text.
+  pub fn selection_text(&self, trim: bool) -> Option<String> {
+    let term = self.terminal.lock().ok()?;
+    term.selection_text(trim).ok().flatten()
+  }
+
+  /// Compute the word boundary containing the given cell (viewport coords).
+  pub fn word_boundary_at(&self, row: u32, col: u32) -> Option<((u32, u32), (u32, u32))> {
+    let term = self.terminal.lock().ok()?;
+    term.word_boundary_at(row, col)
+  }
+
+  /// Compute the line boundary containing the given cell (viewport coords).
+  pub fn line_boundary_at(&self, row: u32, col: u32) -> Option<((u32, u32), (u32, u32))> {
+    let term = self.terminal.lock().ok()?;
+    term.line_boundary_at(row, col)
+  }
+
   /// Scroll the viewport by a number of rows (negative scrolls up).
   pub fn scroll_viewport_lines(&self, delta_rows: i32) -> Result<()> {
     if delta_rows == 0 {
@@ -505,6 +555,7 @@ impl TerminalSession {
   /// # }
   /// ```
   pub fn send_input(&self, data: Vec<u8>) -> Result<()> {
+    self.clear_selection();
     self.pty.send_input(data)
   }
 

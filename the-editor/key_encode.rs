@@ -268,7 +268,9 @@ fn table_lookup(key: &Key, mods: &Modifiers, modes: &TerminalModes) -> Option<&'
 
 /// Encode C0 control sequences (Ctrl+letter -> 0x01-0x1A)
 fn encode_c0_control(key: &Key, mods: &Modifiers) -> Option<String> {
-  if !mods.ctrl || mods.alt || mods.super_ {
+  // Only encode plain Ctrl+letter (reject if Shift, Alt, or Super are present)
+  // This ensures Ctrl+Shift+C is not encoded as Ctrl+C (0x03)
+  if !mods.ctrl || mods.alt || mods.super_ || mods.shift {
     return None;
   }
 

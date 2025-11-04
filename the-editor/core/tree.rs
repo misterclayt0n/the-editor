@@ -125,6 +125,9 @@ impl Node {
         replaced_doc,
         last_theme_hash: 0,
         scroll_accumulator: 0.0,
+        selection_anchor: None,
+        selection_last: None,
+        selection_mode: TerminalSelectionMode::Cell,
       })),
     }
   }
@@ -135,6 +138,13 @@ pub enum Layout {
   Horizontal,
   Vertical,
   // could explore stacked/tabbed
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalSelectionMode {
+  Cell,
+  Word,
+  Line,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -187,6 +197,12 @@ pub struct TerminalNode {
   pub last_theme_hash:    u64,
   /// Accumulated fractional scroll from smooth scrolling devices.
   pub scroll_accumulator: f32,
+  /// Original click cell for selection drags (viewport coordinates).
+  pub selection_anchor:   Option<(u32, u32)>,
+  /// Last target cell processed during selection drag.
+  pub selection_last:     Option<(u32, u32)>,
+  /// Selection mode (cell/word/line) for current drag session.
+  pub selection_mode:     TerminalSelectionMode,
 }
 
 impl std::fmt::Debug for TerminalNode {

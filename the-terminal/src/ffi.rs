@@ -215,6 +215,52 @@ unsafe extern "C" {
   /// Scroll the terminal viewport to the bottom (active area).
   pub fn ghostty_terminal_scroll_viewport_bottom(term: *mut GhosttyTerminal) -> bool;
 
+  /// Set the active selection using viewport coordinates.
+  pub fn ghostty_terminal_set_selection_viewport(
+    term: *mut GhosttyTerminal,
+    start_row: u32,
+    start_col: u32,
+    end_row: u32,
+    end_col: u32,
+    rectangle: bool,
+  ) -> bool;
+
+  /// Clear the current selection (if any).
+  pub fn ghostty_terminal_clear_selection(term: *mut GhosttyTerminal);
+
+  /// Returns true if a selection is active.
+  pub fn ghostty_terminal_has_selection(term: *const GhosttyTerminal) -> bool;
+
+  /// Retrieve the selection as UTF-8 text. Returns null if no selection.
+  /// The caller must free the returned buffer with
+  /// ghostty_terminal_free_selection_buffer.
+  pub fn ghostty_terminal_selection_string(
+    term: *const GhosttyTerminal,
+    trim: bool,
+    out_len: *mut usize,
+  ) -> *const u8;
+
+  /// Free a buffer allocated by ghostty_terminal_selection_string.
+  pub fn ghostty_terminal_free_selection_buffer(ptr: *const u8, len: usize);
+
+  /// Compute word boundaries for a viewport cell.
+  pub fn ghostty_terminal_selection_word_bounds(
+    term: *const GhosttyTerminal,
+    row: u32,
+    col: u32,
+    out_start: *mut GhosttyPoint,
+    out_end: *mut GhosttyPoint,
+  ) -> bool;
+
+  /// Compute line boundaries for a viewport cell.
+  pub fn ghostty_terminal_selection_line_bounds(
+    term: *const GhosttyTerminal,
+    row: u32,
+    col: u32,
+    out_start: *mut GhosttyPoint,
+    out_end: *mut GhosttyPoint,
+  ) -> bool;
+
   /// Check if terminal needs a full rebuild.
   ///
   /// Returns true if terminal-level or screen-level dirty flags are set,

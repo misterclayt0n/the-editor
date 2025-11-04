@@ -18,17 +18,18 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Toggle terminal.
   - [x] Maintain terminal render state.
   - [x] Improve performance.
-  - [ ] Add custom theme support - Still don't know if I pull ghostty theme from the user's ghostty config or if it should be custom. Probably custom since we're not really embedding all of ghostty defaults.
+  - [x] Add custom theme support - Still don't know if I pull ghostty theme from the user's ghostty config or if it should be custom. Probably custom since we're not really embedding all of ghostty defaults.
   - [x] Focus keybindings.
   - [x] Investigate overall performance (quick benchmark - type `ps` a couple of times and then `clear` the screen).
   - [ ] Floating terminal panel.
   - [ ] Render different cursor shapes in the terminal.
-  - [ ] Mouse support.
   - [ ] Cursor animations? Like on the rest of the editor?
   - [x] Scrollback navigation.
-  - [ ] Selection API.
+  - [x] Selection API.
+  - [x] Copy paste.
   - [ ] Hyperlink resolution.
-  - [ ] Investigate bug on nushell outputs rendering in the terminal (I kinda have to press something for it to actually render after typing some command).
+  - [x] Investigate bug on nushell outputs rendering in the terminal (I kinda have to press something for it to actually render after typing some command).
+  - [ ] Terminal picker.
 - [ ] File tree.
 - [ ] Command palette.
 - [ ] "reload-all" prompt command.

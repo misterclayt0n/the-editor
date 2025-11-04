@@ -437,6 +437,86 @@ impl Terminal {
     unsafe { ffi::ghostty_terminal_is_viewport_at_bottom(self.inner) }
   }
 
+  /// Set the selection using viewport coordinates.
+  pub fn set_selection_viewport(
+    &mut self,
+    start: (u32, u32),
+    end: (u32, u32),
+    rectangle: bool,
+  ) -> anyhow::Result<()> {
+    let success = unsafe {
+      ffi::ghostty_terminal_set_selection_viewport(
+        self.inner, start.0, start.1, end.0, end.1, rectangle,
+      )
+    };
+
+    if !success {
+      return Err(anyhow::anyhow!("Failed to update terminal selection"));
+    }
+
+    Ok(())
+  }
+
+  /// Clear the current selection.
+  pub fn clear_selection(&mut self) {
+    unsafe { ffi::ghostty_terminal_clear_selection(self.inner) }
+  }
+
+  /// Returns true if a selection is active.
+  pub fn has_selection(&self) -> bool {
+    unsafe { ffi::ghostty_terminal_has_selection(self.inner) }
+  }
+
+  /// Retrieve the current selection contents as UTF-8 text.
+  pub fn selection_text(&self, trim: bool) -> anyhow::Result<Option<String>> {
+    let mut len: usize = 0;
+    let ptr = unsafe { ffi::ghostty_terminal_selection_string(self.inner, trim, &mut len) };
+
+    if ptr.is_null() {
+      return Ok(None);
+    }
+
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec();
+    unsafe {
+      ffi::ghostty_terminal_free_selection_buffer(ptr, len);
+    }
+
+    let string = String::from_utf8(bytes)?;
+    Ok(Some(string))
+  }
+
+  /// Compute word boundaries for the given viewport cell.
+  pub fn word_boundary_at(&self, row: u32, col: u32) -> Option<((u32, u32), (u32, u32))> {
+    let mut start = ffi::GhosttyPoint { row: 0, col: 0 };
+    let mut end = start;
+
+    let success = unsafe {
+      ffi::ghostty_terminal_selection_word_bounds(self.inner, row, col, &mut start, &mut end)
+    };
+
+    if !success {
+      return None;
+    }
+
+    Some((convert_point(start), convert_point(end)))
+  }
+
+  /// Compute line boundaries for the given viewport cell.
+  pub fn line_boundary_at(&self, row: u32, col: u32) -> Option<((u32, u32), (u32, u32))> {
+    let mut start = ffi::GhosttyPoint { row: 0, col: 0 };
+    let mut end = start;
+
+    let success = unsafe {
+      ffi::ghostty_terminal_selection_line_bounds(self.inner, row, col, &mut start, &mut end)
+    };
+
+    if !success {
+      return None;
+    }
+
+    Some((convert_point(start), convert_point(end)))
+  }
+
   /// Scroll the viewport by a delta in rows (negative scrolls up).
   pub fn scroll_viewport_delta(&mut self, delta_rows: i32) -> anyhow::Result<()> {
     if delta_rows == 0 {
@@ -655,6 +735,12 @@ pub struct Rgb {
   pub r: u8,
   pub g: u8,
   pub b: u8,
+}
+
+fn convert_point(point: ffi::GhosttyPoint) -> (u32, u32) {
+  let row = point.row.max(0) as u32;
+  let col = point.col.max(0) as u32;
+  (row, col)
 }
 
 impl Rgb {

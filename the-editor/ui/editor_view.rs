@@ -1,4 +1,8 @@
-use std::time::Instant;
+use std::{
+  cmp::Ordering,
+  rc::Rc,
+  time::Instant,
+};
 
 use the_editor_event::request_redraw;
 use the_editor_renderer::{
@@ -40,7 +44,10 @@ use crate::{
       char_idx_at_visual_offset,
       visual_offset_from_block,
     },
-    tree::Direction,
+    tree::{
+      Direction,
+      TerminalSelectionMode,
+    },
   },
   editor::Editor,
   keymap::{
@@ -233,6 +240,7 @@ pub struct EditorView {
   // Mouse drag state for selection
   mouse_pressed:             bool,
   mouse_drag_anchor:         Option<usize>, // Document char index where drag started
+  terminal_dragging:         Option<crate::core::ViewId>,
   // Multi-click detection (double/triple-click)
   last_click_time:           Option<std::time::Instant>,
   last_click_pos:            Option<(f32, f32)>,
@@ -266,6 +274,47 @@ struct SeparatorDrag {
 }
 
 impl EditorView {
+  fn terminal_pos_cmp(a: (u32, u32), b: (u32, u32)) -> Ordering {
+    match a.0.cmp(&b.0) {
+      Ordering::Equal => a.1.cmp(&b.1),
+      other => other,
+    }
+  }
+
+  fn terminal_min_cell(a: (u32, u32), b: (u32, u32)) -> (u32, u32) {
+    if Self::terminal_pos_cmp(a, b) == Ordering::Greater {
+      b
+    } else {
+      a
+    }
+  }
+
+  fn terminal_max_cell(a: (u32, u32), b: (u32, u32)) -> (u32, u32) {
+    if Self::terminal_pos_cmp(a, b) == Ordering::Less {
+      b
+    } else {
+      a
+    }
+  }
+
+  fn terminal_selection_bounds(
+    session: &the_terminal::TerminalSession,
+    mode: TerminalSelectionMode,
+    cell: (u32, u32),
+  ) -> ((u32, u32), (u32, u32)) {
+    let bounds = match mode {
+      TerminalSelectionMode::Cell => Some((cell, cell)),
+      TerminalSelectionMode::Word => session.word_boundary_at(cell.0, cell.1),
+      TerminalSelectionMode::Line => session.line_boundary_at(cell.0, cell.1),
+    };
+
+    let mut result = bounds.unwrap_or((cell, cell));
+    if Self::terminal_pos_cmp(result.0, result.1) == Ordering::Greater {
+      std::mem::swap(&mut result.0, &mut result.1);
+    }
+    result
+  }
+
   pub fn new(keymaps: Keymaps) -> Self {
     // Defaults; will be overridden from config on first render
     Self {
@@ -288,6 +337,7 @@ impl EditorView {
       cached_font_size: 18.0,   // Default, will be updated during render
       mouse_pressed: false,
       mouse_drag_anchor: None,
+      terminal_dragging: None,
       last_click_time: None,
       last_click_pos: None,
       click_count: 0,
@@ -524,6 +574,10 @@ impl Component for EditorView {
             return self.execute_editor_command(cmd_fn, cx);
           }
 
+          // Note: Ctrl+Shift+C/V clipboard shortcuts for terminals are handled in
+          // application.rs before events reach the compositor, so this code path
+          // is not used for terminal keyboard events.
+
           if let Some(terminal) = cx.editor.tree.get_terminal_mut(focus_id) {
             if key.shift && !key.ctrl && !key.alt {
               let mut viewport_rows = terminal.area.height as i32;
@@ -593,6 +647,9 @@ impl Component for EditorView {
               };
               match result {
                 Ok(()) => {
+                  terminal.selection_anchor = None;
+                  terminal.selection_last = None;
+                  terminal.selection_mode = TerminalSelectionMode::Cell;
                   terminal.session.borrow().mark_needs_redraw();
                   request_redraw();
                 },
@@ -3098,7 +3155,56 @@ impl EditorView {
               cx.editor.focus(node_id);
             }
 
-            // If it's a view, handle text selection
+            if let Some((term_id, mut row, mut col)) =
+              self.screen_coords_to_terminal_cell(mouse.position, cx)
+            {
+              if term_id == node_id {
+                if let Some(terminal) = cx.editor.tree.get_terminal_mut(node_id) {
+                  let mode = match self.click_count {
+                    2 => TerminalSelectionMode::Word,
+                    3 => TerminalSelectionMode::Line,
+                    _ => TerminalSelectionMode::Cell,
+                  };
+
+                  let session_rc = Rc::clone(&terminal.session);
+                  let bounds = {
+                    let session = session_rc.borrow();
+                    let (rows, cols) = session.size();
+                    if rows == 0 || cols == 0 {
+                      return EventResult::Consumed(None);
+                    }
+
+                    let max_row = rows.saturating_sub(1) as u32;
+                    let max_col = cols.saturating_sub(1) as u32;
+                    row = row.min(max_row);
+                    col = col.min(max_col);
+
+                    Self::terminal_selection_bounds(&session, mode, (row, col))
+                  };
+
+                  terminal.selection_anchor = Some((row, col));
+                  terminal.selection_last = Some((row, col));
+                  terminal.selection_mode = mode;
+                  self.terminal_dragging = Some(term_id);
+
+                  let (mut start, mut end) = bounds;
+                  if Self::terminal_pos_cmp(start, end) == Ordering::Greater {
+                    std::mem::swap(&mut start, &mut end);
+                  }
+
+                  if let Err(e) = session_rc.borrow().set_selection(start, end, false) {
+                    log::error!(
+                      "Failed to initialize terminal selection {}: {}",
+                      terminal.id,
+                      e
+                    );
+                  }
+                }
+
+                return EventResult::Consumed(None);
+              }
+            }
+
             if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
               let scrolloff = cx.editor.config().scrolloff;
 
@@ -3112,12 +3218,8 @@ impl EditorView {
 
               // Create selection based on click count
               let selection = match self.click_count {
-                1 => {
-                  // Single click - point selection
-                  crate::core::selection::Selection::point(doc_pos)
-                },
+                1 => crate::core::selection::Selection::point(doc_pos),
                 2 => {
-                  // Double-click - select word
                   let text = doc.text();
                   let range = crate::core::selection::Range::point(doc_pos);
                   let word_range = crate::core::textobject::textobject_word(
@@ -3125,12 +3227,11 @@ impl EditorView {
                     range,
                     crate::core::textobject::TextObject::Around,
                     1,
-                    false, // short word (not WORD)
+                    false,
                   );
                   crate::core::selection::Selection::single(word_range.anchor, word_range.head)
                 },
                 3 => {
-                  // Triple-click - select line
                   let text = doc.text();
                   let line = text.char_to_line(doc_pos.min(text.len_chars()));
                   let start = text.line_to_char(line);
@@ -3146,13 +3247,13 @@ impl EditorView {
               let view = cx.editor.tree.get_mut(view_id);
               view.ensure_cursor_in_view(doc, scrolloff);
             }
-            // If it's a terminal, we've already switched focus above
-            // TODO: Future enhancement - send mouse events to terminal
 
             return EventResult::Consumed(None);
           }
         } else {
           // Mouse button released - end drag
+          self.terminal_dragging = None;
+
           self.mouse_pressed = false;
           self.mouse_drag_anchor = None;
           self.dragging_separator = None; // End separator drag
@@ -3203,6 +3304,53 @@ impl EditorView {
       },
       None => {
         // Mouse motion without button
+
+        if let Some(term_id) = self.terminal_dragging {
+          if let Some((hit_id, mut row, mut col)) =
+            self.screen_coords_to_terminal_cell(mouse.position, cx)
+          {
+            if hit_id == term_id {
+              if let Some(terminal) = cx.editor.tree.get_terminal_mut(term_id) {
+                if let Some(anchor_cell) = terminal.selection_anchor {
+                  let mode = terminal.selection_mode;
+                  let session_rc = Rc::clone(&terminal.session);
+
+                  let (anchor_bounds, target_bounds, target_cell) = {
+                    let session = session_rc.borrow();
+                    let (rows, cols) = session.size();
+                    if rows == 0 || cols == 0 {
+                      return EventResult::Consumed(None);
+                    }
+
+                    let max_row = rows.saturating_sub(1) as u32;
+                    let max_col = cols.saturating_sub(1) as u32;
+                    row = row.min(max_row);
+                    col = col.min(max_col);
+
+                    let anchor_bounds =
+                      Self::terminal_selection_bounds(&session, mode, anchor_cell);
+                    let target_bounds = Self::terminal_selection_bounds(&session, mode, (row, col));
+                    (anchor_bounds, target_bounds, (row, col))
+                  };
+
+                  terminal.selection_last = Some(target_cell);
+
+                  let mut start = Self::terminal_min_cell(anchor_bounds.0, target_bounds.0);
+                  let mut end = Self::terminal_max_cell(anchor_bounds.1, target_bounds.1);
+                  if Self::terminal_pos_cmp(start, end) == Ordering::Greater {
+                    std::mem::swap(&mut start, &mut end);
+                  }
+
+                  if let Err(e) = session_rc.borrow().set_selection(start, end, false) {
+                    log::error!("Failed to update terminal {} selection: {}", terminal.id, e);
+                  }
+                }
+              }
+            }
+          }
+
+          return EventResult::Consumed(None);
+        }
 
         // Check if we're dragging a separator
         if let Some(mut drag) = self.dragging_separator {
@@ -3403,6 +3551,42 @@ impl EditorView {
       let doc_pos = doc_pos.min(text.len_chars());
 
       return Some((view.id, doc_pos));
+    }
+
+    None
+  }
+
+  /// Convert screen pixel coordinates to terminal cell position (viewport
+  /// coords).
+  fn screen_coords_to_terminal_cell(
+    &self,
+    mouse_pos: (f32, f32),
+    cx: &Context,
+  ) -> Option<(crate::core::ViewId, u32, u32)> {
+    let (mouse_x, mouse_y) = mouse_pos;
+    let (cell_width, cell_height) = self.get_current_cell_metrics(cx);
+
+    if cell_width <= 0.0 || cell_height <= 0.0 {
+      return None;
+    }
+
+    let mouse_col = (mouse_x / cell_width).floor() as i32;
+    let mouse_row = (mouse_y / cell_height).floor() as i32;
+
+    for (term_id, term_node) in cx.editor.tree.terminals() {
+      let x0 = term_node.area.x as i32;
+      let y0 = term_node.area.y as i32;
+      let x1 = x0 + term_node.area.width as i32;
+      let y1 = y0 + term_node.area.height as i32;
+
+      if mouse_col < x0 || mouse_col >= x1 || mouse_row < y0 || mouse_row >= y1 {
+        continue;
+      }
+
+      let rel_col = (mouse_col - x0) as u32;
+      let rel_row = (mouse_row - y0) as u32;
+
+      return Some((term_id, rel_row, rel_col));
     }
 
     None

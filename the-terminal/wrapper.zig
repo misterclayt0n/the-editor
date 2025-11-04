@@ -1501,6 +1501,162 @@ export fn ghostty_terminal_scroll_viewport_bottom(
     return true;
 }
 
+/// Set the screen selection using viewport coordinates.
+export fn ghostty_terminal_set_selection_viewport(
+    term: ?*GhosttyTerminal,
+    start_row: u32,
+    start_col: u32,
+    end_row: u32,
+    end_col: u32,
+    rectangle: bool,
+) bool {
+    if (term == null) return false;
+
+    const wrapper: *TerminalWrapper = @ptrCast(@alignCast(term));
+
+    const to_point = struct {
+        fn convert(col: u32, row: u32) ghostty_vt.Point {
+            return .{ .viewport = .{
+                .x = @intCast(col),
+                .y = row,
+            } };
+        }
+    }.convert;
+
+    const start_point = to_point(start_col, start_row);
+    const end_point = to_point(end_col, end_row);
+
+    const maybe_start = wrapper.terminal.screen.pages.pin(start_point) orelse return false;
+    const maybe_end = wrapper.terminal.screen.pages.pin(end_point) orelse return false;
+
+    const selection = ghostty_vt.Selection.init(maybe_start, maybe_end, rectangle);
+    wrapper.terminal.screen.select(selection) catch return false;
+    return true;
+}
+
+/// Clear the current screen selection, if any.
+export fn ghostty_terminal_clear_selection(term: ?*GhosttyTerminal) void {
+    if (term == null) return;
+
+    const wrapper: *TerminalWrapper = @ptrCast(@alignCast(term));
+    wrapper.terminal.screen.clearSelection();
+}
+
+/// Returns true if a selection is active.
+export fn ghostty_terminal_has_selection(term: ?*const GhosttyTerminal) bool {
+    if (term == null) return false;
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+    return wrapper.terminal.screen.selection != null;
+}
+
+/// Retrieve the active selection as UTF-8 text (null-terminated).
+/// Caller must free the returned buffer with `ghostty_terminal_free_selection_buffer`.
+export fn ghostty_terminal_selection_string(
+    term: ?*const GhosttyTerminal,
+    trim: bool,
+    out_len: *usize,
+) ?*const u8 {
+    if (term == null) return null;
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+    const screen: *ghostty_vt.Screen = @constCast(&wrapper.terminal.screen);
+    const sel = screen.selection orelse return null;
+
+    const alloc = gpa.allocator();
+    const zig_string = screen.selectionString(alloc, .{
+        .sel = sel,
+        .trim = trim,
+    }) catch return null;
+    defer alloc.free(zig_string);
+
+    const len = zig_string.len;
+    const buffer = alloc.alloc(u8, len + 1) catch return null;
+    std.mem.copyForwards(u8, buffer[0..len], zig_string[0..len]);
+    buffer[len] = 0;
+
+    out_len.* = len;
+    const c_ptr: *const u8 = @ptrCast(buffer.ptr);
+    return c_ptr;
+}
+
+/// Free a buffer returned by `ghostty_terminal_selection_string`.
+export fn ghostty_terminal_free_selection_buffer(ptr: ?*const u8, len: usize) void {
+    if (ptr == null) return;
+
+    const alloc = gpa.allocator();
+    const mutable_ptr: [*]u8 = @ptrCast(@constCast(ptr.?));
+    if (len == 0) {
+        alloc.free(mutable_ptr[0..1]);
+    } else {
+        alloc.free(mutable_ptr[0 .. len + 1]);
+    }
+}
+
+fn pinToViewport(
+    screen: *ghostty_vt.Screen,
+    pin: ghostty_vt.PageList.Pin,
+    out: *CPoint,
+) bool {
+    const point = screen.pages.pointFromPin(.viewport, pin) orelse return false;
+    const vp = point.viewport;
+    out.* = .{
+        .row = @intCast(vp.y),
+        .col = @intCast(vp.x),
+    };
+    return true;
+}
+
+/// Get word boundaries around a viewport cell.
+export fn ghostty_terminal_selection_word_bounds(
+    term: ?*const GhosttyTerminal,
+    row: u32,
+    col: u32,
+    out_start: *CPoint,
+    out_end: *CPoint,
+) bool {
+    if (term == null) return false;
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+    const point = ghostty_vt.Point{ .viewport = .{ .x = @intCast(col), .y = row } };
+    const screen_ptr: *ghostty_vt.Screen = @constCast(&wrapper.terminal.screen);
+    const pin = screen_ptr.pages.pin(point) orelse return false;
+
+    var selection = screen_ptr.selectWord(pin) orelse return false;
+    defer selection.deinit(screen_ptr);
+
+    var ordered = selection.ordered(screen_ptr, .forward);
+    defer ordered.deinit(screen_ptr);
+
+    return pinToViewport(screen_ptr, ordered.start(), out_start) and
+        pinToViewport(screen_ptr, ordered.end(), out_end);
+}
+
+/// Get line boundaries around a viewport cell.
+export fn ghostty_terminal_selection_line_bounds(
+    term: ?*const GhosttyTerminal,
+    row: u32,
+    col: u32,
+    out_start: *CPoint,
+    out_end: *CPoint,
+) bool {
+    if (term == null) return false;
+
+    const wrapper: *const TerminalWrapper = @ptrCast(@alignCast(term));
+    const point = ghostty_vt.Point{ .viewport = .{ .x = @intCast(col), .y = row } };
+    const screen_ptr: *ghostty_vt.Screen = @constCast(&wrapper.terminal.screen);
+    const pin = screen_ptr.pages.pin(point) orelse return false;
+
+    var selection = screen_ptr.selectLine(.{ .pin = pin }) orelse return false;
+    defer selection.deinit(screen_ptr);
+
+    var ordered = selection.ordered(screen_ptr, .forward);
+    defer ordered.deinit(screen_ptr);
+
+    return pinToViewport(screen_ptr, ordered.start(), out_start) and
+        pinToViewport(screen_ptr, ordered.end(), out_end);
+}
+
 export fn ghostty_terminal_is_viewport_at_bottom(
     term: ?*const GhosttyTerminal,
 ) bool {

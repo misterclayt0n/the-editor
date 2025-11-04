@@ -295,6 +295,12 @@ fn create_interpolated_theme(from: &Theme, to: &Theme, t: f32) -> Theme {
     interpolated_highlights.push(interpolate_style(from_style, to_style, t));
   }
 
+  let terminal_theme = if t < 0.5 {
+    from.terminal().clone()
+  } else {
+    to.terminal().clone()
+  };
+
   // Create the interpolated theme
   Theme::with_styles(
     format!("{}→{}@{:.0}%", from.name(), to.name(), t * 100.0),
@@ -302,6 +308,7 @@ fn create_interpolated_theme(from: &Theme, to: &Theme, t: f32) -> Theme {
     to.scopes().to_vec(), // Use target theme's scopes
     interpolated_highlights,
     to.rainbow_length(),
+    terminal_theme,
   )
 }
 
@@ -2538,7 +2545,9 @@ impl Editor {
     }
 
     let focust_lost = match action {
-      Action::SpawnTerminal | Action::SpawnTerminalInPane { .. } | Action::ReplaceViewWithTerminal { .. } => {
+      Action::SpawnTerminal
+      | Action::SpawnTerminalInPane { .. }
+      | Action::ReplaceViewWithTerminal { .. } => {
         // These actions don't switch documents, just return without focus lost
         return;
       },

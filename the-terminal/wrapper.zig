@@ -606,8 +606,16 @@ fn populateCellExt(
     }
 
     const palette = &wrapper.terminal.color_palette.colors;
-    const default_fg = palette[@intFromEnum(ghostty_vt.color.Name.white)];
-    const default_bg = palette[@intFromEnum(ghostty_vt.color.Name.black)];
+    const default_fg = ghostty_vt.color.RGB{
+        .r = wrapper.foreground_color[0],
+        .g = wrapper.foreground_color[1],
+        .b = wrapper.foreground_color[2],
+    };
+    const default_bg = ghostty_vt.color.RGB{
+        .r = wrapper.background_color[0],
+        .g = wrapper.background_color[1],
+        .b = wrapper.background_color[2],
+    };
 
     var fg_rgb = style_value.fg(.{
         .default = default_fg,
@@ -782,6 +790,13 @@ export fn ghostty_terminal_set_background_color(term: ?*GhosttyTerminal, r: u8, 
 
     const wrapper: *TerminalWrapper = @ptrCast(@alignCast(term));
     wrapper.background_color = .{ r, g, b };
+}
+
+export fn ghostty_terminal_set_foreground_color(term: ?*GhosttyTerminal, r: u8, g: u8, b: u8) void {
+    if (term == null) return;
+
+    const wrapper: *TerminalWrapper = @ptrCast(@alignCast(term));
+    wrapper.foreground_color = .{ r, g, b };
 }
 
 /// Write raw bytes to the terminal, parsing VT100/ANSI escape sequences

@@ -859,8 +859,16 @@ impl Tree {
     let terminal_view_id = self.nodes.insert(terminal_node);
 
     // Update the parent's child reference
-    if let Node { content: Content::Container(container), .. } = &mut self.nodes[parent] {
-      if let Some(pos) = container.children.iter().position(|&child| child == view_id) {
+    if let Node {
+      content: Content::Container(container),
+      ..
+    } = &mut self.nodes[parent]
+    {
+      if let Some(pos) = container
+        .children
+        .iter()
+        .position(|&child| child == view_id)
+      {
         container.children[pos] = terminal_view_id;
       }
     }
@@ -876,8 +884,8 @@ impl Tree {
 
   /// Replace a terminal node with a view node, restoring the original document
   ///
-  /// This is used when a terminal exits and we want to restore the buffer that was
-  /// replaced. Returns the new view ID if successful.
+  /// This is used when a terminal exits and we want to restore the buffer that
+  /// was replaced. Returns the new view ID if successful.
   pub fn replace_terminal_with_view(
     &mut self,
     terminal_id: ViewId,
@@ -908,8 +916,16 @@ impl Tree {
     self.get_mut(view_id).id = view_id;
 
     // Update the parent's child reference
-    if let Node { content: Content::Container(container), .. } = &mut self.nodes[parent] {
-      if let Some(pos) = container.children.iter().position(|&child| child == terminal_id) {
+    if let Node {
+      content: Content::Container(container),
+      ..
+    } = &mut self.nodes[parent]
+    {
+      if let Some(pos) = container
+        .children
+        .iter()
+        .position(|&child| child == terminal_id)
+      {
         container.children[pos] = view_id;
       }
     }

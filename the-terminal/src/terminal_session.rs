@@ -108,6 +108,8 @@ pub struct TerminalSession {
 
   /// Background color reported for OSC queries
   background_color: (u8, u8, u8),
+  /// Foreground color reported for OSC queries
+  foreground_color: (u8, u8, u8),
 
   /// Last render time for FPS throttling
   /// Prevents excessive redraws when PTY outputs fast
@@ -225,6 +227,7 @@ impl TerminalSession {
       needs_full_render,
       cell_pixel_size: (0, 0),
       background_color: (0, 0, 0),
+      foreground_color: (255, 255, 255),
       last_render_time: Instant::now(),
       max_fps: 120,
       redraw_notifier,
@@ -507,6 +510,15 @@ impl TerminalSession {
     // Update terminal (lock required)
     if let Ok(mut term) = self.terminal.lock() {
       term.set_background_color(r, g, b);
+    }
+  }
+
+  /// Update the foreground color used to answer OSC color queries.
+  pub fn set_foreground_color(&mut self, r: u8, g: u8, b: u8) {
+    self.foreground_color = (r, g, b);
+
+    if let Ok(mut term) = self.terminal.lock() {
+      term.set_foreground_color(r, g, b);
     }
   }
 

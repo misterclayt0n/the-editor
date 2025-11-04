@@ -66,7 +66,13 @@ fn render_right_triangle(width: u32, height: u32) -> Option<Pixmap> {
   paint.set_color_rgba8(255, 255, 255, 255);
   paint.anti_alias = true;
 
-  pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+  pixmap.fill_path(
+    &path,
+    &paint,
+    FillRule::Winding,
+    Transform::identity(),
+    None,
+  );
 
   Some(pixmap)
 }
@@ -91,7 +97,13 @@ fn render_left_triangle(width: u32, height: u32) -> Option<Pixmap> {
   paint.set_color_rgba8(255, 255, 255, 255);
   paint.anti_alias = true;
 
-  pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+  pixmap.fill_path(
+    &path,
+    &paint,
+    FillRule::Winding,
+    Transform::identity(),
+    None,
+  );
 
   Some(pixmap)
 }
@@ -113,11 +125,11 @@ fn render_right_rounded(width: u32, height: u32) -> Option<Pixmap> {
   // Upper Bézier curve: quarter-circle from (0, 0) to (radius, radius)
   pb.cubic_to(
     radius * c,
-    0.0,                  // Control point 1
+    0.0, // Control point 1
     radius,
-    radius - radius * c,  // Control point 2
+    radius - radius * c, // Control point 2
     radius,
-    radius,               // End point
+    radius, // End point
   );
 
   // Vertical line down the middle
@@ -126,11 +138,11 @@ fn render_right_rounded(width: u32, height: u32) -> Option<Pixmap> {
   // Lower Bézier curve: from (radius, h-radius) to (0, h)
   pb.cubic_to(
     radius,
-    h - radius + radius * c,  // Control point 1
+    h - radius + radius * c, // Control point 1
     radius * c,
-    h,                        // Control point 2
+    h, // Control point 2
     0.0,
-    h,                        // End point
+    h, // End point
   );
 
   // Close path back to (0, 0)
@@ -142,7 +154,13 @@ fn render_right_rounded(width: u32, height: u32) -> Option<Pixmap> {
   paint.set_color_rgba8(255, 255, 255, 255);
   paint.anti_alias = true;
 
-  pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+  pixmap.fill_path(
+    &path,
+    &paint,
+    FillRule::Winding,
+    Transform::identity(),
+    None,
+  );
 
   Some(pixmap)
 }
@@ -164,11 +182,11 @@ fn render_left_rounded(width: u32, height: u32) -> Option<Pixmap> {
   // Upper Bézier curve: quarter-circle from (w, 0) to (w-radius, radius)
   pb.cubic_to(
     w - radius * c,
-    0.0,                  // Control point 1
+    0.0, // Control point 1
     w - radius,
-    radius - radius * c,  // Control point 2
+    radius - radius * c, // Control point 2
     w - radius,
-    radius,               // End point
+    radius, // End point
   );
 
   // Vertical line down the middle
@@ -177,11 +195,11 @@ fn render_left_rounded(width: u32, height: u32) -> Option<Pixmap> {
   // Lower Bézier curve: from (w-radius, h-radius) to (w, h)
   pb.cubic_to(
     w - radius,
-    h - radius + radius * c,  // Control point 1
+    h - radius + radius * c, // Control point 1
     w - radius * c,
-    h,                        // Control point 2
+    h, // Control point 2
     w,
-    h,                        // End point
+    h, // End point
   );
 
   // Close path back to (w, 0)
@@ -193,7 +211,13 @@ fn render_left_rounded(width: u32, height: u32) -> Option<Pixmap> {
   paint.set_color_rgba8(255, 255, 255, 255);
   paint.anti_alias = true;
 
-  pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+  pixmap.fill_path(
+    &path,
+    &paint,
+    FillRule::Winding,
+    Transform::identity(),
+    None,
+  );
 
   Some(pixmap)
 }
@@ -231,10 +255,22 @@ mod tests {
 
   #[test]
   fn test_from_char() {
-    assert_eq!(PowerlineGlyph::from_char('\u{E0B0}'), Some(PowerlineGlyph::RightTriangle));
-    assert_eq!(PowerlineGlyph::from_char('\u{E0B2}'), Some(PowerlineGlyph::LeftTriangle));
-    assert_eq!(PowerlineGlyph::from_char('\u{E0B4}'), Some(PowerlineGlyph::RightRounded));
-    assert_eq!(PowerlineGlyph::from_char('\u{E0B6}'), Some(PowerlineGlyph::LeftRounded));
+    assert_eq!(
+      PowerlineGlyph::from_char('\u{E0B0}'),
+      Some(PowerlineGlyph::RightTriangle)
+    );
+    assert_eq!(
+      PowerlineGlyph::from_char('\u{E0B2}'),
+      Some(PowerlineGlyph::LeftTriangle)
+    );
+    assert_eq!(
+      PowerlineGlyph::from_char('\u{E0B4}'),
+      Some(PowerlineGlyph::RightRounded)
+    );
+    assert_eq!(
+      PowerlineGlyph::from_char('\u{E0B6}'),
+      Some(PowerlineGlyph::LeftRounded)
+    );
     assert_eq!(PowerlineGlyph::from_char('A'), None);
   }
 }

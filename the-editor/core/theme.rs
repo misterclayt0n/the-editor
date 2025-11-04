@@ -259,6 +259,25 @@ pub struct Theme {
   scopes:         Vec<String>,
   highlights:     Vec<Style>,
   rainbow_length: usize,
+  terminal:       TerminalTheme,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct TerminalTheme {
+  background: Option<Color>,
+  foreground: Option<Color>,
+}
+
+impl TerminalTheme {
+  #[inline]
+  pub fn background(&self) -> Option<Color> {
+    self.background
+  }
+
+  #[inline]
+  pub fn foreground(&self) -> Option<Color> {
+    self.foreground
+  }
 }
 
 pub enum ThemeAction {
@@ -299,6 +318,7 @@ fn build_theme_values(
   Vec<Style>,
   usize,
   Vec<String>,
+  TerminalTheme,
 ) {
   let mut styles = HashMap::new();
   let mut scopes = Vec::new();
@@ -319,6 +339,8 @@ fn build_theme_values(
     .unwrap_or_default();
   // remove inherits from value to prevent errors
   let _ = values.remove("inherits");
+  let (terminal, mut terminal_warnings) = parse_terminal_theme(&palette, values.remove("terminal"));
+  warnings.append(&mut terminal_warnings);
   styles.reserve(values.len());
   scopes.reserve(values.len());
   highlights.reserve(values.len());
@@ -357,7 +379,57 @@ fn build_theme_values(
     highlights.push(style);
   }
 
-  (styles, scopes, highlights, rainbow_length, warnings)
+  (
+    styles,
+    scopes,
+    highlights,
+    rainbow_length,
+    warnings,
+    terminal,
+  )
+}
+
+fn parse_terminal_theme(
+  palette: &ThemePalette,
+  value: Option<Value>,
+) -> (TerminalTheme, Vec<String>) {
+  let mut warnings = Vec::new();
+  let mut terminal = TerminalTheme::default();
+
+  let Some(value) = value else {
+    return (terminal, warnings);
+  };
+
+  let mut table = match value {
+    Value::Table(table) => table,
+    other => {
+      warnings.push(format!(
+        "Expected 'terminal' to be a table, found {:?}",
+        other
+      ));
+      return (terminal, warnings);
+    },
+  };
+
+  if let Some(bg_value) = table.remove("background").or_else(|| table.remove("bg")) {
+    match palette.parse_color(bg_value) {
+      Ok(color) => terminal.background = Some(color),
+      Err(err) => warnings.push(format!("Failed to parse terminal background. {err}")),
+    }
+  }
+
+  if let Some(fg_value) = table.remove("foreground").or_else(|| table.remove("fg")) {
+    match palette.parse_color(fg_value) {
+      Ok(color) => terminal.foreground = Some(color),
+      Err(err) => warnings.push(format!("Failed to parse terminal foreground. {err}")),
+    }
+  }
+
+  for key in table.keys() {
+    warnings.push(format!("Invalid terminal attribute: {key}"));
+  }
+
+  (terminal, warnings)
 }
 
 fn default_rainbow() -> Vec<Style> {
@@ -465,6 +537,11 @@ impl Theme {
     self.rainbow_length
   }
 
+  #[inline]
+  pub fn terminal(&self) -> &TerminalTheme {
+    &self.terminal
+  }
+
   /// Get an iterator over all UI style scope names
   pub fn style_keys(&self) -> impl Iterator<Item = &str> {
     self.styles.keys().map(|s| s.as_str())
@@ -482,6 +559,7 @@ impl Theme {
     scopes: Vec<String>,
     highlights: Vec<Style>,
     rainbow_length: usize,
+    terminal: TerminalTheme,
   ) -> Self {
     Self {
       name,
@@ -489,6 +567,7 @@ impl Theme {
       scopes,
       highlights,
       rainbow_length,
+      terminal,
     }
   }
 
@@ -502,13 +581,15 @@ impl Theme {
   }
 
   fn from_keys(toml_keys: Map<String, Value>) -> (Self, Vec<String>) {
-    let (styles, scopes, highlights, rainbow_length, load_errors) = build_theme_values(toml_keys);
+    let (styles, scopes, highlights, rainbow_length, load_errors, terminal) =
+      build_theme_values(toml_keys);
 
     let theme = Self {
       styles,
       scopes,
       highlights,
       rainbow_length,
+      terminal,
       ..Default::default()
     };
     (theme, load_errors)

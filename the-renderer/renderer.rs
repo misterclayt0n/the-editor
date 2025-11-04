@@ -76,18 +76,18 @@ impl PowerlineAtlas {
     for glyph in glyphs {
       if let Some(pixmap) = powerline_glyphs::render_powerline_glyph(glyph, width, height) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-          label:              Some("Powerline Glyph"),
-          size:               wgpu::Extent3d {
+          label:           Some("Powerline Glyph"),
+          size:            wgpu::Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
           },
-          mip_level_count:    1,
-          sample_count:       1,
-          dimension:          wgpu::TextureDimension::D2,
-          format:             wgpu::TextureFormat::Rgba8Unorm,
-          usage:              wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-          view_formats:       &[],
+          mip_level_count: 1,
+          sample_count:    1,
+          dimension:       wgpu::TextureDimension::D2,
+          format:          wgpu::TextureFormat::Rgba8Unorm,
+          usage:           wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+          view_formats:    &[],
         });
 
         queue.write_texture(
@@ -117,12 +117,12 @@ impl PowerlineAtlas {
     }
 
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-      label:         Some("Powerline Sampler"),
+      label: Some("Powerline Sampler"),
       address_mode_u: wgpu::AddressMode::ClampToEdge,
       address_mode_v: wgpu::AddressMode::ClampToEdge,
       address_mode_w: wgpu::AddressMode::ClampToEdge,
-      mag_filter:     wgpu::FilterMode::Linear,
-      min_filter:     wgpu::FilterMode::Linear,
+      mag_filter: wgpu::FilterMode::Linear,
+      min_filter: wgpu::FilterMode::Linear,
       ..Default::default()
     });
 
@@ -758,14 +758,15 @@ impl Renderer {
       resolve_family_name(FONT_BYTES).unwrap_or_else(|| "JetBrains Mono".to_string());
     font_system.db_mut().load_font_data(FONT_BYTES.to_vec());
 
-    // Create temporary powerline atlas (will be recreated with correct dimensions after metrics calculation)
+    // Create temporary powerline atlas (will be recreated with correct dimensions
+    // after metrics calculation)
     let temp_powerline_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-      label:         Some("Powerline Sampler (temp)"),
+      label: Some("Powerline Sampler (temp)"),
       address_mode_u: wgpu::AddressMode::ClampToEdge,
       address_mode_v: wgpu::AddressMode::ClampToEdge,
       address_mode_w: wgpu::AddressMode::ClampToEdge,
-      mag_filter:     wgpu::FilterMode::Linear,
-      min_filter:     wgpu::FilterMode::Linear,
+      mag_filter: wgpu::FilterMode::Linear,
+      min_filter: wgpu::FilterMode::Linear,
       ..Default::default()
     });
 
@@ -1534,7 +1535,8 @@ impl Renderer {
         let start = cursor;
         cursor += segment.content.len();
 
-        // Use consistent cell_height for all segments to prevent accumulated positioning errors
+        // Use consistent cell_height for all segments to prevent accumulated
+        // positioning errors
         let seg_metrics = Metrics::new(segment.style.size, self.cell_height);
         let attrs = Attrs::new()
           .family(Family::Name(family.as_str()))
@@ -1759,7 +1761,15 @@ impl Renderer {
 
   /// Draw a Powerline separator glyph
   /// This renders the glyph using tiny-skia and draws it as colored rectangles
-  pub fn draw_powerline_glyph(&mut self, ch: char, x: f32, y: f32, width: f32, height: f32, color: Color) {
+  pub fn draw_powerline_glyph(
+    &mut self,
+    ch: char,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: Color,
+  ) {
     use crate::powerline_glyphs;
 
     // Check if this is a known Powerline glyph

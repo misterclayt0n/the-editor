@@ -2477,9 +2477,7 @@ impl EditorView {
     };
 
     // Helper function for Powerline symbol detection
-    let is_powerline_symbol = |ch: char| -> bool {
-      matches!(ch, '\u{E0B0}'..='\u{E0D4}')
-    };
+    let is_powerline_symbol = |ch: char| -> bool { matches!(ch, '\u{E0B0}'..='\u{E0D4}') };
 
     // Collect terminal IDs to avoid borrowing issues
     let terminal_ids: Vec<_> = cx.editor.tree.terminals().map(|(id, _)| id).collect();
@@ -2507,12 +2505,18 @@ impl EditorView {
         None => continue,
       };
 
-      let background_rgb = cx
-        .editor
-        .theme
-        .try_get("ui.background")
-        .and_then(|style| style.bg)
-        .and_then(theme_color_to_rgb);
+      let theme = &cx.editor.theme;
+      let terminal_theme = theme.terminal();
+      let background_rgb = terminal_theme
+        .background()
+        .and_then(theme_color_to_rgb)
+        .or_else(|| {
+          theme
+            .try_get("ui.background")
+            .and_then(|style| style.bg)
+            .and_then(theme_color_to_rgb)
+        });
+      let foreground_rgb = terminal_theme.foreground().and_then(theme_color_to_rgb);
 
       // Update session metadata (cell size, background color)
       {
@@ -2520,6 +2524,9 @@ impl EditorView {
         session.set_cell_pixel_size(font_width, renderer.cell_height());
         if let Some((r, g, b)) = background_rgb {
           session.set_background_color(r, g, b);
+        }
+        if let Some((r, g, b)) = foreground_rgb {
+          session.set_foreground_color(r, g, b);
         }
       }
 
@@ -2663,7 +2670,8 @@ impl EditorView {
           let fg_color = Color::rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0);
           let text = std::mem::take(buffer);
           let x = term_x + (start_col as f32 * font_width);
-          // TextArea.top expects the top of the line - cosmic-text handles baseline internally
+          // TextArea.top expects the top of the line - cosmic-text handles baseline
+          // internally
           let mut section = TextSection::new(x, row_y);
           section = section.add_text(
             TextSegment::new(text)
@@ -2713,7 +2721,12 @@ impl EditorView {
 
             // Draw the Powerline symbol using the renderer's built-in method
             let x = term_x + (col as f32 * font_width);
-            let fg_color = Color::rgba(rgb.0 as f32 / 255.0, rgb.1 as f32 / 255.0, rgb.2 as f32 / 255.0, 1.0);
+            let fg_color = Color::rgba(
+              rgb.0 as f32 / 255.0,
+              rgb.1 as f32 / 255.0,
+              rgb.2 as f32 / 255.0,
+              1.0,
+            );
             renderer.draw_powerline_glyph(ch, x, row_y, font_width, line_height, fg_color);
 
             // Reset run for next text segment
@@ -2823,8 +2836,7 @@ impl EditorView {
       if has_horizontal_neighbor {
         // Render horizontal separator bar at the bottom edge
         let x = area.x as f32 * font_width;
-        let sep_y =
-          (area.y + area.height) as f32 * (self.cached_cell_height) - SEPARATOR_HEIGHT_PX;
+        let sep_y = (area.y + area.height) as f32 * (self.cached_cell_height) - SEPARATOR_HEIGHT_PX;
         let width = area.width as f32 * font_width;
         let height = SEPARATOR_HEIGHT_PX;
 

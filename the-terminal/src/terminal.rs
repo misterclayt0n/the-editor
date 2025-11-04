@@ -148,6 +148,11 @@ impl Terminal {
     unsafe { ffi::ghostty_terminal_set_background_color(self.inner, r, g, b) };
   }
 
+  /// Set the foreground color reported for OSC queries.
+  pub fn set_foreground_color(&mut self, r: u8, g: u8, b: u8) {
+    unsafe { ffi::ghostty_terminal_set_foreground_color(self.inner, r, g, b) };
+  }
+
   /// Get a view of the entire terminal grid.
   pub fn grid(&self) -> Grid<'_> {
     Grid {

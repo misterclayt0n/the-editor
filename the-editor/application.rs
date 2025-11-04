@@ -45,10 +45,10 @@ use crate::{
 };
 
 pub struct App {
-  pub compositor:       Compositor,
-  pub editor:           Editor,
-  pub jobs:             Jobs,
-  pub input_handler:    InputHandler,
+  pub compositor:    Compositor,
+  pub editor:        Editor,
+  pub jobs:          Jobs,
+  pub input_handler: InputHandler,
 
   // GlobalConfig pointer for runtime updates
   pub config_ptr: std::sync::Arc<arc_swap::ArcSwap<crate::core::config::Config>>,
@@ -79,7 +79,7 @@ pub struct App {
   frame_counter: u32,
 
   // Track whether the next key press should be treated as a meta prefix for terminal shortcuts
-  terminal_meta_pending: bool,
+  terminal_meta_pending:          bool,
   // Track whether Ctrl+W was pressed in terminal, waiting for window command
   terminal_window_prefix_pending: bool,
 }
@@ -454,13 +454,13 @@ fn input_event_to_terminal_bytes(event: &InputEvent) -> Option<Vec<u8>> {
       let bytes = crate::key_encode::encode(key_press, &modes);
 
       // DEBUG: Log encoded bytes
-      log::debug!("input_event_to_terminal_bytes encoded {} bytes: {:?}", bytes.len(), bytes);
+      log::debug!(
+        "input_event_to_terminal_bytes encoded {} bytes: {:?}",
+        bytes.len(),
+        bytes
+      );
 
-      if bytes.is_empty() {
-        None
-      } else {
-        Some(bytes)
-      }
+      if bytes.is_empty() { None } else { Some(bytes) }
     },
     InputEvent::Text(text) => {
       // Handle composed text from dead keys (e.g., " + space = ")
@@ -644,10 +644,7 @@ impl Application for App {
         }
 
         // Intercept Ctrl+W to enable window commands from terminal
-        if key_press.code == Key::Char('w')
-          && key_press.ctrl
-          && !key_press.alt
-          && !key_press.shift
+        if key_press.code == Key::Char('w') && key_press.ctrl && !key_press.alt && !key_press.shift
         {
           self.terminal_window_prefix_pending = true;
           return true;
@@ -655,18 +652,15 @@ impl Application for App {
 
         // Use Ctrl+Space as the terminal meta prefix instead of ESC
         // This allows ESC to be sent directly to terminal apps (vim, helix, etc.)
-        if key_press.code == Key::Char(' ')
-          && key_press.ctrl
-          && !key_press.alt
-          && !key_press.shift
+        if key_press.code == Key::Char(' ') && key_press.ctrl && !key_press.alt && !key_press.shift
         {
           self.terminal_meta_pending = true;
           return true;
         }
 
         // Old ESC-based shortcuts disabled to allow ESC in terminal apps:
-        // if key_press.code == Key::Escape && !key_press.alt && !key_press.ctrl && !key_press.shift {
-        //   self.terminal_meta_pending = true;
+        // if key_press.code == Key::Escape && !key_press.alt && !key_press.ctrl &&
+        // !key_press.shift {   self.terminal_meta_pending = true;
         //   return true;
         // }
 
@@ -1069,7 +1063,9 @@ impl App {
                 self.editor.set_status("Opened terminal");
               },
               None => {
-                self.editor.set_error("Failed to replace view with terminal");
+                self
+                  .editor
+                  .set_error("Failed to replace view with terminal");
               },
             }
           },
@@ -1109,7 +1105,11 @@ impl App {
       if let Some(doc_id) = terminal.replaced_doc {
         // Restore the original document
         if self.editor.documents.contains_key(&doc_id) {
-          match self.editor.tree.replace_terminal_with_view(terminal_id, doc_id) {
+          match self
+            .editor
+            .tree
+            .replace_terminal_with_view(terminal_id, doc_id)
+          {
             Some(view_id) => {
               // Initialize view data in the document
               if let Some(doc) = self.editor.documents.get_mut(&doc_id) {
@@ -1122,7 +1122,9 @@ impl App {
               return;
             },
             None => {
-              self.editor.set_error("Failed to restore buffer after terminal exit".to_string());
+              self
+                .editor
+                .set_error("Failed to restore buffer after terminal exit".to_string());
             },
           }
         }

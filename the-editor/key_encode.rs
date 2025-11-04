@@ -1,7 +1,7 @@
 //! Terminal keyboard encoding
 //!
-//! This module implements proper keyboard event to terminal escape sequence encoding,
-//! inspired by Ghostty's comprehensive approach. It supports:
+//! This module implements proper keyboard event to terminal escape sequence
+//! encoding, inspired by Ghostty's comprehensive approach. It supports:
 //! - Legacy VT100/xterm sequences
 //! - xterm modifyOtherKeys protocol
 //! - Kitty keyboard protocol
@@ -16,18 +16,18 @@ use the_editor_renderer::{
 /// Modifier state for key encoding
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Modifiers {
-  pub shift: bool,
-  pub ctrl:  bool,
-  pub alt:   bool,
+  pub shift:  bool,
+  pub ctrl:   bool,
+  pub alt:    bool,
   pub super_: bool,
 }
 
 impl Modifiers {
   pub fn from_keypress(key_press: &KeyPress) -> Self {
     Self {
-      shift: key_press.shift,
-      ctrl:  key_press.ctrl,
-      alt:   key_press.alt,
+      shift:  key_press.shift,
+      ctrl:   key_press.ctrl,
+      alt:    key_press.alt,
       super_: key_press.super_,
     }
   }
@@ -61,44 +61,46 @@ impl Modifiers {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TerminalModes {
   /// Cursor key application mode (DECCKM)
-  pub cursor_key_application:   bool,
+  pub cursor_key_application: bool,
   /// Keypad application mode
-  pub keypad_application:       bool,
+  pub keypad_application:     bool,
   /// xterm modifyOtherKeys mode (0, 1, or 2)
-  pub modify_other_keys:        u8,
+  pub modify_other_keys:      u8,
   /// Kitty keyboard protocol flags
-  pub kitty_flags:              u32,
+  pub kitty_flags:            u32,
   /// Use ESC prefix for Alt modifier
-  pub alt_esc_prefix:           bool,
+  pub alt_esc_prefix:         bool,
 }
 
 /// A single entry in the key lookup table
 #[derive(Debug, Clone)]
 pub struct KeyEntry {
   /// Required modifiers for this entry
-  pub mods:                Modifiers,
-  /// Cursor key mode required (None = any, Some(true) = app mode, Some(false) = normal mode)
-  pub cursor_mode:         Option<bool>,
+  pub mods:              Modifiers,
+  /// Cursor key mode required (None = any, Some(true) = app mode, Some(false) =
+  /// normal mode)
+  pub cursor_mode:       Option<bool>,
   /// Keypad mode required
-  pub keypad_mode:         Option<bool>,
+  pub keypad_mode:       Option<bool>,
   /// ModifyOtherKeys mode required
-  pub modify_other_keys:   Option<u8>,
+  pub modify_other_keys: Option<u8>,
   /// The escape sequence to emit
-  pub sequence:            &'static str,
+  pub sequence:          &'static str,
 }
 
 impl KeyEntry {
-  /// Create a simple entry with just a sequence (no modifiers or mode requirements)
+  /// Create a simple entry with just a sequence (no modifiers or mode
+  /// requirements)
   pub const fn simple(sequence: &'static str) -> Self {
     Self {
-      mods:              Modifiers {
-        shift: false,
-        ctrl:  false,
-        alt:   false,
+      mods: Modifiers {
+        shift:  false,
+        ctrl:   false,
+        alt:    false,
         super_: false,
       },
-      cursor_mode:       None,
-      keypad_mode:       None,
+      cursor_mode: None,
+      keypad_mode: None,
       modify_other_keys: None,
       sequence,
     }
@@ -113,14 +115,14 @@ impl KeyEntry {
     sequence: &'static str,
   ) -> Self {
     Self {
-      mods:              Modifiers {
+      mods: Modifiers {
         shift,
         ctrl,
         alt,
         super_,
       },
-      cursor_mode:       None,
-      keypad_mode:       None,
+      cursor_mode: None,
+      keypad_mode: None,
       modify_other_keys: None,
       sequence,
     }
@@ -183,7 +185,11 @@ pub fn encode(key_press: &KeyPress, modes: &TerminalModes) -> Vec<u8> {
 }
 
 /// Encode using Kitty keyboard protocol
-fn encode_kitty(_key_press: &KeyPress, _mods: &Modifiers, _modes: &TerminalModes) -> Option<String> {
+fn encode_kitty(
+  _key_press: &KeyPress,
+  _mods: &Modifiers,
+  _modes: &TerminalModes,
+) -> Option<String> {
   // TODO: Implement Kitty protocol encoding
   // For now, return None to fall back to legacy
   None
@@ -254,7 +260,10 @@ fn table_lookup(key: &Key, mods: &Modifiers, modes: &TerminalModes) -> Option<&'
   };
 
   // Find first matching entry
-  entries.iter().find(|e| e.matches(mods, modes)).map(|e| e.sequence)
+  entries
+    .iter()
+    .find(|e| e.matches(mods, modes))
+    .map(|e| e.sequence)
 }
 
 /// Encode C0 control sequences (Ctrl+letter -> 0x01-0x1A)
@@ -309,12 +318,18 @@ fn encode_modify_other_keys(key: &Key, mods: &Modifiers) -> Option<String> {
 }
 
 // Lookup tables for special keys
-// These will be populated in the next task with comprehensive entries from Ghostty
+// These will be populated in the next task with comprehensive entries from
+// Ghostty
 
 static UP_SEQUENCES: &[KeyEntry] = &[
   // Normal mode, no modifiers
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       Some(false),
     keypad_mode:       None,
     modify_other_keys: None,
@@ -322,7 +337,12 @@ static UP_SEQUENCES: &[KeyEntry] = &[
   },
   // Application mode, no modifiers
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       Some(true),
     keypad_mode:       None,
     modify_other_keys: None,
@@ -330,14 +350,24 @@ static UP_SEQUENCES: &[KeyEntry] = &[
   },
   // With modifiers (PC-style)
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: true, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   true,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       None,
     keypad_mode:       None,
     modify_other_keys: None,
     sequence:          "\x1b[1;5A",
   },
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: true, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    true,
+      super_: false,
+    },
     cursor_mode:       None,
     keypad_mode:       None,
     modify_other_keys: None,
@@ -347,28 +377,48 @@ static UP_SEQUENCES: &[KeyEntry] = &[
 
 static DOWN_SEQUENCES: &[KeyEntry] = &[
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       Some(false),
     keypad_mode:       None,
     modify_other_keys: None,
     sequence:          "\x1b[B",
   },
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       Some(true),
     keypad_mode:       None,
     modify_other_keys: None,
     sequence:          "\x1bOB",
   },
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: true, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   true,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       None,
     keypad_mode:       None,
     modify_other_keys: None,
     sequence:          "\x1b[1;5B",
   },
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: true, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    true,
+      super_: false,
+    },
     cursor_mode:       None,
     keypad_mode:       None,
     modify_other_keys: None,
@@ -378,28 +428,48 @@ static DOWN_SEQUENCES: &[KeyEntry] = &[
 
 static LEFT_SEQUENCES: &[KeyEntry] = &[
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       Some(false),
     keypad_mode:       None,
     modify_other_keys: None,
     sequence:          "\x1b[D",
   },
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       Some(true),
     keypad_mode:       None,
     modify_other_keys: None,
     sequence:          "\x1bOD",
   },
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: true, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   true,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       None,
     keypad_mode:       None,
     modify_other_keys: None,
     sequence:          "\x1b[1;5D",
   },
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: true, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    true,
+      super_: false,
+    },
     cursor_mode:       None,
     keypad_mode:       None,
     modify_other_keys: None,
@@ -409,28 +479,48 @@ static LEFT_SEQUENCES: &[KeyEntry] = &[
 
 static RIGHT_SEQUENCES: &[KeyEntry] = &[
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       Some(false),
     keypad_mode:       None,
     modify_other_keys: None,
     sequence:          "\x1b[C",
   },
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       Some(true),
     keypad_mode:       None,
     modify_other_keys: None,
     sequence:          "\x1bOC",
   },
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: true, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   true,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       None,
     keypad_mode:       None,
     modify_other_keys: None,
     sequence:          "\x1b[1;5C",
   },
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: true, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    true,
+      super_: false,
+    },
     cursor_mode:       None,
     keypad_mode:       None,
     modify_other_keys: None,
@@ -438,34 +528,27 @@ static RIGHT_SEQUENCES: &[KeyEntry] = &[
   },
 ];
 
-static HOME_SEQUENCES: &[KeyEntry] = &[
-  KeyEntry::simple("\x1b[H"),
-];
+static HOME_SEQUENCES: &[KeyEntry] = &[KeyEntry::simple("\x1b[H")];
 
-static END_SEQUENCES: &[KeyEntry] = &[
-  KeyEntry::simple("\x1b[F"),
-];
+static END_SEQUENCES: &[KeyEntry] = &[KeyEntry::simple("\x1b[F")];
 
-static PAGEUP_SEQUENCES: &[KeyEntry] = &[
-  KeyEntry::simple("\x1b[5~"),
-];
+static PAGEUP_SEQUENCES: &[KeyEntry] = &[KeyEntry::simple("\x1b[5~")];
 
-static PAGEDOWN_SEQUENCES: &[KeyEntry] = &[
-  KeyEntry::simple("\x1b[6~"),
-];
+static PAGEDOWN_SEQUENCES: &[KeyEntry] = &[KeyEntry::simple("\x1b[6~")];
 
-static INSERT_SEQUENCES: &[KeyEntry] = &[
-  KeyEntry::simple("\x1b[2~"),
-];
+static INSERT_SEQUENCES: &[KeyEntry] = &[KeyEntry::simple("\x1b[2~")];
 
-static DELETE_SEQUENCES: &[KeyEntry] = &[
-  KeyEntry::simple("\x1b[3~"),
-];
+static DELETE_SEQUENCES: &[KeyEntry] = &[KeyEntry::simple("\x1b[3~")];
 
 static BACKSPACE_SEQUENCES: &[KeyEntry] = &[
   // Plain backspace
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       None,
     keypad_mode:       None,
     modify_other_keys: None,
@@ -473,7 +556,12 @@ static BACKSPACE_SEQUENCES: &[KeyEntry] = &[
   },
   // Alt+Backspace
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: true, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    true,
+      super_: false,
+    },
     cursor_mode:       None,
     keypad_mode:       None,
     modify_other_keys: None,
@@ -485,7 +573,12 @@ static BACKSPACE_SEQUENCES: &[KeyEntry] = &[
 static TAB_SEQUENCES: &[KeyEntry] = &[
   // Plain tab
   KeyEntry {
-    mods:              Modifiers { shift: false, ctrl: false, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       None,
     keypad_mode:       None,
     modify_other_keys: None,
@@ -493,7 +586,12 @@ static TAB_SEQUENCES: &[KeyEntry] = &[
   },
   // Shift+Tab (backtab)
   KeyEntry {
-    mods:              Modifiers { shift: true, ctrl: false, alt: false, super_: false },
+    mods:              Modifiers {
+      shift:  true,
+      ctrl:   false,
+      alt:    false,
+      super_: false,
+    },
     cursor_mode:       None,
     keypad_mode:       None,
     modify_other_keys: None,
@@ -502,14 +600,10 @@ static TAB_SEQUENCES: &[KeyEntry] = &[
 ];
 
 // Enter sequences
-static ENTER_SEQUENCES: &[KeyEntry] = &[
-  KeyEntry::simple("\r"),
-];
+static ENTER_SEQUENCES: &[KeyEntry] = &[KeyEntry::simple("\r")];
 
 // Escape sequences
-static ESCAPE_SEQUENCES: &[KeyEntry] = &[
-  KeyEntry::simple("\x1b"),
-];
+static ESCAPE_SEQUENCES: &[KeyEntry] = &[KeyEntry::simple("\x1b")];
 
 // Function keys F1-F12
 static F1_SEQUENCES: &[KeyEntry] = &[KeyEntry::simple("\x1bOP")];

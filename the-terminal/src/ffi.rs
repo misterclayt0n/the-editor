@@ -192,6 +192,8 @@ unsafe extern "C" {
 
   /// Update cached background color for OSC queries.
   pub fn ghostty_terminal_set_background_color(term: *mut GhosttyTerminal, r: u8, g: u8, b: u8);
+  /// Update cached foreground color for OSC queries.
+  pub fn ghostty_terminal_set_foreground_color(term: *mut GhosttyTerminal, r: u8, g: u8, b: u8);
 
   /// Check if terminal needs a full rebuild.
   ///

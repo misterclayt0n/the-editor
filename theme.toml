@@ -109,6 +109,10 @@ warning = "lightning"
 "acp.gutter.streaming" = { fg = "mint" }       # Green ✍
 "acp.gutter.tool"      = { fg = "delta" }      # Purple 🔧
 
+[terminal]
+background = "#000000"
+foreground = "#ffffff"
+
 [palette]
 bossanova = "#452859"
 comet     = "#5a5977"

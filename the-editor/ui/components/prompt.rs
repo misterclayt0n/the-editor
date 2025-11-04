@@ -672,7 +672,14 @@ impl Prompt {
       // Render completions if visible (above the prompt)
       // Render completions if available
       if !self.completions.is_empty() {
-        self.render_completions_internal(surface, base_y, completion_x, completion_width, cell_width, cx);
+        self.render_completions_internal(
+          surface,
+          base_y,
+          completion_x,
+          completion_width,
+          cell_width,
+          cx,
+        );
       }
     }); // End overlay region
 

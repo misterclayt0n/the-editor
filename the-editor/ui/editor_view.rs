@@ -2482,20 +2482,12 @@ impl Component for EditorView {
 
 impl EditorView {
   fn terminal_toggle_command(
-    code: the_editor_renderer::Key,
-    alt: bool,
+    _code: the_editor_renderer::Key,
+    _alt: bool,
   ) -> Option<fn(&mut commands::Context)> {
-    use the_editor_renderer::Key;
-
-    if !alt {
-      return None;
-    }
-
-    match code {
-      Key::Char('j') | Key::Char('J') => Some(commands::toggle_terminal_bottom),
-      Key::Char('l') | Key::Char('L') => Some(commands::toggle_terminal_right),
-      _ => None,
-    }
+    // Terminal toggle commands have been removed in favor of :hterminal and
+    // :vterminal
+    None
   }
 
   fn execute_editor_command(

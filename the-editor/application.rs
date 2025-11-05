@@ -671,7 +671,8 @@ impl Application for App {
           }
         }
 
-        // Intercept Ctrl+Shift+C (copy) and Ctrl+Shift+V (paste) for clipboard operations
+        // Intercept Ctrl+Shift+C (copy) and Ctrl+Shift+V (paste) for clipboard
+        // operations
         if key_press.ctrl && key_press.shift && !key_press.alt {
           match key_press.code {
             Key::Char('c') | Key::Char('C') => {
@@ -727,24 +728,23 @@ impl Application for App {
               if let Some(text) = clipboard_text {
                 if !text.is_empty() {
                   // Reacquire terminal to send input
-                  let paste_result = if let Some(terminal) =
-                    self.editor.tree.get_terminal_mut(focus_id)
-                  {
-                    let result = {
-                      let session_ref = terminal.session.borrow();
-                      session_ref.send_input(text.into_bytes())
-                    };
+                  let paste_result =
+                    if let Some(terminal) = self.editor.tree.get_terminal_mut(focus_id) {
+                      let result = {
+                        let session_ref = terminal.session.borrow();
+                        session_ref.send_input(text.into_bytes())
+                      };
 
-                    if result.is_ok() {
-                      terminal.selection_anchor = None;
-                      terminal.selection_last = None;
-                      terminal.session.borrow().mark_needs_redraw();
-                      the_editor_event::request_redraw();
-                    }
-                    result
-                  } else {
-                    Ok(())
-                  };
+                      if result.is_ok() {
+                        terminal.selection_anchor = None;
+                        terminal.selection_last = None;
+                        terminal.session.borrow().mark_needs_redraw();
+                        the_editor_event::request_redraw();
+                      }
+                      result
+                    } else {
+                      Ok(())
+                    };
 
                   // Set status after dropping terminal borrow
                   if let Err(e) = paste_result {

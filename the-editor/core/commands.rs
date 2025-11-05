@@ -116,7 +116,6 @@ use crate::{
   editor::{
     Action,
     Editor,
-    TerminalPane,
   },
   event::PostInsertChar,
   keymap::{
@@ -7365,14 +7364,4 @@ pub fn spawn_terminal(cx: &mut Context) {
 
   cx.editor.pending_action = Some(Action::SpawnTerminal);
   cx.editor.set_status("Spawning terminal...");
-}
-
-/// Toggle the horizontal (bottom) terminal pane.
-pub fn toggle_terminal_bottom(cx: &mut Context) {
-  cx.editor.toggle_terminal_pane(TerminalPane::Bottom);
-}
-
-/// Toggle the vertical (right-side) terminal pane.
-pub fn toggle_terminal_right(cx: &mut Context) {
-  cx.editor.toggle_terminal_pane(TerminalPane::Right);
 }

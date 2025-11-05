@@ -753,7 +753,7 @@ impl Renderer {
     let stencil_view = stencil_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     // Load default font and configure metrics.
-    const FONT_BYTES: &[u8] = include_bytes!("../assets/JetBrainsMono-Regular.ttf");
+    const FONT_BYTES: &[u8] = include_bytes!("../assets/Iosevka-Regular.ttc");
     let default_family =
       resolve_family_name(FONT_BYTES).unwrap_or_else(|| "JetBrains Mono".to_string());
     font_system.db_mut().load_font_data(FONT_BYTES.to_vec());

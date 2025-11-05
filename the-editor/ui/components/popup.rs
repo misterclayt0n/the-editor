@@ -9,13 +9,17 @@ use crate::{
     graphics::Rect,
     position::Position,
   },
-  ui::compositor::{
-    Callback,
-    Component,
-    Context,
-    Event,
-    EventResult,
-    Surface,
+  ui::{
+    UI_FONT_SIZE,
+    UI_FONT_WIDTH,
+    compositor::{
+      Callback,
+      Component,
+      Context,
+      Event,
+      EventResult,
+      Surface,
+    },
   },
 };
 
@@ -28,7 +32,7 @@ pub enum PositionBias {
   Below,
 }
 
-/// Layout limits expressed in terminal cells.
+/// Layout limits expressed in UI character units.
 #[derive(Clone, Copy, Debug)]
 pub struct PopupLimits {
   pub min_width:  u16,
@@ -288,17 +292,22 @@ impl<T: PopupContent> PopupShell<T> {
     &self,
     viewport_rect: RectPx,
     content_size: PopupSize,
-    cell_w: f32,
-    cell_h: f32,
+    ui_cell_w: f32,
+    ui_cell_h: f32,
+    doc_cell_h: f32,
     anchor: Option<(f32, f32)>,
   ) -> RectPx {
     let padding = self.style.padding;
-    let min_outer_width = (self.limits.min_width as f32 * cell_w).min(viewport_rect.width);
-    let min_outer_height = (self.limits.min_height as f32 * cell_h).min(viewport_rect.height);
-    let max_outer_width = (self.limits.max_width as f32 * cell_w)
+    let min_outer_width = (self.limits.min_width as f32 * ui_cell_w)
+      .max(0.0)
+      .min(viewport_rect.width);
+    let min_outer_height = (self.limits.min_height as f32 * ui_cell_h)
+      .max(0.0)
+      .min(viewport_rect.height);
+    let max_outer_width = (self.limits.max_width as f32 * ui_cell_w)
       .max(min_outer_width)
       .min(viewport_rect.width);
-    let max_outer_height = (self.limits.max_height as f32 * cell_h)
+    let max_outer_height = (self.limits.max_height as f32 * ui_cell_h)
       .max(min_outer_height)
       .min(viewport_rect.height);
 
@@ -330,7 +339,7 @@ impl<T: PopupContent> PopupShell<T> {
       Some((ax, ay)) => {
         let px = clamp_x(ax - outer_width / 2.0);
 
-        let gap = cell_h.max(16.0);
+        let gap = doc_cell_h.max(ui_cell_h).max(16.0);
         match self.bias {
           PositionBias::Below => {
             let candidate = ay + gap;
@@ -382,15 +391,17 @@ impl<T: PopupContent> PopupShell<T> {
     ctx: &mut Context,
     viewport: Rect,
   ) -> PopupSize {
-    let cell_w = surface.cell_width();
-    let cell_h = surface.cell_height();
-    let _viewport_px = Self::viewport_rect(viewport, cell_w, cell_h);
+    let doc_cell_w = surface.cell_width();
+    let doc_cell_h = surface.cell_height();
+    let viewport_px = Self::viewport_rect(viewport, doc_cell_w, doc_cell_h);
+    let ui_cell_w = UI_FONT_WIDTH.max(1.0);
+    let ui_cell_h = (UI_FONT_SIZE + 4.0).max(1.0);
 
     let padding = self.style.padding * 2.0;
     let max_inner_width =
-      (self.limits.max_width.min(viewport.width) as f32 * cell_w - padding).max(0.0);
+      ((self.limits.max_width as f32 * ui_cell_w).min(viewport_px.width) - padding).max(0.0);
     let max_inner_height =
-      (self.limits.max_height.min(viewport.height) as f32 * cell_h - padding).max(0.0);
+      ((self.limits.max_height as f32 * ui_cell_h).min(viewport_px.height) - padding).max(0.0);
 
     let constraints = PopupConstraints {
       max_width:  max_inner_width,
@@ -408,13 +419,24 @@ impl<T: PopupContent + 'static> Component for PopupShell<T> {
     self.animation.update(ctx.dt);
     let eased = *self.animation.current();
 
-    let cell_w = surface.cell_width();
-    let cell_h = surface.cell_height();
-    let viewport_px = Self::viewport_rect(area, cell_w, cell_h);
-    let anchor_px = self.anchor_position(ctx, viewport_px, cell_w, cell_h);
+    let font_state = surface.save_font_state();
+    let doc_cell_w = font_state.cell_width.max(1.0);
+    let doc_cell_h = font_state.cell_height.max(1.0);
+    let viewport_px = Self::viewport_rect(area, doc_cell_w, doc_cell_h);
+    let anchor_px = self.anchor_position(ctx, viewport_px, doc_cell_w, doc_cell_h);
 
-    let mut outer_rect =
-      self.compute_outer_rect(viewport_px, content_size, cell_w, cell_h, anchor_px);
+    surface.configure_font(&font_state.family, UI_FONT_SIZE);
+    let ui_cell_w = surface.cell_width().max(UI_FONT_WIDTH.max(1.0));
+    let ui_cell_h = surface.cell_height().max((UI_FONT_SIZE + 4.0).max(1.0));
+
+    let mut outer_rect = self.compute_outer_rect(
+      viewport_px,
+      content_size,
+      ui_cell_w,
+      ui_cell_h,
+      doc_cell_h,
+      anchor_px,
+    );
 
     let slide = if matches!(self.bias, PositionBias::Above) {
       -(1.0 - eased) * 8.0
@@ -427,8 +449,8 @@ impl<T: PopupContent + 'static> Component for PopupShell<T> {
 
     self.last_outer_rect = Some(outer_rect);
     self.last_outer_size = Some((
-      (outer_rect.width / cell_w).ceil() as u16,
-      (outer_rect.height / cell_h).ceil() as u16,
+      (outer_rect.width / doc_cell_w).ceil() as u16,
+      (outer_rect.height / doc_cell_h).ceil() as u16,
     ));
 
     let theme = &ctx.editor.theme;
@@ -486,6 +508,8 @@ impl<T: PopupContent + 'static> Component for PopupShell<T> {
         surface.pop_scissor_rect();
       },
     );
+
+    surface.restore_font_state(font_state);
   }
 
   fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> EventResult {

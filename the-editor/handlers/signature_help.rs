@@ -50,10 +50,30 @@ impl AsyncHook for SignatureHelpHandler {
         self.finish_debounce();
         return None;
       },
-      SignatureHelpEvent::Trigger => {},
+      SignatureHelpEvent::Trigger => {
+        if self.trigger.is_none() {
+          self.trigger = Some(SignatureHelpInvoked::Automatic);
+        }
+
+        if !matches!(self.state, State::Pending) {
+          self.finish_debounce();
+        }
+
+        return timeout;
+      },
       SignatureHelpEvent::ReTrigger => {
-        // Don't retrigger if we aren't open/pending yet
+        if self.trigger.is_none() {
+          self.trigger = Some(SignatureHelpInvoked::Automatic);
+        }
+
+        // If the popup is already open or pending, schedule a refresh with debounce.
+        if matches!(self.state, State::Open | State::Pending) {
+          return Some(Instant::now() + Duration::from_millis(TIMEOUT_MS));
+        }
+
+        // If we are closed (e.g. re-entered insert mode), request immediately.
         if matches!(self.state, State::Closed) {
+          self.finish_debounce();
           return timeout;
         }
       },

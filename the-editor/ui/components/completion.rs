@@ -202,12 +202,13 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
   lines
 }
 
-fn truncate_to_width(text: &str, max_width: f32) -> String {
+fn truncate_to_width(text: &str, max_width: f32, char_width: f32) -> String {
   if max_width <= 0.0 {
     return String::new();
   }
 
-  let max_chars = (max_width / UI_FONT_WIDTH).floor() as usize;
+  let char_width = char_width.max(1.0);
+  let max_chars = (max_width / char_width).floor() as usize;
   if max_chars == 0 {
     return String::new();
   }
@@ -473,6 +474,8 @@ impl Completion {
     completion_width: f32,
     completion_height: f32,
     alpha: f32,
+    ui_char_width: f32,
+    ui_line_height: f32,
     surface: &mut Surface,
     ctx: &mut Context,
   ) {
@@ -603,7 +606,7 @@ impl Completion {
       // Render documentation content
       let mut y_offset = doc_y + DOC_PADDING;
       let font_size = UI_FONT_SIZE;
-      let line_height = font_size + 4.0;
+      let line_height = ui_line_height.max(font_size + 4.0);
 
       // Render detail (in a code-like style if present)
       if let Some(detail_text) = detail {
@@ -626,7 +629,9 @@ impl Completion {
       // Render documentation text (wrapped)
       if let Some(doc_text) = doc {
         // Simple line wrapping - split into words and wrap at doc_width
-        let max_chars_per_line = ((doc_width - DOC_PADDING * 2.0) / (font_size * 0.6)) as usize;
+        let max_chars_per_line = ((doc_width - DOC_PADDING * 2.0) / ui_char_width)
+          .floor()
+          .max(4.0) as usize;
         let lines = wrap_text(doc_text, max_chars_per_line);
 
         for line in lines
@@ -942,6 +947,9 @@ impl Component for Completion {
       return;
     }
 
+    let font_state = surface.save_font_state();
+    let doc_cell_w = font_state.cell_width.max(1.0);
+
     // Update animation with declarative system
     self.animation.update(ctx.dt);
     let eased_t = *self.animation.current();
@@ -986,39 +994,7 @@ impl Component for Completion {
 
     // Calculate layout
     let visible_items = MAX_VISIBLE_ITEMS.min(self.filtered.len());
-    let line_height = UI_FONT_SIZE + 4.0;
     let item_padding = 6.0;
-    let menu_height = (visible_items as f32 * line_height) + (item_padding * 2.0);
-
-    // First pass: find the longest label to determine kind column alignment
-    let mut max_label_width: f32 = 0.0;
-    for &(idx, _) in self.filtered.iter().take(20) {
-      let item = &self.items[idx as usize];
-      let label = match item {
-        CompletionItem::Lsp(lsp_item) => &lsp_item.item.label,
-        CompletionItem::Other(other) => &other.label,
-      };
-      let label_width = label.len() as f32 * UI_FONT_WIDTH;
-      max_label_width = max_label_width.max(label_width);
-    }
-
-    // Second pass: determine menu width based on aligned layout
-    let mut kind_column_offset = max_label_width + 20.0; // Extra spacing before kind
-    let mut menu_width: f32 = 250.0; // minimum width
-    for &(idx, _) in self.filtered.iter().take(20) {
-      let item = &self.items[idx as usize];
-      let kind = match item {
-        CompletionItem::Lsp(lsp_item) => Self::format_kind(lsp_item.item.kind),
-        CompletionItem::Other(other) => other.kind.as_deref().unwrap_or(""),
-      };
-      let item_width = kind_column_offset + (kind.len() as f32 * UI_FONT_WIDTH) + 16.0;
-      menu_width = menu_width.max(item_width);
-    }
-    menu_width = menu_width.min(MAX_MENU_WIDTH as f32 * UI_FONT_WIDTH);
-    let max_kind_offset = (menu_width - 32.0).max(0.0);
-    if kind_column_offset > max_kind_offset {
-      kind_column_offset = max_kind_offset;
-    }
 
     // Calculate fresh cursor position (not cached) with correct split offset
     let (cursor_x, cursor_y) = {
@@ -1050,7 +1026,7 @@ impl Component for Completion {
         .editor
         .font_size_override
         .unwrap_or(ctx.editor.config().font_size);
-      let font_width = surface.cell_width().max(1.0);
+      let font_width = doc_cell_w;
       const LINE_SPACING: f32 = 4.0;
       let line_height = font_size + LINE_SPACING;
 
@@ -1065,6 +1041,43 @@ impl Component for Completion {
 
       (x, y)
     };
+
+    surface.configure_font(&font_state.family, UI_FONT_SIZE);
+    let ui_char_width = surface.cell_width().max(UI_FONT_WIDTH.max(1.0));
+    let ui_line_height = surface.cell_height().max(UI_FONT_SIZE + 4.0);
+
+    // First pass: find the longest label to determine kind column alignment
+    let mut max_label_width: f32 = 0.0;
+    for &(idx, _) in self.filtered.iter().take(20) {
+      let item = &self.items[idx as usize];
+      let label = match item {
+        CompletionItem::Lsp(lsp_item) => &lsp_item.item.label,
+        CompletionItem::Other(other) => &other.label,
+      };
+      let label_width = label.len() as f32 * ui_char_width;
+      max_label_width = max_label_width.max(label_width);
+    }
+
+    // Second pass: determine menu width based on aligned layout
+    let mut kind_column_offset = max_label_width + 20.0; // Extra spacing before kind
+    let mut menu_width: f32 = 250.0; // minimum width
+    for &(idx, _) in self.filtered.iter().take(20) {
+      let item = &self.items[idx as usize];
+      let kind = match item {
+        CompletionItem::Lsp(lsp_item) => Self::format_kind(lsp_item.item.kind),
+        CompletionItem::Other(other) => other.kind.as_deref().unwrap_or(""),
+      };
+      let item_width = kind_column_offset + (kind.len() as f32 * ui_char_width) + 16.0;
+      menu_width = menu_width.max(item_width);
+    }
+    menu_width = menu_width.min(MAX_MENU_WIDTH as f32 * ui_char_width);
+    let max_kind_offset = (menu_width - 32.0).max(0.0);
+    if kind_column_offset > max_kind_offset {
+      kind_column_offset = max_kind_offset;
+    }
+
+    let line_height = ui_line_height;
+    let menu_height = (visible_items as f32 * line_height) + (item_padding * 2.0);
 
     // Get viewport dimensions for bounds checking
     let viewport_width = surface.width() as f32;
@@ -1187,9 +1200,9 @@ impl Component for Completion {
         };
 
         let available_label_width = (kind_column_offset - 12.0).max(0.0);
-        let label_text = truncate_to_width(label, available_label_width);
+        let label_text = truncate_to_width(label, available_label_width, ui_char_width);
         let available_kind_width = (menu_width - kind_column_offset - 16.0).max(0.0);
-        let kind_text = truncate_to_width(kind, available_kind_width);
+        let kind_text = truncate_to_width(kind, available_kind_width, ui_char_width);
 
         // Draw label
         surface.draw_text(TextSection {
@@ -1228,10 +1241,14 @@ impl Component for Completion {
         anim_width,
         anim_height,
         alpha,
+        ui_char_width,
+        line_height,
         surface,
         ctx,
       );
     }
+
+    surface.restore_font_state(font_state);
   }
 
   fn cursor(&self, _area: Rect, _editor: &crate::Editor) -> (Option<Position>, CursorKind) {

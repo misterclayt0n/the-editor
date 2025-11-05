@@ -15,7 +15,7 @@ fn main() {
     .ok()
     .filter(|output| output.status.success())
     .and_then(|x| String::from_utf8(x.stdout).ok())
-    .or_else(|| option_env!("HELIX_NIX_BUILD_REV").map(|s| s.to_string()));
+    .or_else(|| option_env!("THE_EDITOR_NIX_BUILD_REV").map(|s| s.to_string()));
 
   let minor = if MINOR.len() == 1 {
     // Print single-digit months in '0M' format

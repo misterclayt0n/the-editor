@@ -85,8 +85,8 @@
             pkgs.zig_0_15
           ];
 
-          # Set HELIX_DEFAULT_RUNTIME at compile time so tests can find runtime/ directory
-          HELIX_DEFAULT_RUNTIME = "${src}/runtime";
+          # Set THE_EDITOR_DEFAULT_RUNTIME at compile time so tests can find runtime/ directory
+          THE_EDITOR_DEFAULT_RUNTIME = "${src}/runtime";
 
           # Set library path for ghostty-vt linking
           LD_LIBRARY_PATH = "${ghosttyPkg}/lib";

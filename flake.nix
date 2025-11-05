@@ -62,8 +62,11 @@
             (lib.hasSuffix ".otf" path) ||
             (lib.hasSuffix ".wgsl" path) ||
             (lib.hasSuffix ".scm" path) ||
+            (lib.hasSuffix ".so" path) ||
+            (lib.hasSuffix ".a" path) ||
             (lib.hasInfix "/assets/" path) ||
             (lib.hasInfix "/runtime/" path) ||
+            (lib.hasInfix "/vendored/" path) ||
             (craneLib.filterCargoSources path type);
         };
 
@@ -81,8 +84,7 @@
             ];
 
           nativeBuildInputs = [
-            # Zig is needed to build the-terminal wrapper
-            pkgs.zig_0_15
+            # No Zig needed - wrapper is pre-built and vendored
           ];
 
           # Set THE_EDITOR_DEFAULT_RUNTIME at compile time so tests can find runtime/ directory
@@ -103,20 +105,28 @@
             inherit cargoArtifacts;
             pname = "the-editor";
             cargoExtraArgs = "--features unicode-lines";
+            # Disable tests in build (they run separately in nextest check)
+            doCheck = false;
 
-            # Build the Zig wrapper before Rust compilation
+            # Zig wrapper and ghostty libraries are vendored (pre-built)
+            # No compilation needed during Nix build
             preBuild = ''
-              mkdir -p the-terminal/zig-out
-              cd the-terminal
-              export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-cache
-              ${pkgs.zig_0_15}/bin/zig build -Doptimize=ReleaseSafe --prefix $PWD/zig-out
-              cd ..
+              # Verify vendored libraries exist
+              if [ ! -f the-terminal/vendored/linux-x86_64/libghostty_wrapper.a ]; then
+                echo "ERROR: Vendored wrapper library not found"
+                echo "Expected: the-terminal/vendored/linux-x86_64/libghostty_wrapper.a"
+                exit 1
+              fi
+              if [ ! -f the-terminal/vendored/linux-x86_64/libghostty-vt.so ]; then
+                echo "ERROR: Vendored ghostty library not found"
+                echo "Expected: the-terminal/vendored/linux-x86_64/libghostty-vt.so"
+                exit 1
+              fi
             '';
           }
         );
-        
-        # Wrap the binary with runtime dependencies.
-        # NOTE: So that `nix run` works.
+
+        # Wrap binary with library paths for distribution
         the-editor = pkgs.runCommand "the-editor" {
           buildInputs = [ pkgs.makeWrapper ];
         } ''
@@ -130,7 +140,7 @@
       in
       {
         checks = {
-          "the-editor " = the-editor-unwrapped;
+          "the-editor " = the-editor;
 
           "the-editor-clippy" = craneLib.cargoClippy (
             commonArgs
@@ -163,7 +173,7 @@
               inherit cargoArtifacts;
               partitions = 1;
               partitionType = "count";
-              cargoNextestPartitionsExtraArgs = "--no-tests=pass --features unicode-lines";
+              cargoNextestPartitionsExtraArgs = "--no-tests=pass --features unicode-lines --workspace --exclude the-renderer";
             }
           );
         };

@@ -4,19 +4,20 @@ fn main() {
   let cargo_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
   let cargo_manifest_dir = PathBuf::from(&cargo_dir);
 
-  // Link against pre-built wrapper library
-  // Assumes: zig build has been run in the-terminal directory
-  let wrapper_lib_path = cargo_manifest_dir.join("zig-out/lib");
-  if !wrapper_lib_path.exists() {
+  // Link against vendored wrapper library
+  // The wrapper is pre-built and vendored alongside libghostty-vt.so
+  let wrapper_lib_path = cargo_manifest_dir.join("vendored/linux-x86_64");
+  if !wrapper_lib_path.join("libghostty_wrapper.a").exists() {
     eprintln!(
-      "ERROR: Pre-built wrapper library not found at: {}",
+      "ERROR: Vendored wrapper library not found at: {}",
       wrapper_lib_path.display()
     );
+    eprintln!("Expected: {}/libghostty_wrapper.a", wrapper_lib_path.display());
     eprintln!(
-      "Please run: cd {} && zig build",
+      "To rebuild: cd {} && zig build && cp zig-out/lib/libghostty_wrapper.a vendored/linux-x86_64/",
       cargo_manifest_dir.display()
     );
-    panic!("Missing pre-built ghostty wrapper library");
+    panic!("Missing vendored ghostty wrapper library");
   }
 
   println!(
@@ -73,11 +74,15 @@ fn main() {
     ghostty_lib_path.display()
   );
 
-  // Rerun if wrapper changes
+  // Rerun if wrapper or vendored libraries change
   println!("cargo:rerun-if-changed={}/wrapper.zig", cargo_dir);
   println!("cargo:rerun-if-changed={}/build.zig", cargo_dir);
   println!(
-    "cargo:rerun-if-changed={}/zig-out/lib/libghostty_wrapper.a",
+    "cargo:rerun-if-changed={}/vendored/linux-x86_64/libghostty_wrapper.a",
+    cargo_manifest_dir.display()
+  );
+  println!(
+    "cargo:rerun-if-changed={}/vendored/linux-x86_64/libghostty-vt.so",
     cargo_manifest_dir.display()
   );
 }

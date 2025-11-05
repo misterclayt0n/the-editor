@@ -1632,8 +1632,6 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       .or(border_style.bg)
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.3, 0.6, 0.9, 1.0)); // Bright blue fallback
-    let mut border_color_rgb = border_color;
-    border_color_rgb.a = 1.0;
     let text_color = text_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)

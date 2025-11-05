@@ -243,6 +243,7 @@ fn table_lookup(key: &Key, mods: &Modifiers, modes: &TerminalModes) -> Option<&'
     Key::Backspace => &BACKSPACE_SEQUENCES[..],
     Key::Tab => &TAB_SEQUENCES[..],
     Key::Enter => &ENTER_SEQUENCES[..],
+    Key::NumpadEnter => &NUMPAD_ENTER_SEQUENCES[..],
     Key::Escape => &ESCAPE_SEQUENCES[..],
     Key::F1 => &F1_SEQUENCES[..],
     Key::F2 => &F2_SEQUENCES[..],
@@ -602,7 +603,322 @@ static TAB_SEQUENCES: &[KeyEntry] = &[
 ];
 
 // Enter sequences
-static ENTER_SEQUENCES: &[KeyEntry] = &[KeyEntry::simple("\r")];
+static ENTER_SEQUENCES: &[KeyEntry] = &[
+  // Shift+Enter
+  KeyEntry::with_mods(true, false, false, false, "\x1b[27;2;13~"),
+  // Alt+Enter while modifyOtherKeys is set (state 1)
+  KeyEntry {
+    mods: Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    true,
+      super_: false,
+    },
+    cursor_mode:       None,
+    keypad_mode:       None,
+    modify_other_keys: Some(1),
+    sequence:          "\x1b\r",
+  },
+  // Alt+Enter while modifyOtherKeys is set to "other keys" (state 2)
+  KeyEntry {
+    mods: Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    true,
+      super_: false,
+    },
+    cursor_mode:       None,
+    keypad_mode:       None,
+    modify_other_keys: Some(2),
+    sequence:          "\x1b[27;3;13~",
+  },
+  // Alt+Enter default behavior (Meta prefix + CR)
+  KeyEntry::with_mods(false, false, true, false, "\x1b\r"),
+  // Alt+Shift+Enter
+  KeyEntry::with_mods(true, false, true, false, "\x1b[27;4;13~"),
+  // Ctrl+Enter
+  KeyEntry::with_mods(false, true, false, false, "\x1b[27;5;13~"),
+  // Ctrl+Shift+Enter
+  KeyEntry::with_mods(true, true, false, false, "\x1b[27;6;13~"),
+  // Alt+Ctrl+Enter
+  KeyEntry::with_mods(false, true, true, false, "\x1b[27;7;13~"),
+  // Alt+Ctrl+Shift+Enter
+  KeyEntry::with_mods(true, true, true, false, "\x1b[27;8;13~"),
+  // Super+Enter
+  KeyEntry::with_mods(false, false, false, true, "\x1b[27;9;13~"),
+  // Super+Shift+Enter
+  KeyEntry::with_mods(true, false, false, true, "\x1b[27;10;13~"),
+  // Alt+Super+Enter
+  KeyEntry::with_mods(false, false, true, true, "\x1b[27;11;13~"),
+  // Alt+Super+Shift+Enter
+  KeyEntry::with_mods(true, false, true, true, "\x1b[27;12;13~"),
+  // Super+Ctrl+Enter
+  KeyEntry::with_mods(false, true, false, true, "\x1b[27;13;13~"),
+  // Super+Ctrl+Shift+Enter
+  KeyEntry::with_mods(true, true, false, true, "\x1b[27;14;13~"),
+  // Alt+Super+Ctrl+Enter
+  KeyEntry::with_mods(false, true, true, true, "\x1b[27;15;13~"),
+  // Alt+Super+Ctrl+Shift+Enter
+  KeyEntry::with_mods(true, true, true, true, "\x1b[27;16;13~"),
+  // Plain Enter
+  KeyEntry::simple("\r"),
+];
+
+// Keypad Enter sequences
+static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
+  // Keypad application mode (no modifiers)
+  KeyEntry {
+    mods: Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    false,
+      super_: false,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bOM",
+  },
+  // Keypad application mode with modifiers
+  KeyEntry {
+    mods: Modifiers {
+      shift:  true,
+      ctrl:   false,
+      alt:    false,
+      super_: false,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO2M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    true,
+      super_: false,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO3M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  true,
+      ctrl:   false,
+      alt:    true,
+      super_: false,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO4M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  false,
+      ctrl:   true,
+      alt:    false,
+      super_: false,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO5M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  true,
+      ctrl:   true,
+      alt:    false,
+      super_: false,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO6M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  false,
+      ctrl:   true,
+      alt:    true,
+      super_: false,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO7M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  true,
+      ctrl:   true,
+      alt:    true,
+      super_: false,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO8M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    false,
+      super_: true,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO9M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  true,
+      ctrl:   false,
+      alt:    false,
+      super_: true,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO10M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    true,
+      super_: true,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO11M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  true,
+      ctrl:   false,
+      alt:    true,
+      super_: true,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO12M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  false,
+      ctrl:   true,
+      alt:    false,
+      super_: true,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO13M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  true,
+      ctrl:   true,
+      alt:    false,
+      super_: true,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO14M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  false,
+      ctrl:   true,
+      alt:    true,
+      super_: true,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO15M",
+  },
+  KeyEntry {
+    mods: Modifiers {
+      shift:  true,
+      ctrl:   true,
+      alt:    true,
+      super_: true,
+    },
+    cursor_mode:       None,
+    keypad_mode:       Some(true),
+    modify_other_keys: None,
+    sequence:          "\x1bO16M",
+  },
+  // Alt+Enter while modifyOtherKeys is set (state 1)
+  KeyEntry {
+    mods: Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    true,
+      super_: false,
+    },
+    cursor_mode:       None,
+    keypad_mode:       None,
+    modify_other_keys: Some(1),
+    sequence:          "\x1b\r",
+  },
+  // Alt+Enter while modifyOtherKeys is set to "other keys" (state 2)
+  KeyEntry {
+    mods: Modifiers {
+      shift:  false,
+      ctrl:   false,
+      alt:    true,
+      super_: false,
+    },
+    cursor_mode:       None,
+    keypad_mode:       None,
+    modify_other_keys: Some(2),
+    sequence:          "\x1b[27;3;13~",
+  },
+  // Alt+Enter default behavior (Meta prefix + CR)
+  KeyEntry::with_mods(false, false, true, false, "\x1b\r"),
+  // Shift+Enter
+  KeyEntry::with_mods(true, false, false, false, "\x1b[27;2;13~"),
+  // Alt+Shift+Enter
+  KeyEntry::with_mods(true, false, true, false, "\x1b[27;4;13~"),
+  // Ctrl+Enter
+  KeyEntry::with_mods(false, true, false, false, "\x1b[27;5;13~"),
+  // Ctrl+Shift+Enter
+  KeyEntry::with_mods(true, true, false, false, "\x1b[27;6;13~"),
+  // Alt+Ctrl+Enter
+  KeyEntry::with_mods(false, true, true, false, "\x1b[27;7;13~"),
+  // Alt+Ctrl+Shift+Enter
+  KeyEntry::with_mods(true, true, true, false, "\x1b[27;8;13~"),
+  // Super+Enter
+  KeyEntry::with_mods(false, false, false, true, "\x1b[27;9;13~"),
+  // Super+Shift+Enter
+  KeyEntry::with_mods(true, false, false, true, "\x1b[27;10;13~"),
+  // Alt+Super+Enter
+  KeyEntry::with_mods(false, false, true, true, "\x1b[27;11;13~"),
+  // Alt+Super+Shift+Enter
+  KeyEntry::with_mods(true, false, true, true, "\x1b[27;12;13~"),
+  // Super+Ctrl+Enter
+  KeyEntry::with_mods(false, true, false, true, "\x1b[27;13;13~"),
+  // Super+Ctrl+Shift+Enter
+  KeyEntry::with_mods(true, true, false, true, "\x1b[27;14;13~"),
+  // Alt+Super+Ctrl+Enter
+  KeyEntry::with_mods(false, true, true, true, "\x1b[27;15;13~"),
+  // Alt+Super+Ctrl+Shift+Enter
+  KeyEntry::with_mods(true, true, true, true, "\x1b[27;16;13~"),
+  // Plain Enter
+  KeyEntry::simple("\r"),
+];
 
 // Escape sequences
 static ESCAPE_SEQUENCES: &[KeyEntry] = &[KeyEntry::simple("\x1b")];

@@ -274,6 +274,25 @@ struct SeparatorDrag {
 }
 
 impl EditorView {
+  const TERMINAL_MODES: crate::key_encode::TerminalModes = crate::key_encode::TerminalModes {
+    cursor_key_application: false,
+    keypad_application:     false,
+    modify_other_keys:      0,
+    kitty_flags:            0,
+    alt_esc_prefix:         true,
+  };
+
+  fn key_binding_to_key_press(binding: &KeyBinding) -> the_editor_renderer::KeyPress {
+    the_editor_renderer::KeyPress {
+      code:    binding.code,
+      pressed: true,
+      shift:   binding.shift,
+      ctrl:    binding.ctrl,
+      alt:     binding.alt,
+      super_:  false,
+    }
+  }
+
   fn terminal_pos_cmp(a: (u32, u32), b: (u32, u32)) -> Ordering {
     match a.0.cmp(&b.0) {
       Ordering::Equal => a.1.cmp(&b.1),
@@ -635,11 +654,11 @@ impl Component for EditorView {
               }
             }
 
-            let mut bytes = Vec::new();
+            let key_press = Self::key_binding_to_key_press(key);
+            let mut bytes = crate::key_encode::encode(&key_press, &Self::TERMINAL_MODES);
             if prepend_escape {
-              bytes.push(0x1B);
+              bytes.insert(0, 0x1B);
             }
-            bytes.extend(Self::key_to_terminal_bytes(key));
             if !bytes.is_empty() {
               let result = {
                 let session_ref = terminal.session.borrow();
@@ -2529,93 +2548,6 @@ impl EditorView {
           callback(compositor, cx);
         }
       })))
-    }
-  }
-
-  /// Convert a KeyBinding to bytes for terminal PTY input
-  fn key_to_terminal_bytes(key: &KeyBinding) -> Vec<u8> {
-    use the_editor_renderer::Key;
-
-    let key_code = key.code;
-    let ctrl = key.ctrl;
-    let alt = key.alt;
-    let shift = key.shift;
-
-    // Handle special keys with escape sequences
-    match key_code {
-      Key::Up => {
-        if ctrl {
-          b"\x1b[1;5A".to_vec()
-        } else if alt {
-          b"\x1b[1;3A".to_vec()
-        } else {
-          b"\x1b[A".to_vec()
-        }
-      },
-      Key::Down => {
-        if ctrl {
-          b"\x1b[1;5B".to_vec()
-        } else if alt {
-          b"\x1b[1;3B".to_vec()
-        } else {
-          b"\x1b[B".to_vec()
-        }
-      },
-      Key::Left => {
-        if ctrl {
-          b"\x1b[1;5D".to_vec()
-        } else if alt {
-          b"\x1b[1;3D".to_vec()
-        } else {
-          b"\x1b[D".to_vec()
-        }
-      },
-      Key::Right => {
-        if ctrl {
-          b"\x1b[1;5C".to_vec()
-        } else if alt {
-          b"\x1b[1;3C".to_vec()
-        } else {
-          b"\x1b[C".to_vec()
-        }
-      },
-      Key::Home => b"\x1b[H".to_vec(),
-      Key::End => b"\x1b[F".to_vec(),
-      Key::PageUp => b"\x1b[5~".to_vec(),
-      Key::PageDown => b"\x1b[6~".to_vec(),
-      Key::Tab => {
-        if shift {
-          b"\x1b[Z".to_vec() // Shift+Tab
-        } else {
-          b"\t".to_vec()
-        }
-      },
-      Key::Backspace => b"\x7f".to_vec(),
-      Key::Delete => b"\x1b[3~".to_vec(),
-      Key::Enter => b"\r".to_vec(),
-      Key::Escape => b"\x1b".to_vec(),
-      Key::Char(c) => {
-        let mut bytes = Vec::new();
-
-        if ctrl {
-          // Ctrl+key produces control character
-          match c {
-            'a'..='z' => bytes.push((c as u8) - b'a' + 1),
-            'A'..='Z' => bytes.push((c as u8) - b'A' + 1),
-            '[' => bytes.push(0x1B),
-            _ => bytes.extend_from_slice(c.to_string().as_bytes()),
-          }
-        } else if alt {
-          // Alt+key produces ESC key
-          bytes.push(0x1B);
-          bytes.extend_from_slice(c.to_string().as_bytes());
-        } else {
-          bytes.extend_from_slice(c.to_string().as_bytes());
-        }
-
-        bytes
-      },
-      _ => Vec::new(), // Other keys ignored for now
     }
   }
 

@@ -173,7 +173,7 @@ impl Prompt {
     // Emacs-style keybindings (like Helix)
     match (key.code, key.ctrl, key.alt, key.shift) {
       // Enter - insert selected completion or execute
-      (Key::Enter, ..) => {
+      (Key::Enter | Key::NumpadEnter, ..) => {
         // If we have a completion selected, insert it
         if self.selection.is_some() && !self.completions.is_empty() {
           // Apply the selected completion

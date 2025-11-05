@@ -46,6 +46,7 @@ pub enum UnifiedKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpecialKey {
   Enter,
+  NumpadEnter,
   Tab,
   Backspace,
   Delete,
@@ -161,6 +162,14 @@ impl InputProcessor {
           alt:   key_press.alt,
         })
       },
+      Key::NumpadEnter if has_modifiers => {
+        Some(UnifiedKey::ModifiedSpecial {
+          key:   SpecialKey::NumpadEnter,
+          shift: key_press.shift,
+          ctrl:  key_press.ctrl,
+          alt:   key_press.alt,
+        })
+      },
       Key::Tab if has_modifiers => {
         Some(UnifiedKey::ModifiedSpecial {
           key:   SpecialKey::Tab,
@@ -187,6 +196,7 @@ impl InputProcessor {
       },
       // Unmodified special keys
       Key::Enter => Some(UnifiedKey::Special(SpecialKey::Enter)),
+      Key::NumpadEnter => Some(UnifiedKey::Special(SpecialKey::NumpadEnter)),
       Key::Tab => Some(UnifiedKey::Special(SpecialKey::Tab)),
       Key::Backspace => Some(UnifiedKey::Special(SpecialKey::Backspace)),
       Key::Delete => Some(UnifiedKey::Special(SpecialKey::Delete)),
@@ -283,6 +293,7 @@ impl UnifiedKey {
       UnifiedKey::Special(special) => {
         let key = match special {
           SpecialKey::Enter => Key::Enter,
+          SpecialKey::NumpadEnter => Key::NumpadEnter,
           SpecialKey::Tab => Key::Tab,
           SpecialKey::Backspace => Key::Backspace,
           SpecialKey::Delete => Key::Delete,
@@ -318,6 +329,7 @@ impl UnifiedKey {
       } => {
         let key_code = match key {
           SpecialKey::Enter => Key::Enter,
+          SpecialKey::NumpadEnter => Key::NumpadEnter,
           SpecialKey::Tab => Key::Tab,
           SpecialKey::Backspace => Key::Backspace,
           SpecialKey::Delete => Key::Delete,
@@ -445,7 +457,8 @@ impl InputHandler {
                   result.pending_char = Some(ch);
                   result.consumed = true;
                 },
-                UnifiedKey::Special(SpecialKey::Enter) => {
+                UnifiedKey::Special(SpecialKey::Enter)
+                | UnifiedKey::Special(SpecialKey::NumpadEnter) => {
                   // Some commands treat Enter specially.
                   result.pending_char = Some('\n');
                   result.consumed = true;

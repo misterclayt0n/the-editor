@@ -297,7 +297,7 @@ impl Component for CodeActionMenu {
           compositor.remove(Self::ID);
         })))
       },
-      (Key::Enter, ..) => {
+      (Key::Enter | Key::NumpadEnter, ..) => {
         if let Err(err) = self.apply_code_action(cx) {
           cx.editor
             .set_error(format!("Failed to apply code action: {}", err));

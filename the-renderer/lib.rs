@@ -180,6 +180,7 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
       PhysicalKey::Code(KeyCode::ArrowLeft) => Key::Left,
       PhysicalKey::Code(KeyCode::ArrowRight) => Key::Right,
       PhysicalKey::Code(KeyCode::Enter) => Key::Enter,
+      PhysicalKey::Code(KeyCode::NumpadEnter) => Key::NumpadEnter,
       PhysicalKey::Code(KeyCode::Tab) => Key::Tab,
       PhysicalKey::Code(KeyCode::Escape) => Key::Escape,
       PhysicalKey::Code(KeyCode::Backspace) => Key::Backspace,

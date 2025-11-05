@@ -1293,7 +1293,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         EventResult::Consumed(Some(callback))
       },
       // Enter - primary action (open/select)
-      (Key::Enter, false, false, _) => {
+      (Key::Enter | Key::NumpadEnter, false, false, _) => {
         let should_close = self.execute_action(PickerAction::Primary);
         if should_close {
           self.close();

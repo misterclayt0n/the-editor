@@ -30,7 +30,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [ ] Hyperlink resolution.
   - [x] Investigate bug on nushell outputs rendering in the terminal (I kinda have to press something for it to actually render after typing some command).
   - [ ] Terminal picker.
-  - [ ] Better handling for enter key.
+  - [x] Better handling for enter key.
   - [ ] Scroll while selecting text.
   - [ ] If I'm scrolled somewhere, when I type something the terminal should scroll to the text I'm typing.
 - [ ] File tree.

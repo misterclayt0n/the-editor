@@ -11,6 +11,8 @@ pub enum Key {
   Escape,
   /// Enter/Return key
   Enter,
+  /// Keypad Enter key
+  NumpadEnter,
   /// Backspace key
   Backspace,
   /// Tab key

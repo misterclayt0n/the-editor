@@ -680,7 +680,7 @@ fn find_char(cx: &mut Context, direction: Direction, inclusive: bool, extend: bo
     }
 
     match event.code {
-      Key::Enter => {
+      Key::Enter | Key::NumpadEnter => {
         perform_find_char(cx.editor, pending, FindCharInput::LineEnding);
       },
       Key::Char(ch) => {
@@ -2824,7 +2824,7 @@ pub fn replace(cx: &mut Context) {
     let (view, doc) = current!(cx.editor);
     let ch: Option<&str> = match event.code {
       Key::Char(ch) => Some(ch.encode_utf8(&mut buf)),
-      Key::Enter => Some(doc.line_ending.as_str()),
+      Key::Enter | Key::NumpadEnter => Some(doc.line_ending.as_str()),
       _ => None, // Everything else just cancels it.
     };
 
@@ -3943,7 +3943,7 @@ pub fn surround_add(cx: &mut Context) {
         close.push(c);
         (open, close, 2)
       },
-      Key::Enter => {
+      Key::Enter | Key::NumpadEnter => {
         (
           doc.line_ending.as_str().into(),
           doc.line_ending.as_str().into(),

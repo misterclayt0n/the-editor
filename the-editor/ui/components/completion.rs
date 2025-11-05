@@ -927,7 +927,7 @@ impl Component for Completion {
         })))
       },
       // Enter / Tab - accept completion
-      (Key::Enter, ..) | (Key::Tab, _, _, false) => {
+      (Key::Enter | Key::NumpadEnter, ..) | (Key::Tab, _, _, false) => {
         if let Some(item) = self.selection() {
           // Apply the selected completion
           self.apply_completion(ctx, item);

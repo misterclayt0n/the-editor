@@ -635,12 +635,8 @@ impl Application for App {
         //   return true;
         // }
 
-        if key_press.alt {
-          if let Some(pane) = terminal_toggle_target(key_press.code) {
-            self.editor.toggle_terminal_pane(pane);
-            return true;
-          }
-        }
+        // Alt+L and Alt+J removed - these keys should be sent to terminal
+        // Terminal pane toggling is now only available via Ctrl+Space prefix
 
         // Intercept Ctrl+Shift+C (copy) and Ctrl+Shift+V (paste) for clipboard
         // operations

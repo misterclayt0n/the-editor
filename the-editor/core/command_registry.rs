@@ -840,7 +840,7 @@ impl CommandRegistry {
       &["cd"],
       "Change the current working directory",
       change_current_directory,
-      CommandCompleter::positional(&[completers::directory], completers::none),
+      CommandCompleter::all(completers::filename),
       Signature {
         positionals: (0, Some(1)),
         ..Signature::DEFAULT

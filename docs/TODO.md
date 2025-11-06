@@ -1,6 +1,7 @@
 ### TODO
 So, this is just a simple todo list that will grant me some sort of base for the editor's missing features overall. Note that this document represents my personal vision on what the editor shall become, but will likely change over time.
 
+- [x] Remove ACP integration - The reason for this is that we are embedding ghostty, which let's us better integrate cli tools (which ar e mostly common in vibe coding) inside the editor. This is a simpler/more composable approach overall, so ACP is not needed anymore.
 - [ ] Image rendering.
 - [x] Local search in buffer (https://x.com/neogoose_btw/status/1981778716721393859/photo/1).
 - [ ] End of line diagnostics.

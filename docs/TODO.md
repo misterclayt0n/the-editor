@@ -5,7 +5,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Image rendering.
 - [x] Local search in buffer (https://x.com/neogoose_btw/status/1981778716721393859/photo/1).
 - [ ] End of line diagnostics.
-- [ ] Buffer line
+- [x] Buffer line
 - [ ] VCS
   - [ ] First class jujutsu support (jujutsu will have priority over git).
   - [ ] Git blame (this will likely only support git btw).

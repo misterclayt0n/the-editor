@@ -262,7 +262,7 @@ fn request_completions_sync(
   if uri_str.is_none() {
     if !path_completion_items.is_empty() {
       let items = path_completion_items;
-      crate::ui::job::dispatch(move |editor, compositor| {
+      crate::ui::job::dispatch_blocking(move |editor, compositor| {
         show_completion(editor, compositor, items, trigger_offset, doc_id);
       });
     }
@@ -285,7 +285,7 @@ fn request_completions_sync(
       // If no valid LSP URI but we have path completions, show them
       if !path_completion_items.is_empty() {
         let items = path_completion_items;
-        crate::ui::job::dispatch(move |editor, compositor| {
+        crate::ui::job::dispatch_blocking(move |editor, compositor| {
           show_completion(editor, compositor, items, trigger_offset, doc_id);
         });
       }
@@ -323,7 +323,7 @@ fn request_completions_sync(
   if completion_futures.is_empty() {
     if !path_completion_items.is_empty() {
       let items = path_completion_items;
-      crate::ui::job::dispatch(move |editor, compositor| {
+      crate::ui::job::dispatch_blocking(move |editor, compositor| {
         show_completion(editor, compositor, items, trigger_offset, doc_id);
       });
     }

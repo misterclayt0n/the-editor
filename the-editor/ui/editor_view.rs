@@ -49,13 +49,18 @@ use crate::{
       TerminalSelectionMode,
     },
   },
-  editor::Editor,
+  editor::{
+    Action,
+    BufferLine,
+    Editor,
+  },
   keymap::{
     KeyBinding,
     Keymaps,
     Mode,
   },
   ui::{
+    components::bufferline,
     compositor::{
       Component,
       Context,
@@ -233,6 +238,7 @@ pub struct EditorView {
   pub(crate) completion:     Option<crate::ui::components::Completion>,
   // Signature help popup
   pub(crate) signature_help: Option<crate::ui::components::SignatureHelp>,
+  bufferline_visible:        bool,
   // Cached font metrics for mouse handling (updated during render)
   cached_cell_width:         f32,
   cached_cell_height:        f32,
@@ -249,6 +255,10 @@ pub struct EditorView {
   hovered_separator:         Option<SeparatorInfo>,
   dragging_separator:        Option<SeparatorDrag>,
   terminal_meta_pending:     bool,
+  buffer_hover_index:        Option<usize>,
+  buffer_tabs:               Vec<bufferline::BufferTab>,
+  bufferline_height:         f32,
+  buffer_pressed_index:      Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -351,6 +361,7 @@ impl EditorView {
       gutter_manager: GutterManager::with_defaults(),
       completion: None,
       signature_help: None,
+      bufferline_visible: false,
       cached_cell_width: 12.0,  // Default, will be updated during render
       cached_cell_height: 24.0, // Default, will be updated during render
       cached_font_size: 18.0,   // Default, will be updated during render
@@ -363,6 +374,10 @@ impl EditorView {
       hovered_separator: None,
       dragging_separator: None,
       terminal_meta_pending: false,
+      buffer_hover_index: None,
+      buffer_tabs: Vec::new(),
+      bufferline_height: 24.0,
+      buffer_pressed_index: None,
     }
   }
 
@@ -1027,6 +1042,20 @@ impl Component for EditorView {
     renderer.configure_font(&font_family, font_size);
     let font_width = renderer.cell_width().max(1.0);
 
+    let bufferline_mode = {
+      let config = cx.editor.config();
+      config.bufferline.clone()
+    };
+    let use_bufferline = match bufferline_mode {
+      BufferLine::Always => true,
+      BufferLine::Multiple => cx.editor.documents.len() > 1,
+      BufferLine::Never => false,
+    };
+    if self.bufferline_visible != use_bufferline {
+      self.bufferline_visible = use_bufferline;
+      self.dirty_region.mark_all_dirty();
+    }
+
     // Cache font metrics for mouse handling
     self.cached_cell_width = font_width;
     self.cached_cell_height = renderer.cell_height();
@@ -1041,14 +1070,17 @@ impl Component for EditorView {
 
     // Don't subtract visual padding from viewport width - it's only for rendering
     // offset
-    let available_width = renderer.width() as f32;
-    let available_width = available_width.max(font_width);
+    let viewport_px_width = renderer.width() as f32;
+    let available_width = viewport_px_width.max(font_width);
     let area_width = (available_width / font_width).floor().max(1.0) as u16;
 
     // Reserve space at bottom for statusline (clip_bottom reserves 1 row)
     // The statusline is rendered as an overlay by the compositor, but we need to
     // prevent views from rendering underneath it
-    let target_area = Rect::new(0, 0, area_width, total_rows).clip_bottom(1);
+    let mut target_area = Rect::new(0, 0, area_width, total_rows).clip_bottom(1);
+    if use_bufferline {
+      target_area = target_area.clip_top(1);
+    }
 
     // Resize tree if needed
     if cx.editor.tree.resize(target_area) {
@@ -1122,6 +1154,24 @@ impl Component for EditorView {
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.1, 0.1, 0.15, 1.0));
     renderer.set_background_color(background_color);
+
+    if use_bufferline {
+      self.bufferline_height = bufferline::render(
+        cx.editor,
+        0.0,
+        0.0,
+        viewport_px_width,
+        renderer,
+        self.buffer_hover_index,
+        self.buffer_pressed_index,
+        &mut self.buffer_tabs,
+      );
+    } else {
+      self.buffer_tabs.clear();
+      self.buffer_hover_index = None;
+      self.buffer_pressed_index = None;
+      self.bufferline_height = 0.0;
+    }
 
     let normal_base = normal_style
       .fg
@@ -2993,6 +3043,88 @@ impl EditorView {
     mouse: &the_editor_renderer::MouseEvent,
     cx: &mut Context,
   ) -> EventResult {
+    if self.bufferline_visible {
+      let buffer_height = if self.bufferline_height > 0.0 {
+        self.bufferline_height
+      } else {
+        self.cached_cell_height
+      };
+      let within_bufferline = mouse.position.1 >= 0.0 && mouse.position.1 <= buffer_height;
+
+      if within_bufferline {
+        let hit_index = self
+          .buffer_tabs
+          .iter()
+          .position(|tab| mouse.position.0 >= tab.start_x && mouse.position.0 < tab.end_x);
+
+        match mouse.button {
+          Some(the_editor_renderer::MouseButton::Left) if mouse.pressed => {
+            if self.buffer_pressed_index != hit_index {
+              self.buffer_pressed_index = hit_index;
+              self.dirty_region.mark_all_dirty();
+            }
+            if let Some(idx) = hit_index {
+              let doc_id = self.buffer_tabs[idx].doc_id;
+              let target_view = cx
+                .editor
+                .tree
+                .views()
+                .find_map(|(view, _)| (view.doc == doc_id).then_some(view.id));
+
+              if let Some(view_id) = target_view {
+                cx.editor.focus(view_id);
+              } else {
+                let current_doc = cx
+                  .editor
+                  .tree
+                  .try_get(cx.editor.tree.focus)
+                  .map(|view| view.doc);
+
+                if current_doc != Some(doc_id) {
+                  cx.editor.switch(doc_id, Action::Replace);
+                }
+              }
+            }
+            self.buffer_hover_index = hit_index;
+            request_redraw();
+            self.dirty_region.mark_all_dirty();
+            return EventResult::Consumed(None);
+          },
+          Some(the_editor_renderer::MouseButton::Left) => {
+            if self.buffer_pressed_index.take().is_some() {
+              self.dirty_region.mark_all_dirty();
+            }
+            if self.buffer_hover_index != hit_index {
+              self.buffer_hover_index = hit_index;
+              request_redraw();
+              self.dirty_region.mark_all_dirty();
+            }
+            return EventResult::Consumed(None);
+          },
+          _ => {
+            if self.buffer_hover_index != hit_index {
+              self.buffer_hover_index = hit_index;
+              self.dirty_region.mark_all_dirty();
+              request_redraw();
+            }
+            return EventResult::Consumed(None);
+          },
+        }
+      } else {
+        let mut changed = false;
+        if self.buffer_hover_index.take().is_some() {
+          changed = true;
+        }
+        if self.buffer_pressed_index.take().is_some() {
+          changed = true;
+        }
+        if changed {
+          self.dirty_region.mark_all_dirty();
+          request_redraw();
+        }
+      }
+    }
+
     match mouse.button {
       Some(the_editor_renderer::MouseButton::Left) => {
         if mouse.pressed {

@@ -2280,6 +2280,15 @@ impl Document {
     )
   }
 
+  pub fn short_name(&self) -> Cow<'_, str> {
+    self
+      .path()
+      .and_then(|path| path.file_name())
+      .and_then(|os| os.to_str())
+      .map(Cow::from)
+      .unwrap_or_else(|| Cow::Borrowed(SCRATCH_BUFFER_NAME))
+  }
+
   // transact(Fn) ?
 
   // -- LSP methods

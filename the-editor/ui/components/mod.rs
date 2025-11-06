@@ -1,3 +1,4 @@
+pub mod bufferline;
 pub mod button;
 pub mod code_action;
 pub mod completion;

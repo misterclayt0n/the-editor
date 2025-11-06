@@ -2270,10 +2270,26 @@ impl Renderer {
     self.pending_cursor_icon.take()
   }
 
+  fn release_in_flight_frame(&mut self) {
+    let command_buffer = self.current_encoder.take().map(|encoder| encoder.finish());
+
+    // Drop any references to the view before presenting
+    self.current_view.take();
+
+    if let Some(cb) = command_buffer {
+      self.queue.submit(std::iter::once(cb));
+    }
+
+    if let Some(output) = self.current_output.take() {
+      output.present();
+    }
+  }
+
   /// Gracefully shutdown the renderer, flushing all GPU operations.
   /// This should be called before dropping the renderer to ensure clean
   /// resource cleanup.
   pub fn shutdown(&mut self) {
+    self.release_in_flight_frame();
     // Flush any pending command buffers to the GPU queue.
     // This is critical for preventing Wayland compositor freezes and audio glitches
     // caused by incomplete GPU resource cleanup.
@@ -2286,6 +2302,7 @@ impl Renderer {
 
 impl Drop for Renderer {
   fn drop(&mut self) {
+    self.release_in_flight_frame();
     // Attempt graceful shutdown during cleanup to catch any missed explicit calls.
     // This is a safety net - proper shutdown should call shutdown() explicitly.
     // Flushing the queue ensures pending operations are sent to the GPU.

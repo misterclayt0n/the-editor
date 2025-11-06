@@ -57,6 +57,18 @@ pub struct Button {
   last_rendered_area: Rect,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ButtonPalette {
+  text:           Color,
+  outline:        Color,
+  fill:           Option<Color>,
+  accent_text:    Color,
+  accent_outline: Color,
+  accent_fill:    Option<Color>,
+  hover_glow:     Color,
+  press_glow:     Color,
+}
+
 impl Button {
   pub fn new(label: impl Into<String>) -> Self {
     Self {
@@ -149,28 +161,104 @@ impl Button {
     (x, y, w, h)
   }
 
-  fn resolve_colors(&self, cx: &Context) -> (Color, Color) {
+  fn resolve_palette(&self, cx: &Context) -> ButtonPalette {
     if self.color_override {
       let base = self.base_color;
-      let highlight = Self::glow_rgb_from_base(base);
-      return (base, highlight);
+      let glow = Self::glow_rgb_from_base(base);
+      return ButtonPalette {
+        text:           base,
+        outline:        base,
+        fill:           None,
+        accent_text:    glow,
+        accent_outline: glow,
+        accent_fill:    None,
+        hover_glow:     glow,
+        press_glow:     glow,
+      };
     }
 
     let theme = &cx.editor.theme;
 
-    let base = theme
-      .try_get_exact("ui.button")
+    let base_style = theme.try_get_exact("ui.button");
+    let base_text = base_style
       .and_then(|style| style.fg)
       .map(theme_color_to_renderer_color)
       .unwrap_or(self.base_color);
+    let base_fill = base_style
+      .and_then(|style| style.bg)
+      .map(theme_color_to_renderer_color);
 
-    let highlight = theme
-      .try_get_exact("ui.button.highlight")
+    let highlight_style = theme.try_get_exact("ui.button.highlight");
+    let accent_text = highlight_style
       .and_then(|style| style.fg)
       .map(theme_color_to_renderer_color)
-      .unwrap_or_else(|| Self::glow_rgb_from_base(base));
+      .unwrap_or_else(|| Self::glow_rgb_from_base(base_text));
+    let accent_text = Color::new(
+      accent_text.r,
+      accent_text.g,
+      accent_text.b,
+      if accent_text.a == 0.0 {
+        1.0
+      } else {
+        accent_text.a
+      },
+    );
+    let accent_fill = highlight_style
+      .and_then(|style| style.bg)
+      .map(theme_color_to_renderer_color)
+      .or_else(|| {
+        base_fill.map(|fill| {
+          let lifted = Self::mix(fill, accent_text, 0.35);
+          Color::new(lifted.r, lifted.g, lifted.b, 1.0)
+        })
+      });
+    let accent_outline = highlight_style
+      .and_then(|style| style.fg)
+      .map(theme_color_to_renderer_color)
+      .unwrap_or(accent_text);
+    let accent_outline = Color::new(
+      accent_outline.r,
+      accent_outline.g,
+      accent_outline.b,
+      if accent_outline.a == 0.0 {
+        1.0
+      } else {
+        accent_outline.a
+      },
+    );
 
-    (base, highlight)
+    let selection_style = theme.try_get("ui.selection");
+    let selection_glow_style = theme.try_get("ui.selection.glow");
+    let selection_glow = selection_glow_style
+      .and_then(|style| style.bg.or(style.fg))
+      .map(theme_color_to_renderer_color)
+      .or_else(|| {
+        selection_style
+          .and_then(|style| style.bg.or(style.fg))
+          .map(theme_color_to_renderer_color)
+      })
+      .unwrap_or(accent_text);
+    let selection_glow = Color::new(
+      selection_glow.r,
+      selection_glow.g,
+      selection_glow.b,
+      if selection_glow.a == 0.0 {
+        1.0
+      } else {
+        selection_glow.a
+      },
+    );
+
+    ButtonPalette {
+      text: base_text,
+      outline: base_text,
+      fill: base_fill,
+      accent_text,
+      accent_outline,
+      accent_fill,
+      hover_glow: selection_glow,
+      press_glow: selection_glow,
+    }
   }
 
   #[allow(clippy::too_many_arguments)]
@@ -183,11 +271,16 @@ impl Button {
     h: f32,
     rounded: f32,
     click_t: f32, // 0.0 = not clicking, 1.0 = fully clicked
-    base_color: Color,
-    highlight_color: Color,
+    base_outline: Color,
+    hover_outline: Color,
+    hover_glow_color: Color,
+    press_glow_color: Color,
   ) {
-    // Colors: transparent fill, outline derived from base color
-    let mut outline = base_color;
+    let mut outline = if self.hovered {
+      hover_outline
+    } else {
+      base_outline
+    };
     outline.a = 0.95;
 
     if self.hovered {
@@ -212,16 +305,14 @@ impl Button {
       renderer.draw_rounded_rect_stroke(x, y, w, h, rounded, 1.0, outline);
     }
 
-    let glow_color = highlight_color;
-
     // Bottom glow (only appears on click)
     if click_t > 0.0 {
       let bottom_center_y = y + h + 1.5; // slightly below bottom edge
       let bottom_glow_strength = click_t * 0.12; // only on click, reduced intensity
       let bottom_glow = Color::new(
-        glow_color.r,
-        glow_color.g,
-        glow_color.b,
+        press_glow_color.r,
+        press_glow_color.g,
+        press_glow_color.b,
         bottom_glow_strength,
       );
       let bottom_radius = (w * 0.45).max(h * 0.42);
@@ -239,8 +330,17 @@ impl Button {
     }
 
     if self.hovered {
-      let hover_strength = 1.0 - click_t * 0.9; // almost fully disappear on click
-      Self::draw_hover_layers(renderer, x, y, w, h, rounded, glow_color, hover_strength);
+      let hover_strength = (1.0 - click_t * 0.9).max(0.0); // almost fully disappear on click
+      Self::draw_hover_layers(
+        renderer,
+        x,
+        y,
+        w,
+        h,
+        rounded,
+        hover_glow_color,
+        hover_strength,
+      );
     }
   }
 
@@ -471,7 +571,44 @@ impl Component for Button {
     // Update click state and get current progress
     let click_t = self.update_click_state(cx.dt);
 
-    let (base_color, highlight_color) = self.resolve_colors(cx);
+    let palette = self.resolve_palette(cx);
+    let state_fill = if self.pressed {
+      palette.accent_fill.or(palette.fill).map(|fill| {
+        if let Some(base) = palette.fill {
+          let mixed = Self::mix(fill, base, 0.4);
+          Color::new(
+            mixed.r,
+            mixed.g,
+            mixed.b,
+            if fill.a == 0.0 {
+              base.a.max(0.4)
+            } else {
+              fill.a
+            },
+          )
+        } else {
+          fill
+        }
+      })
+    } else if self.hovered {
+      palette.accent_fill.or(palette.fill).map(|fill| {
+        Color::new(
+          fill.r,
+          fill.g,
+          fill.b,
+          if fill.a == 0.0 { 0.85 } else { fill.a },
+        )
+      })
+    } else {
+      palette.fill
+    };
+
+    if let Some(mut fill) = state_fill {
+      if fill.a == 0.0 {
+        fill.a = 1.0;
+      }
+      renderer.draw_rounded_rect(x, y, w, h, radius, fill);
+    }
 
     // Base + outline (with click inversion effect)
     self.draw_outline_button(
@@ -482,20 +619,22 @@ impl Component for Button {
       h,
       radius,
       click_t,
-      base_color,
-      highlight_color,
+      palette.outline,
+      palette.accent_outline,
+      palette.hover_glow,
+      palette.press_glow,
     );
 
     // Hover glow following cursor (weakens during click)
-    self.draw_hover_glow(renderer, x, y, w, h, click_t, highlight_color);
+    self.draw_hover_glow(renderer, x, y, w, h, click_t, palette.hover_glow);
 
     // Label centered
-    let text_color = if self.hovered {
-      // Slightly elevated contrast on hover
-      let lifted = Self::mix(base_color, Color::WHITE, 0.70);
-      Color::new(lifted.r, lifted.g, lifted.b, 1.0)
+    let text_color = if self.pressed {
+      Self::mix(palette.accent_text, palette.text, 0.45)
+    } else if self.hovered {
+      palette.accent_text
     } else {
-      base_color
+      palette.text
     };
     let font_size = (h * 0.5).clamp(12.0, 20.0);
     // Position is top-left; center the text inside the button.

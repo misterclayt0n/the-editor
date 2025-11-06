@@ -1638,11 +1638,20 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
 
     // Use a specific theme key for picker selected text for better contrast
+    let selection_style = theme.try_get("ui.selection");
+    let selection_fg = selection_style
+      .and_then(|s| s.fg)
+      .map(crate::ui::theme_color_to_renderer_color);
+    let selection_bg = selection_style
+      .and_then(|s| s.bg)
+      .map(crate::ui::theme_color_to_renderer_color);
     let picker_selected_text_style = theme.try_get_exact("ui.picker.selected.text");
-    let selected_fg = picker_selected_text_style
+    let mut selected_fg = picker_selected_text_style
       .and_then(|s| s.fg)
       .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(1.0, 1.0, 1.0, 1.0)); // Bright white for contrast
+      .or(selection_fg)
+      .unwrap_or(text_color);
+    selected_fg.a = 1.0;
     let button_style = theme.get("ui.button");
     let mut button_base_color = button_style
       .fg
@@ -1668,13 +1677,24 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
     let mut picker_selected_fill = picker_selected_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
+      .or(selection_bg)
       .unwrap_or_else(|| Self::mix_rgb(button_fill_color, bg_color, 0.4));
-    picker_selected_fill.a = 1.0;
+    picker_selected_fill.a = if picker_selected_fill.a == 0.0 {
+      1.0
+    } else {
+      picker_selected_fill.a
+    };
     let mut picker_selected_outline = picker_selected_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
+      .or(selection_fg)
+      .or(selection_bg)
       .unwrap_or(button_highlight_color);
-    picker_selected_outline.a = 1.0;
+    picker_selected_outline.a = if picker_selected_outline.a == 0.0 {
+      1.0
+    } else {
+      picker_selected_outline.a
+    };
     let query_color = text_color;
     let count_color = count_style
       .fg
@@ -2085,7 +2105,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
             );
 
             let top_center_x = item_x + item_width * 0.5;
-            let glow_color = Self::glow_rgb_from_base(picker_selected_outline);
+            let glow_color =
+              selection_bg.unwrap_or_else(|| Self::glow_rgb_from_base(picker_selected_outline));
             let glow_strength = (alpha * (0.85 + 0.15 * selection_ease)).clamp(0.0, 1.0);
             Button::draw_hover_layers(
               surface,
@@ -2094,7 +2115,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
               item_width,
               selection_height,
               item_radius,
-              picker_selected_outline,
+              glow_color,
               glow_strength,
             );
 

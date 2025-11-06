@@ -686,13 +686,17 @@ impl Theme {
     if let Some((red, green, blue)) = Self::decode_rgb_highlight(highlight) {
       Style::new().fg(Color::Rgb(red, green, blue))
     } else {
-      self.highlights[highlight.idx()]
+      self
+        .highlights
+        .get(highlight.idx())
+        .copied()
+        .unwrap_or_default()
     }
   }
 
   #[inline]
   pub fn scope(&self, highlight: Highlight) -> &str {
-    &self.scopes[highlight.idx()]
+    self.scopes.get(highlight.idx()).map_or("", |s| s.as_str())
   }
 
   pub fn name(&self) -> &str {

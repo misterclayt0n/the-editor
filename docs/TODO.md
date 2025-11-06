@@ -35,7 +35,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Command palette.
 - [x] "reload-all" prompt command.
 - [ ] Add command history in all prompts.
-- [ ] Add paths in the completer.
+- [x] Add paths in the completer.
 
 When it comes to ghostty, `libghostty` is not stable as an API yet, and the correct decision would be to wait until it's stable, but sometimes the heart speaks for itself you know.
 

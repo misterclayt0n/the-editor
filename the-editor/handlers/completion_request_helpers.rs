@@ -90,7 +90,30 @@ pub fn trigger_auto_completion(editor: &Editor, trigger_char_only: bool) {
   let text = doc.text().slice(..);
   let cursor = doc.selection(view.id).primary().cursor(text);
 
-  // Check if this is a trigger character
+  // Check if this is a path completion trigger (`/` or `\` on Windows)
+  // Always check for path triggers, regardless of config (works for all files including scratch)
+  if cursor > 0 {
+    let last_char = text.char(cursor.saturating_sub(1));
+    let is_path_trigger = if cfg!(windows) {
+      last_char == '/' || last_char == '\\'
+    } else {
+      last_char == '/'
+    };
+
+    if is_path_trigger {
+      editor
+        .handlers
+        .completions
+        .event(CompletionEvent::TriggerChar {
+          cursor,
+          doc: doc.id,
+          view: view.id,
+        });
+      return;
+    }
+  }
+
+  // Check if this is an LSP trigger character
   let is_trigger_char = doc.language_servers().any(|ls| {
     matches!(&ls.capabilities().completion_provider,
       Some(cap) if cap.trigger_characters.as_ref()

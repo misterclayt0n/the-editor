@@ -20,6 +20,7 @@ use crate::{
 };
 
 pub mod completion;
+pub mod completion_path;
 pub mod completion_request;
 pub mod completion_request_helpers;
 pub mod completion_resolve;

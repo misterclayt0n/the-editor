@@ -20,6 +20,7 @@ use super::{
     CompletionItem,
     LspCompletionItem,
   },
+  completion_path,
 };
 use crate::{
   core::{
@@ -204,7 +205,13 @@ fn request_completions_sync(
   // This matches Helix's behavior - send the CURRENT position, not the old
   // trigger position Language servers need this for incomplete completion lists
   // and proper filtering
-  let trigger_offset = cursor;
+  // For path completions, we need to adjust trigger_offset to the start of the path suffix
+  let mut trigger_offset = cursor;
+  let text_slice_for_offset = text.slice(..cursor);
+  if let Some(path_suffix) = the_editor_stdx::path::get_path_suffix(text_slice_for_offset, false) {
+    // Adjust trigger_offset to the start of the path suffix
+    trigger_offset = cursor - path_suffix.len_chars();
+  }
 
   // Determine trigger kind and character for LSP
   let (lsp_trigger_kind, lsp_trigger_char) = match trigger.kind {
@@ -232,12 +239,40 @@ fn request_completions_sync(
   let doc_id = trigger.doc;
   let mut completion_futures = Vec::new();
 
+  // Always check for path completion (works for all files, including scratch files)
+  // Check if there's a path suffix at the cursor position
+  let text_slice = text.slice(..cursor);
+  let has_path_suffix = the_editor_stdx::path::get_path_suffix(text_slice, false).is_some();
+  
+  // Generate path completions if we detect a path, regardless of config
+  // (config can still disable it, but we check for paths in all files)
+  let path_completion_items = if has_path_suffix {
+    let text_slice = text.slice(..);
+    let doc_path = doc.path().map(|p| p.as_path());
+    completion_path::path_completion(text_slice, cursor, doc_path)
+  } else {
+    Vec::new()
+  };
+
+  // Get document URI and LSP position (may be None for scratch files)
+  let uri_str = doc.uri().map(|u| u.to_string());
+  
+  // If no URI (scratch file), show path completions if available and return
+  if uri_str.is_none() {
+    if !path_completion_items.is_empty() {
+      let items = path_completion_items;
+      crate::ui::job::dispatch(move |editor, compositor| {
+        show_completion(editor, compositor, items, trigger_offset, doc_id);
+      });
+    }
+    return;
+  }
+
+  let Some(uri_str) = uri_str else {
+    return;
+  };
+
   {
-    // Get document URI and LSP position
-    let uri_str = doc.uri().map(|u| u.to_string());
-    let Some(uri_str) = uri_str else {
-      return;
-    };
 
     // Convert path to file:// URL if needed
     let lsp_uri = if uri_str.starts_with("file://") {
@@ -247,6 +282,13 @@ fn request_completions_sync(
     };
 
     let Some(lsp_uri) = lsp_uri else {
+      // If no valid LSP URI but we have path completions, show them
+      if !path_completion_items.is_empty() {
+        let items = path_completion_items;
+        crate::ui::job::dispatch(move |editor, compositor| {
+          show_completion(editor, compositor, items, trigger_offset, doc_id);
+        });
+      }
       return;
     };
 
@@ -276,13 +318,23 @@ fn request_completions_sync(
     }
   } // Drop editor borrow here
 
+  // If we have no LSP completions but have path completions, show path completions immediately
   if completion_futures.is_empty() {
+    if !path_completion_items.is_empty() {
+      let items = path_completion_items;
+      crate::ui::job::dispatch(move |editor, compositor| {
+        show_completion(editor, compositor, items, trigger_offset, doc_id);
+      });
+    }
     return;
   }
 
+  // Store path completion items to merge later (clone for the async task)
+  let path_items = path_completion_items.clone();
+
   // Now spawn with only owned data
   tokio::spawn(async move {
-    let mut items = Vec::new();
+    let mut items = path_items; // Start with path completions
     let timeout = tokio::time::sleep(Duration::from_millis(1000));
     tokio::pin!(timeout);
 

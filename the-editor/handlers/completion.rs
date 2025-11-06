@@ -66,6 +66,7 @@ pub struct OtherCompletionItem {
   pub label:         String,
   pub kind:          Option<String>,
   pub documentation: Option<String>,
+  pub provider:      CompletionProvider,
 }
 
 impl OtherCompletionItem {
@@ -102,7 +103,7 @@ impl CompletionItem {
   pub fn provider(&self) -> CompletionProvider {
     match self {
       CompletionItem::Lsp(item) => CompletionProvider::Lsp(item.provider),
-      CompletionItem::Other(_) => CompletionProvider::Word, // Default, will be set properly later
+      CompletionItem::Other(item) => item.provider,
     }
   }
 
@@ -110,7 +111,14 @@ impl CompletionItem {
   pub fn provider_priority(&self) -> i8 {
     match self {
       CompletionItem::Lsp(item) => item.provider_priority,
-      CompletionItem::Other(_) => 0,
+      CompletionItem::Other(item) => {
+        // Path completions have lower priority (higher number) than LSP
+        match item.provider {
+          CompletionProvider::Path => 10,
+          CompletionProvider::Word => 20,
+          CompletionProvider::Lsp(_) => unreachable!(),
+        }
+      },
     }
   }
 }

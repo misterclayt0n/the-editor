@@ -56,7 +56,7 @@ pub enum SignatureHelpEvent {
   Trigger,
   ReTrigger,
   Cancel,
-  RequestComplete { open: bool },
+  RequestComplete { open: bool, generation: u64 },
 }
 
 #[derive(Debug)]

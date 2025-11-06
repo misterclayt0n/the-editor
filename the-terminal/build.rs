@@ -12,9 +12,13 @@ fn main() {
       "ERROR: Vendored wrapper library not found at: {}",
       wrapper_lib_path.display()
     );
-    eprintln!("Expected: {}/libghostty_wrapper.a", wrapper_lib_path.display());
     eprintln!(
-      "To rebuild: cd {} && zig build && cp zig-out/lib/libghostty_wrapper.a vendored/linux-x86_64/",
+      "Expected: {}/libghostty_wrapper.a",
+      wrapper_lib_path.display()
+    );
+    eprintln!(
+      "To rebuild: cd {} && zig build && cp zig-out/lib/libghostty_wrapper.a \
+       vendored/linux-x86_64/",
       cargo_manifest_dir.display()
     );
     panic!("Missing vendored ghostty wrapper library");

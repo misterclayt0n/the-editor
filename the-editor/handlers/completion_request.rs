@@ -205,7 +205,8 @@ fn request_completions_sync(
   // This matches Helix's behavior - send the CURRENT position, not the old
   // trigger position Language servers need this for incomplete completion lists
   // and proper filtering
-  // For path completions, we need to adjust trigger_offset to the start of the path suffix
+  // For path completions, we need to adjust trigger_offset to the start of the
+  // path suffix
   let mut trigger_offset = cursor;
   let text_slice_for_offset = text.slice(..cursor);
   if let Some(path_suffix) = the_editor_stdx::path::get_path_suffix(text_slice_for_offset, false) {
@@ -239,11 +240,11 @@ fn request_completions_sync(
   let doc_id = trigger.doc;
   let mut completion_futures = Vec::new();
 
-  // Always check for path completion (works for all files, including scratch files)
-  // Check if there's a path suffix at the cursor position
+  // Always check for path completion (works for all files, including scratch
+  // files) Check if there's a path suffix at the cursor position
   let text_slice = text.slice(..cursor);
   let has_path_suffix = the_editor_stdx::path::get_path_suffix(text_slice, false).is_some();
-  
+
   // Generate path completions if we detect a path, regardless of config
   // (config can still disable it, but we check for paths in all files)
   let path_completion_items = if has_path_suffix {
@@ -256,7 +257,7 @@ fn request_completions_sync(
 
   // Get document URI and LSP position (may be None for scratch files)
   let uri_str = doc.uri().map(|u| u.to_string());
-  
+
   // If no URI (scratch file), show path completions if available and return
   if uri_str.is_none() {
     if !path_completion_items.is_empty() {
@@ -273,7 +274,6 @@ fn request_completions_sync(
   };
 
   {
-
     // Convert path to file:// URL if needed
     let lsp_uri = if uri_str.starts_with("file://") {
       url::Url::parse(&uri_str).ok()
@@ -318,7 +318,8 @@ fn request_completions_sync(
     }
   } // Drop editor borrow here
 
-  // If we have no LSP completions but have path completions, show path completions immediately
+  // If we have no LSP completions but have path completions, show path
+  // completions immediately
   if completion_futures.is_empty() {
     if !path_completion_items.is_empty() {
       let items = path_completion_items;

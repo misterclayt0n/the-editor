@@ -74,6 +74,7 @@ pub fn show_signature_help(
   compositor: &mut compositor::Compositor,
   invoked: crate::handlers::lsp::SignatureHelpInvoked,
   response: Option<the_editor_lsp_types::types::SignatureHelp>,
+  generation: u64,
 ) {
   use the_editor_event::send_blocking;
   use the_editor_lsp_types::types as lsp;
@@ -106,7 +107,10 @@ pub fn show_signature_help(
     _ => {
       send_blocking(
         &editor.handlers.signature_hints,
-        SignatureHelpEvent::RequestComplete { open: false },
+        SignatureHelpEvent::RequestComplete {
+          open: false,
+          generation,
+        },
       );
       // Clear signature help from EditorView
       if let Some(editor_view) = compositor.find::<EditorView>() {
@@ -118,7 +122,10 @@ pub fn show_signature_help(
 
   send_blocking(
     &editor.handlers.signature_hints,
-    SignatureHelpEvent::RequestComplete { open: true },
+    SignatureHelpEvent::RequestComplete {
+      open: true,
+      generation,
+    },
   );
 
   let doc = crate::doc!(editor);
@@ -153,10 +160,18 @@ pub fn show_signature_help(
     })
     .collect();
 
-  let active_signature = response.active_signature.map(|s| s as usize).unwrap_or(0);
-
   // Update EditorView with signature help
   if let Some(editor_view) = compositor.find::<EditorView>() {
+    let mut active_signature = response.active_signature.map(|s| s as usize);
+    if active_signature.is_none() {
+      active_signature = editor_view
+        .signature_help
+        .as_ref()
+        .map(|helper| helper.active_signature_index());
+    }
+    let mut active_signature = active_signature.unwrap_or(0);
+    let max_index = signatures.len().saturating_sub(1);
+    active_signature = active_signature.min(max_index);
     editor_view.set_signature_help(language.to_string(), active_signature, signatures);
   }
 }

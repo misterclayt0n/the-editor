@@ -93,6 +93,12 @@ impl SignatureHelp {
       .min(self.signatures.len().saturating_sub(1));
     &self.signatures[idx]
   }
+
+  pub fn active_signature_index(&self) -> usize {
+    self
+      .active_signature
+      .min(self.signatures.len().saturating_sub(1))
+  }
 }
 
 impl Component for SignatureHelp {

@@ -245,7 +245,7 @@ pub struct Document {
   /// Per-document wrap indicator override. None = use global/language config
   wrap_indicator_override:            Option<String>,
   /// Whether this document is a special buffer (for UI rendering decisions)
-  pub special_buffer: Option<SpecialBufferMetadata>,
+  pub special_buffer:                 Option<SpecialBufferMetadata>,
 }
 
 /// Inlay hints for a single `(Document, View)` combo.

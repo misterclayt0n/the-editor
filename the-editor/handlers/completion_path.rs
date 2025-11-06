@@ -1,7 +1,7 @@
 //! Path completion handler
 //!
-//! Provides file and directory completion when users type paths (e.g., `/`, `./`, `~/`).
-//! Similar to Helix's path completion feature.
+//! Provides file and directory completion when users type paths (e.g., `/`,
+//! `./`, `~/`). Similar to Helix's path completion feature.
 
 use std::{
   fs,
@@ -45,7 +45,9 @@ pub fn path_completion(
   let (base_dir, file_prefix) = if expanded_path.is_dir() {
     (expanded_path.as_ref(), "")
   } else {
-    let parent = expanded_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let parent = expanded_path
+      .parent()
+      .unwrap_or_else(|| std::path::Path::new("."));
     let file_name = expanded_path
       .file_name()
       .and_then(|n| n.to_str())

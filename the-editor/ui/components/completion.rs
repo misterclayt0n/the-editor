@@ -997,7 +997,7 @@ impl Component for Completion {
     let item_padding = 6.0;
 
     // Calculate fresh cursor position (not cached) with correct split offset
-    let (cursor_x, cursor_y) = {
+    let (cursor_x, cursor_y, doc_line_height) = {
       let (view, doc) = crate::current_ref!(ctx.editor);
       let text = doc.text();
       let cursor_pos = doc.selection(view.id).primary().cursor(text.slice(..));
@@ -1037,9 +1037,9 @@ impl Component for Completion {
 
       // Calculate final screen position
       let x = view_x + (screen_col as f32 * font_width);
-      let y = view_y + (rel_row as f32 * line_height) + line_height;
+      let baseline = view_y + (rel_row as f32 * line_height) + line_height;
 
-      (x, y)
+      (x, baseline, line_height)
     };
 
     surface.configure_font(&font_state.family, UI_FONT_SIZE);
@@ -1088,12 +1088,13 @@ impl Component for Completion {
     let anim_height = menu_height * scale;
 
     // Try to position below cursor first
-    let mut popup_y = cursor_y + slide_offset;
+    let gap = doc_line_height.max(ui_line_height).max(16.0);
+    let mut popup_y = cursor_y + gap + slide_offset;
 
     // Check if popup would overflow bottom of viewport
     if popup_y + anim_height > viewport_height {
       // Try positioning above cursor instead
-      let y_above = cursor_y - anim_height - slide_offset;
+      let y_above = cursor_y - gap - anim_height - slide_offset;
       if y_above >= 0.0 {
         popup_y = y_above;
       } else {

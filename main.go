@@ -3,7 +3,15 @@ package main
 import "fmt"
 
 func main() {
-	a, err := fmt.Println("hello world")
+	a, err := fmt.Print("hello fellas")
 
 	fmt.Println(a, err)
+
+	result := hello(1, 2)
+	
+	fmt.Println(result)
+}
+
+func hello(a int, b int) int {
+	return a + b
 }

@@ -608,7 +608,7 @@ static ENTER_SEQUENCES: &[KeyEntry] = &[
   KeyEntry::with_mods(true, false, false, false, "\x1b[27;2;13~"),
   // Alt+Enter while modifyOtherKeys is set (state 1)
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  false,
       ctrl:   false,
       alt:    true,
@@ -621,7 +621,7 @@ static ENTER_SEQUENCES: &[KeyEntry] = &[
   },
   // Alt+Enter while modifyOtherKeys is set to "other keys" (state 2)
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  false,
       ctrl:   false,
       alt:    true,
@@ -668,7 +668,7 @@ static ENTER_SEQUENCES: &[KeyEntry] = &[
 static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
   // Keypad application mode (no modifiers)
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  false,
       ctrl:   false,
       alt:    false,
@@ -681,7 +681,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
   },
   // Keypad application mode with modifiers
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  true,
       ctrl:   false,
       alt:    false,
@@ -693,7 +693,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO2M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  false,
       ctrl:   false,
       alt:    true,
@@ -705,7 +705,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO3M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  true,
       ctrl:   false,
       alt:    true,
@@ -717,7 +717,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO4M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  false,
       ctrl:   true,
       alt:    false,
@@ -729,7 +729,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO5M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  true,
       ctrl:   true,
       alt:    false,
@@ -741,7 +741,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO6M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  false,
       ctrl:   true,
       alt:    true,
@@ -753,7 +753,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO7M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  true,
       ctrl:   true,
       alt:    true,
@@ -765,7 +765,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO8M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  false,
       ctrl:   false,
       alt:    false,
@@ -777,7 +777,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO9M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  true,
       ctrl:   false,
       alt:    false,
@@ -789,7 +789,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO10M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  false,
       ctrl:   false,
       alt:    true,
@@ -801,7 +801,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO11M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  true,
       ctrl:   false,
       alt:    true,
@@ -813,7 +813,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO12M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  false,
       ctrl:   true,
       alt:    false,
@@ -825,7 +825,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO13M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  true,
       ctrl:   true,
       alt:    false,
@@ -837,7 +837,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO14M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  false,
       ctrl:   true,
       alt:    true,
@@ -849,7 +849,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
     sequence:          "\x1bO15M",
   },
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  true,
       ctrl:   true,
       alt:    true,
@@ -862,7 +862,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
   },
   // Alt+Enter while modifyOtherKeys is set (state 1)
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  false,
       ctrl:   false,
       alt:    true,
@@ -875,7 +875,7 @@ static NUMPAD_ENTER_SEQUENCES: &[KeyEntry] = &[
   },
   // Alt+Enter while modifyOtherKeys is set to "other keys" (state 2)
   KeyEntry {
-    mods: Modifiers {
+    mods:              Modifiers {
       shift:  false,
       ctrl:   false,
       alt:    true,

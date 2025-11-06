@@ -10,6 +10,7 @@ use tokio::time::{
   Instant,
 };
 
+use crate::core::syntax::config::LanguageServerFeature;
 pub use crate::handlers::lsp::{
   SignatureHelpEvent,
   SignatureHelpInvoked,
@@ -27,10 +28,24 @@ enum State {
 }
 
 /// Handler for signature help requests
-#[derive(Default)]
 pub struct SignatureHelpHandler {
-  trigger: Option<SignatureHelpInvoked>,
-  state:   State,
+  trigger:             Option<SignatureHelpInvoked>,
+  state:               State,
+  task:                Option<tokio::task::JoinHandle<()>>,
+  request_generation:  u64,
+  inflight_generation: Option<u64>,
+}
+
+impl Default for SignatureHelpHandler {
+  fn default() -> Self {
+    Self {
+      trigger:             None,
+      state:               State::Closed,
+      task:                None,
+      request_generation:  0,
+      inflight_generation: None,
+    }
+  }
 }
 
 impl SignatureHelpHandler {
@@ -45,67 +60,75 @@ impl AsyncHook for SignatureHelpHandler {
   fn handle_event(&mut self, event: Self::Event, timeout: Option<Instant>) -> Option<Instant> {
     match event {
       SignatureHelpEvent::Invoked => {
-        self.trigger = Some(SignatureHelpInvoked::Manual);
-        self.state = State::Closed;
-        self.finish_debounce();
-        return None;
+        self.launch_request(SignatureHelpInvoked::Manual);
+        None
       },
       SignatureHelpEvent::Trigger => {
-        if self.trigger.is_none() {
-          self.trigger = Some(SignatureHelpInvoked::Automatic);
-        }
-
-        if !matches!(self.state, State::Pending) {
-          self.finish_debounce();
-        }
-
-        return timeout;
+        self.trigger = Some(SignatureHelpInvoked::Automatic);
+        Some(Instant::now() + Duration::from_millis(TIMEOUT_MS))
       },
       SignatureHelpEvent::ReTrigger => {
-        if self.trigger.is_none() {
-          self.trigger = Some(SignatureHelpInvoked::Automatic);
-        }
-
-        // If the popup is already open or pending, schedule a refresh with debounce.
-        if matches!(self.state, State::Open | State::Pending) {
-          return Some(Instant::now() + Duration::from_millis(TIMEOUT_MS));
-        }
-
-        // If we are closed (e.g. re-entered insert mode), request immediately.
+        self.trigger = Some(SignatureHelpInvoked::Automatic);
         if matches!(self.state, State::Closed) {
-          self.finish_debounce();
-          return timeout;
+          self.launch_request(SignatureHelpInvoked::Automatic);
+          timeout
+        } else {
+          Some(Instant::now() + Duration::from_millis(TIMEOUT_MS))
         }
       },
       SignatureHelpEvent::Cancel => {
         self.state = State::Closed;
-        return None;
+        self.trigger = None;
+        self.inflight_generation = None;
+        if let Some(task) = self.task.take() {
+          task.abort();
+        }
+        None
       },
-      SignatureHelpEvent::RequestComplete { open } => {
-        self.state = if open { State::Open } else { State::Closed };
-        return timeout;
+      SignatureHelpEvent::RequestComplete { open, generation } => {
+        if self
+          .inflight_generation
+          .map_or(false, |current| generation < current)
+        {
+          timeout
+        } else {
+          self.inflight_generation = None;
+          self.state = if open { State::Open } else { State::Closed };
+          self.task = None;
+          timeout
+        }
       },
     }
-
-    if self.trigger.is_none() {
-      self.trigger = Some(SignatureHelpInvoked::Automatic);
-    }
-
-    Some(Instant::now() + Duration::from_millis(TIMEOUT_MS))
   }
 
   fn finish_debounce(&mut self) {
-    let invoked = self.trigger.take().unwrap();
-    self.state = State::Pending;
-
-    // Spawn task to request signature help
-    tokio::spawn(async move {
-      request_signature_help(invoked).await;
-    });
+    let invoked = self
+      .trigger
+      .take()
+      .unwrap_or(SignatureHelpInvoked::Automatic);
+    self.launch_request(invoked);
   }
 }
 
-async fn request_signature_help(invoked: SignatureHelpInvoked) {
+impl SignatureHelpHandler {
+  fn launch_request(&mut self, invoked: SignatureHelpInvoked) {
+    self.request_generation = self.request_generation.wrapping_add(1);
+    let generation = self.request_generation;
+    self.state = State::Pending;
+    self.inflight_generation = Some(generation);
+    self.trigger = None;
+
+    if let Some(task) = self.task.take() {
+      task.abort();
+    }
+
+    self.task = Some(tokio::spawn(async move {
+      request_signature_help(invoked, generation).await;
+    }));
+  }
+}
+
+async fn request_signature_help(invoked: SignatureHelpInvoked, generation: u64) {
   // Create a oneshot channel to get the signature help future from the main
   // thread
   let (tx, rx) = tokio::sync::oneshot::channel();
@@ -114,12 +137,8 @@ async fn request_signature_help(invoked: SignatureHelpInvoked) {
     let (view, doc) = crate::current_ref!(editor);
 
     // Find first language server that supports signature help
-    let Some(ls) = doc.language_servers().find(|ls| {
-      matches!(
-        ls.capabilities().signature_help_provider,
-        Some(lsp::SignatureHelpOptions { .. })
-      )
-    }) else {
+    let mut servers = doc.language_servers_with_feature(LanguageServerFeature::SignatureHelp);
+    let Some(ls) = servers.next() else {
       let _ = tx.send(None);
       return;
     };
@@ -131,7 +150,11 @@ async fn request_signature_help(invoked: SignatureHelpInvoked) {
   });
 
   // Wait for the future from main thread
+  let invoked_for_none = invoked;
   let Some(future) = rx.await.ok().flatten() else {
+    crate::ui::job::dispatch_blocking(move |editor, compositor| {
+      crate::ui::show_signature_help(editor, compositor, invoked_for_none, None, generation);
+    });
     return;
   };
 
@@ -140,13 +163,17 @@ async fn request_signature_help(invoked: SignatureHelpInvoked) {
     Ok(res) => res,
     Err(err) => {
       log::error!("Signature help request failed: {}", err);
+      let invoked_for_err = invoked;
+      crate::ui::job::dispatch_blocking(move |editor, compositor| {
+        crate::ui::show_signature_help(editor, compositor, invoked_for_err, None, generation);
+      });
       return;
     },
   };
 
   // Update UI with response
   crate::ui::job::dispatch_blocking(move |editor, compositor| {
-    crate::ui::show_signature_help(editor, compositor, invoked, response);
+    crate::ui::show_signature_help(editor, compositor, invoked, response, generation);
   });
 }
 

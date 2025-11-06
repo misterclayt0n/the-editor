@@ -105,8 +105,7 @@ fn main() -> anyhow::Result<()> {
   }
 
   // Create the application wrapper with runtime handle
-  let app =
-    crate::application::App::new(editor, rt.handle().clone(), config_ptr.clone());
+  let app = crate::application::App::new(editor, rt.handle().clone(), config_ptr.clone());
 
   // Build window configuration from editor config
   let window_config = the_editor_renderer::WindowConfig::new("The Editor", 1024, 768)

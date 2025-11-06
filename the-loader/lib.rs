@@ -44,7 +44,8 @@ pub fn initialize_log_file(specified_file: Option<PathBuf>) {
 ///    set)
 /// 2. subdirectory of user config directory (always included)
 /// 3. `THE_EDITOR_RUNTIME` (if environment variable is set)
-/// 4. `THE_EDITOR_DEFAULT_RUNTIME` (if environment variable is set *at build time*)
+/// 4. `THE_EDITOR_DEFAULT_RUNTIME` (if environment variable is set *at build
+///    time*)
 /// 5. subdirectory of path to the-editor executable (always included)
 ///
 /// Postcondition: returns at least two paths (they might not exist).

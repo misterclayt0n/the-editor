@@ -91,7 +91,8 @@ pub fn trigger_auto_completion(editor: &Editor, trigger_char_only: bool) {
   let cursor = doc.selection(view.id).primary().cursor(text);
 
   // Check if this is a path completion trigger (`/` or `\` on Windows)
-  // Always check for path triggers, regardless of config (works for all files including scratch)
+  // Always check for path triggers, regardless of config (works for all files
+  // including scratch)
   if cursor > 0 {
     let last_char = text.char(cursor.saturating_sub(1));
     let is_path_trigger = if cfg!(windows) {

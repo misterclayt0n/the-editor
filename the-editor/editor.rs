@@ -345,7 +345,6 @@ pub struct Editor {
   pub lsp_progress:      crate::lsp::LspProgressMap,
   pub diagnostics:       Diagnostics,
   pub diff_providers:    DiffProviderRegistry,
-  pub acp_sessions:      crate::acp::Registry,
   pub special_buffers:   SpecialBuffers,
 
   // pub debug_adapters: dap::registry::Registry,
@@ -1930,7 +1929,6 @@ impl Editor {
       lsp_progress: crate::lsp::LspProgressMap::new(),
       diagnostics: Diagnostics::new(),
       diff_providers: DiffProviderRegistry::default(),
-      acp_sessions: crate::acp::Registry::new(vec![crate::acp::AgentConfig::default()]),
       special_buffers: SpecialBuffers::default(),
       // debug_adapters: dap::registry::Registry::new(),
       // breakpoints: HashMap::new(),

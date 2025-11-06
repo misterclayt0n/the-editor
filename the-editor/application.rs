@@ -53,8 +53,6 @@ pub struct App {
   // GlobalConfig pointer for runtime updates
   pub config_ptr: std::sync::Arc<arc_swap::ArcSwap<crate::core::config::Config>>,
 
-  // LocalSet for polling !Send futures (ACP)
-  local_set:      Rc<tokio::task::LocalSet>,
   runtime_handle: tokio::runtime::Handle,
 
   // Smooth scrolling configuration and state
@@ -74,10 +72,6 @@ pub struct App {
   // Delta time tracking for time-based animations
   last_frame_time: std::time::Instant,
 
-  // Throttle LocalSet polling to reduce overhead
-  // Only poll every N frames to avoid blocking on every single frame
-  frame_counter: u32,
-
   // Track whether the next key press should be treated as a meta prefix for terminal shortcuts
   terminal_meta_pending:          bool,
   // Track whether Ctrl+W was pressed in terminal, waiting for window command
@@ -87,7 +81,6 @@ pub struct App {
 impl App {
   pub fn new(
     editor: Editor,
-    local_set: Rc<tokio::task::LocalSet>,
     runtime_handle: tokio::runtime::Handle,
     config_ptr: std::sync::Arc<arc_swap::ArcSwap<crate::core::config::Config>>,
   ) -> Self {
@@ -128,7 +121,6 @@ impl App {
       config_ptr,
       jobs: Jobs::new(),
       input_handler: InputHandler::new(mode),
-      local_set,
       runtime_handle,
       smooth_scroll_enabled: conf.smooth_scroll_enabled,
       scroll_lerp_factor: conf.scroll_lerp_factor,
@@ -139,7 +131,6 @@ impl App {
       trackpad_scroll_lines: 0.0,
       trackpad_scroll_cols: 0.0,
       last_frame_time: std::time::Instant::now(),
-      frame_counter: 0,
       terminal_meta_pending: false,
       terminal_window_prefix_pending: false,
     }
@@ -501,9 +492,6 @@ impl Application for App {
     // The renderer's begin_frame/end_frame are handled by the main loop.
     // We just need to draw our content here.
 
-    // Increment frame counter
-    self.frame_counter = self.frame_counter.wrapping_add(1);
-
     // Process pending terminal responses and check for exits
     // This sends queued responses (e.g., cursor position reports) back to the shell
     let mut exited_terminals = Vec::new();
@@ -549,23 +537,6 @@ impl Application for App {
         .jobs
         .handle_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback)));
     }
-
-    // Process any pending local job callbacks (for !Send futures like ACP)
-    // Drain all callbacks from the Vec
-    let local_cbs = self
-      .jobs
-      .local_callbacks
-      .borrow_mut()
-      .drain(..)
-      .collect::<Vec<_>>();
-    for callback in local_cbs {
-      self
-        .jobs
-        .handle_local_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback)));
-    }
-
-    // Process any pending ACP session notifications
-    self.process_acp_notifications();
 
     // Process any pending status messages
     while let Ok(status) = self.jobs.status_messages.try_recv() {
@@ -1447,288 +1418,6 @@ impl App {
       // Below threshold, snap to zero to stop animation
       self.pending_scroll_cols = 0.0;
     }
-  }
-
-  fn process_acp_notifications(&mut self) {
-    use crate::acp::{
-      SessionNotification,
-      acp::SessionUpdate,
-    };
-
-    // Drain all notifications from the queue
-    let notifications = self
-      .editor
-      .acp_sessions
-      .notifications()
-      .borrow_mut()
-      .drain(..)
-      .collect::<Vec<_>>();
-
-    if !notifications.is_empty() {
-      log::info!("ACP App: Processing {} notifications", notifications.len());
-    }
-
-    // Process each notification
-    for notification in notifications {
-      let SessionNotification { session_id, update } = notification;
-      log::info!(
-        "ACP App: Processing notification for session {:?}",
-        session_id
-      );
-
-      // Convert the update into a message and append to document
-      match update {
-        SessionUpdate::AgentMessageChunk { content } => {
-          let text = Self::extract_content_text(&content);
-          log::info!("ACP App: AgentMessageChunk - {} chars", text.len());
-
-          // Update session state to Streaming
-          let registry = self.editor.acp_sessions.handle();
-          let session_id_clone = session_id.clone();
-          self.jobs.callback_local(async move {
-            use crate::acp::session::SessionState;
-            let _ = registry
-              .update_session(&session_id_clone, |session| {
-                session.state = SessionState::Streaming;
-              })
-              .await;
-            Ok(None)
-          });
-
-          // Append to document for this session (this will also update gutter state)
-          self.append_to_session_document(
-            &session_id,
-            &text,
-            crate::acp::session::MessageRole::Agent,
-          );
-        },
-        SessionUpdate::UserMessageChunk { content } => {
-          let text = Self::extract_content_text(&content);
-          log::info!("ACP App: UserMessageChunk - {} chars", text.len());
-          // Could track user messages too, but for now we focus on agent messages
-          log::debug!("User message chunk: {}", text);
-        },
-        SessionUpdate::AgentThoughtChunk { content } => {
-          // Update session state to Thinking
-          let registry = self.editor.acp_sessions.handle();
-          let session_id_clone = session_id.clone();
-          self.jobs.callback_local(async move {
-            use crate::acp::session::SessionState;
-            let _ = registry
-              .update_session(&session_id_clone, |session| {
-                session.state = SessionState::Thinking;
-              })
-              .await;
-            Ok(None)
-          });
-
-          // Append thinking to document (this will also update gutter state)
-          let thought = Self::extract_content_text(&content);
-          log::info!("ACP App: AgentThoughtChunk - {} chars", thought.len());
-          self.append_to_session_document(
-            &session_id,
-            &format!("[Thinking: {}]\n", thought),
-            crate::acp::session::MessageRole::Thinking,
-          );
-        },
-        SessionUpdate::ToolCall(tool_call) => {
-          // Update session state to ExecutingTool
-          let registry = self.editor.acp_sessions.handle();
-          let session_id_clone = session_id.clone();
-          let tool_name = tool_call.title.clone();
-          self.jobs.callback_local(async move {
-            use crate::acp::session::SessionState;
-            let _ = registry
-              .update_session(&session_id_clone, |session| {
-                session.state = SessionState::ExecutingTool;
-                session.current_tool_name = Some(tool_name.clone());
-              })
-              .await;
-            Ok(None)
-          });
-
-          let text = format!("[Tool Call: {}]\n", tool_call.title);
-          log::info!("ACP App: ToolCall - {}", tool_call.title);
-          // Append to document (this will also update gutter state with tool name)
-          self.append_to_session_document(
-            &session_id,
-            &text,
-            crate::acp::session::MessageRole::Tool,
-          );
-        },
-        SessionUpdate::ToolCallUpdate(_) | SessionUpdate::Plan(_) => {
-          // These could be rendered specially in the future
-          log::debug!("ACP App: Received session update: {:?}", update);
-        },
-        SessionUpdate::CurrentModeUpdate { .. } | SessionUpdate::AvailableCommandsUpdate { .. } => {
-          // Metadata updates
-          log::debug!("ACP App: Received metadata update: {:?}", update);
-        },
-      }
-    }
-  }
-
-  fn extract_content_text(content: &crate::acp::acp::ContentBlock) -> String {
-    use crate::acp::acp::ContentBlock;
-    match content {
-      ContentBlock::Text(text_content) => text_content.text.clone(),
-      ContentBlock::Image(_) => "<image>".into(),
-      ContentBlock::Audio(_) => "<audio>".into(),
-      ContentBlock::ResourceLink(resource_link) => format!("<link: {}>", resource_link.uri),
-      ContentBlock::Resource(_) => "<resource>".into(),
-    }
-  }
-
-  fn append_to_session_document(
-    &mut self,
-    session_id: &crate::acp::acp::SessionId,
-    text: &str,
-    role: crate::acp::session::MessageRole,
-  ) {
-    log::info!(
-      "ACP App: append_to_session_document - {} chars for session {:?}",
-      text.len(),
-      session_id
-    );
-
-    // We need to look up the doc_id synchronously
-    // Since RegistryState is behind an async Mutex, we can't directly access it
-    // here Instead, we'll spawn a callback_local job that can do the async
-    // lookup and append
-    let registry = self.editor.acp_sessions.handle();
-    let session_id_clone = session_id.clone();
-    let text_owned = text.to_string();
-
-    // Spawn a local callback to append text
-    self.jobs.callback_local(async move {
-      log::info!("ACP App: Inside append callback_local, looking up doc_id");
-      // Get the document ID for this session
-      if let Some(doc_id) = registry.get_doc_id_by_session(&session_id_clone).await {
-        log::info!(
-          "ACP App: Found doc_id {:?}, returning editor callback",
-          doc_id
-        );
-
-        // Clone registry for the callback
-        let registry_for_callback = registry.clone();
-        let session_id_for_callback = session_id_clone.clone();
-
-        // Return a callback to append text to the document
-        Ok(Some(crate::ui::job::LocalCallback::EditorCompositor(
-          Box::new(move |editor, _compositor| {
-            use crate::core::{
-              selection::Selection,
-              transaction::Transaction,
-            };
-
-            log::info!(
-              "ACP App: Inside editor callback, appending to doc {:?}",
-              doc_id
-            );
-
-            // Get the document and append text
-            if let Some(doc) = editor.documents.get_mut(&doc_id) {
-              // Get the current byte position (start of new content)
-              let start_byte = doc.text().len_bytes();
-              log::info!("ACP App: Starting append at byte {}", start_byte);
-
-              // Get the end of the document in chars
-              let len = doc.text().len_chars();
-              log::info!(
-                "ACP App: Document has {} chars, appending {} chars",
-                len,
-                text_owned.len()
-              );
-
-              // Find a view that's displaying this document
-              let view_id = editor
-                .tree
-                .views()
-                .find(|(view, _)| view.doc == doc_id)
-                .map(|(view, _)| view.id)
-                .unwrap_or_else(|| {
-                  // If no view is found, get any view ID from the document's selections
-                  doc.selections().keys().next().copied().unwrap_or_default()
-                });
-
-              log::info!("ACP App: Using view_id {:?} for append", view_id);
-
-              // Create a selection at the end of the document
-              let selection = Selection::single(len, len);
-              // Insert text at the end
-              let transaction =
-                Transaction::insert(doc.text(), &selection, text_owned.clone().into());
-              doc.apply(&transaction, view_id);
-
-              // Get the end byte position after appending
-              let end_byte = doc.text().len_bytes();
-              log::info!(
-                "ACP App: Text appended successfully, end byte: {}",
-                end_byte
-              );
-
-              // Store the message span directly in the document for rendering
-              doc.acp_message_spans.push((role, start_byte..end_byte));
-              log::debug!(
-                "ACP: Added message span {:?} from {} to {} in document",
-                role,
-                start_byte,
-                end_byte
-              );
-
-              // Calculate current line number for gutter display
-              let current_line = doc.text().char_to_line(doc.text().byte_to_char(start_byte));
-              log::debug!("ACP: Current line for gutter: {}", current_line);
-
-              // Update document's gutter state directly based on the role
-              // Map role to session state for gutter display
-              use crate::acp::session::{
-                MessageRole,
-                SessionState,
-              };
-              let session_state = match role {
-                MessageRole::Agent => SessionState::Streaming,
-                MessageRole::Thinking => SessionState::Thinking,
-                MessageRole::Tool => SessionState::ExecutingTool,
-                MessageRole::User => SessionState::Idle, // Shouldn't happen but handle it
-              };
-
-              doc.acp_gutter_state = Some(crate::core::document::AcpGutterState {
-                state:        session_state,
-                current_line: Some(current_line),
-                tool_name:    None, // We don't have tool name here, will be updated separately
-              });
-
-              // Also update the session's message spans and current_line for persistence
-              let registry_clone = registry_for_callback.clone();
-              let session_id_clone = session_id_for_callback.clone();
-              tokio::task::spawn_local(async move {
-                let _ = registry_clone
-                  .update_session(&session_id_clone, |session| {
-                    session
-                      .message_spans
-                      .push(crate::acp::session::MessageSpan {
-                        role,
-                        start_byte,
-                        end_byte,
-                      });
-                    session.current_line = Some(current_line);
-                  })
-                  .await;
-              });
-            } else {
-              log::warn!("ACP App: Document {:?} not found in editor", doc_id);
-            }
-          }),
-        )))
-      } else {
-        log::warn!(
-          "ACP App: No doc_id found for session {:?}",
-          session_id_clone
-        );
-        Ok(None)
-      }
-    });
   }
 }
 

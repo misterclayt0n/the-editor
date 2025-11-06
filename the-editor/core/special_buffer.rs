@@ -8,23 +8,20 @@ use std::{
 
 use crate::core::DocumentId;
 
-/// Kinds of editor-managed special buffers such as ACP or compilation outputs.
+/// Kinds of editor-managed special buffers such as compilation outputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpecialBufferKind {
-  Acp,
   Compilation,
 }
 
 impl SpecialBufferKind {
   pub const fn display_name(self) -> &'static str {
     match self {
-      SpecialBufferKind::Acp => ACP_BUFFER_NAME,
       SpecialBufferKind::Compilation => COMPILATION_BUFFER_NAME,
     }
   }
 }
 
-pub const ACP_BUFFER_NAME: &str = "*acp*";
 pub const COMPILATION_BUFFER_NAME: &str = "*compilation*";
 
 impl fmt::Display for SpecialBufferKind {
@@ -108,20 +105,12 @@ mod tests {
   fn registers_and_tracks_last_active() {
     let mut buffers = SpecialBuffers::default();
     let compile = doc_id(1);
-    let acp = doc_id(2);
 
     buffers.register(compile, SpecialBufferKind::Compilation);
     assert_eq!(
       buffers.last_for(SpecialBufferKind::Compilation),
       Some(compile)
     );
-
-    buffers.register(acp, SpecialBufferKind::Acp);
-    buffers.mark_active(acp);
-    assert_eq!(buffers.last_for(SpecialBufferKind::Acp), Some(acp));
-
-    buffers.unregister(acp);
-    assert_eq!(buffers.last_for(SpecialBufferKind::Acp), None);
   }
 
   #[test]

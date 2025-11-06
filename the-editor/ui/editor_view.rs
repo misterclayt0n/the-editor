@@ -1430,42 +1430,8 @@ impl Component for EditorView {
           let start_char = top_char_idx;
           let end_char =
             (start_char + (visible_lines * viewport.width as usize)).min(doc_text.len_chars());
-          let mut overlay_highlights =
+          let overlay_highlights =
             vec![annotations.collect_overlay_highlights(start_char..end_char)];
-
-          // Add ACP message highlighting if this is an ACP buffer
-          if doc.is_acp_buffer() && !doc.acp_message_spans.is_empty() {
-            use crate::{
-              acp::session::MessageRole,
-              core::syntax::OverlayHighlights,
-            };
-
-            let start_byte = doc_text.char_to_byte(start_char);
-            let end_byte = doc_text.char_to_byte(end_char);
-
-            let mut acp_highlights = Vec::new();
-            for (role, range) in &doc.acp_message_spans {
-              // Only include spans that overlap with the visible range
-              if range.end >= start_byte && range.start <= end_byte {
-                let highlight_name = match role {
-                  MessageRole::User => "acp.user",
-                  MessageRole::Agent => "acp.agent",
-                  MessageRole::Thinking => "acp.thinking",
-                  MessageRole::Tool => "acp.tool",
-                };
-
-                if let Some(highlight) = theme.find_highlight(highlight_name) {
-                  acp_highlights.push((highlight, range.clone()));
-                }
-              }
-            }
-
-            if !acp_highlights.is_empty() {
-              overlay_highlights.push(OverlayHighlights::Heterogenous {
-                highlights: acp_highlights,
-              });
-            }
-          }
 
           OverlayHighlighter::new(overlay_highlights, theme)
         };

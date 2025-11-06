@@ -1,9 +1,6 @@
 #![recursion_limit = "512"]
 
-use std::{
-  rc::Rc,
-  sync::Arc,
-};
+use std::sync::Arc;
 
 use arc_swap::{
   ArcSwap,
@@ -24,7 +21,6 @@ use crate::{
   handlers::Handlers,
 };
 
-mod acp;
 mod application;
 mod core;
 mod editor;
@@ -48,17 +44,6 @@ fn main() -> anyhow::Result<()> {
     .build()?;
   // Enter the runtime before constructing handlers that spawn tasks.
   let guard = rt.enter();
-
-  // Create a LocalSet for !Send futures (required by ACP)
-  // NOTE: We specifically use Rc<LocalSet> (not Arc) because LocalSet is !Send
-  // and must stay on a single thread. We'll handle polling carefully to avoid
-  // blocking.
-  let local_set = Rc::new(tokio::task::LocalSet::new());
-
-  // Enter the LocalSet context so spawn_local works throughout the application
-  // ACP and other !Send tasks will be queued here and we'll process them
-  // via non-blocking try operations in the render loop
-  let _local_guard = local_set.enter();
 
   // Prepare theme loader.
   let mut theme_parent_dirs = vec![the_editor_loader::config_dir()];
@@ -119,9 +104,9 @@ fn main() -> anyhow::Result<()> {
     editor.new_file(Action::VerticalSplit);
   }
 
-  // Create the application wrapper with LocalSet and runtime handle
+  // Create the application wrapper with runtime handle
   let app =
-    crate::application::App::new(editor, local_set, rt.handle().clone(), config_ptr.clone());
+    crate::application::App::new(editor, rt.handle().clone(), config_ptr.clone());
 
   // Build window configuration from editor config
   let window_config = the_editor_renderer::WindowConfig::new("The Editor", 1024, 768)

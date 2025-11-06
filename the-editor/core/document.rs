@@ -244,23 +244,8 @@ pub struct Document {
   soft_wrap_override:                 Option<bool>,
   /// Per-document wrap indicator override. None = use global/language config
   wrap_indicator_override:            Option<String>,
-  /// Whether this document is an ACP session buffer (for UI rendering
-  /// decisions)
-  pub special_buffer:                 Option<SpecialBufferMetadata>,
-  /// ACP session ID (if this is an ACP buffer)
-  pub acp_session_id:                 Option<String>,
-  /// Message spans for ACP syntax highlighting (role → byte ranges)
-  pub acp_message_spans: Vec<(crate::acp::session::MessageRole, std::ops::Range<usize>)>,
-  /// Cached ACP session state for gutter rendering (avoids async lookups)
-  pub acp_gutter_state:               Option<AcpGutterState>,
-}
-
-/// Cached ACP session state for efficient gutter rendering
-#[derive(Debug, Clone)]
-pub struct AcpGutterState {
-  pub state:        crate::acp::session::SessionState,
-  pub current_line: Option<usize>,
-  pub tool_name:    Option<String>,
+  /// Whether this document is a special buffer (for UI rendering decisions)
+  pub special_buffer: Option<SpecialBufferMetadata>,
 }
 
 /// Inlay hints for a single `(Document, View)` combo.
@@ -735,9 +720,6 @@ impl Document {
       soft_wrap_override: None,
       wrap_indicator_override: None,
       special_buffer: None,
-      acp_session_id: None,
-      acp_message_spans: Vec::new(),
-      acp_gutter_state: None,
     }
   }
 
@@ -2268,10 +2250,6 @@ impl Document {
 
   pub fn set_special_buffer_metadata(&mut self, metadata: SpecialBufferMetadata) {
     self.special_buffer = Some(metadata);
-  }
-
-  pub fn is_acp_buffer(&self) -> bool {
-    self.is_special_buffer_kind(SpecialBufferKind::Acp)
   }
 
   pub fn is_compilation_buffer(&self) -> bool {

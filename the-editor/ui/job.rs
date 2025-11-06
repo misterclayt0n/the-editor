@@ -162,7 +162,7 @@ impl Jobs {
     self.add(Job::with_callback(f));
   }
 
-  /// Spawn a local job (for !Send futures like ACP operations)
+  /// Spawn a local job (for !Send futures)
   pub fn spawn_local<F: Future<Output = anyhow::Result<()>> + 'static>(&mut self, f: F) {
     self.add_local(LocalJob::new(f));
   }

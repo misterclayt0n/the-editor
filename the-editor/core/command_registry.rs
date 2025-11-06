@@ -819,43 +819,6 @@ impl CommandRegistry {
       },
     ));
 
-    // ACP (Agent Client Protocol) commands
-    self.register(TypableCommand::new(
-      "acp-new-session",
-      &[],
-      "Create a new ACP session with Claude Code",
-      crate::acp::commands::cmd_acp_new_session,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "acp-send-prompt",
-      &[],
-      "Send selected text as prompt to active ACP session",
-      crate::acp::commands::cmd_acp_send_prompt,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "acp-close-session",
-      &[],
-      "Close the current ACP session",
-      crate::acp::commands::cmd_acp_close_session,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
     // Context fade commands
     self.register(TypableCommand::new(
       "fade",

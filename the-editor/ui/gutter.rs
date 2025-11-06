@@ -99,7 +99,6 @@ impl GutterManager {
   /// Create the default gutter configuration
   pub fn with_defaults() -> Self {
     let mut manager = Self::new();
-    manager.add_gutter(Box::new(AcpStateGutter::new())); // ACP state (leftmost)
     manager.add_gutter(Box::new(DiagnosticGutter::new()));
     manager.add_gutter(Box::new(SpacerGutter::new()));
     manager.add_gutter(Box::new(LineNumberGutter::new()));
@@ -552,94 +551,5 @@ impl Gutter for SpacerGutter {
 
   fn name(&self) -> &'static str {
     "Spacer"
-  }
-}
-
-// ACP State Gutter - shows emoji indicators for ACP session state
-pub struct AcpStateGutter {
-  enabled: bool,
-}
-
-impl AcpStateGutter {
-  pub fn new() -> Self {
-    Self { enabled: true }
-  }
-}
-
-impl Gutter for AcpStateGutter {
-  fn width(&self, _view: &View, _doc: &Document) -> usize {
-    2 // Emoji width (some emojis are double-width)
-  }
-
-  fn render_line(
-    &mut self,
-    line_info: &GutterLineInfo,
-    _editor: &Editor,
-    doc: &Document,
-    _view: &View,
-    theme: &Theme,
-  ) -> Option<(String, Color)> {
-    // Only render on ACP buffers
-    if !doc.is_acp_buffer() {
-      return None;
-    }
-
-    // Only render on first visual line of wrapped lines
-    if !line_info.first_visual_line {
-      return None;
-    }
-
-    // Get cached session state from document
-    let state = doc.acp_gutter_state.as_ref()?;
-
-    // Only show emoji on the current line where activity is happening
-    if state.current_line != Some(line_info.doc_line) {
-      return None;
-    }
-
-    // Map session state to emoji and theme key
-    use crate::acp::session::SessionState;
-    let (emoji, theme_key) = match state.state {
-      SessionState::Thinking => ("⏳", "acp.gutter.thinking"),
-      SessionState::Streaming => ("✍", "acp.gutter.streaming"),
-      SessionState::ExecutingTool => ("🔧", "acp.gutter.tool"),
-      SessionState::Idle => return None, // Don't show anything when idle
-    };
-
-    // Get color from theme with fallback
-    let color = theme
-      .try_get(theme_key)
-      .and_then(|s| s.fg)
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::rgb(0.8, 0.8, 0.8));
-
-    Some((emoji.to_string(), color))
-  }
-
-  fn is_enabled(&self) -> bool {
-    self.enabled
-  }
-
-  fn toggle(&mut self) {
-    self.enabled = !self.enabled;
-  }
-
-  fn id(&self) -> &'static str {
-    "acp-state"
-  }
-
-  fn name(&self) -> &'static str {
-    "ACP State"
-  }
-
-  fn handle_event(
-    &mut self,
-    _event: &Event,
-    _pos: Position,
-    _editor: &mut Editor,
-    _doc: &mut Document,
-    _view: &View,
-  ) -> GutterEventResult {
-    GutterEventResult::Ignored
   }
 }

@@ -961,6 +961,57 @@ impl Tree {
     Some(view_id)
   }
 
+  /// Swap a terminal node for a document view in-place and return the detached
+  /// terminal.
+  pub fn swap_terminal_with_view(
+    &mut self,
+    id: ViewId,
+    mut view: View,
+  ) -> Option<Box<TerminalNode>> {
+    let node = self.nodes.get_mut(id)?;
+    let terminal_area = match &node.content {
+      Content::Terminal(terminal) => terminal.area,
+      _ => return None,
+    };
+
+    view.id = id;
+    view.area = terminal_area;
+
+    let previous = std::mem::replace(&mut node.content, Content::View(Box::new(view)));
+    match previous {
+      Content::Terminal(terminal) => {
+        self.recalculate();
+        Some(terminal)
+      },
+      _ => unreachable!(),
+    }
+  }
+
+  /// Swap a document view node for a terminal node, preserving layout
+  /// placement.
+  pub fn swap_view_with_terminal(
+    &mut self,
+    id: ViewId,
+    mut terminal: Box<TerminalNode>,
+  ) -> Option<()> {
+    let node = self.nodes.get_mut(id)?;
+    let view_area = match &node.content {
+      Content::View(view) => view.area,
+      _ => return None,
+    };
+
+    terminal.area = view_area;
+
+    let previous = std::mem::replace(&mut node.content, Content::Terminal(terminal));
+    match previous {
+      Content::View(_) => {
+        self.recalculate();
+        Some(())
+      },
+      _ => unreachable!(),
+    }
+  }
+
   // Finds the split in the given direction if it exists
   pub fn find_split_in_direction(&self, id: ViewId, direction: Direction) -> Option<ViewId> {
     let parent = self.nodes[id].parent;

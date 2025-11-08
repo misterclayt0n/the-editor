@@ -504,6 +504,18 @@ impl Application for App {
       }
     }
 
+    let mut exited_suspended = Vec::new();
+    for (view_id, terminal) in self.editor.suspended_terminals_iter_mut() {
+      terminal.session.borrow_mut().process_responses();
+      if !terminal.session.borrow().is_alive() {
+        exited_suspended.push(view_id);
+      }
+    }
+
+    for terminal_id in exited_suspended {
+      self.handle_terminal_exit(terminal_id);
+    }
+
     // Clean up exited terminals
     for terminal_id in exited_terminals {
       self.handle_terminal_exit(terminal_id);
@@ -1159,6 +1171,11 @@ impl App {
   }
 
   fn handle_terminal_exit(&mut self, terminal_id: ViewId) {
+    if self.editor.take_suspended_terminal(terminal_id).is_some() {
+      self.editor.set_status("Terminal exited".to_string());
+      return;
+    }
+
     // Check if this is a tracked terminal pane
     if let Some(pane) = self.editor.terminal_pane_for_view(terminal_id) {
       // Tracked pane terminal exited
@@ -1424,6 +1441,11 @@ impl Drop for App {
     // Kill all terminal sessions to ensure clean shutdown
     // This prevents hanging on PTY read threads during runtime shutdown
     let terminals: Vec<_> = self.editor.tree.terminals().map(|(id, _)| id).collect();
+    let suspended: Vec<_> = self
+      .editor
+      .suspended_terminals_iter()
+      .map(|(id, _)| id)
+      .collect();
 
     if !terminals.is_empty() {
       log::debug!("Killing {} terminal session(s)", terminals.len());
@@ -1436,6 +1458,17 @@ impl Drop for App {
             .block_on(terminal.session.borrow_mut().kill())
           {
             log::warn!("Failed to kill terminal {:?}: {}", terminal_id, e);
+          }
+        }
+      }
+
+      for terminal_id in suspended {
+        if let Some(mut terminal) = self.editor.take_suspended_terminal(terminal_id) {
+          if let Err(e) = self
+            .runtime_handle
+            .block_on(terminal.session.borrow_mut().kill())
+          {
+            log::warn!("Failed to kill suspended terminal {:?}: {}", terminal_id, e);
           }
         }
       }

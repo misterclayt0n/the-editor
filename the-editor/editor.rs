@@ -142,12 +142,12 @@ use crate::{
     },
     tree::{
       self,
+      TerminalNode,
       Tree,
     },
     uri::Uri,
     view::View,
   },
-  current,
   current_ref,
   doc_mut,
   event::{
@@ -327,6 +327,7 @@ pub struct Editor {
   terminal_right:           Option<ViewId>,
   detached_terminal_bottom: Option<DetachedTerminal>,
   detached_terminal_right:  Option<DetachedTerminal>,
+  suspended_terminals:      HashMap<ViewId, Box<TerminalNode>>,
   pub next_document_id:     DocumentId,
   pub documents:            BTreeMap<DocumentId, Document>,
 
@@ -490,6 +491,12 @@ impl TerminalPane {
 struct DetachedTerminal {
   session: Rc<RefCell<TerminalSession>>,
   id:      u32,
+}
+
+pub struct TerminalTabEntry<'a> {
+  pub view_id:   ViewId,
+  pub terminal:  &'a TerminalNode,
+  pub suspended: bool,
 }
 
 pub type Motion = Box<dyn Fn(&mut Editor)>;
@@ -1915,6 +1922,7 @@ impl Editor {
       terminal_right: None,
       detached_terminal_bottom: None,
       detached_terminal_right: None,
+      suspended_terminals: HashMap::new(),
       next_document_id: DocumentId::default(),
       documents: BTreeMap::new(),
       saves: HashMap::new(),
@@ -2530,6 +2538,58 @@ impl Editor {
     self.touch_special_buffer(doc_id);
   }
 
+  /// Create (or reattach) a view for the given document and focus it.
+  ///
+  /// Returns the view id when successful, or `None` if the document does not
+  /// exist. This is primarily used when all document views have been replaced
+  /// by terminals and the user needs to bring a buffer back into view.
+  pub fn open_view_for_document(&mut self, doc_id: DocumentId) -> Option<ViewId> {
+    if !self.documents.contains_key(&doc_id) {
+      return None;
+    }
+
+    let focus_id = self.tree.focus;
+    let no_document_views = self.tree.views().next().is_none();
+    let gutters = self.config().gutters.clone();
+
+    let view_id = if no_document_views {
+      if self.tree.get_terminal(focus_id).is_some()
+        && self.terminal_pane_for_view(focus_id).is_none()
+      {
+        let view = View::new(doc_id, gutters.clone());
+        match self.tree.swap_terminal_with_view(focus_id, view) {
+          Some(mut terminal) => {
+            terminal.session.borrow().mark_needs_full_render();
+            self.suspended_terminals.insert(focus_id, terminal);
+            focus_id
+          },
+          None => return None,
+        }
+      } else {
+        let view = View::new(doc_id, gutters.clone());
+        self.tree.insert(view)
+      }
+    } else {
+      let prev_focus = self.tree.focus;
+      let view = View::new(doc_id, gutters.clone());
+      let inserted = self.tree.insert(view);
+      self.tree.focus = prev_focus;
+      inserted
+    };
+
+    {
+      let doc = doc_mut!(self, &doc_id);
+      doc.ensure_view_init(view_id);
+      doc.mark_as_focused();
+      self.touch_special_buffer(doc_id);
+    }
+
+    // Ensure renderer bookkeeping matches newly created view
+    self.focus(view_id);
+
+    Some(view_id)
+  }
+
   pub fn switch(&mut self, id: DocumentId, action: Action) {
     use crate::core::tree::Layout;
 
@@ -2550,45 +2610,59 @@ impl Editor {
         return;
       },
       Action::Replace => {
-        let (view, doc) = current_ref!(self);
-        // If the current view is an empty scratch buffer and is not displayed in any
-        // other views, delete it. Boolean value is determined before the call
-        // to `view_mut` because the operation requires a borrow of `self.tree`,
-        // which is mutably borrowed when `view_mut` is called.
-        let remove_empty_scratch = !doc.is_modified()
-                    // If the buffer has no path and is not modified, it is an empty scratch buffer.
-                    && doc.path().is_none()
-                    // If the buffer we are changing to is not this buffer
-                    && id != doc.id
-                    // Ensure the buffer is not displayed in any other splits.
-                    && !self
-                        .tree
-                        .traverse()
-                        .any(|(_, v)| v.doc == doc.id && v.id != view.id);
+        let Some(view_id) = self.focused_view_id() else {
+          self.set_error("No active document view available");
+          return;
+        };
 
-        let (view, doc) = current!(self);
-        let view_id = view.id;
+        let (remove_empty_scratch, previous_doc_id) = match self.tree.try_get(view_id) {
+          Some(view) => {
+            let Some(doc) = self.documents.get(&view.doc) else {
+              self.set_error("Active document is missing");
+              return;
+            };
+            let remove_empty_scratch = !doc.is_modified()
+                      // If the buffer has no path and is not modified, it is an empty scratch buffer.
+                      && doc.path().is_none()
+                      // If the buffer we are changing to is not this buffer
+                      && id != doc.id
+                      // Ensure the buffer is not displayed in any other splits.
+                      && !self
+                          .tree
+                          .traverse()
+                          .any(|(_, v)| v.doc == doc.id && v.id != view.id);
+            (remove_empty_scratch, doc.id)
+          },
+          None => {
+            self.set_error("No active document view available");
+            return;
+          },
+        };
 
-        // Append any outstanding changes to history in the old document.
-        doc.append_changes_to_history(view);
+        {
+          // Append any outstanding changes to history in the old document.
+          let view = self.tree.get_mut(view_id);
+          let Some(doc) = self.documents.get_mut(&view.doc) else {
+            self.set_error("Active document is missing");
+            return;
+          };
+          doc.append_changes_to_history(view);
+        }
 
         if remove_empty_scratch {
-          // Copy `doc.id` into a variable before calling `self.documents.remove`, which
-          // requires a mutable borrow, invalidating direct access to `doc.id`.
-          let id = doc.id;
-          #[allow(dropping_references)]
-          {
-            drop(doc);
-            drop(view);
-          }
-          self.clear_special_buffer(id);
-          self.documents.remove(&id);
+          self.clear_special_buffer(previous_doc_id);
+          self.documents.remove(&previous_doc_id);
 
           // Remove the scratch buffer from any jumplists
           for (view, _) in self.tree.views_mut() {
-            view.remove_document(&id);
+            view.remove_document(&previous_doc_id);
           }
         } else {
+          let view = self.tree.get_mut(view_id);
+          let Some(doc) = self.documents.get_mut(&view.doc) else {
+            self.set_error("Active document is missing");
+            return;
+          };
           let jump = (view.doc, doc.selection(view.id).clone());
           view.jumps.push(jump);
           // Set last accessed doc if it is a different document
@@ -2764,6 +2838,7 @@ impl Editor {
     if self.terminal_right.is_some_and(|pane| pane == id) {
       self.terminal_right = None;
     }
+    self.suspended_terminals.remove(&id);
     self._refresh();
   }
 
@@ -3028,6 +3103,7 @@ impl Editor {
         } else {
           self.clear_detached_terminal(pane);
           self.tree.remove(existing);
+          self.suspended_terminals.remove(&existing);
         }
         self.clear_terminal_pane(pane);
         if let Some(view_id) = fallback {
@@ -3080,6 +3156,69 @@ impl Editor {
       TerminalPane::Bottom => "Opening bottom terminal…",
       TerminalPane::Right => "Opening side terminal…",
     });
+  }
+
+  pub fn suspended_terminals_iter(&self) -> impl Iterator<Item = (ViewId, &TerminalNode)> {
+    self
+      .suspended_terminals
+      .iter()
+      .map(|(&view_id, node)| (view_id, node.as_ref()))
+  }
+
+  pub fn suspended_terminals_iter_mut(
+    &mut self,
+  ) -> impl Iterator<Item = (ViewId, &mut TerminalNode)> {
+    self
+      .suspended_terminals
+      .iter_mut()
+      .map(|(&view_id, node)| (view_id, node.as_mut()))
+  }
+
+  pub fn take_suspended_terminal(&mut self, view_id: ViewId) -> Option<Box<TerminalNode>> {
+    self.suspended_terminals.remove(&view_id)
+  }
+
+  pub fn restore_suspended_terminal(&mut self, terminal_id: ViewId) -> bool {
+    let Some(terminal) = self.suspended_terminals.remove(&terminal_id) else {
+      return false;
+    };
+
+    if let Some(view) = self.tree.try_get(terminal_id) {
+      if let Some(doc) = self.documents.get_mut(&view.doc) {
+        doc.remove_view(terminal_id);
+      }
+    } else {
+      return false;
+    }
+
+    if self
+      .tree
+      .swap_view_with_terminal(terminal_id, terminal)
+      .is_none()
+    {
+      return false;
+    }
+
+    self.focus(terminal_id);
+    true
+  }
+
+  pub fn terminal_tab_entries(&self) -> impl Iterator<Item = TerminalTabEntry<'_>> {
+    let active = self.tree.terminals().map(|(view_id, terminal)| {
+      TerminalTabEntry {
+        view_id,
+        terminal,
+        suspended: false,
+      }
+    });
+    let suspended = self.suspended_terminals_iter().map(|(view_id, terminal)| {
+      TerminalTabEntry {
+        view_id,
+        terminal,
+        suspended: true,
+      }
+    });
+    active.chain(suspended)
   }
 
   pub fn focus_next(&mut self) {

@@ -3064,25 +3064,37 @@ impl EditorView {
               self.dirty_region.mark_all_dirty();
             }
             if let Some(idx) = hit_index {
-              let doc_id = self.buffer_tabs[idx].doc_id;
-              let target_view = cx
-                .editor
-                .tree
-                .views()
-                .find_map(|(view, _)| (view.doc == doc_id).then_some(view.id));
+              match self.buffer_tabs[idx].kind {
+                bufferline::BufferKind::Document(doc_id) => {
+                  let target_view = cx
+                    .editor
+                    .tree
+                    .views()
+                    .find_map(|(view, _)| (view.doc == doc_id).then_some(view.id));
 
-              if let Some(view_id) = target_view {
-                cx.editor.focus(view_id);
-              } else {
-                let current_doc = cx
-                  .editor
-                  .tree
-                  .try_get(cx.editor.tree.focus)
-                  .map(|view| view.doc);
-
-                if current_doc != Some(doc_id) {
-                  cx.editor.switch(doc_id, Action::Replace);
-                }
+                  if let Some(view_id) = target_view {
+                    cx.editor.focus(view_id);
+                  } else if let Some(view_id) = cx.editor.focused_view_id() {
+                    cx.editor.focus(view_id);
+                    let current_doc = cx.editor.tree.get(view_id).doc;
+                    if current_doc != doc_id {
+                      cx.editor.switch(doc_id, Action::Replace);
+                    }
+                  } else if let Some(new_view_id) = cx.editor.open_view_for_document(doc_id) {
+                    cx.editor.focus(new_view_id);
+                  } else {
+                    cx.editor
+                      .set_error("No document view available to show this buffer");
+                  }
+                },
+                bufferline::BufferKind::Terminal(view_id) => {
+                  if cx.editor.tree.get_terminal(view_id).is_some() {
+                    cx.editor.focus(view_id);
+                  } else if cx.editor.restore_suspended_terminal(view_id) {
+                    request_redraw();
+                    self.dirty_region.mark_all_dirty();
+                  }
+                },
               }
             }
             self.buffer_hover_index = hit_index;

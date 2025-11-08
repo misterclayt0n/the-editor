@@ -7,6 +7,7 @@ use super::button::Button;
 use crate::{
   core::{
     DocumentId,
+    ViewId,
     document::Document,
   },
   editor::Editor,
@@ -17,9 +18,15 @@ use crate::{
   },
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BufferKind {
+  Document(DocumentId),
+  Terminal(ViewId),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BufferTab {
-  pub doc_id:  DocumentId,
+  pub kind:    BufferKind,
   pub start_x: f32,
   pub end_x:   f32,
 }
@@ -119,7 +126,13 @@ pub fn render(
 
   let mut cursor_x = origin_x;
   let max_x = origin_x + viewport_width;
-  let current_doc_id = crate::view!(editor).doc;
+  let current_doc_id = editor
+    .focused_view_id()
+    .and_then(|view_id| editor.tree.try_get(view_id).map(|view| view.doc));
+  let current_terminal_id = editor
+    .tree
+    .get_terminal(editor.tree.focus)
+    .map(|_| editor.tree.focus);
   let button_base = theme
     .try_get_exact("ui.button")
     .and_then(|style| style.fg)
@@ -131,14 +144,43 @@ pub fn render(
     .map(theme_color_to_renderer_color)
     .unwrap_or_else(|| glow_rgb_from_base(button_base));
 
-  for (tab_index, doc) in editor.documents().enumerate() {
+  struct TabEntry {
+    label: String,
+    kind:  BufferKind,
+  }
+
+  let mut entries: Vec<TabEntry> = Vec::new();
+
+  for doc in editor.documents() {
     let mut label = format!(" {} ", display_name(doc));
     if doc.is_modified() {
       label.push_str("[+]");
     }
     label.push(' ');
+    entries.push(TabEntry {
+      label,
+      kind: BufferKind::Document(doc.id()),
+    });
+  }
 
-    let style = if doc.id() == current_doc_id {
+  for terminal_entry in editor.terminal_tab_entries() {
+    let mut label = format!(" terminal #{} ", terminal_entry.terminal.id);
+    label.push(' ');
+    entries.push(TabEntry {
+      label,
+      kind: BufferKind::Terminal(terminal_entry.view_id),
+    });
+  }
+
+  for (tab_index, entry) in entries.into_iter().enumerate() {
+    let TabEntry { mut label, kind } = entry;
+
+    let is_active = match kind {
+      BufferKind::Document(doc_id) => current_doc_id == Some(doc_id),
+      BufferKind::Terminal(view_id) => current_terminal_id == Some(view_id),
+    };
+
+    let style = if is_active {
       active_style
     } else if Some(tab_index) == hover_index {
       active_style
@@ -172,7 +214,6 @@ pub fn render(
     }
     let end_x = (cursor_x + draw_width).min(max_x);
 
-    let is_active = doc.id() == current_doc_id;
     let is_hovered = Some(tab_index) == hover_index;
     let is_pressed = Some(tab_index) == pressed_index;
 
@@ -247,7 +288,7 @@ pub fn render(
     ));
 
     tabs.push(BufferTab {
-      doc_id: doc.id(),
+      kind,
       start_x: cursor_x,
       end_x,
     });

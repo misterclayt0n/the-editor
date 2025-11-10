@@ -5,21 +5,19 @@ use std::{
 
 use slotmap::HopSlotMap;
 
-use crate::{
-  core::{
-    ViewId,
-    animation::{
-      AnimationHandle,
-      Easing,
-      presets,
-    },
-    graphics::Rect,
-    layout::{
-      Constraint as LayoutConstraint,
-      Layout as UiLayout,
-    },
-    view::View,
+use crate::core::{
+  ViewId,
+  animation::{
+    AnimationHandle,
+    Easing,
+    presets,
   },
+  graphics::Rect,
+  layout::{
+    Constraint as LayoutConstraint,
+    Layout as UiLayout,
+  },
+  view::View,
 };
 
 // Helper struct to track area animations for views

@@ -2,6 +2,8 @@ use ropey::Rope;
 use the_editor_lsp_types::types as lsp;
 use the_editor_renderer::{
   Color,
+  Key,
+  ScrollDelta,
   TextSection,
   TextSegment,
   TextStyle,
@@ -20,6 +22,7 @@ use crate::{
       PopupConstraints,
       PopupContent,
       PopupFrame,
+      PopupLimits,
       PopupShell,
       PopupSize,
       PositionBias,
@@ -34,8 +37,13 @@ use crate::{
   },
 };
 
-const MAX_VISIBLE_LINES: usize = 20;
+const MAX_VISIBLE_LINES: usize = 12;
 const MIN_CONTENT_CHARS: usize = 10;
+const PIXELS_PER_SCROLL_LINE: f32 = 24.0;
+const MAX_SCROLL_LINES_PER_TICK: i32 = 4;
+const HOVER_MIN_WIDTH_CHARS: u16 = 18;
+const HOVER_MAX_WIDTH_CHARS: u16 = 64;
+const HOVER_MAX_HEIGHT_LINES: u16 = 20;
 
 /// Hover popup component rendered inside a generic popup shell.
 pub struct Hover {
@@ -47,9 +55,16 @@ impl Hover {
 
   pub fn new(hovers: Vec<(String, lsp::Hover)>) -> Self {
     let content = HoverContent::new(hovers);
+    let popup_limits = PopupLimits {
+      min_width: HOVER_MIN_WIDTH_CHARS,
+      max_width: HOVER_MAX_WIDTH_CHARS,
+      max_height: HOVER_MAX_HEIGHT_LINES,
+      ..PopupLimits::default()
+    };
     let popup = PopupShell::new(Self::ID, content)
       .position_bias(PositionBias::Below)
-      .auto_close(true);
+      .auto_close(true)
+      .with_limits(popup_limits);
     Self { popup }
   }
 }
@@ -105,8 +120,9 @@ fn current_cursor_anchor(ctx: &Context) -> Option<Position> {
 }
 
 struct HoverContent {
-  entries: Vec<HoverEntry>,
-  layout:  Option<HoverLayout>,
+  entries:       Vec<HoverEntry>,
+  layout:        Option<HoverLayout>,
+  scroll_offset: usize,
 }
 
 struct HoverEntry {
@@ -145,6 +161,7 @@ impl HoverContent {
     Self {
       entries,
       layout: None,
+      scroll_offset: 0,
     }
   }
 
@@ -192,6 +209,49 @@ impl HoverContent {
 
     self.layout.as_ref()
   }
+
+  fn scroll_by_delta(&mut self, delta: &ScrollDelta) -> bool {
+    let lines = scroll_lines_from_delta(delta);
+    if lines == 0 {
+      return false;
+    }
+    self.scroll_by_lines(lines)
+  }
+
+  fn page_scroll_amount(&self) -> usize {
+    self
+      .layout
+      .as_ref()
+      .map(|layout| {
+        let visible = layout.visible_lines.max(1);
+        (visible + 1) / 2
+      })
+      .unwrap_or(0)
+  }
+
+  fn scroll_by_lines(&mut self, lines: i32) -> bool {
+    let Some(layout) = self.layout.as_ref() else {
+      return false;
+    };
+
+    let total_lines = layout.lines.len();
+    let visible = layout.visible_lines.min(total_lines).max(1);
+    if total_lines <= visible {
+      return false;
+    }
+
+    let max_scroll = total_lines.saturating_sub(visible);
+    let previous = self.scroll_offset;
+    if lines < 0 {
+      let amount = (-lines) as usize;
+      self.scroll_offset = (self.scroll_offset + amount).min(max_scroll);
+    } else {
+      let amount = lines as usize;
+      self.scroll_offset = self.scroll_offset.saturating_sub(amount);
+    }
+    self.scroll_offset = self.scroll_offset.min(max_scroll);
+    previous != self.scroll_offset
+  }
 }
 
 impl PopupContent for HoverContent {
@@ -222,39 +282,121 @@ impl PopupContent for HoverContent {
 
   fn render(&mut self, frame: &mut PopupFrame<'_>, ctx: &mut Context) {
     let inner = frame.inner();
+    let outer = frame.outer();
     let wrap_width = inner.width.max(1.0);
     let cell_width = UI_FONT_WIDTH.max(1.0);
-
-    let Some(layout) = self.ensure_layout(cell_width, ctx, wrap_width) else {
-      return;
-    };
 
     let alpha = frame.alpha();
     let (text_x, mut text_y) = frame.inner_origin();
     text_y += UI_FONT_SIZE;
+    if self.scroll_offset > 0 {
+      let padding_above = (inner.y - outer.y).max(0.0);
+      text_y -= padding_above.min(UI_FONT_SIZE);
+    }
 
-    let lines = layout.lines.iter().take(layout.visible_lines);
-    for segments in lines {
-      if text_y > inner.y + inner.height {
-        break;
-      }
+    let mut new_scroll_offset = self.scroll_offset;
 
-      let texts = segments
-        .iter()
-        .map(|segment| {
-          let mut seg = segment.clone();
-          seg.style.color.a *= alpha;
-          seg
-        })
-        .collect();
-
-      let section = TextSection {
-        position: (text_x, text_y),
-        texts,
+    {
+      let Some(layout) = self.ensure_layout(cell_width, ctx, wrap_width) else {
+        self.scroll_offset = 0;
+        return;
       };
 
-      frame.surface().draw_text(section);
-      text_y += layout.line_height;
+      let total_lines = layout.lines.len();
+      if total_lines == 0 {
+        new_scroll_offset = 0;
+      } else {
+        let visible_lines = layout.visible_lines.min(total_lines).max(1);
+        let max_scroll = total_lines.saturating_sub(visible_lines);
+        new_scroll_offset = new_scroll_offset.min(max_scroll);
+        let text_bottom_bound = inner.y + inner.height;
+
+        for segments in layout
+          .lines
+          .iter()
+          .skip(new_scroll_offset)
+          .take(visible_lines)
+        {
+          if text_y > text_bottom_bound {
+            break;
+          }
+
+          let texts = segments
+            .iter()
+            .map(|segment| {
+              let mut seg = segment.clone();
+              seg.style.color.a *= alpha;
+              seg
+            })
+            .collect();
+
+          let section = TextSection {
+            position: (text_x, text_y),
+            texts,
+          };
+
+          frame.surface().draw_text(section);
+          text_y += layout.line_height;
+        }
+
+        if total_lines > visible_lines {
+          let track_height = inner.height.max(4.0) - 4.0;
+          let track_y = inner.y + 2.0;
+          let track_x = inner.x + inner.width - 2.0;
+          let scroll_ratio = if max_scroll == 0 {
+            0.0
+          } else {
+            new_scroll_offset.min(max_scroll) as f32 / max_scroll as f32
+          };
+          let mut thumb_height = (visible_lines as f32 / total_lines as f32) * track_height;
+          thumb_height = thumb_height.clamp(8.0, track_height);
+          let thumb_travel = (track_height - thumb_height).max(0.0);
+          let thumb_y = track_y + scroll_ratio * thumb_travel;
+
+          let mut track_color = Color::new(0.8, 0.8, 0.8, 0.08);
+          let mut thumb_color = Color::new(0.9, 0.9, 0.9, 0.25);
+          track_color.a *= alpha;
+          thumb_color.a *= alpha;
+
+          let surface = frame.surface();
+          surface.draw_rect(track_x, track_y, 1.0, track_height, track_color);
+          surface.draw_rect(track_x - 1.0, thumb_y, 2.0, thumb_height, thumb_color);
+        }
+      }
+    }
+
+    self.scroll_offset = new_scroll_offset;
+  }
+
+  fn handle_event(&mut self, event: &Event, _ctx: &mut Context) -> EventResult {
+    match event {
+      Event::Scroll(delta) => {
+        let _ = self.scroll_by_delta(delta);
+        EventResult::Consumed(None)
+      },
+      Event::Key(key) => {
+        if key.ctrl && !key.alt && !key.shift {
+          match key.code {
+            Key::Char('d') => {
+              let amount = self.page_scroll_amount();
+              if amount > 0 {
+                let _ = self.scroll_by_lines(-(amount as i32));
+              }
+              return EventResult::Consumed(None);
+            },
+            Key::Char('u') => {
+              let amount = self.page_scroll_amount();
+              if amount > 0 {
+                let _ = self.scroll_by_lines(amount as i32);
+              }
+              return EventResult::Consumed(None);
+            },
+            _ => {},
+          }
+        }
+        EventResult::Ignored(None)
+      },
+      _ => EventResult::Ignored(None),
     }
   }
 }
@@ -583,4 +725,22 @@ fn slice_chars_to_string(s: &str, start: usize, end: usize) -> String {
     }
   }
   buf
+}
+
+fn scroll_lines_from_delta(delta: &ScrollDelta) -> i32 {
+  let raw = match delta {
+    ScrollDelta::Lines { y, .. } => *y,
+    ScrollDelta::Pixels { y, .. } => *y / PIXELS_PER_SCROLL_LINE,
+  };
+
+  if raw.abs() < f32::EPSILON {
+    return 0;
+  }
+
+  let magnitude = raw.abs().ceil().min(MAX_SCROLL_LINES_PER_TICK as f32) as i32;
+  if raw.is_sign_negative() {
+    -magnitude
+  } else {
+    magnitude
+  }
 }

@@ -515,6 +515,20 @@ impl Component for EditorView {
   }
 
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
+    if matches!(event, Event::Scroll(_)) {
+      if let Some(result) = self.dispatch_signature_help_event(event, cx) {
+        return match result {
+          EventResult::Consumed(cb) | EventResult::Ignored(cb) => EventResult::Consumed(cb),
+        };
+      }
+    } else if matches!(event, Event::Key(_)) {
+      if let Some(result) = self.dispatch_signature_help_event(event, cx) {
+        if matches!(result, EventResult::Consumed(_)) {
+          return result;
+        }
+      }
+    }
+
     match event {
       Event::Key(key) => {
         // Clear status on any key press
@@ -2399,6 +2413,15 @@ impl EditorView {
     if let Some(ref mut sig_help) = self.signature_help {
       sig_help.render(area, renderer, cx);
     }
+  }
+
+  fn dispatch_signature_help_event(
+    &mut self,
+    event: &Event,
+    cx: &mut Context,
+  ) -> Option<EventResult> {
+    let sig_help = self.signature_help.as_mut()?;
+    Some(Component::handle_event(sig_help, event, cx))
   }
 
   /// Handle mouse events (clicks, drags, etc.)

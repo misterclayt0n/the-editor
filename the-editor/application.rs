@@ -132,9 +132,7 @@ impl App {
           let old_editor_config = self.editor.config().clone();
 
           // Store the new config in the global config pointer
-          self
-            .config_ptr
-            .store(Arc::new(new_config.clone()));
+          self.config_ptr.store(Arc::new(new_config.clone()));
 
           // Update theme if specified
           if let Some(theme_name) = &new_config.theme {

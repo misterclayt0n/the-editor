@@ -1,5 +1,7 @@
 use the_editor_renderer::{
   Color,
+  Key,
+  ScrollDelta,
   TextSection,
   TextSegment,
   TextStyle,
@@ -20,22 +22,36 @@ use crate::{
   },
 };
 
-/// Maximum width for the signature help popup
-const MAX_POPUP_WIDTH: usize = 80; // characters
-const MIN_POPUP_CHARS: usize = 24;
+/// Signature help layout constants tuned for a compact, Zed-like look.
+const MAX_CONTENT_CHARS: usize = 56;
+const MIN_CONTENT_CHARS: usize = 20;
+const MAX_DOC_VISIBLE_LINES: usize = 8;
+const POPUP_MIN_WIDTH: f32 = 200.0;
+const POPUP_MAX_WIDTH: f32 = 520.0;
+const POPUP_PADDING: f32 = 10.0;
+const DOC_SECTION_GAP: f32 = 6.0;
+const PIXELS_PER_SCROLL_LINE: f32 = 24.0;
+const MAX_SCROLL_LINES_PER_TICK: i32 = 4;
 
 /// Signature help popup component
 pub struct SignatureHelp {
   /// Language for syntax highlighting
-  language:         String,
+  language:               String,
   /// Active signature index
-  active_signature: usize,
+  active_signature:       usize,
   /// All available signatures
-  signatures:       Vec<crate::handlers::signature_help::Signature>,
+  signatures:             Vec<crate::handlers::signature_help::Signature>,
   /// Appearance animation
-  animation:        crate::core::animation::AnimationHandle<f32>,
+  animation:              crate::core::animation::AnimationHandle<f32>,
   /// Whether the popup is visible
-  visible:          bool,
+  visible:                bool,
+  /// Scroll offset for long documentation blocks
+  doc_scroll:             usize,
+  /// Cached doc metadata for scroll handling
+  last_doc_visible_lines: usize,
+  last_doc_total_lines:   usize,
+  /// Deferred scroll amount to apply once layout is ready
+  pending_doc_scroll:     i32,
 }
 
 impl SignatureHelp {
@@ -56,6 +72,10 @@ impl SignatureHelp {
       signatures,
       animation,
       visible: true,
+      doc_scroll: 0,
+      last_doc_visible_lines: 0,
+      last_doc_total_lines: 0,
+      pending_doc_scroll: 0,
     }
   }
 
@@ -68,6 +88,10 @@ impl SignatureHelp {
     self.language = language;
     self.active_signature = active_signature.min(signatures.len().saturating_sub(1));
     self.signatures = signatures;
+    self.doc_scroll = 0;
+    self.last_doc_visible_lines = 0;
+    self.last_doc_total_lines = 0;
+    self.pending_doc_scroll = 0;
     // Reset animation if signatures changed (quick re-animation from 80%)
     if self.animation.is_complete() {
       let (duration, easing) = crate::core::animation::presets::FAST;
@@ -99,32 +123,99 @@ impl SignatureHelp {
       .active_signature
       .min(self.signatures.len().saturating_sub(1))
   }
+
+  fn scroll_docs(&mut self, delta: &ScrollDelta) {
+    let lines = scroll_lines_from_delta(delta);
+    if lines == 0 {
+      return;
+    }
+    self.enqueue_doc_scroll(lines);
+  }
+
+  fn enqueue_doc_scroll(&mut self, lines: i32) {
+    if self.last_doc_total_lines == 0 && self.last_doc_visible_lines == 0 {
+      const MAX_PENDING: i32 = 64;
+      self.pending_doc_scroll = (self.pending_doc_scroll + lines).clamp(-MAX_PENDING, MAX_PENDING);
+    } else {
+      let _ = self.scroll_docs_by_lines(lines);
+    }
+  }
+
+  fn doc_page_scroll_amount(&self) -> usize {
+    if self.last_doc_visible_lines == 0 {
+      0
+    } else {
+      (self.last_doc_visible_lines.max(1) + 1) / 2
+    }
+  }
+
+  fn scroll_docs_by_lines(&mut self, lines: i32) -> bool {
+    if self.last_doc_visible_lines == 0 || self.last_doc_total_lines <= self.last_doc_visible_lines
+    {
+      return false;
+    }
+
+    let max_scroll = self
+      .last_doc_total_lines
+      .saturating_sub(self.last_doc_visible_lines.max(1));
+    let previous = self.doc_scroll;
+    if lines < 0 {
+      let amount = (-lines) as usize;
+      self.doc_scroll = (self.doc_scroll + amount).min(max_scroll);
+    } else {
+      let amount = lines as usize;
+      self.doc_scroll = self.doc_scroll.saturating_sub(amount);
+    }
+    self.doc_scroll = self.doc_scroll.min(max_scroll);
+    previous != self.doc_scroll
+  }
 }
 
 impl Component for SignatureHelp {
   fn handle_event(&mut self, event: &Event, _ctx: &mut Context) -> EventResult {
-    let Event::Key(key) = event else {
-      return EventResult::Ignored(None);
-    };
-
-    if self.signatures.len() <= 1 {
-      return EventResult::Ignored(None);
-    }
-
-    use the_editor_renderer::Key;
-
-    match (key.code, key.ctrl, key.alt, key.shift) {
-      (Key::Char('p'), false, true, false) => {
-        if self.active_signature == 0 {
-          self.active_signature = self.signatures.len() - 1;
-        } else {
-          self.active_signature -= 1;
-        }
+    match event {
+      Event::Scroll(delta) => {
+        self.scroll_docs(delta);
         EventResult::Consumed(None)
       },
-      (Key::Char('n'), false, true, false) => {
-        self.active_signature = (self.active_signature + 1) % self.signatures.len();
-        EventResult::Consumed(None)
+      Event::Key(key) => {
+        if key.ctrl && !key.alt && !key.shift {
+          match key.code {
+            Key::Char('d') => {
+              let amount = self.doc_page_scroll_amount().max(1);
+              self.enqueue_doc_scroll(-(amount as i32));
+              return EventResult::Consumed(None);
+            },
+            Key::Char('u') => {
+              let amount = self.doc_page_scroll_amount().max(1);
+              self.enqueue_doc_scroll(amount as i32);
+              return EventResult::Consumed(None);
+            },
+            _ => {},
+          }
+        }
+
+        if self.signatures.len() <= 1 {
+          return EventResult::Ignored(None);
+        }
+
+        match (key.code, key.ctrl, key.alt, key.shift) {
+          (Key::Char('p'), false, true, false) => {
+            if self.active_signature == 0 {
+              self.active_signature = self.signatures.len() - 1;
+            } else {
+              self.active_signature -= 1;
+            }
+            self.doc_scroll = 0;
+            EventResult::Consumed(None)
+          },
+          (Key::Char('n'), false, true, false) => {
+            self.active_signature = (self.active_signature + 1) % self.signatures.len();
+            self.doc_scroll = 0;
+            EventResult::Consumed(None)
+          },
+          _ => EventResult::Ignored(None),
+        }
       },
       _ => EventResult::Ignored(None),
     }
@@ -163,10 +254,10 @@ impl Component for SignatureHelp {
     text_color.a *= alpha;
 
     // Get active signature
-    let sig = self.current_signature();
+    let sig = self.current_signature().clone();
 
     // Calculate popup dimensions
-    let padding = 12.0;
+    let padding = POPUP_PADDING;
 
     // Calculate fresh cursor position using document font metrics
     let cursor_position = {
@@ -229,20 +320,21 @@ impl Component for SignatureHelp {
       .unwrap_or(0);
 
     let sig_char_count = sig.signature.chars().count();
-    let mut content_chars = sig_char_count.clamp(MIN_POPUP_CHARS, MAX_POPUP_WIDTH);
-    content_chars = content_chars.max(index_width_chars.clamp(0, MAX_POPUP_WIDTH));
+    let mut content_chars = sig_char_count.clamp(MIN_CONTENT_CHARS, MAX_CONTENT_CHARS);
+    content_chars = content_chars.max(index_width_chars.clamp(0, MAX_CONTENT_CHARS));
 
     if let Some(doc) = &sig.signature_doc {
-      if let Some(max_doc_width) = wrap_doc_text(doc, MAX_POPUP_WIDTH)
+      if let Some(max_doc_width) = wrap_doc_text(doc, MAX_CONTENT_CHARS)
         .iter()
         .map(|line| line.chars().count())
         .max()
       {
-        content_chars = content_chars.max(max_doc_width.clamp(MIN_POPUP_CHARS, MAX_POPUP_WIDTH));
+        content_chars =
+          content_chars.max(max_doc_width.clamp(MIN_CONTENT_CHARS, MAX_CONTENT_CHARS));
       }
     }
 
-    let wrap_chars = content_chars.clamp(MIN_POPUP_CHARS, MAX_POPUP_WIDTH);
+    let wrap_chars = content_chars.clamp(MIN_CONTENT_CHARS, MAX_CONTENT_CHARS);
     let doc_lines = if let Some(doc) = &sig.signature_doc {
       wrap_doc_text(doc, wrap_chars)
     } else {
@@ -250,11 +342,30 @@ impl Component for SignatureHelp {
     };
 
     let content_width = content_chars as f32 * ui_char_width;
-    let popup_width = (content_width + padding * 2.0).clamp(240.0, 800.0);
+    let popup_width = (content_width + padding * 2.0).clamp(POPUP_MIN_WIDTH, POPUP_MAX_WIDTH);
+
+    let doc_line_count = doc_lines.len();
+    let visible_doc_lines = doc_line_count.min(MAX_DOC_VISIBLE_LINES);
+
+    self.last_doc_total_lines = doc_line_count;
+    self.last_doc_visible_lines = visible_doc_lines;
+    if visible_doc_lines == 0 {
+      self.doc_scroll = 0;
+      self.pending_doc_scroll = 0;
+    } else {
+      let max_scroll = doc_line_count.saturating_sub(visible_doc_lines);
+      self.doc_scroll = self.doc_scroll.min(max_scroll);
+      if self.pending_doc_scroll != 0 {
+        let pending = self.pending_doc_scroll;
+        self.pending_doc_scroll = 0;
+        let _ = self.scroll_docs_by_lines(pending);
+        self.doc_scroll = self.doc_scroll.min(max_scroll);
+      }
+    }
 
     let mut popup_height = padding * 2.0 + line_height;
-    if !doc_lines.is_empty() {
-      popup_height += 8.0 + doc_lines.len() as f32 * line_height;
+    if visible_doc_lines > 0 {
+      popup_height += DOC_SECTION_GAP + visible_doc_lines as f32 * line_height;
     }
 
     // Get viewport dimensions for bounds checking
@@ -389,10 +500,17 @@ impl Component for SignatureHelp {
         });
       }
 
-      if !doc_lines.is_empty() {
-        let mut doc_y = text_y + line_height + 8.0;
-        for line in doc_lines {
-          if doc_y > anim_y + anim_height - padding {
+      if !doc_lines.is_empty() && visible_doc_lines > 0 {
+        let max_scroll = doc_lines.len().saturating_sub(visible_doc_lines);
+        let start_line = self.doc_scroll.min(max_scroll);
+        let doc_area_top = text_y + line_height + DOC_SECTION_GAP;
+        let mut doc_y = doc_area_top;
+        let doc_box_top = doc_area_top - UI_FONT_SIZE;
+        let doc_box_height = visible_doc_lines as f32 * line_height;
+        let doc_bottom_limit = (anim_y + anim_height - padding).min(doc_box_top + doc_box_height);
+
+        for line in doc_lines.iter().skip(start_line).take(visible_doc_lines) {
+          if doc_y > doc_bottom_limit {
             break;
           }
 
@@ -404,7 +522,7 @@ impl Component for SignatureHelp {
           surface.draw_text(TextSection {
             position: (text_x, doc_y),
             texts:    vec![TextSegment {
-              content: line,
+              content: line.clone(),
               style:   TextStyle {
                 size:  UI_FONT_SIZE,
                 color: text_color,
@@ -412,6 +530,28 @@ impl Component for SignatureHelp {
             }],
           });
           doc_y += line_height;
+        }
+
+        if doc_lines.len() > visible_doc_lines {
+          let track_height = doc_box_height.max(8.0) - 4.0;
+          let track_y = doc_box_top + 2.0;
+          let track_x = anim_x + anim_width - padding - 2.0;
+          let scroll_ratio = if max_scroll == 0 {
+            0.0
+          } else {
+            self.doc_scroll.min(max_scroll) as f32 / max_scroll as f32
+          };
+          let mut thumb_height = (visible_doc_lines as f32 / doc_lines.len() as f32) * track_height;
+          thumb_height = thumb_height.clamp(6.0, track_height);
+          let thumb_travel = (track_height - thumb_height).max(0.0);
+          let thumb_y = track_y + scroll_ratio * thumb_travel;
+          let mut track_color = Color::new(0.8, 0.8, 0.8, 0.08);
+          let mut thumb_color = Color::new(0.9, 0.9, 0.9, 0.25);
+          track_color.a *= alpha;
+          thumb_color.a *= alpha;
+
+          surface.draw_rect(track_x, track_y, 1.0, track_height, track_color);
+          surface.draw_rect(track_x - 1.0, thumb_y, 2.0, thumb_height, thumb_color);
         }
       }
     });
@@ -501,4 +641,22 @@ fn wrap_text(text: &str, max_chars: usize) -> Vec<String> {
   }
 
   lines
+}
+
+fn scroll_lines_from_delta(delta: &ScrollDelta) -> i32 {
+  let raw = match delta {
+    ScrollDelta::Lines { y, .. } => *y,
+    ScrollDelta::Pixels { y, .. } => *y / PIXELS_PER_SCROLL_LINE,
+  };
+
+  if raw.abs() < f32::EPSILON {
+    return 0;
+  }
+
+  let magnitude = raw.abs().ceil().min(MAX_SCROLL_LINES_PER_TICK as f32) as i32;
+  if raw.is_sign_negative() {
+    -magnitude
+  } else {
+    magnitude
+  }
 }

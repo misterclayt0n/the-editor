@@ -12,7 +12,6 @@ path = "main.rs"
 
 [features]
 integration   = [  ]
-term          = [  ]
 unicode-lines = [ "ropey/unicode_lines" ]
 
 [dependencies]
@@ -64,7 +63,6 @@ the-editor-parsec    = { path = "../the-parsec" }
 the-editor-renderer  = { path = "../the-renderer" }
 the-editor-stdx      = { path = "../the-stdx" }
 the-editor-vcs       = { features = [ "git" ], path = "../the-vcs" }
-the-terminal         = { path = "../the-terminal" }
 
 [target.'cfg(unix)'.dependencies]
 libc   = "0.2"

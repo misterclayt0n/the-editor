@@ -7,7 +7,6 @@ use super::button::Button;
 use crate::{
   core::{
     DocumentId,
-    ViewId,
     document::Document,
   },
   editor::Editor,
@@ -21,7 +20,6 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufferKind {
   Document(DocumentId),
-  Terminal(ViewId),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -129,10 +127,6 @@ pub fn render(
   let current_doc_id = editor
     .focused_view_id()
     .and_then(|view_id| editor.tree.try_get(view_id).map(|view| view.doc));
-  let current_terminal_id = editor
-    .tree
-    .get_terminal(editor.tree.focus)
-    .map(|_| editor.tree.focus);
   let button_base = theme
     .try_get_exact("ui.button")
     .and_then(|style| style.fg)
@@ -163,22 +157,10 @@ pub fn render(
     });
   }
 
-  for terminal_entry in editor.terminal_tab_entries() {
-    let mut label = format!(" terminal #{} ", terminal_entry.terminal.id);
-    label.push(' ');
-    entries.push(TabEntry {
-      label,
-      kind: BufferKind::Terminal(terminal_entry.view_id),
-    });
-  }
-
   for (tab_index, entry) in entries.into_iter().enumerate() {
     let TabEntry { mut label, kind } = entry;
 
-    let is_active = match kind {
-      BufferKind::Document(doc_id) => current_doc_id == Some(doc_id),
-      BufferKind::Terminal(view_id) => current_terminal_id == Some(view_id),
-    };
+    let is_active = matches!(kind, BufferKind::Document(doc_id) if Some(doc_id) == current_doc_id);
 
     let style = if is_active {
       active_style

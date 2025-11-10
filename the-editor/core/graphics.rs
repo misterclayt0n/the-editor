@@ -296,35 +296,6 @@ impl Color {
   }
 }
 
-#[cfg(feature = "term")]
-impl From<Color> for crossterm::style::Color {
-  fn from(color: Color) -> Self {
-    use crossterm::style::Color as CColor;
-
-    match color {
-      Color::Reset => CColor::Reset,
-      Color::Black => CColor::Black,
-      Color::Red => CColor::DarkRed,
-      Color::Green => CColor::DarkGreen,
-      Color::Yellow => CColor::DarkYellow,
-      Color::Blue => CColor::DarkBlue,
-      Color::Magenta => CColor::DarkMagenta,
-      Color::Cyan => CColor::DarkCyan,
-      Color::Gray => CColor::DarkGrey,
-      Color::LightRed => CColor::Red,
-      Color::LightGreen => CColor::Green,
-      Color::LightBlue => CColor::Blue,
-      Color::LightYellow => CColor::Yellow,
-      Color::LightMagenta => CColor::Magenta,
-      Color::LightCyan => CColor::Cyan,
-      Color::LightGray => CColor::Grey,
-      Color::White => CColor::White,
-      Color::Indexed(i) => CColor::AnsiValue(i),
-      Color::Rgb(r, g, b) => CColor::Rgb { r, g, b },
-    }
-  }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnderlineStyle {
   Reset,
@@ -346,20 +317,6 @@ impl FromStr for UnderlineStyle {
       "dashed" => Ok(Self::Dashed),
       "double_line" => Ok(Self::DoubleLine),
       _ => Err("Invalid underline style"),
-    }
-  }
-}
-
-#[cfg(feature = "term")]
-impl From<UnderlineStyle> for crossterm::style::Attribute {
-  fn from(style: UnderlineStyle) -> Self {
-    match style {
-      UnderlineStyle::Line => crossterm::style::Attribute::Underlined,
-      UnderlineStyle::Curl => crossterm::style::Attribute::Undercurled,
-      UnderlineStyle::Dotted => crossterm::style::Attribute::Underdotted,
-      UnderlineStyle::Dashed => crossterm::style::Attribute::Underdashed,
-      UnderlineStyle::DoubleLine => crossterm::style::Attribute::DoubleUnderlined,
-      UnderlineStyle::Reset => crossterm::style::Attribute::NoUnderline,
     }
   }
 }
@@ -418,7 +375,7 @@ impl FromStr for Modifier {
 /// ```
 ///
 /// It represents an incremental change. If you apply the styles S1, S2, S3 to a
-/// cell of the terminal buffer, the style of this cell will be the result of
+/// cell of the buffer, the style of this cell will be the result of
 /// the merge of S1, S2 and S3, not just S3.
 ///
 /// ```rust

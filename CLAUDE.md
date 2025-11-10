@@ -132,33 +132,6 @@ The `the-event` crate provides:
 - **`theme.toml`, `base16_theme.toml`**: User themes
 - **`~/.config/the-editor/config.toml`**: User configuration (loaded in `core/config.rs`)
 
-### Terminal Integration
-
-The `the-terminal` crate provides an integrated terminal emulator using [Ghostty's VT emulation library](https://github.com/mitchellh/ghostty).
-
-**Architecture**:
-- **Vendored libraries**: Pre-built `libghostty-vt.so` for Linux x86_64 in `the-terminal/vendored/linux-x86_64/`
-- **Zig wrapper**: `the-terminal/wrapper.zig` exposes Ghostty VT functions to Rust via FFI
-- **Rust bindings**: `the-terminal/src/lib.rs` provides safe Rust API over raw FFI
-
-**Build process**:
-1. **Build wrapper**: `cd the-terminal && zig build` creates `libghostty_wrapper.a`
-2. **Link libraries**: `the-terminal/build.rs` links wrapper + vendored Ghostty library
-3. **Cargo build**: Standard `cargo build` handles everything
-
-**Dependencies**:
-- `the-terminal/build.zig.zon`: Uses local ghostty dependency (sibling dir, for Nix)
-- `the-terminal/build.rs`: Searches for `libghostty-vt.so` in:
-  1. Vendored path: `vendored/linux-x86_64/` (default, checked into git)
-  2. `LD_LIBRARY_PATH` (set by Nix dev shell)
-
-**Important notes**:
-- Requires **Zig 0.15.1+** to build wrapper
-- Pre-built Ghostty libraries are vendored - no Ghostty compilation required
-- Currently supports Linux x86_64 only
-- The Nix flake handles all setup automatically in `nix develop`
-- See `README.md` for build instructions
-
 ## Coding Conventions
 
 - **Rust edition**: 2024

@@ -6,7 +6,6 @@
     crane.url       = "github:ipetkov/crane";
     flake-utils.url = "github:numtide/flake-utils";
     fenix.url       = "github:nix-community/fenix";
-    ghostty.url     = "github:mitchellh/ghostty";
   };
 
   outputs =
@@ -15,7 +14,6 @@
       crane,
       flake-utils,
       fenix,
-      ghostty,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -49,9 +47,6 @@
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-        # Get ghostty from the flake input
-        ghosttyPkg = ghostty.packages.${system}.default;
-
         # Custom filter that includes Cargo files, Rust files, and assets.
         src = lib.cleanSourceWith {
           src = ./.;
@@ -77,21 +72,15 @@
           buildInputs = lib.optionals pkgs.stdenv.isLinux systemLibsLinux
             ++ lib.optionals pkgs.stdenv.isDarwin [
               pkgs.libiconv
-            ]
-            ++ [
-              # Add ghostty library dependency for terminal crate linking
-              ghosttyPkg
             ];
 
           nativeBuildInputs = [
-            # No Zig needed - wrapper is pre-built and vendored
+            # No additional native build inputs required
           ];
 
           # Set THE_EDITOR_DEFAULT_RUNTIME at compile time so tests can find runtime/ directory
           THE_EDITOR_DEFAULT_RUNTIME = "${src}/runtime";
 
-          # Set library path for ghostty-vt linking
-          LD_LIBRARY_PATH = "${ghosttyPkg}/lib";
         };
 
         # Build dependencies separately for better caching.
@@ -108,21 +97,6 @@
             # Disable tests in build (they run separately in nextest check)
             doCheck = false;
 
-            # Zig wrapper and ghostty libraries are vendored (pre-built)
-            # No compilation needed during Nix build
-            preBuild = ''
-              # Verify vendored libraries exist
-              if [ ! -f the-terminal/vendored/linux-x86_64/libghostty_wrapper.a ]; then
-                echo "ERROR: Vendored wrapper library not found"
-                echo "Expected: the-terminal/vendored/linux-x86_64/libghostty_wrapper.a"
-                exit 1
-              fi
-              if [ ! -f the-terminal/vendored/linux-x86_64/libghostty-vt.so ]; then
-                echo "ERROR: Vendored ghostty library not found"
-                echo "Expected: the-terminal/vendored/linux-x86_64/libghostty-vt.so"
-                exit 1
-              fi
-            '';
           }
         );
 
@@ -202,24 +176,12 @@
               export LD_LIBRARY_PATH=${lib.makeLibraryPath (systemLibsLinux ++ (with pkgs; [
                 vulkan-loader
                 libGL
-              ]))}:${ghosttyPkg}/lib:$LD_LIBRARY_PATH
-            ''}
-
-            ${lib.optionalString pkgs.stdenv.isDarwin ''
-              export LD_LIBRARY_PATH=${ghosttyPkg}/lib:$LD_LIBRARY_PATH
+              ]))}:$LD_LIBRARY_PATH
             ''}
 
             # Use local target directory for incremental compilation.
             export CARGO_TARGET_DIR="target"
 
-            # Configure Zig cache directory
-            export ZIG_GLOBAL_CACHE_DIR="$PWD/.zig-cache"
-
-            # Auto-build Zig wrapper if it doesn't exist
-            if [ ! -f the-terminal/zig-out/lib/libghostty_wrapper.a ]; then
-              echo "Building Zig wrapper library..."
-              (cd the-terminal && zig build)
-            fi
           '';
         };
       }

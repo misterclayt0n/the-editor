@@ -8,7 +8,7 @@ func main() {
 	fmt.Println(a, err)
 
 	result := hello(1, 2)
-	
+
 	fmt.Println(result)
 }
 

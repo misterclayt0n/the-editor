@@ -7357,11 +7357,3 @@ pub fn update_fade_ranges(cx: &mut Context) {
     cx.editor.fade_mode.relevant_ranges = None;
   }
 }
-
-/// Spawn a new terminal
-pub fn spawn_terminal(cx: &mut Context) {
-  use crate::editor::Action;
-
-  cx.editor.pending_action = Some(Action::SpawnTerminal);
-  cx.editor.set_status("Spawning terminal...");
-}

@@ -12,7 +12,7 @@
 /// Returns `(&mut View, &mut Document)`
 ///
 /// # Panics
-/// Panics if the focused node is a terminal, not a view.
+/// Panics if the focused node is not a view.
 #[macro_export]
 macro_rules! current {
   ($editor:expr) => {{
@@ -47,7 +47,7 @@ macro_rules! doc_mut {
 /// Returns `&mut View`
 ///
 /// # Panics
-/// Panics if the node is a terminal or if the ID doesn't exist.
+/// Panics if the ID doesn't exist.
 #[macro_export]
 macro_rules! view_mut {
   ($editor:expr, $id:expr) => {{ $editor.tree.get_mut($id) }};
@@ -63,7 +63,7 @@ macro_rules! view_mut {
 /// Returns `&View`
 ///
 /// # Panics
-/// Panics if the node is a terminal or if the ID doesn't exist.
+/// Panics if the ID doesn't exist.
 #[macro_export]
 macro_rules! view {
   ($editor:expr, $id:expr) => {{ $editor.tree.get($id) }};
@@ -75,7 +75,7 @@ macro_rules! view {
   }};
 }
 
-/// Check if the focused node is a view (not a terminal)
+/// Check if the focused node is a view
 #[macro_export]
 macro_rules! focus_is_view {
   ($editor:expr) => {{ $editor.tree.try_get($editor.tree.focus).is_some() }};

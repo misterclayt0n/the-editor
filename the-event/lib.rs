@@ -1,4 +1,4 @@
-//! `helix-event` contains systems that allow (often async) communication
+//! `the-editor-event` contains systems that allow (often async) communication
 //! between different editor components without strongly coupling them.
 //! Specifically it allows defining synchronous hooks that run when certain
 //! editor events occur.

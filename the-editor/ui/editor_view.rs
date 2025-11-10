@@ -1,20 +1,11 @@
-use std::{
-  cmp::Ordering,
-  rc::Rc,
-  time::Instant,
-};
+use std::time::Instant;
 
 use the_editor_event::request_redraw;
 use the_editor_renderer::{
   Color,
-  ScrollDelta,
   TextSection,
 };
 use the_editor_stdx::rope::RopeSliceExt;
-use the_terminal::{
-  ffi::GhosttyCellExt,
-  terminal::Cell,
-};
 
 use crate::{
   core::{
@@ -44,10 +35,7 @@ use crate::{
       char_idx_at_visual_offset,
       visual_offset_from_block,
     },
-    tree::{
-      Direction,
-      TerminalSelectionMode,
-    },
+    tree::Direction,
   },
   editor::{
     Action,
@@ -77,7 +65,6 @@ use crate::{
   },
 };
 
-// Constants from the old editor
 const VIEW_PADDING_LEFT: f32 = 0.0; // No visual padding - only scrolloff
 const VIEW_PADDING_TOP: f32 = 0.0;
 const VIEW_PADDING_BOTTOM: f32 = 0.0; // No reservation - statusbar is now an overlay
@@ -246,7 +233,6 @@ pub struct EditorView {
   // Mouse drag state for selection
   mouse_pressed:             bool,
   mouse_drag_anchor:         Option<usize>, // Document char index where drag started
-  terminal_dragging:         Option<crate::core::ViewId>,
   // Multi-click detection (double/triple-click)
   last_click_time:           Option<std::time::Instant>,
   last_click_pos:            Option<(f32, f32)>,
@@ -254,7 +240,6 @@ pub struct EditorView {
   // Split separator interaction
   hovered_separator:         Option<SeparatorInfo>,
   dragging_separator:        Option<SeparatorDrag>,
-  terminal_meta_pending:     bool,
   buffer_hover_index:        Option<usize>,
   buffer_tabs:               Vec<bufferline::BufferTab>,
   bufferline_height:         f32,
@@ -284,14 +269,6 @@ struct SeparatorDrag {
 }
 
 impl EditorView {
-  const TERMINAL_MODES: crate::key_encode::TerminalModes = crate::key_encode::TerminalModes {
-    cursor_key_application: false,
-    keypad_application:     false,
-    modify_other_keys:      0,
-    kitty_flags:            0,
-    alt_esc_prefix:         true,
-  };
-
   fn key_binding_to_key_press(binding: &KeyBinding) -> the_editor_renderer::KeyPress {
     the_editor_renderer::KeyPress {
       code:    binding.code,
@@ -301,47 +278,6 @@ impl EditorView {
       alt:     binding.alt,
       super_:  false,
     }
-  }
-
-  fn terminal_pos_cmp(a: (u32, u32), b: (u32, u32)) -> Ordering {
-    match a.0.cmp(&b.0) {
-      Ordering::Equal => a.1.cmp(&b.1),
-      other => other,
-    }
-  }
-
-  fn terminal_min_cell(a: (u32, u32), b: (u32, u32)) -> (u32, u32) {
-    if Self::terminal_pos_cmp(a, b) == Ordering::Greater {
-      b
-    } else {
-      a
-    }
-  }
-
-  fn terminal_max_cell(a: (u32, u32), b: (u32, u32)) -> (u32, u32) {
-    if Self::terminal_pos_cmp(a, b) == Ordering::Less {
-      b
-    } else {
-      a
-    }
-  }
-
-  fn terminal_selection_bounds(
-    session: &the_terminal::TerminalSession,
-    mode: TerminalSelectionMode,
-    cell: (u32, u32),
-  ) -> ((u32, u32), (u32, u32)) {
-    let bounds = match mode {
-      TerminalSelectionMode::Cell => Some((cell, cell)),
-      TerminalSelectionMode::Word => session.word_boundary_at(cell.0, cell.1),
-      TerminalSelectionMode::Line => session.line_boundary_at(cell.0, cell.1),
-    };
-
-    let mut result = bounds.unwrap_or((cell, cell));
-    if Self::terminal_pos_cmp(result.0, result.1) == Ordering::Greater {
-      std::mem::swap(&mut result.0, &mut result.1);
-    }
-    result
   }
 
   pub fn new(keymaps: Keymaps) -> Self {
@@ -367,13 +303,11 @@ impl EditorView {
       cached_font_size: 18.0,   // Default, will be updated during render
       mouse_pressed: false,
       mouse_drag_anchor: None,
-      terminal_dragging: None,
       last_click_time: None,
       last_click_pos: None,
       click_count: 0,
       hovered_separator: None,
       dragging_separator: None,
-      terminal_meta_pending: false,
       buffer_hover_index: None,
       buffer_tabs: Vec::new(),
       bufferline_height: 24.0,
@@ -583,119 +517,6 @@ impl Component for EditorView {
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
     match event {
       Event::Key(key) => {
-        // Check if focused node is a terminal.
-        let focus_id = cx.editor.tree.focus;
-        if cx.editor.tree.get_terminal(focus_id).is_some() {
-          use the_editor_renderer::Key;
-
-          let mut prepend_escape = false;
-
-          if self.terminal_meta_pending {
-            self.terminal_meta_pending = false;
-            if let Some(cmd_fn) = Self::terminal_toggle_command(key.code, true) {
-              return self.execute_editor_command(cmd_fn, cx);
-            } else {
-              prepend_escape = true;
-            }
-          }
-
-          if key.code == Key::Escape && !key.alt && !key.ctrl && !key.shift {
-            self.terminal_meta_pending = true;
-            return EventResult::Consumed(None);
-          }
-
-          if let Some(cmd_fn) = Self::terminal_toggle_command(key.code, key.alt) {
-            return self.execute_editor_command(cmd_fn, cx);
-          }
-
-          // Note: Ctrl+Shift+C/V clipboard shortcuts for terminals are handled in
-          // application.rs before events reach the compositor, so this code path
-          // is not used for terminal keyboard events.
-
-          if let Some(terminal) = cx.editor.tree.get_terminal_mut(focus_id) {
-            if key.shift && !key.ctrl && !key.alt {
-              let mut viewport_rows = terminal.area.height as i32;
-              if viewport_rows <= 0 {
-                viewport_rows = terminal.session.borrow().size().0 as i32;
-              }
-              viewport_rows = viewport_rows.max(1);
-
-              match key.code {
-                Key::PageUp => {
-                  terminal.scroll_accumulator = 0.0;
-                  let result = {
-                    let session_ref = terminal.session.borrow();
-                    session_ref.scroll_viewport_lines(-viewport_rows)
-                  };
-                  if let Err(e) = result {
-                    log::error!("Failed to scroll terminal {}: {}", terminal.id, e);
-                  }
-                  return EventResult::Consumed(None);
-                },
-                Key::PageDown => {
-                  terminal.scroll_accumulator = 0.0;
-                  let result = {
-                    let session_ref = terminal.session.borrow();
-                    session_ref.scroll_viewport_lines(viewport_rows)
-                  };
-                  if let Err(e) = result {
-                    log::error!("Failed to scroll terminal {}: {}", terminal.id, e);
-                  }
-                  return EventResult::Consumed(None);
-                },
-                Key::Home => {
-                  terminal.scroll_accumulator = 0.0;
-                  let result = {
-                    let session_ref = terminal.session.borrow();
-                    session_ref.scroll_viewport_to_top()
-                  };
-                  if let Err(e) = result {
-                    log::error!("Failed to scroll terminal {} to top: {}", terminal.id, e);
-                  }
-                  return EventResult::Consumed(None);
-                },
-                Key::End => {
-                  terminal.scroll_accumulator = 0.0;
-                  let result = {
-                    let session_ref = terminal.session.borrow();
-                    session_ref.scroll_viewport_to_bottom()
-                  };
-                  if let Err(e) = result {
-                    log::error!("Failed to scroll terminal {} to bottom: {}", terminal.id, e);
-                  }
-                  return EventResult::Consumed(None);
-                },
-                _ => {},
-              }
-            }
-
-            let key_press = Self::key_binding_to_key_press(key);
-            let mut bytes = crate::key_encode::encode(&key_press, &Self::TERMINAL_MODES);
-            if prepend_escape {
-              bytes.insert(0, 0x1B);
-            }
-            if !bytes.is_empty() {
-              let result = {
-                let session_ref = terminal.session.borrow();
-                session_ref.send_input(bytes)
-              };
-              match result {
-                Ok(()) => {
-                  terminal.selection_anchor = None;
-                  terminal.selection_last = None;
-                  terminal.selection_mode = TerminalSelectionMode::Cell;
-                  terminal.session.borrow().mark_needs_redraw();
-                  request_redraw();
-                },
-                Err(e) => {
-                  log::error!("Failed to send input to terminal: {}", e);
-                },
-              }
-            }
-          }
-          return EventResult::Consumed(None);
-        }
-
         // Clear status on any key press
         cx.editor.clear_status();
 
@@ -924,7 +745,6 @@ impl Component for EditorView {
             cx.editor.count = new_count;
 
             // Ensure cursor visibility and commit history for non-insert commands
-            // Skip this block if focus is on a terminal (not a document view)
             if cx.editor.focused_view_id().is_some() {
               let mode_after = cx.editor.mode();
               let scrolloff = cx.editor.config().scrolloff;
@@ -984,47 +804,7 @@ impl Component for EditorView {
         // are handled during the next render() call
         self.handle_mouse_event(mouse, cx)
       },
-      Event::Scroll(delta) => {
-        let focus_id = cx.editor.tree.focus;
-        if let Some(terminal) = cx.editor.tree.get_terminal_mut(focus_id) {
-          let line_delta = match *delta {
-            ScrollDelta::Lines { y, .. } => y,
-            ScrollDelta::Pixels { y, .. } => {
-              let cell_height = self.cached_cell_height.max(1.0);
-              y / cell_height
-            },
-          };
-
-          if line_delta != 0.0 {
-            terminal.scroll_accumulator += line_delta;
-            let lines_to_scroll = terminal.scroll_accumulator as i32;
-
-            if lines_to_scroll != 0 {
-              terminal.scroll_accumulator -= lines_to_scroll as f32;
-
-              let viewport_rows = terminal.area.height.max(1) as i32;
-              let max_jump = viewport_rows.max(1);
-              let mut delta_rows = -lines_to_scroll;
-              delta_rows = delta_rows.clamp(-max_jump, max_jump);
-
-              if delta_rows != 0 {
-                let result = {
-                  let session_ref = terminal.session.borrow();
-                  session_ref.scroll_viewport_lines(delta_rows)
-                };
-
-                if let Err(e) = result {
-                  log::error!("Failed to scroll terminal {}: {}", terminal.id, e);
-                }
-              }
-            }
-          }
-
-          return EventResult::Consumed(None);
-        }
-
-        EventResult::Ignored(None)
-      },
+      Event::Scroll(_) => EventResult::Ignored(None),
       _ => EventResult::Ignored(None),
     }
   }
@@ -1105,11 +885,9 @@ impl Component for EditorView {
     }
 
     // Ensure cursor is kept within the viewport including scrolloff padding
-    // (only for document views, not terminals)
     {
       let focus_view = cx.editor.tree.focus;
 
-      // Only process if focused node is a view, not a terminal
       if cx.editor.tree.try_get(focus_view).is_some() {
         let scrolloff = cx.editor.config().scrolloff;
 
@@ -2029,7 +1807,7 @@ impl Component for EditorView {
               color
             };
 
-            // Use full cell height without centering (like terminal does)
+            // Use full cell height without centering for better legibility
             let cursor_y = anim_y;
 
             // Clip cursor to stay within view bounds (both horizontal and vertical)
@@ -2159,7 +1937,7 @@ impl Component for EditorView {
         if grapheme_count == 0 && is_focused {
           // Render cursor at position 0 for empty document
           let x = base_x;
-          // Use full cell height without centering (like terminal does)
+          // Use full cell height without centering for better legibility
           let y = base_y;
 
           // Use default cursor bg for empty document
@@ -2496,9 +2274,6 @@ impl Component for EditorView {
       },
     }
 
-    // Render terminals
-    self.render_terminals(renderer, cx, font_width, font_size);
-
     // Render split separators
     self.render_split_separators(renderer, cx, font_width, font_size);
 
@@ -2516,15 +2291,6 @@ impl Component for EditorView {
 }
 
 impl EditorView {
-  fn terminal_toggle_command(
-    _code: the_editor_renderer::Key,
-    _alt: bool,
-  ) -> Option<fn(&mut commands::Context)> {
-    // Terminal toggle commands have been removed in favor of :hterminal and
-    // :vterminal
-    None
-  }
-
   fn execute_editor_command(
     &mut self,
     cmd_fn: fn(&mut commands::Context),
@@ -2567,408 +2333,6 @@ impl EditorView {
     }
   }
 
-  /// Render all terminal nodes in the tree
-  fn render_terminals(
-    &mut self,
-    renderer: &mut Surface,
-    cx: &mut Context,
-    font_width: f32,
-    font_size: f32,
-  ) {
-    use the_editor_renderer::{
-      Color,
-      TextSection,
-      TextSegment,
-    };
-
-    // Helper function for Powerline symbol detection
-    let is_powerline_symbol = |ch: char| -> bool { matches!(ch, '\u{E0B0}'..='\u{E0D4}') };
-
-    // Collect terminal IDs to avoid borrowing issues
-    let terminal_ids: Vec<_> = cx.editor.tree.terminals().map(|(id, _)| id).collect();
-
-    for term_id in terminal_ids {
-      // Get terminal area (might be animated)
-      let term_area = cx
-        .editor
-        .tree
-        .get_animated_area(term_id)
-        .or_else(|| cx.editor.tree.get_terminal_mut(term_id).map(|t| t.area));
-
-      let Some(term_area) = term_area else {
-        continue;
-      };
-
-      // Calculate pixel coordinates from cell coordinates
-      // Use renderer's cell_height to match cosmic-text's metrics
-      let term_x = term_area.x as f32 * font_width;
-      let term_y = term_area.y as f32 * renderer.cell_height();
-
-      // Get mutable reference to terminal
-      let terminal = match cx.editor.tree.get_terminal_mut(term_id) {
-        Some(t) => t,
-        None => continue,
-      };
-
-      let theme = &cx.editor.theme;
-      let terminal_theme = theme.terminal();
-      let background_rgb = terminal_theme
-        .background()
-        .and_then(theme_color_to_rgb)
-        .or_else(|| {
-          theme
-            .try_get("ui.background")
-            .and_then(|style| style.bg)
-            .and_then(theme_color_to_rgb)
-        });
-      let foreground_rgb = terminal_theme
-        .foreground()
-        .and_then(theme_color_to_rgb)
-        .or_else(|| {
-          theme
-            .try_get("ui.text")
-            .and_then(|style| style.fg)
-            .and_then(theme_color_to_rgb)
-        });
-      let palette_colors: Vec<(u16, (u8, u8, u8))> = terminal_theme
-        .palette()
-        .iter()
-        .filter_map(|(index, color)| theme_color_to_rgb(*color).map(|rgb| (*index, rgb)))
-        .collect();
-
-      let mut theme_hash = terminal_theme.fingerprint();
-      if let Some(rgb) = background_rgb {
-        theme_hash = mix_hash(theme_hash, rgb_hash(rgb));
-      }
-      if let Some(rgb) = foreground_rgb {
-        theme_hash = mix_hash(theme_hash, rgb_hash(rgb));
-      }
-      for (index, rgb) in &palette_colors {
-        theme_hash = mix_hash(theme_hash, ((*index as u64) << 32) ^ rgb_hash(*rgb));
-      }
-
-      {
-        let mut session = terminal.session.borrow_mut();
-        session.set_cell_pixel_size(font_width, renderer.cell_height());
-        if terminal.last_theme_hash != theme_hash {
-          if let Some((r, g, b)) = background_rgb {
-            session.set_background_color(r, g, b);
-          }
-          if let Some((r, g, b)) = foreground_rgb {
-            session.set_foreground_color(r, g, b);
-          }
-          for (index, (r, g, b)) in &palette_colors {
-            session.set_palette_color(*index, *r, *g, *b);
-          }
-          terminal.last_theme_hash = theme_hash;
-        }
-      }
-
-      let selection_bg_override = terminal_theme
-        .selection_background()
-        .and_then(theme_color_to_rgb)
-        .map(|(r, g, b)| the_terminal::terminal::Rgb { r, g, b });
-      let selection_fg_override = terminal_theme
-        .selection_foreground()
-        .and_then(theme_color_to_rgb)
-        .map(|(r, g, b)| the_terminal::terminal::Rgb { r, g, b });
-      let cursor_rect_override = terminal_theme.cursor_color().and_then(theme_color_to_rgb);
-      let cursor_text_override = terminal_theme.cursor_text().and_then(theme_color_to_rgb);
-
-      // Calculate terminal dimensions in cells
-      let new_cols = term_area.width;
-      let new_rows = term_area.height;
-
-      if new_cols == 0 || new_rows == 0 {
-        // Keep dirty flags intact until the pane has a drawable area.
-        continue;
-      }
-
-      // Resize terminal if dimensions changed
-      let (current_rows, current_cols) = terminal.session.borrow().size();
-      if new_cols != current_cols || new_rows != current_rows {
-        if new_cols > 0 && new_rows > 0 {
-          if let Err(e) = terminal.session.borrow_mut().resize(new_rows, new_cols) {
-            log::error!("Failed to resize terminal {}: {}", terminal.id, e);
-          }
-        }
-      }
-
-      // Always repaint the full terminal area. The renderer clears the backing
-      // surface each frame, so partial (dirty row) repaints would drop lines
-      // and cause flicker after toggling panes.
-      let session_borrow = terminal.session.borrow();
-      session_borrow.clear_dirty_bits();
-
-      // Lock terminal for rendering (separate lock, dirty bits already cleared)
-      let term_guard = session_borrow.lock_terminal();
-      let grid = term_guard.grid();
-      let (grid_rows, grid_cols) = (grid.rows(), grid.cols());
-
-      // Clamp rendering to avoid overflow
-      let render_rows = grid_rows.min(new_rows);
-      let render_cols = grid_cols.min(new_cols);
-
-      // Use renderer's cell_height for consistent metrics with cosmic-text
-      let line_height = renderer.cell_height();
-
-      // Repaint every row to keep the surface populated.
-      let is_full_render = true;
-
-      let mut raw_row = vec![GhosttyCellExt::default(); render_cols as usize];
-
-      // PASS 0: Render default background (ghostty's approach)
-      // This provides a base layer so cells without explicit backgrounds (bg=None)
-      // naturally show the default color underneath. Matches ghostty's rendering
-      // pipeline.
-      let default_bg = term_guard
-        .get_default_background()
-        .or_else(|| background_rgb.map(|(r, g, b)| the_terminal::terminal::Rgb { r, g, b }));
-
-      if let Some(bg) = default_bg {
-        let bg_color = Color::rgba(
-          bg.r as f32 / 255.0,
-          bg.g as f32 / 255.0,
-          bg.b as f32 / 255.0,
-          1.0,
-        );
-
-        // Render full terminal area with default background
-        let term_width = render_cols as f32 * font_width;
-        let term_height = render_rows as f32 * line_height;
-        renderer.draw_rect(term_x, term_y, term_width, term_height, bg_color);
-      }
-
-      // PASS 1: Render cell backgrounds (selection + explicit backgrounds)
-      // Only cells with explicit backgrounds (or selected/inverse) will render on top
-      for row in 0..render_rows {
-        let row_y = term_y + (row as f32 * line_height);
-        let _ = term_guard.copy_row_ext(row, raw_row.as_mut_slice());
-
-        for (col_idx, cell_ext) in raw_row.iter().enumerate() {
-          let col = col_idx as u16;
-          if col >= render_cols {
-            break;
-          }
-
-          let cell: Cell = (*cell_ext).into();
-
-          // Skip wide character continuation cells (width = 0)
-          if cell.width == 0 {
-            continue;
-          }
-
-          // Determine background color
-          // Note: Colors are already swapped in wrapper.zig for inverse cells,
-          // so we just use cell.bg directly (don't swap again!)
-          let bg_to_render = if cell.selected {
-            // Cell is selected - prefer theme override, fall back to ghostty default
-            selection_bg_override.or(Some(cell.fg))
-          } else {
-            // Normal: use explicit background if set (already swapped for inverse in Zig)
-            cell.bg
-          };
-
-          // Render background if we have a color
-          if let Some(bg) = bg_to_render {
-            let cell_x = term_x + (col_idx as f32 * font_width);
-            let bg_color = Color::rgba(
-              bg.r as f32 / 255.0,
-              bg.g as f32 / 255.0,
-              bg.b as f32 / 255.0,
-              1.0,
-            );
-
-            // Wide characters get proportionally wider backgrounds
-            let bg_width = font_width * (cell.width.max(1) as f32);
-            renderer.draw_rect(cell_x, row_y, bg_width, line_height, bg_color);
-          }
-        }
-      }
-
-      // SECOND PASS: Render text on top of backgrounds
-      // Render rows as contiguous color runs to reduce draw calls
-      for row in 0..render_rows {
-        let row_y = term_y + (row as f32 * line_height);
-        let mut run_text = String::with_capacity(render_cols as usize);
-        let mut run_color: Option<(u8, u8, u8)> = None;
-        let mut run_start_col = 0u16;
-
-        let flush_run = |renderer: &mut Surface,
-                         start_col: u16,
-                         color: Option<(u8, u8, u8)>,
-                         buffer: &mut String| {
-          if buffer.is_empty() {
-            return;
-          }
-          while buffer.ends_with(' ') {
-            buffer.pop();
-          }
-          if buffer.is_empty() {
-            return;
-          }
-          let Some((r, g, b)) = color else {
-            buffer.clear();
-            return;
-          };
-
-          let fg_color = Color::rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0);
-          let text = std::mem::take(buffer);
-          let x = term_x + (start_col as f32 * font_width);
-          // TextArea.top expects the top of the line - cosmic-text handles baseline
-          // internally
-          let mut section = TextSection::new(x, row_y);
-          section = section.add_text(
-            TextSegment::new(text)
-              .with_color(fg_color)
-              .with_size(font_size),
-          );
-          renderer.draw_text(section);
-          buffer.reserve(render_cols as usize);
-        };
-
-        let _ = term_guard.copy_row_ext(row, raw_row.as_mut_slice());
-
-        for (col_idx, cell_ext) in raw_row.iter().enumerate() {
-          let col = col_idx as u16;
-          if col >= render_cols {
-            break;
-          }
-
-          let cell: Cell = (*cell_ext).into();
-          let mut ch = cell.character().unwrap_or(' ');
-          if ch == '\0' {
-            ch = ' ';
-          }
-
-          // Determine text color
-          // Note: For inverse cells, wrapper.zig already swapped fg/bg,
-          // so cell.fg now contains the correct text color. Don't swap again!
-          let text_color = if cell.selected {
-            // Selected: use override when provided, otherwise fallback to ghostty default
-            selection_fg_override.or_else(|| cell.bg).unwrap_or(cell.fg)
-          } else {
-            // Normal and inverse: use fg (already swapped for inverse in wrapper.zig)
-            cell.fg
-          };
-
-          let rgb = (text_color.r, text_color.g, text_color.b);
-          let cell_width = cell.width;
-          let is_wide_continuation = cell_width == 0;
-          if is_wide_continuation {
-            continue;
-          }
-
-          // Check if this is a Powerline symbol that needs custom rendering
-          if is_powerline_symbol(ch) {
-            // Flush any pending text run before drawing the Powerline symbol
-            flush_run(renderer, run_start_col, run_color, &mut run_text);
-
-            // Draw the Powerline symbol using the renderer's built-in method
-            let x = term_x + (col as f32 * font_width);
-            let fg_color = Color::rgba(
-              rgb.0 as f32 / 255.0,
-              rgb.1 as f32 / 255.0,
-              rgb.2 as f32 / 255.0,
-              1.0,
-            );
-            renderer.draw_powerline_glyph(ch, x, row_y, font_width, line_height, fg_color);
-
-            // Reset run for next text segment
-            run_color = None;
-            run_start_col = col + 1;
-            continue;
-          }
-
-          if run_color.map(|current| current != rgb).unwrap_or(true) {
-            flush_run(renderer, run_start_col, run_color, &mut run_text);
-            run_color = Some(rgb);
-            run_start_col = col;
-          }
-
-          run_text.push(ch);
-
-          let glyph_width = usize::from(cell_width.max(1));
-          if glyph_width > 1 {
-            for _ in 1..glyph_width {
-              run_text.push(' ');
-            }
-          }
-        }
-
-        flush_run(renderer, run_start_col, run_color, &mut run_text);
-      }
-
-      // Render cursor ONLY if visible AND viewport is at bottom (ghostty's approach)
-      // - DECTCEM mode (CSI ?25h/l) controls cursor visibility
-      // - Viewport position check prevents cursor rendering when scrolled back in
-      //   history
-      let cursor_visible = term_guard.is_cursor_visible();
-      let viewport_at_bottom = term_guard.is_viewport_at_bottom();
-      let (cursor_row, cursor_col) = term_guard.cursor_pos();
-
-      if cursor_visible && viewport_at_bottom && cursor_row < grid_rows && cursor_col < grid_cols {
-        let cursor_x = term_x + (cursor_col as f32 * font_width);
-
-        // Add centering offset to match cosmic-text's vertical text positioning
-        let glyph_height = font_size;
-        let centering_offset = (line_height - glyph_height) / 2.0;
-        let cursor_y = term_y + (cursor_row as f32 * line_height) + centering_offset;
-
-        let cursor_color = cursor_rect_override
-          .map(|(r, g, b)| Color::rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0));
-
-        renderer.draw_rect(
-          cursor_x,
-          cursor_y,
-          font_width,
-          glyph_height,
-          cursor_color.unwrap_or_else(|| Color::new(0.8, 0.8, 0.8, 0.5)),
-        );
-
-        if let Some((r, g, b)) = cursor_text_override {
-          let _ = term_guard.copy_row_ext(cursor_row, raw_row.as_mut_slice());
-          if let Some(cell_ext) = raw_row.get(cursor_col as usize) {
-            let cell: Cell = (*cell_ext).into();
-            let mut ch = cell.character().unwrap_or(' ');
-            if ch == '\0' {
-              ch = ' ';
-            }
-
-            let fg_color = Color::rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0);
-            let mut text = String::new();
-            text.push(ch);
-            let glyph_width = usize::from(cell.width.max(1));
-            if glyph_width > 1 {
-              for _ in 1..glyph_width {
-                text.push(' ');
-              }
-            }
-            let text_x = term_x + (cursor_col as f32 * font_width);
-            let text_y = term_y + (cursor_row as f32 * line_height);
-            let mut section = TextSection::new(text_x, text_y);
-            section = section.add_text(
-              TextSegment::new(text)
-                .with_color(fg_color)
-                .with_size(font_size),
-            );
-            renderer.draw_text(section);
-          }
-        }
-      }
-
-      // Drop the terminal guard to release the lock
-      drop(term_guard);
-
-      // Clear flags (dirty bits already cleared atomically above)
-      if is_full_render {
-        session_borrow.clear_full_render_flag();
-      }
-      session_borrow.clear_redraw_flag();
-    }
-  }
-
-  /// Render split separator bars between views
   fn render_split_separators(
     &mut self,
     renderer: &mut Surface,
@@ -3087,14 +2451,6 @@ impl EditorView {
                       .set_error("No document view available to show this buffer");
                   }
                 },
-                bufferline::BufferKind::Terminal(view_id) => {
-                  if cx.editor.tree.get_terminal(view_id).is_some() {
-                    cx.editor.focus(view_id);
-                  } else if cx.editor.restore_suspended_terminal(view_id) {
-                    request_redraw();
-                    self.dirty_region.mark_all_dirty();
-                  }
-                },
               }
             }
             self.buffer_hover_index = hit_index;
@@ -3182,61 +2538,11 @@ impl EditorView {
           self.last_click_time = Some(now);
           self.last_click_pos = Some(mouse.position);
 
-          // First check which node (view or terminal) was clicked
+          // First check which view was clicked
           if let Some(node_id) = self.screen_coords_to_node(mouse.position, cx) {
             // Switch focus to the clicked node if different
             if cx.editor.tree.focus != node_id {
               cx.editor.focus(node_id);
-            }
-
-            if let Some((term_id, mut row, mut col)) =
-              self.screen_coords_to_terminal_cell(mouse.position, cx)
-            {
-              if term_id == node_id {
-                if let Some(terminal) = cx.editor.tree.get_terminal_mut(node_id) {
-                  let mode = match self.click_count {
-                    2 => TerminalSelectionMode::Word,
-                    3 => TerminalSelectionMode::Line,
-                    _ => TerminalSelectionMode::Cell,
-                  };
-
-                  let session_rc = Rc::clone(&terminal.session);
-                  let bounds = {
-                    let session = session_rc.borrow();
-                    let (rows, cols) = session.size();
-                    if rows == 0 || cols == 0 {
-                      return EventResult::Consumed(None);
-                    }
-
-                    let max_row = rows.saturating_sub(1) as u32;
-                    let max_col = cols.saturating_sub(1) as u32;
-                    row = row.min(max_row);
-                    col = col.min(max_col);
-
-                    Self::terminal_selection_bounds(&session, mode, (row, col))
-                  };
-
-                  terminal.selection_anchor = Some((row, col));
-                  terminal.selection_last = Some((row, col));
-                  terminal.selection_mode = mode;
-                  self.terminal_dragging = Some(term_id);
-
-                  let (mut start, mut end) = bounds;
-                  if Self::terminal_pos_cmp(start, end) == Ordering::Greater {
-                    std::mem::swap(&mut start, &mut end);
-                  }
-
-                  if let Err(e) = session_rc.borrow().set_selection(start, end, false) {
-                    log::error!(
-                      "Failed to initialize terminal selection {}: {}",
-                      terminal.id,
-                      e
-                    );
-                  }
-                }
-
-                return EventResult::Consumed(None);
-              }
             }
 
             if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
@@ -3286,8 +2592,6 @@ impl EditorView {
           }
         } else {
           // Mouse button released - end drag
-          self.terminal_dragging = None;
-
           self.mouse_pressed = false;
           self.mouse_drag_anchor = None;
           self.dragging_separator = None; // End separator drag
@@ -3295,7 +2599,7 @@ impl EditorView {
         }
       },
       Some(the_editor_renderer::MouseButton::Middle) => {
-        // Middle-click - paste from clipboard (only works on views, not terminals)
+        // Middle-click - paste from clipboard
         if mouse.pressed {
           // First check which node was clicked
           if let Some(node_id) = self.screen_coords_to_node(mouse.position, cx) {
@@ -3304,7 +2608,7 @@ impl EditorView {
               cx.editor.focus(node_id);
             }
 
-            // Only paste if it's a view (not a terminal)
+            // Only paste if it's a view
             if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
               // Move cursor to click position
               let scrolloff = cx.editor.config().scrolloff;
@@ -3330,62 +2634,12 @@ impl EditorView {
 
               commands::paste_after(&mut cmd_cx);
             }
-            // If terminal was clicked, we've already switched focus
-
             return EventResult::Consumed(None);
           }
         }
       },
       None => {
         // Mouse motion without button
-
-        if let Some(term_id) = self.terminal_dragging {
-          if let Some((hit_id, mut row, mut col)) =
-            self.screen_coords_to_terminal_cell(mouse.position, cx)
-          {
-            if hit_id == term_id {
-              if let Some(terminal) = cx.editor.tree.get_terminal_mut(term_id) {
-                if let Some(anchor_cell) = terminal.selection_anchor {
-                  let mode = terminal.selection_mode;
-                  let session_rc = Rc::clone(&terminal.session);
-
-                  let (anchor_bounds, target_bounds, target_cell) = {
-                    let session = session_rc.borrow();
-                    let (rows, cols) = session.size();
-                    if rows == 0 || cols == 0 {
-                      return EventResult::Consumed(None);
-                    }
-
-                    let max_row = rows.saturating_sub(1) as u32;
-                    let max_col = cols.saturating_sub(1) as u32;
-                    row = row.min(max_row);
-                    col = col.min(max_col);
-
-                    let anchor_bounds =
-                      Self::terminal_selection_bounds(&session, mode, anchor_cell);
-                    let target_bounds = Self::terminal_selection_bounds(&session, mode, (row, col));
-                    (anchor_bounds, target_bounds, (row, col))
-                  };
-
-                  terminal.selection_last = Some(target_cell);
-
-                  let mut start = Self::terminal_min_cell(anchor_bounds.0, target_bounds.0);
-                  let mut end = Self::terminal_max_cell(anchor_bounds.1, target_bounds.1);
-                  if Self::terminal_pos_cmp(start, end) == Ordering::Greater {
-                    std::mem::swap(&mut start, &mut end);
-                  }
-
-                  if let Err(e) = session_rc.borrow().set_selection(start, end, false) {
-                    log::error!("Failed to update terminal {} selection: {}", terminal.id, e);
-                  }
-                }
-              }
-            }
-          }
-
-          return EventResult::Consumed(None);
-        }
-
         // Check if we're dragging a separator
         if let Some(mut drag) = self.dragging_separator {
           // Apply separator drag
@@ -3457,8 +2711,8 @@ impl EditorView {
     EventResult::Ignored(None)
   }
 
-  /// Detect which node (view or terminal) was clicked
-  /// Returns ViewId if click was within any node
+  /// Detect which view was clicked
+  /// Returns ViewId if click was within a view
   fn screen_coords_to_node(
     &self,
     mouse_pos: (f32, f32),
@@ -3471,7 +2725,7 @@ impl EditorView {
     let mouse_col = (mouse_x / cell_width) as u16;
     let mouse_row = (mouse_y / cell_height) as u16;
 
-    // Check views first
+    // Check views
     for (view, _) in cx.editor.tree.views() {
       if mouse_col >= view.area.x
         && mouse_col < view.area.x + view.area.width
@@ -3479,17 +2733,6 @@ impl EditorView {
         && mouse_row < view.area.y + view.area.height
       {
         return Some(view.id);
-      }
-    }
-
-    // Check terminals
-    for (term_id, term_node) in cx.editor.tree.terminals() {
-      if mouse_col >= term_node.area.x
-        && mouse_col < term_node.area.x + term_node.area.width
-        && mouse_row >= term_node.area.y
-        && mouse_row < term_node.area.y + term_node.area.height
-      {
-        return Some(term_id);
       }
     }
 
@@ -3585,42 +2828,6 @@ impl EditorView {
       let doc_pos = doc_pos.min(text.len_chars());
 
       return Some((view.id, doc_pos));
-    }
-
-    None
-  }
-
-  /// Convert screen pixel coordinates to terminal cell position (viewport
-  /// coords).
-  fn screen_coords_to_terminal_cell(
-    &self,
-    mouse_pos: (f32, f32),
-    cx: &Context,
-  ) -> Option<(crate::core::ViewId, u32, u32)> {
-    let (mouse_x, mouse_y) = mouse_pos;
-    let (cell_width, cell_height) = self.get_current_cell_metrics(cx);
-
-    if cell_width <= 0.0 || cell_height <= 0.0 {
-      return None;
-    }
-
-    let mouse_col = (mouse_x / cell_width).floor() as i32;
-    let mouse_row = (mouse_y / cell_height).floor() as i32;
-
-    for (term_id, term_node) in cx.editor.tree.terminals() {
-      let x0 = term_node.area.x as i32;
-      let y0 = term_node.area.y as i32;
-      let x1 = x0 + term_node.area.width as i32;
-      let y1 = y0 + term_node.area.height as i32;
-
-      if mouse_col < x0 || mouse_col >= x1 || mouse_row < y0 || mouse_row >= y1 {
-        continue;
-      }
-
-      let rel_col = (mouse_col - x0) as u32;
-      let rel_row = (mouse_row - y0) as u32;
-
-      return Some((term_id, rel_row, rel_col));
     }
 
     None

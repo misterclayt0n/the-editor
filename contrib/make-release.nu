@@ -16,14 +16,6 @@ def main [version?: string] {
 
   print $"Building the-editor v($version) for ($platform)..."
 
-  # Ensure Zig wrapper is built
-  if not ("the-terminal/zig-out/lib/libghostty_wrapper.a" | path exists) {
-    print "Building Zig wrapper..."
-    cd the-terminal
-    zig build
-    cd ..
-  }
-
   # Build with cargo
   print "Building with cargo..."
   cargo build --release --features unicode-lines

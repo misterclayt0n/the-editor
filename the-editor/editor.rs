@@ -1,9 +1,6 @@
 use std::{
   borrow::Cow,
-  cell::{
-    Cell,
-    RefCell,
-  },
+  cell::Cell,
   collections::{
     BTreeMap,
     HashMap,
@@ -23,7 +20,6 @@ use std::{
     PathBuf,
   },
   pin::Pin,
-  rc::Rc,
   sync::Arc,
   time::Duration,
 };
@@ -62,7 +58,6 @@ use serde::{
 use the_editor_event::dispatch;
 use the_editor_stdx::path::canonicalize;
 use the_editor_vcs::DiffProviderRegistry;
-use the_terminal::TerminalSession;
 use tokio::{
   sync::mpsc::{
     UnboundedReceiver,
@@ -142,7 +137,6 @@ use crate::{
     },
     tree::{
       self,
-      TerminalNode,
       Tree,
     },
     uri::Uri,
@@ -295,12 +289,6 @@ fn create_interpolated_theme(from: &Theme, to: &Theme, t: f32) -> Theme {
     interpolated_highlights.push(interpolate_style(from_style, to_style, t));
   }
 
-  let terminal_theme = if t < 0.5 {
-    from.terminal().clone()
-  } else {
-    to.terminal().clone()
-  };
-
   // Create the interpolated theme
   Theme::with_styles(
     format!("{}→{}@{:.0}%", from.name(), to.name(), t * 100.0),
@@ -308,28 +296,20 @@ fn create_interpolated_theme(from: &Theme, to: &Theme, t: f32) -> Theme {
     to.scopes().to_vec(), // Use target theme's scopes
     interpolated_highlights,
     to.rainbow_length(),
-    terminal_theme,
   )
 }
 
 pub struct Editor {
   /// Current editing mode.
-  pub mode:                 Mode,
+  pub mode:             Mode,
   /// Custom mode string override (e.g., "RENAME" for rename symbol)
   /// If set, this is displayed in the statusline instead of the mode name
-  pub custom_mode_str:      Option<String>,
-  pub tree:                 Tree,
-  /// Most recently focused document view. Used when a terminal currently
-  /// holds focus so view-oriented operations still have a fallback.
-  last_view_focus:          Option<ViewId>,
-  /// Tracked terminal panes for quick toggling.
-  terminal_bottom:          Option<ViewId>,
-  terminal_right:           Option<ViewId>,
-  detached_terminal_bottom: Option<DetachedTerminal>,
-  detached_terminal_right:  Option<DetachedTerminal>,
-  suspended_terminals:      HashMap<ViewId, Box<TerminalNode>>,
-  pub next_document_id:     DocumentId,
-  pub documents:            BTreeMap<DocumentId, Document>,
+  pub custom_mode_str:  Option<String>,
+  pub tree:             Tree,
+  /// Most recently focused document view.
+  last_view_focus:      Option<ViewId>,
+  pub next_document_id: DocumentId,
+  pub documents:        BTreeMap<DocumentId, Document>,
 
   // We Flatten<> to resolve the inner DocumentSavedEventFuture. For that we need a stream of
   // streams, hence the Once<>. https://stackoverflow.com/a/66875668
@@ -414,12 +394,6 @@ pub struct Editor {
 
   /// Fade mode state for highlighting code context
   pub fade_mode: FadeMode,
-
-  /// Pending action to be executed by the App
-  pub pending_action: Option<Action>,
-
-  /// Counter for generating unique terminal IDs
-  pub next_terminal_id: u32,
 }
 
 /// State for the context-aware code fading feature
@@ -443,26 +417,12 @@ impl Default for FadeMode {
   }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum TerminalPane {
-  Bottom,
-  Right,
-}
-
 #[derive(Clone, Copy)]
 pub enum Action {
   Load,
   Replace,
   HorizontalSplit,
   VerticalSplit,
-  SpawnTerminal,
-  SpawnTerminalInPane {
-    anchor: ViewId,
-    pane:   TerminalPane,
-  },
-  ReplaceViewWithTerminal {
-    view_id: ViewId,
-  },
 }
 
 impl Action {
@@ -470,33 +430,6 @@ impl Action {
   pub fn align_view(&self, view: &View, new_doc: DocumentId) -> bool {
     !matches!((self, view.doc == new_doc), (Action::Load, false))
   }
-}
-
-impl TerminalPane {
-  pub fn layout(self) -> crate::core::tree::Layout {
-    match self {
-      TerminalPane::Bottom => crate::core::tree::Layout::Horizontal,
-      TerminalPane::Right => crate::core::tree::Layout::Vertical,
-    }
-  }
-
-  pub fn display_name(self) -> &'static str {
-    match self {
-      TerminalPane::Bottom => "bottom terminal",
-      TerminalPane::Right => "side terminal",
-    }
-  }
-}
-
-struct DetachedTerminal {
-  session: Rc<RefCell<TerminalSession>>,
-  id:      u32,
-}
-
-pub struct TerminalTabEntry<'a> {
-  pub view_id:   ViewId,
-  pub terminal:  &'a TerminalNode,
-  pub suspended: bool,
 }
 
 pub type Motion = Box<dyn Fn(&mut Editor)>;
@@ -791,17 +724,14 @@ pub struct EditorConfig {
   pub statusline:                StatusLineConfig,
   /// Shape for cursor in each mode
   pub cursor_shape:              CursorShapeConfig,
-  /// Set to `true` to override automatic detection of terminal truecolor
-  /// support in the event of a false negative. Defaults to `false`.
+  /// Set to `true` to override automatic detection of truecolor support.
   pub true_color:                bool,
-  /// Set to `true` to override automatic detection of terminal undercurl
-  /// support in the event of a false negative. Defaults to `false`.
+  /// Set to `true` to override automatic detection of undercurl support.
   pub undercurl:                 bool,
   /// Search configuration.
   #[serde(default)]
   pub search:                    SearchConfig,
   pub lsp:                       LspConfig,
-  pub terminal:                  Option<TerminalConfig>,
   /// Column numbers at which to draw the rulers. Defaults to `[]`, meaning no
   /// rulers.
   pub rulers:                    Vec<u16>,
@@ -892,75 +822,6 @@ impl Default for SmartTabConfig {
       supersede_menu: false,
     }
   }
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
-pub struct TerminalConfig {
-  pub command: String,
-  #[serde(default)]
-  #[serde(skip_serializing_if = "Vec::is_empty")]
-  pub args:    Vec<String>,
-  /// Maximum FPS for terminal rendering. Defaults to 120.
-  /// Prevents excessive CPU usage when PTY outputs fast data.
-  /// Valid range: 1-1000 FPS.
-  #[serde(default = "default_max_terminal_fps")]
-  pub max_fps: u32,
-}
-
-fn default_max_terminal_fps() -> u32 {
-  120
-}
-
-#[cfg(windows)]
-pub fn get_terminal_provider() -> Option<TerminalConfig> {
-  use helix_stdx::env::binary_exists;
-
-  if binary_exists("wt") {
-    return Some(TerminalConfig {
-      command: "wt".to_string(),
-      args:    vec![
-        "new-tab".to_string(),
-        "--title".to_string(),
-        "DEBUG".to_string(),
-        "cmd".to_string(),
-        "/C".to_string(),
-      ],
-      max_fps: default_max_terminal_fps(),
-    });
-  }
-
-  Some(TerminalConfig {
-    command: "conhost".to_string(),
-    args:    vec!["cmd".to_string(), "/C".to_string()],
-    max_fps: default_max_terminal_fps(),
-  })
-}
-
-#[cfg(not(any(windows, target_arch = "wasm32")))]
-pub fn get_terminal_provider() -> Option<TerminalConfig> {
-  use the_editor_stdx::env::{
-    binary_exists,
-    env_var_is_set,
-  };
-
-  if env_var_is_set("TMUX") && binary_exists("tmux") {
-    return Some(TerminalConfig {
-      command: "tmux".to_string(),
-      args:    vec!["split-window".to_string()],
-      max_fps: default_max_terminal_fps(),
-    });
-  }
-
-  if env_var_is_set("WEZTERM_UNIX_SOCKET") && binary_exists("wezterm") {
-    return Some(TerminalConfig {
-      command: "wezterm".to_string(),
-      args:    vec!["cli".to_string(), "split-pane".to_string()],
-      max_fps: default_max_terminal_fps(),
-    });
-  }
-
-  None
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1842,7 +1703,6 @@ impl Default for EditorConfig {
       undercurl:                 false,
       search:                    SearchConfig::default(),
       lsp:                       LspConfig::default(),
-      terminal:                  get_terminal_provider(),
       rulers:                    Vec::new(),
       whitespace:                WhitespaceConfig::default(),
       bufferline:                BufferLine::default(),
@@ -1918,11 +1778,6 @@ impl Editor {
       custom_mode_str: None,
       tree: Tree::new(area),
       last_view_focus: None,
-      terminal_bottom: None,
-      terminal_right: None,
-      detached_terminal_bottom: None,
-      detached_terminal_right: None,
-      suspended_terminals: HashMap::new(),
       next_document_id: DocumentId::default(),
       documents: BTreeMap::new(),
       saves: HashMap::new(),
@@ -1972,8 +1827,6 @@ impl Editor {
       font_size_override: None,
       noop_effect_pending: false,
       fade_mode: FadeMode::default(),
-      pending_action: None,
-      next_terminal_id: 0,
     };
 
     let scopes = editor.theme.scopes().to_vec();
@@ -2541,34 +2394,18 @@ impl Editor {
   /// Create (or reattach) a view for the given document and focus it.
   ///
   /// Returns the view id when successful, or `None` if the document does not
-  /// exist. This is primarily used when all document views have been replaced
-  /// by terminals and the user needs to bring a buffer back into view.
+  /// exist.
   pub fn open_view_for_document(&mut self, doc_id: DocumentId) -> Option<ViewId> {
     if !self.documents.contains_key(&doc_id) {
       return None;
     }
 
-    let focus_id = self.tree.focus;
     let no_document_views = self.tree.views().next().is_none();
     let gutters = self.config().gutters.clone();
 
     let view_id = if no_document_views {
-      if self.tree.get_terminal(focus_id).is_some()
-        && self.terminal_pane_for_view(focus_id).is_none()
-      {
-        let view = View::new(doc_id, gutters.clone());
-        match self.tree.swap_terminal_with_view(focus_id, view) {
-          Some(mut terminal) => {
-            terminal.session.borrow().mark_needs_full_render();
-            self.suspended_terminals.insert(focus_id, terminal);
-            focus_id
-          },
-          None => return None,
-        }
-      } else {
-        let view = View::new(doc_id, gutters.clone());
-        self.tree.insert(view)
-      }
+      let view = View::new(doc_id, gutters.clone());
+      self.tree.insert(view)
     } else {
       let prev_focus = self.tree.focus;
       let view = View::new(doc_id, gutters.clone());
@@ -2603,12 +2440,6 @@ impl Editor {
     }
 
     let focust_lost = match action {
-      Action::SpawnTerminal
-      | Action::SpawnTerminalInPane { .. }
-      | Action::ReplaceViewWithTerminal { .. } => {
-        // These actions don't switch documents, just return without focus lost
-        return;
-      },
       Action::Replace => {
         let Some(view_id) = self.focused_view_id() else {
           self.set_error("No active document view available");
@@ -2832,13 +2663,6 @@ impl Editor {
       doc.remove_view(id);
     }
     self.tree.remove(id);
-    if self.terminal_bottom.is_some_and(|pane| pane == id) {
-      self.terminal_bottom = None;
-    }
-    if self.terminal_right.is_some_and(|pane| pane == id) {
-      self.terminal_right = None;
-    }
-    self.suspended_terminals.remove(&id);
     self._refresh();
   }
 
@@ -2976,7 +2800,7 @@ impl Editor {
     if prev_id != view_id {
       self.enter_normal_mode();
 
-      // Only process view-specific logic if focusing on a view (not a terminal)
+      // Only process view-specific logic when focusing on a document view
       if let Some(view) = self.tree.try_get(view_id) {
         self.last_view_focus = Some(view_id);
         let doc_id = view.doc;
@@ -3002,13 +2826,14 @@ impl Editor {
           });
         }
       }
-      // If focusing on a terminal, we just change focus without view-specific
+      // If no document view is focused, just change focus without view-specific
       // logic
     }
   }
 
   /// Returns the currently focused document view if one exists.
-  /// Falls back to the last focused view when a terminal holds focus.
+  /// Falls back to the last focused view when the current focus is not a
+  /// document.
   pub fn focused_view_id(&self) -> Option<ViewId> {
     if self.tree.try_get(self.tree.focus).is_some() {
       Some(self.tree.focus)
@@ -3032,193 +2857,6 @@ impl Editor {
       }
     }
     id
-  }
-
-  fn terminal_pane_slot(&mut self, pane: TerminalPane) -> &mut Option<ViewId> {
-    match pane {
-      TerminalPane::Bottom => &mut self.terminal_bottom,
-      TerminalPane::Right => &mut self.terminal_right,
-    }
-  }
-
-  fn terminal_pane_slot_ref(&self, pane: TerminalPane) -> Option<ViewId> {
-    match pane {
-      TerminalPane::Bottom => self.terminal_bottom,
-      TerminalPane::Right => self.terminal_right,
-    }
-  }
-
-  fn store_detached_terminal(&mut self, pane: TerminalPane, terminal: DetachedTerminal) {
-    match pane {
-      TerminalPane::Bottom => self.detached_terminal_bottom = Some(terminal),
-      TerminalPane::Right => self.detached_terminal_right = Some(terminal),
-    }
-  }
-
-  fn take_detached_terminal(&mut self, pane: TerminalPane) -> Option<DetachedTerminal> {
-    match pane {
-      TerminalPane::Bottom => self.detached_terminal_bottom.take(),
-      TerminalPane::Right => self.detached_terminal_right.take(),
-    }
-  }
-
-  fn clear_detached_terminal(&mut self, pane: TerminalPane) {
-    match pane {
-      TerminalPane::Bottom => self.detached_terminal_bottom = None,
-      TerminalPane::Right => self.detached_terminal_right = None,
-    }
-  }
-
-  pub fn register_terminal_pane(&mut self, pane: TerminalPane, view_id: ViewId) {
-    *self.terminal_pane_slot(pane) = Some(view_id);
-  }
-
-  pub fn clear_terminal_pane(&mut self, pane: TerminalPane) {
-    *self.terminal_pane_slot(pane) = None;
-  }
-
-  /// Check if a terminal view is a tracked pane (bottom or right)
-  /// Returns Some(pane) if it's a tracked pane, None otherwise
-  pub fn terminal_pane_for_view(&self, view_id: ViewId) -> Option<TerminalPane> {
-    if self.terminal_bottom == Some(view_id) {
-      Some(TerminalPane::Bottom)
-    } else if self.terminal_right == Some(view_id) {
-      Some(TerminalPane::Right)
-    } else {
-      None
-    }
-  }
-
-  pub fn toggle_terminal_pane(&mut self, pane: TerminalPane) {
-    // If the pane already exists, close it.
-    if let Some(existing) = self.terminal_pane_slot_ref(pane) {
-      if self.tree.contains(existing) {
-        let fallback = self.focused_view_id();
-        if let Some(terminal) = self.tree.detach_terminal(existing) {
-          let terminal = *terminal;
-          self.store_detached_terminal(pane, DetachedTerminal {
-            session: terminal.session,
-            id:      terminal.id,
-          });
-        } else {
-          self.clear_detached_terminal(pane);
-          self.tree.remove(existing);
-          self.suspended_terminals.remove(&existing);
-        }
-        self.clear_terminal_pane(pane);
-        if let Some(view_id) = fallback {
-          self.focus(view_id);
-        }
-        self.set_status(match pane {
-          TerminalPane::Bottom => "Closed bottom terminal",
-          TerminalPane::Right => "Closed side terminal",
-        });
-        return;
-      }
-      // Terminal disappeared externally, clear the slot and fall through to spawn.
-      self.clear_terminal_pane(pane);
-    }
-
-    let Some(anchor) = self.focused_view_id() else {
-      self.set_error("No active view available to host a terminal split");
-      return;
-    };
-
-    if let Some(detached) = self.take_detached_terminal(pane) {
-      let session = Rc::clone(&detached.session);
-
-      // Mark terminal for full render on reattachment to clear stale dirty state
-      session.borrow().mark_needs_full_render();
-
-      match self
-        .tree
-        .insert_terminal_pane(anchor, session, detached.id, pane.layout())
-      {
-        Some(view_id) => {
-          self.register_terminal_pane(pane, view_id);
-          self.set_status(match pane {
-            TerminalPane::Bottom => "Reopened bottom terminal",
-            TerminalPane::Right => "Reopened side terminal",
-          });
-        },
-        None => {
-          // Re-insertion failed; preserve the detached terminal for later attempts.
-          self.store_detached_terminal(pane, detached);
-          self.set_error("Failed to restore terminal split");
-        },
-      }
-      return;
-    }
-
-    self.pending_action = Some(Action::SpawnTerminalInPane { anchor, pane });
-
-    self.set_status(match pane {
-      TerminalPane::Bottom => "Opening bottom terminal…",
-      TerminalPane::Right => "Opening side terminal…",
-    });
-  }
-
-  pub fn suspended_terminals_iter(&self) -> impl Iterator<Item = (ViewId, &TerminalNode)> {
-    self
-      .suspended_terminals
-      .iter()
-      .map(|(&view_id, node)| (view_id, node.as_ref()))
-  }
-
-  pub fn suspended_terminals_iter_mut(
-    &mut self,
-  ) -> impl Iterator<Item = (ViewId, &mut TerminalNode)> {
-    self
-      .suspended_terminals
-      .iter_mut()
-      .map(|(&view_id, node)| (view_id, node.as_mut()))
-  }
-
-  pub fn take_suspended_terminal(&mut self, view_id: ViewId) -> Option<Box<TerminalNode>> {
-    self.suspended_terminals.remove(&view_id)
-  }
-
-  pub fn restore_suspended_terminal(&mut self, terminal_id: ViewId) -> bool {
-    let Some(terminal) = self.suspended_terminals.remove(&terminal_id) else {
-      return false;
-    };
-
-    if let Some(view) = self.tree.try_get(terminal_id) {
-      if let Some(doc) = self.documents.get_mut(&view.doc) {
-        doc.remove_view(terminal_id);
-      }
-    } else {
-      return false;
-    }
-
-    if self
-      .tree
-      .swap_view_with_terminal(terminal_id, terminal)
-      .is_none()
-    {
-      return false;
-    }
-
-    self.focus(terminal_id);
-    true
-  }
-
-  pub fn terminal_tab_entries(&self) -> impl Iterator<Item = TerminalTabEntry<'_>> {
-    let active = self.tree.terminals().map(|(view_id, terminal)| {
-      TerminalTabEntry {
-        view_id,
-        terminal,
-        suspended: false,
-      }
-    });
-    let suspended = self.suspended_terminals_iter().map(|(view_id, terminal)| {
-      TerminalTabEntry {
-        view_id,
-        terminal,
-        suspended: true,
-      }
-    });
-    active.chain(suspended)
   }
 
   pub fn focus_next(&mut self) {
@@ -3528,7 +3166,7 @@ impl Editor {
     self.set_mode(Mode::Normal);
     let focus_id = self.tree.focus;
     let Some(doc_id) = self.tree.try_get(focus_id).map(|view| view.doc) else {
-      // No document view is focused (likely a terminal), so there's nothing
+      // No document view is focused, so there's nothing
       // view-specific to clean up.
       return;
     };

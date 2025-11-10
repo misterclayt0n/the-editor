@@ -7,7 +7,6 @@ members = [
   "the-parsec",
   "the-renderer",
   "the-stdx",
-  "the-terminal",
   "the-vcs",
 ]
 resolver = "3"

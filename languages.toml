@@ -351,12 +351,6 @@ name       = "binary"
 request    = "launch"
 
 [[language.debugger.templates]]
-args       = { program = "{0}", runInTerminal = true }
-completion = [ { completion = "filename", name = "binary" } ]
-name       = "binary (terminal)"
-request    = "launch"
-
-[[language.debugger.templates]]
 args       = { pid = "{0}" }
 completion = [ "pid" ]
 name       = "attach"

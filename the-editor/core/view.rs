@@ -550,7 +550,7 @@ impl View {
     }
   }
 
-  /// Translates a document position to an absolute position in the terminal.
+  /// Translates a document position to an absolute position in the viewport.
   /// Returns a (line, col) position if the position is visible on screen.
   // TODO: Could return width as well for the character width at cursor.
   pub fn screen_coords_at_pos(

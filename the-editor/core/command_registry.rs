@@ -568,42 +568,6 @@ impl CommandRegistry {
     ));
 
     self.register(TypableCommand::new(
-      "terminal",
-      &["term"],
-      "Replace current view with a terminal",
-      terminal,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "hterminal",
-      &["hterm"],
-      "Open terminal in horizontal split",
-      hterminal,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "vterminal",
-      &["vterm"],
-      "Open terminal in vertical split",
-      vterminal,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
       "help",
       &["h"],
       "Show help for commands",
@@ -1698,7 +1662,7 @@ fn buffer_close(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()>
     return Ok(());
   }
 
-  // Check if focused node is a document view (not a terminal)
+  // Check if focused node is a document view
   let Some(view_id) = cx.editor.focused_view_id() else {
     cx.editor
       .set_error("no active document view to close".to_string());
@@ -1751,81 +1715,8 @@ fn buffer_previous(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<
     return Ok(());
   }
 
-  // Simplified buffer switching - in a real implementation you'd maintain a
-  // buffer list
   cx.editor
     .set_status("buffer previous (not implemented)".to_string());
-  Ok(())
-}
-
-fn terminal(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
-  if event != PromptEvent::Validate {
-    return Ok(());
-  }
-
-  // Check if focused node is a document view (not already a terminal)
-  let Some(view_id) = cx.editor.focused_view_id() else {
-    cx.editor
-      .set_error("no active document view to replace with terminal".to_string());
-    return Ok(());
-  };
-
-  // Set pending action to replace the current view with a terminal
-  cx.editor.pending_action = Some(crate::editor::Action::ReplaceViewWithTerminal { view_id });
-  Ok(())
-}
-
-fn hterminal(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
-  use crate::editor::Action;
-
-  if event != PromptEvent::Validate {
-    return Ok(());
-  }
-
-  // Get current document to duplicate in split
-  use crate::current;
-  let (view, _doc) = current!(cx.editor);
-  let doc_id = view.doc;
-
-  // Create horizontal split
-  cx.editor.switch(doc_id, Action::HorizontalSplit);
-
-  // Get the newly focused view (the split we just created)
-  let Some(view_id) = cx.editor.focused_view_id() else {
-    cx.editor.set_error("failed to create split".to_string());
-    return Ok(());
-  };
-
-  // Replace the split with a terminal
-  cx.editor.pending_action = Some(Action::ReplaceViewWithTerminal { view_id });
-
-  Ok(())
-}
-
-fn vterminal(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
-  use crate::editor::Action;
-
-  if event != PromptEvent::Validate {
-    return Ok(());
-  }
-
-  // Get current document to duplicate in split
-  use crate::current;
-  let (view, _doc) = current!(cx.editor);
-  let doc_id = view.doc;
-
-  // Create vertical split
-  cx.editor.switch(doc_id, Action::VerticalSplit);
-
-  // Get the newly focused view (the split we just created)
-  let Some(view_id) = cx.editor.focused_view_id() else {
-    cx.editor.set_error("failed to create split".to_string());
-    return Ok(());
-  };
-
-  // Replace the split with a terminal
-  cx.editor.pending_action = Some(Action::ReplaceViewWithTerminal { view_id });
-
   Ok(())
 }
 

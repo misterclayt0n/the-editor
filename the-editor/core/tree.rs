@@ -1,16 +1,12 @@
 use std::{
-  cell::RefCell,
   collections::HashMap,
-  rc::Rc,
   time::Duration,
 };
 
 use slotmap::HopSlotMap;
-use the_terminal::TerminalSession;
 
 use crate::{
   core::{
-    DocumentId,
     ViewId,
     animation::{
       AnimationHandle,
@@ -24,7 +20,6 @@ use crate::{
     },
     view::View,
   },
-  editor::GutterConfig,
 };
 
 // Helper struct to track area animations for views
@@ -93,7 +88,6 @@ pub struct Node {
 pub enum Content {
   View(Box<View>),
   Container(Box<Container>),
-  Terminal(Box<TerminalNode>),
 }
 
 impl Node {
@@ -110,27 +104,6 @@ impl Node {
       content: Content::View(Box::new(view)),
     }
   }
-
-  pub fn terminal(
-    session: Rc<RefCell<TerminalSession>>,
-    id: u32,
-    replaced_doc: Option<DocumentId>,
-  ) -> Self {
-    Self {
-      parent:  ViewId::default(),
-      content: Content::Terminal(Box::new(TerminalNode {
-        session,
-        id,
-        area: Rect::default(),
-        replaced_doc,
-        last_theme_hash: 0,
-        scroll_accumulator: 0.0,
-        selection_anchor: None,
-        selection_last: None,
-        selection_mode: TerminalSelectionMode::Cell,
-      })),
-    }
-  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,13 +111,6 @@ pub enum Layout {
   Horizontal,
   Vertical,
   // could explore stacked/tabbed
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TerminalSelectionMode {
-  Cell,
-  Word,
-  Line,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -178,40 +144,6 @@ impl Container {
 impl Default for Container {
   fn default() -> Self {
     Self::new(Layout::Vertical)
-  }
-}
-
-/// A terminal node in the tree, containing a PTY session
-pub struct TerminalNode {
-  /// The terminal session (wrapped in RefCell for interior mutability during
-  /// rendering)
-  pub session:            Rc<RefCell<TerminalSession>>,
-  /// Terminal's unique identifier
-  pub id:                 u32,
-  /// Current area occupied by this terminal
-  pub area:               Rect,
-  /// The document that was replaced by this terminal (for fullscreen terminals)
-  /// Used to restore the original buffer when terminal exits
-  pub replaced_doc:       Option<DocumentId>,
-  /// Hash of the last applied terminal theme to avoid redundant updates
-  pub last_theme_hash:    u64,
-  /// Accumulated fractional scroll from smooth scrolling devices.
-  pub scroll_accumulator: f32,
-  /// Original click cell for selection drags (viewport coordinates).
-  pub selection_anchor:   Option<(u32, u32)>,
-  /// Last target cell processed during selection drag.
-  pub selection_last:     Option<(u32, u32)>,
-  /// Selection mode (cell/word/line) for current drag session.
-  pub selection_mode:     TerminalSelectionMode,
-}
-
-impl std::fmt::Debug for TerminalNode {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("TerminalNode")
-      .field("id", &self.id)
-      .field("area", &self.area)
-      .field("session", &"<TerminalSession>")
-      .finish()
   }
 }
 
@@ -273,135 +205,6 @@ impl Tree {
     self.recalculate();
 
     node
-  }
-
-  /// Insert a terminal node into the tree (similar to insert but for terminals)
-  pub fn insert_terminal(&mut self, session: Rc<RefCell<TerminalSession>>, id: u32) -> ViewId {
-    let focus = self.focus;
-    let parent = self.nodes[focus].parent;
-    let mut node = Node::terminal(session, id, None);
-    node.parent = parent;
-    let node_id = self.nodes.insert(node);
-
-    let container = match &mut self.nodes[parent] {
-      Node {
-        content: Content::Container(container),
-        ..
-      } => container,
-      _ => unreachable!(),
-    };
-
-    // insert node after the current item if there are children already
-    let pos = if container.children.is_empty() {
-      0
-    } else {
-      let pos = container
-        .children
-        .iter()
-        .position(|&child| child == focus)
-        .unwrap();
-      pos + 1
-    };
-
-    container.children.insert(pos, node_id);
-    container.child_sizes.insert(pos, None);
-    // Focus the new terminal node
-    self.focus = node_id;
-
-    // recalculate all the sizes
-    self.recalculate();
-
-    node_id
-  }
-
-  /// Insert a terminal node by splitting around a specific anchor with the
-  /// desired layout.
-  pub fn insert_terminal_pane(
-    &mut self,
-    anchor: ViewId,
-    session: Rc<RefCell<TerminalSession>>,
-    id: u32,
-    layout: Layout,
-  ) -> Option<ViewId> {
-    if !self.contains(anchor) {
-      return None;
-    }
-
-    let parent = self.nodes[anchor].parent;
-    let mut node = Node::terminal(session, id, None);
-    node.parent = parent;
-    let node_id = self.nodes.insert(node);
-
-    let container = match &mut self.nodes[parent] {
-      Node {
-        content: Content::Container(container),
-        ..
-      } => container,
-      _ => return None,
-    };
-
-    if container.layout == layout {
-      // Insert after the anchor when the parent already matches the desired layout.
-      let pos = if container.children.is_empty() {
-        0
-      } else {
-        container
-          .children
-          .iter()
-          .position(|&child| child == anchor)
-          .map(|pos| pos + 1)
-          .unwrap_or(container.children.len())
-      };
-      container.children.insert(pos, node_id);
-      container.child_sizes.insert(pos, None);
-      self.nodes[node_id].parent = parent;
-    } else {
-      // Create a new container with the requested layout and replace the anchor.
-      let mut split = Node::container(layout);
-      split.parent = parent;
-      let split_id = self.nodes.insert(split);
-
-      let split_container = match &mut self.nodes[split_id] {
-        Node {
-          content: Content::Container(container),
-          ..
-        } => container,
-        _ => return None,
-      };
-
-      split_container.children.push(anchor);
-      split_container.child_sizes.push(None);
-      split_container.children.push(node_id);
-      split_container.child_sizes.push(None);
-
-      self.nodes[anchor].parent = split_id;
-      self.nodes[node_id].parent = split_id;
-
-      if let Node {
-        content: Content::Container(parent_container),
-        ..
-      } = &mut self.nodes[parent]
-      {
-        if let Some(pos) = parent_container
-          .children
-          .iter()
-          .position(|&child| child == anchor)
-        {
-          parent_container.children[pos] = split_id;
-        } else {
-          parent_container.children.push(split_id);
-          parent_container.child_sizes.push(None);
-        }
-      } else {
-        return None;
-      }
-    }
-
-    // Focus the new terminal node and recalculate tree layout.
-    self.focus = node_id;
-    self.recalculate();
-
-    Some(node_id)
   }
 
   pub fn split(&mut self, view: View, layout: Layout) -> ViewId {
@@ -607,47 +410,6 @@ impl Tree {
     self.recalculate()
   }
 
-  /// Detach a terminal node from the tree while returning its session.
-  pub fn detach_terminal(&mut self, id: ViewId) -> Option<Box<TerminalNode>> {
-    let node = self.nodes.get(id)?;
-    if !matches!(node.content, Content::Terminal(_)) {
-      return None;
-    }
-
-    if self.focus == id {
-      self.focus = self.prev();
-    }
-
-    let parent = node.parent;
-    let parent_is_root = parent == self.root;
-
-    let removed = self.remove_or_replace(id, None)?;
-
-    let terminal = match removed.content {
-      Content::Terminal(terminal) => terminal,
-      _ => unreachable!("detach_terminal called on non-terminal node"),
-    };
-
-    if !parent_is_root {
-      let maybe_sibling = {
-        let container = self.container_mut(parent);
-        if container.children.len() == 1 {
-          Some(container.children[0])
-        } else {
-          None
-        }
-      };
-
-      if let Some(sibling) = maybe_sibling {
-        let _ = self.remove_or_replace(parent, Some(sibling));
-      }
-    }
-
-    self.recalculate();
-
-    Some(terminal)
-  }
-
   pub fn views(&self) -> impl Iterator<Item = (&View, bool)> {
     let focus = self.focus;
     self.nodes.iter().filter_map(move |(key, node)| {
@@ -760,9 +522,6 @@ impl Tree {
           // debug!!("setting view area {:?}", area);
           view.area = area;
         }, // TODO: call f()
-        Content::Terminal(terminal) => {
-          terminal.area = area;
-        },
         Content::Container(container) => {
           // debug!!("setting container area {:?}", area);
           container.area = area;
@@ -824,194 +583,6 @@ impl Tree {
     Traverse::new(self)
   }
 
-  /// Get all terminal nodes in the tree
-  pub fn terminals(&self) -> impl Iterator<Item = (ViewId, &TerminalNode)> {
-    self.nodes.iter().filter_map(|(key, node)| {
-      match &node.content {
-        Content::Terminal(terminal) => Some((key, terminal.as_ref())),
-        _ => None,
-      }
-    })
-  }
-
-  /// Get an immutable terminal node by ID
-  pub fn get_terminal(&self, id: ViewId) -> Option<&TerminalNode> {
-    match &self.nodes.get(id)?.content {
-      Content::Terminal(terminal) => Some(terminal.as_ref()),
-      _ => None,
-    }
-  }
-
-  /// Get a mutable terminal node by ID
-  pub fn get_terminal_mut(&mut self, id: ViewId) -> Option<&mut TerminalNode> {
-    match &mut self.nodes.get_mut(id)?.content {
-      Content::Terminal(terminal) => Some(terminal),
-      _ => None,
-    }
-  }
-
-  /// Replace a view node with a terminal node in-place
-  pub fn replace_view_with_terminal(
-    &mut self,
-    view_id: ViewId,
-    session: Rc<RefCell<TerminalSession>>,
-    terminal_id: u32,
-  ) -> Option<ViewId> {
-    // Ensure the node exists and is a view
-    if !self.contains(view_id) || !matches!(self.nodes[view_id].content, Content::View(_)) {
-      return None;
-    }
-
-    // Get the parent and document ID before we modify anything
-    let parent = self.nodes[view_id].parent;
-    let replaced_doc = if let Content::View(view) = &self.nodes[view_id].content {
-      Some(view.doc)
-    } else {
-      None
-    };
-
-    // Remove the old view node
-    let _removed = self.nodes.remove(view_id)?;
-
-    // Create the new terminal node with same parent and track replaced document
-    let mut terminal_node = Node::terminal(session, terminal_id, replaced_doc);
-    terminal_node.parent = parent;
-
-    // Insert the terminal node
-    let terminal_view_id = self.nodes.insert(terminal_node);
-
-    // Update the parent's child reference
-    if let Node {
-      content: Content::Container(container),
-      ..
-    } = &mut self.nodes[parent]
-    {
-      if let Some(pos) = container
-        .children
-        .iter()
-        .position(|&child| child == view_id)
-      {
-        container.children[pos] = terminal_view_id;
-      }
-    }
-
-    // Update focus to the new terminal
-    if self.focus == view_id {
-      self.focus = terminal_view_id;
-    }
-
-    self.recalculate();
-    Some(terminal_view_id)
-  }
-
-  /// Replace a terminal node with a view node, restoring the original document
-  ///
-  /// This is used when a terminal exits and we want to restore the buffer that
-  /// was replaced. Returns the new view ID if successful.
-  pub fn replace_terminal_with_view(
-    &mut self,
-    terminal_id: ViewId,
-    doc_id: DocumentId,
-  ) -> Option<ViewId> {
-    // Ensure the node exists and is a terminal
-    if !self.contains(terminal_id)
-      || !matches!(self.nodes[terminal_id].content, Content::Terminal(_))
-    {
-      return None;
-    }
-
-    // Get the parent before we modify anything
-    let parent = self.nodes[terminal_id].parent;
-
-    // Remove the terminal node
-    let _removed = self.nodes.remove(terminal_id)?;
-
-    // Create a new view for the document
-    let view = View::new(doc_id, GutterConfig::default());
-    let mut view_node = Node::view(view);
-    view_node.parent = parent;
-
-    // Insert the view node
-    let view_id = self.nodes.insert(view_node);
-
-    // Update the view's ID to match the one assigned by the tree
-    self.get_mut(view_id).id = view_id;
-
-    // Update the parent's child reference
-    if let Node {
-      content: Content::Container(container),
-      ..
-    } = &mut self.nodes[parent]
-    {
-      if let Some(pos) = container
-        .children
-        .iter()
-        .position(|&child| child == terminal_id)
-      {
-        container.children[pos] = view_id;
-      }
-    }
-
-    // Update focus to the new view
-    if self.focus == terminal_id {
-      self.focus = view_id;
-    }
-
-    self.recalculate();
-    Some(view_id)
-  }
-
-  /// Swap a terminal node for a document view in-place and return the detached
-  /// terminal.
-  pub fn swap_terminal_with_view(
-    &mut self,
-    id: ViewId,
-    mut view: View,
-  ) -> Option<Box<TerminalNode>> {
-    let node = self.nodes.get_mut(id)?;
-    let terminal_area = match &node.content {
-      Content::Terminal(terminal) => terminal.area,
-      _ => return None,
-    };
-
-    view.id = id;
-    view.area = terminal_area;
-
-    let previous = std::mem::replace(&mut node.content, Content::View(Box::new(view)));
-    match previous {
-      Content::Terminal(terminal) => {
-        self.recalculate();
-        Some(terminal)
-      },
-      _ => unreachable!(),
-    }
-  }
-
-  /// Swap a document view node for a terminal node, preserving layout
-  /// placement.
-  pub fn swap_view_with_terminal(
-    &mut self,
-    id: ViewId,
-    mut terminal: Box<TerminalNode>,
-  ) -> Option<()> {
-    let node = self.nodes.get_mut(id)?;
-    let view_area = match &node.content {
-      Content::View(view) => view.area,
-      _ => return None,
-    };
-
-    terminal.area = view_area;
-
-    let previous = std::mem::replace(&mut node.content, Content::Terminal(terminal));
-    match previous {
-      Content::View(_) => {
-        self.recalculate();
-        Some(())
-      },
-      _ => unreachable!(),
-    }
-  }
-
   // Finds the split in the given direction if it exists
   pub fn find_split_in_direction(&self, id: ViewId, direction: Direction) -> Option<ViewId> {
     let parent = self.nodes[id].parent;
@@ -1022,7 +593,7 @@ impl Tree {
     // Parent must always be a container
     let parent_container = match &self.nodes[parent].content {
       Content::Container(container) => container,
-      Content::View(_) | Content::Terminal(_) => unreachable!(),
+      Content::View(_) => unreachable!(),
     };
 
     match (direction, parent_container.layout) {
@@ -1080,7 +651,6 @@ impl Tree {
     };
     let (current_x, current_y) = match &self.nodes[self.focus].content {
       Content::View(current_view) => (current_view.area.left(), current_view.area.top()),
-      Content::Terminal(terminal) => (terminal.area.left(), terminal.area.top()),
       Content::Container(_) => unreachable!(),
     };
 
@@ -1094,7 +664,6 @@ impl Tree {
           child_id = *container.children.iter().min_by_key(|id| {
             let x = match &self.nodes[**id].content {
               Content::View(view) => view.area.left(),
-              Content::Terminal(terminal) => terminal.area.left(),
               Content::Container(container) => container.area.left(),
             };
             (current_x as i16 - x as i16).abs()
@@ -1106,7 +675,6 @@ impl Tree {
           child_id = *container.children.iter().min_by_key(|id| {
             let y = match &self.nodes[**id].content {
               Content::View(view) => view.area.top(),
-              Content::Terminal(terminal) => terminal.area.top(),
               Content::Container(container) => container.area.top(),
             };
             (current_y as i16 - y as i16).abs()
@@ -1184,7 +752,7 @@ impl Tree {
         _ => unreachable!(),
       };
 
-      // Get positions using ViewId directly (works for both views and terminals)
+      // Get positions using ViewId directly (works for both views)
       let focus_pos = parent_container
         .children
         .iter()
@@ -1201,13 +769,6 @@ impl Tree {
       match (&mut focus_node.content, &mut target_node.content) {
         (Content::View(focus_view), Content::View(target_view)) => {
           std::mem::swap(&mut focus_view.area, &mut target_view.area);
-        },
-        (Content::Terminal(focus_term), Content::Terminal(target_term)) => {
-          std::mem::swap(&mut focus_term.area, &mut target_term.area);
-        },
-        (Content::View(view), Content::Terminal(term))
-        | (Content::Terminal(term), Content::View(view)) => {
-          std::mem::swap(&mut view.area, &mut term.area);
         },
         _ => return None, // Can't swap containers
       }
@@ -1248,13 +809,6 @@ impl Tree {
       match (&mut focus_node.content, &mut target_node.content) {
         (Content::View(focus_view), Content::View(target_view)) => {
           std::mem::swap(&mut focus_view.area, &mut target_view.area);
-        },
-        (Content::Terminal(focus_term), Content::Terminal(target_term)) => {
-          std::mem::swap(&mut focus_term.area, &mut target_term.area);
-        },
-        (Content::View(view), Content::Terminal(term))
-        | (Content::Terminal(term), Content::View(view)) => {
-          std::mem::swap(&mut view.area, &mut term.area);
         },
         _ => return None,
       }
@@ -1343,13 +897,6 @@ impl Tree {
               v.area.height
             }
           },
-          Content::Terminal(t) => {
-            if vertical {
-              t.area.width
-            } else {
-              t.area.height
-            }
-          },
           Content::Container(c) => {
             if vertical {
               c.area.width
@@ -1417,10 +964,6 @@ impl<'a> Iterator for Traverse<'a> {
 
       match &node.content {
         Content::View(view) => return Some((key, view)),
-        Content::Terminal(_) => {
-          // Skip terminals - this iterator only returns document views
-          continue;
-        },
         Content::Container(container) => {
           self.stack.extend(container.children.iter().rev());
         },
@@ -1438,10 +981,6 @@ impl DoubleEndedIterator for Traverse<'_> {
 
       match &node.content {
         Content::View(view) => return Some((key, view)),
-        Content::Terminal(_) => {
-          // Skip terminals - this iterator only returns document views
-          continue;
-        },
         Content::Container(container) => {
           self.stack.extend(container.children.iter());
         },

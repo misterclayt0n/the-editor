@@ -1,8 +1,4 @@
-use std::{
-  cell::RefCell,
-  rc::Rc,
-  sync::Arc,
-};
+use std::sync::Arc;
 
 use the_editor_renderer::{
   Application,
@@ -14,15 +10,11 @@ use the_editor_renderer::{
 
 use crate::{
   core::{
-    ViewId,
     commands,
     graphics::Rect,
     movement::Direction,
   },
-  editor::{
-    Editor,
-    TerminalPane,
-  },
+  editor::Editor,
   input::InputHandler,
   keymap::{
     KeyBinding,
@@ -51,7 +43,7 @@ pub struct App {
   pub input_handler: InputHandler,
 
   // GlobalConfig pointer for runtime updates
-  pub config_ptr: std::sync::Arc<arc_swap::ArcSwap<crate::core::config::Config>>,
+  pub config_ptr: Arc<arc_swap::ArcSwap<crate::core::config::Config>>,
 
   runtime_handle: tokio::runtime::Handle,
 
@@ -71,18 +63,13 @@ pub struct App {
 
   // Delta time tracking for time-based animations
   last_frame_time: std::time::Instant,
-
-  // Track whether the next key press should be treated as a meta prefix for terminal shortcuts
-  terminal_meta_pending:          bool,
-  // Track whether Ctrl+W was pressed in terminal, waiting for window command
-  terminal_window_prefix_pending: bool,
 }
 
 impl App {
   pub fn new(
     editor: Editor,
     runtime_handle: tokio::runtime::Handle,
-    config_ptr: std::sync::Arc<arc_swap::ArcSwap<crate::core::config::Config>>,
+    config_ptr: Arc<arc_swap::ArcSwap<crate::core::config::Config>>,
   ) -> Self {
     let area = Rect::new(0, 0, 120, 40); // Default size, will be updated on resize.
     let mut compositor = Compositor::new(area);
@@ -131,8 +118,6 @@ impl App {
       trackpad_scroll_lines: 0.0,
       trackpad_scroll_cols: 0.0,
       last_frame_time: std::time::Instant::now(),
-      terminal_meta_pending: false,
-      terminal_window_prefix_pending: false,
     }
   }
 
@@ -149,7 +134,7 @@ impl App {
           // Store the new config in the global config pointer
           self
             .config_ptr
-            .store(std::sync::Arc::new(new_config.clone()));
+            .store(Arc::new(new_config.clone()));
 
           // Update theme if specified
           if let Some(theme_name) = &new_config.theme {
@@ -403,66 +388,6 @@ impl App {
   }
 }
 
-fn terminal_toggle_target(code: Key) -> Option<TerminalPane> {
-  match code {
-    Key::Char('j') | Key::Char('J') => Some(TerminalPane::Bottom),
-    Key::Char('l') | Key::Char('L') => Some(TerminalPane::Right),
-    _ => None,
-  }
-}
-
-/// Convert InputEvent to bytes for terminal PTY
-///
-/// This handles special keys and VT100 escape sequences.
-/// Returns None if the event should not be sent to terminal.
-fn input_event_to_terminal_bytes(event: &InputEvent) -> Option<Vec<u8>> {
-  match event {
-    InputEvent::Keyboard(key_press) => {
-      // Only handle key presses, not releases
-      if !key_press.pressed {
-        return None;
-      }
-
-      // DEBUG: Log the raw KeyPress we received
-      log::debug!(
-        "input_event_to_terminal_bytes: key={:?}, shift={}, ctrl={}, alt={}",
-        key_press.code,
-        key_press.shift,
-        key_press.ctrl,
-        key_press.alt
-      );
-
-      // Set up terminal modes for encoding
-      let modes = crate::key_encode::TerminalModes {
-        cursor_key_application: false,
-        keypad_application:     false,
-        modify_other_keys:      0,
-        kitty_flags:            0,
-        alt_esc_prefix:         true,
-      };
-
-      // Use the comprehensive key encoder
-      let bytes = crate::key_encode::encode(key_press, &modes);
-
-      // DEBUG: Log encoded bytes
-      log::debug!(
-        "input_event_to_terminal_bytes encoded {} bytes: {:?}",
-        bytes.len(),
-        bytes
-      );
-
-      if bytes.is_empty() { None } else { Some(bytes) }
-    },
-    InputEvent::Text(text) => {
-      // Handle composed text from dead keys (e.g., " + space = ")
-      // and IME input
-      log::debug!("input_event_to_terminal_bytes: text=\"{}\"", text);
-      Some(text.as_bytes().to_vec())
-    },
-    _ => None, // Mouse events, scroll, etc. not handled yet
-  }
-}
-
 impl Application for App {
   fn init(&mut self, renderer: &mut Renderer) {
     println!("Application initialized!");
@@ -478,7 +403,7 @@ impl Application for App {
     }
 
     // Ensure the active view has an initial cursor/selection.
-    // Only do this if a view is focused (not a terminal or container)
+    // Only do this if a view is focused.
     use crate::core::selection::Selection;
     if crate::focus_is_view!(self.editor) {
       let (view, doc) = crate::current!(self.editor);
@@ -491,40 +416,6 @@ impl Application for App {
 
     // The renderer's begin_frame/end_frame are handled by the main loop.
     // We just need to draw our content here.
-
-    // Process pending terminal responses and check for exits
-    // This sends queued responses (e.g., cursor position reports) back to the shell
-    let mut exited_terminals = Vec::new();
-    for (view_id, terminal) in self.editor.tree.terminals() {
-      terminal.session.borrow_mut().process_responses();
-
-      // Check if terminal has exited
-      if !terminal.session.borrow().is_alive() {
-        exited_terminals.push(view_id);
-      }
-    }
-
-    let mut exited_suspended = Vec::new();
-    for (view_id, terminal) in self.editor.suspended_terminals_iter_mut() {
-      terminal.session.borrow_mut().process_responses();
-      if !terminal.session.borrow().is_alive() {
-        exited_suspended.push(view_id);
-      }
-    }
-
-    for terminal_id in exited_suspended {
-      self.handle_terminal_exit(terminal_id);
-    }
-
-    // Clean up exited terminals
-    for terminal_id in exited_terminals {
-      self.handle_terminal_exit(terminal_id);
-    }
-
-    // Handle pending actions from the editor (e.g., spawn terminal)
-    if let Some(action) = self.editor.pending_action.take() {
-      self.handle_pending_action(action);
-    }
 
     // Process any pending config events
     while let Some(config_event) = self.editor.try_poll_config_event() {
@@ -585,212 +476,6 @@ impl Application for App {
   }
 
   fn handle_event(&mut self, event: InputEvent, _renderer: &mut Renderer) -> bool {
-    // If a terminal is focused, route keyboard input directly to it
-    let focus_id = self.editor.tree.focus;
-    if let Some(terminal) = self.editor.tree.get_terminal_mut(focus_id) {
-      if let InputEvent::Keyboard(key_press) = &event {
-        if !key_press.pressed {
-          return true;
-        }
-
-        let mut prepend_escape = false;
-
-        // Handle Ctrl+W prefix for window navigation (h/j/k/l)
-        if self.terminal_window_prefix_pending {
-          self.terminal_window_prefix_pending = false;
-
-          // Check for window navigation keys (h/j/k/l or arrow keys)
-          use crate::core::tree::Direction;
-          let direction = match key_press.code {
-            Key::Char('h') | Key::Left => Some(Direction::Left),
-            Key::Char('j') | Key::Down => Some(Direction::Down),
-            Key::Char('k') | Key::Up => Some(Direction::Up),
-            Key::Char('l') | Key::Right => Some(Direction::Right),
-            _ => None,
-          };
-
-          if let Some(dir) = direction {
-            self.editor.focus_direction(dir);
-            return true;
-          }
-
-          // If not a window navigation key, fall through to send to terminal
-        }
-
-        if self.terminal_meta_pending {
-          self.terminal_meta_pending = false;
-          if let Some(pane) = terminal_toggle_target(key_press.code) {
-            self.editor.toggle_terminal_pane(pane);
-            return true;
-          }
-          prepend_escape = true;
-        }
-
-        // Intercept Ctrl+W to enable window commands from terminal
-        if key_press.code == Key::Char('w') && key_press.ctrl && !key_press.alt && !key_press.shift
-        {
-          self.terminal_window_prefix_pending = true;
-          return true;
-        }
-
-        // Use Ctrl+Space as the terminal meta prefix instead of ESC
-        // This allows ESC to be sent directly to terminal apps (vim, helix, etc.)
-        if key_press.code == Key::Char(' ') && key_press.ctrl && !key_press.alt && !key_press.shift
-        {
-          self.terminal_meta_pending = true;
-          return true;
-        }
-
-        // Old ESC-based shortcuts disabled to allow ESC in terminal apps:
-        // if key_press.code == Key::Escape && !key_press.alt && !key_press.ctrl &&
-        // !key_press.shift {   self.terminal_meta_pending = true;
-        //   return true;
-        // }
-
-        // Alt+L and Alt+J removed - these keys should be sent to terminal
-        // Terminal pane toggling is now only available via Ctrl+Space prefix
-
-        // Intercept Ctrl+Shift+C (copy) and Ctrl+Shift+V (paste) for clipboard
-        // operations
-        if key_press.ctrl && key_press.shift && !key_press.alt {
-          match key_press.code {
-            Key::Char('c') | Key::Char('C') => {
-              // Copy terminal selection to clipboard
-              let selection = {
-                let session_ref = terminal.session.borrow();
-                session_ref.selection_text(true)
-              };
-              // Note: terminal reference not used after this point,
-              // so borrow checker allows access to self.editor below
-
-              if let Some(text) = selection {
-                if !text.is_empty() {
-                  if let Err(e) = self.editor.registers.write('+', vec![text.clone()]) {
-                    log::error!("Failed to copy terminal selection to clipboard: {}", e);
-                    self.editor.set_error(format!("Copy failed: {}", e));
-                  } else {
-                    self.editor.set_status("Copied");
-                  }
-                  if let Err(e) = self.editor.registers.write('*', vec![text]) {
-                    log::error!("Failed to copy terminal selection to primary: {}", e);
-                  }
-                } else {
-                  self.editor.set_status("Nothing to copy (empty selection)");
-                }
-              } else {
-                self.editor.set_status("Nothing to copy (no selection)");
-              }
-              return true;
-            },
-            Key::Char('v') | Key::Char('V') => {
-              // Paste from clipboard to terminal
-              // Note: terminal reference not used in this section,
-              // so borrow checker allows access to self.editor below
-              let mut clipboard_text: Option<String> = None;
-
-              if let Some(values) = self.editor.registers.read('+', &self.editor) {
-                let collected: Vec<String> = values.map(|v| v.into_owned()).collect();
-                if !collected.is_empty() {
-                  clipboard_text = Some(collected.join("\n"));
-                }
-              }
-
-              if clipboard_text.is_none() {
-                if let Some(values) = self.editor.registers.read('*', &self.editor) {
-                  let collected: Vec<String> = values.map(|v| v.into_owned()).collect();
-                  if !collected.is_empty() {
-                    clipboard_text = Some(collected.join("\n"));
-                  }
-                }
-              }
-
-              if let Some(text) = clipboard_text {
-                if !text.is_empty() {
-                  // Reacquire terminal to send input
-                  let paste_result =
-                    if let Some(terminal) = self.editor.tree.get_terminal_mut(focus_id) {
-                      let result = {
-                        let session_ref = terminal.session.borrow();
-                        session_ref.send_input(text.into_bytes())
-                      };
-
-                      if result.is_ok() {
-                        terminal.selection_anchor = None;
-                        terminal.selection_last = None;
-                        terminal.session.borrow().mark_needs_redraw();
-                        the_editor_event::request_redraw();
-                      }
-                      result
-                    } else {
-                      Ok(())
-                    };
-
-                  // Set status after dropping terminal borrow
-                  if let Err(e) = paste_result {
-                    log::error!("Failed to paste to terminal: {}", e);
-                    self.editor.set_error(format!("Paste failed: {}", e));
-                  } else {
-                    self.editor.set_status("Pasted");
-                  }
-                } else {
-                  self.editor.set_status("Nothing to paste (empty)");
-                }
-              } else {
-                self.editor.set_status("Nothing to paste");
-              }
-              return true;
-            },
-            _ => {},
-          }
-        }
-
-        if let Some(mut bytes) = input_event_to_terminal_bytes(&event) {
-          if prepend_escape {
-            let mut with_escape = Vec::with_capacity(bytes.len() + 1);
-            with_escape.push(0x1B);
-            with_escape.extend(bytes);
-            bytes = with_escape;
-          }
-
-          let result = {
-            let session_ref = terminal.session.borrow();
-            session_ref.send_input(bytes)
-          };
-          match result {
-            Ok(()) => {
-              terminal.session.borrow().mark_needs_redraw();
-              the_editor_event::request_redraw();
-            },
-            Err(e) => {
-              log::error!("Failed to write to terminal PTY: {}", e);
-            },
-          }
-        }
-
-        return true;
-      }
-
-      if let Some(bytes) = input_event_to_terminal_bytes(&event) {
-        let result = {
-          let session_ref = terminal.session.borrow();
-          session_ref.send_input(bytes)
-        };
-        match result {
-          Ok(()) => {
-            terminal.session.borrow().mark_needs_redraw();
-            the_editor_event::request_redraw();
-          },
-          Err(e) => {
-            log::error!("Failed to write to terminal PTY: {}", e);
-          },
-        }
-        return true;
-      }
-    } else {
-      self.terminal_meta_pending = false;
-      self.terminal_window_prefix_pending = false;
-    }
-
     // Check if EditorView has a pending on_next_key callback.
     // This happens for commands like 'r' that wait for the next character.
     let pending_char = self.compositor.layers.iter().any(|layer| {
@@ -981,16 +666,6 @@ impl Application for App {
       return true;
     }
 
-    // Check if any terminal needs redraw
-    // Terminals continuously process PTY output in dedicated threads, so we need
-    // to keep redrawing while any terminal is alive
-    for (_, terminal) in self.editor.tree.terminals() {
-      let session = terminal.session.borrow();
-      if session.needs_redraw() {
-        return true;
-      }
-    }
-
     // Then check if any component needs updates.
     for layer in self.compositor.layers.iter() {
       // Check if it's a button with active animation.
@@ -1011,230 +686,6 @@ impl Application for App {
 }
 
 impl App {
-  fn handle_pending_action(&mut self, action: crate::editor::Action) {
-    use crate::editor::Action;
-
-    match action {
-      Action::SpawnTerminal => {
-        use the_terminal::TerminalSession;
-
-        // Get next terminal ID
-        let id = self.editor.next_terminal_id;
-        self.editor.next_terminal_id += 1;
-
-        // Get configured shell executable (first element only, no command flags like
-        // -c) The shell config like ["nu", "-c"] is for running commands, not
-        // interactive sessions
-        let shell = self.editor.config().shell.first().map(|s| vec![s.clone()]);
-
-        // Spawn terminal session with default dimensions (80x24)
-        match TerminalSession::new(24, 80, shell) {
-          Ok(mut session) => {
-            // Apply configured max FPS from editor config
-            if let Some(terminal_config) = &self.editor.config().terminal {
-              session.set_max_fps(terminal_config.max_fps);
-            }
-
-            session.set_redraw_notifier(Some(Arc::new(|| the_editor_event::request_redraw())));
-
-            let session = Rc::new(RefCell::new(session));
-            // Insert terminal into the tree
-            self.editor.tree.insert_terminal(session, id);
-            self.editor.set_status("Terminal spawned in split");
-          },
-          Err(e) => {
-            self
-              .editor
-              .set_error(format!("Failed to spawn terminal: {}", e));
-          },
-        }
-      },
-      Action::SpawnTerminalInPane { mut anchor, pane } => {
-        use the_terminal::TerminalSession;
-
-        if !self.editor.tree.contains(anchor) {
-          anchor = match self.editor.focused_view_id() {
-            Some(id) => id,
-            None => {
-              self
-                .editor
-                .set_error("No view available to host a terminal split");
-              return;
-            },
-          };
-        }
-
-        let id = self.editor.next_terminal_id;
-        self.editor.next_terminal_id += 1;
-
-        // Get configured shell executable (first element only, no command flags like
-        // -c) The shell config like ["nu", "-c"] is for running commands, not
-        // interactive sessions
-        let shell = self.editor.config().shell.first().map(|s| vec![s.clone()]);
-
-        match TerminalSession::new(24, 80, shell) {
-          Ok(mut session) => {
-            // Apply configured max FPS from editor config
-            if let Some(terminal_config) = &self.editor.config().terminal {
-              session.set_max_fps(terminal_config.max_fps);
-            }
-
-            session.set_redraw_notifier(Some(Arc::new(|| the_editor_event::request_redraw())));
-
-            let session = Rc::new(RefCell::new(session));
-            match self
-              .editor
-              .tree
-              .insert_terminal_pane(anchor, session, id, pane.layout())
-            {
-              Some(view_id) => {
-                self.editor.register_terminal_pane(pane, view_id);
-                self
-                  .editor
-                  .set_status(format!("Opened {}", pane.display_name()));
-              },
-              None => {
-                self
-                  .editor
-                  .set_error("Failed to place terminal in requested split");
-              },
-            }
-          },
-          Err(e) => {
-            self
-              .editor
-              .set_error(format!("Failed to spawn terminal: {}", e));
-          },
-        }
-      },
-      Action::ReplaceViewWithTerminal { view_id } => {
-        use the_terminal::TerminalSession;
-
-        // Get the document ID before we replace the view
-        let doc_id = if let Some(view) = self.editor.tree.try_get(view_id) {
-          Some(view.doc)
-        } else {
-          self.editor.set_error("View not found");
-          return;
-        };
-
-        let terminal_id = self.editor.next_terminal_id;
-        self.editor.next_terminal_id += 1;
-
-        // Get configured shell executable (first element only, no command flags like
-        // -c) The shell config like ["nu", "-c"] is for running commands, not
-        // interactive sessions
-        let shell = self.editor.config().shell.first().map(|s| vec![s.clone()]);
-
-        match TerminalSession::new(24, 80, shell) {
-          Ok(mut session) => {
-            // Apply configured max FPS from editor config
-            if let Some(terminal_config) = &self.editor.config().terminal {
-              session.set_max_fps(terminal_config.max_fps);
-            }
-
-            session.set_redraw_notifier(Some(Arc::new(|| the_editor_event::request_redraw())));
-
-            let session = Rc::new(RefCell::new(session));
-            match self
-              .editor
-              .tree
-              .replace_view_with_terminal(view_id, session, terminal_id)
-            {
-              Some(_terminal_view_id) => {
-                // Remove view data from the document
-                if let Some(doc_id) = doc_id {
-                  if let Some(doc) = self.editor.documents.get_mut(&doc_id) {
-                    doc.remove_view(view_id);
-                  }
-                }
-                self.editor.set_status("Opened terminal");
-              },
-              None => {
-                self
-                  .editor
-                  .set_error("Failed to replace view with terminal");
-              },
-            }
-          },
-          Err(e) => {
-            self
-              .editor
-              .set_error(format!("Failed to spawn terminal: {}", e));
-          },
-        }
-      },
-      _ => {
-        // Other actions not yet implemented
-      },
-    }
-  }
-
-  fn handle_terminal_exit(&mut self, terminal_id: ViewId) {
-    if self.editor.take_suspended_terminal(terminal_id).is_some() {
-      self.editor.set_status("Terminal exited".to_string());
-      return;
-    }
-
-    // Check if this is a tracked terminal pane
-    if let Some(pane) = self.editor.terminal_pane_for_view(terminal_id) {
-      // Tracked pane terminal exited
-      self.editor.clear_terminal_pane(pane);
-      self.editor.tree.remove(terminal_id);
-
-      // Focus another view if available
-      if let Some(fallback_view) = self.editor.focused_view_id() {
-        self.editor.tree.focus = fallback_view;
-      }
-
-      self
-        .editor
-        .set_status(format!("{} exited", pane.display_name()));
-      return;
-    }
-
-    // Fullscreen terminal - try to restore the original document
-    if let Some(terminal) = self.editor.tree.get_terminal(terminal_id) {
-      if let Some(doc_id) = terminal.replaced_doc {
-        // Restore the original document
-        if self.editor.documents.contains_key(&doc_id) {
-          match self
-            .editor
-            .tree
-            .replace_terminal_with_view(terminal_id, doc_id)
-          {
-            Some(view_id) => {
-              // Initialize view data in the document
-              if let Some(doc) = self.editor.documents.get_mut(&doc_id) {
-                doc.ensure_view_init(view_id);
-              }
-
-              self
-                .editor
-                .set_status("Terminal exited, restored buffer".to_string());
-              return;
-            },
-            None => {
-              self
-                .editor
-                .set_error("Failed to restore buffer after terminal exit".to_string());
-            },
-          }
-        }
-      }
-    }
-
-    // Fallback: just remove the terminal
-    self.editor.tree.remove(terminal_id);
-
-    // Focus another view if available
-    if let Some(fallback_view) = self.editor.focused_view_id() {
-      self.editor.tree.focus = fallback_view;
-    }
-
-    self.editor.set_status("Terminal exited".to_string());
-  }
-
   fn handle_scroll(&mut self, delta: ScrollDelta, renderer: &mut Renderer) {
     match delta {
       // Mouse wheel: discrete line-based scrolling
@@ -1308,7 +759,7 @@ impl App {
 
     if cols != 0 {
       let focus_view = self.editor.tree.focus;
-      // Only scroll if focused on a view, not a terminal
+      // Only scroll if focused on a view
       if let Some(view) = self.editor.tree.try_get(focus_view) {
         let doc_id = view.doc;
         let doc = self.editor.documents.get_mut(&doc_id).unwrap();
@@ -1412,7 +863,7 @@ impl App {
         step_i
       };
 
-      // Apply to focused view (only if it's a view, not a terminal)
+      // Apply to focused view (only if the focus is a view)
       let focus_view = self.editor.tree.focus;
       if let Some(view) = self.editor.tree.try_get(focus_view) {
         let doc_id = view.doc;
@@ -1430,50 +881,6 @@ impl App {
     } else {
       // Below threshold, snap to zero to stop animation
       self.pending_scroll_cols = 0.0;
-    }
-  }
-}
-
-impl Drop for App {
-  fn drop(&mut self) {
-    log::debug!("App dropping, cleaning up terminals");
-
-    // Kill all terminal sessions to ensure clean shutdown
-    // This prevents hanging on PTY read threads during runtime shutdown
-    let terminals: Vec<_> = self.editor.tree.terminals().map(|(id, _)| id).collect();
-    let suspended: Vec<_> = self
-      .editor
-      .suspended_terminals_iter()
-      .map(|(id, _)| id)
-      .collect();
-
-    if !terminals.is_empty() {
-      log::debug!("Killing {} terminal session(s)", terminals.len());
-
-      for terminal_id in terminals {
-        if let Some(terminal) = self.editor.tree.get_terminal_mut(terminal_id) {
-          // Use the runtime handle to block on the async kill operation
-          if let Err(e) = self
-            .runtime_handle
-            .block_on(terminal.session.borrow_mut().kill())
-          {
-            log::warn!("Failed to kill terminal {:?}: {}", terminal_id, e);
-          }
-        }
-      }
-
-      for terminal_id in suspended {
-        if let Some(mut terminal) = self.editor.take_suspended_terminal(terminal_id) {
-          if let Err(e) = self
-            .runtime_handle
-            .block_on(terminal.session.borrow_mut().kill())
-          {
-            log::warn!("Failed to kill suspended terminal {:?}: {}", terminal_id, e);
-          }
-        }
-      }
-
-      log::debug!("Terminal cleanup complete");
     }
   }
 }

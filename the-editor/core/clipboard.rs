@@ -18,7 +18,7 @@ pub enum ClipboardType {
 pub enum ClipboardError {
   #[error(transparent)]
   IoError(#[from] std::io::Error),
-  #[error("could not convert terminal output to UTF-8: {0}")]
+  #[error("could not convert provider output to UTF-8: {0}")]
   FromUtf8Error(#[from] std::string::FromUtf8Error),
   #[cfg(windows)]
   #[error("Windows API error: {0}")]
@@ -100,8 +100,6 @@ mod external {
     #[cfg(windows)]
     Windows,
     Termux,
-    #[cfg(feature = "term")]
-    Termcode,
     Custom(CommandProvider),
     None,
   }
@@ -130,9 +128,6 @@ mod external {
       } else if binary_exists("pbcopy") && binary_exists("pbpaste") {
         Self::Pasteboard
       } else {
-        #[cfg(feature = "term")]
-        return Self::Termcode;
-        #[cfg(not(feature = "term"))]
         return Self::None;
       }
     }
@@ -170,8 +165,6 @@ mod external {
         Self::Tmux
       } else if binary_exists("win32yank.exe") {
         Self::Win32Yank
-      // } else if cfg!(feature = "term") {
-      // Self::Termcode
       } else {
         Self::None
       }
@@ -202,8 +195,6 @@ mod external {
         Self::Termux => builtin_name("termux", &TERMUX),
         #[cfg(windows)]
         Self::Windows => "windows".into(),
-        #[cfg(feature = "term")]
-        Self::Termcode => "termcode".into(),
         Self::Custom(command_provider) => {
           Cow::Owned(format!(
             "custom ({}+{})",
@@ -251,8 +242,6 @@ mod external {
             ClipboardType::Selection => Ok(String::new()),
           }
         },
-        #[cfg(feature = "term")]
-        Self::Termcode => Err(ClipboardError::ReadingNotSupported),
         Self::Custom(command_provider) => {
           execute_command(&command_provider.yank, None, true)?.ok_or(ClipboardError::MissingStdout)
         },
@@ -297,14 +286,6 @@ mod external {
             },
             ClipboardType::Selection => Ok(()),
           }
-        },
-        #[cfg(feature = "term")]
-        Self::Termcode => {
-          crossterm::queue!(
-            std::io::stdout(),
-            osc52::SetClipboardCommand::new(content, clipboard_type)
-          )?;
-          Ok(())
         },
         Self::Custom(command_provider) => {
           match clipboard_type {
@@ -408,44 +389,6 @@ mod external {
       TERMUX,
       yank => "termux-clipboard-get";
       paste => "termux-clipboard-set";
-  }
-
-  #[cfg(feature = "term")]
-  mod osc52 {
-    use super::ClipboardType;
-    use crate::base64;
-
-    pub struct SetClipboardCommand {
-      encoded_content: String,
-      clipboard_type:  ClipboardType,
-    }
-
-    impl SetClipboardCommand {
-      pub fn new(content: &str, clipboard_type: ClipboardType) -> Self {
-        Self {
-          encoded_content: base64::encode(content.as_bytes()),
-          clipboard_type,
-        }
-      }
-    }
-
-    impl crossterm::Command for SetClipboardCommand {
-      fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-        let kind = match &self.clipboard_type {
-          ClipboardType::Clipboard => "c",
-          ClipboardType::Selection => "p",
-        };
-        // Send an OSC 52 set command: https://terminalguide.namepad.de/seq/osc-52/
-        write!(f, "\x1b]52;{};{}\x1b\\", kind, &self.encoded_content)
-      }
-      #[cfg(windows)]
-      fn execute_winapi(&self) -> std::result::Result<(), std::io::Error> {
-        Err(std::io::Error::new(
-          std::io::ErrorKind::Other,
-          "OSC clipboard codes not supported by winapi.",
-        ))
-      }
-    }
   }
 
   fn execute_command(

@@ -259,123 +259,6 @@ pub struct Theme {
   scopes:         Vec<String>,
   highlights:     Vec<Style>,
   rainbow_length: usize,
-  terminal:       TerminalTheme,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct TerminalTheme {
-  background:           Option<Color>,
-  foreground:           Option<Color>,
-  cursor_background:    Option<Color>,
-  cursor_text:          Option<Color>,
-  selection_background: Option<Color>,
-  selection_foreground: Option<Color>,
-  split_divider:        Option<Color>,
-  palette_overrides:    Vec<(u16, Color)>,
-}
-
-impl TerminalTheme {
-  #[inline]
-  pub fn background(&self) -> Option<Color> {
-    self.background
-  }
-
-  #[inline]
-  pub fn foreground(&self) -> Option<Color> {
-    self.foreground
-  }
-
-  #[inline]
-  pub fn cursor_color(&self) -> Option<Color> {
-    self.cursor_background
-  }
-
-  #[inline]
-  pub fn cursor_text(&self) -> Option<Color> {
-    self.cursor_text
-  }
-
-  #[inline]
-  pub fn selection_background(&self) -> Option<Color> {
-    self.selection_background
-  }
-
-  #[inline]
-  pub fn selection_foreground(&self) -> Option<Color> {
-    self.selection_foreground
-  }
-
-  #[inline]
-  pub fn split_divider_color(&self) -> Option<Color> {
-    self.split_divider
-  }
-
-  #[inline]
-  pub fn palette(&self) -> &[(u16, Color)] {
-    &self.palette_overrides
-  }
-
-  pub fn fingerprint(&self) -> u64 {
-    fn mix(hash: u64, value: u64) -> u64 {
-      hash.wrapping_add(0x9E37_79B9_7F4A_7C15).rotate_left(5)
-        ^ value.wrapping_mul(0xBF58_476D_1CE4_E5B9)
-    }
-
-    fn color_fingerprint(color: Color) -> u64 {
-      match color {
-        Color::Reset => 0,
-        Color::Black => 1,
-        Color::Red => 2,
-        Color::Green => 3,
-        Color::Yellow => 4,
-        Color::Blue => 5,
-        Color::Magenta => 6,
-        Color::Cyan => 7,
-        Color::Gray => 8,
-        Color::LightRed => 9,
-        Color::LightGreen => 10,
-        Color::LightYellow => 11,
-        Color::LightBlue => 12,
-        Color::LightMagenta => 13,
-        Color::LightCyan => 14,
-        Color::LightGray => 15,
-        Color::White => 16,
-        Color::Rgb(r, g, b) => (1 << 32) | ((r as u64) << 16) | ((g as u64) << 8) | b as u64,
-        Color::Indexed(index) => (2 << 32) | index as u64,
-      }
-    }
-
-    let mut hash = 0xCBF2_9CE4_8422_2325;
-
-    if let Some(color) = self.background {
-      hash = mix(hash, color_fingerprint(color));
-    }
-    if let Some(color) = self.foreground {
-      hash = mix(hash, color_fingerprint(color));
-    }
-    if let Some(color) = self.cursor_background {
-      hash = mix(hash, color_fingerprint(color));
-    }
-    if let Some(color) = self.cursor_text {
-      hash = mix(hash, color_fingerprint(color));
-    }
-    if let Some(color) = self.selection_background {
-      hash = mix(hash, color_fingerprint(color));
-    }
-    if let Some(color) = self.selection_foreground {
-      hash = mix(hash, color_fingerprint(color));
-    }
-    if let Some(color) = self.split_divider {
-      hash = mix(hash, color_fingerprint(color));
-    }
-
-    for (index, color) in &self.palette_overrides {
-      let value = ((*index as u64) << 32) | color_fingerprint(*color);
-      hash = mix(hash, value);
-    }
-
-    if hash == 0 { 1 } else { hash }
-  }
 }
 
 pub enum ThemeAction {
@@ -416,7 +299,6 @@ fn build_theme_values(
   Vec<Style>,
   usize,
   Vec<String>,
-  TerminalTheme,
 ) {
   let mut styles = HashMap::new();
   let mut scopes = Vec::new();
@@ -437,8 +319,8 @@ fn build_theme_values(
     .unwrap_or_default();
   // remove inherits from value to prevent errors
   let _ = values.remove("inherits");
-  let (terminal, mut terminal_warnings) = parse_terminal_theme(&palette, values.remove("terminal"));
-  warnings.append(&mut terminal_warnings);
+  // drop legacy terminal sections
+  let _ = values.remove("terminal");
   styles.reserve(values.len());
   scopes.reserve(values.len());
   highlights.reserve(values.len());
@@ -477,178 +359,7 @@ fn build_theme_values(
     highlights.push(style);
   }
 
-  (
-    styles,
-    scopes,
-    highlights,
-    rainbow_length,
-    warnings,
-    terminal,
-  )
-}
-
-fn parse_terminal_theme(
-  palette: &ThemePalette,
-  value: Option<Value>,
-) -> (TerminalTheme, Vec<String>) {
-  let mut warnings = Vec::new();
-  let mut terminal = TerminalTheme::default();
-
-  let Some(value) = value else {
-    return (terminal, warnings);
-  };
-
-  let mut table = match value {
-    Value::Table(table) => table,
-    other => {
-      warnings.push(format!(
-        "Expected 'terminal' to be a table, found {:?}",
-        other
-      ));
-      return (terminal, warnings);
-    },
-  };
-
-  if let Some(bg_value) = take_terminal_value(&mut table, &["background", "bg"]) {
-    match palette.parse_color(bg_value) {
-      Ok(color) => terminal.background = Some(color),
-      Err(err) => warnings.push(format!("Failed to parse terminal background. {err}")),
-    }
-  }
-
-  if let Some(fg_value) = take_terminal_value(&mut table, &["foreground", "fg"]) {
-    match palette.parse_color(fg_value) {
-      Ok(color) => terminal.foreground = Some(color),
-      Err(err) => warnings.push(format!("Failed to parse terminal foreground. {err}")),
-    }
-  }
-
-  if let Some(cursor_value) = take_terminal_value(&mut table, &["cursor-color", "cursor_color"]) {
-    match palette.parse_color(cursor_value) {
-      Ok(color) => terminal.cursor_background = Some(color),
-      Err(err) => warnings.push(format!("Failed to parse terminal cursor color. {err}")),
-    }
-  }
-
-  if let Some(cursor_text_value) = take_terminal_value(&mut table, &["cursor-text", "cursor_text"])
-  {
-    match palette.parse_color(cursor_text_value) {
-      Ok(color) => terminal.cursor_text = Some(color),
-      Err(err) => warnings.push(format!("Failed to parse terminal cursor text color. {err}")),
-    }
-  }
-
-  if let Some(selection_bg) = take_terminal_value(&mut table, &[
-    "selection-background",
-    "selection_background",
-  ]) {
-    match palette.parse_color(selection_bg) {
-      Ok(color) => terminal.selection_background = Some(color),
-      Err(err) => {
-        warnings.push(format!(
-          "Failed to parse terminal selection background. {err}"
-        ))
-      },
-    }
-  }
-
-  if let Some(selection_fg) = take_terminal_value(&mut table, &[
-    "selection-foreground",
-    "selection_foreground",
-  ]) {
-    match palette.parse_color(selection_fg) {
-      Ok(color) => terminal.selection_foreground = Some(color),
-      Err(err) => {
-        warnings.push(format!(
-          "Failed to parse terminal selection foreground. {err}"
-        ))
-      },
-    }
-  }
-
-  if let Some(split_divider) =
-    take_terminal_value(&mut table, &["split-divider-color", "split_divider_color"])
-  {
-    match palette.parse_color(split_divider) {
-      Ok(color) => terminal.split_divider = Some(color),
-      Err(err) => {
-        warnings.push(format!(
-          "Failed to parse terminal split divider color. {err}"
-        ))
-      },
-    }
-  }
-
-  if let Some(palette_value) = take_terminal_value(&mut table, &["palette"]) {
-    match palette_value {
-      Value::Table(entries) => {
-        let mut overrides = Vec::with_capacity(entries.len());
-        for (key, value) in entries {
-          match parse_palette_index(&key) {
-            Ok(index) => {
-              match palette.parse_color(value) {
-                Ok(color) => overrides.push((index, color)),
-                Err(err) => {
-                  warnings.push(format!(
-                    "Failed to parse terminal palette color for index {}. {}",
-                    key, err
-                  ))
-                },
-              }
-            },
-            Err(err) => warnings.push(err),
-          }
-        }
-        overrides.sort_by_key(|(index, _)| *index);
-        terminal.palette_overrides = overrides;
-      },
-      other => {
-        warnings.push(format!(
-          "Expected 'terminal.palette' to be a table, found {:?}",
-          other
-        ))
-      },
-    }
-  }
-
-  for key in table.keys() {
-    warnings.push(format!("Invalid terminal attribute: {key}"));
-  }
-
-  (terminal, warnings)
-}
-
-fn take_terminal_value(table: &mut Map<String, Value>, keys: &[&str]) -> Option<Value> {
-  for key in keys {
-    if let Some(value) = table.remove(*key) {
-      return Some(value);
-    }
-  }
-  None
-}
-
-fn parse_palette_index(key: &str) -> Result<u16, String> {
-  let (radix, digits) = if let Some(stripped) = key.strip_prefix("0x") {
-    (16, stripped)
-  } else if let Some(stripped) = key.strip_prefix("0o") {
-    (8, stripped)
-  } else if let Some(stripped) = key.strip_prefix("0b") {
-    (2, stripped)
-  } else {
-    (10, key)
-  };
-
-  u16::from_str_radix(digits, radix)
-    .map_err(|_| format!("Invalid terminal palette index: {key}"))
-    .and_then(|value| {
-      if value < 256 {
-        Ok(value)
-      } else {
-        Err(format!(
-          "Terminal palette index out of range (0-255): {value}"
-        ))
-      }
-    })
+  (styles, scopes, highlights, rainbow_length, warnings)
 }
 
 fn default_rainbow() -> Vec<Style> {
@@ -760,11 +471,6 @@ impl Theme {
     self.rainbow_length
   }
 
-  #[inline]
-  pub fn terminal(&self) -> &TerminalTheme {
-    &self.terminal
-  }
-
   /// Get an iterator over all UI style scope names
   pub fn style_keys(&self) -> impl Iterator<Item = &str> {
     self.styles.keys().map(|s| s.as_str())
@@ -782,7 +488,6 @@ impl Theme {
     scopes: Vec<String>,
     highlights: Vec<Style>,
     rainbow_length: usize,
-    terminal: TerminalTheme,
   ) -> Self {
     Self {
       name,
@@ -790,7 +495,6 @@ impl Theme {
       scopes,
       highlights,
       rainbow_length,
-      terminal,
     }
   }
 
@@ -804,15 +508,13 @@ impl Theme {
   }
 
   fn from_keys(toml_keys: Map<String, Value>) -> (Self, Vec<String>) {
-    let (styles, scopes, highlights, rainbow_length, load_errors, terminal) =
-      build_theme_values(toml_keys);
+    let (styles, scopes, highlights, rainbow_length, load_errors) = build_theme_values(toml_keys);
 
     let theme = Self {
       styles,
       scopes,
       highlights,
       rainbow_length,
-      terminal,
       ..Default::default()
     };
     (theme, load_errors)

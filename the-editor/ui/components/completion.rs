@@ -59,6 +59,8 @@ const MAX_MENU_WIDTH: u16 = 60;
 
 /// Maximum visible completion items
 const MAX_VISIBLE_ITEMS: usize = 15;
+/// Pixel gap between cursor baseline and popup
+const CURSOR_POPUP_MARGIN: f32 = 4.0;
 
 /// Simple text wrapping function
 /// Strip simple snippet syntax from completion text and return cursor offset
@@ -949,6 +951,7 @@ impl Component for Completion {
 
     let font_state = surface.save_font_state();
     let doc_cell_w = font_state.cell_width.max(1.0);
+    let doc_cell_h = font_state.cell_height.max(1.0);
 
     // Update animation with declarative system
     self.animation.update(ctx.dt);
@@ -997,7 +1000,7 @@ impl Component for Completion {
     let item_padding = 6.0;
 
     // Calculate fresh cursor position (not cached) with correct split offset
-    let (cursor_x, cursor_y, doc_line_height) = {
+    let (cursor_x, cursor_bottom, cursor_line_top) = {
       let (view, doc) = crate::current_ref!(ctx.editor);
       let text = doc.text();
       let cursor_pos = doc.selection(view.id).primary().cursor(text.slice(..));
@@ -1021,14 +1024,9 @@ impl Component for Completion {
         return;
       }
 
-      // Get font metrics
-      let font_size = ctx
-        .editor
-        .font_size_override
-        .unwrap_or(ctx.editor.config().font_size);
+      // Convert to pixel positions using renderer cell metrics
       let font_width = doc_cell_w;
-      const LINE_SPACING: f32 = 4.0;
-      let line_height = font_size + LINE_SPACING;
+      let line_height = doc_cell_h;
 
       // Get view's screen offset (handles splits correctly)
       let inner = view.inner_area(doc);
@@ -1037,9 +1035,10 @@ impl Component for Completion {
 
       // Calculate final screen position
       let x = view_x + (screen_col as f32 * font_width);
-      let baseline = view_y + (rel_row as f32 * line_height) + line_height;
+      let line_top = view_y + (rel_row as f32 * line_height);
+      let baseline = line_top + line_height;
 
-      (x, baseline, line_height)
+      (x, baseline, line_top)
     };
 
     surface.configure_font(&font_state.family, UI_FONT_SIZE);
@@ -1088,13 +1087,12 @@ impl Component for Completion {
     let anim_height = menu_height * scale;
 
     // Try to position below cursor first
-    let gap = doc_line_height.max(ui_line_height).max(16.0);
-    let mut popup_y = cursor_y + gap + slide_offset;
+    let mut popup_y = cursor_bottom + CURSOR_POPUP_MARGIN + slide_offset;
 
     // Check if popup would overflow bottom of viewport
     if popup_y + anim_height > viewport_height {
       // Try positioning above cursor instead
-      let y_above = cursor_y - gap - anim_height - slide_offset;
+      let y_above = cursor_line_top - CURSOR_POPUP_MARGIN - anim_height - slide_offset;
       if y_above >= 0.0 {
         popup_y = y_above;
       } else {
@@ -1103,8 +1101,8 @@ impl Component for Completion {
       }
     }
 
-    // Center the scaled popup at the cursor position, then clamp to viewport
-    let mut popup_x = cursor_x - (menu_width - anim_width) / 2.0;
+    // Align popup with cursor column and clamp to viewport
+    let mut popup_x = cursor_x;
 
     // Clamp X to viewport bounds
     popup_x = popup_x.max(0.0).min(viewport_width - anim_width);

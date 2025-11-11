@@ -1,20 +1,35 @@
 #![recursion_limit = "512"]
 
-use std::sync::Arc;
+use std::{
+  path::Path,
+  sync::Arc,
+};
 
 use arc_swap::{
   ArcSwap,
   access::Map,
 };
+use smallvec::SmallVec;
 use the_editor_event::AsyncHook;
 
 use crate::{
+  cli::CliOptions,
   core::{
     config::Config,
+    document::{
+      Document,
+      DocumentOpenError,
+    },
     graphics::Rect,
+    position::Position,
+    selection::{
+      Range,
+      Selection,
+    },
     theme,
   },
   editor::{
+    Action,
     Editor,
     EditorConfig,
   },
@@ -22,10 +37,12 @@ use crate::{
 };
 
 mod application;
+mod cli;
 mod core;
 mod editor;
 mod event;
 pub mod handlers;
+mod health;
 mod increment;
 mod input;
 pub mod keymap;
@@ -34,6 +51,46 @@ mod snippets;
 mod ui;
 
 fn main() -> anyhow::Result<()> {
+  let CliOptions {
+    display_version,
+    load_tutor,
+    fetch_grammars,
+    build_grammars,
+    health: run_health,
+    health_category,
+    split,
+    verbosity,
+    log_file,
+    config_file,
+    working_dir,
+    mut files,
+  } = CliOptions::parse()?;
+
+  if display_version {
+    println!("the-editor {}", the_editor_loader::VERSION_AND_GIT_HASH);
+    return Ok(());
+  }
+
+  the_editor_loader::initialize_config_file(config_file);
+  the_editor_loader::initialize_log_file(log_file);
+
+  if run_health {
+    health::run(health_category.as_deref())?;
+    return Ok(());
+  }
+
+  if fetch_grammars {
+    the_editor_loader::grammar::fetch_grammars()?;
+    return Ok(());
+  }
+
+  if build_grammars {
+    the_editor_loader::grammar::build_grammars(None)?;
+    return Ok(());
+  }
+
+  setup_logging(verbosity)?;
+
   // Register all event types and hooks up front.
   crate::event::register_all_events();
 
@@ -61,7 +118,6 @@ fn main() -> anyhow::Result<()> {
   let config_ptr = Arc::new(ArcSwap::from_pointee(config.clone()));
 
   // Build handlers and register hooks.
-  // Spawn the completion request hook (async debouncer)
   let completion_hook = crate::handlers::completion_request::CompletionRequestHook::new();
   let completion_tx = completion_hook.spawn();
 
@@ -97,10 +153,34 @@ fn main() -> anyhow::Result<()> {
     .unwrap_or_else(|| theme_loader.default_theme(config.editor.true_color));
   editor.set_theme(theme);
 
-  // Create the initial view by opening a new empty file (like helix does).
+  if let Some(dir) = working_dir {
+    the_editor_stdx::env::set_current_working_dir(&dir)?;
+  } else if let Some(first_path) = files
+    .first()
+    .map(|(path, _)| path.clone())
+    .filter(|path| path.is_dir())
   {
-    use crate::editor::Action;
+    the_editor_stdx::env::set_current_working_dir(&first_path)?;
+    files.shift_remove(&first_path);
+  }
+
+  let opened = if load_tutor {
+    if !files.is_empty() {
+      log::warn!("Ignoring additional file arguments because --tutor was set");
+    }
+    open_tutor(&mut editor)?
+  } else {
+    open_cli_files(&mut editor, files, split)?
+  };
+
+  if opened == 0 {
     editor.new_file(Action::VerticalSplit);
+  } else {
+    editor.set_status(format!(
+      "Loaded {} file{}.",
+      opened,
+      if opened == 1 { "" } else { "s" }
+    ));
   }
 
   // Create the application wrapper with runtime handle
@@ -130,4 +210,127 @@ fn main() -> anyhow::Result<()> {
   rt.shutdown_timeout(std::time::Duration::from_secs(5));
 
   result
+}
+
+fn setup_logging(verbosity: u8) -> anyhow::Result<()> {
+  use chrono::Local;
+  use fern::Dispatch;
+  use log::LevelFilter;
+
+  let level = match verbosity {
+    0 => LevelFilter::Warn,
+    1 => LevelFilter::Info,
+    2 => LevelFilter::Debug,
+    _ => LevelFilter::Trace,
+  };
+
+  let file_config = Dispatch::new()
+    .format(|out, message, record| {
+      out.finish(format_args!(
+        "{} {} [{}] {}",
+        Local::now().format("%Y-%m-%dT%H:%M:%S%.3f"),
+        record.target(),
+        record.level(),
+        message
+      ))
+    })
+    .level(level)
+    .chain(fern::log_file(the_editor_loader::log_file())?);
+
+  Dispatch::new().level(level).chain(file_config).apply()?;
+
+  Ok(())
+}
+
+fn open_tutor(editor: &mut Editor) -> anyhow::Result<usize> {
+  let path = the_editor_loader::runtime_file(Path::new("tutor"));
+  let doc_id = editor.open(&path, Action::VerticalSplit)?;
+  {
+    let doc = crate::doc_mut!(editor, &doc_id);
+    doc.set_path(None);
+  }
+  Ok(1)
+}
+
+fn open_cli_files(
+  editor: &mut Editor,
+  files: indexmap::IndexMap<std::path::PathBuf, Vec<Position>>,
+  split: Option<cli::SplitMode>,
+) -> anyhow::Result<usize> {
+  let mut opened = 0usize;
+  let has_view = editor.focused_view_id().is_some();
+
+  for (path, positions) in files {
+    if path.is_dir() {
+      anyhow::bail!(
+        "expected a path to file, but found a directory: {}. (to open a directory pass it as \
+         first argument)",
+        path.display()
+      );
+    }
+
+    // Determine the action to use:
+    // - If split mode is specified, use that
+    // - If no view exists yet, use VerticalSplit to create one
+    // - Otherwise, use Load to open in the current view
+    let action = match split {
+      Some(cli::SplitMode::Vertical) => Action::VerticalSplit,
+      Some(cli::SplitMode::Horizontal) => Action::HorizontalSplit,
+      None => {
+        if has_view || opened > 0 {
+          Action::Load
+        } else {
+          Action::VerticalSplit
+        }
+      },
+    };
+
+    match editor.open(&path, action) {
+      Ok(doc_id) => {
+        opened += 1;
+        let view_id = editor
+          .focused_view_id()
+          .expect("view must exist after opening document");
+        let doc = crate::doc_mut!(editor, &doc_id);
+        let selection = selection_from_positions(doc, &positions);
+        doc.set_selection(view_id, selection);
+      },
+      Err(DocumentOpenError::IrregularFile) => {
+        log::warn!("Skipping irregular file {}", path.display());
+      },
+      Err(err) => return Err(err.into()),
+    }
+  }
+
+  Ok(opened)
+}
+
+fn selection_from_positions(doc: &Document, positions: &[Position]) -> Selection {
+  if positions.is_empty() {
+    return Selection::point(0);
+  }
+
+  let mut ranges: SmallVec<[Range; 1]> = SmallVec::with_capacity(positions.len());
+  let text = doc.text();
+
+  for pos in positions {
+    let offset = position_to_char_index(text, pos);
+    ranges.push(Range::point(offset));
+  }
+
+  let primary_index = ranges.len().saturating_sub(1);
+  Selection::new(ranges, primary_index)
+}
+
+fn position_to_char_index(text: &ropey::Rope, position: &Position) -> usize {
+  if text.len_lines() == 0 {
+    return 0;
+  }
+
+  let max_row = text.len_lines().saturating_sub(1);
+  let row = position.row.min(max_row);
+  let line_start = text.line_to_char(row);
+  let line = text.line(row);
+  let col = position.col.min(line.len_chars());
+  line_start + col
 }

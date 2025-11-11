@@ -21,14 +21,18 @@ arc-swap                           = "1.7.1"
 async-trait.workspace              = true
 bitflags                           = "2.4"
 chardetng.workspace                = true
-chrono                             = { default-features = false, features = [ "alloc", "std" ], version = "0.4" }
+chrono                             = { default-features = false, features = [ "alloc", "clock", "std" ], version = "0.4" }
 encoding_rs.workspace              = true
 foldhash.workspace                 = true
+fern.workspace                     = true
+crossterm.workspace                = true
+clap.workspace                     = true
 futures-executor.workspace         = true
 futures-util.workspace             = true
 globset.workspace                  = true
 ignore.workspace                   = true
 imara-diff.workspace               = true
+indexmap.workspace                 = true
 kstring.workspace                  = true
 log.workspace                      = true
 nucleo.workspace                   = true

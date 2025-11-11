@@ -141,11 +141,23 @@ pub fn cache_dir() -> PathBuf {
 }
 
 pub fn config_file() -> PathBuf {
-  CONFIG_FILE.get().map(|path| path.to_path_buf()).unwrap()
+  CONFIG_FILE
+    .get_or_init(|| {
+      let path = default_config_file();
+      ensure_parent_dir(&path);
+      path
+    })
+    .clone()
 }
 
 pub fn log_file() -> PathBuf {
-  LOG_FILE.get().map(|path| path.to_path_buf()).unwrap()
+  LOG_FILE
+    .get_or_init(|| {
+      let path = default_log_file();
+      ensure_parent_dir(&path);
+      path
+    })
+    .clone()
 }
 
 pub fn workspace_config_file() -> PathBuf {

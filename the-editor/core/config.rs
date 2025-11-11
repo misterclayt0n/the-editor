@@ -1,7 +1,6 @@
 use std::{
   fs,
   io::Error as IOError,
-  path::PathBuf,
 };
 
 use serde::Deserialize;
@@ -93,8 +92,7 @@ impl Config {
   /// Load user config from ~/.config/the-editor/config.toml using loader's
   /// config_dir.
   pub fn load_user() -> Result<Config, ConfigLoadError> {
-    let dir: PathBuf = the_editor_loader::config_dir();
-    let path = dir.join("config.toml");
+    let path = the_editor_loader::config_file();
     match fs::read_to_string(&path) {
       Ok(contents) => toml::from_str::<Config>(&contents).map_err(ConfigLoadError::BadConfig),
       Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),

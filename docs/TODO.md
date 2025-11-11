@@ -20,6 +20,10 @@ So, this is just a simple todo list that will grant me some sort of base for the
 
 #### Fixes
 - [ ] Render fonts correctly in the picker prompt menu (they're too spaced).
+- [ ] Fix panic in prompt because it can't handle unicode properly.
+- [ ] Render tabs in hover component.
+- [ ] Fix indent guides (sometimes it will be rendered as blank for some reason).
+- [ ] Some lsp diagnostics are not really being rendered into virtual lines.
 
 When it comes to ghostty, `libghostty` is not stable as an API yet, and the correct decision would be to wait until it's stable, but sometimes the heart speaks for itself you know.
 

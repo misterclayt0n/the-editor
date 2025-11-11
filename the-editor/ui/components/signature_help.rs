@@ -501,7 +501,8 @@ impl Component for SignatureHelp {
         let doc_bottom_limit = (anim_y + anim_height - padding).min(doc_box_top + doc_box_height);
 
         for segments in doc_lines.iter().skip(start_line).take(visible_doc_lines) {
-          if doc_y > doc_bottom_limit {
+          // Ensure we respect bottom padding - stop rendering before the padding area
+          if doc_y + line_height > anim_y + anim_height - padding {
             break;
           }
 

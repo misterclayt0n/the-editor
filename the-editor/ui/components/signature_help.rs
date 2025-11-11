@@ -1,3 +1,4 @@
+use ropey::Rope;
 use the_editor_renderer::{
   Color,
   Key,
@@ -6,6 +7,7 @@ use the_editor_renderer::{
   TextSegment,
   TextStyle,
 };
+use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
   core::graphics::Rect,
@@ -293,11 +295,18 @@ impl Component for SignatureHelp {
       available_chars.min(MAX_CONTENT_CHARS)
     };
 
-    let signature_lines = wrap_signature_lines(&sig.signature, sig.active_param_range, wrap_chars);
+    let signature_lines = wrap_signature_lines_with_syntax(
+      &sig.signature,
+      sig.active_param_range,
+      wrap_chars,
+      &self.language,
+      ctx,
+      text_color,
+    );
     let signature_line_count = signature_lines.len().max(1);
 
     let doc_lines = if let Some(doc) = &sig.signature_doc {
-      wrap_doc_text(doc, wrap_chars)
+      build_doc_render_lines(doc, wrap_chars, ui_char_width, ctx, text_color)
     } else {
       Vec::new()
     };
@@ -312,8 +321,13 @@ impl Component for SignatureHelp {
       .unwrap_or(0)
       .max(index_width_chars);
 
-    if let Some(max_doc_width) = doc_lines.iter().map(|line| line.chars().count()).max() {
-      content_chars = content_chars.max(max_doc_width);
+    let max_doc_width = doc_lines
+      .iter()
+      .map(|segments| estimate_line_width(segments, ui_char_width))
+      .fold(0.0, f32::max);
+    if max_doc_width > 0.0 {
+      let max_doc_chars = (max_doc_width / ui_char_width).ceil() as usize;
+      content_chars = content_chars.max(max_doc_chars);
     }
 
     let preferred_min = if available_chars >= MIN_CONTENT_CHARS {
@@ -429,11 +443,13 @@ impl Component for SignatureHelp {
         };
 
         for segment in &line.segments {
-          let color = if segment.highlighted {
-            Color::new(1.0, 1.0, 0.6, text_color.a)
-          } else {
-            text_color
-          };
+          let mut color = segment.color;
+          // Parameter highlighting takes precedence over syntax highlighting
+          if segment.highlighted {
+            color = Color::new(1.0, 1.0, 0.6, text_color.a);
+          }
+          // Apply alpha to color
+          color.a *= alpha;
           if segment.text.is_empty() {
             continue;
           }
@@ -484,25 +500,28 @@ impl Component for SignatureHelp {
         let doc_box_height = visible_doc_lines as f32 * line_height;
         let doc_bottom_limit = (anim_y + anim_height - padding).min(doc_box_top + doc_box_height);
 
-        for line in doc_lines.iter().skip(start_line).take(visible_doc_lines) {
+        for segments in doc_lines.iter().skip(start_line).take(visible_doc_lines) {
           if doc_y > doc_bottom_limit {
             break;
           }
 
-          if line.is_empty() {
+          if segments.is_empty() {
             doc_y += line_height;
             continue;
           }
 
+          let texts = segments
+            .iter()
+            .map(|segment| {
+              let mut seg = segment.clone();
+              seg.style.color.a *= alpha;
+              seg
+            })
+            .collect();
+
           surface.draw_text(TextSection {
             position: (text_x, doc_y),
-            texts:    vec![TextSegment {
-              content: line.clone(),
-              style:   TextStyle {
-                size:  UI_FONT_SIZE,
-                color: text_color,
-              },
-            }],
+            texts,
           });
           doc_y += line_height;
         }
@@ -551,6 +570,7 @@ impl Component for SignatureHelp {
 struct SignatureSegment {
   text:        String,
   highlighted: bool,
+  color:       Color,
 }
 
 #[derive(Clone)]
@@ -559,21 +579,31 @@ struct SignatureLine {
   char_len: usize,
 }
 
-fn wrap_signature_lines(
+/// Wrap signature lines with syntax highlighting applied.
+/// Parameter highlighting (yellow) takes precedence over syntax colors.
+fn wrap_signature_lines_with_syntax(
   signature: &str,
   highlight_range: Option<(usize, usize)>,
   max_chars: usize,
+  language: &str,
+  ctx: &mut Context,
+  default_text_color: Color,
 ) -> Vec<SignatureLine> {
   let max_chars = max_chars.max(1);
-  let mut chars = Vec::new();
-  let mut byte_offsets = Vec::new();
-  for (byte_idx, ch) in signature.char_indices() {
-    byte_offsets.push(byte_idx);
-    chars.push(ch);
-  }
-  byte_offsets.push(signature.len());
-  let total_chars = chars.len();
+  let total_chars = signature.chars().count();
 
+  if total_chars == 0 {
+    return vec![SignatureLine {
+      segments: vec![SignatureSegment {
+        text:        String::new(),
+        highlighted: false,
+        color:       default_text_color,
+      }],
+      char_len: 0,
+    }];
+  }
+
+  // Convert parameter highlight range from bytes to characters
   let highlight_chars = highlight_range.map(|(start, end)| {
     (
       signature[..start.min(signature.len())].chars().count(),
@@ -581,15 +611,44 @@ fn wrap_signature_lines(
     )
   });
 
-  if total_chars == 0 {
-    return vec![SignatureLine {
-      segments: vec![SignatureSegment {
-        text:        String::new(),
-        highlighted: false,
-      }],
-      char_len: 0,
-    }];
+  // Apply syntax highlighting to the full signature
+  let theme = &ctx.editor.theme;
+  let loader = ctx.editor.syn_loader.load();
+  let language_obj = loader.language_for_name(language.to_string());
+
+  let rope = Rope::from(signature);
+  let slice = rope.slice(..);
+
+  // Get syntax highlight spans
+  let syntax_spans = language_obj
+    .and_then(|lang| crate::core::syntax::Syntax::new(slice, lang, &loader).ok())
+    .map(|syntax| syntax.collect_highlights(slice, &loader, 0..slice.len_bytes()))
+    .unwrap_or_else(Vec::new);
+
+  // Convert syntax spans to character-based spans with colors
+  let mut syntax_char_spans: Vec<(usize, usize, Color)> = Vec::with_capacity(syntax_spans.len());
+  for (hl, byte_range) in syntax_spans.into_iter() {
+    let style = theme.highlight(hl);
+    let color = style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(default_text_color);
+    let start_char = slice.byte_to_char(slice.floor_char_boundary(byte_range.start));
+    let end_char = slice.byte_to_char(slice.ceil_char_boundary(byte_range.end));
+    if start_char < end_char {
+      syntax_char_spans.push((start_char, end_char, color));
+    }
   }
+  syntax_char_spans.sort_by_key(|(s, _e, _)| *s);
+
+  // Wrap the signature into lines
+  let mut chars = Vec::new();
+  let mut byte_offsets = Vec::new();
+  for (byte_idx, ch) in signature.char_indices() {
+    byte_offsets.push(byte_idx);
+    chars.push(ch);
+  }
+  byte_offsets.push(signature.len());
 
   let mut lines = Vec::new();
   let mut line_start = 0usize;
@@ -606,12 +665,14 @@ fn wrap_signature_lines(
 
     if idx - line_start >= max_chars && idx < total_chars {
       let break_idx = last_break.filter(|b| *b > line_start).unwrap_or(idx);
-      lines.push(build_signature_line(
+      lines.push(build_signature_line_with_syntax(
         signature,
         line_start,
         break_idx,
         &byte_offsets,
         highlight_chars,
+        &syntax_char_spans,
+        default_text_color,
       ));
       line_start = break_idx;
       last_break = None;
@@ -619,56 +680,127 @@ fn wrap_signature_lines(
   }
 
   if line_start < total_chars {
-    lines.push(build_signature_line(
+    lines.push(build_signature_line_with_syntax(
       signature,
       line_start,
       total_chars,
       &byte_offsets,
       highlight_chars,
+      &syntax_char_spans,
+      default_text_color,
     ));
   }
 
   lines
 }
 
-fn build_signature_line(
+fn build_signature_line_with_syntax(
   signature: &str,
   start_char: usize,
   end_char: usize,
   byte_offsets: &[usize],
   highlight_chars: Option<(usize, usize)>,
+  syntax_spans: &[(usize, usize, Color)],
+  default_color: Color,
 ) -> SignatureLine {
   if start_char >= end_char {
     return SignatureLine {
       segments: vec![SignatureSegment {
         text:        String::new(),
         highlighted: false,
+        color:       default_color,
       }],
       char_len: 0,
     };
   }
 
   let (highlight_start, highlight_end) = highlight_chars.unwrap_or((usize::MAX, usize::MAX));
-  let mut cursor = start_char;
-  let mut segments = Vec::new();
 
-  while cursor < end_char {
-    let highlighted = cursor >= highlight_start && cursor < highlight_end;
-    let boundary = if highlighted {
-      highlight_end
-    } else if cursor < highlight_start {
-      highlight_start
-    } else {
-      usize::MAX
-    };
-    let segment_end = boundary.min(end_char).max(cursor + 1);
-    let byte_start = byte_offsets[cursor];
+  // Build segments by merging syntax highlighting and parameter highlighting
+  let mut segments = Vec::new();
+  let mut cursor = start_char;
+
+  // Collect all boundaries (syntax spans and parameter highlight)
+  let mut boundaries = Vec::new();
+  for (s, e, _) in syntax_spans.iter() {
+    if *s >= start_char && *s < end_char {
+      boundaries.push((*s, false));
+    }
+    if *e > start_char && *e <= end_char {
+      boundaries.push((*e, false));
+    }
+  }
+  if highlight_start >= start_char && highlight_start < end_char {
+    boundaries.push((highlight_start, true));
+  }
+  if highlight_end > start_char && highlight_end <= end_char {
+    boundaries.push((highlight_end, true));
+  }
+  boundaries.push((start_char, false));
+  boundaries.push((end_char, false));
+  boundaries.sort_by_key(|(pos, _)| *pos);
+  boundaries.dedup_by_key(|(pos, _)| *pos);
+
+  for &(boundary, _) in boundaries.iter() {
+    if boundary <= cursor || boundary > end_char {
+      continue;
+    }
+
+    let segment_start = cursor;
+    let segment_end = boundary.min(end_char);
+
+    if segment_start >= segment_end {
+      continue;
+    }
+
+    // Determine if this segment is highlighted (parameter highlight)
+    let highlighted = segment_start >= highlight_start && segment_end <= highlight_end;
+
+    // Find syntax color for this segment (use the color from the first overlapping syntax span)
+    let mut syntax_color = default_color;
+    for (s, e, color) in syntax_spans.iter() {
+      if segment_start < *e && segment_end > *s {
+        syntax_color = *color;
+        break;
+      }
+    }
+
+    let byte_start = byte_offsets[segment_start];
     let byte_end = byte_offsets[segment_end];
     segments.push(SignatureSegment {
       text: signature[byte_start..byte_end].to_string(),
       highlighted,
+      color: syntax_color,
     });
+
     cursor = segment_end;
+  }
+
+  // Handle any remaining text
+  if cursor < end_char {
+    let highlighted = cursor >= highlight_start && end_char <= highlight_end;
+    let mut syntax_color = default_color;
+    for (s, e, color) in syntax_spans.iter() {
+      if cursor < *e && end_char > *s {
+        syntax_color = *color;
+        break;
+      }
+    }
+    let byte_start = byte_offsets[cursor];
+    let byte_end = byte_offsets[end_char];
+    segments.push(SignatureSegment {
+      text: signature[byte_start..byte_end].to_string(),
+      highlighted,
+      color: syntax_color,
+    });
+  }
+
+  if segments.is_empty() {
+    segments.push(SignatureSegment {
+      text:        String::new(),
+      highlighted: false,
+      color:       default_color,
+    });
   }
 
   SignatureLine {
@@ -685,17 +817,283 @@ fn signature_wrap_break(ch: char) -> bool {
     )
 }
 
-fn wrap_doc_text(doc: &str, max_chars: usize) -> Vec<String> {
-  let mut lines = Vec::new();
-  for raw_line in doc.lines() {
-    let wrapped = wrap_text(raw_line, max_chars);
-    if wrapped.is_empty() {
-      lines.push(String::new());
+/// Build documentation render lines with markdown and syntax highlighting support.
+/// Similar to build_hover_render_lines in hover.rs.
+fn build_doc_render_lines(
+  markdown: &str,
+  max_chars: usize,
+  _cell_width: f32,
+  ctx: &mut Context,
+  default_text_color: Color,
+) -> Vec<Vec<TextSegment>> {
+  let base_text_color = default_text_color;
+
+  let mut render_lines: Vec<Vec<TextSegment>> = Vec::new();
+  let mut in_fence = false;
+  let mut fence_lang: Option<String> = None;
+  let mut fence_buf: Vec<String> = Vec::new();
+
+  let max_chars = max_chars.max(4);
+
+  for raw_line in markdown.lines() {
+    if raw_line.starts_with("```") {
+      if in_fence {
+        let code = fence_buf.join("\n");
+        render_lines.extend(highlight_code_block_lines(
+          fence_lang.as_deref(),
+          &code,
+          max_chars,
+          ctx,
+        ));
+        render_lines.push(vec![TextSegment {
+          content: String::new(),
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: base_text_color,
+          },
+        }]);
+        in_fence = false;
+        fence_lang = None;
+        fence_buf.clear();
+      } else {
+        in_fence = true;
+        let lang = raw_line.trim_start_matches("```").trim();
+        fence_lang = if lang.is_empty() {
+          None
+        } else {
+          Some(lang.to_string())
+        };
+      }
+      continue;
+    }
+
+    if in_fence {
+      fence_buf.push(raw_line.to_string());
+      continue;
+    }
+
+    let wrapped_lines = wrap_text(raw_line, max_chars);
+    if wrapped_lines.is_empty() {
+      render_lines.push(vec![TextSegment {
+        content: String::new(),
+        style:   TextStyle {
+          size:  UI_FONT_SIZE,
+          color: base_text_color,
+        },
+      }]);
     } else {
-      lines.extend(wrapped);
+      for line in wrapped_lines {
+        render_lines.push(vec![TextSegment {
+          content: line,
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: base_text_color,
+          },
+        }]);
+      }
     }
   }
+
+  if in_fence {
+    let code = fence_buf.join("\n");
+    render_lines.extend(highlight_code_block_lines(
+      fence_lang.as_deref(),
+      &code,
+      max_chars,
+      ctx,
+    ));
+  }
+
+  render_lines
+}
+
+/// Highlight code block lines with syntax highlighting.
+/// Similar to highlight_code_block_lines in hover.rs.
+fn highlight_code_block_lines(
+  lang_hint: Option<&str>,
+  code: &str,
+  max_chars: usize,
+  ctx: &mut Context,
+) -> Vec<Vec<TextSegment>> {
+  let theme = &ctx.editor.theme;
+  let code_style = theme.get("markup.raw");
+  let default_code_color = code_style
+    .fg
+    .map(crate::ui::theme_color_to_renderer_color)
+    .unwrap_or(Color::new(0.8, 0.8, 0.8, 1.0));
+
+  let rope = Rope::from(code);
+  let slice = rope.slice(..);
+
+  let loader = ctx.editor.syn_loader.load();
+  let language = lang_hint
+    .and_then(|name| loader.language_for_name(name.to_string()))
+    .or_else(|| loader.language_for_match(slice));
+
+  let spans = language
+    .and_then(|lang| crate::core::syntax::Syntax::new(slice, lang, &loader).ok())
+    .map(|syntax| syntax.collect_highlights(slice, &loader, 0..slice.len_bytes()))
+    .unwrap_or_else(Vec::new);
+
+  let mut lines: Vec<Vec<TextSegment>> = Vec::new();
+  let total_lines = rope.len_lines();
+
+  let mut char_spans: Vec<(usize, usize, Color)> = Vec::with_capacity(spans.len());
+  for (hl, byte_range) in spans.into_iter() {
+    let style = theme.highlight(hl);
+    let color = style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(default_code_color);
+    let start_char = slice.byte_to_char(slice.floor_char_boundary(byte_range.start));
+    let end_char = slice.byte_to_char(slice.ceil_char_boundary(byte_range.end));
+    if start_char < end_char {
+      char_spans.push((start_char, end_char, color));
+    }
+  }
+  char_spans.sort_by_key(|(s, _e, _)| *s);
+
+  for line_idx in 0..total_lines {
+    let line_slice = rope.line(line_idx);
+    let mut line_string = line_slice.to_string();
+    if line_string.ends_with('\n') {
+      line_string.pop();
+    }
+
+    // Wrap the line to fit within max_chars
+    let wrapped_line_strings = wrap_text(&line_string, max_chars);
+
+    // Process each wrapped segment independently
+    for wrapped_line in wrapped_line_strings {
+      if wrapped_line.is_empty() {
+        lines.push(vec![TextSegment {
+          content: String::new(),
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: default_code_color,
+          },
+        }]);
+        continue;
+      }
+
+      // For wrapped segments, we apply syntax highlighting to the wrapped text directly
+      let wrapped_rope = Rope::from(wrapped_line.as_str());
+      let wrapped_slice = wrapped_rope.slice(..);
+
+      // Re-apply syntax highlighting to the wrapped segment
+      let wrapped_spans = language
+        .and_then(|lang| crate::core::syntax::Syntax::new(wrapped_slice, lang, &loader).ok())
+        .map(|syntax| {
+          syntax.collect_highlights(wrapped_slice, &loader, 0..wrapped_slice.len_bytes())
+        })
+        .unwrap_or_else(Vec::new);
+
+      let mut wrapped_char_spans: Vec<(usize, usize, Color)> =
+        Vec::with_capacity(wrapped_spans.len());
+      for (hl, byte_range) in wrapped_spans.into_iter() {
+        let style = theme.highlight(hl);
+        let color = style
+          .fg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(default_code_color);
+        let start_char =
+          wrapped_slice.byte_to_char(wrapped_slice.floor_char_boundary(byte_range.start));
+        let end_char =
+          wrapped_slice.byte_to_char(wrapped_slice.ceil_char_boundary(byte_range.end));
+        if start_char < end_char {
+          wrapped_char_spans.push((start_char, end_char, color));
+        }
+      }
+      wrapped_char_spans.sort_by_key(|(s, _e, _)| *s);
+
+      let mut segments: Vec<TextSegment> = Vec::new();
+      let mut cursor = 0usize;
+      let wrapped_line_chars = wrapped_line.chars().count();
+
+      for (s, e, color) in wrapped_char_spans.iter().cloned() {
+        if e <= cursor || s >= wrapped_line_chars {
+          continue;
+        }
+        let seg_start = s.max(cursor);
+        let seg_end = e.min(wrapped_line_chars);
+
+        if seg_start > cursor {
+          let prefix = slice_chars_to_string(&wrapped_line, cursor, seg_start);
+          if !prefix.is_empty() {
+            segments.push(TextSegment {
+              content: prefix,
+              style:   TextStyle {
+                size:  UI_FONT_SIZE,
+                color: default_code_color,
+              },
+            });
+          }
+        }
+
+        let content = slice_chars_to_string(&wrapped_line, seg_start, seg_end);
+        if !content.is_empty() {
+          segments.push(TextSegment {
+            content,
+            style:   TextStyle {
+              size:  UI_FONT_SIZE,
+              color,
+            },
+          });
+        }
+        cursor = seg_end;
+      }
+
+      if cursor < wrapped_line_chars {
+        let tail = slice_chars_to_string(&wrapped_line, cursor, wrapped_line_chars);
+        if !tail.is_empty() {
+          segments.push(TextSegment {
+            content: tail,
+            style:   TextStyle {
+              size:  UI_FONT_SIZE,
+              color: default_code_color,
+            },
+          });
+        }
+      }
+
+      if segments.is_empty() {
+        segments.push(TextSegment {
+          content: wrapped_line,
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: default_code_color,
+          },
+        });
+      }
+
+      lines.push(segments);
+    }
+  }
+
   lines
+}
+
+fn estimate_line_width(segments: &[TextSegment], cell_width: f32) -> f32 {
+  segments
+    .iter()
+    .map(|segment| segment.content.chars().count() as f32 * cell_width)
+    .sum()
+}
+
+fn slice_chars_to_string(s: &str, start: usize, end: usize) -> String {
+  if start >= end || start >= s.chars().count() {
+    return String::new();
+  }
+  let mut buf = String::with_capacity(end.saturating_sub(start));
+  for (i, ch) in s.chars().enumerate() {
+    if i >= end {
+      break;
+    }
+    if i >= start {
+      buf.push(ch);
+    }
+  }
+  buf
 }
 
 fn wrap_text(text: &str, max_chars: usize) -> Vec<String> {

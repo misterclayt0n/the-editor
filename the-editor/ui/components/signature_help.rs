@@ -376,21 +376,16 @@ impl Component for SignatureHelp {
     let anim_width = popup_width * scale;
     let anim_height = popup_height * scale;
 
-    // Try to position above cursor first (signature help prefers above)
+    // Signature help ALWAYS positions above the cursor (never below where completion goes)
     let mut popup_y = line_top - popup_height - 4.0 - slide_offset;
 
-    // Ensure popup fits within viewport
-    if popup_y < 0.0 || popup_y + anim_height > viewport_height {
-      // Try positioning below cursor instead
-      let y_below = line_top + doc_line_height + 4.0 + slide_offset;
-      if y_below >= 0.0 && y_below + anim_height <= viewport_height {
-        popup_y = y_below;
-      } else {
-        // Not enough space in preferred positions, clamp to viewport
-        popup_y = popup_y
-          .max(0.0)
-          .min((viewport_height - anim_height).max(0.0));
-      }
+    // Clamp to viewport top if needed, but never move below cursor
+    if popup_y < 0.0 {
+      popup_y = 0.0;
+    }
+    // Ensure bottom doesn't overflow viewport
+    if popup_y + anim_height > viewport_height {
+      popup_y = (viewport_height - anim_height).max(0.0);
     }
 
     // Center the scaled popup at the cursor position, then clamp to viewport

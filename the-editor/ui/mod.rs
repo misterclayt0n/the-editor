@@ -5,6 +5,7 @@ pub mod compositor;
 pub mod editor_view;
 pub mod gutter;
 pub mod job;
+pub mod popup_positioning;
 pub mod render_cache;
 pub mod render_commands;
 pub mod text_decorations;
@@ -162,6 +163,11 @@ pub fn show_signature_help(
 
   // Update EditorView with signature help
   if let Some(editor_view) = compositor.find::<EditorView>() {
+    if editor_view.completion.is_some() {
+      // Mirror Helix behavior: completion popups take precedence, so skip showing
+      // signature help when completion is visible to avoid overlapping UI.
+      return;
+    }
     let mut active_signature = response.active_signature.map(|s| s as usize);
     if active_signature.is_none() {
       active_signature = editor_view

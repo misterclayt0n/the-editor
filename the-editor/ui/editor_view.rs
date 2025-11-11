@@ -353,6 +353,8 @@ impl EditorView {
 
     // Store the completion
     self.completion = Some(completion);
+    // Drop signature help to mirror Helix: popups never coexist to avoid overlap
+    self.signature_help = None;
 
     // TODO: Calculate actual area based on cursor position
     Some(Rect::new(0, 0, 60, 15))

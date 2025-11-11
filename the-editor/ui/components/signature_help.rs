@@ -10,6 +10,11 @@ use the_editor_renderer::{
 use crate::{
   core::graphics::Rect,
   ui::{
+    popup_positioning::{
+      calculate_cursor_position,
+      constrain_popup_height,
+      position_popup_centered_on_cursor,
+    },
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
     compositor::{
@@ -32,6 +37,9 @@ const POPUP_PADDING: f32 = 10.0;
 const DOC_SECTION_GAP: f32 = 6.0;
 const PIXELS_PER_SCROLL_LINE: f32 = 24.0;
 const MAX_SCROLL_LINES_PER_TICK: i32 = 4;
+const VIEWPORT_SIDE_MARGIN: f32 = 12.0;
+/// Pixel gap between cursor and popup (matches completion popup)
+const CURSOR_POPUP_MARGIN: f32 = 4.0;
 
 /// Signature help popup component
 pub struct SignatureHelp {
@@ -226,8 +234,6 @@ impl Component for SignatureHelp {
       return;
     }
 
-    let doc_cell_w = surface.cell_width().max(1.0);
-
     // Update animation with declarative system
     self.animation.update(ctx.dt);
     let eased_t = *self.animation.current();
@@ -259,51 +265,8 @@ impl Component for SignatureHelp {
     // Calculate popup dimensions
     let padding = POPUP_PADDING;
 
-    // Calculate fresh cursor position using document font metrics
-    let cursor_position = {
-      let (view, doc) = crate::current_ref!(ctx.editor);
-      let text = doc.text();
-      let cursor_pos = doc.selection(view.id).primary().cursor(text.slice(..));
-
-      // Convert char position to line/column
-      let line = text.char_to_line(cursor_pos);
-      let line_start = text.line_to_char(line);
-      let col = cursor_pos - line_start;
-
-      // Get view scroll offset
-      let view_offset = doc.view_offset(view.id);
-      let anchor_line = text.char_to_line(view_offset.anchor.min(text.len_chars()));
-
-      // Calculate screen row/col accounting for scroll
-      let rel_row = line.saturating_sub(anchor_line);
-      let screen_col = col.saturating_sub(view_offset.horizontal_offset);
-
-      if rel_row >= view.inner_height() {
-        None
-      } else {
-        // Get font metrics
-        let font_size = ctx
-          .editor
-          .font_size_override
-          .unwrap_or(ctx.editor.config().font_size);
-        let font_width = doc_cell_w;
-        const LINE_SPACING: f32 = 4.0;
-        let line_height = font_size + LINE_SPACING;
-
-        // Get view's screen offset (handles splits correctly)
-        let inner = view.inner_area(doc);
-        let view_x = inner.x as f32 * font_width;
-        let view_y = inner.y as f32 * line_height;
-
-        // Calculate final screen position
-        let x = view_x + (screen_col as f32 * font_width);
-        let line_top = view_y + (rel_row as f32 * line_height);
-
-        Some((x, line_top, line_height))
-      }
-    };
-
-    let Some((cursor_x, line_top, doc_line_height)) = cursor_position else {
+    // Calculate cursor position using shared positioning utility
+    let Some(cursor) = calculate_cursor_position(ctx, surface) else {
       return;
     };
 
@@ -312,6 +275,8 @@ impl Component for SignatureHelp {
     surface.configure_font(&font_state.family, UI_FONT_SIZE);
     let ui_char_width = surface.cell_width().max(UI_FONT_WIDTH.max(1.0));
     let line_height = surface.cell_height().max(UI_FONT_SIZE + 4.0);
+    let viewport_width = surface.width() as f32;
+    let viewport_height = surface.height() as f32;
 
     let signature_index = self.signature_index();
     let index_width_chars = signature_index
@@ -319,33 +284,79 @@ impl Component for SignatureHelp {
       .map(|idx| idx.chars().count())
       .unwrap_or(0);
 
-    let sig_char_count = sig.signature.chars().count();
-    let mut content_chars = sig_char_count.clamp(MIN_CONTENT_CHARS, MAX_CONTENT_CHARS);
-    content_chars = content_chars.max(index_width_chars.clamp(0, MAX_CONTENT_CHARS));
+    let available_content_width =
+      (viewport_width - VIEWPORT_SIDE_MARGIN * 2.0 - padding * 2.0).max(ui_char_width);
+    let available_chars = ((available_content_width / ui_char_width).floor() as usize).max(1);
+    let wrap_chars = if available_chars < MIN_CONTENT_CHARS {
+      available_chars
+    } else {
+      available_chars.min(MAX_CONTENT_CHARS)
+    };
 
-    if let Some(doc) = &sig.signature_doc {
-      if let Some(max_doc_width) = wrap_doc_text(doc, MAX_CONTENT_CHARS)
-        .iter()
-        .map(|line| line.chars().count())
-        .max()
-      {
-        content_chars =
-          content_chars.max(max_doc_width.clamp(MIN_CONTENT_CHARS, MAX_CONTENT_CHARS));
-      }
-    }
+    let signature_lines = wrap_signature_lines(&sig.signature, sig.active_param_range, wrap_chars);
+    let signature_line_count = signature_lines.len().max(1);
 
-    let wrap_chars = content_chars.clamp(MIN_CONTENT_CHARS, MAX_CONTENT_CHARS);
     let doc_lines = if let Some(doc) = &sig.signature_doc {
       wrap_doc_text(doc, wrap_chars)
     } else {
       Vec::new()
     };
 
-    let content_width = content_chars as f32 * ui_char_width;
-    let popup_width = (content_width + padding * 2.0).clamp(POPUP_MIN_WIDTH, POPUP_MAX_WIDTH);
-
     let doc_line_count = doc_lines.len();
-    let visible_doc_lines = doc_line_count.min(MAX_DOC_VISIBLE_LINES);
+    let mut visible_doc_lines = doc_line_count.min(MAX_DOC_VISIBLE_LINES);
+
+    let mut content_chars = signature_lines
+      .iter()
+      .map(|line| line.char_len)
+      .max()
+      .unwrap_or(0)
+      .max(index_width_chars);
+
+    if let Some(max_doc_width) = doc_lines.iter().map(|line| line.chars().count()).max() {
+      content_chars = content_chars.max(max_doc_width);
+    }
+
+    let preferred_min = if available_chars >= MIN_CONTENT_CHARS {
+      MIN_CONTENT_CHARS
+    } else {
+      available_chars
+    };
+    content_chars = content_chars.max(preferred_min).min(wrap_chars).max(1);
+
+    let content_width = content_chars as f32 * ui_char_width;
+    let mut popup_width = (content_width + padding * 2.0).clamp(POPUP_MIN_WIDTH, POPUP_MAX_WIDTH);
+    let available_popup_width =
+      (viewport_width - VIEWPORT_SIDE_MARGIN * 2.0).max(padding * 2.0 + ui_char_width);
+    popup_width = popup_width.min(available_popup_width).min(viewport_width);
+
+    let signature_block_height = signature_line_count as f32 * line_height;
+    let mut popup_height = padding * 2.0 + signature_block_height;
+    if visible_doc_lines > 0 {
+      popup_height += DOC_SECTION_GAP + visible_doc_lines as f32 * line_height;
+    }
+    let min_popup_height = padding * 2.0 + signature_block_height;
+
+    // Constrain popup height to fit available space using shared utility
+    // Pass None for bias to maintain current behavior (choose side with more space)
+    popup_height = constrain_popup_height(
+      cursor,
+      popup_height,
+      min_popup_height,
+      viewport_height,
+      None,
+    );
+
+    // Recalculate visible_doc_lines if height was constrained
+    if popup_height < padding * 2.0 + signature_block_height + DOC_SECTION_GAP + visible_doc_lines as f32 * line_height {
+      let available_for_docs = (popup_height - min_popup_height - DOC_SECTION_GAP).max(0.0);
+      let max_lines_by_height = (available_for_docs / line_height).floor() as usize;
+      visible_doc_lines = visible_doc_lines.min(max_lines_by_height);
+      if visible_doc_lines == 0 {
+        popup_height = min_popup_height;
+      } else {
+        popup_height = min_popup_height + DOC_SECTION_GAP + visible_doc_lines as f32 * line_height;
+      }
+    }
 
     self.last_doc_total_lines = doc_line_count;
     self.last_doc_visible_lines = visible_doc_lines;
@@ -363,39 +374,23 @@ impl Component for SignatureHelp {
       }
     }
 
-    let mut popup_height = padding * 2.0 + line_height;
-    if visible_doc_lines > 0 {
-      popup_height += DOC_SECTION_GAP + visible_doc_lines as f32 * line_height;
-    }
+      // Position popup using shared positioning utility (generalized from completer)
+      // Pass None for bias to maintain current behavior (choose side with more space)
+      let popup_pos = position_popup_centered_on_cursor(
+        cursor,
+        popup_width,
+        popup_height,
+        viewport_width,
+        viewport_height,
+        slide_offset,
+        scale,
+        None,
+      );
 
-    // Get viewport dimensions for bounds checking
-    let viewport_width = surface.width() as f32;
-    let viewport_height = surface.height() as f32;
-
-    // Apply animation transforms
-    let anim_width = popup_width * scale;
-    let anim_height = popup_height * scale;
-
-    // Signature help ALWAYS positions above the cursor (never below where completion goes)
-    let mut popup_y = line_top - popup_height - 4.0 - slide_offset;
-
-    // Clamp to viewport top if needed, but never move below cursor
-    if popup_y < 0.0 {
-      popup_y = 0.0;
-    }
-    // Ensure bottom doesn't overflow viewport
-    if popup_y + anim_height > viewport_height {
-      popup_y = (viewport_height - anim_height).max(0.0);
-    }
-
-    // Center the scaled popup at the cursor position, then clamp to viewport
-    let mut popup_x = cursor_x - (popup_width - anim_width) / 2.0;
-
-    // Clamp X to viewport bounds
-    popup_x = popup_x.max(0.0).min(viewport_width - anim_width);
-
-    let anim_x = popup_x;
-    let anim_y = popup_y;
+      let anim_width = popup_width * scale;
+      let anim_height = popup_height * scale;
+      let anim_x = popup_pos.x;
+      let anim_y = popup_pos.y;
 
     // Draw background
     let corner_radius = 6.0;
@@ -424,23 +419,36 @@ impl Component for SignatureHelp {
     // Render signature text with highlighted parameter
     surface.with_overlay_region(anim_x, anim_y, anim_width, anim_height, |surface| {
       let text_x = anim_x + padding;
-      let text_y = anim_y + padding + UI_FONT_SIZE; // Add font size for baseline
+      let first_line_baseline = anim_y + padding + UI_FONT_SIZE;
 
-      // Build a single section with multiple segments
-      let mut section = TextSection {
-        position: (text_x, text_y),
-        texts:    Vec::new(),
-      };
+      for (line_idx, line) in signature_lines.iter().enumerate() {
+        let line_y = first_line_baseline + line_idx as f32 * line_height;
+        let mut section = TextSection {
+          position: (text_x, line_y),
+          texts:    Vec::new(),
+        };
 
-      if let Some((start, end)) = sig.active_param_range {
-        // Split into: before | highlighted | after
-        let before = &sig.signature[..start];
-        let highlighted = &sig.signature[start..end];
-        let after = &sig.signature[end..];
-
-        if !before.is_empty() {
+        for segment in &line.segments {
+          let color = if segment.highlighted {
+            Color::new(1.0, 1.0, 0.6, text_color.a)
+          } else {
+            text_color
+          };
+          if segment.text.is_empty() {
+            continue;
+          }
           section.texts.push(TextSegment {
-            content: before.to_string(),
+            content: segment.text.clone(),
+            style:   TextStyle {
+              size: UI_FONT_SIZE,
+              color,
+            },
+          });
+        }
+
+        if section.texts.is_empty() {
+          section.texts.push(TextSegment {
+            content: String::new(),
             style:   TextStyle {
               size:  UI_FONT_SIZE,
               color: text_color,
@@ -448,43 +456,14 @@ impl Component for SignatureHelp {
           });
         }
 
-        // For highlighted text, we can use a lighter color since we can't set
-        // background
-        section.texts.push(TextSegment {
-          content: highlighted.to_string(),
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
-            color: Color::new(1.0, 1.0, 0.6, text_color.a), // Yellowish highlight
-          },
-        });
-
-        if !after.is_empty() {
-          section.texts.push(TextSegment {
-            content: after.to_string(),
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
-              color: text_color,
-            },
-          });
-        }
-      } else {
-        // No parameter highlighting
-        section.texts.push(TextSegment {
-          content: sig.signature.clone(),
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
-            color: text_color,
-          },
-        });
+        surface.draw_text(section);
       }
-
-      surface.draw_text(section);
 
       if let Some(index_text) = signature_index {
         let index_width = index_text.chars().count() as f32 * ui_char_width;
         let index_x = (anim_x + anim_width - padding - index_width).max(text_x);
         surface.draw_text(TextSection {
-          position: (index_x, text_y),
+          position: (index_x, first_line_baseline),
           texts:    vec![TextSegment {
             content: index_text,
             style:   TextStyle {
@@ -498,7 +477,8 @@ impl Component for SignatureHelp {
       if !doc_lines.is_empty() && visible_doc_lines > 0 {
         let max_scroll = doc_lines.len().saturating_sub(visible_doc_lines);
         let start_line = self.doc_scroll.min(max_scroll);
-        let doc_area_top = text_y + line_height + DOC_SECTION_GAP;
+        let doc_area_top =
+          first_line_baseline + signature_line_count as f32 * line_height + DOC_SECTION_GAP;
         let mut doc_y = doc_area_top;
         let doc_box_top = doc_area_top - UI_FONT_SIZE;
         let doc_box_height = visible_doc_lines as f32 * line_height;
@@ -565,6 +545,144 @@ impl Component for SignatureHelp {
   fn is_animating(&self) -> bool {
     !self.animation.is_complete()
   }
+}
+
+#[derive(Clone)]
+struct SignatureSegment {
+  text:        String,
+  highlighted: bool,
+}
+
+#[derive(Clone)]
+struct SignatureLine {
+  segments: Vec<SignatureSegment>,
+  char_len: usize,
+}
+
+fn wrap_signature_lines(
+  signature: &str,
+  highlight_range: Option<(usize, usize)>,
+  max_chars: usize,
+) -> Vec<SignatureLine> {
+  let max_chars = max_chars.max(1);
+  let mut chars = Vec::new();
+  let mut byte_offsets = Vec::new();
+  for (byte_idx, ch) in signature.char_indices() {
+    byte_offsets.push(byte_idx);
+    chars.push(ch);
+  }
+  byte_offsets.push(signature.len());
+  let total_chars = chars.len();
+
+  let highlight_chars = highlight_range.map(|(start, end)| {
+    (
+      signature[..start.min(signature.len())].chars().count(),
+      signature[..end.min(signature.len())].chars().count(),
+    )
+  });
+
+  if total_chars == 0 {
+    return vec![SignatureLine {
+      segments: vec![SignatureSegment {
+        text:        String::new(),
+        highlighted: false,
+      }],
+      char_len: 0,
+    }];
+  }
+
+  let mut lines = Vec::new();
+  let mut line_start = 0usize;
+  let mut idx = 0usize;
+  let mut last_break: Option<usize> = None;
+
+  while idx < total_chars {
+    let ch = chars[idx];
+    idx += 1;
+
+    if signature_wrap_break(ch) {
+      last_break = Some(idx);
+    }
+
+    if idx - line_start >= max_chars && idx < total_chars {
+      let break_idx = last_break.filter(|b| *b > line_start).unwrap_or(idx);
+      lines.push(build_signature_line(
+        signature,
+        line_start,
+        break_idx,
+        &byte_offsets,
+        highlight_chars,
+      ));
+      line_start = break_idx;
+      last_break = None;
+    }
+  }
+
+  if line_start < total_chars {
+    lines.push(build_signature_line(
+      signature,
+      line_start,
+      total_chars,
+      &byte_offsets,
+      highlight_chars,
+    ));
+  }
+
+  lines
+}
+
+fn build_signature_line(
+  signature: &str,
+  start_char: usize,
+  end_char: usize,
+  byte_offsets: &[usize],
+  highlight_chars: Option<(usize, usize)>,
+) -> SignatureLine {
+  if start_char >= end_char {
+    return SignatureLine {
+      segments: vec![SignatureSegment {
+        text:        String::new(),
+        highlighted: false,
+      }],
+      char_len: 0,
+    };
+  }
+
+  let (highlight_start, highlight_end) = highlight_chars.unwrap_or((usize::MAX, usize::MAX));
+  let mut cursor = start_char;
+  let mut segments = Vec::new();
+
+  while cursor < end_char {
+    let highlighted = cursor >= highlight_start && cursor < highlight_end;
+    let boundary = if highlighted {
+      highlight_end
+    } else if cursor < highlight_start {
+      highlight_start
+    } else {
+      usize::MAX
+    };
+    let segment_end = boundary.min(end_char).max(cursor + 1);
+    let byte_start = byte_offsets[cursor];
+    let byte_end = byte_offsets[segment_end];
+    segments.push(SignatureSegment {
+      text: signature[byte_start..byte_end].to_string(),
+      highlighted,
+    });
+    cursor = segment_end;
+  }
+
+  SignatureLine {
+    segments,
+    char_len: end_char - start_char,
+  }
+}
+
+fn signature_wrap_break(ch: char) -> bool {
+  ch.is_whitespace()
+    || matches!(
+      ch,
+      ',' | ';' | ':' | '(' | ')' | '<' | '>' | '[' | ']' | '{' | '}' | '-'
+    )
 }
 
 fn wrap_doc_text(doc: &str, max_chars: usize) -> Vec<String> {

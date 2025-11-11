@@ -10,6 +10,12 @@ use crate::{
     position::Position,
   },
   ui::{
+    popup_positioning::{
+      calculate_cursor_position,
+      constrain_popup_height,
+      position_popup_near_cursor,
+      CursorPosition,
+    },
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
     compositor::{
@@ -189,7 +195,7 @@ pub struct PopupShell<T: PopupContent> {
   id:              &'static str,
   contents:        T,
   anchor:          Option<Position>,
-  bias:            PositionBias,
+  bias:            Option<PositionBias>,
   auto_close:      bool,
   limits:          PopupLimits,
   style:           PopupStyle,
@@ -205,7 +211,7 @@ impl<T: PopupContent> PopupShell<T> {
       id,
       contents,
       anchor: None,
-      bias: PositionBias::Below,
+      bias: None,
       auto_close: true,
       limits: PopupLimits::default(),
       style: PopupStyle::default(),
@@ -220,7 +226,7 @@ impl<T: PopupContent> PopupShell<T> {
     self
   }
 
-  pub fn position_bias(mut self, bias: PositionBias) -> Self {
+  pub fn position_bias(mut self, bias: Option<PositionBias>) -> Self {
     self.bias = bias;
     self
   }
@@ -278,14 +284,11 @@ impl<T: PopupContent> PopupShell<T> {
   fn anchor_position(
     &self,
     ctx: &Context,
-    viewport: RectPx,
-    cell_w: f32,
-    cell_h: f32,
-  ) -> Option<(f32, f32)> {
-    let anchor = self.anchor.or_else(|| ctx.editor.cursor().0)?;
-    let x = viewport.x + (anchor.col as f32 * cell_w);
-    let y = viewport.y + (anchor.row as f32 * cell_h);
-    Some((x, y))
+    surface: &Surface,
+  ) -> Option<CursorPosition> {
+    // Use shared cursor position calculation for consistent positioning
+    // with completer and signature help
+    calculate_cursor_position(ctx, surface)
   }
 
   fn compute_outer_rect(
@@ -294,8 +297,11 @@ impl<T: PopupContent> PopupShell<T> {
     content_size: PopupSize,
     ui_cell_w: f32,
     ui_cell_h: f32,
-    doc_cell_h: f32,
-    anchor: Option<(f32, f32)>,
+    cursor: Option<CursorPosition>,
+    slide_offset: f32,
+    scale: f32,
+    surface_width: f32,
+    surface_height: f32,
   ) -> RectPx {
     let padding = self.style.padding;
     let min_outer_width = (self.limits.min_width as f32 * ui_cell_w)
@@ -323,54 +329,36 @@ impl<T: PopupContent> PopupShell<T> {
       outer_height = min_outer_height.max(160.0).min(max_outer_height);
     }
 
-    let clamp_x = |value: f32| {
-      let max_x = (viewport_rect.right() - outer_width).max(viewport_rect.x);
-      let min_x = viewport_rect.x.min(max_x);
-      value.clamp(min_x, max_x)
-    };
-
-    let clamp_y = |value: f32| {
-      let max_y = (viewport_rect.bottom() - outer_height).max(viewport_rect.y);
-      let min_y = viewport_rect.y.min(max_y);
-      value.clamp(min_y, max_y)
-    };
-
-    let (x, y) = match anchor {
-      Some((ax, ay)) => {
-        let px = clamp_x(ax - outer_width / 2.0);
-
-        let gap = doc_cell_h.max(ui_cell_h).max(16.0);
-        match self.bias {
-          PositionBias::Below => {
-            let candidate = ay + gap;
-            let bottom = candidate + outer_height;
-            if bottom <= viewport_rect.bottom() {
-              (px, candidate)
-            } else {
-              let above = ay - gap - outer_height;
-              if above >= viewport_rect.y {
-                (px, above)
-              } else {
-                (px, clamp_y(viewport_rect.bottom() - outer_height))
-              }
-            }
-          },
-          PositionBias::Above => {
-            let candidate = ay - gap - outer_height;
-            if candidate >= viewport_rect.y {
-              (px, candidate)
-            } else {
-              let below = ay + gap;
-              if below + outer_height <= viewport_rect.bottom() {
-                (px, below)
-              } else {
-                (px, viewport_rect.y)
-              }
-            }
-          },
-        }
+    let (x, y) = match cursor {
+      Some(cursor_pos) => {
+        // Use shared positioning logic
+        // For hover, align with cursor column (like completion), not centered
+        // Pass bias to respect preferred positioning side
+        // Use surface dimensions (not viewport_rect) because cursor position is in screen coordinates
+        let popup_pos = position_popup_near_cursor(
+          cursor_pos,
+          outer_width,
+          outer_height,
+          surface_width,
+          surface_height,
+          slide_offset,
+          scale,
+          self.bias,
+        );
+        (popup_pos.x, popup_pos.y)
       },
       None => {
+        // Center in viewport if no cursor
+        let clamp_x = |value: f32| {
+          let max_x = (viewport_rect.right() - outer_width).max(viewport_rect.x);
+          let min_x = viewport_rect.x.min(max_x);
+          value.clamp(min_x, max_x)
+        };
+        let clamp_y = |value: f32| {
+          let max_y = (viewport_rect.bottom() - outer_height).max(viewport_rect.y);
+          let min_y = viewport_rect.y.min(max_y);
+          value.clamp(min_y, max_y)
+        };
         let px = clamp_x(viewport_rect.x + (viewport_rect.width - outer_width) / 2.0);
         let py = clamp_y(viewport_rect.y + (viewport_rect.height - outer_height) / 2.0);
         (px, py)
@@ -414,7 +402,7 @@ impl<T: PopupContent> PopupShell<T> {
 
 impl<T: PopupContent + 'static> Component for PopupShell<T> {
   fn render(&mut self, area: Rect, surface: &mut Surface, ctx: &mut Context) {
-    let content_size = self.measure_with_surface(surface, ctx, area);
+    let mut content_size = self.measure_with_surface(surface, ctx, area);
 
     self.animation.update(ctx.dt);
     let eased = *self.animation.current();
@@ -423,28 +411,61 @@ impl<T: PopupContent + 'static> Component for PopupShell<T> {
     let doc_cell_w = font_state.cell_width.max(1.0);
     let doc_cell_h = font_state.cell_height.max(1.0);
     let viewport_px = Self::viewport_rect(area, doc_cell_w, doc_cell_h);
-    let anchor_px = self.anchor_position(ctx, viewport_px, doc_cell_w, doc_cell_h);
+    let cursor = self.anchor_position(ctx, surface);
 
     surface.configure_font(&font_state.family, UI_FONT_SIZE);
     let ui_cell_w = surface.cell_width().max(UI_FONT_WIDTH.max(1.0));
     let ui_cell_h = surface.cell_height().max((UI_FONT_SIZE + 4.0).max(1.0));
 
-    let mut outer_rect = self.compute_outer_rect(
-      viewport_px,
-      content_size,
-      ui_cell_w,
-      ui_cell_h,
-      doc_cell_h,
-      anchor_px,
-    );
+    // Get surface dimensions for positioning (cursor position is in screen coordinates)
+    let surface_width = surface.width() as f32;
+    let surface_height = surface.height() as f32;
 
-    let slide = if matches!(self.bias, PositionBias::Above) {
+    // Constrain popup height based on available space (same logic as signature helper)
+    if let Some(cursor_pos) = cursor {
+      let padding = self.style.padding;
+      let min_popup_height = (self.limits.min_height as f32 * ui_cell_h)
+        .max(padding * 2.0)
+        .min(surface_height);
+      
+      // Constrain content height to fit available space
+      // Pass bias to respect preferred positioning side
+      // Use surface_height (not viewport_px.height) because cursor position is in screen coordinates
+      let constrained_height = constrain_popup_height(
+        cursor_pos,
+        content_size.height + padding * 2.0,
+        min_popup_height,
+        surface_height,
+        self.bias,
+      );
+      
+      // Adjust content_size height to fit within constrained space
+      content_size.height = (constrained_height - padding * 2.0).max(0.0);
+    }
+
+    // Calculate animation slide offset and scale
+    let slide_offset = if matches!(self.bias, Some(PositionBias::Above)) {
       -(1.0 - eased) * 8.0
     } else {
       (1.0 - eased) * 8.0
     };
-    outer_rect.y =
-      (outer_rect.y + slide).clamp(viewport_px.y, viewport_px.bottom() - outer_rect.height);
+    let scale = 0.95 + (eased * 0.05); // 95% -> 100%
+
+    let outer_rect = self.compute_outer_rect(
+      viewport_px,
+      content_size,
+      ui_cell_w,
+      ui_cell_h,
+      cursor,
+      slide_offset,
+      scale,
+      surface_width,
+      surface_height,
+    );
+
+    // Positioning function already handles viewport clamping, so we don't need
+    // to clamp again here. Clamping here would override the positioning decision
+    // (e.g., if positioned above due to bias, clamping might push it back down).
     let inner_rect = outer_rect.inset(self.style.padding);
 
     self.last_outer_rect = Some(outer_rect);

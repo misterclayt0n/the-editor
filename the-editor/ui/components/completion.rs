@@ -39,6 +39,10 @@ use crate::{
     completion_resolve::ResolveHandler,
   },
   ui::{
+    popup_positioning::{
+      calculate_cursor_position,
+      position_popup_near_cursor,
+    },
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
     compositor::{
@@ -950,8 +954,6 @@ impl Component for Completion {
     }
 
     let font_state = surface.save_font_state();
-    let doc_cell_w = font_state.cell_width.max(1.0);
-    let doc_cell_h = font_state.cell_height.max(1.0);
 
     // Update animation with declarative system
     self.animation.update(ctx.dt);
@@ -999,46 +1001,9 @@ impl Component for Completion {
     let visible_items = MAX_VISIBLE_ITEMS.min(self.filtered.len());
     let item_padding = 6.0;
 
-    // Calculate fresh cursor position (not cached) with correct split offset
-    let (cursor_x, cursor_bottom, cursor_line_top) = {
-      let (view, doc) = crate::current_ref!(ctx.editor);
-      let text = doc.text();
-      let cursor_pos = doc.selection(view.id).primary().cursor(text.slice(..));
-
-      // Convert char position to line/column
-      let line = text.char_to_line(cursor_pos);
-      let line_start = text.line_to_char(line);
-      let col = cursor_pos - line_start;
-
-      // Get view scroll offset
-      let view_offset = doc.view_offset(view.id);
-      let anchor_line = text.char_to_line(view_offset.anchor.min(text.len_chars()));
-
-      // Calculate screen row/col accounting for scroll
-      let rel_row = line.saturating_sub(anchor_line);
-      let screen_col = col.saturating_sub(view_offset.horizontal_offset);
-
-      // Check if cursor is visible
-      if rel_row >= view.inner_height() {
-        // Cursor scrolled out of view vertically
-        return;
-      }
-
-      // Convert to pixel positions using renderer cell metrics
-      let font_width = doc_cell_w;
-      let line_height = doc_cell_h;
-
-      // Get view's screen offset (handles splits correctly)
-      let inner = view.inner_area(doc);
-      let view_x = inner.x as f32 * font_width;
-      let view_y = inner.y as f32 * line_height;
-
-      // Calculate final screen position
-      let x = view_x + (screen_col as f32 * font_width);
-      let line_top = view_y + (rel_row as f32 * line_height);
-      let baseline = line_top + line_height;
-
-      (x, baseline, line_top)
+    // Calculate cursor position using shared positioning utility
+    let Some(cursor) = calculate_cursor_position(ctx, surface) else {
+      return;
     };
 
     surface.configure_font(&font_state.family, UI_FONT_SIZE);
@@ -1082,33 +1047,24 @@ impl Component for Completion {
     let viewport_width = surface.width() as f32;
     let viewport_height = surface.height() as f32;
 
+    // Position popup using shared positioning utility
+    // Pass None for bias to maintain current behavior (choose side with more space)
+    let popup_pos = position_popup_near_cursor(
+      cursor,
+      menu_width,
+      menu_height,
+      viewport_width,
+      viewport_height,
+      slide_offset,
+      scale,
+      None,
+    );
+
     // Apply animation transforms
     let anim_width = menu_width * scale;
     let anim_height = menu_height * scale;
-
-    // Try to position below cursor first
-    let mut popup_y = cursor_bottom + CURSOR_POPUP_MARGIN + slide_offset;
-
-    // Check if popup would overflow bottom of viewport
-    if popup_y + anim_height > viewport_height {
-      // Try positioning above cursor instead
-      let y_above = cursor_line_top - CURSOR_POPUP_MARGIN - anim_height - slide_offset;
-      if y_above >= 0.0 {
-        popup_y = y_above;
-      } else {
-        // Not enough space above or below, clamp to viewport
-        popup_y = popup_y.max(0.0).min(viewport_height - anim_height);
-      }
-    }
-
-    // Align popup with cursor column and clamp to viewport
-    let mut popup_x = cursor_x;
-
-    // Clamp X to viewport bounds
-    popup_x = popup_x.max(0.0).min(viewport_width - anim_width);
-
-    let anim_x = popup_x;
-    let anim_y = popup_y;
+    let anim_x = popup_pos.x;
+    let anim_y = popup_pos.y;
 
     // Draw background
     let corner_radius = 6.0;

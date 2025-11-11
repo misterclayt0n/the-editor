@@ -16,6 +16,7 @@ use crate::{
     position::Position,
   },
   ui::{
+    popup_positioning::calculate_cursor_position,
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
     components::popup::{
@@ -25,7 +26,6 @@ use crate::{
       PopupLimits,
       PopupShell,
       PopupSize,
-      PositionBias,
     },
     compositor::{
       Component,
@@ -62,7 +62,6 @@ impl Hover {
       ..PopupLimits::default()
     };
     let popup = PopupShell::new(Self::ID, content)
-      .position_bias(PositionBias::Below)
       .auto_close(true)
       .with_limits(popup_limits);
     Self { popup }
@@ -71,7 +70,9 @@ impl Hover {
 
 impl Component for Hover {
   fn render(&mut self, area: Rect, surface: &mut Surface, ctx: &mut Context) {
-    let anchor = current_cursor_anchor(ctx);
+    // PopupShell now uses shared positioning module directly
+    // Setting anchor ensures PopupShell knows to position relative to cursor
+    let anchor = current_cursor_anchor(ctx, surface);
     self.popup.set_anchor(anchor);
     Component::render(&mut self.popup, area, surface, ctx);
   }
@@ -93,28 +94,34 @@ impl Component for Hover {
   }
 }
 
-fn current_cursor_anchor(ctx: &Context) -> Option<Position> {
+fn current_cursor_anchor(ctx: &Context, surface: &Surface) -> Option<Position> {
+  // Use shared cursor position calculation to ensure consistent positioning
+  // PopupShell will use calculate_cursor_position internally, but we set anchor
+  // to indicate we want cursor-relative positioning
+  let _cursor = calculate_cursor_position(ctx, surface)?;
+  
+  // Convert to Position format for PopupShell (though it will recalculate using shared module)
   let (view, doc) = crate::current_ref!(ctx.editor);
   let text = doc.text();
   let cursor_pos = doc.selection(view.id).primary().cursor(text.slice(..));
 
   let line = text.char_to_line(cursor_pos);
-  let line_start = text.line_to_char(line);
-  let col = cursor_pos - line_start;
-
   let view_offset = doc.view_offset(view.id);
   let anchor_line = text.char_to_line(view_offset.anchor.min(text.len_chars()));
 
   let rel_row = line.saturating_sub(anchor_line);
-  let screen_col = col.saturating_sub(view_offset.horizontal_offset);
-
   if rel_row >= view.inner_height() {
     return None;
   }
 
+  let line_start = text.line_to_char(line);
+  let col = cursor_pos - line_start;
+  let screen_col = col.saturating_sub(view_offset.horizontal_offset);
+
   let inner = view.inner_area(doc);
   let anchor_col = inner.x as usize + screen_col;
-  let anchor_row = inner.y as usize + rel_row + 1; // one line below cursor
+  // Position one line below cursor (matching original behavior)
+  let anchor_row = inner.y as usize + rel_row + 1;
 
   Some(Position::new(anchor_row, anchor_col))
 }
@@ -446,6 +453,8 @@ fn build_hover_render_lines(
   let mut fence_lang: Option<String> = None;
   let mut fence_buf: Vec<String> = Vec::new();
 
+  let max_chars = (wrap_width / cell_width).floor().max(4.0) as usize;
+
   for raw_line in markdown.lines() {
     if raw_line.starts_with("```") {
       if in_fence {
@@ -453,6 +462,7 @@ fn build_hover_render_lines(
         render_lines.extend(highlight_code_block_lines(
           fence_lang.as_deref(),
           &code,
+          max_chars,
           ctx,
         ));
         render_lines.push(vec![TextSegment {
@@ -482,7 +492,6 @@ fn build_hover_render_lines(
       continue;
     }
 
-    let max_chars = (wrap_width / cell_width).floor().max(4.0) as usize;
     let wrapped_lines = wrap_text(raw_line, max_chars);
     if wrapped_lines.is_empty() {
       render_lines.push(vec![TextSegment {
@@ -507,9 +516,11 @@ fn build_hover_render_lines(
 
   if in_fence {
     let code = fence_buf.join("\n");
+    let max_chars = (wrap_width / cell_width).floor().max(4.0) as usize;
     render_lines.extend(highlight_code_block_lines(
       fence_lang.as_deref(),
       &code,
+      max_chars,
       ctx,
     ));
   }
@@ -520,6 +531,7 @@ fn build_hover_render_lines(
 fn highlight_code_block_lines(
   lang_hint: Option<&str>,
   code: &str,
+  max_chars: usize,
   ctx: &mut Context,
 ) -> Vec<Vec<TextSegment>> {
   let theme = &ctx.editor.theme;
@@ -567,27 +579,93 @@ fn highlight_code_block_lines(
       line_string.pop();
     }
     let line_start_char = rope.line_to_char(line_idx);
-    let line_end_char = line_start_char + line_string.chars().count();
 
-    let mut segments: Vec<TextSegment> = Vec::new();
-    let mut cursor = line_start_char;
-
-    for (s, e, color) in char_spans.iter().cloned() {
-      if e <= line_start_char || s >= line_end_char {
+    // Wrap the line to fit within max_chars
+    let wrapped_line_strings = wrap_text(&line_string, max_chars);
+    
+    // Process each wrapped segment independently
+    // We highlight each wrapped segment separately, which means we lose some
+    // syntax highlighting accuracy for wrapped lines, but ensures text fits within container
+    for wrapped_line in wrapped_line_strings {
+      if wrapped_line.is_empty() {
+        lines.push(vec![TextSegment {
+          content: String::new(),
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: default_code_color,
+          },
+        }]);
         continue;
       }
-      let seg_start = s.max(line_start_char);
-      let seg_end = e.min(line_end_char);
 
-      if seg_start > cursor {
-        let prefix = slice_chars_to_string(
-          &line_string,
-          cursor - line_start_char,
-          seg_start - line_start_char,
-        );
-        if !prefix.is_empty() {
+      // For wrapped segments, we apply syntax highlighting to the wrapped text directly
+      // This is simpler than trying to map wrapped positions back to original spans
+      let wrapped_rope = Rope::from(wrapped_line.as_str());
+      let wrapped_slice = wrapped_rope.slice(..);
+      
+      // Re-apply syntax highlighting to the wrapped segment
+      let wrapped_spans = language
+        .and_then(|lang| crate::core::syntax::Syntax::new(wrapped_slice, lang, &loader).ok())
+        .map(|syntax| syntax.collect_highlights(wrapped_slice, &loader, 0..wrapped_slice.len_bytes()))
+        .unwrap_or_else(Vec::new);
+
+      let mut wrapped_char_spans: Vec<(usize, usize, Color)> = Vec::with_capacity(wrapped_spans.len());
+      for (hl, byte_range) in wrapped_spans.into_iter() {
+        let style = theme.highlight(hl);
+        let color = style
+          .fg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(default_code_color);
+        let start_char = wrapped_slice.byte_to_char(wrapped_slice.floor_char_boundary(byte_range.start));
+        let end_char = wrapped_slice.byte_to_char(wrapped_slice.ceil_char_boundary(byte_range.end));
+        if start_char < end_char {
+          wrapped_char_spans.push((start_char, end_char, color));
+        }
+      }
+      wrapped_char_spans.sort_by_key(|(s, _e, _)| *s);
+
+      let mut segments: Vec<TextSegment> = Vec::new();
+      let mut cursor = 0usize;
+      let wrapped_line_chars = wrapped_line.chars().count();
+
+      for (s, e, color) in wrapped_char_spans.iter().cloned() {
+        if e <= cursor || s >= wrapped_line_chars {
+          continue;
+        }
+        let seg_start = s.max(cursor);
+        let seg_end = e.min(wrapped_line_chars);
+
+        if seg_start > cursor {
+          let prefix = slice_chars_to_string(&wrapped_line, cursor, seg_start);
+          if !prefix.is_empty() {
+            segments.push(TextSegment {
+              content: prefix,
+              style:   TextStyle {
+                size:  UI_FONT_SIZE,
+                color: default_code_color,
+              },
+            });
+          }
+        }
+
+        let content = slice_chars_to_string(&wrapped_line, seg_start, seg_end);
+        if !content.is_empty() {
           segments.push(TextSegment {
-            content: prefix,
+            content,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
+              color,
+            },
+          });
+        }
+        cursor = seg_end;
+      }
+
+      if cursor < wrapped_line_chars {
+        let tail = slice_chars_to_string(&wrapped_line, cursor, wrapped_line_chars);
+        if !tail.is_empty() {
+          segments.push(TextSegment {
+            content: tail,
             style:   TextStyle {
               size:  UI_FONT_SIZE,
               color: default_code_color,
@@ -596,51 +674,18 @@ fn highlight_code_block_lines(
         }
       }
 
-      let content = slice_chars_to_string(
-        &line_string,
-        seg_start - line_start_char,
-        seg_end - line_start_char,
-      );
-      if !content.is_empty() {
+      if segments.is_empty() {
         segments.push(TextSegment {
-          content,
-          style: TextStyle {
-            size: UI_FONT_SIZE,
-            color,
-          },
-        });
-      }
-      cursor = seg_end;
-    }
-
-    if cursor < line_end_char {
-      let tail = slice_chars_to_string(
-        &line_string,
-        cursor - line_start_char,
-        line_end_char - line_start_char,
-      );
-      if !tail.is_empty() {
-        segments.push(TextSegment {
-          content: tail,
+          content: wrapped_line,
           style:   TextStyle {
             size:  UI_FONT_SIZE,
             color: default_code_color,
           },
         });
       }
-    }
 
-    if segments.is_empty() {
-      segments.push(TextSegment {
-        content: line_string,
-        style:   TextStyle {
-          size:  UI_FONT_SIZE,
-          color: default_code_color,
-        },
-      });
+      lines.push(segments);
     }
-
-    lines.push(segments);
   }
 
   lines

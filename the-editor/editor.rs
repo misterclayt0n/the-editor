@@ -1017,7 +1017,14 @@ pub struct CursorShapeConfig([CursorKind; 3]);
 impl CursorShapeConfig {
   #[allow(clippy::wrong_self_convention)]
   pub fn from_mode(&self, mode: Mode) -> CursorKind {
-    self.get(mode as usize).copied().unwrap_or_default()
+    // Map Mode enum order (Normal=0, Insert=1, Select=2) to array order [Normal, Select, Insert]
+    let idx = match mode {
+      Mode::Normal => 0,
+      Mode::Insert => 2,
+      Mode::Select => 1,
+      Mode::Command => 0, // Command mode uses Normal cursor shape
+    };
+    self.get(idx).copied().unwrap_or_default()
   }
 }
 

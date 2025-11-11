@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::core::graphics::CursorKind;
 use the_editor_renderer::{
   Color,
   TextSection,
@@ -25,6 +26,7 @@ pub enum RenderCommand {
     width:  f32,
     height: f32,
     color:  Color,
+    kind:   CursorKind,
   },
   /// Draw selection background
   Selection {
@@ -83,6 +85,7 @@ struct CursorCommand {
   width:  f32,
   height: f32,
   color:  Color,
+  kind:   CursorKind,
 }
 
 impl CommandBatcher {
@@ -150,6 +153,7 @@ impl CommandBatcher {
         width,
         height,
         color,
+        kind,
       } => {
         // Only keep the latest cursor position
         self.cursor_batch = Some(CursorCommand {
@@ -158,6 +162,7 @@ impl CommandBatcher {
           width,
           height,
           color,
+          kind,
         });
       },
     }
@@ -200,13 +205,43 @@ impl CommandBatcher {
 
     // Draw cursor last (top layer)
     if let Some(cursor) = &self.cursor_batch {
-      renderer.draw_rect(
-        cursor.x,
-        cursor.y,
-        cursor.width,
-        cursor.height,
-        cursor.color,
-      );
+      match cursor.kind {
+        CursorKind::Block => {
+          // Draw full rectangle
+          renderer.draw_rect(
+            cursor.x,
+            cursor.y,
+            cursor.width,
+            cursor.height,
+            cursor.color,
+          );
+        },
+        CursorKind::Bar => {
+          // Draw thin vertical line (2px wide) at the left edge
+          const BAR_WIDTH: f32 = 2.0;
+          renderer.draw_rect(
+            cursor.x,
+            cursor.y,
+            BAR_WIDTH.min(cursor.width),
+            cursor.height,
+            cursor.color,
+          );
+        },
+        CursorKind::Underline => {
+          // Draw thin horizontal line (2px tall) at the bottom
+          const UNDERLINE_HEIGHT: f32 = 2.0;
+          renderer.draw_rect(
+            cursor.x,
+            cursor.y + cursor.height - UNDERLINE_HEIGHT,
+            cursor.width,
+            UNDERLINE_HEIGHT.min(cursor.height),
+            cursor.color,
+          );
+        },
+        CursorKind::Hidden => {
+          // Don't draw anything
+        },
+      }
     }
 
     // Clear batches for next frame

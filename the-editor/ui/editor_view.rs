@@ -1208,6 +1208,12 @@ impl Component for EditorView {
         base_y += shake_offset_y;
 
         let cursor_pos = selection.primary().cursor(doc_text.slice(..));
+        let primary_range = selection.primary();
+        let has_selection = !primary_range.is_empty(); // Check if there's an actual selection (not just cursor)
+
+        // Get cursor shape from config based on current mode (needed for selection exclusion)
+        let cursor_kind = cx.editor.config().cursor_shape.from_mode(cx.editor.mode());
+        let cursor_is_block = cursor_kind == CursorKind::Block;
 
         // Check if cursor or selection changed
         let selection_hash = {
@@ -1703,9 +1709,22 @@ impl Component for EditorView {
           // Call decoration hook for this grapheme
           decoration_manager.decorate_grapheme(&g);
 
+          // Check if this is the cursor position
+          let is_cursor_here = g.char_idx == cursor_pos;
+
           // Add selection background command
+          // For non-block cursors, exclude cursor position from selection ONLY when there's no actual selection
+          // (i.e., when it's just a cursor at a single position, not a range selection)
+          // When there's an actual selection, the background should include the cursor position
           let doc_len = g.doc_chars();
-          if is_selected(g.char_idx, doc_len) {
+          let should_draw_selection = if is_selected(g.char_idx, doc_len) {
+            // Only exclude cursor position for non-block cursors when there's no actual selection
+            !(is_cursor_here && is_focused && !cursor_is_block && !has_selection)
+          } else {
+            false
+          };
+
+          if should_draw_selection {
             self.command_batcher.add_command(RenderCommand::Selection {
               x,
               y,
@@ -1714,9 +1733,6 @@ impl Component for EditorView {
               color: selection_fill_color,
             });
           }
-
-          // Check if this is the cursor position
-          let is_cursor_here = g.char_idx == cursor_pos;
 
           // Advance overlay highlighter
           while g.char_idx >= overlay_highlighter.pos {
@@ -1834,12 +1850,34 @@ impl Component for EditorView {
             let max_cursor_height = (view_bottom_edge_px - cursor_y).max(0.0);
             let clipped_cursor_h = cursor_height.min(max_cursor_height);
 
+            // Determine cursor color based on type
+            let cursor_color = if cursor_is_block {
+              // Block cursor: use background color
+              cursor_bg_color
+            } else {
+              // Bar/underline cursor: use foreground color (the line color)
+              if let Some(mut cursor_fg) = cursor_fg_from_theme {
+                cursor_fg.a *= zoom_alpha;
+                cursor_fg
+              } else if let Some(color) = syntax_fg {
+                // Fallback to syntax color if no explicit cursor fg
+                let mut color = crate::ui::theme_color_to_renderer_color(color);
+                color.a *= zoom_alpha;
+                color
+              } else {
+                let mut color = normal;
+                color.a *= zoom_alpha;
+                color
+              }
+            };
+
             self.command_batcher.add_command(RenderCommand::Cursor {
               x:      anim_x,
               y:      cursor_y,
               width:  clipped_cursor_w,
               height: clipped_cursor_h,
-              color:  cursor_bg_color,
+              color:  cursor_color,
+              kind:   cursor_kind,
             });
           }
 
@@ -1860,22 +1898,38 @@ impl Component for EditorView {
               if left_clip == 0 {
                 // Determine foreground color
                 let fg = if is_cursor_here {
-                  if use_adaptive_cursor {
-                    // Adaptive/reversed: use background color as fg
-                    let mut bg = background_color;
-                    bg.a *= zoom_alpha;
-                    bg
-                  } else if let Some(mut cursor_fg) = cursor_fg_from_theme {
-                    // Explicit fg color in theme
-                    cursor_fg.a *= zoom_alpha;
-                    cursor_fg
-                  } else if let Some(color) = syntax_fg {
-                    // No explicit fg: use character's syntax color (inverted cursor effect)
-                    let mut color = crate::ui::theme_color_to_renderer_color(color);
-                    color.a *= zoom_alpha;
-                    color
+                  if cursor_is_block {
+                    // Block cursor: use background color as fg (adaptive) or cursor fg from theme
+                    if use_adaptive_cursor {
+                      // Adaptive/reversed: use background color as fg
+                      let mut bg = background_color;
+                      bg.a *= zoom_alpha;
+                      bg
+                    } else if let Some(mut cursor_fg) = cursor_fg_from_theme {
+                      // Explicit fg color in theme
+                      cursor_fg.a *= zoom_alpha;
+                      cursor_fg
+                    } else if let Some(color) = syntax_fg {
+                      // No explicit fg: use character's syntax color (inverted cursor effect)
+                      let mut color = crate::ui::theme_color_to_renderer_color(color);
+                      color.a *= zoom_alpha;
+                      color
+                    } else {
+                      normal
+                    }
                   } else {
-                    normal
+                    // Bar/underline cursor: always use cursor foreground color
+                    if let Some(mut cursor_fg) = cursor_fg_from_theme {
+                      cursor_fg.a *= zoom_alpha;
+                      cursor_fg
+                    } else if let Some(color) = syntax_fg {
+                      // Fallback to syntax color if no explicit cursor fg
+                      let mut color = crate::ui::theme_color_to_renderer_color(color);
+                      color.a *= zoom_alpha;
+                      color
+                    } else {
+                      normal
+                    }
                   }
                 } else if let Some(color) = syntax_fg {
                   let mut color = crate::ui::theme_color_to_renderer_color(color);
@@ -1956,20 +2010,37 @@ impl Component for EditorView {
           // Use full cell height without centering for better legibility
           let y = base_y;
 
-          // Use default cursor bg for empty document
-          let cursor_bg_color = if use_adaptive_cursor {
-            // For empty document with adaptive cursor, use normal text color
-            let mut color = normal;
-            color.a *= zoom_alpha;
-            color
-          } else if let Some(mut bg) = cursor_bg_from_theme {
-            bg.a *= zoom_alpha;
-            bg
+          // Get cursor shape from config based on current mode
+          let cursor_kind = cx.editor.config().cursor_shape.from_mode(cx.editor.mode());
+          let cursor_is_block = cursor_kind == CursorKind::Block;
+
+          // Determine cursor color based on type
+          let cursor_color = if cursor_is_block {
+            // Block cursor: use background color
+            if use_adaptive_cursor {
+              // For empty document with adaptive cursor, use normal text color
+              let mut color = normal;
+              color.a *= zoom_alpha;
+              color
+            } else if let Some(mut bg) = cursor_bg_from_theme {
+              bg.a *= zoom_alpha;
+              bg
+            } else {
+              // Should not reach here, but default to cyan
+              let mut color = Color::rgb(0.2, 0.8, 0.7);
+              color.a *= zoom_alpha;
+              color
+            }
           } else {
-            // Should not reach here, but default to cyan
-            let mut color = Color::rgb(0.2, 0.8, 0.7);
-            color.a *= zoom_alpha;
-            color
+            // Bar/underline cursor: use foreground color (the line color)
+            if let Some(mut cursor_fg) = cursor_fg_from_theme {
+              cursor_fg.a *= zoom_alpha;
+              cursor_fg
+            } else {
+              let mut color = normal;
+              color.a *= zoom_alpha;
+              color
+            }
           };
 
           self.command_batcher.add_command(RenderCommand::Cursor {
@@ -1977,7 +2048,8 @@ impl Component for EditorView {
             y,
             width: font_width,
             height: self.cached_cell_height,
-            color: cursor_bg_color,
+            color: cursor_color,
+            kind:  cursor_kind,
           });
         }
       } // End scope - drop doc borrow before rendering completion

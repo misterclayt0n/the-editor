@@ -255,6 +255,7 @@ pub fn binding_from_ident(name: &str) -> KeyBinding {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Mode {
   Normal,
   Insert,

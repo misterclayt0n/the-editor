@@ -19,7 +19,11 @@ use crate::{
       OnKeyCallbackKind,
     },
     doc_formatter::DocumentFormatter,
-    grapheme::Grapheme,
+    grapheme::{
+      next_grapheme_boundary,
+      prev_grapheme_boundary,
+      Grapheme,
+    },
     graphics::{
       Color as ThemeColor,
       CursorKind,
@@ -1211,9 +1215,54 @@ impl Component for EditorView {
         let primary_range = selection.primary();
         let has_selection = !primary_range.is_empty(); // Check if there's an actual selection (not just cursor)
 
+        let editor_mode = cx.editor.mode();
         // Get cursor shape from config based on current mode (needed for selection exclusion)
-        let cursor_kind = cx.editor.config().cursor_shape.from_mode(cx.editor.mode());
+        let cursor_kind = cx.editor.config().cursor_shape.from_mode(editor_mode);
         let cursor_is_block = cursor_kind == CursorKind::Block;
+        let selection_highlight_ranges: Vec<(usize, usize)> = {
+          let text_slice = doc_text.slice(..);
+          let mut highlight_ranges = Vec::new();
+          let primary_index = selection.primary_index();
+
+          for (idx, range) in selection.ranges().iter().enumerate() {
+            if range.anchor == range.head {
+              continue;
+            }
+
+            let range = range.min_width_1(text_slice);
+            let is_primary = idx == primary_index;
+
+            if range.head > range.anchor {
+              let cursor_start = prev_grapheme_boundary(text_slice, range.head);
+            let selection_end =
+              if is_primary && !cursor_is_block && editor_mode != Mode::Insert {
+                range.head
+              } else {
+                cursor_start
+              };
+
+              if range.anchor < selection_end {
+                highlight_ranges.push((range.anchor, selection_end));
+              }
+            } else if range.head < range.anchor {
+              let cursor_end = next_grapheme_boundary(text_slice, range.head);
+              let selection_start = if is_primary
+                && !cursor_is_block
+                && !(editor_mode == Mode::Insert && cursor_end == range.anchor)
+              {
+                range.head
+              } else {
+                cursor_end
+              };
+
+              if selection_start < range.anchor {
+                highlight_ranges.push((selection_start, range.anchor));
+              }
+            }
+          }
+
+          highlight_ranges
+        };
 
         // Check if cursor or selection changed
         let selection_hash = {
@@ -1431,10 +1480,9 @@ impl Component for EditorView {
             return false;
           }
           let end = start + len;
-          selection
-            .ranges()
+          selection_highlight_ranges
             .iter()
-            .any(|r| r.from() < end && r.to() > start)
+            .any(|&(from, to)| from < end && to > start)
         };
 
         let mut current_row = usize::MAX;

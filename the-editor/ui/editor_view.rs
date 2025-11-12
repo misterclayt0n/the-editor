@@ -1,4 +1,7 @@
-use std::time::Instant;
+use std::{
+  collections::HashSet,
+  time::Instant,
+};
 
 use the_editor_event::request_redraw;
 use the_editor_renderer::{
@@ -1220,18 +1223,30 @@ impl Component for EditorView {
         base_x += shake_offset_x;
         base_y += shake_offset_y;
 
+        let primary_index = selection.primary_index();
         let cursor_pos = selection.primary().cursor(doc_text.slice(..));
         let primary_range = selection.primary();
         let has_selection = !primary_range.is_empty(); // Check if there's an actual selection (not just cursor)
+        let secondary_cursor_positions: HashSet<usize> = selection
+          .ranges()
+          .iter()
+          .enumerate()
+          .filter_map(|(idx, range)| {
+            if idx == primary_index {
+              None
+            } else {
+              Some(range.cursor(doc_text.slice(..)))
+            }
+          })
+          .collect();
 
         let editor_mode = cx.editor.mode();
         // Get cursor shape from config based on current mode (needed for selection exclusion)
         let cursor_kind = cx.editor.config().cursor_shape.from_mode(editor_mode);
-        let cursor_is_block = cursor_kind == CursorKind::Block;
+        let primary_cursor_is_block = cursor_kind == CursorKind::Block;
         let selection_highlight_ranges: Vec<(usize, usize)> = {
           let text_slice = doc_text.slice(..);
           let mut highlight_ranges = Vec::new();
-          let primary_index = selection.primary_index();
 
           for (idx, range) in selection.ranges().iter().enumerate() {
             if range.anchor == range.head {
@@ -1244,7 +1259,7 @@ impl Component for EditorView {
             if range.head > range.anchor {
               let cursor_start = prev_grapheme_boundary(text_slice, range.head);
             let selection_end =
-              if is_primary && !cursor_is_block && editor_mode != Mode::Insert {
+              if is_primary && !primary_cursor_is_block && editor_mode != Mode::Insert {
                 range.head
               } else {
                 cursor_start
@@ -1256,7 +1271,7 @@ impl Component for EditorView {
             } else if range.head < range.anchor {
               let cursor_end = next_grapheme_boundary(text_slice, range.head);
               let selection_start = if is_primary
-                && !cursor_is_block
+                && !primary_cursor_is_block
                 && !(editor_mode == Mode::Insert && cursor_end == range.anchor)
               {
                 range.head
@@ -1767,7 +1782,11 @@ impl Component for EditorView {
           decoration_manager.decorate_grapheme(&g);
 
           // Check if this is the cursor position
-          let is_cursor_here = g.char_idx == cursor_pos;
+          let is_primary_cursor_here = g.char_idx == cursor_pos;
+          let is_secondary_cursor_here = secondary_cursor_positions.contains(&g.char_idx);
+          let is_cursor_here = is_primary_cursor_here || is_secondary_cursor_here;
+          let cursor_kind_for_position = cursor_kind;
+          let cursor_is_block_here = cursor_kind_for_position == CursorKind::Block;
 
           // Add selection background command
           // For non-block cursors, exclude cursor position from selection ONLY when there's no actual selection
@@ -1776,7 +1795,7 @@ impl Component for EditorView {
           let doc_len = g.doc_chars();
           let should_draw_selection = if is_selected(g.char_idx, doc_len) {
             // Only exclude cursor position for non-block cursors when there's no actual selection
-            !(is_cursor_here && is_focused && !cursor_is_block && !has_selection)
+            !(is_cursor_here && is_focused && !cursor_is_block_here && !has_selection)
           } else {
             false
           };
@@ -1847,29 +1866,33 @@ impl Component for EditorView {
           if is_cursor_here && is_focused {
             let cursor_w = width_cols.max(1) as f32 * font_width;
             // Cursor animation using the animation system
-            let (anim_x, anim_y) = if cx.editor.config().cursor_anim_enabled {
-              // Check if we need to start or retarget the animation
-              if let Some(ref mut anim) = self.cursor_animation {
-                // Check if target position changed
-                if anim.target() != &(x, y) {
-                  // Retarget to new position
-                  anim.retarget((x, y));
+            let (anim_x, anim_y) = if is_primary_cursor_here {
+              if cx.editor.config().cursor_anim_enabled {
+                // Check if we need to start or retarget the animation
+                if let Some(ref mut anim) = self.cursor_animation {
+                  // Check if target position changed
+                  if anim.target() != &(x, y) {
+                    // Retarget to new position
+                    anim.retarget((x, y));
+                  }
+                  // Update animation with time delta
+                  anim.update(cx.dt);
+                  *anim.current()
+                } else {
+                  // No animation exists, create one using cursor preset
+                  let (duration, easing) = crate::core::animation::presets::CURSOR;
+                  let anim =
+                    crate::core::animation::AnimationHandle::new((x, y), (x, y), duration, easing);
+                  let current = *anim.current();
+                  self.cursor_animation = Some(anim);
+                  current
                 }
-                // Update animation with time delta
-                anim.update(cx.dt);
-                *anim.current()
               } else {
-                // No animation exists, create one using cursor preset
-                let (duration, easing) = crate::core::animation::presets::CURSOR;
-                let anim =
-                  crate::core::animation::AnimationHandle::new((x, y), (x, y), duration, easing);
-                let current = *anim.current();
-                self.cursor_animation = Some(anim);
-                current
+                // Animation disabled, use exact position
+                self.cursor_animation = None;
+                (x, y)
               }
             } else {
-              // Animation disabled, use exact position
-              self.cursor_animation = None;
               (x, y)
             };
 
@@ -1881,9 +1904,8 @@ impl Component for EditorView {
                 color.a *= zoom_alpha;
                 color
               } else {
-                let mut color = normal;
-                color.a *= zoom_alpha;
-                color
+                // normal already has zoom_alpha applied
+                normal
               }
             } else if let Some(mut bg) = cursor_bg_from_theme {
               // Explicit bg from theme
@@ -1908,7 +1930,7 @@ impl Component for EditorView {
             let clipped_cursor_h = cursor_height.min(max_cursor_height);
 
             // Determine cursor color based on type
-            let cursor_color = if cursor_is_block {
+            let cursor_color = if cursor_is_block_here {
               // Block cursor: use background color
               cursor_bg_color
             } else {
@@ -1922,9 +1944,8 @@ impl Component for EditorView {
                 color.a *= zoom_alpha;
                 color
               } else {
-                let mut color = normal;
-                color.a *= zoom_alpha;
-                color
+                // normal already has zoom_alpha applied
+                normal
               }
             };
 
@@ -1934,7 +1955,8 @@ impl Component for EditorView {
               width:  clipped_cursor_w,
               height: clipped_cursor_h,
               color:  cursor_color,
-              kind:   cursor_kind,
+              kind:   cursor_kind_for_position,
+              primary: is_primary_cursor_here,
             });
           }
 
@@ -1955,7 +1977,7 @@ impl Component for EditorView {
               if left_clip == 0 {
                 // Determine foreground color
                 let fg = if is_cursor_here {
-                  if cursor_is_block {
+                  if cursor_is_block_here {
                     // Block cursor: use background color as fg (adaptive) or cursor fg from theme
                     if use_adaptive_cursor {
                       // Adaptive/reversed: use background color as fg
@@ -2069,45 +2091,54 @@ impl Component for EditorView {
 
           // Get cursor shape from config based on current mode
           let cursor_kind = cx.editor.config().cursor_shape.from_mode(cx.editor.mode());
-          let cursor_is_block = cursor_kind == CursorKind::Block;
+          let primary_cursor_is_block = cursor_kind == CursorKind::Block;
 
-          // Determine cursor color based on type
-          let cursor_color = if cursor_is_block {
-            // Block cursor: use background color
-            if use_adaptive_cursor {
-              // For empty document with adaptive cursor, use normal text color
-              let mut color = normal;
-              color.a *= zoom_alpha;
-              color
-            } else if let Some(mut bg) = cursor_bg_from_theme {
-              bg.a *= zoom_alpha;
-              bg
-            } else {
-              // Should not reach here, but default to cyan
-              let mut color = Color::rgb(0.2, 0.8, 0.7);
-              color.a *= zoom_alpha;
-              color
-            }
+          // Determine cursor colors
+          let block_cursor_color = if use_adaptive_cursor {
+            // For empty document with adaptive cursor, use normal text color
+            // normal already has zoom_alpha applied
+            normal
+          } else if let Some(mut bg) = cursor_bg_from_theme {
+            bg.a *= zoom_alpha;
+            bg
           } else {
-            // Bar/underline cursor: use foreground color (the line color)
-            if let Some(mut cursor_fg) = cursor_fg_from_theme {
-              cursor_fg.a *= zoom_alpha;
-              cursor_fg
-            } else {
-              let mut color = normal;
-              color.a *= zoom_alpha;
-              color
-            }
+            // Should not reach here, but default to cyan
+            let mut color = Color::rgb(0.2, 0.8, 0.7);
+            color.a *= zoom_alpha;
+            color
+          };
+
+          let primary_cursor_color = if primary_cursor_is_block {
+            block_cursor_color
+          } else if let Some(mut cursor_fg) = cursor_fg_from_theme {
+            cursor_fg.a *= zoom_alpha;
+            cursor_fg
+          } else {
+            // normal already has zoom_alpha applied
+            normal
           };
 
           self.command_batcher.add_command(RenderCommand::Cursor {
             x,
             y,
-            width: font_width,
+            width:  font_width,
             height: self.cached_cell_height,
-            color: cursor_color,
-            kind:  cursor_kind,
+            color:  primary_cursor_color,
+            kind:   cursor_kind,
+            primary: true,
           });
+
+          for _ in secondary_cursor_positions.iter() {
+            self.command_batcher.add_command(RenderCommand::Cursor {
+              x,
+              y,
+              width:  font_width,
+              height: self.cached_cell_height,
+              color:  primary_cursor_color,
+              kind:   cursor_kind,
+              primary: false,
+            });
+          }
         }
       } // End scope - drop doc borrow before rendering completion
 

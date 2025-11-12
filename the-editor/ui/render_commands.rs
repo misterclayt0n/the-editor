@@ -27,6 +27,7 @@ pub enum RenderCommand {
     height: f32,
     color:  Color,
     kind:   CursorKind,
+    primary: bool,
   },
   /// Draw selection background
   Selection {
@@ -44,7 +45,7 @@ pub struct CommandBatcher {
   rect_batch:      Vec<RectCommand>,
   text_batch:      HashMap<TextBatchKey, Vec<TextCommand>>,
   selection_batch: Vec<SelectionCommand>,
-  cursor_batch:    Option<CursorCommand>,
+  cursor_batch:    Vec<CursorCommand>,
 }
 
 #[derive(Debug, Clone)]
@@ -86,6 +87,7 @@ struct CursorCommand {
   height: f32,
   color:  Color,
   kind:   CursorKind,
+  primary: bool,
 }
 
 impl CommandBatcher {
@@ -94,7 +96,7 @@ impl CommandBatcher {
       rect_batch:      Vec::new(),
       text_batch:      HashMap::new(),
       selection_batch: Vec::new(),
-      cursor_batch:    None,
+      cursor_batch:    Vec::new(),
     }
   }
 
@@ -154,15 +156,16 @@ impl CommandBatcher {
         height,
         color,
         kind,
+        primary,
       } => {
-        // Only keep the latest cursor position
-        self.cursor_batch = Some(CursorCommand {
+        self.cursor_batch.push(CursorCommand {
           x,
           y,
           width,
           height,
           color,
           kind,
+          primary,
         });
       },
     }
@@ -203,44 +206,18 @@ impl CommandBatcher {
       }
     }
 
-    // Draw cursor last (top layer)
-    if let Some(cursor) = &self.cursor_batch {
-      match cursor.kind {
-        CursorKind::Block => {
-          // Draw full rectangle
-          renderer.draw_rect(
-            cursor.x,
-            cursor.y,
-            cursor.width,
-            cursor.height,
-            cursor.color,
-          );
-        },
-        CursorKind::Bar => {
-          // Draw thin vertical line (2px wide) at the left edge
-          const BAR_WIDTH: f32 = 2.0;
-          renderer.draw_rect(
-            cursor.x,
-            cursor.y,
-            BAR_WIDTH.min(cursor.width),
-            cursor.height,
-            cursor.color,
-          );
-        },
-        CursorKind::Underline => {
-          // Draw thin horizontal line (2px tall) at the bottom
-          const UNDERLINE_HEIGHT: f32 = 2.0;
-          renderer.draw_rect(
-            cursor.x,
-            cursor.y + cursor.height - UNDERLINE_HEIGHT,
-            cursor.width,
-            UNDERLINE_HEIGHT.min(cursor.height),
-            cursor.color,
-          );
-        },
-        CursorKind::Hidden => {
-          // Don't draw anything
-        },
+    // Draw cursors last (top layer)
+    if !self.cursor_batch.is_empty() {
+      let mut primary_cursor: Option<&CursorCommand> = None;
+      for cursor in &self.cursor_batch {
+        if cursor.primary {
+          primary_cursor = Some(cursor);
+        } else {
+          Self::render_single_cursor(renderer, cursor);
+        }
+      }
+      if let Some(cursor) = primary_cursor {
+        Self::render_single_cursor(renderer, cursor);
       }
     }
 
@@ -253,7 +230,7 @@ impl CommandBatcher {
     self.rect_batch.clear();
     self.text_batch.clear();
     self.selection_batch.clear();
-    self.cursor_batch = None;
+    self.cursor_batch.clear();
   }
 
   /// Check if there are any pending commands
@@ -261,7 +238,44 @@ impl CommandBatcher {
     self.rect_batch.is_empty()
       && self.text_batch.is_empty()
       && self.selection_batch.is_empty()
-      && self.cursor_batch.is_none()
+      && self.cursor_batch.is_empty()
+  }
+
+  fn render_single_cursor(renderer: &mut the_editor_renderer::Renderer, cursor: &CursorCommand) {
+    const SECONDARY_CURSOR_OPACITY: f32 = 0.5;
+
+    // Reduce opacity for secondary (non-primary) cursors
+    let mut cursor_color = cursor.color;
+    if !cursor.primary {
+      cursor_color.a *= SECONDARY_CURSOR_OPACITY;
+    }
+
+    match cursor.kind {
+      CursorKind::Block => {
+        renderer.draw_rect(cursor.x, cursor.y, cursor.width, cursor.height, cursor_color);
+      },
+      CursorKind::Bar => {
+        const BAR_WIDTH: f32 = 2.0;
+        renderer.draw_rect(
+          cursor.x,
+          cursor.y,
+          BAR_WIDTH.min(cursor.width),
+          cursor.height,
+          cursor_color,
+        );
+      },
+      CursorKind::Underline => {
+        const UNDERLINE_HEIGHT: f32 = 2.0;
+        renderer.draw_rect(
+          cursor.x,
+          cursor.y + cursor.height - UNDERLINE_HEIGHT,
+          cursor.width,
+          UNDERLINE_HEIGHT.min(cursor.height),
+          cursor_color,
+        );
+      },
+      CursorKind::Hidden => {},
+    }
   }
 
   fn text_key(section: &TextSection) -> TextBatchKey {

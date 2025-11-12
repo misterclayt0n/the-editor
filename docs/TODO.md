@@ -27,7 +27,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Some lsp diagnostics are not really being rendered into virtual lines.
 - [ ] Fix overflow in lsp helper completer popup.
 - [x] Our code for handling lsp positioning (completer, signature helper, hover) does not work at all when we resize the-editor's window. It kinda just appears out of the blue.
-- [ ] We've stopped rendering multiple cursors after giving support for different cursor shapes (we can just render the rest as block, no worries here).
+- [x] We've stopped rendering multiple cursors after giving support for different cursor shapes.
 
 When it comes to ghostty, `libghostty` is not stable as an API yet, and the correct decision would be to wait until it's stable, but sometimes the heart speaks for itself you know.
 

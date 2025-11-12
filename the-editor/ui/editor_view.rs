@@ -2710,7 +2710,7 @@ impl EditorView {
                   let word_range = crate::core::textobject::textobject_word(
                     text.slice(..),
                     range,
-                    crate::core::textobject::TextObject::Around,
+                    crate::core::textobject::TextObject::Inside,
                     1,
                     false,
                   );

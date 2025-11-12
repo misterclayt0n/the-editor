@@ -207,6 +207,13 @@ impl<'t> OverlayHighlighter<'t> {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DragSelectMode {
+  Character,
+  Word,
+  Line,
+}
+
 pub struct EditorView {
   pub keymaps:               Keymaps,
   on_next_key:               Option<(OnKeyCallback, OnKeyCallbackKind)>,
@@ -236,7 +243,8 @@ pub struct EditorView {
   cached_font_size:          f32, // Font size corresponding to cached metrics
   // Mouse drag state for selection
   mouse_pressed:             bool,
-  mouse_drag_anchor:         Option<usize>, // Document char index where drag started
+  mouse_drag_anchor_range:   Option<crate::core::selection::Range>,
+  mouse_drag_mode:           DragSelectMode,
   // Multi-click detection (double/triple-click)
   last_click_time:           Option<std::time::Instant>,
   last_click_pos:            Option<(f32, f32)>,
@@ -306,7 +314,8 @@ impl EditorView {
       cached_cell_height: 24.0, // Default, will be updated during render
       cached_font_size: 18.0,   // Default, will be updated during render
       mouse_pressed: false,
-      mouse_drag_anchor: None,
+      mouse_drag_anchor_range: None,
+      mouse_drag_mode: DragSelectMode::Character,
       last_click_time: None,
       last_click_pos: None,
       click_count: 0,
@@ -2695,16 +2704,22 @@ impl EditorView {
 
               // Mark drag as started (for potential drag after click)
               self.mouse_pressed = true;
-              self.mouse_drag_anchor = Some(doc_pos);
+              self.mouse_drag_anchor_range = None;
 
               let view = cx.editor.tree.get(view_id);
               let doc_id = view.doc;
               let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
 
+              let drag_mode = match self.click_count {
+                2 => DragSelectMode::Word,
+                3 => DragSelectMode::Line,
+                _ => DragSelectMode::Character,
+              };
+
               // Create selection based on click count
-              let selection = match self.click_count {
-                1 => crate::core::selection::Selection::point(doc_pos),
-                2 => {
+              let selection = match drag_mode {
+                DragSelectMode::Character => crate::core::selection::Selection::point(doc_pos),
+                DragSelectMode::Word => {
                   let text = doc.text();
                   let range = crate::core::selection::Range::point(doc_pos);
                   let word_range = crate::core::textobject::textobject_word(
@@ -2716,21 +2731,27 @@ impl EditorView {
                   );
                   crate::core::selection::Selection::single(word_range.anchor, word_range.head)
                 },
-                3 => {
+                DragSelectMode::Line => {
                   let text = doc.text();
                   let line = text.char_to_line(doc_pos.min(text.len_chars()));
                   let start = text.line_to_char(line);
                   let end = text.line_to_char((line + 1).min(text.len_lines()));
                   crate::core::selection::Selection::single(start, end)
                 },
-                _ => crate::core::selection::Selection::point(doc_pos),
               };
 
+              let initial_range = selection.primary();
+
               doc.set_selection(view_id, selection);
+              self.mouse_drag_anchor_range = Some(initial_range);
+              self.mouse_drag_mode = drag_mode;
 
               // Ensure cursor remains visible
               let view = cx.editor.tree.get_mut(view_id);
               view.ensure_cursor_in_view(doc, scrolloff);
+            } else {
+              self.mouse_drag_anchor_range = None;
+              self.mouse_drag_mode = DragSelectMode::Character;
             }
 
             return EventResult::Consumed(None);
@@ -2738,7 +2759,8 @@ impl EditorView {
         } else {
           // Mouse button released - end drag
           self.mouse_pressed = false;
-          self.mouse_drag_anchor = None;
+          self.mouse_drag_anchor_range = None;
+          self.mouse_drag_mode = DragSelectMode::Character;
           self.dragging_separator = None; // End separator drag
           return EventResult::Consumed(None);
         }
@@ -2825,9 +2847,8 @@ impl EditorView {
         }
 
         // Check if we're dragging text selection
-        if self.mouse_pressed && self.click_count == 1 {
-          // Only drag for single-click (not double/triple)
-          if let Some(anchor) = self.mouse_drag_anchor {
+        if self.mouse_pressed {
+          if let Some(anchor_range) = self.mouse_drag_anchor_range {
             if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
               let scrolloff = cx.editor.config().scrolloff;
 
@@ -2835,8 +2856,92 @@ impl EditorView {
               let doc_id = view.doc;
               let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
 
-              // Create range selection from anchor to current position
-              let selection = crate::core::selection::Selection::single(anchor, doc_pos);
+              let text = doc.text();
+              let slice = text.slice(..);
+
+              let selection = match self.mouse_drag_mode {
+                DragSelectMode::Character => {
+                  crate::core::selection::Selection::single(anchor_range.anchor, doc_pos)
+                },
+                DragSelectMode::Word => {
+                  let base_start = anchor_range.from();
+                  let base_end = anchor_range.to();
+
+                  let target_range = crate::core::textobject::textobject_word(
+                    slice,
+                    crate::core::selection::Range::point(doc_pos),
+                    crate::core::textobject::TextObject::Inside,
+                    1,
+                    false,
+                  );
+
+                  let mut start = base_start.min(target_range.from());
+                  let mut end = base_end.max(target_range.to());
+
+                  if target_range.is_empty() {
+                    if doc_pos < base_start {
+                      start = doc_pos;
+                      end = base_end;
+                    } else if doc_pos > base_end {
+                      start = base_start;
+                      end = doc_pos;
+                    } else {
+                      start = base_start;
+                      end = base_end;
+                    }
+                  }
+
+                  let (anchor, head) = if doc_pos < base_start {
+                    (end, start)
+                  } else if doc_pos > base_end {
+                    (start, end)
+                  } else {
+                    (anchor_range.anchor, anchor_range.head)
+                  };
+
+                  crate::core::selection::Selection::single(anchor, head)
+                },
+                DragSelectMode::Line => {
+                  let total_chars = text.len_chars();
+                  if total_chars == 0 {
+                    crate::core::selection::Selection::single(
+                      anchor_range.anchor,
+                      anchor_range.head,
+                    )
+                  } else {
+                    let total_lines = text.len_lines();
+                    let clamp_line = |pos: usize| -> usize {
+                      if pos >= total_chars {
+                        total_lines.saturating_sub(1)
+                      } else {
+                        text.char_to_line(pos)
+                      }
+                    };
+
+                    let base_start_line = clamp_line(anchor_range.from());
+                    let base_end_char = anchor_range.to().saturating_sub(1);
+                    let base_end_line = clamp_line(base_end_char);
+                    let doc_line = clamp_line(doc_pos);
+
+                    let start_line = base_start_line.min(doc_line);
+                    let end_line = base_end_line.max(doc_line);
+
+                    let start_char = text.line_to_char(start_line);
+                    let end_char = text.line_to_char((end_line + 1).min(total_lines));
+
+                    let (anchor, head) = if doc_line < base_start_line {
+                      (end_char, start_char)
+                    } else if doc_line > base_end_line {
+                      (start_char, end_char)
+                    } else {
+                      (anchor_range.anchor, anchor_range.head)
+                    };
+
+                    crate::core::selection::Selection::single(anchor, head)
+                  }
+                },
+              };
+
               doc.set_selection(view_id, selection);
 
               let view = cx.editor.tree.get_mut(view_id);

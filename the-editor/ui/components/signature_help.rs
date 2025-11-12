@@ -498,7 +498,6 @@ impl Component for SignatureHelp {
         let mut doc_y = doc_area_top;
         let doc_box_top = doc_area_top - UI_FONT_SIZE;
         let doc_box_height = visible_doc_lines as f32 * line_height;
-        let doc_bottom_limit = (anim_y + anim_height - padding).min(doc_box_top + doc_box_height);
 
         for segments in doc_lines.iter().skip(start_line).take(visible_doc_lines) {
           // Ensure we respect bottom padding - stop rendering before the padding area

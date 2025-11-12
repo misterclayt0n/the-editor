@@ -578,7 +578,6 @@ fn highlight_code_block_lines(
     if line_string.ends_with('\n') {
       line_string.pop();
     }
-    let line_start_char = rope.line_to_char(line_idx);
 
     // Wrap the line to fit within max_chars
     let wrapped_line_strings = wrap_text(&line_string, max_chars);

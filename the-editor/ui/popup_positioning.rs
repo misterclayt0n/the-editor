@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crate::{
   ui::{
     compositor::{
@@ -101,7 +103,13 @@ pub fn calculate_cursor_position(
   let doc_cell_w = font_state.cell_width.max(1.0);
   let doc_cell_h = font_state.cell_height.max(1.0);
 
-  let (view, doc) = crate::current_ref!(ctx.editor);
+  let view_id = ctx.editor.focused_view_id()?;
+  let tree = &ctx.editor.tree;
+  let animated_area = tree
+    .get_animated_area(view_id)
+    .or_else(|| tree.try_get(view_id).map(|view| view.area))?;
+  let view = tree.get(view_id);
+  let doc = &ctx.editor.documents[&view.doc];
   let text = doc.text();
   let cursor_pos = doc.selection(view.id).primary().cursor(text.slice(..));
 
@@ -118,15 +126,31 @@ pub fn calculate_cursor_position(
   let rel_row = line.saturating_sub(anchor_line);
   let screen_col = col.saturating_sub(view_offset.horizontal_offset);
 
-  // Check if cursor is visible
-  if rel_row >= view.inner_height() {
+  let inner_area = animated_area.clip_left(view.gutter_offset(doc));
+
+  // Check if cursor is visible within the animated viewport
+  if rel_row >= usize::from(inner_area.height) {
+    return None;
+  }
+  if screen_col >= usize::from(inner_area.width) {
     return None;
   }
 
-  // Get view's screen offset (handles splits correctly)
-  let inner = view.inner_area(doc);
-  let view_x = inner.x as f32 * doc_cell_w;
-  let view_y = inner.y as f32 * doc_cell_h;
+  // Apply the same zoom animation offset used during rendering
+  let zoom_t = view.zoom_anim;
+  let zoom_ease = zoom_t * zoom_t * (3.0 - 2.0 * zoom_t);
+  let zoom_offset_y = (1.0 - zoom_ease) * 50.0;
+
+  // Account for active screen shake effects
+  let now = Instant::now();
+  let (shake_offset_x, shake_offset_y) = doc
+    .screen_shake(view.id)
+    .and_then(|shake| shake.sample(now))
+    .unwrap_or((0.0, 0.0));
+
+  // Get view's screen offset (handles splits/animations correctly)
+  let view_x = inner_area.x as f32 * doc_cell_w + shake_offset_x;
+  let view_y = inner_area.y as f32 * doc_cell_h + zoom_offset_y + shake_offset_y;
 
   // Calculate final screen position
   let x = view_x + (screen_col as f32 * doc_cell_w);

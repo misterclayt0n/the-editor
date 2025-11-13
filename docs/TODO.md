@@ -2,7 +2,6 @@
 So, this is just a simple todo list that will grant me some sort of base for the editor's missing features overall. Note that this document represents my personal vision on what the editor shall become, but will likely change over time.
 
 #### 
-- [x] Remove ACP integration - The reason for this is that we are embedding ghostty, which let's us better integrate cli tools (which ar e mostly common in vibe coding) inside the editor. This is a simpler/more composable approach overall, so ACP is not needed anymore.
 - [ ] Image rendering.
 - [x] Local search in buffer (https://x.com/neogoose_btw/status/1981778716721393859/photo/1).
 - [ ] End of line diagnostics.
@@ -28,8 +27,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Fix overflow in lsp helper completer popup.
 - [x] Our code for handling lsp positioning (completer, signature helper, hover) does not work at all when we resize the-editor's window. It kinda just appears out of the blue.
 - [x] We've stopped rendering multiple cursors after giving support for different cursor shapes.
-
-When it comes to ghostty, `libghostty` is not stable as an API yet, and the correct decision would be to wait until it's stable, but sometimes the heart speaks for itself you know.
+- [x] Fix x11 scrolling (constant flickering).
 
 ### Beyond
 - [ ] File watcher (I'll wait to see helix's implementation on this, they're making big advancements: https://github.com/helix-editor/helix/pull/14544).

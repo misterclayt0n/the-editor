@@ -2,8 +2,6 @@
 
 > **Note**: We don't have an alpha release yet. See [`docs/TODO.md`](docs/TODO.md) for what's left to be done before that happens.
 
-## Demo
-
 ![the-editor demo](assets/the-editor-demo.png)
 
 ## Features

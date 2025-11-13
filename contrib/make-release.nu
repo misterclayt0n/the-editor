@@ -4,8 +4,9 @@
 
 def main [version?: string] {
   # Get version from Cargo.toml or use provided argument
+  # The script should be run from the repository root
   let version = if ($version | is-empty) {
-    open Cargo.toml | get package.version
+    open Cargo.toml | get workspace.package.version
   } else {
     $version
   }

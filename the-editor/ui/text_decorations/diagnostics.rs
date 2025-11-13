@@ -90,6 +90,7 @@ pub struct InlineDiagnostics<'a> {
   base_y:            f32,
   line_height:       f32,
   font_width:        f32,
+  font_size:         f32,
   viewport_width:    u16,
   horizontal_offset: usize,
 }
@@ -105,6 +106,7 @@ impl<'a> InlineDiagnostics<'a> {
     base_y: f32,
     line_height: f32,
     font_width: f32,
+    font_size: f32,
     viewport_width: u16,
     horizontal_offset: usize,
   ) -> Self {
@@ -116,6 +118,7 @@ impl<'a> InlineDiagnostics<'a> {
       base_y,
       line_height,
       font_width,
+      font_size,
       viewport_width,
       horizontal_offset,
     }
@@ -142,37 +145,56 @@ impl<'a> InlineDiagnostics<'a> {
     surface: &mut Surface,
     diag: &Diagnostic,
     row: u16,
-    col: usize,
+    line_end_col: usize,
   ) -> u16 {
-    let color = self.styles.severity_style(diag.severity());
-    let start_col = col as u16;
-    let mut end_col = start_col;
-    let mut draw_col = (col + 1) as u16; // Add space before diagnostic
+    if self.viewport_width == 0 {
+      return 0;
+    }
 
-    // Render each line of the diagnostic message
+    let viewport_width = self.viewport_width as usize;
+    let start_col_in_view = line_end_col.saturating_sub(self.horizontal_offset);
+    if start_col_in_view >= viewport_width {
+      return 0;
+    }
+
+    let mut draw_col = start_col_in_view.saturating_add(1);
+    if draw_col >= viewport_width {
+      return 0;
+    }
+
+    let color = self.styles.severity_style(diag.severity());
+    let mut end_col = start_col_in_view as u16;
+
     for line in diag.message.lines() {
-      // Check if we're still within viewport bounds
-      if draw_col >= self.viewport_width {
+      if draw_col >= viewport_width {
         break;
       }
 
-      let available_width = self.viewport_width.saturating_sub(draw_col) as usize;
+      let available_width = viewport_width - draw_col;
       if available_width == 0 {
         break;
       }
 
-      // Draw this line with truncation if needed
       let x = self.base_x + (draw_col as f32) * self.font_width;
       let y = self.base_y + (row as f32) * self.line_height;
 
-      let chars_drawn = surface.draw_truncated_text(line, x, y, available_width, color);
-      end_col = draw_col + chars_drawn as u16;
+      let chars_drawn = surface.draw_truncated_text_with_font_size(
+        line,
+        x,
+        y,
+        available_width,
+        color,
+        self.font_size,
+      );
+      if chars_drawn == 0 {
+        break;
+      }
 
-      // Double space between lines (matching Helix behavior)
-      draw_col = end_col + 2;
+      end_col = (draw_col + chars_drawn) as u16;
+      draw_col = draw_col.saturating_add(chars_drawn + 2);
     }
 
-    end_col - start_col
+    end_col.saturating_sub(start_col_in_view as u16)
   }
 
   /// Draw a full diagnostic message with box-drawing in virtual lines

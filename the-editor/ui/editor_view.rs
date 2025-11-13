@@ -1,5 +1,8 @@
 use std::{
-  collections::HashSet,
+  collections::{
+    HashMap,
+    HashSet,
+  },
   time::Instant,
 };
 
@@ -22,6 +25,7 @@ use crate::{
       OnKeyCallbackKind,
     },
     doc_formatter::DocumentFormatter,
+    diagnostics::DiagnosticFilter,
     grapheme::{
       Grapheme,
       next_grapheme_boundary,
@@ -1408,17 +1412,29 @@ impl Component for EditorView {
         // Add inline diagnostics decoration if enabled
         let inline_diagnostics_config = cx.editor.config().inline_diagnostics.clone();
         let eol_diagnostics = cx.editor.config().end_of_line_diagnostics;
-        if !inline_diagnostics_config.disabled() {
+        let inline_decoration_enabled = !inline_diagnostics_config.disabled();
+        let eol_decoration_enabled = !matches!(eol_diagnostics, DiagnosticFilter::Disable);
+
+        if inline_decoration_enabled || eol_decoration_enabled {
+          // Check if cursor-line diagnostics should be enabled (with debouncing)
+          let view = cx.editor.tree.get(focus_view);
+          let enable_cursor_line =
+            view.diagnostics_handler.show_cursorline_diagnostics(doc, focus_view);
+
+          // Prepare config based on viewport width and cursor-line state
+          let prepared_config = inline_diagnostics_config.prepare(viewport.width, enable_cursor_line);
+
           let inline_diag = crate::ui::text_decorations::diagnostics::InlineDiagnostics::new(
             doc,
             &cx.editor.theme,
             cursor_pos,
-            inline_diagnostics_config,
+            prepared_config,
             eol_diagnostics,
             base_x,
             base_y,
             self.cached_cell_height,
             font_width,
+            self.cached_font_size,
             viewport.width,
             view_offset.horizontal_offset,
           );
@@ -1515,9 +1531,9 @@ impl Component for EditorView {
         let mut last_doc_line_end_row = 0; // Track the last visual row of the previous doc_line
         let mut grapheme_count = 0;
         let mut line_batch = Vec::new(); // Batch characters on the same line
-        let mut rendered_gutter_lines = std::collections::HashSet::new(); // Track which lines have gutters rendered
-        let mut line_end_x = std::collections::HashMap::new(); // Track the rightmost x position for each doc line
-        let mut current_line_max_x = base_x; // Track max x for current line
+        let mut rendered_gutter_lines = HashSet::new(); // Track which lines have gutters rendered
+        let mut line_end_cols: HashMap<usize, usize> = HashMap::new(); // Track the rightmost column for each doc line
+        let mut current_line_max_col = 0usize; // Track max absolute column for current line
 
         // Indent guides tracking
         let mut last_line_indent_level = 0usize;
@@ -1669,12 +1685,15 @@ impl Component for EditorView {
 
             // Render end-of-line diagnostic for previous line before switching
             if current_doc_line != usize::MAX {
+              let prev_line_end_col = line_end_cols
+                .remove(&current_doc_line)
+                .unwrap_or(current_line_max_col);
               // Render virtual lines for the previous line using the last visual row it ended
               // on
               decoration_manager.render_virtual_lines(
                 renderer,
                 (current_doc_line, last_doc_line_end_row as u16),
-                viewport_cols,
+                prev_line_end_col,
               );
             }
 
@@ -1682,7 +1701,7 @@ impl Component for EditorView {
             decoration_manager.decorate_line(renderer, (doc_line, rel_row as u16));
             current_doc_line = doc_line;
             last_doc_line_end_row = rel_row; // Initialize for the new doc_line
-            current_line_max_x = base_x; // Reset for new line
+            current_line_max_col = 0; // Reset for new line
 
             // Reset indent tracking for new line (but keep last_line_indent_level from
             // previous line) This allows guides to persist on
@@ -1744,6 +1763,10 @@ impl Component for EditorView {
           let width_cols = g.raw.width();
           let h_off = view_offset.horizontal_offset;
 
+          // Track the rightmost absolute column on this line
+          let grapheme_width = width_cols;
+          current_line_max_col = current_line_max_col.max(abs_col.saturating_add(grapheme_width));
+
           // Skip if grapheme is left of viewport
           if abs_col + width_cols <= h_off {
             continue;
@@ -1775,9 +1798,6 @@ impl Component for EditorView {
           }
 
           let x = base_x + (rel_col as f32) * font_width;
-
-          // Track the rightmost x position on this line
-          current_line_max_x = current_line_max_x.max(x + (draw_cols as f32) * font_width);
 
           // Call decoration hook for this grapheme
           decoration_manager.decorate_grapheme(&g);
@@ -1969,8 +1989,8 @@ impl Component for EditorView {
           // Add text command
           match g.raw {
             Grapheme::Newline => {
-              // Store the line end x position for this doc line
-              line_end_x.insert(doc_line, current_line_max_x);
+              // Store the tracked line end column for this doc line
+              line_end_cols.insert(doc_line, current_line_max_col);
               // End of line, no text to draw
             },
             Grapheme::Tab { .. } => {
@@ -2077,10 +2097,13 @@ impl Component for EditorView {
 
         // Render virtual lines for the last line
         if current_doc_line != usize::MAX {
+          let last_line_end_col = line_end_cols
+            .remove(&current_doc_line)
+            .unwrap_or(current_line_max_col);
           decoration_manager.render_virtual_lines(
             renderer,
             (current_doc_line, last_doc_line_end_row as u16),
-            viewport_cols,
+            last_line_end_col,
           );
         }
 

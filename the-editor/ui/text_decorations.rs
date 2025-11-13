@@ -206,6 +206,19 @@ pub trait DecorationRenderer {
     color: Color,
   ) -> usize;
 
+  /// Draw text at a position with automatic truncation if it exceeds max_width
+  /// Uses the specified font size instead of UI_FONT_SIZE
+  /// Returns the actual width rendered in characters
+  fn draw_truncated_text_with_font_size(
+    &mut self,
+    text: &str,
+    x: f32,
+    y: f32,
+    max_width: usize,
+    color: Color,
+    font_size: f32,
+  ) -> usize;
+
   /// Check if a column is within viewport bounds
   fn column_in_bounds(&self, col: usize) -> bool;
 }
@@ -292,6 +305,83 @@ impl DecorationRenderer for Surface {
           content: display,
           style:   TextStyle {
             size: UI_FONT_SIZE,
+            color,
+          },
+        }],
+      });
+      truncated_width + 1 // +1 for ellipsis
+    }
+  }
+
+  fn draw_truncated_text_with_font_size(
+    &mut self,
+    text: &str,
+    x: f32,
+    y: f32,
+    max_width: usize,
+    color: Color,
+    font_size: f32,
+  ) -> usize {
+    use unicode_segmentation::UnicodeSegmentation;
+
+    if max_width == 0 {
+      return 0;
+    }
+
+    // Calculate actual display width using grapheme clusters
+    let graphemes: Vec<&str> = text.graphemes(true).collect();
+    let mut total_width = 0;
+    let mut grapheme_count = 0;
+
+    for grapheme in &graphemes {
+      let width = unicode_width::UnicodeWidthStr::width(*grapheme);
+      if total_width + width > max_width {
+        break;
+      }
+      total_width += width;
+      grapheme_count += 1;
+    }
+
+    // Check if truncation is needed
+    let needs_truncation = grapheme_count < graphemes.len();
+
+    if !needs_truncation {
+      // Render full text
+      self.draw_text(TextSection {
+        position: (x, y),
+        texts:    vec![TextSegment {
+          content: text.to_string(),
+          style:   TextStyle {
+            size: font_size,
+            color,
+          },
+        }],
+      });
+      total_width
+    } else {
+      // Truncate and add ellipsis (reserve 1 char for "…")
+      let truncate_to = if max_width > 1 { max_width - 1 } else { 0 };
+      let mut truncated_width = 0;
+      let mut truncated_count = 0;
+
+      for grapheme in &graphemes {
+        let width = unicode_width::UnicodeWidthStr::width(*grapheme);
+        if truncated_width + width > truncate_to {
+          break;
+        }
+        truncated_width += width;
+        truncated_count += 1;
+      }
+
+      let truncated: String = graphemes[..truncated_count].concat();
+      let display = format!("{}…", truncated);
+
+      self.draw_text(TextSection {
+        position: (x, y),
+        texts:    vec![TextSegment {
+          content: display,
+          style:   TextStyle {
+            size: font_size,
             color,
           },
         }],

@@ -1,12 +1,10 @@
 use std::time::Instant;
 
-use crate::{
-  ui::{
-    compositor::{
-      Context,
-      Surface,
-    },
-    components::popup::PositionBias,
+use crate::ui::{
+  components::popup::PositionBias,
+  compositor::{
+    Context,
+    Surface,
   },
 };
 
@@ -14,10 +12,7 @@ use crate::{
 const CURSOR_POPUP_MARGIN: f32 = 4.0;
 
 /// Calculate available space above and below cursor for popup placement.
-pub fn calculate_available_space(
-  cursor: CursorPosition,
-  viewport_height: f32,
-) -> (f32, f32) {
+pub fn calculate_available_space(cursor: CursorPosition, viewport_height: f32) -> (f32, f32) {
   let available_above = (cursor.line_top - CURSOR_POPUP_MARGIN).max(0.0);
   let available_below = (viewport_height - cursor.line_bottom - CURSOR_POPUP_MARGIN).max(0.0);
   (available_above, available_below)
@@ -25,9 +20,9 @@ pub fn calculate_available_space(
 
 /// Constrain popup height to fit within available space.
 /// Returns the maximum height the popup can be without overflowing.
-/// Respects bias preference: tries the preferred side first, but uses the other side
-/// if the preferred side doesn't have enough space. If no bias is provided, prefers
-/// the side with more space (below by default if equal).
+/// Respects bias preference: tries the preferred side first, but uses the other
+/// side if the preferred side doesn't have enough space. If no bias is
+/// provided, prefers the side with more space (below by default if equal).
 pub fn constrain_popup_height(
   cursor: CursorPosition,
   popup_height: f32,
@@ -36,7 +31,7 @@ pub fn constrain_popup_height(
   bias: Option<PositionBias>,
 ) -> f32 {
   let (available_above, available_below) = calculate_available_space(cursor, viewport_height);
-  
+
   // Determine maximum popup height based on bias and available space
   let max_popup_height = match bias {
     Some(PositionBias::Below) => {
@@ -68,16 +63,16 @@ pub fn constrain_popup_height(
       }
     },
   };
-  
+
   if max_popup_height <= 0.0 {
     return min_popup_height;
   }
-  
+
   if max_popup_height < min_popup_height {
     // Not enough room to display even minimum content without covering text
     return min_popup_height;
   }
-  
+
   // Constrain to available space
   popup_height.min(max_popup_height).max(min_popup_height)
 }
@@ -86,19 +81,16 @@ pub fn constrain_popup_height(
 #[derive(Clone, Copy, Debug)]
 pub struct CursorPosition {
   /// X coordinate of cursor (left edge of character)
-  pub x: f32,
+  pub x:           f32,
   /// Y coordinate of top of cursor line
-  pub line_top: f32,
+  pub line_top:    f32,
   /// Y coordinate of bottom of cursor line (baseline)
   pub line_bottom: f32,
 }
 
 /// Calculate cursor position in screen coordinates using document font metrics.
 /// Returns None if cursor is not visible.
-pub fn calculate_cursor_position(
-  ctx: &Context,
-  surface: &Surface,
-) -> Option<CursorPosition> {
+pub fn calculate_cursor_position(ctx: &Context, surface: &Surface) -> Option<CursorPosition> {
   let font_state = surface.save_font_state();
   let doc_cell_w = font_state.cell_width.max(1.0);
   let doc_cell_h = font_state.cell_height.max(1.0);
@@ -174,9 +166,10 @@ pub struct PopupPosition {
 }
 
 /// Position a popup relative to the cursor.
-/// Tries the preferred side first (based on bias), but falls back to the other side
-/// if there's not enough space. If no bias is provided, chooses the side with more space
-/// (below by default if equal). Accounts for animation slide_offset and scale.
+/// Tries the preferred side first (based on bias), but falls back to the other
+/// side if there's not enough space. If no bias is provided, chooses the side
+/// with more space (below by default if equal). Accounts for animation
+/// slide_offset and scale.
 pub fn position_popup_near_cursor(
   cursor: CursorPosition,
   popup_width: f32,
@@ -246,9 +239,10 @@ pub fn position_popup_near_cursor(
 }
 
 /// Position a popup relative to the cursor, centered horizontally.
-/// Tries the preferred side first (based on bias), but falls back to the other side
-/// if there's not enough space. If no bias is provided, chooses the side with more space
-/// (below by default if equal). Useful for signature help which should be centered on the cursor.
+/// Tries the preferred side first (based on bias), but falls back to the other
+/// side if there's not enough space. If no bias is provided, chooses the side
+/// with more space (below by default if equal). Useful for signature help which
+/// should be centered on the cursor.
 pub fn position_popup_centered_on_cursor(
   cursor: CursorPosition,
   popup_width: f32,
@@ -316,4 +310,3 @@ pub fn position_popup_centered_on_cursor(
     y: popup_y,
   }
 }
-

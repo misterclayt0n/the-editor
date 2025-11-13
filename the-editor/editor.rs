@@ -1017,7 +1017,8 @@ pub struct CursorShapeConfig([CursorKind; 3]);
 impl CursorShapeConfig {
   #[allow(clippy::wrong_self_convention)]
   pub fn from_mode(&self, mode: Mode) -> CursorKind {
-    // Map Mode enum order (Normal=0, Insert=1, Select=2) to array order [Normal, Select, Insert]
+    // Map Mode enum order (Normal=0, Insert=1, Select=2) to array order [Normal,
+    // Select, Insert]
     let idx = match mode {
       Mode::Normal => 0,
       Mode::Insert => 2,

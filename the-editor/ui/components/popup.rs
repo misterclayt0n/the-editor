@@ -10,12 +10,6 @@ use crate::{
     position::Position,
   },
   ui::{
-    popup_positioning::{
-      calculate_cursor_position,
-      constrain_popup_height,
-      position_popup_near_cursor,
-      CursorPosition,
-    },
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
     compositor::{
@@ -25,6 +19,12 @@ use crate::{
       Event,
       EventResult,
       Surface,
+    },
+    popup_positioning::{
+      CursorPosition,
+      calculate_cursor_position,
+      constrain_popup_height,
+      position_popup_near_cursor,
     },
   },
 };
@@ -281,11 +281,7 @@ impl<T: PopupContent> PopupShell<T> {
     }
   }
 
-  fn anchor_position(
-    &self,
-    ctx: &Context,
-    surface: &Surface,
-  ) -> Option<CursorPosition> {
+  fn anchor_position(&self, ctx: &Context, surface: &Surface) -> Option<CursorPosition> {
     // Use shared cursor position calculation for consistent positioning
     // with completer and signature help
     calculate_cursor_position(ctx, surface)
@@ -334,7 +330,8 @@ impl<T: PopupContent> PopupShell<T> {
         // Use shared positioning logic
         // For hover, align with cursor column (like completion), not centered
         // Pass bias to respect preferred positioning side
-        // Use surface dimensions (not viewport_rect) because cursor position is in screen coordinates
+        // Use surface dimensions (not viewport_rect) because cursor position is in
+        // screen coordinates
         let popup_pos = position_popup_near_cursor(
           cursor_pos,
           outer_width,
@@ -417,20 +414,23 @@ impl<T: PopupContent + 'static> Component for PopupShell<T> {
     let ui_cell_w = surface.cell_width().max(UI_FONT_WIDTH.max(1.0));
     let ui_cell_h = surface.cell_height().max((UI_FONT_SIZE + 4.0).max(1.0));
 
-    // Get surface dimensions for positioning (cursor position is in screen coordinates)
+    // Get surface dimensions for positioning (cursor position is in screen
+    // coordinates)
     let surface_width = surface.width() as f32;
     let surface_height = surface.height() as f32;
 
-    // Constrain popup height based on available space (same logic as signature helper)
+    // Constrain popup height based on available space (same logic as signature
+    // helper)
     if let Some(cursor_pos) = cursor {
       let padding = self.style.padding;
       let min_popup_height = (self.limits.min_height as f32 * ui_cell_h)
         .max(padding * 2.0)
         .min(surface_height);
-      
+
       // Constrain content height to fit available space
       // Pass bias to respect preferred positioning side
-      // Use surface_height (not viewport_px.height) because cursor position is in screen coordinates
+      // Use surface_height (not viewport_px.height) because cursor position is in
+      // screen coordinates
       let constrained_height = constrain_popup_height(
         cursor_pos,
         content_size.height + padding * 2.0,
@@ -438,7 +438,7 @@ impl<T: PopupContent + 'static> Component for PopupShell<T> {
         surface_height,
         self.bias,
       );
-      
+
       // Adjust content_size height to fit within constrained space
       content_size.height = (constrained_height - padding * 2.0).max(0.0);
     }

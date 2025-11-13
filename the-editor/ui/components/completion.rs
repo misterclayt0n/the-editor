@@ -39,10 +39,6 @@ use crate::{
     completion_resolve::ResolveHandler,
   },
   ui::{
-    popup_positioning::{
-      calculate_cursor_position,
-      position_popup_near_cursor,
-    },
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
     compositor::{
@@ -51,6 +47,10 @@ use crate::{
       Event,
       EventResult,
       Surface,
+    },
+    popup_positioning::{
+      calculate_cursor_position,
+      position_popup_near_cursor,
     },
   },
 };

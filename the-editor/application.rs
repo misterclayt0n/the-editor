@@ -412,6 +412,10 @@ impl Application for App {
   fn render(&mut self, renderer: &mut Renderer) {
     the_editor_event::start_frame();
 
+    // Clear needs_redraw flag at the start of each frame.
+    // It will be set again if something needs redrawing during this frame.
+    self.editor.needs_redraw = false;
+
     // The renderer's begin_frame/end_frame are handled by the main loop.
     // We just need to draw our content here.
 
@@ -564,8 +568,11 @@ impl Application for App {
 
       // If not handled by compositor, use default scroll behavior
       if !handled {
-        self.handle_scroll(scroll, _renderer);
+        // handle_scroll returns whether immediate redraw is needed
+        let needs_immediate_redraw = self.handle_scroll(scroll, _renderer);
+        return needs_immediate_redraw;
       }
+      // Compositor handled it, request redraw
       return true;
     }
 
@@ -684,11 +691,18 @@ impl Application for App {
 }
 
 impl App {
-  fn handle_scroll(&mut self, delta: ScrollDelta, renderer: &mut Renderer) {
+  fn handle_scroll(&mut self, delta: ScrollDelta, renderer: &mut Renderer) -> bool {
     match delta {
-      // Mouse wheel: discrete line-based scrolling
-      // Use smooth scrolling animation for these
+      // Mouse wheel: discrete line-based scrolling with animation
       ScrollDelta::Lines { x, y } => {
+        if Self::is_precision_line_scroll(x, y) {
+          // Some backends (notably X11) report high-resolution touchpad input
+          // as line deltas. Treat those like pixel scrolling to avoid
+          // oscillation from the smooth-scroll animator.
+          self.handle_precise_line_scroll(x, y);
+          return false;
+        }
+
         let config_lines = self.editor.config().scroll_lines.max(1) as f32;
         let d_cols = -x * 4.0;
         let d_lines = -y * config_lines;
@@ -699,37 +713,69 @@ impl App {
 
         // Nudge a redraw loop
         the_editor_event::request_redraw();
+        true // Request immediate redraw for smooth animation
       },
 
-      // Trackpad: continuous pixel-based scrolling
-      // Already smooth from OS, accumulate fractional lines and apply when ready
+      // Trackpad: continuous pixel-based scrolling handled immediately
       ScrollDelta::Pixels { x, y } => {
-        let line_h = renderer.cell_height().max(1.0);
-        let col_w = renderer.cell_width().max(1.0);
-
-        // Apply same multiplier as mouse wheel for consistent scroll speed
-        let config_lines = self.editor.config().scroll_lines.max(1) as f32;
-        let d_cols = (-x / col_w) * 4.0; // Same horizontal multiplier as mouse wheel
-        let d_lines = (-y / line_h) * config_lines;
-
-        // Accumulate fractional scrolling
-        self.trackpad_scroll_lines += d_lines;
-        self.trackpad_scroll_cols += d_cols;
-
-        // Extract integer part to scroll
-        let lines_to_scroll = self.trackpad_scroll_lines.trunc() as i32;
-        let cols_to_scroll = self.trackpad_scroll_cols.trunc() as i32;
-
-        // Keep fractional remainder for next event
-        self.trackpad_scroll_lines -= lines_to_scroll as f32;
-        self.trackpad_scroll_cols -= cols_to_scroll as f32;
-
-        // Apply accumulated scroll immediately if we have at least 1 line/col
-        if lines_to_scroll != 0 || cols_to_scroll != 0 {
-          self.apply_scroll_immediate(lines_to_scroll, cols_to_scroll);
-        }
+        self.handle_precise_pixel_scroll(x, y, renderer);
+        false // Don't request immediate redraw - let normal loop handle it
       },
     }
+  }
+
+  fn handle_precise_pixel_scroll(&mut self, x: f32, y: f32, renderer: &Renderer) {
+    let line_h = renderer.cell_height().max(1.0);
+    let col_w = renderer.cell_width().max(1.0);
+
+    // Apply same multiplier as mouse wheel for consistent scroll speed
+    let config_lines = self.editor.config().scroll_lines.max(1) as f32;
+    let d_cols = (-x / col_w) * 4.0; // Same horizontal multiplier as mouse wheel
+    let d_lines = (-y / line_h) * config_lines;
+
+    self.accumulate_precise_scroll(d_lines, d_cols);
+  }
+
+  fn handle_precise_line_scroll(&mut self, x: f32, y: f32) {
+    let config_lines = self.editor.config().scroll_lines.max(1) as f32;
+    let d_cols = -x * 4.0;
+    let d_lines = -y * config_lines;
+    self.accumulate_precise_scroll(d_lines, d_cols);
+  }
+
+  fn accumulate_precise_scroll(&mut self, d_lines: f32, d_cols: f32) {
+    // Accumulate fractional scrolling
+    self.trackpad_scroll_lines += d_lines;
+    self.trackpad_scroll_cols += d_cols;
+
+    // Extract integer part to scroll
+    let lines_to_scroll = self.trackpad_scroll_lines.trunc() as i32;
+    let cols_to_scroll = self.trackpad_scroll_cols.trunc() as i32;
+
+    // Keep fractional remainder for next event
+    self.trackpad_scroll_lines -= lines_to_scroll as f32;
+    self.trackpad_scroll_cols -= cols_to_scroll as f32;
+
+    // Apply accumulated scroll immediately if we have at least 1 line/col
+    if lines_to_scroll != 0 || cols_to_scroll != 0 {
+      self.apply_scroll_immediate(lines_to_scroll, cols_to_scroll);
+      // Mark editor as needing redraw, but don't request immediate redraw
+      // to avoid flickering in X11 where scroll events come very frequently.
+      // The normal redraw loop will pick this up.
+      self.editor.needs_redraw = true;
+    }
+  }
+
+  fn is_precision_line_scroll(x: f32, y: f32) -> bool {
+    const EPSILON: f32 = 1e-3;
+    let is_fractional = |value: f32| {
+      if value == 0.0 {
+        return false;
+      }
+      (value - value.round()).abs() > EPSILON
+    };
+
+    is_fractional(x) || is_fractional(y)
   }
 
   /// Apply scroll immediately without animation (for trackpad)

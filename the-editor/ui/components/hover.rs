@@ -16,7 +16,6 @@ use crate::{
     position::Position,
   },
   ui::{
-    popup_positioning::calculate_cursor_position,
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
     components::popup::{
@@ -34,6 +33,7 @@ use crate::{
       EventResult,
       Surface,
     },
+    popup_positioning::calculate_cursor_position,
   },
 };
 
@@ -99,8 +99,9 @@ fn current_cursor_anchor(ctx: &Context, surface: &Surface) -> Option<Position> {
   // PopupShell will use calculate_cursor_position internally, but we set anchor
   // to indicate we want cursor-relative positioning
   let _cursor = calculate_cursor_position(ctx, surface)?;
-  
-  // Convert to Position format for PopupShell (though it will recalculate using shared module)
+
+  // Convert to Position format for PopupShell (though it will recalculate using
+  // shared module)
   let (view, doc) = crate::current_ref!(ctx.editor);
   let text = doc.text();
   let cursor_pos = doc.selection(view.id).primary().cursor(text.slice(..));
@@ -581,10 +582,11 @@ fn highlight_code_block_lines(
 
     // Wrap the line to fit within max_chars
     let wrapped_line_strings = wrap_text(&line_string, max_chars);
-    
+
     // Process each wrapped segment independently
     // We highlight each wrapped segment separately, which means we lose some
-    // syntax highlighting accuracy for wrapped lines, but ensures text fits within container
+    // syntax highlighting accuracy for wrapped lines, but ensures text fits within
+    // container
     for wrapped_line in wrapped_line_strings {
       if wrapped_line.is_empty() {
         lines.push(vec![TextSegment {
@@ -597,25 +599,30 @@ fn highlight_code_block_lines(
         continue;
       }
 
-      // For wrapped segments, we apply syntax highlighting to the wrapped text directly
-      // This is simpler than trying to map wrapped positions back to original spans
+      // For wrapped segments, we apply syntax highlighting to the wrapped text
+      // directly This is simpler than trying to map wrapped positions back to
+      // original spans
       let wrapped_rope = Rope::from(wrapped_line.as_str());
       let wrapped_slice = wrapped_rope.slice(..);
-      
+
       // Re-apply syntax highlighting to the wrapped segment
       let wrapped_spans = language
         .and_then(|lang| crate::core::syntax::Syntax::new(wrapped_slice, lang, &loader).ok())
-        .map(|syntax| syntax.collect_highlights(wrapped_slice, &loader, 0..wrapped_slice.len_bytes()))
+        .map(|syntax| {
+          syntax.collect_highlights(wrapped_slice, &loader, 0..wrapped_slice.len_bytes())
+        })
         .unwrap_or_else(Vec::new);
 
-      let mut wrapped_char_spans: Vec<(usize, usize, Color)> = Vec::with_capacity(wrapped_spans.len());
+      let mut wrapped_char_spans: Vec<(usize, usize, Color)> =
+        Vec::with_capacity(wrapped_spans.len());
       for (hl, byte_range) in wrapped_spans.into_iter() {
         let style = theme.highlight(hl);
         let color = style
           .fg
           .map(crate::ui::theme_color_to_renderer_color)
           .unwrap_or(default_code_color);
-        let start_char = wrapped_slice.byte_to_char(wrapped_slice.floor_char_boundary(byte_range.start));
+        let start_char =
+          wrapped_slice.byte_to_char(wrapped_slice.floor_char_boundary(byte_range.start));
         let end_char = wrapped_slice.byte_to_char(wrapped_slice.ceil_char_boundary(byte_range.end));
         if start_char < end_char {
           wrapped_char_spans.push((start_char, end_char, color));

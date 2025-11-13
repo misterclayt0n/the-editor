@@ -12,11 +12,6 @@ use the_editor_stdx::rope::RopeSliceExt;
 use crate::{
   core::graphics::Rect,
   ui::{
-    popup_positioning::{
-      calculate_cursor_position,
-      constrain_popup_height,
-      position_popup_centered_on_cursor,
-    },
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
     compositor::{
@@ -25,6 +20,11 @@ use crate::{
       Event,
       EventResult,
       Surface,
+    },
+    popup_positioning::{
+      calculate_cursor_position,
+      constrain_popup_height,
+      position_popup_centered_on_cursor,
     },
   },
 };
@@ -361,7 +361,12 @@ impl Component for SignatureHelp {
     );
 
     // Recalculate visible_doc_lines if height was constrained
-    if popup_height < padding * 2.0 + signature_block_height + DOC_SECTION_GAP + visible_doc_lines as f32 * line_height {
+    if popup_height
+      < padding * 2.0
+        + signature_block_height
+        + DOC_SECTION_GAP
+        + visible_doc_lines as f32 * line_height
+    {
       let available_for_docs = (popup_height - min_popup_height - DOC_SECTION_GAP).max(0.0);
       let max_lines_by_height = (available_for_docs / line_height).floor() as usize;
       visible_doc_lines = visible_doc_lines.min(max_lines_by_height);
@@ -388,23 +393,23 @@ impl Component for SignatureHelp {
       }
     }
 
-      // Position popup using shared positioning utility (generalized from completer)
-      // Pass None for bias to maintain current behavior (choose side with more space)
-      let popup_pos = position_popup_centered_on_cursor(
-        cursor,
-        popup_width,
-        popup_height,
-        viewport_width,
-        viewport_height,
-        slide_offset,
-        scale,
-        None,
-      );
+    // Position popup using shared positioning utility (generalized from completer)
+    // Pass None for bias to maintain current behavior (choose side with more space)
+    let popup_pos = position_popup_centered_on_cursor(
+      cursor,
+      popup_width,
+      popup_height,
+      viewport_width,
+      viewport_height,
+      slide_offset,
+      scale,
+      None,
+    );
 
-      let anim_width = popup_width * scale;
-      let anim_height = popup_height * scale;
-      let anim_x = popup_pos.x;
-      let anim_y = popup_pos.y;
+    let anim_width = popup_width * scale;
+    let anim_height = popup_height * scale;
+    let anim_x = popup_pos.x;
+    let anim_y = popup_pos.y;
 
     // Draw background
     let corner_radius = 6.0;
@@ -756,7 +761,8 @@ fn build_signature_line_with_syntax(
     // Determine if this segment is highlighted (parameter highlight)
     let highlighted = segment_start >= highlight_start && segment_end <= highlight_end;
 
-    // Find syntax color for this segment (use the color from the first overlapping syntax span)
+    // Find syntax color for this segment (use the color from the first overlapping
+    // syntax span)
     let mut syntax_color = default_color;
     for (s, e, color) in syntax_spans.iter() {
       if segment_start < *e && segment_end > *s {
@@ -817,8 +823,8 @@ fn signature_wrap_break(ch: char) -> bool {
     )
 }
 
-/// Build documentation render lines with markdown and syntax highlighting support.
-/// Similar to build_hover_render_lines in hover.rs.
+/// Build documentation render lines with markdown and syntax highlighting
+/// support. Similar to build_hover_render_lines in hover.rs.
 fn build_doc_render_lines(
   markdown: &str,
   max_chars: usize,
@@ -976,7 +982,8 @@ fn highlight_code_block_lines(
         continue;
       }
 
-      // For wrapped segments, we apply syntax highlighting to the wrapped text directly
+      // For wrapped segments, we apply syntax highlighting to the wrapped text
+      // directly
       let wrapped_rope = Rope::from(wrapped_line.as_str());
       let wrapped_slice = wrapped_rope.slice(..);
 
@@ -998,8 +1005,7 @@ fn highlight_code_block_lines(
           .unwrap_or(default_code_color);
         let start_char =
           wrapped_slice.byte_to_char(wrapped_slice.floor_char_boundary(byte_range.start));
-        let end_char =
-          wrapped_slice.byte_to_char(wrapped_slice.ceil_char_boundary(byte_range.end));
+        let end_char = wrapped_slice.byte_to_char(wrapped_slice.ceil_char_boundary(byte_range.end));
         if start_char < end_char {
           wrapped_char_spans.push((start_char, end_char, color));
         }
@@ -1034,8 +1040,8 @@ fn highlight_code_block_lines(
         if !content.is_empty() {
           segments.push(TextSegment {
             content,
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
               color,
             },
           });

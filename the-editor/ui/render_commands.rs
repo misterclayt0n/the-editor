@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
-use crate::core::graphics::CursorKind;
 use the_editor_renderer::{
   Color,
   TextSection,
 };
+
+use crate::core::graphics::CursorKind;
 
 /// A render command that can be batched
 #[derive(Debug, Clone)]
@@ -21,12 +22,12 @@ pub enum RenderCommand {
   Text { section: TextSection },
   /// Draw cursor
   Cursor {
-    x:      f32,
-    y:      f32,
-    width:  f32,
-    height: f32,
-    color:  Color,
-    kind:   CursorKind,
+    x:       f32,
+    y:       f32,
+    width:   f32,
+    height:  f32,
+    color:   Color,
+    kind:    CursorKind,
     primary: bool,
   },
   /// Draw selection background
@@ -81,12 +82,12 @@ struct SelectionCommand {
 
 #[derive(Debug, Clone)]
 struct CursorCommand {
-  x:      f32,
-  y:      f32,
-  width:  f32,
-  height: f32,
-  color:  Color,
-  kind:   CursorKind,
+  x:       f32,
+  y:       f32,
+  width:   f32,
+  height:  f32,
+  color:   Color,
+  kind:    CursorKind,
   primary: bool,
 }
 
@@ -252,7 +253,13 @@ impl CommandBatcher {
 
     match cursor.kind {
       CursorKind::Block => {
-        renderer.draw_rect(cursor.x, cursor.y, cursor.width, cursor.height, cursor_color);
+        renderer.draw_rect(
+          cursor.x,
+          cursor.y,
+          cursor.width,
+          cursor.height,
+          cursor_color,
+        );
       },
       CursorKind::Bar => {
         const BAR_WIDTH: f32 = 2.0;

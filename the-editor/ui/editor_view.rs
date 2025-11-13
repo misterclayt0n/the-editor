@@ -23,9 +23,9 @@ use crate::{
     },
     doc_formatter::DocumentFormatter,
     grapheme::{
+      Grapheme,
       next_grapheme_boundary,
       prev_grapheme_boundary,
-      Grapheme,
     },
     graphics::{
       Color as ThemeColor,
@@ -1241,7 +1241,8 @@ impl Component for EditorView {
           .collect();
 
         let editor_mode = cx.editor.mode();
-        // Get cursor shape from config based on current mode (needed for selection exclusion)
+        // Get cursor shape from config based on current mode (needed for selection
+        // exclusion)
         let cursor_kind = cx.editor.config().cursor_shape.from_mode(editor_mode);
         let primary_cursor_is_block = cursor_kind == CursorKind::Block;
         let selection_highlight_ranges: Vec<(usize, usize)> = {
@@ -1258,12 +1259,12 @@ impl Component for EditorView {
 
             if range.head > range.anchor {
               let cursor_start = prev_grapheme_boundary(text_slice, range.head);
-            let selection_end =
-              if is_primary && !primary_cursor_is_block && editor_mode != Mode::Insert {
-                range.head
-              } else {
-                cursor_start
-              };
+              let selection_end =
+                if is_primary && !primary_cursor_is_block && editor_mode != Mode::Insert {
+                  range.head
+                } else {
+                  cursor_start
+                };
 
               if range.anchor < selection_end {
                 highlight_ranges.push((range.anchor, selection_end));
@@ -1789,12 +1790,14 @@ impl Component for EditorView {
           let cursor_is_block_here = cursor_kind_for_position == CursorKind::Block;
 
           // Add selection background command
-          // For non-block cursors, exclude cursor position from selection ONLY when there's no actual selection
-          // (i.e., when it's just a cursor at a single position, not a range selection)
-          // When there's an actual selection, the background should include the cursor position
+          // For non-block cursors, exclude cursor position from selection ONLY when
+          // there's no actual selection (i.e., when it's just a cursor at a
+          // single position, not a range selection) When there's an actual
+          // selection, the background should include the cursor position
           let doc_len = g.doc_chars();
           let should_draw_selection = if is_selected(g.char_idx, doc_len) {
-            // Only exclude cursor position for non-block cursors when there's no actual selection
+            // Only exclude cursor position for non-block cursors when there's no actual
+            // selection
             !(is_cursor_here && is_focused && !cursor_is_block_here && !has_selection)
           } else {
             false
@@ -1950,12 +1953,12 @@ impl Component for EditorView {
             };
 
             self.command_batcher.add_command(RenderCommand::Cursor {
-              x:      anim_x,
-              y:      cursor_y,
-              width:  clipped_cursor_w,
-              height: clipped_cursor_h,
-              color:  cursor_color,
-              kind:   cursor_kind_for_position,
+              x:       anim_x,
+              y:       cursor_y,
+              width:   clipped_cursor_w,
+              height:  clipped_cursor_h,
+              color:   cursor_color,
+              kind:    cursor_kind_for_position,
               primary: is_primary_cursor_here,
             });
           }
@@ -2121,10 +2124,10 @@ impl Component for EditorView {
           self.command_batcher.add_command(RenderCommand::Cursor {
             x,
             y,
-            width:  font_width,
+            width: font_width,
             height: self.cached_cell_height,
-            color:  primary_cursor_color,
-            kind:   cursor_kind,
+            color: primary_cursor_color,
+            kind: cursor_kind,
             primary: true,
           });
 
@@ -2132,10 +2135,10 @@ impl Component for EditorView {
             self.command_batcher.add_command(RenderCommand::Cursor {
               x,
               y,
-              width:  font_width,
+              width: font_width,
               height: self.cached_cell_height,
-              color:  primary_cursor_color,
-              kind:   cursor_kind,
+              color: primary_cursor_color,
+              kind: cursor_kind,
               primary: false,
             });
           }

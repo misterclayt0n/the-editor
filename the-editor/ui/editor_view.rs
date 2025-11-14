@@ -24,8 +24,8 @@ use crate::{
       OnKeyCallback,
       OnKeyCallbackKind,
     },
-    doc_formatter::DocumentFormatter,
     diagnostics::DiagnosticFilter,
+    doc_formatter::DocumentFormatter,
     grapheme::{
       Grapheme,
       next_grapheme_boundary,
@@ -1410,7 +1410,11 @@ impl Component for EditorView {
         decoration_manager.add_decoration(underlines);
 
         // Add inline diagnostics decoration if enabled
-        let inline_diagnostics_config = cx.editor.config().inline_diagnostics.clone();
+        let mut inline_diagnostics_config = cx.editor.config().inline_diagnostics.clone();
+        if !view.inline_diagnostics_enabled {
+          inline_diagnostics_config.cursor_line = DiagnosticFilter::Disable;
+          inline_diagnostics_config.other_lines = DiagnosticFilter::Disable;
+        }
         let eol_diagnostics = cx.editor.config().end_of_line_diagnostics;
         let inline_decoration_enabled = !inline_diagnostics_config.disabled();
         let eol_decoration_enabled = !matches!(eol_diagnostics, DiagnosticFilter::Disable);
@@ -1418,11 +1422,13 @@ impl Component for EditorView {
         if inline_decoration_enabled || eol_decoration_enabled {
           // Check if cursor-line diagnostics should be enabled (with debouncing)
           let view = cx.editor.tree.get(focus_view);
-          let enable_cursor_line =
-            view.diagnostics_handler.show_cursorline_diagnostics(doc, focus_view);
+          let enable_cursor_line = view
+            .diagnostics_handler
+            .show_cursorline_diagnostics(doc, focus_view);
 
           // Prepare config based on viewport width and cursor-line state
-          let prepared_config = inline_diagnostics_config.prepare(viewport.width, enable_cursor_line);
+          let prepared_config =
+            inline_diagnostics_config.prepare(viewport.width, enable_cursor_line);
 
           let inline_diag = crate::ui::text_decorations::diagnostics::InlineDiagnostics::new(
             doc,

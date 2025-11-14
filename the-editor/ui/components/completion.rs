@@ -513,7 +513,7 @@ fn empty_doc_line(color: Color) -> Vec<TextSegment> {
   vec![TextSegment {
     content: String::new(),
     style:   TextStyle {
-      size:  UI_FONT_SIZE,
+      size: UI_FONT_SIZE,
       color,
     },
   }]
@@ -917,8 +917,9 @@ impl Completion {
         line_groups.push(empty_doc_line(base_text_color));
       }
 
-      let max_lines_by_height =
-        ((doc_height - DOC_PADDING * 2.0) / line_height).floor().max(0.0) as usize;
+      let max_lines_by_height = ((doc_height - DOC_PADDING * 2.0) / line_height)
+        .floor()
+        .max(0.0) as usize;
       if max_lines_by_height == 0 {
         return;
       }

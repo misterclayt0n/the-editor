@@ -17,7 +17,10 @@ use crate::{
     DocumentId,
     ViewId,
     animation::selection::SelectionPulse,
-    diagnostics::InlineDiagnostics,
+    diagnostics::{
+      DiagnosticFilter,
+      InlineDiagnostics,
+    },
     document::{
       Document,
       DocumentColorSwatches,
@@ -283,10 +286,10 @@ pub struct View {
   pub jumps:               JumpList,
   pub docs_access_history: Vec<DocumentId>,
 
-  pub last_modified_docs:    [Option<DocumentId>; 2],
-  pub object_selections:     Vec<Selection>,
-  pub gutters:               GutterConfig,
-  doc_revisions:             HashMap<DocumentId, usize>,
+  pub last_modified_docs:         [Option<DocumentId>; 2],
+  pub object_selections:          Vec<Selection>,
+  pub gutters:                    GutterConfig,
+  doc_revisions:                  HashMap<DocumentId, usize>,
   // HACKS: there should really only be a global diagnostics handler (the
   // non-focused views should just not have different handling for the cursor
   // line). For that we would need accces to editor everywhere (we want to use
@@ -294,14 +297,16 @@ pub struct View {
   // Document into entity component like structure. That is a huge refactor
   // left to future work. For now we treat all views as focused and give them
   // each their own handler.
-  pub diagnostics_handler:   DiagnosticsHandler,
+  pub diagnostics_handler:        DiagnosticsHandler,
   /// Animation factor for document opening (0.0 = just opened, 1.0 = fully
   /// loaded)
-  pub zoom_anim:             f32,
+  pub zoom_anim:                  f32,
   /// The actual rendered gutter width (accounts for enabled/disabled gutters).
   /// Set by the renderer. If None, falls back to calculating from gutters
   /// config.
-  pub rendered_gutter_width: Option<u16>,
+  pub rendered_gutter_width:      Option<u16>,
+  /// Whether inline diagnostics should be rendered for this view.
+  pub inline_diagnostics_enabled: bool,
 }
 
 impl fmt::Debug for View {
@@ -329,6 +334,7 @@ impl View {
       diagnostics_handler: DiagnosticsHandler::new(),
       zoom_anim: 1.0, // Start fully loaded for existing views
       rendered_gutter_width: None,
+      inline_diagnostics_enabled: true,
     }
   }
 
@@ -625,9 +631,9 @@ impl View {
         .add_inline_annotations(other_inlay_hints, other_style)
         .add_inline_annotations(padding_after_inlay_hints, None);
     };
-    let config = doc.config.load();
+    let doc_config = doc.config.load();
 
-    if config.lsp.display_color_swatches
+    if doc_config.lsp.display_color_swatches
       && let Some(DocumentColorSwatches {
         color_swatches,
         colors,
@@ -645,8 +651,13 @@ impl View {
     let enable_cursor_line = self
       .diagnostics_handler
       .show_cursorline_diagnostics(doc, self.id);
-    let config = config.inline_diagnostics.prepare(width, enable_cursor_line);
-    if !config.disabled() {
+    let mut inline_config = doc_config.inline_diagnostics.clone();
+    if !self.inline_diagnostics_enabled {
+      inline_config.cursor_line = DiagnosticFilter::Disable;
+      inline_config.other_lines = DiagnosticFilter::Disable;
+    }
+    let inline_config = inline_config.prepare(width, enable_cursor_line);
+    if !inline_config.disabled() {
       let cursor = doc
         .selection(self.id)
         .primary()
@@ -656,7 +667,7 @@ impl View {
         cursor,
         width,
         doc.view_offset(self.id).horizontal_offset,
-        config,
+        inline_config,
       ));
     }
 

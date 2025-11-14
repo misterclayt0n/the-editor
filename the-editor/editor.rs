@@ -1976,6 +1976,14 @@ impl Editor {
   pub fn set_mode(&mut self, mode: Mode) {
     self.mode = mode;
     self.input_handler.set_mode(mode);
+    self.refresh_inline_diagnostics_visibility();
+  }
+
+  fn refresh_inline_diagnostics_visibility(&mut self) {
+    let disable_inline_for_focus = self.mode == Mode::Insert;
+    for (view, is_focused) in self.tree.views_mut() {
+      view.inline_diagnostics_enabled = !(disable_inline_for_focus && is_focused);
+    }
   }
 
   pub fn execute_command(&mut self, input: String) {
@@ -2837,6 +2845,7 @@ impl Editor {
       // If no document view is focused, just change focus without view-specific
       // logic
     }
+    self.refresh_inline_diagnostics_visibility();
   }
 
   /// Returns the currently focused document view if one exists.

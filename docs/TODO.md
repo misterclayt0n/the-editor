@@ -23,7 +23,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Fix panic in prompt because it can't handle unicode properly.
 - [ ] Render tabs in hover component.
 - [ ] Fix indent guides (sometimes it will be rendered as blank for some reason).
-- [ ] Some lsp diagnostics are not really being rendered into virtual lines.
+- [x] Some lsp diagnostics are not really being rendered into virtual lines.
 - [ ] Fix overflow in lsp helper completer popup.
 - [x] Our code for handling lsp positioning (completer, signature helper, hover) does not work at all when we resize the-editor's window. It kinda just appears out of the blue.
 - [x] We've stopped rendering multiple cursors after giving support for different cursor shapes.

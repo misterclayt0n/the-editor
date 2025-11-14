@@ -13,6 +13,7 @@ use nucleo::{
     Normalization,
   },
 };
+use ropey::Rope;
 use the_editor_lsp_types::types as lsp;
 use the_editor_renderer::{
   Color,
@@ -20,6 +21,7 @@ use the_editor_renderer::{
   TextSegment,
   TextStyle,
 };
+use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
   core::{
@@ -239,6 +241,282 @@ fn truncate_to_width(text: &str, max_width: f32, char_width: f32) -> String {
   }
   truncated.push('…');
   truncated
+}
+
+fn build_completion_doc_lines(
+  markdown: &str,
+  max_chars: usize,
+  ctx: &mut Context,
+  base_text_color: Color,
+) -> Vec<Vec<TextSegment>> {
+  let mut render_lines: Vec<Vec<TextSegment>> = Vec::new();
+  let mut in_fence = false;
+  let mut fence_lang: Option<String> = None;
+  let mut fence_buf: Vec<String> = Vec::new();
+  let max_chars = max_chars.max(4);
+
+  for raw_line in markdown.lines() {
+    if raw_line.starts_with("```") {
+      if in_fence {
+        let code = fence_buf.join("\n");
+        render_lines.extend(highlight_completion_code_block_lines(
+          fence_lang.as_deref(),
+          &code,
+          max_chars,
+          ctx,
+        ));
+        render_lines.push(empty_doc_line(base_text_color));
+        in_fence = false;
+        fence_lang = None;
+        fence_buf.clear();
+      } else {
+        in_fence = true;
+        let lang = raw_line.trim_start_matches("```").trim();
+        fence_lang = if lang.is_empty() {
+          None
+        } else {
+          Some(lang.to_string())
+        };
+      }
+      continue;
+    }
+
+    if in_fence {
+      fence_buf.push(raw_line.to_string());
+      continue;
+    }
+
+    if raw_line.trim().is_empty() {
+      render_lines.push(empty_doc_line(base_text_color));
+      continue;
+    }
+
+    let wrapped_lines = wrap_text(raw_line, max_chars);
+    if wrapped_lines.is_empty() {
+      render_lines.push(empty_doc_line(base_text_color));
+    } else {
+      for line in wrapped_lines {
+        render_lines.push(vec![TextSegment {
+          content: line,
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: base_text_color,
+          },
+        }]);
+      }
+    }
+  }
+
+  if in_fence {
+    let code = fence_buf.join("\n");
+    render_lines.extend(highlight_completion_code_block_lines(
+      fence_lang.as_deref(),
+      &code,
+      max_chars,
+      ctx,
+    ));
+  }
+
+  if render_lines.is_empty() {
+    render_lines.push(empty_doc_line(base_text_color));
+  }
+
+  render_lines
+}
+
+fn highlight_completion_code_block_lines(
+  lang_hint: Option<&str>,
+  code: &str,
+  max_chars: usize,
+  ctx: &mut Context,
+) -> Vec<Vec<TextSegment>> {
+  let theme = &ctx.editor.theme;
+  let code_style = theme.get("markup.raw");
+  let default_code_color = code_style
+    .fg
+    .map(crate::ui::theme_color_to_renderer_color)
+    .unwrap_or(Color::new(0.8, 0.8, 0.8, 1.0));
+
+  let rope = Rope::from(code);
+  let slice = rope.slice(..);
+
+  let loader = ctx.editor.syn_loader.load();
+  let language = lang_hint
+    .and_then(|name| loader.language_for_name(name.to_string()))
+    .or_else(|| loader.language_for_match(slice));
+
+  let spans = language
+    .and_then(|lang| crate::core::syntax::Syntax::new(slice, lang, &loader).ok())
+    .map(|syntax| syntax.collect_highlights(slice, &loader, 0..slice.len_bytes()))
+    .unwrap_or_else(Vec::new);
+
+  let mut lines: Vec<Vec<TextSegment>> = Vec::new();
+  let total_lines = rope.len_lines();
+
+  let mut char_spans: Vec<(usize, usize, Color)> = Vec::with_capacity(spans.len());
+  for (hl, byte_range) in spans.into_iter() {
+    let style = theme.highlight(hl);
+    let color = style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(default_code_color);
+    let start_char = slice.byte_to_char(slice.floor_char_boundary(byte_range.start));
+    let end_char = slice.byte_to_char(slice.ceil_char_boundary(byte_range.end));
+    if start_char < end_char {
+      char_spans.push((start_char, end_char, color));
+    }
+  }
+  char_spans.sort_by_key(|(s, _e, _)| *s);
+
+  for line_idx in 0..total_lines {
+    let line_slice = rope.line(line_idx);
+    let mut line_string = line_slice.to_string();
+    if line_string.ends_with('\n') {
+      line_string.pop();
+    }
+
+    let wrapped_line_strings = wrap_text(&line_string, max_chars);
+    if wrapped_line_strings.is_empty() {
+      lines.push(vec![TextSegment {
+        content: String::new(),
+        style:   TextStyle {
+          size:  UI_FONT_SIZE,
+          color: default_code_color,
+        },
+      }]);
+      continue;
+    }
+
+    for wrapped_line in wrapped_line_strings {
+      if wrapped_line.is_empty() {
+        lines.push(vec![TextSegment {
+          content: String::new(),
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: default_code_color,
+          },
+        }]);
+        continue;
+      }
+
+      let wrapped_rope = Rope::from(wrapped_line.as_str());
+      let wrapped_slice = wrapped_rope.slice(..);
+
+      let wrapped_spans = language
+        .and_then(|lang| crate::core::syntax::Syntax::new(wrapped_slice, lang, &loader).ok())
+        .map(|syntax| {
+          syntax.collect_highlights(wrapped_slice, &loader, 0..wrapped_slice.len_bytes())
+        })
+        .unwrap_or_else(Vec::new);
+
+      let mut wrapped_char_spans: Vec<(usize, usize, Color)> =
+        Vec::with_capacity(wrapped_spans.len());
+      for (hl, byte_range) in wrapped_spans.into_iter() {
+        let style = theme.highlight(hl);
+        let color = style
+          .fg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(default_code_color);
+        let start_char =
+          wrapped_slice.byte_to_char(wrapped_slice.floor_char_boundary(byte_range.start));
+        let end_char = wrapped_slice.byte_to_char(wrapped_slice.ceil_char_boundary(byte_range.end));
+        if start_char < end_char {
+          wrapped_char_spans.push((start_char, end_char, color));
+        }
+      }
+      wrapped_char_spans.sort_by_key(|(s, _e, _)| *s);
+
+      let mut segments: Vec<TextSegment> = Vec::new();
+      let mut cursor = 0usize;
+      let wrapped_line_chars = wrapped_line.chars().count();
+
+      for (s, e, color) in wrapped_char_spans.iter().cloned() {
+        if e <= cursor || s >= wrapped_line_chars {
+          continue;
+        }
+        let seg_start = s.max(cursor);
+        let seg_end = e.min(wrapped_line_chars);
+
+        if seg_start > cursor {
+          let prefix = slice_chars_to_string(&wrapped_line, cursor, seg_start);
+          if !prefix.is_empty() {
+            segments.push(TextSegment {
+              content: prefix,
+              style:   TextStyle {
+                size:  UI_FONT_SIZE,
+                color: default_code_color,
+              },
+            });
+          }
+        }
+
+        let content = slice_chars_to_string(&wrapped_line, seg_start, seg_end);
+        if !content.is_empty() {
+          segments.push(TextSegment {
+            content,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
+              color,
+            },
+          });
+        }
+        cursor = seg_end;
+      }
+
+      if cursor < wrapped_line_chars {
+        let tail = slice_chars_to_string(&wrapped_line, cursor, wrapped_line_chars);
+        if !tail.is_empty() {
+          segments.push(TextSegment {
+            content: tail,
+            style:   TextStyle {
+              size:  UI_FONT_SIZE,
+              color: default_code_color,
+            },
+          });
+        }
+      }
+
+      if segments.is_empty() {
+        segments.push(TextSegment {
+          content: wrapped_line,
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: default_code_color,
+          },
+        });
+      }
+
+      lines.push(segments);
+    }
+  }
+
+  lines
+}
+
+fn slice_chars_to_string(s: &str, start: usize, end: usize) -> String {
+  if start >= end {
+    return String::new();
+  }
+  let mut buf = String::with_capacity(end.saturating_sub(start));
+  for (i, ch) in s.chars().enumerate() {
+    if i >= end {
+      break;
+    }
+    if i >= start {
+      buf.push(ch);
+    }
+  }
+  buf
+}
+
+fn empty_doc_line(color: Color) -> Vec<TextSegment> {
+  vec![TextSegment {
+    content: String::new(),
+    style:   TextStyle {
+      size:  UI_FONT_SIZE,
+      color,
+    },
+  }]
 }
 
 /// Completion popup component
@@ -590,6 +868,7 @@ impl Completion {
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
+    let base_text_color = text_color;
     text_color.a *= alpha;
 
     surface.with_overlay_region(doc_x, doc_y, doc_width, doc_height, |surface| {
@@ -613,50 +892,61 @@ impl Completion {
       let mut y_offset = doc_y + DOC_PADDING;
       let font_size = UI_FONT_SIZE;
       let line_height = ui_line_height.max(font_size + 4.0);
+      let max_chars_per_line = ((doc_width - DOC_PADDING * 2.0) / ui_char_width)
+        .floor()
+        .max(4.0) as usize;
+      let mut line_groups: Vec<Vec<TextSegment>> = Vec::new();
 
-      // Render detail (in a code-like style if present)
       if let Some(detail_text) = detail {
-        let mut detail_color = Color::new(0.7, 0.8, 0.9, 1.0);
-        detail_color.a *= alpha;
+        let detail_color = Color::new(0.7, 0.8, 0.9, 1.0);
+        let mut detail_lines =
+          build_completion_doc_lines(detail_text, max_chars_per_line, ctx, detail_color);
+        line_groups.append(&mut detail_lines);
+        if doc.is_some() {
+          line_groups.push(empty_doc_line(detail_color));
+        }
+      }
+
+      if let Some(doc_text) = doc {
+        let mut doc_lines =
+          build_completion_doc_lines(doc_text, max_chars_per_line, ctx, base_text_color);
+        line_groups.append(&mut doc_lines);
+      }
+
+      if line_groups.is_empty() {
+        line_groups.push(empty_doc_line(base_text_color));
+      }
+
+      let max_lines_by_height =
+        ((doc_height - DOC_PADDING * 2.0) / line_height).floor().max(0.0) as usize;
+      if max_lines_by_height == 0 {
+        return;
+      }
+
+      let max_text_y = doc_y + doc_height - DOC_PADDING;
+      surface.push_scissor_rect(doc_x, doc_y, doc_width, doc_height);
+
+      for segments in line_groups.into_iter().take(max_lines_by_height) {
+        if y_offset > max_text_y {
+          break;
+        }
+
+        let texts = segments
+          .into_iter()
+          .map(|mut segment| {
+            segment.style.color.a *= alpha;
+            segment
+          })
+          .collect();
 
         surface.draw_text(TextSection {
           position: (doc_x + DOC_PADDING, y_offset),
-          texts:    vec![TextSegment {
-            content: detail_text.to_string(),
-            style:   TextStyle {
-              size:  font_size,
-              color: detail_color,
-            },
-          }],
+          texts,
         });
-        y_offset += line_height * 2.0; // Extra spacing after detail
+        y_offset += line_height;
       }
 
-      // Render documentation text (wrapped)
-      if let Some(doc_text) = doc {
-        // Simple line wrapping - split into words and wrap at doc_width
-        let max_chars_per_line = ((doc_width - DOC_PADDING * 2.0) / ui_char_width)
-          .floor()
-          .max(4.0) as usize;
-        let lines = wrap_text(doc_text, max_chars_per_line);
-
-        for line in lines
-          .iter()
-          .take(((doc_height - y_offset + doc_y - DOC_PADDING) / line_height) as usize)
-        {
-          surface.draw_text(TextSection {
-            position: (doc_x + DOC_PADDING, y_offset),
-            texts:    vec![TextSegment {
-              content: line.to_string(),
-              style:   TextStyle {
-                size:  font_size,
-                color: text_color,
-              },
-            }],
-          });
-          y_offset += line_height;
-        }
-      }
+      surface.pop_scissor_rect();
     });
   }
 

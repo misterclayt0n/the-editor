@@ -5,6 +5,7 @@ use std::{
     ToUppercase,
   },
   collections::HashSet,
+  io,
   num::NonZeroUsize,
 };
 
@@ -87,6 +88,7 @@ use crate::{
       Range,
       Selection,
     },
+    special_buffer::SpecialBufferKind,
     surround,
     syntax::{
       Syntax,
@@ -6957,15 +6959,58 @@ fn resolve_compilation_buffer(editor: &mut Editor, current_doc_id: DocumentId) -
   doc_id
 }
 
-fn format_exit_status(status: &std::process::ExitStatus) -> String {
-  if status.success() {
-    "[process exited successfully]\n".to_string()
-  } else if let Some(code) = status.code() {
-    format!("[process exited with status {code}]\n")
-  } else {
-    "[process terminated by signal]\n".to_string()
+enum ShellProcessResult {
+  Completed(std::process::ExitStatus),
+  Killed,
+}
+
+fn format_exit_status(result: &ShellProcessResult) -> String {
+  match result {
+    ShellProcessResult::Completed(status) => {
+      if status.success() {
+        "[process exited successfully]\n".to_string()
+      } else if let Some(code) = status.code() {
+        format!("[process exited with status {code}]\n")
+      } else {
+        "[process terminated by signal]\n".to_string()
+      }
+    },
+    ShellProcessResult::Killed => "[process terminated by user]\n".to_string(),
   }
 }
+
+#[cfg(unix)]
+fn configure_process_group(process: &mut tokio::process::Command) {
+  unsafe {
+    process.pre_exec(|| set_new_process_group());
+  }
+}
+
+#[cfg(unix)]
+fn set_new_process_group() -> io::Result<()> {
+  unsafe {
+    if libc::setpgid(0, 0) != 0 {
+      return Err(io::Error::last_os_error());
+    }
+  }
+  Ok(())
+}
+
+#[cfg(not(unix))]
+fn configure_process_group(_process: &mut tokio::process::Command) {}
+
+#[cfg(unix)]
+fn kill_process_group(child_id: Option<u32>) {
+  if let Some(pid) = child_id {
+    unsafe {
+      let pgid = -(pid as i32);
+      let _ = libc::kill(pgid, libc::SIGTERM);
+    }
+  }
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(_child_id: Option<u32>) {}
 
 fn forward_shell_stream<R>(
   reader: R,
@@ -6999,7 +7044,8 @@ async fn run_shell_process(
   shell: Vec<String>,
   command: String,
   doc_id: DocumentId,
-) -> anyhow::Result<std::process::ExitStatus> {
+  mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
+) -> anyhow::Result<ShellProcessResult> {
   use std::process::Stdio;
 
   use tokio::process::Command;
@@ -7013,6 +7059,8 @@ async fn run_shell_process(
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
 
+  configure_process_group(&mut process);
+
   let mut child = process.spawn().context("Failed to spawn shell command")?;
 
   let stdout_handle = child
@@ -7024,10 +7072,25 @@ async fn run_shell_process(
     .take()
     .map(|stderr| forward_shell_stream(stderr, doc_id, ShellStream::Stderr));
 
-  let status = child
-    .wait()
-    .await
-    .context("Failed to await shell command")?;
+  let result = tokio::select! {
+    status = child.wait() => {
+      ShellProcessResult::Completed(status.context("Failed to await shell command")?)
+    }
+    cancel = &mut cancel_rx => {
+      if cancel.is_ok() {
+        kill_process_group(child.id());
+        if let Err(err) = child.start_kill() {
+          log::error!("Failed to kill shell process: {}", err);
+        }
+        let _ = child.wait().await;
+        ShellProcessResult::Killed
+      } else {
+        ShellProcessResult::Completed(
+          child.wait().await.context("Failed to await shell command")?
+        )
+      }
+    }
+  };
 
   if let Some(handle) = stdout_handle {
     handle.await.context("stdout task failed")??;
@@ -7036,7 +7099,7 @@ async fn run_shell_process(
     handle.await.context("stderr task failed")??;
   }
 
-  Ok(status)
+  Ok(result)
 }
 
 fn run_shell_in_compilation_buffer(
@@ -7057,19 +7120,25 @@ fn run_shell_in_compilation_buffer(
 
   let shell = editor.config().shell.clone();
   editor.set_special_buffer_running(doc_id, true);
+  let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+  editor.register_shell_job_cancel(doc_id, cancel_tx);
 
   let job_command = command.clone();
   jobs.spawn(async move {
-    let result = run_shell_process(shell, job_command.clone(), doc_id).await;
+    let result = run_shell_process(shell, job_command.clone(), doc_id, cancel_rx).await;
 
     match result {
-      Ok(status) => {
-        let exit_text = format_exit_status(&status);
-        let status_message = format!("Command finished ({})", job_command);
+      Ok(outcome) => {
+        let exit_text = format_exit_status(&outcome);
+        let status_message = match outcome {
+          ShellProcessResult::Completed(_) => format!("Command finished ({})", job_command),
+          ShellProcessResult::Killed => format!("Command killed ({})", job_command),
+        };
         crate::ui::job::dispatch(move |editor, _| {
           append_document_text(editor, doc_id, &exit_text);
           editor.set_status(status_message);
           editor.set_special_buffer_running(doc_id, false);
+          editor.clear_shell_job_cancel(doc_id);
         })
         .await;
       },
@@ -7081,6 +7150,7 @@ fn run_shell_in_compilation_buffer(
           append_document_text(editor, doc_id, &error_line);
           editor.set_error(status_message);
           editor.set_special_buffer_running(doc_id, false);
+          editor.clear_shell_job_cancel(doc_id);
         })
         .await;
       },
@@ -7196,6 +7266,43 @@ pub fn cmd_shell_spawn(
       cx.editor.set_error(message);
       Err(err)
     },
+  }
+}
+
+pub fn cmd_kill_shell(
+  cx: &mut Context,
+  _args: Args,
+  event: crate::ui::components::prompt::PromptEvent,
+) -> anyhow::Result<()> {
+  use crate::ui::components::prompt::PromptEvent;
+  if matches!(event, PromptEvent::Validate) {
+    kill_shell(cx);
+  }
+  Ok(())
+}
+
+pub fn kill_shell(cx: &mut Context) {
+  let Some(view_id) = cx.editor.focused_view_id() else {
+    cx.editor
+      .set_error("No active view available to kill shell");
+    return;
+  };
+  let doc_id = cx.editor.tree.get(view_id).doc;
+
+  if cx.editor.special_buffer_kind(doc_id) != Some(SpecialBufferKind::Compilation) {
+    cx.editor.set_error("Focused buffer is not a shell buffer");
+    return;
+  }
+
+  if !cx.editor.is_special_buffer_running(doc_id) {
+    cx.editor.set_status("No running shell command to kill");
+    return;
+  }
+
+  if cx.editor.cancel_shell_job(doc_id) {
+    cx.editor.set_status("Stopping shell command…");
+  } else {
+    cx.editor.set_error("Shell command is already completing");
   }
 }
 

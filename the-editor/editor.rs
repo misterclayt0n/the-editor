@@ -59,10 +59,13 @@ use the_editor_event::dispatch;
 use the_editor_stdx::path::canonicalize;
 use the_editor_vcs::DiffProviderRegistry;
 use tokio::{
-  sync::mpsc::{
-    UnboundedReceiver,
-    UnboundedSender,
-    unbounded_channel,
+  sync::{
+    mpsc::{
+      UnboundedReceiver,
+      UnboundedSender,
+      unbounded_channel,
+    },
+    oneshot,
   },
   time::{
     Instant,
@@ -327,6 +330,7 @@ pub struct Editor {
   pub diagnostics:       Diagnostics,
   pub diff_providers:    DiffProviderRegistry,
   pub special_buffers:   SpecialBuffers,
+  shell_job_cancels:     HashMap<DocumentId, oneshot::Sender<()>>,
 
   // pub debug_adapters: dap::registry::Registry,
   // pub breakpoints:    HashMap<PathBuf, Vec<Breakpoint>>,
@@ -1801,6 +1805,7 @@ impl Editor {
       diagnostics: Diagnostics::new(),
       diff_providers: DiffProviderRegistry::default(),
       special_buffers: SpecialBuffers::default(),
+      shell_job_cancels: HashMap::new(),
       // debug_adapters: dap::registry::Registry::new(),
       // breakpoints: HashMap::new(),
       syn_loader,
@@ -1880,6 +1885,9 @@ impl Editor {
       doc.set_special_buffer_kind(None);
     }
     self.special_buffers.unregister(doc_id);
+    if let Some(cancel) = self.shell_job_cancels.remove(&doc_id) {
+      let _ = cancel.send(());
+    }
   }
 
   pub fn touch_special_buffer(&mut self, doc_id: DocumentId) {
@@ -1900,6 +1908,22 @@ impl Editor {
 
   pub fn is_special_buffer_running(&self, doc_id: DocumentId) -> bool {
     self.special_buffers.is_running(doc_id)
+  }
+
+  pub fn register_shell_job_cancel(&mut self, doc_id: DocumentId, cancel: oneshot::Sender<()>) {
+    self.shell_job_cancels.insert(doc_id, cancel);
+  }
+
+  pub fn clear_shell_job_cancel(&mut self, doc_id: DocumentId) {
+    self.shell_job_cancels.remove(&doc_id);
+  }
+
+  pub fn cancel_shell_job(&mut self, doc_id: DocumentId) -> bool {
+    if let Some(cancel) = self.shell_job_cancels.remove(&doc_id) {
+      cancel.send(()).is_ok()
+    } else {
+      false
+    }
   }
   /// Current editing mode for the [`Editor`].
   pub fn mode(&self) -> Mode {
@@ -3251,6 +3275,14 @@ impl Editor {
   fn clear_doc_relative_paths(&mut self) {
     for doc in self.documents_mut() {
       doc.relative_path.take();
+    }
+  }
+}
+
+impl Drop for Editor {
+  fn drop(&mut self) {
+    for (_, cancel) in self.shell_job_cancels.drain() {
+      let _ = cancel.send(());
     }
   }
 }

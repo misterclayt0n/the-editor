@@ -7,10 +7,10 @@ func main() {
 
 	fmt.Println(a, err)
 
-	result := hello()
+	result := hello(1, 2, 3)
 	fmt.Println(result)
 }
 
 func hello(a int, b int, c int) int {
-	return a + b
+	return a + b + c
 }

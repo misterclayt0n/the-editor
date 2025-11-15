@@ -6943,12 +6943,14 @@ fn resolve_compilation_buffer(editor: &mut Editor, current_doc_id: DocumentId) -
 
   if editor.special_buffer_kind(current_doc_id) == Some(SpecialBufferKind::Compilation) {
     editor.touch_special_buffer(current_doc_id);
+    configure_compilation_buffer(editor, current_doc_id);
     return current_doc_id;
   }
 
   if let Some(last_id) = editor.last_special_buffer(SpecialBufferKind::Compilation) {
     if editor.documents.contains_key(&last_id) {
       editor.touch_special_buffer(last_id);
+      configure_compilation_buffer(editor, last_id);
       return last_id;
     }
     editor.clear_special_buffer(last_id);
@@ -6956,7 +6958,63 @@ fn resolve_compilation_buffer(editor: &mut Editor, current_doc_id: DocumentId) -
 
   let doc_id = editor.new_file(Action::HorizontalSplit);
   editor.mark_special_buffer(doc_id, SpecialBufferKind::Compilation);
+  configure_compilation_buffer(editor, doc_id);
   doc_id
+}
+
+fn configure_compilation_buffer(editor: &mut Editor, doc_id: DocumentId) {
+  let preferred_view = first_view_id_for_doc(editor, doc_id);
+  if let Some(doc) = editor.documents.get_mut(&doc_id) {
+    doc.set_special_buffer_ephemeral(true);
+    if let Some(view_id) = preferred_view {
+      doc.set_preferred_special_buffer_view(Some(view_id));
+    }
+  }
+}
+
+fn ensure_compilation_buffer_visible(
+  editor: &mut Editor,
+  doc_id: DocumentId,
+  origin_view: Option<ViewId>,
+) {
+  if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
+    if let Some(doc) = editor.documents.get_mut(&doc_id) {
+      doc.set_preferred_special_buffer_view(Some(view_id));
+    }
+    return;
+  }
+
+  let preferred_view = editor
+    .documents
+    .get(&doc_id)
+    .and_then(|doc| doc.preferred_special_buffer_view());
+
+  if let Some(view_id) = preferred_view {
+    if editor.tree.try_get(view_id).is_some() {
+      editor.replace_document_in_view(view_id, doc_id);
+      if let Some(doc) = editor.documents.get_mut(&doc_id) {
+        doc.set_preferred_special_buffer_view(Some(view_id));
+      }
+      return;
+    }
+  }
+
+  let restore_focus = origin_view.filter(|view_id| editor.tree.try_get(*view_id).is_some());
+
+  editor.switch(doc_id, Action::HorizontalSplit);
+
+  let new_view = first_view_id_for_doc(editor, doc_id);
+
+  if let Some(doc) = editor.documents.get_mut(&doc_id) {
+    if let Some(view_id) = new_view {
+      doc.set_preferred_special_buffer_view(Some(view_id));
+      if let Some(restore) = restore_focus {
+        if restore != view_id && editor.tree.try_get(restore).is_some() {
+          editor.focus(restore);
+        }
+      }
+    }
+  }
 }
 
 enum ShellProcessResult {
@@ -7015,7 +7073,7 @@ fn kill_process_group(_child_id: Option<u32>) {}
 fn forward_shell_stream<R>(
   reader: R,
   doc_id: DocumentId,
-  stream: ShellStream,
+  _stream: ShellStream,
 ) -> tokio::task::JoinHandle<anyhow::Result<()>>
 where
   R: AsyncRead + Unpin + Send + 'static,
@@ -7025,9 +7083,6 @@ where
     while let Some(line) = lines.next_line().await? {
       let mut text = line;
       text.push('\n');
-      if matches!(stream, ShellStream::Stderr) {
-        text = format!("[stderr] {text}");
-      }
       crate::ui::job::dispatch({
         let text = text.clone();
         move |editor, _| {
@@ -7108,7 +7163,9 @@ fn run_shell_in_compilation_buffer(
   current_doc_id: DocumentId,
   command: String,
 ) -> anyhow::Result<DocumentId> {
+  let origin_view = editor.focused_view_id();
   let doc_id = resolve_compilation_buffer(editor, current_doc_id);
+  ensure_compilation_buffer_visible(editor, doc_id, origin_view);
   editor.touch_special_buffer(doc_id);
 
   if editor.is_special_buffer_running(doc_id) {

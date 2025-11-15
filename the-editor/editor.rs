@@ -2413,7 +2413,7 @@ impl Editor {
     }
   }
 
-  fn replace_document_in_view(&mut self, current_view: ViewId, doc_id: DocumentId) {
+  pub(crate) fn replace_document_in_view(&mut self, current_view: ViewId, doc_id: DocumentId) {
     let scrolloff = self.config().scrolloff;
     {
       let view = self.tree.get_mut(current_view);

@@ -186,16 +186,38 @@ pub struct DocumentSavedEvent {
 
 #[derive(Debug, Clone)]
 pub struct SpecialBufferMetadata {
-  kind: SpecialBufferKind,
+  kind:            SpecialBufferKind,
+  ephemeral:       bool,
+  preferred_view:  Option<ViewId>,
 }
 
 impl SpecialBufferMetadata {
   pub const fn new(kind: SpecialBufferKind) -> Self {
-    Self { kind }
+    Self {
+      kind,
+      ephemeral: false,
+      preferred_view: None,
+    }
   }
 
   pub const fn kind(&self) -> SpecialBufferKind {
     self.kind
+  }
+
+  pub const fn is_ephemeral(&self) -> bool {
+    self.ephemeral
+  }
+
+  pub fn set_ephemeral(&mut self, ephemeral: bool) {
+    self.ephemeral = ephemeral;
+  }
+
+  pub const fn preferred_view(&self) -> Option<ViewId> {
+    self.preferred_view
+  }
+
+  pub fn set_preferred_view(&mut self, view_id: Option<ViewId>) {
+    self.preferred_view = view_id;
   }
 }
 
@@ -1436,6 +1458,12 @@ impl Document {
     self.selections.remove(&view_id);
     self.inlay_hints.remove(&view_id);
     self.jump_labels.remove(&view_id);
+    if self
+      .special_buffer_metadata()
+      .map_or(false, |meta| meta.preferred_view() == Some(view_id))
+    {
+      self.set_preferred_special_buffer_view(None);
+    }
   }
 
   /// Calculate the range of lines affected by a changeset
@@ -1907,6 +1935,9 @@ impl Document {
 
   /// If there are unsaved modifications.
   pub fn is_modified(&self) -> bool {
+    if self.is_special_buffer_ephemeral() {
+      return false;
+    }
     let history = self.history.take();
     let current_revision = history.current_revision();
     self.history.set(history);
@@ -2250,6 +2281,30 @@ impl Document {
 
   pub fn set_special_buffer_metadata(&mut self, metadata: SpecialBufferMetadata) {
     self.special_buffer = Some(metadata);
+  }
+
+  pub fn set_special_buffer_ephemeral(&mut self, ephemeral: bool) {
+    if let Some(metadata) = self.special_buffer_metadata_mut() {
+      metadata.set_ephemeral(ephemeral);
+    }
+  }
+
+  pub fn is_special_buffer_ephemeral(&self) -> bool {
+    self
+      .special_buffer_metadata()
+      .map_or(false, SpecialBufferMetadata::is_ephemeral)
+  }
+
+  pub fn preferred_special_buffer_view(&self) -> Option<ViewId> {
+    self
+      .special_buffer_metadata()
+      .and_then(SpecialBufferMetadata::preferred_view)
+  }
+
+  pub fn set_preferred_special_buffer_view(&mut self, view_id: Option<ViewId>) {
+    if let Some(metadata) = self.special_buffer_metadata_mut() {
+      metadata.set_preferred_view(view_id);
+    }
   }
 
   pub fn is_compilation_buffer(&self) -> bool {

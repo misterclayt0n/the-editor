@@ -262,30 +262,30 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
   });
 
   let insert = crate::keymap!({ "Insert"
-    "esc"                               => normal_mode,
+    "esc"                                  => normal_mode,
 
-    "C-s"                               => commit_undo_checkpoint,
-    "C-x"                               => completion,
+    "C-s"                                  => commit_undo_checkpoint,
+    "C-x"                                  => completion,
     // "C-r"                               => insert_register,
 
-    "C-w" | "A-backspace"               => delete_word_backward,
-    "A-d" | "A-del"                     => delete_word_forward,
-    "C-u"                               => kill_to_line_start,
-    "C-k"                               => kill_to_line_end,
-    "C-h" | "backspace" | "S-backspace" => delete_char_backward,
-    "C-d" | "del"                       => delete_char_forward,
-    "C-j" | "ret"                       => insert_newline,
-    "tab"                               => smart_tab,
-    "S-tab"                             => insert_tab,
+    "C-w" | "A-backspace" | "C-backspace"  => delete_word_backward,
+    "A-d" | "A-del"                        => delete_word_forward,
+    "C-u"                                  => kill_to_line_start,
+    "C-k"                                  => kill_to_line_end,
+    "C-h" | "backspace" | "S-backspace"    => delete_char_backward,
+    "C-d" | "del"                          => delete_char_forward,
+    "C-j" | "ret"                          => insert_newline,
+    "tab"                                  => smart_tab,
+    "S-tab"                                => insert_tab,
 
-    "up"                                => move_visual_line_up,
-    "down"                              => move_visual_line_down,
-    "left"                              => move_char_left,
-    "right"                             => move_char_right,
+    "up"                                   => move_visual_line_up,
+    "down"                                 => move_visual_line_down,
+    "left"                                 => move_char_left,
+    "right"                                => move_char_right,
     // "pageup"                            => page_up,
     // "pagedown"                          => page_down,
-    "home"                              => goto_line_start,
-    "end"                               => goto_line_end_newline,
+    "home"                                 => goto_line_start,
+    "end"                                  => goto_line_end_newline,
   });
 
   // Visual mode: inherits from Normal, overrides movement to extend selection

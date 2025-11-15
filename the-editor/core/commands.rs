@@ -7,6 +7,7 @@ use std::{
   collections::HashSet,
   io,
   num::NonZeroUsize,
+  path::Path,
 };
 
 use anyhow::{
@@ -6964,10 +6965,29 @@ fn resolve_compilation_buffer(editor: &mut Editor, current_doc_id: DocumentId) -
 
 fn configure_compilation_buffer(editor: &mut Editor, doc_id: DocumentId) {
   let preferred_view = first_view_id_for_doc(editor, doc_id);
+  let shell_command = {
+    let config = editor.config();
+    config.shell.clone()
+  };
+  let shell_language = shell_language_for_command(&shell_command);
+  let loader = editor.syn_loader.load();
+
   if let Some(doc) = editor.documents.get_mut(&doc_id) {
     doc.set_special_buffer_ephemeral(true);
     if let Some(view_id) = preferred_view {
       doc.set_preferred_special_buffer_view(Some(view_id));
+    }
+    match shell_language {
+      Some(language_id) => {
+        if let Err(err) = doc.set_language_by_language_id(language_id, &loader) {
+          log::warn!(
+            "failed to set syntax for shell buffer (language: {}): {}",
+            language_id,
+            err
+          );
+        }
+      },
+      None => doc.set_language(None, &loader),
     }
   }
 }
@@ -7069,6 +7089,53 @@ fn kill_process_group(child_id: Option<u32>) {
 
 #[cfg(not(unix))]
 fn kill_process_group(_child_id: Option<u32>) {}
+
+fn normalized_shell_name(raw: &str) -> Option<String> {
+  let trimmed = raw.trim_matches(|c| matches!(c, '"' | '\''));
+  if trimmed.is_empty() {
+    return None;
+  }
+
+  let path = Path::new(trimmed);
+
+  path
+    .file_stem()
+    .or_else(|| path.file_name())
+    .and_then(|segment| segment.to_str())
+    .map(|segment| segment.to_ascii_lowercase())
+}
+
+fn detect_shell_program(shell: &[String]) -> Option<String> {
+  let mut program = normalized_shell_name(shell.first()?.as_str())?;
+
+  if program == "env" {
+    for arg in shell.iter().skip(1) {
+      if arg.starts_with('-') || arg.contains('=') {
+        continue;
+      }
+      if let Some(candidate) = normalized_shell_name(arg) {
+        program = candidate;
+        break;
+      }
+    }
+    if program == "env" {
+      return None;
+    }
+  }
+
+  Some(program)
+}
+
+fn shell_language_for_command(shell: &[String]) -> Option<&'static str> {
+  let program = detect_shell_program(shell)?;
+  match program.as_str() {
+    "sh" | "bash" | "dash" | "ash" | "ksh" | "mksh" | "zsh" | "csh" | "tcsh" | "yash" => Some("bash"),
+    "fish" => Some("fish"),
+    "nu" | "nushell" => Some("nu"),
+    "pwsh" | "powershell" => Some("powershell"),
+    _ => None,
+  }
+}
 
 fn forward_shell_stream<R>(
   reader: R,

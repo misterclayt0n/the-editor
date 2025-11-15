@@ -18,9 +18,9 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [x] Add paths in the completer.
 - [x] Different cursor shapes.
 - [ ] Reimagine the compile command:
-  - [ ] Kill processes.
-  - [ ] Don't account for compile commad buffers in the save interface.
-  = [ ] Syntax highlighting? Maybe shell?
+  - [x] Kill processes.
+  - [x] Don't account for compile commad buffers in the save interface.
+  - [ ] Syntax highlighting? Maybe shell?
 
 #### Fixes
 - [ ] Render fonts correctly in the picker prompt menu (they're too spaced).

@@ -2508,6 +2508,22 @@ impl Document {
     });
   }
 
+  /// Remove diagnostics whose `source` matches any of the provided identifiers.
+  /// Returns true when at least one diagnostic was removed.
+  pub fn clear_diagnostics_from_sources(&mut self, sources: &[String]) -> bool {
+    if sources.is_empty() || self.diagnostics.is_empty() {
+      return false;
+    }
+
+    let before = self.diagnostics.len();
+    self.diagnostics.retain(|diagnostic| {
+      diagnostic.source.as_ref().map_or(true, |source| {
+        !sources.iter().any(|persist| persist == source)
+      })
+    });
+    before != self.diagnostics.len()
+  }
+
   /// clears diagnostics for a given language server id if set, otherwise all
   /// diagnostics are cleared
   pub fn clear_diagnostics_for_language_server(&mut self, id: LanguageServerId) {

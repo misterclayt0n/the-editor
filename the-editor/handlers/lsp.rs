@@ -3,7 +3,10 @@ use std::{
   fmt::Display,
 };
 
-use the_editor_event::register_hook;
+use the_editor_event::{
+  dispatch,
+  register_hook,
+};
 use the_editor_lsp_types::types::{
   Command,
   Diagnostic,
@@ -33,6 +36,8 @@ use crate::{
     DocumentDidClose,
     DocumentDidOpen,
     LanguageServerInitialized,
+    PostCommand,
+    PostInsertChar,
   },
   lsp::{
     LanguageServerId,
@@ -436,6 +441,53 @@ impl Editor {
   }
 }
 
+fn clear_stale_persistent_diagnostics(editor: &mut Editor) {
+  let Some(view_id) = editor.focused_view_id() else {
+    return;
+  };
+  let Some(view) = editor.tree.try_get(view_id) else {
+    return;
+  };
+  let doc_id = view.doc;
+
+  let (sources, uri) = {
+    let Some(doc) = editor.documents.get_mut(&doc_id) else {
+      return;
+    };
+    let Some(config) = doc.language_config() else {
+      return;
+    };
+    if config.persistent_diagnostic_sources.is_empty() || !doc.is_modified() {
+      return;
+    }
+    let sources = config.persistent_diagnostic_sources.clone();
+    if !doc.clear_diagnostics_from_sources(&sources) {
+      return;
+    }
+    (sources, doc.uri())
+  };
+
+  if let Some(uri) = uri {
+    let mut remove_entry = false;
+    if let Some(entries) = editor.diagnostics.get_mut(&uri) {
+      entries.retain(|(diagnostic, _provider)| {
+        diagnostic.source.as_ref().map_or(true, |source| {
+          !sources.iter().any(|persist| persist == source)
+        })
+      });
+      remove_entry = entries.is_empty();
+    }
+    if remove_entry {
+      editor.diagnostics.remove(&uri);
+    }
+  }
+
+  dispatch(DiagnosticsDidChange {
+    editor,
+    doc: doc_id,
+  });
+}
+
 pub fn register_hooks(_handlers: &Handlers) {
   register_hook!(move |event: &mut DocumentDidOpen<'_>| {
     // Send textDocument/didOpen notifications when a document is opened
@@ -502,6 +554,16 @@ pub fn register_hooks(_handlers: &Handlers) {
       language_server.text_document_did_close(event.doc.identifier());
     }
 
+    Ok(())
+  });
+
+  register_hook!(move |event: &mut PostInsertChar<'_, '_>| {
+    clear_stale_persistent_diagnostics(event.cx.editor);
+    Ok(())
+  });
+
+  register_hook!(move |event: &mut PostCommand<'_, '_>| {
+    clear_stale_persistent_diagnostics(event.cx.editor);
     Ok(())
   });
 }

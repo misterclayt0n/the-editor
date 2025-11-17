@@ -6,7 +6,14 @@ use std::{
 
 use serde::{
   Deserialize,
+  Deserializer,
   Serialize,
+  de::{
+    self,
+    MapAccess,
+    SeqAccess,
+    Visitor,
+  },
 };
 use the_editor_renderer::{
   Key,
@@ -26,6 +33,16 @@ pub struct KeyBinding {
   pub shift: bool,
   pub ctrl:  bool,
   pub alt:   bool,
+}
+
+impl<'de> Deserialize<'de> for KeyBinding {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    let s = String::deserialize(deserializer)?;
+    KeyBinding::from_str(&s).map_err(de::Error::custom)
+  }
 }
 
 impl fmt::Display for KeyBinding {
@@ -254,6 +271,12 @@ pub fn binding_from_ident(name: &str) -> KeyBinding {
   KeyBinding::from_str(name).unwrap_or_else(|err| panic!("invalid key identifier '{name}': {err}"))
 }
 
+fn command_from_name(name: &str) -> Result<Command, String> {
+  commands::command_fn_by_name(name)
+    .map(Command::Execute)
+    .ok_or_else(|| format!("unknown command '{name}'"))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
@@ -279,6 +302,7 @@ impl std::fmt::Debug for Command {
 #[derive(Debug, Clone)]
 pub enum KeyTrie {
   Command(Command),
+  Sequence(Vec<Command>),
   Node(KeyTrieNode),
 }
 
@@ -341,10 +365,66 @@ impl KeyTrie {
     for key in keys {
       trie = match trie {
         KeyTrie::Node(map) => map.map.get(key)?,
-        KeyTrie::Command(_) => return None,
+        KeyTrie::Command(_) | KeyTrie::Sequence(_) => return None,
       };
     }
     Some(trie)
+  }
+}
+
+impl<'de> Deserialize<'de> for KeyTrie {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    deserializer.deserialize_any(KeyTrieVisitor)
+  }
+}
+
+struct KeyTrieVisitor;
+
+impl<'de> Visitor<'de> for KeyTrieVisitor {
+  type Value = KeyTrie;
+
+  fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str("a command name, list of commands, or nested keymap")
+  }
+
+  fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+  where
+    E: de::Error,
+  {
+    command_from_name(value)
+      .map(KeyTrie::Command)
+      .map_err(E::custom)
+  }
+
+  fn visit_seq<S>(self, mut seq: S) -> Result<Self::Value, S::Error>
+  where
+    S: SeqAccess<'de>,
+  {
+    let mut commands = Vec::new();
+    while let Some(command_name) = seq.next_element::<String>()? {
+      let command = command_from_name(&command_name).map_err(de::Error::custom)?;
+      commands.push(command);
+    }
+    Ok(KeyTrie::Sequence(commands))
+  }
+
+  fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+  where
+    M: MapAccess<'de>,
+  {
+    let mut mapping = HashMap::new();
+    let mut order = Vec::new();
+
+    while let Some((key, value)) = map.next_entry::<KeyBinding, KeyTrie>()? {
+      if mapping.insert(key, value).is_none() {
+        order.push(key);
+      }
+    }
+
+    Ok(KeyTrie::Node(KeyTrieNode::new("", mapping, order)))
   }
 }
 
@@ -352,6 +432,7 @@ impl KeyTrie {
 pub enum KeymapResult {
   Pending(KeyTrieNode),
   Matched(Command),
+  MatchedSequence(Vec<Command>),
   NotFound,
   Cancelled(Vec<KeyBinding>),
 }
@@ -417,6 +498,7 @@ impl Keymaps {
 
     let trie = match base.search(&[first]) {
       Some(KeyTrie::Command(cmd)) => return KeymapResult::Matched(*cmd),
+      Some(KeyTrie::Sequence(cmds)) => return KeymapResult::MatchedSequence(cmds.clone()),
       None => return KeymapResult::NotFound,
       Some(t) => t,
     };
@@ -433,6 +515,10 @@ impl Keymaps {
       Some(KeyTrie::Command(cmd)) => {
         self.state.clear();
         KeymapResult::Matched(*cmd)
+      },
+      Some(KeyTrie::Sequence(cmds)) => {
+        self.state.clear();
+        KeymapResult::MatchedSequence(cmds.clone())
       },
       None => KeymapResult::Cancelled(self.state.drain(..).collect()),
     }

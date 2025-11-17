@@ -568,6 +568,15 @@ pub fn lookup_static_command(name: &str) -> Option<MappableCommand> {
   STATIC_COMMAND_MAP.get(name).copied().cloned()
 }
 
+pub fn command_fn_by_name(name: &str) -> Option<fn(&mut Context)> {
+  lookup_static_command(name).and_then(|cmd| {
+    match cmd {
+      MappableCommand::Static { fun, .. } => Some(fun),
+      _ => None,
+    }
+  })
+}
+
 #[cfg(test)]
 mod tests {
   use the_editor_renderer::Key;

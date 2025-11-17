@@ -54,6 +54,7 @@ use crate::{
     Editor,
   },
   keymap::{
+    Command,
     KeyBinding,
     Keymaps,
     Mode,
@@ -743,91 +744,10 @@ impl Component for EditorView {
         };
 
         // Process through keymap for non-insert modes
-        use crate::keymap::{
-          Command,
-          KeymapResult,
-        };
+        use crate::keymap::KeymapResult;
         match self.keymaps.get(cx.editor.mode(), &key_press) {
-          KeymapResult::Matched(Command::Execute(cmd_fn)) => {
-            // Save editor state before borrowing
-            let register = cx.editor.selected_register;
-            let count = cx.editor.count;
-
-            // Create command context
-            let mut cmd_cx = commands::Context {
-              register,
-              count,
-              editor: cx.editor,
-              on_next_key_callback: None,
-              callback: Vec::new(),
-              jobs: cx.jobs,
-            };
-
-            // Execute the command
-            cmd_fn(&mut cmd_cx);
-
-            // Handle on_next_key if set
-            if let Some(on_next_key) = cmd_cx.on_next_key_callback {
-              self.on_next_key = Some(on_next_key);
-            }
-
-            // Extract results (moving callback consumes cmd_cx)
-            let new_register = cmd_cx.register;
-            let new_count = cmd_cx.count;
-            let callbacks = cmd_cx.callback;
-
-            // Update editor state
-            cx.editor.selected_register = new_register;
-            cx.editor.count = new_count;
-
-            // Ensure cursor visibility and commit history for non-insert commands
-            if cx.editor.focused_view_id().is_some() {
-              let mode_after = cx.editor.mode();
-              let scrolloff = cx.editor.config().scrolloff;
-              let (start_line, end_line) = {
-                let (view, doc) = crate::current!(cx.editor);
-                let text = doc.text();
-                let text_slice = text.slice(..);
-                let cursor_pos = doc.selection(view.id).primary().cursor(text_slice);
-                let len_lines = text.len_lines();
-                let len_chars = text.len_chars();
-                let current_line = if len_chars == 0 {
-                  0
-                } else if cursor_pos < len_chars {
-                  text.char_to_line(cursor_pos)
-                } else {
-                  len_lines.saturating_sub(1)
-                };
-
-                view.ensure_cursor_in_view(doc, scrolloff);
-
-                if mode_after != Mode::Insert {
-                  doc.append_changes_to_history(view);
-                }
-
-                let start = current_line.saturating_sub(1);
-                let end = if len_lines == 0 {
-                  0
-                } else {
-                  (current_line + 1).min(len_lines.saturating_sub(1))
-                };
-                (start, end)
-              };
-
-              self.dirty_region.mark_range_dirty(start_line, end_line);
-            }
-
-            // Process callbacks
-            if !callbacks.is_empty() {
-              EventResult::Consumed(Some(Box::new(move |compositor, cx| {
-                for callback in callbacks {
-                  callback(compositor, cx);
-                }
-              })))
-            } else {
-              EventResult::Consumed(None)
-            }
-          },
+          KeymapResult::Matched(command) => self.execute_command_sequence(cx, &[command]),
+          KeymapResult::MatchedSequence(commands) => self.execute_command_sequence(cx, &commands),
           KeymapResult::Pending(_) => EventResult::Consumed(None),
           KeymapResult::Cancelled(_) | KeymapResult::NotFound => {
             cx.editor.count = None;
@@ -2499,6 +2419,107 @@ impl Component for EditorView {
 }
 
 impl EditorView {
+  fn execute_command_sequence(&mut self, cx: &mut Context, commands: &[Command]) -> EventResult {
+    let mut pending_callbacks: Vec<commands::Callback> = Vec::new();
+
+    for command in commands {
+      match command {
+        Command::Execute(cmd_fn) => self.run_command(cx, *cmd_fn, &mut pending_callbacks),
+      }
+    }
+
+    if pending_callbacks.is_empty() {
+      EventResult::Consumed(None)
+    } else {
+      EventResult::Consumed(Some(Box::new(move |compositor, cx| {
+        for callback in pending_callbacks {
+          callback(compositor, cx);
+        }
+      })))
+    }
+  }
+
+  fn run_command(
+    &mut self,
+    cx: &mut Context,
+    cmd_fn: fn(&mut commands::Context),
+    pending_callbacks: &mut Vec<commands::Callback>,
+  ) {
+    let register = cx.editor.selected_register;
+    let count = cx.editor.count;
+
+    let mut cmd_cx = commands::Context {
+      register,
+      count,
+      editor: cx.editor,
+      on_next_key_callback: None,
+      callback: Vec::new(),
+      jobs: cx.jobs,
+    };
+
+    cmd_fn(&mut cmd_cx);
+
+    let on_next_key = cmd_cx.on_next_key_callback;
+
+    let commands::Context {
+      register: new_register,
+      count: new_count,
+      callback: callbacks,
+      ..
+    } = cmd_cx;
+
+    if let Some(on_next_key) = on_next_key {
+      self.on_next_key = Some(on_next_key);
+    }
+
+    cx.editor.selected_register = new_register;
+    cx.editor.count = new_count;
+
+    self.update_post_command(cx);
+
+    pending_callbacks.extend(callbacks);
+  }
+
+  fn update_post_command(&mut self, cx: &mut Context) {
+    if cx.editor.focused_view_id().is_none() {
+      return;
+    }
+
+    let mode_after = cx.editor.mode();
+    let scrolloff = cx.editor.config().scrolloff;
+    let (start_line, end_line) = {
+      let (view, doc) = crate::current!(cx.editor);
+      let text = doc.text();
+      let text_slice = text.slice(..);
+      let cursor_pos = doc.selection(view.id).primary().cursor(text_slice);
+      let len_lines = text.len_lines();
+      let len_chars = text.len_chars();
+      let current_line = if len_chars == 0 {
+        0
+      } else if cursor_pos < len_chars {
+        text.char_to_line(cursor_pos)
+      } else {
+        len_lines.saturating_sub(1)
+      };
+
+      view.ensure_cursor_in_view(doc, scrolloff);
+
+      if mode_after != Mode::Insert {
+        doc.append_changes_to_history(view);
+      }
+
+      let start = current_line.saturating_sub(1);
+      let end = if len_lines == 0 {
+        0
+      } else {
+        (current_line + 1).min(len_lines.saturating_sub(1))
+      };
+      (start, end)
+    };
+
+    self.dirty_region.mark_range_dirty(start_line, end_line);
+  }
+
   fn execute_editor_command(
     &mut self,
     cmd_fn: fn(&mut commands::Context),

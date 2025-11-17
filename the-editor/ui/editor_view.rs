@@ -304,7 +304,7 @@ impl EditorView {
     Self {
       keymaps,
       on_next_key: None,
-      last_insert: (MappableCommand::NormalMode, Vec::new()),
+      last_insert: (MappableCommand::normal_mode, Vec::new()),
       dirty_region: DirtyRegion::new(),
       command_batcher: CommandBatcher::new(),
       last_cursor_pos: None,

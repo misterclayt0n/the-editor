@@ -35,6 +35,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [x] Our code for handling lsp positioning (completer, signature helper, hover) does not work at all when we resize the-editor's window. It kinda just appears out of the blue.
 - [x] We've stopped rendering multiple cursors after giving support for different cursor shapes.
 - [x] Fix x11 scrolling (constant flickering).
+- [ ] Review how completer "accept" works - It does not automatically import files for instance, it also for some reason inserts the arguments of the function, and that's not ok.
 
 ### Beyond
 - [ ] File watcher (I'll wait to see helix's implementation on this, they're making big advancements: https://github.com/helix-editor/helix/pull/14544).

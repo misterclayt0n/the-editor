@@ -4,10 +4,15 @@ use std::{
     ToLowercase,
     ToUppercase,
   },
-  collections::HashSet,
+  collections::{
+    HashMap,
+    HashSet,
+  },
+  fmt,
   io,
   num::NonZeroUsize,
   path::Path,
+  str::FromStr,
 };
 
 use anyhow::{
@@ -21,6 +26,11 @@ use regex::Regex;
 use ropey::{
   Rope,
   RopeSlice,
+};
+use serde::{
+  Deserialize,
+  Deserializer,
+  de,
 };
 use smallvec::SmallVec;
 use the_editor_loader::find_workspace;
@@ -148,16 +158,455 @@ use crate::ui::compositor;
 // Callback now takes both Compositor and Context like in Helix
 pub type Callback = Box<dyn FnOnce(&mut compositor::Compositor, &mut compositor::Context)>;
 
-// Placeholder for MappableCommand until we implement it fully
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 pub enum MappableCommand {
-  NormalMode,
+  Static {
+    name: &'static str,
+    fun:  fn(&mut Context),
+    doc:  &'static str,
+  },
+  Macro {
+    name: String,
+    keys: Vec<KeyBinding>,
+  },
 }
 
-// Provide a method to match Helix's API
+macro_rules! static_commands {
+  ( $( $name:ident, $doc:expr, )* ) => {
+    $(
+      #[allow(non_upper_case_globals)]
+      pub const $name: Self = Self::Static {
+        name: stringify!($name),
+        fun:  $name,
+        doc:  $doc,
+      };
+    )*
+
+    pub const STATIC_COMMAND_LIST: &'static [Self] = &[
+      $( Self::$name, )*
+    ];
+  };
+}
+
 impl MappableCommand {
-  pub const fn normal_mode() -> Self {
-    MappableCommand::NormalMode
+  pub fn execute(&self, cx: &mut Context) {
+    match self {
+      Self::Static { fun, .. } => (fun)(cx),
+      Self::Macro { keys, .. } => {
+        let count = cx.count();
+        let keys = keys.clone();
+        cx.callback.push(Box::new(move |compositor, cx| {
+          for _ in 0..count {
+            for &key in &keys {
+              compositor.handle_event(&compositor::Event::Key(key), cx);
+            }
+          }
+        }));
+      },
+    }
+  }
+
+  pub fn name(&self) -> &str {
+    match self {
+      Self::Static { name, .. } => name,
+      Self::Macro { name, .. } => name,
+    }
+  }
+
+  pub fn doc(&self) -> &str {
+    match self {
+      Self::Static { doc, .. } => doc,
+      Self::Macro { name, .. } => name,
+    }
+  }
+
+  #[rustfmt::skip]
+  static_commands!(
+        move_char_left, "move char left",
+        move_char_right, "move char right",
+        move_char_up, "move char up",
+        move_visual_line_up, "move visual line up",
+        move_char_down, "move char down",
+        move_visual_line_down, "move visual line down",
+        extend_char_left, "extend char left",
+        extend_char_right, "extend char right",
+        extend_char_up, "extend char up",
+        extend_visual_line_up, "extend visual line up",
+        extend_char_down, "extend char down",
+        extend_to_file_start, "extend to file start",
+        extend_to_last_line, "extend to last line",
+        extend_to_column, "extend to column",
+        extend_line_up, "extend line up",
+        extend_line_down, "extend line down",
+        extend_visual_line_down, "extend visual line down",
+        move_next_word_start, "move next word start",
+        move_prev_word_start, "move prev word start",
+        move_prev_word_end, "move prev word end",
+        move_next_word_end, "move next word end",
+        move_next_long_word_start, "move next long word start",
+        move_prev_long_word_start, "move prev long word start",
+        move_prev_long_word_end, "move prev long word end",
+        move_next_long_word_end, "move next long word end",
+        move_next_sub_word_start, "move next sub word start",
+        move_prev_sub_word_start, "move prev sub word start",
+        move_prev_sub_word_end, "move prev sub word end",
+        move_next_sub_word_end, "move next sub word end",
+        extend_next_word_start, "extend next word start",
+        extend_prev_word_start, "extend prev word start",
+        extend_next_word_end, "extend next word end",
+        extend_prev_word_end, "extend prev word end",
+        extend_next_long_word_start, "extend next long word start",
+        extend_prev_long_word_start, "extend prev long word start",
+        extend_prev_long_word_end, "extend prev long word end",
+        extend_next_long_word_end, "extend next long word end",
+        extend_next_sub_word_start, "extend next sub word start",
+        extend_prev_sub_word_start, "extend prev sub word start",
+        extend_prev_sub_word_end, "extend prev sub word end",
+        extend_next_sub_word_end, "extend next sub word end",
+        delete_selection, "delete selection",
+        delete_selection_noyank, "delete selection noyank",
+        change_selection, "change selection",
+        change_selection_noyank, "change selection noyank",
+        find_till_char, "find till char",
+        find_next_char, "find next char",
+        extend_till_char, "extend till char",
+        extend_next_char, "extend next char",
+        till_prev_char, "till prev char",
+        find_prev_char, "find prev char",
+        extend_till_prev_char, "extend till prev char",
+        extend_prev_char, "extend prev char",
+        repeat_last_motion, "repeat last motion",
+        delete_char_backward, "delete char backward",
+        delete_char_forward, "delete char forward",
+        delete_word_backward, "delete word backward",
+        delete_word_forward, "delete word forward",
+        kill_to_line_end, "kill to line end",
+        kill_to_line_start, "kill to line start",
+        smart_tab, "smart tab",
+        insert_tab, "insert tab",
+        select_mode, "select mode",
+        command_mode, "command mode",
+        normal_mode, "normal mode",
+        select_regex, "select regex",
+        file_picker, "file picker",
+        buffer_picker, "buffer picker",
+        jumplist_picker, "jumplist picker",
+        changed_file_picker, "changed file picker",
+        global_search, "global search",
+        local_search, "local search",
+        file_picker_in_current_directory, "file picker in current directory",
+        file_explorer, "file explorer",
+        file_explorer_in_current_buffer_directory, "file explorer in current buffer directory",
+        file_explorer_in_current_directory, "file explorer in current directory",
+        insert_mode, "insert mode",
+        append_mode, "append mode",
+        insert_at_line_start, "insert at line start",
+        insert_at_line_end, "insert at line end",
+        open_below, "open below",
+        open_above, "open above",
+        replace, "replace",
+        replace_with_yanked, "replace with yanked",
+        replace_selections_with_clipboard, "replace selections with clipboard",
+        switch_case, "switch case",
+        switch_to_uppercase, "switch to uppercase",
+        switch_to_lowercase, "switch to lowercase",
+        goto_file_start, "goto file start",
+        goto_last_line, "goto last line",
+        goto_line, "goto line",
+        goto_window_top, "goto window top",
+        goto_window_center, "goto window center",
+        goto_window_bottom, "goto window bottom",
+        goto_line_start, "goto line start",
+        extend_to_line_start, "extend to line start",
+        goto_line_end, "goto line end",
+        extend_to_line_end, "extend to line end",
+        goto_line_end_newline, "goto line end newline",
+        goto_first_nonwhitespace, "goto first nonwhitespace",
+        goto_column, "goto column",
+        goto_next_tabstop, "goto next tabstop",
+        move_parent_node_end, "move parent node end",
+        extend_parent_node_end, "extend parent node end",
+        insert_newline, "insert newline",
+        yank, "yank",
+        yank_to_clipboard, "yank to clipboard",
+        yank_main_selection_to_clipboard, "yank main selection to clipboard",
+        paste_clipboard_after, "paste clipboard after",
+        paste_clipboard_before, "paste clipboard before",
+        paste_after, "paste after",
+        paste_before, "paste before",
+        copy_selection_on_next_line, "copy selection on next line",
+        copy_selection_on_prev_line, "copy selection on prev line",
+        select_all, "select all",
+        extend_line_below, "extend line below",
+        extend_line_above, "extend line above",
+        extend_to_line_bounds, "extend to line bounds",
+        shrink_to_line_bounds, "shrink to line bounds",
+        match_brackets, "match brackets",
+        surround_add, "surround add",
+        surround_replace, "surround replace",
+        surround_delete, "surround delete",
+        select_textobject_around, "select textobject around",
+        select_textobject_inner, "select textobject inner",
+        undo, "undo",
+        redo, "redo",
+        earlier, "earlier",
+        later, "later",
+        keep_primary_selection, "keep primary selection",
+        remove_primary_selection, "remove primary selection",
+        indent, "indent",
+        unindent, "unindent",
+        record_macro, "record macro",
+        replay_macro, "replay macro",
+        toggle_button, "toggle button",
+        toggle_statusline, "toggle statusline",
+        increase_font_size, "increase font size",
+        decrease_font_size, "decrease font size",
+        default_font_size, "default font size",
+        commit_undo_checkpoint, "commit undo checkpoint",
+        toggle_line_numbers, "toggle line numbers",
+        toggle_diagnostics_gutter, "toggle diagnostics gutter",
+        toggle_diff_gutter, "toggle diff gutter",
+        list_gutters, "list gutters",
+        completion, "completion",
+        goto_next_diag, "goto next diag",
+        goto_prev_diag, "goto prev diag",
+        goto_file, "goto file",
+        goto_last_accessed_file, "goto last accessed file",
+        goto_last_modified_file, "goto last modified file",
+        goto_next_buffer, "goto next buffer",
+        goto_previous_buffer, "goto previous buffer",
+        move_line_up, "move line up",
+        move_line_down, "move line down",
+        goto_last_modification, "goto last modification",
+        goto_word, "goto word",
+        extend_to_word, "extend to word",
+        split_selection_on_newline, "split selection on newline",
+        merge_selections, "merge selections",
+        merge_consecutive_selections, "merge consecutive selections",
+        split_selection, "split selection",
+        collapse_selection, "collapse selection",
+        flip_selections, "flip selections",
+        expand_selection, "expand selection",
+        shrink_selection, "shrink selection",
+        select_all_children, "select all children",
+        select_all_siblings, "select all siblings",
+        select_next_sibling, "select next sibling",
+        select_prev_sibling, "select prev sibling",
+        move_parent_node_start, "move parent node start",
+        extend_parent_node_start, "extend parent node start",
+        goto_first_diag, "goto first diag",
+        goto_last_diag, "goto last diag",
+        goto_next_change, "goto next change",
+        goto_prev_change, "goto prev change",
+        goto_first_change, "goto first change",
+        goto_last_change, "goto last change",
+        goto_next_function, "goto next function",
+        goto_prev_function, "goto prev function",
+        goto_next_class, "goto next class",
+        goto_prev_class, "goto prev class",
+        goto_next_parameter, "goto next parameter",
+        goto_prev_parameter, "goto prev parameter",
+        goto_next_comment, "goto next comment",
+        goto_prev_comment, "goto prev comment",
+        goto_next_test, "goto next test",
+        goto_prev_test, "goto prev test",
+        goto_next_xml_element, "goto next xml element",
+        goto_prev_xml_element, "goto prev xml element",
+        goto_next_entry, "goto next entry",
+        goto_prev_entry, "goto prev entry",
+        goto_prev_paragraph, "goto prev paragraph",
+        goto_next_paragraph, "goto next paragraph",
+        add_newline_above, "add newline above",
+        add_newline_below, "add newline below",
+        search_next, "search next",
+        search_prev, "search prev",
+        extend_search_next, "extend search next",
+        extend_search_prev, "extend search prev",
+        search, "search",
+        rsearch, "rsearch",
+        search_selection_detect_word_boundaries, "search selection detect word boundaries",
+        search_selection, "search selection",
+        join_selections, "join selections",
+        join_selections_space, "join selections space",
+        keep_selections, "keep selections",
+        remove_selections, "remove selections",
+        align_selections, "align selections",
+        trim_selections, "trim selections",
+        rotate_selections_forward, "rotate selections forward",
+        rotate_selections_backward, "rotate selections backward",
+        rotate_selection_contents_forward, "rotate selection contents forward",
+        rotate_selection_contents_backward, "rotate selection contents backward",
+        page_up, "page up",
+        page_down, "page down",
+        half_page_up, "half page up",
+        half_page_down, "half page down",
+        page_cursor_up, "page cursor up",
+        page_cursor_down, "page cursor down",
+        page_cursor_half_up, "page cursor half up",
+        page_cursor_half_down, "page cursor half down",
+        jump_view_right, "jump view right",
+        jump_view_left, "jump view left",
+        jump_view_up, "jump view up",
+        jump_view_down, "jump view down",
+        hsplit, "hsplit",
+        hsplit_new, "hsplit new",
+        vsplit, "vsplit",
+        vsplit_new, "vsplit new",
+        rotate_view, "rotate view",
+        transpose_view, "transpose view",
+        goto_file_hsplit, "goto file hsplit",
+        goto_file_vsplit, "goto file vsplit",
+        wclose, "wclose",
+        wonly, "wonly",
+        swap_view_right, "swap view right",
+        swap_view_left, "swap view left",
+        swap_view_up, "swap view up",
+        swap_view_down, "swap view down",
+        toggle_comments, "toggle comments",
+        jump_forward, "jump forward",
+        jump_backward, "jump backward",
+        save_selection, "save selection",
+        select_register, "select register",
+        shell_pipe, "shell pipe",
+        shell_pipe_to, "shell pipe to",
+        shell_insert_output, "shell insert output",
+        shell_append_output, "shell append output",
+        shell_keep_pipe, "shell keep pipe",
+        shell_command, "shell command",
+        kill_shell, "kill shell",
+        increment, "increment",
+        decrement, "decrement",
+        noop, "noop",
+        toggle_soft_wrap, "toggle soft wrap",
+        toggle_fade_mode, "toggle fade mode",
+        update_fade_ranges, "update fade ranges",
+  );
+}
+
+impl fmt::Debug for MappableCommand {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      MappableCommand::Static { name, .. } => f.debug_tuple("MappableCommand").field(name).finish(),
+      MappableCommand::Macro { name, keys } => {
+        f.debug_tuple("MappableCommand")
+          .field(name)
+          .field(keys)
+          .finish()
+      },
+    }
+  }
+}
+
+impl fmt::Display for MappableCommand {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(self.name())
+  }
+}
+
+impl FromStr for MappableCommand {
+  type Err = anyhow::Error;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    if let Some(keys) = s.strip_prefix('@') {
+      return parse_macro(keys).map(|keys| {
+        MappableCommand::Macro {
+          name: s.to_string(),
+          keys,
+        }
+      });
+    }
+
+    STATIC_COMMAND_MAP
+      .get(s)
+      .copied()
+      .cloned()
+      .ok_or_else(|| anyhow!("No command named '{s}'"))
+  }
+}
+
+impl<'de> Deserialize<'de> for MappableCommand {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    let s = String::deserialize(deserializer)?;
+    s.parse().map_err(de::Error::custom)
+  }
+}
+
+impl PartialEq for MappableCommand {
+  fn eq(&self, other: &Self) -> bool {
+    match (self, other) {
+      (MappableCommand::Static { name: lhs, .. }, MappableCommand::Static { name: rhs, .. }) => {
+        lhs == rhs
+      },
+      (
+        MappableCommand::Macro {
+          name: lhs_name,
+          keys: lhs_keys,
+        },
+        MappableCommand::Macro {
+          name: rhs_name,
+          keys: rhs_keys,
+        },
+      ) => lhs_name == rhs_name && lhs_keys == rhs_keys,
+      _ => false,
+    }
+  }
+}
+
+static STATIC_COMMAND_MAP: Lazy<HashMap<&'static str, &'static MappableCommand>> =
+  Lazy::new(|| {
+    let mut map = HashMap::new();
+    for cmd in MappableCommand::STATIC_COMMAND_LIST {
+      map.insert(cmd.name(), cmd);
+    }
+    map
+  });
+
+pub fn lookup_static_command(name: &str) -> Option<MappableCommand> {
+  STATIC_COMMAND_MAP.get(name).copied().cloned()
+}
+
+#[cfg(test)]
+mod tests {
+  use the_editor_renderer::Key;
+
+  use super::*;
+
+  #[test]
+  fn parse_static_command_by_name() {
+    let cmd: MappableCommand = "move_char_left".parse().expect("static command parses");
+    match cmd {
+      MappableCommand::Static { name, doc, .. } => {
+        assert_eq!(name, "move_char_left");
+        assert!(!doc.is_empty());
+      },
+      _ => panic!("expected static command"),
+    }
+  }
+
+  #[test]
+  fn parse_macro_command() {
+    let cmd: MappableCommand = "@jk".parse().expect("macro command parses");
+    match cmd {
+      MappableCommand::Macro { name, keys } => {
+        assert_eq!(name, "@jk");
+        assert_eq!(keys.len(), 2);
+        assert!(matches!(keys[0].code, Key::Char('j')));
+        assert!(matches!(keys[1].code, Key::Char('k')));
+      },
+      _ => panic!("expected macro command variant"),
+    }
+  }
+
+  #[test]
+  fn lookup_static_command_by_name() {
+    let cmd = lookup_static_command("normal_mode").expect("command exists");
+    match cmd {
+      MappableCommand::Static { name, .. } => assert_eq!(name, "normal_mode"),
+      _ => panic!("expected static command"),
+    }
   }
 }
 
@@ -7129,7 +7578,9 @@ fn detect_shell_program(shell: &[String]) -> Option<String> {
 fn shell_language_for_command(shell: &[String]) -> Option<&'static str> {
   let program = detect_shell_program(shell)?;
   match program.as_str() {
-    "sh" | "bash" | "dash" | "ash" | "ksh" | "mksh" | "zsh" | "csh" | "tcsh" | "yash" => Some("bash"),
+    "sh" | "bash" | "dash" | "ash" | "ksh" | "mksh" | "zsh" | "csh" | "tcsh" | "yash" => {
+      Some("bash")
+    },
     "fish" => Some("fish"),
     "nu" | "nushell" => Some("nu"),
     "pwsh" | "powershell" => Some("powershell"),

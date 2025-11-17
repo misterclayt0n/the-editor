@@ -186,9 +186,9 @@ pub struct DocumentSavedEvent {
 
 #[derive(Debug, Clone)]
 pub struct SpecialBufferMetadata {
-  kind:            SpecialBufferKind,
-  ephemeral:       bool,
-  preferred_view:  Option<ViewId>,
+  kind:           SpecialBufferKind,
+  ephemeral:      bool,
+  preferred_view: Option<ViewId>,
 }
 
 impl SpecialBufferMetadata {

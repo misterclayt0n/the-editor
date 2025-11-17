@@ -3,6 +3,7 @@ use std::{
   sync::Arc,
 };
 
+use futures_executor::block_on;
 use nucleo::{
   Config,
   Utf32Str,
@@ -25,13 +26,16 @@ use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
   core::{
+    ViewId,
     document::SavePoint,
     graphics::{
       CursorKind,
       Rect,
     },
     position::Position,
+    transaction::Transaction,
   },
+  editor::CompleteAction,
   handlers::{
     completion::{
       CompletionItem,
@@ -39,6 +43,11 @@ use crate::{
       LspCompletionItem,
     },
     completion_resolve::ResolveHandler,
+  },
+  snippets::{
+    active::ActiveSnippet,
+    elaborate::Snippet,
+    render::RenderedSnippet,
   },
   ui::{
     UI_FONT_SIZE,
@@ -68,92 +77,10 @@ const MAX_VISIBLE_ITEMS: usize = 15;
 /// Pixel gap between cursor baseline and popup
 const CURSOR_POPUP_MARGIN: f32 = 4.0;
 
-/// Simple text wrapping function
-/// Strip simple snippet syntax from completion text and return cursor offset
-/// This is a temporary solution until we have full snippet support
-/// Handles patterns like:
-/// - ${1:} -> ("", cursor at position)
-/// - ${1:text} -> ("text", cursor after text)
-/// - $1 -> ("", cursor at position)
-/// - Println(${1:}) -> ("Println()", cursor between parens)
-/// Returns (stripped_text, cursor_offset_from_start)
-fn strip_snippet_syntax(text: &str) -> (String, Option<usize>) {
-  let mut result = String::with_capacity(text.len());
-  let mut chars = text.chars().peekable();
-  let mut first_tabstop_pos = None;
-
-  while let Some(ch) = chars.next() {
-    if ch == '$' {
-      // Check if this is a snippet placeholder
-      if chars.peek() == Some(&'{') {
-        chars.next(); // consume '{'
-
-        // Parse the tabstop number
-        let mut tabstop_num = String::new();
-        while let Some(&c) = chars.peek() {
-          if c.is_ascii_digit() {
-            tabstop_num.push(c);
-            chars.next();
-          } else {
-            break;
-          }
-        }
-
-        // Check for ':' which indicates default text
-        if chars.peek() == Some(&':') {
-          chars.next(); // consume ':'
-
-          // Remember position of first tabstop ($1 or ${1:...})
-          if first_tabstop_pos.is_none() && (tabstop_num == "1" || tabstop_num == "0") {
-            first_tabstop_pos = Some(result.len());
-          }
-
-          // Collect text until '}'
-          let mut depth = 1;
-          while let Some(c) = chars.next() {
-            if c == '{' {
-              depth += 1;
-              result.push(c);
-            } else if c == '}' {
-              depth -= 1;
-              if depth == 0 {
-                break;
-              }
-              result.push(c);
-            } else {
-              result.push(c);
-            }
-          }
-        } else if chars.peek() == Some(&'}') {
-          chars.next(); // consume '}'
-
-          // Remember position of first tabstop
-          if first_tabstop_pos.is_none() && (tabstop_num == "1" || tabstop_num == "0") {
-            first_tabstop_pos = Some(result.len());
-          }
-        }
-      } else {
-        // $1 style - skip the number but remember position
-        let mut tabstop_num = String::new();
-        while let Some(&c) = chars.peek() {
-          if c.is_ascii_digit() {
-            tabstop_num.push(c);
-            chars.next();
-          } else {
-            break;
-          }
-        }
-
-        if first_tabstop_pos.is_none() && (tabstop_num == "1" || tabstop_num == "0") {
-          first_tabstop_pos = Some(result.len());
-        }
-      }
-    } else {
-      result.push(ch);
-    }
-  }
-
-  (result, first_tabstop_pos)
+struct CompletionApplyPlan {
+  transaction:            Transaction,
+  snippet:                Option<RenderedSnippet>,
+  trigger_signature_help: bool,
 }
 
 fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
@@ -993,149 +920,80 @@ impl Completion {
 
   /// Apply the selected completion item
   fn apply_completion(&self, ctx: &mut Context, item: &CompletionItem) {
-    use the_editor_lsp_types::types as lsp;
+    use the_editor_event::send_blocking;
 
-    use crate::{
-      core::transaction::Transaction,
-      lsp::util::lsp_pos_to_pos,
-    };
+    use crate::handlers::lsp::SignatureHelpEvent;
 
-    // For LSP items, get the offset encoding before borrowing editor
-    let offset_encoding = match item {
-      CompletionItem::Lsp(lsp_item) => {
-        let language_server = match ctx.editor.language_server_by_id(lsp_item.provider) {
-          Some(ls) => ls,
-          None => {
-            log::error!("Language server not found for completion");
-            return;
-          },
-        };
-        Some(language_server.offset_encoding())
-      },
-      CompletionItem::Other(_) => None,
-    };
+    let mut owned_item = item.clone();
+    let mut offset_encoding = None;
+
+    if let CompletionItem::Lsp(lsp_item) = &mut owned_item {
+      let Some(language_server) = ctx.editor.language_server_by_id(lsp_item.provider) else {
+        log::error!("Language server not found for completion");
+        return;
+      };
+
+      offset_encoding = Some(language_server.offset_encoding());
+      Self::resolve_item_for_accept(language_server, lsp_item);
+    }
 
     let (view, doc) = crate::current!(ctx.editor);
 
-    match item {
+    match owned_item {
       CompletionItem::Lsp(lsp_item) => {
-        let offset_encoding = offset_encoding.unwrap(); // We know it's Some from above
-
-        // Get the text edit from the LSP item
-        // IMPORTANT: Use current cursor position as end, not the LSP's range end,
-        // because the user may have typed more characters while the completion was
-        // pending
-        let cursor = doc
-          .selection(view.id)
-          .primary()
-          .cursor(doc.text().slice(..));
-
-        let (start, end, text) = match &lsp_item.item.text_edit {
-          Some(lsp::CompletionTextEdit::Edit(edit)) => {
-            // Use the LSP-provided start position, but extend end to current cursor
-            let start = lsp_pos_to_pos(doc.text(), edit.range.start, offset_encoding)
-              .unwrap_or_else(|| {
-                log::error!("Invalid LSP edit start position");
-                self.trigger_offset
-              });
-            // Use cursor position to capture any characters typed while waiting
-            (start, cursor, edit.new_text.clone())
-          },
-          Some(lsp::CompletionTextEdit::InsertAndReplace(edit)) => {
-            // Use the insert range start, but extend end to current cursor
-            let start = lsp_pos_to_pos(doc.text(), edit.insert.start, offset_encoding)
-              .unwrap_or_else(|| {
-                log::error!("Invalid LSP edit start position");
-                self.trigger_offset
-              });
-            (start, cursor, edit.new_text.clone())
-          },
-          None => {
-            // No text edit provided, fall back to inserting from trigger_offset to cursor
-            let start = self.trigger_offset;
-            let text = lsp_item
-              .item
-              .insert_text
-              .as_ref()
-              .unwrap_or(&lsp_item.item.label);
-            (start, cursor, text.clone())
-          },
+        let Some(offset_encoding) = offset_encoding else {
+          log::error!("Missing offset encoding for LSP completion");
+          return;
         };
 
-        // Check if this is a snippet that needs to be processed
-        let (final_text, cursor_offset) = if matches!(
-          lsp_item.item.insert_text_format,
-          Some(lsp::InsertTextFormat::SNIPPET)
-        ) {
-          // For now, do a simple strip of snippet syntax since we don't have full snippet
-          // support yet This handles common cases like ${1:} -> empty string,
-          // ${1:text} -> text
-          strip_snippet_syntax(&text)
-        } else {
-          (text, None)
+        let Some(plan) = self.plan_lsp_transaction(doc, view.id, &lsp_item.item, offset_encoding)
+        else {
+          return;
         };
 
-        // Check if we should trigger signature help after completion
-        let should_trigger_signature_help = cursor_offset.is_some() && final_text.contains('(');
+        let placeholder_active = plan.snippet.is_some();
+        let changes = plan
+          .transaction
+          .changes()
+          .changes_iter()
+          .collect::<Vec<_>>();
 
-        // Create and apply main completion transaction
-        let transaction = Transaction::change(
-          doc.text(),
-          [(start, end, Some(final_text.into()))].iter().cloned(),
-        );
-        doc.apply(&transaction, view.id);
+        doc.apply(&plan.transaction, view.id);
 
-        // If snippet had a cursor position, move cursor there
-        if let Some(offset) = cursor_offset {
-          let cursor_pos = start + offset;
-          let selection = crate::core::selection::Selection::point(cursor_pos);
-          doc.set_selection(view.id, selection);
+        if let Some(snippet) = plan.snippet {
+          doc.active_snippet = match doc.active_snippet.take() {
+            Some(active) => active.insert_subsnippet(snippet),
+            None => ActiveSnippet::new(snippet),
+          };
         }
 
-        // If we moved the cursor and the completion text contains '(', trigger
-        // signature help
-        if should_trigger_signature_help {
-          use the_editor_event::send_blocking;
+        if let Some(additional_edits) = lsp_item.item.additional_text_edits {
+          if !additional_edits.is_empty() {
+            log::info!(
+              "Applying {} additional text edits for auto-import",
+              additional_edits.len()
+            );
+            let transaction = crate::lsp::util::generate_transaction_from_edits(
+              doc.text(),
+              additional_edits,
+              offset_encoding,
+            );
+            doc.apply(&transaction, view.id);
+          }
+        }
 
-          use crate::handlers::lsp::SignatureHelpEvent;
+        if plan.trigger_signature_help {
           send_blocking(
             &ctx.editor.handlers.signature_hints,
             SignatureHelpEvent::Trigger,
           );
         }
 
-        // Apply additional text edits (e.g., auto-imports)
-        if let Some(ref additional_edits) = lsp_item.item.additional_text_edits {
-          if !additional_edits.is_empty() {
-            log::info!(
-              "Applying {} additional text edits for auto-import",
-              additional_edits.len()
-            );
-
-            // Convert LSP text edits to transaction
-            let text = doc.text();
-            let mut changes = Vec::new();
-
-            for edit in additional_edits {
-              let start =
-                lsp_pos_to_pos(text, edit.range.start, offset_encoding).unwrap_or_else(|| {
-                  log::error!("Invalid additional edit start position");
-                  0
-                });
-              let end =
-                lsp_pos_to_pos(text, edit.range.end, offset_encoding).unwrap_or_else(|| {
-                  log::error!("Invalid additional edit end position");
-                  start
-                });
-
-              changes.push((start, end, Some(edit.new_text.clone().into())));
-            }
-
-            // Apply all additional edits as a single transaction
-            let additional_transaction = Transaction::change(doc.text(), changes.iter().cloned());
-            doc.apply(&additional_transaction, view.id);
-          }
-        }
+        ctx.editor.last_completion = Some(CompleteAction::Applied {
+          trigger_offset: self.trigger_offset,
+          changes,
+          placeholder: placeholder_active,
+        });
       },
       CompletionItem::Other(other) => {
         // For non-LSP completions, replace from trigger to cursor with the label
@@ -1152,12 +1010,143 @@ impl Completion {
             .iter()
             .cloned(),
         );
+        let changes = transaction.changes().changes_iter().collect::<Vec<_>>();
         doc.apply(&transaction, view.id);
+
+        ctx.editor.last_completion = Some(CompleteAction::Applied {
+          trigger_offset: self.trigger_offset,
+          changes,
+          placeholder: false,
+        });
       },
     }
 
     // Save to history
     doc.append_changes_to_history(view);
+  }
+
+  fn resolve_item_for_accept(language_server: &crate::lsp::Client, item: &mut LspCompletionItem) {
+    if item.resolved {
+      return;
+    }
+
+    if !matches!(
+      language_server.capabilities().completion_provider,
+      Some(lsp::CompletionOptions {
+        resolve_provider: Some(true),
+        ..
+      })
+    ) {
+      return;
+    }
+
+    let future = language_server.resolve_completion_item(&item.item);
+    match block_on(future) {
+      Ok(resolved) => {
+        item.item = resolved;
+        item.resolved = true;
+      },
+      Err(err) => {
+        log::error!("Completion resolve request failed: {}", err);
+        item.resolved = true;
+      },
+    }
+  }
+
+  fn plan_lsp_transaction(
+    &self,
+    doc: &mut crate::core::document::Document,
+    view_id: ViewId,
+    item: &lsp::CompletionItem,
+    offset_encoding: crate::lsp::OffsetEncoding,
+  ) -> Option<CompletionApplyPlan> {
+    use crate::lsp::util::{
+      generate_transaction_from_completion_edit,
+      generate_transaction_from_snippet,
+    };
+
+    let selection = doc.selection(view_id).clone();
+    let text = doc.text();
+    let rope_slice = text.slice(..);
+    let primary_cursor = selection.primary().cursor(rope_slice);
+
+    let (edit_offset, new_text) = if let Some(edit) = &item.text_edit {
+      match edit {
+        lsp::CompletionTextEdit::Edit(edit) => {
+          let Some(start) =
+            crate::lsp::util::lsp_pos_to_pos(text, edit.range.start, offset_encoding)
+          else {
+            log::error!("Invalid LSP completion start position");
+            return None;
+          };
+          let start_offset = start as i128 - primary_cursor as i128;
+          (Some((start_offset, 0)), edit.new_text.clone())
+        },
+        lsp::CompletionTextEdit::InsertAndReplace(edit) => {
+          let pos = if self.replace_mode {
+            edit.replace.start
+          } else {
+            edit.insert.start
+          };
+          let Some(start) = crate::lsp::util::lsp_pos_to_pos(text, pos, offset_encoding) else {
+            log::error!("Invalid LSP insert start position");
+            return None;
+          };
+          let start_offset = start as i128 - primary_cursor as i128;
+          (Some((start_offset, 0)), edit.new_text.clone())
+        },
+      }
+    } else {
+      let new_text = item
+        .insert_text
+        .clone()
+        .unwrap_or_else(|| item.label.clone());
+      (None, new_text)
+    };
+
+    let should_trigger_signature_help = new_text.contains('(');
+    let is_snippet = matches!(item.kind, Some(lsp::CompletionItemKind::SNIPPET))
+      || matches!(
+        item.insert_text_format,
+        Some(lsp::InsertTextFormat::SNIPPET)
+      );
+
+    if is_snippet {
+      match Snippet::parse(&new_text) {
+        Ok(snippet) => {
+          let mut snippet_ctx = doc.snippet_ctx();
+          let (transaction, rendered_snippet) = generate_transaction_from_snippet(
+            text,
+            &selection,
+            edit_offset,
+            self.replace_mode,
+            snippet,
+            &mut snippet_ctx,
+          );
+          return Some(CompletionApplyPlan {
+            transaction,
+            snippet: Some(rendered_snippet),
+            trigger_signature_help: should_trigger_signature_help,
+          });
+        },
+        Err(err) => {
+          log::error!("Failed to parse snippet from completion: {}", err);
+        },
+      }
+    }
+
+    let transaction = generate_transaction_from_completion_edit(
+      text,
+      &selection,
+      edit_offset,
+      self.replace_mode,
+      new_text,
+    );
+    Some(CompletionApplyPlan {
+      transaction,
+      snippet: None,
+      trigger_signature_help: should_trigger_signature_help,
+    })
   }
 }
 

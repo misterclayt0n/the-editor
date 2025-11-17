@@ -51,6 +51,7 @@ use crate::{
   editor::{
     Action,
     BufferLine,
+    CompleteAction as EditorCompleteAction,
     Editor,
   },
   keymap::{
@@ -390,6 +391,29 @@ impl EditorView {
     self.completion = None;
   }
 
+  fn close_completion_with_context(&mut self, cx: &mut Context) {
+    self.completion = None;
+
+    let Some(last_completion) = cx.editor.last_completion.take() else {
+      return;
+    };
+
+    if let EditorCompleteAction::Applied { placeholder, .. } = last_completion {
+      if placeholder {
+        let callback: OnKeyCallback = Box::new(|cmd_cx, key_press| {
+          if let the_editor_renderer::Key::Char(ch) = key_press.code {
+            let (view, doc) = crate::current!(cmd_cx.editor);
+            if let Some(snippet) = &doc.active_snippet {
+              doc.apply(&snippet.delete_placeholder(doc.text()), view.id);
+            }
+            commands::insert_char(cmd_cx, ch);
+          }
+        });
+        self.on_next_key = Some((callback, OnKeyCallbackKind::Fallback));
+      }
+    }
+  }
+
   /// Set signature help popup
   pub fn set_signature_help(
     &mut self,
@@ -612,9 +636,8 @@ impl Component for EditorView {
                 // Completion handled the event
                 let should_close = callback.is_some();
                 if should_close {
-                  // Completion wants to close, clear it
-                  self.completion = None;
-                  cx.editor.last_completion = None;
+                  // Completion wants to close, clear it and handle snippet placeholder state
+                  self.close_completion_with_context(cx);
                 }
                 return EventResult::Consumed(callback);
               },
@@ -632,8 +655,7 @@ impl Component for EditorView {
                   | the_editor_renderer::Key::PageDown
                   | the_editor_renderer::Key::Home
                   | the_editor_renderer::Key::End => {
-                    self.completion = None;
-                    cx.editor.last_completion = None;
+                    self.close_completion_with_context(cx);
                   },
                   _ => {},
                 }

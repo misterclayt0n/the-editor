@@ -129,14 +129,7 @@ pub mod selection {
     let (frequency, mix_bias, alpha_floor, glow_override) = match kind {
       SelectionPulseKind::SearchMatch => (TAU, 1.1, 0.38, None),
       SelectionPulseKind::FilteredSelection => (TAU * 0.75, 1.25, 0.32, None),
-      SelectionPulseKind::YankHighlight => {
-        (
-          TAU * 1.35,
-          1.4,
-          0.42,
-          Some(Color::rgba(1.0, 0.86, 0.4, (glow.a * 1.2).min(1.0))),
-        )
-      },
+      SelectionPulseKind::YankHighlight => (TAU * 1.35, 1.4, 0.42, None),
     };
 
     let wave = (sample.elapsed * frequency).sin().mul_add(0.5, 0.5);

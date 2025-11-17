@@ -1,7 +1,5 @@
 package main
 
-import "fmt"
-
 func main() {
 	a, err := fmt.Print("hello fellas")
 

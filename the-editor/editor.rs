@@ -156,6 +156,7 @@ use crate::{
   input::InputHandler,
   keymap::{
     KeyBinding,
+    KeyTrie,
     Keymaps,
     Mode,
   },
@@ -1943,6 +1944,10 @@ impl Editor {
 
   pub fn config(&self) -> DynGuard<EditorConfig> {
     self.config.load()
+  }
+
+  pub fn set_keymaps(&mut self, map: &HashMap<Mode, KeyTrie>) {
+    self.keymaps = Keymaps::new(map.clone());
   }
 
   /// Call if the config has changed to let the editor update all

@@ -60,7 +60,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "C"         => copy_selection_on_next_line,
     "A-C"       => copy_selection_on_prev_line,
 
-    "C-b"       => toggle_debug_panel,
+    // "C-b"       => toggle_debug_panel,
     "C-n"       => toggle_button,
     "C-s"       => toggle_statusline,
     "C-g"       => toggle_line_numbers,

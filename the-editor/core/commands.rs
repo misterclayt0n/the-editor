@@ -48,6 +48,21 @@ use the_editor_stdx::{
 use the_editor_vcs::Hunk;
 use url::Url;
 
+// Re-export LSP commands so they can be bound directly from keymaps.
+pub use crate::core::lsp_commands::{
+  code_action,
+  document_diagnostics,
+  document_symbols,
+  goto_declaration,
+  goto_definition,
+  goto_implementation,
+  goto_reference,
+  goto_type_definition,
+  rename_symbol,
+  select_references,
+  workspace_diagnostics,
+  workspace_symbols,
+};
 use crate::{
   core::{
     DocumentId,
@@ -56,7 +71,10 @@ use crate::{
     animation::selection::SelectionPulseKind,
     auto_pairs,
     chars::char_is_word,
-    command_line::Args,
+    command_line::{
+      self,
+      Args,
+    },
     comment,
     document::Document,
     global_search::{
@@ -165,6 +183,11 @@ pub enum MappableCommand {
     fun:  fn(&mut Context),
     doc:  &'static str,
   },
+  Typable {
+    name:    String,
+    command: String,
+    args:    String,
+  },
   Macro {
     name: String,
     keys: Vec<KeyBinding>,
@@ -192,6 +215,15 @@ impl MappableCommand {
   pub fn execute(&self, cx: &mut Context) {
     match self {
       Self::Static { fun, .. } => (fun)(cx),
+      Self::Typable { command, args, .. } => {
+        use crate::ui::components::prompt::PromptEvent;
+        let registry = cx.editor.command_registry.clone();
+        if let Err(err) =
+          registry.execute(cx, command.as_str(), args.as_str(), PromptEvent::Validate)
+        {
+          cx.editor.set_error(err.to_string());
+        }
+      },
       Self::Macro { keys, .. } => {
         let count = cx.count();
         let keys = keys.clone();
@@ -209,6 +241,7 @@ impl MappableCommand {
   pub fn name(&self) -> &str {
     match self {
       Self::Static { name, .. } => name,
+      Self::Typable { name, .. } => name,
       Self::Macro { name, .. } => name,
     }
   }
@@ -216,6 +249,7 @@ impl MappableCommand {
   pub fn doc(&self) -> &str {
     match self {
       Self::Static { doc, .. } => doc,
+      Self::Typable { name, .. } => name,
       Self::Macro { name, .. } => name,
     }
   }
@@ -234,6 +268,7 @@ impl MappableCommand {
         extend_visual_line_up, "extend visual line up",
         extend_char_down, "extend char down",
         extend_to_file_start, "extend to file start",
+        extend_to_file_end, "extend to file end",
         extend_to_last_line, "extend to last line",
         extend_to_column, "extend to column",
         extend_line_up, "extend line up",
@@ -307,10 +342,12 @@ impl MappableCommand {
         replace, "replace",
         replace_with_yanked, "replace with yanked",
         replace_selections_with_clipboard, "replace selections with clipboard",
+        replace_selections_with_primary_clipboard, "replace selections with primary clipboard",
         switch_case, "switch case",
         switch_to_uppercase, "switch to uppercase",
         switch_to_lowercase, "switch to lowercase",
         goto_file_start, "goto file start",
+        goto_file_end, "goto file end",
         goto_last_line, "goto last line",
         goto_line, "goto line",
         goto_window_top, "goto window top",
@@ -330,8 +367,11 @@ impl MappableCommand {
         yank, "yank",
         yank_to_clipboard, "yank to clipboard",
         yank_main_selection_to_clipboard, "yank main selection to clipboard",
+        yank_main_selection_to_primary_clipboard, "yank main selection to primary clipboard",
         paste_clipboard_after, "paste clipboard after",
         paste_clipboard_before, "paste clipboard before",
+        paste_primary_clipboard_after, "paste primary clipboard after",
+        paste_primary_clipboard_before, "paste primary clipboard before",
         paste_after, "paste after",
         paste_before, "paste before",
         copy_selection_on_next_line, "copy selection on next line",
@@ -414,10 +454,23 @@ impl MappableCommand {
         goto_prev_xml_element, "goto prev xml element",
         goto_next_entry, "goto next entry",
         goto_prev_entry, "goto prev entry",
+        goto_declaration, "goto declaration",
+        goto_definition, "goto definition",
+        goto_implementation, "goto implementation",
+        goto_reference, "goto reference",
+        goto_type_definition, "goto type definition",
         goto_prev_paragraph, "goto prev paragraph",
         goto_next_paragraph, "goto next paragraph",
+        hover, "hover",
         add_newline_above, "add newline above",
         add_newline_below, "add newline below",
+        code_action, "code action",
+        document_diagnostics, "document diagnostics",
+        document_symbols, "document symbols",
+        workspace_diagnostics, "workspace diagnostics",
+        workspace_symbols, "workspace symbols",
+        rename_symbol, "rename symbol",
+        select_references, "select references",
         search_next, "search next",
         search_prev, "search prev",
         extend_search_next, "extend search next",
@@ -487,6 +540,17 @@ impl fmt::Debug for MappableCommand {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
       MappableCommand::Static { name, .. } => f.debug_tuple("MappableCommand").field(name).finish(),
+      MappableCommand::Typable {
+        name,
+        command,
+        args,
+      } => {
+        f.debug_struct("MappableCommand")
+          .field("name", name)
+          .field("command", command)
+          .field("args", args)
+          .finish()
+      },
       MappableCommand::Macro { name, keys } => {
         f.debug_tuple("MappableCommand")
           .field(name)
@@ -507,6 +571,24 @@ impl FromStr for MappableCommand {
   type Err = anyhow::Error;
 
   fn from_str(s: &str) -> Result<Self, Self::Err> {
+    if let Some(command_line) = s.strip_prefix(':') {
+      let trimmed = command_line.trim_start();
+      if trimmed.is_empty() {
+        bail!("empty command after ':'");
+      }
+
+      let (command, args, _) = command_line::split(trimmed);
+      if command.is_empty() {
+        bail!("empty command after ':'");
+      }
+
+      return Ok(MappableCommand::Typable {
+        name:    s.to_string(),
+        command: command.to_string(),
+        args:    args.to_string(),
+      });
+    }
+
     if let Some(keys) = s.strip_prefix('@') {
       return parse_macro(keys).map(|keys| {
         MappableCommand::Macro {
@@ -540,6 +622,18 @@ impl PartialEq for MappableCommand {
       (MappableCommand::Static { name: lhs, .. }, MappableCommand::Static { name: rhs, .. }) => {
         lhs == rhs
       },
+      (
+        MappableCommand::Typable {
+          command: lhs_cmd,
+          args: lhs_args,
+          ..
+        },
+        MappableCommand::Typable {
+          command: rhs_cmd,
+          args: rhs_args,
+          ..
+        },
+      ) => lhs_cmd == rhs_cmd && lhs_args == rhs_args,
       (
         MappableCommand::Macro {
           name: lhs_name,
@@ -3327,6 +3421,11 @@ pub fn replace_selections_with_clipboard(cx: &mut Context) {
   exit_select_mode(cx);
 }
 
+pub fn replace_selections_with_primary_clipboard(cx: &mut Context) {
+  replace_with_yanked_impl(cx.editor, '*', cx.count());
+  exit_select_mode(cx);
+}
+
 fn replace_with_yanked_impl(editor: &mut Editor, register: char, count: usize) {
   let Some(values) = editor
     .registers
@@ -3471,6 +3570,26 @@ fn goto_file_start_impl(cx: &mut Context, movement: Movement) {
     push_jump(view, doc);
     doc.set_selection(view.id, selection);
   }
+}
+
+pub fn goto_file_end(cx: &mut Context) {
+  goto_file_end_impl(cx, Movement::Move);
+}
+
+pub fn extend_to_file_end(cx: &mut Context) {
+  goto_file_end_impl(cx, Movement::Extend);
+}
+
+fn goto_file_end_impl(cx: &mut Context, movement: Movement) {
+  let (view, doc) = current!(cx.editor);
+  let text = doc.text().slice(..);
+  let pos = text.len_chars();
+  let selection = doc
+    .selection(view.id)
+    .clone()
+    .transform(|range| range.put_cursor(text, pos, movement == Movement::Extend));
+  push_jump(view, doc);
+  doc.set_selection(view.id, selection);
 }
 
 pub fn goto_last_line(cx: &mut Context) {
@@ -3971,6 +4090,11 @@ pub fn yank_main_selection_to_clipboard(cx: &mut Context) {
   exit_select_mode(cx);
 }
 
+pub fn yank_main_selection_to_primary_clipboard(cx: &mut Context) {
+  yank_primary_selection_impl(cx.editor, '*');
+  exit_select_mode(cx);
+}
+
 fn yank_primary_selection_impl(editor: &mut Editor, register: char) {
   let result = {
     let (view, doc) = current!(editor);
@@ -4037,6 +4161,16 @@ pub fn paste_clipboard_after(cx: &mut Context) {
 
 pub fn paste_clipboard_before(cx: &mut Context) {
   paste(cx.editor, '+', Paste::Before, cx.count());
+  exit_select_mode(cx);
+}
+
+pub fn paste_primary_clipboard_after(cx: &mut Context) {
+  paste(cx.editor, '*', Paste::After, cx.count());
+  exit_select_mode(cx);
+}
+
+pub fn paste_primary_clipboard_before(cx: &mut Context) {
+  paste(cx.editor, '*', Paste::Before, cx.count());
   exit_select_mode(cx);
 }
 
@@ -7985,22 +8119,6 @@ pub fn toggle_soft_wrap(cx: &mut Context) {
   };
   cx.editor.set_status(status.to_string());
 }
-
-// Re-export LSP commands
-pub use super::lsp_commands::{
-  code_action,
-  document_diagnostics,
-  document_symbols,
-  goto_declaration,
-  goto_definition,
-  goto_implementation,
-  goto_reference,
-  goto_type_definition,
-  rename_symbol,
-  select_references,
-  workspace_diagnostics,
-  workspace_symbols,
-};
 
 // Context fade commands
 

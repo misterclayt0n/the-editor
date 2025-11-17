@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+  collections::HashMap,
+  sync::Arc,
+};
 
 use the_editor_renderer::{
   Application,
@@ -18,7 +21,9 @@ use crate::{
   input::InputHandler,
   keymap::{
     KeyBinding,
+    KeyTrie,
     Keymaps,
+    Mode,
   },
   ui::{
     components::{
@@ -76,7 +81,7 @@ impl App {
 
     let mode = editor.mode;
 
-    let keymaps = Keymaps::default();
+    let keymaps = Keymaps::new(editor.keymaps.map.clone());
     let editor_view = Box::new(EditorView::new(keymaps));
     compositor.push(editor_view);
 
@@ -127,54 +132,68 @@ impl App {
     match config_event {
       ConfigEvent::Refresh => {
         // Reload configuration from disk
-        if let Ok(new_config) = crate::core::config::Config::load_user() {
-          // Store old config before updating
-          let old_editor_config = self.editor.config().clone();
+        match crate::core::config::Config::load_user() {
+          Ok(new_config) => {
+            // Store old config before updating
+            let old_editor_config = self.editor.config().clone();
 
-          // Store the new config in the global config pointer
-          self.config_ptr.store(Arc::new(new_config.clone()));
+            // Store the new config in the global config pointer
+            self.config_ptr.store(Arc::new(new_config.clone()));
 
-          // Update theme if specified
-          if let Some(theme_name) = &new_config.theme {
-            if let Ok(new_theme) = self.editor.theme_loader.load(theme_name) {
-              self.editor.set_theme(new_theme);
+            // Update theme if specified
+            if let Some(theme_name) = &new_config.theme {
+              if let Ok(new_theme) = self.editor.theme_loader.load(theme_name) {
+                self.editor.set_theme(new_theme);
+              }
+            } else {
+              // Use default theme
+              let default_theme = self
+                .editor
+                .theme_loader
+                .default_theme(self.editor.config().true_color);
+              self.editor.set_theme(default_theme);
             }
-          } else {
-            // Use default theme
-            let default_theme = self
+
+            // Refresh editor configuration
+            self.editor.refresh_config(&old_editor_config);
+            self.apply_keymaps(&new_config.keys);
+
+            // Re-detect .editorconfig for all documents
+            for doc in self.editor.documents.values_mut() {
+              doc.detect_editor_config();
+            }
+
+            // Reset view positions for scrolloff changes
+            let scrolloff = self.editor.config().scrolloff;
+            for (view, _) in self.editor.tree.views() {
+              if let Some(doc) = self.editor.documents.get_mut(&view.doc) {
+                view.ensure_cursor_in_view(doc, scrolloff);
+              }
+            }
+
+            self.editor.set_status("Configuration reloaded".to_string());
+          },
+          Err(err) => {
+            println!("Failed to reload configuration: {err:?}");
+            self
               .editor
-              .theme_loader
-              .default_theme(self.editor.config().true_color);
-            self.editor.set_theme(default_theme);
-          }
-
-          // Refresh editor configuration
-          self.editor.refresh_config(&old_editor_config);
-
-          // Re-detect .editorconfig for all documents
-          for doc in self.editor.documents.values_mut() {
-            doc.detect_editor_config();
-          }
-
-          // Reset view positions for scrolloff changes
-          let scrolloff = self.editor.config().scrolloff;
-          for (view, _) in self.editor.tree.views() {
-            if let Some(doc) = self.editor.documents.get_mut(&view.doc) {
-              view.ensure_cursor_in_view(doc, scrolloff);
-            }
-          }
-
-          self.editor.set_status("Configuration reloaded".to_string());
-        } else {
-          self
-            .editor
-            .set_status("Failed to reload configuration".to_string());
+              .set_status("Failed to reload configuration".to_string());
+          },
         }
       },
       ConfigEvent::Update(_new_config) => {
         // Configuration update already applied
         self.editor.set_status("Configuration updated".to_string());
       },
+    }
+  }
+
+  fn apply_keymaps(&mut self, keys: &HashMap<Mode, KeyTrie>) {
+    self.editor.set_keymaps(keys);
+    for layer in self.compositor.layers.iter_mut() {
+      if let Some(editor_view) = layer.as_any_mut().downcast_mut::<EditorView>() {
+        editor_view.set_keymaps(keys);
+      }
     }
   }
 

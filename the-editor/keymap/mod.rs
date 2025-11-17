@@ -20,7 +20,7 @@ use the_editor_renderer::{
   KeyPress,
 };
 
-use crate::core::commands;
+use crate::core::commands::MappableCommand;
 
 pub mod default;
 pub mod macros;
@@ -271,10 +271,10 @@ pub fn binding_from_ident(name: &str) -> KeyBinding {
   KeyBinding::from_str(name).unwrap_or_else(|err| panic!("invalid key identifier '{name}': {err}"))
 }
 
-fn command_from_name(name: &str) -> Result<Command, String> {
-  commands::command_fn_by_name(name)
-    .map(Command::Execute)
-    .ok_or_else(|| format!("unknown command '{name}'"))
+fn command_from_name(name: &str) -> Result<MappableCommand, String> {
+  name
+    .parse::<MappableCommand>()
+    .map_err(|err| format!("unknown command '{name}': {err}"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
@@ -286,23 +286,10 @@ pub enum Mode {
   Command,
 }
 
-#[derive(Clone, Copy)]
-pub enum Command {
-  Execute(fn(&mut commands::Context)),
-}
-
-impl std::fmt::Debug for Command {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    match self {
-      Command::Execute(_) => write!(f, "Execute(..)"),
-    }
-  }
-}
-
 #[derive(Debug, Clone)]
 pub enum KeyTrie {
-  Command(Command),
-  Sequence(Vec<Command>),
+  Command(MappableCommand),
+  Sequence(Vec<MappableCommand>),
   Node(KeyTrieNode),
 }
 
@@ -431,8 +418,8 @@ impl<'de> Visitor<'de> for KeyTrieVisitor {
 #[derive(Debug, Clone)]
 pub enum KeymapResult {
   Pending(KeyTrieNode),
-  Matched(Command),
-  MatchedSequence(Vec<Command>),
+  Matched(MappableCommand),
+  MatchedSequence(Vec<MappableCommand>),
   NotFound,
   Cancelled(Vec<KeyBinding>),
 }
@@ -497,7 +484,7 @@ impl Keymaps {
     };
 
     let trie = match base.search(&[first]) {
-      Some(KeyTrie::Command(cmd)) => return KeymapResult::Matched(*cmd),
+      Some(KeyTrie::Command(cmd)) => return KeymapResult::Matched(cmd.clone()),
       Some(KeyTrie::Sequence(cmds)) => return KeymapResult::MatchedSequence(cmds.clone()),
       None => return KeymapResult::NotFound,
       Some(t) => t,
@@ -514,7 +501,7 @@ impl Keymaps {
       },
       Some(KeyTrie::Command(cmd)) => {
         self.state.clear();
-        KeymapResult::Matched(*cmd)
+        KeymapResult::Matched(cmd.clone())
       },
       Some(KeyTrie::Sequence(cmds)) => {
         self.state.clear();
@@ -539,5 +526,58 @@ pub fn merge_keys(dst: &mut HashMap<Mode, KeyTrie>, mut delta: HashMap<Mode, Key
         .remove(mode)
         .unwrap_or_else(|| KeyTrie::Node(KeyTrieNode::default())),
     );
+  }
+
+  // Carry over any additional modes that weren't present in the defaults.
+  for (mode, trie) in delta {
+    dst.insert(mode, trie);
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn parses_typable_and_macro_commands() {
+    let toml = r#"
+[normal]
+C-o = ":config-open"
+C-r = ":config-reload"
+C-g = [":new", ":insert-output lazygit", ":buffer-close!", ":redraw"]
+K = "hover"
+
+[normal.d]
+d = ["extend_to_line_bounds", "yank_main_selection_to_primary_clipboard", "delete_selection"]
+
+[normal.space]
+"space" = "file_picker"
+
+[normal.space.f]
+"m" = ":fmt"
+
+[insert]
+esc = ["move_char_left", "collapse_selection", "normal_mode"]
+C-space = "completion"
+
+[select]
+esc = ["collapse_selection", "keep_primary_selection", "normal_mode"]
+"#;
+
+    let parsed: HashMap<Mode, KeyTrie> = toml::from_str(toml).expect("keymap parses");
+    let mut defaults = default::default();
+    merge_keys(&mut defaults, parsed.clone());
+
+    // Ensure colon commands resolved
+    let normal = parsed.get(&Mode::Normal).expect("normal table");
+    let node = normal.node().expect("normal node");
+    let binding = KeyBinding::from_str("C-o").unwrap();
+    assert!(node.map.contains_key(&binding));
+
+    // Ensure nested sequences with colon commands deserialize
+    match node.map.get(&KeyBinding::from_str("C-g").unwrap()).unwrap() {
+      KeyTrie::Sequence(seq) => assert_eq!(seq.first().unwrap().name(), ":new"),
+      other => panic!("expected sequence, got {:?}", other),
+    }
   }
 }

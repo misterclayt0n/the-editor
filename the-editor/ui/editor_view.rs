@@ -54,8 +54,8 @@ use crate::{
     Editor,
   },
   keymap::{
-    Command,
     KeyBinding,
+    KeyTrie,
     Keymaps,
     Mode,
   },
@@ -334,6 +334,10 @@ impl EditorView {
       bufferline_height: 24.0,
       buffer_pressed_index: None,
     }
+  }
+
+  pub fn set_keymaps(&mut self, map: &HashMap<Mode, KeyTrie>) {
+    self.keymaps = Keymaps::new(map.clone());
   }
 
   pub fn has_pending_on_next_key(&self) -> bool {
@@ -746,8 +750,10 @@ impl Component for EditorView {
         // Process through keymap for non-insert modes
         use crate::keymap::KeymapResult;
         match self.keymaps.get(cx.editor.mode(), &key_press) {
-          KeymapResult::Matched(command) => self.execute_command_sequence(cx, &[command]),
-          KeymapResult::MatchedSequence(commands) => self.execute_command_sequence(cx, &commands),
+          KeymapResult::Matched(command) => {
+            self.execute_command_sequence(cx, std::iter::once(command))
+          },
+          KeymapResult::MatchedSequence(commands) => self.execute_command_sequence(cx, commands),
           KeymapResult::Pending(_) => EventResult::Consumed(None),
           KeymapResult::Cancelled(_) | KeymapResult::NotFound => {
             cx.editor.count = None;
@@ -2419,13 +2425,14 @@ impl Component for EditorView {
 }
 
 impl EditorView {
-  fn execute_command_sequence(&mut self, cx: &mut Context, commands: &[Command]) -> EventResult {
+  fn execute_command_sequence<I>(&mut self, cx: &mut Context, commands: I) -> EventResult
+  where
+    I: IntoIterator<Item = MappableCommand>,
+  {
     let mut pending_callbacks: Vec<commands::Callback> = Vec::new();
 
     for command in commands {
-      match command {
-        Command::Execute(cmd_fn) => self.run_command(cx, *cmd_fn, &mut pending_callbacks),
-      }
+      self.run_command(cx, command, &mut pending_callbacks);
     }
 
     if pending_callbacks.is_empty() {
@@ -2442,7 +2449,7 @@ impl EditorView {
   fn run_command(
     &mut self,
     cx: &mut Context,
-    cmd_fn: fn(&mut commands::Context),
+    command: MappableCommand,
     pending_callbacks: &mut Vec<commands::Callback>,
   ) {
     let register = cx.editor.selected_register;
@@ -2457,7 +2464,7 @@ impl EditorView {
       jobs: cx.jobs,
     };
 
-    cmd_fn(&mut cmd_cx);
+    command.execute(&mut cmd_cx);
 
     let on_next_key = cmd_cx.on_next_key_callback;
 

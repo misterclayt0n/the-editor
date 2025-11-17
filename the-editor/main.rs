@@ -114,7 +114,13 @@ fn main() -> anyhow::Result<()> {
     .unwrap_or_else(|_err| crate::core::config::default_lang_loader());
 
   // Load config from ~/.config/the-editor/config.toml (falls back to defaults).
-  let config = crate::core::config::Config::load_user().unwrap_or_default();
+  let config = match crate::core::config::Config::load_user() {
+    Ok(cfg) => cfg,
+    Err(err) => {
+      println!("Failed to load user config, falling back to defaults: {err:?}");
+      Config::default()
+    },
+  };
   let config_ptr = Arc::new(ArcSwap::from_pointee(config.clone()));
 
   // Build handlers and register hooks.
@@ -145,6 +151,7 @@ fn main() -> anyhow::Result<()> {
     )),
     handlers,
   );
+  editor.set_keymaps(&config.keys);
 
   let theme = config
     .theme

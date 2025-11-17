@@ -1,10 +1,15 @@
 use std::{
+  collections::HashMap,
   fs,
   io::Error as IOError,
 };
 
 use serde::Deserialize;
-use toml::de::Error as TomlError;
+use the_editor_loader::merge_toml_values;
+use toml::{
+  Value,
+  de::Error as TomlError,
+};
 
 use crate::{
   core::{
@@ -17,7 +22,12 @@ use crate::{
     },
   },
   editor::EditorConfig,
-  keymap::Keymaps,
+  keymap::{
+    self,
+    KeyTrie,
+    Mode,
+    default,
+  },
 };
 
 /// Language configuration based on built-in languages.toml.
@@ -64,23 +74,20 @@ pub fn user_lang_loader() -> Result<Loader, LanguageLoaderError> {
   Loader::new(config).map_err(LanguageLoaderError::LoaderError)
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
-#[derive(Default)]
+#[derive(Debug, Clone)]
 pub struct Config {
   pub theme:  Option<String>,
-  #[serde(skip)]
-  pub keymap: Keymaps,
+  pub keys:   HashMap<Mode, KeyTrie>,
   pub editor: EditorConfig,
 }
 
-// #[derive(Debug, Clone, PartialEq, Deserialize)]
-// #[serde(deny_unknown_fields)]
-// pub struct ConfigRaw {
-//   pub theme:  Option<String>,
-//   pub keys:   Option<Keymaps>,
-//   pub editor: Option<toml::Value>,
-// }
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfigRaw {
+  pub theme:  Option<String>,
+  pub keys:   Option<HashMap<Mode, KeyTrie>>,
+  pub editor: Option<Value>,
+}
 
 #[derive(Debug)]
 pub enum ConfigLoadError {
@@ -89,15 +96,74 @@ pub enum ConfigLoadError {
 }
 
 impl Config {
+  pub fn load(
+    global: Result<String, ConfigLoadError>,
+    local: Result<String, ConfigLoadError>,
+  ) -> Result<Config, ConfigLoadError> {
+    let global_config: Result<ConfigRaw, ConfigLoadError> =
+      global.and_then(|file| toml::from_str(&file).map_err(ConfigLoadError::BadConfig));
+    let local_config: Result<ConfigRaw, ConfigLoadError> =
+      local.and_then(|file| toml::from_str(&file).map_err(ConfigLoadError::BadConfig));
+
+    let result = match (global_config, local_config) {
+      (Ok(global), Ok(local)) => {
+        let mut keys = default::default();
+        if let Some(global_keys) = global.keys {
+          keymap::merge_keys(&mut keys, global_keys);
+        }
+        if let Some(local_keys) = local.keys {
+          keymap::merge_keys(&mut keys, local_keys);
+        }
+
+        let editor = match (global.editor, local.editor) {
+          (None, None) => EditorConfig::default(),
+          (None, Some(val)) | (Some(val), None) => {
+            val.try_into().map_err(ConfigLoadError::BadConfig)?
+          },
+          (Some(global), Some(local)) => {
+            merge_toml_values(global, local, 3)
+              .try_into()
+              .map_err(ConfigLoadError::BadConfig)?
+          },
+        };
+
+        Config {
+          theme: local.theme.or(global.theme),
+          keys,
+          editor,
+        }
+      },
+      (_, Err(ConfigLoadError::BadConfig(err))) | (Err(ConfigLoadError::BadConfig(err)), _) => {
+        return Err(ConfigLoadError::BadConfig(err));
+      },
+      (Ok(config), Err(_)) | (Err(_), Ok(config)) => {
+        let mut keys = default::default();
+        if let Some(keymap) = config.keys {
+          keymap::merge_keys(&mut keys, keymap);
+        }
+        Config {
+          theme: config.theme,
+          keys,
+          editor: config.editor.map_or_else(
+            || Ok(EditorConfig::default()),
+            |val| val.try_into().map_err(ConfigLoadError::BadConfig),
+          )?,
+        }
+      },
+      (Err(err), Err(_)) => return Err(err),
+    };
+
+    Ok(result)
+  }
+
   /// Load user config from ~/.config/the-editor/config.toml using loader's
   /// config_dir.
   pub fn load_user() -> Result<Config, ConfigLoadError> {
-    let path = the_editor_loader::config_file();
-    match fs::read_to_string(&path) {
-      Ok(contents) => toml::from_str::<Config>(&contents).map_err(ConfigLoadError::BadConfig),
-      Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-      Err(e) => Err(ConfigLoadError::Error(e)),
-    }
+    let global_config =
+      fs::read_to_string(the_editor_loader::config_file()).map_err(ConfigLoadError::Error);
+    let local_config = fs::read_to_string(the_editor_loader::workspace_config_file())
+      .map_err(ConfigLoadError::Error);
+    Self::load(global_config, local_config)
   }
 
   // pub fn load(
@@ -177,4 +243,14 @@ impl Config {
   //   Config::load(global_config, local_config)
   //   Config::default()
   // }
+}
+
+impl Default for Config {
+  fn default() -> Self {
+    Self {
+      theme:  None,
+      keys:   default::default(),
+      editor: EditorConfig::default(),
+    }
+  }
 }

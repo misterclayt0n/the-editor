@@ -23,7 +23,9 @@ macro_rules! keymap {
   (@pairs $map:ident, $order:ident; $($k:tt)|+ => $cmd:ident, $($rest:tt)*) => {
     $(
       let _k = $crate::key!($k);
-      if $map.insert(_k, $crate::keymap::KeyTrie::Command($crate::keymap::Command::Execute($crate::core::commands::$cmd))).is_none() { $order.push(_k); }
+      let _cmd = $crate::core::commands::lookup_static_command(stringify!($cmd))
+        .unwrap_or_else(|| panic!("unknown command '{}'", stringify!($cmd)));
+      if $map.insert(_k, $crate::keymap::KeyTrie::Command(_cmd)).is_none() { $order.push(_k); }
     )+
     $crate::keymap!(@pairs $map, $order; $($rest)*);
   };
@@ -31,7 +33,9 @@ macro_rules! keymap {
   // single key => cmd,
   (@pairs $map:ident, $order:ident; $k:tt => $cmd:ident, $($rest:tt)*) => {
     let _k = $crate::key!($k);
-    if $map.insert(_k, $crate::keymap::KeyTrie::Command($crate::keymap::Command::Execute($crate::core::commands::$cmd))).is_none() { $order.push(_k); }
+    let _cmd = $crate::core::commands::lookup_static_command(stringify!($cmd))
+      .unwrap_or_else(|| panic!("unknown command '{}'", stringify!($cmd)));
+    if $map.insert(_k, $crate::keymap::KeyTrie::Command(_cmd)).is_none() { $order.push(_k); }
     $crate::keymap!(@pairs $map, $order; $($rest)*);
   };
 

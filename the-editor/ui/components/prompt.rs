@@ -275,23 +275,23 @@ impl Prompt {
         self.recalculate_completions(editor);
         PromptEvent::Update
       },
-      // Up - history previous
-      (Key::Up, false, false, false) => {
-        self.history_previous();
-        PromptEvent::Update
-      },
-      // Down - history next
-      (Key::Down, false, false, false) => {
-        self.history_next();
-        PromptEvent::Update
-      },
+      // // Up - history previous
+      // (Key::Up, false, false, false) => {
+      //   self.history_previous();
+      //   PromptEvent::Update
+      // },
+      // // Down - history next
+      // (Key::Down, false, false, false) => {
+      //   self.history_next();
+      //   PromptEvent::Update
+      // },
       // Ctrl+n - next completion
-      (Key::Char('n'), true, false, false) => {
+      (Key::Char('n'), true, false, false) | (Key::Down, false, false, false) => {
         self.change_completion_selection_forward(editor);
         PromptEvent::Update
       },
       // Ctrl+p - previous completion
-      (Key::Char('p'), true, false, false) => {
+      (Key::Char('p'), true, false, false) | (Key::Up, false, false, false) => {
         self.change_completion_selection_backward(editor);
         PromptEvent::Update
       },

@@ -1,8 +1,14 @@
 use std::{
+  borrow::Cow,
   collections::HashMap,
-  path::PathBuf,
+  io::Read,
+  path::{
+    Path,
+    PathBuf,
+  },
   sync::{
     Arc,
+    Mutex,
     atomic::{
       AtomicUsize,
       Ordering,
@@ -10,10 +16,19 @@ use std::{
   },
 };
 
+use arc_swap::{
+  ArcSwap,
+  access::DynAccess,
+};
 use nucleo::{
   Config,
   Nucleo,
 };
+use ropey::{
+  Rope,
+  RopeSlice,
+};
+use the_editor_event::request_redraw;
 use the_editor_renderer::{
   Color,
   Key,
@@ -23,7 +38,17 @@ use the_editor_renderer::{
 };
 
 use super::button::Button;
-use crate::core::document::Document;
+use crate::{
+  core::{
+    document::Document,
+    syntax::{
+      self,
+      HighlightCache,
+      config::LanguageConfiguration,
+    },
+  },
+  editor::EditorConfig as AppEditorConfig,
+};
 
 /// Minimum area width to show preview panel (needs enough room for both panels)
 const MIN_AREA_WIDTH_FOR_PREVIEW: u16 = 120;
@@ -34,7 +59,7 @@ const MAX_FILE_SIZE_FOR_PREVIEW: u64 = 10 * 1024 * 1024;
 /// Cached preview types
 pub enum CachedPreview {
   /// Loaded document with syntax highlighting
-  Document(Box<Document>),
+  Document(PreviewDocument),
   /// Directory with list of entries
   Directory(Vec<String>),
   /// Binary file (not text)
@@ -43,6 +68,15 @@ pub enum CachedPreview {
   LargeFile,
   /// File not found
   NotFound,
+  /// Preview still loading
+  Loading,
+  /// Preview failed
+  Error(String),
+}
+
+pub(crate) struct PreviewDocument {
+  text:       Rope,
+  highlights: HighlightCache,
 }
 
 /// Preview data prepared for rendering (to avoid borrow issues)
@@ -59,7 +93,15 @@ enum PreviewData {
   Directory {
     entries: Vec<String>,
   },
-  Placeholder(&'static str),
+  Placeholder(Cow<'static, str>),
+}
+
+enum PreviewJobKind {
+  DocumentSnapshot {
+    text:     Rope,
+    language: Option<Arc<LanguageConfiguration>>,
+  },
+  Filesystem,
 }
 
 use crate::{
@@ -345,8 +387,8 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   preview_handler:       Option<PreviewHandler>,
   /// Cache of loaded previews
   preview_cache:         HashMap<PathBuf, CachedPreview>,
-  /// Reusable buffer for binary detection
-  read_buffer:           Vec<u8>,
+  /// Pending updates produced by asynchronous preview loading
+  preview_updates:       Arc<Mutex<Vec<(PathBuf, CachedPreview)>>>,
   /// Dynamic query callback for async item fetching
   dyn_query_callback:    Option<DynQueryCallback<T, D>>,
   /// Debounce timer for dynamic queries (milliseconds)
@@ -449,7 +491,7 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       preview_fn: None,
       preview_handler: None,
       preview_cache: HashMap::new(),
-      read_buffer: Vec::new(),
+      preview_updates: Arc::new(Mutex::new(Vec::new())),
       dyn_query_callback: None,
       dyn_query_debounce_ms: 300, // Default 300ms debounce
       last_query_change: None,
@@ -546,6 +588,53 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     self
   }
 
+  fn flush_preview_updates(&mut self) {
+    if let Ok(mut pending) = self.preview_updates.lock() {
+      for (path, preview) in pending.drain(..) {
+        self.preview_cache.insert(path, preview);
+      }
+    }
+  }
+
+  fn spawn_preview_job(&self, path: PathBuf, kind: PreviewJobKind, ctx: &Context) {
+    let updates = Arc::clone(&self.preview_updates);
+    let config_snapshot: Arc<ArcSwap<AppEditorConfig>> = {
+      let config_guard = ctx.editor.config();
+      Arc::new(ArcSwap::from_pointee((*config_guard).clone()))
+    };
+    let syn_loader = ctx.editor.syn_loader.clone();
+    tokio::task::spawn_blocking(move || {
+      let preview = execute_preview_job(path.clone(), kind, config_snapshot, syn_loader);
+      if let Ok(mut pending) = updates.lock() {
+        pending.push((path.clone(), preview));
+      }
+      request_redraw();
+    });
+  }
+
+  fn request_preview(&mut self, path: PathBuf, ctx: &Context) {
+    if self.preview_cache.contains_key(&path) {
+      return;
+    }
+
+    let snapshot = ctx
+      .editor
+      .document_by_path(&path)
+      .map(|doc| (doc.text().clone(), doc.language.clone()));
+
+    self
+      .preview_cache
+      .insert(path.clone(), CachedPreview::Loading);
+
+    let job = if let Some((text, language)) = snapshot {
+      PreviewJobKind::DocumentSnapshot { text, language }
+    } else {
+      PreviewJobKind::Filesystem
+    };
+
+    self.spawn_preview_job(path, job, ctx);
+  }
+
   /// Get the currently selected item
   pub fn selection(&self) -> Option<&T> {
     let snapshot = self.matcher.snapshot();
@@ -558,121 +647,26 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
     let selected = self.selection()?;
     let (path, line_range) = (preview_fn)(selected)?;
 
-    // Check if already open in editor - if so, always use fresh data
-    if let Some(doc) = ctx.editor.document_by_path(&path) {
-      // Create a temporary document by extracting the necessary data
-      let text_rope = doc.text().clone();
-
-      // Create a new document with the same text
-      let mut temp_doc = Document::from(
-        text_rope,
-        None, // encoding
-        ctx.editor.config.clone(),
-        ctx.editor.syn_loader.clone(),
-      );
-
-      // Set the same language as the original document to get proper syntax
-      // highlighting
-      if let Some(ref lang) = doc.language {
-        let loader = ctx.editor.syn_loader.load();
-        temp_doc.set_language(Some(lang.clone()), &loader);
-      }
-
-      // Cache it (it will be replaced on next call if document changes)
-      self
-        .preview_cache
-        .insert(path.clone(), CachedPreview::Document(Box::new(temp_doc)));
-      return Some((&self.preview_cache[&path], line_range));
+    if path.as_os_str().is_empty() {
+      return None;
     }
 
-    // Check cache (for documents not open in editor)
-    if self.preview_cache.contains_key(&path) {
-      return Some((&self.preview_cache[&path], line_range));
-    }
-
-    // Use custom preview handler if provided
-    if let Some(ref handler) = self.preview_handler {
-      if let Some(preview) = handler(&path, ctx) {
-        self.preview_cache.insert(path.clone(), preview);
-        return Some((&self.preview_cache[&path], line_range));
-      }
-      // Handler returned None, use default loading
-    }
-
-    // Load file
-    let preview = std::fs::metadata(&path)
-      .and_then(|metadata| {
-        if metadata.is_dir() {
-          // Handle directory: list its contents
-          let mut entries = std::fs::read_dir(&path)?
-            .filter_map(|entry| entry.ok())
-            .map(|entry| {
-              let file_name = entry.file_name().to_string_lossy().to_string();
-              let is_dir = entry
-                .file_type()
-                .ok()
-                .map(|ft| ft.is_dir())
-                .unwrap_or(false);
-              if is_dir {
-                format!("{}/", file_name)
-              } else {
-                file_name
-              }
-            })
-            .collect::<Vec<_>>();
-
-          // Sort: directories first, then files, both alphabetically
-          entries.sort_by(|a, b| {
-            let a_is_dir = a.ends_with('/');
-            let b_is_dir = b.ends_with('/');
-            match (a_is_dir, b_is_dir) {
-              (true, false) => std::cmp::Ordering::Less,
-              (false, true) => std::cmp::Ordering::Greater,
-              _ => a.cmp(b),
-            }
-          });
-
-          Ok(CachedPreview::Directory(entries))
-        } else if metadata.is_file() {
-          if metadata.len() > MAX_FILE_SIZE_FOR_PREVIEW {
-            return Ok(CachedPreview::LargeFile);
-          }
-
-          // Check if binary by reading first 1KB
-          let file = std::fs::File::open(&path)?;
-          use std::io::Read;
-          let n = file.take(1024).read_to_end(&mut self.read_buffer)?;
-
-          // Simple binary detection: check for null bytes
-          let is_binary = self.read_buffer[..n].contains(&0);
-          self.read_buffer.clear();
-
-          if is_binary {
-            return Ok(CachedPreview::Binary);
-          }
-
-          // Load document
-          let doc = Document::open(
-            &path,
-            None,
-            true, // detect language
-            ctx.editor.config.clone(),
-            ctx.editor.syn_loader.clone(),
-          )
-          .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
-
-          Ok(CachedPreview::Document(Box::new(doc)))
-        } else {
-          Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "Not a regular file or directory",
-          ))
+    if !self.preview_cache.contains_key(&path) {
+      if let Some(ref handler) = self.preview_handler {
+        if let Some(preview) = handler(&path, ctx) {
+          self.preview_cache.insert(path.clone(), preview);
         }
-      })
-      .unwrap_or(CachedPreview::NotFound);
+      }
+    }
 
-    self.preview_cache.insert(path.clone(), preview);
-    Some((&self.preview_cache[&path], line_range))
+    if !self.preview_cache.contains_key(&path) {
+      self.request_preview(path.clone(), ctx);
+    }
+
+    self
+      .preview_cache
+      .get(&path)
+      .map(|preview| (preview, line_range))
   }
 
   fn mix_rgb(base: Color, accent: Color, t: f32) -> Color {
@@ -1447,6 +1441,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       return;
     }
 
+    self.flush_preview_updates();
+
     // Flush pending history to register
     if let Some(register) = self.history_register {
       if !self.pending_history.is_empty() {
@@ -1544,7 +1540,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
           match preview {
             CachedPreview::Document(doc) => {
               // Extract the lines we need to render
-              let text = doc.text();
+              let text = doc.text.slice(..);
               let total_lines = text.len_lines();
               let max_preview_lines = 200; // Maximum lines to load for preview
 
@@ -1569,15 +1565,14 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
               // Get syntax highlights for the loaded range
               let start_byte = text.line_to_byte(preview_start);
-              let end_byte = if preview_end < total_lines {
-                text.line_to_byte(preview_end)
+              let highlight_end_line = preview_end.saturating_sub(1);
+              let highlights = if preview_start <= highlight_end_line && total_lines > 0 {
+                doc
+                  .highlights
+                  .get_line_range(preview_start, highlight_end_line)
               } else {
-                text.len_bytes()
+                Vec::new()
               };
-
-              let highlights = doc
-                .get_viewport_highlights(start_byte..end_byte, &ctx.editor.syn_loader.load())
-                .unwrap_or_default();
 
               PreviewData::Document {
                 lines,
@@ -1591,9 +1586,13 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 entries: entries.clone(),
               }
             },
-            CachedPreview::Binary => PreviewData::Placeholder("<Binary file>"),
-            CachedPreview::LargeFile => PreviewData::Placeholder("<File too large to preview>"),
-            CachedPreview::NotFound => PreviewData::Placeholder("<File not found>"),
+            CachedPreview::Binary => PreviewData::Placeholder(Cow::Borrowed("<Binary file>")),
+            CachedPreview::LargeFile => {
+              PreviewData::Placeholder(Cow::Borrowed("<File too large to preview>"))
+            },
+            CachedPreview::NotFound => PreviewData::Placeholder(Cow::Borrowed("<File not found>")),
+            CachedPreview::Loading => PreviewData::Placeholder(Cow::Borrowed("Loading preview…")),
+            CachedPreview::Error(message) => PreviewData::Placeholder(Cow::Owned(message.clone())),
           }
         })
       } else {
@@ -2639,6 +2638,152 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         .as_ref()
         .map(|a| !a.is_complete())
         .unwrap_or(false)
+  }
+}
+
+fn execute_preview_job(
+  path: PathBuf,
+  kind: PreviewJobKind,
+  config: Arc<ArcSwap<AppEditorConfig>>,
+  syn_loader: Arc<ArcSwap<crate::core::syntax::Loader>>,
+) -> CachedPreview {
+  match kind {
+    PreviewJobKind::DocumentSnapshot { text, language } => {
+      load_document_snapshot(path, text, language, syn_loader)
+    },
+    PreviewJobKind::Filesystem => load_filesystem_preview(path, config, syn_loader),
+  }
+}
+
+fn load_document_snapshot(
+  path: PathBuf,
+  text: Rope,
+  language: Option<Arc<LanguageConfiguration>>,
+  syn_loader: Arc<ArcSwap<crate::core::syntax::Loader>>,
+) -> CachedPreview {
+  let loader = syn_loader.load_full();
+  let preview = build_preview_document(path, text, language, loader);
+  CachedPreview::Document(preview)
+}
+
+fn load_directory_entries(path: &Path) -> Result<Vec<String>, std::io::Error> {
+  let mut entries = std::fs::read_dir(path)?
+    .filter_map(|entry| entry.ok())
+    .map(|entry| {
+      let file_name = entry.file_name().to_string_lossy().to_string();
+      let is_dir = entry
+        .file_type()
+        .ok()
+        .map(|ft| ft.is_dir())
+        .unwrap_or(false);
+      if is_dir {
+        format!("{}/", file_name)
+      } else {
+        file_name
+      }
+    })
+    .collect::<Vec<_>>();
+
+  entries.sort_by(|a, b| {
+    let a_is_dir = a.ends_with('/');
+    let b_is_dir = b.ends_with('/');
+    match (a_is_dir, b_is_dir) {
+      (true, false) => std::cmp::Ordering::Less,
+      (false, true) => std::cmp::Ordering::Greater,
+      _ => a.cmp(b),
+    }
+  });
+
+  Ok(entries)
+}
+
+fn build_preview_document(
+  path: PathBuf,
+  text: Rope,
+  language: Option<Arc<LanguageConfiguration>>,
+  loader: Arc<crate::core::syntax::Loader>,
+) -> PreviewDocument {
+  let mut highlights = HighlightCache::default();
+  let resolved_language =
+    language.or_else(|| detect_language_for_preview(path.as_path(), text.slice(..), &loader));
+
+  if let Some(language_config) = resolved_language {
+    if let Ok(syntax) = syntax::Syntax::new(text.slice(..), language_config.language(), &loader) {
+      let total_lines = text.len_lines();
+      syntax.requery_and_cache(&mut highlights, text.slice(..), &loader, 0..total_lines, 0);
+    }
+  }
+
+  PreviewDocument { text, highlights }
+}
+
+fn detect_language_for_preview(
+  path: &Path,
+  text: RopeSlice,
+  loader: &crate::core::syntax::Loader,
+) -> Option<Arc<LanguageConfiguration>> {
+  let language = loader
+    .language_for_filename(path)
+    .or_else(|| loader.language_for_shebang(text))?;
+  Some(loader.language(language).config().clone())
+}
+
+fn load_filesystem_preview(
+  path: PathBuf,
+  config: Arc<ArcSwap<AppEditorConfig>>,
+  syn_loader: Arc<ArcSwap<crate::core::syntax::Loader>>,
+) -> CachedPreview {
+  let metadata = match std::fs::metadata(&path) {
+    Ok(metadata) => metadata,
+    Err(_) => return CachedPreview::NotFound,
+  };
+
+  if metadata.is_dir() {
+    return match load_directory_entries(&path) {
+      Ok(entries) => CachedPreview::Directory(entries),
+      Err(err) => CachedPreview::Error(format!("Failed to list {}: {}", path.display(), err)),
+    };
+  }
+
+  if !metadata.is_file() {
+    return CachedPreview::NotFound;
+  }
+
+  if metadata.len() > MAX_FILE_SIZE_FOR_PREVIEW {
+    return CachedPreview::LargeFile;
+  }
+
+  let mut preview_buffer = [0u8; 1024];
+  match std::fs::File::open(&path) {
+    Ok(file) => {
+      let mut handle = file.take(1024);
+      match handle.read(&mut preview_buffer) {
+        Ok(n) => {
+          if preview_buffer[..n].contains(&0) {
+            return CachedPreview::Binary;
+          }
+        },
+        Err(err) => {
+          return CachedPreview::Error(format!("Failed to inspect {}: {}", path.display(), err));
+        },
+      }
+    },
+    Err(err) => {
+      return CachedPreview::Error(format!("Failed to open {}: {}", path.display(), err));
+    },
+  }
+
+  let config_dyn: Arc<dyn DynAccess<AppEditorConfig>> = config.clone();
+  match Document::open(&path, None, true, config_dyn, syn_loader.clone()) {
+    Ok(doc) => {
+      let text = doc.text().clone();
+      let language = doc.language.clone();
+      drop(doc);
+      let loader = syn_loader.load_full();
+      let preview = build_preview_document(path, text, language, loader);
+      CachedPreview::Document(preview)
+    },
+    Err(err) => CachedPreview::Error(format!("Failed to load preview: {}", err)),
   }
 }
 

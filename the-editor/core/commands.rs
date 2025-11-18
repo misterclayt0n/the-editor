@@ -9,9 +9,16 @@ use std::{
     HashSet,
   },
   fmt,
-  io,
+  fs::File,
+  io::{
+    self,
+    Cursor,
+  },
   num::NonZeroUsize,
-  path::Path,
+  path::{
+    Path,
+    PathBuf,
+  },
   str::FromStr,
 };
 
@@ -20,6 +27,13 @@ use anyhow::{
   anyhow,
   bail,
   ensure,
+};
+use imara_diff::{
+  Algorithm as ImaraAlgorithm,
+  Diff as ImaraDiff,
+  IndentHeuristic,
+  IndentLevel,
+  InternedInput,
 };
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -45,7 +59,10 @@ use the_editor_stdx::{
   },
   rope::RopeSliceExt,
 };
-use the_editor_vcs::Hunk;
+use the_editor_vcs::{
+  DiffProviderRegistry,
+  Hunk,
+};
 use url::Url;
 
 // Re-export LSP commands so they can be bound directly from keymaps.
@@ -76,7 +93,10 @@ use crate::{
       Args,
     },
     comment,
-    document::Document,
+    document::{
+      self,
+      Document,
+    },
     global_search::{
       self as global_search_utils,
       FileResult,
@@ -5988,6 +6008,14 @@ struct DiffBlockDisplay {
   preview_range: Option<(usize, usize)>,
 }
 
+#[derive(Clone)]
+struct WorkspaceDiffEntry {
+  block:     DiffBlockDisplay,
+  doc_id:    Option<DocumentId>,
+  path:      Option<PathBuf>,
+  file_name: String,
+}
+
 impl DiffBlockDisplay {
   fn new(hunk: Hunk, doc_text: &Rope, diff_base: &Rope) -> Self {
     let kind = DiffChangeKind::from_hunk(&hunk);
@@ -6230,54 +6258,31 @@ pub fn document_vcs_diffs(cx: &mut Context) {
 }
 
 pub fn workspace_vcs_diffs(cx: &mut Context) {
-  use std::path::PathBuf;
+  use std::collections::HashMap;
 
-  #[derive(Clone)]
-  struct WorkspaceDiffEntry {
-    block:     DiffBlockDisplay,
-    doc_id:    DocumentId,
-    path:      Option<PathBuf>,
-    file_name: String,
-  }
+  let cwd = match std::env::current_dir() {
+    Ok(dir) => dir,
+    Err(err) => {
+      cx.editor
+        .set_error(format!("Failed to determine workspace root: {}", err));
+      return;
+    },
+  };
 
-  let mut entries = Vec::new();
+  let diff_providers = cx.editor.diff_providers.clone();
+  let diff_providers_for_iter = diff_providers.clone();
 
-  for (doc_id, doc) in &cx.editor.documents {
-    let Some(diff_handle) = doc.diff_handle() else {
-      continue;
-    };
-    let diff = diff_handle.load();
-    if diff.is_empty() {
-      continue;
-    }
-
-    let path = doc.path().map(|path| path.to_path_buf());
-    let file_name = path
-      .as_ref()
-      .and_then(|p| p.file_name())
-      .and_then(|n| n.to_str())
-      .unwrap_or("[No Name]")
-      .to_string();
-
-    for idx in 0..diff.len() as usize {
-      let hunk = diff.nth_hunk(idx as u32);
-      if hunk == Hunk::NONE {
-        continue;
-      }
-      let block = DiffBlockDisplay::new(hunk, diff.doc(), diff.diff_base());
-      entries.push(WorkspaceDiffEntry {
-        block,
-        doc_id: *doc_id,
-        path: path.clone(),
-        file_name: file_name.clone(),
-      });
-    }
-  }
-
-  if entries.is_empty() {
-    cx.editor.set_status("No VCS changes in workspace");
-    return;
-  }
+  let open_docs: HashMap<PathBuf, (DocumentId, Rope)> = cx
+    .editor
+    .documents
+    .iter()
+    .filter_map(|(doc_id, doc)| {
+      doc
+        .path()
+        .map(|path| (path.clone(), (*doc_id, doc.text().clone())))
+    })
+    .collect();
+  let open_docs = std::sync::Arc::new(open_docs);
 
   cx.callback.push(Box::new(move |compositor, _cx| {
     use crate::ui::components::{
@@ -6305,16 +6310,13 @@ pub fn workspace_vcs_diffs(cx: &mut Context) {
       move |entry: &WorkspaceDiffEntry, _: &(), _action: PickerAction| {
         let entry = entry.clone();
         crate::ui::job::dispatch_blocking(move |editor, _compositor| {
-          let doc_id = editor
-            .documents
-            .get(&entry.doc_id)
-            .map(|_| entry.doc_id)
-            .or_else(|| {
-              entry
-                .path
-                .as_ref()
-                .and_then(|path| editor.open(path, Action::Replace).ok())
-            });
+          let mut doc_id = entry.doc_id;
+
+          if doc_id.is_none() {
+            if let Some(path) = &entry.path {
+              doc_id = editor.open(path, Action::Replace).ok();
+            }
+          }
 
           if let Some(doc_id) = doc_id {
             let view_id = editor.tree.focus;
@@ -6335,7 +6337,7 @@ pub fn workspace_vcs_diffs(cx: &mut Context) {
       },
     );
 
-    let picker = Picker::new(columns, 3, entries, (), |_| {})
+    let picker = Picker::new(columns, 3, Vec::<WorkspaceDiffEntry>::new(), (), |_| {})
       .with_action_handler(action_handler)
       .with_preview(|entry: &WorkspaceDiffEntry| {
         entry
@@ -6343,9 +6345,135 @@ pub fn workspace_vcs_diffs(cx: &mut Context) {
           .as_ref()
           .map(|path| (path.clone(), entry.block.preview_range))
       });
+    let injector = picker.injector();
+
+    let open_docs_for_iter = std::sync::Arc::clone(&open_docs);
+    diff_providers_for_iter.for_each_changed_file(cwd.clone(), move |change| {
+      match change {
+        Ok(change) => {
+          let entries =
+            build_workspace_diff_entries(&change, &diff_providers, &open_docs_for_iter, &cwd);
+          for entry in entries {
+            if injector.push(entry).is_err() {
+              return false;
+            }
+          }
+          true
+        },
+        Err(err) => {
+          log::error!("Failed to enumerate changed files: {}", err);
+          true
+        },
+      }
+    });
 
     compositor.push(Box::new(picker));
   }));
+}
+
+fn build_workspace_diff_entries(
+  change: &the_editor_vcs::FileChange,
+  diff_providers: &DiffProviderRegistry,
+  open_docs: &std::collections::HashMap<PathBuf, (DocumentId, Rope)>,
+  cwd: &Path,
+) -> Vec<WorkspaceDiffEntry> {
+  let (absolute_path, display_name) = match change {
+    the_editor_vcs::FileChange::Renamed { from_path, to_path } => {
+      let from_abs = absolutize_path(from_path, cwd);
+      let to_abs = absolutize_path(to_path, cwd);
+      let from_rel = make_relative_path(&from_abs, cwd);
+      let to_rel = make_relative_path(&to_abs, cwd);
+      (to_abs, format!("{} -> {}", from_rel, to_rel))
+    },
+    _ => {
+      let path = absolutize_path(change.path(), cwd);
+      let rel = make_relative_path(&path, cwd);
+      (path, rel)
+    },
+  };
+
+  let mut doc_id = None;
+  let doc_text = if let Some((existing_id, text)) = open_docs.get(&absolute_path) {
+    doc_id = Some(*existing_id);
+    text.clone()
+  } else if matches!(change, the_editor_vcs::FileChange::Deleted { .. }) {
+    Rope::new()
+  } else {
+    read_file_rope(&absolute_path).unwrap_or_else(Rope::new)
+  };
+
+  let diff_base_text = diff_providers
+    .get_diff_base(&absolute_path)
+    .and_then(rope_from_bytes)
+    .unwrap_or_else(Rope::new);
+
+  let hunks = compute_diff_hunks(&diff_base_text, &doc_text);
+
+  hunks
+    .into_iter()
+    .map(|hunk| {
+      WorkspaceDiffEntry {
+        block: DiffBlockDisplay::new(hunk, &doc_text, &diff_base_text),
+        doc_id,
+        path: Some(absolute_path.clone()),
+        file_name: display_name.clone(),
+      }
+    })
+    .collect()
+}
+
+fn read_file_rope(path: &Path) -> Option<Rope> {
+  let mut file = File::open(path).ok()?;
+  document::from_reader(&mut file, None)
+    .ok()
+    .map(|(rope, ..)| rope)
+}
+
+fn rope_from_bytes(bytes: Vec<u8>) -> Option<Rope> {
+  let mut cursor = Cursor::new(bytes);
+  document::from_reader(&mut cursor, None)
+    .ok()
+    .map(|(rope, ..)| rope)
+}
+
+fn absolutize_path(path: &Path, cwd: &Path) -> PathBuf {
+  if path.is_absolute() {
+    path.to_path_buf()
+  } else {
+    cwd.join(path)
+  }
+}
+
+fn make_relative_path(path: &Path, cwd: &Path) -> String {
+  path.strip_prefix(cwd).unwrap_or(path).display().to_string()
+}
+
+fn compute_diff_hunks(diff_base: &Rope, doc: &Rope) -> Vec<Hunk> {
+  let input = InternedInput::new(
+    PickerRopeLines(diff_base.slice(..)),
+    PickerRopeLines(doc.slice(..)),
+  );
+  let mut diff = ImaraDiff::compute(ImaraAlgorithm::Histogram, &input);
+  diff.postprocess_with_heuristic(
+    &input,
+    IndentHeuristic::new(|token| IndentLevel::for_ascii_line(input.interner[token].bytes(), 4)),
+  );
+  diff.hunks().collect()
+}
+
+struct PickerRopeLines<'a>(RopeSlice<'a>);
+
+impl<'a> imara_diff::TokenSource for PickerRopeLines<'a> {
+  type Token = RopeSlice<'a>;
+  type Tokenizer = ropey::iter::Lines<'a>;
+
+  fn tokenize(&self) -> Self::Tokenizer {
+    self.0.lines()
+  }
+
+  fn estimate_tokens(&self) -> u32 {
+    self.0.len_lines() as u32
+  }
 }
 
 pub fn goto_first_change(cx: &mut Context) {

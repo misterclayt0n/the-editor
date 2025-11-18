@@ -1,3 +1,8 @@
+use std::{
+  cmp::Ordering,
+  collections::HashSet,
+};
+
 use futures_util::{
   StreamExt,
   future::BoxFuture,
@@ -332,22 +337,69 @@ pub fn goto_reference(cx: &mut Context) {
   });
 }
 
+fn classify_code_action(action: &lsp_types::CodeActionOrCommand) -> u32 {
+  use lsp_types::CodeActionOrCommand::CodeAction;
+
+  if let CodeAction(lsp_types::CodeAction {
+    kind: Some(kind), ..
+  }) = action
+  {
+    let mut components = kind.as_str().split('.');
+    match components.next() {
+      Some("quickfix") => 0,
+      Some("refactor") => {
+        match components.next() {
+          Some("extract") => 1,
+          Some("inline") => 2,
+          Some("rewrite") => 3,
+          Some("move") => 4,
+          Some("surround") => 5,
+          _ => 7,
+        }
+      },
+      Some("source") => 6,
+      _ => 7,
+    }
+  } else {
+    7
+  }
+}
+
+fn action_is_preferred(action: &lsp_types::CodeActionOrCommand) -> bool {
+  matches!(
+    action,
+    lsp_types::CodeActionOrCommand::CodeAction(lsp_types::CodeAction {
+      is_preferred: Some(true),
+      ..
+    })
+  )
+}
+
+fn action_fixes_diagnostics(action: &lsp_types::CodeActionOrCommand) -> bool {
+  matches!(
+    action,
+    lsp_types::CodeActionOrCommand::CodeAction(lsp_types::CodeAction {
+      diagnostics: Some(diagnostics),
+      ..
+    }) if !diagnostics.is_empty()
+  )
+}
+
 pub fn code_action(cx: &mut Context) {
   let (view, doc) = current_ref!(cx.editor);
 
   // Get selection range
   let selection = doc.selection(view.id).primary();
 
-  // Collect all the futures
+  // Collect all the futures along with the language server id
+  let mut seen_servers = HashSet::new();
   let requests: Vec<_> = doc
     .language_servers_with_feature(LanguageServerFeature::CodeAction)
+    .filter(|language_server| seen_servers.insert(language_server.id()))
     .filter_map(|language_server| {
       let offset_encoding = language_server.offset_encoding();
-
-      // Convert selection to LSP range
       let range = crate::lsp::util::range_to_lsp_range(doc.text(), selection, offset_encoding);
 
-      // Get diagnostics overlapping the selection
       let diagnostics: Vec<lsp_types::Diagnostic> = doc
         .diagnostics()
         .iter()
@@ -366,7 +418,9 @@ pub fn code_action(cx: &mut Context) {
         trigger_kind: Some(lsp_types::CodeActionTriggerKind::INVOKED),
       };
 
-      language_server.code_actions(doc.identifier(), range, context)
+      language_server
+        .code_actions(doc.identifier(), range, context)
+        .map(|future| (language_server.id(), future))
     })
     .collect();
 
@@ -379,11 +433,10 @@ pub fn code_action(cx: &mut Context) {
   cx.jobs.callback(async move {
     let mut all_actions = Vec::new();
 
-    for future in requests {
+    for (language_server_id, future) in requests {
       match future.await {
         Ok(Some(actions)) => {
-          // Filter out disabled actions
-          let enabled_actions: Vec<_> = actions
+          let enabled_actions = actions
             .into_iter()
             .filter(|action| {
               match action {
@@ -391,7 +444,12 @@ pub fn code_action(cx: &mut Context) {
                 _ => true,
               }
             })
-            .collect();
+            .map(|action| {
+              crate::ui::components::CodeActionEntry {
+                action,
+                language_server_id,
+              }
+            });
           all_actions.extend(enabled_actions);
         },
         Ok(None) => {},
@@ -400,6 +458,24 @@ pub fn code_action(cx: &mut Context) {
         },
       }
     }
+
+    all_actions.sort_by(|a, b| {
+      let order = classify_code_action(&a.action).cmp(&classify_code_action(&b.action));
+      if order != Ordering::Equal {
+        return order;
+      }
+
+      let fixes_order = action_fixes_diagnostics(&a.action)
+        .cmp(&action_fixes_diagnostics(&b.action))
+        .reverse();
+      if fixes_order != Ordering::Equal {
+        return fixes_order;
+      }
+
+      action_is_preferred(&a.action)
+        .cmp(&action_is_preferred(&b.action))
+        .reverse()
+    });
 
     let call = move |editor: &mut crate::editor::Editor, compositor: &mut Compositor| {
       if all_actions.is_empty() {

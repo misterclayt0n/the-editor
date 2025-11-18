@@ -1,6 +1,12 @@
+use anyhow::{
+  anyhow,
+  bail,
+};
+use futures_executor::block_on;
 use the_editor_lsp_types::types as lsp;
 use the_editor_renderer::{
   Color,
+  Key,
   TextSection,
   TextSegment,
   TextStyle,
@@ -8,16 +14,20 @@ use the_editor_renderer::{
 
 use crate::{
   core::{
+    animation::{
+      AnimationHandle,
+      presets,
+    },
     graphics::{
       CursorKind,
       Rect,
     },
     position::Position,
-    transaction::Transaction,
   },
-  editor::Action,
+  lsp::LanguageServerId,
   ui::{
     UI_FONT_SIZE,
+    UI_FONT_WIDTH,
     compositor::{
       Component,
       Context,
@@ -25,271 +35,202 @@ use crate::{
       EventResult,
       Surface,
     },
+    popup_positioning::{
+      calculate_cursor_position,
+      position_popup_near_cursor,
+    },
+    theme_color_to_renderer_color,
   },
 };
 
-const MAX_VISIBLE_ITEMS: usize = 10;
+const MAX_VISIBLE_ITEMS: usize = 12;
+const MAX_MENU_WIDTH_CH: u16 = 70;
+const HORIZONTAL_PADDING: f32 = 12.0;
+const VERTICAL_PADDING: f32 = 10.0;
+const MIN_MENU_WIDTH: f32 = 220.0;
+
+pub struct CodeActionEntry {
+  pub action:             lsp::CodeActionOrCommand,
+  pub language_server_id: LanguageServerId,
+}
 
 pub struct CodeActionMenu {
-  actions:       Vec<lsp::CodeActionOrCommand>,
+  entries:       Vec<CodeActionEntry>,
   cursor:        usize,
   scroll_offset: usize,
-  anim_progress: f32,
+  animation:     AnimationHandle<f32>,
 }
 
 impl CodeActionMenu {
   pub const ID: &'static str = "code-action";
 
-  pub fn new(actions: Vec<lsp::CodeActionOrCommand>) -> Self {
+  pub fn new(entries: Vec<CodeActionEntry>) -> Self {
+    let (duration, easing) = presets::POPUP;
     Self {
-      actions,
+      entries,
       cursor: 0,
       scroll_offset: 0,
-      anim_progress: 0.0,
+      animation: AnimationHandle::new(0.0, 1.0, duration, easing),
     }
+  }
+
+  fn action_title(entry: &CodeActionEntry) -> &str {
+    match &entry.action {
+      lsp::CodeActionOrCommand::Command(command) => &command.title,
+      lsp::CodeActionOrCommand::CodeAction(action) => &action.title,
+    }
+  }
+
+  fn action_kind(entry: &CodeActionEntry) -> Option<&str> {
+    match &entry.action {
+      lsp::CodeActionOrCommand::CodeAction(action) => {
+        action.kind.as_ref().map(|kind| kind.as_str())
+      },
+      _ => None,
+    }
+  }
+
+  fn is_preferred(entry: &CodeActionEntry) -> bool {
+    matches!(
+      entry.action,
+      lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+        is_preferred: Some(true),
+        ..
+      })
+    )
   }
 
   fn move_cursor(&mut self, delta: isize) {
-    let len = self.actions.len();
-    if len == 0 {
+    if self.entries.is_empty() {
       return;
     }
 
-    let new_cursor = if delta < 0 {
-      self.cursor.saturating_sub(delta.unsigned_abs())
-    } else {
-      self.cursor.saturating_add(delta as usize)
-    };
+    let len = self.entries.len() as isize;
+    let new_index = (self.cursor as isize + delta).clamp(0, len - 1);
+    self.cursor = new_index as usize;
+    self.ensure_cursor_visible();
+  }
 
-    self.cursor = new_cursor.min(len - 1);
+  fn ensure_cursor_visible(&mut self) {
+    if self.entries.is_empty() {
+      self.scroll_offset = 0;
+      return;
+    }
 
-    // Adjust scroll offset
     if self.cursor < self.scroll_offset {
       self.scroll_offset = self.cursor;
     } else if self.cursor >= self.scroll_offset + MAX_VISIBLE_ITEMS {
-      self.scroll_offset = self.cursor - MAX_VISIBLE_ITEMS + 1;
+      self.scroll_offset = self.cursor + 1 - MAX_VISIBLE_ITEMS;
     }
   }
 
-  fn get_action_title(action: &lsp::CodeActionOrCommand) -> String {
-    match action {
-      lsp::CodeActionOrCommand::Command(cmd) => cmd.title.clone(),
-      lsp::CodeActionOrCommand::CodeAction(action) => action.title.clone(),
+  fn visible_range(&self) -> (usize, usize) {
+    if self.entries.is_empty() {
+      return (0, 0);
     }
+
+    let start = self.scroll_offset.min(self.entries.len().saturating_sub(1));
+    let remaining = self.entries.len() - start;
+    let visible = remaining.min(MAX_VISIBLE_ITEMS);
+    (start, start + visible)
   }
 
-  fn apply_code_action(&self, cx: &mut Context) -> anyhow::Result<()> {
-    let action = &self.actions[self.cursor];
+  fn selection(&self) -> Option<&CodeActionEntry> {
+    self.entries.get(self.cursor)
+  }
 
-    match action {
+  fn apply_selected(&mut self, cx: &mut Context) -> anyhow::Result<()> {
+    let entry = self
+      .selection()
+      .ok_or_else(|| anyhow!("No code action selected"))?;
+
+    let Some(language_server) = cx.editor.language_server_by_id(entry.language_server_id) else {
+      cx.editor
+        .set_error("Language server not found for code action");
+      bail!("language server not found");
+    };
+
+    match &entry.action {
       lsp::CodeActionOrCommand::Command(command) => {
-        // Execute the command
-        log::info!("Executing command: {}", command.command);
-        // TODO: Implement workspace command execution
-        cx.editor.set_status(format!(
-          "Command execution not yet implemented: {}",
-          command.command
-        ));
+        cx.editor
+          .execute_lsp_command(command.clone(), entry.language_server_id);
       },
       lsp::CodeActionOrCommand::CodeAction(action) => {
-        // Apply the workspace edit if present
-        if let Some(ref edit) = action.edit {
-          self.apply_workspace_edit(cx, edit)?;
+        let mut resolved = None;
+        if action.edit.is_none() || action.command.is_none() {
+          if let Some(future) = language_server.resolve_code_action(action) {
+            match block_on(future) {
+              Ok(action) => resolved = Some(action),
+              Err(err) => {
+                log::error!("Failed to resolve code action: {err}");
+              },
+            }
+          }
         }
 
-        // Execute the command if present
-        if let Some(ref command) = action.command {
-          log::info!("Executing command: {}", command.command);
-          // TODO: Implement workspace command execution
+        let action = resolved.as_ref().unwrap_or(action);
+
+        if let Some(edit) = &action.edit {
+          if let Err(err) = cx
+            .editor
+            .apply_workspace_edit(language_server.offset_encoding(), edit)
+          {
+            cx.editor
+              .set_error(format!("Failed to apply workspace edit: {}", err.kind));
+            bail!("workspace edit failed");
+          }
+        }
+
+        if let Some(command) = &action.command {
+          cx.editor
+            .execute_lsp_command(command.clone(), entry.language_server_id);
         }
       },
     }
-
-    Ok(())
-  }
-
-  fn apply_workspace_edit(
-    &self,
-    cx: &mut Context,
-    edit: &lsp::WorkspaceEdit,
-  ) -> anyhow::Result<()> {
-    use crate::lsp::util::lsp_range_to_range;
-
-    // Apply document changes
-    if let Some(ref changes) = edit.changes {
-      for (uri, text_edits) in changes {
-        let path = uri
-          .to_file_path()
-          .map_err(|_| anyhow::anyhow!("Invalid file path"))?;
-
-        // Open or get the document
-        let doc_id = cx.editor.open(&path, Action::Replace)?;
-        let doc = cx
-          .editor
-          .documents
-          .get_mut(&doc_id)
-          .ok_or_else(|| anyhow::anyhow!("Failed to get document"))?;
-
-        // Get the language server to determine offset encoding
-        let language_server = doc
-          .language_servers_with_feature(
-            crate::core::syntax::config::LanguageServerFeature::CodeAction,
-          )
-          .next()
-          .ok_or_else(|| anyhow::anyhow!("No language server"))?;
-
-        let offset_encoding = language_server.offset_encoding();
-
-        // Apply edits in reverse order to maintain offsets
-        let mut edits: Vec<_> = text_edits.iter().collect();
-        edits.sort_by_key(|edit| std::cmp::Reverse(edit.range.start));
-
-        for edit in edits {
-          let text = doc.text();
-          if let Some(range) = lsp_range_to_range(text, edit.range, offset_encoding) {
-            let transaction = Transaction::change(
-              text,
-              [(
-                range.anchor,
-                range.head,
-                Some(edit.new_text.as_str().into()),
-              )]
-              .into_iter(),
-            );
-
-            doc.apply(&transaction, cx.editor.tree.focus);
-          }
-        }
-      }
-    }
-
-    // TODO: Handle document_changes (which includes more than just text edits)
 
     cx.editor.set_status("Code action applied");
     Ok(())
   }
 }
 
-impl Component for CodeActionMenu {
-  fn render(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context) {
-    // Animate entrance
-    let anim_speed = 12.0;
-    if self.anim_progress < 1.0 {
-      self.anim_progress = (self.anim_progress + cx.dt * anim_speed).min(1.0);
-    }
-
-    let alpha = self.anim_progress;
-    let scale = 0.95 + 0.05 * alpha;
-
-    let line_height = UI_FONT_SIZE + 4.0;
-    let visible_items = self.actions.len().min(MAX_VISIBLE_ITEMS);
-    let menu_height = (visible_items as f32 * line_height) + 16.0;
-    let menu_width = 400.0;
-
-    // Get cursor position for positioning
-    let (view, doc) = crate::current_ref!(cx.editor);
-    let viewport = view.area;
-    let text = doc.text().slice(..);
-    let cursor = doc.selection(view.id).primary().cursor(text);
-
-    // Simple position calculation (without decorations)
-    let line = text.char_to_line(cursor);
-    let line_start = text.line_to_char(line);
-    let col = cursor - line_start;
-    let row = line;
-
-    let Position { row, col } = Position { row, col };
-
-    // Calculate position (below cursor)
-    let base_x = viewport.x as f32 + col as f32 * surface.cell_width();
-    let base_y = viewport.y as f32 + (row as f32 + 1.0) * line_height;
-
-    // Ensure menu fits in viewport
-    let x = base_x.min(area.width as f32 - menu_width);
-    let y = if base_y + menu_height > area.height as f32 {
-      // Show above cursor if doesn't fit below
-      (base_y - line_height - menu_height).max(0.0)
-    } else {
-      base_y
-    };
-
-    let anim_width = menu_width * scale;
-    let anim_height = menu_height * scale;
-    let anim_x = x + (menu_width - anim_width) / 2.0;
-    let anim_y = y + (menu_height - anim_height) / 2.0;
-
-    // Get theme colors
-    let theme = &cx.editor.theme;
-    let bg_style = theme.get("ui.popup");
-    let text_style = theme.get("ui.text");
-    let selected_style = theme.get("ui.menu.selected");
-
-    let bg_color = bg_style
-      .bg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.1, 0.1, 0.1, 0.95));
-    let text_color = text_style
-      .fg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
-    let selected_bg = selected_style
-      .bg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.3, 0.3, 0.4, 1.0));
-
-    let mut bg_color_anim = bg_color;
-    bg_color_anim.a *= alpha;
-
-    // Draw background
-    surface.draw_rounded_rect(anim_x, anim_y, anim_width, anim_height, 6.0, bg_color_anim);
-
-    // Render in overlay mode
-    surface.with_overlay_region(anim_x, anim_y, anim_width, anim_height, |surface| {
-      let start = self.scroll_offset;
-      let end = (start + visible_items).min(self.actions.len());
-
-      for (i, action) in self.actions[start..end].iter().enumerate() {
-        let item_y = anim_y + 8.0 + (i as f32 * line_height);
-        let is_selected = start + i == self.cursor;
-
-        // Draw selection background
-        if is_selected {
-          let mut sel_bg = selected_bg;
-          sel_bg.a *= alpha;
-          surface.draw_rect(
-            anim_x + 4.0,
-            item_y - 2.0,
-            anim_width - 8.0,
-            line_height,
-            sel_bg,
-          );
-        }
-
-        // Draw action title
-        let title = Self::get_action_title(action);
-        let mut color = text_color;
-        color.a *= alpha;
-
-        surface.draw_text(TextSection {
-          position: (anim_x + 8.0, item_y),
-          texts:    vec![TextSegment {
-            content: title,
-            style:   TextStyle {
-              size: UI_FONT_SIZE,
-              color,
-            },
-          }],
-        });
-      }
-    });
+fn truncate_to_width(text: &str, max_width: f32, char_width: f32) -> String {
+  if max_width <= 0.0 {
+    return String::new();
   }
 
+  let char_width = char_width.max(1.0);
+  let max_chars = (max_width / char_width).floor() as usize;
+  if max_chars == 0 {
+    return String::new();
+  }
+
+  let count = text.chars().count();
+  if count <= max_chars {
+    return text.to_string();
+  }
+
+  if max_chars == 1 {
+    return "…".to_string();
+  }
+
+  let mut truncated = String::with_capacity(max_chars);
+  let mut chars = text.chars();
+  for _ in 0..(max_chars - 1) {
+    if let Some(ch) = chars.next() {
+      truncated.push(ch);
+    } else {
+      break;
+    }
+  }
+  truncated.push('…');
+  truncated
+}
+
+impl Component for CodeActionMenu {
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
     let Event::Key(key) = event else {
       return EventResult::Ignored(None);
     };
-
-    use the_editor_renderer::Key;
 
     match (key.code, key.ctrl, key.alt, key.shift) {
       (Key::Escape, ..) => {
@@ -297,28 +238,222 @@ impl Component for CodeActionMenu {
           compositor.remove(Self::ID);
         })))
       },
-      (Key::Enter | Key::NumpadEnter, ..) => {
-        if let Err(err) = self.apply_code_action(cx) {
-          cx.editor
-            .set_error(format!("Failed to apply code action: {}", err));
-        }
-        EventResult::Consumed(Some(Box::new(|compositor, _| {
-          compositor.remove(Self::ID);
-        })))
-      },
-      (Key::Up, ..) | (Key::Char('k'), false, ..) => {
+      (Key::Up, ..) | (Key::Char('p'), true, ..) | (Key::Char('k'), false, false, false) => {
         self.move_cursor(-1);
         EventResult::Consumed(None)
       },
-      (Key::Down, ..) | (Key::Char('j'), false, ..) => {
+      (Key::Down, ..) | (Key::Char('n'), true, ..) | (Key::Char('j'), false, false, false) => {
         self.move_cursor(1);
         EventResult::Consumed(None)
+      },
+      (Key::PageUp, ..) | (Key::Char('u'), true, ..) => {
+        let step = (MAX_VISIBLE_ITEMS / 2).max(1) as isize;
+        self.move_cursor(-(step));
+        EventResult::Consumed(None)
+      },
+      (Key::PageDown, ..) | (Key::Char('d'), true, ..) => {
+        let step = (MAX_VISIBLE_ITEMS / 2).max(1) as isize;
+        self.move_cursor(step);
+        EventResult::Consumed(None)
+      },
+      (Key::Home, ..) => {
+        self.cursor = 0;
+        self.ensure_cursor_visible();
+        EventResult::Consumed(None)
+      },
+      (Key::End, ..) => {
+        if !self.entries.is_empty() {
+          self.cursor = self.entries.len() - 1;
+          self.ensure_cursor_visible();
+        }
+        EventResult::Consumed(None)
+      },
+      (Key::Enter | Key::NumpadEnter, ..) => {
+        match self.apply_selected(cx) {
+          Ok(()) => {
+            EventResult::Consumed(Some(Box::new(|compositor, _| {
+              compositor.remove(Self::ID);
+            })))
+          },
+          Err(err) => {
+            cx.editor
+              .set_error(format!("Failed to apply code action: {err}"));
+            EventResult::Consumed(None)
+          },
+        }
       },
       _ => EventResult::Ignored(None),
     }
   }
 
-  fn cursor(&self, _area: Rect, _ctx: &crate::editor::Editor) -> (Option<Position>, CursorKind) {
+  fn render(&mut self, _area: Rect, surface: &mut Surface, cx: &mut Context) {
+    if self.entries.is_empty() {
+      return;
+    }
+
+    let font_state = surface.save_font_state();
+
+    self.animation.update(cx.dt);
+    let eased = *self.animation.current();
+    let alpha = eased;
+    let slide_offset = (1.0 - eased) * 8.0;
+    let scale = 0.95 + eased * 0.05;
+
+    let theme = &cx.editor.theme;
+    let bg_color = theme
+      .get("ui.popup")
+      .bg
+      .map(theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.12, 0.12, 0.15, 1.0));
+    let mut text_color = theme
+      .get("ui.text")
+      .fg
+      .map(theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
+    let mut selected_fg = theme
+      .get("ui.menu.selected")
+      .fg
+      .map(theme_color_to_renderer_color)
+      .unwrap_or(Color::new(1.0, 1.0, 1.0, 1.0));
+    let selected_bg = theme
+      .get("ui.menu.selected")
+      .bg
+      .map(theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.25, 0.3, 0.45, 1.0));
+
+    text_color.a *= alpha;
+    selected_fg.a *= alpha;
+
+    let Some(cursor) = calculate_cursor_position(cx, surface) else {
+      surface.restore_font_state(font_state);
+      return;
+    };
+
+    surface.configure_font(&font_state.family, UI_FONT_SIZE);
+    let char_width = surface.cell_width().max(UI_FONT_WIDTH.max(1.0));
+    let line_height = surface.cell_height().max(UI_FONT_SIZE + 4.0);
+
+    let mut max_title_chars: f32 = 0.0;
+    let mut max_kind_chars: f32 = 0.0;
+    for entry in self.entries.iter().take(40) {
+      max_title_chars = max_title_chars.max(Self::action_title(entry).chars().count() as f32);
+      if let Some(kind) = Self::action_kind(entry) {
+        max_kind_chars = max_kind_chars.max(kind.chars().count() as f32);
+      }
+    }
+
+    let mut menu_width = HORIZONTAL_PADDING * 2.0 + (max_title_chars.max(20.0) * char_width);
+    let mut kind_column_width = 0.0;
+    if max_kind_chars > 0.0 {
+      kind_column_width = (max_kind_chars + 4.0) * char_width;
+      menu_width += kind_column_width;
+    }
+
+    let max_width = MAX_MENU_WIDTH_CH as f32 * char_width;
+    menu_width = menu_width.clamp(MIN_MENU_WIDTH, max_width);
+    if kind_column_width > 0.0 {
+      kind_column_width = kind_column_width.min(menu_width * 0.45);
+    }
+
+    let mut available_title_width = menu_width - (HORIZONTAL_PADDING * 2.0);
+    if kind_column_width > 0.0 {
+      available_title_width -= kind_column_width + 8.0;
+    }
+    if available_title_width < char_width * 4.0 {
+      available_title_width = char_width * 4.0;
+    }
+
+    let visible_items = self.entries.len().min(MAX_VISIBLE_ITEMS).max(1);
+    let menu_height = (visible_items as f32 * line_height) + (VERTICAL_PADDING * 2.0);
+
+    let viewport_width = surface.width() as f32;
+    let viewport_height = surface.height() as f32;
+
+    let popup_pos = position_popup_near_cursor(
+      cursor,
+      menu_width,
+      menu_height,
+      viewport_width,
+      viewport_height,
+      slide_offset,
+      scale,
+      None,
+    );
+
+    let anim_width = menu_width * scale;
+    let anim_height = menu_height * scale;
+    let anim_x = popup_pos.x;
+    let anim_y = popup_pos.y;
+
+    surface.draw_rounded_rect(anim_x, anim_y, anim_width, anim_height, 6.0, bg_color);
+
+    surface.with_overlay_region(anim_x, anim_y, anim_width, anim_height, |surface| {
+      let (start, end) = self.visible_range();
+      let kind_column_x = if kind_column_width > 0.0 {
+        Some(anim_x + menu_width - HORIZONTAL_PADDING - kind_column_width)
+      } else {
+        None
+      };
+
+      for (i, entry) in self.entries[start..end].iter().enumerate() {
+        let y = anim_y + VERTICAL_PADDING + (i as f32 * line_height);
+        let is_selected = start + i == self.cursor;
+
+        if is_selected {
+          let mut sel_bg = selected_bg;
+          sel_bg.a *= alpha;
+          surface.draw_rect(
+            anim_x + 4.0,
+            y - 2.0,
+            anim_width - 8.0,
+            line_height + 4.0,
+            sel_bg,
+          );
+        }
+
+        let fg = if is_selected { selected_fg } else { text_color };
+        let mut detail = fg;
+        detail.a *= 0.8;
+        detail.a = detail.a.min(fg.a);
+
+        let title = truncate_to_width(Self::action_title(entry), available_title_width, char_width);
+        let title = if Self::is_preferred(entry) {
+          format!("★ {title}")
+        } else {
+          title
+        };
+
+        surface.draw_text(TextSection {
+          position: (anim_x + HORIZONTAL_PADDING, y),
+          texts:    vec![TextSegment {
+            content: title,
+            style:   TextStyle {
+              size:  UI_FONT_SIZE,
+              color: fg,
+            },
+          }],
+        });
+
+        if let (Some(kind), Some(kind_x)) = (Self::action_kind(entry), kind_column_x) {
+          let kind_text = truncate_to_width(kind, kind_column_width, char_width);
+          surface.draw_text(TextSection {
+            position: (kind_x, y),
+            texts:    vec![TextSegment {
+              content: kind_text,
+              style:   TextStyle {
+                size:  UI_FONT_SIZE,
+                color: detail,
+              },
+            }],
+          });
+        }
+      }
+    });
+
+    surface.restore_font_state(font_state);
+  }
+
+  fn cursor(&self, _area: Rect, _editor: &crate::editor::Editor) -> (Option<Position>, CursorKind) {
     (None, CursorKind::Hidden)
   }
 
@@ -327,6 +462,6 @@ impl Component for CodeActionMenu {
   }
 
   fn is_animating(&self) -> bool {
-    self.anim_progress < 1.0
+    !self.animation.is_complete()
   }
 }

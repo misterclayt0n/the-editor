@@ -11,7 +11,10 @@ pub mod statusline;
 
 // Completion, SignatureHelp, Hover, and CodeActionMenu are used internally by
 // the editor
-pub(crate) use code_action::CodeActionMenu;
+pub(crate) use code_action::{
+  CodeActionEntry,
+  CodeActionMenu,
+};
 pub(crate) use completion::Completion;
 pub use picker::{
   Column,

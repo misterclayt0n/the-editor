@@ -467,8 +467,10 @@ impl MappableCommand {
         code_action, "code action",
         document_diagnostics, "document diagnostics",
         document_symbols, "document symbols",
+        document_vcs_diffs, "document vcs diff picker",
         workspace_diagnostics, "workspace diagnostics",
         workspace_symbols, "workspace symbols",
+        workspace_vcs_diffs, "workspace vcs diff picker",
         rename_symbol, "rename symbol",
         select_references, "select references",
         search_next, "search next",
@@ -5975,6 +5977,375 @@ fn hunk_range(hunk: Hunk, text: RopeSlice) -> Range {
   };
 
   Range::new(anchor, head)
+}
+
+#[derive(Clone)]
+struct DiffBlockDisplay {
+  hunk:          Hunk,
+  kind:          DiffChangeKind,
+  summary:       String,
+  line_display:  String,
+  preview_range: Option<(usize, usize)>,
+}
+
+impl DiffBlockDisplay {
+  fn new(hunk: Hunk, doc_text: &Rope, diff_base: &Rope) -> Self {
+    let kind = DiffChangeKind::from_hunk(&hunk);
+    let (summary_source, lines) = if matches!(kind, DiffChangeKind::Removed) {
+      (diff_base, hunk.before.clone())
+    } else {
+      (doc_text, hunk.after.clone())
+    };
+
+    let summary = summarize_hunk_lines(summary_source, lines);
+    let line_display = match kind {
+      DiffChangeKind::Removed => {
+        format!("{} (removed)", format_diff_line_range(hunk.before.clone()))
+      },
+      _ => format_diff_line_range(hunk.after.clone()),
+    };
+    let preview_range = diff_preview_range(&hunk, doc_text);
+
+    Self {
+      hunk,
+      kind,
+      summary,
+      line_display,
+      preview_range,
+    }
+  }
+
+  fn change_label(&self) -> &'static str {
+    self.kind.label()
+  }
+}
+
+#[derive(Clone, Copy)]
+enum DiffChangeKind {
+  Added,
+  Removed,
+  Modified,
+}
+
+impl DiffChangeKind {
+  fn from_hunk(hunk: &Hunk) -> Self {
+    match (hunk.before.is_empty(), hunk.after.is_empty()) {
+      (true, false) => Self::Added,
+      (false, true) => Self::Removed,
+      _ => Self::Modified,
+    }
+  }
+
+  fn label(self) -> &'static str {
+    match self {
+      Self::Added => "Added",
+      Self::Removed => "Removed",
+      Self::Modified => "Modified",
+    }
+  }
+}
+
+fn format_diff_line_range(range: std::ops::Range<u32>) -> String {
+  let start_line = range.start.saturating_add(1);
+  let span = range.end.saturating_sub(range.start);
+  if span <= 1 {
+    format!("{}", start_line)
+  } else {
+    let end_line = range.end.max(range.start + 1);
+    format!("{}-{}", start_line, end_line)
+  }
+}
+
+fn summarize_hunk_lines(text: &Rope, lines: std::ops::Range<u32>) -> String {
+  if text.len_lines() == 0 {
+    return "[blank]".into();
+  }
+
+  let total_lines = text.len_lines() as u32;
+  if total_lines == 0 {
+    return "[blank]".into();
+  }
+
+  let start = lines.start.min(total_lines.saturating_sub(1));
+  let mut end = lines.end.min(total_lines);
+  if end <= start {
+    end = (start + 1).min(total_lines);
+  }
+
+  for line_idx in start..end {
+    let idx = line_idx as usize;
+    if idx >= text.len_lines() {
+      break;
+    }
+    let line = text.line(idx).to_string();
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+      continue;
+    }
+
+    let mut summary = String::new();
+    let mut count = 0usize;
+    let mut truncated = false;
+    for ch in trimmed.chars() {
+      if count >= 80 {
+        truncated = true;
+        break;
+      }
+      summary.push(ch);
+      count += 1;
+    }
+    if truncated {
+      summary.push('…');
+    }
+    return summary;
+  }
+
+  let span = lines.end.saturating_sub(lines.start).max(1);
+  if span == 1 {
+    "[blank line]".into()
+  } else {
+    format!("[{} blank lines]", span)
+  }
+}
+
+fn diff_preview_range(hunk: &Hunk, doc_text: &Rope) -> Option<(usize, usize)> {
+  let total_lines = doc_text.len_lines();
+  if total_lines == 0 {
+    return None;
+  }
+
+  if hunk.after.is_empty() {
+    let raw = if hunk.after.start == 0 {
+      0
+    } else {
+      hunk.after.start as usize - 1
+    };
+    let clamped = raw.min(total_lines - 1);
+    Some((clamped, clamped))
+  } else {
+    let mut start = (hunk.after.start as usize).min(total_lines - 1);
+    let mut end_line = if hunk.after.end > hunk.after.start {
+      (hunk.after.end - 1) as usize
+    } else {
+      hunk.after.start as usize
+    };
+    end_line = end_line.min(total_lines - 1);
+    if start > end_line {
+      start = end_line;
+    }
+    Some((start, end_line))
+  }
+}
+
+pub fn document_vcs_diffs(cx: &mut Context) {
+  let view_id = match cx.editor.focused_view_id() {
+    Some(id) => id,
+    None => {
+      cx.editor.set_status("No active document");
+      return;
+    },
+  };
+
+  let (diff_handle, doc_path) = {
+    let view = cx.editor.tree.get(view_id);
+    let doc = &cx.editor.documents[&view.doc];
+    (doc.diff_handle().cloned(), doc.path().cloned())
+  };
+
+  let Some(diff_handle) = diff_handle else {
+    cx.editor
+      .set_status("No VCS diff available for current document");
+    return;
+  };
+
+  let (has_changes, blocks) = {
+    let diff = diff_handle.load();
+    if diff.is_empty() {
+      (false, Vec::new())
+    } else {
+      let mut entries = Vec::with_capacity(diff.len() as usize);
+      for idx in 0..diff.len() as usize {
+        let hunk = diff.nth_hunk(idx as u32);
+        if hunk == Hunk::NONE {
+          continue;
+        }
+        entries.push(DiffBlockDisplay::new(hunk, diff.doc(), diff.diff_base()));
+      }
+      (true, entries)
+    }
+  };
+
+  if !has_changes || blocks.is_empty() {
+    cx.editor.set_status("Document has no VCS changes");
+    return;
+  }
+
+  cx.callback.push(Box::new(move |compositor, _cx| {
+    use crate::ui::components::{
+      Column,
+      Picker,
+      PickerAction,
+    };
+
+    let columns = vec![
+      Column::new("Change", |entry: &DiffBlockDisplay, _: &()| {
+        entry.change_label().to_string()
+      }),
+      Column::new("Lines", |entry: &DiffBlockDisplay, _: &()| {
+        entry.line_display.clone()
+      }),
+      Column::new("Summary", |entry: &DiffBlockDisplay, _: &()| {
+        entry.summary.clone()
+      }),
+    ];
+
+    let action_handler = std::sync::Arc::new(
+      move |entry: &DiffBlockDisplay, _: &(), _action: PickerAction| {
+        let entry = entry.clone();
+        crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+          if let Some(view_id) = editor.focused_view_id_mut() {
+            let view = editor.tree.get_mut(view_id);
+            if let Some(doc) = editor.documents.get_mut(&view.doc) {
+              let range = hunk_range(entry.hunk, doc.text().slice(..));
+              doc.set_selection(view.id, Selection::single(range.anchor, range.head));
+              align_view(doc, view, Align::Center);
+            }
+          }
+        });
+        true
+      },
+    );
+
+    let preview_path = doc_path.clone();
+    let picker = Picker::new(columns, 2, blocks, (), |_| {})
+      .with_action_handler(action_handler)
+      .with_preview(move |entry: &DiffBlockDisplay| {
+        preview_path
+          .as_ref()
+          .map(|path| (path.clone(), entry.preview_range))
+      });
+
+    compositor.push(Box::new(picker));
+  }));
+}
+
+pub fn workspace_vcs_diffs(cx: &mut Context) {
+  use std::path::PathBuf;
+
+  #[derive(Clone)]
+  struct WorkspaceDiffEntry {
+    block:     DiffBlockDisplay,
+    doc_id:    DocumentId,
+    path:      Option<PathBuf>,
+    file_name: String,
+  }
+
+  let mut entries = Vec::new();
+
+  for (doc_id, doc) in &cx.editor.documents {
+    let Some(diff_handle) = doc.diff_handle() else {
+      continue;
+    };
+    let diff = diff_handle.load();
+    if diff.is_empty() {
+      continue;
+    }
+
+    let path = doc.path().map(|path| path.to_path_buf());
+    let file_name = path
+      .as_ref()
+      .and_then(|p| p.file_name())
+      .and_then(|n| n.to_str())
+      .unwrap_or("[No Name]")
+      .to_string();
+
+    for idx in 0..diff.len() as usize {
+      let hunk = diff.nth_hunk(idx as u32);
+      if hunk == Hunk::NONE {
+        continue;
+      }
+      let block = DiffBlockDisplay::new(hunk, diff.doc(), diff.diff_base());
+      entries.push(WorkspaceDiffEntry {
+        block,
+        doc_id: *doc_id,
+        path: path.clone(),
+        file_name: file_name.clone(),
+      });
+    }
+  }
+
+  if entries.is_empty() {
+    cx.editor.set_status("No VCS changes in workspace");
+    return;
+  }
+
+  cx.callback.push(Box::new(move |compositor, _cx| {
+    use crate::ui::components::{
+      Column,
+      Picker,
+      PickerAction,
+    };
+
+    let columns = vec![
+      Column::new("Change", |entry: &WorkspaceDiffEntry, _: &()| {
+        entry.block.change_label().to_string()
+      }),
+      Column::new("File", |entry: &WorkspaceDiffEntry, _: &()| {
+        entry.file_name.clone()
+      }),
+      Column::new("Lines", |entry: &WorkspaceDiffEntry, _: &()| {
+        entry.block.line_display.clone()
+      }),
+      Column::new("Summary", |entry: &WorkspaceDiffEntry, _: &()| {
+        entry.block.summary.clone()
+      }),
+    ];
+
+    let action_handler = std::sync::Arc::new(
+      move |entry: &WorkspaceDiffEntry, _: &(), _action: PickerAction| {
+        let entry = entry.clone();
+        crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+          let doc_id = editor
+            .documents
+            .get(&entry.doc_id)
+            .map(|_| entry.doc_id)
+            .or_else(|| {
+              entry
+                .path
+                .as_ref()
+                .and_then(|path| editor.open(path, Action::Replace).ok())
+            });
+
+          if let Some(doc_id) = doc_id {
+            let view_id = editor.tree.focus;
+            {
+              let view = editor.tree.get_mut(view_id);
+              view.doc = doc_id;
+            }
+
+            if let Some(doc) = editor.documents.get_mut(&doc_id) {
+              let range = hunk_range(entry.block.hunk, doc.text().slice(..));
+              doc.set_selection(view_id, Selection::single(range.anchor, range.head));
+              let view = editor.tree.get_mut(view_id);
+              align_view(doc, view, Align::Center);
+            }
+          }
+        });
+        true
+      },
+    );
+
+    let picker = Picker::new(columns, 3, entries, (), |_| {})
+      .with_action_handler(action_handler)
+      .with_preview(|entry: &WorkspaceDiffEntry| {
+        entry
+          .path
+          .as_ref()
+          .map(|path| (path.clone(), entry.block.preview_range))
+      });
+
+    compositor.push(Box::new(picker));
+  }));
 }
 
 pub fn goto_first_change(cx: &mut Context) {

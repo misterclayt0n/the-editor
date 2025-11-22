@@ -342,7 +342,10 @@ impl EditorView {
   }
 
   pub fn has_pending_on_next_key(&self) -> bool {
-    self.on_next_key.is_some()
+    self
+      .on_next_key
+      .as_ref()
+      .is_some_and(|(_, kind)| *kind == OnKeyCallbackKind::Pending)
   }
 
   /// Set the completion popup with the given items
@@ -407,6 +410,14 @@ impl EditorView {
               doc.apply(&snippet.delete_placeholder(doc.text()), view.id);
             }
             commands::insert_char(cmd_cx, ch);
+          } else {
+            // Re-dispatch non-char keys (like Esc, arrows) so they aren't swallowed
+            let binding = crate::keymap::KeyBinding::new(key_press.code)
+              .with_modifiers(key_press.shift, key_press.ctrl, key_press.alt);
+
+            cmd_cx.callback.push(Box::new(move |compositor, cx| {
+              compositor.handle_event(&crate::ui::compositor::Event::Key(binding), cx);
+            }));
           }
         });
         self.on_next_key = Some((callback, OnKeyCallbackKind::Fallback));

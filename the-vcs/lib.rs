@@ -97,6 +97,13 @@ impl DiffProviderRegistry {
       }
     });
   }
+
+  pub fn needs_reload(&self, fs_event: &filesentry::Event) -> bool {
+    self
+      .providers
+      .iter()
+      .any(|provider| provider.needs_reload(fs_event))
+  }
 }
 
 impl Default for DiffProviderRegistry {
@@ -122,9 +129,18 @@ enum DiffProvider {
   #[cfg(feature = "git")]
   Git,
   None,
+  // TODO: Add jujutsu
 }
 
 impl DiffProvider {
+  fn needs_reload(&self, fs_event: &filesentry::Event) -> bool {
+    match self {
+      #[cfg(feature = "git")]
+      DiffProvider::Git => fs_event.path.as_std_path().ends_with(".git/HEAD"),
+      DiffProvider::None => false,
+    }
+  }
+
   fn get_diff_base(&self, _file: &Path) -> Result<Vec<u8>> {
     match self {
       #[cfg(feature = "git")]

@@ -29,6 +29,7 @@ pub mod hover;
 pub mod lsp;
 pub mod signature_help;
 pub mod word_index;
+pub mod auto_reload;
 
 #[derive(Debug)]
 pub enum AutoSaveEvent {

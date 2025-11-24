@@ -97,6 +97,7 @@ use crate::{
       DocumentSavedEventResult,
       SavePoint,
     },
+    file_watcher,
     graphics::{
       CursorKind,
       Rect,
@@ -811,6 +812,26 @@ pub struct EditorConfig {
   pub theme_transition_enabled:  bool,
   /// Theme transition speed (lerp factor, 0.0-1.0). Defaults to 0.15.
   pub theme_transition_speed:    f32,
+  /// File watcher config.
+  pub file_watcher:              file_watcher::Config,
+  /// Auto reload config.
+  pub auto_reload:               AutoReloadConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct AutoReloadConfig {
+  pub enable:             bool,
+  pub prompt_if_modified: bool,
+}
+
+impl Default for AutoReloadConfig {
+  fn default() -> Self {
+    AutoReloadConfig {
+      enable:             true,
+      prompt_if_modified: false,
+    }
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
@@ -1755,6 +1776,8 @@ impl Default for EditorConfig {
       window_decorations:        true,
       theme_transition_enabled:  true,
       theme_transition_speed:    0.15,
+      file_watcher: file_watcher::Config::default(),
+      auto_reload: AutoReloadConfig::default(),
     }
   }
 }

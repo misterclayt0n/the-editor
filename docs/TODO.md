@@ -25,6 +25,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Don't account for compile commad buffers in the save interface.
   - [x] Syntax highlighting? Maybe shell?
 - [ ] Workspace features - Still reasoning about this.
+- [ ] Tab completion in the file prompt should look for the correct directory entry, not just scroll (This is a special case tho, the behavior is correct for all other cases).
 
 #### Fixes
 - [ ] Render fonts correctly in the picker prompt menu (they're too spaced).

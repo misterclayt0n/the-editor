@@ -25,6 +25,7 @@ use serde::{
 use the_editor_event::{
   dispatch,
   events,
+  request_redraw,
 };
 
 events! {
@@ -114,6 +115,7 @@ impl Watcher {
           Ok(watcher) => {
             watcher.set_filter(self.filter.clone(), false);
             watcher.add_handler(move |events| {
+              request_redraw();
               dispatch(FileSystemDidChange { fs_events: events });
               true
             });

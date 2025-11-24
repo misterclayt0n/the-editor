@@ -78,6 +78,7 @@ wgpu                     = "25.0"
 wgpu_text                = "0.9"
 which                    = "8.0"
 winit                    = "0.30"
+filesentry = "0.2.1"
 
 tokio = { features = [
   "rt",

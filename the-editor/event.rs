@@ -52,11 +52,11 @@ events! {
 
     // NOTE: this event is simple for now and is expected to change as the config system evolves.
     // Ideally it would say what changed.
-  ConfigDidChange<'a> { editor: &'a mut Editor, old: &'a EditorConfig, new: &'a EditorConfig }
+    ConfigDidChange<'a> { editor: &'a mut Editor, old: &'a EditorConfig, new: &'a EditorConfig }
 
-  OnModeSwitch<'a, 'cx> { old_mode: Mode, new_mode: Mode, cx: &'a mut commands::Context<'cx> }
-  PostInsertChar<'a, 'cx> { c: char, cx: &'a mut commands::Context<'cx> }
-  PostCommand<'a, 'cx> { command: &'a str, cx: &'a mut commands::Context<'cx> }
+    OnModeSwitch<'a, 'cx> { old_mode: Mode, new_mode: Mode, cx: &'a mut commands::Context<'cx> }
+    PostInsertChar<'a, 'cx> { c: char, cx: &'a mut commands::Context<'cx> }
+    PostCommand<'a, 'cx> { command: &'a str, cx: &'a mut commands::Context<'cx> }
 }
 
 // Register all events defined above with the global registry.

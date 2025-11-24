@@ -251,7 +251,7 @@ pub struct Document {
   pub(crate) modified_since_accessed: bool,
   pub diagnostics:                    Vec<Diagnostic>,
   pub(crate) language_servers:        HashMap<LanguageServerName, Arc<Client>>,
-  pub diff_handle:                        Option<DiffHandle>,
+  pub diff_handle:                    Option<DiffHandle>,
   version_control_head:               Option<Arc<ArcSwap<Box<str>>>>,
   pub focused_at:                     std::time::Instant,
   pub readonly:                       bool,

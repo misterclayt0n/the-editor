@@ -331,6 +331,7 @@ pub struct Editor {
   pub lsp_progress:      crate::lsp::LspProgressMap,
   pub diagnostics:       Diagnostics,
   pub diff_providers:    DiffProviderRegistry,
+  pub file_watcher:      file_watcher::Watcher,
   pub special_buffers:   SpecialBuffers,
   shell_job_cancels:     HashMap<DocumentId, oneshot::Sender<()>>,
 
@@ -1776,8 +1777,8 @@ impl Default for EditorConfig {
       window_decorations:        true,
       theme_transition_enabled:  true,
       theme_transition_speed:    0.15,
-      file_watcher: file_watcher::Config::default(),
-      auto_reload: AutoReloadConfig::default(),
+      file_watcher:              file_watcher::Config::default(),
+      auto_reload:               AutoReloadConfig::default(),
     }
   }
 }
@@ -1828,6 +1829,7 @@ impl Editor {
       lsp_progress: crate::lsp::LspProgressMap::new(),
       diagnostics: Diagnostics::new(),
       diff_providers: DiffProviderRegistry::default(),
+      file_watcher: file_watcher::Watcher::new(&conf.file_watcher),
       special_buffers: SpecialBuffers::default(),
       shell_job_cancels: HashMap::new(),
       // debug_adapters: dap::registry::Registry::new(),
@@ -1979,6 +1981,7 @@ impl Editor {
     let config = self.config();
     self.auto_pairs = (&config.auto_pairs).into();
     self.reset_idle_timer();
+    self.file_watcher.reload(&config.file_watcher);
     self._refresh();
     the_editor_event::dispatch(crate::event::ConfigDidChange {
       editor: self,
@@ -2295,27 +2298,39 @@ impl Editor {
   }
 
   pub fn set_doc_path(&mut self, doc_id: DocumentId, path: &Path) {
-    let doc = doc_mut!(self, &doc_id);
-    let old_path = doc.path();
+    let old_path = {
+      let doc = doc_mut!(self, &doc_id);
+      let old_path = doc.path().cloned();
 
-    if let Some(old_path) = old_path {
+      if let Some(old_path) = old_path.as_deref() {
+        // sanity check, should not occur but some callers (like an LSP) may
+        // create bogus calls
+        if old_path == path {
+          return;
+        }
+        // if we are open in LSPs send did_close notification
+        for language_server in doc.language_servers() {
+          language_server.text_document_did_close(doc.identifier());
+        }
+      }
+      // we need to clear the list of language servers here so that
+      // refresh_doc_language/refresh_language_servers doesn't resend
+      // text_document_did_close. Since we called `text_document_did_close`
+      // we have fully unregistered this document from its LS
+      doc.language_servers.clear();
+      doc.set_path(Some(path));
+      doc.detect_editor_config();
+      old_path
+    };
+
+    if let Some(old_path) = old_path.as_deref() {
       // sanity check, should not occur but some callers (like an LSP) may
       // create bogus calls
-      if old_path == path {
-        return;
-      }
-      // if we are open in LSPs send did_close notification
-      for language_server in doc.language_servers() {
-        language_server.text_document_did_close(doc.identifier());
+      if old_path != path {
+        self.unwatch_document_path(old_path);
       }
     }
-    // we need to clear the list of language servers here so that
-    // refresh_doc_language/refresh_language_servers doesn't resend
-    // text_document_did_close. Since we called `text_document_did_close`
-    // we have fully unregistered this document from its LS
-    doc.language_servers.clear();
-    doc.set_path(Some(path));
-    doc.detect_editor_config();
+    self.watch_document_path(path);
     self.refresh_doc_language(doc_id)
   }
 
@@ -2683,6 +2698,20 @@ impl Editor {
 
   pub fn document_id_by_path(&self, path: &Path) -> Option<DocumentId> {
     self.document_by_path(path).map(|doc| doc.id)
+  }
+
+  pub(crate) fn watch_document_path(&mut self, path: &Path) {
+    if let Some(parent) = path.parent() {
+      self.file_watcher.add_root(parent);
+    }
+  }
+
+  pub(crate) fn unwatch_document_path(&mut self, path: &Path) {
+    if let Some(parent) = path.parent() {
+      if self.file_watcher.is_tracking_root(parent) {
+        self.file_watcher.remove_root(parent.to_path_buf());
+      }
+    }
   }
 
   // ??? possible use for integration tests

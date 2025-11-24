@@ -53,8 +53,8 @@ macro_rules! view_mut {
   ($editor:expr, $id:expr) => {{ $editor.tree.get_mut($id) }};
   ($editor:expr) => {{
     // let view_id = $editor
-      // .focused_view_id()
-      // .expect("no active document view available");
+    // .focused_view_id()
+    // .expect("no active document view available");
     $editor.tree.get_mut($editor.tree.focus)
   }};
 }

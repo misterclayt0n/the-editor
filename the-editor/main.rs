@@ -139,7 +139,7 @@ fn main() -> anyhow::Result<()> {
     document_colors: colors_tx,
     word_index:      crate::handlers::word_index::Handler::spawn(),
   };
-  crate::handlers::register_hooks(&handlers);
+  crate::handlers::register_hooks(&handlers, &config.editor);
 
   let mut editor = Editor::new(
     area,

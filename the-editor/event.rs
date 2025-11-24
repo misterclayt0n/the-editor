@@ -10,6 +10,7 @@ use crate::{
     ViewId,
     commands,
     document::Document,
+    file_watcher::FileSystemDidChange,
     transaction::ChangeSet,
   },
   editor::{
@@ -74,4 +75,5 @@ pub fn register_all_events() {
   register_event::<OnModeSwitch<'_, '_>>();
   register_event::<PostInsertChar<'_, '_>>();
   register_event::<PostCommand<'_, '_>>();
+  register_event::<FileSystemDidChange>();
 }

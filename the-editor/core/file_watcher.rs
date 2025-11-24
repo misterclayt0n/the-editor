@@ -1,10 +1,7 @@
 use core::slice;
-use std::mem::replace;
-use the_editor_event::dispatch;
-
-use filesentry::Filter;
 use std::{
   borrow::Borrow,
+  mem::replace,
   path::{
     Path,
     PathBuf,
@@ -14,6 +11,7 @@ use std::{
 
 use filesentry::{
   Events,
+  Filter,
   ShutdownOnDrop,
 };
 use ignore::gitignore::{
@@ -24,7 +22,10 @@ use serde::{
   Deserialize,
   Serialize,
 };
-use the_editor_event::events;
+use the_editor_event::{
+  dispatch,
+  events,
+};
 
 events! {
   FileSystemDidChange {
@@ -153,6 +154,10 @@ impl Watcher {
     } else {
       self.roots[i].1 -= 1;
     }
+  }
+
+  pub fn is_tracking_root(&self, root: &Path) -> bool {
+    self.roots.iter().any(|(it, _)| it == root)
   }
 
   pub fn add_root(&mut self, root: &Path) {

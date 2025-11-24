@@ -412,8 +412,11 @@ impl EditorView {
             commands::insert_char(cmd_cx, ch);
           } else {
             // Re-dispatch non-char keys (like Esc, arrows) so they aren't swallowed
-            let binding = crate::keymap::KeyBinding::new(key_press.code)
-              .with_modifiers(key_press.shift, key_press.ctrl, key_press.alt);
+            let binding = crate::keymap::KeyBinding::new(key_press.code).with_modifiers(
+              key_press.shift,
+              key_press.ctrl,
+              key_press.alt,
+            );
 
             cmd_cx.callback.push(Box::new(move |compositor, cx| {
               compositor.handle_event(&crate::ui::compositor::Event::Key(binding), cx);

@@ -6,7 +6,10 @@ use crate::{
     DocumentId,
     ViewId,
   },
-  editor::Editor,
+  editor::{
+    Editor,
+    EditorConfig,
+  },
   handlers::{
     completion::{
       CompletionEvent,
@@ -19,6 +22,7 @@ use crate::{
   },
 };
 
+pub mod auto_reload;
 pub mod completion;
 pub mod completion_path;
 pub mod completion_request;
@@ -29,7 +33,6 @@ pub mod hover;
 pub mod lsp;
 pub mod signature_help;
 pub mod word_index;
-pub mod auto_reload;
 
 #[derive(Debug)]
 pub enum AutoSaveEvent {
@@ -74,9 +77,10 @@ impl Handlers {
   }
 }
 
-pub fn register_hooks(handlers: &Handlers) {
+pub fn register_hooks(handlers: &Handlers, config: &EditorConfig) {
   lsp::register_hooks(handlers);
   word_index::register_hooks(handlers);
   completion_request::register_completion_hooks(handlers);
   signature_help::register_hooks(handlers);
+  auto_reload::register_hooks(config);
 }

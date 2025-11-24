@@ -1,3 +1,12 @@
 package main
 
-func main() { }
+func main() {
+	hello world()
+
+	alskjdlkasjdlkaj
+
+	hi
+	hi
+	hi
+
+}

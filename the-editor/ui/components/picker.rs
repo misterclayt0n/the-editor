@@ -28,7 +28,6 @@ use ropey::{
   Rope,
   RopeSlice,
 };
-use unicode_segmentation::UnicodeSegmentation;
 use the_editor_event::request_redraw;
 use the_editor_renderer::{
   Color,
@@ -37,6 +36,7 @@ use the_editor_renderer::{
   TextSegment,
   TextStyle,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::button::Button;
 use crate::{
@@ -1930,12 +1930,13 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         .map(crate::ui::theme_color_to_renderer_color)
         .unwrap_or(Color::new(0.0, 0.0, 0.0, 1.0));
 
-       // Calculate visible cursor column (convert byte position to grapheme index)
-       // self.query_cursor is a byte position, we need to count graphemes up to that byte
-       let query_grapheme_count = self.query[..self.query_cursor.min(self.query.len())]
-         .graphemes(true)
-         .count();
-       let visible_cursor_col = prefix_len + query_grapheme_count;
+      // Calculate visible cursor column (convert byte position to grapheme index)
+      // self.query_cursor is a byte position, we need to count graphemes up to that
+      // byte
+      let query_grapheme_count = self.query[..self.query_cursor.min(self.query.len())]
+        .graphemes(true)
+        .count();
+      let visible_cursor_col = prefix_len + query_grapheme_count;
 
       // Cursor animation using actual cell width from renderer
       let target_x = prompt_x + visible_cursor_col as f32 * cell_width;
@@ -1974,28 +1975,28 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         cursor_bg_anim,
       );
 
-       // Render full text as one string to preserve font shaping and kerning
-       surface.draw_text(TextSection::simple(
-         prompt_x,
-         prompt_y,
-         &full_text,
-         UI_FONT_SIZE,
-         query_color_anim,
-       ));
+      // Render full text as one string to preserve font shaping and kerning
+      surface.draw_text(TextSection::simple(
+        prompt_x,
+        prompt_y,
+        &full_text,
+        UI_FONT_SIZE,
+        query_color_anim,
+      ));
 
-       // Draw cursor grapheme on top if visible (iterate on graphemes, not bytes)
-       let graphemes: Vec<&str> = full_text.graphemes(true).collect();
-       if visible_cursor_col < graphemes.len() {
-         let cursor_grapheme = graphemes[visible_cursor_col];
-         let cursor_x = prompt_x + visible_cursor_col as f32 * cell_width;
-         surface.draw_text(TextSection::simple(
-           cursor_x,
-           prompt_y,
-           cursor_grapheme,
-           UI_FONT_SIZE,
-           Color::new(cursor_fg.r, cursor_fg.g, cursor_fg.b, cursor_fg.a * alpha),
-         ));
-       }
+      // Draw cursor grapheme on top if visible (iterate on graphemes, not bytes)
+      let graphemes: Vec<&str> = full_text.graphemes(true).collect();
+      if visible_cursor_col < graphemes.len() {
+        let cursor_grapheme = graphemes[visible_cursor_col];
+        let cursor_x = prompt_x + visible_cursor_col as f32 * cell_width;
+        surface.draw_text(TextSection::simple(
+          cursor_x,
+          prompt_y,
+          cursor_grapheme,
+          UI_FONT_SIZE,
+          Color::new(cursor_fg.r, cursor_fg.g, cursor_fg.b, cursor_fg.a * alpha),
+        ));
+      }
 
       // Draw match count (count_text and count_width already calculated above)
       surface.draw_text(TextSection {

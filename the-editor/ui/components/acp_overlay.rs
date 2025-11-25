@@ -178,7 +178,7 @@ impl AcpLayout {
 impl AcpOverlayContent {
   fn new() -> Self {
     Self {
-      layout: None,
+      layout:        None,
       scroll_offset: 0,
     }
   }
@@ -456,11 +456,7 @@ impl PopupContent for AcpOverlayContent {
           .chain(layout.response_lines.iter())
           .collect();
 
-        for segments in all_lines
-          .iter()
-          .skip(new_scroll_offset)
-          .take(visible_lines)
-        {
+        for segments in all_lines.iter().skip(new_scroll_offset).take(visible_lines) {
           if text_y > text_bottom_bound {
             break;
           }

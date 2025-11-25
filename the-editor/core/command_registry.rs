@@ -2635,7 +2635,8 @@ fn acp_start(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
   }
 
   if cx.editor.acp.is_some() {
-    cx.editor.set_status("ACP agent is already running".to_string());
+    cx.editor
+      .set_status("ACP agent is already running".to_string());
     return Ok(());
   }
 
@@ -2652,7 +2653,8 @@ fn acp_start(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
       cx.editor.set_status("ACP agent started".to_string());
     },
     Err(err) => {
-      cx.editor.set_error(format!("Failed to start ACP agent: {}", err));
+      cx.editor
+        .set_error(format!("Failed to start ACP agent: {}", err));
     },
   }
 
@@ -2709,7 +2711,8 @@ fn acp_approve(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> 
   if cx.editor.acp_permissions.approve_next() {
     cx.editor.set_status("Permission approved".to_string());
   } else {
-    cx.editor.set_status("No pending permission requests".to_string());
+    cx.editor
+      .set_status("No pending permission requests".to_string());
   }
 
   Ok(())
@@ -2723,7 +2726,8 @@ fn acp_deny(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
   if cx.editor.acp_permissions.deny_next() {
     cx.editor.set_status("Permission denied".to_string());
   } else {
-    cx.editor.set_status("No pending permission requests".to_string());
+    cx.editor
+      .set_status("No pending permission requests".to_string());
   }
 
   Ok(())

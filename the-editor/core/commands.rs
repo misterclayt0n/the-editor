@@ -8685,7 +8685,8 @@ pub fn acp_prompt(cx: &mut Context) {
 
   // Check if ACP is connected
   if cx.editor.acp.is_none() {
-    cx.editor.set_error("ACP agent not connected. Use :acp-start first.".to_string());
+    cx.editor
+      .set_error("ACP agent not connected. Use :acp-start first.".to_string());
     return;
   }
 
@@ -8698,11 +8699,12 @@ pub fn acp_prompt(cx: &mut Context) {
   // Build context from the selection
   let context = PromptContext::from_selection(doc, view, &primary, context_lines);
 
-  // Format the prompt with context
-  let prompt_text = context.format_prompt_with_context();
+  // Format the prompt - strips comment markers from selection
+  let prompt_text = context.format_prompt();
 
   if prompt_text.trim().is_empty() {
-    cx.editor.set_error("No text selected to send to ACP agent".to_string());
+    cx.editor
+      .set_error("No text selected to send to ACP agent".to_string());
     return;
   }
 
@@ -8721,7 +8723,7 @@ pub fn acp_prompt(cx: &mut Context) {
   // Initialize ACP response state
   cx.editor.acp_response = Some(AcpResponseState {
     context_summary,
-    input_prompt: context.selection_text.clone(),
+    input_prompt: prompt_text.clone(),
     response_text: String::new(),
     is_streaming: true,
     model_name: "default".to_string(), // TODO: Get actual model from agent
@@ -8738,7 +8740,8 @@ pub fn acp_prompt(cx: &mut Context) {
 
   match result {
     Ok(()) => {
-      cx.editor.set_status("Prompt sent, waiting for response...".to_string());
+      cx.editor
+        .set_status("Prompt sent, waiting for response...".to_string());
 
       // Open the ACP overlay to show streaming response
       cx.callback.push(Box::new(|compositor, _cx| {
@@ -8748,7 +8751,8 @@ pub fn acp_prompt(cx: &mut Context) {
     Err(err) => {
       // Clear the response state on error
       cx.editor.acp_response = None;
-      cx.editor.set_error(format!("Failed to send prompt: {}", err));
+      cx.editor
+        .set_error(format!("Failed to send prompt: {}", err));
     },
   }
 }
@@ -8760,7 +8764,8 @@ pub fn acp_show_overlay(cx: &mut Context) {
   use crate::ui::components::AcpOverlay;
 
   if cx.editor.acp_response.is_none() {
-    cx.editor.set_error("No ACP response to display. Use acp_prompt first.".to_string());
+    cx.editor
+      .set_error("No ACP response to display. Use acp_prompt first.".to_string());
     return;
   }
 
@@ -8787,12 +8792,14 @@ pub fn acp_select_model(cx: &mut Context) {
   };
 
   let Some(ref handle) = cx.editor.acp else {
-    cx.editor.set_error("ACP agent not connected. Use :acp-start first.");
+    cx.editor
+      .set_error("ACP agent not connected. Use :acp-start first.");
     return;
   };
 
   let Some(model_state) = handle.model_state() else {
-    cx.editor.set_error("No models available. Agent may not support model selection.");
+    cx.editor
+      .set_error("No models available. Agent may not support model selection.");
     return;
   };
 

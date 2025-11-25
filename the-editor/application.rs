@@ -756,13 +756,17 @@ impl App {
           if let Some(ref mut state) = self.editor.acp_response {
             state.is_streaming = false;
           }
-          self.editor.set_status("[ACP] Response complete".to_string());
+          self
+            .editor
+            .set_status("[ACP] Response complete".to_string());
         },
         crate::acp::StreamEvent::Error(err) => {
           // Mark streaming as complete and append error to response
           if let Some(ref mut state) = self.editor.acp_response {
             state.is_streaming = false;
-            state.response_text.push_str(&format!("\n\n**Error:** {}", err));
+            state
+              .response_text
+              .push_str(&format!("\n\n**Error:** {}", err));
           }
           self.editor.set_error(format!("[ACP] Error: {}", err));
         },
@@ -774,7 +778,9 @@ impl App {
           if let Some(ref mut state) = self.editor.acp_response {
             state.model_name = model_id.to_string();
           }
-          self.editor.set_status(format!("[ACP] Model changed to: {}", model_id));
+          self
+            .editor
+            .set_status(format!("[ACP] Model changed to: {}", model_id));
         },
       }
     }
@@ -796,7 +802,9 @@ impl App {
           if let Err(e) = handle.set_session_model(model_id.clone()) {
             self.editor.set_error(format!("Failed to set model: {}", e));
           } else {
-            self.editor.set_status(format!("Switching to model: {}...", model_id));
+            self
+              .editor
+              .set_status(format!("Switching to model: {}...", model_id));
           }
         }
         // Clear the receiver after processing

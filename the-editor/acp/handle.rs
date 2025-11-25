@@ -1,14 +1,14 @@
 //! ACP connection handle management.
 //!
-//! This module provides `AcpHandle` which manages the lifecycle of the connection
-//! to an ACP agent subprocess.
+//! This module provides `AcpHandle` which manages the lifecycle of the
+//! connection to an ACP agent subprocess.
 //!
 //! ## Architecture
 //!
 //! ACP uses `!Send` futures internally, which means we can't use them directly
-//! on tokio's multi-threaded runtime. To solve this, we spawn a dedicated thread
-//! that runs its own single-threaded runtime with a LocalSet. Communication
-//! between the editor and this thread happens via channels.
+//! on tokio's multi-threaded runtime. To solve this, we spawn a dedicated
+//! thread that runs its own single-threaded runtime with a LocalSet.
+//! Communication between the editor and this thread happens via channels.
 //!
 //! All operations are non-blocking from the editor's perspective:
 //! - Commands are sent via `command_tx` (fire-and-forget)
@@ -75,23 +75,24 @@ enum AcpCommand {
 /// with it. It is designed to be held in the `Editor` struct.
 pub struct AcpHandle {
   /// The current session ID
-  session_id: Arc<Mutex<Option<acp::SessionId>>>,
+  session_id:        Arc<Mutex<Option<acp::SessionId>>>,
   /// Current model state (available models and current selection)
-  model_state: Arc<Mutex<Option<acp::SessionModelState>>>,
+  model_state:       Arc<Mutex<Option<acp::SessionModelState>>>,
   /// Receiver for streaming events from the agent
-  pub event_rx: mpsc::UnboundedReceiver<StreamEvent>,
+  pub event_rx:      mpsc::UnboundedReceiver<StreamEvent>,
   /// Receiver for permission requests from the agent
   pub permission_rx: mpsc::UnboundedReceiver<PendingPermission>,
   /// Channel to send commands to the ACP thread
-  command_tx: mpsc::UnboundedSender<AcpCommand>,
+  command_tx:        mpsc::UnboundedSender<AcpCommand>,
   /// Handle to the ACP thread (for cleanup)
-  _thread: JoinHandle<()>,
+  _thread:           JoinHandle<()>,
 }
 
 impl AcpHandle {
   /// Start an ACP agent and establish a connection.
   ///
-  /// This spawns a dedicated thread for the ACP runtime since ACP uses !Send futures.
+  /// This spawns a dedicated thread for the ACP runtime since ACP uses !Send
+  /// futures.
   pub fn start(config: &AcpConfig, cwd: PathBuf) -> Result<Self> {
     if config.command.is_empty() {
       bail!("ACP command is empty");
@@ -262,7 +263,10 @@ impl AcpHandle {
 
     while let Some(cmd) = command_rx.recv().await {
       match cmd {
-        AcpCommand::Prompt { session_id, content } => {
+        AcpCommand::Prompt {
+          session_id,
+          content,
+        } => {
           log::debug!("Processing prompt command");
 
           let result = conn
@@ -285,7 +289,10 @@ impl AcpHandle {
             },
           }
         },
-        AcpCommand::SetModel { session_id, model_id } => {
+        AcpCommand::SetModel {
+          session_id,
+          model_id,
+        } => {
           log::debug!("Processing set model command: {}", model_id);
 
           let result = conn
@@ -329,7 +336,10 @@ impl AcpHandle {
 
     self
       .command_tx
-      .send(AcpCommand::Prompt { session_id, content })
+      .send(AcpCommand::Prompt {
+        session_id,
+        content,
+      })
       .map_err(|_| anyhow::anyhow!("ACP thread has shut down"))
   }
 
@@ -365,7 +375,10 @@ impl AcpHandle {
 
     self
       .command_tx
-      .send(AcpCommand::SetModel { session_id, model_id })
+      .send(AcpCommand::SetModel {
+        session_id,
+        model_id,
+      })
       .map_err(|_| anyhow::anyhow!("ACP thread has shut down"))
   }
 

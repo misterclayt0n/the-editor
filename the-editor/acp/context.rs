@@ -5,6 +5,8 @@
 
 use std::path::PathBuf;
 
+use once_cell::sync::Lazy;
+use regex::Regex;
 use ropey::RopeSlice;
 
 use crate::core::{
@@ -19,17 +21,17 @@ pub struct PromptContext {
   /// The selected text that forms the prompt
   pub selection_text: String,
   /// The file path of the current document (if any)
-  pub file_path: Option<PathBuf>,
+  pub file_path:      Option<PathBuf>,
   /// The language of the current document (if detected)
-  pub language: Option<String>,
+  pub language:       Option<String>,
   /// Line number where the selection starts (1-indexed)
-  pub start_line: usize,
+  pub start_line:     usize,
   /// Line number where the selection ends (1-indexed)
-  pub end_line: usize,
+  pub end_line:       usize,
   /// Lines before the selection for context
-  pub lines_before: String,
+  pub lines_before:   String,
   /// Lines after the selection for context
-  pub lines_after: String,
+  pub lines_after:    String,
   /// The workspace root directory
   pub workspace_root: Option<PathBuf>,
 }
@@ -112,34 +114,29 @@ impl PromptContext {
     (lines_before, lines_after)
   }
 
-  /// Format the context as a prompt string for the agent.
+  /// Format the selection text as a prompt, stripping comment markers.
   ///
-  /// This creates a structured prompt that includes file information and context.
+  /// This extracts the actual user prompt from the selection by removing
+  /// common comment syntax (e.g., `//`, `#`, `--`, `/* */`, etc.).
+  /// The current file path is included at the top for context.
   pub fn format_prompt(&self) -> String {
     let mut prompt = String::new();
 
-    // Add file context if available
+    // Add file context at the top
     if let Some(path) = &self.file_path {
-      prompt.push_str(&format!("File: {}\n", path.display()));
+      prompt.push_str(&format!("File: {}\n\n", path.display()));
     }
 
-    if let Some(lang) = &self.language {
-      prompt.push_str(&format!("Language: {}\n", lang));
-    }
-
-    prompt.push_str(&format!(
-      "Lines: {}-{}\n",
-      self.start_line, self.end_line
-    ));
-    prompt.push('\n');
-
-    // Add the selection as the main prompt
-    prompt.push_str(&self.selection_text);
+    // Add the actual prompt (selection with comment markers stripped)
+    prompt.push_str(&strip_comment_markers(&self.selection_text));
 
     prompt
   }
 
   /// Format the context with surrounding code for richer context.
+  ///
+  /// Note: This is currently unused - we use `format_prompt()` instead
+  /// which just extracts the prompt from the selection.
   pub fn format_prompt_with_context(&self) -> String {
     let mut prompt = String::new();
 
@@ -181,6 +178,78 @@ impl PromptContext {
 
     prompt
   }
+}
+
+/// Strip comment markers from text to extract the actual prompt.
+///
+/// Handles common comment syntaxes:
+/// - Line comments: `//`, `#`, `--`, `;`, `%`
+/// - Block comments: `/* */`, `(* *)`, `{- -}`, `<!-- -->`
+/// - Doc comments: `///`, `//!`, `/** */`
+fn strip_comment_markers(text: &str) -> String {
+  // Regex patterns for different comment styles
+  static BLOCK_COMMENT_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?s)^\s*(/\*\*?|\(\*|\{-|<!--)\s*(.*?)\s*(\*/|\*\)|-\}|-->)\s*$").unwrap()
+  });
+
+  let text = text.trim();
+
+  // Check for block comments first
+  if let Some(caps) = BLOCK_COMMENT_RE.captures(text) {
+    if let Some(content) = caps.get(2) {
+      let inner = content.as_str();
+      // For block comments, clean up each line (remove leading * if present)
+      let cleaned: Vec<&str> = inner
+        .lines()
+        .map(|line| {
+          let trimmed = line.trim();
+          // Remove leading * from doc-style block comments
+          trimmed
+            .strip_prefix('*')
+            .map(|s| s.trim_start())
+            .unwrap_or(trimmed)
+        })
+        .collect();
+      return cleaned.join("\n").trim().to_string();
+    }
+  }
+
+  // Handle line comments - process each line
+  let lines: Vec<String> = text
+    .lines()
+    .map(|line| strip_line_comment(line.trim()))
+    .collect();
+
+  lines.join("\n").trim().to_string()
+}
+
+/// Strip line comment markers from a single line.
+fn strip_line_comment(line: &str) -> String {
+  // Common line comment prefixes (order matters - longer patterns first)
+  const LINE_COMMENT_PREFIXES: &[&str] = &[
+    "///",  // Rust/C++ doc comment
+    "//!",  // Rust inner doc comment
+    "//",   // C-style
+    "##",   // Some shells/configs
+    "#",    // Shell/Python/Ruby
+    "---",  // YAML doc separator (treat as comment)
+    "--",   // SQL/Lua/Haskell
+    ";;",   // Lisp
+    ";",    // Lisp/Assembly
+    "%%",   // Erlang
+    "%",    // LaTeX/Erlang/Prolog
+    "REM ", // Batch
+    "rem ", // Batch (lowercase)
+    "'",    // VB
+  ];
+
+  for prefix in LINE_COMMENT_PREFIXES {
+    if let Some(rest) = line.strip_prefix(prefix) {
+      return rest.trim_start().to_string();
+    }
+  }
+
+  line.to_string()
 }
 
 /// Utility for visualizing context that would be sent to the agent.

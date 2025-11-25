@@ -33,10 +33,11 @@ fn next_permission_id() -> String {
 /// The editor's ACP client implementation.
 ///
 /// This struct is passed to `ClientSideConnection` and handles all callbacks
-/// from the ACP agent. It communicates with the main editor thread via channels.
+/// from the ACP agent. It communicates with the main editor thread via
+/// channels.
 pub struct EditorClient {
   /// Channel to send streaming events back to the editor
-  event_tx: mpsc::UnboundedSender<StreamEvent>,
+  event_tx:      mpsc::UnboundedSender<StreamEvent>,
   /// Channel to send permission requests to the editor
   permission_tx: mpsc::UnboundedSender<PendingPermission>,
 }
@@ -170,7 +171,10 @@ impl acp::Client for EditorClient {
     };
 
     log::info!("ACP: Read file {:?}", args.path);
-    Ok(acp::ReadTextFileResponse { content, meta: None })
+    Ok(acp::ReadTextFileResponse {
+      content,
+      meta: None,
+    })
   }
 
   /// Handle terminal creation requests.
@@ -214,7 +218,8 @@ impl acp::Client for EditorClient {
     Err(acp::Error::method_not_found())
   }
 
-  /// Handle session notifications - this is where streaming responses come through.
+  /// Handle session notifications - this is where streaming responses come
+  /// through.
   async fn session_notification(&self, args: acp::SessionNotification) -> acp::Result<()> {
     match args.update {
       acp::SessionUpdate::AgentMessageChunk(chunk) => {

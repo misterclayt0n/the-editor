@@ -11,9 +11,9 @@ use tokio::sync::oneshot;
 #[derive(Debug)]
 pub struct PendingPermission {
   /// Unique identifier for this permission request
-  pub id: String,
+  pub id:          String,
   /// The kind of permission being requested
-  pub kind: PermissionKind,
+  pub kind:        PermissionKind,
   /// Human-readable description of what the agent wants to do
   pub description: String,
   /// Channel to send the user's response
@@ -35,10 +35,16 @@ impl PendingPermission {
   pub fn short_summary(&self) -> String {
     match &self.kind {
       PermissionKind::ReadFile(path) => {
-        format!("Read: {}", path.file_name().unwrap_or_default().to_string_lossy())
+        format!(
+          "Read: {}",
+          path.file_name().unwrap_or_default().to_string_lossy()
+        )
       },
       PermissionKind::WriteFile(path) => {
-        format!("Write: {}", path.file_name().unwrap_or_default().to_string_lossy())
+        format!(
+          "Write: {}",
+          path.file_name().unwrap_or_default().to_string_lossy()
+        )
       },
       PermissionKind::CreateTerminal => "Create terminal".to_string(),
       PermissionKind::Other(desc) => desc.clone(),

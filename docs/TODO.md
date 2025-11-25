@@ -33,7 +33,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [ ] Render the entire conversation into a buffer, from where I should also be able to send messages through the same select -> action model.
   - [ ] *Maybe* some debug info? Like what's the context of the agent? how many tokens are being used? things of the nature, tho I'm not sure we'll be able to get this data from the ACP protocol.
   - [ ] Render tool calls?
-  - [ ] Fix the issue where every time I save a file it gets autoreloaded.
+  - [x] Fix the issue where every time I save a file it gets autoreloaded.
   
 #### Fixes
 - [x] Render fonts correctly in the picker prompt menu (they're too spaced).

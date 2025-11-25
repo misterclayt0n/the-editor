@@ -403,15 +403,15 @@ pub struct Editor {
   pub fade_mode: FadeMode,
 
   /// ACP (Agent Client Protocol) integration state
-  pub acp:                      Option<crate::acp::AcpHandle>,
+  pub acp:                     Option<crate::acp::AcpHandle>,
   /// ACP configuration
-  pub acp_config:               crate::acp::AcpConfig,
+  pub acp_config:              crate::acp::AcpConfig,
   /// Permission manager for ACP agent requests
-  pub acp_permissions:          crate::acp::PermissionManager,
+  pub acp_permissions:         crate::acp::PermissionManager,
   /// Current ACP response state for overlay display
-  pub acp_response:             Option<AcpResponseState>,
+  pub acp_response:            Option<AcpResponseState>,
   /// Pending model selection from the picker (polled in event loop)
-  pub pending_model_selection:  Option<std::sync::mpsc::Receiver<agent_client_protocol::ModelId>>,
+  pub pending_model_selection: Option<std::sync::mpsc::Receiver<agent_client_protocol::ModelId>>,
 }
 
 /// State for the current ACP response being displayed in the overlay.

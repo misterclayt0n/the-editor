@@ -99,6 +99,13 @@ impl AutoReload {
 
     let prompt_if_modified = self.prompt_if_modified.load(atomic::Ordering::Relaxed);
     job::dispatch_blocking(move |editor, _| {
+      // Skip auto-reload if there are pending saves to avoid race conditions.
+      // The file watcher may detect our own save before the save event is processed,
+      // which would cause a spurious reload.
+      if editor.write_count > 0 {
+        return;
+      }
+
       let scrolloff = editor.config().scrolloff;
       let mut vcs_reload = false;
 

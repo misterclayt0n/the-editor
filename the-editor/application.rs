@@ -467,6 +467,9 @@ impl Application for App {
       self.editor.set_status(status.message.to_string());
     }
 
+    // Process any pending ACP events
+    self.handle_acp_events();
+
     // Calculate delta time for time-based animations
     let now = std::time::Instant::now();
     let dt = now.duration_since(self.last_frame_time).as_secs_f32();
@@ -710,6 +713,62 @@ impl Application for App {
 }
 
 impl App {
+  /// Process pending ACP events (streaming responses and permission requests).
+  fn handle_acp_events(&mut self) {
+    // Collect events first to avoid borrow issues
+    let mut events = Vec::new();
+    let mut permissions = Vec::new();
+
+    if let Some(ref mut handle) = self.editor.acp {
+      while let Some(event) = handle.try_recv_event() {
+        events.push(event);
+      }
+      while let Some(permission) = handle.try_recv_permission() {
+        permissions.push(permission);
+      }
+    }
+
+    // Now process the collected events
+    for event in events {
+      match event {
+        crate::acp::StreamEvent::TextChunk(text) => {
+          // For now, log the text chunk. Later we'll insert it into the buffer.
+          log::debug!("[ACP] Text chunk: {}", text);
+          // TODO: Accumulate text and insert after selection
+        },
+        crate::acp::StreamEvent::ToolCall { name, status } => {
+          let status_msg = match status {
+            crate::acp::ToolCallStatus::Started => format!("[ACP] Tool: {} starting...", name),
+            crate::acp::ToolCallStatus::InProgress(msg) => {
+              format!("[ACP] Tool: {} - {}", name, msg)
+            },
+            crate::acp::ToolCallStatus::Completed => format!("[ACP] Tool: {} completed", name),
+            crate::acp::ToolCallStatus::Failed(err) => {
+              format!("[ACP] Tool: {} failed: {}", name, err)
+            },
+          };
+          self.editor.set_status(status_msg);
+        },
+        crate::acp::StreamEvent::Done => {
+          self.editor.set_status("[ACP] Response complete".to_string());
+        },
+        crate::acp::StreamEvent::Error(err) => {
+          self.editor.set_error(format!("[ACP] Error: {}", err));
+        },
+      }
+    }
+
+    // Add collected permissions to the manager
+    for permission in permissions {
+      self.editor.acp_permissions.push(permission);
+    }
+
+    // If there are pending permissions, show a status message
+    if let Some(msg) = self.editor.acp_permissions.status_message() {
+      self.editor.set_status(format!("{} (y/n)", msg));
+    }
+  }
+
   fn handle_scroll(&mut self, delta: ScrollDelta, renderer: &mut Renderer) -> bool {
     match delta {
       // Mouse wheel: discrete line-based scrolling with animation

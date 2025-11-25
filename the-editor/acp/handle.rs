@@ -189,6 +189,11 @@ impl AcpHandle {
     self.session_id.lock().clone()
   }
 
+  /// Get a reference to the connection.
+  pub fn conn(&self) -> &Arc<acp::ClientSideConnection> {
+    &self.conn
+  }
+
   /// Try to receive the next streaming event without blocking.
   pub fn try_recv_event(&mut self) -> Option<StreamEvent> {
     self.event_rx.try_recv().ok()

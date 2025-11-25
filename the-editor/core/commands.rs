@@ -22,6 +22,7 @@ use std::{
   str::FromStr,
 };
 
+use agent_client_protocol::Agent as _;
 use anyhow::{
   Context as _,
   anyhow,
@@ -8677,23 +8678,33 @@ pub fn update_fade_ranges(cx: &mut Context) {
 pub fn acp_prompt(cx: &mut Context) {
   use crate::acp::PromptContext;
 
-  // Check if ACP agent is connected
-  if cx.editor.acp.is_none() {
-    cx.editor.set_error("ACP agent not connected. Use :acp-start first.".to_string());
-    return;
-  }
+  // Extract connection info first to avoid borrow conflicts
+  let (conn, session_id) = match &cx.editor.acp {
+    Some(handle) => {
+      let conn = handle.conn().clone();
+      let session_id = match handle.session_id() {
+        Some(id) => id,
+        None => {
+          cx.editor.set_error("No active ACP session".to_string());
+          return;
+        },
+      };
+      (conn, session_id)
+    },
+    None => {
+      cx.editor.set_error("ACP agent not connected. Use :acp-start first.".to_string());
+      return;
+    },
+  };
+
+  let context_lines = cx.editor.acp_config.context_lines;
 
   let (view, doc) = current!(cx.editor);
   let selection = doc.selection(view.id);
   let primary = selection.primary();
 
   // Build context from the selection
-  let context = PromptContext::from_selection(
-    doc,
-    view,
-    &primary,
-    cx.editor.acp_config.context_lines,
-  );
+  let context = PromptContext::from_selection(doc, view, &primary, context_lines);
 
   // Format the prompt with context
   let prompt_text = context.format_prompt_with_context();
@@ -8708,19 +8719,32 @@ pub fn acp_prompt(cx: &mut Context) {
     prompt_text.len()
   ));
 
-  // Send prompt to agent via job system
-  // Note: The ACP futures are !Send, so we need to use callback_local
-  // However, we can't easily move the AcpHandle into a future here.
-  // Instead, we'll check the handle exists and create a simple text prompt.
+  // Send the prompt in a blocking context since ACP futures are !Send
+  // Responses will arrive via the event_rx channel which is polled in the main loop
+  let result = tokio::task::block_in_place(|| {
+    let rt = tokio::runtime::Builder::new_current_thread()
+      .enable_all()
+      .build()
+      .expect("failed to create runtime");
 
-  // For now, just show what would be sent (actual sending needs more wiring)
-  log::info!("ACP prompt: {}", prompt_text);
-  cx.editor.set_status("ACP prompt queued (streaming not yet wired)".to_string());
+    let local = tokio::task::LocalSet::new();
+    local.block_on(&rt, async {
+      conn
+        .prompt(agent_client_protocol::PromptRequest {
+          session_id,
+          prompt: vec![prompt_text.into()],
+          meta: None,
+        })
+        .await
+    })
+  });
 
-  // TODO: Wire up actual prompt sending once event loop integration is done
-  // The proper implementation would:
-  // 1. Get &mut AcpHandle from editor
-  // 2. Call handle.prompt_text(prompt_text).await
-  // 3. Poll handle.event_rx for StreamEvent::TextChunk
-  // 4. Insert text chunks after selection
+  match result {
+    Ok(_) => {
+      cx.editor.set_status("Prompt sent, waiting for response...".to_string());
+    },
+    Err(err) => {
+      cx.editor.set_error(format!("Failed to send prompt: {}", err));
+    },
+  }
 }

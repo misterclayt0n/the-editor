@@ -907,6 +907,30 @@ impl CommandRegistry {
         ..Signature::DEFAULT
       },
     ));
+
+    self.register(TypableCommand::new(
+      "acp-approve",
+      &["acpy"],
+      "Approve the pending ACP permission request",
+      acp_approve,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "acp-deny",
+      &["acpn"],
+      "Deny the pending ACP permission request",
+      acp_deny,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 
@@ -2621,31 +2645,29 @@ fn acp_start(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
 
   cx.editor.set_status("Starting ACP agent...".to_string());
 
-  // Spawn the ACP connection in a local task (ACP futures are !Send)
-  cx.jobs.callback_local(async move {
-    match crate::acp::AcpHandle::start(&config, cwd).await {
-      Ok(handle) => {
-        let callback = move |editor: &mut crate::editor::Editor,
-                             _compositor: &mut crate::ui::compositor::Compositor| {
-          editor.acp = Some(handle);
-          editor.set_status("ACP agent started".to_string());
-        };
-        Ok(Some(crate::ui::job::LocalCallback::EditorCompositor(
-          Box::new(callback),
-        )))
-      },
-      Err(err) => {
-        let error_msg = format!("Failed to start ACP agent: {}", err);
-        let callback = move |editor: &mut crate::editor::Editor,
-                             _compositor: &mut crate::ui::compositor::Compositor| {
-          editor.set_error(error_msg);
-        };
-        Ok(Some(crate::ui::job::LocalCallback::EditorCompositor(
-          Box::new(callback),
-        )))
-      },
-    }
+  // ACP uses !Send futures internally (spawn_local), so we need to run it
+  // inside a LocalSet with a current-thread runtime.
+  let result = tokio::task::block_in_place(|| {
+    let rt = tokio::runtime::Builder::new_current_thread()
+      .enable_all()
+      .build()
+      .expect("failed to create runtime for ACP");
+
+    let local = tokio::task::LocalSet::new();
+    local.block_on(&rt, async {
+      crate::acp::AcpHandle::start(&config, cwd).await
+    })
   });
+
+  match result {
+    Ok(handle) => {
+      cx.editor.acp = Some(handle);
+      cx.editor.set_status("ACP agent started".to_string());
+    },
+    Err(err) => {
+      cx.editor.set_error(format!("Failed to start ACP agent: {}", err));
+    },
+  }
 
   Ok(())
 }
@@ -2687,6 +2709,34 @@ fn acp_status(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
       cx.editor
         .set_status("ACP agent: not connected. Use :acp-start to connect.".to_string());
     },
+  }
+
+  Ok(())
+}
+
+fn acp_approve(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  if cx.editor.acp_permissions.approve_next() {
+    cx.editor.set_status("Permission approved".to_string());
+  } else {
+    cx.editor.set_status("No pending permission requests".to_string());
+  }
+
+  Ok(())
+}
+
+fn acp_deny(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  if cx.editor.acp_permissions.deny_next() {
+    cx.editor.set_status("Permission denied".to_string());
+  } else {
+    cx.editor.set_status("No pending permission requests".to_string());
   }
 
   Ok(())

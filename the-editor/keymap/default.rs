@@ -150,7 +150,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "h" => select_references,
       "/" => global_search,
       "l" => local_search,
-      "k" => acp_prompt,
+      "t" => acp_prompt,
     },
 
     "s"                => select_regex,

@@ -5,8 +5,10 @@
 //! - Header with "ACP" label and model name
 //! - Context summary (what was sent)
 //! - The response text (markdown with syntax highlighting)
+//! - Tool call indicators with icons
 //! - A streaming indicator when response is in progress
 
+use ropey::Rope;
 use the_editor_renderer::{
   Color,
   Key,
@@ -26,7 +28,6 @@ use crate::{
     UI_FONT_WIDTH,
     components::{
       hover::{
-        build_hover_render_lines,
         estimate_line_width,
         scroll_lines_from_delta,
       },
@@ -101,10 +102,13 @@ impl Component for AcpOverlay {
 
   fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> EventResult {
     // Handle Escape to close
-    if let Event::Key(key) = event {
-      if key.code == Key::Escape && !key.ctrl && !key.alt && !key.shift {
-        return EventResult::Consumed(Some(Self::close_callback()));
-      }
+    if let Event::Key(key) = event
+      && key.code == Key::Escape
+      && !key.ctrl
+      && !key.alt
+      && !key.shift
+    {
+      return EventResult::Consumed(Some(Self::close_callback()));
     }
 
     Component::handle_event(&mut self.popup, event, ctx)
@@ -173,6 +177,386 @@ impl AcpLayout {
   fn inner_height(&self) -> f32 {
     (self.visible_lines as f32) * self.line_height
   }
+}
+
+// ============================================================================
+// ACP Markdown Renderer
+// ============================================================================
+
+/// Marker prefix for tool calls injected into the response text.
+/// Format: `[TOOL:status:name]` where status is "start", "done", or "error"
+pub const TOOL_MARKER_PREFIX: &str = "[TOOL:";
+
+/// Parse and render ACP response markdown with proper formatting.
+///
+/// Handles:
+/// - Paragraphs (double newlines)
+/// - Fenced code blocks with syntax highlighting
+/// - Tool call markers (rendered as styled lines)
+/// - Proper word wrapping that preserves intentional line breaks
+fn build_acp_render_lines(
+  markdown: &str,
+  wrap_width: f32,
+  cell_width: f32,
+  ctx: &mut Context,
+) -> Vec<Vec<TextSegment>> {
+  let theme = &ctx.editor.theme;
+  let text_style = theme.get("ui.text");
+  let base_text_color = text_style
+    .fg
+    .map(crate::ui::theme_color_to_renderer_color)
+    .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
+
+  // Use "function" color for tool calls - typically a nice accent color
+  let mut tool_color = theme
+    .get("function")
+    .fg
+    .map(crate::ui::theme_color_to_renderer_color)
+    .unwrap_or(Color::new(0.5, 0.8, 0.6, 1.0));
+  // Dim it slightly to be less prominent than regular text
+  tool_color.r *= 0.85;
+  tool_color.g *= 0.85;
+  tool_color.b *= 0.85;
+
+  let max_chars = (wrap_width / cell_width).floor().max(4.0) as usize;
+
+  let mut render_lines: Vec<Vec<TextSegment>> = Vec::new();
+  let mut in_fence = false;
+  let mut fence_lang: Option<String> = None;
+  let mut fence_buf: Vec<String> = Vec::new();
+
+  // Split by paragraphs first (double newlines), then process each paragraph
+  let paragraphs: Vec<&str> = markdown.split("\n\n").collect();
+
+  for (para_idx, paragraph) in paragraphs.iter().enumerate() {
+    // Add blank line between paragraphs (except before the first one)
+    if para_idx > 0 && !render_lines.is_empty() {
+      render_lines.push(vec![TextSegment {
+        content: String::new(),
+        style:   TextStyle {
+          size:  UI_FONT_SIZE,
+          color: base_text_color,
+        },
+      }]);
+    }
+
+    // Process each line within the paragraph
+    for raw_line in paragraph.lines() {
+      // Check for tool markers
+      if let Some(tool_line) = parse_tool_marker(raw_line) {
+        // Render tool call with special styling
+        let (icon, text) = tool_line;
+        render_lines.push(vec![TextSegment {
+          content: format!("{} {}", icon, text),
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: tool_color,
+          },
+        }]);
+        continue;
+      }
+
+      // Handle fenced code blocks
+      if raw_line.starts_with("```") {
+        if in_fence {
+          // End of code block
+          let code = fence_buf.join("\n");
+          render_lines.extend(highlight_code_block(
+            fence_lang.as_deref(),
+            &code,
+            max_chars,
+            ctx,
+          ));
+          in_fence = false;
+          fence_lang = None;
+          fence_buf.clear();
+        } else {
+          // Start of code block
+          in_fence = true;
+          let lang = raw_line.trim_start_matches('`').trim();
+          fence_lang = if lang.is_empty() {
+            None
+          } else {
+            Some(lang.to_string())
+          };
+        }
+        continue;
+      }
+
+      if in_fence {
+        fence_buf.push(raw_line.to_string());
+        continue;
+      }
+
+      // Regular text - wrap it properly
+      let wrapped = wrap_text_preserve_breaks(raw_line, max_chars);
+      if wrapped.is_empty() {
+        // Empty line within paragraph - preserve it
+        render_lines.push(vec![TextSegment {
+          content: String::new(),
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: base_text_color,
+          },
+        }]);
+      } else {
+        for line in wrapped {
+          render_lines.push(vec![TextSegment {
+            content: line,
+            style:   TextStyle {
+              size:  UI_FONT_SIZE,
+              color: base_text_color,
+            },
+          }]);
+        }
+      }
+    }
+  }
+
+  // Handle unclosed fence
+  if in_fence {
+    let code = fence_buf.join("\n");
+    render_lines.extend(highlight_code_block(
+      fence_lang.as_deref(),
+      &code,
+      max_chars,
+      ctx,
+    ));
+  }
+
+  render_lines
+}
+
+/// Parse a tool marker line and return (icon, description).
+///
+/// Format: `[TOOL:status:name]` or `[TOOL:status:name:details]`
+fn parse_tool_marker(line: &str) -> Option<(&'static str, String)> {
+  let trimmed = line.trim();
+  if !trimmed.starts_with(TOOL_MARKER_PREFIX) {
+    return None;
+  }
+
+  let content = trimmed
+    .strip_prefix(TOOL_MARKER_PREFIX)?
+    .strip_suffix(']')?;
+
+  let parts: Vec<&str> = content.splitn(3, ':').collect();
+  if parts.len() < 2 {
+    return None;
+  }
+
+  let status = parts[0];
+  let name = parts[1];
+  let details = parts.get(2).unwrap_or(&"");
+
+  let (icon, text) = match status {
+    "start" => ("→", format!("{} {}", name, details).trim().to_string()),
+    "done" => ("←", format!("{} {}", name, details).trim().to_string()),
+    "error" => ("✗", format!("{}: {}", name, details).trim().to_string()),
+    _ => ("•", format!("{} {}", name, details).trim().to_string()),
+  };
+
+  Some((icon, text))
+}
+
+/// Wrap text to fit within max_chars, preserving intentional structure.
+///
+/// Unlike the hover wrap_text, this preserves leading whitespace and
+/// only wraps lines that exceed the width.
+fn wrap_text_preserve_breaks(text: &str, max_chars: usize) -> Vec<String> {
+  if max_chars == 0 {
+    return vec![String::new()];
+  }
+
+  let text = text.trim_end();
+  if text.is_empty() {
+    return vec![];
+  }
+
+  // If the line fits, return it as-is
+  if text.chars().count() <= max_chars {
+    return vec![text.to_string()];
+  }
+
+  // Need to wrap - use word boundaries
+  let mut lines = Vec::new();
+  let mut current = String::new();
+
+  for word in text.split_whitespace() {
+    let word_len = word.chars().count();
+
+    // Handle very long words
+    if word_len > max_chars {
+      if !current.is_empty() {
+        lines.push(std::mem::take(&mut current));
+      }
+      // Break long word into chunks
+      let mut chunk = String::new();
+      for ch in word.chars() {
+        if chunk.chars().count() >= max_chars {
+          lines.push(std::mem::take(&mut chunk));
+        }
+        chunk.push(ch);
+      }
+      if !chunk.is_empty() {
+        current = chunk;
+      }
+      continue;
+    }
+
+    let current_len = current.chars().count();
+    let needed = if current.is_empty() {
+      word_len
+    } else {
+      word_len + 1
+    };
+
+    if current_len + needed > max_chars && !current.is_empty() {
+      lines.push(std::mem::take(&mut current));
+    }
+
+    if !current.is_empty() {
+      current.push(' ');
+    }
+    current.push_str(word);
+  }
+
+  if !current.is_empty() {
+    lines.push(current);
+  }
+
+  lines
+}
+
+/// Highlight a code block with syntax highlighting.
+fn highlight_code_block(
+  lang_hint: Option<&str>,
+  code: &str,
+  max_chars: usize,
+  ctx: &mut Context,
+) -> Vec<Vec<TextSegment>> {
+  let theme = &ctx.editor.theme;
+
+  let default_code_color = theme
+    .get("markup.raw")
+    .fg
+    .map(crate::ui::theme_color_to_renderer_color)
+    .unwrap_or(Color::new(0.8, 0.8, 0.8, 1.0));
+
+  let rope = Rope::from(code);
+  let slice = rope.slice(..);
+
+  let loader = ctx.editor.syn_loader.load();
+  let language = lang_hint
+    .and_then(|name| loader.language_for_name(name.to_string()))
+    .or_else(|| loader.language_for_match(slice));
+
+  let spans = language
+    .and_then(|lang| crate::core::syntax::Syntax::new(slice, lang, &loader).ok())
+    .map(|syntax| syntax.collect_highlights(slice, &loader, 0..slice.len_bytes()))
+    .unwrap_or_default();
+
+  // Convert highlights to (byte_start, byte_end, color) for easier processing
+  let char_spans: Vec<(usize, usize, Color)> = spans
+    .into_iter()
+    .map(|(hl, byte_range)| {
+      let style = theme.highlight(hl);
+      let color = style
+        .fg
+        .map(crate::ui::theme_color_to_renderer_color)
+        .unwrap_or(default_code_color);
+      (byte_range.start, byte_range.end, color)
+    })
+    .collect();
+
+  let mut result = Vec::new();
+
+  for (line_idx, line) in code.lines().enumerate() {
+    let line_start_byte = rope.line_to_byte(line_idx);
+    let line_end_byte = line_start_byte + line.len();
+
+    // Truncate long lines
+    let display_line = if line.chars().count() > max_chars {
+      let truncated: String = line.chars().take(max_chars - 1).collect();
+      format!("{}…", truncated)
+    } else {
+      line.to_string()
+    };
+
+    // Collect highlights for this line
+    let mut segments: Vec<TextSegment> = Vec::new();
+    let mut last_end = 0usize;
+
+    for &(byte_start, byte_end, color) in &char_spans {
+      // Skip spans outside this line
+      if byte_end <= line_start_byte || byte_start >= line_end_byte {
+        continue;
+      }
+
+      // Clamp span to line boundaries
+      let span_start = byte_start.saturating_sub(line_start_byte);
+      let span_end = (byte_end - line_start_byte).min(line.len());
+
+      // Add unhighlighted text before this span
+      if span_start > last_end {
+        let text: String = line[last_end..span_start].to_string();
+        if !text.is_empty() {
+          segments.push(TextSegment {
+            content: text,
+            style:   TextStyle {
+              size:  UI_FONT_SIZE,
+              color: default_code_color,
+            },
+          });
+        }
+      }
+
+      // Add highlighted text
+      if span_end > span_start {
+        let text: String = line[span_start..span_end].to_string();
+        if !text.is_empty() {
+          segments.push(TextSegment {
+            content: text,
+            style:   TextStyle {
+              size: UI_FONT_SIZE,
+              color,
+            },
+          });
+        }
+      }
+
+      last_end = span_end;
+    }
+
+    // Add remaining unhighlighted text
+    if last_end < display_line.len() {
+      let text = display_line[last_end..].to_string();
+      if !text.is_empty() {
+        segments.push(TextSegment {
+          content: text,
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: default_code_color,
+          },
+        });
+      }
+    }
+
+    // If no segments, add the whole line with default color
+    if segments.is_empty() {
+      segments.push(TextSegment {
+        content: display_line,
+        style:   TextStyle {
+          size:  UI_FONT_SIZE,
+          color: default_code_color,
+        },
+      });
+    }
+
+    result.push(segments);
+  }
+
+  result
 }
 
 impl AcpOverlayContent {
@@ -302,7 +686,7 @@ impl AcpOverlayContent {
         text
       };
 
-      let response_lines = build_hover_render_lines(&response_text, wrap_width, cell_width, ctx);
+      let response_lines = build_acp_render_lines(&response_text, wrap_width, cell_width, ctx);
 
       // Calculate content dimensions
       let all_lines_count = header_lines.len() + response_lines.len();

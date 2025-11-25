@@ -766,6 +766,16 @@ impl App {
           }
           self.editor.set_error(format!("[ACP] Error: {}", err));
         },
+        crate::acp::StreamEvent::ModelChanged(model_id) => {
+          // Update stored model state and response state
+          if let Some(ref mut handle) = self.editor.acp {
+            handle.update_current_model(&model_id);
+          }
+          if let Some(ref mut state) = self.editor.acp_response {
+            state.model_name = model_id.to_string();
+          }
+          self.editor.set_status(format!("[ACP] Model changed to: {}", model_id));
+        },
       }
     }
 
@@ -777,6 +787,21 @@ impl App {
     // If there are pending permissions, show a status message
     if let Some(msg) = self.editor.acp_permissions.status_message() {
       self.editor.set_status(format!("{} (y/n)", msg));
+    }
+
+    // Check for pending model selection from the picker
+    if let Some(ref rx) = self.editor.pending_model_selection {
+      if let Ok(model_id) = rx.try_recv() {
+        if let Some(ref handle) = self.editor.acp {
+          if let Err(e) = handle.set_session_model(model_id.clone()) {
+            self.editor.set_error(format!("Failed to set model: {}", e));
+          } else {
+            self.editor.set_status(format!("Switching to model: {}...", model_id));
+          }
+        }
+        // Clear the receiver after processing
+        self.editor.pending_model_selection = None;
+      }
     }
   }
 

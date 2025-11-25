@@ -10,8 +10,8 @@ pub mod prompt;
 pub mod signature_help;
 pub mod statusline;
 
-// Completion, SignatureHelp, Hover, CodeActionMenu, and AcpOverlay are used
-// internally by the editor
+// Completion, SignatureHelp, Hover, CodeActionMenu, and AcpOverlay
+// are used internally by the editor
 pub(crate) use acp_overlay::AcpOverlay;
 pub(crate) use code_action::{
   CodeActionEntry,

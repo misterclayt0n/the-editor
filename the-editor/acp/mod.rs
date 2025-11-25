@@ -85,6 +85,8 @@ pub enum StreamEvent {
   Done,
   /// An error occurred
   Error(String),
+  /// Model was successfully changed
+  ModelChanged(agent_client_protocol::ModelId),
 }
 
 /// Status of a tool call.

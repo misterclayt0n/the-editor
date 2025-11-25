@@ -152,6 +152,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "l" => local_search,
       "t" => acp_prompt,
       "o" => acp_show_overlay,
+      "m" => acp_select_model,
     },
 
     "s"                => select_regex,

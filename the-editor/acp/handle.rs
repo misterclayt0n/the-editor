@@ -60,6 +60,11 @@ enum AcpCommand {
     session_id: acp::SessionId,
     content:    Vec<acp::ContentBlock>,
   },
+  /// Set the session model
+  SetModel {
+    session_id: acp::SessionId,
+    model_id:   acp::ModelId,
+  },
   /// Shutdown the ACP thread
   Shutdown,
 }
@@ -71,6 +76,8 @@ enum AcpCommand {
 pub struct AcpHandle {
   /// The current session ID
   session_id: Arc<Mutex<Option<acp::SessionId>>>,
+  /// Current model state (available models and current selection)
+  model_state: Arc<Mutex<Option<acp::SessionModelState>>>,
   /// Receiver for streaming events from the agent
   pub event_rx: mpsc::UnboundedReceiver<StreamEvent>,
   /// Receiver for permission requests from the agent
@@ -97,7 +104,8 @@ impl AcpHandle {
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let (permission_tx, permission_rx) = mpsc::unbounded_channel();
     let (command_tx, command_rx) = mpsc::unbounded_channel();
-    let (init_tx, init_rx) = oneshot::channel();
+    let (init_tx, init_rx) =
+      oneshot::channel::<Result<(acp::SessionId, Option<acp::SessionModelState>)>>();
 
     let cwd_clone = cwd.clone();
 
@@ -115,8 +123,8 @@ impl AcpHandle {
 
       local.block_on(&rt, async move {
         match Self::init_connection(&program, &args, cwd_clone, event_tx, permission_tx).await {
-          Ok((conn, session_id, child)) => {
-            let _ = init_tx.send(Ok(session_id.clone()));
+          Ok((conn, session_id, model_state, child)) => {
+            let _ = init_tx.send(Ok((session_id.clone(), model_state)));
             Self::run_event_loop(conn, command_rx, event_tx_for_loop, child).await;
           },
           Err(e) => {
@@ -127,7 +135,7 @@ impl AcpHandle {
     });
 
     // Wait for initialization to complete (this is the only blocking part)
-    let session_id = init_rx
+    let (session_id, model_state) = init_rx
       .blocking_recv()
       .context("ACP thread died during initialization")??;
 
@@ -135,6 +143,7 @@ impl AcpHandle {
 
     Ok(Self {
       session_id: Arc::new(Mutex::new(Some(session_id))),
+      model_state: Arc::new(Mutex::new(model_state)),
       event_rx,
       permission_rx,
       command_tx,
@@ -149,7 +158,12 @@ impl AcpHandle {
     cwd: PathBuf,
     event_tx: mpsc::UnboundedSender<StreamEvent>,
     permission_tx: mpsc::UnboundedSender<PendingPermission>,
-  ) -> Result<(Arc<acp::ClientSideConnection>, acp::SessionId, Child)> {
+  ) -> Result<(
+    Arc<acp::ClientSideConnection>,
+    acp::SessionId,
+    Option<acp::SessionModelState>,
+    Child,
+  )> {
     log::info!("Starting ACP agent: {} {:?}", program, args);
 
     // Spawn the agent process
@@ -218,7 +232,21 @@ impl AcpHandle {
 
     log::info!("ACP session created: {}", session_response.session_id);
 
-    Ok((conn, session_response.session_id.into(), child))
+    // Log available models if present
+    if let Some(ref models) = session_response.models {
+      log::info!(
+        "ACP models available: {} (current: {})",
+        models.available_models.len(),
+        models.current_model_id
+      );
+    }
+
+    Ok((
+      conn,
+      session_response.session_id.into(),
+      session_response.models,
+      child,
+    ))
   }
 
   /// Run the event loop on the ACP thread.
@@ -254,6 +282,27 @@ impl AcpHandle {
             Err(e) => {
               // Send error via event channel so it appears in the editor
               let _ = event_tx.send(StreamEvent::Error(format!("Prompt failed: {}", e)));
+            },
+          }
+        },
+        AcpCommand::SetModel { session_id, model_id } => {
+          log::debug!("Processing set model command: {}", model_id);
+
+          let result = conn
+            .set_session_model(acp::SetSessionModelRequest {
+              session_id,
+              model_id: model_id.clone(),
+              meta: None,
+            })
+            .await;
+
+          match result {
+            Ok(_response) => {
+              log::info!("Model changed to: {}", model_id);
+              let _ = event_tx.send(StreamEvent::ModelChanged(model_id));
+            },
+            Err(e) => {
+              let _ = event_tx.send(StreamEvent::Error(format!("Failed to set model: {}", e)));
             },
           }
         },
@@ -297,6 +346,36 @@ impl AcpHandle {
   /// Get the current session ID.
   pub fn session_id(&self) -> Option<acp::SessionId> {
     self.session_id.lock().clone()
+  }
+
+  /// Get the current model state.
+  pub fn model_state(&self) -> Option<acp::SessionModelState> {
+    self.model_state.lock().clone()
+  }
+
+  /// Set the session model (non-blocking).
+  ///
+  /// The result will arrive via `event_rx` as either `ModelChanged` or `Error`.
+  pub fn set_session_model(&self, model_id: acp::ModelId) -> Result<()> {
+    let session_id = self
+      .session_id
+      .lock()
+      .clone()
+      .context("No active ACP session")?;
+
+    self
+      .command_tx
+      .send(AcpCommand::SetModel { session_id, model_id })
+      .map_err(|_| anyhow::anyhow!("ACP thread has shut down"))
+  }
+
+  /// Update the stored model state after a model change.
+  ///
+  /// Called from the main event loop when `ModelChanged` is received.
+  pub fn update_current_model(&self, model_id: &acp::ModelId) {
+    if let Some(ref mut state) = *self.model_state.lock() {
+      state.current_model_id = model_id.clone();
+    }
   }
 
   /// Try to receive the next streaming event without blocking.

@@ -220,10 +220,43 @@ impl AcpOverlayContent {
       // Build header lines
       let mut header_lines: Vec<Vec<TextSegment>> = Vec::new();
 
-      // Line 1: "ACP" + model name (right aligned conceptually, but we'll just separate with
-      // spaces)
-      let model_name = &state.model_name;
-      let header_text = format!("ACP  {}", model_name);
+      // Line 1: "ACP" label + provider + model
+      // Get provider from config command (first element, e.g., "opencode")
+      let provider = ctx
+        .editor
+        .acp_config
+        .command
+        .first()
+        .map(|s| s.as_str())
+        .unwrap_or("agent");
+
+      // Get model name: prefer stored model state, fallback to response state
+      let model_name = ctx
+        .editor
+        .acp
+        .as_ref()
+        .and_then(|h| h.model_state())
+        .map(|s| {
+          // Find the human-readable name for the current model
+          s.available_models
+            .iter()
+            .find(|m| m.model_id == s.current_model_id)
+            .map(|m| m.name.clone())
+            .unwrap_or_else(|| s.current_model_id.to_string())
+        })
+        .or_else(|| {
+          let m = &state.model_name;
+          if m.is_empty() || m == "default" {
+            None
+          } else {
+            Some(m.clone())
+          }
+        });
+
+      let header_text = match model_name {
+        Some(model) => format!("ACP  {} ({})", provider, model),
+        None => format!("ACP  {}", provider),
+      };
       header_lines.push(vec![TextSegment {
         content: header_text,
         style:   TextStyle {
@@ -264,7 +297,7 @@ impl AcpOverlayContent {
       } else {
         let mut text = state.response_text.clone();
         if state.is_streaming {
-          text.push_str("\n\n▌"); // Streaming cursor
+          text.push('▌'); // Streaming cursor (inline)
         }
         text
       };

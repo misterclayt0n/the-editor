@@ -557,6 +557,7 @@ impl MappableCommand {
         update_fade_ranges, "update fade ranges",
         acp_prompt, "send selection to ACP agent",
         acp_show_overlay, "show ACP response overlay",
+        acp_select_model, "select ACP model",
   );
 }
 
@@ -8723,7 +8724,7 @@ pub fn acp_prompt(cx: &mut Context) {
     input_prompt: context.selection_text.clone(),
     response_text: String::new(),
     is_streaming: true,
-    model_name: "opencode".to_string(), // TODO: Get from config/agent
+    model_name: "default".to_string(), // TODO: Get actual model from agent
   });
 
   cx.editor.set_status(format!(
@@ -8765,5 +8766,101 @@ pub fn acp_show_overlay(cx: &mut Context) {
 
   cx.callback.push(Box::new(|compositor, _cx| {
     compositor.replace_or_push(AcpOverlay::ID, AcpOverlay::new());
+  }));
+}
+
+/// Open the model selector to choose an AI model.
+///
+/// Shows a picker with all available models from the ACP agent.
+pub fn acp_select_model(cx: &mut Context) {
+  use std::sync::{
+    Arc,
+    mpsc,
+  };
+
+  use agent_client_protocol as acp;
+
+  use crate::ui::components::{
+    Column,
+    Picker,
+    PickerAction,
+  };
+
+  let Some(ref handle) = cx.editor.acp else {
+    cx.editor.set_error("ACP agent not connected. Use :acp-start first.");
+    return;
+  };
+
+  let Some(model_state) = handle.model_state() else {
+    cx.editor.set_error("No models available. Agent may not support model selection.");
+    return;
+  };
+
+  if model_state.available_models.is_empty() {
+    cx.editor.set_error("No models available from the agent.");
+    return;
+  }
+
+  // Create a channel to communicate the selected model back
+  let (tx, rx) = mpsc::channel::<acp::ModelId>();
+
+  /// Editor data for the model picker
+  struct ModelPickerData {
+    current_model_id: acp::ModelId,
+    tx:               mpsc::Sender<acp::ModelId>,
+  }
+
+  let current_model_id = model_state.current_model_id.clone();
+
+  let editor_data = ModelPickerData {
+    current_model_id: current_model_id.clone(),
+    tx,
+  };
+
+  // Create picker columns
+  let columns = [
+    Column::new("Model", |info: &acp::ModelInfo, data: &ModelPickerData| {
+      if info.model_id == data.current_model_id {
+        format!("\u{2713} {}", info.name) // checkmark for current
+      } else {
+        format!("  {}", info.name)
+      }
+    }),
+    Column::new(
+      "Description",
+      |info: &acp::ModelInfo, _: &ModelPickerData| info.description.clone().unwrap_or_default(),
+    )
+    .without_filtering(),
+  ];
+
+  // Action handler for model selection
+  let action_handler: Arc<
+    dyn Fn(&acp::ModelInfo, &ModelPickerData, PickerAction) -> bool + Send + Sync,
+  > = Arc::new(|info, data, action| {
+    if action != PickerAction::Primary {
+      return false;
+    }
+
+    // Don't do anything if already the current model
+    if info.model_id == data.current_model_id {
+      return true; // Close picker
+    }
+
+    // Send the selected model ID through the channel
+    let _ = data.tx.send(info.model_id.clone());
+
+    true // Close picker
+  });
+
+  let items = model_state.available_models.clone();
+
+  let picker =
+    Picker::new(columns, 0, items, editor_data, |_| {}).with_action_handler(action_handler);
+
+  // Store the receiver in the editor's pending model selection
+  cx.editor.pending_model_selection = Some(rx);
+
+  cx.callback.push(Box::new(move |compositor, _ctx| {
+    compositor.push(Box::new(picker));
   }));
 }

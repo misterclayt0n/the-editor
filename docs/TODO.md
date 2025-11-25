@@ -27,11 +27,19 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Workspace features - Still reasoning about this.
 - [ ] Tab completion in the file prompt should look for the correct directory entry, not just scroll (This is a special case tho, the behavior is correct for all other cases).
 
+- [ ] ACP Integration
+  - [x] Model picker.
+  - [x] Hover that streams agents response.
+  - [ ] Render the entire conversation into a buffer, from where I should also be able to send messages through the same select -> action model.
+  - [ ] *Maybe* some debug info? Like what's the context of the agent? how many tokens are being used? things of the nature, tho I'm not sure we'll be able to get this data from the ACP protocol.
+  - [ ] Render tool calls?
+  - [ ] Fix the issue where every time I save a file it gets autoreloaded.
+  
 #### Fixes
-- [ ] Render fonts correctly in the picker prompt menu (they're too spaced).
-- [ ] Fix panic in prompt because it can't handle unicode properly.
+- [x] Render fonts correctly in the picker prompt menu (they're too spaced).
+- [x] Fix panic in prompt because it can't handle unicode properly.
 - [ ] Render tabs in hover component.
-- [ ] Fix indent guides (sometimes it will be rendered as blank for some reason).
+- [ ] Fix indent guides (sometimes it will be rendered as blank for some reason). - Hard to reproduce tho.
 - [x] Some lsp diagnostics are not really being rendered into virtual lines.
 - [x] Fix overflow in lsp helper completer popup.
 - [x] Our code for handling lsp positioning (completer, signature helper, hover) does not work at all when we resize the-editor's window. It kinda just appears out of the blue.
@@ -40,6 +48,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [x] Review how completer "accept" works - It does not automatically import files for instance, it also for some reason inserts the arguments of the function, and that's not ok.
 - [x] Highlight on yank should grab color from theme config.
 - [x] LSP diagnostics sometimes do not update correctly.
+- [ ] Fix an issue regarding the touchpad scrolling (wayland in particular, simple way to reproduce this is block the screen and unlock it afterwards)
 
 ### Beyond
 - [ ] File watcher (I'll wait to see helix's implementation on this, they're making big advancements: https://github.com/helix-editor/helix/pull/14544).

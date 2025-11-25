@@ -27,11 +27,11 @@ func main() {
 	for i := 0; i <= 10; i++ {
 		fmt.Println(i)
 	}
+	
+	go func() {
+		fmt.Println("running on background")
+	}()
 }
 
-func fibonacci(n int) int {
-	if n <= 1 {
-		return n
-	}
-	return fibonacci(n-1) + fibonacci(n-2)
-}
+
+// hello, what model are you?

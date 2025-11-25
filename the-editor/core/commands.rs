@@ -556,6 +556,7 @@ impl MappableCommand {
         toggle_fade_mode, "toggle fade mode",
         update_fade_ranges, "update fade ranges",
         acp_prompt, "send selection to ACP agent",
+        acp_show_overlay, "show ACP response overlay",
   );
 }
 
@@ -8673,9 +8674,13 @@ pub fn update_fade_ranges(cx: &mut Context) {
 ///
 /// This is the main command for interacting with AI coding agents.
 /// The selection text is sent to the agent, and the response will be
-/// streamed back and inserted after the selection.
+/// streamed back via the ACP overlay.
 pub fn acp_prompt(cx: &mut Context) {
-  use crate::acp::PromptContext;
+  use crate::{
+    acp::PromptContext,
+    editor::AcpResponseState,
+    ui::components::AcpOverlay,
+  };
 
   // Check if ACP is connected
   if cx.editor.acp.is_none() {
@@ -8700,6 +8705,27 @@ pub fn acp_prompt(cx: &mut Context) {
     return;
   }
 
+  // Create context summary for display
+  let context_summary = match &context.file_path {
+    Some(path) => {
+      let filename = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string());
+      format!("{}:{}-{}", filename, context.start_line, context.end_line)
+    },
+    None => format!("lines {}-{}", context.start_line, context.end_line),
+  };
+
+  // Initialize ACP response state
+  cx.editor.acp_response = Some(AcpResponseState {
+    context_summary,
+    input_prompt: context.selection_text.clone(),
+    response_text: String::new(),
+    is_streaming: true,
+    model_name: "opencode".to_string(), // TODO: Get from config/agent
+  });
+
   cx.editor.set_status(format!(
     "Sending to ACP agent ({} chars)...",
     prompt_text.len()
@@ -8712,9 +8738,32 @@ pub fn acp_prompt(cx: &mut Context) {
   match result {
     Ok(()) => {
       cx.editor.set_status("Prompt sent, waiting for response...".to_string());
+
+      // Open the ACP overlay to show streaming response
+      cx.callback.push(Box::new(|compositor, _cx| {
+        compositor.replace_or_push(AcpOverlay::ID, AcpOverlay::new());
+      }));
     },
     Err(err) => {
+      // Clear the response state on error
+      cx.editor.acp_response = None;
       cx.editor.set_error(format!("Failed to send prompt: {}", err));
     },
   }
+}
+
+/// Show the ACP overlay with the current/last response.
+///
+/// This allows viewing the ACP response at any time without re-prompting.
+pub fn acp_show_overlay(cx: &mut Context) {
+  use crate::ui::components::AcpOverlay;
+
+  if cx.editor.acp_response.is_none() {
+    cx.editor.set_error("No ACP response to display. Use acp_prompt first.".to_string());
+    return;
+  }
+
+  cx.callback.push(Box::new(|compositor, _cx| {
+    compositor.replace_or_push(AcpOverlay::ID, AcpOverlay::new());
+  }));
 }

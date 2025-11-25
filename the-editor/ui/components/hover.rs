@@ -436,7 +436,7 @@ fn hover_contents_to_string(contents: lsp::HoverContents) -> String {
   }
 }
 
-fn build_hover_render_lines(
+pub(crate) fn build_hover_render_lines(
   markdown: &str,
   wrap_width: f32,
   cell_width: f32,
@@ -697,7 +697,7 @@ fn highlight_code_block_lines(
   lines
 }
 
-fn wrap_text(text: &str, max_chars: usize) -> Vec<String> {
+pub(crate) fn wrap_text(text: &str, max_chars: usize) -> Vec<String> {
   if max_chars == 0 {
     return vec![String::new()];
   }
@@ -755,7 +755,7 @@ fn wrap_text(text: &str, max_chars: usize) -> Vec<String> {
   lines
 }
 
-fn estimate_line_width(segments: &[TextSegment], cell_width: f32) -> f32 {
+pub(crate) fn estimate_line_width(segments: &[TextSegment], cell_width: f32) -> f32 {
   segments
     .iter()
     .map(|segment| segment.content.chars().count() as f32 * cell_width)
@@ -778,7 +778,7 @@ fn slice_chars_to_string(s: &str, start: usize, end: usize) -> String {
   buf
 }
 
-fn scroll_lines_from_delta(delta: &ScrollDelta) -> i32 {
+pub(crate) fn scroll_lines_from_delta(delta: &ScrollDelta) -> i32 {
   let raw = match delta {
     ScrollDelta::Lines { y, .. } => *y,
     ScrollDelta::Pixels { y, .. } => *y / PIXELS_PER_SCROLL_LINE,

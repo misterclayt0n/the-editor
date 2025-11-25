@@ -732,9 +732,11 @@ impl App {
     for event in events {
       match event {
         crate::acp::StreamEvent::TextChunk(text) => {
-          // For now, log the text chunk. Later we'll insert it into the buffer.
-          log::debug!("[ACP] Text chunk: {}", text);
-          // TODO: Accumulate text and insert after selection
+          // Append text to the ACP response state
+          if let Some(ref mut state) = self.editor.acp_response {
+            state.response_text.push_str(&text);
+          }
+          log::debug!("[ACP] Text chunk: {} chars", text.len());
         },
         crate::acp::StreamEvent::ToolCall { name, status } => {
           let status_msg = match status {
@@ -750,9 +752,18 @@ impl App {
           self.editor.set_status(status_msg);
         },
         crate::acp::StreamEvent::Done => {
+          // Mark streaming as complete
+          if let Some(ref mut state) = self.editor.acp_response {
+            state.is_streaming = false;
+          }
           self.editor.set_status("[ACP] Response complete".to_string());
         },
         crate::acp::StreamEvent::Error(err) => {
+          // Mark streaming as complete and append error to response
+          if let Some(ref mut state) = self.editor.acp_response {
+            state.is_streaming = false;
+            state.response_text.push_str(&format!("\n\n**Error:** {}", err));
+          }
           self.editor.set_error(format!("[ACP] Error: {}", err));
         },
       }

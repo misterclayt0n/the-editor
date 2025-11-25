@@ -408,6 +408,23 @@ pub struct Editor {
   pub acp_config:      crate::acp::AcpConfig,
   /// Permission manager for ACP agent requests
   pub acp_permissions: crate::acp::PermissionManager,
+  /// Current ACP response state for overlay display
+  pub acp_response:    Option<AcpResponseState>,
+}
+
+/// State for the current ACP response being displayed in the overlay.
+#[derive(Debug, Clone, Default)]
+pub struct AcpResponseState {
+  /// Summary of context sent (e.g., "src/lib.rs:42-48")
+  pub context_summary: String,
+  /// The input/prompt sent to the agent
+  pub input_prompt:    String,
+  /// Accumulated response text (markdown)
+  pub response_text:   String,
+  /// Whether we're currently receiving a streaming response
+  pub is_streaming:    bool,
+  /// Model name (e.g., "claude-sonnet")
+  pub model_name:      String,
 }
 
 /// State for the context-aware code fading feature
@@ -1876,6 +1893,7 @@ impl Editor {
       acp: None,
       acp_config: crate::acp::AcpConfig::default(),
       acp_permissions: crate::acp::PermissionManager::new(),
+      acp_response: None,
     };
 
     let scopes = editor.theme.scopes().to_vec();

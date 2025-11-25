@@ -155,8 +155,12 @@ fn current_cursor_anchor(ctx: &Context, surface: &Surface) -> Option<Position> {
 }
 
 struct AcpOverlayContent {
-  layout:        Option<AcpLayout>,
-  scroll_offset: usize,
+  layout:             Option<AcpLayout>,
+  scroll_offset:      usize,
+  /// Cached response text length to detect changes
+  last_response_len:  usize,
+  /// Cached streaming state
+  last_was_streaming: bool,
 }
 
 #[derive(Clone)]
@@ -224,27 +228,16 @@ fn build_acp_render_lines(
   let mut in_fence = false;
   let mut fence_lang: Option<String> = None;
   let mut fence_buf: Vec<String> = Vec::new();
+  let mut prev_was_empty = false;
 
-  // Split by paragraphs first (double newlines), then process each paragraph
-  let paragraphs: Vec<&str> = markdown.split("\n\n").collect();
+  // Process line by line, tracking blank lines for paragraph breaks
+  // We can't split by \n\n first because that breaks code blocks with blank lines
+  for raw_line in markdown.lines() {
+    let is_empty = raw_line.trim().is_empty();
 
-  for (para_idx, paragraph) in paragraphs.iter().enumerate() {
-    // Add blank line between paragraphs (except before the first one)
-    if para_idx > 0 && !render_lines.is_empty() {
-      render_lines.push(vec![TextSegment {
-        content: String::new(),
-        style:   TextStyle {
-          size:  UI_FONT_SIZE,
-          color: base_text_color,
-        },
-      }]);
-    }
-
-    // Process each line within the paragraph
-    for raw_line in paragraph.lines() {
-      // Check for tool markers
+    // Check for tool markers (outside of code blocks)
+    if !in_fence {
       if let Some(tool_line) = parse_tool_marker(raw_line) {
-        // Render tool call with special styling
         let (icon, text) = tool_line;
         render_lines.push(vec![TextSegment {
           content: format!("{} {}", icon, text),
@@ -253,45 +246,49 @@ fn build_acp_render_lines(
             color: tool_color,
           },
         }]);
+        prev_was_empty = false;
         continue;
       }
+    }
 
-      // Handle fenced code blocks
-      if raw_line.starts_with("```") {
-        if in_fence {
-          // End of code block
-          let code = fence_buf.join("\n");
-          render_lines.extend(highlight_code_block(
-            fence_lang.as_deref(),
-            &code,
-            max_chars,
-            ctx,
-          ));
-          in_fence = false;
-          fence_lang = None;
-          fence_buf.clear();
-        } else {
-          // Start of code block
-          in_fence = true;
-          let lang = raw_line.trim_start_matches('`').trim();
-          fence_lang = if lang.is_empty() {
-            None
-          } else {
-            Some(lang.to_string())
-          };
-        }
-        continue;
-      }
-
+    // Handle fenced code blocks
+    if raw_line.starts_with("```") {
       if in_fence {
-        fence_buf.push(raw_line.to_string());
-        continue;
+        // End of code block
+        let code = fence_buf.join("\n");
+        render_lines.extend(highlight_code_block(
+          fence_lang.as_deref(),
+          &code,
+          max_chars,
+          ctx,
+        ));
+        in_fence = false;
+        fence_lang = None;
+        fence_buf.clear();
+      } else {
+        // Start of code block
+        in_fence = true;
+        let lang = raw_line.trim_start_matches('`').trim();
+        fence_lang = if lang.is_empty() {
+          None
+        } else {
+          Some(lang.to_string())
+        };
       }
+      prev_was_empty = false;
+      continue;
+    }
 
-      // Regular text - wrap it properly
-      let wrapped = wrap_text_preserve_breaks(raw_line, max_chars);
-      if wrapped.is_empty() {
-        // Empty line within paragraph - preserve it
+    // Inside a code block - preserve everything including blank lines
+    if in_fence {
+      fence_buf.push(raw_line.to_string());
+      continue;
+    }
+
+    // Handle blank lines as paragraph separators
+    if is_empty {
+      // Only add one blank line for paragraph break (collapse multiple)
+      if !prev_was_empty && !render_lines.is_empty() {
         render_lines.push(vec![TextSegment {
           content: String::new(),
           style:   TextStyle {
@@ -299,17 +296,23 @@ fn build_acp_render_lines(
             color: base_text_color,
           },
         }]);
-      } else {
-        for line in wrapped {
-          render_lines.push(vec![TextSegment {
-            content: line,
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
-              color: base_text_color,
-            },
-          }]);
-        }
       }
+      prev_was_empty = true;
+      continue;
+    }
+
+    prev_was_empty = false;
+
+    // Regular text - wrap it properly
+    let wrapped = wrap_text_preserve_breaks(raw_line, max_chars);
+    for line in wrapped {
+      render_lines.push(vec![TextSegment {
+        content: line,
+        style:   TextStyle {
+          size:  UI_FONT_SIZE,
+          color: base_text_color,
+        },
+      }]);
     }
   }
 
@@ -456,50 +459,71 @@ fn highlight_code_block(
     .map(|syntax| syntax.collect_highlights(slice, &loader, 0..slice.len_bytes()))
     .unwrap_or_default();
 
-  // Convert highlights to (byte_start, byte_end, color) for easier processing
-  let char_spans: Vec<(usize, usize, Color)> = spans
-    .into_iter()
-    .map(|(hl, byte_range)| {
-      let style = theme.highlight(hl);
-      let color = style
-        .fg
-        .map(crate::ui::theme_color_to_renderer_color)
-        .unwrap_or(default_code_color);
-      (byte_range.start, byte_range.end, color)
-    })
-    .collect();
+  // Convert byte ranges to char ranges and sort by start position
+  let mut char_spans: Vec<(usize, usize, Color)> = Vec::with_capacity(spans.len());
+  for (hl, byte_range) in spans.into_iter() {
+    let style = theme.highlight(hl);
+    let color = style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(default_code_color);
+    // Convert byte indices to char indices
+    let start_char = slice.byte_to_char(byte_range.start.min(slice.len_bytes()));
+    let end_char = slice.byte_to_char(byte_range.end.min(slice.len_bytes()));
+    if start_char < end_char {
+      char_spans.push((start_char, end_char, color));
+    }
+  }
+  char_spans.sort_by_key(|(s, _, _)| *s);
 
   let mut result = Vec::new();
+  let total_lines = rope.len_lines();
 
-  for (line_idx, line) in code.lines().enumerate() {
-    let line_start_byte = rope.line_to_byte(line_idx);
-    let line_end_byte = line_start_byte + line.len();
+  for line_idx in 0..total_lines {
+    let line_start_char = rope.line_to_char(line_idx);
+    let line_slice = rope.line(line_idx);
+    let mut line_string = line_slice.to_string();
+    // Remove trailing newline if present
+    if line_string.ends_with('\n') {
+      line_string.pop();
+    }
+    let line_char_count = line_string.chars().count();
+    let line_end_char = line_start_char + line_char_count;
 
-    // Truncate long lines
-    let display_line = if line.chars().count() > max_chars {
-      let truncated: String = line.chars().take(max_chars - 1).collect();
+    // Truncate long lines for display
+    let display_line = if line_char_count > max_chars {
+      let truncated: String = line_string.chars().take(max_chars - 1).collect();
       format!("{}…", truncated)
     } else {
-      line.to_string()
+      line_string.clone()
     };
 
-    // Collect highlights for this line
+    // Build segments for this line
     let mut segments: Vec<TextSegment> = Vec::new();
-    let mut last_end = 0usize;
+    let mut current_char = 0usize;
 
-    for &(byte_start, byte_end, color) in &char_spans {
-      // Skip spans outside this line
-      if byte_end <= line_start_byte || byte_start >= line_end_byte {
+    for &(span_start, span_end, color) in &char_spans {
+      // Skip spans that end before this line or start after
+      if span_end <= line_start_char || span_start >= line_end_char {
         continue;
       }
 
-      // Clamp span to line boundaries
-      let span_start = byte_start.saturating_sub(line_start_byte);
-      let span_end = (byte_end - line_start_byte).min(line.len());
+      // Clamp span to line boundaries (in line-relative char indices)
+      let rel_start = span_start.saturating_sub(line_start_char);
+      let rel_end = (span_end - line_start_char).min(line_char_count);
+
+      // Skip if this span starts before where we are (overlapping spans)
+      if rel_start < current_char {
+        continue;
+      }
 
       // Add unhighlighted text before this span
-      if span_start > last_end {
-        let text: String = line[last_end..span_start].to_string();
+      if rel_start > current_char {
+        let text: String = line_string
+          .chars()
+          .skip(current_char)
+          .take(rel_start - current_char)
+          .collect();
         if !text.is_empty() {
           segments.push(TextSegment {
             content: text,
@@ -512,8 +536,12 @@ fn highlight_code_block(
       }
 
       // Add highlighted text
-      if span_end > span_start {
-        let text: String = line[span_start..span_end].to_string();
+      if rel_end > rel_start {
+        let text: String = line_string
+          .chars()
+          .skip(rel_start)
+          .take(rel_end - rel_start)
+          .collect();
         if !text.is_empty() {
           segments.push(TextSegment {
             content: text,
@@ -523,14 +551,13 @@ fn highlight_code_block(
             },
           });
         }
+        current_char = rel_end;
       }
-
-      last_end = span_end;
     }
 
     // Add remaining unhighlighted text
-    if last_end < display_line.len() {
-      let text = display_line[last_end..].to_string();
+    if current_char < line_char_count {
+      let text: String = line_string.chars().skip(current_char).collect();
       if !text.is_empty() {
         segments.push(TextSegment {
           content: text,
@@ -562,8 +589,10 @@ fn highlight_code_block(
 impl AcpOverlayContent {
   fn new() -> Self {
     Self {
-      layout:        None,
-      scroll_offset: 0,
+      layout:             None,
+      scroll_offset:      0,
+      last_response_len:  0,
+      last_was_streaming: false,
     }
   }
 
@@ -796,8 +825,17 @@ impl PopupContent for AcpOverlayContent {
 
   fn render(&mut self, frame: &mut PopupFrame<'_>, ctx: &mut Context) {
     // If no ACP response, don't render anything
-    if ctx.editor.acp_response.is_none() {
+    let Some(state) = ctx.editor.acp_response.as_ref() else {
       return;
+    };
+
+    // Check if content has changed - only invalidate layout when necessary
+    let current_len = state.response_text.len();
+    let current_streaming = state.is_streaming;
+    if current_len != self.last_response_len || current_streaming != self.last_was_streaming {
+      self.layout = None;
+      self.last_response_len = current_len;
+      self.last_was_streaming = current_streaming;
     }
 
     let inner = frame.inner();
@@ -812,9 +850,6 @@ impl PopupContent for AcpOverlayContent {
       let padding_above = (inner.y - outer.y).max(0.0);
       text_y -= padding_above.min(UI_FONT_SIZE);
     }
-
-    // Invalidate layout to pick up streaming updates
-    self.layout = None;
 
     let mut new_scroll_offset = self.scroll_offset;
 

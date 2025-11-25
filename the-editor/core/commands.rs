@@ -22,7 +22,6 @@ use std::{
   str::FromStr,
 };
 
-use agent_client_protocol::Agent as _;
 use anyhow::{
   Context as _,
   anyhow,
@@ -8678,24 +8677,11 @@ pub fn update_fade_ranges(cx: &mut Context) {
 pub fn acp_prompt(cx: &mut Context) {
   use crate::acp::PromptContext;
 
-  // Extract connection info first to avoid borrow conflicts
-  let (conn, session_id) = match &cx.editor.acp {
-    Some(handle) => {
-      let conn = handle.conn().clone();
-      let session_id = match handle.session_id() {
-        Some(id) => id,
-        None => {
-          cx.editor.set_error("No active ACP session".to_string());
-          return;
-        },
-      };
-      (conn, session_id)
-    },
-    None => {
-      cx.editor.set_error("ACP agent not connected. Use :acp-start first.".to_string());
-      return;
-    },
-  };
+  // Check if ACP is connected
+  if cx.editor.acp.is_none() {
+    cx.editor.set_error("ACP agent not connected. Use :acp-start first.".to_string());
+    return;
+  }
 
   let context_lines = cx.editor.acp_config.context_lines;
 
@@ -8719,28 +8705,12 @@ pub fn acp_prompt(cx: &mut Context) {
     prompt_text.len()
   ));
 
-  // Send the prompt in a blocking context since ACP futures are !Send
-  // Responses will arrive via the event_rx channel which is polled in the main loop
-  let result = tokio::task::block_in_place(|| {
-    let rt = tokio::runtime::Builder::new_current_thread()
-      .enable_all()
-      .build()
-      .expect("failed to create runtime");
-
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
-      conn
-        .prompt(agent_client_protocol::PromptRequest {
-          session_id,
-          prompt: vec![prompt_text.into()],
-          meta: None,
-        })
-        .await
-    })
-  });
+  // Send the prompt (non-blocking, just queues the request)
+  // Responses will stream via event_rx which is polled in the main loop
+  let result = cx.editor.acp.as_ref().unwrap().prompt_text(prompt_text);
 
   match result {
-    Ok(_) => {
+    Ok(()) => {
       cx.editor.set_status("Prompt sent, waiting for response...".to_string());
     },
     Err(err) => {

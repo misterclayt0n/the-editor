@@ -2,11 +2,23 @@
 //!
 //! This module provides `AcpHandle` which manages the lifecycle of the connection
 //! to an ACP agent subprocess.
+//!
+//! ## Architecture
+//!
+//! ACP uses `!Send` futures internally, which means we can't use them directly
+//! on tokio's multi-threaded runtime. To solve this, we spawn a dedicated thread
+//! that runs its own single-threaded runtime with a LocalSet. Communication
+//! between the editor and this thread happens via channels.
+//!
+//! All operations are non-blocking from the editor's perspective:
+//! - Commands are sent via `command_tx` (fire-and-forget)
+//! - Results/errors come back via `event_rx` (polled in main loop)
 
 use std::{
   path::PathBuf,
   process::Stdio,
   sync::Arc,
+  thread::JoinHandle,
 };
 
 use agent_client_protocol::{
@@ -24,7 +36,10 @@ use tokio::{
     Child,
     Command,
   },
-  sync::mpsc,
+  sync::{
+    mpsc,
+    oneshot,
+  },
 };
 use tokio_util::compat::{
   TokioAsyncReadCompatExt,
@@ -38,35 +53,103 @@ use super::{
   StreamEvent,
 };
 
+/// Commands sent to the ACP thread.
+enum AcpCommand {
+  /// Send a prompt to the agent (fire-and-forget, results via event_tx)
+  Prompt {
+    session_id: acp::SessionId,
+    content:    Vec<acp::ContentBlock>,
+  },
+  /// Shutdown the ACP thread
+  Shutdown,
+}
+
 /// Handle to an active ACP connection.
 ///
 /// This struct manages the agent subprocess and provides methods to interact
 /// with it. It is designed to be held in the `Editor` struct.
 pub struct AcpHandle {
-  /// The connection to the agent
-  conn: Arc<acp::ClientSideConnection>,
   /// The current session ID
   session_id: Arc<Mutex<Option<acp::SessionId>>>,
   /// Receiver for streaming events from the agent
   pub event_rx: mpsc::UnboundedReceiver<StreamEvent>,
   /// Receiver for permission requests from the agent
   pub permission_rx: mpsc::UnboundedReceiver<PendingPermission>,
-  /// The agent subprocess (kept alive)
-  _child: Child,
+  /// Channel to send commands to the ACP thread
+  command_tx: mpsc::UnboundedSender<AcpCommand>,
+  /// Handle to the ACP thread (for cleanup)
+  _thread: JoinHandle<()>,
 }
 
 impl AcpHandle {
   /// Start an ACP agent and establish a connection.
   ///
-  /// This spawns the agent subprocess and initializes the ACP protocol.
-  pub async fn start(config: &AcpConfig, cwd: PathBuf) -> Result<Self> {
+  /// This spawns a dedicated thread for the ACP runtime since ACP uses !Send futures.
+  pub fn start(config: &AcpConfig, cwd: PathBuf) -> Result<Self> {
     if config.command.is_empty() {
       bail!("ACP command is empty");
     }
 
-    let program = &config.command[0];
-    let args = &config.command[1..];
+    let program = config.command[0].clone();
+    let args: Vec<String> = config.command[1..].to_vec();
 
+    // Create channels for communication
+    let (event_tx, event_rx) = mpsc::unbounded_channel();
+    let (permission_tx, permission_rx) = mpsc::unbounded_channel();
+    let (command_tx, command_rx) = mpsc::unbounded_channel();
+    let (init_tx, init_rx) = oneshot::channel();
+
+    let cwd_clone = cwd.clone();
+
+    // Clone event_tx for the event loop to report errors
+    let event_tx_for_loop = event_tx.clone();
+
+    // Spawn dedicated thread for ACP runtime
+    let thread = std::thread::spawn(move || {
+      let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to create ACP runtime");
+
+      let local = tokio::task::LocalSet::new();
+
+      local.block_on(&rt, async move {
+        match Self::init_connection(&program, &args, cwd_clone, event_tx, permission_tx).await {
+          Ok((conn, session_id, child)) => {
+            let _ = init_tx.send(Ok(session_id.clone()));
+            Self::run_event_loop(conn, command_rx, event_tx_for_loop, child).await;
+          },
+          Err(e) => {
+            let _ = init_tx.send(Err(e));
+          },
+        }
+      });
+    });
+
+    // Wait for initialization to complete (this is the only blocking part)
+    let session_id = init_rx
+      .blocking_recv()
+      .context("ACP thread died during initialization")??;
+
+    log::info!("ACP connection established, session: {}", session_id);
+
+    Ok(Self {
+      session_id: Arc::new(Mutex::new(Some(session_id))),
+      event_rx,
+      permission_rx,
+      command_tx,
+      _thread: thread,
+    })
+  }
+
+  /// Initialize the ACP connection (runs on the ACP thread).
+  async fn init_connection(
+    program: &str,
+    args: &[String],
+    cwd: PathBuf,
+    event_tx: mpsc::UnboundedSender<StreamEvent>,
+    permission_tx: mpsc::UnboundedSender<PendingPermission>,
+  ) -> Result<(Arc<acp::ClientSideConnection>, acp::SessionId, Child)> {
     log::info!("Starting ACP agent: {} {:?}", program, args);
 
     // Spawn the agent process
@@ -75,7 +158,7 @@ impl AcpHandle {
       .current_dir(&cwd)
       .stdin(Stdio::piped())
       .stdout(Stdio::piped())
-      .stderr(Stdio::inherit()) // Let agent stderr go to editor's stderr for debugging
+      .stderr(Stdio::inherit())
       .kill_on_drop(true)
       .spawn()
       .with_context(|| format!("Failed to spawn ACP agent: {}", program))?;
@@ -91,22 +174,17 @@ impl AcpHandle {
       .context("Failed to get agent stdout")?
       .compat();
 
-    // Create channels for communication with the EditorClient
-    let (event_tx, event_rx) = mpsc::unbounded_channel();
-    let (permission_tx, permission_rx) = mpsc::unbounded_channel();
-
     // Create the client
     let client = EditorClient::new(event_tx, permission_tx);
 
     // Create the connection
-    // Note: ACP futures are !Send, so we use spawn_local
     let (conn, handle_io) = acp::ClientSideConnection::new(client, stdin, stdout, |fut| {
       tokio::task::spawn_local(fut);
     });
 
     let conn = Arc::new(conn);
 
-    // Spawn the I/O handler
+    // Spawn the I/O handler on the local set
     tokio::task::spawn_local(handle_io);
 
     // Initialize the connection
@@ -140,19 +218,60 @@ impl AcpHandle {
 
     log::info!("ACP session created: {}", session_response.session_id);
 
-    Ok(Self {
-      conn,
-      session_id: Arc::new(Mutex::new(Some(session_response.session_id.into()))),
-      event_rx,
-      permission_rx,
-      _child: child,
-    })
+    Ok((conn, session_response.session_id.into(), child))
   }
 
-  /// Send a prompt to the agent.
+  /// Run the event loop on the ACP thread.
   ///
-  /// The response will be streamed via `event_rx`.
-  pub async fn prompt(&self, content: Vec<acp::ContentBlock>) -> Result<()> {
+  /// Processes commands from the editor and sends results/errors via event_tx.
+  async fn run_event_loop(
+    conn: Arc<acp::ClientSideConnection>,
+    mut command_rx: mpsc::UnboundedReceiver<AcpCommand>,
+    event_tx: mpsc::UnboundedSender<StreamEvent>,
+    _child: Child,
+  ) {
+    log::info!("ACP event loop started");
+
+    while let Some(cmd) = command_rx.recv().await {
+      match cmd {
+        AcpCommand::Prompt { session_id, content } => {
+          log::debug!("Processing prompt command");
+
+          let result = conn
+            .prompt(acp::PromptRequest {
+              session_id,
+              prompt: content,
+              meta: None,
+            })
+            .await;
+
+          match result {
+            Ok(_response) => {
+              // Response streaming is handled by EditorClient callbacks
+              // The Done event will be sent by the client when streaming completes
+              log::debug!("Prompt request completed");
+            },
+            Err(e) => {
+              // Send error via event channel so it appears in the editor
+              let _ = event_tx.send(StreamEvent::Error(format!("Prompt failed: {}", e)));
+            },
+          }
+        },
+        AcpCommand::Shutdown => {
+          log::info!("ACP shutdown requested");
+          break;
+        },
+      }
+    }
+
+    log::info!("ACP event loop ended");
+  }
+
+  /// Send a prompt to the agent (non-blocking).
+  ///
+  /// Returns immediately after queuing the request. Results and errors
+  /// will arrive via `event_rx`, which should be polled in the main loop.
+  pub fn prompt(&self, content: Vec<acp::ContentBlock>) -> Result<()> {
     let session_id = self
       .session_id
       .lock()
@@ -160,38 +279,24 @@ impl AcpHandle {
       .context("No active ACP session")?;
 
     self
-      .conn
-      .prompt(acp::PromptRequest {
-        session_id: session_id.clone(),
-        prompt: content,
-        meta: None,
-      })
-      .await
-      .context("Failed to send prompt to agent")?;
-
-    Ok(())
+      .command_tx
+      .send(AcpCommand::Prompt { session_id, content })
+      .map_err(|_| anyhow::anyhow!("ACP thread has shut down"))
   }
 
-  /// Send a text prompt to the agent.
-  ///
-  /// This is a convenience wrapper around `prompt` for simple text prompts.
-  pub async fn prompt_text(&self, text: String) -> Result<()> {
-    self.prompt(vec![text.into()]).await
+  /// Send a text prompt to the agent (non-blocking).
+  pub fn prompt_text(&self, text: String) -> Result<()> {
+    self.prompt(vec![text.into()])
   }
 
   /// Check if the connection is still active.
   pub fn is_connected(&self) -> bool {
-    self.session_id.lock().is_some()
+    self.session_id.lock().is_some() && !self.command_tx.is_closed()
   }
 
   /// Get the current session ID.
   pub fn session_id(&self) -> Option<acp::SessionId> {
     self.session_id.lock().clone()
-  }
-
-  /// Get a reference to the connection.
-  pub fn conn(&self) -> &Arc<acp::ClientSideConnection> {
-    &self.conn
   }
 
   /// Try to receive the next streaming event without blocking.
@@ -202,6 +307,13 @@ impl AcpHandle {
   /// Try to receive the next permission request without blocking.
   pub fn try_recv_permission(&mut self) -> Option<PendingPermission> {
     self.permission_rx.try_recv().ok()
+  }
+}
+
+impl Drop for AcpHandle {
+  fn drop(&mut self) {
+    // Request shutdown of the ACP thread
+    let _ = self.command_tx.send(AcpCommand::Shutdown);
   }
 }
 

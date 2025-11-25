@@ -2645,21 +2645,8 @@ fn acp_start(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
 
   cx.editor.set_status("Starting ACP agent...".to_string());
 
-  // ACP uses !Send futures internally (spawn_local), so we need to run it
-  // inside a LocalSet with a current-thread runtime.
-  let result = tokio::task::block_in_place(|| {
-    let rt = tokio::runtime::Builder::new_current_thread()
-      .enable_all()
-      .build()
-      .expect("failed to create runtime for ACP");
-
-    let local = tokio::task::LocalSet::new();
-    local.block_on(&rt, async {
-      crate::acp::AcpHandle::start(&config, cwd).await
-    })
-  });
-
-  match result {
+  // AcpHandle::start spawns a dedicated thread for ACP's !Send futures
+  match crate::acp::AcpHandle::start(&config, cwd) {
     Ok(handle) => {
       cx.editor.acp = Some(handle);
       cx.editor.set_status("ACP agent started".to_string());

@@ -10,6 +10,10 @@ use the_editor_renderer::{
   KeyPress,
   TextSection,
 };
+use unicode_segmentation::{
+  GraphemeCursor,
+  UnicodeSegmentation,
+};
 
 use crate::{
   core::{
@@ -588,12 +592,15 @@ impl Prompt {
         .collect();
       let full_text = format!("{}{}", self.prefix, visible_input);
 
-      // Calculate cursor position relative to visible area
-      let visible_cursor_col = if self.cursor >= self.scroll_offset {
-        prefix_len + (self.cursor - self.scroll_offset)
-      } else {
-        prefix_len
-      };
+       // Calculate cursor position relative to visible area (convert byte position to grapheme index)
+       let query_grapheme_count = if self.cursor >= self.scroll_offset {
+         self.input[self.scroll_offset..self.cursor.min(self.input.len())]
+           .graphemes(true)
+           .count()
+       } else {
+         0
+       };
+       let visible_cursor_col = prefix_len + query_grapheme_count;
 
       // Get cursor color from theme
       let theme = &cx.editor.theme;
@@ -653,21 +660,21 @@ impl Prompt {
         Color::WHITE,
       ));
 
-      // If cursor is within visible text, render the cursor character again on top
-      // with cursor color This ensures the text layout is consistent while
-      // still showing the cursor-colored character
-      let chars: Vec<char> = full_text.chars().collect();
-      if visible_cursor_col < chars.len() {
-        let cursor_char = chars[visible_cursor_col].to_string();
-        let cursor_x = text_x + visible_cursor_col as f32 * cell_width;
-        surface.draw_text(TextSection::simple(
-          cursor_x,
-          text_y,
-          &cursor_char,
-          UI_FONT_SIZE,
-          cursor_fg,
-        ));
-      }
+       // If cursor is within visible text, render the cursor grapheme again on top
+       // with cursor color. This ensures the text layout is consistent while
+       // still showing the cursor-colored grapheme
+       let graphemes: Vec<&str> = full_text.graphemes(true).collect();
+       if visible_cursor_col < graphemes.len() {
+         let cursor_grapheme = graphemes[visible_cursor_col];
+         let cursor_x = text_x + visible_cursor_col as f32 * cell_width;
+         surface.draw_text(TextSection::simple(
+           cursor_x,
+           text_y,
+           cursor_grapheme,
+           UI_FONT_SIZE,
+           cursor_fg,
+         ));
+       }
 
       // Render completions if visible (above the prompt)
       // Render completions if available
@@ -709,79 +716,112 @@ impl Prompt {
 
   fn insert_char(&mut self, c: char) {
     self.input.insert(self.cursor, c);
-    self.cursor += 1;
+    self.cursor += c.len_utf8();
   }
 
-  fn delete_char_backward(&mut self) {
-    if self.cursor > 0 {
-      self.cursor -= 1;
-      self.input.remove(self.cursor);
-    }
-  }
+   fn delete_char_backward(&mut self) {
+     if self.cursor > 0 {
+       let prev_pos = Self::prev_grapheme_boundary(&self.input, self.cursor);
+       self.input.drain(prev_pos..self.cursor).for_each(drop);
+       self.cursor = prev_pos;
+     }
+   }
 
-  fn delete_char_forward(&mut self) {
-    if self.cursor < self.input.len() {
-      self.input.remove(self.cursor);
-    }
-  }
+   fn delete_char_forward(&mut self) {
+     if self.cursor < self.input.len() {
+       let next_pos = Self::next_grapheme_boundary(&self.input, self.cursor);
+       self.input.drain(self.cursor..next_pos).for_each(drop);
+     }
+   }
 
   fn move_cursor_left(&mut self) {
-    if self.cursor > 0 {
-      self.cursor -= 1;
-    }
+    self.cursor = Self::prev_grapheme_boundary(&self.input, self.cursor);
   }
 
   fn move_cursor_right(&mut self) {
-    if self.cursor < self.input.len() {
-      self.cursor += 1;
-    }
+    self.cursor = Self::next_grapheme_boundary(&self.input, self.cursor);
   }
 
   fn is_word_boundary(c: char) -> bool {
     c.is_whitespace() || c == '/' || c == '-' || c == '_'
   }
 
-  fn move_word_backward(&mut self) {
-    if self.cursor == 0 {
-      return;
-    }
+   fn move_word_backward(&mut self) {
+     if self.cursor == 0 {
+       return;
+     }
 
-    let chars: Vec<char> = self.input.chars().collect();
-    let mut pos = self.cursor.saturating_sub(1);
+     // Move back one grapheme first
+     let mut pos = Self::prev_grapheme_boundary(&self.input, self.cursor);
 
-    // Skip whitespace
-    while pos > 0 && Self::is_word_boundary(chars[pos]) {
-      pos -= 1;
-    }
+     // Skip whitespace backward
+     loop {
+       if pos == 0 {
+         break;
+       }
+       let prev_pos = Self::prev_grapheme_boundary(&self.input, pos);
+       let grapheme = &self.input[prev_pos..pos];
+       let ch = grapheme.chars().next().unwrap_or(' ');
+       if !Self::is_word_boundary(ch) {
+         break;
+       }
+       pos = prev_pos;
+     }
 
-    // Move to start of word
-    while pos > 0 && !Self::is_word_boundary(chars[pos - 1]) {
-      pos -= 1;
-    }
+     // Move to start of word backward
+     loop {
+       if pos == 0 {
+         break;
+       }
+       let prev_pos = Self::prev_grapheme_boundary(&self.input, pos);
+       let grapheme = &self.input[prev_pos..pos];
+       let ch = grapheme.chars().next().unwrap_or(' ');
+       if Self::is_word_boundary(ch) {
+         break;
+       }
+       pos = prev_pos;
+     }
 
-    self.cursor = pos;
-  }
+     self.cursor = pos;
+   }
 
-  fn move_word_forward(&mut self) {
-    let chars: Vec<char> = self.input.chars().collect();
-    if self.cursor >= chars.len() {
-      return;
-    }
+   fn move_word_forward(&mut self) {
+     if self.cursor >= self.input.len() {
+       return;
+     }
 
-    let mut pos = self.cursor;
+     let mut pos = self.cursor;
 
-    // Skip current word
-    while pos < chars.len() && !Self::is_word_boundary(chars[pos]) {
-      pos += 1;
-    }
+     // Skip current word
+     loop {
+       if pos >= self.input.len() {
+         break;
+       }
+       let next_pos = Self::next_grapheme_boundary(&self.input, pos);
+       let grapheme = &self.input[pos..next_pos];
+       let ch = grapheme.chars().next().unwrap_or(' ');
+       if Self::is_word_boundary(ch) {
+         break;
+       }
+       pos = next_pos;
+     }
 
-    // Skip whitespace
-    while pos < chars.len() && Self::is_word_boundary(chars[pos]) {
-      pos += 1;
-    }
+     // Skip whitespace
+     loop {
+       if pos >= self.input.len() {
+         break;
+       }
+       let next_pos = Self::next_grapheme_boundary(&self.input, pos);
+       let grapheme = &self.input[pos..next_pos];
+       let ch = grapheme.chars().next().unwrap_or(' ');
+       if !Self::is_word_boundary(ch) {
+         break;
+       }
+       pos = next_pos;
+     }
 
-    self.cursor = pos;
-  }
+     self.cursor = pos;
+   }
 
   fn delete_word_backward(&mut self) {
     if self.cursor == 0 {
@@ -793,17 +833,16 @@ impl Prompt {
     self.input.replace_range(self.cursor..old_cursor, "");
   }
 
-  fn delete_word_forward(&mut self) {
-    let chars: Vec<char> = self.input.chars().collect();
-    if self.cursor >= chars.len() {
-      return;
-    }
+   fn delete_word_forward(&mut self) {
+     if self.cursor >= self.input.len() {
+       return;
+     }
 
-    let old_cursor = self.cursor;
-    self.move_word_forward();
-    self.input.replace_range(old_cursor..self.cursor, "");
-    self.cursor = old_cursor;
-  }
+     let old_cursor = self.cursor;
+     self.move_word_forward();
+     self.input.replace_range(old_cursor..self.cursor, "");
+     self.cursor = old_cursor;
+   }
 
   fn kill_to_end(&mut self) {
     self.input.truncate(self.cursor);
@@ -812,6 +851,17 @@ impl Prompt {
   fn kill_to_start(&mut self) {
     self.input.replace_range(..self.cursor, "");
     self.cursor = 0;
+  }
+
+  fn prev_grapheme_boundary(text: &str, byte_idx: usize) -> usize {
+    let mut gc = GraphemeCursor::new(byte_idx, text.len(), true);
+    gc.prev_boundary(text, 0).unwrap_or(Some(0)).unwrap_or(0)
+  }
+
+  
+  fn next_grapheme_boundary(text: &str, byte_idx: usize) -> usize {
+    let mut gc = GraphemeCursor::new(byte_idx, text.len(), true);
+    gc.next_boundary(text, 0).unwrap_or(Some(text.len())).unwrap_or(text.len())
   }
 
   /// Recalculate completions based on current input

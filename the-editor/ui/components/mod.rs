@@ -4,6 +4,7 @@ pub mod button;
 pub mod code_action;
 pub mod completion;
 pub mod hover;
+pub mod markdown;
 pub mod picker;
 pub mod popup;
 pub mod prompt;

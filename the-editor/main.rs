@@ -36,6 +36,7 @@ use crate::{
   handlers::Handlers,
 };
 
+pub mod acp;
 mod application;
 mod cli;
 mod core;

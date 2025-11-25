@@ -35,29 +35,30 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.4.7"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76133c067c37ae7a3641c3ad1ec88f36aac06cea5f9b3b49b5c29f18214f9101"
+checksum = "525705e39c11cd73f7bc784e3681a9386aa30c8d0630808d3dc2237eb4f9cb1b"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
  "async-broadcast",
  "async-trait",
+ "derive_more",
  "futures",
  "log",
  "parking_lot",
- "schemars",
  "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "0.4.9"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db625c1cb83729cb7d04080fff35cabe7f68870f31e003546aa99565beccb11a"
+checksum = "16d08d095e8069115774caa50392e9c818e3fb1c482ef4f3153d26b4595482f2"
 dependencies = [
  "anyhow",
+ "derive_more",
  "schemars",
  "serde",
  "serde_json",
@@ -693,6 +694,27 @@ dependencies = [
  "lock_api",
  "once_cell",
  "parking_lot_core",
+]
+
+[[package]]
+name = "derive_more"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "093242cf7570c207c83073cf82f79706fe7b8317e98620a47d5be7c3d8497678"
+dependencies = [
+ "derive_more-impl",
+]
+
+[[package]]
+name = "derive_more-impl"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bda628edc44c4bb645fbe0f758797143e4e07926f7ebf4e9bdfbd3d2ce621df3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+ "unicode-xid",
 ]
 
 [[package]]
@@ -4417,6 +4439,12 @@ name = "unicode-width"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a1a07cc7db3810833284e8d372ccdc6da29741639ecc70c9ec107df0fa6154c"
+
+[[package]]
+name = "unicode-xid"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
 name = "url"

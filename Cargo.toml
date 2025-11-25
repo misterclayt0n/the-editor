@@ -25,7 +25,7 @@ dead_code        = "allow"
 unused_variables = "warn"
 
 [workspace.dependencies]
-agent-client-protocol    = "0.4"
+agent-client-protocol    = "0.7"
 anyhow                   = "1.0"
 arc-swap                 = "1"
 async-trait              = "0.1"

@@ -1911,7 +1911,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         input_box_border,
       );
 
-      // Draw search query with prompt and cursor (similar to command prompt)
+      // Draw search query with prompt and cursor
       let prompt_prefix = "› ";
       let full_text = format!("{}{}", prompt_prefix, self.query);
       let prompt_x = x + 8.0;
@@ -1932,8 +1932,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       // Calculate visible cursor column
       let visible_cursor_col = prefix_len + self.query_cursor;
 
-      // Cursor animation
-      let target_x = prompt_x + visible_cursor_col as f32 * UI_FONT_WIDTH;
+      // Cursor animation using actual cell width from renderer
+      let target_x = prompt_x + visible_cursor_col as f32 * cell_width;
       let cursor_anim_enabled = ctx.editor.config().cursor_anim_enabled;
 
       let anim_x = if cursor_anim_enabled {
@@ -1964,31 +1964,34 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       surface.draw_rect(
         anim_x,
         prompt_y,
-        UI_FONT_WIDTH,
+        cell_width,
         UI_FONT_SIZE + CURSOR_HEIGHT_EXTENSION,
         cursor_bg_anim,
       );
 
-      // Render text character by character (like prompt does)
-      for (i, ch) in full_text.chars().enumerate() {
-        let char_x = prompt_x + i as f32 * UI_FONT_WIDTH;
-        let color = if i == visible_cursor_col {
-          // Use cursor foreground color for character under cursor
-          Color::new(cursor_fg.r, cursor_fg.g, cursor_fg.b, cursor_fg.a * alpha)
-        } else {
-          query_color_anim
-        };
+      // TODO: Iterate on graphemes, not bytes.
 
-        surface.draw_text(TextSection {
-          position: (char_x, prompt_y),
-          texts:    vec![TextSegment {
-            content: ch.to_string(),
-            style:   TextStyle {
-              color,
-              size: UI_FONT_SIZE,
-            },
-          }],
-        });
+      // Render full text as one string to preserve font shaping and kerning
+      surface.draw_text(TextSection::simple(
+        prompt_x,
+        prompt_y,
+        &full_text,
+        UI_FONT_SIZE,
+        query_color_anim,
+      ));
+
+      // Draw cursor character on top if visible.
+      let chars: Vec<char> = full_text.chars().collect();
+      if visible_cursor_col < chars.len() {
+        let cursor_char = chars[visible_cursor_col].to_string();
+        let cursor_x = prompt_x + visible_cursor_col as f32 * cell_width;
+        surface.draw_text(TextSection::simple(
+          cursor_x,
+          prompt_y,
+          &cursor_char,
+          UI_FONT_SIZE,
+          Color::new(cursor_fg.r, cursor_fg.g, cursor_fg.b, cursor_fg.a * alpha),
+        ));
       }
 
       // Draw match count (count_text and count_width already calculated above)

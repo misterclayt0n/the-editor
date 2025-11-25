@@ -555,6 +555,7 @@ impl MappableCommand {
         toggle_soft_wrap, "toggle soft wrap",
         toggle_fade_mode, "toggle fade mode",
         update_fade_ranges, "update fade ranges",
+        acp_prompt, "send selection to ACP agent",
   );
 }
 
@@ -8664,4 +8665,62 @@ pub fn update_fade_ranges(cx: &mut Context) {
     // No syntax highlighting available, disable fade
     cx.editor.fade_mode.relevant_ranges = None;
   }
+}
+
+// ACP (Agent Client Protocol) commands
+
+/// Send the current selection to the ACP agent as a prompt.
+///
+/// This is the main command for interacting with AI coding agents.
+/// The selection text is sent to the agent, and the response will be
+/// streamed back and inserted after the selection.
+pub fn acp_prompt(cx: &mut Context) {
+  use crate::acp::PromptContext;
+
+  // Check if ACP agent is connected
+  if cx.editor.acp.is_none() {
+    cx.editor.set_error("ACP agent not connected. Use :acp-start first.".to_string());
+    return;
+  }
+
+  let (view, doc) = current!(cx.editor);
+  let selection = doc.selection(view.id);
+  let primary = selection.primary();
+
+  // Build context from the selection
+  let context = PromptContext::from_selection(
+    doc,
+    view,
+    &primary,
+    cx.editor.acp_config.context_lines,
+  );
+
+  // Format the prompt with context
+  let prompt_text = context.format_prompt_with_context();
+
+  if prompt_text.trim().is_empty() {
+    cx.editor.set_error("No text selected to send to ACP agent".to_string());
+    return;
+  }
+
+  cx.editor.set_status(format!(
+    "Sending to ACP agent ({} chars)...",
+    prompt_text.len()
+  ));
+
+  // Send prompt to agent via job system
+  // Note: The ACP futures are !Send, so we need to use callback_local
+  // However, we can't easily move the AcpHandle into a future here.
+  // Instead, we'll check the handle exists and create a simple text prompt.
+
+  // For now, just show what would be sent (actual sending needs more wiring)
+  log::info!("ACP prompt: {}", prompt_text);
+  cx.editor.set_status("ACP prompt queued (streaming not yet wired)".to_string());
+
+  // TODO: Wire up actual prompt sending once event loop integration is done
+  // The proper implementation would:
+  // 1. Get &mut AcpHandle from editor
+  // 2. Call handle.prompt_text(prompt_text).await
+  // 3. Poll handle.event_rx for StreamEvent::TextChunk
+  // 4. Insert text chunks after selection
 }

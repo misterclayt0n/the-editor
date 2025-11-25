@@ -870,6 +870,43 @@ impl CommandRegistry {
         ..Signature::DEFAULT
       },
     ));
+
+    // ACP (Agent Client Protocol) commands
+    self.register(TypableCommand::new(
+      "acp-start",
+      &[],
+      "Start the ACP agent (AI coding assistant)",
+      acp_start,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "acp-stop",
+      &[],
+      "Stop the ACP agent",
+      acp_stop,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "acp-status",
+      &[],
+      "Show ACP agent status",
+      acp_status,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 
@@ -2563,6 +2600,95 @@ fn config_reload(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()
     .config_events
     .0
     .send(crate::editor::ConfigEvent::Refresh)?;
+  Ok(())
+}
+
+// ACP (Agent Client Protocol) command implementations
+
+fn acp_start(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  if cx.editor.acp.is_some() {
+    cx.editor.set_status("ACP agent is already running".to_string());
+    return Ok(());
+  }
+
+  // Get the workspace root (current working directory)
+  let cwd = the_editor_stdx::env::current_working_dir();
+  let config = cx.editor.acp_config.clone();
+
+  cx.editor.set_status("Starting ACP agent...".to_string());
+
+  // Spawn the ACP connection in a local task (ACP futures are !Send)
+  cx.jobs.callback_local(async move {
+    match crate::acp::AcpHandle::start(&config, cwd).await {
+      Ok(handle) => {
+        let callback = move |editor: &mut crate::editor::Editor,
+                             _compositor: &mut crate::ui::compositor::Compositor| {
+          editor.acp = Some(handle);
+          editor.set_status("ACP agent started".to_string());
+        };
+        Ok(Some(crate::ui::job::LocalCallback::EditorCompositor(
+          Box::new(callback),
+        )))
+      },
+      Err(err) => {
+        let error_msg = format!("Failed to start ACP agent: {}", err);
+        let callback = move |editor: &mut crate::editor::Editor,
+                             _compositor: &mut crate::ui::compositor::Compositor| {
+          editor.set_error(error_msg);
+        };
+        Ok(Some(crate::ui::job::LocalCallback::EditorCompositor(
+          Box::new(callback),
+        )))
+      },
+    }
+  });
+
+  Ok(())
+}
+
+fn acp_stop(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  if cx.editor.acp.is_none() {
+    cx.editor.set_status("ACP agent is not running".to_string());
+    return Ok(());
+  }
+
+  // Drop the ACP handle to close the connection
+  cx.editor.acp = None;
+  cx.editor.acp_permissions.deny_all();
+  cx.editor.set_status("ACP agent stopped".to_string());
+
+  Ok(())
+}
+
+fn acp_status(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  match &cx.editor.acp {
+    Some(handle) => {
+      let session_info = if let Some(session_id) = handle.session_id() {
+        format!("session: {}", session_id)
+      } else {
+        "no active session".to_string()
+      };
+      cx.editor
+        .set_status(format!("ACP agent: connected ({})", session_info));
+    },
+    None => {
+      cx.editor
+        .set_status("ACP agent: not connected. Use :acp-start to connect.".to_string());
+    },
+  }
+
   Ok(())
 }
 

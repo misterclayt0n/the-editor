@@ -401,6 +401,13 @@ pub struct Editor {
 
   /// Fade mode state for highlighting code context
   pub fade_mode: FadeMode,
+
+  /// ACP (Agent Client Protocol) integration state
+  pub acp:             Option<crate::acp::AcpHandle>,
+  /// ACP configuration
+  pub acp_config:      crate::acp::AcpConfig,
+  /// Permission manager for ACP agent requests
+  pub acp_permissions: crate::acp::PermissionManager,
 }
 
 /// State for the context-aware code fading feature
@@ -1866,6 +1873,9 @@ impl Editor {
       font_size_override: None,
       noop_effect_pending: false,
       fade_mode: FadeMode::default(),
+      acp: None,
+      acp_config: crate::acp::AcpConfig::default(),
+      acp_permissions: crate::acp::PermissionManager::new(),
     };
 
     let scopes = editor.theme.scopes().to_vec();

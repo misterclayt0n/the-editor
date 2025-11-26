@@ -65,8 +65,8 @@ impl acp::Client for EditorClient {
     let (response_tx, response_rx) = oneshot::channel();
 
     let permission = PendingPermission {
-      tool_call:   args.tool_call,
-      options:     args.options,
+      tool_call: args.tool_call,
+      options: args.options,
       response_tx,
     };
 

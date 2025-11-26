@@ -50,26 +50,34 @@ impl PendingPermission {
 
   /// Respond with the selected option
   pub fn respond(self, option_id: PermissionOptionId) {
-    log::info!("[ACP] Permission response: {} -> {}", self.title(), option_id);
+    log::info!(
+      "[ACP] Permission response: {} -> {}",
+      self.title(),
+      option_id
+    );
     let _ = self.response_tx.send(option_id);
   }
 
   /// Find an "allow" option (AllowOnce or AllowAlways)
   pub fn find_allow_option(&self) -> Option<&PermissionOption> {
     use agent_client_protocol::PermissionOptionKind;
-    self
-      .options
-      .iter()
-      .find(|o| matches!(o.kind, PermissionOptionKind::AllowOnce | PermissionOptionKind::AllowAlways))
+    self.options.iter().find(|o| {
+      matches!(
+        o.kind,
+        PermissionOptionKind::AllowOnce | PermissionOptionKind::AllowAlways
+      )
+    })
   }
 
   /// Find a "reject" option (RejectOnce or RejectAlways)
   pub fn find_reject_option(&self) -> Option<&PermissionOption> {
     use agent_client_protocol::PermissionOptionKind;
-    self
-      .options
-      .iter()
-      .find(|o| matches!(o.kind, PermissionOptionKind::RejectOnce | PermissionOptionKind::RejectAlways))
+    self.options.iter().find(|o| {
+      matches!(
+        o.kind,
+        PermissionOptionKind::RejectOnce | PermissionOptionKind::RejectAlways
+      )
+    })
   }
 
   /// Approve using the first available allow option

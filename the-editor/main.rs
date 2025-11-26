@@ -342,3 +342,5 @@ fn position_to_char_index(text: &ropey::Rope, position: &Position) -> usize {
   let col = position.col.min(line.len_chars());
   line_start + col
 }
+
+// hi

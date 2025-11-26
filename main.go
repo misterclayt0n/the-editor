@@ -36,3 +36,5 @@ func main() {
 }
 
 // hello how you doing?
+// how much is 2 + 2?
+// how much is 16 + 16?

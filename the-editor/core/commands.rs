@@ -8270,7 +8270,10 @@ pub fn append_user_prompt_to_acp_buffer(
 
   let text = format!("\n{}\n\n─── {} ───\n", quoted_prompt, model_name);
 
-  append_document_text(editor, doc_id, &text);
+  // Use raw append which works without a view
+  if let Some(doc) = editor.documents.get_mut(&doc_id) {
+    doc.append_text_raw(&text);
+  }
 }
 
 /// Ensure the ACP buffer exists, creating it if necessary.
@@ -8311,7 +8314,23 @@ pub fn append_response_to_acp_buffer(editor: &mut Editor, text: &str) {
     return;
   }
 
-  append_document_text_and_scroll(editor, doc_id, text);
+  // Check if there's a view for transaction-based append, otherwise use raw
+  if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
+    // View exists - use transaction to append and move selection to end
+    if let Some(doc) = editor.documents.get_mut(&doc_id) {
+      let end = doc.text().len_chars();
+      let new_selection = Selection::point(end + text.chars().count());
+      let transaction =
+        Transaction::change(doc.text(), std::iter::once((end, end, Some(text.into()))))
+          .with_selection(new_selection);
+      doc.apply(&transaction, view_id);
+    }
+  } else {
+    // No view - use raw append
+    if let Some(doc) = editor.documents.get_mut(&doc_id) {
+      doc.append_text_raw(text);
+    }
+  }
 
   // Mark editor as needing redraw and request redraw
   editor.needs_redraw = true;
@@ -8319,12 +8338,16 @@ pub fn append_response_to_acp_buffer(editor: &mut Editor, text: &str) {
 }
 
 /// Append text to a document and scroll to show the new content.
+///
+/// If a view exists, uses transaction-based append with selection update.
+/// If no view exists, uses raw append directly on the document.
 fn append_document_text_and_scroll(editor: &mut Editor, doc_id: DocumentId, text: &str) {
   if text.is_empty() {
     return;
   }
 
   if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
+    // View exists - use transaction to append and move selection to end
     if let Some(doc) = editor.documents.get_mut(&doc_id) {
       let end = doc.text().len_chars();
       // Move selection to end so the view follows
@@ -8333,6 +8356,11 @@ fn append_document_text_and_scroll(editor: &mut Editor, doc_id: DocumentId, text
         Transaction::change(doc.text(), std::iter::once((end, end, Some(text.into()))))
           .with_selection(new_selection);
       doc.apply(&transaction, view_id);
+    }
+  } else {
+    // No view - use raw append directly on document
+    if let Some(doc) = editor.documents.get_mut(&doc_id) {
+      doc.append_text_raw(text);
     }
   }
 }
@@ -8400,8 +8428,10 @@ fn sync_acp_buffer_with_response(editor: &mut Editor, doc_id: DocumentId) {
         quoted_prompt, model_name, state.response_text
       );
 
-      // Set the buffer content
-      replace_document_text(editor, doc_id, &content);
+      // Set the buffer content using raw method (works without view)
+      if let Some(doc) = editor.documents.get_mut(&doc_id) {
+        doc.set_text_raw(&content);
+      }
     }
   }
 }

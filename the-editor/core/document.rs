@@ -1781,6 +1781,43 @@ impl Document {
     self.apply_temporary(&transaction, view_id);
   }
 
+  /// Append text to the end of the document without requiring a view.
+  ///
+  /// This is useful for special buffers (like ACP) that need to be updated
+  /// even when they don't have an active view. This method directly modifies
+  /// the underlying Rope without going through the transaction system,
+  /// so it doesn't affect undo history or selections.
+  ///
+  /// IMPORTANT: This resets pending changes to avoid transaction composition errors.
+  pub fn append_text_raw(&mut self, text: &str) {
+    if text.is_empty() {
+      return;
+    }
+    self.text.append(Rope::from_str(text));
+    // Reset changes to match new document length - this is critical to avoid
+    // "assertion failed: self.len_after == other.len" panics when composing transactions
+    self.changes = ChangeSet::new(self.text.slice(..));
+    self.old_state = None;
+    // Mark document as modified
+    self.modified_since_accessed = true;
+  }
+
+  /// Set the entire document text without requiring a view.
+  ///
+  /// This is useful for initializing special buffers that don't have
+  /// an active view yet.
+  ///
+  /// IMPORTANT: This resets pending changes to avoid transaction composition errors.
+  pub fn set_text_raw(&mut self, text: &str) {
+    self.text = Rope::from_str(text);
+    // Reset changes to match new document length - this is critical to avoid
+    // "assertion failed: self.len_after == other.len" panics when composing transactions
+    self.changes = ChangeSet::new(self.text.slice(..));
+    self.old_state = None;
+    // Mark document as modified
+    self.modified_since_accessed = true;
+  }
+
   fn undo_redo_impl(&mut self, view: &mut View, undo: bool) -> bool {
     if undo {
       self.append_changes_to_history(view);

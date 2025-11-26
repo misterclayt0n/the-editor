@@ -685,6 +685,17 @@ impl Application for App {
       return true;
     }
 
+    // Keep redrawing while ACP is streaming responses.
+    // This is necessary because the ACP buffer updates don't wake the winit event loop.
+    if self
+      .editor
+      .acp_response
+      .as_ref()
+      .map_or(false, |r| r.is_streaming)
+    {
+      return true;
+    }
+
     // Keep redrawing while a scroll animation is active.
     // Use same threshold as animate_scroll to prevent micro-animations
     if self.smooth_scroll_enabled

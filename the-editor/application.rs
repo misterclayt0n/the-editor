@@ -736,11 +736,15 @@ impl App {
           if let Some(ref mut state) = self.editor.acp_response {
             state.response_text.push_str(&text);
           }
+
+          // Always append to ACP buffer to keep it in sync
+          crate::core::commands::append_response_to_acp_buffer(&mut self.editor, &text);
+
           log::debug!("[ACP] Text chunk: {} chars", text.len());
         },
         crate::acp::StreamEvent::ToolCall { name, status } => {
           // Inject tool marker into response text for overlay rendering
-          if let Some(ref mut state) = self.editor.acp_response {
+          let marker = if let Some(ref mut state) = self.editor.acp_response {
             let marker = match &status {
               crate::acp::ToolCallStatus::Started => {
                 format!("\n[TOOL:start:{}]\n", name)
@@ -756,6 +760,14 @@ impl App {
               },
             };
             state.response_text.push_str(&marker);
+            marker
+          } else {
+            String::new()
+          };
+
+          // Always append tool marker to ACP buffer
+          if !marker.is_empty() {
+            crate::core::commands::append_response_to_acp_buffer(&mut self.editor, &marker);
           }
 
           // Also set status bar message

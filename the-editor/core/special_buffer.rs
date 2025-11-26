@@ -12,17 +12,20 @@ use crate::core::DocumentId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpecialBufferKind {
   Compilation,
+  Acp,
 }
 
 impl SpecialBufferKind {
   pub const fn display_name(self) -> &'static str {
     match self {
       SpecialBufferKind::Compilation => COMPILATION_BUFFER_NAME,
+      SpecialBufferKind::Acp => ACP_BUFFER_NAME,
     }
   }
 }
 
 pub const COMPILATION_BUFFER_NAME: &str = "*compilation*";
+pub const ACP_BUFFER_NAME: &str = "*acp*";
 
 impl fmt::Display for SpecialBufferKind {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

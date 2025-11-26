@@ -8131,6 +8131,285 @@ fn ensure_compilation_buffer_visible(
   }
 }
 
+// ============================================================================
+// ACP Buffer Management
+// ============================================================================
+
+/// Resolve or create the ACP conversation buffer.
+///
+/// Returns the document ID of the ACP buffer. If we're already in the ACP
+/// buffer, returns it. Otherwise, finds the last used ACP buffer or creates
+/// a new one.
+fn resolve_acp_buffer(editor: &mut Editor, current_doc_id: DocumentId) -> DocumentId {
+  use crate::{
+    core::special_buffer::SpecialBufferKind,
+    editor::Action,
+  };
+
+  // If we're already in the ACP buffer, reuse it
+  if editor.special_buffer_kind(current_doc_id) == Some(SpecialBufferKind::Acp) {
+    editor.touch_special_buffer(current_doc_id);
+    configure_acp_buffer(editor, current_doc_id);
+    return current_doc_id;
+  }
+
+  // Try to find an existing ACP buffer
+  if let Some(last_id) = editor.last_special_buffer(SpecialBufferKind::Acp) {
+    if editor.documents.contains_key(&last_id) {
+      editor.touch_special_buffer(last_id);
+      configure_acp_buffer(editor, last_id);
+      return last_id;
+    }
+    editor.clear_special_buffer(last_id);
+  }
+
+  // Create a new ACP buffer
+  let doc_id = editor.new_file(Action::HorizontalSplit);
+  editor.mark_special_buffer(doc_id, SpecialBufferKind::Acp);
+  configure_acp_buffer(editor, doc_id);
+  doc_id
+}
+
+/// Configure the ACP buffer with appropriate settings.
+fn configure_acp_buffer(editor: &mut Editor, doc_id: DocumentId) {
+  let preferred_view = first_view_id_for_doc(editor, doc_id);
+  let loader = editor.syn_loader.load();
+
+  if let Some(doc) = editor.documents.get_mut(&doc_id) {
+    doc.set_special_buffer_ephemeral(true);
+    if let Some(view_id) = preferred_view {
+      doc.set_preferred_special_buffer_view(Some(view_id));
+    }
+    // Use markdown syntax for the ACP buffer
+    if let Err(err) = doc.set_language_by_language_id("markdown", &loader) {
+      log::warn!("failed to set markdown syntax for ACP buffer: {}", err);
+    }
+  }
+}
+
+/// Ensure the ACP buffer is visible in a view.
+fn ensure_acp_buffer_visible(
+  editor: &mut Editor,
+  doc_id: DocumentId,
+  origin_view: Option<ViewId>,
+) {
+  // Check if buffer is already visible in some view
+  if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
+    if let Some(doc) = editor.documents.get_mut(&doc_id) {
+      doc.set_preferred_special_buffer_view(Some(view_id));
+    }
+    return;
+  }
+
+  // Try to reuse the preferred view
+  let preferred_view = editor
+    .documents
+    .get(&doc_id)
+    .and_then(|doc| doc.preferred_special_buffer_view());
+
+  if let Some(view_id) = preferred_view {
+    if editor.tree.try_get(view_id).is_some() {
+      editor.replace_document_in_view(view_id, doc_id);
+      if let Some(doc) = editor.documents.get_mut(&doc_id) {
+        doc.set_preferred_special_buffer_view(Some(view_id));
+      }
+      return;
+    }
+  }
+
+  let restore_focus = origin_view.filter(|view_id| editor.tree.try_get(*view_id).is_some());
+
+  editor.switch(doc_id, Action::HorizontalSplit);
+
+  let new_view = first_view_id_for_doc(editor, doc_id);
+
+  if let Some(doc) = editor.documents.get_mut(&doc_id) {
+    if let Some(view_id) = new_view {
+      doc.set_preferred_special_buffer_view(Some(view_id));
+      if let Some(restore) = restore_focus {
+        if restore != view_id && editor.tree.try_get(restore).is_some() {
+          editor.focus(restore);
+        }
+      }
+    }
+  }
+}
+
+/// Check if the current document is the ACP buffer.
+pub fn is_in_acp_buffer(editor: &Editor) -> bool {
+  use crate::core::special_buffer::SpecialBufferKind;
+
+  let doc_id = doc!(editor).id;
+  editor.special_buffer_kind(doc_id) == Some(SpecialBufferKind::Acp)
+}
+
+/// Append a user prompt turn to the ACP buffer.
+///
+/// Creates the ACP buffer if it doesn't exist.
+///
+/// Format:
+/// ```
+/// > user prompt text here
+///
+/// ─── model-name ───
+/// ```
+pub fn append_user_prompt_to_acp_buffer(
+  editor: &mut Editor,
+  prompt: &str,
+  model_name: &str,
+) {
+  // Ensure ACP buffer exists (create if needed)
+  let doc_id = ensure_acp_buffer_exists(editor);
+
+  // Format user prompt as blockquote, then model header
+  let quoted_prompt: String = prompt
+    .lines()
+    .map(|line| format!("> {}", line))
+    .collect::<Vec<_>>()
+    .join("\n");
+
+  let text = format!("\n{}\n\n─── {} ───\n", quoted_prompt, model_name);
+
+  append_document_text(editor, doc_id, &text);
+}
+
+/// Ensure the ACP buffer exists, creating it if necessary.
+/// Returns the document ID of the ACP buffer.
+fn ensure_acp_buffer_exists(editor: &mut Editor) -> DocumentId {
+  use crate::{
+    core::special_buffer::SpecialBufferKind,
+    editor::Action,
+  };
+
+  // Check if an ACP buffer already exists
+  if let Some(doc_id) = editor.last_special_buffer(SpecialBufferKind::Acp) {
+    if editor.documents.contains_key(&doc_id) {
+      return doc_id;
+    }
+    editor.clear_special_buffer(doc_id);
+  }
+
+  // Create a new ACP buffer (without splitting - we'll handle visibility separately)
+  let doc_id = editor.new_file(Action::Load);
+  editor.mark_special_buffer(doc_id, SpecialBufferKind::Acp);
+  configure_acp_buffer(editor, doc_id);
+  doc_id
+}
+
+/// Append streaming response text to the ACP buffer.
+pub fn append_response_to_acp_buffer(editor: &mut Editor, text: &str) {
+  use crate::core::special_buffer::SpecialBufferKind;
+
+  // Only append if the ACP buffer already exists
+  // (We don't want to create it just for streaming response - it should be created
+  // by append_user_prompt_to_acp_buffer)
+  let Some(doc_id) = editor.last_special_buffer(SpecialBufferKind::Acp) else {
+    return;
+  };
+
+  if !editor.documents.contains_key(&doc_id) {
+    return;
+  }
+
+  append_document_text_and_scroll(editor, doc_id, text);
+
+  // Mark editor as needing redraw and request redraw
+  editor.needs_redraw = true;
+  the_editor_event::request_redraw();
+}
+
+/// Append text to a document and scroll to show the new content.
+fn append_document_text_and_scroll(editor: &mut Editor, doc_id: DocumentId, text: &str) {
+  if text.is_empty() {
+    return;
+  }
+
+  if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
+    if let Some(doc) = editor.documents.get_mut(&doc_id) {
+      let end = doc.text().len_chars();
+      // Move selection to end so the view follows
+      let new_selection = Selection::point(end + text.chars().count());
+      let transaction =
+        Transaction::change(doc.text(), std::iter::once((end, end, Some(text.into()))))
+          .with_selection(new_selection);
+      doc.apply(&transaction, view_id);
+    }
+  }
+}
+
+/// Open or focus the ACP conversation buffer.
+pub fn acp_buffer(cx: &mut Context) {
+  use crate::core::special_buffer::SpecialBufferKind;
+
+  let current_doc_id = doc!(cx.editor).id;
+
+  // Check if we're already in the ACP buffer
+  if cx.editor.special_buffer_kind(current_doc_id) == Some(SpecialBufferKind::Acp) {
+    cx.editor.set_status("Already in ACP buffer");
+    return;
+  }
+
+  // Find or create the ACP buffer
+  let doc_id = resolve_acp_buffer(cx.editor, current_doc_id);
+
+  // Sync buffer with current acp_response state (in case overlay was used first)
+  sync_acp_buffer_with_response(cx.editor, doc_id);
+
+  let origin_view = Some(view!(cx.editor).id);
+
+  // Ensure it's visible
+  ensure_acp_buffer_visible(cx.editor, doc_id, origin_view);
+
+  // Focus the ACP buffer
+  if let Some(view_id) = first_view_id_for_doc(cx.editor, doc_id) {
+    cx.editor.focus(view_id);
+  }
+}
+
+/// Sync the ACP buffer content with the current acp_response state.
+///
+/// This ensures that if a prompt was made via overlay before opening the buffer,
+/// the buffer will contain the full conversation.
+fn sync_acp_buffer_with_response(editor: &mut Editor, doc_id: DocumentId) {
+  // Get current buffer content length
+  let buffer_len = editor
+    .documents
+    .get(&doc_id)
+    .map(|doc| doc.text().len_chars())
+    .unwrap_or(0);
+
+  // If buffer is empty but we have response state, populate the buffer
+  if buffer_len == 0 {
+    if let Some(ref state) = editor.acp_response {
+      // Build the full conversation content
+      let quoted_prompt: String = state
+        .input_prompt
+        .lines()
+        .map(|line| format!("> {}", line))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+      let model_name = if state.model_name.is_empty() || state.model_name == "default" {
+        "assistant".to_string()
+      } else {
+        state.model_name.clone()
+      };
+
+      let content = format!(
+        "{}\n\n─── {} ───\n{}",
+        quoted_prompt, model_name, state.response_text
+      );
+
+      // Set the buffer content
+      replace_document_text(editor, doc_id, &content);
+    }
+  }
+}
+
+// ============================================================================
+// Shell Buffer Management
+// ============================================================================
+
 enum ShellProcessResult {
   Completed(std::process::ExitStatus),
   Killed,
@@ -8675,7 +8954,11 @@ pub fn update_fade_ranges(cx: &mut Context) {
 ///
 /// This is the main command for interacting with AI coding agents.
 /// The selection text is sent to the agent, and the response will be
-/// streamed back via the ACP overlay.
+/// streamed back via the ACP overlay or ACP buffer.
+///
+/// If called from the ACP buffer (`*acp*`), the response is streamed directly
+/// into the buffer without showing the overlay. If called from any other buffer,
+/// the ACP overlay is shown to display the streaming response.
 pub fn acp_prompt(cx: &mut Context) {
   use crate::{
     acp::PromptContext,
@@ -8689,6 +8972,9 @@ pub fn acp_prompt(cx: &mut Context) {
       .set_error("ACP agent not connected. Use :acp-start first.".to_string());
     return;
   }
+
+  // Check if we're prompting from the ACP buffer
+  let prompting_from_acp_buffer = is_in_acp_buffer(cx.editor);
 
   let context_lines = cx.editor.acp_config.context_lines;
 
@@ -8720,14 +9006,34 @@ pub fn acp_prompt(cx: &mut Context) {
     None => format!("lines {}-{}", context.start_line, context.end_line),
   };
 
+  // Get model name from ACP handle
+  let model_name = cx
+    .editor
+    .acp
+    .as_ref()
+    .and_then(|h| h.model_state())
+    .map(|s| {
+      s.available_models
+        .iter()
+        .find(|m| m.model_id == s.current_model_id)
+        .map(|m| m.name.clone())
+        .unwrap_or_else(|| s.current_model_id.to_string())
+    })
+    .unwrap_or_else(|| "assistant".to_string());
+
   // Initialize ACP response state
+  // Set use_overlay based on whether we're in the ACP buffer
   cx.editor.acp_response = Some(AcpResponseState {
-    context_summary,
+    context_summary: context_summary.clone(),
     input_prompt: prompt_text.clone(),
     response_text: String::new(),
     is_streaming: true,
-    model_name: "default".to_string(), // TODO: Get actual model from agent
+    model_name: model_name.clone(),
+    use_overlay: !prompting_from_acp_buffer,
   });
+
+  // Always append user prompt to ACP buffer (keeps buffer in sync with overlay)
+  append_user_prompt_to_acp_buffer(cx.editor, &prompt_text, &model_name);
 
   cx.editor.set_status(format!(
     "Sending to ACP agent ({} chars)...",
@@ -8743,10 +9049,12 @@ pub fn acp_prompt(cx: &mut Context) {
       cx.editor
         .set_status("Prompt sent, waiting for response...".to_string());
 
-      // Open the ACP overlay to show streaming response
-      cx.callback.push(Box::new(|compositor, _cx| {
-        compositor.replace_or_push(AcpOverlay::ID, AcpOverlay::new());
-      }));
+      // Only show overlay if not prompting from ACP buffer
+      if !prompting_from_acp_buffer {
+        cx.callback.push(Box::new(|compositor, _cx| {
+          compositor.replace_or_push(AcpOverlay::ID, AcpOverlay::new());
+        }));
+      }
     },
     Err(err) => {
       // Clear the response state on error

@@ -31,9 +31,13 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Model picker.
   - [x] Hover that streams agents response.
   - [ ] Render the entire conversation into a buffer, from where I should also be able to send messages through the same select -> action model.
+  - [ ] Permission prompt -> should be something similar to a completion/code-action.
+  - [ ] Shell commands handling.
   - [ ] *Maybe* some debug info? Like what's the context of the agent? how many tokens are being used? things of the nature, tho I'm not sure we'll be able to get this data from the ACP protocol.
   - [ ] Render tool calls?
   - [x] Fix the issue where every time I save a file it gets autoreloaded.
+
+- [ ] Since we now have a lot of special buffers, we need a system to easily toggle them, maybe in an overlay. We should be able to bind arbitrary buffers to this system tho, not just special buffers.
   
 #### Fixes
 - [x] Render fonts correctly in the picker prompt menu (they're too spaced).
@@ -51,4 +55,4 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Fix an issue regarding the touchpad scrolling (wayland in particular, simple way to reproduce this is block the screen and unlock it afterwards)
 
 ### Beyond
-- [ ] File watcher (I'll wait to see helix's implementation on this, they're making big advancements: https://github.com/helix-editor/helix/pull/14544).
+- [x] File watcher (I'll wait to see helix's implementation on this, they're making big advancements: https://github.com/helix-editor/helix/pull/14544).

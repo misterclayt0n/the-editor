@@ -35,17 +35,4 @@ func main() {
 	}
 }
 
-// let's just have something like this:
-// //
-// ```go
-// package main
-//
-// import "fmt"
-// 
-// func main() {
-//     fmt.Println("hello world")
-// }
-// ```
-func hello() {
-	
-}
+// hello how you doing?

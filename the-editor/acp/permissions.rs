@@ -1,87 +1,105 @@
-//! Permission handling for ACP file operations.
+//! Permission handling for ACP tool calls.
 //!
-//! When an ACP agent wants to read or write files, we require user approval.
-//! This module provides the types and logic for managing permission requests.
+//! When an ACP agent wants to perform an operation that requires user approval,
+//! it sends a permission request with a list of options. The user selects one
+//! option, and we respond with the selected option's ID.
 
-use std::path::PathBuf;
+use std::sync::Arc;
 
+use agent_client_protocol::{
+  PermissionOption,
+  PermissionOptionId,
+  ToolCallUpdate,
+};
 use tokio::sync::oneshot;
 
 /// A pending permission request from the ACP agent.
-#[derive(Debug)]
 pub struct PendingPermission {
-  /// Unique identifier for this permission request
-  pub id:          String,
-  /// The kind of permission being requested
-  pub kind:        PermissionKind,
-  /// Human-readable description of what the agent wants to do
-  pub description: String,
-  /// Channel to send the user's response
-  pub response_tx: oneshot::Sender<bool>,
+  /// The tool call requiring permission
+  pub tool_call:   ToolCallUpdate,
+  /// Available options for the user to choose from
+  pub options:     Vec<PermissionOption>,
+  /// Channel to send the user's selected option
+  pub response_tx: oneshot::Sender<PermissionOptionId>,
+}
+
+impl std::fmt::Debug for PendingPermission {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("PendingPermission")
+      .field("tool_call", &self.title())
+      .field("options", &self.options.len())
+      .finish()
+  }
 }
 
 impl PendingPermission {
-  /// Approve this permission request.
-  pub fn approve(self) {
-    let _ = self.response_tx.send(true);
+  /// Get the title of the tool call
+  pub fn title(&self) -> &str {
+    self
+      .tool_call
+      .fields
+      .title
+      .as_deref()
+      .unwrap_or("Permission Request")
   }
 
-  /// Deny this permission request.
-  pub fn deny(self) {
-    let _ = self.response_tx.send(false);
-  }
-
-  /// Get a short summary for display in the statusline.
+  /// Get a short summary for display
   pub fn short_summary(&self) -> String {
-    match &self.kind {
-      PermissionKind::ReadFile(path) => {
-        format!(
-          "Read: {}",
-          path.file_name().unwrap_or_default().to_string_lossy()
-        )
-      },
-      PermissionKind::WriteFile(path) => {
-        format!(
-          "Write: {}",
-          path.file_name().unwrap_or_default().to_string_lossy()
-        )
-      },
-      PermissionKind::CreateTerminal => "Create terminal".to_string(),
-      PermissionKind::Other(desc) => desc.clone(),
+    self.title().to_string()
+  }
+
+  /// Respond with the selected option
+  pub fn respond(self, option_id: PermissionOptionId) {
+    log::info!("[ACP] Permission response: {} -> {}", self.title(), option_id);
+    let _ = self.response_tx.send(option_id);
+  }
+
+  /// Find an "allow" option (AllowOnce or AllowAlways)
+  pub fn find_allow_option(&self) -> Option<&PermissionOption> {
+    use agent_client_protocol::PermissionOptionKind;
+    self
+      .options
+      .iter()
+      .find(|o| matches!(o.kind, PermissionOptionKind::AllowOnce | PermissionOptionKind::AllowAlways))
+  }
+
+  /// Find a "reject" option (RejectOnce or RejectAlways)
+  pub fn find_reject_option(&self) -> Option<&PermissionOption> {
+    use agent_client_protocol::PermissionOptionKind;
+    self
+      .options
+      .iter()
+      .find(|o| matches!(o.kind, PermissionOptionKind::RejectOnce | PermissionOptionKind::RejectAlways))
+  }
+
+  /// Approve using the first available allow option
+  pub fn approve(self) {
+    if let Some(opt) = self.find_allow_option() {
+      let id = opt.id.clone();
+      self.respond(id);
+    } else if let Some(first) = self.options.first() {
+      // Fallback to first option
+      let id = first.id.clone();
+      self.respond(id);
+    } else {
+      // No options - create a synthetic "allow" response
+      self.respond(PermissionOptionId(Arc::from("allow")));
     }
   }
-}
 
-/// The kind of permission being requested.
-#[derive(Debug, Clone)]
-pub enum PermissionKind {
-  /// Read a file
-  ReadFile(PathBuf),
-  /// Write to a file
-  WriteFile(PathBuf),
-  /// Create a terminal
-  CreateTerminal,
-  /// Other permission type
-  Other(String),
-}
-
-impl PermissionKind {
-  /// Get the path associated with this permission, if any.
-  pub fn path(&self) -> Option<&PathBuf> {
-    match self {
-      PermissionKind::ReadFile(p) | PermissionKind::WriteFile(p) => Some(p),
-      _ => None,
+  /// Deny using the first available reject option
+  pub fn deny(self) {
+    if let Some(opt) = self.find_reject_option() {
+      let id = opt.id.clone();
+      self.respond(id);
+    } else if let Some(last) = self.options.last() {
+      // Fallback to last option (often reject)
+      let id = last.id.clone();
+      self.respond(id);
+    } else {
+      // No options - create a synthetic "reject" response
+      self.respond(PermissionOptionId(Arc::from("reject")));
     }
-  }
-
-  /// Check if this is a read operation.
-  pub fn is_read(&self) -> bool {
-    matches!(self, PermissionKind::ReadFile(_))
-  }
-
-  /// Check if this is a write operation.
-  pub fn is_write(&self) -> bool {
-    matches!(self, PermissionKind::WriteFile(_))
   }
 }
 
@@ -105,6 +123,11 @@ impl PermissionManager {
 
   /// Add a pending permission request.
   pub fn push(&mut self, permission: PendingPermission) {
+    log::info!(
+      "[ACP] Permission request added: {} ({} options)",
+      permission.title(),
+      permission.options.len()
+    );
     self.pending.push(permission);
   }
 
@@ -172,8 +195,6 @@ impl PermissionManager {
   }
 
   /// Approve a permission at a specific index.
-  /// Returns true if the permission was approved, false if index was out of
-  /// bounds.
   pub fn approve_at(&mut self, index: usize) -> bool {
     if index < self.pending.len() {
       let permission = self.pending.remove(index);
@@ -185,8 +206,6 @@ impl PermissionManager {
   }
 
   /// Deny a permission at a specific index.
-  /// Returns true if the permission was denied, false if index was out of
-  /// bounds.
   pub fn deny_at(&mut self, index: usize) -> bool {
     if index < self.pending.len() {
       let permission = self.pending.remove(index);

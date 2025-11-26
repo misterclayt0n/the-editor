@@ -9129,6 +9129,72 @@ pub fn acp_permission_popup(cx: &mut Context) {
   }));
 }
 
+/// Add fake permission requests for testing the permission popup.
+///
+/// This is a development/testing command that adds sample permission requests
+/// to test the UI without needing a real ACP agent.
+#[cfg(debug_assertions)]
+pub fn acp_test_permissions(cx: &mut Context) {
+  use std::sync::Arc;
+
+  use agent_client_protocol::{
+    PermissionOption,
+    PermissionOptionId,
+    PermissionOptionKind,
+    ToolCallId,
+    ToolCallUpdate,
+    ToolCallUpdateFields,
+  };
+  use tokio::sync::oneshot;
+
+  use crate::acp::PendingPermission;
+
+  // Create test permission options
+  let make_options = || {
+    vec![
+      PermissionOption {
+        id:   PermissionOptionId(Arc::from("allow")),
+        name: "Allow".to_string(),
+        kind: PermissionOptionKind::AllowOnce,
+        meta: None,
+      },
+      PermissionOption {
+        id:   PermissionOptionId(Arc::from("reject")),
+        name: "Reject".to_string(),
+        kind: PermissionOptionKind::RejectOnce,
+        meta: None,
+      },
+    ]
+  };
+
+  // Add a few test permissions
+  let test_permissions = vec![
+    "Read main.rs",
+    "Write to lib.rs",
+    "Run: ls -la",
+    "Edit Cargo.toml",
+    "Execute npm install",
+  ];
+
+  for (i, title) in test_permissions.iter().enumerate() {
+    let (tx, _rx) = oneshot::channel();
+    cx.editor.acp_permissions.push(PendingPermission {
+      tool_call:   ToolCallUpdate {
+        id:     ToolCallId(Arc::from(format!("test-{}", i))),
+        fields: ToolCallUpdateFields {
+          title: Some(title.to_string()),
+          ..Default::default()
+        },
+        meta:   None,
+      },
+      options:     make_options(),
+      response_tx: tx,
+    });
+  }
+
+  cx.editor.set_status("Added 5 test permissions".to_string());
+}
+
 /// Open the model selector to choose an AI model.
 ///
 /// Shows a picker with all available models from the ACP agent.

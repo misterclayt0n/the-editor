@@ -34,7 +34,6 @@ pub use context::{
 pub use handle::AcpHandle;
 pub use permissions::{
   PendingPermission,
-  PermissionKind,
   PermissionManager,
 };
 use serde::{

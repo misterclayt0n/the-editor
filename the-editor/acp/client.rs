@@ -3,11 +3,6 @@
 //! This module implements the `acp::Client` trait, which defines how the editor
 //! responds to requests and notifications from the ACP agent.
 
-use std::sync::atomic::{
-  AtomicU64,
-  Ordering,
-};
-
 use agent_client_protocol as acp;
 use tokio::sync::{
   mpsc,
@@ -16,19 +11,9 @@ use tokio::sync::{
 
 use super::{
   PendingPermission,
-  PermissionKind,
   StreamEvent,
   ToolCallStatus,
 };
-
-/// Counter for generating unique permission request IDs.
-static PERMISSION_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Generate a unique permission request ID.
-fn next_permission_id() -> String {
-  let id = PERMISSION_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-  format!("perm-{}", id)
-}
 
 /// The editor's ACP client implementation.
 ///
@@ -53,45 +38,65 @@ impl EditorClient {
       permission_tx,
     }
   }
-
-  /// Request permission from the user for a file operation.
-  async fn request_permission(&self, kind: PermissionKind, description: String) -> bool {
-    let (response_tx, response_rx) = oneshot::channel();
-
-    let permission = PendingPermission {
-      id: next_permission_id(),
-      kind,
-      description,
-      response_tx,
-    };
-
-    // Send permission request to editor
-    if self.permission_tx.send(permission).is_err() {
-      log::error!("Failed to send permission request - channel closed");
-      return false;
-    }
-
-    // Wait for user response
-    match response_rx.await {
-      Ok(approved) => approved,
-      Err(_) => {
-        log::error!("Permission response channel closed");
-        false
-      },
-    }
-  }
 }
 
 #[async_trait::async_trait(?Send)]
 impl acp::Client for EditorClient {
   /// Handle permission requests from the agent.
+  ///
+  /// This is the main permission flow - when the agent wants to perform an
+  /// operation that requires user approval, it sends a request with options.
   async fn request_permission(
     &self,
-    _args: acp::RequestPermissionRequest,
+    args: acp::RequestPermissionRequest,
   ) -> acp::Result<acp::RequestPermissionResponse> {
-    // For now, we handle permissions at the operation level (read/write file)
-    // rather than through the generic permission request
-    Err(acp::Error::method_not_found())
+    let title = args
+      .tool_call
+      .fields
+      .title
+      .as_deref()
+      .unwrap_or("Permission Request");
+    log::info!(
+      "[ACP] Permission request: {} ({} options)",
+      title,
+      args.options.len()
+    );
+
+    let (response_tx, response_rx) = oneshot::channel();
+
+    let permission = PendingPermission {
+      tool_call:   args.tool_call,
+      options:     args.options,
+      response_tx,
+    };
+
+    // Send permission request to editor
+    if self.permission_tx.send(permission).is_err() {
+      log::error!("[ACP] Failed to send permission request - channel closed");
+      return Err(acp::Error {
+        code:    -32603,
+        message: "Internal error: permission channel closed".into(),
+        data:    None,
+      });
+    }
+
+    // Wait for user response
+    match response_rx.await {
+      Ok(option_id) => {
+        log::info!("[ACP] Permission response received: {}", option_id);
+        Ok(acp::RequestPermissionResponse {
+          outcome: acp::RequestPermissionOutcome::Selected { option_id },
+          meta:    None,
+        })
+      },
+      Err(_) => {
+        log::error!("[ACP] Permission response channel closed");
+        Ok(acp::RequestPermissionResponse {
+          outcome: acp::RequestPermissionOutcome::Cancelled,
+          meta:    None,
+        })
+      },
+    }
   }
 
   /// Handle file write requests from the agent.
@@ -99,23 +104,10 @@ impl acp::Client for EditorClient {
     &self,
     args: acp::WriteTextFileRequest,
   ) -> acp::Result<acp::WriteTextFileResponse> {
-    let path = args.path.clone();
-    let description = format!("Agent wants to write to: {}", path.display());
-
-    let approved = self
-      .request_permission(PermissionKind::WriteFile(path.clone()), description)
-      .await;
-
-    if !approved {
-      return Err(acp::Error {
-        code:    -32001,
-        message: "Permission denied by user".into(),
-        data:    None,
-      });
-    }
+    log::info!("[ACP] Write file request: {:?}", args.path);
 
     // Create parent directories if needed
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = args.path.parent() {
       if let Err(e) = tokio::fs::create_dir_all(parent).await {
         return Err(acp::Error {
           code:    -32603,
@@ -126,7 +118,7 @@ impl acp::Client for EditorClient {
     }
 
     // Write the file
-    if let Err(e) = tokio::fs::write(&path, &args.content).await {
+    if let Err(e) = tokio::fs::write(&args.path, &args.content).await {
       return Err(acp::Error {
         code:    -32603,
         message: format!("Failed to write file: {}", e),
@@ -134,7 +126,7 @@ impl acp::Client for EditorClient {
       });
     }
 
-    log::info!("ACP: Wrote file {:?}", args.path);
+    log::info!("[ACP] Wrote file {:?}", args.path);
     Ok(acp::WriteTextFileResponse { meta: None })
   }
 
@@ -143,23 +135,10 @@ impl acp::Client for EditorClient {
     &self,
     args: acp::ReadTextFileRequest,
   ) -> acp::Result<acp::ReadTextFileResponse> {
-    let path = args.path.clone();
-    let description = format!("Agent wants to read: {}", path.display());
-
-    let approved = self
-      .request_permission(PermissionKind::ReadFile(path.clone()), description)
-      .await;
-
-    if !approved {
-      return Err(acp::Error {
-        code:    -32001,
-        message: "Permission denied by user".into(),
-        data:    None,
-      });
-    }
+    log::info!("[ACP] Read file request: {:?}", args.path);
 
     // Read the file
-    let content = match tokio::fs::read_to_string(&path).await {
+    let content = match tokio::fs::read_to_string(&args.path).await {
       Ok(content) => content,
       Err(e) => {
         return Err(acp::Error {
@@ -170,7 +149,7 @@ impl acp::Client for EditorClient {
       },
     };
 
-    log::info!("ACP: Read file {:?}", args.path);
+    log::info!("[ACP] Read file {:?}", args.path);
     Ok(acp::ReadTextFileResponse {
       content,
       meta: None,
@@ -244,7 +223,7 @@ impl acp::Client for EditorClient {
       },
       acp::SessionUpdate::ToolCallUpdate(update) => {
         // Log tool call progress
-        log::debug!("ACP tool call update: {:?}", update);
+        log::debug!("[ACP] Tool call update: {:?}", update);
       },
       acp::SessionUpdate::AgentThoughtChunk { .. } => {
         // Agent thinking - could display in status or ignore

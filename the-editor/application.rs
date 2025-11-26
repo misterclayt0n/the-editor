@@ -830,13 +830,28 @@ impl App {
     }
 
     // Add collected permissions to the manager
+    let had_permissions = self.editor.acp_permissions.has_pending();
+    for permission in &permissions {
+      log::info!(
+        "[ACP] Received permission request: {} ({} options)",
+        permission.title(),
+        permission.options.len()
+      );
+    }
     for permission in permissions {
       self.editor.acp_permissions.push(permission);
     }
 
-    // If there are pending permissions, show a status message
-    if let Some(msg) = self.editor.acp_permissions.status_message() {
-      self.editor.set_status(format!("{} (y/n)", msg));
+    // Auto-open permission popup when new permissions arrive
+    if !had_permissions && self.editor.acp_permissions.has_pending() {
+      log::info!(
+        "[ACP] Opening permission popup, {} pending",
+        self.editor.acp_permissions.pending_count()
+      );
+      use crate::ui::components::AcpPermissionPopup;
+      self
+        .compositor
+        .replace_or_push(AcpPermissionPopup::ID, AcpPermissionPopup::new());
     }
 
     // Check for pending model selection from the picker

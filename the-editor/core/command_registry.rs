@@ -958,6 +958,23 @@ impl CommandRegistry {
         ..Signature::DEFAULT
       },
     ));
+
+    // Debug-only test command for permissions
+    #[cfg(debug_assertions)]
+    self.register(TypableCommand::new(
+      "acp-test-permissions",
+      &["acptp"],
+      "Add fake permission requests for testing",
+      |cx, _args, _event| {
+        crate::core::commands::acp_test_permissions(cx);
+        Ok(())
+      },
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 

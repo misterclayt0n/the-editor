@@ -1,7 +1,7 @@
 //! ACP Permission Popup component.
 //!
-//! Displays pending permission requests from the ACP agent in a popup menu.
-//! Users can approve or deny individual permissions or handle them in bulk.
+//! Displays a simple yes/no prompt for the current pending permission request.
+//! Styled identically to the code action menu.
 
 use the_editor_renderer::{
   Color,
@@ -12,13 +12,16 @@ use the_editor_renderer::{
 };
 
 use crate::{
-  acp::PermissionKind,
   core::{
     animation::{
       AnimationHandle,
       presets,
     },
-    graphics::Rect,
+    graphics::{
+      CursorKind,
+      Rect,
+    },
+    position::Position,
   },
   ui::{
     UI_FONT_SIZE,
@@ -30,24 +33,23 @@ use crate::{
       EventResult,
       Surface,
     },
+    popup_positioning::{
+      calculate_cursor_position,
+      position_popup_near_cursor,
+    },
     theme_color_to_renderer_color,
   },
 };
 
-const MAX_VISIBLE_ITEMS: usize = 10;
 const HORIZONTAL_PADDING: f32 = 12.0;
 const VERTICAL_PADDING: f32 = 10.0;
-const MIN_POPUP_WIDTH: f32 = 300.0;
-const MAX_POPUP_WIDTH: f32 = 500.0;
-const ITEM_HEIGHT: f32 = 24.0;
-const HEADER_HEIGHT: f32 = 28.0;
-const FOOTER_HEIGHT: f32 = 24.0;
+const MIN_MENU_WIDTH: f32 = 200.0;
+const MAX_MENU_WIDTH: f32 = 400.0;
 
-/// Popup component for managing ACP permission requests.
+/// Popup component for approving/denying a single ACP permission request.
 pub struct AcpPermissionPopup {
-  cursor:        usize,
-  scroll_offset: usize,
-  animation:     AnimationHandle<f32>,
+  cursor:    usize, // 0 = Yes, 1 = No
+  animation: AnimationHandle<f32>,
 }
 
 impl AcpPermissionPopup {
@@ -56,78 +58,8 @@ impl AcpPermissionPopup {
   pub fn new() -> Self {
     let (duration, easing) = presets::POPUP;
     Self {
-      cursor:        0,
-      scroll_offset: 0,
-      animation:     AnimationHandle::new(0.0, 1.0, duration, easing),
-    }
-  }
-
-  fn move_cursor(&mut self, delta: isize, count: usize) {
-    if count == 0 {
-      return;
-    }
-
-    let len = count as isize;
-    let new_index = (self.cursor as isize + delta).clamp(0, len - 1);
-    self.cursor = new_index as usize;
-    self.ensure_cursor_visible(count);
-  }
-
-  fn ensure_cursor_visible(&mut self, count: usize) {
-    if count == 0 {
-      self.scroll_offset = 0;
-      return;
-    }
-
-    if self.cursor < self.scroll_offset {
-      self.scroll_offset = self.cursor;
-    } else if self.cursor >= self.scroll_offset + MAX_VISIBLE_ITEMS {
-      self.scroll_offset = self.cursor + 1 - MAX_VISIBLE_ITEMS;
-    }
-  }
-
-  fn visible_range(&self, count: usize) -> (usize, usize) {
-    if count == 0 {
-      return (0, 0);
-    }
-
-    let start = self.scroll_offset.min(count.saturating_sub(1));
-    let remaining = count - start;
-    let visible = remaining.min(MAX_VISIBLE_ITEMS);
-    (start, start + visible)
-  }
-
-  fn permission_icon(kind: &PermissionKind) -> &'static str {
-    match kind {
-      PermissionKind::ReadFile(_) => "R",
-      PermissionKind::WriteFile(_) => "W",
-      PermissionKind::CreateTerminal => "T",
-      PermissionKind::Other(_) => "?",
-    }
-  }
-
-  fn permission_label(kind: &PermissionKind) -> String {
-    match kind {
-      PermissionKind::ReadFile(path) => {
-        format!(
-          "Read: {}",
-          path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.display().to_string())
-        )
-      },
-      PermissionKind::WriteFile(path) => {
-        format!(
-          "Write: {}",
-          path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.display().to_string())
-        )
-      },
-      PermissionKind::CreateTerminal => "Create terminal".to_string(),
-      PermissionKind::Other(desc) => desc.clone(),
+      cursor:    0,
+      animation: AnimationHandle::new(0.0, 1.0, duration, easing),
     }
   }
 
@@ -145,298 +77,209 @@ impl Default for AcpPermissionPopup {
 }
 
 impl Component for AcpPermissionPopup {
-  fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> EventResult {
-    let count = ctx.editor.acp_permissions.pending_count();
-
+  fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
     // Auto-close if no permissions pending
-    if count == 0 {
+    if cx.editor.acp_permissions.pending_count() == 0 {
       return Self::close_popup();
     }
 
-    match event {
-      Event::Key(key) => {
-        // Clamp cursor to valid range
-        if self.cursor >= count {
-          self.cursor = count.saturating_sub(1);
-        }
+    let Event::Key(key) = event else {
+      return EventResult::Ignored(None);
+    };
 
-        match (key.code, key.ctrl, key.alt, key.shift) {
-          // Navigation
-          (Key::Char('j') | Key::Down, false, false, false) => {
-            self.move_cursor(1, count);
-            EventResult::Consumed(None)
-          },
-          (Key::Char('k') | Key::Up, false, false, false) => {
-            self.move_cursor(-1, count);
-            EventResult::Consumed(None)
-          },
+    match (key.code, key.ctrl, key.alt, key.shift) {
+      // Close
+      (Key::Escape, ..) => Self::close_popup(),
 
-          // Approve selected
-          (Key::Char('y') | Key::Enter, false, false, false) => {
-            if ctx.editor.acp_permissions.approve_at(self.cursor) {
-              ctx.editor.set_status("Permission approved".to_string());
-              // Clamp cursor after removal
-              let new_count = ctx.editor.acp_permissions.pending_count();
-              if self.cursor >= new_count && new_count > 0 {
-                self.cursor = new_count - 1;
-              }
-            }
-            // Auto-close if no more permissions
-            if ctx.editor.acp_permissions.pending_count() == 0 {
-              return Self::close_popup();
-            }
-            EventResult::Consumed(None)
-          },
+      // Navigate between Yes/No
+      (Key::Up, ..)
+      | (Key::Char('k'), false, false, false)
+      | (Key::Left, ..)
+      | (Key::Char('h'), false, false, false) => {
+        self.cursor = 0;
+        EventResult::Consumed(None)
+      },
+      (Key::Down, ..)
+      | (Key::Char('j'), false, false, false)
+      | (Key::Right, ..)
+      | (Key::Char('l'), false, false, false) => {
+        self.cursor = 1;
+        EventResult::Consumed(None)
+      },
 
-          // Deny selected
-          (Key::Char('n'), false, false, false) => {
-            if ctx.editor.acp_permissions.deny_at(self.cursor) {
-              ctx.editor.set_status("Permission denied".to_string());
-              // Clamp cursor after removal
-              let new_count = ctx.editor.acp_permissions.pending_count();
-              if self.cursor >= new_count && new_count > 0 {
-                self.cursor = new_count - 1;
-              }
-            }
-            // Auto-close if no more permissions
-            if ctx.editor.acp_permissions.pending_count() == 0 {
-              return Self::close_popup();
-            }
-            EventResult::Consumed(None)
-          },
-
-          // Approve all (Shift+Y)
-          (Key::Char('Y'), false, false, true) | (Key::Char('y'), false, false, true) => {
-            let approved_count = ctx.editor.acp_permissions.pending_count();
-            ctx.editor.acp_permissions.approve_all();
-            ctx
-              .editor
-              .set_status(format!("Approved {} permissions", approved_count));
-            Self::close_popup()
-          },
-
-          // Deny all (Shift+N)
-          (Key::Char('N'), false, false, true) | (Key::Char('n'), false, false, true) => {
-            let denied_count = ctx.editor.acp_permissions.pending_count();
-            ctx.editor.acp_permissions.deny_all();
-            ctx
-              .editor
-              .set_status(format!("Denied {} permissions", denied_count));
-            Self::close_popup()
-          },
-
-          // Close without action
-          (Key::Escape | Key::Char('q'), false, false, false) => Self::close_popup(),
-
-          _ => EventResult::Ignored(None),
+      // Quick approve with 'y'
+      (Key::Char('y'), false, false, false) => {
+        cx.editor.acp_permissions.approve_next();
+        if cx.editor.acp_permissions.pending_count() == 0 {
+          Self::close_popup()
+        } else {
+          EventResult::Consumed(None)
         }
       },
+
+      // Quick deny with 'n'
+      (Key::Char('n'), false, false, false) => {
+        cx.editor.acp_permissions.deny_next();
+        if cx.editor.acp_permissions.pending_count() == 0 {
+          Self::close_popup()
+        } else {
+          EventResult::Consumed(None)
+        }
+      },
+
+      // Confirm selection with Enter
+      (Key::Enter | Key::NumpadEnter, ..) => {
+        if self.cursor == 0 {
+          cx.editor.acp_permissions.approve_next();
+        } else {
+          cx.editor.acp_permissions.deny_next();
+        }
+        if cx.editor.acp_permissions.pending_count() == 0 {
+          Self::close_popup()
+        } else {
+          self.cursor = 0; // Reset to Yes for next permission
+          EventResult::Consumed(None)
+        }
+      },
+
       _ => EventResult::Ignored(None),
     }
   }
 
-  fn render(&mut self, _area: Rect, surface: &mut Surface, ctx: &mut Context) {
-    let permissions = ctx.editor.acp_permissions.pending_ref();
-    let count = permissions.len();
-
-    if count == 0 {
+  fn render(&mut self, _area: Rect, surface: &mut Surface, cx: &mut Context) {
+    let Some(permission) = cx.editor.acp_permissions.peek() else {
       return;
-    }
+    };
 
-    // Update animation
-    self.animation.update(ctx.dt);
-    let anim_t = *self.animation.current();
-    let alpha = anim_t;
-    let scale = 0.95 + (anim_t * 0.05);
+    let font_state = surface.save_font_state();
 
-    // Get theme colors
-    let theme = &ctx.editor.theme;
-    let bg_style = theme.get("ui.popup");
-    let text_style = theme.get("ui.text");
-    let selection_style = theme.get("ui.menu.selected");
+    self.animation.update(cx.dt);
+    let eased = *self.animation.current();
+    let alpha = eased;
+    let slide_offset = (1.0 - eased) * 8.0;
+    let scale = 0.95 + eased * 0.05;
 
-    let mut bg_color = bg_style
+    let theme = &cx.editor.theme;
+    let bg_color = theme
+      .get("ui.popup")
       .bg
       .map(theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.12, 0.12, 0.15, 1.0));
-    let mut text_color = text_style
+    let mut text_color = theme
+      .get("ui.text")
       .fg
       .map(theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
-    let mut selection_bg = selection_style
+    let mut selected_fg = theme
+      .get("ui.menu.selected")
+      .fg
+      .map(theme_color_to_renderer_color)
+      .unwrap_or(Color::new(1.0, 1.0, 1.0, 1.0));
+    let selected_bg = theme
+      .get("ui.menu.selected")
       .bg
       .map(theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.2, 0.3, 0.5, 1.0));
-    let mut dim_color = Color::new(0.6, 0.6, 0.6, 1.0);
+      .unwrap_or(Color::new(0.25, 0.3, 0.45, 1.0));
 
-    bg_color.a *= alpha;
     text_color.a *= alpha;
-    selection_bg.a *= alpha;
-    dim_color.a *= alpha;
+    selected_fg.a *= alpha;
 
-    // Save font state
-    let font_state = surface.save_font_state();
+    let Some(cursor_pos) = calculate_cursor_position(cx, surface) else {
+      surface.restore_font_state(font_state);
+      return;
+    };
+
     surface.configure_font(&font_state.family, UI_FONT_SIZE);
+    let char_width = surface.cell_width().max(UI_FONT_WIDTH.max(1.0));
+    let line_height = surface.cell_height().max(UI_FONT_SIZE + 4.0);
 
-    let cell_width = surface.cell_width().max(UI_FONT_WIDTH);
+    // Build the label from the tool call title
+    let label = permission.title();
+    let label_width = label.chars().count() as f32 * char_width;
+
+    // Menu has: label row, then Yes/No row
+    let options = ["Yes (y)", "No (n)"];
+    let options_width = options.iter().map(|s| s.len()).max().unwrap_or(6) as f32 * char_width;
+
+    let menu_width = (label_width + HORIZONTAL_PADDING * 2.0)
+      .max(options_width * 2.0 + HORIZONTAL_PADDING * 3.0)
+      .clamp(MIN_MENU_WIDTH, MAX_MENU_WIDTH);
+    let menu_height = (2.0 * line_height) + (VERTICAL_PADDING * 2.0);
+
     let viewport_width = surface.width() as f32;
     let viewport_height = surface.height() as f32;
 
-    // Calculate dimensions
-    let visible_items = count.min(MAX_VISIBLE_ITEMS);
-    let content_height =
-      HEADER_HEIGHT + (visible_items as f32 * ITEM_HEIGHT) + FOOTER_HEIGHT + VERTICAL_PADDING * 2.0;
-
-    // Calculate max label width
-    let max_label_width = permissions
-      .iter()
-      .map(|p| Self::permission_label(&p.kind).chars().count())
-      .max()
-      .unwrap_or(20) as f32
-      * cell_width;
-
-    let content_width = (max_label_width + HORIZONTAL_PADDING * 4.0 + cell_width * 4.0)
-      .clamp(MIN_POPUP_WIDTH, MAX_POPUP_WIDTH);
-
-    // Position popup in center-top area
-    let popup_width = content_width * scale;
-    let popup_height = content_height * scale;
-    let popup_x = (viewport_width - popup_width) / 2.0;
-    let popup_y = viewport_height * 0.15; // 15% from top
-
-    // Draw background
-    let corner_radius = 8.0;
-    surface.draw_rounded_rect(
-      popup_x,
-      popup_y,
-      popup_width,
-      popup_height,
-      corner_radius,
-      bg_color,
+    let popup_pos = position_popup_near_cursor(
+      cursor_pos,
+      menu_width,
+      menu_height,
+      viewport_width,
+      viewport_height,
+      slide_offset,
+      scale,
+      None,
     );
 
-    // Draw border
-    let mut border_color = Color::new(0.3, 0.3, 0.35, 0.8);
-    border_color.a *= alpha;
-    surface.draw_rounded_rect_stroke(
-      popup_x,
-      popup_y,
-      popup_width,
-      popup_height,
-      corner_radius,
-      1.0,
-      border_color,
-    );
+    let anim_width = menu_width * scale;
+    let anim_height = menu_height * scale;
+    let anim_x = popup_pos.x;
+    let anim_y = popup_pos.y;
 
-    // Draw content
-    surface.with_overlay_region(popup_x, popup_y, popup_width, popup_height, |surface| {
-      let content_x = popup_x + HORIZONTAL_PADDING;
-      let mut y = popup_y + VERTICAL_PADDING;
+    surface.draw_rounded_rect(anim_x, anim_y, anim_width, anim_height, 6.0, bg_color);
 
-      // Header
-      let header_text = format!("ACP Permissions ({} pending)", count);
+    surface.with_overlay_region(anim_x, anim_y, anim_width, anim_height, |surface| {
+      // Row 1: Permission label
+      let y1 = anim_y + VERTICAL_PADDING;
       surface.draw_text(TextSection {
-        position: (content_x, y + UI_FONT_SIZE),
+        position: (anim_x + HORIZONTAL_PADDING, y1),
         texts:    vec![TextSegment {
-          content: header_text,
+          content: label.to_string(),
           style:   TextStyle {
             size:  UI_FONT_SIZE,
             color: text_color,
           },
         }],
       });
-      y += HEADER_HEIGHT;
 
-      // Separator line
-      let mut sep_color = Color::new(0.3, 0.3, 0.35, 0.5);
-      sep_color.a *= alpha;
-      surface.draw_rect(
-        content_x,
-        y - 4.0,
-        popup_width - HORIZONTAL_PADDING * 2.0,
-        1.0,
-        sep_color,
-      );
+      // Row 2: Yes / No options
+      let y2 = y1 + line_height;
+      let option_width = (anim_width - HORIZONTAL_PADDING * 2.0) / 2.0;
 
-      // Permission items
-      let (start, end) = self.visible_range(count);
-      for (idx, permission) in permissions.iter().enumerate().skip(start).take(end - start) {
-        let is_selected = idx == self.cursor;
+      for (i, opt) in options.iter().enumerate() {
+        let opt_x = anim_x + HORIZONTAL_PADDING + (i as f32 * option_width);
+        let is_selected = i == self.cursor;
 
-        // Selection background
         if is_selected {
+          let mut sel_bg = selected_bg;
+          sel_bg.a *= alpha;
           surface.draw_rect(
-            popup_x + 4.0,
-            y,
-            popup_width - 8.0,
-            ITEM_HEIGHT,
-            selection_bg,
+            opt_x - 4.0,
+            y2 - 2.0,
+            option_width - 4.0,
+            line_height + 4.0,
+            sel_bg,
           );
         }
 
-        // Icon
-        let icon = Self::permission_icon(&permission.kind);
-        let icon_color = match &permission.kind {
-          PermissionKind::ReadFile(_) => Color::new(0.4, 0.8, 0.4, alpha), // Green for read
-          PermissionKind::WriteFile(_) => Color::new(0.9, 0.6, 0.3, alpha), // Orange for write
-          PermissionKind::CreateTerminal => Color::new(0.6, 0.6, 0.9, alpha), // Blue for terminal
-          PermissionKind::Other(_) => dim_color,
-        };
-
+        let fg = if is_selected { selected_fg } else { text_color };
         surface.draw_text(TextSection {
-          position: (content_x, y + UI_FONT_SIZE + 2.0),
-          texts:    vec![
-            TextSegment {
-              content: format!("[{}] ", icon),
-              style:   TextStyle {
-                size:  UI_FONT_SIZE,
-                color: icon_color,
-              },
+          position: (opt_x, y2),
+          texts:    vec![TextSegment {
+            content: (*opt).to_string(),
+            style:   TextStyle {
+              size:  UI_FONT_SIZE,
+              color: fg,
             },
-            TextSegment {
-              content: Self::permission_label(&permission.kind),
-              style:   TextStyle {
-                size:  UI_FONT_SIZE,
-                color: if is_selected { text_color } else { dim_color },
-              },
-            },
-          ],
+          }],
         });
-
-        y += ITEM_HEIGHT;
       }
-
-      // Separator before footer
-      y += 4.0;
-      surface.draw_rect(
-        content_x,
-        y,
-        popup_width - HORIZONTAL_PADDING * 2.0,
-        1.0,
-        sep_color,
-      );
-      y += 8.0;
-
-      // Footer with keybindings
-      let footer_color = Color::new(0.5, 0.5, 0.5, alpha);
-      surface.draw_text(TextSection {
-        position: (content_x, y + UI_FONT_SIZE - 2.0),
-        texts:    vec![TextSegment {
-          content: "y:approve  n:deny  Y:all  N:none  esc:close".to_string(),
-          style:   TextStyle {
-            size:  UI_FONT_SIZE - 2.0,
-            color: footer_color,
-          },
-        }],
-      });
     });
 
-    // Restore font state
     surface.restore_font_state(font_state);
   }
 
-  fn required_size(&mut self, _viewport: (u16, u16)) -> Option<(u16, u16)> {
-    None // Render in overlay mode
+  fn cursor(&self, _area: Rect, _editor: &crate::editor::Editor) -> (Option<Position>, CursorKind) {
+    (None, CursorKind::Hidden)
   }
 
   fn id(&self) -> Option<&'static str> {

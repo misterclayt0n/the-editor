@@ -558,6 +558,7 @@ impl MappableCommand {
         acp_prompt, "send selection to ACP agent",
         acp_show_overlay, "show ACP response overlay",
         acp_select_model, "select ACP model",
+        acp_permission_popup, "manage pending ACP permissions",
   );
 }
 
@@ -8188,11 +8189,7 @@ fn configure_acp_buffer(editor: &mut Editor, doc_id: DocumentId) {
 }
 
 /// Ensure the ACP buffer is visible in a view.
-fn ensure_acp_buffer_visible(
-  editor: &mut Editor,
-  doc_id: DocumentId,
-  origin_view: Option<ViewId>,
-) {
+fn ensure_acp_buffer_visible(editor: &mut Editor, doc_id: DocumentId, origin_view: Option<ViewId>) {
   // Check if buffer is already visible in some view
   if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
     if let Some(doc) = editor.documents.get_mut(&doc_id) {
@@ -8253,11 +8250,7 @@ pub fn is_in_acp_buffer(editor: &Editor) -> bool {
 ///
 /// ─── model-name ───
 /// ```
-pub fn append_user_prompt_to_acp_buffer(
-  editor: &mut Editor,
-  prompt: &str,
-  model_name: &str,
-) {
+pub fn append_user_prompt_to_acp_buffer(editor: &mut Editor, prompt: &str, model_name: &str) {
   // Ensure ACP buffer exists (create if needed)
   let doc_id = ensure_acp_buffer_exists(editor);
 
@@ -8292,7 +8285,8 @@ fn ensure_acp_buffer_exists(editor: &mut Editor) -> DocumentId {
     editor.clear_special_buffer(doc_id);
   }
 
-  // Create a new ACP buffer (without splitting - we'll handle visibility separately)
+  // Create a new ACP buffer (without splitting - we'll handle visibility
+  // separately)
   let doc_id = editor.new_file(Action::Load);
   editor.mark_special_buffer(doc_id, SpecialBufferKind::Acp);
   configure_acp_buffer(editor, doc_id);
@@ -8304,8 +8298,8 @@ pub fn append_response_to_acp_buffer(editor: &mut Editor, text: &str) {
   use crate::core::special_buffer::SpecialBufferKind;
 
   // Only append if the ACP buffer already exists
-  // (We don't want to create it just for streaming response - it should be created
-  // by append_user_prompt_to_acp_buffer)
+  // (We don't want to create it just for streaming response - it should be
+  // created by append_user_prompt_to_acp_buffer)
   let Some(doc_id) = editor.last_special_buffer(SpecialBufferKind::Acp) else {
     return;
   };
@@ -8396,8 +8390,8 @@ pub fn acp_buffer(cx: &mut Context) {
 
 /// Sync the ACP buffer content with the current acp_response state.
 ///
-/// This ensures that if a prompt was made via overlay before opening the buffer,
-/// the buffer will contain the full conversation.
+/// This ensures that if a prompt was made via overlay before opening the
+/// buffer, the buffer will contain the full conversation.
 fn sync_acp_buffer_with_response(editor: &mut Editor, doc_id: DocumentId) {
   // Get current buffer content length
   let buffer_len = editor
@@ -8987,8 +8981,8 @@ pub fn update_fade_ranges(cx: &mut Context) {
 /// streamed back via the ACP overlay or ACP buffer.
 ///
 /// If called from the ACP buffer (`*acp*`), the response is streamed directly
-/// into the buffer without showing the overlay. If called from any other buffer,
-/// the ACP overlay is shown to display the streaming response.
+/// into the buffer without showing the overlay. If called from any other
+/// buffer, the ACP overlay is shown to display the streaming response.
 pub fn acp_prompt(cx: &mut Context) {
   use crate::{
     acp::PromptContext,
@@ -9055,11 +9049,11 @@ pub fn acp_prompt(cx: &mut Context) {
   // Set use_overlay based on whether we're in the ACP buffer
   cx.editor.acp_response = Some(AcpResponseState {
     context_summary: context_summary.clone(),
-    input_prompt: prompt_text.clone(),
-    response_text: String::new(),
-    is_streaming: true,
-    model_name: model_name.clone(),
-    use_overlay: !prompting_from_acp_buffer,
+    input_prompt:    prompt_text.clone(),
+    response_text:   String::new(),
+    is_streaming:    true,
+    model_name:      model_name.clone(),
+    use_overlay:     !prompting_from_acp_buffer,
   });
 
   // Always append user prompt to ACP buffer (keeps buffer in sync with overlay)
@@ -9109,6 +9103,29 @@ pub fn acp_show_overlay(cx: &mut Context) {
 
   cx.callback.push(Box::new(|compositor, _cx| {
     compositor.replace_or_push(AcpOverlay::ID, AcpOverlay::new());
+  }));
+}
+
+/// Open the ACP permission popup to manage pending permission requests.
+///
+/// Shows a list of pending permissions from the ACP agent that can be
+/// approved or denied individually or in bulk.
+pub fn acp_permission_popup(cx: &mut Context) {
+  use crate::ui::components::AcpPermissionPopup;
+
+  if cx.editor.acp.is_none() {
+    cx.editor
+      .set_error("ACP agent not connected. Use :acp-start first.");
+    return;
+  }
+
+  if cx.editor.acp_permissions.pending_count() == 0 {
+    cx.editor.set_status("No pending permissions");
+    return;
+  }
+
+  cx.callback.push(Box::new(|compositor, _cx| {
+    compositor.replace_or_push(AcpPermissionPopup::ID, AcpPermissionPopup::new());
   }));
 }
 

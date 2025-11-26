@@ -159,6 +159,44 @@ impl PermissionManager {
     }
   }
 
+  /// Approve all pending permissions.
+  pub fn approve_all(&mut self) {
+    while let Some(permission) = self.pop() {
+      permission.approve();
+    }
+  }
+
+  /// Get a reference to all pending permissions.
+  pub fn pending_ref(&self) -> &[PendingPermission] {
+    &self.pending
+  }
+
+  /// Approve a permission at a specific index.
+  /// Returns true if the permission was approved, false if index was out of
+  /// bounds.
+  pub fn approve_at(&mut self, index: usize) -> bool {
+    if index < self.pending.len() {
+      let permission = self.pending.remove(index);
+      permission.approve();
+      true
+    } else {
+      false
+    }
+  }
+
+  /// Deny a permission at a specific index.
+  /// Returns true if the permission was denied, false if index was out of
+  /// bounds.
+  pub fn deny_at(&mut self, index: usize) -> bool {
+    if index < self.pending.len() {
+      let permission = self.pending.remove(index);
+      permission.deny();
+      true
+    } else {
+      false
+    }
+  }
+
   /// Format a status message showing pending permissions.
   pub fn status_message(&self) -> Option<String> {
     if self.pending.is_empty() {

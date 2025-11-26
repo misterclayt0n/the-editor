@@ -65,7 +65,7 @@ pub fn highlight_code_block(
       char_spans.push((start_char, end_char, color));
     }
   }
-  char_spans.sort_by_key(|(s, _, _)| *s);
+  char_spans.sort_by_key(|(s, ..)| *s);
 
   let mut result = Vec::new();
   let total_lines = rope.len_lines();

@@ -25,15 +25,13 @@ use crate::{
   ui::{
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
-    components::{
-      popup::{
-        PopupConstraints,
-        PopupContent,
-        PopupFrame,
-        PopupLimits,
-        PopupShell,
-        PopupSize,
-      },
+    components::popup::{
+      PopupConstraints,
+      PopupContent,
+      PopupFrame,
+      PopupLimits,
+      PopupShell,
+      PopupSize,
     },
     compositor::{
       Callback,
@@ -356,10 +354,6 @@ fn parse_tool_marker(line: &str) -> Option<(&'static str, String)> {
 
   Some((icon, text))
 }
-
-
-
-
 
 impl AcpOverlayContent {
   fn new() -> Self {

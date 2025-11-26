@@ -439,13 +439,3 @@ pub(crate) fn build_hover_render_lines(
 ) -> Vec<Vec<TextSegment>> {
   super::markdown::build_markdown_lines(markdown, wrap_width, cell_width, ctx)
 }
-
-
-
-
-
-
-
-
-
-

@@ -833,13 +833,3 @@ fn build_doc_render_lines(
   let wrap_width = max_chars as f32 * cell_width;
   super::markdown::build_markdown_lines(markdown, wrap_width, cell_width, ctx)
 }
-
-
-
-
-
-
-
-
-
-

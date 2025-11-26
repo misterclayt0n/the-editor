@@ -22,6 +22,48 @@ use crate::{
   },
 };
 
+/// Formats a model ID for display in the statusline.
+///
+/// Extracts a shortened display name from model IDs like:
+/// - "anthropic/claude-sonnet-4-20250514" -> "claude-sonnet-4"
+/// - "anthropic/claude-3-5-haiku-20241022" -> "haiku"
+/// - "openai/gpt-4o" -> "gpt-4o"
+fn format_model_display(model_id: &str) -> String {
+  // Split on "/" and take the model part
+  let model_part = model_id.split('/').last().unwrap_or(model_id);
+
+  // Common simplifications for well-known models
+  if model_part.contains("haiku") {
+    return "haiku".to_string();
+  }
+  if model_part.contains("sonnet") {
+    // Extract just "claude-sonnet-4" from "claude-sonnet-4-20250514"
+    if let Some(base) = model_part.strip_suffix("-20250514") {
+      return base.to_string();
+    }
+    if model_part.contains("sonnet-4") {
+      return "sonnet-4".to_string();
+    }
+    return "sonnet".to_string();
+  }
+  if model_part.contains("opus") {
+    return "opus".to_string();
+  }
+
+  // For other models, strip date suffixes (like "-20241022")
+  let without_date = model_part
+    .split('-')
+    .take_while(|part| part.parse::<u32>().is_err() || part.len() < 8)
+    .collect::<Vec<_>>()
+    .join("-");
+
+  if without_date.is_empty() {
+    model_part.to_string()
+  } else {
+    without_date
+  }
+}
+
 // Visual constants
 const STATUS_BAR_HEIGHT: f32 = 28.0;
 const SEGMENT_PADDING_X: f32 = 12.0;
@@ -45,6 +87,8 @@ pub struct StatusLine {
   last_status_msg:     Option<String>, // Track last message to detect changes
   // LSP loading breathing animations with last-seen timestamps for stability
   lsp_breathing_anims: HashMap<LanguageServerId, (BreathingAnimation, Instant)>,
+  // ACP permission breathing animation
+  acp_breathing_anim:  Option<BreathingAnimation>,
 }
 
 impl StatusLine {
@@ -61,6 +105,7 @@ impl StatusLine {
       status_msg_slide_x:  0.0,
       last_status_msg:     None,
       lsp_breathing_anims: HashMap::new(),
+      acp_breathing_anim:  None,
     }
   }
 
@@ -381,7 +426,7 @@ impl Component for StatusLine {
         }
       }
 
-      // Right side: LSP | GIT BRANCH (right-aligned)
+      // Right side: ACP | LSP | GIT BRANCH (right-aligned)
       let mut right_x = surface.width() as f32 - SEGMENT_PADDING_X + self.slide_offset;
 
       // Git branch (render first, right-most)
@@ -469,6 +514,52 @@ impl Component for StatusLine {
         };
 
         Self::draw_text(surface, right_x, bar_y, &lsp_text, lsp_color);
+        right_x -= Self::measure_text(" | ");
+      }
+
+      // ACP status - show connected agent with model, breathing when permissions
+      // pending
+      if let Some(ref acp) = cx.editor.acp {
+        if acp.is_connected() {
+          let now = std::time::Instant::now();
+          let has_pending_permissions = cx.editor.acp_permissions.pending_count() > 0;
+
+          // Update breathing animation based on pending permissions
+          if has_pending_permissions {
+            if self.acp_breathing_anim.is_none() {
+              self.acp_breathing_anim = Some(BreathingAnimation::new());
+            }
+          } else {
+            self.acp_breathing_anim = None;
+          }
+
+          // Format the display text: "ACP:model" or just "ACP"
+          let acp_text = if let Some(model_state) = acp.model_state() {
+            let model_id_str = model_state.current_model_id.to_string();
+            let model_display = format_model_display(&model_id_str);
+            format!("ACP:{}", model_display)
+          } else {
+            "ACP".to_string()
+          };
+
+          let acp_width = Self::measure_text(&acp_text);
+          right_x -= acp_width;
+
+          // Determine color - breathing if permissions pending
+          let acp_color = if let Some(ref anim) = self.acp_breathing_anim {
+            let base_color = theme
+              .get("ui.statusline.acp.pending")
+              .fg
+              .or_else(|| theme.get("warning").fg)
+              .map(crate::ui::theme_color_to_renderer_color)
+              .unwrap_or(Color::new(0.9, 0.7, 0.3, 1.0));
+            anim.apply_to_color(base_color, now)
+          } else {
+            text_color
+          };
+
+          Self::draw_text(surface, right_x, bar_y, &acp_text, acp_color);
+        }
       }
     }); // End overlay region
 
@@ -482,5 +573,6 @@ impl Component for StatusLine {
       || self.slide_anim_t < 1.0
       || self.status_msg_anim_t < 1.0
       || !self.lsp_breathing_anims.is_empty() // Keep updating while LSP is loading
+      || self.acp_breathing_anim.is_some() // Keep updating while ACP permissions pending
   }
 }

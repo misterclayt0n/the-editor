@@ -427,7 +427,8 @@ pub struct AcpResponseState {
   pub is_streaming:    bool,
   /// Model name (e.g., "claude-sonnet")
   pub model_name:      String,
-  /// Whether to use the overlay for display (false when prompting from ACP buffer)
+  /// Whether to use the overlay for display (false when prompting from ACP
+  /// buffer)
   pub use_overlay:     bool,
 }
 

@@ -1788,14 +1788,16 @@ impl Document {
   /// the underlying Rope without going through the transaction system,
   /// so it doesn't affect undo history or selections.
   ///
-  /// IMPORTANT: This resets pending changes to avoid transaction composition errors.
+  /// IMPORTANT: This resets pending changes to avoid transaction composition
+  /// errors.
   pub fn append_text_raw(&mut self, text: &str) {
     if text.is_empty() {
       return;
     }
     self.text.append(Rope::from_str(text));
     // Reset changes to match new document length - this is critical to avoid
-    // "assertion failed: self.len_after == other.len" panics when composing transactions
+    // "assertion failed: self.len_after == other.len" panics when composing
+    // transactions
     self.changes = ChangeSet::new(self.text.slice(..));
     self.old_state = None;
     // Mark document as modified
@@ -1807,11 +1809,13 @@ impl Document {
   /// This is useful for initializing special buffers that don't have
   /// an active view yet.
   ///
-  /// IMPORTANT: This resets pending changes to avoid transaction composition errors.
+  /// IMPORTANT: This resets pending changes to avoid transaction composition
+  /// errors.
   pub fn set_text_raw(&mut self, text: &str) {
     self.text = Rope::from_str(text);
     // Reset changes to match new document length - this is critical to avoid
-    // "assertion failed: self.len_after == other.len" panics when composing transactions
+    // "assertion failed: self.len_after == other.len" panics when composing
+    // transactions
     self.changes = ChangeSet::new(self.text.slice(..));
     self.old_state = None;
     // Mark document as modified

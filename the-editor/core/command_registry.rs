@@ -943,6 +943,21 @@ impl CommandRegistry {
         ..Signature::DEFAULT
       },
     ));
+
+    self.register(TypableCommand::new(
+      "acp-permissions",
+      &["acpp"],
+      "Open popup to manage pending ACP permissions",
+      |cx, _args, _event| {
+        crate::core::commands::acp_permission_popup(cx);
+        Ok(())
+      },
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 

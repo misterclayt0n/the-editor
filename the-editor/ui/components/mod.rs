@@ -1,4 +1,5 @@
 pub mod acp_overlay;
+pub mod acp_permission;
 pub mod bufferline;
 pub mod button;
 pub mod code_action;
@@ -11,9 +12,10 @@ pub mod prompt;
 pub mod signature_help;
 pub mod statusline;
 
-// Completion, SignatureHelp, Hover, CodeActionMenu, and AcpOverlay
-// are used internally by the editor
+// Completion, SignatureHelp, Hover, CodeActionMenu, AcpOverlay, and
+// AcpPermissionPopup are used internally by the editor
 pub(crate) use acp_overlay::AcpOverlay;
+pub(crate) use acp_permission::AcpPermissionPopup;
 pub(crate) use code_action::{
   CodeActionEntry,
   CodeActionMenu,

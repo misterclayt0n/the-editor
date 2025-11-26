@@ -30,7 +30,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] ACP Integration
   - [x] Model picker.
   - [x] Hover that streams agents response.
-  - [ ] Render the entire conversation into a buffer, from where I should also be able to send messages through the same select -> action model.
+  - [x] Render the entire conversation into a buffer, from where I should also be able to send messages through the same select -> action model.
   - [ ] Permission prompt -> should be something similar to a completion/code-action.
   - [ ] Shell commands handling.
   - [ ] *Maybe* some debug info? Like what's the context of the agent? how many tokens are being used? things of the nature, tho I'm not sure we'll be able to get this data from the ACP protocol.

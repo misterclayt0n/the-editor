@@ -184,9 +184,14 @@ impl AcpLayout {
 /// Format: `-> tool_name details` (started/in-progress)
 ///         `<- tool_name details` (completed)
 ///         `x  tool_name details` (failed)
+///
+/// Also handle Unicode arrow variants that may come from font ligatures or other sources.
 const TOOL_PREFIX_STARTED: &str = "-> ";
 const TOOL_PREFIX_COMPLETED: &str = "<- ";
 const TOOL_PREFIX_FAILED: &str = "x ";
+// Unicode arrow variants (may appear due to font ligatures or external tools)
+const TOOL_PREFIX_STARTED_UNICODE: &str = "→ ";
+const TOOL_PREFIX_COMPLETED_UNICODE: &str = "← ";
 
 /// Parse and render ACP response markdown with proper formatting.
 ///
@@ -246,6 +251,8 @@ fn build_acp_render_lines(
     if !in_fence {
       if let Some((tool_line, is_error)) = parse_tool_line_with_status(raw_line) {
         let color = if is_error { error_color } else { tool_color };
+        // Truncate tool call lines to fit within container
+        let tool_line = truncate_to_width(&tool_line, max_chars);
         render_lines.push(vec![TextSegment {
           content: tool_line,
           style:   TextStyle {
@@ -260,8 +267,10 @@ fn build_acp_render_lines(
 
       // Check for indented error message (follows a failed tool line)
       if in_error_context && raw_line.starts_with("   ") {
+        // Truncate error messages to fit within container
+        let error_line = truncate_to_width(raw_line, max_chars);
         render_lines.push(vec![TextSegment {
-          content: raw_line.to_string(),
+          content: error_line,
           style:   TextStyle {
             size:  UI_FONT_SIZE,
             color: error_color,
@@ -365,13 +374,30 @@ fn build_acp_render_lines(
 fn parse_tool_line_with_status(line: &str) -> Option<(String, bool)> {
   let trimmed = line.trim();
 
-  // Check for tool call line prefixes
-  if trimmed.starts_with(TOOL_PREFIX_STARTED) || trimmed.starts_with(TOOL_PREFIX_COMPLETED) {
+  // Check for tool call line prefixes (both ASCII and Unicode variants)
+  if trimmed.starts_with(TOOL_PREFIX_STARTED)
+    || trimmed.starts_with(TOOL_PREFIX_COMPLETED)
+    || trimmed.starts_with(TOOL_PREFIX_STARTED_UNICODE)
+    || trimmed.starts_with(TOOL_PREFIX_COMPLETED_UNICODE)
+  {
     Some((trimmed.to_string(), false))
   } else if trimmed.starts_with(TOOL_PREFIX_FAILED) {
     Some((trimmed.to_string(), true))
   } else {
     None
+  }
+}
+
+/// Truncate a string to fit within max_chars, adding ellipsis if needed.
+fn truncate_to_width(text: &str, max_chars: usize) -> String {
+  let char_count = text.chars().count();
+  if char_count <= max_chars {
+    text.to_string()
+  } else if max_chars <= 1 {
+    "…".to_string()
+  } else {
+    let truncated: String = text.chars().take(max_chars - 1).collect();
+    format!("{}…", truncated)
   }
 }
 
@@ -421,6 +447,7 @@ impl AcpOverlayContent {
 
       // Build header lines
       let mut header_lines: Vec<Vec<TextSegment>> = Vec::new();
+      let max_chars = (wrap_width / cell_width).floor().max(4.0) as usize;
 
       // Line 1: "ACP" label + provider + model
       // Get provider from config command (first element, e.g., "opencode")
@@ -459,6 +486,8 @@ impl AcpOverlayContent {
         Some(model) => format!("ACP  {} ({})", provider, model),
         None => format!("ACP  {}", provider),
       };
+      // Truncate header to fit within container
+      let header_text = truncate_to_width(&header_text, max_chars);
       header_lines.push(vec![TextSegment {
         content: header_text,
         style:   TextStyle {
@@ -467,10 +496,11 @@ impl AcpOverlayContent {
         },
       }]);
 
-      // Line 2: Context summary
+      // Line 2: Context summary (truncate to fit)
       if !state.context_summary.is_empty() {
+        let summary = truncate_to_width(&state.context_summary, max_chars);
         header_lines.push(vec![TextSegment {
-          content: state.context_summary.clone(),
+          content: summary,
           style:   TextStyle {
             size:  UI_FONT_SIZE,
             color: dim_color,

@@ -39,11 +39,9 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Permission prompt -> should be something similar to a completion/code-action.
   - [ ] Shell commands handling.
   - [ ] *Maybe* some debug info? Like what's the context of the agent? how many tokens are being used? things of the nature, tho I'm not sure we'll be able to get this data from the ACP protocol.
-  - [ ] Render tool calls -> Like, show what's being actually executed by the tool call.
+  - [x] Render tool calls -> Like, show what's being actually executed by the tool call.
   - [x] Command to interrupt agent.
   - [x] Fix the issue where every time I save a file it gets autoreloaded.
-  - [ ] ACP sometimes does not autoreload.
-  - [ ] Session picker.
 
 - [ ] Since we now have a lot of special buffers, we need a system to easily toggle them, maybe in an overlay. We should be able to bind arbitrary buffers to this system tho, not just special buffers.
   

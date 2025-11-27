@@ -832,6 +832,12 @@ impl App {
             .editor
             .set_status(format!("[ACP] Model changed to: {}", model_id));
         },
+        crate::acp::StreamEvent::PlanUpdate(plan) => {
+          // Update the plan/TODOs in the ACP response state
+          if let Some(ref mut state) = self.editor.acp_response {
+            state.plan = Some(plan);
+          }
+        },
       }
     }
 

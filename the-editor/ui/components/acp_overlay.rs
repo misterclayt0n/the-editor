@@ -154,11 +154,14 @@ struct AcpOverlayContent {
   last_response_len:  usize,
   /// Cached streaming state
   last_was_streaming: bool,
+  /// Cached plan entry count to detect changes
+  last_plan_len:      usize,
 }
 
 #[derive(Clone)]
 struct AcpLayout {
   header_lines:   Vec<Vec<TextSegment>>,
+  plan_lines:     Vec<Vec<TextSegment>>,
   response_lines: Vec<Vec<TextSegment>>,
   visible_lines:  usize,
   line_height:    f32,
@@ -168,7 +171,7 @@ struct AcpLayout {
 
 impl AcpLayout {
   fn total_lines(&self) -> usize {
-    self.header_lines.len() + self.response_lines.len()
+    self.header_lines.len() + self.plan_lines.len() + self.response_lines.len()
   }
 
   fn inner_height(&self) -> f32 {
@@ -401,6 +404,103 @@ fn truncate_to_width(text: &str, max_chars: usize) -> String {
   }
 }
 
+/// Build lines for the agent's execution plan (TODOs).
+fn build_plan_lines(
+  plan: &agent_client_protocol::Plan,
+  max_chars: usize,
+  ctx: &Context,
+) -> Vec<Vec<TextSegment>> {
+  use agent_client_protocol::{
+    PlanEntryPriority,
+    PlanEntryStatus,
+  };
+
+  if plan.entries.is_empty() {
+    return Vec::new();
+  }
+
+  let theme = &ctx.editor.theme;
+
+  // Get colors from theme
+  let dim_color = theme
+    .get("ui.text")
+    .fg
+    .map(crate::ui::theme_color_to_renderer_color)
+    .map(|c| Color::new(c.r * 0.6, c.g * 0.6, c.b * 0.6, c.a))
+    .unwrap_or(Color::new(0.5, 0.5, 0.5, 1.0));
+
+  let pending_color = theme
+    .get("ui.text")
+    .fg
+    .map(crate::ui::theme_color_to_renderer_color)
+    .unwrap_or(Color::new(0.7, 0.7, 0.7, 1.0));
+
+  let in_progress_color = theme
+    .get("ui.selection")
+    .fg
+    .or_else(|| theme.get("special").fg)
+    .map(crate::ui::theme_color_to_renderer_color)
+    .unwrap_or(Color::new(0.4, 0.7, 1.0, 1.0));
+
+  let completed_color = theme
+    .get("diff.plus")
+    .fg
+    .or_else(|| theme.get("string").fg)
+    .map(crate::ui::theme_color_to_renderer_color)
+    .unwrap_or(Color::new(0.5, 0.8, 0.5, 1.0));
+
+  let mut lines: Vec<Vec<TextSegment>> = Vec::new();
+
+  // Add separator before plan entries
+  let separator = "─".repeat(max_chars.min(60));
+  lines.push(vec![TextSegment {
+    content: separator.clone(),
+    style:   TextStyle {
+      size:  UI_FONT_SIZE,
+      color: dim_color,
+    },
+  }]);
+
+  // Render each plan entry
+  for entry in &plan.entries {
+    // Choose icon and color based on status
+    let (icon, color) = match entry.status {
+      PlanEntryStatus::Pending => ("○", pending_color),
+      PlanEntryStatus::InProgress => ("◐", in_progress_color),
+      PlanEntryStatus::Completed => ("●", completed_color),
+    };
+
+    // Add priority indicator for high priority items
+    let priority_indicator = match entry.priority {
+      PlanEntryPriority::High => "! ",
+      PlanEntryPriority::Medium | PlanEntryPriority::Low => "",
+    };
+
+    // Format: "○ ! Task description" or "● Task description"
+    let content = format!("{} {}{}", icon, priority_indicator, entry.content);
+    let content = truncate_to_width(&content, max_chars);
+
+    lines.push(vec![TextSegment {
+      content,
+      style: TextStyle {
+        size: UI_FONT_SIZE,
+        color,
+      },
+    }]);
+  }
+
+  // Add separator after plan entries
+  lines.push(vec![TextSegment {
+    content: separator,
+    style:   TextStyle {
+      size:  UI_FONT_SIZE,
+      color: dim_color,
+    },
+  }]);
+
+  lines
+}
+
 impl AcpOverlayContent {
   fn new() -> Self {
     Self {
@@ -408,6 +508,7 @@ impl AcpOverlayContent {
       scroll_offset:      0,
       last_response_len:  0,
       last_was_streaming: false,
+      last_plan_len:      0,
     }
   }
 
@@ -508,16 +609,25 @@ impl AcpOverlayContent {
         }]);
       }
 
-      // Line 3: Separator
-      let max_chars = (wrap_width / cell_width).floor().max(4.0) as usize;
-      let separator = "─".repeat(max_chars.min(60));
-      header_lines.push(vec![TextSegment {
-        content: separator,
-        style:   TextStyle {
-          size:  UI_FONT_SIZE,
-          color: dim_color,
-        },
-      }]);
+      // Build plan lines if there's an active plan
+      // Plan lines include separators on both ends when non-empty
+      let plan_lines = state
+        .plan
+        .as_ref()
+        .map(|plan| build_plan_lines(plan, max_chars, ctx))
+        .unwrap_or_default();
+
+      // If no plan, add a separator between header and response
+      if plan_lines.is_empty() {
+        let separator = "─".repeat(max_chars.min(60));
+        header_lines.push(vec![TextSegment {
+          content: separator,
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: dim_color,
+          },
+        }]);
+      }
 
       // Build response lines using hover's markdown renderer
       let response_text = if state.response_text.is_empty() {
@@ -537,11 +647,12 @@ impl AcpOverlayContent {
       let response_lines = build_acp_render_lines(&response_text, wrap_width, cell_width, ctx);
 
       // Calculate content dimensions
-      let all_lines_count = header_lines.len() + response_lines.len();
+      let all_lines_count = header_lines.len() + plan_lines.len() + response_lines.len();
       let visible_lines = all_lines_count.min(MAX_VISIBLE_LINES);
 
       let mut content_width = header_lines
         .iter()
+        .chain(plan_lines.iter())
         .chain(response_lines.iter())
         .take(visible_lines)
         .map(|segments| super::markdown::estimate_line_width(segments, cell_width))
@@ -556,6 +667,7 @@ impl AcpOverlayContent {
 
       self.layout = Some(AcpLayout {
         header_lines,
+        plan_lines,
         response_lines,
         visible_lines,
         line_height,
@@ -651,10 +763,15 @@ impl PopupContent for AcpOverlayContent {
     // Check if content has changed - only invalidate layout when necessary
     let current_len = state.response_text.len();
     let current_streaming = state.is_streaming;
-    if current_len != self.last_response_len || current_streaming != self.last_was_streaming {
+    let current_plan_len = state.plan.as_ref().map_or(0, |p| p.entries.len());
+    if current_len != self.last_response_len
+      || current_streaming != self.last_was_streaming
+      || current_plan_len != self.last_plan_len
+    {
       self.layout = None;
       self.last_response_len = current_len;
       self.last_was_streaming = current_streaming;
+      self.last_plan_len = current_plan_len;
     }
 
     let inner = frame.inner();
@@ -687,10 +804,11 @@ impl PopupContent for AcpOverlayContent {
         new_scroll_offset = new_scroll_offset.min(max_scroll);
         let text_bottom_bound = inner.y + inner.height;
 
-        // Combine header and response lines for rendering
+        // Combine header, plan, and response lines for rendering
         let all_lines: Vec<_> = layout
           .header_lines
           .iter()
+          .chain(layout.plan_lines.iter())
           .chain(layout.response_lines.iter())
           .collect();
 

@@ -296,8 +296,9 @@ impl acp::Client for EditorClient {
       acp::SessionUpdate::UserMessageChunk { .. } => {
         // Echo of user message - ignore
       },
-      acp::SessionUpdate::Plan(_) => {
-        // Agent planning - could display or ignore
+      acp::SessionUpdate::Plan(plan) => {
+        // Forward plan updates to the editor for display
+        let _ = self.event_tx.send(StreamEvent::PlanUpdate(plan));
       },
       acp::SessionUpdate::CurrentModeUpdate { .. } => {
         // Mode changes

@@ -427,6 +427,8 @@ pub struct AcpResponseState {
   pub is_streaming:    bool,
   /// Model name (e.g., "claude-sonnet")
   pub model_name:      String,
+  /// Agent's execution plan (TODOs)
+  pub plan:            Option<agent_client_protocol::Plan>,
 }
 
 /// State for the context-aware code fading feature

@@ -8752,6 +8752,7 @@ pub fn acp_prompt(cx: &mut Context) {
     response_text:   String::new(),
     is_streaming:    true,
     model_name:      model_name.clone(),
+    plan:            None,
   });
 
   cx.editor.set_status(format!(

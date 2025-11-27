@@ -85,6 +85,8 @@ pub enum StreamEvent {
     /// Current status of the tool call
     status:    ToolCallStatus,
   },
+  /// Agent's execution plan (TODOs) has been updated
+  PlanUpdate(agent_client_protocol::Plan),
   /// Agent has finished responding
   Done,
   /// An error occurred

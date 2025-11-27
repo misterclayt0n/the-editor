@@ -42,6 +42,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Render tool calls -> Like, show what's being actually executed by the tool call.
   - [x] Command to interrupt agent.
   - [x] Fix the issue where every time I save a file it gets autoreloaded.
+  - [ ] Render TODOs
 
 - [ ] Since we now have a lot of special buffers, we need a system to easily toggle them, maybe in an overlay. We should be able to bind arbitrary buffers to this system tho, not just special buffers.
   

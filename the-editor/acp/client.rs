@@ -216,14 +216,79 @@ impl acp::Client for EditorClient {
         }
       },
       acp::SessionUpdate::ToolCall(tool_call) => {
+        // Convert ACP ToolKind to string for display
+        let kind = match tool_call.kind {
+          acp::ToolKind::Read => Some("read".to_string()),
+          acp::ToolKind::Edit => Some("edit".to_string()),
+          acp::ToolKind::Delete => Some("delete".to_string()),
+          acp::ToolKind::Move => Some("move".to_string()),
+          acp::ToolKind::Search => Some("search".to_string()),
+          acp::ToolKind::Execute => Some("execute".to_string()),
+          acp::ToolKind::Think => Some("think".to_string()),
+          acp::ToolKind::Fetch => Some("fetch".to_string()),
+          acp::ToolKind::SwitchMode => Some("switch_mode".to_string()),
+          acp::ToolKind::Other => None,
+        };
+
         let _ = self.event_tx.send(StreamEvent::ToolCall {
-          name:   tool_call.title,
+          title: tool_call.title,
+          kind,
+          raw_input: tool_call.raw_input,
           status: ToolCallStatus::Started,
         });
       },
       acp::SessionUpdate::ToolCallUpdate(update) => {
-        // Log tool call progress
         log::debug!("[ACP] Tool call update: {:?}", update);
+
+        // Extract error message from content if present (for failed tool calls)
+        let error_msg = update.fields.content.as_ref().and_then(|contents| {
+          for content in contents {
+            if let acp::ToolCallContent::Content { content } = content {
+              if let acp::ContentBlock::Text(text_content) = content {
+                if !text_content.text.is_empty() {
+                  return Some(text_content.text.clone());
+                }
+              }
+            }
+          }
+          None
+        });
+
+        // Send tool call updates with new status
+        let status = match update.fields.status {
+          Some(acp::ToolCallStatus::Completed) => Some(ToolCallStatus::Completed),
+          Some(acp::ToolCallStatus::Failed) => {
+            Some(ToolCallStatus::Failed(error_msg.unwrap_or_default()))
+          },
+          Some(acp::ToolCallStatus::InProgress) => Some(ToolCallStatus::InProgress(String::new())),
+          Some(acp::ToolCallStatus::Pending) | None => None,
+        };
+
+        if let Some(status) = status {
+          // Get the title from the update or use a placeholder
+          let title = update.fields.title.unwrap_or_default();
+          let kind = update.fields.kind.map(|k| {
+            match k {
+              acp::ToolKind::Read => "read".to_string(),
+              acp::ToolKind::Edit => "edit".to_string(),
+              acp::ToolKind::Delete => "delete".to_string(),
+              acp::ToolKind::Move => "move".to_string(),
+              acp::ToolKind::Search => "search".to_string(),
+              acp::ToolKind::Execute => "execute".to_string(),
+              acp::ToolKind::Think => "think".to_string(),
+              acp::ToolKind::Fetch => "fetch".to_string(),
+              acp::ToolKind::SwitchMode => "switch_mode".to_string(),
+              acp::ToolKind::Other => "other".to_string(),
+            }
+          });
+
+          let _ = self.event_tx.send(StreamEvent::ToolCall {
+            title,
+            kind,
+            raw_input: update.fields.raw_input,
+            status,
+          });
+        }
       },
       acp::SessionUpdate::AgentThoughtChunk { .. } => {
         // Agent thinking - could display in status or ignore

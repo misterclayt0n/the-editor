@@ -8176,12 +8176,17 @@ fn resolve_acp_buffer(editor: &mut Editor, current_doc_id: DocumentId) -> Docume
 }
 
 /// Configure the ACP buffer with appropriate settings.
+///
+/// The ACP buffer is a read-only transcript/visualization of the session.
+/// All interaction happens through the overlay.
 fn configure_acp_buffer(editor: &mut Editor, doc_id: DocumentId) {
   let preferred_view = first_view_id_for_doc(editor, doc_id);
   let loader = editor.syn_loader.load();
 
   if let Some(doc) = editor.documents.get_mut(&doc_id) {
     doc.set_special_buffer_ephemeral(true);
+    // Make buffer read-only - it's just a visualization/transcript
+    doc.readonly = true;
     if let Some(view_id) = preferred_view {
       doc.set_preferred_special_buffer_view(Some(view_id));
     }
@@ -8986,11 +8991,10 @@ pub fn update_fade_ranges(cx: &mut Context) {
 ///
 /// This is the main command for interacting with AI coding agents.
 /// The selection text is sent to the agent, and the response will be
-/// streamed back via the ACP overlay or ACP buffer.
+/// streamed back via the ACP overlay.
 ///
-/// If called from the ACP buffer (`*acp*`), the response is streamed directly
-/// into the buffer without showing the overlay. If called from any other
-/// buffer, the ACP overlay is shown to display the streaming response.
+/// The ACP buffer (`*acp*`) serves as a read-only transcript/visualization
+/// of the session and stays in sync with the overlay automatically.
 pub fn acp_prompt(cx: &mut Context) {
   use crate::{
     acp::PromptContext,
@@ -9004,9 +9008,6 @@ pub fn acp_prompt(cx: &mut Context) {
       .set_error("ACP agent not connected. Use :acp-start first.".to_string());
     return;
   }
-
-  // Check if we're prompting from the ACP buffer
-  let prompting_from_acp_buffer = is_in_acp_buffer(cx.editor);
 
   let context_lines = cx.editor.acp_config.context_lines;
 
@@ -9054,14 +9055,12 @@ pub fn acp_prompt(cx: &mut Context) {
     .unwrap_or_else(|| "assistant".to_string());
 
   // Initialize ACP response state
-  // Set use_overlay based on whether we're in the ACP buffer
   cx.editor.acp_response = Some(AcpResponseState {
     context_summary: context_summary.clone(),
     input_prompt:    prompt_text.clone(),
     response_text:   String::new(),
     is_streaming:    true,
     model_name:      model_name.clone(),
-    use_overlay:     !prompting_from_acp_buffer,
   });
 
   // Always append user prompt to ACP buffer (keeps buffer in sync with overlay)
@@ -9081,12 +9080,10 @@ pub fn acp_prompt(cx: &mut Context) {
       cx.editor
         .set_status("Prompt sent, waiting for response...".to_string());
 
-      // Only show overlay if not prompting from ACP buffer
-      if !prompting_from_acp_buffer {
-        cx.callback.push(Box::new(|compositor, _cx| {
-          compositor.replace_or_push(AcpOverlay::ID, AcpOverlay::new());
-        }));
-      }
+      // Always show the overlay - it's the primary interaction interface
+      cx.callback.push(Box::new(|compositor, _cx| {
+        compositor.replace_or_push(AcpOverlay::ID, AcpOverlay::new());
+      }));
     },
     Err(err) => {
       // Clear the response state on error

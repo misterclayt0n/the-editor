@@ -48,6 +48,7 @@ pub mod text_annotations;
 pub mod text_format;
 pub mod textobject;
 pub mod theme;
+pub mod tool_display;
 pub mod transaction;
 pub mod tree;
 pub mod uri;

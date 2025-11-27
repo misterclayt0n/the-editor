@@ -76,8 +76,14 @@ pub enum StreamEvent {
   TextChunk(String),
   /// Agent is making a tool call
   ToolCall {
-    name:   String,
-    status: ToolCallStatus,
+    /// Human-readable title of the tool call
+    title:     String,
+    /// Tool kind (read, edit, execute, etc.)
+    kind:      Option<String>,
+    /// Raw input parameters as JSON
+    raw_input: Option<serde_json::Value>,
+    /// Current status of the tool call
+    status:    ToolCallStatus,
   },
   /// Agent has finished responding
   Done,

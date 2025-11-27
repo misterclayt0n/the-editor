@@ -754,23 +754,43 @@ impl App {
 
           log::debug!("[ACP] Text chunk: {} chars", text.len());
         },
-        crate::acp::StreamEvent::ToolCall { name, status } => {
-          // Inject tool marker into response text for overlay rendering
+        crate::acp::StreamEvent::ToolCall {
+          title,
+          kind,
+          raw_input,
+          status,
+        } => {
+          use crate::core::tool_display::{
+            ToolDisplayInfo,
+            ToolKind,
+            ToolStatus,
+          };
+
+          // Convert our status to tool_display status
+          let (display_status, error_msg) = match &status {
+            crate::acp::ToolCallStatus::Started => (ToolStatus::Started, None),
+            crate::acp::ToolCallStatus::InProgress(_) => (ToolStatus::InProgress, None),
+            crate::acp::ToolCallStatus::Completed => (ToolStatus::Completed, None),
+            crate::acp::ToolCallStatus::Failed(err) => (ToolStatus::Failed, Some(err.clone())),
+          };
+
+          // Convert kind string to ToolKind
+          let tool_kind = kind.as_deref().map(ToolKind::from_acp_kind);
+
+          // Create display info and format it
+          let display_info = ToolDisplayInfo::new(
+            title.clone(),
+            tool_kind,
+            raw_input.as_ref(),
+            display_status,
+            error_msg,
+          );
+
+          let formatted = display_info.format();
+
+          // Inject formatted tool line into response text for overlay rendering
           let marker = if let Some(ref mut state) = self.editor.acp_response {
-            let marker = match &status {
-              crate::acp::ToolCallStatus::Started => {
-                format!("\n[TOOL:start:{}]\n", name)
-              },
-              crate::acp::ToolCallStatus::InProgress(msg) => {
-                format!("\n[TOOL:progress:{}:{}]\n", name, msg)
-              },
-              crate::acp::ToolCallStatus::Completed => {
-                format!("\n[TOOL:done:{}]\n", name)
-              },
-              crate::acp::ToolCallStatus::Failed(err) => {
-                format!("\n[TOOL:error:{}:{}]\n", name, err)
-              },
-            };
+            let marker = format!("\n{}\n", formatted);
             state.response_text.push_str(&marker);
             marker
           } else {
@@ -784,13 +804,13 @@ impl App {
 
           // Also set status bar message
           let status_msg = match status {
-            crate::acp::ToolCallStatus::Started => format!("[ACP] Tool: {} starting...", name),
+            crate::acp::ToolCallStatus::Started => format!("[ACP] {}", formatted),
             crate::acp::ToolCallStatus::InProgress(msg) => {
-              format!("[ACP] Tool: {} - {}", name, msg)
+              format!("[ACP] {} - {}", formatted, msg)
             },
-            crate::acp::ToolCallStatus::Completed => format!("[ACP] Tool: {} completed", name),
+            crate::acp::ToolCallStatus::Completed => format!("[ACP] {}", formatted),
             crate::acp::ToolCallStatus::Failed(err) => {
-              format!("[ACP] Tool: {} failed: {}", name, err)
+              format!("[ACP] {} failed: {}", title, err)
             },
           };
           self.editor.set_status(status_msg);

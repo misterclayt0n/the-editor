@@ -180,9 +180,13 @@ impl AcpLayout {
 // ACP Markdown Renderer
 // ============================================================================
 
-/// Marker prefix for tool calls injected into the response text.
-/// Format: `[TOOL:status:name]` where status is "start", "done", or "error"
-pub const TOOL_MARKER_PREFIX: &str = "[TOOL:";
+/// Tool call line prefixes for identifying tool calls in the response text.
+/// Format: `-> tool_name details` (started/in-progress)
+///         `<- tool_name details` (completed)
+///         `x  tool_name details` (failed)
+const TOOL_PREFIX_STARTED: &str = "-> ";
+const TOOL_PREFIX_COMPLETED: &str = "<- ";
+const TOOL_PREFIX_FAILED: &str = "x ";
 
 /// Parse and render ACP response markdown with proper formatting.
 ///
@@ -215,6 +219,15 @@ fn build_acp_render_lines(
   tool_color.g *= 0.85;
   tool_color.b *= 0.85;
 
+  // Use error/warning color for failed tool calls
+  let error_color = theme
+    .get("error")
+    .fg
+    .or_else(|| theme.get("diagnostic.error").fg)
+    .or_else(|| theme.get("warning").fg)
+    .map(crate::ui::theme_color_to_renderer_color)
+    .unwrap_or(Color::new(0.9, 0.3, 0.3, 1.0)); // Fallback to red
+
   let max_chars = (wrap_width / cell_width).floor().max(4.0) as usize;
 
   let mut render_lines: Vec<Vec<TextSegment>> = Vec::new();
@@ -222,25 +235,43 @@ fn build_acp_render_lines(
   let mut fence_lang: Option<String> = None;
   let mut fence_buf: Vec<String> = Vec::new();
   let mut prev_was_empty = false;
+  let mut in_error_context = false; // Track if we're after a failed tool line
 
   // Process line by line, tracking blank lines for paragraph breaks
   // We can't split by \n\n first because that breaks code blocks with blank lines
   for raw_line in markdown.lines() {
     let is_empty = raw_line.trim().is_empty();
 
-    // Check for tool markers (outside of code blocks)
+    // Check for tool call lines (outside of code blocks)
     if !in_fence {
-      if let Some(tool_line) = parse_tool_marker(raw_line) {
-        let (icon, text) = tool_line;
+      if let Some((tool_line, is_error)) = parse_tool_line_with_status(raw_line) {
+        let color = if is_error { error_color } else { tool_color };
         render_lines.push(vec![TextSegment {
-          content: format!("{} {}", icon, text),
+          content: tool_line,
+          style:   TextStyle {
+            size: UI_FONT_SIZE,
+            color,
+          },
+        }]);
+        in_error_context = is_error;
+        prev_was_empty = false;
+        continue;
+      }
+
+      // Check for indented error message (follows a failed tool line)
+      if in_error_context && raw_line.starts_with("   ") {
+        render_lines.push(vec![TextSegment {
+          content: raw_line.to_string(),
           style:   TextStyle {
             size:  UI_FONT_SIZE,
-            color: tool_color,
+            color: error_color,
           },
         }]);
         prev_was_empty = false;
         continue;
+      } else if !is_empty {
+        // Non-empty, non-indented line exits error context
+        in_error_context = false;
       }
     }
 
@@ -323,36 +354,25 @@ fn build_acp_render_lines(
   render_lines
 }
 
-/// Parse a tool marker line and return (icon, description).
+/// Parse a tool call line and return the formatted content with error status.
 ///
-/// Format: `[TOOL:status:name]` or `[TOOL:status:name:details]`
-fn parse_tool_marker(line: &str) -> Option<(&'static str, String)> {
+/// Recognizes lines starting with:
+/// - `-> ` (started/in-progress)
+/// - `<- ` (completed)
+/// - `x  ` (failed)
+///
+/// Returns (line_content, is_error)
+fn parse_tool_line_with_status(line: &str) -> Option<(String, bool)> {
   let trimmed = line.trim();
-  if !trimmed.starts_with(TOOL_MARKER_PREFIX) {
-    return None;
+
+  // Check for tool call line prefixes
+  if trimmed.starts_with(TOOL_PREFIX_STARTED) || trimmed.starts_with(TOOL_PREFIX_COMPLETED) {
+    Some((trimmed.to_string(), false))
+  } else if trimmed.starts_with(TOOL_PREFIX_FAILED) {
+    Some((trimmed.to_string(), true))
+  } else {
+    None
   }
-
-  let content = trimmed
-    .strip_prefix(TOOL_MARKER_PREFIX)?
-    .strip_suffix(']')?;
-
-  let parts: Vec<&str> = content.splitn(3, ':').collect();
-  if parts.len() < 2 {
-    return None;
-  }
-
-  let status = parts[0];
-  let name = parts[1];
-  let details = parts.get(2).unwrap_or(&"");
-
-  let (icon, text) = match status {
-    "start" => ("→", format!("{} {}", name, details).trim().to_string()),
-    "done" => ("←", format!("{} {}", name, details).trim().to_string()),
-    "error" => ("✗", format!("{}: {}", name, details).trim().to_string()),
-    _ => ("•", format!("{} {}", name, details).trim().to_string()),
-  };
-
-  Some((icon, text))
 }
 
 impl AcpOverlayContent {

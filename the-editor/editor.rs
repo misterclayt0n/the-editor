@@ -415,6 +415,10 @@ pub struct Editor {
 }
 
 /// State for the current ACP response being displayed in the overlay.
+///
+/// The overlay is always the primary interaction interface for ACP. The ACP
+/// buffer (`*acp*`) serves as a read-only visualization/transcript of the
+/// session that stays in sync with the overlay.
 #[derive(Debug, Clone, Default)]
 pub struct AcpResponseState {
   /// Summary of context sent (e.g., "src/lib.rs:42-48")
@@ -427,9 +431,6 @@ pub struct AcpResponseState {
   pub is_streaming:    bool,
   /// Model name (e.g., "claude-sonnet")
   pub model_name:      String,
-  /// Whether to use the overlay for display (false when prompting from ACP
-  /// buffer)
-  pub use_overlay:     bool,
 }
 
 /// State for the context-aware code fading feature

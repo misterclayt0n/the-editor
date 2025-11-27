@@ -8005,6 +8005,8 @@ fn first_view_id_for_doc(editor: &Editor, doc_id: DocumentId) -> Option<ViewId> 
 fn replace_document_text(editor: &mut Editor, doc_id: DocumentId, text: &str) {
   if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
     if let Some(doc) = editor.documents.get_mut(&doc_id) {
+      // Ensure the view has a selection initialized for this document
+      doc.ensure_view_init(view_id);
       let len = doc.text().len_chars();
       let selection = Selection::point(text.chars().count());
       let transaction =
@@ -8021,6 +8023,8 @@ fn append_document_text(editor: &mut Editor, doc_id: DocumentId, text: &str) {
   }
   if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
     if let Some(doc) = editor.documents.get_mut(&doc_id) {
+      // Ensure the view has a selection initialized for this document
+      doc.ensure_view_init(view_id);
       let end = doc.text().len_chars();
       let selection = doc.selection(view_id).clone();
       let transaction =
@@ -8312,6 +8316,8 @@ pub fn append_response_to_acp_buffer(editor: &mut Editor, text: &str) {
   if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
     // View exists - use transaction to append and move selection to end
     if let Some(doc) = editor.documents.get_mut(&doc_id) {
+      // Ensure the view has a selection initialized for this document
+      doc.ensure_view_init(view_id);
       let end = doc.text().len_chars();
       let new_selection = Selection::point(end + text.chars().count());
       let transaction =
@@ -8343,6 +8349,8 @@ fn append_document_text_and_scroll(editor: &mut Editor, doc_id: DocumentId, text
   if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
     // View exists - use transaction to append and move selection to end
     if let Some(doc) = editor.documents.get_mut(&doc_id) {
+      // Ensure the view has a selection initialized for this document
+      doc.ensure_view_init(view_id);
       let end = doc.text().len_chars();
       // Move selection to end so the view follows
       let new_selection = Selection::point(end + text.chars().count());

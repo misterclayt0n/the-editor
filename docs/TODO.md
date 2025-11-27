@@ -38,7 +38,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [ ] *Maybe* some debug info? Like what's the context of the agent? how many tokens are being used? things of the nature, tho I'm not sure we'll be able to get this data from the ACP protocol.
   - [ ] Render tool calls -> Like, show what's being actually executed by the tool call.
   - [ ] Maybe the ACP buffer should have it's own cursor that is independent of my own.
-  - [ ] Command to interrupt agent.
+  - [x] Command to interrupt agent.
   - [x] Fix the issue where every time I save a file it gets autoreloaded.
   - [ ] ACP sometimes does not autoreload.
 
@@ -47,7 +47,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 #### Fixes
 - [x] Render fonts correctly in the picker prompt menu (they're too spaced).
 - [x] Fix panic in prompt because it can't handle unicode properly.
-- [ ] Render tabs in hover component.
+- [x] Render tabs in hover component.
 - [ ] Fix indent guides (sometimes it will be rendered as blank for some reason). - Hard to reproduce tho.
 - [x] Some lsp diagnostics are not really being rendered into virtual lines.
 - [x] Fix overflow in lsp helper completer popup.
@@ -58,6 +58,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [x] Highlight on yank should grab color from theme config.
 - [x] LSP diagnostics sometimes do not update correctly.
 - [ ] Fix an issue regarding the touchpad scrolling (wayland in particular, simple way to reproduce this is block the screen and unlock it afterwards)
+- [ ] Correctly stream in shell command (force redraw on every stream).
 
 ### Beyond
 - [x] File watcher (I'll wait to see helix's implementation on this, they're making big advancements: https://github.com/helix-editor/helix/pull/14544).

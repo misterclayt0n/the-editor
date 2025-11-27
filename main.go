@@ -1,7 +1,2 @@
-package main
+// write a guess game here
 
-import "fmt"
-
-func main() {
-	fmt.Println("Hello, World!")
-}

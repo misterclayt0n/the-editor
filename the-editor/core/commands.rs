@@ -558,6 +558,7 @@ impl MappableCommand {
         acp_prompt, "send selection to ACP agent",
         acp_show_overlay, "show ACP response overlay",
         acp_select_model, "select ACP model",
+        acp_stop, "stop the ACP agent",
         acp_permission_popup, "manage pending ACP permissions",
   );
 }
@@ -9296,4 +9297,29 @@ pub fn acp_select_model(cx: &mut Context) {
   cx.callback.push(Box::new(move |compositor, _ctx| {
     compositor.push(Box::new(picker));
   }));
+}
+
+/// Stop the ACP agent and clean up associated state.
+///
+/// This terminates the ACP agent subprocess and clears all associated state,
+/// including pending permissions and response state.
+pub fn acp_stop(cx: &mut Context) {
+  let Some(ref acp) = cx.editor.acp else {
+    cx.editor.set_status("ACP agent is not running");
+    return;
+  };
+
+  // Cancel any in-flight request first - this interrupts the current operation
+  acp.cancel();
+
+  // Deny all pending permissions before stopping
+  cx.editor.acp_permissions.deny_all();
+
+  // Drop the ACP handle, which triggers shutdown via its Drop impl
+  cx.editor.acp = None;
+
+  // Clear response state
+  cx.editor.acp_response = None;
+
+  cx.editor.set_status("ACP agent stopped");
 }

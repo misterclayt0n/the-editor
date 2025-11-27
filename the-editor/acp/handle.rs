@@ -65,6 +65,8 @@ enum AcpCommand {
     session_id: acp::SessionId,
     model_id:   acp::ModelId,
   },
+  /// Cancel the current in-flight request
+  Cancel,
   /// Shutdown the ACP thread
   Shutdown,
 }
@@ -257,11 +259,27 @@ impl AcpHandle {
     conn: Arc<acp::ClientSideConnection>,
     mut command_rx: mpsc::UnboundedReceiver<AcpCommand>,
     event_tx: mpsc::UnboundedSender<StreamEvent>,
-    _child: Child,
+    mut child: Child,
   ) {
     log::info!("ACP event loop started");
 
-    while let Some(cmd) = command_rx.recv().await {
+    loop {
+      // Wait for next command, but also listen for child process exit
+      let cmd = tokio::select! {
+        biased;
+        cmd = command_rx.recv() => cmd,
+        // If child exits unexpectedly, break out of loop
+        _ = child.wait() => {
+          log::warn!("ACP child process exited unexpectedly");
+          let _ = event_tx.send(StreamEvent::Error("Agent process exited".into()));
+          break;
+        }
+      };
+
+      let Some(cmd) = cmd else {
+        break;
+      };
+
       match cmd {
         AcpCommand::Prompt {
           session_id,
@@ -269,13 +287,34 @@ impl AcpHandle {
         } => {
           log::debug!("Processing prompt command");
 
-          let result = conn
-            .prompt(acp::PromptRequest {
-              session_id,
-              prompt: content,
-              meta: None,
-            })
-            .await;
+          let prompt_future = conn.prompt(acp::PromptRequest {
+            session_id,
+            prompt: content,
+            meta: None,
+          });
+
+          // Make the prompt cancelable by listening for Cancel/Shutdown commands
+          let result = tokio::select! {
+            biased;
+            // Check for cancellation commands while prompt is running
+            cmd = command_rx.recv() => {
+              match cmd {
+                Some(AcpCommand::Cancel) | Some(AcpCommand::Shutdown) => {
+                  log::info!("Prompt request cancelled, killing child process");
+                  let _ = child.kill().await;
+                  let _ = event_tx.send(StreamEvent::Error("Request cancelled".into()));
+                  break;
+                }
+                Some(other) => {
+                  // Queue up the command to be processed after - but for now just log
+                  log::warn!("Received command {:?} during prompt, ignoring", std::mem::discriminant(&other));
+                  continue;
+                }
+                None => break,
+              }
+            }
+            result = prompt_future => result,
+          };
 
           match result {
             Ok(_response) => {
@@ -313,8 +352,10 @@ impl AcpHandle {
             },
           }
         },
-        AcpCommand::Shutdown => {
-          log::info!("ACP shutdown requested");
+        AcpCommand::Cancel | AcpCommand::Shutdown => {
+          log::info!("ACP cancel/shutdown requested");
+          // Kill the child process to ensure immediate termination
+          let _ = child.kill().await;
           break;
         },
       }
@@ -399,6 +440,14 @@ impl AcpHandle {
   /// Try to receive the next permission request without blocking.
   pub fn try_recv_permission(&mut self) -> Option<PendingPermission> {
     self.permission_rx.try_recv().ok()
+  }
+
+  /// Cancel any in-flight request.
+  ///
+  /// This sends a cancellation signal to interrupt the current prompt request.
+  /// The request will be aborted and the agent process will be killed.
+  pub fn cancel(&self) {
+    let _ = self.command_tx.send(AcpCommand::Cancel);
   }
 }
 

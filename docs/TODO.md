@@ -33,7 +33,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Workspace features - Still reasoning about this.
 - [ ] Tab completion in the file prompt should look for the correct directory entry, not just scroll (This is a special case tho, the behavior is correct for all other cases).
 
-- [ ] ACP Integration
+- [x] ACP Integration - We're pausing this for now, I think we're at a reasonable state currently.
   - [x] Model picker.
   - [x] Hover that streams agents response.
   - [x] Permission prompt -> should be something similar to a completion/code-action.

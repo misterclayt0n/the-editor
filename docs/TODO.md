@@ -27,14 +27,18 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Workspace features - Still reasoning about this.
 - [ ] Tab completion in the file prompt should look for the correct directory entry, not just scroll (This is a special case tho, the behavior is correct for all other cases).
 
+**Features**
+
 - [ ] ACP Integration
   - [x] Model picker.
   - [x] Hover that streams agents response.
   - [x] Render the entire conversation into a buffer, from where I should also be able to send messages through the same select -> action model.
-  - [ ] Permission prompt -> should be something similar to a completion/code-action.
+  - [x] Permission prompt -> should be something similar to a completion/code-action.
   - [ ] Shell commands handling.
   - [ ] *Maybe* some debug info? Like what's the context of the agent? how many tokens are being used? things of the nature, tho I'm not sure we'll be able to get this data from the ACP protocol.
-  - [ ] Render tool calls?
+  - [ ] Render tool calls -> Like, show what's being actually executed by the tool call.
+  - [ ] Maybe the ACP buffer should have it's own cursor that is independent of my own.
+  - [ ] Command to interrupt agent.
   - [x] Fix the issue where every time I save a file it gets autoreloaded.
 
 - [ ] Since we now have a lot of special buffers, we need a system to easily toggle them, maybe in an overlay. We should be able to bind arbitrary buffers to this system tho, not just special buffers.

@@ -686,8 +686,6 @@ impl Application for App {
     }
 
     // Keep redrawing while ACP is streaming responses.
-    // This is necessary because the ACP buffer updates don't wake the winit event
-    // loop.
     if self
       .editor
       .acp_response
@@ -748,10 +746,6 @@ impl App {
           if let Some(ref mut state) = self.editor.acp_response {
             state.response_text.push_str(&text);
           }
-
-          // Always append to ACP buffer to keep it in sync
-          crate::core::commands::append_response_to_acp_buffer(&mut self.editor, &text);
-
           log::debug!("[ACP] Text chunk: {} chars", text.len());
         },
         crate::acp::StreamEvent::ToolCall {
@@ -789,20 +783,12 @@ impl App {
           let formatted = display_info.format();
 
           // Inject formatted tool line into response text for overlay rendering
-          let marker = if let Some(ref mut state) = self.editor.acp_response {
+          if let Some(ref mut state) = self.editor.acp_response {
             let marker = format!("\n{}\n", formatted);
             state.response_text.push_str(&marker);
-            marker
-          } else {
-            String::new()
-          };
-
-          // Always append tool marker to ACP buffer
-          if !marker.is_empty() {
-            crate::core::commands::append_response_to_acp_buffer(&mut self.editor, &marker);
           }
 
-          // Also set status bar message
+          // Set status bar message
           let status_msg = match status {
             crate::acp::ToolCallStatus::Started => format!("[ACP] {}", formatted),
             crate::acp::ToolCallStatus::InProgress(msg) => {

@@ -415,10 +415,6 @@ pub struct Editor {
 }
 
 /// State for the current ACP response being displayed in the overlay.
-///
-/// The overlay is always the primary interaction interface for ACP. The ACP
-/// buffer (`*acp*`) serves as a read-only visualization/transcript of the
-/// session that stays in sync with the overlay.
 #[derive(Debug, Clone, Default)]
 pub struct AcpResponseState {
   /// Summary of context sent (e.g., "src/lib.rs:42-48")

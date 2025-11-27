@@ -1,43 +1,45 @@
 ### TODO
 So, this is just a simple todo list that will grant me some sort of base for the editor's missing features overall. Note that this document represents my personal vision on what the editor shall become, but will likely change over time.
 
-#### 
 - [ ] Image rendering.
 - [x] Local search in buffer (https://x.com/neogoose_btw/status/1981778716721393859/photo/1).
 - [x] End of line diagnostics.
 - [x] Buffer line
+
 - [ ] VCS
   - [ ] First class jujutsu support (jujutsu will have priority over git).
   - [ ] Git blame (this will likely only support git btw).
+  
 - [ ] Configuration
   - [ ] Custom font loading.
   - [x] Full helix config engine support.
+  
 - [ ] File tree.
 - [ ] Command palette.
 - [x] "reload-all" prompt command.
+
 - [ ] Add command history in all prompts - Thinking about this, maybe we don't need command history in the regular prompt, as we need in the shell, search, select (and similar). The main idea is that we don't want to have to repeat typing in commands used often, and that's not really the prompt itself (most commands have aliases to them, so why do we need history in those cases?). That seems overall reasonable.
   - [ ] Add `:repeat-last-shell` command - This should repeat the last executed shell command.
   - [ ] Render history as if it werer a completion in shell, search, keep and similar commands.
+  
 - [x] Add paths in the completer.
 - [x] Different cursor shapes.
+
 - [x] Reimagine the compile command:
   - [x] Kill processes.
   - [x] Don't account for compile commad buffers in the save interface.
   - [x] Syntax highlighting? Maybe shell?
+  
 - [ ] Workspace features - Still reasoning about this.
 - [ ] Tab completion in the file prompt should look for the correct directory entry, not just scroll (This is a special case tho, the behavior is correct for all other cases).
-
-**Features**
 
 - [ ] ACP Integration
   - [x] Model picker.
   - [x] Hover that streams agents response.
-  - [x] Render the entire conversation into a buffer, from where I should also be able to send messages through the same select -> action model.
   - [x] Permission prompt -> should be something similar to a completion/code-action.
   - [ ] Shell commands handling.
   - [ ] *Maybe* some debug info? Like what's the context of the agent? how many tokens are being used? things of the nature, tho I'm not sure we'll be able to get this data from the ACP protocol.
   - [ ] Render tool calls -> Like, show what's being actually executed by the tool call.
-  - [ ] Maybe the ACP buffer should have it's own cursor that is independent of my own.
   - [x] Command to interrupt agent.
   - [x] Fix the issue where every time I save a file it gets autoreloaded.
   - [ ] ACP sometimes does not autoreload.
@@ -59,6 +61,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [x] LSP diagnostics sometimes do not update correctly.
 - [ ] Fix an issue regarding the touchpad scrolling (wayland in particular, simple way to reproduce this is block the screen and unlock it afterwards)
 - [ ] Correctly stream in shell command (force redraw on every stream).
+- [ ] Freeze on completer happens a lot, also hard to reproduce tho.
 
 ### Beyond
 - [x] File watcher (I'll wait to see helix's implementation on this, they're making big advancements: https://github.com/helix-editor/helix/pull/14544).

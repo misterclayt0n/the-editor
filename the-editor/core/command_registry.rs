@@ -933,18 +933,6 @@ impl CommandRegistry {
     ));
 
     self.register(TypableCommand::new(
-      "acp-buffer",
-      &["acpb"],
-      "Open the ACP conversation buffer",
-      acp_buffer_cmd,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
       "acp-permissions",
       &["acpp"],
       "Open popup to manage pending ACP permissions",
@@ -2774,15 +2762,6 @@ fn acp_deny(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
       .set_status("No pending permission requests".to_string());
   }
 
-  Ok(())
-}
-
-fn acp_buffer_cmd(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
-  if event != PromptEvent::Validate {
-    return Ok(());
-  }
-
-  crate::core::commands::acp_buffer(cx);
   Ok(())
 }
 

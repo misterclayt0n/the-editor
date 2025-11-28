@@ -188,7 +188,8 @@ impl AcpLayout {
 ///         `<- tool_name details` (completed)
 ///         `x  tool_name details` (failed)
 ///
-/// Also handle Unicode arrow variants that may come from font ligatures or other sources.
+/// Also handle Unicode arrow variants that may come from font ligatures or
+/// other sources.
 const TOOL_PREFIX_STARTED: &str = "-> ";
 const TOOL_PREFIX_COMPLETED: &str = "<- ";
 const TOOL_PREFIX_FAILED: &str = "x ";

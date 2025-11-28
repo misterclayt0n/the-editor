@@ -55,6 +55,39 @@ pub struct Completion {
 /// Takes the editor and current input, returns list of completions
 pub type CompletionFn = Arc<dyn Fn(&Editor, &str) -> Vec<Completion> + Send + Sync>;
 
+/// Create a completion function that generates completions from a register's
+/// history. This is used for prompts like search, shell commands, etc. to show
+/// previous entries.
+pub fn history_completion(register: char) -> CompletionFn {
+  Arc::new(move |editor: &Editor, input: &str| -> Vec<Completion> {
+    let Some(values) = editor.registers.read(register, editor) else {
+      return Vec::new();
+    };
+
+    let input_lower = input.to_lowercase();
+    let mut seen = std::collections::HashSet::new();
+
+    // Filter, deduplicate, and map history entries to completions
+    values
+      .filter(|value| {
+        // Match if input is empty or if value contains the input (case-insensitive)
+        input.is_empty() || value.to_lowercase().contains(&input_lower)
+      })
+      .filter(|value| {
+        // Deduplicate entries
+        seen.insert(value.to_string())
+      })
+      .map(|value| {
+        Completion {
+          range: 0..,
+          text:  value.to_string(),
+          doc:   None,
+        }
+      })
+      .collect()
+  })
+}
+
 /// Function type for handling prompt events (validate, update, abort)
 /// Takes context, current input, and event type
 /// This allows custom behavior for different prompt types (rename, search,

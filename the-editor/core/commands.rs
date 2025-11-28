@@ -2026,6 +2026,11 @@ pub fn normal_mode(cx: &mut Context) {
 }
 
 pub fn select_regex(cx: &mut Context) {
+  use crate::ui::components::prompt::history_completion;
+
+  // Use search register for select regex history (shares history with search)
+  let reg = cx.register.unwrap_or('/');
+
   // Set custom mode string
   cx.editor.set_custom_mode_str("SELECT".to_string());
 
@@ -2045,9 +2050,10 @@ pub fn select_regex(cx: &mut Context) {
     original_selection
   };
 
-  // Create prompt with callback
-  let prompt =
-    crate::ui::components::Prompt::new(String::new()).with_callback(move |cx, input, event| {
+  // Create prompt with callback and search history completions
+  let mut prompt = crate::ui::components::Prompt::new(String::new())
+    .with_completion(history_completion(reg))
+    .with_callback(move |cx, input, event| {
       use crate::ui::components::prompt::PromptEvent;
 
       // Handle events
@@ -2056,6 +2062,13 @@ pub fn select_regex(cx: &mut Context) {
           if matches!(event, PromptEvent::Validate) {
             // Clear custom mode string on validation
             cx.editor.clear_custom_mode_str();
+
+            // Store the pattern in search register on validation
+            if !input.is_empty() {
+              if let Err(err) = cx.editor.registers.push(reg, input.to_string()) {
+                log::warn!("Failed to store pattern in search register: {}", err);
+              }
+            }
           }
 
           // Skip empty input
@@ -2094,7 +2107,7 @@ pub fn select_regex(cx: &mut Context) {
     });
 
   // Push prompt to compositor with statusline slide animation
-  cx.callback.push(Box::new(|compositor, _cx| {
+  cx.callback.push(Box::new(|compositor, cx| {
     // Find the statusline and trigger slide animation
     for layer in compositor.layers.iter_mut() {
       if let Some(statusline) = layer
@@ -2106,6 +2119,8 @@ pub fn select_regex(cx: &mut Context) {
       }
     }
 
+    // Initialize completions so history appears immediately
+    prompt.init_completions(cx.editor);
     compositor.push(Box::new(prompt));
   }));
 }
@@ -6752,6 +6767,8 @@ pub fn search_selection(cx: &mut Context) {
 }
 
 fn searcher(cx: &mut Context, direction: Direction) {
+  use crate::ui::components::prompt::history_completion;
+
   let reg = cx.register.unwrap_or('/');
   let config = cx.editor.config();
   let scrolloff = config.scrolloff;
@@ -6772,9 +6789,10 @@ fn searcher(cx: &mut Context, direction: Direction) {
   let (view, doc) = current_ref!(cx.editor);
   let original_selection = doc.selection(view.id).clone();
 
-  // Create prompt with callback
-  let prompt =
-    crate::ui::components::Prompt::new(String::new()).with_callback(move |cx, input, event| {
+  // Create prompt with callback and search history completions
+  let mut prompt = crate::ui::components::Prompt::new(String::new())
+    .with_completion(history_completion(reg))
+    .with_callback(move |cx, input, event| {
       use crate::ui::components::prompt::PromptEvent;
 
       // Handle events
@@ -6823,7 +6841,7 @@ fn searcher(cx: &mut Context, direction: Direction) {
       }
     });
 
-  cx.callback.push(Box::new(|compositor, _cx| {
+  cx.callback.push(Box::new(|compositor, cx| {
     // Find the statusline and trigger slide animation
     for layer in compositor.layers.iter_mut() {
       if let Some(statusline) = layer
@@ -6835,6 +6853,8 @@ fn searcher(cx: &mut Context, direction: Direction) {
       }
     }
 
+    // Initialize completions so history appears immediately
+    prompt.init_completions(cx.editor);
     compositor.push(Box::new(prompt));
   }));
 }
@@ -7106,7 +7126,11 @@ pub fn remove_selections(cx: &mut Context) {
 }
 
 fn keep_or_remove_selections_impl(cx: &mut Context, remove: bool) {
+  use crate::ui::components::prompt::history_completion;
+
   // keep or remove selections matching regex
+  // Uses search register for history (shares history with search/select)
+  let reg = cx.register.unwrap_or('/');
 
   // Set custom mode string
   cx.editor.set_custom_mode_str(if remove {
@@ -7122,9 +7146,10 @@ fn keep_or_remove_selections_impl(cx: &mut Context, remove: bool) {
   let (view, doc) = current_ref!(cx.editor);
   let original_selection = doc.selection(view.id).clone();
 
-  // Create prompt with callback
-  let prompt =
-    crate::ui::components::Prompt::new(String::new()).with_callback(move |cx, input, event| {
+  // Create prompt with callback and search history completions
+  let mut prompt = crate::ui::components::Prompt::new(String::new())
+    .with_completion(history_completion(reg))
+    .with_callback(move |cx, input, event| {
       use crate::ui::components::prompt::PromptEvent;
 
       // Handle events
@@ -7133,6 +7158,13 @@ fn keep_or_remove_selections_impl(cx: &mut Context, remove: bool) {
           if matches!(event, PromptEvent::Validate) {
             // Clear custom mode string on validation
             cx.editor.clear_custom_mode_str();
+
+            // Store the pattern in search register on validation
+            if !input.is_empty() {
+              if let Err(err) = cx.editor.registers.push(reg, input.to_string()) {
+                log::warn!("Failed to store pattern in search register: {}", err);
+              }
+            }
           }
 
           // Skip empty input
@@ -7172,7 +7204,7 @@ fn keep_or_remove_selections_impl(cx: &mut Context, remove: bool) {
       }
     });
 
-  cx.callback.push(Box::new(|compositor, _cx| {
+  cx.callback.push(Box::new(|compositor, cx| {
     // Find the statusline and trigger slide animation
     for layer in compositor.layers.iter_mut() {
       if let Some(statusline) = layer
@@ -7184,6 +7216,8 @@ fn keep_or_remove_selections_impl(cx: &mut Context, remove: bool) {
       }
     }
 
+    // Initialize completions so history appears immediately
+    prompt.init_completions(cx.editor);
     compositor.push(Box::new(prompt));
   }));
 }
@@ -7711,7 +7745,13 @@ pub fn shell_append_output(cx: &mut Context) {
 }
 
 pub fn shell_keep_pipe(cx: &mut Context) {
-  use crate::ui::components::prompt::PromptEvent;
+  use crate::ui::components::prompt::{
+    PromptEvent,
+    history_completion,
+  };
+
+  // Shell history is stored in the '|' register (pipe register)
+  const SHELL_HISTORY_REGISTER: char = '|';
 
   // Set custom mode string
   cx.editor.set_custom_mode_str("KEEP PIPE".to_string());
@@ -7719,9 +7759,10 @@ pub fn shell_keep_pipe(cx: &mut Context) {
   // Set mode to Command so prompt is shown
   cx.editor.set_mode(crate::keymap::Mode::Command);
 
-  // Create prompt with callback
-  let prompt =
-    crate::ui::components::Prompt::new(String::new()).with_callback(move |cx, input, event| {
+  // Create prompt with callback and shell history completions
+  let mut prompt = crate::ui::components::Prompt::new(String::new())
+    .with_completion(history_completion(SHELL_HISTORY_REGISTER))
+    .with_callback(move |cx, input, event| {
       match event {
         PromptEvent::Validate => {
           // Clear custom mode string on validation
@@ -7729,6 +7770,15 @@ pub fn shell_keep_pipe(cx: &mut Context) {
 
           if input.is_empty() {
             return;
+          }
+
+          // Store the command in shell history register
+          if let Err(err) = cx
+            .editor
+            .registers
+            .push(SHELL_HISTORY_REGISTER, input.to_string())
+          {
+            log::warn!("Failed to store shell command in history: {}", err);
           }
 
           let config = cx.editor.config();
@@ -7767,7 +7817,7 @@ pub fn shell_keep_pipe(cx: &mut Context) {
       }
     });
 
-  cx.callback.push(Box::new(|compositor, _cx| {
+  cx.callback.push(Box::new(|compositor, cx| {
     // Find the statusline and trigger slide animation
     for layer in compositor.layers.iter_mut() {
       if let Some(statusline) = layer
@@ -7779,13 +7829,20 @@ pub fn shell_keep_pipe(cx: &mut Context) {
       }
     }
 
-    // Push the prompt
+    // Initialize completions so history appears immediately
+    prompt.init_completions(cx.editor);
     compositor.push(Box::new(prompt));
   }));
 }
 
 fn shell_prompt(cx: &mut Context, mode_str: &str, behavior: ShellBehavior) {
-  use crate::ui::components::prompt::PromptEvent;
+  use crate::ui::components::prompt::{
+    PromptEvent,
+    history_completion,
+  };
+
+  // Shell history is stored in the '|' register (pipe register)
+  const SHELL_HISTORY_REGISTER: char = '|';
 
   // Set custom mode string
   cx.editor.set_custom_mode_str(mode_str.to_string());
@@ -7793,9 +7850,10 @@ fn shell_prompt(cx: &mut Context, mode_str: &str, behavior: ShellBehavior) {
   // Set mode to Command so prompt is shown
   cx.editor.set_mode(crate::keymap::Mode::Command);
 
-  // Create prompt with callback
-  let prompt =
-    crate::ui::components::Prompt::new(String::new()).with_callback(move |cx, input, event| {
+  // Create prompt with callback and history completions
+  let mut prompt = crate::ui::components::Prompt::new(String::new())
+    .with_completion(history_completion(SHELL_HISTORY_REGISTER))
+    .with_callback(move |cx, input, event| {
       match event {
         PromptEvent::Validate => {
           // Clear custom mode string on validation
@@ -7804,6 +7862,16 @@ fn shell_prompt(cx: &mut Context, mode_str: &str, behavior: ShellBehavior) {
           if input.is_empty() {
             return;
           }
+
+          // Store the command in shell history register
+          if let Err(err) = cx
+            .editor
+            .registers
+            .push(SHELL_HISTORY_REGISTER, input.to_string())
+          {
+            log::warn!("Failed to store shell command in history: {}", err);
+          }
+
           shell(cx, input, &behavior);
         },
         PromptEvent::Abort => {
@@ -7814,7 +7882,7 @@ fn shell_prompt(cx: &mut Context, mode_str: &str, behavior: ShellBehavior) {
       }
     });
 
-  cx.callback.push(Box::new(|compositor, _cx| {
+  cx.callback.push(Box::new(|compositor, cx| {
     // Find the statusline and trigger slide animation
     for layer in compositor.layers.iter_mut() {
       if let Some(statusline) = layer
@@ -7826,7 +7894,8 @@ fn shell_prompt(cx: &mut Context, mode_str: &str, behavior: ShellBehavior) {
       }
     }
 
-    // Push the prompt
+    // Initialize completions so history appears immediately
+    prompt.init_completions(cx.editor);
     compositor.push(Box::new(prompt));
   }));
 }
@@ -8401,6 +8470,11 @@ fn spawn_shell_command_context(cx: &mut Context, command: String) -> anyhow::Res
 }
 
 pub fn shell_command(cx: &mut Context) {
+  use crate::ui::components::prompt::history_completion;
+
+  // Shell history is stored in the '|' register (pipe register)
+  const SHELL_HISTORY_REGISTER: char = '|';
+
   // Set custom mode string
   cx.editor.set_custom_mode_str("SHELL".to_string());
 
@@ -8413,9 +8487,10 @@ pub fn shell_command(cx: &mut Context) {
     view.doc
   };
 
-  // Create prompt with callback
-  let prompt =
-    crate::ui::components::Prompt::new(String::new()).with_callback(move |cx, input, event| {
+  // Create prompt with callback and shell history completions
+  let mut prompt = crate::ui::components::Prompt::new(String::new())
+    .with_completion(history_completion(SHELL_HISTORY_REGISTER))
+    .with_callback(move |cx, input, event| {
       use crate::ui::components::prompt::PromptEvent;
 
       // Handle events
@@ -8428,6 +8503,15 @@ pub fn shell_command(cx: &mut Context) {
           }
 
           let command = input.trim().to_string();
+
+          // Store the command in shell history register
+          if let Err(err) = cx
+            .editor
+            .registers
+            .push(SHELL_HISTORY_REGISTER, command.clone())
+          {
+            log::warn!("Failed to store shell command in history: {}", err);
+          }
 
           match run_shell_in_compilation_buffer(cx.editor, cx.jobs, current_doc_id, command.clone())
           {
@@ -8452,7 +8536,7 @@ pub fn shell_command(cx: &mut Context) {
       }
     });
 
-  cx.callback.push(Box::new(|compositor, _cx| {
+  cx.callback.push(Box::new(|compositor, cx| {
     // Find the statusline and trigger slide animation
     for layer in compositor.layers.iter_mut() {
       if let Some(statusline) = layer
@@ -8464,6 +8548,8 @@ pub fn shell_command(cx: &mut Context) {
       }
     }
 
+    // Initialize completions so history appears immediately
+    prompt.init_completions(cx.editor);
     compositor.push(Box::new(prompt));
   }));
 }

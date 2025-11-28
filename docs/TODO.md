@@ -19,8 +19,8 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [x] "reload-all" prompt command.
 
 - [x] Add command history in all prompts - Thinking about this, maybe we don't need command history in the regular prompt, as we need in the shell, search, select (and similar). The main idea is that we don't want to have to repeat typing in commands used often, and that's not really the prompt itself (most commands have aliases to them, so why do we need history in those cases?). That seems overall reasonable.
-  - [x] Add `:repeat-last-shell` command - This should repeat the last executed shell command.
-  - [x] Render history as if it were a completion in shell, search, keep and similar commands.
+- [x] Add `:repeat-last-shell` command - This should repeat the last executed shell command.
+- [x] Render history as if it were a completion in shell, search, keep and similar commands.
 - [ ] Add workspace commands.
   
 - [x] Add paths in the completer.
@@ -38,16 +38,19 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Model picker.
   - [x] Hover that streams agents response.
   - [x] Permission prompt -> should be something similar to a completion/code-action.
-  - [ ] Shell commands handling.
-  - [ ] *Maybe* some debug info? Like what's the context of the agent? how many tokens are being used? things of the nature, tho I'm not sure we'll be able to get this data from the ACP protocol.
   - [x] Render tool calls -> Like, show what's being actually executed by the tool call.
   - [x] Command to interrupt agent.
   - [x] Fix the issue where every time I save a file it gets autoreloaded.
-  - [ ] Render TODOs
+  - [x] Render TODOs
 
 - [ ] Since we now have a lot of special buffers, we need a system to easily toggle them, maybe in an overlay. We should be able to bind arbitrary buffers to this system tho, not just special buffers.
+
+Now I kinda want this editor to look nice so here's some ideas:
+- [ ] Cursor breathing animation.
+- [ ] Render jumplist picker.
+- [ ] Improve the window splitting animation (it currently sucks).
   
-#### Fixes
+### Fixes
 - [x] Render fonts correctly in the picker prompt menu (they're too spaced).
 - [x] Fix panic in prompt because it can't handle unicode properly.
 - [x] Render tabs in hover component.
@@ -66,3 +69,4 @@ So, this is just a simple todo list that will grant me some sort of base for the
 
 ### Beyond
 - [x] File watcher (I'll wait to see helix's implementation on this, they're making big advancements: https://github.com/helix-editor/helix/pull/14544).
+- [ ] JJ diff editor.

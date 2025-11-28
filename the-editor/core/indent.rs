@@ -786,7 +786,7 @@ fn query_indents<'a>(
     extend_captures,
   };
 
-  println!("indent result = {:?}", result);
+  log::info!("indent result = {:?}", result);
 
   result
 }

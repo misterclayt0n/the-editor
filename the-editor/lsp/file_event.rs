@@ -8,6 +8,10 @@ use globset::{
   GlobBuilder,
   GlobSetBuilder,
 };
+use log::{
+  debug,
+  error,
+};
 use the_editor_lsp_types::types as lsp;
 use tokio::sync::mpsc;
 
@@ -103,7 +107,7 @@ impl Handler {
     while let Some(event) = rx.recv().await {
       match event {
         Event::FileChanged { path } => {
-          println!("Received file event for {:?}", &path);
+          debug!("Received file event for {:?}", &path);
 
           state.retain(|id, client_state| {
             if !client_state
@@ -114,13 +118,13 @@ impl Handler {
               return true;
             }
             let Some(client) = client_state.client.upgrade() else {
-              println!("LSP client was dropped: {id}");
+              debug!("LSP client was dropped: {id}");
               return false;
             };
             let Ok(uri) = lsp::Url::from_file_path(&path) else {
               return true;
             };
-            println!(
+            debug!(
               "Sending didChangeWatchedFiles notification to client '{}'",
               client.name()
             );
@@ -140,7 +144,7 @@ impl Handler {
           registration_id,
           options: ops,
         } => {
-          println!(
+          debug!(
             "Registering didChangeWatchedFiles for client '{}' with id '{}'",
             client_id, registration_id
           );
@@ -167,7 +171,7 @@ impl Handler {
               if entry.registered.is_empty() {
                 state.remove(&client_id);
               }
-              println!("Unable to build globset for LSP didChangeWatchedFiles {err}")
+              error!("Unable to build globset for LSP didChangeWatchedFiles {err}")
             },
           }
         },
@@ -175,7 +179,7 @@ impl Handler {
           client_id,
           registration_id,
         } => {
-          println!(
+          debug!(
             "Unregistering didChangeWatchedFiles with id '{}' for client '{}'",
             registration_id, client_id
           );

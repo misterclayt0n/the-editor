@@ -4,8 +4,12 @@ use std::{
 };
 
 use anyhow::Context;
+use log::{
+  debug,
+  error,
+  warn,
+};
 use lsp::notification::Notification as _;
-// use log::{error, info};
 use serde::{
   Deserialize,
   Serialize,
@@ -159,7 +163,7 @@ impl Transport {
     reader.read_exact(content).await?;
     let msg = std::str::from_utf8(content).context("invalid utf8 from server")?;
 
-    println!("{language_server_name} <- {msg}");
+    debug!("{language_server_name} <- {msg}");
 
     // try parsing as output (server response) or call (server request)
     let output: serde_json::Result<ServerMessage> = serde_json::from_str(msg);
@@ -178,7 +182,7 @@ impl Transport {
     if err.read_line(buffer).await? == 0 {
       return Err(Error::StreamClosed);
     };
-    eprintln!("{language_server_name} err <- {buffer:?}");
+    error!("{language_server_name} err <- {buffer:?}");
 
     Ok(())
   }
@@ -212,7 +216,7 @@ impl Transport {
     request: String,
     language_server_name: &str,
   ) -> Result<()> {
-    println!("{language_server_name} -> {request}");
+    debug!("{language_server_name} -> {request}");
 
     // send the headers
     server_stdin
@@ -257,7 +261,7 @@ impl Transport {
     let (id, result) = match output {
       jsonrpc::Output::Success(jsonrpc::Success { id, result, .. }) => (id, Ok(result)),
       jsonrpc::Output::Failure(jsonrpc::Failure { id, error, .. }) => {
-        eprintln!("{language_server_name} <- {error}");
+        error!("{language_server_name} <- {error}");
         (id, Err(error.into()))
       },
     };
@@ -266,7 +270,7 @@ impl Transport {
       match tx.send(result).await {
         Ok(_) => (),
         Err(_) => {
-          eprintln!(
+          warn!(
             "Tried sending response into a closed channel (id={:?}), original request likely \
              timed out",
             id
@@ -274,7 +278,7 @@ impl Transport {
         },
       };
     } else {
-      eprintln!(
+      warn!(
         "Discarding Language Server response without a request (id={:?}) {:?}",
         id, result
       );
@@ -306,14 +310,14 @@ impl Transport {
           {
             Ok(_) => {},
             Err(err) => {
-              eprintln!("{} err: <- {err:?}", transport.name);
+              error!("{} err: <- {err:?}", transport.name);
               break;
             },
           };
         },
         Err(err) => {
           if !matches!(err, Error::StreamClosed) {
-            eprintln!(
+            error!(
               "Exiting {} after unexpected error: {err:?}",
               &transport.name
             );
@@ -324,7 +328,7 @@ impl Transport {
             match tx.send(Err(Error::StreamClosed)).await {
               Ok(_) => (),
               Err(_) => {
-                eprintln!("Could not close request on a closed channel (id={:?})", id)
+                warn!("Could not close request on a closed channel (id={:?})", id)
               },
             }
           }
@@ -343,7 +347,7 @@ impl Transport {
           {
             Ok(_) => {},
             Err(err) => {
-              eprintln!("err: <- {:?}", err);
+              error!("err: <- {:?}", err);
             },
           }
           break;
@@ -358,7 +362,7 @@ impl Transport {
       match Self::recv_server_error(&mut server_stderr, &mut recv_buffer, &transport.name).await {
         Ok(_) => {},
         Err(err) => {
-          eprintln!("{} err: <- {err:?}", transport.name);
+          error!("{} err: <- {err:?}", transport.name);
           break;
         },
       }
@@ -426,17 +430,17 @@ impl Transport {
               match transport.process_server_message(&client_tx, notification, language_server_name).await {
                   Ok(_) => {}
                   Err(err) => {
-                      eprintln!("{language_server_name} err: <- {err:?}");
+                      error!("{language_server_name} err: <- {err:?}");
                   }
               }
 
               // drain the pending queue and send payloads to server
               for msg in pending_messages.drain(..) {
-                  println!("Draining pending message {:?}", msg);
+                  debug!("Draining pending message {:?}", msg);
                   match transport.send_payload_to_server(&mut server_stdin, msg).await {
                       Ok(_) => {}
                       Err(err) => {
-                          eprintln!("{language_server_name} err: <- {err:?}");
+                          error!("{language_server_name} err: <- {err:?}");
                       }
                   }
               }
@@ -444,7 +448,7 @@ impl Transport {
           msg = client_rx.recv() => {
               if let Some(msg) = msg {
                   if is_pending && is_shutdown(&msg) {
-                      println!("Language server not initialized, shutting down");
+                      debug!("Language server not initialized, shutting down");
                       break;
                   } else if is_pending && !is_initialize(&msg) {
                       // ignore notifications
@@ -452,13 +456,13 @@ impl Transport {
                           continue;
                       }
 
-                      println!("Language server not initialized, delaying request");
+                      debug!("Language server not initialized, delaying request");
                       pending_messages.push(msg);
                   } else {
                       match transport.send_payload_to_server(&mut server_stdin, msg).await {
                           Ok(_) => {}
                           Err(err) => {
-                              eprintln!("{} err: <- {err:?}", transport.name);
+                              error!("{} err: <- {err:?}", transport.name);
                           }
                       }
                   }

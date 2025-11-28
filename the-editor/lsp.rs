@@ -17,6 +17,10 @@ use arc_swap::ArcSwap;
 pub use client::Client;
 use futures_util::stream::select_all::SelectAll;
 pub use jsonrpc::Call;
+use log::{
+  debug,
+  error,
+};
 pub use lsp::types::Url;
 use slotmap::SlotMap;
 pub use the_editor_lsp_types as lsp;
@@ -84,6 +88,7 @@ pub enum OffsetEncoding {
 }
 
 pub mod util {
+  use log::warn;
   use ropey::{
     Rope,
     RopeSlice,
@@ -190,7 +195,7 @@ pub mod util {
       // If it extends past the end, truncate it to the end. This is because the
       // way the LSP describes the range including the last newline is by
       // specifying a line number after what we would call the last line.
-      println!("LSP position {pos:?} out of range assuming EOF");
+      warn!("LSP position {pos:?} out of range assuming EOF");
       return Some(doc.len_chars());
     }
 
@@ -310,7 +315,7 @@ pub mod util {
     // start to end and because it's not specified quite a few LS rely on this
     // as a result (for example the TS server)
     if range.start > range.end {
-      println!(
+      warn!(
         "Invalid LSP range start {:?} > end {:?}, using an empty range at the end instead",
         range.start, range.end
       );
@@ -491,7 +496,7 @@ pub mod util {
         };
 
         if start > end {
-          println!(
+          warn!(
             "Invalid LSP text edit start {:?} > end {:?}, discarding",
             start, end
           );
@@ -625,7 +630,7 @@ impl Registry {
 
   pub fn remove_by_id(&mut self, id: LanguageServerId) {
     let Some(client) = self.inner.remove(id) else {
-      println!("client was already removed");
+      debug!("client was already removed");
       return;
     };
     self.file_event_handler.remove_client(id);
@@ -683,9 +688,9 @@ impl Registry {
   ) -> Option<Result<Arc<Client>>> {
     if let Some(old_clients) = self.inner_by_name.remove(name) {
       if old_clients.is_empty() {
-        println!("restarting client for '{name}' which was manually stopped");
+        debug!("restarting client for '{name}' which was manually stopped");
       } else {
-        println!("stopping existing clients for '{name}'");
+        debug!("stopping existing clients for '{name}'");
       }
       for old_client in old_clients {
         self.file_event_handler.remove_client(old_client.id());
@@ -989,7 +994,7 @@ fn start_client(
       .await;
 
     if let Err(e) = value {
-      println!("failed to initialize language server: {}", e);
+      error!("failed to initialize language server: {}", e);
       return;
     }
 

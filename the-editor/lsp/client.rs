@@ -18,6 +18,11 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
+use log::{
+  debug,
+  error,
+  warn,
+};
 use parking_lot::Mutex;
 use ropey::Rope;
 use serde::Deserialize;
@@ -478,7 +483,7 @@ impl Client {
           "utf-16" => Some(OffsetEncoding::Utf16),
           "utf-32" => Some(OffsetEncoding::Utf32),
           encoding => {
-            println!("Server provided invalid position encoding {encoding}, defaulting to utf-16");
+            warn!("Server provided invalid position encoding {encoding}, defaulting to utf-16");
             None
           },
         }
@@ -570,7 +575,7 @@ impl Client {
     let params = match serde_json::to_value(params) {
       Ok(params) => params,
       Err(err) => {
-        println!(
+        error!(
           "Failed to serialize params for notification '{}' for server '{}': {err}",
           R::METHOD,
           self.name,
@@ -586,7 +591,7 @@ impl Client {
     };
 
     if let Err(err) = server_tx.send(Payload::Notification(notification)) {
-      println!(
+      error!(
         "Failed to send notification '{}' to server '{}': {err}",
         R::METHOD,
         self.name
@@ -639,7 +644,7 @@ impl Client {
 
   pub(crate) async fn initialize(&self, enable_snippets: bool) -> Result<lsp::InitializeResult> {
     if let Some(config) = &self.config {
-      println!("Using custom LSP config: {}", config);
+      debug!("Using custom LSP config: {}", config);
     }
 
     #[allow(deprecated)]
@@ -827,7 +832,7 @@ impl Client {
   /// Forcefully shuts down the language server ignoring any errors.
   pub async fn force_shutdown(&self) -> Result<()> {
     if let Err(e) = self.shutdown().await {
-      println!("language server failed to terminate gracefully - {}", e);
+      warn!("language server failed to terminate gracefully - {}", e);
     }
     self.exit();
     Ok(())

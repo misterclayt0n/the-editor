@@ -4,6 +4,7 @@ use globset::{
   GlobBuilder,
   GlobSet,
 };
+use log::error;
 use the_editor_lsp_types::types as lsp;
 
 #[derive(Default, Debug)]
@@ -39,7 +40,7 @@ impl FileOperationFilter {
       let glob = match glob_builder.build() {
         Ok(glob) => glob,
         Err(err) => {
-          println!("invalid glob send by LS: {err}");
+          error!("invalid glob send by LS: {err}");
           continue;
         },
       };
@@ -57,11 +58,11 @@ impl FileOperationFilter {
       };
     }
     let file_globs = file_globs.build().unwrap_or_else(|err| {
-      println!("invalid globs send by LS: {err}");
+      error!("invalid globs send by LS: {err}");
       GlobSet::empty()
     });
     let dir_globs = dir_globs.build().unwrap_or_else(|err| {
-      println!("invalid globs send by LS: {err}");
+      error!("invalid globs send by LS: {err}");
       GlobSet::empty()
     });
     FileOperationFilter {

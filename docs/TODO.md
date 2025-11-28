@@ -18,9 +18,10 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Command palette.
 - [x] "reload-all" prompt command.
 
-- [ ] Add command history in all prompts - Thinking about this, maybe we don't need command history in the regular prompt, as we need in the shell, search, select (and similar). The main idea is that we don't want to have to repeat typing in commands used often, and that's not really the prompt itself (most commands have aliases to them, so why do we need history in those cases?). That seems overall reasonable.
-  - [ ] Add `:repeat-last-shell` command - This should repeat the last executed shell command.
+- [x] Add command history in all prompts - Thinking about this, maybe we don't need command history in the regular prompt, as we need in the shell, search, select (and similar). The main idea is that we don't want to have to repeat typing in commands used often, and that's not really the prompt itself (most commands have aliases to them, so why do we need history in those cases?). That seems overall reasonable.
+  - [x] Add `:repeat-last-shell` command - This should repeat the last executed shell command.
   - [x] Render history as if it were a completion in shell, search, keep and similar commands.
+- [ ] Add workspace commands.
   
 - [x] Add paths in the completer.
 - [x] Different cursor shapes.

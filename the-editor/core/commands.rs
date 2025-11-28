@@ -548,6 +548,7 @@ impl MappableCommand {
         shell_append_output, "shell append output",
         shell_keep_pipe, "shell keep pipe",
         shell_command, "shell command",
+        repeat_last_shell, "repeat last shell",
         kill_shell, "kill shell",
         increment, "increment",
         decrement, "decrement",
@@ -8552,6 +8553,36 @@ pub fn shell_command(cx: &mut Context) {
     prompt.init_completions(cx.editor);
     compositor.push(Box::new(prompt));
   }));
+}
+
+pub fn repeat_last_shell(cx: &mut Context) {
+  const SHELL_HISTORY_REGISTER: char = '|';
+
+  // Get the last executed shell command from the register
+  let last_command = cx
+    .editor
+    .registers
+    .first(SHELL_HISTORY_REGISTER, cx.editor)
+    .map(|cmd| cmd.to_string());
+
+  if let Some(command) = last_command {
+    let current_doc_id = {
+      let view = view!(cx.editor);
+      view.doc
+    };
+
+    match run_shell_in_compilation_buffer(cx.editor, cx.jobs, current_doc_id, command.clone()) {
+      Ok(_) => {
+        cx.editor.set_status(format!("running: {}", command));
+      },
+      Err(err) => {
+        cx.editor.set_error(err.to_string());
+      },
+    }
+  } else {
+    cx.editor
+      .set_error("no shell command in history".to_string());
+  }
 }
 
 pub fn cmd_shell_spawn(

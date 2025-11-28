@@ -1949,6 +1949,37 @@ impl Component for EditorView {
               kind:    cursor_kind_for_position,
               primary: is_primary_cursor_here,
             });
+          } else if is_cursor_here && !is_focused {
+            // Draw hollow cursor for unfocused views to indicate cursor position
+            let cursor_w = width_cols.max(1) as f32 * font_width;
+
+            // Clip cursor to stay within view bounds
+            let max_cursor_width = (view_right_edge_px - x).max(0.0);
+            let clipped_cursor_w = cursor_w.min(max_cursor_width);
+
+            let cursor_height = self.cached_cell_height;
+            let max_cursor_height = (view_bottom_edge_px - y).max(0.0);
+            let clipped_cursor_h = cursor_height.min(max_cursor_height);
+
+            // Use cursor background color with reduced opacity for hollow cursor
+            let hollow_cursor_color = if let Some(mut bg) = cursor_bg_from_theme {
+              bg.a *= zoom_alpha * 0.7; // Slightly dimmed for unfocused
+              bg
+            } else {
+              let mut color = Color::rgb(0.2, 0.8, 0.7);
+              color.a *= zoom_alpha * 0.7;
+              color
+            };
+
+            self.command_batcher.add_command(RenderCommand::Cursor {
+              x,
+              y,
+              width:   clipped_cursor_w,
+              height:  clipped_cursor_h,
+              color:   hollow_cursor_color,
+              kind:    CursorKind::Hollow,
+              primary: is_primary_cursor_here,
+            });
           }
 
           // Store char_idx before match (g gets shadowed inside Grapheme::Other)
@@ -1967,7 +1998,8 @@ impl Component for EditorView {
             Grapheme::Other { ref g } => {
               if left_clip == 0 {
                 // Determine foreground color
-                let fg = if is_cursor_here {
+                // Only invert text color for cursor when view is focused
+                let fg = if is_cursor_here && is_focused {
                   if cursor_is_block_here {
                     // Block cursor: use background color as fg (adaptive) or cursor fg from theme
                     if use_adaptive_cursor {

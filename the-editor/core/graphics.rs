@@ -22,6 +22,8 @@ pub enum CursorKind {
   Bar,
   /// _
   Underline,
+  /// □ (hollow/outline block for unfocused views)
+  Hollow,
   /// Hidden cursor, can set cursor position with this to let IME have correct
   /// cursor position.
   Hidden,

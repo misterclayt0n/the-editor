@@ -281,6 +281,30 @@ impl CommandBatcher {
           cursor_color,
         );
       },
+      CursorKind::Hollow => {
+        // Draw hollow/outline cursor (4 thin rectangles forming a border)
+        const BORDER_WIDTH: f32 = 1.0;
+        // Top edge
+        renderer.draw_rect(cursor.x, cursor.y, cursor.width, BORDER_WIDTH, cursor_color);
+        // Bottom edge
+        renderer.draw_rect(
+          cursor.x,
+          cursor.y + cursor.height - BORDER_WIDTH,
+          cursor.width,
+          BORDER_WIDTH,
+          cursor_color,
+        );
+        // Left edge
+        renderer.draw_rect(cursor.x, cursor.y, BORDER_WIDTH, cursor.height, cursor_color);
+        // Right edge
+        renderer.draw_rect(
+          cursor.x + cursor.width - BORDER_WIDTH,
+          cursor.y,
+          BORDER_WIDTH,
+          cursor.height,
+          cursor_color,
+        );
+      },
       CursorKind::Hidden => {},
     }
   }

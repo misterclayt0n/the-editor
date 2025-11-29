@@ -91,14 +91,14 @@ impl PowerlineAtlas {
         });
 
         queue.write_texture(
-          wgpu::ImageCopyTexture {
+          wgpu::TexelCopyTextureInfo {
             texture:   &texture,
             mip_level: 0,
             origin:    wgpu::Origin3d::ZERO,
             aspect:    wgpu::TextureAspect::All,
           },
           pixmap.data(), // RGBA8 bytes
-          wgpu::ImageDataLayout {
+          wgpu::TexelCopyBufferLayout {
             offset:         0,
             bytes_per_row:  Some(4 * width),
             rows_per_image: Some(height),

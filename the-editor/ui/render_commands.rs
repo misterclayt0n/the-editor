@@ -295,7 +295,13 @@ impl CommandBatcher {
           cursor_color,
         );
         // Left edge
-        renderer.draw_rect(cursor.x, cursor.y, BORDER_WIDTH, cursor.height, cursor_color);
+        renderer.draw_rect(
+          cursor.x,
+          cursor.y,
+          BORDER_WIDTH,
+          cursor.height,
+          cursor_color,
+        );
         // Right edge
         renderer.draw_rect(
           cursor.x + cursor.width - BORDER_WIDTH,

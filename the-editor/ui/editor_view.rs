@@ -1974,10 +1974,10 @@ impl Component for EditorView {
             self.command_batcher.add_command(RenderCommand::Cursor {
               x,
               y,
-              width:   clipped_cursor_w,
-              height:  clipped_cursor_h,
-              color:   hollow_cursor_color,
-              kind:    CursorKind::Hollow,
+              width: clipped_cursor_w,
+              height: clipped_cursor_h,
+              color: hollow_cursor_color,
+              kind: CursorKind::Hollow,
               primary: is_primary_cursor_here,
             });
           }

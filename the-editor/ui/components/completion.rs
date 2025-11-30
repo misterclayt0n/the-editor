@@ -3,7 +3,6 @@ use std::{
   sync::Arc,
 };
 
-use futures_executor::block_on;
 use nucleo::{
   Config,
   Utf32Str,
@@ -919,32 +918,46 @@ impl Completion {
   }
 
   /// Apply the selected completion item
+  ///
+  /// This function applies the completion immediately without blocking.
+  /// If the item needs resolution (for additional_text_edits like
+  /// auto-imports), it spawns an async task to fetch and apply them
+  /// afterwards.
   fn apply_completion(&self, ctx: &mut Context, item: &CompletionItem) {
     use the_editor_event::send_blocking;
 
     use crate::handlers::lsp::SignatureHelpEvent;
 
-    let mut owned_item = item.clone();
-    let mut offset_encoding = None;
-
-    if let CompletionItem::Lsp(lsp_item) = &mut owned_item {
-      let Some(language_server) = ctx.editor.language_server_by_id(lsp_item.provider) else {
-        log::error!("Language server not found for completion");
-        return;
-      };
-
-      offset_encoding = Some(language_server.offset_encoding());
-      Self::resolve_item_for_accept(language_server, lsp_item);
-    }
-
-    let (view, doc) = crate::current!(ctx.editor);
+    let owned_item = item.clone();
 
     match owned_item {
       CompletionItem::Lsp(lsp_item) => {
-        let Some(offset_encoding) = offset_encoding else {
-          log::error!("Missing offset encoding for LSP completion");
+        // First get the offset encoding and resolve future (if needed) before borrowing
+        // doc
+        let Some(language_server) = ctx.editor.language_server_by_id(lsp_item.provider) else {
+          log::error!("Language server not found for completion");
           return;
         };
+
+        let offset_encoding = language_server.offset_encoding();
+
+        // Get the resolve future now if we need async resolution later
+        let resolve_future = if !lsp_item.resolved
+          && lsp_item.item.additional_text_edits.is_none()
+          && matches!(
+            language_server.capabilities().completion_provider,
+            Some(lsp::CompletionOptions {
+              resolve_provider: Some(true),
+              ..
+            })
+          ) {
+          Some(language_server.resolve_completion_item(&lsp_item.item))
+        } else {
+          None
+        };
+
+        // Now borrow doc mutably
+        let (view, doc) = crate::current!(ctx.editor);
 
         let Some(plan) = self.plan_lsp_transaction(doc, view.id, &lsp_item.item, offset_encoding)
         else {
@@ -958,6 +971,7 @@ impl Completion {
           .changes_iter()
           .collect::<Vec<_>>();
 
+        // Apply the main completion transaction immediately
         doc.apply(&plan.transaction, view.id);
 
         if let Some(snippet) = plan.snippet {
@@ -967,7 +981,9 @@ impl Completion {
           };
         }
 
-        if let Some(additional_edits) = lsp_item.item.additional_text_edits {
+        // Handle additional_text_edits - apply immediately if already resolved,
+        // otherwise fetch asynchronously
+        if let Some(additional_edits) = &lsp_item.item.additional_text_edits {
           if !additional_edits.is_empty() {
             log::info!(
               "Applying {} additional text edits for auto-import",
@@ -975,11 +991,16 @@ impl Completion {
             );
             let transaction = crate::lsp::util::generate_transaction_from_edits(
               doc.text(),
-              additional_edits,
+              additional_edits.clone(),
               offset_encoding,
             );
             doc.apply(&transaction, view.id);
           }
+        } else if let Some(future) = resolve_future {
+          // Item not resolved - spawn async task to fetch additional_text_edits
+          let doc_id = doc.id();
+          let view_id = view.id;
+          Self::spawn_resolve_additional_edits(future, offset_encoding, doc_id, view_id);
         }
 
         if plan.trigger_signature_help {
@@ -989,6 +1010,9 @@ impl Completion {
           );
         }
 
+        // Save to history
+        doc.append_changes_to_history(view);
+
         ctx.editor.last_completion = Some(CompleteAction::Applied {
           trigger_offset: self.trigger_offset,
           changes,
@@ -996,6 +1020,8 @@ impl Completion {
         });
       },
       CompletionItem::Other(other) => {
+        let (view, doc) = crate::current!(ctx.editor);
+
         // For non-LSP completions, replace from trigger to cursor with the label
         let cursor = doc
           .selection(view.id)
@@ -1013,6 +1039,9 @@ impl Completion {
         let changes = transaction.changes().changes_iter().collect::<Vec<_>>();
         doc.apply(&transaction, view.id);
 
+        // Save to history
+        doc.append_changes_to_history(view);
+
         ctx.editor.last_completion = Some(CompleteAction::Applied {
           trigger_offset: self.trigger_offset,
           changes,
@@ -1020,37 +1049,62 @@ impl Completion {
         });
       },
     }
-
-    // Save to history
-    doc.append_changes_to_history(view);
   }
 
-  fn resolve_item_for_accept(language_server: &crate::lsp::Client, item: &mut LspCompletionItem) {
-    if item.resolved {
-      return;
-    }
+  /// Spawn an async task to resolve completion item and apply
+  /// additional_text_edits
+  ///
+  /// This is called when accepting a completion that hasn't been fully resolved
+  /// yet. The main completion text is applied immediately, and this task
+  /// fetches any additional edits (like auto-imports) asynchronously without
+  /// blocking the UI.
+  fn spawn_resolve_additional_edits(
+    resolve_future: futures_util::future::BoxFuture<
+      'static,
+      crate::lsp::Result<lsp::CompletionItem>,
+    >,
+    offset_encoding: crate::lsp::OffsetEncoding,
+    doc_id: crate::core::DocumentId,
+    view_id: ViewId,
+  ) {
+    // Spawn async task to resolve and apply additional edits
+    tokio::spawn(async move {
+      match resolve_future.await {
+        Ok(resolved) => {
+          if let Some(additional_edits) = resolved.additional_text_edits.filter(|e| !e.is_empty()) {
+            log::info!(
+              "Async: Applying {} additional text edits for auto-import",
+              additional_edits.len()
+            );
+            // Dispatch back to main thread to apply the edits
+            crate::ui::job::dispatch(move |editor, _compositor| {
+              let Some(doc) = editor.documents.get_mut(&doc_id) else {
+                log::warn!("Document no longer exists for additional edits");
+                return;
+              };
 
-    if !matches!(
-      language_server.capabilities().completion_provider,
-      Some(lsp::CompletionOptions {
-        resolve_provider: Some(true),
-        ..
-      })
-    ) {
-      return;
-    }
+              let transaction = crate::lsp::util::generate_transaction_from_edits(
+                doc.text(),
+                additional_edits,
+                offset_encoding,
+              );
+              doc.apply(&transaction, view_id);
 
-    let future = language_server.resolve_completion_item(&item.item);
-    match block_on(future) {
-      Ok(resolved) => {
-        item.item = resolved;
-        item.resolved = true;
-      },
-      Err(err) => {
-        log::error!("Completion resolve request failed: {}", err);
-        item.resolved = true;
-      },
-    }
+              // Append to history so the additional edits can be undone together
+              // Check if view still exists before getting mutable reference
+              if editor.tree.try_get(view_id).is_some() {
+                let view = editor.tree.get_mut(view_id);
+                doc.append_changes_to_history(view);
+              }
+            })
+            .await;
+          }
+        },
+        Err(err) => {
+          log::error!("Async completion resolve failed: {}", err);
+        },
+      }
+    });
   }
 
   fn plan_lsp_transaction(

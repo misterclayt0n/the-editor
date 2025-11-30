@@ -508,7 +508,7 @@ impl MappableCommand {
         align_selections, "align selections",
         trim_selections, "trim selections",
         rotate_selections_forward, "rotate selections forward",
-        rotate_selections_backward, "rotate selections backward",
+       rotate_selections_backward, "rotate selections backward",
         rotate_selection_contents_forward, "rotate selection contents forward",
         rotate_selection_contents_backward, "rotate selection contents backward",
         page_up, "page up",

@@ -2856,51 +2856,54 @@ impl EditorView {
     cx: &mut Context,
   ) -> EventResult {
     // Handle explorer mouse interaction
-    if self.explorer_px_width > 0.0 && mouse.position.0 < self.explorer_px_width {
+    if self.explorer_px_width > 0.0 {
+      let in_explorer_area = mouse.position.0 < self.explorer_px_width;
+      
       if let Some(ref mut explorer) = self.explorer {
         if explorer.is_opened() {
-          // Calculate visual row from mouse Y position
-          // Header height is UI_FONT_SIZE + 8.0, separator is 1.0
-          let header_height = crate::ui::UI_FONT_SIZE + 8.0 + 1.0;
-          let item_height = crate::ui::UI_FONT_SIZE + 4.0 + 1.0; // line_height + padding + gap
-          
-          if mouse.position.1 > header_height {
-            let relative_y = mouse.position.1 - header_height;
-            let visual_row = (relative_y / item_height).floor() as usize;
+          if in_explorer_area {
+            // Calculate visual row from mouse Y position
+            // Header height is UI_FONT_SIZE + 8.0, separator is 1.0
+            let header_height = crate::ui::UI_FONT_SIZE + 8.0 + 1.0;
+            let item_height = crate::ui::UI_FONT_SIZE + 4.0 + 1.0; // line_height + padding + gap
             
-            match mouse.button {
-              Some(the_editor_renderer::MouseButton::Left) if mouse.pressed => {
-                // Detect double-click
-                let now = std::time::Instant::now();
-                let is_double_click = if let (Some(last_time), Some(last_pos)) = 
-                  (self.last_click_time, self.last_click_pos) 
-                {
-                  let time_diff = now.duration_since(last_time);
-                  let pos_diff = ((mouse.position.0 - last_pos.0).powi(2) 
-                    + (mouse.position.1 - last_pos.1).powi(2)).sqrt();
-                  time_diff.as_millis() < 400 && pos_diff < 10.0
-                } else {
-                  false
-                };
-                
-                self.last_click_time = Some(now);
-                self.last_click_pos = Some(mouse.position);
-                
-                // Focus explorer if not focused
-                if !explorer.is_focus() {
-                  explorer.focus();
+            if mouse.position.1 > header_height {
+              let relative_y = mouse.position.1 - header_height;
+              let visual_row = (relative_y / item_height).floor() as usize;
+              
+              match mouse.button {
+                Some(the_editor_renderer::MouseButton::Left) if mouse.pressed => {
+                  self.last_click_time = Some(std::time::Instant::now());
+                  self.last_click_pos = Some(mouse.position);
+                  
+                  // Focus explorer if not focused
+                  if !explorer.is_focus() {
+                    explorer.focus();
+                  }
+                  
+                  // Single click activates (opens file/toggles folder)
+                  explorer.handle_mouse_click(visual_row, true, cx);
+                  request_redraw();
+                  return EventResult::Consumed(None);
+                },
+                _ => {},
+              }
+            }
+            
+            // Consume all mouse events in explorer area (don't pass through)
+            return EventResult::Consumed(None);
+          } else {
+            // Clicked outside explorer area - unfocus explorer if it was focused
+            if explorer.is_focus() {
+              if let Some(the_editor_renderer::MouseButton::Left) = mouse.button {
+                if mouse.pressed {
+                  explorer.unfocus();
+                  request_redraw();
+                  // Don't return - let the click pass through to the editor
                 }
-                
-                explorer.handle_mouse_click(visual_row, is_double_click, cx);
-                request_redraw();
-                return EventResult::Consumed(None);
-              },
-              _ => {},
+              }
             }
           }
-          
-          // Consume all mouse events in explorer area (don't pass through)
-          return EventResult::Consumed(None);
         }
       }
     }

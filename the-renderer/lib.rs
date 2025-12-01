@@ -9,6 +9,7 @@ mod error;
 pub mod event;
 mod powerline_glyphs;
 mod renderer;
+pub mod svg_icon;
 mod text;
 mod text_cache;
 

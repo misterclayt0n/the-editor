@@ -1005,6 +1005,10 @@ struct RenderedLine {
   parent_index:                Option<usize>,
   /// Nesting level (0 = root)
   level:                       usize,
+  /// Whether this item is a folder (directory)
+  is_folder:                   bool,
+  /// Whether this folder is opened (only meaningful if is_folder is true)
+  is_opened:                   bool,
 }
 struct RenderTreeParams<'a, T> {
   tree:     &'a Tree<T>,
@@ -1021,9 +1025,14 @@ fn render_tree<T: TreeViewItem>(
     selected,
   }: RenderTreeParams<T>,
 ) -> Vec<RenderedLine> {
+  let is_folder = tree.item().is_parent();
+  let is_opened = tree.is_opened;
+
+  // The indent includes the folder indicator character for text representation
+  // (used in tests). The GUI rendering will draw an SVG icon on top of this.
   let indent = if level > 0 {
-    let indicator = if tree.item().is_parent() {
-      if tree.is_opened { "⏷" } else { "⏵" }
+    let indicator = if is_folder {
+      if is_opened { "⏷" } else { "⏵" }
     } else {
       " "
     };
@@ -1031,6 +1040,7 @@ fn render_tree<T: TreeViewItem>(
   } else {
     "".to_string()
   };
+
   let name = tree.item.name();
   let head = RenderedLine {
     indent,
@@ -1040,6 +1050,8 @@ fn render_tree<T: TreeViewItem>(
     parent_index: tree.parent_index,
     level,
     tree_index: tree.index,
+    is_folder,
+    is_opened,
   };
   let prefix = format!("{}{}", prefix, if level == 0 { "" } else { "  " });
   vec![head]
@@ -1069,6 +1081,10 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
     };
 
     use crate::ui::UI_FONT_SIZE;
+
+    // SVG icon data for folder icons
+    const FOLDER_CLOSED_SVG: &[u8] = include_bytes!("../../assets/folder.svg");
+    const FOLDER_OPEN_SVG: &[u8] = include_bytes!("../../assets/folder_open.svg");
 
     // Update animations
     self.selection_anim.update(cx.dt);
@@ -1310,30 +1326,43 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
       // Draw indent + content
       let text_x = item_x + item_padding_x;
       let text_y = item_y + item_padding_y;
+
+      // Icon size (square, based on font size)
+      let icon_size = (UI_FONT_SIZE * 0.85) as u32;
+      let icon_size_f = icon_size as f32;
+
+      // Use slightly different color for directories vs files
+      let mut item_color = if line.is_folder {
+        // Directory - slightly brighter
+        Color::new(
+          (text_color.r + 0.1).min(1.0),
+          (text_color.g + 0.1).min(1.0),
+          (text_color.b + 0.05).min(1.0),
+          text_color.a,
+        )
+      } else {
+        text_color
+      };
+      // Apply entrance animation alpha
+      item_color.a *= item_entrance;
+
+      // Build the display text, replacing folder indicators with spaces for the icon
       let full_line = format!("{}{}", line.indent, line.content);
+      let display_line = if line.is_folder && line.level > 0 {
+        // Replace the folder indicator (⏷ or ⏵) with a space for the icon
+        full_line
+          .replace('⏷', " ")
+          .replace('⏵', " ")
+      } else {
+        full_line.clone()
+      };
 
       // Calculate max characters that fit in available width
       // Available width = item_width - 2 * padding_x - extra margin for safety
       let available_text_width = (item_width - item_padding_x * 2.0 - 4.0).max(0.0);
-      let display_line = truncate_to_width(&full_line, available_text_width, cell_width);
+      let display_line = truncate_to_width(&display_line, available_text_width, cell_width);
 
-      // Use slightly different color for directories vs files
-      let mut item_color =
-        if line.content.ends_with('/') || line.indent.contains('⏵') || line.indent.contains('⏷')
-        {
-          // Directory - slightly brighter
-          Color::new(
-            (text_color.r + 0.1).min(1.0),
-            (text_color.g + 0.1).min(1.0),
-            (text_color.b + 0.05).min(1.0),
-            text_color.a,
-          )
-        } else {
-          text_color
-        };
-      // Apply entrance animation alpha
-      item_color.a *= item_entrance;
-
+      // Draw the text first
       surface.draw_text(TextSection::simple(
         text_x,
         text_y,
@@ -1341,6 +1370,25 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
         UI_FONT_SIZE,
         item_color,
       ));
+
+      // Draw folder icon for directories (at level > 0)
+      // The icon is drawn on top of the space we left in the text
+      if line.is_folder && line.level > 0 {
+        // Find the position of the indicator in the indent
+        // The indicator is at position: prefix_len (which is (level - 1) * 2 characters)
+        let indicator_char_pos = (line.level - 1) * 2;
+        let icon_x = text_x + indicator_char_pos as f32 * cell_width;
+        // Align icon with text baseline - offset down slightly to match text visual center
+        let icon_y = text_y + (UI_FONT_SIZE - icon_size_f) / 2.0 + 1.0;
+
+        let svg_data = if line.is_opened {
+          FOLDER_OPEN_SVG
+        } else {
+          FOLDER_CLOSED_SVG
+        };
+
+        surface.draw_svg_icon(svg_data, icon_x, icon_y, icon_size, icon_size, item_color);
+      }
     }
   }
 

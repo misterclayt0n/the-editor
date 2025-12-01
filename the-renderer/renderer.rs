@@ -298,6 +298,9 @@ pub struct Renderer {
   // Powerline glyph atlas
   powerline_atlas: PowerlineAtlas,
 
+  // SVG icon cache
+  svg_icon_cache: crate::svg_icon::SvgIconCache,
+
   // Cursor icon tracking
   pending_cursor_icon: Option<winit::window::CursorIcon>,
 }
@@ -831,6 +834,7 @@ impl Renderer {
         sampler:    temp_powerline_sampler,
         bind_group: None,
       },
+      svg_icon_cache: crate::svg_icon::SvgIconCache::new(),
       pending_cursor_icon: None,
     };
 
@@ -1802,6 +1806,67 @@ impl Renderer {
 
                 self.draw_rect(pixel_x, pixel_y, 1.0, 1.0, pixel_color);
               }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /// Draw an SVG icon at the specified position.
+  ///
+  /// The SVG will be rasterized at the given size and drawn with the specified color.
+  /// Icons are cached for efficient reuse.
+  ///
+  /// # Arguments
+  /// * `svg_data` - Raw SVG file contents
+  /// * `x`, `y` - Position to draw the icon
+  /// * `width`, `height` - Size to render the icon at
+  /// * `color` - Color to apply to the icon (the icon's alpha will be preserved)
+  pub fn draw_svg_icon(
+    &mut self,
+    svg_data: &[u8],
+    x: f32,
+    y: f32,
+    width: u32,
+    height: u32,
+    color: Color,
+  ) {
+    // Convert color to RGBA8
+    let color_rgba = (
+      (color.r * 255.0) as u8,
+      (color.g * 255.0) as u8,
+      (color.b * 255.0) as u8,
+      (color.a * 255.0) as u8,
+    );
+
+    // Render the SVG with color
+    if let Some(icon) =
+      crate::svg_icon::render_svg_with_color(svg_data, width, height, color_rgba)
+    {
+      // Draw the icon pixel by pixel (similar to powerline glyph rendering)
+      // For efficiency, we skip fully transparent pixels
+      const ALPHA_THRESHOLD: u8 = 8;
+
+      let data = icon.pixmap.data();
+      for py in 0..height {
+        for px in 0..width {
+          let pixel_idx = ((py * width + px) * 4) as usize;
+
+          if pixel_idx + 3 < data.len() {
+            let alpha = data[pixel_idx + 3];
+
+            if alpha > ALPHA_THRESHOLD {
+              let pixel_x = x + px as f32;
+              let pixel_y = y + py as f32;
+
+              // Use the pre-colored pixel
+              let r = data[pixel_idx] as f32 / 255.0;
+              let g = data[pixel_idx + 1] as f32 / 255.0;
+              let b = data[pixel_idx + 2] as f32 / 255.0;
+              let a = alpha as f32 / 255.0;
+
+              self.draw_rect(pixel_x, pixel_y, 1.0, 1.0, Color::new(r, g, b, a));
             }
           }
         }

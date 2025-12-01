@@ -90,10 +90,18 @@ pub struct CursorPosition {
 
 /// Calculate cursor position in screen coordinates using document font metrics.
 /// Returns None if cursor is not visible.
-pub fn calculate_cursor_position(ctx: &Context, surface: &Surface) -> Option<CursorPosition> {
-  let font_state = surface.save_font_state();
-  let doc_cell_w = font_state.cell_width.max(1.0);
-  let doc_cell_h = font_state.cell_height.max(1.0);
+pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option<CursorPosition> {
+  // Configure the document font to get correct metrics
+  // This is important because the surface may have UI font configured (e.g., after explorer render)
+  let font_family = surface.current_font_family().to_owned();
+  let font_size = ctx
+    .editor
+    .font_size_override
+    .unwrap_or(ctx.editor.config().font_size);
+  surface.configure_font(&font_family, font_size);
+
+  let doc_cell_w = surface.cell_width().max(1.0);
+  let doc_cell_h = surface.cell_height().max(1.0);
 
   let view_id = ctx.editor.focused_view_id()?;
   let tree = &ctx.editor.tree;
@@ -140,9 +148,18 @@ pub fn calculate_cursor_position(ctx: &Context, surface: &Surface) -> Option<Cur
     .and_then(|shake| shake.sample(now))
     .unwrap_or((0.0, 0.0));
 
-  // Get view's screen offset (handles splits/animations correctly)
-  let view_x = inner_area.x as f32 * doc_cell_w + shake_offset_x;
-  let view_y = inner_area.y as f32 * doc_cell_h + zoom_offset_y + shake_offset_y;
+  // Get viewport pixel offsets (explorer width, bufferline height)
+  // These are set by EditorView during render
+  let (explorer_px_offset, bufferline_px_offset) = ctx.editor.viewport_pixel_offset;
+
+  // Calculate view position in pixels - must match how editor_view.rs renders text
+  // Tree coordinates are 0-based (not offset by explorer), so we add explorer_px_offset
+  // inner_area.x contains gutter offset in cells
+  let view_x = explorer_px_offset + (inner_area.x as f32 * doc_cell_w) + shake_offset_x;
+
+  // For Y: inner_area.y is in cells, convert to pixels and add bufferline offset
+  let view_y =
+    bufferline_px_offset + (inner_area.y as f32 * doc_cell_h) + zoom_offset_y + shake_offset_y;
 
   // Calculate final screen position
   let x = view_x + (screen_col as f32 * doc_cell_w);

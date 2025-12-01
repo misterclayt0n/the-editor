@@ -412,6 +412,10 @@ pub struct Editor {
   pub acp_response:            Option<AcpResponseState>,
   /// Pending model selection from the picker (polled in event loop)
   pub pending_model_selection: Option<std::sync::mpsc::Receiver<agent_client_protocol::ModelId>>,
+
+  /// Viewport pixel offsets for popup positioning (set by EditorView during render)
+  /// These account for explorer width and bufferline height
+  pub viewport_pixel_offset: (f32, f32),
 }
 
 /// State for the current ACP response being displayed in the overlay.
@@ -1899,6 +1903,7 @@ impl Editor {
       acp_permissions: crate::acp::PermissionManager::new(),
       acp_response: None,
       pending_model_selection: None,
+      viewport_pixel_offset: (0.0, 0.0),
     };
 
     let scopes = editor.theme.scopes().to_vec();

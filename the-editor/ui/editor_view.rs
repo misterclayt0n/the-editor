@@ -967,17 +967,20 @@ impl Component for EditorView {
     };
     let explorer_px_width = self.explorer_px_width;
 
-    // Calculate explorer width in buffer font cells for target_area adjustment
+    // Calculate explorer width in buffer font cells for target_area width adjustment
+    // Note: We do NOT offset target_area.x - instead we add explorer_px_width directly
+    // to all rendering coordinates. This ensures popup positioning uses the same offset.
     let explorer_width_buffer_cells = if explorer_px_width > 0.0 {
       (explorer_px_width / font_width).ceil() as u16
     } else {
       0
     };
 
-    // Offset the editor area to make room for the explorer on the left
+    // Reduce editor width to make room for the explorer, but keep x=0
+    // The explorer offset is applied during rendering via explorer_px_width
     if explorer_width_buffer_cells > 0 {
       target_area = Rect::new(
-        target_area.x + explorer_width_buffer_cells,
+        target_area.x, // Keep x at 0 - offset applied during rendering
         target_area.y,
         target_area.width.saturating_sub(explorer_width_buffer_cells),
         target_area.height,
@@ -1073,6 +1076,10 @@ impl Component for EditorView {
       self.buffer_pressed_index = None;
       self.bufferline_height = 0.0;
     }
+
+    // Update viewport pixel offsets for popup positioning
+    // These offsets account for explorer width (x) and bufferline height (y)
+    cx.editor.viewport_pixel_offset = (explorer_px_width, self.bufferline_height);
 
     let normal_base = normal_style
       .fg
@@ -1170,7 +1177,8 @@ impl Component for EditorView {
         .unwrap_or(view.area);
 
       // Calculate base coordinates from view's area (convert cell coords to pixels)
-      let view_offset_x = view_area.x as f32 * font_width;
+      // Add explorer_px_width to X offset - this is the key to consistent popup positioning
+      let view_offset_x = explorer_px_width + view_area.x as f32 * font_width;
       let view_offset_y = view_area.y as f32 * (self.cached_cell_height);
       let mut base_y = view_offset_y + VIEW_PADDING_TOP + zoom_offset_y;
 
@@ -1296,8 +1304,9 @@ impl Component for EditorView {
           }
         }
 
-        let gutter_x = gutter_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
-        let mut base_x = content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
+        // Add explorer_px_width to gutter and content X positions
+        let gutter_x = explorer_px_width + gutter_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
+        let mut base_x = explorer_px_width + content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
 
         // Apply screen shake if active
         let (shake_offset_x, shake_offset_y) = if let Some(shake) = doc.screen_shake(focus_view) {
@@ -1600,8 +1609,9 @@ impl Component for EditorView {
         let viewport_cols = viewport.width as usize;
 
         // Calculate view's right edge in pixels for clipping (accounting for vertical
-        // separator)
-        let view_right_edge_px = (content_rect.x + content_rect.width) as f32 * font_width
+        // separator and explorer offset)
+        let view_right_edge_px = explorer_px_width
+          + (content_rect.x + content_rect.width) as f32 * font_width
           - if has_vertical_split_right {
             SEPARATOR_WIDTH_PX
           } else {
@@ -2325,7 +2335,8 @@ impl Component for EditorView {
 
               if screen_row >= 0 && screen_row < viewport.height as isize {
                 // Convert screen row/col to pixel coordinates
-                let mut effect_base_x = content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
+                let mut effect_base_x =
+                  explorer_px_width + content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
                 let mut effect_base_y = (content_rect.y + screen_row as u16) as f32
                   * (self.cached_cell_height)
                   + VIEW_PADDING_TOP;
@@ -2808,7 +2819,9 @@ impl EditorView {
       if has_vertical_neighbor {
         // Render vertical separator bar at the right edge
         // Center the thin separator in the gap
-        let gap_center_x = (area.x + area.width) as f32 * font_width + (font_width / 2.0);
+        let gap_center_x = self.explorer_px_width
+          + (area.x + area.width) as f32 * font_width
+          + (font_width / 2.0);
         let x = gap_center_x - (SEPARATOR_WIDTH_PX / 2.0);
         let y = area.y as f32 * (self.cached_cell_height);
         let width = SEPARATOR_WIDTH_PX;
@@ -2822,7 +2835,7 @@ impl EditorView {
         .is_some();
       if has_horizontal_neighbor {
         // Render horizontal separator bar at the bottom edge
-        let x = area.x as f32 * font_width;
+        let x = self.explorer_px_width + area.x as f32 * font_width;
         let sep_y = (area.y + area.height) as f32 * (self.cached_cell_height) - SEPARATOR_HEIGHT_PX;
         let width = area.width as f32 * font_width;
         let height = SEPARATOR_HEIGHT_PX;
@@ -3504,7 +3517,8 @@ impl EditorView {
         .find_split_in_direction(view.id, Direction::Right)
         .is_some()
       {
-        let gap_center_x = (area.x + area.width) as f32 * font_width + (font_width / 2.0);
+        let gap_center_x =
+          self.explorer_px_width + (area.x + area.width) as f32 * font_width + (font_width / 2.0);
         let sep_y = area.y as f32 * cell_height;
         let sep_height = area.height as f32 * cell_height;
 
@@ -3528,7 +3542,7 @@ impl EditorView {
         .find_split_in_direction(view.id, Direction::Down)
         .is_some()
       {
-        let sep_x = area.x as f32 * font_width;
+        let sep_x = self.explorer_px_width + area.x as f32 * font_width;
         let sep_y = (area.y + area.height) as f32 * cell_height - SEPARATOR_HEIGHT_PX;
         let sep_width = area.width as f32 * font_width;
 

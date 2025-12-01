@@ -281,7 +281,7 @@ impl<T: PopupContent> PopupShell<T> {
     }
   }
 
-  fn anchor_position(&self, ctx: &Context, surface: &Surface) -> Option<CursorPosition> {
+  fn anchor_position(&self, ctx: &Context, surface: &mut Surface) -> Option<CursorPosition> {
     // Use shared cursor position calculation for consistent positioning
     // with completer and signature help
     calculate_cursor_position(ctx, surface)

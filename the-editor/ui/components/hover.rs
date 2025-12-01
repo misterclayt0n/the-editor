@@ -89,7 +89,7 @@ impl Component for Hover {
   }
 }
 
-fn current_cursor_anchor(ctx: &Context, surface: &Surface) -> Option<Position> {
+fn current_cursor_anchor(ctx: &Context, surface: &mut Surface) -> Option<Position> {
   // Use shared cursor position calculation to ensure consistent positioning
   // PopupShell will use calculate_cursor_position internally, but we set anchor
   // to indicate we want cursor-relative positioning

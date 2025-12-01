@@ -120,7 +120,7 @@ impl Component for AcpOverlay {
   }
 }
 
-fn current_cursor_anchor(ctx: &Context, surface: &Surface) -> Option<Position> {
+fn current_cursor_anchor(ctx: &Context, surface: &mut Surface) -> Option<Position> {
   let _cursor = calculate_cursor_position(ctx, surface)?;
 
   let (view, doc) = crate::current_ref!(ctx.editor);

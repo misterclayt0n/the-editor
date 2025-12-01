@@ -305,7 +305,7 @@ impl Explorer {
     self.state.open = true;
   }
 
-  fn unfocus(&mut self) {
+  pub fn unfocus(&mut self) {
     self.state.focus = false;
   }
 
@@ -427,63 +427,114 @@ impl Explorer {
     self.tree.render(area, prompt_area, surface, cx);
   }
 
-  fn render_embed(
+  /// Render the explorer as a sidebar
+  /// 
+  /// # Arguments
+  /// * `px_x` - X position in pixels
+  /// * `px_y` - Y position in pixels  
+  /// * `px_width` - Width in pixels
+  /// * `px_height` - Height in pixels (full viewport height)
+  pub fn render(
     &mut self,
-    area: Rect,
+    px_x: f32,
+    px_y: f32,
+    px_width: f32,
+    px_height: f32,
     surface: &mut Surface,
     cx: &mut Context,
-    position: &ExplorerPosition,
   ) {
+    use the_editor_renderer::{Color, TextSection};
+    use crate::ui::UI_FONT_SIZE;
+
     if !self.state.open {
       return;
     }
-    let width = area.width.min(self.column_width + 2);
 
-    self.state.area_width = area.width;
+    // Configure font to UI font size (independent of editor font size)
+    let ui_font_family = surface.current_font_family().to_owned();
+    surface.configure_font(&ui_font_family, UI_FONT_SIZE);
 
-    let side_area = match position {
-      ExplorerPosition::Left => Rect { width, ..area },
-      ExplorerPosition::Right => {
-        Rect {
-          x: area.width - width,
-          width,
-          ..area
-        }
-      },
-    }
-    .clip_bottom(1);
+    let cell_width = surface.cell_width();
 
-    // TODO: Implement proper background clearing for GPU renderer
-    // For now, the tree view will handle its own rendering
+    // Get theme colors
+    let theme = &cx.editor.theme;
+    let bg_style = theme.get("ui.background");
+    let bg_color = bg_style
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.1, 0.1, 0.15, 1.0));
 
-    let prompt_area = area.clip_top(side_area.height);
+    let text_style = theme.get("ui.text");
+    let text_color = text_style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::WHITE);
 
-    let list_area = match position {
-      ExplorerPosition::Left => {
-        render_block(side_area.clip_left(1), surface, Borders::LEFT).clip_bottom(1)
-      },
-      ExplorerPosition::Right => {
-        render_block(side_area.clip_right(1), surface, Borders::RIGHT).clip_bottom(1)
-      },
+    let statusline_style = if self.is_focus() {
+      theme.get("ui.statusline")
+    } else {
+      theme.get("ui.statusline.inactive")
     };
-    self.render_tree(list_area, prompt_area, surface, cx);
+    let statusline_bg = statusline_style
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.15, 0.15, 0.2, 1.0));
 
-    // TODO: Implement statusline rendering for explorer
-    // The GPU renderer uses different APIs (draw_text, draw_rect)
-    // For now, we skip the statusline rendering
+    // Store width in cells for column_width tracking
+    self.state.area_width = (px_width / cell_width).floor() as u16;
 
-    if self.is_focus() && self.show_help {
-      let help_area = match position {
-        ExplorerPosition::Left => area,
-        ExplorerPosition::Right => area.clip_right(list_area.width.saturating_add(2)),
-      };
-      self.render_help(help_area, surface, cx);
-    }
+    // Draw background (full height)
+    surface.draw_rect(px_x, px_y, px_width, px_height, bg_color);
 
-    // TODO: Prompt rendering needs to use the Component trait's render method
-    // if let Some((_, prompt)) = self.prompt.as_mut() {
-    //   prompt.render(prompt_area, surface, cx);
-    // }
+    // Draw header/title bar
+    let header_height = UI_FONT_SIZE + 8.0;
+    surface.draw_rect(px_x, px_y, px_width, header_height, statusline_bg);
+
+    // Draw title text
+    let title = "EXPLORER";
+    let title_color = if self.is_focus() {
+      text_color
+    } else {
+      Color::new(text_color.r * 0.6, text_color.g * 0.6, text_color.b * 0.6, text_color.a)
+    };
+    surface.draw_text(TextSection::simple(
+      px_x + 8.0,
+      px_y + 2.0,
+      title,
+      UI_FONT_SIZE,
+      title_color,
+    ));
+
+    // Draw separator line below header
+    let sep_y = px_y + header_height;
+    let sep_color = Color::new(text_color.r, text_color.g, text_color.b, 0.2);
+    surface.draw_rect(px_x, sep_y, px_width, 1.0, sep_color);
+
+    // Draw right border separator
+    let border_color = Color::new(text_color.r, text_color.g, text_color.b, 0.15);
+    surface.draw_rect(px_x + px_width - 1.0, px_y, 1.0, px_height, border_color);
+
+    // Calculate tree area in cell units for tree rendering
+    // Tree starts below header
+    let tree_start_y = sep_y + 1.0;
+    let tree_height = px_height - header_height - 1.0;
+    
+    // Convert to cell units for tree rendering (which expects Rect in cells)
+    let line_height = UI_FONT_SIZE + 4.0;
+    let tree_area = Rect::new(
+      (px_x / cell_width).floor() as u16,
+      (tree_start_y / line_height).floor() as u16,
+      (px_width / cell_width).floor() as u16,
+      (tree_height / line_height).floor() as u16,
+    );
+    let prompt_area = Rect::new(
+      tree_area.x,
+      tree_area.y + tree_area.height,
+      tree_area.width,
+      1,
+    );
+
+    self.render_tree(tree_area, prompt_area, surface, cx);
   }
 
   fn render_help(&mut self, _area: Rect, _surface: &mut Surface, _cx: &mut Context) {
@@ -502,6 +553,36 @@ impl Explorer {
     // "-, _", "Decrease size"
     // "q", "Close"
     // Plus tree_view_help() items
+  }
+
+  /// Handle a mouse click on the explorer
+  /// 
+  /// # Arguments
+  /// * `visual_row` - The visual row index (0-based from top of tree area)
+  /// * `double_click` - Whether this is a double-click
+  pub fn handle_mouse_click(
+    &mut self,
+    visual_row: usize,
+    double_click: bool,
+    cx: &mut Context,
+  ) {
+    // Get the tree index for this visual row
+    if let Some(tree_index) = self.tree.tree_index_at_row(visual_row) {
+      // Select the item
+      self.tree.select_by_tree_index(tree_index);
+      
+      // On double-click, activate the item (open file or toggle folder)
+      if double_click {
+        if let Err(err) = self.tree.on_enter(cx, &mut self.state, tree_index) {
+          cx.editor.set_error(format!("{err}"));
+        }
+      }
+    }
+  }
+
+  /// Get the number of visible items (for hover detection)
+  pub fn visible_item_count(&self) -> usize {
+    self.tree.visible_item_count()
   }
 
   fn handle_prompt_event(&mut self, event: &KeyBinding, cx: &mut Context) -> EventResult {
@@ -615,10 +696,13 @@ impl Explorer {
 
   fn increase_size(&mut self) {
     const EDITOR_MIN_WIDTH: u16 = 10;
-    self.column_width = std::cmp::min(
-      self.state.area_width.saturating_sub(EDITOR_MIN_WIDTH),
-      self.column_width.saturating_add(1),
-    )
+    // If area_width hasn't been set yet (no render), allow unconstrained growth
+    let max_width = if self.state.area_width == 0 {
+      u16::MAX
+    } else {
+      self.state.area_width.saturating_sub(EDITOR_MIN_WIDTH)
+    };
+    self.column_width = std::cmp::min(max_width, self.column_width.saturating_add(1))
   }
 
   fn decrease_size(&mut self) {
@@ -774,13 +858,10 @@ impl Component for Explorer {
     EventResult::Consumed(None)
   }
 
-  fn render(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context) {
-    if area.width < 10 || area.height < 5 {
-      cx.editor.set_error("explorer render area is too small");
-      return;
-    }
-    let position = self.position;
-    self.render_embed(area, surface, cx, &position);
+  fn render(&mut self, _area: Rect, _surface: &mut Surface, _cx: &mut Context) {
+    // Explorer is rendered directly by EditorView using the pixel-based render method.
+    // This Component::render is kept for trait compliance but is not used when
+    // the explorer is embedded as a sidebar.
   }
 
   fn cursor(&self, area: Rect, editor: &Editor) -> (Option<Position>, CursorKind) {
@@ -1046,5 +1127,50 @@ mod test_explorer {
       )
       .trim()
     );
+  }
+
+  #[test]
+  fn test_focus_state() {
+    let (_path, mut explorer) = new_explorer();
+    
+    // Initially, explorer should be focused (from new())
+    assert!(explorer.is_focus(), "Explorer should be focused after creation");
+    assert!(explorer.is_opened(), "Explorer should be open after creation");
+    
+    // Unfocus the explorer
+    explorer.unfocus();
+    assert!(!explorer.is_focus(), "Explorer should not be focused after unfocus()");
+    assert!(explorer.is_opened(), "Explorer should still be open after unfocus()");
+    
+    // Focus the explorer again
+    explorer.focus();
+    assert!(explorer.is_focus(), "Explorer should be focused after focus()");
+    assert!(explorer.is_opened(), "Explorer should be open after focus()");
+    
+    // Close the explorer
+    explorer.close();
+    assert!(!explorer.is_focus(), "Explorer should not be focused after close()");
+    assert!(!explorer.is_opened(), "Explorer should not be open after close()");
+  }
+
+  #[test]
+  fn test_column_width() {
+    let (_path, mut explorer) = new_explorer();
+    
+    // Default column width should be reasonable
+    let initial_width = explorer.column_width();
+    assert!(initial_width > 0, "Column width should be positive");
+    
+    // Increase size
+    let old_width = explorer.column_width();
+    explorer.increase_size();
+    assert!(explorer.column_width() > old_width || explorer.column_width() == old_width,
+            "Column width should increase or stay same (if at max)");
+    
+    // Decrease size
+    let current_width = explorer.column_width();
+    explorer.decrease_size();
+    assert!(explorer.column_width() < current_width || explorer.column_width() == 0,
+            "Column width should decrease");
   }
 }

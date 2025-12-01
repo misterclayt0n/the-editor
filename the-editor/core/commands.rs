@@ -7481,11 +7481,50 @@ pub fn page_cursor_half_down(cx: &mut Context) {
 }
 
 pub fn jump_view_right(cx: &mut Context) {
-  cx.editor.focus_direction(tree::Direction::Right)
+  // If explorer is focused, unfocus it and focus the editor
+  cx.callback.push(Box::new(|compositor, ctx| {
+    for layer in compositor.layers.iter_mut() {
+      if let Some(editor_view) = layer.as_any_mut().downcast_mut::<crate::ui::EditorView>() {
+        if editor_view.explorer_focused() {
+          if let Some(explorer) = editor_view.explorer_mut() {
+            explorer.unfocus();
+          }
+          return;
+        }
+        break;
+      }
+    }
+    // Normal view navigation if explorer not focused
+    ctx.editor.focus_direction(tree::Direction::Right);
+  }));
 }
 
 pub fn jump_view_left(cx: &mut Context) {
-  cx.editor.focus_direction(tree::Direction::Left)
+  // Try to focus explorer if it's open and we're at the leftmost view
+  cx.callback.push(Box::new(|compositor, ctx| {
+    for layer in compositor.layers.iter_mut() {
+      if let Some(editor_view) = layer.as_any_mut().downcast_mut::<crate::ui::EditorView>() {
+        // Check if explorer is open and not already focused
+        if editor_view.explorer_is_open() && !editor_view.explorer_focused() {
+          // Check if we're at the leftmost view (no view to the left)
+          let can_go_left = ctx.editor.tree
+            .find_split_in_direction(ctx.editor.tree.focus, tree::Direction::Left)
+            .is_some();
+          
+          if !can_go_left {
+            // Focus the explorer instead
+            if let Some(explorer) = editor_view.explorer_mut() {
+              explorer.focus();
+            }
+            return;
+          }
+        }
+        break;
+      }
+    }
+    // Normal view navigation
+    ctx.editor.focus_direction(tree::Direction::Left);
+  }));
 }
 
 pub fn jump_view_up(cx: &mut Context) {
@@ -7546,10 +7585,13 @@ pub fn goto_file_vsplit(cx: &mut Context) {
 
 pub fn wclose(cx: &mut Context) {
   if cx.editor.tree.views().count() == 1 {
+    // Last view - check for unsaved buffers and quit if all saved
     if let Err(err) = crate::core::command_registry::buffers_remaining_impl(cx.editor) {
       cx.editor.set_error(err.to_string());
       return;
     }
+    // All buffers saved, quit the editor gracefully
+    std::process::exit(0);
   }
   let view_id = view!(cx.editor).id;
   // close current split

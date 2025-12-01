@@ -310,6 +310,9 @@ pub struct TreeView<T: TreeViewItem> {
 
   #[allow(clippy::type_complexity)]
   on_next_key: Option<Box<dyn FnMut(&mut Context, &mut Self, &KeyBinding) -> Result<()>>>,
+  
+  /// Cached tree indices for visible rows (updated during render)
+  visible_tree_indices: Vec<usize>,
 }
 
 impl<T: TreeViewItem> TreeView<T> {
@@ -317,22 +320,23 @@ impl<T: TreeViewItem> TreeView<T> {
     let children = root.get_children()?;
     let items = vec_to_tree(children);
     Ok(Self {
-      tree:              Tree::new(root, items),
-      selected:          0,
-      backward_jumps:    vec![],
-      forward_jumps:     vec![],
-      saved_view:        None,
-      winline:           0,
-      column:            0,
-      max_len:           0,
-      count:             0,
-      tree_symbol_style: "ui.text".into(),
-      pre_render:        None,
-      on_opened_fn:      None,
-      on_folded_fn:      None,
-      on_next_key:       None,
-      search_prompt:     None,
-      search_str:        "".into(),
+      tree:                 Tree::new(root, items),
+      selected:             0,
+      backward_jumps:       vec![],
+      forward_jumps:        vec![],
+      saved_view:           None,
+      winline:              0,
+      column:               0,
+      max_len:              0,
+      count:                0,
+      tree_symbol_style:    "ui.text".into(),
+      pre_render:           None,
+      on_opened_fn:         None,
+      on_folded_fn:         None,
+      on_next_key:          None,
+      search_prompt:        None,
+      search_str:           "".into(),
+      visible_tree_indices: Vec::new(),
     })
   }
 
@@ -608,7 +612,7 @@ impl<T: TreeViewItem> TreeView<T> {
     self.set_selected(self.selected.saturating_add(rows))
   }
 
-  fn set_selected(&mut self, selected: usize) {
+  pub fn set_selected(&mut self, selected: usize) {
     let previous_selected = self.selected;
     self.set_selected_without_history(selected);
     if previous_selected.abs_diff(selected) > 1 {
@@ -651,6 +655,21 @@ impl<T: TreeViewItem> TreeView<T> {
 
   pub fn move_up(&mut self, rows: usize) {
     self.set_selected(self.selected.saturating_sub(rows))
+  }
+
+  /// Get the tree index for a given visual row (0-based from top of rendered area)
+  pub fn tree_index_at_row(&self, visual_row: usize) -> Option<usize> {
+    self.visible_tree_indices.get(visual_row).copied()
+  }
+
+  /// Select an item by its tree index
+  pub fn select_by_tree_index(&mut self, tree_index: usize) {
+    self.set_selected(tree_index);
+  }
+
+  /// Get the number of visible items
+  pub fn visible_item_count(&self) -> usize {
+    self.visible_tree_indices.len()
   }
 
   fn move_to_next_sibling(&mut self) -> Result<()> {
@@ -789,6 +808,8 @@ struct RenderedLine {
   content:                     String,
   selected:                    bool,
   is_ancestor_of_current_item: bool,
+  /// The actual tree index of this item
+  tree_index:                  usize,
 }
 struct RenderTreeParams<'a, T> {
   tree:     &'a Tree<T>,
@@ -821,6 +842,7 @@ fn render_tree<T: TreeViewItem>(
     selected: selected == tree.index,
     is_ancestor_of_current_item: selected != tree.index && tree.get(selected).is_some(),
     content: name,
+    tree_index: tree.index,
   };
   let prefix = format!("{}{}", prefix, if level == 0 { "" } else { "  " });
   vec![head]
@@ -851,51 +873,137 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
 
     use crate::ui::UI_FONT_SIZE;
 
-    // TODO: Prompt rendering for search
-    // if let Some((_, prompt)) = self.search_prompt.as_mut() {
-    //     prompt.render(prompt_area, surface, cx);
-    // }
+    // Configure font to UI font size (independent of editor font size)
+    let ui_font_family = surface.current_font_family().to_owned();
+    surface.configure_font(&ui_font_family, UI_FONT_SIZE);
 
-    let text_style = cx.editor.theme.get("ui.text");
+    // Get cell dimensions for UI font
+    let cell_width = surface.cell_width();
+
+    // Get theme colors
+    let theme = &cx.editor.theme;
+    let text_style = theme.get("ui.text");
     let text_color = text_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::WHITE);
 
-    let selection_style = cx.editor.theme.get("ui.selection");
+    // Get picker-style selection colors
+    let selection_style = theme.try_get("ui.selection");
     let selection_bg = selection_style
+      .and_then(|s| s.bg)
+      .map(crate::ui::theme_color_to_renderer_color);
+    let selection_fg = selection_style
+      .and_then(|s| s.fg)
+      .map(crate::ui::theme_color_to_renderer_color);
+
+    let picker_selected_style = theme.get("ui.picker.selected");
+    let picker_selected_fill = picker_selected_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
+      .or(selection_bg)
       .unwrap_or(Color::new(0.3, 0.3, 0.5, 1.0));
+    let picker_selected_outline = picker_selected_style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .or(selection_fg)
+      .or(selection_bg)
+      .unwrap_or(Color::new(0.5, 0.5, 0.8, 1.0));
 
-    let cell_height = surface.cell_height();
-    let cell_width = surface.cell_width();
+    // Compact item styling matching picker
+    let line_height = UI_FONT_SIZE;
+    let item_padding_y = 2.0;
+    let item_padding_x = 6.0;
+    let item_height = line_height + item_padding_y * 2.0;
+    let item_gap = 1.0;
+    let item_radius = 4.0;
 
-    let iter = self.render_lines(area).into_iter().enumerate();
+    // Calculate positions using UI font metrics
+    let area_px_x = area.x as f32 * cell_width;
+    let area_px_y = area.y as f32 * (UI_FONT_SIZE + 4.0);
+    let area_px_width = area.width as f32 * cell_width;
+
+    let lines = self.render_lines(area);
+    let iter = lines.into_iter().enumerate();
 
     for (index, line) in iter {
-      let y = area.y as f32 + index as f32 * cell_height;
-      let x = area.x as f32;
+      let item_y = area_px_y + index as f32 * (item_height + item_gap);
+      let item_x = area_px_x + 4.0;
+      let item_width = area_px_width - 8.0;
 
-      // Draw selection background if selected
+      // Draw selection background if selected (picker style)
       if line.selected {
-        surface.draw_rect(
-          x,
-          y,
-          area.width as f32 * cell_width,
-          cell_height,
-          selection_bg,
+        // Selection fill - use picker colors
+        let mut fill_color = picker_selected_fill;
+        fill_color.a = fill_color.a.max(0.8);
+        surface.draw_rounded_rect(
+          item_x,
+          item_y,
+          item_width,
+          item_height,
+          item_radius,
+          fill_color,
+        );
+
+        // Selection border with gradient thickness (picker style)
+        let mut outline_color = picker_selected_outline;
+        outline_color.a = outline_color.a.max(0.9);
+        let bottom_thickness = (item_height * 0.035).clamp(0.6, 1.2);
+        let side_thickness = (bottom_thickness * 1.55).min(bottom_thickness + 1.6);
+        let top_thickness = (bottom_thickness * 2.2).min(bottom_thickness + 2.4);
+        surface.draw_rounded_rect_stroke_fade(
+          item_x,
+          item_y,
+          item_width,
+          item_height,
+          item_radius,
+          top_thickness,
+          side_thickness,
+          bottom_thickness,
+          outline_color,
+        );
+      } else if line.is_ancestor_of_current_item {
+        // Ancestor highlight (subtle)
+        let ancestor_bg = Color::new(
+          picker_selected_fill.r,
+          picker_selected_fill.g,
+          picker_selected_fill.b,
+          0.15,
+        );
+        surface.draw_rounded_rect(
+          item_x,
+          item_y,
+          item_width,
+          item_height,
+          item_radius,
+          ancestor_bg,
         );
       }
 
       // Draw indent + content
+      let text_x = item_x + item_padding_x;
+      let text_y = item_y + item_padding_y;
       let full_line = format!("{}{}", line.indent, line.content);
+
+      // Use slightly different color for directories vs files
+      let item_color = if line.content.ends_with('/') || line.indent.contains('⏵') || line.indent.contains('⏷') {
+        // Directory - slightly brighter
+        Color::new(
+          (text_color.r + 0.1).min(1.0),
+          (text_color.g + 0.1).min(1.0),
+          (text_color.b + 0.05).min(1.0),
+          text_color.a,
+        )
+      } else {
+        text_color
+      };
+
       surface.draw_text(TextSection::simple(
-        x,
-        y,
+        text_x,
+        text_y,
         &full_line,
         UI_FONT_SIZE,
-        text_color,
+        item_color,
       ));
     }
   }
@@ -1011,7 +1119,7 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
 
     let skipped_ancestors_len = skipped_ancestors.len();
 
-    skipped_ancestors
+    let result: Vec<RenderedLine> = skipped_ancestors
             .into_iter()
             .chain(
                 remaining_lines
@@ -1041,7 +1149,12 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
                     ..line
                 }
             })
-            .collect()
+            .collect();
+    
+    // Cache visible tree indices for mouse interaction
+    self.visible_tree_indices = result.iter().map(|line| line.tree_index).collect();
+    
+    result
   }
 
   #[cfg(test)]

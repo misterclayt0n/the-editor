@@ -268,6 +268,9 @@ pub struct EditorView {
   buffer_pressed_index:      Option<usize>,
   // Tree explorer sidebar
   explorer:                  Option<Explorer>,
+  // Explorer mouse interaction state
+  explorer_px_width:         f32,
+  explorer_hovered_item:     Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -338,6 +341,8 @@ impl EditorView {
       bufferline_height: 24.0,
       buffer_pressed_index: None,
       explorer: None,
+      explorer_px_width: 0.0,
+      explorer_hovered_item: None,
     }
   }
 
@@ -385,6 +390,16 @@ impl EditorView {
   /// Check if explorer is open and focused
   pub fn explorer_focused(&self) -> bool {
     self.explorer.as_ref().is_some_and(|e| e.is_focus())
+  }
+
+  /// Get mutable reference to the explorer if it exists
+  pub fn explorer_mut(&mut self) -> Option<&mut Explorer> {
+    self.explorer.as_mut()
+  }
+
+  /// Check if explorer is open (regardless of focus)
+  pub fn explorer_is_open(&self) -> bool {
+    self.explorer.as_ref().is_some_and(|e| e.is_opened())
   }
 
   pub fn set_keymaps(&mut self, map: &HashMap<Mode, KeyTrie>) {
@@ -648,7 +663,7 @@ impl Component for EditorView {
     if let Some(ref mut explorer) = self.explorer {
       if explorer.is_focus() {
         let result = explorer.handle_event(event, cx);
-        // Check if explorer was closed
+        // Check if explorer was closed or unfocused
         if !explorer.is_opened() {
           self.explorer = None;
         }
@@ -924,26 +939,40 @@ impl Component for EditorView {
       target_area = target_area.clip_top(1);
     }
 
-    // Calculate explorer area and adjust target_area if explorer is open
-    let explorer_width_cells = if let Some(ref explorer) = self.explorer {
+    // Calculate explorer pixel width using UI font (independent of buffer font)
+    // We need to temporarily configure the font to get UI metrics
+    let ui_font_family = renderer.current_font_family().to_string();
+    renderer.configure_font(&ui_font_family, crate::ui::UI_FONT_SIZE);
+    let ui_cell_width = renderer.cell_width();
+    // Restore buffer font configuration
+    renderer.configure_font(&font_family, font_size);
+    
+    // Calculate explorer pixel width (using UI font metrics, not buffer font)
+    self.explorer_px_width = if let Some(ref explorer) = self.explorer {
       if explorer.is_opened() {
-        // Explorer width in cells (columns)
-        explorer
-          .column_width()
-          .min(target_area.width.saturating_sub(20))
+        let explorer_width_cells = explorer.column_width();
+        explorer_width_cells as f32 * ui_cell_width
       } else {
-        0
+        0.0
       }
+    } else {
+      0.0
+    };
+    let explorer_px_width = self.explorer_px_width;
+
+    // Calculate explorer width in buffer font cells for target_area adjustment
+    let explorer_width_buffer_cells = if explorer_px_width > 0.0 {
+      (explorer_px_width / font_width).ceil() as u16
     } else {
       0
     };
 
     // Offset the editor area to make room for the explorer on the left
-    if explorer_width_cells > 0 {
+    if explorer_width_buffer_cells > 0 {
       target_area = Rect::new(
-        target_area.x + explorer_width_cells,
+        target_area.x + explorer_width_buffer_cells,
         target_area.y,
-        target_area.width.saturating_sub(explorer_width_cells),
+        target_area.width.saturating_sub(explorer_width_buffer_cells),
         target_area.height,
       );
     }
@@ -1020,11 +1049,12 @@ impl Component for EditorView {
     renderer.set_background_color(background_color);
 
     if use_bufferline {
+      // Offset bufferline by explorer width so it doesn't overlap
       self.bufferline_height = bufferline::render(
         cx.editor,
+        explorer_px_width,
         0.0,
-        0.0,
-        viewport_px_width,
+        viewport_px_width - explorer_px_width,
         renderer,
         self.buffer_hover_index,
         self.buffer_pressed_index,
@@ -2569,17 +2599,18 @@ impl Component for EditorView {
 
     // Render explorer sidebar if open
     if let Some(ref mut explorer) = self.explorer {
-      if explorer.is_opened() {
-        let explorer_width = explorer.column_width();
-        let explorer_area = Rect::new(
-          0,
-          if use_bufferline { 1 } else { 0 },
-          explorer_width,
-          total_rows
-            .saturating_sub(if use_bufferline { 1 } else { 0 })
-            .saturating_sub(1), // -1 for statusline
+      if explorer.is_opened() && explorer_px_width > 0.0 {
+        // Full viewport height
+        let explorer_px_height = renderer.height() as f32;
+        
+        explorer.render(
+          0.0,  // x position
+          0.0,  // y position
+          explorer_px_width,
+          explorer_px_height,
+          renderer,
+          cx,
         );
-        explorer.render(explorer_area, renderer, cx);
       }
     }
 
@@ -2824,6 +2855,56 @@ impl EditorView {
     mouse: &the_editor_renderer::MouseEvent,
     cx: &mut Context,
   ) -> EventResult {
+    // Handle explorer mouse interaction
+    if self.explorer_px_width > 0.0 && mouse.position.0 < self.explorer_px_width {
+      if let Some(ref mut explorer) = self.explorer {
+        if explorer.is_opened() {
+          // Calculate visual row from mouse Y position
+          // Header height is UI_FONT_SIZE + 8.0, separator is 1.0
+          let header_height = crate::ui::UI_FONT_SIZE + 8.0 + 1.0;
+          let item_height = crate::ui::UI_FONT_SIZE + 4.0 + 1.0; // line_height + padding + gap
+          
+          if mouse.position.1 > header_height {
+            let relative_y = mouse.position.1 - header_height;
+            let visual_row = (relative_y / item_height).floor() as usize;
+            
+            match mouse.button {
+              Some(the_editor_renderer::MouseButton::Left) if mouse.pressed => {
+                // Detect double-click
+                let now = std::time::Instant::now();
+                let is_double_click = if let (Some(last_time), Some(last_pos)) = 
+                  (self.last_click_time, self.last_click_pos) 
+                {
+                  let time_diff = now.duration_since(last_time);
+                  let pos_diff = ((mouse.position.0 - last_pos.0).powi(2) 
+                    + (mouse.position.1 - last_pos.1).powi(2)).sqrt();
+                  time_diff.as_millis() < 400 && pos_diff < 10.0
+                } else {
+                  false
+                };
+                
+                self.last_click_time = Some(now);
+                self.last_click_pos = Some(mouse.position);
+                
+                // Focus explorer if not focused
+                if !explorer.is_focus() {
+                  explorer.focus();
+                }
+                
+                explorer.handle_mouse_click(visual_row, is_double_click, cx);
+                request_redraw();
+                return EventResult::Consumed(None);
+              },
+              _ => {},
+            }
+          }
+          
+          // Consume all mouse events in explorer area (don't pass through)
+          return EventResult::Consumed(None);
+        }
+      }
+    }
+    
     if self.bufferline_visible {
       let buffer_height = if self.bufferline_height > 0.0 {
         self.bufferline_height

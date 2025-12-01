@@ -310,22 +310,33 @@ pub struct TreeView<T: TreeViewItem> {
 
   #[allow(clippy::type_complexity)]
   on_next_key: Option<Box<dyn FnMut(&mut Context, &mut Self, &KeyBinding) -> Result<()>>>,
-  
+
   /// Cached tree indices for visible rows (updated during render)
   visible_tree_indices: Vec<usize>,
-  
+
   /// Selection animation (0.0 -> 1.0 when selection changes)
-  selection_anim: crate::core::animation::AnimationHandle<f32>,
+  selection_anim:       crate::core::animation::AnimationHandle<f32>,
   /// Previous selected index for animation
-  prev_selected: usize,
+  prev_selected:        usize,
   /// Hovered visual row (for hover glow effect)
-  hovered_row: Option<usize>,
+  hovered_row:          Option<usize>,
   /// Entrance animation progress (0.0 -> 1.0), None when complete
-  entrance_anim: Option<crate::core::animation::AnimationHandle<f32>>,
+  entrance_anim:        Option<crate::core::animation::AnimationHandle<f32>>,
   /// Global alpha multiplier (for closing animations, etc.)
-  global_alpha: f32,
+  global_alpha:         f32,
   /// Cached viewport height for scrolloff calculations
-  viewport_height: usize,
+  viewport_height:      usize,
+  /// Folder expand/collapse animation: (folder_index, is_expanding, animation,
+  /// num_children) num_children is used for collapse animation to know how
+  /// many items to animate
+  folder_anim: Option<(
+    usize,
+    bool,
+    crate::core::animation::AnimationHandle<f32>,
+    usize,
+  )>,
+  /// Folder index pending close after collapse animation completes
+  pending_folder_close: Option<usize>,
 }
 
 impl<T: TreeViewItem> TreeView<T> {
@@ -352,12 +363,21 @@ impl<T: TreeViewItem> TreeView<T> {
       search_prompt:        None,
       search_str:           "".into(),
       visible_tree_indices: Vec::new(),
-      selection_anim:       crate::core::animation::AnimationHandle::new(1.0, 1.0, duration, easing),
+      selection_anim:       crate::core::animation::AnimationHandle::new(
+        1.0, 1.0, duration, easing,
+      ),
       prev_selected:        0,
       hovered_row:          None,
-      entrance_anim:        Some(crate::core::animation::AnimationHandle::new(0.0, 1.0, entrance_dur, entrance_ease)),
+      entrance_anim:        Some(crate::core::animation::AnimationHandle::new(
+        0.0,
+        1.0,
+        entrance_dur,
+        entrance_ease,
+      )),
       global_alpha:         1.0,
       viewport_height:      0, // Will be updated on first render
+      folder_anim:          None,
+      pending_folder_close: None,
     })
   }
 
@@ -560,10 +580,30 @@ impl<T: TreeViewItem> TreeView<T> {
     params: &mut T::Params,
     selected_index: usize,
   ) -> Result<()> {
-    let selected_item = self.get_mut(selected_index)?;
-    if selected_item.is_opened {
-      selected_item.close();
-      self.regenerate_index();
+    // Check if item is opened first
+    let is_opened = self.get(selected_index)?.is_opened;
+
+    if is_opened {
+      // Count children before closing (for animation)
+      let num_children = self.get(selected_index)?.children.len();
+
+      if num_children > 0 {
+        // Start collapse animation - fast like picker
+        let (duration, easing) = crate::core::animation::presets::FAST;
+        self.folder_anim = Some((
+          selected_index,
+          false,
+          crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing),
+          num_children,
+        ));
+        // Mark folder for closing after animation completes
+        self.pending_folder_close = Some(selected_index);
+      } else {
+        // No children, just close immediately
+        let selected_item = self.get_mut(selected_index)?;
+        selected_item.close();
+        self.regenerate_index();
+      }
       return Ok(());
     }
 
@@ -574,6 +614,17 @@ impl<T: TreeViewItem> TreeView<T> {
           TreeOp::GetChildsAndInsert => {
             if let Err(err) = current.open() {
               cx.editor.set_error(format!("{err}"))
+            } else {
+              // Count the new children for animation
+              let num_children = current.children.len();
+              // Start expand animation - fast like picker
+              let (duration, easing) = crate::core::animation::presets::FAST;
+              self.folder_anim = Some((
+                self.selected,
+                true,
+                crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing),
+                num_children,
+              ));
             }
           },
           TreeOp::Noop => {},
@@ -683,7 +734,8 @@ impl<T: TreeViewItem> TreeView<T> {
     self.set_selected(self.selected.saturating_sub(rows))
   }
 
-  /// Get the tree index for a given visual row (0-based from top of rendered area)
+  /// Get the tree index for a given visual row (0-based from top of rendered
+  /// area)
   pub fn tree_index_at_row(&self, visual_row: usize) -> Option<usize> {
     self.visible_tree_indices.get(visual_row).copied()
   }
@@ -851,6 +903,10 @@ struct RenderedLine {
   is_ancestor_of_current_item: bool,
   /// The actual tree index of this item
   tree_index:                  usize,
+  /// Parent's tree index (for folder animation)
+  parent_index:                Option<usize>,
+  /// Nesting level (0 = root)
+  level:                       usize,
 }
 struct RenderTreeParams<'a, T> {
   tree:     &'a Tree<T>,
@@ -883,6 +939,8 @@ fn render_tree<T: TreeViewItem>(
     selected: selected == tree.index,
     is_ancestor_of_current_item: selected != tree.index && tree.get(selected).is_some(),
     content: name,
+    parent_index: tree.parent_index,
+    level,
     tree_index: tree.index,
   };
   let prefix = format!("{}{}", prefix, if level == 0 { "" } else { "  " });
@@ -916,7 +974,7 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
 
     // Update animations
     self.selection_anim.update(cx.dt);
-    
+
     // Update entrance animation and clear it when complete
     let entrance_progress = if let Some(ref mut anim) = self.entrance_anim {
       anim.update(cx.dt);
@@ -928,7 +986,31 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
     } else {
       1.0 // Animation complete, all items fully visible
     };
-    
+
+    // Update folder expand/collapse animation
+    let folder_anim_state =
+      if let Some((folder_idx, is_expanding, ref mut anim, num_children)) = self.folder_anim {
+        anim.update(cx.dt);
+        let progress = *anim.current();
+        let complete = anim.is_complete();
+        Some((folder_idx, is_expanding, progress, complete, num_children))
+      } else {
+        None
+      };
+    // Handle completed folder animation
+    if let Some((_, _, _, complete, _)) = folder_anim_state {
+      if complete {
+        self.folder_anim = None;
+        // If there's a pending folder close, execute it now
+        if let Some(folder_idx) = self.pending_folder_close.take() {
+          if let Ok(folder) = self.get_mut(folder_idx) {
+            folder.close();
+          }
+          self.regenerate_index();
+        }
+      }
+    }
+
     let selection_anim_value = *self.selection_anim.current();
 
     // Configure font to UI font size (independent of editor font size)
@@ -990,9 +1072,10 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
     for (index, line) in iter {
       // Apply entrance animation - items slide in from left with staggered delay
       // Each item starts appearing after a small delay based on its position
-      let (item_entrance, slide_offset) = if entrance_progress < 1.0 {
-        // Stagger: item i starts at progress = i * 0.02, completes at progress = i * 0.02 + 0.5
-        // This ensures all items animate within the full animation duration
+      let (mut item_entrance, slide_offset) = if entrance_progress < 1.0 {
+        // Stagger: item i starts at progress = i * 0.02, completes at progress = i *
+        // 0.02 + 0.5 This ensures all items animate within the full animation
+        // duration
         let item_start = (index as f32 * 0.015).min(0.5); // Max 50% delay for last items
         let item_duration = 0.5; // Each item takes 50% of total duration to animate
         let item_progress = ((entrance_progress - item_start) / item_duration).clamp(0.0, 1.0);
@@ -1001,6 +1084,31 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
       } else {
         (global_alpha, 0.0) // No entrance animation, apply global alpha
       };
+
+      // Apply folder expand/collapse animation
+      // Check if this item is a descendant of the animating folder
+      if let Some((folder_idx, is_expanding, progress, _, _num_children)) = folder_anim_state {
+        // Check if this item is a descendant by walking up the parent chain
+        let mut is_descendant = false;
+        let mut current_parent = line.parent_index;
+        while let Some(parent_idx) = current_parent {
+          if parent_idx == folder_idx {
+            is_descendant = true;
+            break;
+          }
+          current_parent = self.tree.get(parent_idx).and_then(|p| p.parent_index);
+        }
+
+        if is_descendant {
+          if is_expanding {
+            // Expanding: simple fade in
+            item_entrance *= progress;
+          } else {
+            // Collapsing: simple fade out
+            item_entrance *= 1.0 - progress;
+          }
+        }
+      }
 
       let item_y = area_px_y + index as f32 * (item_height + item_gap);
       let item_x = area_px_x + 4.0 - slide_offset;
@@ -1107,17 +1215,19 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
       let full_line = format!("{}{}", line.indent, line.content);
 
       // Use slightly different color for directories vs files
-      let mut item_color = if line.content.ends_with('/') || line.indent.contains('⏵') || line.indent.contains('⏷') {
-        // Directory - slightly brighter
-        Color::new(
-          (text_color.r + 0.1).min(1.0),
-          (text_color.g + 0.1).min(1.0),
-          (text_color.b + 0.05).min(1.0),
-          text_color.a,
-        )
-      } else {
-        text_color
-      };
+      let mut item_color =
+        if line.content.ends_with('/') || line.indent.contains('⏵') || line.indent.contains('⏷')
+        {
+          // Directory - slightly brighter
+          Color::new(
+            (text_color.r + 0.1).min(1.0),
+            (text_color.g + 0.1).min(1.0),
+            (text_color.b + 0.05).min(1.0),
+            text_color.a,
+          )
+        } else {
+          text_color
+        };
       // Apply entrance animation alpha
       item_color.a *= item_entrance;
 
@@ -1157,7 +1267,7 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
 
     // Cache viewport height for scrolloff calculations
     self.viewport_height = area.height as usize;
-    
+
     // Apply scrolloff to keep selection away from top/bottom edges
     // Only apply for viewports large enough (at least 2*scrolloff + 3 rows)
     const SCROLLOFF: usize = 3;
@@ -1167,12 +1277,14 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
     } else {
       0
     };
-    
+
     // Clamp winline to keep selection within scrolloff bounds
-    let max_winline = viewport_height.saturating_sub(1).saturating_sub(effective_scrolloff);
+    let max_winline = viewport_height
+      .saturating_sub(1)
+      .saturating_sub(effective_scrolloff);
     let min_winline = effective_scrolloff.min(self.selected);
     self.winline = self.winline.clamp(min_winline, max_winline);
-    
+
     // Also ensure winline doesn't exceed viewport
     self.winline = self.winline.min(area.height.saturating_sub(1) as usize);
     let skip = self.selected.saturating_sub(self.winline);
@@ -1264,9 +1376,9 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
     let result: Vec<RenderedLine> = skipped_ancestors
             .into_iter()
             .chain(
-                remaining_lines
-                    .into_iter()
-                    .take(take.saturating_sub(skipped_ancestors_len)),
+              remaining_lines
+                .into_iter()
+                .take(take.saturating_sub(skipped_ancestors_len)),
             )
             // Horizontal scroll
             .map(|line| {
@@ -1277,25 +1389,25 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
                         "".to_string()
                     } else {
                         line.indent
-                            .chars()
-                            .skip(skip)
-                            .take(max_width)
-                            .collect::<String>()
+                          .chars()
+                          .skip(skip)
+                          .take(max_width)
+                          .collect::<String>()
                     },
                     content: line
-                        .content
-                        .chars()
-                        .skip(skip.saturating_sub(indent_len))
-                        .take((max_width.saturating_sub(indent_len)).clamp(0, line.content.len()))
-                        .collect::<String>(),
+                      .content
+                      .chars()
+                      .skip(skip.saturating_sub(indent_len))
+                      .take((max_width.saturating_sub(indent_len)).clamp(0, line.content.len()))
+                      .collect::<String>(),
                     ..line
                 }
             })
             .collect();
-    
+
     // Cache visible tree indices for mouse interaction
     self.visible_tree_indices = result.iter().map(|line| line.tree_index).collect();
-    
+
     result
   }
 

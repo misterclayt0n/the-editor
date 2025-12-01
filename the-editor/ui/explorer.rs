@@ -17,6 +17,10 @@ use the_editor_renderer::Key;
 
 use crate::{
   core::{
+    animation::{
+      AnimationHandle,
+      presets,
+    },
     graphics::{
       CursorKind,
       Rect,
@@ -198,6 +202,8 @@ pub struct Explorer {
   on_next_key:  Option<Box<dyn FnMut(&mut Context, &mut Self, &KeyBinding) -> EventResult>>,
   column_width: u16,
   position:     ExplorerPosition,
+  /// Closing animation (1.0 -> 0.0 when closing)
+  closing_anim: Option<AnimationHandle<f32>>,
 }
 
 /// Default column width for the explorer
@@ -217,6 +223,7 @@ impl Explorer {
       on_next_key:  None,
       column_width: DEFAULT_EXPLORER_COLUMN_WIDTH,
       position:     ExplorerPosition::default(),
+      closing_anim: None,
     })
   }
 
@@ -231,6 +238,7 @@ impl Explorer {
       on_next_key: None,
       column_width,
       position: ExplorerPosition::default(),
+      closing_anim: None,
     })
   }
 
@@ -303,6 +311,8 @@ impl Explorer {
   pub fn focus(&mut self) {
     self.state.focus = true;
     self.state.open = true;
+    // Cancel any closing animation
+    self.closing_anim = None;
   }
 
   pub fn unfocus(&mut self) {
@@ -311,7 +321,35 @@ impl Explorer {
 
   fn close(&mut self) {
     self.state.focus = false;
-    self.state.open = false;
+    // Start closing animation instead of immediately closing
+    let (duration, easing) = presets::FAST;
+    self.closing_anim = Some(AnimationHandle::new(1.0, 0.0, duration, easing));
+  }
+
+  /// Check if the explorer is currently in closing animation
+  pub fn is_closing(&self) -> bool {
+    self.closing_anim.is_some()
+  }
+
+  /// Update the closing animation. Returns true if explorer should be removed.
+  pub fn update_closing(&mut self, dt: f32) -> bool {
+    if let Some(ref mut anim) = self.closing_anim {
+      anim.update(dt);
+      if anim.is_complete() {
+        self.state.open = false;
+        self.closing_anim = None;
+        return true; // Explorer should be removed
+      }
+    }
+    false
+  }
+
+  /// Get the closing animation progress (1.0 = fully open, 0.0 = fully closed)
+  pub fn closing_progress(&self) -> f32 {
+    self.closing_anim
+      .as_ref()
+      .map(|a| *a.current())
+      .unwrap_or(1.0)
   }
 
   pub fn is_focus(&self) -> bool {
@@ -446,9 +484,12 @@ impl Explorer {
     use the_editor_renderer::{Color, TextSection};
     use crate::ui::UI_FONT_SIZE;
 
-    if !self.state.open {
+    if !self.state.open && !self.is_closing() {
       return;
     }
+
+    // Get closing animation progress for alpha fade
+    let close_alpha = self.closing_progress();
 
     // Configure font to UI font size (independent of editor font size)
     let ui_font_family = surface.current_font_family().to_owned();
@@ -459,13 +500,13 @@ impl Explorer {
     // Get theme colors
     let theme = &cx.editor.theme;
     let bg_style = theme.get("ui.background");
-    let bg_color = bg_style
+    let mut bg_color = bg_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.1, 0.1, 0.15, 1.0));
 
     let text_style = theme.get("ui.text");
-    let text_color = text_style
+    let mut text_color = text_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::WHITE);
@@ -475,10 +516,15 @@ impl Explorer {
     } else {
       theme.get("ui.statusline.inactive")
     };
-    let statusline_bg = statusline_style
+    let mut statusline_bg = statusline_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.15, 0.15, 0.2, 1.0));
+
+    // Apply closing animation alpha to colors
+    bg_color.a *= close_alpha;
+    text_color.a *= close_alpha;
+    statusline_bg.a *= close_alpha;
 
     // Store width in cells for column_width tracking
     self.state.area_width = (px_width / cell_width).floor() as u16;
@@ -507,11 +553,11 @@ impl Explorer {
 
     // Draw separator line below header
     let sep_y = px_y + header_height;
-    let sep_color = Color::new(text_color.r, text_color.g, text_color.b, 0.2);
+    let sep_color = Color::new(text_color.r, text_color.g, text_color.b, 0.2 * close_alpha);
     surface.draw_rect(px_x, sep_y, px_width, 1.0, sep_color);
 
     // Draw right border separator
-    let border_color = Color::new(text_color.r, text_color.g, text_color.b, 0.15);
+    let border_color = Color::new(text_color.r, text_color.g, text_color.b, 0.15 * close_alpha);
     surface.draw_rect(px_x + px_width - 1.0, px_y, 1.0, px_height, border_color);
 
     // Calculate tree area in cell units for tree rendering
@@ -534,6 +580,8 @@ impl Explorer {
       1,
     );
 
+    // Set tree global alpha for closing animation
+    self.tree.set_global_alpha(close_alpha);
     self.render_tree(tree_area, prompt_area, surface, cx);
   }
 
@@ -583,6 +631,11 @@ impl Explorer {
   /// Get the number of visible items (for hover detection)
   pub fn visible_item_count(&self) -> usize {
     self.tree.visible_item_count()
+  }
+
+  /// Set the hovered visual row (for hover effects)
+  pub fn set_hovered_row(&mut self, row: Option<usize>) {
+    self.tree.set_hovered_row(row);
   }
 
   fn handle_prompt_event(&mut self, event: &KeyBinding, cx: &mut Context) -> EventResult {
@@ -1147,10 +1200,15 @@ mod test_explorer {
     assert!(explorer.is_focus(), "Explorer should be focused after focus()");
     assert!(explorer.is_opened(), "Explorer should be open after focus()");
     
-    // Close the explorer
+    // Close the explorer (starts closing animation)
     explorer.close();
     assert!(!explorer.is_focus(), "Explorer should not be focused after close()");
-    assert!(!explorer.is_opened(), "Explorer should not be open after close()");
+    assert!(explorer.is_closing(), "Explorer should be in closing animation after close()");
+    
+    // Simulate animation completion
+    explorer.update_closing(1.0); // Large dt to complete animation
+    assert!(!explorer.is_opened(), "Explorer should not be open after animation completes");
+    assert!(!explorer.is_closing(), "Explorer should not be closing after animation completes");
   }
 
   #[test]

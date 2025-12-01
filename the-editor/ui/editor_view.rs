@@ -947,11 +947,18 @@ impl Component for EditorView {
     // Restore buffer font configuration
     renderer.configure_font(&font_family, font_size);
     
-    // Calculate explorer pixel width (using UI font metrics, not buffer font)
-    self.explorer_px_width = if let Some(ref explorer) = self.explorer {
-      if explorer.is_opened() {
+    // Update and calculate explorer pixel width (using UI font metrics, not buffer font)
+    self.explorer_px_width = if let Some(ref mut explorer) = self.explorer {
+      // Update closing animation
+      if explorer.update_closing(cx.dt) {
+        // Animation complete, remove explorer
+        self.explorer = None;
+        0.0
+      } else if explorer.is_opened() || explorer.is_closing() {
         let explorer_width_cells = explorer.column_width();
-        explorer_width_cells as f32 * ui_cell_width
+        let base_width = explorer_width_cells as f32 * ui_cell_width;
+        // Apply closing animation progress
+        base_width * explorer.closing_progress()
       } else {
         0.0
       }
@@ -2871,6 +2878,18 @@ impl EditorView {
               let relative_y = mouse.position.1 - header_height;
               let visual_row = (relative_y / item_height).floor() as usize;
               
+              // Update hover state for hover glow animation
+              let new_hover = if visual_row < explorer.visible_item_count() {
+                Some(visual_row)
+              } else {
+                None
+              };
+              if self.explorer_hovered_item != new_hover {
+                self.explorer_hovered_item = new_hover;
+                explorer.set_hovered_row(new_hover);
+                request_redraw();
+              }
+              
               match mouse.button {
                 Some(the_editor_renderer::MouseButton::Left) if mouse.pressed => {
                   self.last_click_time = Some(std::time::Instant::now());
@@ -2888,11 +2907,25 @@ impl EditorView {
                 },
                 _ => {},
               }
+            } else {
+              // Mouse is over header, clear hover
+              if self.explorer_hovered_item.is_some() {
+                self.explorer_hovered_item = None;
+                explorer.set_hovered_row(None);
+                request_redraw();
+              }
             }
             
             // Consume all mouse events in explorer area (don't pass through)
             return EventResult::Consumed(None);
           } else {
+            // Mouse moved outside explorer area - clear hover
+            if self.explorer_hovered_item.is_some() {
+              self.explorer_hovered_item = None;
+              explorer.set_hovered_row(None);
+              request_redraw();
+            }
+            
             // Clicked outside explorer area - unfocus explorer if it was focused
             if explorer.is_focus() {
               if let Some(the_editor_renderer::MouseButton::Left) = mouse.button {

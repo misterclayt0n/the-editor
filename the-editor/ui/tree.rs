@@ -313,12 +313,27 @@ pub struct TreeView<T: TreeViewItem> {
   
   /// Cached tree indices for visible rows (updated during render)
   visible_tree_indices: Vec<usize>,
+  
+  /// Selection animation (0.0 -> 1.0 when selection changes)
+  selection_anim: crate::core::animation::AnimationHandle<f32>,
+  /// Previous selected index for animation
+  prev_selected: usize,
+  /// Hovered visual row (for hover glow effect)
+  hovered_row: Option<usize>,
+  /// Entrance animation progress (0.0 -> 1.0), None when complete
+  entrance_anim: Option<crate::core::animation::AnimationHandle<f32>>,
+  /// Global alpha multiplier (for closing animations, etc.)
+  global_alpha: f32,
+  /// Cached viewport height for scrolloff calculations
+  viewport_height: usize,
 }
 
 impl<T: TreeViewItem> TreeView<T> {
   pub fn build_tree(root: T) -> Result<Self> {
     let children = root.get_children()?;
     let items = vec_to_tree(children);
+    let (duration, easing) = crate::core::animation::presets::FAST;
+    let (entrance_dur, entrance_ease) = crate::core::animation::presets::MEDIUM;
     Ok(Self {
       tree:                 Tree::new(root, items),
       selected:             0,
@@ -337,6 +352,12 @@ impl<T: TreeViewItem> TreeView<T> {
       search_prompt:        None,
       search_str:           "".into(),
       visible_tree_indices: Vec::new(),
+      selection_anim:       crate::core::animation::AnimationHandle::new(1.0, 1.0, duration, easing),
+      prev_selected:        0,
+      hovered_row:          None,
+      entrance_anim:        Some(crate::core::animation::AnimationHandle::new(0.0, 1.0, entrance_dur, entrance_ease)),
+      global_alpha:         1.0,
+      viewport_height:      0, // Will be updated on first render
     })
   }
 
@@ -637,6 +658,11 @@ impl<T: TreeViewItem> TreeView<T> {
           .saturating_sub(self.selected.saturating_sub(selected)),
       );
     }
+    // Trigger selection animation when selection changes
+    if selected != self.selected {
+      self.prev_selected = self.selected;
+      self.selection_anim.retarget(1.0);
+    }
     self.selected = selected
   }
 
@@ -670,6 +696,21 @@ impl<T: TreeViewItem> TreeView<T> {
   /// Get the number of visible items
   pub fn visible_item_count(&self) -> usize {
     self.visible_tree_indices.len()
+  }
+
+  /// Set the hovered visual row (for hover effects)
+  pub fn set_hovered_row(&mut self, row: Option<usize>) {
+    self.hovered_row = row;
+  }
+
+  /// Get the currently hovered row
+  pub fn hovered_row(&self) -> Option<usize> {
+    self.hovered_row
+  }
+
+  /// Set the global alpha multiplier (for closing animations)
+  pub fn set_global_alpha(&mut self, alpha: f32) {
+    self.global_alpha = alpha;
   }
 
   fn move_to_next_sibling(&mut self) -> Result<()> {
@@ -873,6 +914,23 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
 
     use crate::ui::UI_FONT_SIZE;
 
+    // Update animations
+    self.selection_anim.update(cx.dt);
+    
+    // Update entrance animation and clear it when complete
+    let entrance_progress = if let Some(ref mut anim) = self.entrance_anim {
+      anim.update(cx.dt);
+      let progress = *anim.current();
+      if anim.is_complete() {
+        self.entrance_anim = None;
+      }
+      progress
+    } else {
+      1.0 // Animation complete, all items fully visible
+    };
+    
+    let selection_anim_value = *self.selection_anim.current();
+
     // Configure font to UI font size (independent of editor font size)
     let ui_font_family = surface.current_font_family().to_owned();
     surface.configure_font(&ui_font_family, UI_FONT_SIZE);
@@ -926,16 +984,54 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
     let lines = self.render_lines(area);
     let iter = lines.into_iter().enumerate();
 
+    // Global alpha for closing animations
+    let global_alpha = self.global_alpha;
+
     for (index, line) in iter {
+      // Apply entrance animation - items slide in from left with staggered delay
+      // Each item starts appearing after a small delay based on its position
+      let (item_entrance, slide_offset) = if entrance_progress < 1.0 {
+        // Stagger: item i starts at progress = i * 0.02, completes at progress = i * 0.02 + 0.5
+        // This ensures all items animate within the full animation duration
+        let item_start = (index as f32 * 0.015).min(0.5); // Max 50% delay for last items
+        let item_duration = 0.5; // Each item takes 50% of total duration to animate
+        let item_progress = ((entrance_progress - item_start) / item_duration).clamp(0.0, 1.0);
+        let slide = (1.0 - item_progress) * 15.0; // Slide 15px from left
+        (item_progress * global_alpha, slide)
+      } else {
+        (global_alpha, 0.0) // No entrance animation, apply global alpha
+      };
+
       let item_y = area_px_y + index as f32 * (item_height + item_gap);
-      let item_x = area_px_x + 4.0;
+      let item_x = area_px_x + 4.0 - slide_offset;
       let item_width = area_px_width - 8.0;
+
+      // Check if this row is hovered
+      let is_hovered = self.hovered_row == Some(index);
+
+      // Draw hover highlight (subtle glow effect)
+      if is_hovered && !line.selected {
+        let hover_bg = Color::new(
+          picker_selected_fill.r,
+          picker_selected_fill.g,
+          picker_selected_fill.b,
+          0.25 * item_entrance,
+        );
+        surface.draw_rounded_rect(
+          item_x,
+          item_y,
+          item_width,
+          item_height,
+          item_radius,
+          hover_bg,
+        );
+      }
 
       // Draw selection background if selected (picker style)
       if line.selected {
-        // Selection fill - use picker colors
+        // Selection fill - use picker colors with entrance animation
         let mut fill_color = picker_selected_fill;
-        fill_color.a = fill_color.a.max(0.8);
+        fill_color.a = fill_color.a.max(0.8) * item_entrance;
         surface.draw_rounded_rect(
           item_x,
           item_y,
@@ -945,9 +1041,34 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
           fill_color,
         );
 
+        // Selection glow effect when animation is active
+        if selection_anim_value < 1.0 {
+          let glow_intensity = (1.0 - selection_anim_value) * 0.4;
+          let glow_color = Color::new(
+            picker_selected_outline.r,
+            picker_selected_outline.g,
+            picker_selected_outline.b,
+            glow_intensity * item_entrance,
+          );
+          let glow_radius = item_height * 1.5 * (1.0 + (1.0 - selection_anim_value) * 0.5);
+          let center_x = item_x + item_width / 2.0;
+          let center_y = item_y + item_height / 2.0;
+          surface.draw_rounded_rect_glow(
+            item_x,
+            item_y,
+            item_width,
+            item_height,
+            item_radius,
+            center_x,
+            center_y,
+            glow_radius,
+            glow_color,
+          );
+        }
+
         // Selection border with gradient thickness (picker style)
         let mut outline_color = picker_selected_outline;
-        outline_color.a = outline_color.a.max(0.9);
+        outline_color.a = outline_color.a.max(0.9) * item_entrance;
         let bottom_thickness = (item_height * 0.035).clamp(0.6, 1.2);
         let side_thickness = (bottom_thickness * 1.55).min(bottom_thickness + 1.6);
         let top_thickness = (bottom_thickness * 2.2).min(bottom_thickness + 2.4);
@@ -968,7 +1089,7 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
           picker_selected_fill.r,
           picker_selected_fill.g,
           picker_selected_fill.b,
-          0.15,
+          0.15 * item_entrance,
         );
         surface.draw_rounded_rect(
           item_x,
@@ -986,7 +1107,7 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
       let full_line = format!("{}{}", line.indent, line.content);
 
       // Use slightly different color for directories vs files
-      let item_color = if line.content.ends_with('/') || line.indent.contains('⏵') || line.indent.contains('⏷') {
+      let mut item_color = if line.content.ends_with('/') || line.indent.contains('⏵') || line.indent.contains('⏷') {
         // Directory - slightly brighter
         Color::new(
           (text_color.r + 0.1).min(1.0),
@@ -997,6 +1118,8 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
       } else {
         text_color
       };
+      // Apply entrance animation alpha
+      item_color.a *= item_entrance;
 
       surface.draw_text(TextSection::simple(
         text_x,
@@ -1032,6 +1155,25 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
       pre_render(self, area);
     }
 
+    // Cache viewport height for scrolloff calculations
+    self.viewport_height = area.height as usize;
+    
+    // Apply scrolloff to keep selection away from top/bottom edges
+    // Only apply for viewports large enough (at least 2*scrolloff + 3 rows)
+    const SCROLLOFF: usize = 3;
+    let viewport_height = area.height as usize;
+    let effective_scrolloff = if viewport_height >= SCROLLOFF * 2 + 3 {
+      SCROLLOFF
+    } else {
+      0
+    };
+    
+    // Clamp winline to keep selection within scrolloff bounds
+    let max_winline = viewport_height.saturating_sub(1).saturating_sub(effective_scrolloff);
+    let min_winline = effective_scrolloff.min(self.selected);
+    self.winline = self.winline.clamp(min_winline, max_winline);
+    
+    // Also ensure winline doesn't exceed viewport
     self.winline = self.winline.min(area.height.saturating_sub(1) as usize);
     let skip = self.selected.saturating_sub(self.winline);
     let params = RenderTreeParams {

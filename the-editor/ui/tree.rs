@@ -1,4 +1,7 @@
-use std::cmp::Ordering;
+use std::{
+  borrow::Cow,
+  cmp::Ordering,
+};
 
 use anyhow::Result;
 
@@ -18,6 +21,36 @@ use crate::{
     },
   },
 };
+
+/// Truncate a string to fit within a given pixel width, adding ellipsis if
+/// needed.
+fn truncate_to_width<'a>(text: &'a str, max_width: f32, char_width: f32) -> Cow<'a, str> {
+  if max_width <= 0.0 {
+    return Cow::Borrowed("");
+  }
+
+  let char_width = char_width.max(1.0);
+  let max_chars = (max_width / char_width).floor() as usize;
+  if max_chars == 0 {
+    return Cow::Borrowed("");
+  }
+
+  let count = text.chars().count();
+  if count <= max_chars {
+    return Cow::Borrowed(text);
+  }
+
+  if max_chars == 1 {
+    return Cow::Owned("…".to_string());
+  }
+
+  let mut truncated = String::with_capacity(max_chars);
+  for ch in text.chars().take(max_chars - 1) {
+    truncated.push(ch);
+  }
+  truncated.push('…');
+  Cow::Owned(truncated)
+}
 
 pub trait TreeViewItem: Sized + Ord {
   type Params: Default;
@@ -765,6 +798,71 @@ impl<T: TreeViewItem> TreeView<T> {
     self.global_alpha = alpha;
   }
 
+  /// Scroll the view by delta lines (positive = down, negative = up).
+  /// This scrolls the view without changing the selection, like picker-style
+  /// scrolling.
+  ///
+  /// When scrolling would push the cursor out of the visible area,
+  /// the cursor is moved to stay within view (scrolloff respected).
+  pub fn scroll(&mut self, delta: i32) {
+    let tree_len = self.tree.len();
+    if tree_len == 0 || self.viewport_height == 0 {
+      return;
+    }
+
+    // Use scrolloff for smooth scrolling experience
+    const SCROLLOFF: usize = 3;
+    let effective_scrolloff = if self.viewport_height >= SCROLLOFF * 2 + 3 {
+      SCROLLOFF
+    } else {
+      0
+    };
+
+    if delta > 0 {
+      // Scroll down (reveal more items below) - decrease winline
+      // This moves the cursor toward the top of the viewport
+      let amount = delta as usize;
+      let new_winline = self.winline.saturating_sub(amount);
+
+      // If cursor would go above the scrolloff zone, move cursor down to compensate
+      if new_winline < effective_scrolloff {
+        // How many lines we're pushing the cursor
+        let overflow = effective_scrolloff.saturating_sub(new_winline);
+        let new_selected = self
+          .selected
+          .saturating_add(overflow)
+          .min(tree_len.saturating_sub(1));
+        self.selected = new_selected;
+        self.winline = effective_scrolloff.min(self.selected);
+      } else {
+        self.winline = new_winline;
+      }
+    } else if delta < 0 {
+      // Scroll up (reveal more items above) - increase winline
+      // This moves the cursor toward the bottom of the viewport
+      let amount = delta.unsigned_abs() as usize;
+      let new_winline = self.winline.saturating_add(amount);
+
+      // Max winline is viewport - scrolloff - 1 (or just viewport - 1 if no scrolloff)
+      let max_winline = self
+        .viewport_height
+        .saturating_sub(1)
+        .saturating_sub(effective_scrolloff);
+
+      // If cursor would go below the scrolloff zone, move cursor up to compensate
+      if new_winline > max_winline {
+        let overflow = new_winline.saturating_sub(max_winline);
+        let new_selected = self.selected.saturating_sub(overflow);
+        self.selected = new_selected;
+        self.winline = max_winline.min(new_selected);
+      } else {
+        // Also need to ensure winline doesn't exceed selected (cursor can't be below
+        // first item)
+        self.winline = new_winline.min(self.selected);
+      }
+    }
+  }
+
   fn move_to_next_sibling(&mut self) -> Result<()> {
     if let Some(parent) = self.current_parent()? {
       if let Some(local_index) = parent
@@ -1052,10 +1150,10 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
 
     // Compact item styling matching picker
     let line_height = UI_FONT_SIZE;
-    let item_padding_y = 2.0;
+    let item_padding_y = 4.0; // More vertical padding for better spacing
     let item_padding_x = 6.0;
     let item_height = line_height + item_padding_y * 2.0;
-    let item_gap = 1.0;
+    let item_gap = 2.0; // Slightly more gap between items
     let item_radius = 4.0;
 
     // Calculate positions using UI font metrics
@@ -1214,6 +1312,11 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
       let text_y = item_y + item_padding_y;
       let full_line = format!("{}{}", line.indent, line.content);
 
+      // Calculate max characters that fit in available width
+      // Available width = item_width - 2 * padding_x - extra margin for safety
+      let available_text_width = (item_width - item_padding_x * 2.0 - 4.0).max(0.0);
+      let display_line = truncate_to_width(&full_line, available_text_width, cell_width);
+
       // Use slightly different color for directories vs files
       let mut item_color =
         if line.content.ends_with('/') || line.indent.contains('⏵') || line.indent.contains('⏷')
@@ -1234,7 +1337,7 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
       surface.draw_text(TextSection::simple(
         text_x,
         text_y,
-        &full_line,
+        display_line.as_ref(),
         UI_FONT_SIZE,
         item_color,
       ));

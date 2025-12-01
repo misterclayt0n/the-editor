@@ -566,12 +566,16 @@ impl Explorer {
     let tree_height = px_height - header_height - 1.0;
     
     // Convert to cell units for tree rendering (which expects Rect in cells)
+    // The tree renders items with: item_height = UI_FONT_SIZE + 8.0, item_gap = 2.0
+    // So each item takes UI_FONT_SIZE + 10.0 pixels total
+    let tree_item_stride = UI_FONT_SIZE + 10.0;
     let line_height = UI_FONT_SIZE + 4.0;
     let tree_area = Rect::new(
       (px_x / cell_width).floor() as u16,
       (tree_start_y / line_height).floor() as u16,
       (px_width / cell_width).floor() as u16,
-      (tree_height / line_height).floor() as u16,
+      // Calculate height as number of items that fit, not line count
+      (tree_height / tree_item_stride).floor() as u16,
     );
     let prompt_area = Rect::new(
       tree_area.x,
@@ -636,6 +640,11 @@ impl Explorer {
   /// Set the hovered visual row (for hover effects)
   pub fn set_hovered_row(&mut self, row: Option<usize>) {
     self.tree.set_hovered_row(row);
+  }
+
+  /// Scroll the tree view by delta lines (positive = down, negative = up)
+  pub fn scroll(&mut self, delta: i32) {
+    self.tree.scroll(delta);
   }
 
   fn handle_prompt_event(&mut self, event: &KeyBinding, cx: &mut Context) -> EventResult {

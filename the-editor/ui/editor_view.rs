@@ -271,6 +271,8 @@ pub struct EditorView {
   // Explorer mouse interaction state
   explorer_px_width:         f32,
   explorer_hovered_item:     Option<usize>,
+  // Track last mouse position for scroll targeting
+  last_mouse_pos:            Option<(f32, f32)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -343,6 +345,7 @@ impl EditorView {
       explorer: None,
       explorer_px_width: 0.0,
       explorer_hovered_item: None,
+      last_mouse_pos: None,
     }
   }
 
@@ -881,7 +884,33 @@ impl Component for EditorView {
         // are handled during the next render() call
         self.handle_mouse_event(mouse, cx)
       },
-      Event::Scroll(_) => EventResult::Ignored(None),
+      Event::Scroll(delta) => {
+        // Handle scroll in explorer area if mouse is over it
+        if let Some((mouse_x, _)) = self.last_mouse_pos {
+          if mouse_x < self.explorer_px_width && self.explorer_px_width > 0.0 {
+            if let Some(ref mut explorer) = self.explorer {
+              if explorer.is_opened() {
+                use the_editor_renderer::ScrollDelta;
+
+                let scroll_lines = match delta {
+                  ScrollDelta::Lines { y, .. } => -*y as i32,
+                  ScrollDelta::Pixels { y, .. } => {
+                    // Approximate: 20 pixels per line
+                    (-*y / 20.0) as i32
+                  },
+                };
+
+                if scroll_lines != 0 {
+                  explorer.scroll(scroll_lines);
+                  request_redraw();
+                }
+                return EventResult::Consumed(None);
+              }
+            }
+          }
+        }
+        EventResult::Ignored(None)
+      },
       _ => EventResult::Ignored(None),
     }
   }
@@ -2618,8 +2647,9 @@ impl Component for EditorView {
     // Render explorer sidebar if open
     if let Some(ref mut explorer) = self.explorer {
       if explorer.is_opened() && explorer_px_width > 0.0 {
-        // Full viewport height
-        let explorer_px_height = renderer.height() as f32;
+        // Viewport height minus statusline
+        const STATUS_BAR_HEIGHT: f32 = 28.0;
+        let explorer_px_height = renderer.height() as f32 - STATUS_BAR_HEIGHT;
         
         explorer.render(
           0.0,  // x position
@@ -2875,6 +2905,9 @@ impl EditorView {
     mouse: &the_editor_renderer::MouseEvent,
     cx: &mut Context,
   ) -> EventResult {
+    // Track mouse position for scroll targeting
+    self.last_mouse_pos = Some(mouse.position);
+
     // Handle explorer mouse interaction
     if self.explorer_px_width > 0.0 {
       let in_explorer_area = mouse.position.0 < self.explorer_px_width;
@@ -2885,7 +2918,11 @@ impl EditorView {
             // Calculate visual row from mouse Y position
             // Header height is UI_FONT_SIZE + 8.0, separator is 1.0
             let header_height = crate::ui::UI_FONT_SIZE + 8.0 + 1.0;
-            let item_height = crate::ui::UI_FONT_SIZE + 4.0 + 1.0; // line_height + padding + gap
+            // Item height matches tree.rs: line_height (UI_FONT_SIZE) + item_padding_y (4.0) * 2
+            // Plus item_gap (2.0) between items
+            let item_padding_y = 4.0;
+            let item_gap = 2.0;
+            let item_height = crate::ui::UI_FONT_SIZE + item_padding_y * 2.0 + item_gap;
             
             if mouse.position.1 > header_height {
               let relative_y = mouse.position.1 - header_height;

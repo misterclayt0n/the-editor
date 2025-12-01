@@ -61,6 +61,7 @@ use crate::{
     Mode,
   },
   ui::{
+    Explorer,
     components::bufferline,
     compositor::{
       Component,
@@ -265,6 +266,8 @@ pub struct EditorView {
   buffer_tabs:               Vec<bufferline::BufferTab>,
   bufferline_height:         f32,
   buffer_pressed_index:      Option<usize>,
+  // Tree explorer sidebar
+  explorer:                  Option<Explorer>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -334,7 +337,54 @@ impl EditorView {
       buffer_tabs: Vec::new(),
       bufferline_height: 24.0,
       buffer_pressed_index: None,
+      explorer: None,
     }
+  }
+
+  /// Toggle the tree explorer sidebar
+  pub fn toggle_explorer(&mut self, cx: &mut Context) {
+    if self.explorer.is_some() {
+      self.explorer = None;
+    } else {
+      match Explorer::new(cx) {
+        Ok(explorer) => {
+          self.explorer = Some(explorer);
+        },
+        Err(err) => {
+          cx.editor
+            .set_error(format!("Failed to open explorer: {}", err));
+        },
+      }
+    }
+  }
+
+  /// Open the tree explorer sidebar
+  pub fn open_explorer(&mut self, cx: &mut Context) {
+    if self.explorer.is_none() {
+      match Explorer::new(cx) {
+        Ok(explorer) => {
+          self.explorer = Some(explorer);
+        },
+        Err(err) => {
+          cx.editor
+            .set_error(format!("Failed to open explorer: {}", err));
+        },
+      }
+    }
+    // Focus the explorer if it exists
+    if let Some(ref mut explorer) = self.explorer {
+      explorer.focus();
+    }
+  }
+
+  /// Close the tree explorer sidebar
+  pub fn close_explorer(&mut self) {
+    self.explorer = None;
+  }
+
+  /// Check if explorer is open and focused
+  pub fn explorer_focused(&self) -> bool {
+    self.explorer.as_ref().is_some_and(|e| e.is_focus())
   }
 
   pub fn set_keymaps(&mut self, map: &HashMap<Mode, KeyTrie>) {
@@ -588,6 +638,20 @@ impl Component for EditorView {
       }
     } else if matches!(event, Event::Key(_)) {
       if let Some(result) = self.dispatch_signature_help_event(event, cx) {
+        if matches!(result, EventResult::Consumed(_)) {
+          return result;
+        }
+      }
+    }
+
+    // Handle explorer events if it's focused
+    if let Some(ref mut explorer) = self.explorer {
+      if explorer.is_focus() {
+        let result = explorer.handle_event(event, cx);
+        // Check if explorer was closed
+        if !explorer.is_opened() {
+          self.explorer = None;
+        }
         if matches!(result, EventResult::Consumed(_)) {
           return result;
         }
@@ -858,6 +922,30 @@ impl Component for EditorView {
     let mut target_area = Rect::new(0, 0, area_width, total_rows).clip_bottom(1);
     if use_bufferline {
       target_area = target_area.clip_top(1);
+    }
+
+    // Calculate explorer area and adjust target_area if explorer is open
+    let explorer_width_cells = if let Some(ref explorer) = self.explorer {
+      if explorer.is_opened() {
+        // Explorer width in cells (columns)
+        explorer
+          .column_width()
+          .min(target_area.width.saturating_sub(20))
+      } else {
+        0
+      }
+    } else {
+      0
+    };
+
+    // Offset the editor area to make room for the explorer on the left
+    if explorer_width_cells > 0 {
+      target_area = Rect::new(
+        target_area.x + explorer_width_cells,
+        target_area.y,
+        target_area.width.saturating_sub(explorer_width_cells),
+        target_area.height,
+      );
     }
 
     // Resize tree if needed
@@ -2478,6 +2566,22 @@ impl Component for EditorView {
 
     // Render split separators
     self.render_split_separators(renderer, cx, font_width, font_size);
+
+    // Render explorer sidebar if open
+    if let Some(ref mut explorer) = self.explorer {
+      if explorer.is_opened() {
+        let explorer_width = explorer.column_width();
+        let explorer_area = Rect::new(
+          0,
+          if use_bufferline { 1 } else { 0 },
+          explorer_width,
+          total_rows
+            .saturating_sub(if use_bufferline { 1 } else { 0 })
+            .saturating_sub(1), // -1 for statusline
+        );
+        explorer.render(explorer_area, renderer, cx);
+      }
+    }
 
     // Render completion and signature help popups on top (only for focused view)
     self.render_popups(area, renderer, cx);

@@ -534,6 +534,44 @@ pub fn merge_keys(dst: &mut HashMap<Mode, KeyTrie>, mut delta: HashMap<Mode, Key
   }
 }
 
+/// Parse a macro string like "jjk<ret>C-x" into a sequence of KeyBindings.
+/// This is useful for testing key event handlers.
+#[cfg(test)]
+pub fn parse_macro(input: &str) -> anyhow::Result<Vec<KeyBinding>> {
+  let mut keys = Vec::new();
+  let mut chars = input.chars().peekable();
+
+  while let Some(c) = chars.next() {
+    if c == '<' {
+      // Parse special key like <ret>, <esc>, <C-x>
+      let mut special = String::new();
+      while let Some(&ch) = chars.peek() {
+        if ch == '>' {
+          chars.next();
+          break;
+        }
+        special.push(ch);
+        chars.next();
+      }
+      let binding = KeyBinding::from_str(&special)?;
+      keys.push(binding);
+    } else if c.is_ascii_uppercase() {
+      // Shifted character
+      keys.push(KeyBinding {
+        code:  Key::Char(c),
+        shift: true,
+        ctrl:  false,
+        alt:   false,
+      });
+    } else {
+      // Regular character
+      keys.push(KeyBinding::new(Key::Char(c)));
+    }
+  }
+
+  Ok(keys)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

@@ -3,14 +3,29 @@ use the_editor_renderer::Color;
 pub mod components;
 pub mod compositor;
 pub mod editor_view;
+pub mod explorer;
 pub mod gutter;
 pub mod job;
 pub mod popup_positioning;
 pub mod render_cache;
 pub mod render_commands;
 pub mod text_decorations;
+pub mod tree;
 
 pub use editor_view::EditorView;
+// Explorer-related exports (currently work in progress)
+#[allow(unused_imports)]
+pub use explorer::{
+  Explorer,
+  ExplorerPosition,
+};
+#[allow(unused_imports)]
+pub use tree::{
+  TreeOp,
+  TreeView,
+  TreeViewItem,
+  tree_view_help,
+};
 
 // UI Font constants - used across all UI components for consistency
 pub const UI_FONT_SIZE: f32 = 14.0;

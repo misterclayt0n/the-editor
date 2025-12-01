@@ -353,6 +353,7 @@ impl MappableCommand {
         file_explorer, "file explorer",
         file_explorer_in_current_buffer_directory, "file explorer in current buffer directory",
         file_explorer_in_current_directory, "file explorer in current directory",
+        tree_explorer, "tree explorer sidebar",
         insert_mode, "insert mode",
         append_mode, "append mode",
         insert_at_line_start, "insert at line start",
@@ -3123,6 +3124,23 @@ pub fn file_explorer_in_current_directory(cx: &mut Context) {
   }
 
   push_file_explorer_with_root(cx, cwd);
+}
+
+/// Opens/toggles the tree-view explorer sidebar
+pub fn tree_explorer(cx: &mut Context) {
+  cx.callback.push(Box::new(|compositor, ctx| {
+    // Find the EditorView in the compositor and toggle its explorer
+    for layer in compositor.layers.iter_mut() {
+      if let Some(editor_view) = layer.as_any_mut().downcast_mut::<crate::ui::EditorView>() {
+        editor_view.toggle_explorer(ctx);
+        return;
+      }
+    }
+    // Fallback: show error if EditorView not found
+    ctx
+      .editor
+      .set_error("Could not find EditorView".to_string());
+  }));
 }
 
 // Inserts at the start of each selection.

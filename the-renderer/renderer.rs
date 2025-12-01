@@ -316,10 +316,12 @@ impl Renderer {
       .create_surface(window.clone())
       .map_err(|e| RendererError::SurfaceCreation(e.to_string()))?;
 
+    let power_preference =
+      wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::HighPerformance);
     let adapter = instance
       .request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference:       wgpu::PowerPreference::LowPower,
-        compatible_surface:     Some(&surface),
+        power_preference,
+        compatible_surface: Some(&surface),
         force_fallback_adapter: false,
       })
       .await

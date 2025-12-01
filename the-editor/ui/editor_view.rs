@@ -3364,8 +3364,14 @@ impl EditorView {
     let (mouse_x, mouse_y) = mouse_pos;
     let (cell_width, cell_height) = self.get_current_cell_metrics(cx);
 
+    // Subtract explorer width from mouse X to get position relative to editor area
+    let adjusted_mouse_x = mouse_x - self.explorer_px_width;
+    if adjusted_mouse_x < 0.0 {
+      return None; // Click is in explorer area
+    }
+
     // Convert pixel coordinates to cell coordinates
-    let mouse_col = (mouse_x / cell_width) as u16;
+    let mouse_col = (adjusted_mouse_x / cell_width) as u16;
     let mouse_row = (mouse_y / cell_height) as u16;
 
     // Check views
@@ -3392,8 +3398,15 @@ impl EditorView {
     let (mouse_x, mouse_y) = mouse_pos;
     let (cell_width, cell_height) = self.get_current_cell_metrics(cx);
 
+    // Subtract explorer width from mouse X to get position relative to editor area
+    // The explorer renders at pixel coordinates, but tree/view areas start at x=0
+    let adjusted_mouse_x = mouse_x - self.explorer_px_width;
+    if adjusted_mouse_x < 0.0 {
+      return None; // Click is in explorer area
+    }
+
     // Convert pixel coordinates to cell coordinates
-    let mouse_col = (mouse_x / cell_width) as u16;
+    let mouse_col = (adjusted_mouse_x / cell_width) as u16;
     let mouse_row = (mouse_y / cell_height) as u16;
 
     // Find which view was clicked

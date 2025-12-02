@@ -22,6 +22,17 @@ use crate::{
   },
 };
 
+// the only issue overall with this implementation is that the icons are too
+// small and they're not quite as aligned as they should be, for reference, see
+// this image comparing the-editor vs zed. I want the same sort of plaecment as
+// zed here
+//
+// /home/mister/Pictures/Screenshots/Screenshot from 2025-12-02 10-18-07.png
+
+// that's a bit better, however, the icons are not totally centralized vertically with the text itself:
+//
+// /home/mister/Pictures/Screenshots/Screenshot from 2025-12-02 10-27-52.png
+
 /// Truncate a string to fit within a given pixel width, adding ellipsis if
 /// needed.
 fn truncate_to_width<'a>(text: &'a str, max_width: f32, char_width: f32) -> Cow<'a, str> {
@@ -843,7 +854,8 @@ impl<T: TreeViewItem> TreeView<T> {
       let amount = delta.unsigned_abs() as usize;
       let new_winline = self.winline.saturating_add(amount);
 
-      // Max winline is viewport - scrolloff - 1 (or just viewport - 1 if no scrolloff)
+      // Max winline is viewport - scrolloff - 1 (or just viewport - 1 if no
+      // scrolloff)
       let max_winline = self
         .viewport_height
         .saturating_sub(1)
@@ -1067,6 +1079,111 @@ fn render_tree<T: TreeViewItem>(
     .collect()
 }
 
+/// Pixel-space area for rendering
+struct AreaPixels {
+  x:     f32,
+  y:     f32,
+  width: f32,
+}
+
+/// Rectangle for a single tree item
+struct ItemRect {
+  x:      f32,
+  y:      f32,
+  width:  f32,
+  height: f32,
+}
+
+/// Layout constants for tree item rendering
+struct ItemLayout {
+  padding_x:    f32,
+  padding_y:    f32,
+  height:       f32,
+  gap:          f32,
+  radius:       f32,
+  icon_size:    u32,
+  icon_sizef:   f32,
+  indent_width: f32,
+  icon_gap:     f32,
+}
+
+impl ItemLayout {
+  fn new(font_size: f32, cell_width: f32) -> Self {
+    let padding_y = 4.0;
+    // Icon size matches the font size for proper visual balance (like Zed)
+    let icon_size = font_size as u32;
+    Self {
+      padding_x: 6.0,
+      padding_y,
+      height: font_size + padding_y * 2.0,
+      gap: 2.0,
+      radius: 4.0,
+      icon_size,
+      icon_sizef: icon_size as f32,
+      // Each indent level is 2 characters wide
+      indent_width: cell_width * 2.0,
+      // Gap between icon and text
+      icon_gap: 4.0,
+    }
+  }
+}
+
+/// Theme colors for tree rendering
+struct TreeColors {
+  text:             the_editor_renderer::Color,
+  selection_fill:   the_editor_renderer::Color,
+  selection_stroke: the_editor_renderer::Color,
+}
+
+impl TreeColors {
+  fn from_theme(theme: &crate::core::theme::Theme) -> Self {
+    use the_editor_renderer::Color;
+
+    let text = theme
+      .get("ui.text")
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::WHITE);
+
+    let selection_style = theme.try_get("ui.selection");
+    let selection_bg = selection_style
+      .and_then(|s| s.bg)
+      .map(crate::ui::theme_color_to_renderer_color);
+    let selection_fg = selection_style
+      .and_then(|s| s.fg)
+      .map(crate::ui::theme_color_to_renderer_color);
+
+    let picker_style = theme.get("ui.picker.selected");
+    let selection_fill = picker_style
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .or(selection_bg)
+      .unwrap_or(Color::new(0.3, 0.3, 0.5, 1.0));
+    let selection_stroke = picker_style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .or(selection_fg)
+      .or(selection_bg)
+      .unwrap_or(Color::new(0.5, 0.5, 0.8, 1.0));
+
+    Self {
+      text,
+      selection_fill,
+      selection_stroke,
+    }
+  }
+
+  /// Returns a slightly brighter color for directories
+  fn directory_color(&self) -> the_editor_renderer::Color {
+    the_editor_renderer::Color::new(
+      (self.text.r + 0.1).min(1.0),
+      (self.text.g + 0.1).min(1.0),
+      (self.text.b + 0.05).min(1.0),
+      self.text.a,
+    )
+  }
+}
+
 impl<T: TreeViewItem + Clone> TreeView<T> {
   pub fn render(
     &mut self,
@@ -1075,47 +1192,150 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
     surface: &mut Surface,
     cx: &mut Context,
   ) {
-    use the_editor_renderer::{
-      Color,
-      TextSection,
+    use the_editor_renderer::TextSection;
+
+    use crate::ui::{
+      UI_FONT_SIZE,
+      file_icons,
     };
 
-    use crate::ui::UI_FONT_SIZE;
+    let (entrance_progress, folder_anim_state) = self.update_animations(cx.dt);
+    let selection_anim_value = *self.selection_anim.current();
 
-    // SVG icon data for folder icons
-    const FOLDER_CLOSED_SVG: &[u8] = include_bytes!("../../assets/folder.svg");
-    const FOLDER_OPEN_SVG: &[u8] = include_bytes!("../../assets/folder_open.svg");
+    // Configure font
+    let ui_font_family = surface.current_font_family().to_owned();
+    surface.configure_font(&ui_font_family, UI_FONT_SIZE);
+    let cell_width = surface.cell_width();
 
-    // Update animations
-    self.selection_anim.update(cx.dt);
+    let colors = TreeColors::from_theme(&cx.editor.theme);
+    let layout = ItemLayout::new(UI_FONT_SIZE, cell_width);
 
-    // Update entrance animation and clear it when complete
+    // Calculate pixel positions
+    let area_px = AreaPixels {
+      x:     area.x as f32 * cell_width,
+      y:     area.y as f32 * (UI_FONT_SIZE + 4.0),
+      width: area.width as f32 * cell_width,
+    };
+
+    let lines = self.render_lines(area);
+
+    for (index, line) in lines.into_iter().enumerate() {
+      let (item_entrance, slide_offset) =
+        self.compute_item_animation(index, entrance_progress, folder_anim_state, &line);
+
+      let item_rect = ItemRect {
+        x:      area_px.x + 4.0 - slide_offset,
+        y:      area_px.y + index as f32 * (layout.height + layout.gap),
+        width:  area_px.width - 8.0,
+        height: layout.height,
+      };
+
+      // Draw background layers
+      self.draw_item_background(
+        surface,
+        &item_rect,
+        &layout,
+        &colors,
+        &line,
+        index,
+        item_entrance,
+        selection_anim_value,
+      );
+
+      // Compute text color
+      let mut item_color = if line.is_folder {
+        colors.directory_color()
+      } else {
+        colors.text
+      };
+      item_color.a *= item_entrance;
+
+      // Calculate positions for Zed-like layout:
+      // [padding][indent...][icon][gap][filename]
+      let base_x = item_rect.x + layout.padding_x;
+      let base_y = item_rect.y + layout.padding_y;
+
+      // Indent based on nesting level (level 0 = root, level 1+ = children)
+      let indent_x = if line.level > 0 {
+        (line.level - 1) as f32 * layout.indent_width
+      } else {
+        0.0
+      };
+
+      // Icon position: right after indent, vertically centered with text
+      let icon_x = base_x + indent_x;
+      // Align icon with text baseline - icons need a small downward offset
+      // to visually align with the text center
+      let icon_y = base_y + 1.0;
+
+      // Text position: after icon + gap
+      let text_x = icon_x + layout.icon_sizef + layout.icon_gap;
+      let text_y = base_y;
+
+      // Calculate available width for text
+      let available_width = (item_rect.width - (text_x - item_rect.x) - layout.padding_x).max(0.0);
+      let display_text = truncate_to_width(&line.content, available_width, cell_width);
+
+      // Draw text (filename only, no indent characters)
+      surface.draw_text(TextSection::simple(
+        text_x,
+        text_y,
+        display_text.as_ref(),
+        UI_FONT_SIZE,
+        item_color,
+      ));
+
+      // Draw icon (folder or file type)
+      let icon = if line.is_folder {
+        if line.is_opened {
+          file_icons::FOLDER_OPEN
+        } else {
+          file_icons::FOLDER_CLOSED
+        }
+      } else {
+        file_icons::icon_for_file(&line.content)
+      };
+
+      surface.draw_svg_icon(
+        icon.svg_data,
+        icon_x,
+        icon_y,
+        layout.icon_size,
+        layout.icon_size,
+        item_color,
+      );
+    }
+  }
+
+  /// Updates all animations and returns (entrance_progress, folder_anim_state)
+  fn update_animations(&mut self, dt: f32) -> (f32, Option<(usize, bool, f32, bool, usize)>) {
+    self.selection_anim.update(dt);
+
     let entrance_progress = if let Some(ref mut anim) = self.entrance_anim {
-      anim.update(cx.dt);
+      anim.update(dt);
       let progress = *anim.current();
       if anim.is_complete() {
         self.entrance_anim = None;
       }
       progress
     } else {
-      1.0 // Animation complete, all items fully visible
+      1.0
     };
 
-    // Update folder expand/collapse animation
     let folder_anim_state =
       if let Some((folder_idx, is_expanding, ref mut anim, num_children)) = self.folder_anim {
-        anim.update(cx.dt);
+        anim.update(dt);
         let progress = *anim.current();
         let complete = anim.is_complete();
         Some((folder_idx, is_expanding, progress, complete, num_children))
       } else {
         None
       };
+
     // Handle completed folder animation
     if let Some((_, _, _, complete, _)) = folder_anim_state {
       if complete {
         self.folder_anim = None;
-        // If there's a pending folder close, execute it now
         if let Some(folder_idx) = self.pending_folder_close.take() {
           if let Ok(folder) = self.get_mut(folder_idx) {
             folder.close();
@@ -1125,271 +1345,183 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
       }
     }
 
-    let selection_anim_value = *self.selection_anim.current();
+    (entrance_progress, folder_anim_state)
+  }
 
-    // Configure font to UI font size (independent of editor font size)
-    let ui_font_family = surface.current_font_family().to_owned();
-    surface.configure_font(&ui_font_family, UI_FONT_SIZE);
-
-    // Get cell dimensions for UI font
-    let cell_width = surface.cell_width();
-
-    // Get theme colors
-    let theme = &cx.editor.theme;
-    let text_style = theme.get("ui.text");
-    let text_color = text_style
-      .fg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::WHITE);
-
-    // Get picker-style selection colors
-    let selection_style = theme.try_get("ui.selection");
-    let selection_bg = selection_style
-      .and_then(|s| s.bg)
-      .map(crate::ui::theme_color_to_renderer_color);
-    let selection_fg = selection_style
-      .and_then(|s| s.fg)
-      .map(crate::ui::theme_color_to_renderer_color);
-
-    let picker_selected_style = theme.get("ui.picker.selected");
-    let picker_selected_fill = picker_selected_style
-      .bg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .or(selection_bg)
-      .unwrap_or(Color::new(0.3, 0.3, 0.5, 1.0));
-    let picker_selected_outline = picker_selected_style
-      .fg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .or(selection_fg)
-      .or(selection_bg)
-      .unwrap_or(Color::new(0.5, 0.5, 0.8, 1.0));
-
-    // Compact item styling matching picker
-    let line_height = UI_FONT_SIZE;
-    let item_padding_y = 4.0; // More vertical padding for better spacing
-    let item_padding_x = 6.0;
-    let item_height = line_height + item_padding_y * 2.0;
-    let item_gap = 2.0; // Slightly more gap between items
-    let item_radius = 4.0;
-
-    // Calculate positions using UI font metrics
-    let area_px_x = area.x as f32 * cell_width;
-    let area_px_y = area.y as f32 * (UI_FONT_SIZE + 4.0);
-    let area_px_width = area.width as f32 * cell_width;
-
-    let lines = self.render_lines(area);
-    let iter = lines.into_iter().enumerate();
-
-    // Global alpha for closing animations
+  /// Computes animation values for a single item
+  fn compute_item_animation(
+    &self,
+    index: usize,
+    entrance_progress: f32,
+    folder_anim_state: Option<(usize, bool, f32, bool, usize)>,
+    line: &RenderedLine,
+  ) -> (f32, f32) {
     let global_alpha = self.global_alpha;
 
-    for (index, line) in iter {
-      // Apply entrance animation - items slide in from left with staggered delay
-      // Each item starts appearing after a small delay based on its position
-      let (mut item_entrance, slide_offset) = if entrance_progress < 1.0 {
-        // Stagger: item i starts at progress = i * 0.02, completes at progress = i *
-        // 0.02 + 0.5 This ensures all items animate within the full animation
-        // duration
-        let item_start = (index as f32 * 0.015).min(0.5); // Max 50% delay for last items
-        let item_duration = 0.5; // Each item takes 50% of total duration to animate
-        let item_progress = ((entrance_progress - item_start) / item_duration).clamp(0.0, 1.0);
-        let slide = (1.0 - item_progress) * 15.0; // Slide 15px from left
-        (item_progress * global_alpha, slide)
-      } else {
-        (global_alpha, 0.0) // No entrance animation, apply global alpha
-      };
+    // Entrance animation
+    let (mut item_entrance, slide_offset) = if entrance_progress < 1.0 {
+      let item_start = (index as f32 * 0.015).min(0.5);
+      let item_duration = 0.5;
+      let item_progress = ((entrance_progress - item_start) / item_duration).clamp(0.0, 1.0);
+      let slide = (1.0 - item_progress) * 15.0;
+      (item_progress * global_alpha, slide)
+    } else {
+      (global_alpha, 0.0)
+    };
 
-      // Apply folder expand/collapse animation
-      // Check if this item is a descendant of the animating folder
-      if let Some((folder_idx, is_expanding, progress, _, _num_children)) = folder_anim_state {
-        // Check if this item is a descendant by walking up the parent chain
-        let mut is_descendant = false;
-        let mut current_parent = line.parent_index;
-        while let Some(parent_idx) = current_parent {
-          if parent_idx == folder_idx {
-            is_descendant = true;
-            break;
-          }
-          current_parent = self.tree.get(parent_idx).and_then(|p| p.parent_index);
-        }
-
-        if is_descendant {
-          if is_expanding {
-            // Expanding: simple fade in
-            item_entrance *= progress;
-          } else {
-            // Collapsing: simple fade out
-            item_entrance *= 1.0 - progress;
-          }
-        }
-      }
-
-      let item_y = area_px_y + index as f32 * (item_height + item_gap);
-      let item_x = area_px_x + 4.0 - slide_offset;
-      let item_width = area_px_width - 8.0;
-
-      // Check if this row is hovered
-      let is_hovered = self.hovered_row == Some(index);
-
-      // Draw hover highlight (subtle glow effect)
-      if is_hovered && !line.selected {
-        let hover_bg = Color::new(
-          picker_selected_fill.r,
-          picker_selected_fill.g,
-          picker_selected_fill.b,
-          0.25 * item_entrance,
-        );
-        surface.draw_rounded_rect(
-          item_x,
-          item_y,
-          item_width,
-          item_height,
-          item_radius,
-          hover_bg,
-        );
-      }
-
-      // Draw selection background if selected (picker style)
-      if line.selected {
-        // Selection fill - use picker colors with entrance animation
-        let mut fill_color = picker_selected_fill;
-        fill_color.a = fill_color.a.max(0.8) * item_entrance;
-        surface.draw_rounded_rect(
-          item_x,
-          item_y,
-          item_width,
-          item_height,
-          item_radius,
-          fill_color,
-        );
-
-        // Selection glow effect when animation is active
-        if selection_anim_value < 1.0 {
-          let glow_intensity = (1.0 - selection_anim_value) * 0.4;
-          let glow_color = Color::new(
-            picker_selected_outline.r,
-            picker_selected_outline.g,
-            picker_selected_outline.b,
-            glow_intensity * item_entrance,
-          );
-          let glow_radius = item_height * 1.5 * (1.0 + (1.0 - selection_anim_value) * 0.5);
-          let center_x = item_x + item_width / 2.0;
-          let center_y = item_y + item_height / 2.0;
-          surface.draw_rounded_rect_glow(
-            item_x,
-            item_y,
-            item_width,
-            item_height,
-            item_radius,
-            center_x,
-            center_y,
-            glow_radius,
-            glow_color,
-          );
-        }
-
-        // Selection border with gradient thickness (picker style)
-        let mut outline_color = picker_selected_outline;
-        outline_color.a = outline_color.a.max(0.9) * item_entrance;
-        let bottom_thickness = (item_height * 0.035).clamp(0.6, 1.2);
-        let side_thickness = (bottom_thickness * 1.55).min(bottom_thickness + 1.6);
-        let top_thickness = (bottom_thickness * 2.2).min(bottom_thickness + 2.4);
-        surface.draw_rounded_rect_stroke_fade(
-          item_x,
-          item_y,
-          item_width,
-          item_height,
-          item_radius,
-          top_thickness,
-          side_thickness,
-          bottom_thickness,
-          outline_color,
-        );
-      } else if line.is_ancestor_of_current_item {
-        // Ancestor highlight (subtle)
-        let ancestor_bg = Color::new(
-          picker_selected_fill.r,
-          picker_selected_fill.g,
-          picker_selected_fill.b,
-          0.15 * item_entrance,
-        );
-        surface.draw_rounded_rect(
-          item_x,
-          item_y,
-          item_width,
-          item_height,
-          item_radius,
-          ancestor_bg,
-        );
-      }
-
-      // Draw indent + content
-      let text_x = item_x + item_padding_x;
-      let text_y = item_y + item_padding_y;
-
-      // Icon size (square, based on font size)
-      let icon_size = (UI_FONT_SIZE * 0.85) as u32;
-      let icon_size_f = icon_size as f32;
-
-      // Use slightly different color for directories vs files
-      let mut item_color = if line.is_folder {
-        // Directory - slightly brighter
-        Color::new(
-          (text_color.r + 0.1).min(1.0),
-          (text_color.g + 0.1).min(1.0),
-          (text_color.b + 0.05).min(1.0),
-          text_color.a,
-        )
-      } else {
-        text_color
-      };
-      // Apply entrance animation alpha
-      item_color.a *= item_entrance;
-
-      // Build the display text, replacing folder indicators with spaces for the icon
-      let full_line = format!("{}{}", line.indent, line.content);
-      let display_line = if line.is_folder && line.level > 0 {
-        // Replace the folder indicator (⏷ or ⏵) with a space for the icon
-        full_line
-          .replace('⏷', " ")
-          .replace('⏵', " ")
-      } else {
-        full_line.clone()
-      };
-
-      // Calculate max characters that fit in available width
-      // Available width = item_width - 2 * padding_x - extra margin for safety
-      let available_text_width = (item_width - item_padding_x * 2.0 - 4.0).max(0.0);
-      let display_line = truncate_to_width(&display_line, available_text_width, cell_width);
-
-      // Draw the text first
-      surface.draw_text(TextSection::simple(
-        text_x,
-        text_y,
-        display_line.as_ref(),
-        UI_FONT_SIZE,
-        item_color,
-      ));
-
-      // Draw folder icon for directories (at level > 0)
-      // The icon is drawn on top of the space we left in the text
-      if line.is_folder && line.level > 0 {
-        // Find the position of the indicator in the indent
-        // The indicator is at position: prefix_len (which is (level - 1) * 2 characters)
-        let indicator_char_pos = (line.level - 1) * 2;
-        let icon_x = text_x + indicator_char_pos as f32 * cell_width;
-        // Align icon with text baseline - offset down slightly to match text visual center
-        let icon_y = text_y + (UI_FONT_SIZE - icon_size_f) / 2.0 + 1.0;
-
-        let svg_data = if line.is_opened {
-          FOLDER_OPEN_SVG
+    // Folder expand/collapse animation
+    if let Some((folder_idx, is_expanding, progress, ..)) = folder_anim_state {
+      if self.is_descendant_of(line.parent_index, folder_idx) {
+        item_entrance *= if is_expanding {
+          progress
         } else {
-          FOLDER_CLOSED_SVG
+          1.0 - progress
         };
-
-        surface.draw_svg_icon(svg_data, icon_x, icon_y, icon_size, icon_size, item_color);
       }
     }
+
+    (item_entrance, slide_offset)
+  }
+
+  /// Checks if an item is a descendant of a folder by walking up the parent
+  /// chain
+  fn is_descendant_of(&self, mut parent_index: Option<usize>, folder_idx: usize) -> bool {
+    while let Some(parent_idx) = parent_index {
+      if parent_idx == folder_idx {
+        return true;
+      }
+      parent_index = self.tree.get(parent_idx).and_then(|p| p.parent_index);
+    }
+    false
+  }
+
+  /// Draws all background layers for an item (hover, selection, ancestor
+  /// highlight)
+  #[allow(clippy::too_many_arguments)]
+  fn draw_item_background(
+    &self,
+    surface: &mut Surface,
+    rect: &ItemRect,
+    layout: &ItemLayout,
+    colors: &TreeColors,
+    line: &RenderedLine,
+    index: usize,
+    item_entrance: f32,
+    selection_anim_value: f32,
+  ) {
+    use the_editor_renderer::Color;
+
+    let is_hovered = self.hovered_row == Some(index);
+
+    // Hover highlight
+    if is_hovered && !line.selected {
+      let hover_bg = Color::new(
+        colors.selection_fill.r,
+        colors.selection_fill.g,
+        colors.selection_fill.b,
+        0.25 * item_entrance,
+      );
+      surface.draw_rounded_rect(
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        layout.radius,
+        hover_bg,
+      );
+    }
+
+    if line.selected {
+      self.draw_selection(
+        surface,
+        rect,
+        layout,
+        colors,
+        item_entrance,
+        selection_anim_value,
+      );
+    } else if line.is_ancestor_of_current_item {
+      let ancestor_bg = Color::new(
+        colors.selection_fill.r,
+        colors.selection_fill.g,
+        colors.selection_fill.b,
+        0.15 * item_entrance,
+      );
+      surface.draw_rounded_rect(
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        layout.radius,
+        ancestor_bg,
+      );
+    }
+  }
+
+  /// Draws selection fill, glow, and border
+  fn draw_selection(
+    &self,
+    surface: &mut Surface,
+    rect: &ItemRect,
+    layout: &ItemLayout,
+    colors: &TreeColors,
+    item_entrance: f32,
+    selection_anim_value: f32,
+  ) {
+    use the_editor_renderer::Color;
+
+    // Selection fill
+    let mut fill_color = colors.selection_fill;
+    fill_color.a = fill_color.a.max(0.8) * item_entrance;
+    surface.draw_rounded_rect(
+      rect.x,
+      rect.y,
+      rect.width,
+      rect.height,
+      layout.radius,
+      fill_color,
+    );
+
+    // Selection glow (animated)
+    if selection_anim_value < 1.0 {
+      let glow_intensity = (1.0 - selection_anim_value) * 0.4;
+      let glow_color = Color::new(
+        colors.selection_stroke.r,
+        colors.selection_stroke.g,
+        colors.selection_stroke.b,
+        glow_intensity * item_entrance,
+      );
+      let glow_radius = rect.height * 1.5 * (1.0 + (1.0 - selection_anim_value) * 0.5);
+      surface.draw_rounded_rect_glow(
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        layout.radius,
+        rect.x + rect.width / 2.0,
+        rect.y + rect.height / 2.0,
+        glow_radius,
+        glow_color,
+      );
+    }
+
+    // Selection border with gradient thickness
+    let mut outline_color = colors.selection_stroke;
+    outline_color.a = outline_color.a.max(0.9) * item_entrance;
+    let bottom = (rect.height * 0.035).clamp(0.6, 1.2);
+    let side = (bottom * 1.55).min(bottom + 1.6);
+    let top = (bottom * 2.2).min(bottom + 2.4);
+    surface.draw_rounded_rect_stroke_fade(
+      rect.x,
+      rect.y,
+      rect.width,
+      rect.height,
+      layout.radius,
+      top,
+      side,
+      bottom,
+      outline_color,
+    );
   }
 
   #[cfg(test)]

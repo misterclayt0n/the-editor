@@ -7507,10 +7507,12 @@ pub fn jump_view_left(cx: &mut Context) {
         // Check if explorer is open and not already focused
         if editor_view.explorer_is_open() && !editor_view.explorer_focused() {
           // Check if we're at the leftmost view (no view to the left)
-          let can_go_left = ctx.editor.tree
+          let can_go_left = ctx
+            .editor
+            .tree
             .find_split_in_direction(ctx.editor.tree.focus, tree::Direction::Left)
             .is_some();
-          
+
           if !can_go_left {
             // Focus the explorer instead
             if let Some(explorer) = editor_view.explorer_mut() {

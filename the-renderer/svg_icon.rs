@@ -135,8 +135,7 @@ pub fn render_svg(svg_data: &[u8], width: u32, height: u32) -> Option<Rasterized
   let offset_y = (height as f32 - rendered_height as f32) / 2.0;
 
   // Create transform: translate to center, then scale
-  let transform = tiny_skia::Transform::from_translate(offset_x, offset_y)
-    .post_scale(scale, scale);
+  let transform = tiny_skia::Transform::from_translate(offset_x, offset_y).post_scale(scale, scale);
 
   // Render the SVG
   resvg::render(&tree, transform, &mut pixmap.as_mut());
@@ -150,8 +149,8 @@ pub fn render_svg(svg_data: &[u8], width: u32, height: u32) -> Option<Rasterized
 
 /// Render an SVG with a specific color applied.
 ///
-/// This renders the SVG and then applies the color to all non-transparent pixels,
-/// useful for monochrome icons that should match theme colors.
+/// This renders the SVG and then applies the color to all non-transparent
+/// pixels, useful for monochrome icons that should match theme colors.
 pub fn render_svg_with_color(
   svg_data: &[u8],
   width: u32,

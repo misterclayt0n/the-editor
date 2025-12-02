@@ -346,7 +346,8 @@ impl Explorer {
 
   /// Get the closing animation progress (1.0 = fully open, 0.0 = fully closed)
   pub fn closing_progress(&self) -> f32 {
-    self.closing_anim
+    self
+      .closing_anim
       .as_ref()
       .map(|a| *a.current())
       .unwrap_or(1.0)
@@ -466,10 +467,10 @@ impl Explorer {
   }
 
   /// Render the explorer as a sidebar
-  /// 
+  ///
   /// # Arguments
   /// * `px_x` - X position in pixels
-  /// * `px_y` - Y position in pixels  
+  /// * `px_y` - Y position in pixels
   /// * `px_width` - Width in pixels
   /// * `px_height` - Height in pixels (full viewport height)
   pub fn render(
@@ -481,7 +482,11 @@ impl Explorer {
     surface: &mut Surface,
     cx: &mut Context,
   ) {
-    use the_editor_renderer::{Color, TextSection};
+    use the_editor_renderer::{
+      Color,
+      TextSection,
+    };
+
     use crate::ui::UI_FONT_SIZE;
 
     if !self.state.open && !self.is_closing() {
@@ -541,7 +546,12 @@ impl Explorer {
     let title_color = if self.is_focus() {
       text_color
     } else {
-      Color::new(text_color.r * 0.6, text_color.g * 0.6, text_color.b * 0.6, text_color.a)
+      Color::new(
+        text_color.r * 0.6,
+        text_color.g * 0.6,
+        text_color.b * 0.6,
+        text_color.a,
+      )
     };
     surface.draw_text(TextSection::simple(
       px_x + 8.0,
@@ -564,7 +574,7 @@ impl Explorer {
     // Tree starts below header
     let tree_start_y = sep_y + 1.0;
     let tree_height = px_height - header_height - 1.0;
-    
+
     // Convert to cell units for tree rendering (which expects Rect in cells)
     // The tree renders items with: item_height = UI_FONT_SIZE + 8.0, item_gap = 2.0
     // So each item takes UI_FONT_SIZE + 10.0 pixels total
@@ -608,21 +618,16 @@ impl Explorer {
   }
 
   /// Handle a mouse click on the explorer
-  /// 
+  ///
   /// # Arguments
   /// * `visual_row` - The visual row index (0-based from top of tree area)
   /// * `double_click` - Whether this is a double-click
-  pub fn handle_mouse_click(
-    &mut self,
-    visual_row: usize,
-    double_click: bool,
-    cx: &mut Context,
-  ) {
+  pub fn handle_mouse_click(&mut self, visual_row: usize, double_click: bool, cx: &mut Context) {
     // Get the tree index for this visual row
     if let Some(tree_index) = self.tree.tree_index_at_row(visual_row) {
       // Select the item
       self.tree.select_by_tree_index(tree_index);
-      
+
       // On double-click, activate the item (open file or toggle folder)
       if double_click {
         if let Err(err) = self.tree.on_enter(cx, &mut self.state, tree_index) {
@@ -921,9 +926,9 @@ impl Component for Explorer {
   }
 
   fn render(&mut self, _area: Rect, _surface: &mut Surface, _cx: &mut Context) {
-    // Explorer is rendered directly by EditorView using the pixel-based render method.
-    // This Component::render is kept for trait compliance but is not used when
-    // the explorer is embedded as a sidebar.
+    // Explorer is rendered directly by EditorView using the pixel-based render
+    // method. This Component::render is kept for trait compliance but is
+    // not used when the explorer is embedded as a sidebar.
   }
 
   fn cursor(&self, area: Rect, editor: &Editor) -> (Option<Position>, CursorKind) {
@@ -1194,50 +1199,84 @@ mod test_explorer {
   #[test]
   fn test_focus_state() {
     let (_path, mut explorer) = new_explorer();
-    
+
     // Initially, explorer should be focused (from new())
-    assert!(explorer.is_focus(), "Explorer should be focused after creation");
-    assert!(explorer.is_opened(), "Explorer should be open after creation");
-    
+    assert!(
+      explorer.is_focus(),
+      "Explorer should be focused after creation"
+    );
+    assert!(
+      explorer.is_opened(),
+      "Explorer should be open after creation"
+    );
+
     // Unfocus the explorer
     explorer.unfocus();
-    assert!(!explorer.is_focus(), "Explorer should not be focused after unfocus()");
-    assert!(explorer.is_opened(), "Explorer should still be open after unfocus()");
-    
+    assert!(
+      !explorer.is_focus(),
+      "Explorer should not be focused after unfocus()"
+    );
+    assert!(
+      explorer.is_opened(),
+      "Explorer should still be open after unfocus()"
+    );
+
     // Focus the explorer again
     explorer.focus();
-    assert!(explorer.is_focus(), "Explorer should be focused after focus()");
-    assert!(explorer.is_opened(), "Explorer should be open after focus()");
-    
+    assert!(
+      explorer.is_focus(),
+      "Explorer should be focused after focus()"
+    );
+    assert!(
+      explorer.is_opened(),
+      "Explorer should be open after focus()"
+    );
+
     // Close the explorer (starts closing animation)
     explorer.close();
-    assert!(!explorer.is_focus(), "Explorer should not be focused after close()");
-    assert!(explorer.is_closing(), "Explorer should be in closing animation after close()");
-    
+    assert!(
+      !explorer.is_focus(),
+      "Explorer should not be focused after close()"
+    );
+    assert!(
+      explorer.is_closing(),
+      "Explorer should be in closing animation after close()"
+    );
+
     // Simulate animation completion
     explorer.update_closing(1.0); // Large dt to complete animation
-    assert!(!explorer.is_opened(), "Explorer should not be open after animation completes");
-    assert!(!explorer.is_closing(), "Explorer should not be closing after animation completes");
+    assert!(
+      !explorer.is_opened(),
+      "Explorer should not be open after animation completes"
+    );
+    assert!(
+      !explorer.is_closing(),
+      "Explorer should not be closing after animation completes"
+    );
   }
 
   #[test]
   fn test_column_width() {
     let (_path, mut explorer) = new_explorer();
-    
+
     // Default column width should be reasonable
     let initial_width = explorer.column_width();
     assert!(initial_width > 0, "Column width should be positive");
-    
+
     // Increase size
     let old_width = explorer.column_width();
     explorer.increase_size();
-    assert!(explorer.column_width() > old_width || explorer.column_width() == old_width,
-            "Column width should increase or stay same (if at max)");
-    
+    assert!(
+      explorer.column_width() > old_width || explorer.column_width() == old_width,
+      "Column width should increase or stay same (if at max)"
+    );
+
     // Decrease size
     let current_width = explorer.column_width();
     explorer.decrease_size();
-    assert!(explorer.column_width() < current_width || explorer.column_width() == 0,
-            "Column width should decrease");
+    assert!(
+      explorer.column_width() < current_width || explorer.column_width() == 0,
+      "Column width should decrease"
+    );
   }
 }

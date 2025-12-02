@@ -975,8 +975,9 @@ impl Component for EditorView {
     let ui_cell_width = renderer.cell_width();
     // Restore buffer font configuration
     renderer.configure_font(&font_family, font_size);
-    
-    // Update and calculate explorer pixel width (using UI font metrics, not buffer font)
+
+    // Update and calculate explorer pixel width (using UI font metrics, not buffer
+    // font)
     self.explorer_px_width = if let Some(ref mut explorer) = self.explorer {
       // Update closing animation
       if explorer.update_closing(cx.dt) {
@@ -996,9 +997,10 @@ impl Component for EditorView {
     };
     let explorer_px_width = self.explorer_px_width;
 
-    // Calculate explorer width in buffer font cells for target_area width adjustment
-    // Note: We do NOT offset target_area.x - instead we add explorer_px_width directly
-    // to all rendering coordinates. This ensures popup positioning uses the same offset.
+    // Calculate explorer width in buffer font cells for target_area width
+    // adjustment Note: We do NOT offset target_area.x - instead we add
+    // explorer_px_width directly to all rendering coordinates. This ensures
+    // popup positioning uses the same offset.
     let explorer_width_buffer_cells = if explorer_px_width > 0.0 {
       (explorer_px_width / font_width).ceil() as u16
     } else {
@@ -1011,7 +1013,9 @@ impl Component for EditorView {
       target_area = Rect::new(
         target_area.x, // Keep x at 0 - offset applied during rendering
         target_area.y,
-        target_area.width.saturating_sub(explorer_width_buffer_cells),
+        target_area
+          .width
+          .saturating_sub(explorer_width_buffer_cells),
         target_area.height,
       );
     }
@@ -1206,7 +1210,8 @@ impl Component for EditorView {
         .unwrap_or(view.area);
 
       // Calculate base coordinates from view's area (convert cell coords to pixels)
-      // Add explorer_px_width to X offset - this is the key to consistent popup positioning
+      // Add explorer_px_width to X offset - this is the key to consistent popup
+      // positioning
       let view_offset_x = explorer_px_width + view_area.x as f32 * font_width;
       let view_offset_y = view_area.y as f32 * (self.cached_cell_height);
       let mut base_y = view_offset_y + VIEW_PADDING_TOP + zoom_offset_y;
@@ -2650,10 +2655,10 @@ impl Component for EditorView {
         // Viewport height minus statusline
         const STATUS_BAR_HEIGHT: f32 = 28.0;
         let explorer_px_height = renderer.height() as f32 - STATUS_BAR_HEIGHT;
-        
+
         explorer.render(
-          0.0,  // x position
-          0.0,  // y position
+          0.0, // x position
+          0.0, // y position
           explorer_px_width,
           explorer_px_height,
           renderer,
@@ -2849,9 +2854,8 @@ impl EditorView {
       if has_vertical_neighbor {
         // Render vertical separator bar at the right edge
         // Center the thin separator in the gap
-        let gap_center_x = self.explorer_px_width
-          + (area.x + area.width) as f32 * font_width
-          + (font_width / 2.0);
+        let gap_center_x =
+          self.explorer_px_width + (area.x + area.width) as f32 * font_width + (font_width / 2.0);
         let x = gap_center_x - (SEPARATOR_WIDTH_PX / 2.0);
         let y = area.y as f32 * (self.cached_cell_height);
         let width = SEPARATOR_WIDTH_PX;
@@ -2911,23 +2915,23 @@ impl EditorView {
     // Handle explorer mouse interaction
     if self.explorer_px_width > 0.0 {
       let in_explorer_area = mouse.position.0 < self.explorer_px_width;
-      
+
       if let Some(ref mut explorer) = self.explorer {
         if explorer.is_opened() {
           if in_explorer_area {
             // Calculate visual row from mouse Y position
             // Header height is UI_FONT_SIZE + 8.0, separator is 1.0
             let header_height = crate::ui::UI_FONT_SIZE + 8.0 + 1.0;
-            // Item height matches tree.rs: line_height (UI_FONT_SIZE) + item_padding_y (4.0) * 2
-            // Plus item_gap (2.0) between items
+            // Item height matches tree.rs: line_height (UI_FONT_SIZE) + item_padding_y
+            // (4.0) * 2 Plus item_gap (2.0) between items
             let item_padding_y = 4.0;
             let item_gap = 2.0;
             let item_height = crate::ui::UI_FONT_SIZE + item_padding_y * 2.0 + item_gap;
-            
+
             if mouse.position.1 > header_height {
               let relative_y = mouse.position.1 - header_height;
               let visual_row = (relative_y / item_height).floor() as usize;
-              
+
               // Update hover state for hover glow animation
               let new_hover = if visual_row < explorer.visible_item_count() {
                 Some(visual_row)
@@ -2939,17 +2943,17 @@ impl EditorView {
                 explorer.set_hovered_row(new_hover);
                 request_redraw();
               }
-              
+
               match mouse.button {
                 Some(the_editor_renderer::MouseButton::Left) if mouse.pressed => {
                   self.last_click_time = Some(std::time::Instant::now());
                   self.last_click_pos = Some(mouse.position);
-                  
+
                   // Focus explorer if not focused
                   if !explorer.is_focus() {
                     explorer.focus();
                   }
-                  
+
                   // Single click activates (opens file/toggles folder)
                   explorer.handle_mouse_click(visual_row, true, cx);
                   request_redraw();
@@ -2965,7 +2969,7 @@ impl EditorView {
                 request_redraw();
               }
             }
-            
+
             // Consume all mouse events in explorer area (don't pass through)
             return EventResult::Consumed(None);
           } else {
@@ -2975,7 +2979,7 @@ impl EditorView {
               explorer.set_hovered_row(None);
               request_redraw();
             }
-            
+
             // Clicked outside explorer area - unfocus explorer if it was focused
             if explorer.is_focus() {
               if let Some(the_editor_renderer::MouseButton::Left) = mouse.button {
@@ -2990,7 +2994,7 @@ impl EditorView {
         }
       }
     }
-    
+
     if self.bufferline_visible {
       let buffer_height = if self.bufferline_height > 0.0 {
         self.bufferline_height

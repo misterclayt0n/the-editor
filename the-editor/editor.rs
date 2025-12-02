@@ -413,8 +413,8 @@ pub struct Editor {
   /// Pending model selection from the picker (polled in event loop)
   pub pending_model_selection: Option<std::sync::mpsc::Receiver<agent_client_protocol::ModelId>>,
 
-  /// Viewport pixel offsets for popup positioning (set by EditorView during render)
-  /// These account for explorer width and bufferline height
+  /// Viewport pixel offsets for popup positioning (set by EditorView during
+  /// render) These account for explorer width and bufferline height
   pub viewport_pixel_offset: (f32, f32),
 }
 

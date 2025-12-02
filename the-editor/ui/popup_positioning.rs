@@ -92,7 +92,8 @@ pub struct CursorPosition {
 /// Returns None if cursor is not visible.
 pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option<CursorPosition> {
   // Configure the document font to get correct metrics
-  // This is important because the surface may have UI font configured (e.g., after explorer render)
+  // This is important because the surface may have UI font configured (e.g.,
+  // after explorer render)
   let font_family = surface.current_font_family().to_owned();
   let font_size = ctx
     .editor
@@ -152,9 +153,9 @@ pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option
   // These are set by EditorView during render
   let (explorer_px_offset, bufferline_px_offset) = ctx.editor.viewport_pixel_offset;
 
-  // Calculate view position in pixels - must match how editor_view.rs renders text
-  // Tree coordinates are 0-based (not offset by explorer), so we add explorer_px_offset
-  // inner_area.x contains gutter offset in cells
+  // Calculate view position in pixels - must match how editor_view.rs renders
+  // text Tree coordinates are 0-based (not offset by explorer), so we add
+  // explorer_px_offset inner_area.x contains gutter offset in cells
   let view_x = explorer_px_offset + (inner_area.x as f32 * doc_cell_w) + shake_offset_x;
 
   // For Y: inner_area.y is in cells, convert to pixels and add bufferline offset

@@ -1815,14 +1815,15 @@ impl Renderer {
 
   /// Draw an SVG icon at the specified position.
   ///
-  /// The SVG will be rasterized at the given size and drawn with the specified color.
-  /// Icons are cached for efficient reuse.
+  /// The SVG will be rasterized at the given size and drawn with the specified
+  /// color. Icons are cached for efficient reuse.
   ///
   /// # Arguments
   /// * `svg_data` - Raw SVG file contents
   /// * `x`, `y` - Position to draw the icon
   /// * `width`, `height` - Size to render the icon at
-  /// * `color` - Color to apply to the icon (the icon's alpha will be preserved)
+  /// * `color` - Color to apply to the icon (the icon's alpha will be
+  ///   preserved)
   pub fn draw_svg_icon(
     &mut self,
     svg_data: &[u8],
@@ -1841,8 +1842,7 @@ impl Renderer {
     );
 
     // Render the SVG with color
-    if let Some(icon) =
-      crate::svg_icon::render_svg_with_color(svg_data, width, height, color_rgba)
+    if let Some(icon) = crate::svg_icon::render_svg_with_color(svg_data, width, height, color_rgba)
     {
       // Draw the icon pixel by pixel (similar to powerline glyph rendering)
       // For efficiency, we skip fully transparent pixels

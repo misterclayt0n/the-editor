@@ -53,6 +53,7 @@ use crate::{
     BufferLine,
     CompleteAction as EditorCompleteAction,
     Editor,
+    FileTreePosition,
   },
   keymap::{
     KeyBinding,
@@ -270,6 +271,7 @@ pub struct EditorView {
   explorer:                  Option<Explorer>,
   // Explorer mouse interaction state
   explorer_px_width:         f32,
+  explorer_position:         FileTreePosition,
   explorer_hovered_item:     Option<usize>,
   // Track last mouse position for scroll targeting
   last_mouse_pos:            Option<(f32, f32)>,
@@ -344,6 +346,7 @@ impl EditorView {
       buffer_pressed_index: None,
       explorer: None,
       explorer_px_width: 0.0,
+      explorer_position: FileTreePosition::Left,
       explorer_hovered_item: None,
       last_mouse_pos: None,
     }
@@ -393,6 +396,26 @@ impl EditorView {
   /// Check if explorer is open and focused
   pub fn explorer_focused(&self) -> bool {
     self.explorer.as_ref().is_some_and(|e| e.is_focus())
+  }
+
+  /// Get the x offset for content when explorer is on the left.
+  /// Returns 0.0 when explorer is on the right (no offset needed).
+  fn content_x_offset(&self) -> f32 {
+    match self.explorer_position {
+      FileTreePosition::Left => self.explorer_px_width,
+      FileTreePosition::Right => 0.0,
+    }
+  }
+
+  /// Check if mouse is in the explorer area based on explorer position
+  fn is_in_explorer_area(&self, mouse_x: f32, viewport_width: f32) -> bool {
+    if self.explorer_px_width <= 0.0 {
+      return false;
+    }
+    match self.explorer_position {
+      FileTreePosition::Left => mouse_x < self.explorer_px_width,
+      FileTreePosition::Right => mouse_x >= viewport_width - self.explorer_px_width,
+    }
   }
 
   /// Get mutable reference to the explorer if it exists
@@ -887,7 +910,11 @@ impl Component for EditorView {
       Event::Scroll(delta) => {
         // Handle scroll in explorer area if mouse is over it
         if let Some((mouse_x, _)) = self.last_mouse_pos {
-          if mouse_x < self.explorer_px_width && self.explorer_px_width > 0.0 {
+          // Calculate viewport width from editor tree area and font
+          let viewport_px_width =
+            cx.editor.tree.area().width as f32 * self.cached_cell_width + self.explorer_px_width;
+          let in_explorer = self.is_in_explorer_area(mouse_x, viewport_px_width);
+          if in_explorer {
             if let Some(ref mut explorer) = self.explorer {
               if explorer.is_opened() {
                 use the_editor_renderer::ScrollDelta;
@@ -976,6 +1003,9 @@ impl Component for EditorView {
     // Restore buffer font configuration
     renderer.configure_font(&font_family, font_size);
 
+    // Update explorer position from config
+    self.explorer_position = cx.editor.config().file_tree.position;
+
     // Update and calculate explorer pixel width (using UI font metrics, not buffer
     // font)
     self.explorer_px_width = if let Some(ref mut explorer) = self.explorer {
@@ -996,6 +1026,7 @@ impl Component for EditorView {
       0.0
     };
     let explorer_px_width = self.explorer_px_width;
+    let explorer_position = self.explorer_position;
 
     // Calculate explorer width in buffer font cells for target_area width
     // adjustment Note: We do NOT offset target_area.x - instead we add
@@ -1091,11 +1122,17 @@ impl Component for EditorView {
       .unwrap_or(Color::new(0.1, 0.1, 0.15, 1.0));
     renderer.set_background_color(background_color);
 
+    // Calculate content x offset (only applies when explorer is on the left)
+    let content_x_offset = match explorer_position {
+      FileTreePosition::Left => explorer_px_width,
+      FileTreePosition::Right => 0.0,
+    };
+
     if use_bufferline {
-      // Offset bufferline by explorer width so it doesn't overlap
+      // Offset bufferline by explorer width so it doesn't overlap (only for left-side explorer)
       self.bufferline_height = bufferline::render(
         cx.editor,
-        explorer_px_width,
+        content_x_offset,
         0.0,
         viewport_px_width - explorer_px_width,
         renderer,
@@ -1112,7 +1149,8 @@ impl Component for EditorView {
 
     // Update viewport pixel offsets for popup positioning
     // These offsets account for explorer width (x) and bufferline height (y)
-    cx.editor.viewport_pixel_offset = (explorer_px_width, self.bufferline_height);
+    // Only offset x when explorer is on the left
+    cx.editor.viewport_pixel_offset = (content_x_offset, self.bufferline_height);
 
     let normal_base = normal_style
       .fg
@@ -1210,9 +1248,9 @@ impl Component for EditorView {
         .unwrap_or(view.area);
 
       // Calculate base coordinates from view's area (convert cell coords to pixels)
-      // Add explorer_px_width to X offset - this is the key to consistent popup
-      // positioning
-      let view_offset_x = explorer_px_width + view_area.x as f32 * font_width;
+      // Add content_x_offset to X offset - this is the key to consistent popup
+      // positioning (only applies when explorer is on the left)
+      let view_offset_x = content_x_offset + view_area.x as f32 * font_width;
       let view_offset_y = view_area.y as f32 * (self.cached_cell_height);
       let mut base_y = view_offset_y + VIEW_PADDING_TOP + zoom_offset_y;
 
@@ -1338,9 +1376,9 @@ impl Component for EditorView {
           }
         }
 
-        // Add explorer_px_width to gutter and content X positions
-        let gutter_x = explorer_px_width + gutter_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
-        let mut base_x = explorer_px_width + content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
+        // Add content_x_offset to gutter and content X positions (only for left-side explorer)
+        let gutter_x = content_x_offset + gutter_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
+        let mut base_x = content_x_offset + content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
 
         // Apply screen shake if active
         let (shake_offset_x, shake_offset_y) = if let Some(shake) = doc.screen_shake(focus_view) {
@@ -2370,7 +2408,7 @@ impl Component for EditorView {
               if screen_row >= 0 && screen_row < viewport.height as isize {
                 // Convert screen row/col to pixel coordinates
                 let mut effect_base_x =
-                  explorer_px_width + content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
+                  content_x_offset + content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
                 let mut effect_base_y = (content_rect.y + screen_row as u16) as f32
                   * (self.cached_cell_height)
                   + VIEW_PADDING_TOP;
@@ -2656,8 +2694,14 @@ impl Component for EditorView {
         const STATUS_BAR_HEIGHT: f32 = 28.0;
         let explorer_px_height = renderer.height() as f32 - STATUS_BAR_HEIGHT;
 
+        // Calculate explorer x position based on config
+        let explorer_x = match explorer_position {
+          FileTreePosition::Left => 0.0,
+          FileTreePosition::Right => viewport_px_width - explorer_px_width,
+        };
+
         explorer.render(
-          0.0, // x position
+          explorer_x,
           0.0, // y position
           explorer_px_width,
           explorer_px_height,
@@ -2855,7 +2899,7 @@ impl EditorView {
         // Render vertical separator bar at the right edge
         // Center the thin separator in the gap
         let gap_center_x =
-          self.explorer_px_width + (area.x + area.width) as f32 * font_width + (font_width / 2.0);
+          self.content_x_offset() + (area.x + area.width) as f32 * font_width + (font_width / 2.0);
         let x = gap_center_x - (SEPARATOR_WIDTH_PX / 2.0);
         let y = area.y as f32 * (self.cached_cell_height);
         let width = SEPARATOR_WIDTH_PX;
@@ -2869,7 +2913,7 @@ impl EditorView {
         .is_some();
       if has_horizontal_neighbor {
         // Render horizontal separator bar at the bottom edge
-        let x = self.explorer_px_width + area.x as f32 * font_width;
+        let x = self.content_x_offset() + area.x as f32 * font_width;
         let sep_y = (area.y + area.height) as f32 * (self.cached_cell_height) - SEPARATOR_HEIGHT_PX;
         let width = area.width as f32 * font_width;
         let height = SEPARATOR_HEIGHT_PX;
@@ -2912,9 +2956,13 @@ impl EditorView {
     // Track mouse position for scroll targeting
     self.last_mouse_pos = Some(mouse.position);
 
+    // Calculate viewport width for explorer area detection
+    let viewport_px_width =
+      cx.editor.tree.area().width as f32 * self.cached_cell_width + self.explorer_px_width;
+
     // Handle explorer mouse interaction
     if self.explorer_px_width > 0.0 {
-      let in_explorer_area = mouse.position.0 < self.explorer_px_width;
+      let in_explorer_area = self.is_in_explorer_area(mouse.position.0, viewport_px_width);
 
       if let Some(ref mut explorer) = self.explorer {
         if explorer.is_opened() {
@@ -3405,10 +3453,11 @@ impl EditorView {
     let (mouse_x, mouse_y) = mouse_pos;
     let (cell_width, cell_height) = self.get_current_cell_metrics(cx);
 
-    // Subtract explorer width from mouse X to get position relative to editor area
-    let adjusted_mouse_x = mouse_x - self.explorer_px_width;
+    // Subtract explorer offset from mouse X to get position relative to editor area
+    // (only subtract when explorer is on the left)
+    let adjusted_mouse_x = mouse_x - self.content_x_offset();
     if adjusted_mouse_x < 0.0 {
-      return None; // Click is in explorer area
+      return None; // Click is in explorer area (left side)
     }
 
     // Convert pixel coordinates to cell coordinates
@@ -3439,11 +3488,12 @@ impl EditorView {
     let (mouse_x, mouse_y) = mouse_pos;
     let (cell_width, cell_height) = self.get_current_cell_metrics(cx);
 
-    // Subtract explorer width from mouse X to get position relative to editor area
+    // Subtract explorer offset from mouse X to get position relative to editor area
     // The explorer renders at pixel coordinates, but tree/view areas start at x=0
-    let adjusted_mouse_x = mouse_x - self.explorer_px_width;
+    // (only subtract when explorer is on the left)
+    let adjusted_mouse_x = mouse_x - self.content_x_offset();
     if adjusted_mouse_x < 0.0 {
-      return None; // Click is in explorer area
+      return None; // Click is in explorer area (left side)
     }
 
     // Convert pixel coordinates to cell coordinates
@@ -3572,7 +3622,7 @@ impl EditorView {
         .is_some()
       {
         let gap_center_x =
-          self.explorer_px_width + (area.x + area.width) as f32 * font_width + (font_width / 2.0);
+          self.content_x_offset() + (area.x + area.width) as f32 * font_width + (font_width / 2.0);
         let sep_y = area.y as f32 * cell_height;
         let sep_height = area.height as f32 * cell_height;
 
@@ -3596,7 +3646,7 @@ impl EditorView {
         .find_split_in_direction(view.id, Direction::Down)
         .is_some()
       {
-        let sep_x = self.explorer_px_width + area.x as f32 * font_width;
+        let sep_x = self.content_x_offset() + area.x as f32 * font_width;
         let sep_y = (area.y + area.height) as f32 * cell_height - SEPARATOR_HEIGHT_PX;
         let sep_width = area.width as f32 * font_width;
 

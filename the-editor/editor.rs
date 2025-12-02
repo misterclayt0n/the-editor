@@ -849,6 +849,8 @@ pub struct EditorConfig {
   pub file_watcher:              file_watcher::Config,
   /// Auto reload config.
   pub auto_reload:               AutoReloadConfig,
+  /// File tree (explorer) configuration.
+  pub file_tree:                 FileTreeConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
@@ -863,6 +865,32 @@ impl Default for AutoReloadConfig {
     AutoReloadConfig {
       enable:             true,
       prompt_if_modified: false,
+    }
+  }
+}
+
+/// Position of the file tree explorer panel
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileTreePosition {
+  #[default]
+  Left,
+  Right,
+}
+
+/// File tree (explorer) configuration
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct FileTreeConfig {
+  /// Position of the file tree panel. Can be "left" or "right".
+  /// Defaults to "left".
+  pub position: FileTreePosition,
+}
+
+impl Default for FileTreeConfig {
+  fn default() -> Self {
+    Self {
+      position: FileTreePosition::Left,
     }
   }
 }
@@ -1811,6 +1839,7 @@ impl Default for EditorConfig {
       theme_transition_speed:    0.15,
       file_watcher:              file_watcher::Config::default(),
       auto_reload:               AutoReloadConfig::default(),
+      file_tree:                 FileTreeConfig::default(),
     }
   }
 }

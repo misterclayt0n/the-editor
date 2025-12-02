@@ -264,13 +264,8 @@ struct ExplorerHistory {
   current_root: PathBuf,
 }
 
-/// Position of the explorer panel
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ExplorerPosition {
-  #[default]
-  Left,
-  Right,
-}
+// Re-export FileTreePosition from editor for backwards compatibility
+pub use crate::editor::FileTreePosition as ExplorerPosition;
 
 /// Shared git status cache that can be updated from background threads
 type GitStatusCache = Arc<Mutex<HashMap<PathBuf, GitFileStatus>>>;
@@ -284,7 +279,6 @@ pub struct Explorer {
   #[allow(clippy::type_complexity)]
   on_next_key:      Option<Box<dyn FnMut(&mut Context, &mut Self, &KeyBinding) -> EventResult>>,
   column_width:     u16,
-  position:         ExplorerPosition,
   /// Closing animation (1.0 -> 0.0 when closing)
   closing_anim:     Option<AnimationHandle<f32>>,
   /// Cache of git status for files
@@ -309,7 +303,6 @@ impl Explorer {
       prompt:           None,
       on_next_key:      None,
       column_width:     DEFAULT_EXPLORER_COLUMN_WIDTH,
-      position:         ExplorerPosition::default(),
       closing_anim:     None,
       git_status_cache: git_status_cache.clone(),
     };
@@ -331,7 +324,6 @@ impl Explorer {
       prompt: None,
       on_next_key: None,
       column_width,
-      position: ExplorerPosition::default(),
       closing_anim: None,
       git_status_cache: Arc::new(Mutex::new(HashMap::new())),
     })
@@ -733,9 +725,14 @@ impl Explorer {
     let sep_color = Color::new(text_color.r, text_color.g, text_color.b, 0.2 * close_alpha);
     surface.draw_rect(px_x, sep_y, px_width, 1.0, sep_color);
 
-    // Draw right border separator
+    // Draw border separator on the edge facing the editor content
     let border_color = Color::new(text_color.r, text_color.g, text_color.b, 0.15 * close_alpha);
-    surface.draw_rect(px_x + px_width - 1.0, px_y, 1.0, px_height, border_color);
+    let position = cx.editor.config().file_tree.position;
+    let border_x = match position {
+      crate::editor::FileTreePosition::Left => px_x + px_width - 1.0,  // Right edge
+      crate::editor::FileTreePosition::Right => px_x,                   // Left edge
+    };
+    surface.draw_rect(border_x, px_y, 1.0, px_height, border_color);
 
     // Calculate tree area in cell units for tree rendering
     // Tree starts below header

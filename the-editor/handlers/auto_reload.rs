@@ -10,7 +10,7 @@ use std::{
   time::SystemTime,
 };
 
-use filesentry::EventType;
+use notify::event::EventKind;
 use the_editor_event::register_hook;
 
 use crate::{
@@ -29,6 +29,13 @@ use crate::{
   ui::job,
   view_mut,
 };
+
+#[derive(Debug)]
+enum ReloadDecision {
+  Skip,
+  Warn(String),
+  Reload(String),
+}
 
 pub(crate) fn register_hooks(config: &EditorConfig) {
   let handler = Arc::new(AutoReload::new(config));
@@ -93,7 +100,7 @@ impl AutoReload {
     }
 
     let fs_events = event.fs_events.clone();
-    if !fs_events.iter().any(|evt| evt.ty == EventType::Modified) {
+    if !fs_events.iter().any(|evt| matches!(evt.kind, EventKind::Modify(_))) {
       return;
     }
 
@@ -110,79 +117,79 @@ impl AutoReload {
       let mut vcs_reload = false;
 
       for fs_event in &*fs_events {
-        if fs_event.ty != EventType::Modified {
+        if !matches!(fs_event.kind, EventKind::Modify(_)) {
           continue;
         }
 
-        vcs_reload |= editor.diff_providers.needs_reload(fs_event);
-
-        let Some(doc_id) = editor.document_id_by_path(fs_event.path.as_std_path()) else {
-          continue;
-        };
-
-        enum ReloadDecision {
-          Skip,
-          Warn(String),
-          Reload(String),
+        // Check all paths in the event for VCS reload
+        for path in &fs_event.paths {
+          vcs_reload |= editor.diff_providers.needs_reload_path(path);
         }
 
-        let decision = 'decision: {
-          let doc = doc_mut!(editor, &doc_id);
-          let Some(doc_path) = doc.path().cloned() else {
-            break 'decision ReloadDecision::Skip;
-          };
-
-          let mtime = match doc_path.metadata() {
-            Ok(meta) => meta.modified().unwrap_or_else(|_| SystemTime::now()),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {
-              break 'decision ReloadDecision::Skip;
-            },
-            Err(_) => SystemTime::now(),
-          };
-
-          if mtime == doc.last_saved_time {
-            break 'decision ReloadDecision::Skip;
-          }
-
-          let label = document_display_name(doc);
-          if doc.is_modified() {
-            let message = if prompt_if_modified {
-              format!("{label} has unsaved changes, use :reload to discard them")
-            } else {
-              format!("{label} auto-reload failed due to unsaved changes, use :reload to refresh")
-            };
-            break 'decision ReloadDecision::Warn(message);
-          }
-
-          break 'decision ReloadDecision::Reload(label);
-        };
-
-        let label = match decision {
-          ReloadDecision::Skip => continue,
-          ReloadDecision::Warn(message) => {
-            editor.set_warning(message);
+        // Process documents for each path
+        for path in &fs_event.paths {
+          let Some(doc_id) = editor.document_id_by_path(path) else {
             continue;
-          },
-          ReloadDecision::Reload(label) => label,
-        };
+          };
 
-        let reload_result = {
-          let view = view_mut!(editor);
-          let doc = doc_mut!(editor, &doc_id);
-          let result = doc.reload(view, &editor.diff_providers);
-          if result.is_ok() {
-            view.ensure_cursor_in_view(doc, scrolloff);
+          let decision = 'decision: {
+            let doc = doc_mut!(editor, &doc_id);
+            let Some(doc_path) = doc.path().cloned() else {
+              break 'decision ReloadDecision::Skip;
+            };
+
+            let mtime = match doc_path.metadata() {
+              Ok(meta) => meta.modified().unwrap_or_else(|_| SystemTime::now()),
+              Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                break 'decision ReloadDecision::Skip;
+              },
+              Err(_) => SystemTime::now(),
+            };
+
+            if mtime == doc.last_saved_time {
+              break 'decision ReloadDecision::Skip;
+            }
+
+            let label = document_display_name(doc);
+            if doc.is_modified() {
+              let message = if prompt_if_modified {
+                format!("{label} has unsaved changes, use :reload to discard them")
+              } else {
+                format!("{label} auto-reload failed due to unsaved changes, use :reload to refresh")
+              };
+              break 'decision ReloadDecision::Warn(message);
+            }
+
+            break 'decision ReloadDecision::Reload(label);
+          };
+
+          let label = match decision {
+            ReloadDecision::Skip => continue,
+            ReloadDecision::Warn(message) => {
+              editor.set_warning(message);
+              continue;
+            },
+            ReloadDecision::Reload(label) => label,
+          };
+
+          let reload_result = {
+            let view = view_mut!(editor);
+            let doc = doc_mut!(editor, &doc_id);
+            let result = doc.reload(view, &editor.diff_providers);
+            if result.is_ok() {
+              view.ensure_cursor_in_view(doc, scrolloff);
+            }
+            result
+          };
+
+          match reload_result {
+            Ok(_) => {
+              editor.set_status(format!("{label} auto-reload external changes"));
+            },
+            Err(err) => {
+              editor.set_error(format!("{label} auto-reload failed: {err}"));
+            },
           }
-          result
-        };
-
-        match reload_result {
-          Ok(_) => {
-            editor.set_status(format!("{label} auto-reload external changes"));
-          },
-          Err(err) => {
-            editor.set_error(format!("{label} auto-reload failed: {err}"));
-          },
         }
       }
 

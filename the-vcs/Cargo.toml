@@ -18,7 +18,7 @@ log.workspace         = true
 parking_lot.workspace = true
 ropey.workspace       = true
 tokio.workspace       = true
-filesentry.workspace               = true
+notify.workspace               = true
 
 gix = { default-features = false, features = [
   "attributes",

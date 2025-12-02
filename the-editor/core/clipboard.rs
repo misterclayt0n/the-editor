@@ -118,7 +118,7 @@ mod external {
 
     #[cfg(target_os = "macos")]
     fn default() -> Self {
-      use helix_stdx::env::{
+      use the_editor_stdx::env::{
         binary_exists,
         env_var_is_set,
       };

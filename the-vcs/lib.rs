@@ -98,11 +98,11 @@ impl DiffProviderRegistry {
     });
   }
 
-  pub fn needs_reload(&self, fs_event: &filesentry::Event) -> bool {
+  pub fn needs_reload_path(&self, path: &Path) -> bool {
     self
       .providers
       .iter()
-      .any(|provider| provider.needs_reload(fs_event))
+      .any(|provider| provider.needs_reload_path(path))
   }
 }
 
@@ -133,10 +133,10 @@ enum DiffProvider {
 }
 
 impl DiffProvider {
-  fn needs_reload(&self, fs_event: &filesentry::Event) -> bool {
+  fn needs_reload_path(&self, path: &Path) -> bool {
     match self {
       #[cfg(feature = "git")]
-      DiffProvider::Git => fs_event.path.as_std_path().ends_with(".git/HEAD"),
+      DiffProvider::Git => path.ends_with(".git/HEAD"),
       DiffProvider::None => false,
     }
   }

@@ -1,7 +1,6 @@
 use core::slice;
 use std::{
   borrow::Borrow,
-  mem::replace,
   path::{
     Path,
     PathBuf,
@@ -9,10 +8,12 @@ use std::{
   sync::Arc,
 };
 
-use filesentry::{
-  Events,
-  Filter,
-  ShutdownOnDrop,
+use notify::{
+  Config as NotifyConfig,
+  Event as NotifyEvent,
+  RecommendedWatcher,
+  RecursiveMode,
+  Watcher as NotifyWatcher,
 };
 use ignore::gitignore::{
   Gitignore,
@@ -30,7 +31,7 @@ use the_editor_event::{
 
 events! {
   FileSystemDidChange {
-    fs_events: Events
+    fs_events: Vec<NotifyEvent>
   }
 }
 
@@ -64,7 +65,7 @@ impl Default for Config {
 }
 
 pub struct Watcher {
-  watcher: Option<(filesentry::Watcher, ShutdownOnDrop)>,
+  watcher: Option<RecommendedWatcher>,
   filter:  Arc<WatchFilter>,
   roots:   Vec<(PathBuf, usize)>,
   config:  Config,
@@ -90,7 +91,7 @@ impl Watcher {
   }
 
   pub fn reload(&mut self, config: &Config) {
-    let old_config = replace(&mut self.config, config.clone());
+    self.config = config.clone();
     let (workspace, no_workspace) = the_editor_loader::find_workspace();
 
     if !config.enable || config.require_workspace && no_workspace {
@@ -105,22 +106,38 @@ impl Watcher {
     ));
 
     let watcher = match &mut self.watcher {
-      Some((watcher, _)) => {
-        // TODO: more fine grained detection of when recrawl is nedded
-        watcher.set_filter(self.filter.clone(), old_config != self.config);
+      Some(watcher) => {
+        // TODO: more fine grained detection of when recrawl is needed
+        // Note: notify doesn't have set_filter, filtering is done in the event handler
         watcher
       },
       None => {
-        match filesentry::Watcher::new() {
+        match RecommendedWatcher::new(
+          {
+            let filter = self.filter.clone();
+            move |res: notify::Result<NotifyEvent>| {
+              match res {
+                Ok(event) => {
+                  // Filter events based on our ignore rules
+                  let should_ignore = event.paths.iter().any(|path| {
+                    filter.ignore_path_rec(path, Some(path.is_dir()))
+                  });
+
+                  if !should_ignore {
+                    request_redraw();
+                    dispatch(FileSystemDidChange { fs_events: vec![event] });
+                  }
+                },
+                Err(err) => {
+                  log::error!("file watcher error: {err}");
+                },
+              }
+            }
+          },
+          NotifyConfig::default(),
+        ) {
           Ok(watcher) => {
-            watcher.set_filter(self.filter.clone(), false);
-            watcher.add_handler(move |events| {
-              request_redraw();
-              dispatch(FileSystemDidChange { fs_events: events });
-              true
-            });
-            let shutdown_guard = watcher.shutdown_guard();
-            &mut self.watcher.insert((watcher, shutdown_guard)).0
+            &mut self.watcher.insert(watcher)
           },
           Err(err) => {
             log::error!("failed to start file-watcher: {err}");
@@ -130,17 +147,15 @@ impl Watcher {
       },
     };
 
-    if let Err(err) = watcher.add_root(&workspace, true, |_| ()) {
+    if let Err(err) = watcher.watch(&workspace, RecursiveMode::Recursive) {
       log::error!("failed to start file-watcher: {err}");
     }
 
     for (root, _) in &self.roots {
-      if let Err(err) = watcher.add_root(root, true, |_| ()) {
+      if let Err(err) = watcher.watch(root, RecursiveMode::Recursive) {
         log::error!("failed to start file-watcher: {err}");
       }
     }
-
-    watcher.start();
   }
 
   pub fn remove_root(&mut self, root: PathBuf) {
@@ -199,10 +214,8 @@ impl Watcher {
       self.roots.iter().map(|(it, _)| &**it),
     ));
 
-    if let Some((watcher, _)) = &self.watcher {
-      watcher.set_filter(self.filter.clone(), false);
-
-      if let Err(err) = watcher.add_root(&root, true, |_| ()) {
+    if let Some(watcher) = &mut self.watcher {
+      if let Err(err) = watcher.watch(&root, RecursiveMode::Recursive) {
         log::error!("failed to watch {root:?}: {err}");
       }
     }
@@ -411,26 +424,7 @@ impl WatchFilter {
   }
 }
 
-impl filesentry::Filter for WatchFilter {
-  fn ignore_path(&self, path: &Path, is_dir: Option<bool>) -> bool {
-    let i = self
-      .ignore_files
-      .partition_point(|ignore_files| path < ignore_files.root);
-
-    let (root, ignore_files) = self
-      .ignore_files
-      .get(i)
-      .map_or((Path::new(""), &self.global_ignores), |files| {
-        (&files.root, &files.ignores)
-      });
-
-    if path == root {
-      return false;
-    }
-
-    self.ignore_path_impl(path, is_dir, ignore_files)
-  }
-
+impl WatchFilter {
   fn ignore_path_rec(&self, mut path: &Path, is_dir: Option<bool>) -> bool {
     let i = self
       .ignore_files

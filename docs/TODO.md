@@ -14,7 +14,15 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [ ] Custom font loading.
   - [x] Full helix config engine support.
   
-- [ ] File tree.
+- [ ] File tree:
+  - [x] File icons.
+  - [ ] File tree at the right.
+  - [ ] Basic configs.
+  - [ ] File explorer should remember the layout.
+  - [ ] Fix scrolling (it's not working on trackpad).
+  - [ ] Explorer should react to the open file?.
+  - [ ] Overlay? - Probably no reason for it.
+  
 - [ ] Command palette.
 - [x] "reload-all" prompt command.
 
@@ -42,6 +50,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Command to interrupt agent.
   - [x] Fix the issue where every time I save a file it gets autoreloaded.
   - [x] Render TODOs
+  - [ ] Opencode shell comamnds are not happening in the same nix enviroment as the one the editor is currently set.
 
 - [ ] Since we now have a lot of special buffers, we need a system to easily toggle them, maybe in an overlay. We should be able to bind arbitrary buffers to this system tho, not just special buffers.
 

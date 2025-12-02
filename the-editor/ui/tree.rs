@@ -22,15 +22,6 @@ use crate::{
   },
 };
 
-// the only issue overall with this implementation is that the icons are too
-// small and they're not quite as aligned as they should be, for reference, see
-// this image comparing the-editor vs zed. I want the same sort of plaecment as
-// zed here
-//
-// /home/mister/Pictures/Screenshots/Screenshot from 2025-12-02 10-18-07.png
-
-// that's a bit better, however, the icons are not totally centralized vertically with the text itself:
-//
 // /home/mister/Pictures/Screenshots/Screenshot from 2025-12-02 10-27-52.png
 
 /// Truncate a string to fit within a given pixel width, adding ellipsis if
@@ -63,6 +54,25 @@ fn truncate_to_width<'a>(text: &'a str, max_width: f32, char_width: f32) -> Cow<
   Cow::Owned(truncated)
 }
 
+/// Git status for a file in the tree view
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GitFileStatus {
+  #[default]
+  None,
+  /// File has been modified
+  Modified,
+  /// File is new/untracked
+  New,
+  /// File has been deleted
+  Deleted,
+  /// File has conflicts
+  Conflict,
+  /// File has been renamed
+  Renamed,
+  /// File is ignored
+  Ignored,
+}
+
 pub trait TreeViewItem: Sized + Ord {
   type Params: Default;
 
@@ -71,6 +81,12 @@ pub trait TreeViewItem: Sized + Ord {
 
   fn filter(&self, s: &str) -> bool {
     self.name().to_lowercase().contains(&s.to_lowercase())
+  }
+
+  /// Returns the git status for this item. Override in implementations
+  /// that track git status.
+  fn git_status(&self) -> GitFileStatus {
+    GitFileStatus::None
   }
 
   fn get_children(&self) -> Result<Vec<Self>>;
@@ -114,6 +130,10 @@ pub struct Tree<T> {
   /// and thus the folder still appears empty after refreshing.
   is_opened: bool,
 }
+
+// nice, this is good overall. now I want you to implement the file color
+// changing depending upon the git status of it. much like what zed does you
+// see?
 
 impl<T: Clone> Clone for Tree<T> {
   fn clone(&self) -> Self {
@@ -1021,6 +1041,8 @@ struct RenderedLine {
   is_folder:                   bool,
   /// Whether this folder is opened (only meaningful if is_folder is true)
   is_opened:                   bool,
+  /// Git status for this file
+  git_status:                  GitFileStatus,
 }
 struct RenderTreeParams<'a, T> {
   tree:     &'a Tree<T>,
@@ -1054,6 +1076,7 @@ fn render_tree<T: TreeViewItem>(
   };
 
   let name = tree.item.name();
+  let git_status = tree.item.git_status();
   let head = RenderedLine {
     indent,
     selected: selected == tree.index,
@@ -1064,6 +1087,7 @@ fn render_tree<T: TreeViewItem>(
     tree_index: tree.index,
     is_folder,
     is_opened,
+    git_status,
   };
   let prefix = format!("{}{}", prefix, if level == 0 { "" } else { "  " });
   vec![head]
@@ -1133,6 +1157,10 @@ struct TreeColors {
   text:             the_editor_renderer::Color,
   selection_fill:   the_editor_renderer::Color,
   selection_stroke: the_editor_renderer::Color,
+  git_modified:     the_editor_renderer::Color,
+  git_new:          the_editor_renderer::Color,
+  git_deleted:      the_editor_renderer::Color,
+  git_conflict:     the_editor_renderer::Color,
 }
 
 impl TreeColors {
@@ -1166,10 +1194,39 @@ impl TreeColors {
       .or(selection_bg)
       .unwrap_or(Color::new(0.5, 0.5, 0.8, 1.0));
 
+    // Git status colors from diff.* theme keys
+    let git_modified = theme
+      .try_get("diff.delta")
+      .and_then(|s| s.fg)
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.9, 0.7, 0.2, 1.0)); // yellow/orange
+
+    let git_new = theme
+      .try_get("diff.plus")
+      .and_then(|s| s.fg)
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.4, 0.8, 0.4, 1.0)); // green
+
+    let git_deleted = theme
+      .try_get("diff.minus")
+      .and_then(|s| s.fg)
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.9, 0.4, 0.4, 1.0)); // red
+
+    let git_conflict = theme
+      .try_get("error")
+      .and_then(|s| s.fg)
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(1.0, 0.3, 0.3, 1.0)); // bright red
+
     Self {
       text,
       selection_fill,
       selection_stroke,
+      git_modified,
+      git_new,
+      git_deleted,
+      git_conflict,
     }
   }
 
@@ -1181,6 +1238,37 @@ impl TreeColors {
       (self.text.b + 0.05).min(1.0),
       self.text.a,
     )
+  }
+
+  /// Returns the color for a file based on its git status
+  fn color_for_git_status(
+    &self,
+    status: GitFileStatus,
+    is_folder: bool,
+  ) -> the_editor_renderer::Color {
+    // For folders with no git status, use the brighter directory color
+    if is_folder && status == GitFileStatus::None {
+      return self.directory_color();
+    }
+
+    // Apply git status colors to both files and folders
+    match status {
+      GitFileStatus::None => self.text,
+      GitFileStatus::Modified => self.git_modified,
+      GitFileStatus::New => self.git_new,
+      GitFileStatus::Deleted => self.git_deleted,
+      GitFileStatus::Conflict => self.git_conflict,
+      GitFileStatus::Renamed => self.git_modified, // Use same color as modified
+      GitFileStatus::Ignored => {
+        // Dimmed text for ignored files/folders
+        the_editor_renderer::Color::new(
+          self.text.r * 0.5,
+          self.text.g * 0.5,
+          self.text.b * 0.5,
+          self.text.a,
+        )
+      },
+    }
   }
 }
 
@@ -1242,12 +1330,8 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
         selection_anim_value,
       );
 
-      // Compute text color
-      let mut item_color = if line.is_folder {
-        colors.directory_color()
-      } else {
-        colors.text
-      };
+      // Compute text color based on git status
+      let mut item_color = colors.color_for_git_status(line.git_status, line.is_folder);
       item_color.a *= item_entrance;
 
       // Calculate positions for Zed-like layout:

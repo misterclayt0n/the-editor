@@ -1,13 +1,22 @@
 use std::{
   borrow::Cow,
   cmp::Ordering,
+  collections::HashMap,
   fs::DirEntry,
   path::{
     Path,
     PathBuf,
   },
+  sync::{
+    Arc,
+    Mutex,
+  },
 };
 
+// that works, but we should also color the directory text, not just the file itself, in a
+// recursive way:d
+//
+// /home/mister/Pictures/Screenshots/Screenshot from 2025-12-02 11-08-04.png
 use anyhow::{
   Result,
   bail,
@@ -34,6 +43,7 @@ use crate::{
   },
   keymap::KeyBinding,
   ui::{
+    GitFileStatus,
     TreeOp,
     TreeView,
     TreeViewItem,
@@ -55,18 +65,33 @@ enum FileType {
   Root,
 }
 
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(Debug, Clone)]
 struct FileInfo {
-  file_type: FileType,
-  path:      PathBuf,
+  file_type:        FileType,
+  path:             PathBuf,
+  git_status_cache: Option<GitStatusCache>,
 }
+
+impl PartialEq for FileInfo {
+  fn eq(&self, other: &Self) -> bool {
+    self.file_type == other.file_type && self.path == other.path
+  }
+}
+
+impl Eq for FileInfo {}
 
 impl FileInfo {
   fn root(path: PathBuf) -> Self {
     Self {
       file_type: FileType::Root,
       path,
+      git_status_cache: None,
     }
+  }
+
+  fn with_git_cache(mut self, cache: GitStatusCache) -> Self {
+    self.git_status_cache = Some(cache);
+    self
   }
 
   fn get_text(&self) -> Cow<'static, str> {
@@ -125,7 +150,7 @@ impl TreeViewItem for FileInfo {
     };
     let ret: Vec<_> = std::fs::read_dir(&self.path)?
       .filter_map(|entry| entry.ok())
-      .filter_map(|entry| dir_entry_to_file_info(entry, &self.path))
+      .filter_map(|entry| dir_entry_to_file_info(entry, &self.path, self.git_status_cache.clone()))
       .collect();
     Ok(ret)
   }
@@ -137,17 +162,72 @@ impl TreeViewItem for FileInfo {
   fn is_parent(&self) -> bool {
     matches!(self.file_type, FileType::Folder | FileType::Root)
   }
+
+  fn git_status(&self) -> GitFileStatus {
+    let Some(cache) = self.git_status_cache.as_ref() else {
+      return GitFileStatus::None;
+    };
+    let Ok(cache) = cache.lock() else {
+      return GitFileStatus::None;
+    };
+
+    // For files, just look up directly
+    if !self.is_parent() {
+      return cache
+        .get(&self.path)
+        .copied()
+        .unwrap_or(GitFileStatus::None);
+    }
+
+    // For directories, find the highest priority status among all descendants
+    // Priority: Conflict > Deleted > Modified > Renamed > New > Ignored > None
+    let mut highest_status = GitFileStatus::None;
+
+    for (path, status) in cache.iter() {
+      if path.starts_with(&self.path) && path != &self.path {
+        highest_status = higher_priority_status(highest_status, *status);
+        // Early exit if we found the highest possible priority
+        if highest_status == GitFileStatus::Conflict {
+          break;
+        }
+      }
+    }
+
+    highest_status
+  }
 }
 
-fn dir_entry_to_file_info(entry: DirEntry, path: &Path) -> Option<FileInfo> {
+/// Returns the status with higher priority (more important to show)
+fn higher_priority_status(a: GitFileStatus, b: GitFileStatus) -> GitFileStatus {
+  fn priority(s: GitFileStatus) -> u8 {
+    match s {
+      GitFileStatus::None => 0,
+      GitFileStatus::Ignored => 1,
+      GitFileStatus::New => 2,
+      GitFileStatus::Renamed => 3,
+      GitFileStatus::Modified => 4,
+      GitFileStatus::Deleted => 5,
+      GitFileStatus::Conflict => 6,
+    }
+  }
+  if priority(a) >= priority(b) { a } else { b }
+}
+
+fn dir_entry_to_file_info(
+  entry: DirEntry,
+  path: &Path,
+  git_cache: Option<GitStatusCache>,
+) -> Option<FileInfo> {
   entry.metadata().ok().map(|meta| {
     let file_type = match meta.is_dir() {
       true => FileType::Folder,
       false => FileType::File,
     };
+    let full_path = path.join(entry.file_name());
     FileInfo {
       file_type,
-      path: path.join(entry.file_name()),
+      path: full_path,
+      git_status_cache: git_cache,
     }
   })
 }
@@ -192,45 +272,59 @@ pub enum ExplorerPosition {
   Right,
 }
 
+/// Shared git status cache that can be updated from background threads
+type GitStatusCache = Arc<Mutex<HashMap<PathBuf, GitFileStatus>>>;
+
 pub struct Explorer {
-  tree:         TreeView<FileInfo>,
-  history:      Vec<ExplorerHistory>,
-  show_help:    bool,
-  state:        State,
-  prompt:       Option<(PromptAction, Prompt)>,
+  tree:             TreeView<FileInfo>,
+  history:          Vec<ExplorerHistory>,
+  show_help:        bool,
+  state:            State,
+  prompt:           Option<(PromptAction, Prompt)>,
   #[allow(clippy::type_complexity)]
-  on_next_key:  Option<Box<dyn FnMut(&mut Context, &mut Self, &KeyBinding) -> EventResult>>,
-  column_width: u16,
-  position:     ExplorerPosition,
+  on_next_key:      Option<Box<dyn FnMut(&mut Context, &mut Self, &KeyBinding) -> EventResult>>,
+  column_width:     u16,
+  position:         ExplorerPosition,
   /// Closing animation (1.0 -> 0.0 when closing)
-  closing_anim: Option<AnimationHandle<f32>>,
+  closing_anim:     Option<AnimationHandle<f32>>,
+  /// Cache of git status for files
+  git_status_cache: GitStatusCache,
 }
 
 /// Default column width for the explorer
 const DEFAULT_EXPLORER_COLUMN_WIDTH: u16 = 30;
 
 impl Explorer {
-  pub fn new(_cx: &mut Context) -> Result<Self> {
+  pub fn new(cx: &mut Context) -> Result<Self> {
     let current_root = std::env::current_dir()
       .unwrap_or_else(|_| "./".into())
       .canonicalize()?;
-    Ok(Self {
-      tree:         Self::new_tree_view(current_root.clone())?,
-      history:      vec![],
-      show_help:    false,
-      state:        State::new(true, current_root),
-      prompt:       None,
-      on_next_key:  None,
-      column_width: DEFAULT_EXPLORER_COLUMN_WIDTH,
-      position:     ExplorerPosition::default(),
-      closing_anim: None,
-    })
+    let git_status_cache: GitStatusCache = Arc::new(Mutex::new(HashMap::new()));
+
+    let mut explorer = Self {
+      tree:             Self::new_tree_view(current_root.clone(), Some(git_status_cache.clone()))?,
+      history:          vec![],
+      show_help:        false,
+      state:            State::new(true, current_root.clone()),
+      prompt:           None,
+      on_next_key:      None,
+      column_width:     DEFAULT_EXPLORER_COLUMN_WIDTH,
+      position:         ExplorerPosition::default(),
+      closing_anim:     None,
+      git_status_cache: git_status_cache.clone(),
+    };
+
+    // Start initial git status refresh
+    explorer.refresh_git_status(cx);
+
+    Ok(explorer)
   }
 
   #[cfg(test)]
   fn from_path(root: PathBuf, column_width: u16) -> Result<Self> {
+    let git_status_cache: GitStatusCache = Arc::new(Mutex::new(HashMap::new()));
     Ok(Self {
-      tree: Self::new_tree_view(root.clone())?,
+      tree: Self::new_tree_view(root.clone(), Some(git_status_cache.clone()))?,
       history: vec![],
       show_help: false,
       state: State::new(true, root),
@@ -239,11 +333,15 @@ impl Explorer {
       column_width,
       position: ExplorerPosition::default(),
       closing_anim: None,
+      git_status_cache: Arc::new(Mutex::new(HashMap::new())),
     })
   }
 
-  fn new_tree_view(root: PathBuf) -> Result<TreeView<FileInfo>> {
-    let root = FileInfo::root(root);
+  fn new_tree_view(root: PathBuf, git_cache: Option<GitStatusCache>) -> Result<TreeView<FileInfo>> {
+    let mut root = FileInfo::root(root);
+    if let Some(cache) = git_cache {
+      root = root.with_git_cache(cache);
+    }
     Ok(TreeView::build_tree(root)?.with_enter_fn(Self::toggle_current))
   }
 
@@ -260,7 +358,7 @@ impl Explorer {
     if self.state.current_root.eq(&root) {
       return Ok(());
     }
-    let tree = Self::new_tree_view(root.clone())?;
+    let tree = Self::new_tree_view(root.clone(), Some(self.git_status_cache.clone()))?;
     let old_tree = std::mem::replace(&mut self.tree, tree);
     self.push_history(old_tree, self.state.current_root.clone());
     self.state.current_root = root;
@@ -355,6 +453,51 @@ impl Explorer {
 
   pub fn is_focus(&self) -> bool {
     self.state.focus
+  }
+
+  /// Refresh git status for all files in the current root.
+  /// This spawns a background task that updates the git status cache.
+  pub fn refresh_git_status(&mut self, cx: &mut Context) {
+    use the_editor_vcs::FileChange;
+
+    let cwd = self.state.current_root.clone();
+    let cache = self.git_status_cache.clone();
+    let diff_providers = cx.editor.diff_providers.clone();
+
+    // Clear existing cache
+    if let Ok(mut cache) = cache.lock() {
+      cache.clear();
+    }
+
+    // Spawn background task to fetch git status
+    diff_providers.for_each_changed_file(cwd, move |result| {
+      match result {
+        Ok(change) => {
+          let (path, status) = match change {
+            FileChange::Modified { path } => (path, GitFileStatus::Modified),
+            FileChange::Untracked { path } => (path, GitFileStatus::New),
+            FileChange::Deleted { path } => (path, GitFileStatus::Deleted),
+            FileChange::Conflict { path } => (path, GitFileStatus::Conflict),
+            FileChange::Renamed { to_path, .. } => (to_path, GitFileStatus::Renamed),
+          };
+          if let Ok(mut cache) = cache.lock() {
+            cache.insert(path, status);
+          }
+          true // Continue iteration
+        },
+        Err(_) => false, // Stop on error
+      }
+    });
+  }
+
+  /// Look up the git status for a path from the cache
+  pub fn get_git_status(&self, path: &Path) -> GitFileStatus {
+    self
+      .git_status_cache
+      .lock()
+      .ok()
+      .and_then(|cache| cache.get(path).copied())
+      .unwrap_or(GitFileStatus::None)
   }
 
   fn new_create_file_or_folder_prompt(&mut self, _cx: &mut Context) -> Result<()> {

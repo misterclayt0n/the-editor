@@ -22,6 +22,7 @@ pub use explorer::{
 };
 #[allow(unused_imports)]
 pub use tree::{
+  GitFileStatus,
   TreeOp,
   TreeView,
   TreeViewItem,

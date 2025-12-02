@@ -41,6 +41,8 @@ events! {
     DiagnosticsDidChange<'a> { editor: &'a mut Editor, doc: DocumentId }
     // called **after** a document loses focus (but not when its closed)
     DocumentFocusLost<'a> { editor: &'a mut Editor, doc: DocumentId }
+    // called **after** a document gains focus (either from opening or switching views)
+    DocumentFocusGained<'a> { editor: &'a mut Editor, doc: DocumentId }
 
     LanguageServerInitialized<'a> {
         editor: &'a mut Editor,
@@ -69,6 +71,7 @@ pub fn register_all_events() {
   register_event::<SelectionDidChange>();
   register_event::<DiagnosticsDidChange>();
   register_event::<DocumentFocusLost>();
+  register_event::<DocumentFocusGained>();
   register_event::<LanguageServerInitialized>();
   register_event::<LanguageServerExited>();
   register_event::<ConfigDidChange>();

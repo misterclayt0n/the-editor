@@ -151,6 +151,7 @@ use crate::{
   event::{
     DocumentDidClose,
     DocumentDidOpen,
+    DocumentFocusGained,
     DocumentFocusLost,
   },
   handlers::Handlers,
@@ -885,12 +886,18 @@ pub struct FileTreeConfig {
   /// Position of the file tree panel. Can be "left" or "right".
   /// Defaults to "left".
   pub position: FileTreePosition,
+  /// Auto-reveal the current file in the explorer when switching documents.
+  /// When enabled, the file tree will expand folders and select the currently
+  /// focused file, similar to "Reveal in Side Bar" in VS Code or Zed.
+  /// Defaults to false.
+  pub auto_reveal: bool,
 }
 
 impl Default for FileTreeConfig {
   fn default() -> Self {
     Self {
       position: FileTreePosition::Left,
+      auto_reveal: false,
     }
   }
 }
@@ -2989,6 +2996,12 @@ impl Editor {
             doc:    focus_lost,
           });
         }
+
+        // Dispatch focus gained event for the new document
+        dispatch(DocumentFocusGained {
+          editor: self,
+          doc:    doc_id,
+        });
       }
       // If no document view is focused, just change focus without view-specific
       // logic

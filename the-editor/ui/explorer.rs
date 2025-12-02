@@ -398,6 +398,19 @@ impl Explorer {
     }
   }
 
+  /// Reveal a file in the tree without focusing the explorer.
+  /// This is used for auto-reveal functionality where we want to
+  /// show the file location without stealing focus from the editor.
+  pub fn reveal_file_quiet(&mut self, path: PathBuf) -> Result<()> {
+    // Only reveal if the explorer is open (don't force it open)
+    if !self.state.open {
+      log::debug!("Explorer is not open, skipping reveal");
+      return Ok(());
+    }
+    log::debug!("Explorer is open, calling reveal_file");
+    self.reveal_file(path)
+  }
+
   pub fn focus(&mut self) {
     self.state.focus = true;
     self.state.open = true;

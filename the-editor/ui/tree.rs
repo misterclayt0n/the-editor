@@ -22,6 +22,13 @@ use crate::{
   },
 };
 
+// how can we create a system where upon entering a file (regardless of where), the file tree kinda watches the current file? and
+// highlights it in the tree?
+//
+// like what zed does. if all directories are collapsed and I open a file, it will open the directory recursive to find that file and highlight it with the selection
+//
+// yep, that would be great, implement that
+
 /// Truncate a string to fit within a given pixel width, adding ellipsis if
 /// needed.
 fn truncate_to_width<'a>(text: &'a str, max_width: f32, char_width: f32) -> Cow<'a, str> {

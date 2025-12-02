@@ -15,10 +15,10 @@ anyhow.workspace      = true
 arc-swap.workspace    = true
 imara-diff.workspace  = true
 log.workspace         = true
+notify.workspace      = true
 parking_lot.workspace = true
 ropey.workspace       = true
 tokio.workspace       = true
-notify.workspace               = true
 
 gix = { default-features = false, features = [
   "attributes",

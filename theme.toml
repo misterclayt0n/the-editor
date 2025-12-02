@@ -68,8 +68,8 @@ tabstop = { bg = "bossanova", modifiers = [ "italic" ] }
 "ui.virtual.indent-guide" = { fg = "comet" }
 
 "ui.selection"         = { bg = "#540099" }
-"ui.selection.primary" = { bg = "#540099" }
 "ui.selection.glow"    = { bg = "#9F7FFF" }
+"ui.selection.primary" = { bg = "#540099" }
 # TODO: namespace ui.cursor as ui.selection.cursor?
 "ui.cursor"                = { modifiers = [ "reversed" ] }
 "ui.cursor.insert"         = { bg = "white" }
@@ -98,7 +98,7 @@ hint    = "silver"
 info    = "delta"
 warning = "lightning"
 
-  "15" = "white"
+"15" = "white"
 
 [palette]
 bossanova = "#452859"

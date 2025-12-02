@@ -409,7 +409,8 @@ impl Explorer {
     self.state.focus = false;
   }
 
-  fn close(&mut self) {
+  /// Close the explorer with animation
+  pub fn close(&mut self) {
     self.state.focus = false;
     // Start closing animation instead of immediately closing
     let (duration, easing) = presets::FAST;

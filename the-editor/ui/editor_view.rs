@@ -354,9 +354,13 @@ impl EditorView {
 
   /// Toggle the tree explorer sidebar
   pub fn toggle_explorer(&mut self, cx: &mut Context) {
-    if self.explorer.is_some() {
-      self.explorer = None;
+    if let Some(ref mut explorer) = self.explorer {
+      // If explorer is open, start closing animation
+      if explorer.is_opened() && !explorer.is_closing() {
+        explorer.close();
+      }
     } else {
+      // Open new explorer
       match Explorer::new(cx) {
         Ok(explorer) => {
           self.explorer = Some(explorer);
@@ -388,9 +392,13 @@ impl EditorView {
     }
   }
 
-  /// Close the tree explorer sidebar
+  /// Close the tree explorer sidebar (with animation)
   pub fn close_explorer(&mut self) {
-    self.explorer = None;
+    if let Some(ref mut explorer) = self.explorer {
+      if explorer.is_opened() && !explorer.is_closing() {
+        explorer.close();
+      }
+    }
   }
 
   /// Check if explorer is open and focused

@@ -105,8 +105,6 @@ fn vec_to_tree<T: TreeViewItem>(mut items: Vec<T>) -> Vec<Tree<T>> {
   )
 }
 
-// nice! that worked, but the ctrl+w hjkl do not respect the file tree's position, which means that even tho the file tree is at the right, I have to do ctrl+w h to focus on it, instead of ctrl+w l 
-
 pub enum TreeOp {
   Noop,
   GetChildsAndInsert,

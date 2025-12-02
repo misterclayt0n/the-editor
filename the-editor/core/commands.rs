@@ -7481,15 +7481,40 @@ pub fn page_cursor_half_down(cx: &mut Context) {
 }
 
 pub fn jump_view_right(cx: &mut Context) {
-  // If explorer is focused, unfocus it and focus the editor
+  use crate::editor::FileTreePosition;
+
   cx.callback.push(Box::new(|compositor, ctx| {
     for layer in compositor.layers.iter_mut() {
       if let Some(editor_view) = layer.as_any_mut().downcast_mut::<crate::ui::EditorView>() {
+        let explorer_position = editor_view.explorer_position();
+
+        // If explorer is focused, unfocus it and focus the editor
         if editor_view.explorer_focused() {
           if let Some(explorer) = editor_view.explorer_mut() {
             explorer.unfocus();
           }
           return;
+        }
+
+        // If explorer is on the right and open, check if we should focus it
+        if explorer_position == FileTreePosition::Right
+          && editor_view.explorer_is_open()
+          && !editor_view.explorer_focused()
+        {
+          // Check if we're at the rightmost view (no view to the right)
+          let can_go_right = ctx
+            .editor
+            .tree
+            .find_split_in_direction(ctx.editor.tree.focus, tree::Direction::Right)
+            .is_some();
+
+          if !can_go_right {
+            // Focus the explorer instead
+            if let Some(explorer) = editor_view.explorer_mut() {
+              explorer.focus();
+            }
+            return;
+          }
         }
         break;
       }
@@ -7500,12 +7525,26 @@ pub fn jump_view_right(cx: &mut Context) {
 }
 
 pub fn jump_view_left(cx: &mut Context) {
-  // Try to focus explorer if it's open and we're at the leftmost view
+  use crate::editor::FileTreePosition;
+
   cx.callback.push(Box::new(|compositor, ctx| {
     for layer in compositor.layers.iter_mut() {
       if let Some(editor_view) = layer.as_any_mut().downcast_mut::<crate::ui::EditorView>() {
-        // Check if explorer is open and not already focused
-        if editor_view.explorer_is_open() && !editor_view.explorer_focused() {
+        let explorer_position = editor_view.explorer_position();
+
+        // If explorer is focused, unfocus it and focus the editor
+        if editor_view.explorer_focused() {
+          if let Some(explorer) = editor_view.explorer_mut() {
+            explorer.unfocus();
+          }
+          return;
+        }
+
+        // If explorer is on the left and open, check if we should focus it
+        if explorer_position == FileTreePosition::Left
+          && editor_view.explorer_is_open()
+          && !editor_view.explorer_focused()
+        {
           // Check if we're at the leftmost view (no view to the left)
           let can_go_left = ctx
             .editor

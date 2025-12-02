@@ -423,6 +423,11 @@ impl EditorView {
     self.explorer.as_mut()
   }
 
+  /// Get the current explorer position (from config)
+  pub fn explorer_position(&self) -> FileTreePosition {
+    self.explorer_position
+  }
+
   /// Check if explorer is open (regardless of focus)
   pub fn explorer_is_open(&self) -> bool {
     self.explorer.as_ref().is_some_and(|e| e.is_opened())

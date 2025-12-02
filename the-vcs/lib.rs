@@ -86,6 +86,18 @@ impl DiffProviderRegistry {
     cwd: PathBuf,
     f: impl Fn(Result<FileChange>) -> bool + Send + 'static,
   ) {
+    self.for_each_changed_file_with_completion(cwd, f, || {});
+  }
+
+  /// Fire-and-forget changed file iteration with a completion callback.
+  /// The `on_complete` callback is called after all changes have been iterated,
+  /// regardless of success or failure.
+  pub fn for_each_changed_file_with_completion(
+    self,
+    cwd: PathBuf,
+    f: impl Fn(Result<FileChange>) -> bool + Send + 'static,
+    on_complete: impl FnOnce() + Send + 'static,
+  ) {
     tokio::task::spawn_blocking(move || {
       if self
         .providers
@@ -95,6 +107,7 @@ impl DiffProviderRegistry {
       {
         f(Err(anyhow!("no diff provider returns success")));
       }
+      on_complete();
     });
   }
 

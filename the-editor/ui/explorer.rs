@@ -458,36 +458,60 @@ impl Explorer {
   /// Refresh git status for all files in the current root.
   /// This spawns a background task that updates the git status cache.
   pub fn refresh_git_status(&mut self, cx: &mut Context) {
+    self.refresh_git_status_with_providers(&cx.editor.diff_providers);
+  }
+
+  /// Refresh git status using the provided diff providers.
+  /// This is useful when called from contexts without access to a full Context.
+  pub fn refresh_git_status_with_providers(
+    &mut self,
+    diff_providers: &the_editor_vcs::DiffProviderRegistry,
+  ) {
+    use std::collections::HashMap;
+
     use the_editor_vcs::FileChange;
 
     let cwd = self.state.current_root.clone();
     let cache = self.git_status_cache.clone();
-    let diff_providers = cx.editor.diff_providers.clone();
+    let diff_providers = diff_providers.clone();
 
-    // Clear existing cache
-    if let Ok(mut cache) = cache.lock() {
-      cache.clear();
-    }
+    // Build new cache in background, then swap atomically to avoid flashing.
+    // We collect all changes first, then replace the cache contents all at once.
+    let new_cache: Arc<Mutex<HashMap<PathBuf, GitFileStatus>>> =
+      Arc::new(Mutex::new(HashMap::new()));
+    let new_cache_for_iteration = new_cache.clone();
+    let new_cache_for_completion = new_cache.clone();
 
     // Spawn background task to fetch git status
-    diff_providers.for_each_changed_file(cwd, move |result| {
-      match result {
-        Ok(change) => {
-          let (path, status) = match change {
-            FileChange::Modified { path } => (path, GitFileStatus::Modified),
-            FileChange::Untracked { path } => (path, GitFileStatus::New),
-            FileChange::Deleted { path } => (path, GitFileStatus::Deleted),
-            FileChange::Conflict { path } => (path, GitFileStatus::Conflict),
-            FileChange::Renamed { to_path, .. } => (to_path, GitFileStatus::Renamed),
-          };
-          if let Ok(mut cache) = cache.lock() {
-            cache.insert(path, status);
-          }
-          true // Continue iteration
-        },
-        Err(_) => false, // Stop on error
-      }
-    });
+    diff_providers.for_each_changed_file_with_completion(
+      cwd,
+      move |result| {
+        match result {
+          Ok(change) => {
+            let (path, status) = match change {
+              FileChange::Modified { path } => (path, GitFileStatus::Modified),
+              FileChange::Untracked { path } => (path, GitFileStatus::New),
+              FileChange::Deleted { path } => (path, GitFileStatus::Deleted),
+              FileChange::Conflict { path } => (path, GitFileStatus::Conflict),
+              FileChange::Renamed { to_path, .. } => (to_path, GitFileStatus::Renamed),
+            };
+            if let Ok(mut new_cache) = new_cache_for_iteration.lock() {
+              new_cache.insert(path, status);
+            }
+            true // Continue iteration
+          },
+          Err(_) => false, // Stop on error
+        }
+      },
+      move || {
+        // On completion, swap the new cache into the main cache atomically
+        if let (Ok(mut main_cache), Ok(new_cache)) = (cache.lock(), new_cache_for_completion.lock())
+        {
+          main_cache.clear();
+          main_cache.extend(new_cache.iter().map(|(k, v)| (k.clone(), *v)));
+        }
+      },
+    );
   }
 
   /// Look up the git status for a path from the cache

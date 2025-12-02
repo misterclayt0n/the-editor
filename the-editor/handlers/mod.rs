@@ -29,6 +29,7 @@ pub mod completion_request;
 pub mod completion_request_helpers;
 pub mod completion_resolve;
 pub mod diagnostics;
+pub mod explorer;
 pub mod hover;
 pub mod lsp;
 pub mod signature_help;
@@ -83,4 +84,5 @@ pub fn register_hooks(handlers: &Handlers, config: &EditorConfig) {
   completion_request::register_completion_hooks(handlers);
   signature_help::register_hooks(handlers);
   auto_reload::register_hooks(config);
+  explorer::register_hooks();
 }

@@ -8,16 +8,16 @@ use std::{
   sync::Arc,
 };
 
+use ignore::gitignore::{
+  Gitignore,
+  GitignoreBuilder,
+};
 use notify::{
   Config as NotifyConfig,
   Event as NotifyEvent,
   RecommendedWatcher,
   RecursiveMode,
   Watcher as NotifyWatcher,
-};
-use ignore::gitignore::{
-  Gitignore,
-  GitignoreBuilder,
 };
 use serde::{
   Deserialize,
@@ -119,13 +119,16 @@ impl Watcher {
               match res {
                 Ok(event) => {
                   // Filter events based on our ignore rules
-                  let should_ignore = event.paths.iter().any(|path| {
-                    filter.ignore_path_rec(path, Some(path.is_dir()))
-                  });
+                  let should_ignore = event
+                    .paths
+                    .iter()
+                    .any(|path| filter.ignore_path_rec(path, Some(path.is_dir())));
 
                   if !should_ignore {
                     request_redraw();
-                    dispatch(FileSystemDidChange { fs_events: vec![event] });
+                    dispatch(FileSystemDidChange {
+                      fs_events: vec![event],
+                    });
                   }
                 },
                 Err(err) => {
@@ -136,9 +139,7 @@ impl Watcher {
           },
           NotifyConfig::default(),
         ) {
-          Ok(watcher) => {
-            &mut self.watcher.insert(watcher)
-          },
+          Ok(watcher) => &mut self.watcher.insert(watcher),
           Err(err) => {
             log::error!("failed to start file-watcher: {err}");
             return;

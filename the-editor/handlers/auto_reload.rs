@@ -100,7 +100,10 @@ impl AutoReload {
     }
 
     let fs_events = event.fs_events.clone();
-    if !fs_events.iter().any(|evt| matches!(evt.kind, EventKind::Modify(_))) {
+    if !fs_events
+      .iter()
+      .any(|evt| matches!(evt.kind, EventKind::Modify(_)))
+    {
       return;
     }
 

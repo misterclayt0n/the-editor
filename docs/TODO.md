@@ -20,6 +20,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [ ] Basic configs.
   - [ ] File explorer should remember the layout.
   - [ ] Fix scrolling (it's not working on trackpad).
+  - [x] VCS indicator.
   - [ ] Explorer should react to the open file?.
   - [ ] Overlay? - Probably no reason for it.
   

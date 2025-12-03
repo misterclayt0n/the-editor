@@ -279,7 +279,7 @@ pub struct Explorer {
   #[allow(clippy::type_complexity)]
   on_next_key:      Option<Box<dyn FnMut(&mut Context, &mut Self, &KeyBinding) -> EventResult>>,
   column_width:     u16,
-  /// Closing animation (1.0 -> 0.0 when closing)
+  /// Opening/closing animation (0.0 -> 1.0 when opening, 1.0 -> 0.0 when closing)
   closing_anim:     Option<AnimationHandle<f32>>,
   /// Cache of git status for files
   git_status_cache: GitStatusCache,
@@ -413,9 +413,16 @@ impl Explorer {
 
   pub fn focus(&mut self) {
     self.state.focus = true;
-    self.state.open = true;
-    // Cancel any closing animation
-    self.closing_anim = None;
+    // If explorer is currently closed, start opening animation
+    if !self.state.open {
+      self.state.open = true;
+      let (duration, easing) = presets::FAST;
+      // Animate from 0.0 (closed) to 1.0 (open)
+      self.closing_anim = Some(AnimationHandle::new(0.0, 1.0, duration, easing));
+    } else {
+      // Already open, just cancel any closing animation
+      self.closing_anim = None;
+    }
   }
 
   pub fn unfocus(&mut self) {
@@ -430,25 +437,34 @@ impl Explorer {
     self.closing_anim = Some(AnimationHandle::new(1.0, 0.0, duration, easing));
   }
 
-  /// Check if the explorer is currently in closing animation
+  /// Check if the explorer is currently animating (opening or closing)
   pub fn is_closing(&self) -> bool {
     self.closing_anim.is_some()
   }
 
-  /// Update the closing animation. Returns true if explorer should be removed.
+  /// Update the closing/opening animation. Returns true if explorer should be removed.
   pub fn update_closing(&mut self, dt: f32) -> bool {
     if let Some(ref mut anim) = self.closing_anim {
       anim.update(dt);
       if anim.is_complete() {
-        self.state.open = false;
-        self.closing_anim = None;
-        return true; // Explorer should be removed
+        // Check if this was a closing or opening animation based on target value
+        let target = anim.target();
+        if *target == 0.0 {
+          // This was a closing animation
+          self.state.open = false;
+          self.closing_anim = None;
+          return true; // Explorer should be removed (but we keep it alive now)
+        } else {
+          // This was an opening animation, just clear the animation
+          self.closing_anim = None;
+        }
       }
     }
     false
   }
 
-  /// Get the closing animation progress (1.0 = fully open, 0.0 = fully closed)
+  /// Get the animation progress (1.0 = fully open, 0.0 = fully closed)
+  /// Returns current animation value, or 1.0 if not animating (default to open state)
   pub fn closing_progress(&self) -> f32 {
     self
       .closing_anim

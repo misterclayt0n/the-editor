@@ -355,12 +355,15 @@ impl EditorView {
   /// Toggle the tree explorer sidebar
   pub fn toggle_explorer(&mut self, cx: &mut Context) {
     if let Some(ref mut explorer) = self.explorer {
-      // If explorer is open, start closing animation
+      // If explorer exists, toggle its visibility
       if explorer.is_opened() && !explorer.is_closing() {
         explorer.close();
+      } else if !explorer.is_opened() {
+        // Explorer exists but is closed - reopen it (preserving layout)
+        explorer.focus();
       }
     } else {
-      // Open new explorer
+      // No explorer exists - create a new one
       match Explorer::new(cx) {
         Ok(explorer) => {
           self.explorer = Some(explorer);
@@ -702,10 +705,8 @@ impl Component for EditorView {
     if let Some(ref mut explorer) = self.explorer {
       if explorer.is_focus() {
         let result = explorer.handle_event(event, cx);
-        // Check if explorer was closed or unfocused
-        if !explorer.is_opened() {
-          self.explorer = None;
-        }
+        // Note: We intentionally keep the explorer instance alive when closed
+        // so that the tree layout is preserved when reopening.
         if matches!(result, EventResult::Consumed(_)) {
           return result;
         }
@@ -1021,13 +1022,11 @@ impl Component for EditorView {
 
     // Update and calculate explorer pixel width (using UI font metrics, not buffer
     // font)
+    // Note: We keep the explorer instance alive even when closed to preserve tree layout.
     self.explorer_px_width = if let Some(ref mut explorer) = self.explorer {
-      // Update closing animation
-      if explorer.update_closing(cx.dt) {
-        // Animation complete, remove explorer
-        self.explorer = None;
-        0.0
-      } else if explorer.is_opened() || explorer.is_closing() {
+      // Update closing animation (but don't destroy explorer when complete)
+      explorer.update_closing(cx.dt);
+      if explorer.is_opened() || explorer.is_closing() {
         let explorer_width_cells = explorer.column_width();
         let base_width = explorer_width_cells as f32 * ui_cell_width;
         // Apply closing animation progress

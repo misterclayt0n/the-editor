@@ -16,13 +16,13 @@ So, this is just a simple todo list that will grant me some sort of base for the
   
 - [ ] File tree:
   - [x] File icons.
-  - [ ] File tree at the right.
-  - [ ] Basic configs.
-  - [ ] File explorer should remember the layout.
+  - [x] File tree at the right.
+  - [x] Basic configs.
+  - [x] File explorer should remember the layout.
+  - [ ] File tree is not really following the current buffer correctly.
   - [ ] Fix scrolling (it's not working on trackpad).
   - [x] VCS indicator.
-  - [ ] Explorer should react to the open file?.
-  - [ ] Overlay? - Probably no reason for it.
+  - [x] Explorer should react to the open file - Auto reveal.
   
 - [ ] Command palette.
 - [x] "reload-all" prompt command.
@@ -34,6 +34,8 @@ So, this is just a simple todo list that will grant me some sort of base for the
   
 - [x] Add paths in the completer.
 - [x] Different cursor shapes.
+
+- [ ] Scrolling should not depend on me having to click to focus. Just hovering my cursor in the correct component should scroll it.
 
 - [x] Reimagine the compile command:
   - [x] Kill processes.
@@ -59,6 +61,8 @@ Now I kinda want this editor to look nice so here's some ideas:
 - [ ] Cursor breathing animation.
 - [ ] Render jumplist picker.
 - [ ] Improve the window splitting animation (it currently sucks).
+- [ ] File tree on click animation.
+- [ ] File open should have a totally different animation - already open files should have one animation (if any) and recently open files should have another one (see raddebugger's animation on this)
   
 ### Fixes
 - [x] Render fonts correctly in the picker prompt menu (they're too spaced).

@@ -273,6 +273,8 @@ pub struct EditorView {
   explorer_px_width:         f32,
   explorer_position:         FileTreePosition,
   explorer_hovered_item:     Option<usize>,
+  // Accumulator for fractional scroll amounts in explorer (for trackpad)
+  explorer_scroll_accum:     f32,
   // Track last mouse position for scroll targeting
   last_mouse_pos:            Option<(f32, f32)>,
 }
@@ -348,6 +350,7 @@ impl EditorView {
       explorer_px_width: 0.0,
       explorer_position: FileTreePosition::Left,
       explorer_hovered_item: None,
+      explorer_scroll_accum: 0.0,
       last_mouse_pos: None,
     }
   }
@@ -933,16 +936,33 @@ impl Component for EditorView {
               if explorer.is_opened() {
                 use the_editor_renderer::ScrollDelta;
 
-                let scroll_lines = match delta {
-                  ScrollDelta::Lines { y, .. } => -*y as i32,
+                // Convert scroll delta to lines, accumulating fractional amounts
+                let delta_lines = match delta {
+                  ScrollDelta::Lines { y, .. } => {
+                    // Discrete scroll (mouse wheel) - use directly
+                    // Reset accumulator on discrete scrolls
+                    self.explorer_scroll_accum = 0.0;
+                    -*y
+                  },
                   ScrollDelta::Pixels { y, .. } => {
-                    // Approximate: 20 pixels per line
-                    (-*y / 20.0) as i32
+                    // Continuous scroll (trackpad) - accumulate fractional amounts
+                    // Use cached cell height for accurate line calculation
+                    let line_height = self.cached_cell_height.max(1.0);
+                    -*y / line_height
                   },
                 };
 
-                if scroll_lines != 0 {
-                  explorer.scroll(scroll_lines);
+                // Accumulate scroll amount
+                self.explorer_scroll_accum += delta_lines;
+
+                // Extract integer lines to scroll
+                let lines_to_scroll = self.explorer_scroll_accum.trunc() as i32;
+
+                // Keep fractional remainder for next event
+                self.explorer_scroll_accum -= lines_to_scroll as f32;
+
+                if lines_to_scroll != 0 {
+                  explorer.scroll(lines_to_scroll);
                   request_redraw();
                 }
                 return EventResult::Consumed(None);

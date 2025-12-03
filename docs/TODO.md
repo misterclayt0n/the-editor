@@ -19,10 +19,11 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] File tree at the right.
   - [x] Basic configs.
   - [x] File explorer should remember the layout.
-  - [ ] File tree is not really following the current buffer correctly.
-  - [ ] Fix scrolling (it's not working on trackpad).
+  - [x] File tree is not really following the current buffer correctly.
+  - [x] Fix scrolling (it's not working on trackpad). 
   - [x] VCS indicator.
   - [x] Explorer should react to the open file - Auto reveal.
+  - [ ] Basic file operations -> Create/Delete files/folders.
   
 - [ ] Command palette.
 - [x] "reload-all" prompt command.

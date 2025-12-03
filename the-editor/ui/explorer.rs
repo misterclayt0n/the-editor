@@ -279,10 +279,14 @@ pub struct Explorer {
   #[allow(clippy::type_complexity)]
   on_next_key:      Option<Box<dyn FnMut(&mut Context, &mut Self, &KeyBinding) -> EventResult>>,
   column_width:     u16,
-  /// Opening/closing animation (0.0 -> 1.0 when opening, 1.0 -> 0.0 when closing)
+  /// Opening/closing animation (0.0 -> 1.0 when opening, 1.0 -> 0.0 when
+  /// closing)
   closing_anim:     Option<AnimationHandle<f32>>,
   /// Cache of git status for files
   git_status_cache: GitStatusCache,
+  /// Path to reveal when the explorer is next opened.
+  /// This is set when auto-reveal is triggered while the explorer is closed.
+  pending_reveal:   Option<PathBuf>,
 }
 
 /// Default column width for the explorer
@@ -305,6 +309,7 @@ impl Explorer {
       column_width:     DEFAULT_EXPLORER_COLUMN_WIDTH,
       closing_anim:     None,
       git_status_cache: git_status_cache.clone(),
+      pending_reveal:   None,
     };
 
     // Start initial git status refresh
@@ -326,6 +331,7 @@ impl Explorer {
       column_width,
       closing_anim: None,
       git_status_cache: Arc::new(Mutex::new(HashMap::new())),
+      pending_reveal: None,
     })
   }
 
@@ -402,9 +408,13 @@ impl Explorer {
   /// This is used for auto-reveal functionality where we want to
   /// show the file location without stealing focus from the editor.
   pub fn reveal_file_quiet(&mut self, path: PathBuf) -> Result<()> {
-    // Only reveal if the explorer is open (don't force it open)
+    // If the explorer is closed, store the path to reveal when it opens
     if !self.state.open {
-      log::debug!("Explorer is not open, skipping reveal");
+      log::debug!(
+        "Explorer is not open, storing pending reveal for {:?}",
+        path
+      );
+      self.pending_reveal = Some(path);
       return Ok(());
     }
     log::debug!("Explorer is open, calling reveal_file");
@@ -419,6 +429,14 @@ impl Explorer {
       let (duration, easing) = presets::FAST;
       // Animate from 0.0 (closed) to 1.0 (open)
       self.closing_anim = Some(AnimationHandle::new(0.0, 1.0, duration, easing));
+
+      // Execute any pending reveal from when the explorer was closed
+      if let Some(path) = self.pending_reveal.take() {
+        log::debug!("Executing pending reveal for {:?}", path);
+        if let Err(e) = self.reveal_file(path) {
+          log::warn!("Failed to execute pending reveal: {}", e);
+        }
+      }
     } else {
       // Already open, just cancel any closing animation
       self.closing_anim = None;
@@ -442,7 +460,8 @@ impl Explorer {
     self.closing_anim.is_some()
   }
 
-  /// Update the closing/opening animation. Returns true if explorer should be removed.
+  /// Update the closing/opening animation. Returns true if explorer should be
+  /// removed.
   pub fn update_closing(&mut self, dt: f32) -> bool {
     if let Some(ref mut anim) = self.closing_anim {
       anim.update(dt);
@@ -464,7 +483,8 @@ impl Explorer {
   }
 
   /// Get the animation progress (1.0 = fully open, 0.0 = fully closed)
-  /// Returns current animation value, or 1.0 if not animating (default to open state)
+  /// Returns current animation value, or 1.0 if not animating (default to open
+  /// state)
   pub fn closing_progress(&self) -> f32 {
     self
       .closing_anim
@@ -759,8 +779,8 @@ impl Explorer {
     let border_color = Color::new(text_color.r, text_color.g, text_color.b, 0.15 * close_alpha);
     let position = cx.editor.config().file_tree.position;
     let border_x = match position {
-      crate::editor::FileTreePosition::Left => px_x + px_width - 1.0,  // Right edge
-      crate::editor::FileTreePosition::Right => px_x,                   // Left edge
+      crate::editor::FileTreePosition::Left => px_x + px_width - 1.0, // Right edge
+      crate::editor::FileTreePosition::Right => px_x,                 // Left edge
     };
     surface.draw_rect(border_x, px_y, 1.0, px_height, border_color);
 

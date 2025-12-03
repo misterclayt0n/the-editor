@@ -1022,7 +1022,8 @@ impl Component for EditorView {
 
     // Update and calculate explorer pixel width (using UI font metrics, not buffer
     // font)
-    // Note: We keep the explorer instance alive even when closed to preserve tree layout.
+    // Note: We keep the explorer instance alive even when closed to preserve tree
+    // layout.
     self.explorer_px_width = if let Some(ref mut explorer) = self.explorer {
       // Update closing animation (but don't destroy explorer when complete)
       explorer.update_closing(cx.dt);
@@ -1141,7 +1142,8 @@ impl Component for EditorView {
     };
 
     if use_bufferline {
-      // Offset bufferline by explorer width so it doesn't overlap (only for left-side explorer)
+      // Offset bufferline by explorer width so it doesn't overlap (only for left-side
+      // explorer)
       self.bufferline_height = bufferline::render(
         cx.editor,
         content_x_offset,
@@ -1388,7 +1390,8 @@ impl Component for EditorView {
           }
         }
 
-        // Add content_x_offset to gutter and content X positions (only for left-side explorer)
+        // Add content_x_offset to gutter and content X positions (only for left-side
+        // explorer)
         let gutter_x = content_x_offset + gutter_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
         let mut base_x = content_x_offset + content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
 

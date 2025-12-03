@@ -885,7 +885,7 @@ pub enum FileTreePosition {
 pub struct FileTreeConfig {
   /// Position of the file tree panel. Can be "left" or "right".
   /// Defaults to "left".
-  pub position: FileTreePosition,
+  pub position:    FileTreePosition,
   /// Auto-reveal the current file in the explorer when switching documents.
   /// When enabled, the file tree will expand folders and select the currently
   /// focused file, similar to "Reveal in Side Bar" in VS Code or Zed.
@@ -896,7 +896,7 @@ pub struct FileTreeConfig {
 impl Default for FileTreeConfig {
   fn default() -> Self {
     Self {
-      position: FileTreePosition::Left,
+      position:    FileTreePosition::Left,
       auto_reveal: false,
     }
   }

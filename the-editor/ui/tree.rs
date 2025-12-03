@@ -22,7 +22,6 @@ use crate::{
   },
 };
 
-
 /// Truncate a string to fit within a given pixel width, adding ellipsis if
 /// needed.
 fn truncate_to_width<'a>(text: &'a str, max_width: f32, char_width: f32) -> Cow<'a, str> {

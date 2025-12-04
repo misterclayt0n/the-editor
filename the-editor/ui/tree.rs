@@ -569,6 +569,32 @@ impl<T: TreeViewItem> TreeView<T> {
     Ok(())
   }
 
+  /// Update tree animations. Should be called every frame even when not rendering
+  /// to keep animations in sync.
+  pub fn tick_animations(&mut self, dt: f32) {
+    self.selection_anim.update(dt);
+
+    if let Some(ref mut anim) = self.entrance_anim {
+      anim.update(dt);
+      if anim.is_complete() {
+        self.entrance_anim = None;
+      }
+    }
+
+    if let Some((_folder_idx, _is_expanding, ref mut anim, _num_children)) = self.folder_anim {
+      anim.update(dt);
+      if anim.is_complete() {
+        self.folder_anim = None;
+        if let Some(pending_idx) = self.pending_folder_close.take() {
+          if let Ok(folder) = self.get_mut(pending_idx) {
+            folder.close();
+          }
+          self.regenerate_index();
+        }
+      }
+    }
+  }
+
   fn move_to_first_line(&mut self) {
     self.move_up(usize::MAX / 2)
   }

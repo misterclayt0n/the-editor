@@ -13,10 +13,6 @@ use std::{
   },
 };
 
-// that works, but we should also color the directory text, not just the file itself, in a
-// recursive way:d
-//
-// /home/mister/Pictures/Screenshots/Screenshot from 2025-12-02 11-08-04.png
 use anyhow::{
   Result,
   bail,
@@ -232,14 +228,6 @@ fn dir_entry_to_file_info(
   })
 }
 
-#[derive(Clone, Debug)]
-enum PromptAction {
-  CreateFileOrFolder,
-  RemoveFolder,
-  RemoveFile,
-  RenameFile,
-}
-
 #[derive(Clone, Debug, Default)]
 struct State {
   focus:        bool,
@@ -275,7 +263,6 @@ pub struct Explorer {
   history:          Vec<ExplorerHistory>,
   show_help:        bool,
   state:            State,
-  prompt:           Option<(PromptAction, Prompt)>,
   #[allow(clippy::type_complexity)]
   on_next_key:      Option<Box<dyn FnMut(&mut Context, &mut Self, &KeyBinding) -> EventResult>>,
   column_width:     u16,
@@ -304,7 +291,6 @@ impl Explorer {
       history:          vec![],
       show_help:        false,
       state:            State::new(true, current_root.clone()),
-      prompt:           None,
       on_next_key:      None,
       column_width:     DEFAULT_EXPLORER_COLUMN_WIDTH,
       closing_anim:     None,
@@ -326,7 +312,6 @@ impl Explorer {
       history: vec![],
       show_help: false,
       state: State::new(true, root),
-      prompt: None,
       on_next_key: None,
       column_width,
       closing_anim: None,
@@ -421,6 +406,18 @@ impl Explorer {
     self.reveal_file(path)
   }
 
+  /// Refresh the tree and reveal a specific path.
+  /// Used after file operations (create, rename, delete) to update the tree.
+  pub fn refresh_and_reveal(&mut self, path: PathBuf) -> Result<()> {
+    self.tree.refresh()?;
+    self.reveal_file(path)
+  }
+
+  /// Refresh the tree without revealing any specific file.
+  pub fn refresh(&mut self) -> Result<()> {
+    self.tree.refresh()
+  }
+
   pub fn focus(&mut self) {
     self.state.focus = true;
     // If explorer is currently closed, start opening animation
@@ -463,6 +460,9 @@ impl Explorer {
   /// Update the closing/opening animation. Returns true if explorer should be
   /// removed.
   pub fn update_closing(&mut self, dt: f32) -> bool {
+    // Update tree animations even when explorer is not visible to keep them in sync
+    self.tree.tick_animations(dt);
+
     if let Some(ref mut anim) = self.closing_anim {
       anim.update(dt);
       if anim.is_complete() {
@@ -566,17 +566,193 @@ impl Explorer {
       .unwrap_or(GitFileStatus::None)
   }
 
-  fn new_create_file_or_folder_prompt(&mut self, _cx: &mut Context) -> Result<()> {
+  fn new_create_file_or_folder_prompt(&mut self, cx: &mut Context) -> Result<EventResult> {
+    use std::sync::Arc;
+
+    use crate::ui::components::prompt::{
+      Completion,
+      PromptEvent,
+    };
+
     let folder_path = self.nearest_folder()?;
-    self.prompt = Some((
-      PromptAction::CreateFileOrFolder,
-      Prompt::new(format!(
-        " New file or folder (ends with '{}'): ",
-        std::path::MAIN_SEPARATOR
-      ))
-      .with_prefill(format!("{}/", folder_path.to_string_lossy())),
-    ));
-    Ok(())
+    // Prefill with just the folder path (with trailing separator)
+    let prefill = format!("{}{}", folder_path.to_string_lossy(), std::path::MAIN_SEPARATOR);
+
+    // Set custom mode string for the statusline
+    cx.editor.set_custom_mode_str("ADD FILE".to_string());
+
+    // Set mode to Command so prompt keybindings work
+    cx.editor.set_mode(crate::keymap::Mode::Command);
+
+    // Create file path completion function
+    let file_completion: Arc<dyn Fn(&crate::editor::Editor, &str) -> Vec<Completion> + Send + Sync> =
+      Arc::new(|_editor, input| {
+        if input.is_empty() {
+          return Vec::new();
+        }
+
+        let path = PathBuf::from(input);
+
+        // Determine the directory to list and the prefix to filter by
+        let (dir_to_list, prefix) = if input.ends_with(std::path::MAIN_SEPARATOR) {
+          // Input ends with separator, list that directory
+          (path.clone(), String::new())
+        } else if path.is_dir() {
+          // Input is an existing directory without trailing separator
+          (path.clone(), String::new())
+        } else {
+          // Input is a partial path, get parent dir and filename prefix
+          let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+          let file_prefix = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+          (parent.to_path_buf(), file_prefix)
+        };
+
+        // Read directory entries
+        let Ok(entries) = std::fs::read_dir(&dir_to_list) else {
+          return Vec::new();
+        };
+
+        let mut items = Vec::new();
+        let prefix_lower = prefix.to_lowercase();
+
+        for entry in entries.flatten() {
+          let entry_path = entry.path();
+          let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+          };
+
+          // Filter by prefix (case-insensitive)
+          if !prefix.is_empty() && !file_name.to_lowercase().starts_with(&prefix_lower) {
+            continue;
+          }
+
+          // Skip hidden files unless prefix starts with '.'
+          if file_name.starts_with('.') && !prefix.starts_with('.') {
+            continue;
+          }
+
+          let is_dir = entry_path.is_dir();
+
+          // Build the full completion path
+          let completion_path = dir_to_list.join(file_name);
+          let completion_text = if is_dir {
+            format!("{}{}", completion_path.display(), std::path::MAIN_SEPARATOR)
+          } else {
+            completion_path.display().to_string()
+          };
+
+          // Calculate the range to replace (from the start of input)
+          let range = 0..;
+
+          items.push(Completion {
+            range,
+            text: completion_text,
+            doc: Some(if is_dir {
+              "directory".to_string()
+            } else {
+              "file".to_string()
+            }),
+          });
+        }
+
+        // Sort: directories first, then files, both alphabetically
+        items.sort_by(|a, b| {
+          let a_is_dir = a.text.ends_with(std::path::MAIN_SEPARATOR);
+          let b_is_dir = b.text.ends_with(std::path::MAIN_SEPARATOR);
+          match (a_is_dir, b_is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.text.cmp(&b.text),
+          }
+        });
+
+        items
+      });
+
+    let prompt = Prompt::new(String::new())
+      .with_prefill(prefill)
+      .with_completion(file_completion)
+    .with_callback(move |cx, input, event| {
+      match event {
+        PromptEvent::Validate => {
+          // Clear custom mode string
+          cx.editor.clear_custom_mode_str();
+
+          if input.is_empty() {
+            return;
+          }
+
+          let path = the_editor_stdx::path::normalize(PathBuf::from(input));
+          let is_folder = input.ends_with(std::path::MAIN_SEPARATOR);
+
+          let result = if is_folder {
+            std::fs::create_dir_all(&path).map_err(anyhow::Error::from)
+          } else {
+            // Create parent directories if needed
+            if let Some(parent) = path.parent() {
+              if let Err(e) = std::fs::create_dir_all(parent) {
+                cx.editor.set_error(format!("Failed to create parent directory: {}", e));
+                return;
+              }
+            }
+            std::fs::OpenOptions::new()
+              .create_new(true)
+              .write(true)
+              .open(&path)
+              .map(|_| ())
+              .map_err(anyhow::Error::from)
+          };
+
+          match &result {
+            Ok(()) => {
+              cx.editor.set_status(format!(
+                "Created {}",
+                if is_folder { "folder" } else { "file" }
+              ));
+            },
+            Err(e) => {
+              cx.editor.set_error(format!("Failed to create: {}", e));
+            },
+          }
+
+          // Refresh the explorer tree after successful file operation
+          if result.is_ok() {
+            let path_to_reveal = path.clone();
+            crate::ui::job::dispatch_blocking(move |_editor, compositor| {
+              if let Some(editor_view) = compositor.find::<crate::ui::EditorView>() {
+                if let Some(explorer) = editor_view.explorer_mut() {
+                  let _ = explorer.refresh_and_reveal(path_to_reveal);
+                }
+              }
+            });
+          }
+        },
+        PromptEvent::Abort => {
+          // Clear custom mode string on abort
+          cx.editor.clear_custom_mode_str();
+        },
+        PromptEvent::Update => {},
+      }
+    });
+
+    Ok(EventResult::Consumed(Some(Box::new(move |compositor, _cx| {
+      // Find the statusline and trigger slide animation
+      for layer in compositor.layers.iter_mut() {
+        if let Some(statusline) = layer
+          .as_any_mut()
+          .downcast_mut::<crate::ui::components::statusline::StatusLine>()
+        {
+          statusline.slide_for_prompt(true);
+          break;
+        }
+      }
+
+      compositor.push(Box::new(prompt));
+    }))))
   }
 
   fn nearest_folder(&self) -> Result<PathBuf> {
@@ -594,39 +770,260 @@ impl Explorer {
     }
   }
 
-  fn new_remove_prompt(&mut self) -> Result<()> {
+  fn new_remove_prompt(&mut self, cx: &mut Context) -> Result<EventResult> {
     let item = self.tree.current()?.item();
     match item.file_type {
-      FileType::Folder => self.new_remove_folder_prompt(),
-      FileType::File => self.new_remove_file_prompt(),
+      FileType::Folder => self.new_remove_folder_prompt(cx),
+      FileType::File => self.new_remove_file_prompt(cx),
       FileType::Root => bail!("Root is not removable"),
     }
   }
 
-  fn new_rename_prompt(&mut self, _cx: &mut Context) -> Result<()> {
+  fn new_rename_prompt(&mut self, cx: &mut Context) -> Result<EventResult> {
+    use std::sync::Arc;
+
+    use crate::ui::components::prompt::{
+      Completion,
+      PromptEvent,
+    };
+
     let path = self.tree.current_item()?.path.clone();
-    self.prompt = Some((
-      PromptAction::RenameFile,
-      Prompt::new(" Rename to ".into()).with_prefill(path.to_string_lossy().to_string()),
-    ));
-    Ok(())
+    let prefill = path.to_string_lossy().to_string();
+    let original_path = path.clone();
+
+    // Set custom mode string for the statusline
+    cx.editor.set_custom_mode_str("RENAME".to_string());
+
+    // Set mode to Command so prompt keybindings work
+    cx.editor.set_mode(crate::keymap::Mode::Command);
+
+    // Create file path completion function
+    let file_completion: Arc<dyn Fn(&crate::editor::Editor, &str) -> Vec<Completion> + Send + Sync> =
+      Arc::new(|_editor, input| {
+        if input.is_empty() {
+          return Vec::new();
+        }
+
+        let path = PathBuf::from(input);
+
+        // Determine the directory to list and the prefix to filter by
+        let (dir_to_list, prefix) = if input.ends_with(std::path::MAIN_SEPARATOR) {
+          (path.clone(), String::new())
+        } else if path.is_dir() {
+          (path.clone(), String::new())
+        } else {
+          let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+          let file_prefix = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+          (parent.to_path_buf(), file_prefix)
+        };
+
+        let Ok(entries) = std::fs::read_dir(&dir_to_list) else {
+          return Vec::new();
+        };
+
+        let mut items = Vec::new();
+        let prefix_lower = prefix.to_lowercase();
+
+        for entry in entries.flatten() {
+          let entry_path = entry.path();
+          let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+          };
+
+          if !prefix.is_empty() && !file_name.to_lowercase().starts_with(&prefix_lower) {
+            continue;
+          }
+
+          if file_name.starts_with('.') && !prefix.starts_with('.') {
+            continue;
+          }
+
+          let is_dir = entry_path.is_dir();
+          let completion_path = dir_to_list.join(file_name);
+          let completion_text = if is_dir {
+            format!("{}{}", completion_path.display(), std::path::MAIN_SEPARATOR)
+          } else {
+            completion_path.display().to_string()
+          };
+
+          items.push(Completion {
+            range: 0..,
+            text: completion_text,
+            doc: Some(if is_dir { "directory" } else { "file" }.to_string()),
+          });
+        }
+
+        items.sort_by(|a, b| {
+          let a_is_dir = a.text.ends_with(std::path::MAIN_SEPARATOR);
+          let b_is_dir = b.text.ends_with(std::path::MAIN_SEPARATOR);
+          match (a_is_dir, b_is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.text.cmp(&b.text),
+          }
+        });
+
+        items
+      });
+
+    let prompt = Prompt::new(String::new())
+      .with_prefill(prefill)
+      .with_completion(file_completion)
+      .with_callback(move |cx, input, event| {
+        match event {
+          PromptEvent::Validate => {
+            // Clear custom mode string
+            cx.editor.clear_custom_mode_str();
+
+            if input.is_empty() {
+              return;
+            }
+
+            let new_path = PathBuf::from(input);
+
+            // Create parent directories if needed
+            if let Some(parent) = new_path.parent() {
+              if let Err(e) = std::fs::create_dir_all(parent) {
+                cx.editor.set_error(format!("Failed to create parent directory: {}", e));
+                return;
+              }
+            }
+
+            let rename_result = std::fs::rename(&original_path, &new_path);
+
+            match &rename_result {
+              Ok(()) => {
+                cx.editor.set_status(format!(
+                  "Renamed '{}' to '{}'",
+                  original_path.display(),
+                  new_path.display()
+                ));
+              },
+              Err(e) => {
+                cx.editor.set_error(format!("Failed to rename: {}", e));
+              },
+            }
+
+            // Refresh the explorer tree after successful rename
+            if rename_result.is_ok() {
+              let path_to_reveal = new_path.clone();
+              crate::ui::job::dispatch_blocking(move |_editor, compositor| {
+                if let Some(editor_view) = compositor.find::<crate::ui::EditorView>() {
+                  if let Some(explorer) = editor_view.explorer_mut() {
+                    let _ = explorer.refresh_and_reveal(path_to_reveal);
+                  }
+                }
+              });
+            }
+          },
+          PromptEvent::Abort => {
+            // Clear custom mode string on abort
+            cx.editor.clear_custom_mode_str();
+          },
+          PromptEvent::Update => {},
+        }
+      });
+
+    Ok(EventResult::Consumed(Some(Box::new(move |compositor, _cx| {
+      // Find the statusline and trigger slide animation
+      for layer in compositor.layers.iter_mut() {
+        if let Some(statusline) = layer
+          .as_any_mut()
+          .downcast_mut::<crate::ui::components::statusline::StatusLine>()
+        {
+          statusline.slide_for_prompt(true);
+          break;
+        }
+      }
+
+      compositor.push(Box::new(prompt));
+    }))))
   }
 
-  fn new_remove_file_prompt(&mut self) -> Result<()> {
+  fn new_remove_file_prompt(&mut self, cx: &mut Context) -> Result<EventResult> {
+    use crate::ui::components::prompt::PromptEvent;
+
     let item = self.tree.current_item()?;
     ensure!(
       item.path.is_file(),
       "The path '{}' is not a file",
       item.path.to_string_lossy()
     );
-    self.prompt = Some((
-      PromptAction::RemoveFile,
-      Prompt::new(format!(" Delete file: '{}'? y/N: ", item.path.display())),
-    ));
-    Ok(())
+
+    let path = item.path.clone();
+    let display_path = path.display().to_string();
+
+    // Set custom mode string for the statusline
+    cx.editor.set_custom_mode_str("DELETE".to_string());
+
+    // Set mode to Command so prompt keybindings work
+    cx.editor.set_mode(crate::keymap::Mode::Command);
+
+    let prompt = Prompt::new(format!(" Delete '{}'? (y/N): ", display_path))
+      .with_callback(move |cx, input, event| {
+        match event {
+          PromptEvent::Validate => {
+            // Clear custom mode string
+            cx.editor.clear_custom_mode_str();
+
+            let input_lower = input.to_lowercase();
+            if input_lower == "y" || input_lower == "yes" {
+              let delete_result = std::fs::remove_file(&path);
+              match &delete_result {
+                Ok(()) => {
+                  cx.editor.set_status(format!("Deleted file '{}'", path.display()));
+                },
+                Err(e) => {
+                  cx.editor.set_error(format!("Failed to delete file: {}", e));
+                },
+              }
+
+              // Refresh the explorer tree after successful delete
+              if delete_result.is_ok() {
+                crate::ui::job::dispatch_blocking(move |_editor, compositor| {
+                  if let Some(editor_view) = compositor.find::<crate::ui::EditorView>() {
+                    if let Some(explorer) = editor_view.explorer_mut() {
+                      let _ = explorer.refresh();
+                    }
+                  }
+                });
+              }
+            } else {
+              cx.editor.set_status("Delete cancelled");
+            }
+          },
+          PromptEvent::Abort => {
+            // Clear custom mode string on abort
+            cx.editor.clear_custom_mode_str();
+            cx.editor.set_status("Delete cancelled");
+          },
+          PromptEvent::Update => {},
+        }
+      });
+
+    Ok(EventResult::Consumed(Some(Box::new(move |compositor, _cx| {
+      // Find the statusline and trigger slide animation
+      for layer in compositor.layers.iter_mut() {
+        if let Some(statusline) = layer
+          .as_any_mut()
+          .downcast_mut::<crate::ui::components::statusline::StatusLine>()
+        {
+          statusline.slide_for_prompt(true);
+          break;
+        }
+      }
+
+      compositor.push(Box::new(prompt));
+    }))))
   }
 
-  fn new_remove_folder_prompt(&mut self) -> Result<()> {
+  fn new_remove_folder_prompt(&mut self, cx: &mut Context) -> Result<EventResult> {
+    use crate::ui::components::prompt::PromptEvent;
+
     let item = self.tree.current_item()?;
     ensure!(
       item.path.is_dir(),
@@ -634,11 +1031,71 @@ impl Explorer {
       item.path.to_string_lossy()
     );
 
-    self.prompt = Some((
-      PromptAction::RemoveFolder,
-      Prompt::new(format!(" Delete folder: '{}'? y/N: ", item.path.display())),
-    ));
-    Ok(())
+    let path = item.path.clone();
+    let display_path = path.display().to_string();
+
+    // Set custom mode string for the statusline
+    cx.editor.set_custom_mode_str("DELETE".to_string());
+
+    // Set mode to Command so prompt keybindings work
+    cx.editor.set_mode(crate::keymap::Mode::Command);
+
+    let prompt = Prompt::new(format!(" Delete '{}'? (y/N): ", display_path))
+      .with_callback(move |cx, input, event| {
+        match event {
+          PromptEvent::Validate => {
+            // Clear custom mode string
+            cx.editor.clear_custom_mode_str();
+
+            let input_lower = input.to_lowercase();
+            if input_lower == "y" || input_lower == "yes" {
+              let delete_result = std::fs::remove_dir_all(&path);
+              match &delete_result {
+                Ok(()) => {
+                  cx.editor.set_status(format!("Deleted folder '{}'", path.display()));
+                },
+                Err(e) => {
+                  cx.editor.set_error(format!("Failed to delete folder: {}", e));
+                },
+              }
+
+              // Refresh the explorer tree after successful delete
+              if delete_result.is_ok() {
+                crate::ui::job::dispatch_blocking(move |_editor, compositor| {
+                  if let Some(editor_view) = compositor.find::<crate::ui::EditorView>() {
+                    if let Some(explorer) = editor_view.explorer_mut() {
+                      let _ = explorer.refresh();
+                    }
+                  }
+                });
+              }
+            } else {
+              cx.editor.set_status("Delete cancelled");
+            }
+          },
+          PromptEvent::Abort => {
+            // Clear custom mode string on abort
+            cx.editor.clear_custom_mode_str();
+            cx.editor.set_status("Delete cancelled");
+          },
+          PromptEvent::Update => {},
+        }
+      });
+
+    Ok(EventResult::Consumed(Some(Box::new(move |compositor, _cx| {
+      // Find the statusline and trigger slide animation
+      for layer in compositor.layers.iter_mut() {
+        if let Some(statusline) = layer
+          .as_any_mut()
+          .downcast_mut::<crate::ui::components::statusline::StatusLine>()
+        {
+          statusline.slide_for_prompt(true);
+          break;
+        }
+      }
+
+      compositor.push(Box::new(prompt));
+    }))))
   }
 
   fn toggle_current(item: &mut FileInfo, cx: &mut Context, state: &mut State) -> TreeOp {
@@ -866,83 +1323,6 @@ impl Explorer {
     self.tree.scroll(delta);
   }
 
-  fn handle_prompt_event(&mut self, event: &KeyBinding, cx: &mut Context) -> EventResult {
-    let result = (|| -> Result<EventResult> {
-      let (action, mut prompt) = match self.prompt.take() {
-        Some((action, p)) => (action, p),
-        _ => return Ok(EventResult::Ignored(None)),
-      };
-      let line = prompt.input().to_string();
-
-      let current_item_path = self.tree.current_item()?.path.clone();
-
-      // Check for Enter key (no modifiers)
-      let is_enter = matches!(event.code, Key::Enter) && !event.ctrl && !event.alt && !event.shift;
-      // Check for Escape key
-      let is_esc = matches!(event.code, Key::Escape) && !event.ctrl && !event.alt && !event.shift;
-      // Check for Ctrl+C
-      let is_ctrl_c =
-        matches!(event.code, Key::Char('c')) && event.ctrl && !event.alt && !event.shift;
-      // Check for 'y' key
-      let is_y = matches!(event.code, Key::Char('y')) && !event.ctrl && !event.alt && !event.shift;
-
-      match &action {
-        PromptAction::CreateFileOrFolder if is_enter => {
-          if line.ends_with(std::path::MAIN_SEPARATOR) {
-            self.new_folder(&line)?
-          } else {
-            self.new_file(&line)?
-          }
-        },
-        PromptAction::RemoveFolder if is_y => {
-          close_documents(current_item_path, cx)?;
-          self.remove_folder()?;
-        },
-        PromptAction::RemoveFile if is_y => {
-          close_documents(current_item_path, cx)?;
-          self.remove_file()?;
-        },
-        PromptAction::RenameFile if is_enter => {
-          close_documents(current_item_path, cx)?;
-          self.rename_current(&line)?;
-        },
-        _ if is_esc || is_ctrl_c => {
-          // Cancel prompt
-        },
-        _ => {
-          prompt.handle_event(&Event::Key(*event), cx);
-          self.prompt = Some((action, prompt));
-        },
-      }
-      Ok(EventResult::Consumed(None))
-    })();
-    match result {
-      Ok(event_result) => event_result,
-      Err(err) => {
-        cx.editor.set_error(err.to_string());
-        EventResult::Consumed(None)
-      },
-    }
-  }
-
-  fn new_file(&mut self, path: &str) -> Result<()> {
-    let path = the_editor_stdx::path::normalize(PathBuf::from(path));
-    if let Some(parent) = path.parent() {
-      std::fs::create_dir_all(parent)?;
-    }
-    let mut fd = std::fs::OpenOptions::new();
-    fd.create_new(true).write(true).open(&path)?;
-    self.tree.refresh()?;
-    self.reveal_file(path)
-  }
-
-  fn new_folder(&mut self, path: &str) -> Result<()> {
-    let path = the_editor_stdx::path::normalize(PathBuf::from(path));
-    std::fs::create_dir_all(&path)?;
-    self.tree.refresh()?;
-    self.reveal_file(path)
-  }
-
   fn toggle_help(&mut self) {
     self.show_help = !self.show_help
   }
@@ -989,62 +1369,6 @@ impl Explorer {
   fn decrease_size(&mut self) {
     self.column_width = self.column_width.saturating_sub(1)
   }
-
-  fn rename_current(&mut self, line: &str) -> Result<()> {
-    let item = self.tree.current_item()?;
-    let path = PathBuf::from(line);
-    if let Some(parent) = path.parent() {
-      std::fs::create_dir_all(parent)?;
-    }
-    std::fs::rename(&item.path, &path)?;
-    self.tree.refresh()?;
-    self.reveal_file(path)
-  }
-
-  fn remove_folder(&mut self) -> Result<()> {
-    let item = self.tree.current_item()?;
-    std::fs::remove_dir_all(&item.path)?;
-    self.tree.refresh()
-  }
-
-  fn remove_file(&mut self) -> Result<()> {
-    let item = self.tree.current_item()?;
-    std::fs::remove_file(&item.path)?;
-    self.tree.refresh()
-  }
-}
-
-fn close_documents(current_item_path: PathBuf, cx: &mut Context) -> Result<()> {
-  use crate::editor::CloseError;
-
-  let ids = cx
-    .editor
-    .documents
-    .iter()
-    .filter_map(|(id, doc)| {
-      if doc.path()?.starts_with(&current_item_path) {
-        Some(*id)
-      } else {
-        None
-      }
-    })
-    .collect::<Vec<_>>();
-
-  for id in ids {
-    match cx.editor.close_document(id, true) {
-      Ok(()) => {},
-      Err(CloseError::DoesNotExist) => {
-        // Document already closed, ignore
-      },
-      Err(CloseError::BufferModified(name)) => {
-        bail!("Buffer '{}' is modified", name);
-      },
-      Err(CloseError::SaveError(e)) => {
-        return Err(e);
-      },
-    }
-  }
-  Ok(())
 }
 
 impl Component for Explorer {
@@ -1065,77 +1389,81 @@ impl Component for Explorer {
       return on_next_key(cx, self, key_event);
     }
 
-    if let EventResult::Consumed(c) = self.handle_prompt_event(key_event, cx) {
-      return EventResult::Consumed(c);
+    // Check for shifted keys
+    if key_event.shift && !key_event.ctrl && !key_event.alt {
+      match key_event.code {
+        Key::Char('B') => {
+          if let Err(err) = self.change_root_parent_folder() {
+            cx.editor.set_error(format!("{err}"));
+          }
+          return EventResult::Consumed(None);
+        },
+        _ => {},
+      }
     }
 
-    (|| -> Result<()> {
-      // Check for shifted keys
-      if key_event.shift && !key_event.ctrl && !key_event.alt {
-        match key_event.code {
-          Key::Char('B') => {
-            self.change_root_parent_folder()?;
-            return Ok(());
-          },
-          _ => {},
-        }
+    // Check for regular keys (no modifiers)
+    if !key_event.ctrl && !key_event.alt && !key_event.shift {
+      match key_event.code {
+        Key::Escape => {
+          self.unfocus();
+          return EventResult::Consumed(None);
+        },
+        Key::Char('q') => {
+          self.close();
+          return EventResult::Consumed(None);
+        },
+        Key::Char('?') => {
+          self.toggle_help();
+          return EventResult::Consumed(None);
+        },
+        Key::Char('a') => {
+          match self.new_create_file_or_folder_prompt(cx) {
+            Ok(result) => return result,
+            Err(err) => cx.editor.set_error(format!("{err}")),
+          }
+          return EventResult::Consumed(None);
+        },
+        Key::Char(']') => {
+          if let Err(err) = self.change_root_to_current_folder() {
+            cx.editor.set_error(format!("{err}"));
+          }
+          return EventResult::Consumed(None);
+        },
+        Key::Char('[') => {
+          self.go_to_previous_root();
+          return EventResult::Consumed(None);
+        },
+        Key::Char('d') => {
+          match self.new_remove_prompt(cx) {
+            Ok(result) => return result,
+            Err(err) => cx.editor.set_error(format!("{err}")),
+          }
+          return EventResult::Consumed(None);
+        },
+        Key::Char('r') => {
+          match self.new_rename_prompt(cx) {
+            Ok(result) => return result,
+            Err(err) => cx.editor.set_error(format!("{err}")),
+          }
+          return EventResult::Consumed(None);
+        },
+        Key::Char('-') | Key::Char('_') => {
+          self.decrease_size();
+          return EventResult::Consumed(None);
+        },
+        Key::Char('+') | Key::Char('=') => {
+          self.increase_size();
+          return EventResult::Consumed(None);
+        },
+        _ => {},
       }
+    }
 
-      // Check for regular keys (no modifiers)
-      if !key_event.ctrl && !key_event.alt && !key_event.shift {
-        match key_event.code {
-          Key::Escape => {
-            self.unfocus();
-            return Ok(());
-          },
-          Key::Char('q') => {
-            self.close();
-            return Ok(());
-          },
-          Key::Char('?') => {
-            self.toggle_help();
-            return Ok(());
-          },
-          Key::Char('a') => {
-            self.new_create_file_or_folder_prompt(cx)?;
-            return Ok(());
-          },
-          Key::Char(']') => {
-            self.change_root_to_current_folder()?;
-            return Ok(());
-          },
-          Key::Char('[') => {
-            self.go_to_previous_root();
-            return Ok(());
-          },
-          Key::Char('d') => {
-            self.new_remove_prompt()?;
-            return Ok(());
-          },
-          Key::Char('r') => {
-            self.new_rename_prompt(cx)?;
-            return Ok(());
-          },
-          Key::Char('-') | Key::Char('_') => {
-            self.decrease_size();
-            return Ok(());
-          },
-          Key::Char('+') | Key::Char('=') => {
-            self.increase_size();
-            return Ok(());
-          },
-          _ => {},
-        }
-      }
-
-      // Pass to tree view
-      self
-        .tree
-        .handle_event(&Event::Key(*key_event), cx, &mut self.state);
-      Ok(())
-    })()
-    .unwrap_or_else(|err| cx.editor.set_error(format!("{err}")));
-
+    // Pass to tree view
+    self
+      .tree
+      .handle_event(&Event::Key(*key_event), cx, &mut self.state);
     EventResult::Consumed(None)
   }
 
@@ -1146,12 +1474,8 @@ impl Component for Explorer {
   }
 
   fn cursor(&self, area: Rect, editor: &Editor) -> (Option<Position>, CursorKind) {
-    if let Some(prompt) = self
-      .prompt
-      .as_ref()
-      .map(|(_, prompt)| prompt)
-      .or_else(|| self.tree.prompt())
-    {
+    // Check if the tree has a search prompt active
+    if let Some(prompt) = self.tree.prompt() {
       let (x, y) = (area.x, area.y + area.height.saturating_sub(1));
       prompt.cursor(Rect::new(x, y, area.width, 1), editor)
     } else {

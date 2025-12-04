@@ -7,6 +7,7 @@
 use the_editor_renderer::{
   Color,
   Key,
+  MouseButton,
   TextSection,
   TextSegment,
   TextStyle,
@@ -26,6 +27,7 @@ use crate::{
   },
   ui::{
     UI_FONT_SIZE,
+    components::button::Button,
     compositor::{
       Callback,
       Component,
@@ -94,17 +96,55 @@ impl ConfirmationConfig {
   }
 }
 
+/// State for an individual button in the popup.
+#[derive(Default)]
+struct ButtonState {
+  hovered:   bool,
+  pressed:   bool,
+  anim_t:    f32,
+  /// Cursor position relative to button top-left (when hovered)
+  cursor_px: Option<(f32, f32)>,
+}
+
+impl ButtonState {
+  /// Update click animation state, returns eased progress
+  fn update_anim(&mut self, dt: f32) -> f32 {
+    let target = if self.pressed { 1.0 } else { 0.0 };
+    let anim_speed = 12.0;
+
+    if (self.anim_t - target).abs() < 0.01 {
+      self.anim_t = target;
+    } else if self.anim_t < target {
+      self.anim_t = (self.anim_t + dt * anim_speed).min(target);
+    } else {
+      self.anim_t = (self.anim_t - dt * anim_speed).max(target);
+    }
+
+    // Smoothstep easing
+    let t = self.anim_t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+  }
+
+  fn is_animating(&self) -> bool {
+    let target = if self.pressed { 1.0 } else { 0.0 };
+    (self.anim_t - target).abs() > 0.01
+  }
+}
+
 /// Popup component for confirmation dialogs.
 /// Appears at top-right corner with a slide-in animation.
 pub struct ConfirmationPopup {
   id:            &'static str,
   title:         String,
   buttons:       [ConfirmationButton; 2],
-  cursor:        usize, // 0 = first button, 1 = second button
+  button_states: [ButtonState; 2],
+  cursor:        usize, // 0 = first button, 1 = second button (keyboard selection)
   animation:     AnimationHandle<f32>,
   closing:       bool,
   close_pending: bool,
   on_result:     Option<ConfirmationCallback>,
+  /// Cached button rects for mouse hit testing (in pixels)
+  button_rects:  [(f32, f32, f32, f32); 2],
 }
 
 impl ConfirmationPopup {
@@ -117,11 +157,13 @@ impl ConfirmationPopup {
       id:            config.id,
       title:         config.title,
       buttons:       config.buttons,
+      button_states: Default::default(),
       cursor:        0,
       animation:     AnimationHandle::new(0.0, 1.0, duration, easing),
       closing:       false,
       close_pending: false,
       on_result:     Some(Box::new(on_result)),
+      button_rects:  [(0.0, 0.0, 0.0, 0.0); 2],
     }
   }
 
@@ -179,6 +221,12 @@ impl ConfirmationPopup {
 
     lines
   }
+
+  /// Check if a point is inside a button rect
+  fn point_in_button(&self, idx: usize, mx: f32, my: f32) -> bool {
+    let (x, y, w, h) = self.button_rects[idx];
+    mx >= x && mx <= x + w && my >= y && my <= y + h
+  }
 }
 
 impl Component for ConfirmationPopup {
@@ -194,50 +242,100 @@ impl Component for ConfirmationPopup {
       return EventResult::Ignored(None);
     }
 
-    let Event::Key(key) = event else {
-      return EventResult::Ignored(None);
-    };
+    match event {
+      Event::Mouse(mouse) => {
+        let (mx, my) = mouse.position;
 
-    match (key.code, key.ctrl, key.alt, key.shift) {
-      // Close/Cancel
-      (Key::Escape, ..) => {
-        self.start_close(ConfirmationResult::Denied, cx);
+        // Update hover state for both buttons
+        for (i, state) in self.button_states.iter_mut().enumerate() {
+          let (bx, by, bw, bh) = self.button_rects[i];
+          let inside = mx >= bx && mx <= bx + bw && my >= by && my <= by + bh;
+
+          if inside {
+            state.hovered = true;
+            state.cursor_px = Some((mx - bx, my - by));
+            // Update keyboard cursor to match hovered button
+            self.cursor = i;
+          } else {
+            state.hovered = false;
+            state.cursor_px = None;
+          }
+        }
+
+        // Handle clicks
+        if let Some(MouseButton::Left) = mouse.button {
+          for i in 0..2 {
+            let inside = self.point_in_button(i, mx, my);
+            if inside && mouse.pressed {
+              self.button_states[i].pressed = true;
+              return EventResult::Consumed(None);
+            } else if self.button_states[i].pressed && !mouse.pressed {
+              self.button_states[i].pressed = false;
+              if inside {
+                // Click completed inside button - trigger action
+                let result = if i == 0 {
+                  ConfirmationResult::Confirmed
+                } else {
+                  ConfirmationResult::Denied
+                };
+                self.start_close(result, cx);
+              }
+              return EventResult::Consumed(None);
+            }
+          }
+        }
+
+        // Consume mouse events over the popup to prevent pass-through
         EventResult::Consumed(None)
       },
 
-      // Navigate between buttons
-      (Key::Left, ..) | (Key::Char('h'), false, false, false) | (Key::Tab, false, false, true) => {
-        self.cursor = 0;
-        EventResult::Consumed(None)
-      },
-      (Key::Right, ..)
-      | (Key::Char('l'), false, false, false)
-      | (Key::Tab, false, false, false) => {
-        self.cursor = 1;
-        EventResult::Consumed(None)
-      },
+      Event::Key(key) => {
+        match (key.code, key.ctrl, key.alt, key.shift) {
+          // Close/Cancel
+          (Key::Escape, ..) => {
+            self.start_close(ConfirmationResult::Denied, cx);
+            EventResult::Consumed(None)
+          },
 
-      // Quick confirm with 'y' or first button shortcut
-      (Key::Char('y'), false, false, false) => {
-        self.start_close(ConfirmationResult::Confirmed, cx);
-        EventResult::Consumed(None)
-      },
+          // Navigate between buttons
+          (Key::Left, ..)
+          | (Key::Char('h'), false, false, false)
+          | (Key::Tab, false, false, true) => {
+            self.cursor = 0;
+            EventResult::Consumed(None)
+          },
+          (Key::Right, ..)
+          | (Key::Char('l'), false, false, false)
+          | (Key::Tab, false, false, false) => {
+            self.cursor = 1;
+            EventResult::Consumed(None)
+          },
 
-      // Quick deny with 'n' or second button shortcut
-      (Key::Char('n'), false, false, false) => {
-        self.start_close(ConfirmationResult::Denied, cx);
-        EventResult::Consumed(None)
-      },
+          // Quick confirm with 'y' or first button shortcut
+          (Key::Char('y'), false, false, false) => {
+            self.start_close(ConfirmationResult::Confirmed, cx);
+            EventResult::Consumed(None)
+          },
 
-      // Confirm selection with Enter
-      (Key::Enter | Key::NumpadEnter, ..) => {
-        let result = if self.cursor == 0 {
-          ConfirmationResult::Confirmed
-        } else {
-          ConfirmationResult::Denied
-        };
-        self.start_close(result, cx);
-        EventResult::Consumed(None)
+          // Quick deny with 'n' or second button shortcut
+          (Key::Char('n'), false, false, false) => {
+            self.start_close(ConfirmationResult::Denied, cx);
+            EventResult::Consumed(None)
+          },
+
+          // Confirm selection with Enter
+          (Key::Enter | Key::NumpadEnter, ..) => {
+            let result = if self.cursor == 0 {
+              ConfirmationResult::Confirmed
+            } else {
+              ConfirmationResult::Denied
+            };
+            self.start_close(result, cx);
+            EventResult::Consumed(None)
+          },
+
+          _ => EventResult::Ignored(None),
+        }
       },
 
       _ => EventResult::Ignored(None),
@@ -319,6 +417,19 @@ impl Component for ConfirmationPopup {
     let popup_x = viewport_width - POPUP_WIDTH - MARGIN + slide_offset;
     let popup_y = MARGIN;
 
+    // Calculate button positions for hit testing
+    let content_x = popup_x + PADDING;
+    let content_width = POPUP_WIDTH - PADDING * 2.0;
+    let buttons_y = popup_y + PADDING + (num_title_lines as f32 * line_height) + PADDING * 0.3;
+    let button_width = (content_width - PADDING) / 2.0;
+    let button_height = line_height + 8.0;
+
+    // Store button rects for mouse hit testing
+    for i in 0..2 {
+      let btn_x = content_x + (i as f32 * (button_width + PADDING));
+      self.button_rects[i] = (btn_x, buttons_y, button_width, button_height);
+    }
+
     // Use overlay region to render on top of other content
     surface.with_overlay_region(popup_x, popup_y, POPUP_WIDTH, popup_height, |surface| {
       // Draw background
@@ -354,10 +465,6 @@ impl Component for ConfirmationPopup {
         accent_color,
       );
 
-      // Content area
-      let content_x = popup_x + PADDING;
-      let content_width = POPUP_WIDTH - PADDING * 2.0;
-
       // Title lines
       let mut y = popup_y + PADDING;
       for line in &title_lines {
@@ -374,47 +481,93 @@ impl Component for ConfirmationPopup {
         y += line_height;
       }
 
-      // Buttons row
-      let buttons_y = y + PADDING * 0.3;
-      let button_width = (content_width - PADDING) / 2.0;
-      let button_height = line_height + 8.0;
-
+      // Buttons
       for (i, button) in self.buttons.iter().enumerate() {
-        let btn_x = content_x + (i as f32 * (button_width + PADDING));
+        let (btn_x, btn_y, btn_w, btn_h) = self.button_rects[i];
+        let state = &mut self.button_states[i];
         let is_selected = i == self.cursor;
+        let btn_radius = 4.0;
 
-        // Button background
-        let btn_bg = if is_selected {
-          let mut c = accent_color;
-          c.a = alpha * 0.3;
-          c
+        // Update button animation
+        let click_t = state.update_anim(cx.dt);
+
+        // Determine button colors based on state
+        let (btn_bg, btn_outline, btn_text_color) = if state.pressed {
+          // Pressed state - darker/more saturated
+          let pressed_bg = {
+            let mut c = accent_color;
+            c.a = alpha * 0.5;
+            c
+          };
+          (pressed_bg, accent_color, text_color)
+        } else if state.hovered || is_selected {
+          // Hovered or keyboard-selected
+          let hover_bg = {
+            let mut c = accent_color;
+            c.a = alpha * 0.3;
+            c
+          };
+          (hover_bg, accent_color, text_color)
         } else {
-          let mut c = text_color;
-          c.a = alpha * 0.08;
-          c
+          // Normal state
+          let normal_bg = {
+            let mut c = text_color;
+            c.a = alpha * 0.08;
+            c
+          };
+          (normal_bg, dim_color, dim_color)
         };
 
-        surface.draw_rounded_rect(btn_x, buttons_y, button_width, button_height, 4.0, btn_bg);
+        // Draw button background
+        surface.draw_rounded_rect(btn_x, btn_y, btn_w, btn_h, btn_radius, btn_bg);
 
-        // Button border when selected
-        if is_selected {
-          surface.draw_rounded_rect_stroke(
+        // Draw button outline
+        surface.draw_rounded_rect_stroke(btn_x, btn_y, btn_w, btn_h, btn_radius, 1.0, btn_outline);
+
+        // Draw hover glow effect using Button's helper
+        if state.hovered {
+          let glow_strength = (1.0 - click_t * 0.7).max(0.0);
+          Button::draw_hover_layers(
+            surface,
             btn_x,
-            buttons_y,
-            button_width,
-            button_height,
-            4.0,
-            1.0,
+            btn_y,
+            btn_w,
+            btn_h,
+            btn_radius,
             accent_color,
+            glow_strength * alpha,
+          );
+        }
+
+        // Draw press glow (bottom glow on click)
+        if click_t > 0.0 {
+          let bottom_center_y = btn_y + btn_h + 1.5;
+          let bottom_glow_strength = click_t * 0.12 * alpha;
+          let bottom_glow = Color::new(
+            accent_color.r,
+            accent_color.g,
+            accent_color.b,
+            bottom_glow_strength,
+          );
+          let bottom_radius = (btn_w * 0.45).max(btn_h * 0.42);
+          surface.draw_rounded_rect_glow(
+            btn_x,
+            btn_y,
+            btn_w,
+            btn_h,
+            btn_radius,
+            btn_x + btn_w * 0.5,
+            bottom_center_y,
+            bottom_radius,
+            bottom_glow,
           );
         }
 
         // Button text
-        let btn_text_color = if is_selected { text_color } else { dim_color };
         let btn_text = format!("{} ({})", button.label, button.shortcut);
         let text_width = btn_text.len() as f32 * char_width;
-        let text_x = btn_x + (button_width - text_width) / 2.0;
-        let text_y = buttons_y + (button_height - UI_FONT_SIZE) / 2.0;
+        let text_x = btn_x + (btn_w - text_width) / 2.0;
+        let text_y = btn_y + (btn_h - UI_FONT_SIZE) / 2.0;
 
         surface.draw_text(TextSection {
           position: (text_x, text_y),
@@ -440,7 +593,18 @@ impl Component for ConfirmationPopup {
     Some(self.id)
   }
 
+  fn should_update(&self) -> bool {
+    // Keep updating while any animation is active
+    !self.animation.is_complete()
+      || self.button_states[0].is_animating()
+      || self.button_states[1].is_animating()
+      || self.button_states[0].hovered
+      || self.button_states[1].hovered
+  }
+
   fn is_animating(&self) -> bool {
     !self.animation.is_complete()
+      || self.button_states[0].is_animating()
+      || self.button_states[1].is_animating()
   }
 }

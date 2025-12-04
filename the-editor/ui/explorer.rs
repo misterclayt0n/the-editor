@@ -493,6 +493,11 @@ impl Explorer {
       .unwrap_or(1.0)
   }
 
+  /// Check if any explorer animation is currently active.
+  pub fn is_animating(&self) -> bool {
+    self.closing_anim.is_some() || self.tree.is_animating()
+  }
+
   pub fn is_focus(&self) -> bool {
     self.state.focus
   }
@@ -576,7 +581,11 @@ impl Explorer {
 
     let folder_path = self.nearest_folder()?;
     // Prefill with just the folder path (with trailing separator)
-    let prefill = format!("{}{}", folder_path.to_string_lossy(), std::path::MAIN_SEPARATOR);
+    let prefill = format!(
+      "{}{}",
+      folder_path.to_string_lossy(),
+      std::path::MAIN_SEPARATOR
+    );
 
     // Set custom mode string for the statusline
     cx.editor.set_custom_mode_str("ADD FILE".to_string());
@@ -585,174 +594,178 @@ impl Explorer {
     cx.editor.set_mode(crate::keymap::Mode::Command);
 
     // Create file path completion function
-    let file_completion: Arc<dyn Fn(&crate::editor::Editor, &str) -> Vec<Completion> + Send + Sync> =
-      Arc::new(|_editor, input| {
-        if input.is_empty() {
-          return Vec::new();
+    let file_completion: Arc<
+      dyn Fn(&crate::editor::Editor, &str) -> Vec<Completion> + Send + Sync,
+    > = Arc::new(|_editor, input| {
+      if input.is_empty() {
+        return Vec::new();
+      }
+
+      let path = PathBuf::from(input);
+
+      // Determine the directory to list and the prefix to filter by
+      let (dir_to_list, prefix) = if input.ends_with(std::path::MAIN_SEPARATOR) {
+        // Input ends with separator, list that directory
+        (path.clone(), String::new())
+      } else if path.is_dir() {
+        // Input is an existing directory without trailing separator
+        (path.clone(), String::new())
+      } else {
+        // Input is a partial path, get parent dir and filename prefix
+        let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let file_prefix = path
+          .file_name()
+          .and_then(|n| n.to_str())
+          .unwrap_or("")
+          .to_string();
+        (parent.to_path_buf(), file_prefix)
+      };
+
+      // Read directory entries
+      let Ok(entries) = std::fs::read_dir(&dir_to_list) else {
+        return Vec::new();
+      };
+
+      let mut items = Vec::new();
+      let prefix_lower = prefix.to_lowercase();
+
+      for entry in entries.flatten() {
+        let entry_path = entry.path();
+        let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str()) else {
+          continue;
+        };
+
+        // Filter by prefix (case-insensitive)
+        if !prefix.is_empty() && !file_name.to_lowercase().starts_with(&prefix_lower) {
+          continue;
         }
 
-        let path = PathBuf::from(input);
+        // Skip hidden files unless prefix starts with '.'
+        if file_name.starts_with('.') && !prefix.starts_with('.') {
+          continue;
+        }
 
-        // Determine the directory to list and the prefix to filter by
-        let (dir_to_list, prefix) = if input.ends_with(std::path::MAIN_SEPARATOR) {
-          // Input ends with separator, list that directory
-          (path.clone(), String::new())
-        } else if path.is_dir() {
-          // Input is an existing directory without trailing separator
-          (path.clone(), String::new())
+        let is_dir = entry_path.is_dir();
+
+        // Build the full completion path
+        let completion_path = dir_to_list.join(file_name);
+        let completion_text = if is_dir {
+          format!("{}{}", completion_path.display(), std::path::MAIN_SEPARATOR)
         } else {
-          // Input is a partial path, get parent dir and filename prefix
-          let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-          let file_prefix = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-          (parent.to_path_buf(), file_prefix)
+          completion_path.display().to_string()
         };
 
-        // Read directory entries
-        let Ok(entries) = std::fs::read_dir(&dir_to_list) else {
-          return Vec::new();
-        };
+        // Calculate the range to replace (from the start of input)
+        let range = 0..;
 
-        let mut items = Vec::new();
-        let prefix_lower = prefix.to_lowercase();
-
-        for entry in entries.flatten() {
-          let entry_path = entry.path();
-          let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-          };
-
-          // Filter by prefix (case-insensitive)
-          if !prefix.is_empty() && !file_name.to_lowercase().starts_with(&prefix_lower) {
-            continue;
-          }
-
-          // Skip hidden files unless prefix starts with '.'
-          if file_name.starts_with('.') && !prefix.starts_with('.') {
-            continue;
-          }
-
-          let is_dir = entry_path.is_dir();
-
-          // Build the full completion path
-          let completion_path = dir_to_list.join(file_name);
-          let completion_text = if is_dir {
-            format!("{}{}", completion_path.display(), std::path::MAIN_SEPARATOR)
+        items.push(Completion {
+          range,
+          text: completion_text,
+          doc: Some(if is_dir {
+            "directory".to_string()
           } else {
-            completion_path.display().to_string()
-          };
-
-          // Calculate the range to replace (from the start of input)
-          let range = 0..;
-
-          items.push(Completion {
-            range,
-            text: completion_text,
-            doc: Some(if is_dir {
-              "directory".to_string()
-            } else {
-              "file".to_string()
-            }),
-          });
-        }
-
-        // Sort: directories first, then files, both alphabetically
-        items.sort_by(|a, b| {
-          let a_is_dir = a.text.ends_with(std::path::MAIN_SEPARATOR);
-          let b_is_dir = b.text.ends_with(std::path::MAIN_SEPARATOR);
-          match (a_is_dir, b_is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.text.cmp(&b.text),
-          }
+            "file".to_string()
+          }),
         });
+      }
 
-        items
+      // Sort: directories first, then files, both alphabetically
+      items.sort_by(|a, b| {
+        let a_is_dir = a.text.ends_with(std::path::MAIN_SEPARATOR);
+        let b_is_dir = b.text.ends_with(std::path::MAIN_SEPARATOR);
+        match (a_is_dir, b_is_dir) {
+          (true, false) => std::cmp::Ordering::Less,
+          (false, true) => std::cmp::Ordering::Greater,
+          _ => a.text.cmp(&b.text),
+        }
       });
+
+      items
+    });
 
     let prompt = Prompt::new(String::new())
       .with_prefill(prefill)
       .with_completion(file_completion)
-    .with_callback(move |cx, input, event| {
-      match event {
-        PromptEvent::Validate => {
-          // Clear custom mode string
-          cx.editor.clear_custom_mode_str();
+      .with_callback(move |cx, input, event| {
+        match event {
+          PromptEvent::Validate => {
+            // Clear custom mode string
+            cx.editor.clear_custom_mode_str();
 
-          if input.is_empty() {
-            return;
-          }
-
-          let path = the_editor_stdx::path::normalize(PathBuf::from(input));
-          let is_folder = input.ends_with(std::path::MAIN_SEPARATOR);
-
-          let result = if is_folder {
-            std::fs::create_dir_all(&path).map_err(anyhow::Error::from)
-          } else {
-            // Create parent directories if needed
-            if let Some(parent) = path.parent() {
-              if let Err(e) = std::fs::create_dir_all(parent) {
-                cx.editor.set_error(format!("Failed to create parent directory: {}", e));
-                return;
-              }
+            if input.is_empty() {
+              return;
             }
-            std::fs::OpenOptions::new()
-              .create_new(true)
-              .write(true)
-              .open(&path)
-              .map(|_| ())
-              .map_err(anyhow::Error::from)
-          };
 
-          match &result {
-            Ok(()) => {
-              cx.editor.set_status(format!(
-                "Created {}",
-                if is_folder { "folder" } else { "file" }
-              ));
-            },
-            Err(e) => {
-              cx.editor.set_error(format!("Failed to create: {}", e));
-            },
-          }
+            let path = the_editor_stdx::path::normalize(PathBuf::from(input));
+            let is_folder = input.ends_with(std::path::MAIN_SEPARATOR);
 
-          // Refresh the explorer tree after successful file operation
-          if result.is_ok() {
-            let path_to_reveal = path.clone();
-            crate::ui::job::dispatch_blocking(move |_editor, compositor| {
-              if let Some(editor_view) = compositor.find::<crate::ui::EditorView>() {
-                if let Some(explorer) = editor_view.explorer_mut() {
-                  let _ = explorer.refresh_and_reveal(path_to_reveal);
+            let result = if is_folder {
+              std::fs::create_dir_all(&path).map_err(anyhow::Error::from)
+            } else {
+              // Create parent directories if needed
+              if let Some(parent) = path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                  cx.editor
+                    .set_error(format!("Failed to create parent directory: {}", e));
+                  return;
                 }
               }
-            });
-          }
-        },
-        PromptEvent::Abort => {
-          // Clear custom mode string on abort
-          cx.editor.clear_custom_mode_str();
-        },
-        PromptEvent::Update => {},
-      }
-    });
+              std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&path)
+                .map(|_| ())
+                .map_err(anyhow::Error::from)
+            };
 
-    Ok(EventResult::Consumed(Some(Box::new(move |compositor, _cx| {
-      // Find the statusline and trigger slide animation
-      for layer in compositor.layers.iter_mut() {
-        if let Some(statusline) = layer
-          .as_any_mut()
-          .downcast_mut::<crate::ui::components::statusline::StatusLine>()
-        {
-          statusline.slide_for_prompt(true);
-          break;
+            match &result {
+              Ok(()) => {
+                cx.editor.set_status(format!(
+                  "Created {}",
+                  if is_folder { "folder" } else { "file" }
+                ));
+              },
+              Err(e) => {
+                cx.editor.set_error(format!("Failed to create: {}", e));
+              },
+            }
+
+            // Refresh the explorer tree after successful file operation
+            if result.is_ok() {
+              let path_to_reveal = path.clone();
+              crate::ui::job::dispatch_blocking(move |_editor, compositor| {
+                if let Some(editor_view) = compositor.find::<crate::ui::EditorView>() {
+                  if let Some(explorer) = editor_view.explorer_mut() {
+                    let _ = explorer.refresh_and_reveal(path_to_reveal);
+                  }
+                }
+              });
+            }
+          },
+          PromptEvent::Abort => {
+            // Clear custom mode string on abort
+            cx.editor.clear_custom_mode_str();
+          },
+          PromptEvent::Update => {},
         }
-      }
+      });
 
-      compositor.push(Box::new(prompt));
-    }))))
+    Ok(EventResult::Consumed(Some(Box::new(
+      move |compositor, _cx| {
+        // Find the statusline and trigger slide animation
+        for layer in compositor.layers.iter_mut() {
+          if let Some(statusline) = layer
+            .as_any_mut()
+            .downcast_mut::<crate::ui::components::statusline::StatusLine>()
+          {
+            statusline.slide_for_prompt(true);
+            break;
+          }
+        }
+
+        compositor.push(Box::new(prompt));
+      },
+    ))))
   }
 
   fn nearest_folder(&self) -> Result<PathBuf> {
@@ -798,77 +811,78 @@ impl Explorer {
     cx.editor.set_mode(crate::keymap::Mode::Command);
 
     // Create file path completion function
-    let file_completion: Arc<dyn Fn(&crate::editor::Editor, &str) -> Vec<Completion> + Send + Sync> =
-      Arc::new(|_editor, input| {
-        if input.is_empty() {
-          return Vec::new();
+    let file_completion: Arc<
+      dyn Fn(&crate::editor::Editor, &str) -> Vec<Completion> + Send + Sync,
+    > = Arc::new(|_editor, input| {
+      if input.is_empty() {
+        return Vec::new();
+      }
+
+      let path = PathBuf::from(input);
+
+      // Determine the directory to list and the prefix to filter by
+      let (dir_to_list, prefix) = if input.ends_with(std::path::MAIN_SEPARATOR) {
+        (path.clone(), String::new())
+      } else if path.is_dir() {
+        (path.clone(), String::new())
+      } else {
+        let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let file_prefix = path
+          .file_name()
+          .and_then(|n| n.to_str())
+          .unwrap_or("")
+          .to_string();
+        (parent.to_path_buf(), file_prefix)
+      };
+
+      let Ok(entries) = std::fs::read_dir(&dir_to_list) else {
+        return Vec::new();
+      };
+
+      let mut items = Vec::new();
+      let prefix_lower = prefix.to_lowercase();
+
+      for entry in entries.flatten() {
+        let entry_path = entry.path();
+        let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str()) else {
+          continue;
+        };
+
+        if !prefix.is_empty() && !file_name.to_lowercase().starts_with(&prefix_lower) {
+          continue;
         }
 
-        let path = PathBuf::from(input);
+        if file_name.starts_with('.') && !prefix.starts_with('.') {
+          continue;
+        }
 
-        // Determine the directory to list and the prefix to filter by
-        let (dir_to_list, prefix) = if input.ends_with(std::path::MAIN_SEPARATOR) {
-          (path.clone(), String::new())
-        } else if path.is_dir() {
-          (path.clone(), String::new())
+        let is_dir = entry_path.is_dir();
+        let completion_path = dir_to_list.join(file_name);
+        let completion_text = if is_dir {
+          format!("{}{}", completion_path.display(), std::path::MAIN_SEPARATOR)
         } else {
-          let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-          let file_prefix = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-          (parent.to_path_buf(), file_prefix)
+          completion_path.display().to_string()
         };
 
-        let Ok(entries) = std::fs::read_dir(&dir_to_list) else {
-          return Vec::new();
-        };
-
-        let mut items = Vec::new();
-        let prefix_lower = prefix.to_lowercase();
-
-        for entry in entries.flatten() {
-          let entry_path = entry.path();
-          let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-          };
-
-          if !prefix.is_empty() && !file_name.to_lowercase().starts_with(&prefix_lower) {
-            continue;
-          }
-
-          if file_name.starts_with('.') && !prefix.starts_with('.') {
-            continue;
-          }
-
-          let is_dir = entry_path.is_dir();
-          let completion_path = dir_to_list.join(file_name);
-          let completion_text = if is_dir {
-            format!("{}{}", completion_path.display(), std::path::MAIN_SEPARATOR)
-          } else {
-            completion_path.display().to_string()
-          };
-
-          items.push(Completion {
-            range: 0..,
-            text: completion_text,
-            doc: Some(if is_dir { "directory" } else { "file" }.to_string()),
-          });
-        }
-
-        items.sort_by(|a, b| {
-          let a_is_dir = a.text.ends_with(std::path::MAIN_SEPARATOR);
-          let b_is_dir = b.text.ends_with(std::path::MAIN_SEPARATOR);
-          match (a_is_dir, b_is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.text.cmp(&b.text),
-          }
+        items.push(Completion {
+          range: 0..,
+          text:  completion_text,
+          doc:   Some(if is_dir { "directory" } else { "file" }.to_string()),
         });
+      }
 
-        items
+      items.sort_by(|a, b| {
+        let a_is_dir = a.text.ends_with(std::path::MAIN_SEPARATOR);
+        let b_is_dir = b.text.ends_with(std::path::MAIN_SEPARATOR);
+        match (a_is_dir, b_is_dir) {
+          (true, false) => std::cmp::Ordering::Less,
+          (false, true) => std::cmp::Ordering::Greater,
+          _ => a.text.cmp(&b.text),
+        }
       });
+
+      items
+    });
 
     let prompt = Prompt::new(String::new())
       .with_prefill(prefill)
@@ -888,7 +902,8 @@ impl Explorer {
             // Create parent directories if needed
             if let Some(parent) = new_path.parent() {
               if let Err(e) = std::fs::create_dir_all(parent) {
-                cx.editor.set_error(format!("Failed to create parent directory: {}", e));
+                cx.editor
+                  .set_error(format!("Failed to create parent directory: {}", e));
                 return;
               }
             }
@@ -928,24 +943,31 @@ impl Explorer {
         }
       });
 
-    Ok(EventResult::Consumed(Some(Box::new(move |compositor, _cx| {
-      // Find the statusline and trigger slide animation
-      for layer in compositor.layers.iter_mut() {
-        if let Some(statusline) = layer
-          .as_any_mut()
-          .downcast_mut::<crate::ui::components::statusline::StatusLine>()
-        {
-          statusline.slide_for_prompt(true);
-          break;
+    Ok(EventResult::Consumed(Some(Box::new(
+      move |compositor, _cx| {
+        // Find the statusline and trigger slide animation
+        for layer in compositor.layers.iter_mut() {
+          if let Some(statusline) = layer
+            .as_any_mut()
+            .downcast_mut::<crate::ui::components::statusline::StatusLine>()
+          {
+            statusline.slide_for_prompt(true);
+            break;
+          }
         }
-      }
 
-      compositor.push(Box::new(prompt));
-    }))))
+        compositor.push(Box::new(prompt));
+      },
+    ))))
   }
 
-  fn new_remove_file_prompt(&mut self, cx: &mut Context) -> Result<EventResult> {
-    use crate::ui::components::prompt::PromptEvent;
+  fn new_remove_file_prompt(&mut self, _cx: &mut Context) -> Result<EventResult> {
+    use crate::ui::components::{
+      ConfirmationButton,
+      ConfirmationConfig,
+      ConfirmationPopup,
+      ConfirmationResult,
+    };
 
     let item = self.tree.current_item()?;
     ensure!(
@@ -957,72 +979,57 @@ impl Explorer {
     let path = item.path.clone();
     let display_path = path.display().to_string();
 
-    // Set custom mode string for the statusline
-    cx.editor.set_custom_mode_str("DELETE".to_string());
+    let config = ConfirmationConfig::new("delete-file", format!("Delete '{}'?", display_path))
+      .with_buttons([
+        ConfirmationButton::new("Delete", "y"),
+        ConfirmationButton::new("Cancel", "n"),
+      ]);
 
-    // Set mode to Command so prompt keybindings work
-    cx.editor.set_mode(crate::keymap::Mode::Command);
+    let popup = ConfirmationPopup::new(config, move |cx, result| {
+      match result {
+        ConfirmationResult::Confirmed => {
+          let delete_result = std::fs::remove_file(&path);
+          match &delete_result {
+            Ok(()) => {
+              cx.editor
+                .set_status(format!("Deleted file '{}'", path.display()));
+            },
+            Err(e) => {
+              cx.editor.set_error(format!("Failed to delete file: {}", e));
+            },
+          }
 
-    let prompt = Prompt::new(format!(" Delete '{}'? (y/N): ", display_path))
-      .with_callback(move |cx, input, event| {
-        match event {
-          PromptEvent::Validate => {
-            // Clear custom mode string
-            cx.editor.clear_custom_mode_str();
-
-            let input_lower = input.to_lowercase();
-            if input_lower == "y" || input_lower == "yes" {
-              let delete_result = std::fs::remove_file(&path);
-              match &delete_result {
-                Ok(()) => {
-                  cx.editor.set_status(format!("Deleted file '{}'", path.display()));
-                },
-                Err(e) => {
-                  cx.editor.set_error(format!("Failed to delete file: {}", e));
-                },
+          // Refresh the explorer tree after successful delete
+          if delete_result.is_ok() {
+            crate::ui::job::dispatch_blocking(move |_editor, compositor| {
+              if let Some(editor_view) = compositor.find::<crate::ui::EditorView>() {
+                if let Some(explorer) = editor_view.explorer_mut() {
+                  let _ = explorer.refresh();
+                }
               }
-
-              // Refresh the explorer tree after successful delete
-              if delete_result.is_ok() {
-                crate::ui::job::dispatch_blocking(move |_editor, compositor| {
-                  if let Some(editor_view) = compositor.find::<crate::ui::EditorView>() {
-                    if let Some(explorer) = editor_view.explorer_mut() {
-                      let _ = explorer.refresh();
-                    }
-                  }
-                });
-              }
-            } else {
-              cx.editor.set_status("Delete cancelled");
-            }
-          },
-          PromptEvent::Abort => {
-            // Clear custom mode string on abort
-            cx.editor.clear_custom_mode_str();
-            cx.editor.set_status("Delete cancelled");
-          },
-          PromptEvent::Update => {},
-        }
-      });
-
-    Ok(EventResult::Consumed(Some(Box::new(move |compositor, _cx| {
-      // Find the statusline and trigger slide animation
-      for layer in compositor.layers.iter_mut() {
-        if let Some(statusline) = layer
-          .as_any_mut()
-          .downcast_mut::<crate::ui::components::statusline::StatusLine>()
-        {
-          statusline.slide_for_prompt(true);
-          break;
-        }
+            });
+          }
+        },
+        ConfirmationResult::Denied => {
+          cx.editor.set_status("Delete cancelled");
+        },
       }
+    });
 
-      compositor.push(Box::new(prompt));
-    }))))
+    Ok(EventResult::Consumed(Some(Box::new(
+      move |compositor, _cx| {
+        compositor.push(Box::new(popup));
+      },
+    ))))
   }
 
-  fn new_remove_folder_prompt(&mut self, cx: &mut Context) -> Result<EventResult> {
-    use crate::ui::components::prompt::PromptEvent;
+  fn new_remove_folder_prompt(&mut self, _cx: &mut Context) -> Result<EventResult> {
+    use crate::ui::components::{
+      ConfirmationButton,
+      ConfirmationConfig,
+      ConfirmationPopup,
+      ConfirmationResult,
+    };
 
     let item = self.tree.current_item()?;
     ensure!(
@@ -1034,68 +1041,49 @@ impl Explorer {
     let path = item.path.clone();
     let display_path = path.display().to_string();
 
-    // Set custom mode string for the statusline
-    cx.editor.set_custom_mode_str("DELETE".to_string());
+    let config = ConfirmationConfig::new("delete-folder", format!("Delete '{}'?", display_path))
+      .with_buttons([
+        ConfirmationButton::new("Delete", "y"),
+        ConfirmationButton::new("Cancel", "n"),
+      ]);
 
-    // Set mode to Command so prompt keybindings work
-    cx.editor.set_mode(crate::keymap::Mode::Command);
+    let popup = ConfirmationPopup::new(config, move |cx, result| {
+      match result {
+        ConfirmationResult::Confirmed => {
+          let delete_result = std::fs::remove_dir_all(&path);
+          match &delete_result {
+            Ok(()) => {
+              cx.editor
+                .set_status(format!("Deleted folder '{}'", path.display()));
+            },
+            Err(e) => {
+              cx.editor
+                .set_error(format!("Failed to delete folder: {}", e));
+            },
+          }
 
-    let prompt = Prompt::new(format!(" Delete '{}'? (y/N): ", display_path))
-      .with_callback(move |cx, input, event| {
-        match event {
-          PromptEvent::Validate => {
-            // Clear custom mode string
-            cx.editor.clear_custom_mode_str();
-
-            let input_lower = input.to_lowercase();
-            if input_lower == "y" || input_lower == "yes" {
-              let delete_result = std::fs::remove_dir_all(&path);
-              match &delete_result {
-                Ok(()) => {
-                  cx.editor.set_status(format!("Deleted folder '{}'", path.display()));
-                },
-                Err(e) => {
-                  cx.editor.set_error(format!("Failed to delete folder: {}", e));
-                },
+          // Refresh the explorer tree after successful delete
+          if delete_result.is_ok() {
+            crate::ui::job::dispatch_blocking(move |_editor, compositor| {
+              if let Some(editor_view) = compositor.find::<crate::ui::EditorView>() {
+                if let Some(explorer) = editor_view.explorer_mut() {
+                  let _ = explorer.refresh();
+                }
               }
-
-              // Refresh the explorer tree after successful delete
-              if delete_result.is_ok() {
-                crate::ui::job::dispatch_blocking(move |_editor, compositor| {
-                  if let Some(editor_view) = compositor.find::<crate::ui::EditorView>() {
-                    if let Some(explorer) = editor_view.explorer_mut() {
-                      let _ = explorer.refresh();
-                    }
-                  }
-                });
-              }
-            } else {
-              cx.editor.set_status("Delete cancelled");
-            }
-          },
-          PromptEvent::Abort => {
-            // Clear custom mode string on abort
-            cx.editor.clear_custom_mode_str();
-            cx.editor.set_status("Delete cancelled");
-          },
-          PromptEvent::Update => {},
-        }
-      });
-
-    Ok(EventResult::Consumed(Some(Box::new(move |compositor, _cx| {
-      // Find the statusline and trigger slide animation
-      for layer in compositor.layers.iter_mut() {
-        if let Some(statusline) = layer
-          .as_any_mut()
-          .downcast_mut::<crate::ui::components::statusline::StatusLine>()
-        {
-          statusline.slide_for_prompt(true);
-          break;
-        }
+            });
+          }
+        },
+        ConfirmationResult::Denied => {
+          cx.editor.set_status("Delete cancelled");
+        },
       }
+    });
 
-      compositor.push(Box::new(prompt));
-    }))))
+    Ok(EventResult::Consumed(Some(Box::new(
+      move |compositor, _cx| {
+        compositor.push(Box::new(popup));
+      },
+    ))))
   }
 
   fn toggle_current(item: &mut FileInfo, cx: &mut Context, state: &mut State) -> TreeOp {

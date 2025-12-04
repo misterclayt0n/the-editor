@@ -124,14 +124,15 @@ impl Default for AcpPermissionPopup {
 
 impl Component for AcpPermissionPopup {
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
-    // If closing animation is done, actually remove the component
+    // If closing animation is done, remove the component but let the event
+    // propagate
     if self.close_pending {
-      return EventResult::Consumed(Some(Self::close_callback()));
+      return EventResult::Ignored(Some(Self::close_callback()));
     }
 
-    // Don't handle events while closing
+    // Don't handle events while closing, but let them propagate to other layers
     if self.closing {
-      return EventResult::Consumed(None);
+      return EventResult::Ignored(None);
     }
 
     // Auto-close if no permissions pending
@@ -221,14 +222,8 @@ impl Component for AcpPermissionPopup {
     let font_state = surface.save_font_state();
     surface.configure_font(&font_state.family, UI_FONT_SIZE);
 
-    // Easing for smooth slide
-    let eased = if self.closing {
-      // Ease-in for closing (accelerate out)
-      t * t
-    } else {
-      // Ease-out for opening (decelerate in)
-      1.0 - (1.0 - t).powi(3)
-    };
+    // Use the animated value directly - easing is handled by AnimationHandle
+    let eased = t;
     let alpha = eased;
 
     // Get theme colors

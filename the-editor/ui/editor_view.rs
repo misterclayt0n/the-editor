@@ -687,6 +687,7 @@ impl Component for EditorView {
         .as_ref()
         .is_some_and(|s| s.is_animating())
       || self.dragging_separator.is_some()
+      || self.explorer.as_ref().is_some_and(|e| e.is_animating())
   }
 
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {

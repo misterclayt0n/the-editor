@@ -569,8 +569,8 @@ impl<T: TreeViewItem> TreeView<T> {
     Ok(())
   }
 
-  /// Update tree animations. Should be called every frame even when not rendering
-  /// to keep animations in sync.
+  /// Update tree animations. Should be called every frame even when not
+  /// rendering to keep animations in sync.
   pub fn tick_animations(&mut self, dt: f32) {
     self.selection_anim.update(dt);
 
@@ -593,6 +593,11 @@ impl<T: TreeViewItem> TreeView<T> {
         }
       }
     }
+  }
+
+  /// Check if any tree animation is currently active.
+  pub fn is_animating(&self) -> bool {
+    !self.selection_anim.is_complete() || self.entrance_anim.is_some() || self.folder_anim.is_some()
   }
 
   fn move_to_first_line(&mut self) {

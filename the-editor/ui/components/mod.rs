@@ -4,6 +4,7 @@ pub mod bufferline;
 pub mod button;
 pub mod code_action;
 pub mod completion;
+pub mod confirmation_popup;
 pub mod hover;
 pub mod markdown;
 pub mod picker;
@@ -21,6 +22,12 @@ pub(crate) use code_action::{
   CodeActionMenu,
 };
 pub(crate) use completion::Completion;
+pub(crate) use confirmation_popup::{
+  ConfirmationButton,
+  ConfirmationConfig,
+  ConfirmationPopup,
+  ConfirmationResult,
+};
 pub use picker::{
   Column,
   Picker,

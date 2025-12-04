@@ -23,7 +23,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Fix scrolling (it's not working on trackpad). 
   - [x] VCS indicator.
   - [x] Explorer should react to the open file - Auto reveal.
-  - [ ] Basic file operations -> Create/Delete files/folders.
+  - [x] Basic file operations -> Create/Delete files/folders.
   
 - [ ] Command palette.
 - [x] "reload-all" prompt command.

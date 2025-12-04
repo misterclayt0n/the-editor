@@ -3,6 +3,7 @@ use std::{
   time::Instant,
 };
 
+use once_cell::sync::Lazy;
 use the_editor_renderer::{
   Color,
   TextSection,
@@ -21,6 +22,12 @@ use crate::{
     Surface,
   },
 };
+
+/// Nix icon SVG data for statusline indicator
+const NIX_ICON: &[u8] = include_bytes!("../../../assets/icons/nix.svg");
+
+/// Check if we're running inside a Nix shell (cached at startup)
+static IN_NIX_SHELL: Lazy<bool> = Lazy::new(|| the_editor_stdx::env::env_var_is_set("IN_NIX_SHELL"));
 
 /// Formats a model ID for display in the statusline.
 ///
@@ -435,6 +442,15 @@ impl Component for StatusLine {
         let branch_width = Self::measure_text(&branch_text);
         right_x -= branch_width;
         Self::draw_text(surface, right_x, bar_y, &branch_text, text_color);
+        right_x -= Self::measure_text(" | ");
+      }
+
+      // Nix shell indicator (icon only)
+      if *IN_NIX_SHELL {
+        const NIX_ICON_SIZE: u32 = 18;
+        right_x -= NIX_ICON_SIZE as f32;
+        let icon_y = bar_y + (STATUS_BAR_HEIGHT - NIX_ICON_SIZE as f32) * 0.5;
+        surface.draw_svg_icon(NIX_ICON, right_x, icon_y, NIX_ICON_SIZE, NIX_ICON_SIZE, text_color);
         right_x -= Self::measure_text(" | ");
       }
 

@@ -1323,7 +1323,7 @@ fn find_char_line_ending(editor: &mut Editor, pending: FindCharPending) {
     let cursor = range.cursor(text);
     let cursor_line = range.cursor_line(text);
 
-    let find_on_line = match pending.direction {
+   let find_on_line = match pending.direction {
       Direction::Forward => {
         let on_edge = line_end_char_index(&text, cursor_line) == cursor;
         let line = cursor_line + pending.count - 1 + (on_edge as usize);

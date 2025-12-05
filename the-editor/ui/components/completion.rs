@@ -795,7 +795,6 @@ impl Completion {
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
     let base_text_color = text_color;
-    text_color.a *= alpha;
 
     surface.with_overlay_region(doc_x, doc_y, doc_width, doc_height, |surface| {
       // Draw background

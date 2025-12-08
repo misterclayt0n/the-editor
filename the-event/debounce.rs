@@ -12,6 +12,11 @@ use tokio::{
   time::Instant,
 };
 
+/// Maximum time to block when sending to a full channel.
+/// Keep this very short to avoid UI freezes - better to drop a message
+/// than to freeze the editor.
+const SEND_TIMEOUT_MS: u64 = 2;
+
 /// Async hooks provide a convenient framework for implementing (debounced)
 /// async event handlers. Most synchronous event hooks will likely need to
 /// debounce their events, coordinate multiple different hooks and potentially
@@ -29,12 +34,10 @@ pub trait AsyncHook: Sync + Send + 'static + Sized {
   fn finish_debounce(&mut self);
 
   fn spawn(self) -> mpsc::Sender<Self::Event> {
-    // the capacity doesn't matter too much here, unless the cpu is totally
-    // overwhelmed the cap will never be reached since we always immediately
-    // drain the channel so it should only be reached in case of total CPU
-    // overload. However, a bounded channel is much more efficient so it's nice
-    // to use here
-    let (tx, rx) = mpsc::channel(128);
+    // Use a larger capacity to reduce the chance of blocking.
+    // The channel should rarely fill up since we immediately drain events,
+    // but during rapid typing we want extra headroom.
+    let (tx, rx) = mpsc::channel(256);
     // only spawn worker if we are inside runtime to avoid having to spawn a runtime
     // for unrelated unit tests
     if tokio::runtime::Handle::try_current().is_ok() {
@@ -68,12 +71,33 @@ async fn run<Hook: AsyncHook>(mut hook: Hook, mut rx: mpsc::Receiver<Hook::Event
   }
 }
 
+/// Send an event to a channel, blocking only briefly if the channel is full.
+///
+/// This function is designed to be called from synchronous code that needs to
+/// communicate with async tasks. It prioritizes responsiveness over reliability:
+/// - First attempts a non-blocking send (fast path)
+/// - If the channel is full, blocks for at most `SEND_TIMEOUT_MS` milliseconds
+/// - If still full after timeout, the message is dropped
+///
+/// This trade-off prevents UI freezes when the async system is overwhelmed.
 pub fn send_blocking<T>(tx: &Sender<T>, data: T) {
-  // block_on has some overhead and in practice the channel should basically
-  // never be full anyway so first try sending without blocking
-  if let Err(TrySendError::Full(data)) = tx.try_send(data) {
-    // set a timeout so that we just drop a message instead of freezing the editor
-    // in the worst case
-    let _ = block_on(tx.send_timeout(data, Duration::from_millis(10)));
+  // Fast path: try non-blocking send first
+  match tx.try_send(data) {
+    Ok(()) => {},
+    Err(TrySendError::Full(data)) => {
+      // Channel is full - block briefly but don't freeze the UI
+      // Use a very short timeout to minimize UI impact
+      let _ = block_on(tx.send_timeout(data, Duration::from_millis(SEND_TIMEOUT_MS)));
+    },
+    Err(TrySendError::Closed(_)) => {
+      // Channel is closed, nothing we can do
+      log::warn!("Attempted to send to closed channel");
+    },
   }
+}
+
+/// Try to send an event without blocking at all.
+/// Returns true if the event was sent, false if the channel was full or closed.
+pub fn try_send<T>(tx: &Sender<T>, data: T) -> bool {
+  tx.try_send(data).is_ok()
 }

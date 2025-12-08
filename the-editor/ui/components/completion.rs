@@ -658,6 +658,45 @@ impl Completion {
     log::warn!("Could not find item to replace in completion list");
   }
 
+  /// Update the completion items (for progressive loading from LSP)
+  /// This merges new items with existing ones, re-deduplicating by label and provider
+  pub fn update_items(&mut self, new_items: Vec<CompletionItem>) {
+    use std::collections::HashSet;
+
+    // Build a set of existing item keys (label + provider) for deduplication
+    let mut seen: HashSet<(String, CompletionProvider)> = self
+      .items
+      .iter()
+      .map(|item| {
+        let label = match item {
+          CompletionItem::Lsp(lsp) => lsp.item.label.clone(),
+          CompletionItem::Other(other) => other.label.clone(),
+        };
+        (label, item.provider())
+      })
+      .collect();
+
+    // Add new items that aren't duplicates
+    for item in new_items {
+      let label = match &item {
+        CompletionItem::Lsp(lsp) => lsp.item.label.clone(),
+        CompletionItem::Other(other) => other.label.clone(),
+      };
+      let key = (label, item.provider());
+
+      if !seen.contains(&key) {
+        seen.insert(key);
+        self.items.push(item);
+      }
+    }
+
+    // Re-score with updated items
+    self.score(false);
+
+    // Mark docs as needing resolution again
+    self.doc_resolved = false;
+  }
+
   /// Trigger resolution for the currently selected item
   fn trigger_resolve(&mut self) {
     // Get the current selection index before borrowing resolve_handler
@@ -790,7 +829,7 @@ impl Completion {
       .unwrap_or(Color::new(0.12, 0.12, 0.15, 1.0));
 
     // Apply animation alpha only to text
-    let mut text_color = text_style
+    let text_color = text_style
       .fg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));

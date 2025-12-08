@@ -7,11 +7,17 @@ use std::time::Duration;
 
 use the_editor_event::{
   AsyncHook,
+  TaskController,
+  TaskHandle,
+  cancelable_future,
   register_hook,
 };
 use the_editor_lsp_types::types as lsp;
 use the_editor_stdx::rope::RopeSliceExt;
-use tokio::time::Instant;
+use tokio::{
+  task::JoinSet,
+  time::Instant,
+};
 
 use super::{
   Handlers,
@@ -47,25 +53,23 @@ const AUTO_DEBOUNCE: Duration = Duration::from_millis(120);
 /// Debounce duration for trigger character completions (much shorter)
 const TRIGGER_CHAR_DEBOUNCE: Duration = Duration::from_millis(5);
 
-/// Helper to assert a future is 'static
-fn assert_static<F>(f: F) -> F
-where
-  F: std::future::Future + Send + 'static,
-{
-  f
-}
+/// Timeout for showing first completion result (show fast, update later)
+const FIRST_RESULT_TIMEOUT: Duration = Duration::from_millis(100);
+
+/// Maximum timeout for all completion results
+const ALL_RESULTS_TIMEOUT: Duration = Duration::from_millis(1000);
 
 /// Pending completion request
 #[derive(Debug, Clone, Copy)]
-struct PendingTrigger {
-  cursor: usize,
-  doc:    DocumentId,
-  view:   ViewId,
-  kind:   TriggerKind,
+pub struct PendingTrigger {
+  pub cursor: usize,
+  pub doc:    DocumentId,
+  pub view:   ViewId,
+  pub kind:   TriggerKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TriggerKind {
+pub enum TriggerKind {
   Auto,
   TriggerChar,
   Manual,
@@ -77,6 +81,8 @@ pub struct CompletionRequestHook {
   pending_trigger: Option<PendingTrigger>,
   /// The currently in-flight trigger (being processed)
   in_flight:       Option<PendingTrigger>,
+  /// Task controller for canceling in-flight requests
+  task_controller: TaskController,
 }
 
 impl CompletionRequestHook {
@@ -84,6 +90,7 @@ impl CompletionRequestHook {
     Self {
       pending_trigger: None,
       in_flight:       None,
+      task_controller: TaskController::new(),
     }
   }
 
@@ -97,6 +104,11 @@ impl AsyncHook for CompletionRequestHook {
   type Event = CompletionEvent;
 
   fn handle_event(&mut self, event: Self::Event, _timeout: Option<Instant>) -> Option<Instant> {
+    // Check if previous in-flight request has completed
+    if self.in_flight.is_some() && !self.task_controller.is_running() {
+      self.in_flight = None;
+    }
+
     match event {
       CompletionEvent::AutoTrigger { cursor, doc, view } => {
         // Only set trigger if doc/view match in-flight OR we have no in-flight
@@ -118,7 +130,8 @@ impl AsyncHook for CompletionRequestHook {
         }
       },
       CompletionEvent::TriggerChar { cursor, doc, view } => {
-        // Cancel any pending trigger and set new trigger char request
+        // Cancel any in-flight request and set new trigger char request
+        self.task_controller.cancel();
         self.pending_trigger = Some(PendingTrigger {
           cursor,
           doc,
@@ -129,29 +142,31 @@ impl AsyncHook for CompletionRequestHook {
       },
       CompletionEvent::ManualTrigger { cursor, doc, view } => {
         // Manual triggers should fire immediately without debouncing
-        // We can't return None because that would wait for the next event
-        // Instead, use Instant::now() to expire immediately
         self.pending_trigger = Some(PendingTrigger {
           cursor,
           doc,
           view,
           kind: TriggerKind::Manual,
         });
-        Some(Instant::now()) // Expire immediately
+        // Immediately finish debounce for manual triggers
+        self.finish_debounce();
+        None
       },
       CompletionEvent::DeleteText { cursor } => {
-        // If we deleted before the trigger position, cancel
+        // If we deleted before the trigger position, cancel everything
         if matches!(self.pending_trigger.or(self.in_flight), Some(PendingTrigger{ cursor: trigger_cursor, .. }) if cursor < trigger_cursor)
         {
           self.pending_trigger = None;
-          // TODO: Cancel in-flight request via TaskController
+          self.task_controller.cancel();
+          self.in_flight = None;
         }
         None
       },
       CompletionEvent::Cancel => {
-        // Cancel pending trigger
+        // Cancel pending trigger and in-flight requests
         self.pending_trigger = None;
-        // TODO: Cancel in-flight request via TaskController
+        self.task_controller.cancel();
+        self.in_flight = None;
         None
       },
     }
@@ -159,19 +174,32 @@ impl AsyncHook for CompletionRequestHook {
 
   fn finish_debounce(&mut self) {
     // When debounce timer fires, request completions
-    if let Some(trigger) = self.pending_trigger.take() {
-      self.in_flight = Some(trigger.clone());
-      crate::ui::job::dispatch_blocking(move |editor, compositor| {
-        request_completions_sync(trigger, editor, compositor);
-      });
-    }
+    let Some(trigger) = self.pending_trigger.take() else {
+      return;
+    };
+
+    self.in_flight = Some(trigger);
+    let handle = self.task_controller.restart();
+
+    // Use dispatch_blocking to get on main thread, but keep work minimal
+    crate::ui::job::dispatch_blocking(move |editor, compositor| {
+      request_completions(trigger, handle, editor, compositor);
+    });
   }
 }
 
-/// Synchronous entry point for requesting completions (called from
-/// dispatch_blocking)
-fn request_completions_sync(
+/// Response from a single completion provider
+struct CompletionResponse {
+  items:    Vec<CompletionItem>,
+  provider: LanguageServerId,
+  priority: i8,
+}
+
+/// Entry point for requesting completions (called from dispatch_blocking)
+/// Keeps main thread work minimal - just validates state and spawns async task
+fn request_completions(
   trigger: PendingTrigger,
+  handle: TaskHandle,
   editor: &mut Editor,
   compositor: &mut crate::ui::compositor::Compositor,
 ) {
@@ -201,16 +229,10 @@ fn request_completions_sync(
     return;
   }
 
-  // IMPORTANT: Update trigger position to current cursor
-  // This matches Helix's behavior - send the CURRENT position, not the old
-  // trigger position Language servers need this for incomplete completion lists
-  // and proper filtering
-  // For path completions, we need to adjust trigger_offset to the start of the
-  // path suffix
+  // Calculate trigger offset for path completions
   let mut trigger_offset = cursor;
   let text_slice_for_offset = text.slice(..cursor);
   if let Some(path_suffix) = the_editor_stdx::path::get_path_suffix(text_slice_for_offset, false) {
-    // Adjust trigger_offset to the start of the path suffix
     trigger_offset = cursor - path_suffix.len_chars();
   }
 
@@ -218,7 +240,6 @@ fn request_completions_sync(
   let (lsp_trigger_kind, lsp_trigger_char) = match trigger.kind {
     TriggerKind::Manual => (lsp::CompletionTriggerKind::INVOKED, None),
     TriggerKind::TriggerChar => {
-      // Find the trigger character
       let trigger_char = doc.language_servers().find_map(|ls| {
         ls.capabilities()
           .completion_provider
@@ -238,15 +259,11 @@ fn request_completions_sync(
   };
 
   let doc_id = trigger.doc;
-  let mut completion_futures = Vec::new();
+  let _view_id = trigger.view;
 
-  // Always check for path completion (works for all files, including scratch
-  // files) Check if there's a path suffix at the cursor position
+  // Generate path completions synchronously (fast, local operation)
   let text_slice = text.slice(..cursor);
   let has_path_suffix = the_editor_stdx::path::get_path_suffix(text_slice, false).is_some();
-
-  // Generate path completions if we detect a path, regardless of config
-  // (config can still disable it, but we check for paths in all files)
   let path_completion_items = if has_path_suffix {
     let text_slice = text.slice(..);
     let doc_path = doc.path().map(|p| p.as_path());
@@ -255,16 +272,13 @@ fn request_completions_sync(
     Vec::new()
   };
 
-  // Get document URI and LSP position (may be None for scratch files)
+  // Get document URI (may be None for scratch files)
   let uri_str = doc.uri().map(|u| u.to_string());
 
   // If no URI (scratch file), show path completions if available and return
   if uri_str.is_none() {
     if !path_completion_items.is_empty() {
-      let items = path_completion_items;
-      crate::ui::job::dispatch_blocking(move |editor, compositor| {
-        show_completion(editor, compositor, items, trigger_offset, doc_id);
-      });
+      show_completion(editor, compositor, path_completion_items, trigger_offset, doc_id);
     }
     return;
   }
@@ -273,193 +287,206 @@ fn request_completions_sync(
     return;
   };
 
-  {
-    // Convert path to file:// URL if needed
-    let lsp_uri = if uri_str.starts_with("file://") {
-      url::Url::parse(&uri_str).ok()
-    } else {
-      url::Url::from_file_path(&uri_str).ok()
-    };
+  // Convert path to file:// URL
+  let lsp_uri = if uri_str.starts_with("file://") {
+    url::Url::parse(&uri_str).ok()
+  } else {
+    url::Url::from_file_path(&uri_str).ok()
+  };
 
-    let Some(lsp_uri) = lsp_uri else {
-      // If no valid LSP URI but we have path completions, show them
-      if !path_completion_items.is_empty() {
-        let items = path_completion_items;
-        crate::ui::job::dispatch_blocking(move |editor, compositor| {
-          show_completion(editor, compositor, items, trigger_offset, doc_id);
-        });
-      }
-      return;
-    };
-
-    // Convert cursor position to LSP position
-    let pos = crate::lsp::util::pos_to_lsp_pos(text, cursor, OffsetEncoding::Utf16);
-
-    // Collect completion futures from each language server (now 'static thanks to
-    // BoxFuture)
-    for (priority_index, client) in doc.language_servers().enumerate() {
-      let server_id = client.id();
-      let context = lsp::CompletionContext {
-        trigger_kind:      lsp_trigger_kind,
-        trigger_character: lsp_trigger_char.clone(),
-      };
-
-      // Get the boxed 'static future
-      if let Some(completion_future) = client.completion(
-        lsp::TextDocumentIdentifier {
-          uri: lsp_uri.clone(),
-        },
-        pos,
-        None,
-        context,
-      ) {
-        completion_futures.push((server_id, completion_future, priority_index as i8));
-      }
-    }
-  } // Drop editor borrow here
-
-  // If we have no LSP completions but have path completions, show path
-  // completions immediately
-  if completion_futures.is_empty() {
+  let Some(lsp_uri) = lsp_uri else {
+    // No valid LSP URI but we have path completions, show them
     if !path_completion_items.is_empty() {
-      let items = path_completion_items;
-      crate::ui::job::dispatch_blocking(move |editor, compositor| {
-        show_completion(editor, compositor, items, trigger_offset, doc_id);
+      show_completion(editor, compositor, path_completion_items, trigger_offset, doc_id);
+    }
+    return;
+  };
+
+  // Convert cursor position to LSP position
+  let pos = crate::lsp::util::pos_to_lsp_pos(text, cursor, OffsetEncoding::Utf16);
+
+  // Spawn JoinSet for parallel LSP requests
+  let mut requests: JoinSet<CompletionResponse> = JoinSet::new();
+
+  for (priority_index, client) in doc.language_servers().enumerate() {
+    let server_id = client.id();
+    let context = lsp::CompletionContext {
+      trigger_kind:      lsp_trigger_kind,
+      trigger_character: lsp_trigger_char.clone(),
+    };
+
+    // Get the completion future - it's important this happens synchronously
+    // before any edits so the LSP position is correct
+    if let Some(completion_future) = client.completion(
+      lsp::TextDocumentIdentifier {
+        uri: lsp_uri.clone(),
+      },
+      pos,
+      None,
+      context,
+    ) {
+      let priority = -(priority_index as i8);
+      requests.spawn(async move {
+        let response = completion_future.await;
+        let items = match response {
+          Ok(Some(lsp::CompletionResponse::Array(items))) => items,
+          Ok(Some(lsp::CompletionResponse::List(list))) => list.items,
+          Ok(None) => Vec::new(),
+          Err(err) => {
+            log::warn!("Completion request failed for {:?}: {}", server_id, err);
+            Vec::new()
+          },
+        };
+
+        // Sort by sort_text
+        let mut sorted_items: Vec<_> = items
+          .into_iter()
+          .map(|item| {
+            CompletionItem::Lsp(LspCompletionItem {
+              item,
+              provider: server_id,
+              resolved: false,
+              provider_priority: priority,
+            })
+          })
+          .collect();
+        sorted_items.sort_by(|a, b| {
+          let sort_a = match a {
+            CompletionItem::Lsp(lsp) => {
+              lsp.item.sort_text.as_deref().unwrap_or(&lsp.item.label)
+            },
+            _ => "",
+          };
+          let sort_b = match b {
+            CompletionItem::Lsp(lsp) => {
+              lsp.item.sort_text.as_deref().unwrap_or(&lsp.item.label)
+            },
+            _ => "",
+          };
+          sort_a.cmp(sort_b)
+        });
+
+        CompletionResponse {
+          items: sorted_items,
+          provider: server_id,
+          priority,
+        }
       });
+    }
+  }
+
+  // If we have no LSP completions but have path completions, show them immediately
+  if requests.is_empty() {
+    if !path_completion_items.is_empty() {
+      show_completion(editor, compositor, path_completion_items, trigger_offset, doc_id);
     }
     return;
   }
 
-  // Store path completion items to merge later (clone for the async task)
-  let path_items = path_completion_items.clone();
+  // Spawn async task to collect results progressively
+  let path_items = path_completion_items;
+  let request_completions_task = async move {
+    let mut all_items = path_items;
+    let mut shown_first = false;
 
-  // Now spawn with only owned data
-  tokio::spawn(async move {
-    let mut items = path_items; // Start with path completions
-    let timeout = tokio::time::sleep(Duration::from_millis(1000));
-    tokio::pin!(timeout);
+    // Wait for the first result with a short timeout
+    let first_deadline = Instant::now() + FIRST_RESULT_TIMEOUT;
 
-    for (server_id, completion_future, priority) in completion_futures {
-      tokio::select! {
-        result = completion_future => {
-          match result {
-            Ok(Some(response)) => {
-              let mut lsp_items: Vec<lsp::CompletionItem> = match response {
-                lsp::CompletionResponse::Array(items) => items,
-                lsp::CompletionResponse::List(list) => list.items,
-              };
-              lsp_items.sort_by(|a, b| {
-                let sort_a = a.sort_text.as_deref().unwrap_or(&a.label);
-                let sort_b = b.sort_text.as_deref().unwrap_or(&b.label);
-                sort_a.cmp(sort_b)
-              });
-              for lsp_item in lsp_items {
-                items.push(CompletionItem::Lsp(LspCompletionItem {
-                  item: lsp_item,
-                  provider: server_id,
-                  resolved: false,
-                  provider_priority: -(priority as i8),
-                }));
-              }
-            },
-            Ok(None) => {},
-            Err(err) => {
-              log::warn!("Completion request failed for {:?}: {}", server_id, err);
-            },
+    loop {
+      let result = if !shown_first {
+        // For the first result, use a short timeout
+        tokio::time::timeout_at(first_deadline, requests.join_next()).await
+      } else {
+        // For subsequent results, use a longer timeout
+        let deadline = Instant::now() + ALL_RESULTS_TIMEOUT;
+        tokio::time::timeout_at(deadline, requests.join_next()).await
+      };
+
+      match result {
+        Ok(Some(Ok(response))) => {
+          if response.items.is_empty() {
+            continue;
           }
-        }
-        _ = &mut timeout => {
-          log::warn!("Completion request timed out");
+
+          all_items.extend(response.items);
+
+          if !shown_first {
+            // Show first result immediately via async dispatch
+            shown_first = true;
+            let items_to_show = all_items.clone();
+            crate::ui::job::dispatch(move |editor, compositor| {
+              show_completion(editor, compositor, items_to_show, trigger_offset, doc_id);
+            })
+            .await;
+          } else {
+            // Update existing completion with new items
+            let items_to_update = all_items.clone();
+            crate::ui::job::dispatch(move |editor, compositor| {
+              update_completion(editor, compositor, items_to_update, trigger_offset, doc_id);
+            })
+            .await;
+          }
+        },
+        Ok(Some(Err(join_err))) => {
+          log::warn!("Completion task panicked: {:?}", join_err);
+        },
+        Ok(None) => {
+          // All requests completed
           break;
-        }
-      }
-    }
-
-    // Dispatch back to main thread to show completion
-    crate::ui::job::dispatch(move |editor, compositor| {
-      show_completion(editor, compositor, items, trigger_offset, doc_id);
-    })
-    .await;
-  });
-}
-
-/// Async function to request completions from all LSP servers
-async fn request_completions_async(
-  language_servers: Vec<(LanguageServerId, crate::lsp::Client)>,
-  lsp_uri: url::Url,
-  pos: lsp::Position,
-  trigger_kind: lsp::CompletionTriggerKind,
-  trigger_character: Option<String>,
-) -> Vec<CompletionItem> {
-  let mut items = Vec::new();
-
-  // Request completions from each language server in parallel
-  let mut tasks = Vec::new();
-
-  for (server_id, client) in language_servers {
-    let lsp_uri = lsp_uri.clone();
-    let context = lsp::CompletionContext {
-      trigger_kind,
-      trigger_character: trigger_character.clone(),
-    };
-
-    let future = async move {
-      let completion_future = client.completion(
-        lsp::TextDocumentIdentifier { uri: lsp_uri },
-        pos,
-        None, // work_done_token
-        context,
-      )?;
-
-      match completion_future.await {
-        Ok(Some(response)) => {
-          let items: Vec<lsp::CompletionItem> = match response {
-            lsp::CompletionResponse::Array(items) => items,
-            lsp::CompletionResponse::List(list) => list.items,
-          };
-          Some((server_id, items))
         },
-        Ok(None) => None,
-        Err(err) => {
-          log::warn!("Completion request failed for {:?}: {}", server_id, err);
-          None
-        },
-      }
-    };
-
-    tasks.push(future);
-  }
-
-  // Wait for all requests to complete (with timeout)
-  let timeout = tokio::time::sleep(Duration::from_millis(1000));
-  tokio::pin!(timeout);
-
-  for future in tasks {
-    tokio::select! {
-      result = future => {
-        if let Some((server_id, lsp_items)) = result {
-          // Convert LSP items to our CompletionItem type
-          for lsp_item in lsp_items {
-            items.push(CompletionItem::Lsp(LspCompletionItem {
-              item: lsp_item,
-              provider: server_id,
-              resolved: false,
-              provider_priority: 0, // TODO: assign based on server order
-            }));
+        Err(_timeout) => {
+          if !shown_first && !all_items.is_empty() {
+            // Timed out waiting for first result, show what we have (path completions)
+            let items_to_show = all_items.clone();
+            crate::ui::job::dispatch(move |editor, compositor| {
+              show_completion(editor, compositor, items_to_show, trigger_offset, doc_id);
+            })
+            .await;
+            shown_first = true;
           }
-        }
-      }
-      _ = &mut timeout => {
-        log::warn!("Completion request timed out");
-        break;
+
+          if shown_first {
+            // Already showing results, continue collecting more
+            continue;
+          } else {
+            // Timed out with nothing to show, abort
+            break;
+          }
+        },
       }
     }
-  }
 
-  items
+    // Final update if we collected more items after the initial show
+    if shown_first && !requests.is_empty() {
+      // There might be more results, wait a bit longer
+      while let Ok(Some(Ok(response))) =
+        tokio::time::timeout(Duration::from_millis(50), requests.join_next()).await
+      {
+        if !response.items.is_empty() {
+          all_items.extend(response.items);
+        }
+      }
+
+      // Final update
+      let final_items = all_items;
+      crate::ui::job::dispatch(move |editor, compositor| {
+        update_completion(editor, compositor, final_items, trigger_offset, doc_id);
+      })
+      .await;
+    } else if !shown_first && !all_items.is_empty() {
+      // Never showed anything but have items, show now
+      crate::ui::job::dispatch(move |editor, compositor| {
+        show_completion(editor, compositor, all_items, trigger_offset, doc_id);
+      })
+      .await;
+    }
+  };
+
+  // Spawn the task with cancellation support
+  tokio::spawn(cancelable_future(request_completions_task, handle));
 }
 
-/// Show completion popup in the editor view
+/// Show completion popup in the editor view (creates new popup)
 fn show_completion(
   editor: &mut Editor,
   compositor: &mut crate::ui::compositor::Compositor,
@@ -487,11 +514,46 @@ fn show_completion(
     return;
   };
 
+  // If completion already exists, update instead
+  if editor_view.completion.is_some() {
+    update_completion(editor, compositor, items, trigger_offset, doc_id);
+    return;
+  }
+
   // Mark completion as triggered
   editor.last_completion = Some(crate::editor::CompleteAction::Triggered);
 
   // Set the completion
   editor_view.set_completion(editor, items, trigger_offset);
+}
+
+/// Update existing completion popup with new items (for progressive loading)
+fn update_completion(
+  editor: &mut Editor,
+  compositor: &mut crate::ui::compositor::Compositor,
+  items: Vec<CompletionItem>,
+  _trigger_offset: usize,
+  doc_id: DocumentId,
+) {
+  // Verify we're still in insert mode
+  if editor.mode != Mode::Insert {
+    return;
+  }
+
+  // Verify document still exists
+  if !editor.documents.contains_key(&doc_id) {
+    return;
+  }
+
+  // Get editor view from compositor
+  let Some(editor_view) = compositor.find::<ui::EditorView>() else {
+    return;
+  };
+
+  // Update the completion items if popup exists
+  if let Some(completion) = &mut editor_view.completion {
+    completion.update_items(items);
+  }
 }
 
 /// Register hooks for automatic completion triggering

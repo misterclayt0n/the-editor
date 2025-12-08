@@ -2,19 +2,18 @@
 ///
 /// From the LSP spec:
 /// > If computing full completion items is expensive, servers can additionally
-/// > provide a
-/// > handler for the completion item resolve request. A typical use case is for
-/// > example:
-/// > the `textDocument/completion` request doesn't fill in the `documentation`
-/// > property
-/// > for returned completion items since it is expensive to compute.
-/// > When the item is selected in the user interface then a
-/// > 'completionItem/resolve' request
-/// > is sent with the selected completion item as a parameter.
+/// > provide a handler for the completion item resolve request. A typical use
+/// > case is for example: the `textDocument/completion` request doesn't fill
+/// > in the `documentation` property for returned completion items since it
+/// > is expensive to compute. When the item is selected in the user interface
+/// > then a 'completionItem/resolve' request is sent with the selected
+/// > completion item as a parameter.
 use std::sync::Arc;
 
 use the_editor_event::{
   AsyncHook,
+  TaskController,
+  cancelable_future,
   send_blocking,
 };
 use the_editor_lsp_types::types as lsp;
@@ -107,15 +106,22 @@ struct ResolveRequest {
 #[derive(Default)]
 struct ResolveTimeout {
   /// The next pending request (will be sent after debounce)
-  next_request: Option<ResolveRequest>,
+  next_request:    Option<ResolveRequest>,
   /// The currently in-flight request (being processed by LSP)
-  in_flight:    Option<Arc<LspCompletionItem>>,
+  in_flight:       Option<Arc<LspCompletionItem>>,
+  /// Task controller for cancellation
+  task_controller: TaskController,
 }
 
 impl AsyncHook for ResolveTimeout {
   type Event = ResolveRequest;
 
   fn handle_event(&mut self, request: Self::Event, timeout: Option<Instant>) -> Option<Instant> {
+    // Check if previous in-flight request has completed
+    if self.in_flight.is_some() && !self.task_controller.is_running() {
+      self.in_flight = None;
+    }
+
     // If we already have a pending request for this same item, keep the current
     // timeout
     if self
@@ -147,25 +153,24 @@ impl AsyncHook for ResolveTimeout {
     };
 
     self.in_flight = Some(request.item.clone());
+    let handle = self.task_controller.restart();
 
-    // Spawn async task to resolve the item
-    tokio::spawn(async move {
-      request.execute().await;
-    });
+    // Spawn async task to resolve the item with cancellation support
+    tokio::spawn(cancelable_future(request.execute(), handle));
   }
 }
 
 impl ResolveRequest {
   async fn execute(self) {
-    // Get the language server - we need to do this in a blocking callback
-    // since we need access to the Editor
     let item_arc = self.item.clone();
     let provider = self.provider;
 
     // Create a oneshot channel to get the resolve future from the main thread
+    // This is the minimal work we need to do on the main thread
     let (tx, rx) = tokio::sync::oneshot::channel();
 
-    crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+    // Use async dispatch to avoid blocking the UI thread
+    crate::ui::job::dispatch(move |editor, _compositor| {
       let Some(ls) = editor.language_server_by_id(provider) else {
         log::warn!(
           "Language server {:?} not found for completion resolve",
@@ -190,14 +195,15 @@ impl ResolveRequest {
 
       let future = ls.resolve_completion_item(&item_arc.item);
       let _ = tx.send(Some(future));
-    });
+    })
+    .await;
 
     // Wait for the resolve future from main thread
     let Some(resolve_future) = rx.await.ok().flatten() else {
       return;
     };
 
-    // Await the resolution
+    // Await the resolution (this is the potentially slow LSP call)
     let resolved = match resolve_future.await {
       Ok(item) => {
         CompletionItem::Lsp(LspCompletionItem {
@@ -215,14 +221,15 @@ impl ResolveRequest {
       },
     };
 
-    // Update the completion in the UI
+    // Update the completion in the UI using async dispatch
     let old_item = self.item.clone();
-    crate::ui::job::dispatch_blocking(move |_editor, compositor| {
+    crate::ui::job::dispatch(move |_editor, compositor| {
       if let Some(editor_view) = compositor.find::<crate::ui::EditorView>() {
         if let Some(completion) = &mut editor_view.completion {
           completion.replace_item(&*old_item, resolved);
         }
       }
-    });
+    })
+    .await;
   }
 }

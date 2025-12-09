@@ -947,6 +947,19 @@ impl CommandRegistry {
       },
     ));
 
+    
+    self.register(TypableCommand::new(
+      "log-open",
+      &[],
+      "Open the editor log file",
+      open_log,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
     // Debug-only test command for permissions
     #[cfg(debug_assertions)]
     self.register(TypableCommand::new(
@@ -2762,6 +2775,16 @@ fn acp_deny(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
       .set_status("No pending permission requests".to_string());
   }
 
+  Ok(())
+}
+
+fn open_log(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  cx.editor.open(&the_editor_loader::log_file(), Action::Replace)?;
+  
   Ok(())
 }
 

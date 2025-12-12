@@ -12,6 +12,7 @@ mod renderer;
 pub mod svg_icon;
 mod text;
 mod text_cache;
+pub mod image;
 
 use std::sync::Arc;
 

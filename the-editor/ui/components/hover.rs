@@ -34,11 +34,11 @@ use crate::{
   },
 };
 
-const MAX_VISIBLE_LINES: usize = 12;
-const MIN_CONTENT_CHARS: usize = 10;
-const HOVER_MIN_WIDTH_CHARS: u16 = 18;
-const HOVER_MAX_WIDTH_CHARS: u16 = 64;
-const HOVER_MAX_HEIGHT_LINES: u16 = 20;
+const MAX_VISIBLE_LINES: usize = 50;
+const MIN_CONTENT_CHARS: usize = 50;
+const HOVER_MIN_WIDTH_CHARS: u16 = 40;
+const HOVER_MAX_WIDTH_CHARS: u16 = 100;
+const HOVER_MAX_HEIGHT_LINES: u16 = 40;
 
 /// Hover popup component rendered inside a generic popup shell.
 pub struct Hover {

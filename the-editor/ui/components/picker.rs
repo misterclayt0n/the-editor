@@ -63,6 +63,8 @@ pub enum CachedPreview {
   Document(PreviewDocument),
   /// Directory with list of entries
   Directory(Vec<String>),
+  /// Image file (decoded RGBA pixels)
+  Image(ImagePreview),
   /// Binary file (not text)
   Binary,
   /// File too large to preview
@@ -73,6 +75,43 @@ pub enum CachedPreview {
   Loading,
   /// Preview failed
   Error(String),
+}
+
+/// A single animation frame
+pub struct AnimationFrame {
+  /// RGBA pixel data
+  pub pixels:   Vec<u8>,
+  /// Delay before next frame in milliseconds
+  pub delay_ms: u32,
+}
+
+/// Decoded image ready for rendering (supports animation)
+pub struct ImagePreview {
+  /// Animation frames (at least one for static images)
+  pub frames: Vec<AnimationFrame>,
+  /// Image width
+  pub width:  u32,
+  /// Image height
+  pub height: u32,
+}
+
+impl ImagePreview {
+  /// Create a static (non-animated) image preview.
+  pub fn static_image(pixels: Vec<u8>, width: u32, height: u32) -> Self {
+    Self {
+      frames: vec![AnimationFrame {
+        pixels,
+        delay_ms: 0,
+      }],
+      width,
+      height,
+    }
+  }
+
+  /// Check if this image is animated (has multiple frames).
+  pub fn is_animated(&self) -> bool {
+    self.frames.len() > 1
+  }
 }
 
 pub(crate) struct PreviewDocument {
@@ -93,6 +132,16 @@ enum PreviewData {
   },
   Directory {
     entries: Vec<String>,
+  },
+  Image {
+    /// Current frame's pixel data
+    pixels:      Vec<u8>,
+    /// Image width
+    width:       u32,
+    /// Image height
+    height:      u32,
+    /// Whether this is an animated image
+    is_animated: bool,
   },
   Placeholder(Cow<'static, str>),
 }
@@ -406,6 +455,22 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   pending_history:       Vec<String>,
   /// Whether preview animation has been initialized
   preview_initialized:   bool,
+  /// GIF animation state (current frame index, elapsed time)
+  gif_anim_state:        Option<GifAnimationState>,
+}
+
+/// State for GIF animation playback
+struct GifAnimationState {
+  /// Path of the currently animating GIF
+  path:          PathBuf,
+  /// Current frame index
+  current_frame: usize,
+  /// Time elapsed on current frame in seconds
+  frame_elapsed: f32,
+  /// Total number of frames
+  total_frames:  usize,
+  /// Delay for each frame in seconds (cached for quick lookup)
+  frame_delays:  Vec<f32>,
 }
 
 #[derive(Clone)]
@@ -501,6 +566,7 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       history_format: None,
       pending_history: Vec::new(),
       preview_initialized: false,
+      gif_anim_state: None,
     }
   }
 
@@ -1587,6 +1653,54 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 entries: entries.clone(),
               }
             },
+            CachedPreview::Image(img) => {
+              // Determine which frame to show
+              let (frame_pixels, is_animated) = if img.is_animated() {
+                // Update or initialize animation state
+                let frame_idx = match &mut self.gif_anim_state {
+                  Some(state) if state.path == path => {
+                    // Same file, advance animation
+                    state.frame_elapsed += ctx.dt;
+                    let current_delay = state.frame_delays[state.current_frame];
+                    if state.frame_elapsed >= current_delay {
+                      state.frame_elapsed -= current_delay;
+                      state.current_frame = (state.current_frame + 1) % state.total_frames;
+                    }
+                    state.current_frame
+                  },
+                  _ => {
+                    // New file or no state, initialize
+                    let frame_delays: Vec<f32> = img
+                      .frames
+                      .iter()
+                      .map(|f| f.delay_ms as f32 / 1000.0)
+                      .collect();
+                    self.gif_anim_state = Some(GifAnimationState {
+                      path: path.clone(),
+                      current_frame: 0,
+                      frame_elapsed: 0.0,
+                      total_frames: img.frames.len(),
+                      frame_delays,
+                    });
+                    0
+                  },
+                };
+                (img.frames[frame_idx].pixels.clone(), true)
+              } else {
+                // Static image, clear any animation state
+                if self.gif_anim_state.is_some() {
+                  self.gif_anim_state = None;
+                }
+                (img.frames[0].pixels.clone(), false)
+              };
+
+              PreviewData::Image {
+                pixels: frame_pixels,
+                width: img.width,
+                height: img.height,
+                is_animated,
+              }
+            },
             CachedPreview::Binary => PreviewData::Placeholder(Cow::Borrowed("<Binary file>")),
             CachedPreview::LargeFile => {
               PreviewData::Placeholder(Cow::Borrowed("<File too large to preview>"))
@@ -2581,6 +2695,42 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 },
               );
             },
+            PreviewData::Image {
+              pixels,
+              width,
+              height,
+              is_animated: _,
+            } => {
+              // Render image centered in preview panel
+              let padding = 12.0;
+              let content_width = preview_width - (padding * 2.0);
+              let content_height = height_scaled - (padding * 2.0);
+
+              // Calculate scaled dimensions to fit while preserving aspect ratio
+              let img_width = *width as f32;
+              let img_height = *height as f32;
+              let scale_x = content_width / img_width;
+              let scale_y = content_height / img_height;
+              let scale = scale_x.min(scale_y).min(1.0); // Don't upscale
+
+              let draw_width = img_width * scale;
+              let draw_height = img_height * scale;
+
+              // Center the image
+              let img_x = preview_x + padding + (content_width - draw_width) / 2.0;
+              let img_y = y + padding + (content_height - draw_height) / 2.0;
+
+              surface.draw_image(
+                pixels,
+                *width,
+                *height,
+                img_x,
+                img_y,
+                draw_width,
+                draw_height,
+                preview_alpha,
+              );
+            },
             PreviewData::Placeholder(placeholder) => {
               // Show placeholder text centered
               let text_width = placeholder.len() as f32 * cell_width;
@@ -2645,6 +2795,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         .as_ref()
         .map(|a| !a.is_complete())
         .unwrap_or(false)
+      || self.gif_anim_state.is_some() // Continuous redraw for GIF animation
   }
 }
 
@@ -2758,6 +2909,76 @@ fn load_filesystem_preview(
 
   if metadata.len() > MAX_FILE_SIZE_FOR_PREVIEW {
     return CachedPreview::LargeFile;
+  }
+
+  // Check if this is an image file by extension
+  if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+    if the_editor_renderer::image::is_svg_extension(ext) {
+      // Load SVG with dynamic sizing based on typical preview dimensions
+      // We'll use a reasonable max size; actual rendering will scale to fit
+      match std::fs::read(&path) {
+        Ok(data) => {
+          // Use 512x512 as max decode size for preview (will be scaled to fit panel)
+          if let Some(decoded) = the_editor_renderer::image::decode_svg(&data, 512, 512) {
+            return CachedPreview::Image(ImagePreview::static_image(
+              decoded.pixels,
+              decoded.width,
+              decoded.height,
+            ));
+          }
+          // SVG decode failed, fall through to try as text
+        },
+        Err(err) => {
+          return CachedPreview::Error(format!("Failed to read {}: {}", path.display(), err));
+        },
+      }
+    } else if the_editor_renderer::image::is_gif_extension(ext) {
+      // Load GIF with animation support
+      match std::fs::read(&path) {
+        Ok(data) => {
+          if let Some(decoded) = the_editor_renderer::image::decode_animated_gif(&data) {
+            let frames = decoded
+              .frames
+              .into_iter()
+              .map(|f| {
+                AnimationFrame {
+                  pixels:   f.pixels,
+                  delay_ms: f.delay_ms,
+                }
+              })
+              .collect();
+            return CachedPreview::Image(ImagePreview {
+              frames,
+              width: decoded.width,
+              height: decoded.height,
+            });
+          } else {
+            return CachedPreview::Error(format!("Failed to decode GIF: {}", path.display()));
+          }
+        },
+        Err(err) => {
+          return CachedPreview::Error(format!("Failed to read {}: {}", path.display(), err));
+        },
+      }
+    } else if the_editor_renderer::image::is_image_extension(ext) {
+      // Load raster image (PNG, JPEG, etc.)
+      match std::fs::read(&path) {
+        Ok(data) => {
+          if let Some(decoded) = the_editor_renderer::image::decode_image(&data) {
+            return CachedPreview::Image(ImagePreview::static_image(
+              decoded.pixels,
+              decoded.width,
+              decoded.height,
+            ));
+          } else {
+            return CachedPreview::Error(format!("Failed to decode image: {}", path.display()));
+          }
+        },
+        Err(err) => {
+          return CachedPreview::Error(format!("Failed to read {}: {}", path.display(), err));
+        },
+      }
+    }
   }
 
   let mut preview_buffer = [0u8; 1024];

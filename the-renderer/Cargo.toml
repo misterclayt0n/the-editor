@@ -24,5 +24,14 @@ thiserror.workspace  = true
 tiny-skia            = "0.11"
 wgpu.workspace       = true
 winit.workspace      = true
+image = { version = "0.25", default-features = false, features = [
+  "png",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "ico",
+  "tiff",
+] }
 
 the-editor-event = { path = "../the-event" }

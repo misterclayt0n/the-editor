@@ -173,6 +173,45 @@ struct BlurUniforms {
   resolution: [f32; 2],
 }
 
+/// Vertex data for textured image quad
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct ImageVertex {
+  position:  [f32; 2],
+  tex_coord: [f32; 2],
+}
+
+/// Uniform data for image rendering
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct ImageUniforms {
+  screen_size:   [f32; 2],
+  rect_position: [f32; 2],
+  rect_size:     [f32; 2],
+  alpha:         f32,
+  _pad:          f32,
+}
+
+/// Command to draw an image (processed in end_frame)
+struct ImageDrawCommand {
+  /// RGBA pixel data
+  pixels:      Vec<u8>,
+  /// Image width
+  width:       u32,
+  /// Image height
+  height:      u32,
+  /// Draw position X
+  x:           f32,
+  /// Draw position Y
+  y:           f32,
+  /// Draw width (may differ from image width for scaling)
+  draw_width:  f32,
+  /// Draw height (may differ from image height for scaling)
+  draw_height: f32,
+  /// Alpha multiplier
+  alpha:       f32,
+}
+
 struct TextCommand {
   position:  (f32, f32),
   cache_key: crate::text_cache::ShapedTextKey, // Key to retrieve buffer from cache
@@ -303,6 +342,14 @@ pub struct Renderer {
 
   // Cursor icon tracking
   pending_cursor_icon: Option<winit::window::CursorIcon>,
+
+  // Image rendering pipeline
+  image_render_pipeline:   wgpu::RenderPipeline,
+  image_vertex_buffer:     wgpu::Buffer,
+  image_uniform_buffer:    wgpu::Buffer,
+  image_bind_group_layout: wgpu::BindGroupLayout,
+  image_sampler:           wgpu::Sampler,
+  image_draw_commands:     Vec<ImageDrawCommand>,
 }
 
 impl Renderer {
@@ -688,6 +735,144 @@ impl Renderer {
       cache:         None,
     });
 
+    // Image pipeline setup
+    let image_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+      label:  Some("Image Shader"),
+      source: wgpu::ShaderSource::Wgsl(include_str!("image.wgsl").into()),
+    });
+
+    let image_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+      label:              Some("Image Uniform Buffer"),
+      size:               std::mem::size_of::<ImageUniforms>() as u64,
+      usage:              wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
+    });
+
+    let image_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+      label: Some("Image Sampler"),
+      address_mode_u: wgpu::AddressMode::ClampToEdge,
+      address_mode_v: wgpu::AddressMode::ClampToEdge,
+      address_mode_w: wgpu::AddressMode::ClampToEdge,
+      mag_filter: wgpu::FilterMode::Linear,
+      min_filter: wgpu::FilterMode::Linear,
+      mipmap_filter: wgpu::FilterMode::Nearest,
+      ..Default::default()
+    });
+
+    let image_bind_group_layout =
+      device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label:   Some("Image Bind Group Layout"),
+        entries: &[
+          wgpu::BindGroupLayoutEntry {
+            binding:    0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty:         wgpu::BindingType::Buffer {
+              ty:                 wgpu::BufferBindingType::Uniform,
+              has_dynamic_offset: false,
+              min_binding_size:   None,
+            },
+            count:      None,
+          },
+          wgpu::BindGroupLayoutEntry {
+            binding:    1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty:         wgpu::BindingType::Texture {
+              sample_type:    wgpu::TextureSampleType::Float { filterable: true },
+              view_dimension: wgpu::TextureViewDimension::D2,
+              multisampled:   false,
+            },
+            count:      None,
+          },
+          wgpu::BindGroupLayoutEntry {
+            binding:    2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty:         wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count:      None,
+          },
+        ],
+      });
+
+    let image_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+      label:                Some("Image Pipeline Layout"),
+      bind_group_layouts:   &[&image_bind_group_layout],
+      push_constant_ranges: &[],
+    });
+
+    // Quad vertices with texture coordinates
+    let image_vertices = [
+      ImageVertex {
+        position:  [0.0, 0.0],
+        tex_coord: [0.0, 0.0],
+      },
+      ImageVertex {
+        position:  [1.0, 0.0],
+        tex_coord: [1.0, 0.0],
+      },
+      ImageVertex {
+        position:  [0.0, 1.0],
+        tex_coord: [0.0, 1.0],
+      },
+      ImageVertex {
+        position:  [1.0, 1.0],
+        tex_coord: [1.0, 1.0],
+      },
+    ];
+
+    let image_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+      label:    Some("Image Vertex Buffer"),
+      contents: bytemuck::cast_slice(&image_vertices),
+      usage:    wgpu::BufferUsages::VERTEX,
+    });
+
+    let image_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+      label:         Some("Image Render Pipeline"),
+      layout:        Some(&image_pipeline_layout),
+      vertex:        wgpu::VertexState {
+        module:              &image_shader,
+        entry_point:         Some("vs_main"),
+        buffers:             &[wgpu::VertexBufferLayout {
+          array_stride: std::mem::size_of::<ImageVertex>() as u64,
+          step_mode:    wgpu::VertexStepMode::Vertex,
+          attributes:   &[
+            wgpu::VertexAttribute {
+              offset:          0,
+              shader_location: 0,
+              format:          wgpu::VertexFormat::Float32x2,
+            },
+            wgpu::VertexAttribute {
+              offset:          8,
+              shader_location: 1,
+              format:          wgpu::VertexFormat::Float32x2,
+            },
+          ],
+        }],
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+      },
+      fragment:      Some(wgpu::FragmentState {
+        module:              &image_shader,
+        entry_point:         Some("fs_main"),
+        targets:             &[Some(wgpu::ColorTargetState {
+          format:     surface_format,
+          blend:      Some(wgpu::BlendState::ALPHA_BLENDING),
+          write_mask: wgpu::ColorWrites::ALL,
+        })],
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+      }),
+      primitive:     wgpu::PrimitiveState {
+        topology:           wgpu::PrimitiveTopology::TriangleStrip,
+        strip_index_format: None,
+        front_face:         wgpu::FrontFace::Ccw,
+        cull_mode:          None,
+        unclipped_depth:    false,
+        polygon_mode:       wgpu::PolygonMode::Fill,
+        conservative:       false,
+      },
+      depth_stencil: None,
+      multisample:   wgpu::MultisampleState::default(),
+      multiview:     None,
+      cache:         None,
+    });
+
     // Glyphon initialization.
     let cache = Cache::new(&device);
     let mut font_system = FontSystem::new();
@@ -836,6 +1021,12 @@ impl Renderer {
       },
       svg_icon_cache: crate::svg_icon::SvgIconCache::new(),
       pending_cursor_icon: None,
+      image_render_pipeline,
+      image_vertex_buffer,
+      image_uniform_buffer,
+      image_bind_group_layout,
+      image_sampler,
+      image_draw_commands: Vec::new(),
     };
 
     renderer.recalculate_metrics();
@@ -980,6 +1171,11 @@ impl Renderer {
     // Clear stencil mask rects (per-frame state)
     self.stencil_mask_rects.clear();
     self.is_overlay_mode = false;
+
+    // Clear image draw commands (handled in end_frame via drain)
+    // Note: We don't clear here because end_frame uses drain()
+    // But we should ensure it's empty if begin_frame is called without end_frame
+    self.image_draw_commands.clear();
 
     let uniforms = RectUniforms {
       screen_size: [self.size.width as f32, self.size.height as f32],
@@ -1139,6 +1335,103 @@ impl Renderer {
       mask_pass.set_stencil_reference(1); // Write 1 to stencil
       mask_pass.draw(0..4, 0..mask_instances.len() as u32);
       drop(mask_pass);
+    }
+
+    // Render images
+    if !self.image_draw_commands.is_empty() {
+      for cmd in self.image_draw_commands.drain(..) {
+        // Create texture for this image
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+          label:           Some("Image Texture"),
+          size:            wgpu::Extent3d {
+            width:                 cmd.width,
+            height:                cmd.height,
+            depth_or_array_layers: 1,
+          },
+          mip_level_count: 1,
+          sample_count:    1,
+          dimension:       wgpu::TextureDimension::D2,
+          format:          wgpu::TextureFormat::Rgba8UnormSrgb,
+          usage:           wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+          view_formats:    &[],
+        });
+
+        // Upload pixel data
+        self.queue.write_texture(
+          wgpu::TexelCopyTextureInfo {
+            texture:   &texture,
+            mip_level: 0,
+            origin:    wgpu::Origin3d::ZERO,
+            aspect:    wgpu::TextureAspect::All,
+          },
+          &cmd.pixels,
+          wgpu::TexelCopyBufferLayout {
+            offset:         0,
+            bytes_per_row:  Some(4 * cmd.width),
+            rows_per_image: Some(cmd.height),
+          },
+          wgpu::Extent3d {
+            width:                 cmd.width,
+            height:                cmd.height,
+            depth_or_array_layers: 1,
+          },
+        );
+
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Update uniforms
+        let uniforms = ImageUniforms {
+          screen_size:   [self.config.width as f32, self.config.height as f32],
+          rect_position: [cmd.x, cmd.y],
+          rect_size:     [cmd.draw_width, cmd.draw_height],
+          alpha:         cmd.alpha,
+          _pad:          0.0,
+        };
+        self
+          .queue
+          .write_buffer(&self.image_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+
+        // Create bind group for this image
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+          label:   Some("Image Bind Group"),
+          layout:  &self.image_bind_group_layout,
+          entries: &[
+            wgpu::BindGroupEntry {
+              binding:  0,
+              resource: self.image_uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+              binding:  1,
+              resource: wgpu::BindingResource::TextureView(&texture_view),
+            },
+            wgpu::BindGroupEntry {
+              binding:  2,
+              resource: wgpu::BindingResource::Sampler(&self.image_sampler),
+            },
+          ],
+        });
+
+        // Render the image
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+          label:                    Some("Image Render Pass"),
+          color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
+            view:           &view,
+            resolve_target: None,
+            ops:            wgpu::Operations {
+              load:  wgpu::LoadOp::Load,
+              store: wgpu::StoreOp::Store,
+            },
+          })],
+          depth_stencil_attachment: None,
+          timestamp_writes:         None,
+          occlusion_query_set:      None,
+        });
+
+        pass.set_pipeline(&self.image_render_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.set_vertex_buffer(0, self.image_vertex_buffer.slice(..));
+        pass.draw(0..4, 0..1);
+      }
     }
 
     if !self.text_commands.is_empty() {
@@ -1872,6 +2165,47 @@ impl Renderer {
         }
       }
     }
+  }
+
+  /// Draw an image at the specified position.
+  ///
+  /// The image will be rendered using GPU textures for optimal performance.
+  /// The image can be scaled to fit a specific size while preserving aspect
+  /// ratio.
+  ///
+  /// # Arguments
+  /// * `pixels` - RGBA pixel data (4 bytes per pixel)
+  /// * `width` - Image width in pixels
+  /// * `height` - Image height in pixels
+  /// * `x`, `y` - Position to draw the image
+  /// * `draw_width`, `draw_height` - Size to render the image at (can differ
+  ///   from actual size for scaling)
+  /// * `alpha` - Alpha multiplier (0.0 to 1.0)
+  pub fn draw_image(
+    &mut self,
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    x: f32,
+    y: f32,
+    draw_width: f32,
+    draw_height: f32,
+    alpha: f32,
+  ) {
+    if width == 0 || height == 0 || pixels.len() != (width * height * 4) as usize {
+      return;
+    }
+
+    self.image_draw_commands.push(ImageDrawCommand {
+      pixels: pixels.to_vec(), // NOTE: Is this reasonable?
+      width,
+      height,
+      x,
+      y,
+      draw_width,
+      draw_height,
+      alpha,
+    });
   }
 
   /// Configure the monospaced font family and size used for layout calculations

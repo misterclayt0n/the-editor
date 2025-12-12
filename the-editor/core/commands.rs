@@ -556,6 +556,7 @@ impl MappableCommand {
         noop, "noop",
         toggle_soft_wrap, "toggle soft wrap",
         toggle_fade_mode, "toggle fade mode",
+        toggle_injections, "toggle injection parsing",
         update_fade_ranges, "update fade ranges",
         acp_prompt, "send selection to ACP agent",
         acp_show_overlay, "show ACP response overlay",
@@ -5199,7 +5200,7 @@ pub fn toggle_line_numbers(cx: &mut Context) {
       if toggled {
         // Force redraw of all lines since text positions will change
         editor_view.mark_all_dirty();
-        cx.editor.set_status("Toggled line numbers");
+        cx.editor.set_status("toggled line numbers");
       }
     }
   }));
@@ -5213,7 +5214,7 @@ pub fn toggle_diagnostics_gutter(cx: &mut Context) {
       if toggled {
         // Force redraw of all lines since text positions will change
         editor_view.mark_all_dirty();
-        cx.editor.set_status("Toggled diagnostics gutter");
+        cx.editor.set_status("toggled diagnostics gutter");
       }
     }
   }));
@@ -5227,7 +5228,7 @@ pub fn toggle_diff_gutter(cx: &mut Context) {
       if toggled {
         // Force redraw of all lines since text positions will change
         editor_view.mark_all_dirty();
-        cx.editor.set_status("Toggled diff gutter");
+        cx.editor.set_status("toggled diff gutter");
       }
     }
   }));
@@ -5243,7 +5244,7 @@ pub fn list_gutters(cx: &mut Context) {
         .map(|(_id, name, enabled)| format!("{}: {}", name, if *enabled { "ON" } else { "OFF" }))
         .collect::<Vec<_>>()
         .join(", ");
-      cx.editor.set_status(format!("Gutters: {}", status));
+      cx.editor.set_status(format!("gutters: {}", status));
     }
   }));
 }
@@ -5321,7 +5322,7 @@ pub fn goto_next_diag(cx: &mut Context) {
     .find(|diag| diag.range.start > cursor_pos);
 
   let Some(diag) = diag else {
-    cx.editor.set_status("No next diagnostic");
+    cx.editor.set_status("no next diagnostic");
     return;
   };
 
@@ -5345,7 +5346,7 @@ pub fn goto_prev_diag(cx: &mut Context) {
     .find(|diag| diag.range.start < cursor_pos);
 
   let Some(diag) = diag else {
-    cx.editor.set_status("No previous diagnostic");
+    cx.editor.set_status("no previous diagnostic");
     return;
   };
 
@@ -5421,12 +5422,12 @@ pub fn goto_file_impl(cx: &mut Context, action: Action) {
 
           if let Err(e) = cx.editor.open(&final_path, action) {
             cx.editor
-              .set_error(format!("Failed to open {}: {}", final_path.display(), e));
+              .set_error(format!("failed to open {}: {}", final_path.display(), e));
           }
         }
       } else {
         // Non-file URLs - just show an error for now
-        cx.editor.set_error(format!("Cannot open URL: {}", url));
+        cx.editor.set_error(format!("cannot open URL: {}", url));
       }
       continue;
     }
@@ -5444,7 +5445,7 @@ pub fn goto_file_impl(cx: &mut Context, action: Action) {
         .set_error(format!("{} is a directory", final_path.display()));
     } else if let Err(e) = cx.editor.open(&final_path, action) {
       cx.editor
-        .set_error(format!("Failed to open {}: {}", final_path.display(), e));
+        .set_error(format!("failed to open {}: {}", final_path.display(), e));
     }
   }
 }
@@ -5776,7 +5777,7 @@ pub fn split_selection(cx: &mut Context) {
           let regex = match the_editor_stdx::rope::Regex::new(input) {
             Ok(regex) => regex,
             Err(err) => {
-              cx.editor.set_error(format!("Invalid regex: {}", err));
+              cx.editor.set_error(format!("invalid regex: {}", err));
               return;
             },
           };
@@ -5981,7 +5982,7 @@ fn goto_next_change_impl(cx: &mut Context, direction: Direction) {
     let diff_handle = if let Some(diff_handle) = doc.diff_handle() {
       diff_handle
     } else {
-      editor.set_status("Diff is not available in current buffer");
+      editor.set_status("diff is not available in current buffer");
       return;
     };
 
@@ -6208,7 +6209,7 @@ pub fn document_vcs_diffs(cx: &mut Context) {
   let view_id = match cx.editor.focused_view_id() {
     Some(id) => id,
     None => {
-      cx.editor.set_status("No active document");
+      cx.editor.set_status("no active document");
       return;
     },
   };
@@ -6221,7 +6222,7 @@ pub fn document_vcs_diffs(cx: &mut Context) {
 
   let Some(diff_handle) = diff_handle else {
     cx.editor
-      .set_status("No VCS diff available for current document");
+      .set_status("no VCS diff available for current document");
     return;
   };
 
@@ -6243,7 +6244,7 @@ pub fn document_vcs_diffs(cx: &mut Context) {
   };
 
   if !has_changes || blocks.is_empty() {
-    cx.editor.set_status("Document has no VCS changes");
+    cx.editor.set_status("document has no VCS changes");
     return;
   }
 
@@ -6303,7 +6304,7 @@ pub fn workspace_vcs_diffs(cx: &mut Context) {
     Ok(dir) => dir,
     Err(err) => {
       cx.editor
-        .set_error(format!("Failed to determine workspace root: {}", err));
+        .set_error(format!("failed to determine workspace root: {}", err));
       return;
     },
   };
@@ -6572,7 +6573,7 @@ fn goto_ts_object_impl(cx: &mut Context, object: &'static str, direction: Direct
 
       doc.set_selection(view.id, selection);
     } else {
-      editor.set_status("Syntax-tree is not available in current buffer");
+      editor.set_status("syntax-tree is not available in current buffer");
     }
   };
   cx.editor.apply_motion(motion);
@@ -6754,8 +6755,7 @@ fn search_next_or_prev_impl(cx: &mut Context, movement: Movement, direction: Dir
         );
       }
     } else {
-      let error = format!("Invalid regex: {}", query);
-      cx.editor.set_error(error);
+      cx.editor.set_error(format!("invalid regex: {}", query));
     }
   }
 }
@@ -6826,7 +6826,7 @@ fn searcher(cx: &mut Context, direction: Direction) {
           let regex = match the_editor_stdx::rope::Regex::new(input) {
             Ok(regex) => regex,
             Err(err) => {
-              cx.editor.set_error(format!("Invalid regex: {}", err));
+              cx.editor.set_error(format!("invalid regex: {}", err));
               return;
             },
           };
@@ -7195,7 +7195,7 @@ fn keep_or_remove_selections_impl(cx: &mut Context, remove: bool) {
           let regex = match the_editor_stdx::rope::Regex::new(input) {
             Ok(regex) => regex,
             Err(err) => {
-              cx.editor.set_error(format!("Invalid regex: {}", err));
+              cx.editor.set_error(format!("invalid regex: {}", err));
               return;
             },
           };
@@ -7213,7 +7213,7 @@ fn keep_or_remove_selections_impl(cx: &mut Context, remove: bool) {
             doc.set_selection(view.id, selection);
             doc.trigger_selection_pulse(view.id, SelectionPulseKind::FilteredSelection);
           } else if matches!(event, PromptEvent::Validate) {
-            cx.editor.set_error("No selections remaining");
+            cx.editor.set_error("no selections remaining");
           }
         },
         PromptEvent::Abort => {
@@ -7806,7 +7806,7 @@ pub fn jump_backward(cx: &mut Context) {
 pub fn save_selection(cx: &mut Context) {
   let (view, doc) = current!(cx.editor);
   push_jump(view, doc);
-  cx.editor.set_status("Selection saved to jumplist");
+  cx.editor.set_status("selection saved to jumplist");
 }
 
 pub fn select_register(cx: &mut Context) {
@@ -7904,7 +7904,7 @@ pub fn shell_keep_pipe(cx: &mut Context) {
           }
 
           if ranges.is_empty() {
-            cx.editor.set_error("No selections remaining".to_string());
+            cx.editor.set_error("no selections remaining".to_string());
             return;
           }
 
@@ -8618,7 +8618,7 @@ pub fn shell_command(cx: &mut Context) {
           match run_shell_in_compilation_buffer(cx.editor, cx.jobs, current_doc_id, command.clone())
           {
             Ok(_) => {
-              cx.editor.set_status(format!("Running: {}", command));
+              cx.editor.set_status(format!("running: {}", command));
             },
             Err(err) => {
               cx.editor.set_error(err.to_string());
@@ -8706,7 +8706,7 @@ pub fn cmd_shell_spawn(
 
   match spawn_shell_command_context(cx, command.clone()) {
     Ok(_) => {
-      cx.editor.set_status(format!("Running ({command})"));
+      cx.editor.set_status(format!("running ({command})"));
       Ok(())
     },
     Err(err) => {
@@ -8732,25 +8732,25 @@ pub fn cmd_kill_shell(
 pub fn kill_shell(cx: &mut Context) {
   let Some(view_id) = cx.editor.focused_view_id() else {
     cx.editor
-      .set_error("No active view available to kill shell");
+      .set_error("no active view available to kill shell");
     return;
   };
   let doc_id = cx.editor.tree.get(view_id).doc;
 
   if cx.editor.special_buffer_kind(doc_id) != Some(SpecialBufferKind::Compilation) {
-    cx.editor.set_error("Focused buffer is not a shell buffer");
+    cx.editor.set_error("focused buffer is not a shell buffer");
     return;
   }
 
   if !cx.editor.is_special_buffer_running(doc_id) {
-    cx.editor.set_status("No running shell command to kill");
+    cx.editor.set_status("no running shell command to kill");
     return;
   }
 
   if cx.editor.cancel_shell_job(doc_id) {
-    cx.editor.set_status("Stopping shell command…");
+    cx.editor.set_status("stopping shell command…");
   } else {
-    cx.editor.set_error("Shell command is already completing");
+    cx.editor.set_error("shell command is already completing");
   }
 }
 
@@ -8832,10 +8832,10 @@ pub fn noop(cx: &mut Context) {
   cx.editor.noop_effect_pending = !cx.editor.noop_effect_pending;
 
   if cx.editor.noop_effect_pending {
-    cx.editor.set_status("Noop effect mode enabled".to_string());
+    cx.editor.set_status("noop effect mode enabled".to_string());
   } else {
     cx.editor
-      .set_status("Noop effect mode disabled".to_string());
+      .set_status("noop effect mode disabled".to_string());
   }
 }
 
@@ -8843,17 +8843,35 @@ pub fn toggle_soft_wrap(cx: &mut Context) {
   let (_, doc) = current!(cx.editor);
   let enabled = doc.toggle_soft_wrap();
   let status = if enabled {
-    "Soft wrap enabled"
+    "soft wrap enabled"
   } else {
-    "Soft wrap disabled"
+    "soft wrap disabled"
   };
   cx.editor.set_status(status.to_string());
+}
+
+pub fn toggle_injections(cx: &mut Context) {
+  let (_, doc) = current!(cx.editor);
+  let enabled = doc.toggle_injections();
+  let status = if enabled {
+    "Injection parsing enabled"
+  } else {
+    "Injection parsing disabled (faster for large files)"
+  };
+  cx.editor.set_status(status.to_string());
+
+  // Force a full redraw to update syntax highlighting
+  cx.callback.push(Box::new(|compositor, _cx| {
+    if let Some(editor_view) = compositor.find::<crate::ui::editor_view::EditorView>() {
+      editor_view.mark_all_dirty();
+    }
+  }));
 }
 
 // Context fade commands
 
 pub fn toggle_fade_mode(cx: &mut Context) {
-  cx.editor.fade_mode.enabled = !cx.editor.fade_mode.enabled;
+  cx.editor.fade_mode.enabled = !cx.editor.fade_mode.enabled; 
   eprintln!(
     "[FADE DEBUG] Toggle fade mode: enabled={}",
     cx.editor.fade_mode.enabled

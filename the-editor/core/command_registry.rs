@@ -812,6 +812,21 @@ impl CommandRegistry {
     ));
 
     self.register(TypableCommand::new(
+      "toggle-injections",
+      &["injections"],
+      "Toggle injection parsing for better performance on large files",
+      |cx, _args, _event| {
+        crate::core::commands::toggle_injections(cx);
+        Ok(())
+      },
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
       "change-current-directory",
       &["cd"],
       "Change the current working directory",

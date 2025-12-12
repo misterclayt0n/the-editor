@@ -776,6 +776,23 @@ impl Syntax {
     self.inner.walk()
   }
 
+  /// Returns whether injection parsing is enabled.
+  pub fn injections_enabled(&self) -> bool {
+    self.inner.injections_enabled()
+  }
+
+  /// Sets whether injection parsing is enabled.
+  ///
+  /// When disabled, only the root layer is parsed, which can significantly
+  /// improve performance for large files with many injections (e.g., files
+  /// with doc comments, SQL strings, etc.).
+  ///
+  /// Note: After changing this setting, the syntax tree should be re-parsed
+  /// to apply the change.
+  pub fn set_injections_enabled(&mut self, enabled: bool) {
+    self.inner.set_injections_enabled(enabled);
+  }
+
   pub fn highlighter<'a>(
     &'a self,
     source: RopeSlice<'a>,

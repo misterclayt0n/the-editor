@@ -2676,6 +2676,38 @@ impl Document {
     }
   }
 
+  /// Toggle injection parsing for this document.
+  /// Returns the new state (true = enabled, false = disabled).
+  ///
+  /// When injections are disabled, only the root syntax layer is parsed,
+  /// which can significantly improve performance for large files with many
+  /// injections (e.g., files with doc comments, SQL strings, embedded HTML).
+  pub fn toggle_injections(&mut self) -> bool {
+    let Some(syntax) = &mut self.syntax else {
+      return true; // No syntax, injections would be enabled by default
+    };
+
+    let current = syntax.injections_enabled();
+    let new_state = !current;
+    syntax.set_injections_enabled(new_state);
+
+    // Clear highlight cache since highlights will change
+    if let Some(cache) = &mut self.highlight_cache {
+      cache.clear();
+    }
+
+    new_state
+  }
+
+  /// Returns whether injection parsing is enabled for this document.
+  pub fn injections_enabled(&self) -> bool {
+    self
+      .syntax
+      .as_ref()
+      .map(|s| s.injections_enabled())
+      .unwrap_or(true)
+  }
+
   /// Toggle soft wrap for this document.
   /// Returns the new state (true = enabled, false = disabled).
   pub fn toggle_soft_wrap(&mut self) -> bool {

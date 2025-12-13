@@ -2530,13 +2530,20 @@ impl Editor {
     }
   }
 
-  pub(crate) fn replace_document_in_view(&mut self, current_view: ViewId, doc_id: DocumentId) {
+  pub(crate) fn replace_document_in_view(
+    &mut self,
+    current_view: ViewId,
+    doc_id: DocumentId,
+    animate: bool,
+  ) {
     let scrolloff = self.config().scrolloff;
     {
       let view = self.tree.get_mut(current_view);
 
       view.doc = doc_id;
-      view.zoom_anim = 0.0; // Trigger zoom animation for new document
+      if animate {
+        view.zoom_anim = 0.0; // Trigger zoom animation for new document
+      }
       let doc = doc_mut!(self, &doc_id);
 
       doc.ensure_view_init(view.id);
@@ -2584,7 +2591,7 @@ impl Editor {
     Some(view_id)
   }
 
-  pub fn switch(&mut self, id: DocumentId, action: Action) {
+  pub fn switch(&mut self, id: DocumentId, action: Action, animate: bool) {
     use crate::core::tree::Layout;
 
     if !self.documents.contains_key(&id) {
@@ -2665,7 +2672,7 @@ impl Editor {
           }
         }
 
-        self.replace_document_in_view(view_id, id);
+        self.replace_document_in_view(view_id, id, animate);
 
         dispatch(DocumentFocusLost {
           editor: self,
@@ -2733,7 +2740,7 @@ impl Editor {
 
   fn new_file_from_document(&mut self, action: Action, doc: Document) -> DocumentId {
     let id = self.new_document(doc);
-    self.switch(id, action);
+    self.switch(id, action, true); // Animate for new documents
     id
   }
 
@@ -2791,9 +2798,10 @@ impl Editor {
   // ??? possible use for integration tests
   pub fn open(&mut self, path: &Path, action: Action) -> Result<DocumentId, DocumentOpenError> {
     let path = the_editor_stdx::path::canonicalize(path);
-    let id = self.document_id_by_path(&path);
+    let existing_id = self.document_id_by_path(&path);
+    let is_new_document = existing_id.is_none();
 
-    let id = if let Some(id) = id {
+    let id = if let Some(id) = existing_id {
       id
     } else {
       let mut doc = Document::open(
@@ -2823,7 +2831,7 @@ impl Editor {
       id
     };
 
-    self.switch(id, action);
+    self.switch(id, action, is_new_document);
 
     Ok(id)
   }
@@ -2880,7 +2888,7 @@ impl Editor {
           self.close(view_id);
         },
         Action::ReplaceDoc(view_id, doc_id) => {
-          self.replace_document_in_view(view_id, doc_id);
+          self.replace_document_in_view(view_id, doc_id, false);
         },
       }
     }

@@ -2409,7 +2409,7 @@ pub fn buffer_picker(cx: &mut Context) {
       };
 
       crate::ui::job::dispatch_blocking(move |editor, _compositor| {
-        editor.switch(doc_id, action);
+        editor.switch(doc_id, action, false);
       });
 
       true // Close picker
@@ -2527,7 +2527,7 @@ pub fn jumplist_picker(cx: &mut Context) {
       };
 
       crate::ui::job::dispatch_blocking(move |editor, _compositor| {
-        editor.switch(doc_id, action);
+        editor.switch(doc_id, action, false);
         let config = editor.config();
         let Some(view_id) = editor.focused_view_id_mut() else {
           return;
@@ -5458,7 +5458,7 @@ pub fn goto_file(cx: &mut Context) {
 pub fn goto_last_accessed_file(cx: &mut Context) {
   let view = view_mut!(cx.editor);
   if let Some(alt) = view.docs_access_history.pop() {
-    cx.editor.switch(alt, Action::Replace);
+    cx.editor.switch(alt, Action::Replace, false);
   } else {
     cx.editor.set_error("no last accessed buffer")
   }
@@ -5472,7 +5472,7 @@ pub fn goto_last_modified_file(cx: &mut Context) {
     .flatten()
     .find(|&id| id != view.doc);
   if let Some(alt) = alternate_file {
-    cx.editor.switch(alt, Action::Replace);
+    cx.editor.switch(alt, Action::Replace, false);
   } else {
     cx.editor.set_error("no last modified buffer")
   }
@@ -5509,7 +5509,7 @@ fn goto_buffer(editor: &mut Editor, direction: Direction, count: usize) {
 
   let id = *id;
 
-  editor.switch(id, Action::Replace);
+  editor.switch(id, Action::Replace, false);
 }
 
 pub fn move_line_up(cx: &mut Context) {
@@ -7598,7 +7598,7 @@ fn split(editor: &mut Editor, action: Action) {
   let selection = doc.selection(view.id).clone();
   let offset = doc.view_offset(view.id);
 
-  editor.switch(id, action);
+  editor.switch(id, action, false);
 
   // match the selection in the previous view
   let (view, doc) = current!(editor);
@@ -8282,7 +8282,7 @@ fn ensure_compilation_buffer_visible(
 
   if let Some(view_id) = preferred_view {
     if editor.tree.try_get(view_id).is_some() {
-      editor.replace_document_in_view(view_id, doc_id);
+      editor.replace_document_in_view(view_id, doc_id, false);
       if let Some(doc) = editor.documents.get_mut(&doc_id) {
         doc.set_preferred_special_buffer_view(Some(view_id));
       }
@@ -8292,7 +8292,7 @@ fn ensure_compilation_buffer_visible(
 
   let restore_focus = origin_view.filter(|view_id| editor.tree.try_get(*view_id).is_some());
 
-  editor.switch(doc_id, Action::HorizontalSplit);
+  editor.switch(doc_id, Action::HorizontalSplit, false);
 
   let new_view = first_view_id_for_doc(editor, doc_id);
 

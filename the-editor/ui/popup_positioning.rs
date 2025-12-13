@@ -138,9 +138,9 @@ pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option
   }
 
   // Apply the same zoom animation offset used during rendering
+  // Uses exponential decay animation, so zoom_t goes smoothly from 0 to 1
   let zoom_t = view.zoom_anim;
-  let zoom_ease = zoom_t * zoom_t * (3.0 - 2.0 * zoom_t);
-  let zoom_offset_y = (1.0 - zoom_ease) * 50.0;
+  let zoom_offset_y = (1.0 - zoom_t) * 25.0;
 
   // Account for active screen shake effects
   let now = Instant::now();

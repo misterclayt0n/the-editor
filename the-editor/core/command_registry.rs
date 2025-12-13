@@ -2094,7 +2094,7 @@ fn vsplit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
     use crate::current;
     let (view, _doc) = current!(cx.editor);
     let doc_id = view.doc;
-    cx.editor.switch(doc_id, Action::VerticalSplit);
+    cx.editor.switch(doc_id, Action::VerticalSplit, false);
   } else {
     // Open file in split
     open_impl(cx, args, Action::VerticalSplit)?;
@@ -2115,7 +2115,7 @@ fn hsplit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
     use crate::current;
     let (view, _doc) = current!(cx.editor);
     let doc_id = view.doc;
-    cx.editor.switch(doc_id, Action::HorizontalSplit);
+    cx.editor.switch(doc_id, Action::HorizontalSplit, false);
   } else {
     // Open file in split
     open_impl(cx, args, Action::HorizontalSplit)?;
@@ -2461,7 +2461,7 @@ pub(super) fn buffers_remaining_impl(editor: &mut Editor) -> anyhow::Result<()> 
     // If the current document is unmodified, and there are modified
     // documents, switch focus to the first modified doc.
     if !modified_ids.contains(&current.id()) {
-      editor.switch(*first, Action::Replace);
+      editor.switch(*first, Action::Replace, false);
     }
 
     let modified_names: Vec<_> = modified_ids

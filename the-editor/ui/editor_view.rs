@@ -1247,13 +1247,21 @@ impl Component for EditorView {
       // Get current view and document
       let focus_view = current_view_id;
 
-      // Update zoom animation
-      let zoom_anim_speed = 20.0; // Fast animation (completes in ~0.05s)
+      // Update zoom animation using exponential decay (like raddebugger)
+      // This gives a smooth "ease out" feel where movement slows as it approaches target
       {
         let view = cx.editor.tree.get_mut(focus_view);
         if view.zoom_anim < 1.0 {
-          view.zoom_anim = (view.zoom_anim + cx.dt * zoom_anim_speed).min(1.0);
-          self.zoom_anim_active = true;
+          // Exponential decay rate: 1 - 2^(-speed * dt)
+          // At speed=8, completes ~95% in ~0.4s, feels smooth
+          let rate = 1.0 - 2.0_f32.powf(-8.0 * cx.dt);
+          view.zoom_anim += (1.0 - view.zoom_anim) * rate;
+
+          // Snap to 1.0 when very close to avoid endless tiny updates
+          if view.zoom_anim > 0.995 {
+            view.zoom_anim = 1.0;
+          }
+          self.zoom_anim_active = view.zoom_anim < 1.0;
         } else {
           self.zoom_anim_active = false;
         }
@@ -1261,12 +1269,14 @@ impl Component for EditorView {
 
       let view = cx.editor.tree.get(focus_view);
       let zoom_t = view.zoom_anim;
-      let zoom_ease = zoom_t * zoom_t * (3.0 - 2.0 * zoom_t); // Smoothstep easing
 
-      // Apply slide-up + fade effect with more pronounced motion
-      // Alpha fades in quickly, but slide is more dramatic
-      let zoom_alpha = zoom_ease.powf(0.7); // Faster fade-in
-      let zoom_offset_y = (1.0 - zoom_ease) * 50.0; // Start 50px below, slide to normal position
+      // Apply fade + subtle slide effect (raddebugger style)
+      // Exponential decay already provides natural easing, so use zoom_t directly
+      let zoom_alpha = zoom_t;
+      let zoom_offset_y = (1.0 - zoom_t) * 25.0; // Subtle 25px slide up
+
+      // Squish effect: scale from 97% to 100% (content appears to grow slightly)
+      let zoom_scale = 0.97 + 0.03 * zoom_t;
 
       // Apply zoom alpha to all colors for fade-in effect
       normal.a *= zoom_alpha;
@@ -3114,7 +3124,7 @@ impl EditorView {
                     cx.editor.focus(view_id);
                     let current_doc = cx.editor.tree.get(view_id).doc;
                     if current_doc != doc_id {
-                      cx.editor.switch(doc_id, Action::Replace);
+                      cx.editor.switch(doc_id, Action::Replace, false);
                     }
                   } else if let Some(new_view_id) = cx.editor.open_view_for_document(doc_id) {
                     cx.editor.focus(new_view_id);

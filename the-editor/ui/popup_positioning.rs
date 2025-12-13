@@ -137,11 +137,6 @@ pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option
     return None;
   }
 
-  // Apply the same zoom animation offset used during rendering
-  // Uses exponential decay animation, so zoom_t goes smoothly from 0 to 1
-  let zoom_t = view.zoom_anim;
-  let zoom_offset_y = (1.0 - zoom_t) * 25.0;
-
   // Account for active screen shake effects
   let now = Instant::now();
   let (shake_offset_x, shake_offset_y) = doc
@@ -159,8 +154,7 @@ pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option
   let view_x = explorer_px_offset + (inner_area.x as f32 * doc_cell_w) + shake_offset_x;
 
   // For Y: inner_area.y is in cells, convert to pixels and add bufferline offset
-  let view_y =
-    bufferline_px_offset + (inner_area.y as f32 * doc_cell_h) + zoom_offset_y + shake_offset_y;
+  let view_y = bufferline_px_offset + (inner_area.y as f32 * doc_cell_h) + shake_offset_y;
 
   // Calculate final screen position
   let x = view_x + (screen_col as f32 * doc_cell_w);

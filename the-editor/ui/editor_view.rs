@@ -1247,18 +1247,19 @@ impl Component for EditorView {
       // Get current view and document
       let focus_view = current_view_id;
 
-      // Update zoom animation using exponential decay (like raddebugger)
-      // This gives a smooth "ease out" feel where movement slows as it approaches target
+      // Update zoom animation using exponential decay
+      // Formula: rate = 1 - 2^(-speed * dt)
+      // Speed 10 gives ~200-300ms fade, speed 8 gives ~350ms
+      // Clamp dt to prevent animation skipping on slow frames (large files)
       {
         let view = cx.editor.tree.get_mut(focus_view);
         if view.zoom_anim < 1.0 {
-          // Exponential decay rate: 1 - 2^(-speed * dt)
-          // At speed=8, completes ~95% in ~0.4s, feels smooth
-          let rate = 1.0 - 2.0_f32.powf(-8.0 * cx.dt);
+          let anim_dt = cx.dt.min(0.032); // Cap at ~30fps worth of progress
+          let rate = 1.0 - 2.0_f32.powf(-10.0 * anim_dt);
           view.zoom_anim += (1.0 - view.zoom_anim) * rate;
 
           // Snap to 1.0 when very close to avoid endless tiny updates
-          if view.zoom_anim > 0.995 {
+          if view.zoom_anim > 0.99 {
             view.zoom_anim = 1.0;
           }
           self.zoom_anim_active = view.zoom_anim < 1.0;
@@ -1268,15 +1269,7 @@ impl Component for EditorView {
       }
 
       let view = cx.editor.tree.get(focus_view);
-      let zoom_t = view.zoom_anim;
-
-      // Apply fade + subtle slide effect (raddebugger style)
-      // Exponential decay already provides natural easing, so use zoom_t directly
-      let zoom_alpha = zoom_t;
-      let zoom_offset_y = (1.0 - zoom_t) * 25.0; // Subtle 25px slide up
-
-      // Squish effect: scale from 97% to 100% (content appears to grow slightly)
-      let zoom_scale = 0.97 + 0.03 * zoom_t;
+      let zoom_alpha = view.zoom_anim; // Raddebugger-style: just fade, no squish
 
       // Apply zoom alpha to all colors for fade-in effect
       normal.a *= zoom_alpha;
@@ -1297,7 +1290,7 @@ impl Component for EditorView {
       // positioning (only applies when explorer is on the left)
       let view_offset_x = content_x_offset + view_area.x as f32 * font_width;
       let view_offset_y = view_area.y as f32 * (self.cached_cell_height);
-      let mut base_y = view_offset_y + VIEW_PADDING_TOP + zoom_offset_y;
+      let mut base_y = view_offset_y + VIEW_PADDING_TOP;
 
       // Calculate visible lines for THIS view based on its height
       // view.area.height is already in rows/cells
@@ -1797,7 +1790,7 @@ impl Component for EditorView {
             return;
           }
 
-          let y = base_y + (rel_row as f32) * (self.cached_cell_height);
+          let y = base_y + (rel_row as f32) * self.cached_cell_height;
 
           // Draw guides at each indent level
           for i in starting_indent..end_indent {
@@ -1883,7 +1876,7 @@ impl Component for EditorView {
           // TODO: Re-enable once we properly track all dirty regions
 
           // Calculate y position early (needed for gutter rendering)
-          let y = base_y + (rel_row as f32) * (self.cached_cell_height);
+          let y = base_y + (rel_row as f32) * self.cached_cell_height;
 
           // Get doc_line early, before horizontal scrolling checks
           let doc_line = doc_text.char_to_line(g.char_idx.min(doc_text.len_chars()));

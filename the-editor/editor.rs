@@ -2837,12 +2837,19 @@ impl Editor {
   }
 
   pub fn close(&mut self, id: ViewId) {
-    // Remove selections for the closed view on all documents.
-    for doc in self.documents_mut() {
-      doc.remove_view(id);
-    }
-    self.tree.remove(id);
+    // Start the close animation - selections will be cleaned up when animation completes
+    self.tree.start_close(id);
     self._refresh();
+  }
+
+  /// Clean up document selections for views that have finished closing.
+  /// Called after update_animations() returns closed view IDs.
+  pub fn cleanup_closed_views(&mut self, closed_ids: &[ViewId]) {
+    for &id in closed_ids {
+      for doc in self.documents_mut() {
+        doc.remove_view(id);
+      }
+    }
   }
 
   pub fn close_document(&mut self, doc_id: DocumentId, force: bool) -> Result<(), CloseError> {

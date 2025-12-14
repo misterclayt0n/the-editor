@@ -2930,34 +2930,67 @@ impl EditorView {
 
     let tree = &cx.editor.tree;
     for (view, _) in tree.views() {
-      let area = view.area;
-      let has_vertical_neighbor = tree
-        .find_split_in_direction(view.id, Direction::Right)
-        .is_some();
-      if has_vertical_neighbor {
-        // Render vertical separator bar at the right edge
-        // Center the thin separator in the gap
-        let gap_center_x =
-          self.content_x_offset() + (area.x + area.width) as f32 * font_width + (font_width / 2.0);
-        let x = gap_center_x - (SEPARATOR_WIDTH_PX / 2.0);
-        let y = area.y as f32 * (self.cached_cell_height);
-        let width = SEPARATOR_WIDTH_PX;
-        let height = area.height as f32 * (self.cached_cell_height);
-
-        renderer.draw_rect(x, y, width, height, separator_color);
+      // Skip separators for closing views - they're animating out
+      if tree.is_closing(view.id) {
+        continue;
       }
 
-      let has_horizontal_neighbor = tree
-        .find_split_in_direction(view.id, Direction::Down)
-        .is_some();
-      if has_horizontal_neighbor {
-        // Render horizontal separator bar at the bottom edge
-        let x = self.content_x_offset() + area.x as f32 * font_width;
-        let sep_y = (area.y + area.height) as f32 * (self.cached_cell_height) - SEPARATOR_HEIGHT_PX;
-        let width = area.width as f32 * font_width;
-        let height = SEPARATOR_HEIGHT_PX;
+      // Use animated area for separator positioning
+      let area = tree.get_animated_area(view.id).unwrap_or(view.area);
 
-        renderer.draw_rect(x, sep_y, width, height, separator_color);
+      // Check for right neighbor and draw separator at right edge
+      let right_neighbor = tree.find_split_in_direction(view.id, Direction::Right);
+      if let Some(right_id) = right_neighbor {
+        // Only draw if the right neighbor is not closing
+        if !tree.is_closing(right_id) {
+          let gap_center_x =
+            self.content_x_offset() + (area.x + area.width) as f32 * font_width + (font_width / 2.0);
+          let x = gap_center_x - (SEPARATOR_WIDTH_PX / 2.0);
+          let y = area.y as f32 * (self.cached_cell_height);
+          let width = SEPARATOR_WIDTH_PX;
+          let height = area.height as f32 * (self.cached_cell_height);
+          renderer.draw_rect(x, y, width, height, separator_color);
+        }
+      }
+
+      // Check for left neighbor closing - draw separator at our left edge
+      let left_neighbor = tree.find_split_in_direction(view.id, Direction::Left);
+      if let Some(left_id) = left_neighbor {
+        if tree.is_closing(left_id) {
+          // Left neighbor is closing, draw separator at our animated left edge
+          let gap_center_x =
+            self.content_x_offset() + area.x as f32 * font_width - (font_width / 2.0);
+          let x = gap_center_x - (SEPARATOR_WIDTH_PX / 2.0);
+          let y = area.y as f32 * (self.cached_cell_height);
+          let width = SEPARATOR_WIDTH_PX;
+          let height = area.height as f32 * (self.cached_cell_height);
+          renderer.draw_rect(x, y, width, height, separator_color);
+        }
+      }
+
+      // Check for bottom neighbor and draw separator at bottom edge
+      let down_neighbor = tree.find_split_in_direction(view.id, Direction::Down);
+      if let Some(down_id) = down_neighbor {
+        if !tree.is_closing(down_id) {
+          let x = self.content_x_offset() + area.x as f32 * font_width;
+          let sep_y = (area.y + area.height) as f32 * (self.cached_cell_height) - SEPARATOR_HEIGHT_PX;
+          let width = area.width as f32 * font_width;
+          let height = SEPARATOR_HEIGHT_PX;
+          renderer.draw_rect(x, sep_y, width, height, separator_color);
+        }
+      }
+
+      // Check for top neighbor closing - draw separator at our top edge
+      let up_neighbor = tree.find_split_in_direction(view.id, Direction::Up);
+      if let Some(up_id) = up_neighbor {
+        if tree.is_closing(up_id) {
+          // Top neighbor is closing, draw separator at our animated top edge
+          let x = self.content_x_offset() + area.x as f32 * font_width;
+          let sep_y = area.y as f32 * (self.cached_cell_height);
+          let width = area.width as f32 * font_width;
+          let height = SEPARATOR_HEIGHT_PX;
+          renderer.draw_rect(x, sep_y, width, height, separator_color);
+        }
       }
     }
   }

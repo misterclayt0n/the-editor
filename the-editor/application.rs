@@ -483,8 +483,11 @@ impl Application for App {
     // Update theme transition animation
     let _theme_animating = self.editor.update_theme_transition(dt);
 
-    // Update split animations
-    let _split_animating = self.editor.tree.update_animations(dt);
+    // Update split animations and clean up views that finished closing
+    let closed_views = self.editor.tree.update_animations(dt);
+    if !closed_views.is_empty() {
+      self.editor.cleanup_closed_views(&closed_views);
+    }
 
     // Create context for rendering.
     let mut cx = Context {

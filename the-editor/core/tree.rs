@@ -39,6 +39,13 @@ impl AreaAnimation {
     }
   }
 
+  fn retarget(&mut self, to: Rect) {
+    self.x.retarget(to.x as f32);
+    self.y.retarget(to.y as f32);
+    self.width.retarget(to.width as f32);
+    self.height.retarget(to.height as f32);
+  }
+
   fn update(&mut self, dt: f32) -> bool {
     let x_done = self.x.update(dt);
     let y_done = self.y.update(dt);
@@ -55,6 +62,13 @@ impl AreaAnimation {
       height: (*self.height.current() as u16).max(1),
     }
   }
+}
+
+/// Info about a view that is in the process of closing (animating out).
+#[derive(Debug)]
+struct ClosingViewInfo {
+  /// The layout direction this view was part of (determines slide direction)
+  layout: Layout,
 }
 
 // the dimensions are recomputed on window resize/tree change.
@@ -74,6 +88,9 @@ pub struct Tree {
 
   // split animations: maps view IDs to their area animations
   area_animations: HashMap<ViewId, AreaAnimation>,
+
+  // views that are in the process of closing (animating out)
+  closing_views: HashMap<ViewId, ClosingViewInfo>,
 }
 
 #[derive(Debug)]
@@ -163,6 +180,7 @@ impl Tree {
       nodes,
       stack: Vec::new(),
       area_animations: HashMap::new(),
+      closing_views: HashMap::new(),
     }
   }
 
@@ -406,6 +424,221 @@ impl Tree {
     }
 
     self.recalculate()
+  }
+
+  /// Start the close animation for a view. The view will be removed
+  /// after the animation completes.
+  pub fn start_close(&mut self, index: ViewId) {
+    // If this is the last view, skip animation and proceed with immediate close
+    if self.views().count() == 1 {
+      self.remove(index);
+      return;
+    }
+
+    // If this is the focused view, move focus first
+    if self.focus == index {
+      self.focus = self.prev();
+    }
+
+    // Get the current view area
+    let current_area = match self.try_get(index) {
+      Some(view) => view.area,
+      None => return,
+    };
+
+    // Get parent's layout direction and position of this view
+    let parent = self.nodes[index].parent;
+    let (layout, is_first) = match &self.nodes[parent].content {
+      Content::Container(container) => {
+        let pos = container.children.iter().position(|&id| id == index).unwrap_or(0);
+        (container.layout, pos == 0)
+      },
+      _ => (Layout::Vertical, false),
+    };
+
+    // Calculate the collapse target based on position:
+    // Raddebugger-style: slide towards the SCREEN EDGE (off-screen direction)
+    // - First child (left/top): slide towards left/top edge
+    // - Not first (right/bottom): slide towards right/bottom edge
+    let target_area = match layout {
+      Layout::Horizontal => {
+        if is_first {
+          // Top view: slide upward off screen (y stays at top, height = 0)
+          Rect {
+            x:      current_area.x,
+            y:      current_area.y,
+            width:  current_area.width,
+            height: 0,
+          }
+        } else {
+          // Bottom view: slide downward off screen (y moves to bottom, height = 0)
+          Rect {
+            x:      current_area.x,
+            y:      current_area.y + current_area.height,
+            width:  current_area.width,
+            height: 0,
+          }
+        }
+      },
+      Layout::Vertical => {
+        if is_first {
+          // Left view: slide leftward off screen (x stays at left, width = 0)
+          Rect {
+            x:      current_area.x,
+            y:      current_area.y,
+            width:  0,
+            height: current_area.height,
+          }
+        } else {
+          // Right view: slide rightward off screen (x moves to right, width = 0)
+          Rect {
+            x:      current_area.x + current_area.width,
+            y:      current_area.y,
+            width:  0,
+            height: current_area.height,
+          }
+        }
+      },
+    };
+
+    // Retarget existing animation OR create new one
+    let (duration, easing) = presets::FAST;
+    if let Some(anim) = self.area_animations.get_mut(&index) {
+      anim.retarget(target_area);
+    } else {
+      self.area_animations.insert(
+        index,
+        AreaAnimation::new(current_area, target_area, duration, easing),
+      );
+    }
+
+    // Mark view as closing
+    self.closing_views.insert(index, ClosingViewInfo { layout });
+
+    // Animate sibling expansion
+    self.animate_sibling_expansion(index, parent);
+  }
+
+  /// Animate the sibling view expanding to fill the closing view's space.
+  fn animate_sibling_expansion(&mut self, closing_id: ViewId, parent: ViewId) {
+    // Find the sibling that will expand
+    let container = match &self.nodes[parent].content {
+      Content::Container(c) => c,
+      _ => return,
+    };
+
+    let pos = match container.children.iter().position(|&id| id == closing_id) {
+      Some(p) => p,
+      None => return,
+    };
+
+    // Prefer the sibling after, then the one before
+    let sibling_id = if pos + 1 < container.children.len() {
+      container.children[pos + 1]
+    } else if pos > 0 {
+      container.children[pos - 1]
+    } else {
+      return;
+    };
+
+    // Get the closing view's area
+    let closing_area = match self.try_get(closing_id) {
+      Some(view) => view.area,
+      None => return,
+    };
+
+    // Get the sibling's current area
+    let sibling_area = match self.try_get(sibling_id) {
+      Some(view) => view.area,
+      None => return,
+    };
+
+    let layout = match &self.nodes[parent].content {
+      Content::Container(c) => c.layout,
+      _ => return,
+    };
+
+    // Calculate the sibling's expanded area (includes closing view's space)
+    let expanded_area = match layout {
+      Layout::Horizontal => {
+        if sibling_area.y > closing_area.y {
+          // Sibling is below - expand upward
+          Rect {
+            x:      sibling_area.x,
+            y:      closing_area.y,
+            width:  sibling_area.width,
+            height: sibling_area.height + closing_area.height,
+          }
+        } else {
+          // Sibling is above - expand downward
+          Rect {
+            x:      sibling_area.x,
+            y:      sibling_area.y,
+            width:  sibling_area.width,
+            height: sibling_area.height + closing_area.height,
+          }
+        }
+      },
+      Layout::Vertical => {
+        if sibling_area.x > closing_area.x {
+          // Sibling is to the right - expand leftward
+          Rect {
+            x:      closing_area.x,
+            y:      sibling_area.y,
+            width:  sibling_area.width + closing_area.width,
+            height: sibling_area.height,
+          }
+        } else {
+          // Sibling is to the left - expand rightward
+          Rect {
+            x:      sibling_area.x,
+            y:      sibling_area.y,
+            width:  sibling_area.width + closing_area.width,
+            height: sibling_area.height,
+          }
+        }
+      },
+    };
+
+    // Create or retarget sibling expansion animation
+    let (duration, easing) = presets::FAST;
+    if let Some(anim) = self.area_animations.get_mut(&sibling_id) {
+      anim.retarget(expanded_area);
+    } else {
+      self.area_animations.insert(
+        sibling_id,
+        AreaAnimation::new(sibling_area, expanded_area, duration, easing),
+      );
+    }
+
+    // Update the sibling's actual area to the target (for recalculate consistency)
+    if let Content::View(view) = &mut self.nodes[sibling_id].content {
+      view.area = expanded_area;
+    }
+  }
+
+  /// Actually remove a view after its close animation completes.
+  fn finish_close(&mut self, index: ViewId) {
+    self.closing_views.remove(&index);
+    self.area_animations.remove(&index);
+
+    let parent = self.nodes[index].parent;
+    let parent_is_root = parent == self.root;
+
+    let _ = self.remove_or_replace(index, None);
+
+    let parent_container = self.container_mut(parent);
+    if parent_container.children.len() == 1 && !parent_is_root {
+      let sibling = parent_container.children.pop().unwrap();
+      let _ = self.remove_or_replace(parent, Some(sibling));
+    }
+
+    self.recalculate();
+  }
+
+  /// Check if a view is currently closing (animating out).
+  pub fn is_closing(&self, view_id: ViewId) -> bool {
+    self.closing_views.contains_key(&view_id)
   }
 
   pub fn views(&self) -> impl Iterator<Item = (&View, bool)> {
@@ -820,10 +1053,31 @@ impl Tree {
   }
 
   /// Update all active area animations with the given delta time.
-  /// Returns true if any animations are still active.
-  pub fn update_animations(&mut self, dt: f32) -> bool {
-    self.area_animations.retain(|_, anim| !anim.update(dt));
-    !self.area_animations.is_empty()
+  /// Returns the list of view IDs that were fully closed this frame (for cleanup).
+  pub fn update_animations(&mut self, dt: f32) -> Vec<ViewId> {
+    // Track which closing views have completed their animations
+    let mut completed_closes = Vec::new();
+
+    self.area_animations.retain(|id, anim| {
+      let done = anim.update(dt);
+      if done && self.closing_views.contains_key(id) {
+        completed_closes.push(*id);
+        return false; // Remove animation
+      }
+      !done
+    });
+
+    // Actually remove views whose close animations have completed
+    for &id in &completed_closes {
+      self.finish_close(id);
+    }
+
+    completed_closes
+  }
+
+  /// Check if there are any active area animations.
+  pub fn has_active_animations(&self) -> bool {
+    !self.area_animations.is_empty() || !self.closing_views.is_empty()
   }
 
   /// Get the current animated area for a view, or its actual area if no
@@ -834,11 +1088,6 @@ impl Tree {
     } else {
       self.try_get(view_id).map(|view| view.area)
     }
-  }
-
-  /// Check if there are any active area animations.
-  pub fn has_active_animations(&self) -> bool {
-    !self.area_animations.is_empty()
   }
 
   /// Resize a split separator by adjusting the view's size

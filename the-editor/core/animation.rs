@@ -11,8 +11,9 @@ use the_editor_renderer::Color;
 pub mod presets {
   use super::*;
 
-  /// Fast, snappy animation (150ms, EaseOutQuad)
-  pub const FAST: (Duration, Easing) = (Duration::from_millis(100), Easing::EaseOutQuad);
+  /// Fast, smooth animation using exponential decay (raddebugger style)
+  /// Duration is a max timeout; animation completes when close to target
+  pub const FAST: (Duration, Easing) = (Duration::from_millis(500), Easing::ExponentialDecay);
 
   /// Medium speed animation (250ms, EaseInOutQuad)
   pub const MEDIUM: (Duration, Easing) = (Duration::from_millis(150), Easing::EaseInOutQuad);
@@ -257,6 +258,9 @@ pub enum Easing {
   EaseOutQuart,
   /// Quartic ease in and out
   EaseInOutQuart,
+  /// Exponential decay (raddebugger style) - frame-rate adaptive, no fixed duration
+  /// Uses formula: current += (target - current) * rate, where rate = 1 - 2^(-60 * dt)
+  ExponentialDecay,
 }
 
 impl Easing {
@@ -309,7 +313,14 @@ impl Easing {
           1.0 - 8.0 * t * t * t * t
         }
       },
+      // ExponentialDecay is handled specially in update(), not through apply()
+      Easing::ExponentialDecay => t,
     }
+  }
+
+  /// Check if this easing uses exponential decay (rate-based, not duration-based)
+  pub fn is_exponential_decay(self) -> bool {
+    matches!(self, Easing::ExponentialDecay)
   }
 }
 
@@ -318,6 +329,10 @@ pub trait Animatable: Clone + std::fmt::Debug {
   /// Linear interpolation between self and target
   /// t is in the range [0.0, 1.0] where 0.0 = self, 1.0 = target
   fn lerp(&self, target: &Self, t: f32) -> Self;
+
+  /// Check if this value is close enough to target (for exponential decay completion)
+  /// Default epsilon is 0.5 (suitable for pixel-based animations)
+  fn is_close(&self, target: &Self) -> bool;
 }
 
 // Implement Animatable for common numeric types
@@ -325,11 +340,19 @@ impl Animatable for f32 {
   fn lerp(&self, target: &Self, t: f32) -> Self {
     self + (target - self) * t
   }
+
+  fn is_close(&self, target: &Self) -> bool {
+    (self - target).abs() < 0.5
+  }
 }
 
 impl Animatable for f64 {
   fn lerp(&self, target: &Self, t: f32) -> Self {
     self + (target - self) * t as f64
+  }
+
+  fn is_close(&self, target: &Self) -> bool {
+    (self - target).abs() < 0.5
   }
 }
 
@@ -339,6 +362,10 @@ impl Animatable for usize {
     let end = *target as f32;
     (start + (end - start) * t) as usize
   }
+
+  fn is_close(&self, target: &Self) -> bool {
+    self == target
+  }
 }
 
 // Implement for tuples (useful for cursor positions, etc.)
@@ -346,11 +373,19 @@ impl Animatable for (f32, f32) {
   fn lerp(&self, target: &Self, t: f32) -> Self {
     (self.0.lerp(&target.0, t), self.1.lerp(&target.1, t))
   }
+
+  fn is_close(&self, target: &Self) -> bool {
+    self.0.is_close(&target.0) && self.1.is_close(&target.1)
+  }
 }
 
 impl Animatable for (usize, usize) {
   fn lerp(&self, target: &Self, t: f32) -> Self {
     (self.0.lerp(&target.0, t), self.1.lerp(&target.1, t))
+  }
+
+  fn is_close(&self, target: &Self) -> bool {
+    self.0.is_close(&target.0) && self.1.is_close(&target.1)
   }
 }
 
@@ -363,6 +398,13 @@ impl Animatable for Color {
       b: self.b.lerp(&target.b, t),
       a: self.a.lerp(&target.a, t),
     }
+  }
+
+  fn is_close(&self, target: &Self) -> bool {
+    self.r.is_close(&target.r)
+      && self.g.is_close(&target.g)
+      && self.b.is_close(&target.b)
+      && self.a.is_close(&target.a)
   }
 }
 
@@ -400,6 +442,31 @@ impl<T: Animatable> Animation<T> {
   /// Update the animation with the time delta
   /// Returns true if the animation is complete
   pub fn update(&mut self, dt: f32) -> bool {
+    // Handle exponential decay specially (raddebugger style)
+    if self.easing.is_exponential_decay() {
+      // Rate formula: 1 - 2^(-60 * dt)
+      // This is frame-rate adaptive and creates smooth deceleration
+      let rate = 1.0 - 2.0_f32.powf(-60.0 * dt);
+      // current = current + (target - current) * rate = lerp(current, target, rate)
+      self.current = self.current.lerp(&self.target, rate);
+
+      // Complete when close enough to target
+      if self.current.is_close(&self.target) {
+        self.current = self.target.clone();
+        return true;
+      }
+
+      // Also use duration as a max timeout (safety fallback)
+      self.elapsed += dt;
+      if self.elapsed >= self.duration {
+        self.current = self.target.clone();
+        return true;
+      }
+
+      return false;
+    }
+
+    // Standard duration-based easing
     self.elapsed += dt;
 
     if self.elapsed >= self.duration {

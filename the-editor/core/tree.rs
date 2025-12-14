@@ -304,21 +304,21 @@ impl Tree {
             );
           }
         } else {
-          // New view - animate from zero width/height
+          // New view - animate sliding in from the edge
           let start_area = match layout {
             Layout::Horizontal => {
-              // For horizontal splits, start with zero height
+              // For horizontal splits, slide in from bottom edge
               Rect {
                 x:      view.area.x,
-                y:      view.area.y,
+                y:      view.area.y + view.area.height,
                 width:  view.area.width,
                 height: 0,
               }
             },
             Layout::Vertical => {
-              // For vertical splits, start with zero width
+              // For vertical splits, slide in from right edge
               Rect {
-                x:      view.area.x,
+                x:      view.area.x + view.area.width,
                 y:      view.area.y,
                 width:  0,
                 height: view.area.height,

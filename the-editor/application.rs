@@ -453,11 +453,24 @@ impl Application for App {
       }
     }
 
-    // Process any pending job callbacks before rendering
-    while let Ok(callback) = self.jobs.callbacks.try_recv() {
-      self
-        .jobs
-        .handle_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback)));
+    // Process pending job callbacks with a frame budget to prevent UI freezes
+    // when many LSP responses arrive at once
+    const MAX_CALLBACKS_PER_FRAME: usize = 16;
+    let mut callbacks_processed = 0;
+    while callbacks_processed < MAX_CALLBACKS_PER_FRAME {
+      match self.jobs.callbacks.try_recv() {
+        Ok(callback) => {
+          self
+            .jobs
+            .handle_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback)));
+          callbacks_processed += 1;
+        },
+        Err(_) => break,
+      }
+    }
+    // If we hit the limit, there may be more callbacks - request another frame
+    if callbacks_processed == MAX_CALLBACKS_PER_FRAME {
+      self.editor.needs_redraw = true;
     }
 
     // Process any pending status messages

@@ -1,8 +1,5 @@
 //! Utilities for declaring an async (usually debounced) hook
 
-use std::time::Duration;
-
-use futures_executor::block_on;
 use tokio::{
   sync::mpsc::{
     self,
@@ -11,11 +8,6 @@ use tokio::{
   },
   time::Instant,
 };
-
-/// Maximum time to block when sending to a full channel.
-/// Keep this very short to avoid UI freezes - better to drop a message
-/// than to freeze the editor.
-const SEND_TIMEOUT_MS: u64 = 2;
 
 /// Async hooks provide a convenient framework for implementing (debounced)
 /// async event handlers. Most synchronous event hooks will likely need to
@@ -71,27 +63,24 @@ async fn run<Hook: AsyncHook>(mut hook: Hook, mut rx: mpsc::Receiver<Hook::Event
   }
 }
 
-/// Send an event to a channel, blocking only briefly if the channel is full.
+/// Send an event to a channel without blocking.
 ///
 /// This function is designed to be called from synchronous code that needs to
 /// communicate with async tasks. It prioritizes responsiveness over reliability:
-/// - First attempts a non-blocking send (fast path)
-/// - If the channel is full, blocks for at most `SEND_TIMEOUT_MS` milliseconds
-/// - If still full after timeout, the message is dropped
+/// - Attempts a non-blocking send
+/// - If the channel is full, the event is dropped (no blocking)
 ///
-/// This trade-off prevents UI freezes when the async system is overwhelmed.
+/// This is acceptable because completion/signature events are advisory -
+/// the next keystroke will trigger a new request anyway.
 pub fn send_blocking<T>(tx: &Sender<T>, data: T) {
-  // Fast path: try non-blocking send first
   match tx.try_send(data) {
     Ok(()) => {},
-    Err(TrySendError::Full(data)) => {
-      // Channel is full - block briefly but don't freeze the UI
-      // Use a very short timeout to minimize UI impact
-      let _ = block_on(tx.send_timeout(data, Duration::from_millis(SEND_TIMEOUT_MS)));
+    Err(TrySendError::Full(_)) => {
+      // Channel is full - drop event rather than block UI thread
+      // Completion events are advisory; next keystroke triggers new request
     },
     Err(TrySendError::Closed(_)) => {
       // Channel is closed, nothing we can do
-      log::warn!("Attempted to send to closed channel");
     },
   }
 }

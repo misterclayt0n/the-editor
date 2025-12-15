@@ -16,13 +16,123 @@ use crate::ui::{
   compositor::Context,
 };
 
+const CONTINUATION_INDENT: &str = "  ";
+
+/// Wrap a highlighted line (Vec<TextSegment>) into multiple lines when it exceeds max_chars.
+/// Continuation lines are indented with 2 spaces and preserve syntax highlighting.
+fn wrap_highlighted_line(
+  segments: Vec<TextSegment>,
+  max_chars: usize,
+  default_color: Color,
+) -> Vec<Vec<TextSegment>> {
+  if max_chars == 0 {
+    return vec![segments];
+  }
+
+  // Calculate total line width
+  let total_chars: usize = segments.iter().map(|s| s.content.chars().count()).sum();
+  if total_chars <= max_chars {
+    return vec![segments];
+  }
+
+  let mut result: Vec<Vec<TextSegment>> = Vec::new();
+  let mut current_line: Vec<TextSegment> = Vec::new();
+  let mut current_width = 0usize;
+  let mut is_continuation = false;
+
+  // Effective max for continuation lines (accounting for indent)
+  let continuation_max = max_chars.saturating_sub(CONTINUATION_INDENT.len());
+
+  for segment in segments {
+    let seg_chars: Vec<char> = segment.content.chars().collect();
+    let seg_len = seg_chars.len();
+
+    if seg_len == 0 {
+      continue;
+    }
+
+    let effective_max = if is_continuation { continuation_max } else { max_chars };
+
+    // If segment fits entirely on current line
+    if current_width + seg_len <= effective_max {
+      current_line.push(segment);
+      current_width += seg_len;
+      continue;
+    }
+
+    // Need to split this segment
+    let mut seg_pos = 0;
+    while seg_pos < seg_len {
+      let effective_max = if is_continuation { continuation_max } else { max_chars };
+      let remaining_space = effective_max.saturating_sub(current_width);
+
+      if remaining_space == 0 {
+        // Start new line
+        if !current_line.is_empty() {
+          result.push(std::mem::take(&mut current_line));
+        }
+        is_continuation = true;
+        // Add indent for continuation
+        current_line.push(TextSegment {
+          content: CONTINUATION_INDENT.to_string(),
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: default_color,
+          },
+        });
+        current_width = CONTINUATION_INDENT.len();
+        continue;
+      }
+
+      // Take as much as we can fit
+      let take_count = (seg_len - seg_pos).min(remaining_space);
+      let chunk: String = seg_chars[seg_pos..seg_pos + take_count].iter().collect();
+
+      if !chunk.is_empty() {
+        current_line.push(TextSegment {
+          content: chunk,
+          style:   segment.style.clone(),
+        });
+        current_width += take_count;
+      }
+      seg_pos += take_count;
+
+      // If there's more to process, start a new line
+      if seg_pos < seg_len {
+        result.push(std::mem::take(&mut current_line));
+        is_continuation = true;
+        // Add indent for continuation
+        current_line.push(TextSegment {
+          content: CONTINUATION_INDENT.to_string(),
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: default_color,
+          },
+        });
+        current_width = CONTINUATION_INDENT.len();
+      }
+    }
+  }
+
+  // Don't forget the last line
+  if !current_line.is_empty() {
+    result.push(current_line);
+  }
+
+  if result.is_empty() {
+    result.push(vec![]);
+  }
+
+  result
+}
+
 /// Highlight a code block with syntax highlighting.
 ///
 /// This function properly handles:
 /// - Char-based indexing (not byte-based)
 /// - Sorted and non-overlapping spans
 /// - Preservation of whitespace including tabs
-/// - Line truncation for display
+/// - Line wrapping for long lines
 pub fn highlight_code_block(
   lang_hint: Option<&str>,
   code: &str,
@@ -80,14 +190,6 @@ pub fn highlight_code_block(
     }
     let line_char_count = line_string.chars().count();
     let line_end_char = line_start_char + line_char_count;
-
-    // Truncate long lines for display
-    let display_line = if line_char_count > max_chars {
-      let truncated: String = line_string.chars().take(max_chars - 1).collect();
-      format!("{}…", truncated)
-    } else {
-      line_string.clone()
-    };
 
     // Build segments for this line
     let mut segments: Vec<TextSegment> = Vec::new();
@@ -163,7 +265,7 @@ pub fn highlight_code_block(
     // If no segments, add the whole line with default color
     if segments.is_empty() {
       segments.push(TextSegment {
-        content: display_line,
+        content: line_string,
         style:   TextStyle {
           size:  UI_FONT_SIZE,
           color: default_code_color,
@@ -171,7 +273,8 @@ pub fn highlight_code_block(
       });
     }
 
-    result.push(segments);
+    // Wrap long lines, preserving syntax highlighting
+    result.extend(wrap_highlighted_line(segments, max_chars, default_code_color));
   }
 
   result

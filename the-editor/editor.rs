@@ -827,8 +827,10 @@ pub struct EditorConfig {
   )]
   pub jump_label_alphabet:       Vec<char>,
   /// Display diagnostic below the line they occur.
-  pub inline_diagnostics:        InlineDiagnosticsConfig,
-  pub end_of_line_diagnostics:   DiagnosticFilter,
+  pub inline_diagnostics:                      InlineDiagnosticsConfig,
+  pub end_of_line_diagnostics:                 DiagnosticFilter,
+  /// Only show end-of-line diagnostics on the cursor line. Defaults to `false`.
+  pub end_of_line_diagnostics_cursor_line_only: bool,
   // Set to override the default clipboard provider
   pub clipboard_provider:        ClipboardProvider,
   /// Whether to read settings from [EditorConfig](https://editorconfig.org) files. Defaults to
@@ -1827,9 +1829,10 @@ impl Default for EditorConfig {
       popup_border:              PopupBorderConfig::None,
       indent_heuristic:          IndentationHeuristic::default(),
       jump_label_alphabet:       ('a'..='z').collect(),
-      inline_diagnostics:        InlineDiagnosticsConfig::default(),
-      end_of_line_diagnostics:   DiagnosticFilter::Enable(Severity::Hint),
-      clipboard_provider:        ClipboardProvider::default(),
+      inline_diagnostics:                       InlineDiagnosticsConfig::default(),
+      end_of_line_diagnostics:                  DiagnosticFilter::Enable(Severity::Hint),
+      end_of_line_diagnostics_cursor_line_only: false,
+      clipboard_provider:                       ClipboardProvider::default(),
       editor_config:             true,
       rainbow_brackets:          false,
       // Animations defaults

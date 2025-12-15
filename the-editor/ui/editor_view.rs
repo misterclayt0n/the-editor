@@ -1450,6 +1450,7 @@ impl Component for EditorView {
 
         let primary_index = selection.primary_index();
         let cursor_pos = selection.primary().cursor(doc_text.slice(..));
+        let cursor_line = doc_text.char_to_line(cursor_pos);
         let primary_range = selection.primary();
         let has_selection = !primary_range.is_empty(); // Check if there's an actual selection (not just cursor)
         let secondary_cursor_positions: HashSet<usize> = selection
@@ -1651,12 +1652,15 @@ impl Component for EditorView {
           let prepared_config =
             inline_diagnostics_config.prepare(viewport.width, enable_cursor_line);
 
+          let eol_cursor_line_only = cx.editor.config().end_of_line_diagnostics_cursor_line_only;
           let inline_diag = crate::ui::text_decorations::diagnostics::InlineDiagnostics::new(
             doc,
             &cx.editor.theme,
             cursor_pos,
+            cursor_line,
             prepared_config,
             eol_diagnostics,
+            eol_cursor_line_only,
             base_x,
             base_y,
             self.cached_cell_height,

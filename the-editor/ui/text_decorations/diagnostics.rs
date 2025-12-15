@@ -83,16 +83,18 @@ impl Styles {
 
 /// Inline diagnostics decoration for rendering diagnostic messages
 pub struct InlineDiagnostics<'a> {
-  state:             InlineDiagnosticAccumulator<'a>,
-  eol_diagnostics:   crate::core::diagnostics::DiagnosticFilter,
-  styles:            Styles,
-  base_x:            f32,
-  base_y:            f32,
-  line_height:       f32,
-  font_width:        f32,
-  font_size:         f32,
-  viewport_width:    u16,
-  horizontal_offset: usize,
+  state:               InlineDiagnosticAccumulator<'a>,
+  eol_diagnostics:     crate::core::diagnostics::DiagnosticFilter,
+  eol_cursor_line_only: bool,
+  cursor_line:         usize,
+  styles:              Styles,
+  base_x:              f32,
+  base_y:              f32,
+  line_height:         f32,
+  font_width:          f32,
+  font_size:           f32,
+  viewport_width:      u16,
+  horizontal_offset:   usize,
 }
 
 impl<'a> InlineDiagnostics<'a> {
@@ -100,8 +102,10 @@ impl<'a> InlineDiagnostics<'a> {
     doc: &'a Document,
     theme: &Theme,
     cursor: usize,
+    cursor_line: usize,
     config: InlineDiagnosticsConfig,
     eol_diagnostics: crate::core::diagnostics::DiagnosticFilter,
+    eol_cursor_line_only: bool,
     base_x: f32,
     base_y: f32,
     line_height: f32,
@@ -113,6 +117,8 @@ impl<'a> InlineDiagnostics<'a> {
     InlineDiagnostics {
       state: InlineDiagnosticAccumulator::new(cursor, doc, config),
       eol_diagnostics,
+      eol_cursor_line_only,
+      cursor_line,
       styles: Styles::new(theme),
       base_x,
       base_y,
@@ -412,8 +418,12 @@ impl Decoration for InlineDiagnostics<'_> {
       DiagnosticFilter::Disable => None,
     };
 
-    if let Some((eol_diagnostic, _)) = eol_diagnostic {
-      col_off = self.draw_eol_diagnostic(surface, eol_diagnostic, pos.1, virt_off.col);
+    // Only render EOL diagnostic if not in cursor-line-only mode, or if we're on the cursor line
+    let show_eol = !self.eol_cursor_line_only || pos.0 == self.cursor_line;
+    if show_eol {
+      if let Some((eol_diagnostic, _)) = eol_diagnostic {
+        col_off = self.draw_eol_diagnostic(surface, eol_diagnostic, pos.1, virt_off.col);
+      }
     }
 
     // Phase 2: Compute and render inline diagnostics

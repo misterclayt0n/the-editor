@@ -281,6 +281,10 @@ pub struct EditorView {
   indent_guide_opacities:    std::collections::HashMap<usize, f32>,
   // Track if indent guide animation is in progress
   indent_guides_anim_active: bool,
+  // Diagnostic glow animation state (per doc line -> current opacity)
+  diagnostic_glow_opacities: std::collections::HashMap<usize, f32>,
+  // Track if diagnostic glow animation is in progress
+  diagnostic_glow_anim_active: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -358,6 +362,8 @@ impl EditorView {
       last_mouse_pos: None,
       indent_guide_opacities: std::collections::HashMap::new(),
       indent_guides_anim_active: false,
+      diagnostic_glow_opacities: std::collections::HashMap::new(),
+      diagnostic_glow_anim_active: false,
     }
   }
 
@@ -695,6 +701,7 @@ impl Component for EditorView {
       || self.dragging_separator.is_some()
       || self.explorer.as_ref().is_some_and(|e| e.is_animating())
       || self.indent_guides_anim_active
+      || self.diagnostic_glow_anim_active
   }
 
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
@@ -1915,6 +1922,49 @@ impl Component for EditorView {
 
         self.indent_guides_anim_active = any_animating;
 
+        // Update diagnostic glow animation state
+        // Collect lines with diagnostics
+        let diagnostic_lines: std::collections::HashSet<usize> = doc
+          .diagnostics()
+          .iter()
+          .map(|d| doc_text.char_to_line(d.range.start.min(doc_text.len_chars())))
+          .collect();
+
+        // Animate glow opacities with exponential decay (faster rate for glow)
+        let glow_anim_rate = 1.0 - 2.0_f32.powf(-30.0 * cx.dt);
+        let mut glow_animating = false;
+
+        // Update existing entries and add new ones
+        let max_line = doc_text.len_lines();
+        for line in 0..max_line.min(10000) {
+          // Cap to avoid huge allocations
+          let target = if diagnostic_lines.contains(&line) { 1.0 } else { 0.0 };
+
+          if let Some(current) = self.diagnostic_glow_opacities.get_mut(&line) {
+            let delta = target - *current;
+            if delta.abs() > 0.01 {
+              glow_animating = true;
+              *current += glow_anim_rate * delta;
+            } else {
+              *current = target;
+            }
+          } else if target > 0.0 {
+            // New diagnostic line - start at 0 and animate in
+            self.diagnostic_glow_opacities.insert(line, 0.0);
+            glow_animating = true;
+          }
+        }
+
+        // Clean up lines that are no longer needed (opacity ~0 and no diagnostic)
+        self
+          .diagnostic_glow_opacities
+          .retain(|line, opacity| diagnostic_lines.contains(line) || *opacity > 0.01);
+
+        self.diagnostic_glow_anim_active = glow_animating;
+
+        // Clone for use in rendering
+        let glow_opacities = self.diagnostic_glow_opacities.clone();
+
         // Clone opacities for use in closure
         let guide_opacities = self.indent_guide_opacities.clone();
 
@@ -2121,6 +2171,69 @@ impl Component for EditorView {
               font_size,
               normal,
             );
+
+            // Render diagnostic glow if this line has one
+            if let Some(&glow_opacity) = glow_opacities.get(&doc_line) {
+              if glow_opacity > 0.01 {
+                // Find the highest severity diagnostic on this line
+                use crate::core::diagnostics::Severity;
+                let diagnostics = &doc.diagnostics;
+                let first_diag_idx =
+                  diagnostics.partition_point(|d| d.line < doc_line);
+                let severity = diagnostics
+                  .get(first_diag_idx..)
+                  .and_then(|diags| diags.iter().find(|d| d.line == doc_line))
+                  .and_then(|d| d.severity);
+
+                // Get color based on severity
+                let glow_color = match severity {
+                  Some(Severity::Error) => cx
+                    .editor
+                    .theme
+                    .get("error")
+                    .fg
+                    .map(crate::ui::theme_color_to_renderer_color)
+                    .unwrap_or(Color::rgb(0.9, 0.3, 0.3)),
+                  Some(Severity::Warning) | None => cx
+                    .editor
+                    .theme
+                    .get("warning")
+                    .fg
+                    .map(crate::ui::theme_color_to_renderer_color)
+                    .unwrap_or(Color::rgb(0.9, 0.7, 0.3)),
+                  Some(Severity::Info) => cx
+                    .editor
+                    .theme
+                    .get("info")
+                    .fg
+                    .map(crate::ui::theme_color_to_renderer_color)
+                    .unwrap_or(Color::rgb(0.3, 0.7, 0.9)),
+                  Some(Severity::Hint) => cx
+                    .editor
+                    .theme
+                    .get("hint")
+                    .fg
+                    .map(crate::ui::theme_color_to_renderer_color)
+                    .unwrap_or(Color::rgb(0.5, 0.8, 0.5)),
+                };
+
+                // Draw gradient glow rectangle in gutter area only (stops at line content)
+                // Width: spans from gutter to content area start
+                // Opacity: 30% of color, further scaled by glow_opacity
+                // Fades from left (full color) to right (transparent)
+                let glow_width = (base_x - gutter_x) * glow_opacity;
+                let mut final_color = glow_color;
+                final_color.a = 0.3 * glow_opacity;
+
+                self.command_batcher.add_command(RenderCommand::GradientRect {
+                  x:      gutter_x,
+                  y,
+                  width:  glow_width,
+                  height: self.cached_cell_height,
+                  color:  final_color,
+                });
+              }
+            }
           }
 
           // Track indent level for indent guides

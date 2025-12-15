@@ -224,7 +224,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             return vec4<f32>(fire_color * time_fade, alpha * time_fade * shape_alpha);
         }
 
-    } else {
+    } else if (in.effect_kind < 5.5) {
         // Laser effect (effect_kind 5.0)
         // Vertical laser beam with glow
         let center = in.rect_size * 0.5;
@@ -252,5 +252,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Combine effects
         let total_alpha = (beam_alpha + glow_alpha + scan_alpha) * flicker;
         return vec4<f32>(in.color.rgb, in.color.a * total_alpha * shape_alpha);
+    } else {
+        // Horizontal gradient fade (effect_kind 6.0)
+        // Fades from full color on left to transparent on right
+        let gradient = 1.0 - (in.local_pos.x / in.rect_size.x);
+        return vec4<f32>(in.color.rgb, in.color.a * gradient * shape_alpha);
     }
 }

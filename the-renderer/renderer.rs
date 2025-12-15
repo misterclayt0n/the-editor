@@ -1944,6 +1944,29 @@ impl Renderer {
     });
   }
 
+  /// Draw a horizontal gradient rectangle (fades from left to right)
+  pub fn draw_gradient_rect_horizontal(
+    &mut self,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: Color,
+  ) {
+    self.rect_instances.push(RectInstance {
+      position:      [x, y],
+      size:          [width, height],
+      color:         color_to_linear(color),
+      corner_radius: 0.0,
+      _pad0:         [0.0, 0.0],
+      glow_center:   [0.0, 0.0],
+      glow_radius:   0.0,
+      effect_kind:   6.0, // Horizontal gradient
+      effect_time:   0.0,
+      _pad1:         [0.0, 0.0, 0.0],
+    });
+  }
+
   /// Draw a rounded rectangle glow overlay, clipped to the rounded rect
   #[allow(clippy::too_many_arguments)]
   pub fn draw_rounded_rect_glow(

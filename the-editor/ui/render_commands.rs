@@ -38,19 +38,37 @@ pub enum RenderCommand {
     height: f32,
     color:  Color,
   },
+  /// Draw a horizontal gradient rectangle (fades left to right)
+  GradientRect {
+    x:      f32,
+    y:      f32,
+    width:  f32,
+    height: f32,
+    color:  Color,
+  },
 }
 
 /// Groups render commands by type and state for batching
 pub struct CommandBatcher {
   /// Pending commands grouped by render state
-  rect_batch:      Vec<RectCommand>,
-  text_batch:      HashMap<TextBatchKey, Vec<TextCommand>>,
-  selection_batch: Vec<SelectionCommand>,
-  cursor_batch:    Vec<CursorCommand>,
+  rect_batch:          Vec<RectCommand>,
+  gradient_rect_batch: Vec<GradientRectCommand>,
+  text_batch:          HashMap<TextBatchKey, Vec<TextCommand>>,
+  selection_batch:     Vec<SelectionCommand>,
+  cursor_batch:        Vec<CursorCommand>,
 }
 
 #[derive(Debug, Clone)]
 struct RectCommand {
+  x:      f32,
+  y:      f32,
+  width:  f32,
+  height: f32,
+  color:  Color,
+}
+
+#[derive(Debug, Clone)]
+struct GradientRectCommand {
   x:      f32,
   y:      f32,
   width:  f32,
@@ -94,10 +112,11 @@ struct CursorCommand {
 impl CommandBatcher {
   pub fn new() -> Self {
     Self {
-      rect_batch:      Vec::new(),
-      text_batch:      HashMap::new(),
-      selection_batch: Vec::new(),
-      cursor_batch:    Vec::new(),
+      rect_batch:          Vec::new(),
+      gradient_rect_batch: Vec::new(),
+      text_batch:          HashMap::new(),
+      selection_batch:     Vec::new(),
+      cursor_batch:        Vec::new(),
     }
   }
 
@@ -169,6 +188,21 @@ impl CommandBatcher {
           primary,
         });
       },
+      RenderCommand::GradientRect {
+        x,
+        y,
+        width,
+        height,
+        color,
+      } => {
+        self.gradient_rect_batch.push(GradientRectCommand {
+          x,
+          y,
+          width,
+          height,
+          color,
+        });
+      },
     }
   }
 
@@ -182,6 +216,11 @@ impl CommandBatcher {
     // Draw rectangles
     for rect in &self.rect_batch {
       renderer.draw_rect(rect.x, rect.y, rect.width, rect.height, rect.color);
+    }
+
+    // Draw gradient rectangles
+    for rect in &self.gradient_rect_batch {
+      renderer.draw_gradient_rect_horizontal(rect.x, rect.y, rect.width, rect.height, rect.color);
     }
 
     // Draw text batches
@@ -229,6 +268,7 @@ impl CommandBatcher {
   /// Clear all pending commands
   pub fn clear(&mut self) {
     self.rect_batch.clear();
+    self.gradient_rect_batch.clear();
     self.text_batch.clear();
     self.selection_batch.clear();
     self.cursor_batch.clear();
@@ -237,6 +277,7 @@ impl CommandBatcher {
   /// Check if there are any pending commands
   pub fn is_empty(&self) -> bool {
     self.rect_batch.is_empty()
+      && self.gradient_rect_batch.is_empty()
       && self.text_batch.is_empty()
       && self.selection_batch.is_empty()
       && self.cursor_batch.is_empty()

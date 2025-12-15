@@ -291,6 +291,10 @@ pub struct EditorView {
   eol_diagnostic_anim_active:    bool,
   // EOL diagnostic debounce: pending lines waiting to be animated (line -> first seen time)
   eol_diagnostic_pending:        std::collections::HashMap<usize, std::time::Instant>,
+  // Underline animation state (per doc line -> current opacity)
+  underline_opacities:           std::collections::HashMap<usize, f32>,
+  // Track if underline animation is in progress
+  underline_anim_active:         bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -373,6 +377,8 @@ impl EditorView {
       eol_diagnostic_opacities: std::collections::HashMap::new(),
       eol_diagnostic_anim_active: false,
       eol_diagnostic_pending: std::collections::HashMap::new(),
+      underline_opacities: std::collections::HashMap::new(),
+      underline_anim_active: false,
     }
   }
 
@@ -712,6 +718,7 @@ impl Component for EditorView {
       || self.indent_guides_anim_active
       || self.diagnostic_glow_anim_active
       || self.eol_diagnostic_anim_active
+      || self.underline_anim_active
   }
 
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
@@ -1627,6 +1634,44 @@ impl Component for EditorView {
         // Create decoration manager for inline diagnostics
         let mut decoration_manager = crate::ui::text_decorations::DecorationManager::new();
 
+        // Update underline animation state (fast, no debounce)
+        {
+          let underline_lines: std::collections::HashSet<usize> = doc
+            .diagnostics()
+            .iter()
+            .map(|d| doc_text.char_to_line(d.range.start.min(doc_text.len_chars())))
+            .collect();
+
+          // Add new diagnostic lines with opacity 0
+          for &line in &underline_lines {
+            if !self.underline_opacities.contains_key(&line) {
+              self.underline_opacities.insert(line, 0.0);
+            }
+          }
+
+          // Animate existing opacities (fast rate)
+          let anim_rate = 1.0 - 2.0_f32.powf(-60.0 * cx.dt);
+          let mut animating = false;
+
+          for (&line, current) in self.underline_opacities.iter_mut() {
+            let target = if underline_lines.contains(&line) { 1.0 } else { 0.0 };
+            let delta = target - *current;
+            if delta.abs() > 0.01 {
+              animating = true;
+              *current += anim_rate * delta;
+            } else {
+              *current = target;
+            }
+          }
+
+          // Clean up lines that faded out
+          self
+            .underline_opacities
+            .retain(|line, opacity| underline_lines.contains(line) || *opacity > 0.01);
+
+          self.underline_anim_active = animating;
+        }
+
         // Add diagnostic underlines decoration
         let underlines =
           crate::ui::text_decorations::diagnostic_underlines::DiagnosticUnderlines::new(
@@ -1638,6 +1683,7 @@ impl Component for EditorView {
             font_width,
             font_size,
             view_offset.horizontal_offset,
+            &self.underline_opacities,
           );
         decoration_manager.add_decoration(underlines);
 

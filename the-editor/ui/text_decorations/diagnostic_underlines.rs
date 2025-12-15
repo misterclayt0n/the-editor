@@ -31,6 +31,7 @@ pub struct DiagnosticUnderlines<'a> {
   info_color:        Color,
   warning_color:     Color,
   error_color:       Color,
+  opacities:         &'a std::collections::HashMap<usize, f32>,
 }
 
 impl<'a> DiagnosticUnderlines<'a> {
@@ -43,6 +44,7 @@ impl<'a> DiagnosticUnderlines<'a> {
     font_width: f32,
     font_size: f32,
     horizontal_offset: usize,
+    opacities: &'a std::collections::HashMap<usize, f32>,
   ) -> Self {
     // Get colors from theme
     let hint_style = theme.get("diagnostic.hint");
@@ -80,6 +82,7 @@ impl<'a> DiagnosticUnderlines<'a> {
         .or(error_style.fg)
         .map(crate::ui::theme_color_to_renderer_color)
         .unwrap_or(Color::rgb(1.0, 0.3, 0.3)),
+      opacities,
     }
   }
 
@@ -99,24 +102,39 @@ impl<'a> DiagnosticUnderlines<'a> {
     end_col: usize,
     row: u16,
     severity: Severity,
+    doc_line: usize,
   ) {
     if start_col >= end_col {
-      return; // No underline to draw
+      return;
     }
 
-    let color = self.severity_color(severity);
+    let mut color = self.severity_color(severity);
 
-    // Y position: place the underline character at the same baseline as the text
-    // The text rendering system will position the "▁" character correctly relative
-    // to baseline
-    let base_y_for_line = self.base_y + (row as f32) * self.line_height;
+    // Apply animation opacity
+    if let Some(&opacity) = self.opacities.get(&doc_line) {
+      color.a *= opacity;
+    }
 
-    // Draw individual "▁" characters for each column, matching how text is rendered
-    // This ensures perfect alignment since we're using the same font rendering
-    // system
-    for col in start_col..end_col {
-      let x = self.base_x + (col as f32) * self.font_width;
-      surface.draw_decoration_grapheme("▁", color, x, base_y_for_line);
+    // Scale wave parameters based on font size (baseline: 16px font)
+    let scale = self.font_size / 16.0;
+
+    // Position wave at bottom of the text line
+    let y_base = self.base_y + (row as f32 + 1.0) * self.line_height - (3.0 * scale);
+
+    // Wave parameters scaled to font size
+    let wave_amplitude = 1.5 * scale; // Height of wave peaks
+    let wave_period = 6.0 * scale; // Pixels per full wave cycle
+    let point_size = 1.0 * scale; // Size of each drawn point
+
+    // Draw wave from start to end column
+    let start_x = self.base_x + (start_col as f32) * self.font_width;
+    let end_x = self.base_x + (end_col as f32) * self.font_width;
+
+    let mut px = start_x;
+    while px < end_x {
+      let wave_y = y_base + (px / wave_period * std::f32::consts::TAU).sin() * wave_amplitude;
+      surface.draw_rect(px, wave_y, point_size, point_size, color);
+      px += point_size;
     }
   }
 }
@@ -207,8 +225,9 @@ impl Decoration for DiagnosticUnderlines<'_> {
     _virt_off: crate::core::position::Position,
   ) -> crate::core::position::Position {
     // Draw any pending underline at the end of the line
+    // pos.0 is the document line, pos.1 is the visual row
     if let Some((start_col, end_col, severity)) = self.current_underline.take() {
-      self.draw_underline(surface, start_col, end_col, pos.1, severity);
+      self.draw_underline(surface, start_col, end_col, pos.1, severity, pos.0);
     }
 
     // Don't consume any virtual lines

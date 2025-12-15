@@ -87,6 +87,7 @@ pub struct InlineDiagnostics<'a> {
   eol_diagnostics:      crate::core::diagnostics::DiagnosticFilter,
   eol_cursor_line_only: bool,
   eol_opacities:        &'a std::collections::HashMap<usize, f32>,
+  inline_anim_states:   &'a std::collections::HashMap<usize, crate::ui::inline_diagnostic_animation::InlineDiagnosticAnimState>,
   cursor_line:          usize,
   styles:               Styles,
   base_x:               f32,
@@ -108,6 +109,7 @@ impl<'a> InlineDiagnostics<'a> {
     eol_diagnostics: crate::core::diagnostics::DiagnosticFilter,
     eol_cursor_line_only: bool,
     eol_opacities: &'a std::collections::HashMap<usize, f32>,
+    inline_anim_states: &'a std::collections::HashMap<usize, crate::ui::inline_diagnostic_animation::InlineDiagnosticAnimState>,
     base_x: f32,
     base_y: f32,
     line_height: f32,
@@ -121,6 +123,7 @@ impl<'a> InlineDiagnostics<'a> {
       eol_diagnostics,
       eol_cursor_line_only,
       eol_opacities,
+      inline_anim_states,
       cursor_line,
       styles: Styles::new(theme),
       base_x,
@@ -133,7 +136,16 @@ impl<'a> InlineDiagnostics<'a> {
     }
   }
 
-  /// Draw a single decoration grapheme at the specified column and row
+  /// Get animation state for a document line
+  /// Returns None if line has no animation state (still in debounce or not tracked)
+  fn get_anim_state(
+    &self,
+    doc_line: usize,
+  ) -> Option<crate::ui::inline_diagnostic_animation::InlineDiagnosticAnimState> {
+    self.inline_anim_states.get(&doc_line).copied()
+  }
+
+  /// Draw a single decoration grapheme at the specified column and row (no animation)
   fn draw_decoration(
     &self,
     surface: &mut Surface,
@@ -147,6 +159,25 @@ impl<'a> InlineDiagnostics<'a> {
     let color = self.styles.severity_style(severity);
     surface.draw_decoration_grapheme(g, color, x, y);
   }
+
+  /// Draw a single decoration grapheme with animation applied
+  fn draw_decoration_with_anim(
+    &self,
+    surface: &mut Surface,
+    g: &'static str,
+    severity: Severity,
+    col: u16,
+    row: u16,
+    anim: &crate::ui::inline_diagnostic_animation::InlineDiagnosticAnimState,
+  ) {
+    let x = self.base_x + (col as f32) * self.font_width;
+    // Apply vertical slide offset
+    let y = self.base_y + ((row as f32) - anim.slide_offset) * self.line_height;
+    let mut color = self.styles.severity_style(severity);
+    color.a *= anim.opacity;
+    surface.draw_decoration_grapheme(g, color, x, y);
+  }
+
 
   /// Draw end-of-line diagnostic (message at line end, potentially multi-line)
   fn draw_eol_diagnostic(
@@ -216,7 +247,7 @@ impl<'a> InlineDiagnostics<'a> {
     end_col.saturating_sub(start_col_in_view as u16)
   }
 
-  /// Draw a full diagnostic message with box-drawing in virtual lines
+  /// Draw a full diagnostic message with box-drawing in virtual lines (with animation)
   fn draw_diagnostic(
     &self,
     surface: &mut Surface,
@@ -224,6 +255,7 @@ impl<'a> InlineDiagnostics<'a> {
     col: u16,
     current_row: &mut u16,
     next_severity: Option<Severity>,
+    anim: &crate::ui::inline_diagnostic_animation::InlineDiagnosticAnimState,
   ) {
     let severity = diag.severity();
     let (sym, sym_severity) = if let Some(next_severity) = next_severity {
@@ -232,10 +264,12 @@ impl<'a> InlineDiagnostics<'a> {
       (BR_CORNER, severity)
     };
 
-    // Draw corner and horizontal bar
-    self.draw_decoration(surface, sym, sym_severity, col, *current_row);
+    // Draw corner and horizontal bar with animation
+    self.draw_decoration_with_anim(surface, sym, sym_severity, col, *current_row, anim);
+
+    // Draw horizontal bars
     for i in 0..self.state.config.prefix_len {
-      self.draw_decoration(surface, HOR_BAR, severity, col + i + 1, *current_row);
+      self.draw_decoration_with_anim(surface, HOR_BAR, severity, col + i + 1, *current_row, anim);
     }
 
     // Draw diagnostic message text
@@ -250,14 +284,17 @@ impl<'a> InlineDiagnostics<'a> {
       0,
     );
 
-    let color = self.styles.severity_style(severity);
+    let mut color = self.styles.severity_style(severity);
+    color.a *= anim.opacity;
     let mut last_row = 0;
 
     for grapheme in formatter {
       last_row = grapheme.visual_pos.row;
       let x = self.base_x + ((text_col + grapheme.visual_pos.col as u16) as f32) * self.font_width;
-      let y =
-        self.base_y + ((*current_row + grapheme.visual_pos.row as u16) as f32) * self.line_height;
+      // Apply slide offset to Y coordinate
+      let y = self.base_y
+        + ((*current_row + grapheme.visual_pos.row as u16) as f32 - anim.slide_offset)
+          * self.line_height;
 
       // Convert grapheme to string for rendering
       let grapheme_str = match &grapheme.raw {
@@ -275,7 +312,7 @@ impl<'a> InlineDiagnostics<'a> {
     let extra_lines = last_row;
     if let Some(next_severity) = next_severity {
       for _ in 0..extra_lines {
-        self.draw_decoration(surface, VER_BAR, next_severity, col, *current_row);
+        self.draw_decoration_with_anim(surface, VER_BAR, next_severity, col, *current_row, anim);
         *current_row += 1;
       }
     } else {
@@ -283,12 +320,13 @@ impl<'a> InlineDiagnostics<'a> {
     }
   }
 
-  /// Draw multiple diagnostics stacked together
+  /// Draw multiple diagnostics stacked together (with animation)
   fn draw_multi_diagnostics(
     &self,
     surface: &mut Surface,
     stack: &mut Vec<(&Diagnostic, u16)>,
     row: &mut u16,
+    anim: &crate::ui::inline_diagnostic_animation::InlineDiagnosticAnimState,
   ) {
     let Some(&(last_diag, last_anchor)) = stack.last() else {
       return;
@@ -303,7 +341,7 @@ impl<'a> InlineDiagnostics<'a> {
     let mut severity = last_diag.severity();
     let mut last_anchor = last_anchor;
 
-    self.draw_decoration(surface, BL_CORNER, severity, last_anchor, *row);
+    self.draw_decoration_with_anim(surface, BL_CORNER, severity, last_anchor, *row, anim);
 
     let mut stacked_diagnostics = 1;
     for &(diag, anchor) in stack.iter().rev().skip(1) {
@@ -322,20 +360,21 @@ impl<'a> InlineDiagnostics<'a> {
         continue;
       }
 
+      // Draw horizontal bars
       for col in (anchor + 1)..last_anchor {
-        self.draw_decoration(surface, HOR_BAR, old_severity, col, *row);
+        self.draw_decoration_with_anim(surface, HOR_BAR, old_severity, col, *row, anim);
       }
 
-      self.draw_decoration(surface, sym, severity, anchor, *row);
+      self.draw_decoration_with_anim(surface, sym, severity, anchor, *row, anim);
       last_anchor = anchor;
     }
 
     // Draw the connecting line to start position
     if last_anchor != start {
       for col in (start + 1)..last_anchor {
-        self.draw_decoration(surface, HOR_BAR, severity, col, *row);
+        self.draw_decoration_with_anim(surface, HOR_BAR, severity, col, *row, anim);
       }
-      self.draw_decoration(surface, TR_CORNER, severity, start, *row);
+      self.draw_decoration_with_anim(surface, TR_CORNER, severity, start, *row, anim);
     }
 
     *row += 1;
@@ -348,19 +387,20 @@ impl<'a> InlineDiagnostics<'a> {
         .iter()
         .map(|(diag, _)| diag.severity())
         .max();
-      self.draw_diagnostic(surface, diag, start, row, next_severity);
+      self.draw_diagnostic(surface, diag, start, row, next_severity, anim);
     }
 
     stack.truncate(stack.len() - stacked_diagnostics.len());
   }
 
-  /// Draw all diagnostics in the stack
+  /// Draw all diagnostics in the stack (with animation)
   fn draw_diagnostics(
     &self,
     surface: &mut Surface,
     stack: &mut Vec<(&Diagnostic, u16)>,
     first_row: u16,
     current_row: &mut u16,
+    anim: &crate::ui::inline_diagnostic_animation::InlineDiagnosticAnimState,
   ) {
     let mut stack_iter = stack.drain(..).rev().peekable();
     let mut last_anchor = self.viewport_width;
@@ -369,7 +409,7 @@ impl<'a> InlineDiagnostics<'a> {
       if anchor != last_anchor {
         // Draw vertical bars from first row to current row
         for row in first_row..*current_row {
-          self.draw_decoration(surface, VER_BAR, diag.severity(), anchor, row);
+          self.draw_decoration_with_anim(surface, VER_BAR, diag.severity(), anchor, row, anim);
         }
       }
 
@@ -377,7 +417,7 @@ impl<'a> InlineDiagnostics<'a> {
         .peek()
         .and_then(|&(diag, next_anchor)| (next_anchor == anchor).then_some(diag.severity()));
 
-      self.draw_diagnostic(surface, diag, anchor, current_row, next_severity);
+      self.draw_diagnostic(surface, diag, anchor, current_row, next_severity, anim);
       last_anchor = anchor;
     }
   }
@@ -406,6 +446,7 @@ impl Decoration for InlineDiagnostics<'_> {
   ) -> Position {
     use crate::core::diagnostics::DiagnosticFilter;
 
+    let doc_line = pos.0;
     let mut col_off = 0;
     let filter = self.state.filter();
 
@@ -432,10 +473,10 @@ impl Decoration for InlineDiagnostics<'_> {
     };
 
     // Only render EOL diagnostic if not in cursor-line-only mode, or if we're on the cursor line
-    let show_eol = !self.eol_cursor_line_only || pos.0 == self.cursor_line;
+    let show_eol = !self.eol_cursor_line_only || doc_line == self.cursor_line;
     if show_eol {
       if let Some((eol_diagnostic, _)) = eol_diagnostic {
-        col_off = self.draw_eol_diagnostic(surface, eol_diagnostic, pos.0, pos.1, virt_off.col);
+        col_off = self.draw_eol_diagnostic(surface, eol_diagnostic, doc_line, pos.1, virt_off.col);
       }
     }
 
@@ -443,6 +484,18 @@ impl Decoration for InlineDiagnostics<'_> {
     self.state.compute_line_diagnostics();
 
     if self.state.stack.is_empty() {
+      return Position::new(0, col_off as usize);
+    }
+
+    // Get animation state for this line - if None, we're still in debounce period
+    let Some(anim) = self.get_anim_state(doc_line) else {
+      self.state.stack.clear();
+      return Position::new(0, col_off as usize);
+    };
+
+    // Skip rendering if opacity is too low (faded out)
+    if anim.opacity < 0.01 {
+      self.state.stack.clear();
       return Position::new(0, col_off as usize);
     }
 
@@ -469,12 +522,12 @@ impl Decoration for InlineDiagnostics<'_> {
     // Clone the stack for rendering
     let mut stack = self.state.stack.clone();
 
-    // Render the diagnostics
+    // Render the diagnostics with animation (opacity + slide down)
     if has_multi {
-      self.draw_multi_diagnostics(surface, &mut stack, &mut current_row);
+      self.draw_multi_diagnostics(surface, &mut stack, &mut current_row, &anim);
     }
 
-    self.draw_diagnostics(surface, &mut stack, first_row, &mut current_row);
+    self.draw_diagnostics(surface, &mut stack, first_row, &mut current_row, &anim);
 
     let total_height = (current_row - first_row) as usize;
 

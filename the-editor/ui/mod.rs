@@ -6,6 +6,7 @@ pub mod editor_view;
 pub mod explorer;
 pub mod file_icons;
 pub mod gutter;
+pub mod inline_diagnostic_animation;
 pub mod job;
 pub mod popup_positioning;
 pub mod render_cache;

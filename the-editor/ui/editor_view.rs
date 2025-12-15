@@ -295,6 +295,10 @@ pub struct EditorView {
   underline_opacities:           std::collections::HashMap<usize, f32>,
   // Track if underline animation is in progress
   underline_anim_active:         bool,
+  // Inline diagnostic animation state (per doc line -> full animation state)
+  inline_diagnostic_anim:        std::collections::HashMap<usize, super::inline_diagnostic_animation::InlineDiagnosticAnimState>,
+  // Track if inline diagnostic animation is in progress
+  inline_diagnostic_anim_active: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -379,6 +383,8 @@ impl EditorView {
       eol_diagnostic_pending: std::collections::HashMap::new(),
       underline_opacities: std::collections::HashMap::new(),
       underline_anim_active: false,
+      inline_diagnostic_anim: std::collections::HashMap::new(),
+      inline_diagnostic_anim_active: false,
     }
   }
 
@@ -719,6 +725,7 @@ impl Component for EditorView {
       || self.diagnostic_glow_anim_active
       || self.eol_diagnostic_anim_active
       || self.underline_anim_active
+      || self.inline_diagnostic_anim_active
   }
 
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
@@ -1752,7 +1759,7 @@ impl Component for EditorView {
             eol_animating || !self.eol_diagnostic_pending.is_empty();
         }
 
-        // Add inline diagnostics decoration if enabled
+        // Prepare inline diagnostics config (needed for both animation and rendering)
         let mut inline_diagnostics_config = cx.editor.config().inline_diagnostics.clone();
         if !view.inline_diagnostics_enabled {
           inline_diagnostics_config.cursor_line = DiagnosticFilter::Disable;
@@ -1762,16 +1769,79 @@ impl Component for EditorView {
         let inline_decoration_enabled = !inline_diagnostics_config.disabled();
         let eol_decoration_enabled = !matches!(eol_diagnostics, DiagnosticFilter::Disable);
 
-        if inline_decoration_enabled || eol_decoration_enabled {
-          // Check if cursor-line diagnostics should be enabled (with debouncing)
+        // Get enable_cursor_line state for config preparation
+        let enable_cursor_line = {
           let view = cx.editor.tree.get(focus_view);
-          let enable_cursor_line = view
+          view
             .diagnostics_handler
-            .show_cursorline_diagnostics(doc, focus_view);
+            .show_cursorline_diagnostics(doc, focus_view)
+        };
+        let prepared_config =
+          inline_diagnostics_config.prepare(viewport.width, enable_cursor_line);
 
-          // Prepare config based on viewport width and cursor-line state
-          let prepared_config =
-            inline_diagnostics_config.prepare(viewport.width, enable_cursor_line);
+        // Update inline diagnostic animation state
+        {
+          use super::inline_diagnostic_animation::{
+            InlineDiagnosticAnimTarget,
+            update_animation,
+          };
+          use crate::core::diagnostics::Severity;
+
+          // Compute which lines are DISPLAYING inline diagnostics (not just have them)
+          // This considers cursor position and severity filters
+          let displaying_inline_diags: std::collections::HashSet<usize> = doc
+            .diagnostics()
+            .iter()
+            .filter_map(|diag| {
+              let line = doc_text.char_to_line(diag.range.start.min(doc_text.len_chars()));
+              let severity = diag.severity.unwrap_or(Severity::Hint);
+
+              // Check filter based on cursor line vs other lines
+              let filter = if line == cursor_line {
+                prepared_config.cursor_line
+              } else {
+                prepared_config.other_lines
+              };
+
+              // Only include if filter allows this severity
+              match filter {
+                DiagnosticFilter::Enable(threshold) if threshold <= severity => Some(line),
+                _ => None,
+              }
+            })
+            .collect();
+
+          // Add new displaying lines to animation state
+          for &line in &displaying_inline_diags {
+            if !self.inline_diagnostic_anim.contains_key(&line) {
+              self.inline_diagnostic_anim.insert(line, Default::default());
+            }
+          }
+
+          // Update existing animations
+          let mut inline_animating = false;
+
+          for (&line, state) in self.inline_diagnostic_anim.iter_mut() {
+            let target = if displaying_inline_diags.contains(&line) {
+              InlineDiagnosticAnimTarget::visible()
+            } else {
+              InlineDiagnosticAnimTarget::hidden()
+            };
+
+            if update_animation(state, target, cx.dt) {
+              inline_animating = true;
+            }
+          }
+
+          // Clean up lines that have fully faded out
+          self
+            .inline_diagnostic_anim
+            .retain(|line, state| displaying_inline_diags.contains(line) || state.opacity > 0.01);
+
+          self.inline_diagnostic_anim_active = inline_animating;
+        }
+
+        if inline_decoration_enabled || eol_decoration_enabled {
 
           let eol_cursor_line_only = cx.editor.config().end_of_line_diagnostics_cursor_line_only;
           let inline_diag = crate::ui::text_decorations::diagnostics::InlineDiagnostics::new(
@@ -1783,6 +1853,7 @@ impl Component for EditorView {
             eol_diagnostics,
             eol_cursor_line_only,
             &self.eol_diagnostic_opacities,
+            &self.inline_diagnostic_anim,
             base_x,
             base_y,
             self.cached_cell_height,

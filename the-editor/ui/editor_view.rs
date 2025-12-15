@@ -282,9 +282,15 @@ pub struct EditorView {
   // Track if indent guide animation is in progress
   indent_guides_anim_active: bool,
   // Diagnostic glow animation state (per doc line -> current opacity)
-  diagnostic_glow_opacities: std::collections::HashMap<usize, f32>,
+  diagnostic_glow_opacities:     std::collections::HashMap<usize, f32>,
   // Track if diagnostic glow animation is in progress
-  diagnostic_glow_anim_active: bool,
+  diagnostic_glow_anim_active:   bool,
+  // EOL diagnostic text animation state (per doc line -> current opacity)
+  eol_diagnostic_opacities:      std::collections::HashMap<usize, f32>,
+  // Track if EOL diagnostic animation is in progress
+  eol_diagnostic_anim_active:    bool,
+  // EOL diagnostic debounce: pending lines waiting to be animated (line -> first seen time)
+  eol_diagnostic_pending:        std::collections::HashMap<usize, std::time::Instant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -364,6 +370,9 @@ impl EditorView {
       indent_guides_anim_active: false,
       diagnostic_glow_opacities: std::collections::HashMap::new(),
       diagnostic_glow_anim_active: false,
+      eol_diagnostic_opacities: std::collections::HashMap::new(),
+      eol_diagnostic_anim_active: false,
+      eol_diagnostic_pending: std::collections::HashMap::new(),
     }
   }
 
@@ -702,6 +711,7 @@ impl Component for EditorView {
       || self.explorer.as_ref().is_some_and(|e| e.is_animating())
       || self.indent_guides_anim_active
       || self.diagnostic_glow_anim_active
+      || self.eol_diagnostic_anim_active
   }
 
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
@@ -1631,6 +1641,71 @@ impl Component for EditorView {
           );
         decoration_manager.add_decoration(underlines);
 
+        // Update EOL diagnostic text animation state with debouncing
+        {
+          use std::time::{Duration, Instant};
+          const EOL_DEBOUNCE: Duration = Duration::from_millis(350);
+
+          let eol_diagnostic_lines: std::collections::HashSet<usize> = doc
+            .diagnostics()
+            .iter()
+            .map(|d| doc_text.char_to_line(d.range.start.min(doc_text.len_chars())))
+            .collect();
+
+          let now = Instant::now();
+
+          // Add new diagnostic lines to pending (if not already tracked)
+          for &line in &eol_diagnostic_lines {
+            if !self.eol_diagnostic_opacities.contains_key(&line)
+              && !self.eol_diagnostic_pending.contains_key(&line)
+            {
+              self.eol_diagnostic_pending.insert(line, now);
+            }
+          }
+
+          // Remove pending lines that disappeared before debounce completed
+          self
+            .eol_diagnostic_pending
+            .retain(|line, _| eol_diagnostic_lines.contains(line));
+
+          // Move pending lines to opacities once debounce period passes
+          let ready_lines: Vec<usize> = self
+            .eol_diagnostic_pending
+            .iter()
+            .filter(|(_, first_seen)| now.duration_since(**first_seen) >= EOL_DEBOUNCE)
+            .map(|(line, _)| *line)
+            .collect();
+
+          for line in ready_lines {
+            self.eol_diagnostic_pending.remove(&line);
+            self.eol_diagnostic_opacities.insert(line, 0.0);
+          }
+
+          // Animate existing opacities
+          let eol_anim_rate = 1.0 - 2.0_f32.powf(-40.0 * cx.dt);
+          let mut eol_animating = false;
+
+          for (&line, current) in self.eol_diagnostic_opacities.iter_mut() {
+            let target = if eol_diagnostic_lines.contains(&line) { 1.0 } else { 0.0 };
+            let delta = target - *current;
+            if delta.abs() > 0.01 {
+              eol_animating = true;
+              *current += eol_anim_rate * delta;
+            } else {
+              *current = target;
+            }
+          }
+
+          // Clean up lines that faded out completely
+          self
+            .eol_diagnostic_opacities
+            .retain(|line, opacity| eol_diagnostic_lines.contains(line) || *opacity > 0.01);
+
+          // Keep animating if there are pending lines waiting for debounce
+          self.eol_diagnostic_anim_active =
+            eol_animating || !self.eol_diagnostic_pending.is_empty();
+        }
+
         // Add inline diagnostics decoration if enabled
         let mut inline_diagnostics_config = cx.editor.config().inline_diagnostics.clone();
         if !view.inline_diagnostics_enabled {
@@ -1661,6 +1736,7 @@ impl Component for EditorView {
             prepared_config,
             eol_diagnostics,
             eol_cursor_line_only,
+            &self.eol_diagnostic_opacities,
             base_x,
             base_y,
             self.cached_cell_height,
@@ -1971,8 +2047,6 @@ impl Component for EditorView {
 
         // Clone opacities for use in closure
         let guide_opacities = self.indent_guide_opacities.clone();
-
-        // EOL diagnostics are now handled by the decoration system
 
         // Helper to draw indent guides for a line
         let draw_indent_guides = |last_indent: usize,

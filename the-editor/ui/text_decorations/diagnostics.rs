@@ -83,18 +83,19 @@ impl Styles {
 
 /// Inline diagnostics decoration for rendering diagnostic messages
 pub struct InlineDiagnostics<'a> {
-  state:               InlineDiagnosticAccumulator<'a>,
-  eol_diagnostics:     crate::core::diagnostics::DiagnosticFilter,
+  state:                InlineDiagnosticAccumulator<'a>,
+  eol_diagnostics:      crate::core::diagnostics::DiagnosticFilter,
   eol_cursor_line_only: bool,
-  cursor_line:         usize,
-  styles:              Styles,
-  base_x:              f32,
-  base_y:              f32,
-  line_height:         f32,
-  font_width:          f32,
-  font_size:           f32,
-  viewport_width:      u16,
-  horizontal_offset:   usize,
+  eol_opacities:        &'a std::collections::HashMap<usize, f32>,
+  cursor_line:          usize,
+  styles:               Styles,
+  base_x:               f32,
+  base_y:               f32,
+  line_height:          f32,
+  font_width:           f32,
+  font_size:            f32,
+  viewport_width:       u16,
+  horizontal_offset:    usize,
 }
 
 impl<'a> InlineDiagnostics<'a> {
@@ -106,6 +107,7 @@ impl<'a> InlineDiagnostics<'a> {
     config: InlineDiagnosticsConfig,
     eol_diagnostics: crate::core::diagnostics::DiagnosticFilter,
     eol_cursor_line_only: bool,
+    eol_opacities: &'a std::collections::HashMap<usize, f32>,
     base_x: f32,
     base_y: f32,
     line_height: f32,
@@ -118,6 +120,7 @@ impl<'a> InlineDiagnostics<'a> {
       state: InlineDiagnosticAccumulator::new(cursor, doc, config),
       eol_diagnostics,
       eol_cursor_line_only,
+      eol_opacities,
       cursor_line,
       styles: Styles::new(theme),
       base_x,
@@ -150,12 +153,18 @@ impl<'a> InlineDiagnostics<'a> {
     &self,
     surface: &mut Surface,
     diag: &Diagnostic,
+    doc_line: usize,
     row: u16,
     line_end_col: usize,
   ) -> u16 {
     if self.viewport_width == 0 {
       return 0;
     }
+
+    // Get animation opacity - if not in map, don't render (still in debounce period)
+    let Some(opacity) = self.eol_opacities.get(&doc_line).copied() else {
+      return 0;
+    };
 
     let viewport_width = self.viewport_width as usize;
     let start_col_in_view = line_end_col.saturating_sub(self.horizontal_offset);
@@ -168,7 +177,11 @@ impl<'a> InlineDiagnostics<'a> {
       return 0;
     }
 
-    let color = self.styles.severity_style(diag.severity());
+    // Apply opacity to color
+    let mut color = self.styles.severity_style(diag.severity());
+    color.a *= opacity;
+
+
     let mut end_col = start_col_in_view as u16;
 
     for line in diag.message.lines() {
@@ -422,7 +435,7 @@ impl Decoration for InlineDiagnostics<'_> {
     let show_eol = !self.eol_cursor_line_only || pos.0 == self.cursor_line;
     if show_eol {
       if let Some((eol_diagnostic, _)) = eol_diagnostic {
-        col_off = self.draw_eol_diagnostic(surface, eol_diagnostic, pos.1, virt_off.col);
+        col_off = self.draw_eol_diagnostic(surface, eol_diagnostic, pos.0, pos.1, virt_off.col);
       }
     }
 

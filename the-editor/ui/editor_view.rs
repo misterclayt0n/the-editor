@@ -1772,17 +1772,52 @@ impl Component for EditorView {
           .map(crate::ui::theme_color_to_renderer_color)
           .unwrap_or(Color::rgb(0.3, 0.3, 0.35));
 
-        // Calculate cursor indent level for animation
+        // Calculate cursor indent level based on LINE indentation
+        // For closing-only lines, use the indent of surrounding content
         let cursor_line = doc_text.char_to_line(cursor_pos.min(doc_text.len_chars()));
         let cursor_line_text = doc_text.line(cursor_line);
-        let cursor_indent_chars = cursor_line_text
+        let line_indent_chars = cursor_line_text
           .chars()
           .take_while(|c| c.is_whitespace() && *c != '\n')
           .count();
-        let cursor_indent_level = if indent_width > 0 {
-          cursor_indent_chars / indent_width
+        let line_indent_level = if indent_width > 0 {
+          line_indent_chars / indent_width
         } else {
           0
+        };
+
+        // Check if current line is closing-only (}, );, etc.)
+        let trimmed: String = cursor_line_text.chars().filter(|c| !c.is_whitespace()).collect();
+        let is_cursor_line_closing = !trimmed.is_empty()
+          && trimmed
+            .chars()
+            .all(|c| matches!(c, '}' | ')' | ']' | ',' | ';'));
+
+        // For closing-only lines, look at previous content lines to get effective indent
+        let cursor_indent_level = if is_cursor_line_closing {
+          let mut effective_level = line_indent_level;
+          for prev_line in (0..cursor_line).rev() {
+            let prev_text = doc_text.line(prev_line);
+            let prev_trimmed: String = prev_text.chars().filter(|c| !c.is_whitespace()).collect();
+            // Skip empty and closing-only lines
+            if prev_trimmed.is_empty()
+              || prev_trimmed
+                .chars()
+                .all(|c| matches!(c, '}' | ')' | ']' | ',' | ';'))
+            {
+              continue;
+            }
+            // Found a content line - use its indent level
+            let prev_indent = prev_text
+              .chars()
+              .take_while(|c| c.is_whitespace() && *c != '\n')
+              .count();
+            effective_level = if indent_width > 0 { prev_indent / indent_width } else { 0 };
+            break;
+          }
+          effective_level
+        } else {
+          line_indent_level
         };
 
         // Compute scope boundaries for each indent level
@@ -1805,13 +1840,29 @@ impl Component for EditorView {
           }
         };
 
+        // Helper to check if a line should NOT break scope boundaries
+        // This includes: empty lines, whitespace-only, and closing braces/punctuation
+        let is_scope_neutral = |line_idx: usize| -> bool {
+          if line_idx >= total_lines {
+            return false;
+          }
+          let line = doc_text.line(line_idx);
+          let trimmed: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+          // Empty/whitespace-only lines or closing-only chars don't break scope
+          trimmed.is_empty()
+            || trimmed
+              .chars()
+              .all(|c| matches!(c, '}' | ')' | ']' | ',' | ';'))
+        };
+
         // For each indent level from cursor's level down to 0, find scope boundaries
         for level in (0..=cursor_indent_level).rev() {
           // Scan up from cursor to find scope start
           let mut scope_start = cursor_line;
           for line in (0..cursor_line).rev() {
             let line_indent = get_line_indent(line);
-            if line_indent < level {
+            // Don't break on scope-neutral lines (empty, closing braces)
+            if line_indent < level && !is_scope_neutral(line) {
               break;
             }
             scope_start = line;
@@ -1821,7 +1872,8 @@ impl Component for EditorView {
           let mut scope_end = cursor_line;
           for line in (cursor_line + 1)..total_lines {
             let line_indent = get_line_indent(line);
-            if line_indent < level {
+            // Don't break on scope-neutral lines (empty, closing braces)
+            if line_indent < level && !is_scope_neutral(line) {
               break;
             }
             scope_end = line;

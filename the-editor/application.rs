@@ -407,8 +407,6 @@ impl App {
 
 impl Application for App {
   fn init(&mut self, renderer: &mut Renderer) {
-    println!("Application initialized!");
-
     renderer.set_ligature_protection(false);
 
     // NOTE: We currently allow users to specify a font file path via env var

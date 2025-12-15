@@ -277,6 +277,10 @@ pub struct EditorView {
   explorer_scroll_accum:     f32,
   // Track last mouse position for scroll targeting
   last_mouse_pos:            Option<(f32, f32)>,
+  // Indent guide animation state (per indent level -> current opacity)
+  indent_guide_opacities:    std::collections::HashMap<usize, f32>,
+  // Track if indent guide animation is in progress
+  indent_guides_anim_active: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -352,6 +356,8 @@ impl EditorView {
       explorer_hovered_item: None,
       explorer_scroll_accum: 0.0,
       last_mouse_pos: None,
+      indent_guide_opacities: std::collections::HashMap::new(),
+      indent_guides_anim_active: false,
     }
   }
 
@@ -688,6 +694,7 @@ impl Component for EditorView {
         .is_some_and(|s| s.is_animating())
       || self.dragging_separator.is_some()
       || self.explorer.as_ref().is_some_and(|e| e.is_animating())
+      || self.indent_guides_anim_active
   }
 
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
@@ -1765,11 +1772,106 @@ impl Component for EditorView {
           .map(crate::ui::theme_color_to_renderer_color)
           .unwrap_or(Color::rgb(0.3, 0.3, 0.35));
 
+        // Calculate cursor indent level for animation
+        let cursor_line = doc_text.char_to_line(cursor_pos.min(doc_text.len_chars()));
+        let cursor_line_text = doc_text.line(cursor_line);
+        let cursor_indent_chars = cursor_line_text
+          .chars()
+          .take_while(|c| c.is_whitespace() && *c != '\n')
+          .count();
+        let cursor_indent_level = if indent_width > 0 {
+          cursor_indent_chars / indent_width
+        } else {
+          0
+        };
+
+        // Compute scope boundaries for each indent level
+        // scope_bounds[level] = (start_line, end_line) where this level is active
+        let total_lines = doc_text.len_lines();
+        let mut scope_bounds: std::collections::HashMap<usize, (usize, usize)> =
+          std::collections::HashMap::new();
+
+        // Helper to get indent level of a line
+        let get_line_indent = |line_idx: usize| -> usize {
+          if line_idx >= total_lines {
+            return 0;
+          }
+          let line = doc_text.line(line_idx);
+          let indent_chars = line.chars().take_while(|c| c.is_whitespace() && *c != '\n').count();
+          if indent_width > 0 {
+            indent_chars / indent_width
+          } else {
+            0
+          }
+        };
+
+        // For each indent level from cursor's level down to 0, find scope boundaries
+        for level in (0..=cursor_indent_level).rev() {
+          // Scan up from cursor to find scope start
+          let mut scope_start = cursor_line;
+          for line in (0..cursor_line).rev() {
+            let line_indent = get_line_indent(line);
+            if line_indent < level {
+              break;
+            }
+            scope_start = line;
+          }
+
+          // Scan down from cursor to find scope end
+          let mut scope_end = cursor_line;
+          for line in (cursor_line + 1)..total_lines {
+            let line_indent = get_line_indent(line);
+            if line_indent < level {
+              break;
+            }
+            scope_end = line;
+          }
+
+          scope_bounds.insert(level, (scope_start, scope_end));
+        }
+
+        // Update indent guide animation state with exponential decay
+        let anim_rate = 1.0 - 2.0_f32.powf(-60.0 * cx.dt);
+        const BASE_OPACITY: f32 = 0.2;
+        const MAX_LEVELS: usize = 20; // Reasonable max indent levels to track
+
+        // Track if any animation is still in progress
+        let mut any_animating = false;
+
+        // Update opacities for all levels
+        for level in 0..MAX_LEVELS {
+          let target = if level <= cursor_indent_level {
+            // Active scope: opacity decreases with depth from cursor (like raddebugger)
+            let depth_from_cursor = cursor_indent_level.saturating_sub(level);
+            (1.0 - depth_from_cursor as f32 / 6.0).max(BASE_OPACITY)
+          } else {
+            BASE_OPACITY
+          };
+
+          let current = self.indent_guide_opacities.entry(level).or_insert(BASE_OPACITY);
+          let delta = target - *current;
+
+          // Check if still animating before updating
+          if delta.abs() > 0.01 {
+            any_animating = true;
+            *current += anim_rate * delta;
+          } else {
+            // Snap when close
+            *current = target;
+          }
+        }
+
+        self.indent_guides_anim_active = any_animating;
+
+        // Clone opacities for use in closure
+        let guide_opacities = self.indent_guide_opacities.clone();
+
         // EOL diagnostics are now handled by the decoration system
 
         // Helper to draw indent guides for a line
         let draw_indent_guides = |last_indent: usize,
                                   rel_row: usize,
+                                  doc_line: usize,
                                   batcher: &mut CommandBatcher,
                                   font_width: f32,
                                   font_size: f32,
@@ -1798,13 +1900,27 @@ impl Component for EditorView {
 
             // Only draw if visible in viewport
             if guide_x >= base_x && guide_x < base_x + (viewport_cols as f32) * font_width {
+              // Check if this line is within scope for this indent level
+              let in_scope = scope_bounds
+                .get(&i)
+                .is_some_and(|(start, end)| doc_line >= *start && doc_line <= *end);
+
+              // Get animated opacity only if in scope, otherwise use base
+              let opacity = if in_scope {
+                guide_opacities.get(&i).copied().unwrap_or(BASE_OPACITY)
+              } else {
+                BASE_OPACITY
+              };
+              let mut color = indent_guide_color;
+              color.a *= opacity;
+
               batcher.add_command(RenderCommand::Text {
                 section: TextSection::simple(
                   guide_x,
                   y,
                   indent_guide_char.clone(),
                   font_size,
-                  indent_guide_color,
+                  color,
                 ),
               });
             }
@@ -1890,6 +2006,7 @@ impl Component for EditorView {
               draw_indent_guides(
                 last_line_indent_level,
                 last_doc_line_end_row,
+                current_doc_line,
                 &mut self.command_batcher,
                 font_width,
                 font_size,
@@ -2334,6 +2451,7 @@ impl Component for EditorView {
           draw_indent_guides(
             last_line_indent_level,
             last_doc_line_end_row,
+            current_doc_line,
             &mut self.command_batcher,
             font_width,
             font_size,

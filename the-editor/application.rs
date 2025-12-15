@@ -477,7 +477,7 @@ impl Application for App {
 
     // Apply smooth scrolling animation prior to rendering this frame.
     if self.smooth_scroll_enabled {
-      self.animate_scroll(renderer);
+      self.animate_scroll(dt, renderer);
     }
 
     // Update theme transition animation
@@ -704,6 +704,20 @@ impl Application for App {
       && (self.pending_scroll_lines.abs() > 0.1 || self.pending_scroll_cols.abs() > 0.1)
     {
       return true;
+    }
+
+    // Check for per-view scroll animations (keyboard page up/down, etc.)
+    if self.smooth_scroll_enabled {
+      for (view, _) in self.editor.tree.views() {
+        if self
+          .editor
+          .documents
+          .get(&view.doc)
+          .is_some_and(|doc| doc.has_active_scroll_animation(view.id))
+        {
+          return true;
+        }
+      }
     }
 
     // Then check if any component needs updates.
@@ -1016,36 +1030,103 @@ impl App {
     }
   }
 
-  fn animate_scroll(&mut self, _renderer: &mut Renderer) {
+  fn animate_scroll(&mut self, dt: f32, _renderer: &mut Renderer) {
+    // Exponential decay rate (raddebugger-style, frame-rate independent)
+    let rate = 1.0 - 2.0_f32.powf(-60.0 * dt);
+
+    // ============================================================
+    // Per-view scroll animation (keyboard commands: page up/down, etc.)
+    // ============================================================
+    // Collect view IDs and their doc IDs to animate
+    let view_doc_ids: Vec<_> = self
+      .editor
+      .tree
+      .views()
+      .map(|(view, _)| (view.id, view.doc))
+      .collect();
+
+    for (view_id, doc_id) in view_doc_ids {
+      let Some(doc) = self.editor.documents.get_mut(&doc_id) else {
+        continue;
+      };
+      let anim = doc.scroll_animation_mut(view_id);
+      if !anim.is_animating() {
+        continue;
+      }
+
+      // Calculate delta to apply this frame using exponential decay
+      let v_delta = rate * (anim.target_vertical - anim.current_vertical);
+      let h_delta = rate * (anim.target_horizontal - anim.current_horizontal);
+
+      // Update animation state
+      anim.current_vertical += v_delta;
+      anim.current_horizontal += h_delta;
+
+      // Snap when close
+      if (anim.current_vertical - anim.target_vertical).abs() < 0.5 {
+        anim.current_vertical = anim.target_vertical;
+      }
+      if (anim.current_horizontal - anim.target_horizontal).abs() < 0.5 {
+        anim.current_horizontal = anim.target_horizontal;
+      }
+
+      // Apply integral line delta via the scroll function
+      let v_lines = v_delta.round() as i32;
+      if v_lines != 0 {
+        let direction = if v_lines > 0 { Direction::Forward } else { Direction::Backward };
+        // Temporarily set focus to this view for the scroll command
+        let old_focus = self.editor.tree.focus;
+        self.editor.tree.focus = view_id;
+        let mut cmd_cx = commands::Context {
+          register:             self.editor.selected_register,
+          count:                self.editor.count,
+          editor:               &mut self.editor,
+          on_next_key_callback: None,
+          callback:             Vec::new(),
+          jobs:                 &mut self.jobs,
+        };
+        commands::scroll(&mut cmd_cx, v_lines.unsigned_abs() as usize, direction, false);
+        self.editor.tree.focus = old_focus;
+      }
+
+      // Apply horizontal offset directly
+      if h_delta.abs() >= 0.5 {
+        let h_lines = h_delta.round() as i32;
+        let doc = self.editor.documents.get_mut(&doc_id).unwrap();
+        let mut vp = doc.view_offset(view_id);
+        vp.horizontal_offset = if h_lines >= 0 {
+          vp.horizontal_offset.saturating_add(h_lines as usize)
+        } else {
+          vp.horizontal_offset.saturating_sub((-h_lines) as usize)
+        };
+        doc.set_view_offset(view_id, vp);
+      }
+    }
+
+    // ============================================================
+    // Mouse wheel scroll animation (legacy system, focused view only)
+    // ============================================================
     // Vertical: apply a fraction of pending lines via commands::scroll
     let apply_axis = |pending: &mut f32| -> i32 {
       let remaining = *pending;
-      // Use higher threshold to stop micro-animations faster
       if remaining.abs() < 0.1 {
-        // Close enough to zero, snap to zero and stop animating
         *pending = 0.0;
         return 0;
       }
-      let step_f = remaining * self.scroll_lerp_factor;
-      // Ensure a minimum perceptible step in the right direction
+      // Use exponential decay for mouse wheel too
+      let step_f = remaining * rate;
+      // Ensure minimum perceptible step
       let min_step = self.scroll_min_step_lines.copysign(remaining);
       let mut step = if step_f.abs() < self.scroll_min_step_lines.abs() {
         min_step
       } else {
         step_f
       };
-      // Clamp step to remaining so we don't overshoot wildly
       if step.abs() > remaining.abs() {
         step = remaining;
       }
-      // Convert to integral lines
-      let step_i = if step >= 0.0 {
-        step.floor() as i32
-      } else {
-        step.ceil() as i32
-      };
+      let step_i = if step >= 0.0 { step.floor() as i32 } else { step.ceil() as i32 };
       if step_i == 0 {
-        // If fractional but significant remaining, force a single-line step
         let forced = if remaining > 0.0 { 1 } else { -1 };
         *pending -= forced as f32;
         return forced;
@@ -1054,14 +1135,9 @@ impl App {
       step_i
     };
 
-    // Apply vertical scroll
     let v_lines = apply_axis(&mut self.pending_scroll_lines);
     if v_lines != 0 {
-      let direction = if v_lines > 0 {
-        Direction::Forward
-      } else {
-        Direction::Backward
-      };
+      let direction = if v_lines > 0 { Direction::Forward } else { Direction::Backward };
       let mut cmd_cx = commands::Context {
         register:             self.editor.selected_register,
         count:                self.editor.count,
@@ -1070,56 +1146,35 @@ impl App {
         callback:             Vec::new(),
         jobs:                 &mut self.jobs,
       };
-      commands::scroll(
-        &mut cmd_cx,
-        v_lines.unsigned_abs() as usize,
-        direction,
-        false,
-      );
+      commands::scroll(&mut cmd_cx, v_lines.unsigned_abs() as usize, direction, false);
     }
 
     // Horizontal: adjust view_offset.horizontal_offset directly
-    // We use a separate min step for columns as columns tend to be smaller
     let remaining_h = self.pending_scroll_cols;
     if remaining_h.abs() >= 0.1 {
-      let step_f = remaining_h * self.scroll_lerp_factor;
+      let step_f = remaining_h * rate;
       let min_step = self.scroll_min_step_cols.copysign(remaining_h);
-      let mut step = if step_f.abs() < self.scroll_min_step_cols.abs() {
-        min_step
-      } else {
-        step_f
-      };
+      let mut step = if step_f.abs() < self.scroll_min_step_cols.abs() { min_step } else { step_f };
       if step.abs() > remaining_h.abs() {
         step = remaining_h;
       }
-      let step_i = if step >= 0.0 {
-        step.floor() as i32
-      } else {
-        step.ceil() as i32
-      };
-      let step_i = if step_i == 0 {
-        if remaining_h > 0.0 { 1 } else { -1 }
-      } else {
-        step_i
-      };
+      let step_i = if step >= 0.0 { step.floor() as i32 } else { step.ceil() as i32 };
+      let step_i = if step_i == 0 { if remaining_h > 0.0 { 1 } else { -1 } } else { step_i };
 
-      // Apply to focused view (only if the focus is a view)
       let focus_view = self.editor.tree.focus;
       if let Some(view) = self.editor.tree.try_get(focus_view) {
         let doc_id = view.doc;
         let doc = self.editor.documents.get_mut(&doc_id).unwrap();
         let mut vp = doc.view_offset(focus_view);
-        let new_h = if step_i >= 0 {
+        vp.horizontal_offset = if step_i >= 0 {
           vp.horizontal_offset.saturating_add(step_i as usize)
         } else {
           vp.horizontal_offset.saturating_sub((-step_i) as usize)
         };
-        vp.horizontal_offset = new_h;
         doc.set_view_offset(focus_view, vp);
       }
       self.pending_scroll_cols -= step_i as f32;
     } else {
-      // Below threshold, snap to zero to stop animation
       self.pending_scroll_cols = 0.0;
     }
   }

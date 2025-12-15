@@ -7435,49 +7435,86 @@ fn reorder_selection_contents(cx: &mut Context, strategy: ReorderStrategy) {
 pub fn page_up(cx: &mut Context) {
   let view = view!(cx.editor);
   let offset = view.inner_height();
-  scroll(cx, offset, Direction::Backward, false);
+  scroll_animated(cx, offset, Direction::Backward, false);
 }
 
 pub fn page_down(cx: &mut Context) {
   let view = view!(cx.editor);
   let offset = view.inner_height();
-  scroll(cx, offset, Direction::Forward, false);
+  scroll_animated(cx, offset, Direction::Forward, false);
 }
 
 pub fn half_page_up(cx: &mut Context) {
   let view = view!(cx.editor);
   let offset = view.inner_height() / 2;
-  scroll(cx, offset, Direction::Backward, false);
+  scroll_animated(cx, offset, Direction::Backward, false);
 }
 
 pub fn half_page_down(cx: &mut Context) {
   let view = view!(cx.editor);
   let offset = view.inner_height() / 2;
-  scroll(cx, offset, Direction::Forward, false);
+  scroll_animated(cx, offset, Direction::Forward, false);
+}
+
+/// Animated scroll - sets the target for smooth scrolling.
+/// The animation loop will apply the scroll incrementally.
+pub fn scroll_animated(cx: &mut Context, offset: usize, direction: Direction, sync_cursor: bool) {
+  use Direction::*;
+
+  let (view, doc) = current!(cx.editor);
+  let delta = match direction {
+    Forward => offset as f32,
+    Backward => -(offset as f32),
+  };
+
+  // Set the scroll animation target
+  doc.add_scroll_target(view.id, delta, 0.0);
+
+  // If sync_cursor, move cursor immediately by the full offset
+  if sync_cursor {
+    let (view, doc) = current!(cx.editor);
+    let doc_text = doc.text().slice(..);
+    let viewport = view.inner_area(doc);
+    let text_fmt = doc.text_format(viewport.width, None);
+    let mut annotations = view.text_annotations(&*doc, None);
+
+    let movement = match cx.editor.mode {
+      Mode::Select => Movement::Extend,
+      _ => Movement::Move,
+    };
+    let selection = doc.selection(view.id).clone().transform(|range| {
+      move_vertically_visual(doc_text, range, direction, offset, movement, &text_fmt, &mut annotations)
+    });
+    drop(annotations);
+    doc.set_selection(view.id, selection);
+  }
+
+  // Request redraw to start animation
+  the_editor_event::request_redraw();
 }
 
 pub fn page_cursor_up(cx: &mut Context) {
   let view = view!(cx.editor);
   let offset = view.inner_height();
-  scroll(cx, offset, Direction::Backward, true);
+  scroll_animated(cx, offset, Direction::Backward, true);
 }
 
 pub fn page_cursor_down(cx: &mut Context) {
   let view = view!(cx.editor);
   let offset = view.inner_height();
-  scroll(cx, offset, Direction::Forward, true);
+  scroll_animated(cx, offset, Direction::Forward, true);
 }
 
 pub fn page_cursor_half_up(cx: &mut Context) {
   let view = view!(cx.editor);
   let offset = view.inner_height() / 2;
-  scroll(cx, offset, Direction::Backward, true);
+  scroll_animated(cx, offset, Direction::Backward, true);
 }
 
 pub fn page_cursor_half_down(cx: &mut Context) {
   let view = view!(cx.editor);
   let offset = view.inner_height() / 2;
-  scroll(cx, offset, Direction::Forward, true);
+  scroll_animated(cx, offset, Direction::Forward, true);
 }
 
 pub fn jump_view_right(cx: &mut Context) {

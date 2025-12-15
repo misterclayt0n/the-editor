@@ -180,6 +180,113 @@ pub struct ViewPosition {
   pub vertical_offset:   usize,
 }
 
+/// Smooth scroll animation state for a view.
+/// Uses exponential decay for raddebugger-style smooth scrolling.
+#[derive(Debug, Clone, Copy)]
+pub struct ScrollAnimation {
+  /// Target vertical offset in lines (fractional for sub-line precision)
+  pub target_vertical:   f32,
+  /// Current animated vertical offset in lines
+  pub current_vertical:  f32,
+  /// Target horizontal offset in columns
+  pub target_horizontal: f32,
+  /// Current animated horizontal offset in columns
+  pub current_horizontal: f32,
+}
+
+impl Default for ScrollAnimation {
+  fn default() -> Self {
+    Self {
+      target_vertical:    0.0,
+      current_vertical:   0.0,
+      target_horizontal:  0.0,
+      current_horizontal: 0.0,
+    }
+  }
+}
+
+impl ScrollAnimation {
+  /// Create a new scroll animation initialized to the given position.
+  pub fn new(vertical: f32, horizontal: f32) -> Self {
+    Self {
+      target_vertical:    vertical,
+      current_vertical:   vertical,
+      target_horizontal:  horizontal,
+      current_horizontal: horizontal,
+    }
+  }
+
+  /// Add a delta to the vertical scroll target.
+  pub fn add_vertical_target(&mut self, delta: f32) {
+    self.target_vertical += delta;
+    // Clamp to non-negative (can't scroll above line 0)
+    if self.target_vertical < 0.0 {
+      self.target_vertical = 0.0;
+    }
+  }
+
+  /// Add a delta to the horizontal scroll target.
+  pub fn add_horizontal_target(&mut self, delta: f32) {
+    self.target_horizontal += delta;
+    if self.target_horizontal < 0.0 {
+      self.target_horizontal = 0.0;
+    }
+  }
+
+  /// Set an absolute vertical target.
+  pub fn set_vertical_target(&mut self, target: f32) {
+    self.target_vertical = target.max(0.0);
+  }
+
+  /// Set an absolute horizontal target.
+  pub fn set_horizontal_target(&mut self, target: f32) {
+    self.target_horizontal = target.max(0.0);
+  }
+
+  /// Snap current position to target (no animation).
+  pub fn snap_to_target(&mut self) {
+    self.current_vertical = self.target_vertical;
+    self.current_horizontal = self.target_horizontal;
+  }
+
+  /// Update animation with exponential decay.
+  /// Returns true if animation is still active.
+  pub fn update(&mut self, dt: f32) -> bool {
+    // Exponential decay rate (same formula as split animations)
+    let rate = 1.0 - 2.0_f32.powf(-60.0 * dt);
+
+    // Animate vertical
+    self.current_vertical += rate * (self.target_vertical - self.current_vertical);
+    if (self.current_vertical - self.target_vertical).abs() < 0.01 {
+      self.current_vertical = self.target_vertical;
+    }
+
+    // Animate horizontal
+    self.current_horizontal += rate * (self.target_horizontal - self.current_horizontal);
+    if (self.current_horizontal - self.target_horizontal).abs() < 0.01 {
+      self.current_horizontal = self.target_horizontal;
+    }
+
+    self.is_animating()
+  }
+
+  /// Check if animation is still in progress.
+  pub fn is_animating(&self) -> bool {
+    (self.current_vertical - self.target_vertical).abs() > 0.01
+      || (self.current_horizontal - self.target_horizontal).abs() > 0.01
+  }
+
+  /// Get the fractional part of vertical scroll (for sub-pixel rendering).
+  pub fn vertical_frac(&self) -> f32 {
+    self.current_vertical.fract()
+  }
+
+  /// Get the fractional part of horizontal scroll.
+  pub fn horizontal_frac(&self) -> f32 {
+    self.current_horizontal.fract()
+  }
+}
+
 // NOTE: This wrapper probably does not need to exist.
 /// Visual effect triggered by the noop command (easter egg)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,10 +335,11 @@ impl NoopEffect {
 
 #[derive(Debug, Clone)]
 pub struct ViewData {
-  pub view_position:   ViewPosition,
-  pub selection_pulse: Option<SelectionPulse>,
-  pub noop_effects:    Vec<NoopEffect>,
-  pub screen_shake:    Option<ScreenShake>,
+  pub view_position:    ViewPosition,
+  pub scroll_animation: ScrollAnimation,
+  pub selection_pulse:  Option<SelectionPulse>,
+  pub noop_effects:     Vec<NoopEffect>,
+  pub screen_shake:     Option<ScreenShake>,
 }
 
 #[derive(Debug, Clone)]
@@ -270,10 +378,11 @@ impl ScreenShake {
 impl Default for ViewData {
   fn default() -> Self {
     Self {
-      view_position:   ViewPosition::default(),
-      selection_pulse: None,
-      noop_effects:    Vec::new(),
-      screen_shake:    None,
+      view_position:    ViewPosition::default(),
+      scroll_animation: ScrollAnimation::default(),
+      selection_pulse:  None,
+      noop_effects:     Vec::new(),
+      screen_shake:     None,
     }
   }
 }

@@ -108,6 +108,7 @@ use crate::{
       Transaction,
     },
     view::{
+      ScrollAnimation,
       View,
       ViewData,
       ViewPosition,
@@ -2277,6 +2278,31 @@ impl Document {
 
   pub fn set_view_offset(&mut self, view_id: ViewId, new_offset: ViewPosition) {
     self.view_data_mut(view_id).view_position = new_offset;
+  }
+
+  /// Get the scroll animation state for a view.
+  pub fn scroll_animation(&self, view_id: ViewId) -> &ScrollAnimation {
+    &self.view_data(view_id).scroll_animation
+  }
+
+  /// Get mutable access to the scroll animation state for a view.
+  pub fn scroll_animation_mut(&mut self, view_id: ViewId) -> &mut ScrollAnimation {
+    &mut self.view_data_mut(view_id).scroll_animation
+  }
+
+  /// Add a scroll target delta for animated scrolling.
+  pub fn add_scroll_target(&mut self, view_id: ViewId, vertical_delta: f32, horizontal_delta: f32) {
+    let anim = self.scroll_animation_mut(view_id);
+    anim.add_vertical_target(vertical_delta);
+    anim.add_horizontal_target(horizontal_delta);
+  }
+
+  /// Check if any view has an active scroll animation.
+  pub fn has_active_scroll_animation(&self, view_id: ViewId) -> bool {
+    self
+      .view_data
+      .get(&view_id)
+      .is_some_and(|data| data.scroll_animation.is_animating())
   }
 
   pub fn special_buffer_kind(&self) -> Option<SpecialBufferKind> {

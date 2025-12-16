@@ -80,7 +80,8 @@ Now I kinda want this editor to look nice so here's some ideas:
 - [x] LSP diagnostics sometimes do not update correctly.
 - [ ] Fix an issue regarding the touchpad scrolling (wayland in particular, simple way to reproduce this is block the screen and unlock it afterwards)
 - [ ] Correctly stream in shell command (force redraw on every stream).
-- [ ] Freeze on completer happens a lot, also hard to reproduce tho.
+- [x] Freeze on completer happens a lot, also hard to reproduce tho. "Kinda" fixed I guess
+- [ ] Fix cursor alignment on lsp components to account for bufferline when rendered.
 
 ### Beyond
 - [x] File watcher (I'll wait to see helix's implementation on this, they're making big advancements: https://github.com/helix-editor/helix/pull/14544).

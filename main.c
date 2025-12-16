@@ -1,6 +1,12 @@
 #include <stdio.h>
 
+int add(int a, int b) {
+  return a + b;
+}
+
 int main() {
-  printf("hello world");
+  int r = add(1, 2);
+  
+  printf("%d\n", r);
   return 0;
 }

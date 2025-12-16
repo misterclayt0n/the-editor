@@ -690,6 +690,11 @@ impl Tree {
     }
   }
 
+  /// Check if the currently focused view is a terminal.
+  pub fn focused_is_terminal(&self) -> bool {
+    self.try_get(self.focus).is_some_and(|v| v.is_terminal())
+  }
+
   /// Get a mutable reference to a [View] by index.
   /// # Panics
   ///

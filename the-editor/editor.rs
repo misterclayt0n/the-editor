@@ -58,6 +58,12 @@ use serde::{
 use the_editor_event::dispatch;
 use the_editor_stdx::path::canonicalize;
 use the_editor_vcs::DiffProviderRegistry;
+use the_terminal::{
+  Terminal,
+  TerminalConfig,
+  TerminalEvent,
+  TerminalId,
+};
 use tokio::{
   sync::{
     mpsc::{
@@ -316,6 +322,14 @@ pub struct Editor {
   last_view_focus:      Option<ViewId>,
   pub next_document_id: DocumentId,
   pub documents:        BTreeMap<DocumentId, Document>,
+
+  /// Terminal instances.
+  pub terminals:         BTreeMap<TerminalId, Terminal>,
+  pub next_terminal_id:  TerminalId,
+  /// Channel for receiving terminal events (title changes, exits, etc.)
+  terminal_event_rx:     Option<UnboundedReceiver<TerminalEvent>>,
+  /// Sender cloned and given to each terminal for event dispatch.
+  terminal_event_tx:     UnboundedSender<TerminalEvent>,
 
   // We Flatten<> to resolve the inner DocumentSavedEventFuture. For that we need a stream of
   // streams, hence the Once<>. https://stackoverflow.com/a/66875668
@@ -1878,6 +1892,9 @@ impl Editor {
     let conf = config.load();
     let auto_pairs = (&conf.auto_pairs).into();
 
+    // Create channel for terminal events
+    let (tx, rx) = unbounded_channel::<TerminalEvent>();
+
     // HAXX: offset the render area height by 1 to account for prompt/commandline
     area.height -= 1;
 
@@ -1888,6 +1905,10 @@ impl Editor {
       last_view_focus: None,
       next_document_id: DocumentId::default(),
       documents: BTreeMap::new(),
+      terminals: BTreeMap::new(),
+      next_terminal_id: TerminalId::default(),
+      terminal_event_rx: Some(rx),
+      terminal_event_tx: tx,
       saves: HashMap::new(),
       save_queue: SelectAll::new(),
       write_count: 0,
@@ -2011,6 +2032,133 @@ impl Editor {
 
   pub fn is_special_buffer_running(&self, doc_id: DocumentId) -> bool {
     self.special_buffers.is_running(doc_id)
+  }
+
+  // --- Terminal Methods ---
+
+  /// Get a reference to a terminal by ID.
+  pub fn terminal(&self, id: TerminalId) -> Option<&Terminal> {
+    self.terminals.get(&id)
+  }
+
+  /// Get a mutable reference to a terminal by ID.
+  pub fn terminal_mut(&mut self, id: TerminalId) -> Option<&mut Terminal> {
+    self.terminals.get_mut(&id)
+  }
+
+  /// Open a new terminal and create a view for it.
+  /// Returns the terminal ID if successful.
+  pub fn open_terminal(&mut self, shell: Option<&str>) -> anyhow::Result<TerminalId> {
+    // Generate terminal ID
+    let id = self.next_terminal_id;
+    self.next_terminal_id =
+      TerminalId(NonZeroUsize::new(id.0.get() + 1).expect("terminal id overflow"));
+
+    // Get dimensions from current focused view area
+    let (cols, rows) = {
+      let view = self.tree.try_get(self.tree.focus);
+      match view {
+        Some(v) => (v.area.width.max(10), v.area.height.max(5)),
+        None => (80, 24),
+      }
+    };
+
+    // Create terminal config
+    let config = TerminalConfig {
+      shell: shell.map(String::from),
+      ..Default::default()
+    };
+
+    // Spawn the terminal
+    let terminal =
+      Terminal::spawn(id, cols, rows, config, self.terminal_event_tx.clone())?;
+
+    // Store terminal
+    self.terminals.insert(id, terminal);
+
+    // Create a placeholder document for the terminal view
+    // (terminal views need a doc reference but won't actually use it)
+    let placeholder_doc =
+      Document::default(self.config.clone(), self.syn_loader.clone());
+    let placeholder_doc_id = self.new_document(placeholder_doc);
+
+    // Create and insert the view
+    let view = View::new_terminal(id, placeholder_doc_id);
+    self.tree.insert(view);
+
+    Ok(id)
+  }
+
+  /// Close a terminal and its associated view.
+  pub fn close_terminal(&mut self, id: TerminalId) {
+    // Remove terminal (Drop impl will signal shutdown)
+    self.terminals.remove(&id);
+
+    // Find and close views that reference this terminal
+    let view_ids: Vec<ViewId> = self
+      .tree
+      .views()
+      .filter_map(|(view, _)| {
+        if view.terminal == Some(id) {
+          Some(view.id)
+        } else {
+          None
+        }
+      })
+      .collect();
+
+    for view_id in view_ids {
+      self.tree.remove(view_id);
+    }
+  }
+
+  /// Take the terminal event receiver for polling in the event loop.
+  pub fn take_terminal_event_rx(&mut self) -> Option<UnboundedReceiver<TerminalEvent>> {
+    self.terminal_event_rx.take()
+  }
+
+  /// Process pending terminal events.
+  /// Should be called periodically from the main event loop.
+  pub fn process_terminal_events(&mut self, events: &mut Vec<TerminalEvent>) {
+    for event in events.drain(..) {
+      match event {
+        TerminalEvent::Wakeup(_) => {
+          // Terminal needs redraw
+          self.needs_redraw = true;
+        }
+        TerminalEvent::Title { id, title } => {
+          if let Some(terminal) = self.terminals.get_mut(&id) {
+            terminal.set_title(title);
+          }
+        }
+        TerminalEvent::Exit { id, status } => {
+          if let Some(terminal) = self.terminals.get_mut(&id) {
+            terminal.mark_exited(status);
+          }
+          // Optionally auto-close the terminal view
+          // self.close_terminal(id);
+        }
+        TerminalEvent::Bell(_) => {
+          // Could trigger a visual bell effect
+        }
+        TerminalEvent::ClipboardStore { content, .. } => {
+          // Copy to system clipboard via the '+' register
+          if let Err(e) = self.registers.write('+', vec![content]) {
+            log::warn!("Failed to write to clipboard: {}", e);
+          }
+        }
+        TerminalEvent::ClipboardLoad { id } => {
+          // Paste from clipboard to terminal via the '+' register
+          if let Some(contents) = self.registers.read('+', self) {
+            let text: String = contents.collect::<Vec<_>>().join("\n");
+            if let Some(terminal) = self.terminals.get(&id) {
+              terminal.write_str(&text);
+            }
+          }
+        }
+        _ => {}
+      }
+    }
   }
 
   pub fn register_shell_job_cancel(&mut self, doc_id: DocumentId, cancel: oneshot::Sender<()>) {

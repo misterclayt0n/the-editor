@@ -1,0 +1,18 @@
+[package]
+name = "the-terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+alacritty_terminal = "0.25"
+anyhow.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+tokio.workspace = true

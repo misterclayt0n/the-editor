@@ -7,7 +7,6 @@ include           = [ "**/*.rs", "*.wgsl" ]
 [lints]
 workspace = true
 
-
 [lib]
 path = "lib.rs"
 

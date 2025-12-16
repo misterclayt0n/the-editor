@@ -12,6 +12,8 @@ use std::{
 
 use ropey::RopeSlice;
 
+use the_terminal::TerminalId;
+
 use crate::{
   core::{
     DocumentId,
@@ -392,6 +394,8 @@ pub struct View {
   pub id:                  ViewId,
   pub area:                Rect,
   pub doc:                 DocumentId,
+  /// Optional terminal ID - when Some, this view displays a terminal instead of a document.
+  pub terminal:            Option<TerminalId>,
   pub jumps:               JumpList,
   pub docs_access_history: Vec<DocumentId>,
 
@@ -433,6 +437,7 @@ impl View {
     Self {
       id: ViewId::default(),
       doc,
+      terminal: None,
       area: Rect::default(), // will get calculated upon inserting into tree
       jumps: JumpList::new((doc, Selection::point(0))), // TODO: use actual sel
       docs_access_history: Vec::new(),
@@ -445,6 +450,31 @@ impl View {
       rendered_gutter_width: None,
       inline_diagnostics_enabled: true,
     }
+  }
+
+  /// Create a new view for a terminal.
+  pub fn new_terminal(terminal_id: TerminalId, scratch_doc: DocumentId) -> Self {
+    Self {
+      id: ViewId::default(),
+      doc: scratch_doc, // A placeholder document for terminal views
+      terminal: Some(terminal_id),
+      area: Rect::default(),
+      jumps: JumpList::new((scratch_doc, Selection::point(0))),
+      docs_access_history: Vec::new(),
+      last_modified_docs: [None, None],
+      object_selections: Vec::new(),
+      gutters: GutterConfig::default(),
+      doc_revisions: HashMap::new(),
+      diagnostics_handler: DiagnosticsHandler::new(),
+      zoom_anim: 1.0,
+      rendered_gutter_width: None,
+      inline_diagnostics_enabled: false, // Terminals don't have diagnostics
+    }
+  }
+
+  /// Check if this view displays a terminal.
+  pub fn is_terminal(&self) -> bool {
+    self.terminal.is_some()
   }
 
   pub fn add_to_history(&mut self, id: DocumentId) {

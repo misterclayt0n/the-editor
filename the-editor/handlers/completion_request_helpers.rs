@@ -86,7 +86,10 @@ pub fn clear_completions(cx: &mut commands::Context) {
 pub fn trigger_auto_completion(editor: &Editor, trigger_char_only: bool) {
   use the_editor_stdx::rope::RopeSliceExt;
 
-  let (view, doc) = crate::current_ref!(editor);
+  // Skip if focused view is not a document (e.g., terminal)
+  let Some((view, doc)) = crate::try_current_ref!(editor) else {
+    return;
+  };
   let text = doc.text().slice(..);
   let cursor = doc.selection(view.id).primary().cursor(text);
 

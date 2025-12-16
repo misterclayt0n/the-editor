@@ -2069,9 +2069,10 @@ impl Editor {
       ..Default::default()
     };
 
-    // Spawn the terminal
+    // Spawn the terminal with default cell dimensions (will be updated on first resize)
+    // Default cell size: 12x24 pixels (typical monospace font dimensions)
     let terminal =
-      Terminal::spawn(id, cols, rows, config, self.terminal_event_tx.clone())?;
+      Terminal::spawn(id, cols, rows, 12, 24, config, self.terminal_event_tx.clone())?;
 
     // Store terminal
     self.terminals.insert(id, terminal);
@@ -2135,9 +2136,10 @@ impl Editor {
     let cols = (area.width / 2).max(10);
     let rows = (area.height / 2).max(5);
 
-    // Spawn the terminal
+    // Spawn the terminal with default cell dimensions (will be updated on first resize)
+    // Default cell size: 12x24 pixels (typical monospace font dimensions)
     let terminal =
-      Terminal::spawn(id, cols, rows, config, self.terminal_event_tx.clone())?;
+      Terminal::spawn(id, cols, rows, 12, 24, config, self.terminal_event_tx.clone())?;
 
     // Store terminal
     self.terminals.insert(id, terminal);

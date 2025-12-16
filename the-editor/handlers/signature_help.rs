@@ -134,7 +134,11 @@ async fn request_signature_help(invoked: SignatureHelpInvoked, generation: u64) 
   let (tx, rx) = tokio::sync::oneshot::channel();
 
   crate::ui::job::dispatch_blocking(move |editor, _compositor| {
-    let (view, doc) = crate::current_ref!(editor);
+    // Skip if focused view is not a document (e.g., terminal)
+    let Some((view, doc)) = crate::try_current_ref!(editor) else {
+      let _ = tx.send(None);
+      return;
+    };
 
     // Find first language server that supports signature help
     let mut servers = doc.language_servers_with_feature(LanguageServerFeature::SignatureHelp);
@@ -271,7 +275,10 @@ pub fn register_hooks(handlers: &crate::handlers::Handlers) {
       return Ok(());
     }
 
-    let (view, doc) = crate::current_ref!(event.cx.editor);
+    // Skip if focused view is not a document (e.g., terminal)
+    let Some((view, doc)) = crate::try_current_ref!(event.cx.editor) else {
+      return Ok(());
+    };
 
     // Find first language server that supports signature help
     let Some(ls) = doc.language_servers().find(|ls| {

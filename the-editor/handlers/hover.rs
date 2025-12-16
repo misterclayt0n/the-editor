@@ -11,7 +11,11 @@ pub async fn request_hover() -> anyhow::Result<()> {
   let (tx_name, rx_name) = tokio::sync::oneshot::channel();
 
   crate::ui::job::dispatch_blocking(move |editor, _compositor| {
-    let (view, doc) = crate::current_ref!(editor);
+    // Skip if focused view is not a document (e.g., terminal)
+    let Some((view, doc)) = crate::try_current_ref!(editor) else {
+      let _ = tx_future.send(None);
+      return;
+    };
 
     // Find first language server that supports hover
     let Some(ls) = doc.language_servers().find(|ls| {

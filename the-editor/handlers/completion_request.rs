@@ -623,7 +623,10 @@ pub fn register_completion_hooks(handlers: &Handlers) {
         // No completion active, send events for delete operations
         match event.command {
           "delete_char_backward" | "delete_word_forward" | "delete_char_forward" => {
-            let (view, doc) = crate::current!(event.cx.editor);
+            // Skip if focused view is not a document (e.g., terminal)
+            let Some((view, doc)) = crate::try_current!(event.cx.editor) else {
+              return Ok(());
+            };
             let primary_cursor = doc
               .selection(view.id)
               .primary()

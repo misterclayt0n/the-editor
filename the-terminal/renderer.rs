@@ -28,6 +28,8 @@ pub struct RenderCell {
   pub bg: (u8, u8, u8),
   /// Cell flags for styling.
   pub flags: CellStyle,
+  /// Whether this is a wide character (takes 2 cells).
+  pub is_wide: bool,
 }
 
 /// Style flags for a cell.
@@ -207,16 +209,26 @@ pub fn extract_cells(
       continue;
     }
 
+    // Skip wide character spacers - these are placeholder cells that follow
+    // double-width characters (like CJK characters). The actual character
+    // is in the cell before this one.
+    let flags = cell.flags;
+    if flags.contains(CellFlags::WIDE_CHAR_SPACER) {
+      continue;
+    }
+
     let c = cell.c;
 
     // Get colors, handling inverse
-    let flags = cell.flags;
     let mut fg = colors.resolve(cell.fg, true);
     let mut bg = colors.resolve(cell.bg, false);
 
     if flags.contains(CellFlags::INVERSE) {
       std::mem::swap(&mut fg, &mut bg);
     }
+
+    // Check if this is a wide character (takes 2 cells)
+    let is_wide = flags.contains(CellFlags::WIDE_CHAR);
 
     cells.push(RenderCell {
       col: point.column.0 as u16,
@@ -225,6 +237,7 @@ pub fn extract_cells(
       fg,
       bg,
       flags: CellStyle::from(flags),
+      is_wide,
     });
   }
 

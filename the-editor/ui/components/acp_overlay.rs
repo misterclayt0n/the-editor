@@ -123,7 +123,8 @@ impl Component for AcpOverlay {
 fn current_cursor_anchor(ctx: &Context, surface: &mut Surface) -> Option<Position> {
   let _cursor = calculate_cursor_position(ctx, surface)?;
 
-  let (view, doc) = crate::current_ref!(ctx.editor);
+  // Skip if focused view is not a document (e.g., terminal)
+  let (view, doc) = crate::try_current_ref!(ctx.editor)?;
   let text = doc.text();
   let cursor_pos = doc.selection(view.id).primary().cursor(text.slice(..));
 

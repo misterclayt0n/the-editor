@@ -309,10 +309,11 @@ pub struct Renderer {
   mask_instance_capacity: usize,
 
   // Text metrics / font tracking.
-  font_family: String,
-  font_size:   f32,
-  cell_width:  f32,
-  cell_height: f32,
+  font_family:      String,
+  font_size:        f32,
+  cell_width:       f32,
+  cell_height:      f32,
+  line_top_offset:  f32, // Vertical offset from buffer top to actual text top
 
   // Performance optimization: disable ligature protection for better performance
   disable_ligature_protection: bool,
@@ -997,6 +998,7 @@ impl Renderer {
       font_size: 16.0,
       cell_width: 8.0,
       cell_height: 16.0,
+      line_top_offset: 0.0,
       disable_ligature_protection: false,
       buffer_pool: BufferPool {
         buffers: Vec::with_capacity(4),
@@ -1050,15 +1052,43 @@ impl Renderer {
     let attrs = Attrs::new()
       .family(Family::Name(self.font_family.as_str()))
       .metrics(metrics);
-    buffer.set_text(&mut self.font_system, "0", &attrs, Shaping::Advanced);
+
+    // Shape multiple characters to get actual advance width
+    // (line_w for a single char is hitbox width, not advance)
+    buffer.set_text(&mut self.font_system, "00", &attrs, Shaping::Advanced);
     buffer.shape_until_scroll(&mut self.font_system, false);
 
     if let Some(run) = buffer.layout_runs().next() {
-      self.cell_width = run.line_w.max(1.0);
+      // Get advance width by looking at the second glyph's x position
+      // or by dividing line width by character count
+      let advance_width = if run.glyphs.len() >= 2 {
+        // Use the x position of the second glyph as the advance of the first
+        run.glyphs[1].x
+      } else {
+        // Fallback: divide total width by 2
+        run.line_w / 2.0
+      };
+
+      self.cell_width = advance_width.max(1.0);
       self.cell_height = run.line_height.max(self.font_size);
+      self.line_top_offset = run.line_top;
+
+      log::info!(
+        "RENDERER METRICS: font_size={}, advance_width={}, line_w={}, line_height={}, line_top={}, glyph_count={}",
+        self.font_size, advance_width, run.line_w, run.line_height, run.line_top,
+        run.glyphs.len()
+      );
+      if run.glyphs.len() >= 2 {
+        log::info!(
+          "GLYPH POSITIONS: g0.x={}, g1.x={}, g0.w={}, g1.w={}",
+          run.glyphs[0].x, run.glyphs[1].x, run.glyphs[0].w, run.glyphs[1].w
+        );
+      }
     } else {
       self.cell_height = self.font_size * LINE_HEIGHT_FACTOR;
       self.cell_width = (self.font_size * 0.6).max(1.0);
+      self.line_top_offset = 0.0;
+      log::warn!("RENDERER METRICS: No layout run found, using fallback values");
     }
   }
 
@@ -2302,6 +2332,12 @@ impl Renderer {
   /// Current cell height used for layout heuristics.
   pub fn cell_height(&self) -> f32 {
     self.cell_height
+  }
+
+  /// Vertical offset from buffer top to actual text top.
+  /// Used to compensate for cosmic-text's internal vertical padding.
+  pub fn line_top_offset(&self) -> f32 {
+    self.line_top_offset
   }
 
   /// Enable or disable ligature protection for performance.

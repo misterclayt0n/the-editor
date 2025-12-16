@@ -112,6 +112,8 @@ impl Terminal {
     id: TerminalId,
     cols: u16,
     rows: u16,
+    cell_width: u16,
+    cell_height: u16,
     config: TerminalConfig,
     event_sender: mpsc::UnboundedSender<TerminalEvent>,
   ) -> anyhow::Result<Self> {
@@ -125,17 +127,19 @@ impl Terminal {
     // Create terminal config
     let term_config = TermConfig::default();
 
-    // Create window size
+    // Create window size with actual cell dimensions for proper PTY sizing
     let window_size = WindowSize {
-      num_cols:    cols,
-      num_lines:   rows,
-      cell_width:  1, // Will be set properly by renderer
-      cell_height: 1,
+      num_cols: cols,
+      num_lines: rows,
+      cell_width,
+      cell_height,
     };
 
     // Create PTY options
+    // Pass -i flag for interactive mode - most shells need this to work properly
+    // in a pseudo-terminal context (bash, zsh, fish, nu all support -i)
     let pty_config = PtyOptions {
-      shell:             Some(tty::Shell::new(shell, vec![])),
+      shell:             Some(tty::Shell::new(shell, vec!["-i".to_string()])),
       working_directory: config.working_directory.clone(),
       ..Default::default()
     };
@@ -207,7 +211,7 @@ impl Terminal {
   }
 
   /// Resize the terminal.
-  pub fn resize(&mut self, cols: u16, rows: u16) {
+  pub fn resize(&mut self, cols: u16, rows: u16, cell_width: u16, cell_height: u16) {
     if cols == self.cols && rows == self.rows {
       return;
     }
@@ -216,10 +220,10 @@ impl Terminal {
     self.rows = rows;
 
     let size = WindowSize {
-      num_cols:    cols,
-      num_lines:   rows,
-      cell_width:  1,
-      cell_height: 1,
+      num_cols: cols,
+      num_lines: rows,
+      cell_width,
+      cell_height,
     };
 
     // Resize terminal state

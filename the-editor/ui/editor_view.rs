@@ -507,8 +507,10 @@ impl EditorView {
   ) -> Option<Rect> {
     use crate::ui::components::Completion;
 
-    // Get the initial filter text (text typed since trigger)
-    let (view, doc) = crate::current_ref!(editor);
+    // Skip if focused view is not a document (e.g., terminal)
+    let Some((view, doc)) = crate::try_current_ref!(editor) else {
+      return None;
+    };
     let text = doc.text();
     let cursor = doc.selection(view.id).primary().cursor(text.slice(..));
 
@@ -1201,6 +1203,10 @@ impl Component for EditorView {
     // Resize any terminal views to match their area
     // This must happen before we borrow the theme immutably
     {
+      // Get cell dimensions for PTY sizing
+      let cell_width = self.cached_cell_width.max(1.0) as u16;
+      let cell_height = self.cached_cell_height.max(1.0) as u16;
+
       let terminal_resizes: Vec<_> = cx
         .editor
         .tree
@@ -1213,7 +1219,7 @@ impl Component for EditorView {
 
       for (terminal_id, cols, rows) in terminal_resizes {
         if let Some(term) = cx.editor.terminal_mut(terminal_id) {
-          term.resize(cols, rows);
+          term.resize(cols, rows, cell_width, cell_height);
         }
       }
     }
@@ -3342,10 +3348,20 @@ impl EditorView {
 
     renderer.draw_rect(base_x, base_y, total_width, total_height, bg_color);
 
+    // Debug: Log terminal metrics once
+    static DEBUG_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !DEBUG_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+      log::info!(
+        "TERMINAL DEBUG: font_size={}, cell_width={}, cell_height={}, cols={}, rows={}, line_top_offset={}",
+        self.cached_font_size, font_width, cell_height, cols, rows, renderer.line_top_offset()
+      );
+    }
+
     // Draw cells
     for cell in cells {
-      let x = base_x + cell.col as f32 * font_width;
-      let y = base_y + cell.row as f32 * cell_height;
+      // Use floor() for pixel-perfect grid alignment (matches Zed's approach)
+      let x = (base_x + cell.col as f32 * font_width).floor();
+      let y = (base_y + cell.row as f32 * cell_height).floor();
 
       // Draw background if different from default
       let cell_bg = Color::rgb(
@@ -3354,8 +3370,12 @@ impl EditorView {
         cell.bg.2 as f32 / 255.0,
       );
 
+      // Calculate cell width (double for wide characters like CJK)
+      let char_width = if cell.is_wide { font_width * 2.0 } else { font_width };
+
       if cell.bg != colors.background {
-        renderer.draw_rect(x, y, font_width, cell_height, cell_bg);
+        // Use ceil() on width to ensure full cell coverage
+        renderer.draw_rect(x, y, char_width.ceil(), cell_height, cell_bg);
       }
 
       // Draw character if not empty/space
@@ -3368,14 +3388,15 @@ impl EditorView {
 
         let section =
           TextSection::simple(x, y, cell.c.to_string(), self.cached_font_size, cell_fg);
-        renderer.draw_text_batched(section);
+        renderer.draw_text_immediate(section);
       }
     }
 
     // Draw cursor if focused
     if is_focused && cursor_info.visible {
-      let cursor_x = base_x + cursor_info.col as f32 * font_width;
-      let cursor_y = base_y + cursor_info.row as f32 * cell_height;
+      // Use floor() for pixel-perfect cursor alignment
+      let cursor_x = (base_x + cursor_info.col as f32 * font_width).floor();
+      let cursor_y = (base_y + cursor_info.row as f32 * cell_height).floor();
 
       let cursor_color = fg_style
         .fg

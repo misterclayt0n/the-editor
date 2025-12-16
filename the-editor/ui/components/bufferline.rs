@@ -126,7 +126,7 @@ pub fn render(
   let max_x = origin_x + viewport_width;
   let current_doc_id = editor
     .focused_view_id()
-    .and_then(|view_id| editor.tree.try_get(view_id).map(|view| view.doc));
+    .and_then(|view_id| editor.tree.try_get(view_id).and_then(|view| view.doc()));
   let button_base = theme
     .try_get_exact("ui.button")
     .and_then(|style| style.fg)

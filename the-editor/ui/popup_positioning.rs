@@ -110,7 +110,8 @@ pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option
     .get_animated_area(view_id)
     .or_else(|| tree.try_get(view_id).map(|view| view.area))?;
   let view = tree.get(view_id);
-  let doc = &ctx.editor.documents[&view.doc];
+  let doc_id = view.doc()?;
+  let doc = &ctx.editor.documents[&doc_id];
   let text = doc.text();
   let cursor_pos = doc.selection(view.id).primary().cursor(text.slice(..));
 

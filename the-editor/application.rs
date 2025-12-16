@@ -172,7 +172,9 @@ impl App {
             // Reset view positions for scrolloff changes
             let scrolloff = self.editor.config().scrolloff;
             for (view, _) in self.editor.tree.views() {
-              if let Some(doc) = self.editor.documents.get_mut(&view.doc) {
+              // Skip terminal views
+              let Some(doc_id) = view.doc() else { continue };
+              if let Some(doc) = self.editor.documents.get_mut(&doc_id) {
                 view.ensure_cursor_in_view(doc, scrolloff);
               }
             }
@@ -729,10 +731,11 @@ impl Application for App {
     // Check for per-view scroll animations (keyboard page up/down, etc.)
     if self.smooth_scroll_enabled {
       for (view, _) in self.editor.tree.views() {
+        let Some(doc_id) = view.doc() else { continue };
         if self
           .editor
           .documents
-          .get(&view.doc)
+          .get(&doc_id)
           .is_some_and(|doc| doc.has_active_scroll_animation(view.id))
         {
           return true;
@@ -1098,9 +1101,10 @@ impl App {
 
     if cols != 0 {
       let focus_view = self.editor.tree.focus;
-      // Only scroll if focused on a view
-      if let Some(view) = self.editor.tree.try_get(focus_view) {
-        let doc_id = view.doc;
+      // Only scroll if focused on a document view
+      if let Some(view) = self.editor.tree.try_get(focus_view)
+        && let Some(doc_id) = view.doc()
+      {
         let doc = self.editor.documents.get_mut(&doc_id).unwrap();
         let mut vp = doc.view_offset(focus_view);
 
@@ -1122,12 +1126,12 @@ impl App {
     // ============================================================
     // Per-view scroll animation (keyboard commands: page up/down, etc.)
     // ============================================================
-    // Collect view IDs and their doc IDs to animate
+    // Collect view IDs and their doc IDs to animate (skip terminal views)
     let view_doc_ids: Vec<_> = self
       .editor
       .tree
       .views()
-      .map(|(view, _)| (view.id, view.doc))
+      .filter_map(|(view, _)| view.doc().map(|doc_id| (view.id, doc_id)))
       .collect();
 
     for (view_id, doc_id) in view_doc_ids {
@@ -1247,8 +1251,9 @@ impl App {
       let step_i = if step_i == 0 { if remaining_h > 0.0 { 1 } else { -1 } } else { step_i };
 
       let focus_view = self.editor.tree.focus;
-      if let Some(view) = self.editor.tree.try_get(focus_view) {
-        let doc_id = view.doc;
+      if let Some(view) = self.editor.tree.try_get(focus_view)
+        && let Some(doc_id) = view.doc()
+      {
         let doc = self.editor.documents.get_mut(&doc_id).unwrap();
         let mut vp = doc.view_offset(focus_view);
         vp.horizontal_offset = if step_i >= 0 {

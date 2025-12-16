@@ -448,7 +448,9 @@ fn clear_stale_persistent_diagnostics(editor: &mut Editor) {
   let Some(view) = editor.tree.try_get(view_id) else {
     return;
   };
-  let doc_id = view.doc;
+  let Some(doc_id) = view.doc() else {
+    return;
+  };
 
   let (sources, uri) = {
     let Some(doc) = editor.documents.get_mut(&doc_id) else {

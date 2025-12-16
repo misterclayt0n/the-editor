@@ -1720,7 +1720,7 @@ fn write_buffer(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> 
   use crate::current;
 
   let (view, doc) = current!(cx.editor);
-  let doc_id = view.doc;
+  let doc_id = view.doc_id();
 
   let path = if args.is_empty() {
     doc.path().map(|p| p.to_path_buf())
@@ -1754,7 +1754,7 @@ fn force_write(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
   use crate::current;
 
   let (view, doc) = current!(cx.editor);
-  let doc_id = view.doc;
+  let doc_id = view.doc_id();
 
   let path = if args.is_empty() {
     doc.path().map(|p| p.to_path_buf())
@@ -1995,7 +1995,7 @@ fn format(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
 
   // Get IDs first before any borrows
   let (view, doc) = current!(cx.editor);
-  let doc_id = view.doc;
+  let doc_id = view.doc_id();
   let view_id = view.id;
   let doc_version = doc.version();
 
@@ -2068,7 +2068,7 @@ fn force_buffer_close(cx: &mut Context, _args: Args, event: PromptEvent) -> Resu
   use crate::current;
 
   let (view, _doc) = current!(cx.editor);
-  let doc_id = view.doc;
+  let doc_id = view.doc_id();
 
   // Force close by ignoring unsaved changes
   match cx.editor.close_document(doc_id, true) {
@@ -2129,7 +2129,7 @@ fn vsplit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
     // Split with current buffer
     use crate::current;
     let (view, _doc) = current!(cx.editor);
-    let doc_id = view.doc;
+    let doc_id = view.doc_id();
     cx.editor.switch(doc_id, Action::VerticalSplit, false);
   } else {
     // Open file in split
@@ -2150,7 +2150,7 @@ fn hsplit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
     // Split with current buffer
     use crate::current;
     let (view, _doc) = current!(cx.editor);
-    let doc_id = view.doc;
+    let doc_id = view.doc_id();
     cx.editor.switch(doc_id, Action::HorizontalSplit, false);
   } else {
     // Open file in split
@@ -2513,7 +2513,7 @@ fn open_impl(cx: &mut Context, args: Args, action: crate::editor::Action) -> Res
       // Set focus to the new document
       let view_id = cx.editor.tree.focus;
       let view = cx.editor.tree.get_mut(view_id);
-      view.doc = doc_id;
+      view.set_doc(doc_id);
     },
     Err(err) => {
       cx.editor
@@ -2713,7 +2713,7 @@ fn reload_all(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
         .editor
         .tree
         .views()
-        .filter(|(view, _)| view.doc == *doc_id)
+        .filter(|(view, _)| view.doc() == Some(*doc_id))
         .map(|(view, _)| view.id)
         .collect();
 

@@ -914,7 +914,8 @@ pub fn document_symbols(cx: &mut Context) {
               return;
             };
             let view = editor.tree.get_mut(view_id);
-            let doc = editor.documents.get_mut(&view.doc).unwrap();
+            let Some(doc_id) = view.doc() else { return };
+            let Some(doc) = editor.documents.get_mut(&doc_id) else { return };
 
             // Convert LSP range to editor range
             if let Some(range) =
@@ -1211,7 +1212,8 @@ pub fn document_diagnostics(cx: &mut Context) {
             return;
           };
           let view = editor.tree.get_mut(view_id);
-          let doc = editor.documents.get_mut(&view.doc).unwrap();
+          let Some(doc_id) = view.doc() else { return };
+          let Some(doc) = editor.documents.get_mut(&doc_id) else { return };
 
           // Set selection to the diagnostic location
           doc.set_selection(view.id, Selection::single(diag.range.start, diag.range.end));
@@ -1356,7 +1358,7 @@ pub fn workspace_diagnostics(cx: &mut Context) {
             // Focus the document
             let view_id = editor.tree.focus;
             let view = editor.tree.get_mut(view_id);
-            view.doc = doc_id;
+            view.set_doc(doc_id);
 
             // Set selection to the diagnostic location
             let doc = editor.documents.get_mut(&doc_id).unwrap();
@@ -1426,7 +1428,7 @@ pub fn select_references(cx: &mut Context) {
     return;
   }
 
-  let doc_id = view.doc;
+  let doc_id = view.doc_id();
   let view_id = view.id;
 
   cx.jobs.callback(async move {

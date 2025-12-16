@@ -1348,7 +1348,7 @@ mod test {
 
     fn doc_id(tree: &Tree, view_id: ViewId) -> Option<DocumentId> {
       if let Content::View(view) = &tree.nodes[view_id].content {
-        Some(view.doc)
+        view.doc()
       } else {
         None
       }

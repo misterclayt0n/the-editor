@@ -482,7 +482,7 @@ pub enum Action {
 impl Action {
   /// Whether to align the view to the cursor after executing this action
   pub fn align_view(&self, view: &View, new_doc: DocumentId) -> bool {
-    !matches!((self, view.doc == new_doc), (Action::Load, false))
+    !matches!((self, view.doc() == Some(new_doc)), (Action::Load, false))
   }
 }
 
@@ -2076,14 +2076,9 @@ impl Editor {
     // Store terminal
     self.terminals.insert(id, terminal);
 
-    // Create a placeholder document for the terminal view
-    // (terminal views need a doc reference but won't actually use it)
-    let placeholder_doc =
-      Document::default(self.config.clone(), self.syn_loader.clone());
-    let placeholder_doc_id = self.new_document(placeholder_doc);
-
     // Create and insert the view
-    let view = View::new_terminal(id, placeholder_doc_id);
+    let gutters = self.config().gutters.clone();
+    let view = View::new_terminal(id, gutters);
     self.tree.insert(view);
 
     Ok(id)
@@ -2099,7 +2094,7 @@ impl Editor {
       .tree
       .views()
       .filter_map(|(view, _)| {
-        if view.terminal == Some(id) {
+        if view.terminal() == Some(id) {
           Some(view.id)
         } else {
           None
@@ -2147,13 +2142,9 @@ impl Editor {
     // Store terminal
     self.terminals.insert(id, terminal);
 
-    // Create a placeholder document for the terminal view
-    let placeholder_doc =
-      Document::default(self.config.clone(), self.syn_loader.clone());
-    let placeholder_doc_id = self.new_document(placeholder_doc);
-
     // Create and insert the view with split
-    let view = View::new_terminal(id, placeholder_doc_id);
+    let gutters = self.config().gutters.clone();
+    let view = View::new_terminal(id, gutters);
     let view_id = self.tree.split(view, layout);
 
     // Focus the new terminal view
@@ -2724,7 +2715,8 @@ impl Editor {
     }
 
     for (view, _) in self.tree.views_mut() {
-      let doc = doc_mut!(self, &view.doc);
+      let Some(doc_id) = view.doc() else { continue };
+      let doc = doc_mut!(self, &doc_id);
       view.sync_changes(doc);
       view.gutters = config.gutters.clone();
       view.ensure_cursor_in_view(doc, config.scrolloff)
@@ -2741,7 +2733,7 @@ impl Editor {
     {
       let view = self.tree.get_mut(current_view);
 
-      view.doc = doc_id;
+      view.set_doc(doc_id);
       if animate {
         view.zoom_anim = 0.0; // Trigger zoom animation for new document
       }
@@ -2813,7 +2805,11 @@ impl Editor {
 
         let (remove_empty_scratch, previous_doc_id) = match self.tree.try_get(view_id) {
           Some(view) => {
-            let Some(doc) = self.documents.get(&view.doc) else {
+            let Some(doc_id) = view.doc() else {
+              self.set_error("Active view is not a document");
+              return;
+            };
+            let Some(doc) = self.documents.get(&doc_id) else {
               self.set_error("Active document is missing");
               return;
             };
@@ -2826,7 +2822,7 @@ impl Editor {
                       && !self
                           .tree
                           .traverse()
-                          .any(|(_, v)| v.doc == doc.id && v.id != view.id);
+                          .any(|(_, v)| v.doc() == Some(doc.id) && v.id != view.id);
             (remove_empty_scratch, doc.id)
           },
           None => {
@@ -2838,7 +2834,11 @@ impl Editor {
         {
           // Append any outstanding changes to history in the old document.
           let view = self.tree.get_mut(view_id);
-          let Some(doc) = self.documents.get_mut(&view.doc) else {
+          let Some(doc_id) = view.doc() else {
+            self.set_error("Active view is not a document");
+            return;
+          };
+          let Some(doc) = self.documents.get_mut(&doc_id) else {
             self.set_error("Active document is missing");
             return;
           };
@@ -2855,20 +2855,24 @@ impl Editor {
           }
         } else {
           let view = self.tree.get_mut(view_id);
-          let Some(doc) = self.documents.get_mut(&view.doc) else {
+          let Some(doc_id) = view.doc() else {
+            self.set_error("Active view is not a document");
+            return;
+          };
+          let Some(doc) = self.documents.get_mut(&doc_id) else {
             self.set_error("Active document is missing");
             return;
           };
-          let jump = (view.doc, doc.selection(view.id).clone());
+          let jump = (doc_id, doc.selection(view.id).clone());
           view.jumps.push(jump);
           // Set last accessed doc if it is a different document
           if doc.id != id {
-            view.add_to_history(view.doc);
+            view.add_to_history(doc_id);
             // Set last modified doc if modified and last modified doc is different
             if std::mem::take(&mut doc.modified_since_accessed)
-              && view.last_modified_docs[0] != Some(view.doc)
+              && view.last_modified_docs[0] != Some(doc_id)
             {
-              view.last_modified_docs = [Some(view.doc), view.last_modified_docs[0]];
+              view.last_modified_docs = [Some(doc_id), view.last_modified_docs[0]];
             }
           }
         }
@@ -2890,12 +2894,12 @@ impl Editor {
         return;
       },
       Action::HorizontalSplit | Action::VerticalSplit => {
-        let focus_lost = self.tree.try_get(self.tree.focus).map(|view| view.doc);
+        let focus_lost = self.tree.try_get(self.tree.focus).and_then(|view| view.doc());
         // copy the current view, unless there is no view yet
         let view = self
                     .tree
                     .try_get(self.tree.focus)
-                    .filter(|v| id == v.doc) // Different Document
+                    .filter(|v| v.doc() == Some(id)) // Same Document
                     .cloned()
                     .unwrap_or_else(|| View::new(id, self.config().gutters.clone()));
         let view_id = self.tree.split(view, match action {
@@ -3076,7 +3080,7 @@ impl Editor {
       .filter_map(|(view, _focus)| {
         view.remove_document(&doc_id);
 
-        if view.doc == doc_id {
+        if view.doc() == Some(doc_id) {
           // something was previously open in the view, switch to previous doc
           if let Some(prev_doc) = view.docs_access_history.pop() {
             Some(Action::ReplaceDoc(view.id, prev_doc))
@@ -3188,18 +3192,18 @@ impl Editor {
       self.enter_normal_mode();
 
       // Only process view-specific logic when focusing on a document view
-      if let Some(view) = self.tree.try_get(view_id) {
+      if let Some(view) = self.tree.try_get(view_id)
+        && let Some(doc_id) = view.doc()
+      {
         self.last_view_focus = Some(view_id);
-        let doc_id = view.doc;
 
-        // Skip cursor-in-view for terminal views
-        if view.terminal.is_none() {
-          self.ensure_cursor_in_view(view_id);
-        }
+        // Ensure cursor in view for document views
+        self.ensure_cursor_in_view(view_id);
 
         // Update jumplist selections with new document changes.
         for (view, _focused) in self.tree.views_mut() {
-          let doc = doc_mut!(self, &view.doc);
+          let Some(view_doc_id) = view.doc() else { continue };
+          let doc = doc_mut!(self, &view_doc_id);
           view.sync_changes(doc);
         }
 
@@ -3207,9 +3211,10 @@ impl Editor {
         doc.mark_as_focused();
         self.touch_special_buffer(doc_id);
 
-        // Dispatch focus lost event only if previous focus was also a view
-        if let Some(prev_view) = self.tree.try_get(prev_id) {
-          let focus_lost = prev_view.doc;
+        // Dispatch focus lost event only if previous focus was also a document view
+        if let Some(prev_view) = self.tree.try_get(prev_id)
+          && let Some(focus_lost) = prev_view.doc()
+        {
           dispatch(DocumentFocusLost {
             editor: self,
             doc:    focus_lost,
@@ -3286,7 +3291,8 @@ impl Editor {
   pub fn ensure_cursor_in_view(&mut self, id: ViewId) {
     let config = self.config();
     let view = self.tree.get(id);
-    let doc = doc_mut!(self, &view.doc);
+    let Some(doc_id) = view.doc() else { return };
+    let doc = doc_mut!(self, &doc_id);
     view.ensure_cursor_in_view(doc, config.scrolloff)
   }
 
@@ -3562,7 +3568,7 @@ impl Editor {
 
     self.set_mode(Mode::Normal);
     let focus_id = self.tree.focus;
-    let Some(doc_id) = self.tree.try_get(focus_id).map(|view| view.doc) else {
+    let Some(doc_id) = self.tree.try_get(focus_id).and_then(|view| view.doc()) else {
       // No document view is focused, so there's nothing
       // view-specific to clean up.
       return;
@@ -3603,7 +3609,7 @@ impl Editor {
     let doc = self.documents.get_mut(&id).unwrap();
     if doc.selections().contains_key(&current_view.id) {
       // only need to sync current view if this is not the current doc
-      if current_view.doc != id {
+      if current_view.doc() != Some(id) {
         current_view.sync_changes(doc);
       }
       current_view.id

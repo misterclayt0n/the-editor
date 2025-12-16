@@ -2102,10 +2102,7 @@ mod test_tree_view {
     TreeView,
     TreeViewItem,
   };
-  use crate::{
-    core::graphics::Rect,
-    ui::compositor::Context,
-  };
+  use crate::core::graphics::Rect;
 
   #[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
   /// The children of DivisibleItem is the division of itself.

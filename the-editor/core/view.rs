@@ -389,13 +389,47 @@ impl Default for ViewData {
   }
 }
 
+/// Content that a view can display - either a document or a terminal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewContent {
+  Document(DocumentId),
+  Terminal(TerminalId),
+}
+
+impl ViewContent {
+  /// Get the document ID if this is a document view.
+  pub fn document(&self) -> Option<DocumentId> {
+    match self {
+      ViewContent::Document(id) => Some(*id),
+      ViewContent::Terminal(_) => None,
+    }
+  }
+
+  /// Get the terminal ID if this is a terminal view.
+  pub fn terminal(&self) -> Option<TerminalId> {
+    match self {
+      ViewContent::Document(_) => None,
+      ViewContent::Terminal(id) => Some(*id),
+    }
+  }
+
+  /// Check if this is a document view.
+  pub fn is_document(&self) -> bool {
+    matches!(self, ViewContent::Document(_))
+  }
+
+  /// Check if this is a terminal view.
+  pub fn is_terminal(&self) -> bool {
+    matches!(self, ViewContent::Terminal(_))
+  }
+}
+
 #[derive(Clone)]
 pub struct View {
-  pub id:                  ViewId,
-  pub area:                Rect,
-  pub doc:                 DocumentId,
-  /// Optional terminal ID - when Some, this view displays a terminal instead of a document.
-  pub terminal:            Option<TerminalId>,
+  pub id:      ViewId,
+  pub area:    Rect,
+  /// The content displayed by this view - either a document or terminal.
+  pub content: ViewContent,
   pub jumps:               JumpList,
   pub docs_access_history: Vec<DocumentId>,
 
@@ -427,7 +461,7 @@ impl fmt::Debug for View {
     f.debug_struct("View")
       .field("id", &self.id)
       .field("area", &self.area)
-      .field("doc", &self.doc)
+      .field("content", &self.content)
       .finish()
   }
 }
@@ -436,8 +470,7 @@ impl View {
   pub fn new(doc: DocumentId, gutters: GutterConfig) -> Self {
     Self {
       id: ViewId::default(),
-      doc,
-      terminal: None,
+      content: ViewContent::Document(doc),
       area: Rect::default(), // will get calculated upon inserting into tree
       jumps: JumpList::new((doc, Selection::point(0))), // TODO: use actual sel
       docs_access_history: Vec::new(),
@@ -453,17 +486,17 @@ impl View {
   }
 
   /// Create a new view for a terminal.
-  pub fn new_terminal(terminal_id: TerminalId, scratch_doc: DocumentId) -> Self {
+  pub fn new_terminal(terminal_id: TerminalId, gutters: GutterConfig) -> Self {
     Self {
       id: ViewId::default(),
-      doc: scratch_doc, // A placeholder document for terminal views
-      terminal: Some(terminal_id),
+      content: ViewContent::Terminal(terminal_id),
       area: Rect::default(),
-      jumps: JumpList::new((scratch_doc, Selection::point(0))),
+      // Terminal views don't use the jumplist or doc_revisions meaningfully
+      jumps: JumpList::new((DocumentId::default(), Selection::point(0))),
       docs_access_history: Vec::new(),
       last_modified_docs: [None, None],
       object_selections: Vec::new(),
-      gutters: GutterConfig::default(),
+      gutters,
       doc_revisions: HashMap::new(),
       diagnostics_handler: DiagnosticsHandler::new(),
       zoom_anim: 1.0,
@@ -472,9 +505,40 @@ impl View {
     }
   }
 
+  // ========== Content access methods ==========
+
+  /// Get the document ID if this is a document view.
+  pub fn doc(&self) -> Option<DocumentId> {
+    self.content.document()
+  }
+
+  /// Get the document ID, panicking if this is not a document view.
+  /// Use this only when you're certain the view is a document view.
+  pub fn doc_id(&self) -> DocumentId {
+    self.content.document().expect("View is not a document view")
+  }
+
+  /// Get the terminal ID if this is a terminal view.
+  pub fn terminal(&self) -> Option<TerminalId> {
+    self.content.terminal()
+  }
+
+  /// Check if this view displays a document.
+  pub fn is_document(&self) -> bool {
+    self.content.is_document()
+  }
+
   /// Check if this view displays a terminal.
   pub fn is_terminal(&self) -> bool {
-    self.terminal.is_some()
+    self.content.is_terminal()
+  }
+
+  /// Set the document for this view. Panics if this is a terminal view.
+  pub fn set_doc(&mut self, doc_id: DocumentId) {
+    match self.content {
+      ViewContent::Document(_) => self.content = ViewContent::Document(doc_id),
+      ViewContent::Terminal(_) => panic!("Cannot set document on a terminal view"),
+    }
   }
 
   pub fn add_to_history(&mut self, id: DocumentId) {

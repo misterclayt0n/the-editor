@@ -2329,7 +2329,7 @@ pub fn buffer_picker(cx: &mut Context) {
     special_buffer::SpecialBufferKind,
   };
 
-  let current = view!(cx.editor).doc;
+  let current = view!(cx.editor).doc();
 
   struct BufferMeta {
     id:             DocumentId,
@@ -2346,7 +2346,7 @@ pub fn buffer_picker(cx: &mut Context) {
       id:             doc.id(),
       path:           doc.path().cloned(),
       is_modified:    doc.is_modified(),
-      is_current:     doc.id() == current,
+      is_current:     Some(doc.id()) == current,
       special_buffer: doc.special_buffer_kind(),
       is_running:     cx.editor.is_special_buffer_running(doc.id()),
       focused_at:     doc.focused_at,
@@ -2479,7 +2479,7 @@ pub fn jumplist_picker(cx: &mut Context) {
       selection,
       text,
       line,
-      is_current: view.doc == doc_id,
+      is_current: view.doc() == Some(doc_id),
     }
   };
 
@@ -3005,32 +3005,31 @@ pub fn local_search(cx: &mut Context) {
 
       crate::ui::job::dispatch_blocking(move |editor, _compositor| {
         let view_id = editor.tree.focus;
-        let doc_id = editor.tree.get(view_id).doc;
-        if let Some(doc) = editor.documents.get_mut(&doc_id) {
-          let text = doc.text();
-          if line_num < text.len_lines() {
-            // Convert byte offsets to char positions
-            let line_start_char = text.line_to_char(line_num);
-            let line_text = text.line(line_num);
-            let line_str = line_text.to_string();
+        let Some(doc_id) = editor.tree.get(view_id).doc() else { return };
+        let Some(doc) = editor.documents.get_mut(&doc_id) else { return };
+        let text = doc.text();
+        if line_num < text.len_lines() {
+          // Convert byte offsets to char positions
+          let line_start_char = text.line_to_char(line_num);
+          let line_text = text.line(line_num);
+          let line_str = line_text.to_string();
 
-            // Convert byte offsets to char offsets
-            let match_start_char = line_start_char
-              + line_str[..match_start_byte.min(line_str.len())]
-                .chars()
-                .count();
-            let match_end_char = line_start_char
-              + line_str[..match_end_byte.min(line_str.len())]
-                .chars()
-                .count();
+          // Convert byte offsets to char offsets
+          let match_start_char = line_start_char
+            + line_str[..match_start_byte.min(line_str.len())]
+              .chars()
+              .count();
+          let match_end_char = line_start_char
+            + line_str[..match_end_byte.min(line_str.len())]
+              .chars()
+              .count();
 
-            let view_id = editor.tree.focus;
-            let view = editor.tree.get_mut(view_id);
-            doc.set_selection(view.id, Selection::single(match_start_char, match_end_char));
+          let view_id = editor.tree.focus;
+          let view = editor.tree.get_mut(view_id);
+          doc.set_selection(view.id, Selection::single(match_start_char, match_end_char));
 
-            if action.align_view(view, doc.id()) {
-              align_view(doc, view, Align::Center);
-            }
+          if action.align_view(view, doc.id()) {
+            align_view(doc, view, Align::Center);
           }
         }
       });
@@ -5466,11 +5465,12 @@ pub fn goto_last_accessed_file(cx: &mut Context) {
 
 pub fn goto_last_modified_file(cx: &mut Context) {
   let view = view!(cx.editor);
+  let current_doc = view.doc();
   let alternate_file = view
     .last_modified_docs
     .into_iter()
     .flatten()
-    .find(|&id| id != view.doc);
+    .find(|&id| Some(id) != current_doc);
   if let Some(alt) = alternate_file {
     cx.editor.switch(alt, Action::Replace, false);
   } else {
@@ -5487,7 +5487,7 @@ pub fn goto_previous_buffer(cx: &mut Context) {
 }
 
 fn goto_buffer(editor: &mut Editor, direction: Direction, count: usize) {
-  let current = view!(editor).doc;
+  let Some(current) = view!(editor).doc() else { return };
 
   let id = match direction {
     Direction::Forward => {
@@ -6216,7 +6216,11 @@ pub fn document_vcs_diffs(cx: &mut Context) {
 
   let (diff_handle, doc_path) = {
     let view = cx.editor.tree.get(view_id);
-    let doc = &cx.editor.documents[&view.doc];
+    let Some(doc_id) = view.doc() else {
+      cx.editor.set_status("not a document view");
+      return;
+    };
+    let doc = &cx.editor.documents[&doc_id];
     (doc.diff_handle().cloned(), doc.path().cloned())
   };
 
@@ -6273,7 +6277,9 @@ pub fn document_vcs_diffs(cx: &mut Context) {
         crate::ui::job::dispatch_blocking(move |editor, _compositor| {
           if let Some(view_id) = editor.focused_view_id_mut() {
             let view = editor.tree.get_mut(view_id);
-            if let Some(doc) = editor.documents.get_mut(&view.doc) {
+            if let Some(doc_id) = view.doc()
+              && let Some(doc) = editor.documents.get_mut(&doc_id)
+            {
               let range = hunk_range(entry.hunk, doc.text().slice(..));
               doc.set_selection(view.id, Selection::single(range.anchor, range.head));
               align_view(doc, view, Align::Center);
@@ -6362,7 +6368,7 @@ pub fn workspace_vcs_diffs(cx: &mut Context) {
             let view_id = editor.tree.focus;
             {
               let view = editor.tree.get_mut(view_id);
-              view.doc = doc_id;
+              view.set_doc(doc_id);
             }
 
             if let Some(doc) = editor.documents.get_mut(&doc_id) {
@@ -7800,11 +7806,12 @@ pub fn jump_forward(cx: &mut Context) {
   let count = cx.count();
   let config = cx.editor.config();
   let view = view_mut!(cx.editor);
-  let doc_id = view.doc;
+  let doc_id = view.doc_id();
 
   if let Some((id, selection)) = view.jumps.forward(count) {
-    view.doc = *id;
+    let new_doc_id = *id;
     let selection = selection.clone();
+    view.set_doc(new_doc_id);
     let (view, doc) = current!(cx.editor); // refetch doc
 
     if doc.id() != doc_id {
@@ -7825,8 +7832,9 @@ pub fn jump_backward(cx: &mut Context) {
   let doc_id = doc.id();
 
   if let Some((id, selection)) = view.jumps.backward(view.id, doc, count) {
-    view.doc = *id;
+    let new_doc_id = *id;
     let selection = selection.clone();
+    view.set_doc(new_doc_id);
     let (view, doc) = current!(cx.editor); // refetch doc
 
     if doc.id() != doc_id {
@@ -8207,7 +8215,7 @@ fn first_view_id_for_doc(editor: &Editor, doc_id: DocumentId) -> Option<ViewId> 
   editor
     .tree
     .views()
-    .find(|(view, _)| view.doc == doc_id)
+    .find(|(view, _)| view.doc() == Some(doc_id))
     .map(|(view, _)| view.id)
 }
 
@@ -8244,16 +8252,22 @@ fn append_document_text(editor: &mut Editor, doc_id: DocumentId, text: &str) {
   }
 }
 
-fn resolve_compilation_buffer(editor: &mut Editor, current_doc_id: DocumentId) -> DocumentId {
+fn resolve_compilation_buffer(
+  editor: &mut Editor,
+  current_doc_id: Option<DocumentId>,
+) -> DocumentId {
   use crate::{
     core::special_buffer::SpecialBufferKind,
     editor::Action,
   };
 
-  if editor.special_buffer_kind(current_doc_id) == Some(SpecialBufferKind::Compilation) {
-    editor.touch_special_buffer(current_doc_id);
-    configure_compilation_buffer(editor, current_doc_id);
-    return current_doc_id;
+  // If current view is already a compilation buffer, reuse it
+  if let Some(doc_id) = current_doc_id
+    && editor.special_buffer_kind(doc_id) == Some(SpecialBufferKind::Compilation)
+  {
+    editor.touch_special_buffer(doc_id);
+    configure_compilation_buffer(editor, doc_id);
+    return doc_id;
   }
 
   if let Some(last_id) = editor.last_special_buffer(SpecialBufferKind::Compilation) {
@@ -8541,7 +8555,7 @@ async fn run_shell_process(
 fn run_shell_in_compilation_buffer(
   editor: &mut Editor,
   jobs: &mut crate::ui::job::Jobs,
-  current_doc_id: DocumentId,
+  current_doc_id: Option<DocumentId>,
   command: String,
 ) -> anyhow::Result<DocumentId> {
   let origin_view = editor.focused_view_id();
@@ -8601,10 +8615,7 @@ fn run_shell_in_compilation_buffer(
 }
 
 fn spawn_shell_command_context(cx: &mut Context, command: String) -> anyhow::Result<DocumentId> {
-  let current_doc_id = {
-    let view = view!(cx.editor);
-    view.doc
-  };
+  let current_doc_id = view!(cx.editor).doc();
   run_shell_in_compilation_buffer(cx.editor, cx.jobs, current_doc_id, command)
 }
 
@@ -8621,10 +8632,7 @@ pub fn shell_command(cx: &mut Context) {
   cx.editor.set_mode(Mode::Command);
 
   // Capture the current document ID
-  let current_doc_id = {
-    let view = view!(cx.editor);
-    view.doc
-  };
+  let current_doc_id = view!(cx.editor).doc();
 
   // Create prompt with callback and shell history completions
   let mut prompt = crate::ui::components::Prompt::new(String::new())
@@ -8704,10 +8712,7 @@ pub fn repeat_last_shell(cx: &mut Context) {
     .map(|cmd| cmd.to_string());
 
   if let Some(command) = last_command {
-    let current_doc_id = {
-      let view = view!(cx.editor);
-      view.doc
-    };
+    let current_doc_id = view!(cx.editor).doc();
 
     match run_shell_in_compilation_buffer(cx.editor, cx.jobs, current_doc_id, command.clone()) {
       Ok(_) => {
@@ -8772,7 +8777,10 @@ pub fn kill_shell(cx: &mut Context) {
       .set_error("no active view available to kill shell");
     return;
   };
-  let doc_id = cx.editor.tree.get(view_id).doc;
+  let Some(doc_id) = cx.editor.tree.get(view_id).doc() else {
+    cx.editor.set_error("focused view is not a document");
+    return;
+  };
 
   if cx.editor.special_buffer_kind(doc_id) != Some(SpecialBufferKind::Compilation) {
     cx.editor.set_error("focused buffer is not a shell buffer");

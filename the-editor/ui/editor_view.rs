@@ -889,7 +889,8 @@ impl Component for EditorView {
               // Mark current line as dirty before insertion
               let focus_view = cx.editor.tree.focus;
               let view = cx.editor.tree.get(focus_view);
-              let doc = &cx.editor.documents[&view.doc];
+              let Some(doc_id) = view.doc() else { return EventResult::Ignored(None) };
+              let doc = &cx.editor.documents[&doc_id];
               let cursor_pos = doc
                 .selection(focus_view)
                 .primary()
@@ -919,7 +920,8 @@ impl Component for EditorView {
               // Mark line as dirty after insertion (may be different if newline was inserted)
               let focus_view = cx.editor.tree.focus;
               let view = cx.editor.tree.get(focus_view);
-              let doc = &cx.editor.documents[&view.doc];
+              let Some(doc_id) = view.doc() else { return EventResult::Consumed(None) };
+              let doc = &cx.editor.documents[&doc_id];
               let new_cursor_pos = doc
                 .selection(focus_view)
                 .primary()
@@ -1142,22 +1144,19 @@ impl Component for EditorView {
       let scrolloff = cx.editor.config().scrolloff;
       let view_ids: Vec<_> = cx.editor.tree.views().map(|(view, _)| view.id).collect();
       for view_id in view_ids {
+        let view = cx.editor.tree.get(view_id);
         // Skip terminal views - they don't have document selections
-        let is_terminal = cx.editor.tree.get(view_id).terminal.is_some();
-        if is_terminal {
-          continue;
-        }
+        let Some(doc_id) = view.doc() else { continue };
 
         // Calculate actual gutter width for this view (accounts for disabled gutters)
         let gutter_width = {
-          let view = cx.editor.tree.get(view_id);
-          let doc = &cx.editor.documents[&view.doc];
+          let doc = &cx.editor.documents[&doc_id];
           (self.gutter_manager.total_width(view, doc) as u16).min(view.area.width)
         };
 
         let view = cx.editor.tree.get_mut(view_id);
         view.rendered_gutter_width = Some(gutter_width);
-        let doc = cx.editor.documents.get_mut(&view.doc).unwrap();
+        let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
         view.sync_changes(doc);
         view.ensure_cursor_in_view(doc, scrolloff);
       }
@@ -1170,33 +1169,29 @@ impl Component for EditorView {
     {
       let focus_view = cx.editor.tree.focus;
 
-      if let Some(view) = cx.editor.tree.try_get(focus_view) {
-        // Skip terminal views - they don't have document selections
-        if view.terminal.is_none() {
-          let scrolloff = cx.editor.config().scrolloff;
+      if let Some(view) = cx.editor.tree.try_get(focus_view)
+        && let Some(doc_id) = view.doc()
+      {
+        let scrolloff = cx.editor.config().scrolloff;
 
-          // Calculate actual gutter width for focused view (accounts for disabled
-          // gutters)
-          let gutter_width = {
-            let view = cx.editor.tree.get(focus_view);
-            let doc = &cx.editor.documents[&view.doc];
-            (self.gutter_manager.total_width(view, doc) as u16).min(view.area.width)
-          };
+        // Calculate actual gutter width for focused view (accounts for disabled
+        // gutters)
+        let gutter_width = {
+          let view = cx.editor.tree.get(focus_view);
+          let doc = &cx.editor.documents[&doc_id];
+          (self.gutter_manager.total_width(view, doc) as u16).min(view.area.width)
+        };
 
-          let view_id_doc;
-          {
-            // Limit the mutable borrow scope
-            let view = cx.editor.tree.get_mut(focus_view);
-            view.rendered_gutter_width = Some(gutter_width);
-            let doc = cx.editor.documents.get_mut(&view.doc).unwrap();
-            view_id_doc = view.doc;
-            if !view.is_cursor_in_view(doc, scrolloff) {
-              view.ensure_cursor_in_view(doc, scrolloff);
-              // Viewport changed, force a redraw of visible content
-              self.dirty_region.mark_all_dirty();
-            }
+        {
+          // Limit the mutable borrow scope
+          let view = cx.editor.tree.get_mut(focus_view);
+          view.rendered_gutter_width = Some(gutter_width);
+          let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
+          if !view.is_cursor_in_view(doc, scrolloff) {
+            view.ensure_cursor_in_view(doc, scrolloff);
+            // Viewport changed, force a redraw of visible content
+            self.dirty_region.mark_all_dirty();
           }
-          let _ = view_id_doc; // keep variable to ensure scope is closed
         }
       }
     }
@@ -1212,7 +1207,7 @@ impl Component for EditorView {
         .traverse()
         .filter_map(|(view_id, _)| {
           let view = cx.editor.tree.get(view_id);
-          view.terminal.map(|tid| (tid, view.area.width, view.area.height))
+          view.terminal().map(|tid| (tid, view.area.width, view.area.height))
         })
         .collect();
 
@@ -1309,9 +1304,10 @@ impl Component for EditorView {
     // Update rendered_gutter_width for all views before rendering
     // This ensures cursor positioning logic uses the correct gutter width
     for &view_id in &views_to_render {
+      let view = cx.editor.tree.get(view_id);
+      let Some(doc_id) = view.doc() else { continue };
       let gutter_width = {
-        let view = cx.editor.tree.get(view_id);
-        let doc = &cx.editor.documents[&view.doc];
+        let doc = &cx.editor.documents[&doc_id];
         (self.gutter_manager.total_width(view, doc) as u16).min(view.area.width)
       };
       let view = cx.editor.tree.get_mut(view_id);
@@ -1406,7 +1402,7 @@ impl Component for EditorView {
       );
 
       // Check if this view is a terminal - if so, render it and continue
-      if let Some(terminal_id) = view.terminal {
+      if let Some(terminal_id) = view.terminal() {
         self.render_terminal_view(
           terminal_id,
           view_offset_x,
@@ -1420,7 +1416,7 @@ impl Component for EditorView {
         continue;
       }
 
-      let doc_id = view.doc;
+      let doc_id = view.doc_id();
 
       // Get cached highlights early while we can still mutably borrow doc
       // (We'll compute the exact range later, but pre-cache a larger range)
@@ -3428,7 +3424,7 @@ impl EditorView {
     // Check if focused view is a terminal
     let focus = cx.editor.tree.focus;
     let view = cx.editor.tree.get(focus);
-    let terminal_id = view.terminal?;
+    let terminal_id = view.terminal()?;
 
     // Handle terminal escape prefix (Ctrl+\)
     if self.terminal_escape_pending {
@@ -4042,14 +4038,14 @@ impl EditorView {
                     .editor
                     .tree
                     .views()
-                    .find_map(|(view, _)| (view.doc == doc_id).then_some(view.id));
+                    .find_map(|(view, _)| (view.doc() == Some(doc_id)).then_some(view.id));
 
                   if let Some(view_id) = target_view {
                     cx.editor.focus(view_id);
                   } else if let Some(view_id) = cx.editor.focused_view_id() {
                     cx.editor.focus(view_id);
-                    let current_doc = cx.editor.tree.get(view_id).doc;
-                    if current_doc != doc_id {
+                    let current_doc = cx.editor.tree.get(view_id).doc();
+                    if current_doc != Some(doc_id) {
                       cx.editor.switch(doc_id, Action::Replace, false);
                     }
                   } else if let Some(new_view_id) = cx.editor.open_view_for_document(doc_id) {
@@ -4161,7 +4157,7 @@ impl EditorView {
               self.mouse_drag_anchor_range = None;
 
               let view = cx.editor.tree.get(view_id);
-              let doc_id = view.doc;
+              let doc_id = view.doc_id();
               let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
 
               let drag_mode = match self.click_count {
@@ -4234,7 +4230,7 @@ impl EditorView {
               // Move cursor to click position
               let scrolloff = cx.editor.config().scrolloff;
               let view = cx.editor.tree.get(view_id);
-              let doc_id = view.doc;
+              let doc_id = view.doc_id();
               let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
 
               let selection = crate::core::selection::Selection::point(doc_pos);
@@ -4307,7 +4303,7 @@ impl EditorView {
               let scrolloff = cx.editor.config().scrolloff;
 
               let view = cx.editor.tree.get(view_id);
-              let doc_id = view.doc;
+              let doc_id = view.doc_id();
               let doc = cx.editor.documents.get_mut(&doc_id).unwrap();
 
               let text = doc.text();
@@ -4484,12 +4480,12 @@ impl EditorView {
       }
 
       // Skip terminal views - they don't have document positions
-      if view.terminal.is_some() {
+      let Some(doc_id) = view.doc() else {
         return None;
-      }
+      };
 
       // Found the view! Now convert to document position
-      let doc = &cx.editor.documents[&view.doc];
+      let doc = &cx.editor.documents[&doc_id];
       let text = doc.text();
 
       // Calculate position relative to view's content area (excluding gutter)

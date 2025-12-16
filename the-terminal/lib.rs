@@ -8,6 +8,9 @@ mod event;
 mod renderer;
 mod terminal;
 
+#[cfg(test)]
+mod test_utils;
+
 pub use config::TerminalConfig;
 pub use event::TerminalEvent;
 pub use renderer::{

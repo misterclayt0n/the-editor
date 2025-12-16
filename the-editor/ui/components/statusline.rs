@@ -269,12 +269,21 @@ impl Component for StatusLine {
       let mode_width = Self::draw_text(surface, x, bar_y, mode_text, text_color);
       x += mode_width + SEGMENT_SPACING;
 
-      // Buffer name
-      let path = doc.path();
+      // Buffer name - check if this is a terminal view first
       let modified = doc.is_modified();
-
-      // Compute display name based on workspace context
-      let display_name = if let Some(path) = path {
+      let display_name = if let Some(terminal_id) = view.terminal {
+        // Terminal view - show terminal title
+        if let Some(term) = cx.editor.terminal(terminal_id) {
+          let title = term.title();
+          if term.is_exited() {
+            format!("[{}] (exited)", title)
+          } else {
+            format!("[{}]", title)
+          }
+        } else {
+          "[Terminal]".to_string()
+        }
+      } else if let Some(path) = doc.path() {
         // Try to get workspace root
         if let Some(workspace_root) = cx.editor.diff_providers.get_workspace_root(path) {
           // File is inside a workspace - show relative path from workspace root
@@ -323,29 +332,32 @@ impl Component for StatusLine {
       let buffer_width = Self::draw_text(surface, x, bar_y, &display_name, text_color);
       x += buffer_width + SEGMENT_SPACING;
 
-      // File percentage (emacs style)
-      let text = doc.text();
-      let selection = doc.selection(view.id);
-      let cursor_line = text.char_to_line(selection.primary().cursor(text.slice(..)));
-      let total_lines = text.len_lines();
-      let percentage = if total_lines > 0 {
-        (cursor_line + 1) * 100 / total_lines
-      } else {
-        0
-      };
-      let percent_text = format!("{}%", percentage);
-      let percent_width = Self::draw_text(surface, x, bar_y, &percent_text, text_color);
-      x += percent_width + SEGMENT_SPACING;
+      // Skip document-specific sections for terminal views
+      if view.terminal.is_none() {
+        // File percentage (emacs style)
+        let text = doc.text();
+        let selection = doc.selection(view.id);
+        let cursor_line = text.char_to_line(selection.primary().cursor(text.slice(..)));
+        let total_lines = text.len_lines();
+        let percentage = if total_lines > 0 {
+          (cursor_line + 1) * 100 / total_lines
+        } else {
+          0
+        };
+        let percent_text = format!("{}%", percentage);
+        let percent_width = Self::draw_text(surface, x, bar_y, &percent_text, text_color);
+        x += percent_width + SEGMENT_SPACING;
 
-      // Selection count
-      let selection_count = selection.ranges().len();
-      let selection_text = if selection_count == 1 {
-        "1 sel".to_string()
-      } else {
-        format!("{}/{} sel", selection.primary_index() + 1, selection_count)
-      };
-      let sel_width = Self::draw_text(surface, x, bar_y, &selection_text, text_color);
-      x += sel_width + SEGMENT_SPACING;
+        // Selection count
+        let selection_count = selection.ranges().len();
+        let selection_text = if selection_count == 1 {
+          "1 sel".to_string()
+        } else {
+          format!("{}/{} sel", selection.primary_index() + 1, selection_count)
+        };
+        let sel_width = Self::draw_text(surface, x, bar_y, &selection_text, text_color);
+        x += sel_width + SEGMENT_SPACING;
+      }
 
       // Status message (with fade-in and slide animation)
       if let Some((status_msg, severity)) = cx.editor.get_status() {

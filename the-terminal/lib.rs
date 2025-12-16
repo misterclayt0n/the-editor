@@ -12,6 +12,8 @@ pub use config::TerminalConfig;
 pub use event::TerminalEvent;
 pub use renderer::{
   ColorScheme,
+  CursorInfo,
+  CursorShape,
   RenderCell,
 };
 pub use terminal::Terminal;

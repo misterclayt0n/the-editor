@@ -52,6 +52,9 @@ pub struct App {
 
   runtime_handle: tokio::runtime::Handle,
 
+  // Terminal event receiver
+  terminal_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<the_terminal::TerminalEvent>>,
+
   // Smooth scrolling configuration and state
   smooth_scroll_enabled: bool,
   scroll_lerp_factor:    f32, // fraction of remaining distance per frame (0..1)
@@ -72,10 +75,12 @@ pub struct App {
 
 impl App {
   pub fn new(
-    editor: Editor,
+    mut editor: Editor,
     runtime_handle: tokio::runtime::Handle,
     config_ptr: Arc<arc_swap::ArcSwap<crate::core::config::Config>>,
   ) -> Self {
+    // Take terminal event receiver from editor for polling in render loop
+    let terminal_event_rx = editor.take_terminal_event_rx();
     let area = Rect::new(0, 0, 120, 40); // Default size, will be updated on resize.
     let mut compositor = Compositor::new(area);
 
@@ -114,6 +119,7 @@ impl App {
       jobs: Jobs::new(),
       input_handler: InputHandler::new(mode),
       runtime_handle,
+      terminal_event_rx,
       smooth_scroll_enabled: conf.smooth_scroll_enabled,
       scroll_lerp_factor: conf.scroll_lerp_factor,
       scroll_min_step_lines: conf.scroll_min_step_lines,
@@ -480,6 +486,9 @@ impl Application for App {
 
     // Process any pending ACP events
     self.handle_acp_events();
+
+    // Process any pending terminal events
+    self.process_terminal_events();
 
     // Calculate delta time for time-based animations
     let now = std::time::Instant::now();
@@ -908,6 +917,71 @@ impl App {
         }
         // Clear the receiver after processing
         self.editor.pending_model_selection = None;
+      }
+    }
+  }
+
+  /// Process pending terminal events (wakeup, title changes, exit, etc.)
+  fn process_terminal_events(&mut self) {
+    use the_terminal::TerminalEvent;
+
+    let Some(ref mut rx) = self.terminal_event_rx else {
+      return;
+    };
+
+    while let Ok(event) = rx.try_recv() {
+      match event {
+        TerminalEvent::Wakeup(id) => {
+          // Terminal output received - request redraw
+          if self.editor.terminal(id).is_some() {
+            self.editor.needs_redraw = true;
+          }
+        },
+        TerminalEvent::Title { id, title } => {
+          // Update terminal title
+          if let Some(term) = self.editor.terminal_mut(id) {
+            term.set_title(title);
+          }
+        },
+        TerminalEvent::Bell(id) => {
+          // Bell - could flash screen or play sound
+          log::debug!("Terminal {:?} bell", id);
+        },
+        TerminalEvent::Exit { id, status } => {
+          // Terminal process exited
+          if let Some(term) = self.editor.terminal_mut(id) {
+            term.mark_exited(status);
+            let msg = match status {
+              Some(code) => format!("Terminal exited with code {}", code),
+              None => "Terminal exited".to_string(),
+            };
+            self.editor.set_status(msg);
+          }
+        },
+        TerminalEvent::ClipboardLoad { id } => {
+          // Terminal wants clipboard content - read from system clipboard register
+          // Collect content first to avoid borrow conflicts
+          let content = self
+            .editor
+            .registers
+            .read('+', &self.editor)
+            .map(|values| values.into_iter().collect::<Vec<_>>().join("\n"));
+          if let Some(content) = content {
+            if let Some(term) = self.editor.terminal_mut(id) {
+              term.write(content.as_bytes());
+            }
+          }
+        },
+        TerminalEvent::ClipboardStore { id: _, content } => {
+          // Terminal wants to store to clipboard - write to system clipboard register
+          let _ = self.editor.registers.write('+', vec![content]);
+        },
+        TerminalEvent::CursorVisibility { id: _, visible: _ } => {
+          // Cursor visibility change - handled during rendering
+        },
+        TerminalEvent::MouseCursorShape { id: _, shape: _ } => {
+          // Mouse cursor shape change - could be used to change system cursor
+        },
       }
     }
   }

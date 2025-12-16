@@ -724,6 +724,42 @@ impl CommandRegistry {
     ));
 
     self.register(TypableCommand::new(
+      "terminal",
+      &["term", "te"],
+      "Open a terminal in a new split",
+      terminal,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "terminal-hsplit",
+      &["term-hs"],
+      "Open a terminal in a horizontal split",
+      terminal_hsplit,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "terminal-vsplit",
+      &["term-vs"],
+      "Open a terminal in a vertical split",
+      terminal_vsplit,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
       "write-all",
       &["wa", "wall"],
       "Write all modified buffers to disk",
@@ -2121,6 +2157,48 @@ fn hsplit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
     open_impl(cx, args, Action::HorizontalSplit)?;
   }
 
+  Ok(())
+}
+
+fn terminal(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  use crate::core::tree::Layout;
+
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  // Get optional shell argument
+  let shell = args.first();
+
+  // Open terminal in horizontal split by default
+  cx.editor.open_terminal_split(shell, Layout::Vertical)?;
+  cx.editor.set_status("Terminal opened");
+  Ok(())
+}
+
+fn terminal_hsplit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  use crate::core::tree::Layout;
+
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  let shell = args.first();
+  cx.editor.open_terminal_split(shell, Layout::Horizontal)?;
+  cx.editor.set_status("Terminal opened");
+  Ok(())
+}
+
+fn terminal_vsplit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  use crate::core::tree::Layout;
+
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  let shell = args.first();
+  cx.editor.open_terminal_split(shell, Layout::Vertical)?;
+  cx.editor.set_status("Terminal opened");
   Ok(())
 }
 

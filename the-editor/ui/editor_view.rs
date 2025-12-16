@@ -11,6 +11,10 @@ use the_editor_renderer::{
   Color,
   TextSection,
 };
+use the_terminal::{
+  ColorScheme as TerminalColorScheme,
+  CursorShape as TerminalCursorShape,
+};
 use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
@@ -299,6 +303,8 @@ pub struct EditorView {
   inline_diagnostic_anim:        std::collections::HashMap<usize, super::inline_diagnostic_animation::InlineDiagnosticAnimState>,
   // Track if inline diagnostic animation is in progress
   inline_diagnostic_anim_active: bool,
+  // Terminal escape prefix state: true when waiting for command after Ctrl+\
+  terminal_escape_pending:       bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -385,6 +391,7 @@ impl EditorView {
       underline_anim_active: false,
       inline_diagnostic_anim: std::collections::HashMap::new(),
       inline_diagnostic_anim_active: false,
+      terminal_escape_pending: false,
     }
   }
 
@@ -752,6 +759,13 @@ impl Component for EditorView {
         if matches!(result, EventResult::Consumed(_)) {
           return result;
         }
+      }
+    }
+
+    // Handle terminal input if focused view is a terminal
+    if let Event::Key(key) = event {
+      if let Some(result) = self.handle_terminal_key(key, cx) {
+        return result;
       }
     }
 
@@ -1128,6 +1142,12 @@ impl Component for EditorView {
       let scrolloff = cx.editor.config().scrolloff;
       let view_ids: Vec<_> = cx.editor.tree.views().map(|(view, _)| view.id).collect();
       for view_id in view_ids {
+        // Skip terminal views - they don't have document selections
+        let is_terminal = cx.editor.tree.get(view_id).terminal.is_some();
+        if is_terminal {
+          continue;
+        }
+
         // Calculate actual gutter width for this view (accounts for disabled gutters)
         let gutter_width = {
           let view = cx.editor.tree.get(view_id);
@@ -1146,38 +1166,62 @@ impl Component for EditorView {
     }
 
     // Ensure cursor is kept within the viewport including scrolloff padding
+    // Skip for terminal views since they don't have document selections
     {
       let focus_view = cx.editor.tree.focus;
 
-      if cx.editor.tree.try_get(focus_view).is_some() {
-        let scrolloff = cx.editor.config().scrolloff;
+      if let Some(view) = cx.editor.tree.try_get(focus_view) {
+        // Skip terminal views - they don't have document selections
+        if view.terminal.is_none() {
+          let scrolloff = cx.editor.config().scrolloff;
 
-        // Calculate actual gutter width for focused view (accounts for disabled
-        // gutters)
-        let gutter_width = {
-          let view = cx.editor.tree.get(focus_view);
-          let doc = &cx.editor.documents[&view.doc];
-          (self.gutter_manager.total_width(view, doc) as u16).min(view.area.width)
-        };
+          // Calculate actual gutter width for focused view (accounts for disabled
+          // gutters)
+          let gutter_width = {
+            let view = cx.editor.tree.get(focus_view);
+            let doc = &cx.editor.documents[&view.doc];
+            (self.gutter_manager.total_width(view, doc) as u16).min(view.area.width)
+          };
 
-        let view_id_doc;
-        {
-          // Limit the mutable borrow scope
-          let view = cx.editor.tree.get_mut(focus_view);
-          view.rendered_gutter_width = Some(gutter_width);
-          let doc = cx.editor.documents.get_mut(&view.doc).unwrap();
-          view_id_doc = view.doc;
-          if !view.is_cursor_in_view(doc, scrolloff) {
-            view.ensure_cursor_in_view(doc, scrolloff);
-            // Viewport changed, force a redraw of visible content
-            self.dirty_region.mark_all_dirty();
+          let view_id_doc;
+          {
+            // Limit the mutable borrow scope
+            let view = cx.editor.tree.get_mut(focus_view);
+            view.rendered_gutter_width = Some(gutter_width);
+            let doc = cx.editor.documents.get_mut(&view.doc).unwrap();
+            view_id_doc = view.doc;
+            if !view.is_cursor_in_view(doc, scrolloff) {
+              view.ensure_cursor_in_view(doc, scrolloff);
+              // Viewport changed, force a redraw of visible content
+              self.dirty_region.mark_all_dirty();
+            }
           }
+          let _ = view_id_doc; // keep variable to ensure scope is closed
         }
-        let _ = view_id_doc; // keep variable to ensure scope is closed
       }
     }
 
     // Cursor animation config is now read directly from editor config when needed
+
+    // Resize any terminal views to match their area
+    // This must happen before we borrow the theme immutably
+    {
+      let terminal_resizes: Vec<_> = cx
+        .editor
+        .tree
+        .traverse()
+        .filter_map(|(view_id, _)| {
+          let view = cx.editor.tree.get(view_id);
+          view.terminal.map(|tid| (tid, view.area.width, view.area.height))
+        })
+        .collect();
+
+      for (terminal_id, cols, rows) in terminal_resizes {
+        if let Some(term) = cx.editor.terminal_mut(terminal_id) {
+          term.resize(cols, rows);
+        }
+      }
+    }
 
     // Get theme colors
     let theme = &cx.editor.theme;
@@ -1360,6 +1404,21 @@ impl Component for EditorView {
         scissor_width.max(0.0),
         scissor_height.max(0.0),
       );
+
+      // Check if this view is a terminal - if so, render it and continue
+      if let Some(terminal_id) = view.terminal {
+        self.render_terminal_view(
+          terminal_id,
+          view_offset_x,
+          base_y,
+          is_focused,
+          font_width,
+          renderer,
+          cx.editor,
+        );
+        renderer.pop_scissor_rect();
+        continue;
+      }
 
       let doc_id = view.doc;
 
@@ -3242,6 +3301,369 @@ impl Component for EditorView {
 }
 
 impl EditorView {
+  /// Render a terminal view.
+  ///
+  /// Note: Terminal resizing should be done before calling this method,
+  /// as this method only needs immutable access to the editor.
+  #[allow(clippy::too_many_arguments)]
+  fn render_terminal_view(
+    &self,
+    terminal_id: the_terminal::TerminalId,
+    base_x: f32,
+    base_y: f32,
+    is_focused: bool,
+    font_width: f32,
+    renderer: &mut Surface,
+    editor: &Editor,
+  ) {
+    let terminal = match editor.terminal(terminal_id) {
+      Some(t) => t,
+      None => return,
+    };
+
+    // Get theme colors for terminal
+    let theme = &editor.theme;
+    let bg_style = theme.get("ui.background");
+    let fg_style = theme.get("ui.text");
+
+    // Build terminal color scheme from theme
+    let colors = self.build_terminal_color_scheme_from_theme(theme);
+
+    // Get terminal cells and cursor info
+    let (cols, rows) = terminal.dimensions();
+    let cells = terminal.render_cells(&colors);
+    let cursor_info = terminal.cursor_info();
+
+    // Draw background
+    let bg_color = bg_style
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.1, 0.1, 0.15, 1.0));
+
+    let cell_height = self.cached_cell_height;
+    let total_width = cols as f32 * font_width;
+    let total_height = rows as f32 * cell_height;
+
+    renderer.draw_rect(base_x, base_y, total_width, total_height, bg_color);
+
+    // Draw cells
+    for cell in cells {
+      let x = base_x + cell.col as f32 * font_width;
+      let y = base_y + cell.row as f32 * cell_height;
+
+      // Draw background if different from default
+      let cell_bg = Color::rgb(
+        cell.bg.0 as f32 / 255.0,
+        cell.bg.1 as f32 / 255.0,
+        cell.bg.2 as f32 / 255.0,
+      );
+
+      if cell.bg != colors.background {
+        renderer.draw_rect(x, y, font_width, cell_height, cell_bg);
+      }
+
+      // Draw character if not empty/space
+      if cell.c != ' ' && cell.c != '\0' {
+        let cell_fg = Color::rgb(
+          cell.fg.0 as f32 / 255.0,
+          cell.fg.1 as f32 / 255.0,
+          cell.fg.2 as f32 / 255.0,
+        );
+
+        let section =
+          TextSection::simple(x, y, cell.c.to_string(), self.cached_font_size, cell_fg);
+        renderer.draw_text_batched(section);
+      }
+    }
+
+    // Draw cursor if focused
+    if is_focused && cursor_info.visible {
+      let cursor_x = base_x + cursor_info.col as f32 * font_width;
+      let cursor_y = base_y + cursor_info.row as f32 * cell_height;
+
+      let cursor_color = fg_style
+        .fg
+        .map(crate::ui::theme_color_to_renderer_color)
+        .unwrap_or(Color::rgb(0.85, 0.85, 0.9));
+
+      match cursor_info.shape {
+        TerminalCursorShape::Block => {
+          // Draw block cursor with inverted colors
+          renderer.draw_rect(cursor_x, cursor_y, font_width, cell_height, cursor_color);
+        }
+        TerminalCursorShape::Underline => {
+          // Draw underline cursor
+          let underline_height = 2.0;
+          renderer.draw_rect(
+            cursor_x,
+            cursor_y + cell_height - underline_height,
+            font_width,
+            underline_height,
+            cursor_color,
+          );
+        }
+        TerminalCursorShape::Beam => {
+          // Draw beam/bar cursor
+          let beam_width = 2.0;
+          renderer.draw_rect(cursor_x, cursor_y, beam_width, cell_height, cursor_color);
+        }
+      }
+    }
+
+    // Flush text batch
+    renderer.flush_text_batch();
+  }
+
+  /// Handle key input for terminal views.
+  ///
+  /// Returns `Some(EventResult)` if the key was handled by terminal,
+  /// `None` if normal editor handling should proceed.
+  fn handle_terminal_key(
+    &mut self,
+    key: &KeyBinding,
+    cx: &mut Context,
+  ) -> Option<EventResult> {
+    use the_editor_renderer::Key;
+
+    // Check if focused view is a terminal
+    let focus = cx.editor.tree.focus;
+    let view = cx.editor.tree.get(focus);
+    let terminal_id = view.terminal?;
+
+    // Handle terminal escape prefix (Ctrl+\)
+    if self.terminal_escape_pending {
+      self.terminal_escape_pending = false;
+
+      match &key.code {
+        // Ctrl+\ Ctrl+\ - send literal Ctrl+\ to terminal
+        Key::Char('\\') if key.ctrl => {
+          if let Some(term) = cx.editor.terminal(terminal_id) {
+            term.write(&[0x1c]); // Ctrl+\ = 0x1c
+          }
+          return Some(EventResult::Consumed(None));
+        }
+        // Ctrl+\ q - close terminal
+        Key::Char('q') => {
+          cx.editor.close_terminal(terminal_id);
+          // Focus next view or close the view
+          return Some(EventResult::Consumed(None));
+        }
+        // Ctrl+\ n - focus next view
+        Key::Char('n') => {
+          cx.editor.focus_next();
+          return Some(EventResult::Consumed(None));
+        }
+        // Ctrl+\ p - focus previous view
+        Key::Char('p') => {
+          cx.editor.focus_prev();
+          return Some(EventResult::Consumed(None));
+        }
+        // Ctrl+\ Escape - back to normal mode (unfocus terminal)
+        Key::Escape => {
+          // This could switch to a "terminal normal mode" in the future
+          return Some(EventResult::Consumed(None));
+        }
+        // Unknown escape command - ignore
+        _ => {
+          cx.editor.set_status("Unknown terminal escape command");
+          return Some(EventResult::Consumed(None));
+        }
+      }
+    }
+
+    // Check for escape prefix (Ctrl+\)
+    if key.ctrl && matches!(&key.code, Key::Char('\\')) {
+      self.terminal_escape_pending = true;
+      cx.editor.set_status("Terminal: Ctrl+\\ ...");
+      return Some(EventResult::Consumed(None));
+    }
+
+    // Convert key to terminal bytes and send
+    let bytes = self.key_to_terminal_bytes(key);
+    if !bytes.is_empty() {
+      if let Some(term) = cx.editor.terminal(terminal_id) {
+        term.write(&bytes);
+      }
+      the_editor_event::request_redraw();
+      return Some(EventResult::Consumed(None));
+    }
+
+    Some(EventResult::Consumed(None))
+  }
+
+  /// Convert a key event to terminal escape sequence bytes.
+  fn key_to_terminal_bytes(&self, key: &KeyBinding) -> Vec<u8> {
+    use the_editor_renderer::Key;
+
+    match &key.code {
+      // Control characters
+      Key::Char(c) if key.ctrl => {
+        let c = c.to_ascii_lowercase();
+        if c >= 'a' && c <= 'z' {
+          vec![(c as u8) - b'a' + 1]
+        } else {
+          vec![]
+        }
+      }
+      // Alt (Meta) - send ESC prefix
+      Key::Char(c) if key.alt => {
+        let mut bytes = vec![0x1b]; // ESC
+        bytes.extend(c.to_string().as_bytes());
+        bytes
+      }
+      // Regular characters
+      Key::Char(c) => c.to_string().into_bytes(),
+      // Enter
+      Key::Enter | Key::NumpadEnter => vec![b'\r'],
+      // Tab
+      Key::Tab => vec![b'\t'],
+      // Backspace
+      Key::Backspace => vec![0x7f], // DEL
+      // Escape
+      Key::Escape => vec![0x1b],
+      // Arrow keys
+      Key::Up => b"\x1b[A".to_vec(),
+      Key::Down => b"\x1b[B".to_vec(),
+      Key::Right => b"\x1b[C".to_vec(),
+      Key::Left => b"\x1b[D".to_vec(),
+      // Home/End
+      Key::Home => b"\x1b[H".to_vec(),
+      Key::End => b"\x1b[F".to_vec(),
+      // Page Up/Down
+      Key::PageUp => b"\x1b[5~".to_vec(),
+      Key::PageDown => b"\x1b[6~".to_vec(),
+      // Insert/Delete
+      Key::Insert => b"\x1b[2~".to_vec(),
+      Key::Delete => b"\x1b[3~".to_vec(),
+      // Function keys
+      Key::F1 => b"\x1bOP".to_vec(),
+      Key::F2 => b"\x1bOQ".to_vec(),
+      Key::F3 => b"\x1bOR".to_vec(),
+      Key::F4 => b"\x1bOS".to_vec(),
+      Key::F5 => b"\x1b[15~".to_vec(),
+      Key::F6 => b"\x1b[17~".to_vec(),
+      Key::F7 => b"\x1b[18~".to_vec(),
+      Key::F8 => b"\x1b[19~".to_vec(),
+      Key::F9 => b"\x1b[20~".to_vec(),
+      Key::F10 => b"\x1b[21~".to_vec(),
+      Key::F11 => b"\x1b[23~".to_vec(),
+      Key::F12 => b"\x1b[24~".to_vec(),
+      // Unknown
+      Key::Other => vec![],
+    }
+  }
+
+  /// Build a terminal color scheme from the given theme.
+  fn build_terminal_color_scheme_from_theme(
+    &self,
+    theme: &crate::core::theme::Theme,
+  ) -> TerminalColorScheme {
+    // Helper to extract RGB from theme style
+    let get_color = |key: &str, is_fg: bool| -> (u8, u8, u8) {
+      let style = theme.get(key);
+      let color = if is_fg { style.fg } else { style.bg };
+      color
+        .and_then(theme_color_to_rgb)
+        .unwrap_or(if is_fg {
+          (204, 204, 204)
+        } else {
+          (30, 30, 30)
+        })
+    };
+
+    // Try to get terminal-specific colors from theme, fallback to UI colors
+    let foreground = get_color("ui.text", true);
+    let background = get_color("ui.background", false);
+    let cursor = get_color("ui.cursor", true);
+
+    // ANSI colors - try theme-specific colors, fallback to reasonable defaults
+    TerminalColorScheme {
+      foreground,
+      background,
+      cursor,
+      black: theme
+        .get("terminal.black")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((0, 0, 0)),
+      red: theme
+        .get("terminal.red")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((204, 0, 0)),
+      green: theme
+        .get("terminal.green")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((0, 204, 0)),
+      yellow: theme
+        .get("terminal.yellow")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((204, 204, 0)),
+      blue: theme
+        .get("terminal.blue")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((0, 0, 204)),
+      magenta: theme
+        .get("terminal.magenta")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((204, 0, 204)),
+      cyan: theme
+        .get("terminal.cyan")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((0, 204, 204)),
+      white: theme
+        .get("terminal.white")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((204, 204, 204)),
+      bright_black: theme
+        .get("terminal.bright_black")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((128, 128, 128)),
+      bright_red: theme
+        .get("terminal.bright_red")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((255, 0, 0)),
+      bright_green: theme
+        .get("terminal.bright_green")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((0, 255, 0)),
+      bright_yellow: theme
+        .get("terminal.bright_yellow")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((255, 255, 0)),
+      bright_blue: theme
+        .get("terminal.bright_blue")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((0, 0, 255)),
+      bright_magenta: theme
+        .get("terminal.bright_magenta")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((255, 0, 255)),
+      bright_cyan: theme
+        .get("terminal.bright_cyan")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((0, 255, 255)),
+      bright_white: theme
+        .get("terminal.bright_white")
+        .fg
+        .and_then(theme_color_to_rgb)
+        .unwrap_or((255, 255, 255)),
+    }
+  }
+
   fn execute_command_sequence<I>(&mut self, cx: &mut Context, commands: I) -> EventResult
   where
     I: IntoIterator<Item = MappableCommand>,
@@ -4059,6 +4481,11 @@ impl EditorView {
         || mouse_row >= view.area.y + view.area.height
       {
         continue;
+      }
+
+      // Skip terminal views - they don't have document positions
+      if view.terminal.is_some() {
+        return None;
       }
 
       // Found the view! Now convert to document position

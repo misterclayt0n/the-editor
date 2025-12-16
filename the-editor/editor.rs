@@ -2112,6 +2112,56 @@ impl Editor {
     }
   }
 
+  /// Open a terminal in a split.
+  pub fn open_terminal_split(
+    &mut self,
+    shell: Option<&str>,
+    layout: tree::Layout,
+  ) -> anyhow::Result<TerminalId> {
+    use the_terminal::{
+      Terminal,
+      TerminalConfig,
+    };
+
+    // Get the next terminal ID
+    let id = self.next_terminal_id;
+    self.next_terminal_id = TerminalId(unsafe {
+      std::num::NonZeroUsize::new_unchecked(self.next_terminal_id.0.get() + 1)
+    });
+
+    // Default terminal config
+    let mut config = TerminalConfig::default();
+    if let Some(shell) = shell {
+      config.shell = Some(shell.to_string());
+    }
+
+    // Get initial size from tree area
+    let area = self.tree.area();
+    let cols = (area.width / 2).max(10);
+    let rows = (area.height / 2).max(5);
+
+    // Spawn the terminal
+    let terminal =
+      Terminal::spawn(id, cols, rows, config, self.terminal_event_tx.clone())?;
+
+    // Store terminal
+    self.terminals.insert(id, terminal);
+
+    // Create a placeholder document for the terminal view
+    let placeholder_doc =
+      Document::default(self.config.clone(), self.syn_loader.clone());
+    let placeholder_doc_id = self.new_document(placeholder_doc);
+
+    // Create and insert the view with split
+    let view = View::new_terminal(id, placeholder_doc_id);
+    let view_id = self.tree.split(view, layout);
+
+    // Focus the new terminal view
+    self.focus(view_id);
+
+    Ok(id)
+  }
+
   /// Take the terminal event receiver for polling in the event loop.
   pub fn take_terminal_event_rx(&mut self) -> Option<UnboundedReceiver<TerminalEvent>> {
     self.terminal_event_rx.take()
@@ -3142,7 +3192,10 @@ impl Editor {
         self.last_view_focus = Some(view_id);
         let doc_id = view.doc;
 
-        self.ensure_cursor_in_view(view_id);
+        // Skip cursor-in-view for terminal views
+        if view.terminal.is_none() {
+          self.ensure_cursor_in_view(view_id);
+        }
 
         // Update jumplist selections with new document changes.
         for (view, _focused) in self.tree.views_mut() {

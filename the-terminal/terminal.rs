@@ -340,20 +340,25 @@ impl Terminal {
     term.grid().display_offset()
   }
 
-  /// Start a new selection at the given cell position.
+  /// Start a new selection at the given viewport cell position.
+  /// Coordinates are converted to absolute (history-relative) internally.
   /// `selection_type`: Simple (character), Semantic (word), or Lines (line)
   pub fn start_selection(&self, col: u16, row: i32, selection_type: SelectionType) {
     let mut term = self.term.lock();
-    let point = AlacPoint::new(Line(row), Column(col as usize));
+    let display_offset = term.grid().display_offset() as i32;
+    // Convert viewport row to absolute line (negative = history)
+    let point = AlacPoint::new(Line(row - display_offset), Column(col as usize));
     let selection = Selection::new(selection_type, point, AlacDirection::Left);
     term.selection = Some(selection);
   }
 
-  /// Update the current selection to the given cell position.
+  /// Update the current selection to the given viewport cell position.
+  /// Coordinates are converted to absolute (history-relative) internally.
   pub fn update_selection(&self, col: u16, row: i32) {
     let mut term = self.term.lock();
+    let display_offset = term.grid().display_offset() as i32;
     if let Some(ref mut selection) = term.selection {
-      let point = AlacPoint::new(Line(row), Column(col as usize));
+      let point = AlacPoint::new(Line(row - display_offset), Column(col as usize));
       selection.update(point, AlacDirection::Right);
     }
   }
@@ -377,14 +382,16 @@ impl Terminal {
   }
 
   /// Get the selection range for rendering purposes.
-  /// Returns (start_col, start_row, end_col, end_row) if there's a selection.
+  /// Returns viewport-relative coordinates: (start_col, start_row, end_col, end_row).
   pub fn selection_range(&self) -> Option<((u16, i32), (u16, i32))> {
     let term = self.term.lock();
+    let display_offset = term.grid().display_offset() as i32;
     term.selection.as_ref().and_then(|sel| {
       let range = sel.to_range(&term)?;
+      // Convert absolute line back to viewport row
       Some((
-        (range.start.column.0 as u16, range.start.line.0),
-        (range.end.column.0 as u16, range.end.line.0),
+        (range.start.column.0 as u16, range.start.line.0 + display_offset),
+        (range.end.column.0 as u16, range.end.line.0 + display_offset),
       ))
     })
   }

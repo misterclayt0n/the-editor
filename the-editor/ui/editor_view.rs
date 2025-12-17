@@ -3618,6 +3618,8 @@ impl EditorView {
       if let Some(term) = cx.editor.terminal(terminal_id) {
         // Scroll to bottom when typing (standard terminal behavior)
         term.scroll_to_bottom();
+        // Clear any active selection when typing
+        term.clear_selection();
         term.write(&bytes);
       }
       the_editor_event::request_redraw();
@@ -4580,14 +4582,27 @@ impl EditorView {
                 let rel_x = mouse.position.0 - self.content_x_offset() - view_area.x as f32 * self.cached_cell_width;
                 let rel_y = mouse.position.1 - view_area.y as f32 * self.cached_cell_height - VIEW_PADDING_TOP;
                 let col = (rel_x / self.cached_cell_width).floor().max(0.0) as u16;
-                let row = (rel_y / self.cached_cell_height).floor().max(0.0) as i32;
+                let row_unclamped = (rel_y / self.cached_cell_height).floor() as i32;
+                let (_cols, rows) = term.dimensions();
 
                 if term.mouse_mode() {
                   // Send mouse drag to PTY (button 32 = left button + motion flag)
+                  let row = row_unclamped.max(0);
                   let report = format!("\x1b[<32;{};{}M", col + 1, row + 1);
                   term.write(report.as_bytes());
                 } else {
-                  // Update selection
+                  // Auto-scroll when mouse is at edge of viewport during selection
+                  if row_unclamped < 0 {
+                    // Mouse above viewport - scroll up (show history)
+                    term.scroll(-row_unclamped); // Positive delta scrolls up into history
+                  } else if row_unclamped >= rows as i32 {
+                    // Mouse below viewport - scroll down (towards current)
+                    let overflow = row_unclamped - rows as i32 + 1;
+                    term.scroll(-overflow); // Negative delta scrolls down
+                  }
+
+                  // Update selection with clamped row
+                  let row = row_unclamped.clamp(0, rows as i32 - 1);
                   term.update_selection(col, row);
                 }
                 request_redraw();

@@ -19,7 +19,10 @@ pub use renderer::{
   CursorShape,
   RenderCell,
 };
-pub use terminal::Terminal;
+pub use terminal::{
+  Terminal,
+  TerminalPickerInfo,
+};
 
 // Re-export selection types for mouse handling
 pub use alacritty_terminal::selection::SelectionType;

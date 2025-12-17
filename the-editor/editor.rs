@@ -2085,9 +2085,70 @@ impl Editor {
     Ok(id)
   }
 
-  /// Close a terminal and its associated view.
-  pub fn close_terminal(&mut self, id: TerminalId) {
-    // Remove terminal (Drop impl will signal shutdown)
+  /// Hide a terminal (close view but keep terminal alive).
+  /// The terminal can be shown again later via `show_terminal`.
+  pub fn hide_terminal(&mut self, id: TerminalId) {
+    // Mark terminal as hidden
+    if let Some(term) = self.terminals.get_mut(&id) {
+      term.set_visible(false);
+    }
+
+    // Find and close views that reference this terminal
+    let view_ids: Vec<ViewId> = self
+      .tree
+      .views()
+      .filter_map(|(view, _)| {
+        if view.terminal() == Some(id) {
+          Some(view.id)
+        } else {
+          None
+        }
+      })
+      .collect();
+
+    for view_id in view_ids {
+      self.tree.remove(view_id);
+    }
+  }
+
+  /// Show a hidden terminal in a new view.
+  pub fn show_terminal(&mut self, id: TerminalId, action: Action) {
+    // Mark terminal as visible
+    if let Some(term) = self.terminals.get_mut(&id) {
+      term.set_visible(true);
+    } else {
+      return; // Terminal doesn't exist
+    }
+
+    // Create a new view for the terminal
+    let gutters = self.config().gutters.clone();
+    let view = View::new_terminal(id, gutters);
+
+    match action {
+      Action::Replace => {
+        let view_id = self.tree.insert(view);
+        self.focus(view_id);
+      }
+      Action::HorizontalSplit => {
+        let view_id = self.tree.split(view, tree::Layout::Horizontal);
+        self.focus(view_id);
+      }
+      Action::VerticalSplit => {
+        let view_id = self.tree.split(view, tree::Layout::Vertical);
+        self.focus(view_id);
+      }
+      Action::Load => {
+        // Load is not typically used for terminals, treat as Replace
+        let view_id = self.tree.insert(view);
+        self.focus(view_id);
+      }
+    }
+  }
+
+  /// Destroy a terminal completely (kill process and remove from registry).
+  /// Use `hide_terminal` if you want to keep the terminal alive but close the view.
+  pub fn destroy_terminal(&mut self, id: TerminalId) {
+    // Remove terminal (Drop impl will signal PTY shutdown)
     self.terminals.remove(&id);
 
     // Find and close views that reference this terminal
@@ -2106,6 +2167,28 @@ impl Editor {
     for view_id in view_ids {
       self.tree.remove(view_id);
     }
+  }
+
+  /// Close a terminal view (hides the terminal, keeping it alive).
+  /// This is the default behavior when closing a terminal view.
+  /// Use `destroy_terminal` to actually kill the terminal process.
+  pub fn close_terminal(&mut self, id: TerminalId) {
+    self.hide_terminal(id);
+  }
+
+  /// Get all terminals (both visible and hidden).
+  pub fn all_terminals(&self) -> impl Iterator<Item = &Terminal> {
+    self.terminals.values()
+  }
+
+  /// Get only hidden terminals.
+  pub fn hidden_terminals(&self) -> impl Iterator<Item = &Terminal> {
+    self.terminals.values().filter(|t| !t.visible())
+  }
+
+  /// Get only visible terminals.
+  pub fn visible_terminals(&self) -> impl Iterator<Item = &Terminal> {
+    self.terminals.values().filter(|t| t.visible())
   }
 
   /// Open a terminal in a split.

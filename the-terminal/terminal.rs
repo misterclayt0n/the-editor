@@ -1,8 +1,12 @@
 //! Terminal emulation wrapper around alacritty_terminal.
 
-use std::sync::{
-  Arc,
-  OnceLock,
+use std::{
+  path::PathBuf,
+  sync::{
+    Arc,
+    OnceLock,
+  },
+  time::Instant,
 };
 
 use alacritty_terminal::{
@@ -52,6 +56,18 @@ use crate::{
     extract_cells,
   },
 };
+
+/// Display info for the terminal picker.
+#[derive(Debug, Clone)]
+pub struct TerminalPickerInfo {
+  pub id:                TerminalId,
+  pub title:             String,
+  pub visible:           bool,
+  pub exited:            bool,
+  pub exit_status:       Option<i32>,
+  pub working_directory: Option<PathBuf>,
+  pub created_at:        Instant,
+}
 
 /// Event proxy that forwards alacritty events to our channel.
 struct EventProxy {
@@ -121,8 +137,13 @@ pub struct Terminal {
   cols: u16,
   rows: u16,
 
+  /// Whether this terminal is displayed in a view.
+  visible: bool,
+
+  /// Creation timestamp for ordering in picker.
+  created_at: Instant,
+
   /// Configuration.
-  #[allow(dead_code)]
   config: TerminalConfig,
 }
 
@@ -206,6 +227,8 @@ impl Terminal {
       exit_status: None,
       cols,
       rows,
+      visible: true,
+      created_at: Instant::now(),
       config,
     })
   }
@@ -405,6 +428,38 @@ impl Terminal {
 
   // Note: Raw terminal access is available through render_cells() and cursor_info().
   // Direct term() access is intentionally not exposed to keep EventProxy private.
+
+  // ==========================================================================
+  // Visibility and Lifecycle
+  // ==========================================================================
+
+  /// Check if this terminal is currently visible (displayed in a view).
+  pub fn visible(&self) -> bool {
+    self.visible
+  }
+
+  /// Set the visibility state of this terminal.
+  pub fn set_visible(&mut self, visible: bool) {
+    self.visible = visible;
+  }
+
+  /// Get the creation timestamp.
+  pub fn created_at(&self) -> Instant {
+    self.created_at
+  }
+
+  /// Get display info for the terminal picker.
+  pub fn picker_info(&self) -> TerminalPickerInfo {
+    TerminalPickerInfo {
+      id:                self.id,
+      title:             self.title().to_string(),
+      visible:           self.visible,
+      exited:            self.exited,
+      exit_status:       self.exit_status,
+      working_directory: self.config.working_directory.clone(),
+      created_at:        self.created_at,
+    }
+  }
 }
 
 impl Drop for Terminal {

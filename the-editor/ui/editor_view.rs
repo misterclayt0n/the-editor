@@ -3507,8 +3507,10 @@ impl EditorView {
       }
     }
 
-    // Draw cursor if focused
-    if is_focused && cursor_info.visible {
+    // Draw cursor if focused and not scrolled into history
+    // When display_offset > 0, the cursor is scrolled off the bottom of the viewport
+    let display_offset = terminal.display_offset();
+    if is_focused && cursor_info.visible && display_offset == 0 {
       // Use floor() for pixel-perfect cursor alignment
       let cursor_x = (base_x + cursor_info.col as f32 * font_width).floor();
       let cursor_y = (base_y + cursor_info.row as f32 * cell_height).floor();

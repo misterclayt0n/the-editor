@@ -3652,6 +3652,11 @@ impl EditorView {
       // Enter
       Key::Enter | Key::NumpadEnter => vec![b'\r'],
       // Tab
+      // Shift+Tab - send CSI Z (backtab/reverse tab)
+      Key::Tab if key.shift => vec![0x1b, b'[', b'Z'],
+      // Ctrl+Tab - some terminals use this, send CSI with modifier
+      Key::Tab if key.ctrl => vec![0x1b, b'[', b'2', b'7', b';', b'5', b'~'],
+      // Regular Tab
       Key::Tab => vec![b'\t'],
       // Alt+Backspace - send ESC + DEL (word delete in most shells)
       Key::Backspace if key.alt => vec![0x1b, 0x7f],

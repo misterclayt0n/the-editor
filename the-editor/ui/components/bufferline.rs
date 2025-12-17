@@ -165,8 +165,8 @@ pub fn render(
   surface.configure_font(&ui_font_family, UI_FONT_SIZE);
 
   let base_cell_height = surface.cell_height().max(UI_FONT_SIZE + 4.0);
-  let cell_height = (base_cell_height + 4.0).max(UI_FONT_SIZE + 8.0);
-  let tab_height = (cell_height - 4.0).max(UI_FONT_SIZE + 2.0);
+  let cell_height = (base_cell_height + 10.0).max(UI_FONT_SIZE + 16.0);
+  let tab_height = (cell_height - 6.0).max(UI_FONT_SIZE + 8.0);
   let tab_top = origin_y + (cell_height - tab_height) * 0.5;
   let text_y = tab_top + (tab_height - UI_FONT_SIZE) * 0.5;
 
@@ -249,7 +249,7 @@ pub fn render(
   let icon_size = (UI_FONT_SIZE * 1.0) as u32;
   let icon_padding = 6.0;
   let text_padding = 8.0;
-  let close_button_width = UI_FONT_SIZE * 1.2;
+  let close_btn_size = 14.0_f32;
   let tab_spacing = 2.0;
   let min_tab_width = text_padding * 2.0 + icon_size as f32 + 20.0;
 
@@ -268,7 +268,7 @@ pub fn render(
         name.to_string()
       };
       let text_width = surface.measure_text(&display_text, UI_FONT_SIZE);
-      (text_padding + icon_size as f32 + icon_padding + text_width + close_button_width + text_padding)
+      (text_padding + icon_size as f32 + icon_padding + text_width + close_btn_size + text_padding * 1.5)
         .max(min_tab_width)
     })
     .collect();
@@ -318,8 +318,8 @@ pub fn render(
       kind: BufferKind::Document(doc_id),
       start_x: tab_start,
       end_x: tab_end,
-      close_start_x: tab_end - close_button_width - text_padding * 0.5,
-      close_end_x: tab_end - text_padding * 0.5,
+      close_start_x: tab_end - close_btn_size - text_padding,
+      close_end_x: tab_end - text_padding,
     });
 
     // Skip rendering if tab is completely outside visible area
@@ -462,48 +462,29 @@ pub fn render(
     ));
 
     // Draw close button (only when hovering and visible - implicit style)
-    let close_x = end_x - close_button_width - text_padding * 0.5;
-    let close_visible = close_x >= clip_left && close_x + close_button_width <= clip_right;
+    let close_x = end_x - close_btn_size - text_padding;
+    let close_y = tab_top + (tab_height - close_btn_size) * 0.5;
+    let close_visible = close_x >= clip_left && close_x + close_btn_size <= clip_right;
 
     if anim.hover_t > 0.1 && close_visible {
-      let close_alpha = anim.hover_t * 0.8;
+      let close_alpha = anim.hover_t * 0.5;
 
       // Draw close button background on hover
       if anim.close_hover_t > 0.0 {
-        let close_bg = with_alpha(button_base, anim.close_hover_t * 0.3);
-        surface.draw_rounded_rect(
-          close_x,
-          tab_top + 2.0,
-          close_button_width,
-          tab_height - 4.0,
-          2.0,
-          close_bg,
-        );
-
-        // Draw close button glow
-        if anim.close_hover_t > 0.3 {
-          Button::draw_hover_layers(
-            surface,
-            close_x,
-            tab_top + 2.0,
-            close_button_width,
-            tab_height - 4.0,
-            2.0,
-            button_highlight,
-            anim.close_hover_t * 0.5,
-          );
-        }
+        let close_bg = with_alpha(button_base, anim.close_hover_t * 0.2);
+        surface.draw_rounded_rect(close_x, close_y, close_btn_size, close_btn_size, 3.0, close_bg);
       }
 
-      // Draw × character
-      let close_color = with_alpha(
-        text_color.lerp(Color::WHITE, anim.close_hover_t * 0.3),
-        close_alpha,
+      // Draw small × character, well-centered
+      let x_color = with_alpha(
+        inactive_text.lerp(active_text, anim.close_hover_t * 0.6),
+        close_alpha + anim.close_hover_t * 0.5,
       );
-      let x_size = UI_FONT_SIZE * 0.7;
-      let x_x = close_x + (close_button_width - x_size * 0.5) * 0.5;
-      let x_y = tab_top + (tab_height - x_size) * 0.5;
-      surface.draw_text(TextSection::simple(x_x, x_y, "×", x_size, close_color));
+      let x_font_size = 10.0;
+      // Center the × in the button area
+      let x_x = close_x + (close_btn_size - x_font_size * 0.55) * 0.5;
+      let x_y = close_y + (close_btn_size - x_font_size) * 0.5;
+      surface.draw_text(TextSection::simple(x_x, x_y, "×", x_font_size, x_color));
     }
 
     cursor_x = tab_end + tab_spacing;

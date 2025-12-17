@@ -3534,24 +3534,29 @@ impl EditorView {
       Key::Enter | Key::NumpadEnter => vec![b'\r'],
       // Tab
       Key::Tab => vec![b'\t'],
+      // Alt+Backspace - send ESC + DEL (word delete in most shells)
+      Key::Backspace if key.alt => vec![0x1b, 0x7f],
+      // Ctrl+Backspace - send DEL or could use CSI sequence
+      Key::Backspace if key.ctrl => vec![0x1b, 0x7f], // Same as Alt+Backspace for compatibility
       // Backspace
       Key::Backspace => vec![0x7f], // DEL
       // Escape
       Key::Escape => vec![0x1b],
-      // Arrow keys
-      Key::Up => b"\x1b[A".to_vec(),
-      Key::Down => b"\x1b[B".to_vec(),
-      Key::Right => b"\x1b[C".to_vec(),
-      Key::Left => b"\x1b[D".to_vec(),
-      // Home/End
-      Key::Home => b"\x1b[H".to_vec(),
-      Key::End => b"\x1b[F".to_vec(),
-      // Page Up/Down
-      Key::PageUp => b"\x1b[5~".to_vec(),
-      Key::PageDown => b"\x1b[6~".to_vec(),
-      // Insert/Delete
-      Key::Insert => b"\x1b[2~".to_vec(),
-      Key::Delete => b"\x1b[3~".to_vec(),
+      // Arrow keys with modifiers (CSI 1 ; modifier code)
+      // Modifier codes: 2=Shift, 3=Alt, 5=Ctrl, 7=Ctrl+Alt
+      Key::Up => Self::csi_with_modifiers(b'A', key),
+      Key::Down => Self::csi_with_modifiers(b'B', key),
+      Key::Right => Self::csi_with_modifiers(b'C', key),
+      Key::Left => Self::csi_with_modifiers(b'D', key),
+      // Home/End with modifiers
+      Key::Home => Self::csi_with_modifiers(b'H', key),
+      Key::End => Self::csi_with_modifiers(b'F', key),
+      // Page Up/Down with modifiers (CSI number ; modifier ~)
+      Key::PageUp => Self::csi_tilde_with_modifiers(5, key),
+      Key::PageDown => Self::csi_tilde_with_modifiers(6, key),
+      // Insert/Delete with modifiers
+      Key::Insert => Self::csi_tilde_with_modifiers(2, key),
+      Key::Delete => Self::csi_tilde_with_modifiers(3, key),
       // Function keys
       Key::F1 => b"\x1bOP".to_vec(),
       Key::F2 => b"\x1bOQ".to_vec(),
@@ -3568,6 +3573,44 @@ impl EditorView {
       // Unknown
       Key::Other => vec![],
     }
+  }
+
+  /// Generate CSI sequence with modifiers for arrow/home/end keys.
+  /// Format: ESC [ 1 ; modifier code (e.g., \x1b[1;5D for Ctrl+Left)
+  fn csi_with_modifiers(key_char: u8, key: &KeyBinding) -> Vec<u8> {
+    let modifier = Self::modifier_code(key);
+    if modifier > 1 {
+      format!("\x1b[1;{}{}", modifier, key_char as char).into_bytes()
+    } else {
+      vec![0x1b, b'[', key_char]
+    }
+  }
+
+  /// Generate CSI sequence with modifiers for keys using ~ format.
+  /// Format: ESC [ number ; modifier ~ (e.g., \x1b[3;5~ for Ctrl+Delete)
+  fn csi_tilde_with_modifiers(number: u8, key: &KeyBinding) -> Vec<u8> {
+    let modifier = Self::modifier_code(key);
+    if modifier > 1 {
+      format!("\x1b[{};{}~", number, modifier).into_bytes()
+    } else {
+      format!("\x1b[{}~", number).into_bytes()
+    }
+  }
+
+  /// Calculate the modifier code for CSI sequences.
+  /// 1 = none, 2 = Shift, 3 = Alt, 4 = Shift+Alt, 5 = Ctrl, 6 = Ctrl+Shift, 7 = Ctrl+Alt, 8 = all
+  fn modifier_code(key: &KeyBinding) -> u8 {
+    let mut code = 1u8;
+    if key.shift {
+      code += 1;
+    }
+    if key.alt {
+      code += 2;
+    }
+    if key.ctrl {
+      code += 4;
+    }
+    code
   }
 
   /// Build a terminal color scheme from the given theme.

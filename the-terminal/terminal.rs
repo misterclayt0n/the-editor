@@ -1,6 +1,9 @@
 //! Terminal emulation wrapper around alacritty_terminal.
 
-use std::sync::Arc;
+use std::sync::{
+  Arc,
+  OnceLock,
+};
 
 use alacritty_terminal::{
   event::{
@@ -41,8 +44,9 @@ use crate::{
 
 /// Event proxy that forwards alacritty events to our channel.
 struct EventProxy {
-  id:     TerminalId,
-  sender: mpsc::UnboundedSender<TerminalEvent>,
+  id:                TerminalId,
+  sender:            mpsc::UnboundedSender<TerminalEvent>,
+  event_loop_sender: Arc<OnceLock<EventLoopSender>>,
 }
 
 impl EventListener for EventProxy {
@@ -64,8 +68,10 @@ impl EventListener for EventProxy {
       AlacrittyEvent::TextAreaSizeRequest(_) => return,
       AlacrittyEvent::ColorRequest(_, _) => return,
       AlacrittyEvent::PtyWrite(text) => {
-        // This shouldn't happen in normal operation
-        log::warn!("Unexpected PtyWrite event: {}", text);
+        // Write response back to PTY (for terminal queries like device attributes)
+        if let Some(sender) = self.event_loop_sender.get() {
+          let _ = sender.send(Msg::Input(text.into_bytes().into()));
+        }
         return;
       }
       AlacrittyEvent::ChildExit(status) => {
@@ -117,7 +123,14 @@ impl Terminal {
     config: TerminalConfig,
     event_sender: mpsc::UnboundedSender<TerminalEvent>,
   ) -> anyhow::Result<Self> {
-    let event_proxy = EventProxy { id, sender: event_sender.clone() };
+    // Create shared OnceLock for event_loop_sender (set after EventLoop creation)
+    let event_loop_sender_cell = Arc::new(OnceLock::new());
+
+    let event_proxy = EventProxy {
+      id,
+      sender:            event_sender.clone(),
+      event_loop_sender: Arc::clone(&event_loop_sender_cell),
+    };
 
     // Determine shell
     let shell = config.shell.clone().unwrap_or_else(|| {
@@ -156,7 +169,8 @@ impl Terminal {
       Arc::clone(&term),
       EventProxy {
         id,
-        sender: event_sender.clone(),
+        sender:            event_sender.clone(),
+        event_loop_sender: Arc::clone(&event_loop_sender_cell),
       },
       pty,
       false, // hold
@@ -165,6 +179,8 @@ impl Terminal {
 
     // Start the event loop
     let event_loop_sender = event_loop.channel();
+    // Set the sender in the OnceLock so EventProxy can use it for PtyWrite responses
+    let _ = event_loop_sender_cell.set(event_loop_sender.clone());
     let _handle = event_loop.spawn();
 
     Ok(Self {

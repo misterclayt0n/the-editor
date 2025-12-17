@@ -98,6 +98,27 @@ hint    = "silver"
 info    = "delta"
 warning = "lightning"
 
+# Terminal ANSI colors
+"terminal.foreground"    = { fg = "lavender" }
+"terminal.background"    = { fg = "midnight" }
+"terminal.cursor"        = { fg = "white" }
+"terminal.black"         = { fg = "#1a1a2e" }
+"terminal.red"           = { fg = "#f47868" }
+"terminal.green"         = { fg = "#9ff28f" }
+"terminal.yellow"        = { fg = "#efba5d" }
+"terminal.blue"          = { fg = "#6F44F0" }
+"terminal.magenta"       = { fg = "#dbbfef" }
+"terminal.cyan"          = { fg = "#7dd3fc" }
+"terminal.white"         = { fg = "#a4a0e8" }
+"terminal.bright_black"  = { fg = "#5a5977" }
+"terminal.bright_red"    = { fg = "#ff9580" }
+"terminal.bright_green"  = { fg = "#b8ffb0" }
+"terminal.bright_yellow" = { fg = "#ffcd1c" }
+"terminal.bright_blue"   = { fg = "#9f7fff" }
+"terminal.bright_magenta" = { fg = "#f0d0ff" }
+"terminal.bright_cyan"   = { fg = "#a5f3fc" }
+"terminal.bright_white"  = { fg = "#ffffff" }
+
 "15" = "white"
 
 [palette]

@@ -3751,9 +3751,21 @@ impl EditorView {
     };
 
     // Try to get terminal-specific colors from theme, fallback to UI colors
-    let foreground = get_color("ui.text", true);
-    let background = get_color("ui.background", false);
-    let cursor = get_color("ui.cursor", true);
+    let foreground = theme
+      .get("terminal.foreground")
+      .fg
+      .and_then(theme_color_to_rgb)
+      .unwrap_or_else(|| get_color("ui.text", true));
+    let background = theme
+      .get("terminal.background")
+      .fg
+      .and_then(theme_color_to_rgb)
+      .unwrap_or_else(|| get_color("ui.background", false));
+    let cursor = theme
+      .get("terminal.cursor")
+      .fg
+      .and_then(theme_color_to_rgb)
+      .unwrap_or_else(|| get_color("ui.cursor", true));
 
     // ANSI colors - try theme-specific colors, fallback to reasonable defaults
     TerminalColorScheme {

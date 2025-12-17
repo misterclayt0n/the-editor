@@ -3526,14 +3526,14 @@ impl EditorView {
       });
 
       // Draw background: search match takes priority over selection
+      // Use ceil() on both width and height to ensure full cell coverage and avoid gaps
       if in_search_match {
-        renderer.draw_rect(x, y, char_width.ceil(), cell_height, search_match_bg);
+        renderer.draw_rect(x, y, char_width.ceil(), cell_height.ceil(), search_match_bg);
       } else if in_selection {
         // Draw selection highlight
-        renderer.draw_rect(x, y, char_width.ceil(), cell_height, selection_bg);
+        renderer.draw_rect(x, y, char_width.ceil(), cell_height.ceil(), selection_bg);
       } else if cell.bg != colors.background {
-        // Use ceil() on width to ensure full cell coverage
-        renderer.draw_rect(x, y, char_width.ceil(), cell_height, cell_bg);
+        renderer.draw_rect(x, y, char_width.ceil(), cell_height.ceil(), cell_bg);
       }
 
       // Draw character if not empty/space

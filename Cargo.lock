@@ -4451,6 +4451,7 @@ dependencies = [
  "itertools",
  "log",
  "parking_lot",
+ "the-editor-event",
  "tokio",
 ]
 

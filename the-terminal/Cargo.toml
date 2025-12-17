@@ -16,4 +16,5 @@ anyhow.workspace = true
 itertools = "0.14"
 log.workspace = true
 parking_lot.workspace = true
+the-editor-event = { path = "../the-event" }
 tokio.workspace = true

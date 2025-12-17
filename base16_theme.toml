@@ -55,3 +55,24 @@
 "info"       = "blue"
 "ui.gutter"  = { bg = "black" }
 "warning"    = "yellow"
+
+# Terminal ANSI colors (base16 style - using hex for clarity)
+"terminal.foreground"    = { fg = "#d0d0d0" }
+"terminal.background"    = { fg = "#1d1f21" }
+"terminal.cursor"        = { fg = "#ffffff" }
+"terminal.black"         = { fg = "#1d1f21" }
+"terminal.red"           = { fg = "#cc6666" }
+"terminal.green"         = { fg = "#b5bd68" }
+"terminal.yellow"        = { fg = "#f0c674" }
+"terminal.blue"          = { fg = "#81a2be" }
+"terminal.magenta"       = { fg = "#b294bb" }
+"terminal.cyan"          = { fg = "#8abeb7" }
+"terminal.white"         = { fg = "#c5c8c6" }
+"terminal.bright_black"  = { fg = "#969896" }
+"terminal.bright_red"    = { fg = "#de935f" }
+"terminal.bright_green"  = { fg = "#b5bd68" }
+"terminal.bright_yellow" = { fg = "#f0c674" }
+"terminal.bright_blue"   = { fg = "#81a2be" }
+"terminal.bright_magenta" = { fg = "#b294bb" }
+"terminal.bright_cyan"   = { fg = "#8abeb7" }
+"terminal.bright_white"  = { fg = "#ffffff" }

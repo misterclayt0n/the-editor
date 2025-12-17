@@ -3737,6 +3737,16 @@ impl EditorView {
     &self,
     theme: &crate::core::theme::Theme,
   ) -> TerminalColorScheme {
+    // Debug: Log theme name to verify it's changing
+    static LAST_THEME: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+    {
+      let mut last = LAST_THEME.lock().unwrap();
+      if *last != theme.name() {
+        log::info!("Terminal color scheme: theme changed to '{}'", theme.name());
+        *last = theme.name().to_string();
+      }
+    }
+
     // Helper to extract RGB from theme style
     let get_color = |key: &str, is_fg: bool| -> (u8, u8, u8) {
       let style = theme.get(key);

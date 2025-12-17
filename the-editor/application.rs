@@ -938,6 +938,7 @@ impl App {
           // Terminal output received - request redraw
           if self.editor.terminal(id).is_some() {
             self.editor.needs_redraw = true;
+            the_editor_event::request_redraw();
           }
         },
         TerminalEvent::Title { id, title } => {

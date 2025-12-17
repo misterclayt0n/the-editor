@@ -90,7 +90,10 @@ impl EventListener for EventProxy {
       }
     };
 
-    let _ = self.sender.send(terminal_event);
+    if self.sender.send(terminal_event).is_ok() {
+      // Wake up the UI to process the event
+      the_editor_event::request_redraw();
+    }
   }
 }
 

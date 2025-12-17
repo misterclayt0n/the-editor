@@ -345,6 +345,7 @@ impl MappableCommand {
         select_regex, "select regex",
         file_picker, "file picker",
         buffer_picker, "buffer picker",
+        terminal_picker, "terminal picker",
         jumplist_picker, "jumplist picker",
         changed_file_picker, "changed file picker",
         global_search, "global search",
@@ -2422,6 +2423,136 @@ pub fn buffer_picker(cx: &mut Context) {
       // Return the document's actual path for preview
       meta.path.as_ref().map(|path| (path.clone(), None))
     });
+
+  cx.callback.push(Box::new(move |compositor, _cx| {
+    compositor.push(Box::new(picker));
+  }));
+}
+
+pub fn terminal_picker(cx: &mut Context) {
+  use std::path::PathBuf;
+
+  use the_terminal::TerminalId;
+
+  use crate::{
+    editor::Action,
+    ui::components::{
+      CachedPreview,
+      Column,
+      Picker,
+      PickerAction,
+      TerminalPreview,
+    },
+  };
+
+  // Get current view's terminal (if any) to mark as current
+  let current_terminal = cx
+    .editor
+    .tree
+    .try_get(cx.editor.tree.focus)
+    .and_then(|view| view.terminal());
+
+  struct TerminalMeta {
+    id:         TerminalId,
+    title:      String,
+    visible:    bool,
+    exited:     bool,
+    is_current: bool,
+    cwd:        Option<PathBuf>,
+    created_at: std::time::Instant,
+  }
+
+  let mut items: Vec<TerminalMeta> = cx
+    .editor
+    .all_terminals()
+    .map(|term| {
+      let info = term.picker_info();
+      TerminalMeta {
+        id:         info.id,
+        title:      info.title,
+        visible:    info.visible,
+        exited:     info.exited,
+        is_current: Some(info.id) == current_terminal,
+        cwd:        info.working_directory,
+        created_at: info.created_at,
+      }
+    })
+    .collect();
+
+  // Sort by creation time (most recent first)
+  items.sort_unstable_by_key(|item| std::cmp::Reverse(item.created_at));
+
+  if items.is_empty() {
+    cx.editor.set_status("No terminals open");
+    return;
+  }
+
+  let columns = [
+    Column::new("id", |meta: &TerminalMeta, _| format!("{}", meta.id.0)),
+    Column::new("flags", |meta: &TerminalMeta, _| {
+      let mut flags = String::new();
+      if meta.is_current {
+        flags.push('*');
+      }
+      if !meta.visible {
+        flags.push('h'); // hidden
+      }
+      if meta.exited {
+        flags.push('x'); // exited
+      }
+      flags
+    }),
+    Column::new("title", |meta: &TerminalMeta, _| meta.title.clone()),
+  ];
+
+  let action_handler = std::sync::Arc::new(
+    move |meta: &TerminalMeta, _: &(), picker_action: PickerAction| {
+      let terminal_id = meta.id;
+      let action = match picker_action {
+        PickerAction::Primary => Action::Replace,
+        PickerAction::Secondary => Action::HorizontalSplit,
+        PickerAction::Tertiary => Action::VerticalSplit,
+      };
+
+      crate::ui::job::dispatch_blocking(move |editor, _compositor| {
+        editor.show_terminal(terminal_id, action);
+      });
+
+      true // Close picker
+    },
+  );
+
+  // Create preview handler that captures terminal cells
+  let preview_handler: crate::ui::components::PreviewHandler =
+    std::sync::Arc::new(|path: &std::path::Path, ctx: &crate::ui::compositor::Context| {
+      // Path is used as a key - we encode terminal ID in the path
+      let terminal_id_str = path.file_name()?.to_str()?;
+      let terminal_id_num: usize = terminal_id_str.parse().ok()?;
+      let terminal_id = TerminalId(std::num::NonZeroUsize::new(terminal_id_num)?);
+
+      let terminal = ctx.editor.terminal(terminal_id)?;
+      let (cols, rows) = terminal.dimensions();
+
+      // Build color scheme from theme (simplified)
+      let colors = the_terminal::ColorScheme::default();
+      let cells = terminal.render_cells(&colors);
+
+      Some(CachedPreview::Terminal(TerminalPreview {
+        cells,
+        cols,
+        rows,
+        title: terminal.title().to_string(),
+      }))
+    });
+
+  let picker = Picker::new(columns, 2, items, (), |_| {})
+    .with_action_handler(action_handler)
+    .with_preview(|meta: &TerminalMeta| {
+      // Use terminal ID as a fake path for preview cache key
+      let fake_path = PathBuf::from(format!("terminal:{}", meta.id.0));
+      Some((fake_path, None))
+    })
+    .with_preview_handler(preview_handler);
 
   cx.callback.push(Box::new(move |compositor, _cx| {
     compositor.push(Box::new(picker));

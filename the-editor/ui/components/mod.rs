@@ -29,9 +29,12 @@ pub(crate) use confirmation_popup::{
   ConfirmationResult,
 };
 pub use picker::{
+  CachedPreview,
   Column,
   Picker,
   PickerAction,
+  PreviewHandler,
+  TerminalPreview,
 };
 pub use prompt::Prompt;
 pub(crate) use signature_help::SignatureHelp;

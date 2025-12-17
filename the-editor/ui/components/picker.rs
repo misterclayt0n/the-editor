@@ -65,6 +65,8 @@ pub enum CachedPreview {
   Directory(Vec<String>),
   /// Image file (decoded RGBA pixels)
   Image(ImagePreview),
+  /// Terminal preview with rendered cells
+  Terminal(TerminalPreview),
   /// Binary file (not text)
   Binary,
   /// File too large to preview
@@ -75,6 +77,18 @@ pub enum CachedPreview {
   Loading,
   /// Preview failed
   Error(String),
+}
+
+/// Terminal preview data
+#[derive(Clone)]
+pub struct TerminalPreview {
+  /// Rendered cells from the terminal
+  pub cells: Vec<the_terminal::RenderCell>,
+  /// Terminal dimensions (cols, rows)
+  pub cols:  u16,
+  pub rows:  u16,
+  /// Terminal title for display
+  pub title: String,
 }
 
 /// A single animation frame
@@ -142,6 +156,15 @@ enum PreviewData {
     height:      u32,
     /// Whether this is an animated image
     is_animated: bool,
+  },
+  Terminal {
+    /// Rendered cells
+    cells: Vec<the_terminal::RenderCell>,
+    /// Terminal dimensions
+    cols:  u16,
+    rows:  u16,
+    /// Terminal title
+    title: String,
   },
   Placeholder(Cow<'static, str>),
 }
@@ -1701,6 +1724,14 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 is_animated,
               }
             },
+            CachedPreview::Terminal(term) => {
+              PreviewData::Terminal {
+                cells: term.cells.clone(),
+                cols:  term.cols,
+                rows:  term.rows,
+                title: term.title.clone(),
+              }
+            },
             CachedPreview::Binary => PreviewData::Placeholder(Cow::Borrowed("<Binary file>")),
             CachedPreview::LargeFile => {
               PreviewData::Placeholder(Cow::Borrowed("<File too large to preview>"))
@@ -2729,6 +2760,92 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 draw_width,
                 draw_height,
                 preview_alpha,
+              );
+            },
+            PreviewData::Terminal { cells, cols, rows, title } => {
+              // Render terminal preview
+              let padding = 12.0;
+              let title_height = UI_FONT_SIZE + 8.0;
+              let content_x = preview_x + padding;
+              let content_y = y + padding + title_height;
+              let content_width = preview_width - (padding * 2.0);
+              let content_height = height_scaled - (padding * 2.0) - title_height;
+
+              // Draw title
+              let mut title_color = text_color_preview;
+              title_color.a *= preview_alpha;
+              surface.draw_text(TextSection {
+                position: (content_x, y + padding + UI_FONT_SIZE),
+                texts:    vec![TextSegment {
+                  content: title.clone(),
+                  style:   TextStyle {
+                    size:  UI_FONT_SIZE,
+                    color: title_color,
+                  },
+                }],
+              });
+
+              // Calculate cell dimensions to fit terminal in preview
+              let term_cell_width = content_width / *cols as f32;
+              let term_cell_height = content_height / *rows as f32;
+              // Use the smaller dimension to maintain aspect ratio
+              let cell_size = term_cell_width.min(term_cell_height).min(UI_FONT_SIZE);
+
+              // Calculate actual terminal dimensions
+              let term_width = cell_size * *cols as f32;
+              let term_height = cell_size * *rows as f32;
+
+              // Center terminal in preview area
+              let term_x = content_x + (content_width - term_width) / 2.0;
+              let term_y = content_y + (content_height - term_height) / 2.0;
+
+              // Draw terminal background
+              let term_bg = Color::new(0.1, 0.1, 0.12, preview_alpha);
+              surface.draw_rect(term_x, term_y, term_width, term_height, term_bg);
+
+              // Draw cells
+              surface.with_overlay_region(
+                term_x,
+                term_y,
+                term_width,
+                term_height,
+                |surface| {
+                  for cell in cells {
+                    let cx = term_x + cell.col as f32 * cell_size;
+                    let cy = term_y + cell.row as f32 * cell_size;
+
+                    // Draw background if not default
+                    if cell.bg != (30, 30, 30) {
+                      let bg = Color::new(
+                        cell.bg.0 as f32 / 255.0,
+                        cell.bg.1 as f32 / 255.0,
+                        cell.bg.2 as f32 / 255.0,
+                        preview_alpha,
+                      );
+                      surface.draw_rect(cx, cy, cell_size, cell_size, bg);
+                    }
+
+                    // Draw character
+                    if cell.c != ' ' && cell.c != '\0' {
+                      let fg = Color::new(
+                        cell.fg.0 as f32 / 255.0,
+                        cell.fg.1 as f32 / 255.0,
+                        cell.fg.2 as f32 / 255.0,
+                        preview_alpha,
+                      );
+                      surface.draw_text(TextSection {
+                        position: (cx, cy + cell_size * 0.85),
+                        texts:    vec![TextSegment {
+                          content: cell.c.to_string(),
+                          style:   TextStyle {
+                            size:  cell_size,
+                            color: fg,
+                          },
+                        }],
+                      });
+                    }
+                  }
+                },
               );
             },
             PreviewData::Placeholder(placeholder) => {

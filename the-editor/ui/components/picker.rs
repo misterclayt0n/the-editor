@@ -2762,40 +2762,33 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 preview_alpha,
               );
             },
-            PreviewData::Terminal { cells, cols, rows, title } => {
+            PreviewData::Terminal { cells, cols, rows, title: _ } => {
               // Render terminal preview
               let padding = 12.0;
-              let title_height = UI_FONT_SIZE + 8.0;
               let content_x = preview_x + padding;
-              let content_y = y + padding + title_height;
+              let content_y = y + padding;
               let content_width = preview_width - (padding * 2.0);
-              let content_height = height_scaled - (padding * 2.0) - title_height;
+              let content_height = height_scaled - (padding * 2.0);
 
-              // Draw title
-              let mut title_color = text_color_preview;
-              title_color.a *= preview_alpha;
-              surface.draw_text(TextSection {
-                position: (content_x, y + padding + UI_FONT_SIZE),
-                texts:    vec![TextSegment {
-                  content: title.clone(),
-                  style:   TextStyle {
-                    size:  UI_FONT_SIZE,
-                    color: title_color,
-                  },
-                }],
-              });
+              // Use UI font dimensions for readable preview
+              // This shows a portion of the terminal at readable size rather than
+              // squishing the entire terminal into a tiny preview
+              let cell_width = UI_FONT_WIDTH;
+              let cell_height = UI_FONT_SIZE + 2.0; // Add line spacing
 
-              // Calculate cell dimensions to fit terminal in preview
-              let term_cell_width = content_width / *cols as f32;
-              let term_cell_height = content_height / *rows as f32;
-              // Use the smaller dimension to maintain aspect ratio
-              let cell_size = term_cell_width.min(term_cell_height).min(UI_FONT_SIZE);
+              // Calculate how many cells we can show
+              let visible_cols = (content_width / cell_width).floor() as u16;
+              let visible_rows = (content_height / cell_height).floor() as u16;
 
-              // Calculate actual terminal dimensions
-              let term_width = cell_size * *cols as f32;
-              let term_height = cell_size * *rows as f32;
+              // Use terminal dimensions or visible area, whichever is smaller
+              let display_cols = visible_cols.min(*cols);
+              let display_rows = visible_rows.min(*rows);
 
-              // Center terminal in preview area
+              // Calculate actual terminal preview dimensions
+              let term_width = display_cols as f32 * cell_width;
+              let term_height = display_rows as f32 * cell_height;
+
+              // Center terminal preview in content area
               let term_x = content_x + (content_width - term_width) / 2.0;
               let term_y = content_y + (content_height - term_height) / 2.0;
 
@@ -2803,7 +2796,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
               let term_bg = Color::new(0.1, 0.1, 0.12, preview_alpha);
               surface.draw_rect(term_x, term_y, term_width, term_height, term_bg);
 
-              // Draw cells
+              // Draw cells that are within the visible area
               surface.with_overlay_region(
                 term_x,
                 term_y,
@@ -2811,8 +2804,13 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 term_height,
                 |surface| {
                   for cell in cells {
-                    let cx = term_x + cell.col as f32 * cell_size;
-                    let cy = term_y + cell.row as f32 * cell_size;
+                    // Only render cells within visible bounds
+                    if cell.col >= display_cols || cell.row >= display_rows {
+                      continue;
+                    }
+
+                    let cx = term_x + cell.col as f32 * cell_width;
+                    let cy = term_y + cell.row as f32 * cell_height;
 
                     // Draw background if not default
                     if cell.bg != (30, 30, 30) {
@@ -2822,7 +2820,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                         cell.bg.2 as f32 / 255.0,
                         preview_alpha,
                       );
-                      surface.draw_rect(cx, cy, cell_size, cell_size, bg);
+                      surface.draw_rect(cx, cy, cell_width, cell_height, bg);
                     }
 
                     // Draw character
@@ -2834,11 +2832,11 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                         preview_alpha,
                       );
                       surface.draw_text(TextSection {
-                        position: (cx, cy + cell_size * 0.85),
+                        position: (cx, cy + UI_FONT_SIZE),
                         texts:    vec![TextSegment {
                           content: cell.c.to_string(),
                           style:   TextStyle {
-                            size:  cell_size,
+                            size:  UI_FONT_SIZE,
                             color: fg,
                           },
                         }],

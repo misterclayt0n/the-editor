@@ -2549,7 +2549,8 @@ pub fn terminal_picker(cx: &mut Context) {
     .with_action_handler(action_handler)
     .with_preview(|meta: &TerminalMeta| {
       // Use terminal ID as a fake path for preview cache key
-      let fake_path = PathBuf::from(format!("terminal:{}", meta.id.0));
+      // Must use "/" separator so file_name() returns just the ID
+      let fake_path = PathBuf::from(format!("terminal/{}", meta.id.0));
       Some((fake_path, None))
     })
     .with_preview_handler(preview_handler);

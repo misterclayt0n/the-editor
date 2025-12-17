@@ -27,6 +27,9 @@ pub use terminal::{
 // Re-export selection types for mouse handling
 pub use alacritty_terminal::selection::SelectionType;
 
+// Re-export vi mode types for terminal vim mode
+pub use alacritty_terminal::vi_mode::ViMotion;
+
 use std::num::NonZeroUsize;
 
 /// Unique identifier for a terminal instance.

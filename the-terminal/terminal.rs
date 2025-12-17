@@ -20,11 +20,13 @@ use alacritty_terminal::{
     EventLoopSender,
     Msg,
   },
+  grid::Dimensions,
   index::{
     Column,
     Direction as AlacDirection,
     Line,
     Point as AlacPoint,
+    Side,
   },
   selection::{
     Selection,
@@ -35,11 +37,16 @@ use alacritty_terminal::{
     Config as TermConfig,
     Term,
     TermMode,
+    search::RegexSearch,
     test::TermSize,
   },
   tty::{
     self,
     Options as PtyOptions,
+  },
+  vi_mode::{
+    ViModeCursor,
+    ViMotion,
   },
 };
 use tokio::sync::mpsc;
@@ -145,6 +152,31 @@ pub struct Terminal {
 
   /// Configuration.
   config: TerminalConfig,
+
+  /// Vi mode cursor (Some = vi mode active).
+  vi_mode_cursor: Option<ViModeCursor>,
+
+  /// Whether selection is active in vi mode (visual mode).
+  vi_selection_active: bool,
+
+  /// Vi mode selection anchor (starting point of selection).
+  vi_selection_anchor: Option<AlacPoint>,
+
+  /// Vi mode selection type (Simple for 'v', Lines for 'V').
+  vi_selection_type: Option<SelectionType>,
+
+  /// Vi mode search state.
+  vi_search: Option<RegexSearch>,
+
+  /// Last search pattern for display.
+  vi_search_pattern: String,
+
+  /// Pending 'g' key for gg motion.
+  vi_pending_g: bool,
+
+  /// Current search match range for highlighting (start_col, start_row, end_col, end_row).
+  /// Uses grid coordinates (not viewport-relative).
+  vi_search_match: Option<(AlacPoint, AlacPoint)>,
 }
 
 impl Terminal {
@@ -230,6 +262,14 @@ impl Terminal {
       visible: true,
       created_at: Instant::now(),
       config,
+      vi_mode_cursor: None,
+      vi_selection_active: false,
+      vi_selection_anchor: None,
+      vi_selection_type: None,
+      vi_search: None,
+      vi_search_pattern: String::new(),
+      vi_pending_g: false,
+      vi_search_match: None,
     })
   }
 
@@ -378,7 +418,7 @@ impl Terminal {
     let display_offset = term.grid().display_offset() as i32;
     // Convert viewport row to absolute line (negative = history)
     let point = AlacPoint::new(Line(row - display_offset), Column(col as usize));
-    let selection = Selection::new(selection_type, point, AlacDirection::Left);
+    let selection = Selection::new(selection_type, point, Side::Left);
     term.selection = Some(selection);
   }
 
@@ -389,7 +429,10 @@ impl Terminal {
     let display_offset = term.grid().display_offset() as i32;
     if let Some(ref mut selection) = term.selection {
       let point = AlacPoint::new(Line(row - display_offset), Column(col as usize));
-      selection.update(point, AlacDirection::Right);
+      // Use Side::Left so that when this becomes "start" (right-to-left selection),
+      // the cursor cell is not excluded. We compensate for the "end" exclusion in
+      // selection_range by adding +1 to end_col.
+      selection.update(point, Side::Left);
     }
   }
 
@@ -412,18 +455,58 @@ impl Terminal {
   }
 
   /// Get the selection range for rendering purposes.
-  /// Returns viewport-relative coordinates: (start_col, start_row, end_col, end_row).
+  /// Returns viewport-relative coordinates: ((start_col, start_row), (end_col, end_row)).
+  /// Note: end_col is EXCLUSIVE (one past the last selected column) to match vim-style
+  /// character selection where both anchor and cursor cells should be included.
   pub fn selection_range(&self) -> Option<((u16, i32), (u16, i32))> {
-    let term = self.term.lock();
-    let display_offset = term.grid().display_offset() as i32;
-    term.selection.as_ref().and_then(|sel| {
-      let range = sel.to_range(&term)?;
-      // Convert absolute line back to viewport row
-      Some((
-        (range.start.column.0 as u16, range.start.line.0 + display_offset),
-        (range.end.column.0 as u16, range.end.line.0 + display_offset),
-      ))
-    })
+    // For vi mode selection, compute range directly from anchor and cursor
+    // to ensure both cells are always included (vim-style selection)
+    if self.vi_selection_active {
+      let anchor = self.vi_selection_anchor?;
+      let cursor = self.vi_mode_cursor?.point;
+      let selection_type = self.vi_selection_type?;
+      let term = self.term.lock();
+      let display_offset = term.grid().display_offset() as i32;
+      let cols = term.columns() as u16;
+
+      // Sort anchor and cursor to get start <= end (by line, then column)
+      let (start, end) = if anchor.line < cursor.line
+        || (anchor.line == cursor.line && anchor.column <= cursor.column)
+      {
+        (anchor, cursor)
+      } else {
+        (cursor, anchor)
+      };
+
+      match selection_type {
+        SelectionType::Lines => {
+          // Line selection: select full lines from start to end
+          Some((
+            (0, start.line.0 + display_offset),
+            (cols, end.line.0 + display_offset),
+          ))
+        }
+        _ => {
+          // Character selection: use actual column positions
+          // Return inclusive range with exclusive end (end_col + 1)
+          Some((
+            (start.column.0 as u16, start.line.0 + display_offset),
+            (end.column.0 as u16 + 1, end.line.0 + display_offset),
+          ))
+        }
+      }
+    } else {
+      // Fall back to alacritty's selection for mouse selections
+      let term = self.term.lock();
+      let display_offset = term.grid().display_offset() as i32;
+      term.selection.as_ref().and_then(|sel| {
+        let range = sel.to_range(&term)?;
+        Some((
+          (range.start.column.0 as u16, range.start.line.0 + display_offset),
+          (range.end.column.0 as u16 + 1, range.end.line.0 + display_offset),
+        ))
+      })
+    }
   }
 
   // Note: Raw terminal access is available through render_cells() and cursor_info().
@@ -459,6 +542,358 @@ impl Terminal {
       working_directory: self.config.working_directory.clone(),
       created_at:        self.created_at,
     }
+  }
+
+  // ==========================================================================
+  // Vi Mode
+  // ==========================================================================
+
+  /// Check if vi mode is active.
+  pub fn vi_mode(&self) -> bool {
+    self.vi_mode_cursor.is_some()
+  }
+
+  /// Toggle vi mode on/off.
+  pub fn toggle_vi_mode(&mut self) {
+    if self.vi_mode_cursor.is_some() {
+      self.exit_vi_mode();
+    } else {
+      self.enter_vi_mode();
+    }
+  }
+
+  /// Enter vi mode at current cursor position.
+  pub fn enter_vi_mode(&mut self) {
+    let term = self.term.lock();
+    let point = term.grid().cursor.point;
+    drop(term);
+    self.vi_mode_cursor = Some(ViModeCursor::new(point));
+    self.vi_selection_active = false;
+  }
+
+  /// Exit vi mode.
+  pub fn exit_vi_mode(&mut self) {
+    self.vi_mode_cursor = None;
+    self.vi_selection_active = false;
+    self.vi_selection_anchor = None;
+    self.vi_selection_type = None;
+    self.clear_selection();
+    self.scroll_to_bottom();
+  }
+
+  /// Move vi cursor by motion.
+  pub fn vi_motion(&mut self, motion: ViMotion) {
+    if let Some(cursor) = self.vi_mode_cursor.take() {
+      let mut term = self.term.lock();
+      let new_cursor = cursor.motion(&mut *term, motion);
+
+      if self.vi_selection_active {
+        // Update selection endpoint
+        let display_offset = term.grid().display_offset() as i32;
+        let row = new_cursor.point.line.0 + display_offset;
+        drop(term);
+        self.update_selection(new_cursor.point.column.0 as u16, row);
+      } else {
+        drop(term);
+      }
+
+      self.vi_mode_cursor = Some(new_cursor);
+    }
+  }
+
+  /// Scroll vi mode by pages.
+  /// Positive lines = scroll up (toward history), negative = scroll down (toward current).
+  pub fn vi_scroll(&mut self, lines: i32) {
+    if let Some(cursor) = self.vi_mode_cursor.take() {
+      let mut term = self.term.lock();
+      let new_cursor = cursor.scroll(&*term, lines);
+
+      // Also scroll the display viewport
+      // Positive lines means we want to see content above (scroll display up)
+      // In alacritty, positive delta scrolls toward history (up)
+      term.scroll_display(alacritty_terminal::grid::Scroll::Delta(lines));
+
+      drop(term);
+      self.vi_mode_cursor = Some(new_cursor);
+    }
+  }
+
+  /// Toggle visual (character) selection in vi mode.
+  pub fn vi_toggle_selection(&mut self) {
+    if let Some(cursor) = &self.vi_mode_cursor {
+      if self.vi_selection_active {
+        self.vi_selection_active = false;
+        self.vi_selection_anchor = None;
+        self.vi_selection_type = None;
+        self.clear_selection();
+      } else {
+        self.vi_selection_active = true;
+        let point = cursor.point;
+        self.vi_selection_anchor = Some(point);
+        self.vi_selection_type = Some(SelectionType::Simple);
+        let term = self.term.lock();
+        let display_offset = term.grid().display_offset() as i32;
+        drop(term);
+        let row = point.line.0 + display_offset;
+        self.start_selection(point.column.0 as u16, row, SelectionType::Simple);
+      }
+    }
+  }
+
+  /// Toggle visual line selection in vi mode.
+  pub fn vi_toggle_line_selection(&mut self) {
+    if let Some(cursor) = &self.vi_mode_cursor {
+      if self.vi_selection_active {
+        self.vi_selection_active = false;
+        self.vi_selection_anchor = None;
+        self.vi_selection_type = None;
+        self.clear_selection();
+      } else {
+        self.vi_selection_active = true;
+        let point = cursor.point;
+        self.vi_selection_anchor = Some(point);
+        self.vi_selection_type = Some(SelectionType::Lines);
+        let term = self.term.lock();
+        let display_offset = term.grid().display_offset() as i32;
+        drop(term);
+        let row = point.line.0 + display_offset;
+        self.start_selection(point.column.0 as u16, row, SelectionType::Lines);
+      }
+    }
+  }
+
+  /// Get vi mode cursor position for rendering (viewport-relative).
+  pub fn vi_cursor_position(&self) -> Option<(u16, i32)> {
+    self.vi_mode_cursor.map(|c| {
+      let term = self.term.lock();
+      let display_offset = term.grid().display_offset() as i32;
+      (c.point.column.0 as u16, c.point.line.0 + display_offset)
+    })
+  }
+
+  /// Check if vi mode visual selection is active.
+  pub fn vi_selection_active(&self) -> bool {
+    self.vi_selection_active
+  }
+
+  /// Clear visual selection but stay in vi mode.
+  pub fn vi_clear_selection(&mut self) {
+    self.vi_selection_active = false;
+    self.vi_selection_anchor = None;
+    self.vi_selection_type = None;
+    self.clear_selection();
+  }
+
+  /// Check if pending 'g' key for gg motion.
+  pub fn vi_pending_g(&self) -> bool {
+    self.vi_pending_g
+  }
+
+  /// Set pending 'g' key.
+  pub fn vi_set_pending_g(&mut self) {
+    self.vi_pending_g = true;
+  }
+
+  /// Clear pending 'g' key.
+  pub fn vi_clear_pending_g(&mut self) {
+    self.vi_pending_g = false;
+  }
+
+  /// Go to absolute top of terminal history.
+  pub fn vi_goto_top(&mut self) {
+    if self.vi_mode_cursor.is_none() {
+      return;
+    }
+
+    let mut term = self.term.lock();
+
+    // Scroll to top of history
+    term.scroll_display(alacritty_terminal::grid::Scroll::Top);
+
+    // Get the topmost line in history
+    let history_size = term.grid().history_size();
+    let topmost_line = Line(-(history_size as i32));
+
+    // Position cursor at top-left of history
+    drop(term);
+    self.vi_mode_cursor = Some(ViModeCursor::new(AlacPoint::new(topmost_line, Column(0))));
+  }
+
+  /// Go to bottom of terminal (current cursor line).
+  pub fn vi_goto_bottom(&mut self) {
+    if self.vi_mode_cursor.is_none() {
+      return;
+    }
+
+    let mut term = self.term.lock();
+
+    // Scroll to bottom
+    term.scroll_display(alacritty_terminal::grid::Scroll::Bottom);
+
+    // Get the cursor position (bottom of active area)
+    let cursor_point = term.grid().cursor.point;
+    drop(term);
+
+    // Position vi cursor at terminal cursor
+    self.vi_mode_cursor = Some(ViModeCursor::new(cursor_point));
+  }
+
+  /// Scroll viewport to make vi cursor visible.
+  pub fn vi_scroll_to_cursor(&mut self) {
+    let Some(cursor) = self.vi_mode_cursor else {
+      return;
+    };
+
+    let mut term = self.term.lock();
+    let display_offset = term.grid().display_offset() as i32;
+    let screen_lines = term.screen_lines() as i32;
+
+    // Calculate the viewport range (in grid coordinates)
+    // Top of viewport is at line: -(display_offset)
+    // Bottom of viewport is at line: screen_lines - 1 - display_offset
+    let viewport_top = -display_offset;
+    let viewport_bottom = screen_lines - 1 - display_offset;
+
+    let cursor_line = cursor.point.line.0;
+
+    if cursor_line < viewport_top {
+      // Cursor is above viewport, scroll up
+      let delta = viewport_top - cursor_line;
+      term.scroll_display(alacritty_terminal::grid::Scroll::Delta(delta));
+    } else if cursor_line > viewport_bottom {
+      // Cursor is below viewport, scroll down
+      let delta = viewport_bottom - cursor_line;
+      term.scroll_display(alacritty_terminal::grid::Scroll::Delta(delta));
+    }
+  }
+
+  // ==========================================================================
+  // Vi Mode Search
+  // ==========================================================================
+
+  /// Set search pattern and compile regex.
+  pub fn vi_set_search(&mut self, pattern: &str) -> Result<(), String> {
+    if pattern.is_empty() {
+      self.vi_search = None;
+      self.vi_search_pattern.clear();
+      return Ok(());
+    }
+
+    match RegexSearch::new(pattern) {
+      Ok(search) => {
+        self.vi_search = Some(search);
+        self.vi_search_pattern = pattern.to_string();
+        Ok(())
+      }
+      Err(e) => Err(format!("Invalid regex: {}", e)),
+    }
+  }
+
+  /// Search forward (next match).
+  pub fn vi_search_next(&mut self) -> bool {
+    let Some(ref mut dfas) = self.vi_search else {
+      log::debug!("vi_search_next: no search pattern");
+      return false;
+    };
+    let Some(cursor) = self.vi_mode_cursor else {
+      log::debug!("vi_search_next: no vi_mode_cursor");
+      return false;
+    };
+
+    log::debug!(
+      "vi_search_next: searching from {:?}, pattern='{}'",
+      cursor.point,
+      self.vi_search_pattern
+    );
+
+    let term = self.term.lock();
+
+    // Offset start position by 1 column to skip current match
+    // If at end of line, wrap to next line
+    let cols = term.columns();
+    let mut start_point = cursor.point;
+    if start_point.column.0 + 1 < cols {
+      start_point.column.0 += 1;
+    } else {
+      start_point.column.0 = 0;
+      start_point.line += 1;
+    }
+
+    log::debug!("vi_search_next: offset start to {:?}", start_point);
+
+    if let Some(m) = term.search_next(dfas, start_point, AlacDirection::Right, Side::Left, None) {
+      log::debug!("vi_search_next: found match at {:?}", m.start());
+      // Store match range for highlighting
+      let match_start = *m.start();
+      let match_end = *m.end();
+      drop(term);
+      // Move vi cursor to start of match
+      self.vi_mode_cursor = Some(ViModeCursor::new(match_start));
+      self.vi_search_match = Some((match_start, match_end));
+      // Scroll viewport to show the match
+      self.vi_scroll_to_cursor();
+      true
+    } else {
+      log::debug!("vi_search_next: no match found");
+      self.vi_search_match = None;
+      false
+    }
+  }
+
+  /// Search backward (previous match).
+  pub fn vi_search_prev(&mut self) -> bool {
+    let Some(ref mut dfas) = self.vi_search else {
+      return false;
+    };
+    let Some(cursor) = self.vi_mode_cursor else {
+      return false;
+    };
+
+    let term = self.term.lock();
+    if let Some(m) = term.search_next(dfas, cursor.point, AlacDirection::Left, Side::Right, None) {
+      // Store match range for highlighting
+      let match_start = *m.start();
+      let match_end = *m.end();
+      drop(term);
+      // Move vi cursor to start of match
+      self.vi_mode_cursor = Some(ViModeCursor::new(match_start));
+      self.vi_search_match = Some((match_start, match_end));
+      // Scroll viewport to show the match
+      self.vi_scroll_to_cursor();
+      true
+    } else {
+      self.vi_search_match = None;
+      false
+    }
+  }
+
+  /// Get current search pattern.
+  pub fn vi_search_pattern(&self) -> &str {
+    &self.vi_search_pattern
+  }
+
+  /// Check if search is active.
+  pub fn vi_search_active(&self) -> bool {
+    self.vi_search.is_some()
+  }
+
+  /// Get the current search match range for rendering.
+  /// Returns viewport-relative coordinates: ((start_col, start_row), (end_col, end_row)).
+  /// Note: end_col is EXCLUSIVE (one past the last matched column).
+  pub fn vi_search_match_range(&self) -> Option<((u16, i32), (u16, i32))> {
+    let (start, end) = self.vi_search_match?;
+    let term = self.term.lock();
+    let display_offset = term.grid().display_offset() as i32;
+    Some((
+      (start.column.0 as u16, start.line.0 + display_offset),
+      // Add 1 to make end exclusive for consistent handling with selection
+      (end.column.0 as u16 + 1, end.line.0 + display_offset),
+    ))
+  }
+
+  /// Clear the search match highlight.
+  pub fn vi_clear_search_match(&mut self) {
+    self.vi_search_match = None;
   }
 }
 

@@ -3452,6 +3452,19 @@ impl EditorView {
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.3, 0.4, 0.6, 0.5));
 
+    // Get search match range for highlighting
+    let search_match_range = if terminal.alt_screen_mode() {
+      None
+    } else {
+      terminal.vi_search_match_range()
+    };
+    // Use a distinct color for search match (yellow/orange tint)
+    let search_match_bg = theme
+      .get("ui.selection.primary")
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.6, 0.5, 0.2, 0.7));
+
     // Draw cells
     for cell in cells {
       // Use floor() for pixel-perfect grid alignment (matches Zed's approach)
@@ -3468,7 +3481,29 @@ impl EditorView {
       // Calculate cell width (double for wide characters like CJK)
       let char_width = if cell.is_wide { font_width * 2.0 } else { font_width };
 
+      // Check if cell is in search match (single-line only for simplicity)
+      // Note: end_col is exclusive
+      let in_search_match =
+        search_match_range.map_or(false, |((start_col, start_row), (end_col, end_row))| {
+          let cell_row = cell.row as i32;
+          let cell_col = cell.col;
+
+          if cell_row < start_row || cell_row > end_row {
+            false
+          } else if cell_row == start_row && cell_row == end_row {
+            // Single line match (most common case)
+            cell_col >= start_col && cell_col < end_col
+          } else if cell_row == start_row {
+            cell_col >= start_col
+          } else if cell_row == end_row {
+            cell_col < end_col
+          } else {
+            true
+          }
+        });
+
       // Check if cell is in selection
+      // Note: end_col is exclusive (one past the last selected column)
       let in_selection = selection_range.map_or(false, |((start_col, start_row), (end_col, end_row))| {
         let cell_row = cell.row as i32;
         let cell_col = cell.col;
@@ -3476,21 +3511,24 @@ impl EditorView {
         if cell_row < start_row || cell_row > end_row {
           false
         } else if cell_row == start_row && cell_row == end_row {
-          // Single line selection
-          cell_col >= start_col && cell_col <= end_col
+          // Single line selection (end_col is exclusive)
+          cell_col >= start_col && cell_col < end_col
         } else if cell_row == start_row {
           // First line of multi-line selection
           cell_col >= start_col
         } else if cell_row == end_row {
-          // Last line of multi-line selection
-          cell_col <= end_col
+          // Last line of multi-line selection (end_col is exclusive)
+          cell_col < end_col
         } else {
           // Middle lines are fully selected
           true
         }
       });
 
-      if in_selection {
+      // Draw background: search match takes priority over selection
+      if in_search_match {
+        renderer.draw_rect(x, y, char_width.ceil(), cell_height, search_match_bg);
+      } else if in_selection {
         // Draw selection highlight
         renderer.draw_rect(x, y, char_width.ceil(), cell_height, selection_bg);
       } else if cell.bg != colors.background {
@@ -3549,6 +3587,55 @@ impl EditorView {
       }
     }
 
+    // Draw vi mode cursor if active (hollow block cursor)
+    if is_focused && terminal.vi_mode() {
+      if let Some((vi_col, vi_row)) = terminal.vi_cursor_position() {
+        // Only draw if the vi cursor is in the visible viewport
+        if vi_row >= 0 && vi_row < rows as i32 {
+          let vi_cursor_x = (base_x + vi_col as f32 * font_width).floor();
+          let vi_cursor_y = (base_y + vi_row as f32 * cell_height).floor();
+
+          // Use a distinct color for vi mode cursor (yellowish)
+          let vi_cursor_color = Color::new(1.0, 0.9, 0.4, 1.0);
+          let border_width = 2.0;
+
+          // Draw hollow block cursor (4 sides)
+          // Top
+          renderer.draw_rect(
+            vi_cursor_x,
+            vi_cursor_y,
+            font_width,
+            border_width,
+            vi_cursor_color,
+          );
+          // Bottom
+          renderer.draw_rect(
+            vi_cursor_x,
+            vi_cursor_y + cell_height - border_width,
+            font_width,
+            border_width,
+            vi_cursor_color,
+          );
+          // Left
+          renderer.draw_rect(
+            vi_cursor_x,
+            vi_cursor_y,
+            border_width,
+            cell_height,
+            vi_cursor_color,
+          );
+          // Right
+          renderer.draw_rect(
+            vi_cursor_x + font_width - border_width,
+            vi_cursor_y,
+            border_width,
+            cell_height,
+            vi_cursor_color,
+          );
+        }
+      }
+    }
+
     // Flush text batch
     renderer.flush_text_batch();
   }
@@ -3597,9 +3684,8 @@ impl EditorView {
           cx.editor.focus_prev();
           return Some(EventResult::Consumed(None));
         }
-        // Ctrl+\ Escape - back to normal mode (unfocus terminal)
+        // Ctrl+\ Escape - reserved
         Key::Escape => {
-          // This could switch to a "terminal normal mode" in the future
           return Some(EventResult::Consumed(None));
         }
         // Unknown escape command - ignore
@@ -3626,6 +3712,27 @@ impl EditorView {
     // If keymap is in pending state (e.g., after Ctrl+W), pass keys through
     if !self.keymaps.pending().is_empty() {
       return None;
+    }
+
+    // Ctrl+Shift+Space - toggle vi mode
+    if key.ctrl && key.shift && !key.alt && matches!(&key.code, Key::Char(' ')) {
+      if let Some(term) = cx.editor.terminal_mut(terminal_id) {
+        term.toggle_vi_mode();
+        if term.vi_mode() {
+          cx.editor.set_status("-- VI --");
+        } else {
+          cx.editor.set_status("");
+        }
+      }
+      the_editor_event::request_redraw();
+      return Some(EventResult::Consumed(None));
+    }
+
+    // Handle vi mode if active
+    if let Some(term) = cx.editor.terminal(terminal_id) {
+      if term.vi_mode() {
+        return self.handle_vi_mode_key(key, terminal_id, cx);
+      }
     }
 
     // Handle terminal clipboard shortcuts
@@ -3783,6 +3890,230 @@ impl EditorView {
       code += 4;
     }
     code
+  }
+
+  /// Handle key input for terminal vi mode.
+  fn handle_vi_mode_key(
+    &mut self,
+    key: &KeyBinding,
+    terminal_id: the_terminal::TerminalId,
+    cx: &mut Context,
+  ) -> Option<EventResult> {
+    use the_editor_renderer::Key;
+    use the_terminal::ViMotion;
+
+    let term = cx.editor.terminal_mut(terminal_id)?;
+
+    // Clear pending 'g' state for all keys except 'g' itself
+    if !matches!(&key.code, Key::Char('g') if !key.ctrl && !key.alt) {
+      term.vi_clear_pending_g();
+    }
+
+    match &key.code {
+      // Escape - if in visual mode, go back to normal vi mode; otherwise do nothing
+      Key::Escape => {
+        if term.vi_selection_active() {
+          term.vi_clear_selection();
+          cx.editor.set_status("-- VI --");
+        }
+        // Stay in vi mode (don't exit)
+      }
+      // Exit vi mode - Ctrl+C, i, or a
+      Key::Char('c') if key.ctrl => {
+        term.exit_vi_mode();
+        cx.editor.set_status("");
+      }
+      Key::Char('i') | Key::Char('a') if !key.ctrl && !key.alt => {
+        term.exit_vi_mode();
+        cx.editor.set_status("");
+      }
+      // Toggle visual (character) selection - v
+      Key::Char('v') if !key.ctrl && !key.alt => {
+        term.vi_toggle_selection();
+        if term.vi_selection_active() {
+          cx.editor.set_status("-- VISUAL --");
+        } else {
+          cx.editor.set_status("-- VI --");
+        }
+      }
+      // Toggle visual line selection - V
+      Key::Char('V') if !key.ctrl && !key.alt => {
+        term.vi_toggle_line_selection();
+        if term.vi_selection_active() {
+          cx.editor.set_status("-- VISUAL LINE --");
+        } else {
+          cx.editor.set_status("-- VI --");
+        }
+      }
+      // Yank selection
+      Key::Char('y') if !key.ctrl && !key.alt => {
+        // Get selection text and exit vi mode before borrowing other editor fields
+        let text = term.selection_text();
+        term.exit_vi_mode();
+        // Now we can safely borrow registers (term borrow ends here)
+        if let Some(text) = text {
+          if !text.is_empty() {
+            let len = text.len();
+            let _ = cx.editor.registers.write('+', vec![text]);
+            cx.editor.set_status(format!("Yanked {} chars", len));
+          }
+        }
+        the_editor_event::request_redraw();
+        return Some(EventResult::Consumed(None));
+      }
+      // Basic motions
+      Key::Char('h') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::Left),
+      Key::Char('j') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::Down),
+      Key::Char('k') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::Up),
+      Key::Char('l') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::Right),
+      Key::Left => term.vi_motion(ViMotion::Left),
+      Key::Down => term.vi_motion(ViMotion::Down),
+      Key::Up => term.vi_motion(ViMotion::Up),
+      Key::Right => term.vi_motion(ViMotion::Right),
+      // Line motions
+      Key::Char('0') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::First),
+      Key::Char('$') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::Last),
+      Key::Char('^') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::FirstOccupied),
+      // Word motions (semantic)
+      Key::Char('w') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::SemanticRight),
+      Key::Char('b') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::SemanticLeft),
+      Key::Char('e') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::SemanticRightEnd),
+      // Word motions (whitespace)
+      Key::Char('W') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::WordRight),
+      Key::Char('B') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::WordLeft),
+      Key::Char('E') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::WordRightEnd),
+      // Screen motions
+      Key::Char('H') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::High),
+      Key::Char('M') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::Middle),
+      Key::Char('L') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::Low),
+      // Paragraph motions
+      Key::Char('{') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::ParagraphUp),
+      Key::Char('}') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::ParagraphDown),
+      // Bracket matching
+      Key::Char('%') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::Bracket),
+      // Scroll (Ctrl+B/F/U/D)
+      Key::Char('b') if key.ctrl => {
+        let rows = term.dimensions().1 as i32;
+        // Positive = scroll up (back toward history)
+        term.vi_scroll(rows);
+      }
+      Key::Char('f') if key.ctrl => {
+        let rows = term.dimensions().1 as i32;
+        // Negative = scroll down (forward toward current)
+        term.vi_scroll(-rows);
+      }
+      Key::Char('u') if key.ctrl => {
+        let rows = term.dimensions().1 as i32;
+        // Positive = scroll up (toward history)
+        term.vi_scroll(rows / 2);
+      }
+      Key::Char('d') if key.ctrl => {
+        let rows = term.dimensions().1 as i32;
+        // Negative = scroll down (toward current)
+        term.vi_scroll(-rows / 2);
+      }
+      // Go to top (gg) - requires two g presses
+      Key::Char('g') if !key.ctrl && !key.alt => {
+        if term.vi_pending_g() {
+          // Second g - execute gg motion (go to absolute top of history)
+          term.vi_clear_pending_g();
+          term.vi_goto_top();
+        } else {
+          // First g - set pending state
+          term.vi_set_pending_g();
+        }
+      }
+      // Go to bottom (G)
+      Key::Char('G') if !key.ctrl && !key.alt => {
+        term.vi_clear_pending_g();
+        term.vi_goto_bottom();
+      }
+      // Search forward - / opens search prompt
+      Key::Char('/') if !key.ctrl && !key.alt => {
+        // Open search prompt via callback
+        let term_id = terminal_id;
+        let callback: crate::ui::compositor::Callback =
+          Box::new(move |compositor, cx| {
+            // Set custom mode string to SEARCH
+            cx.editor.set_custom_mode_str("SEARCH".to_string());
+
+            // Trigger statusline slide animation like buffer search
+            for layer in compositor.layers.iter_mut() {
+              if let Some(statusline) = layer
+                .as_any_mut()
+                .downcast_mut::<crate::ui::components::statusline::StatusLine>()
+              {
+                statusline.slide_for_prompt(true);
+                break;
+              }
+            }
+
+            let prompt = crate::ui::components::Prompt::new(String::new())
+              .with_callback(move |cx, input, event| {
+                use crate::ui::components::prompt::PromptEvent;
+                log::debug!("Terminal search prompt callback: event={:?}, input='{}'", event, input);
+                match event {
+                  PromptEvent::Validate => {
+                    // Clear custom mode string
+                    cx.editor.clear_custom_mode_str();
+                    if !input.is_empty() {
+                      log::debug!("Terminal search: looking up terminal {}", term_id.0);
+                      if let Some(term) = cx.editor.terminal_mut(term_id) {
+                        log::debug!("Terminal search: got terminal, vi_mode={}", term.vi_mode());
+                        match term.vi_set_search(input) {
+                          Ok(()) => {
+                            log::debug!("Terminal search: pattern set, calling search_next");
+                            // Search for first match
+                            if term.vi_search_next() {
+                              cx.editor.set_status(format!("/{}", input));
+                            } else {
+                              cx.editor.set_status(format!("Pattern not found: {}", input));
+                            }
+                          }
+                          Err(e) => cx.editor.set_status(e),
+                        }
+                      } else {
+                        log::debug!("Terminal search: terminal not found!");
+                      }
+                    }
+                  }
+                  PromptEvent::Abort => {
+                    cx.editor.clear_custom_mode_str();
+                    cx.editor.set_status("-- VI --");
+                  }
+                  PromptEvent::Update => {}
+                }
+              });
+            compositor.push(Box::new(prompt));
+          });
+        return Some(EventResult::Consumed(Some(callback)));
+      }
+      // Search next - n
+      Key::Char('n') if !key.ctrl && !key.alt => {
+        if term.vi_search_active() {
+          if !term.vi_search_next() {
+            cx.editor.set_status("No more matches");
+          }
+        } else {
+          cx.editor.set_status("No search pattern");
+        }
+      }
+      // Search previous - N
+      Key::Char('N') if !key.ctrl && !key.alt => {
+        if term.vi_search_active() {
+          if !term.vi_search_prev() {
+            cx.editor.set_status("No more matches");
+          }
+        } else {
+          cx.editor.set_status("No search pattern");
+        }
+      }
+      // Other keys - ignore in vi mode
+      _ => {}
+    }
+
+    the_editor_event::request_redraw();
+    Some(EventResult::Consumed(None))
   }
 
   /// Build a terminal color scheme from the given theme.

@@ -23,6 +23,7 @@ use super::{
 };
 use crate::{
   doc,
+  try_current_ref,
   editor::{
     Action,
     Editor,
@@ -2535,10 +2536,12 @@ pub(super) fn buffers_remaining_impl(editor: &mut Editor) -> anyhow::Result<()> 
     .collect();
 
   if let Some(first) = modified_ids.first() {
-    let current = doc!(editor);
-    // If the current document is unmodified, and there are modified
-    // documents, switch focus to the first modified doc.
-    if !modified_ids.contains(&current.id()) {
+    // Get current document ID if we're in a document view (not terminal)
+    let current_doc_id = try_current_ref!(editor).map(|(_, doc): (_, &crate::core::document::Document)| doc.id());
+
+    // If the current document is unmodified (or we're in a terminal view),
+    // and there are modified documents, switch focus to the first modified doc.
+    if current_doc_id.is_none() || !modified_ids.contains(&current_doc_id.unwrap()) {
       editor.switch(*first, Action::Replace, false);
     }
 

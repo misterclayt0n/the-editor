@@ -3946,14 +3946,16 @@ impl EditorView {
   }
 
   fn update_post_command(&mut self, cx: &mut Context) {
-    if cx.editor.focused_view_id().is_none() {
-      return;
-    }
-
+    // Capture immutable values before mutable borrow
     let mode_after = cx.editor.mode();
     let scrolloff = cx.editor.config().scrolloff;
+
+    // Skip document-specific updates if focused on a terminal view
+    let Some((view, doc)) = crate::try_current!(cx.editor) else {
+      return;
+    };
+
     let (start_line, end_line) = {
-      let (view, doc) = crate::current!(cx.editor);
       let text = doc.text();
       let text_slice = text.slice(..);
       let cursor_pos = doc.selection(view.id).primary().cursor(text_slice);

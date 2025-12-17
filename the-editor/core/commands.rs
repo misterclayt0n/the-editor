@@ -7636,19 +7636,35 @@ pub fn vsplit_new(cx: &mut Context) {
 }
 
 fn split(editor: &mut Editor, action: Action) {
-  let (view, doc) = current!(editor);
-  let id = doc.id();
-  let selection = doc.selection(view.id).clone();
-  let offset = doc.view_offset(view.id);
+  // If in a document view, split with the same document
+  if let Some((view, doc)) = crate::try_current!(editor) {
+    let id = doc.id();
+    let selection = doc.selection(view.id).clone();
+    let offset = doc.view_offset(view.id);
 
-  editor.switch(id, action, false);
+    editor.switch(id, action, false);
 
-  // match the selection in the previous view
-  let (view, doc) = current!(editor);
-  doc.set_selection(view.id, selection);
-  // match the view scroll offset (switch doesn't handle this fully
-  // since the selection is only matched after the split)
-  doc.set_view_offset(view.id, offset);
+    // match the selection in the previous view
+    let (view, doc) = current!(editor);
+    doc.set_selection(view.id, selection);
+    // match the view scroll offset (switch doesn't handle this fully
+    // since the selection is only matched after the split)
+    doc.set_view_offset(view.id, offset);
+  } else {
+    // In a terminal view - split with the last accessed document
+    // focused_view_id() falls back to last_view_focus for terminals
+    let Some(last_view_id) = editor.focused_view_id() else {
+      // No document views exist, create a new scratch buffer
+      editor.new_file(action);
+      return;
+    };
+    let Some(doc_id) = editor.tree.get(last_view_id).doc() else {
+      editor.new_file(action);
+      return;
+    };
+
+    editor.switch(doc_id, action, false);
+  }
 }
 
 pub fn rotate_view(cx: &mut Context) {

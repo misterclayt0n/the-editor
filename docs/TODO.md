@@ -46,6 +46,10 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Workspace features - Still reasoning about this.
 - [ ] Tab completion in the file prompt should look for the correct directory entry, not just scroll (This is a special case tho, the behavior is correct for all other cases).
 
+- [ ] Terminal
+  - [x] Basic stuff
+  - [x] Mouse handling
+
 - [x] ACP Integration - We're pausing this for now, I think we're at a reasonable state currently.
   - [x] Model picker.
   - [x] Hover that streams agents response.

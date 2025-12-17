@@ -16,10 +16,21 @@ use alacritty_terminal::{
     EventLoopSender,
     Msg,
   },
+  index::{
+    Column,
+    Direction as AlacDirection,
+    Line,
+    Point as AlacPoint,
+  },
+  selection::{
+    Selection,
+    SelectionType,
+  },
   sync::FairMutex,
   term::{
     Config as TermConfig,
     Term,
+    TermMode,
     test::TermSize,
   },
   tty::{
@@ -279,17 +290,20 @@ impl Terminal {
     let term = self.term.lock();
     let content = term.renderable_content();
 
+    // Handle hidden cursor - alacritty sets shape to Hidden when SHOW_CURSOR mode is off
+    let (shape, visible) = match content.cursor.shape {
+      alacritty_terminal::vte::ansi::CursorShape::Block => (CursorShape::Block, true),
+      alacritty_terminal::vte::ansi::CursorShape::Underline => (CursorShape::Underline, true),
+      alacritty_terminal::vte::ansi::CursorShape::Beam => (CursorShape::Beam, true),
+      alacritty_terminal::vte::ansi::CursorShape::HollowBlock => (CursorShape::Block, true),
+      alacritty_terminal::vte::ansi::CursorShape::Hidden => (CursorShape::Block, false),
+    };
+
     CursorInfo {
-      col:   content.cursor.point.column.0 as u16,
-      row:   content.cursor.point.line.0 as u16,
-      shape: match content.cursor.shape {
-        alacritty_terminal::vte::ansi::CursorShape::Block => CursorShape::Block,
-        alacritty_terminal::vte::ansi::CursorShape::Underline => CursorShape::Underline,
-        alacritty_terminal::vte::ansi::CursorShape::Beam => CursorShape::Beam,
-        _ => CursorShape::Block,
-      },
-      // Cursor visibility is managed by mode in alacritty_terminal 0.25
-      visible: true,
+      col: content.cursor.point.column.0 as u16,
+      row: content.cursor.point.line.0 as u16,
+      shape,
+      visible,
     }
   }
 
@@ -297,6 +311,73 @@ impl Terminal {
   pub fn scroll(&self, delta: i32) {
     let mut term = self.term.lock();
     term.scroll_display(alacritty_terminal::grid::Scroll::Delta(delta));
+  }
+
+  /// Check if the terminal is in mouse mode (for mouse-aware programs like vim, less, tmux).
+  pub fn mouse_mode(&self) -> bool {
+    let term = self.term.lock();
+    term.mode().contains(TermMode::MOUSE_MODE)
+  }
+
+  /// Check if SGR mouse mode is enabled (extended mouse reporting).
+  pub fn sgr_mouse_mode(&self) -> bool {
+    let term = self.term.lock();
+    term.mode().contains(TermMode::SGR_MOUSE)
+  }
+
+  /// Get the current display offset (scroll position in history).
+  pub fn display_offset(&self) -> usize {
+    let term = self.term.lock();
+    term.grid().display_offset()
+  }
+
+  /// Start a new selection at the given cell position.
+  /// `selection_type`: Simple (character), Semantic (word), or Lines (line)
+  pub fn start_selection(&self, col: u16, row: i32, selection_type: SelectionType) {
+    let mut term = self.term.lock();
+    let point = AlacPoint::new(Line(row), Column(col as usize));
+    let selection = Selection::new(selection_type, point, AlacDirection::Left);
+    term.selection = Some(selection);
+  }
+
+  /// Update the current selection to the given cell position.
+  pub fn update_selection(&self, col: u16, row: i32) {
+    let mut term = self.term.lock();
+    if let Some(ref mut selection) = term.selection {
+      let point = AlacPoint::new(Line(row), Column(col as usize));
+      selection.update(point, AlacDirection::Right);
+    }
+  }
+
+  /// Clear the current selection.
+  pub fn clear_selection(&self) {
+    let mut term = self.term.lock();
+    term.selection = None;
+  }
+
+  /// Check if there is an active selection.
+  pub fn has_selection(&self) -> bool {
+    let term = self.term.lock();
+    term.selection.is_some()
+  }
+
+  /// Get the selected text, if any.
+  pub fn selection_text(&self) -> Option<String> {
+    let term = self.term.lock();
+    term.selection_to_string()
+  }
+
+  /// Get the selection range for rendering purposes.
+  /// Returns (start_col, start_row, end_col, end_row) if there's a selection.
+  pub fn selection_range(&self) -> Option<((u16, i32), (u16, i32))> {
+    let term = self.term.lock();
+    term.selection.as_ref().and_then(|sel| {
+      let range = sel.to_range(&term)?;
+      Some((
+        (range.start.column.0 as u16, range.start.line.0),
+        (range.end.column.0 as u16, range.end.line.0),
+      ))
+    })
   }
 
   // Note: Raw terminal access is available through render_cells() and cursor_info().

@@ -21,6 +21,9 @@ pub use renderer::{
 };
 pub use terminal::Terminal;
 
+// Re-export selection types for mouse handling
+pub use alacritty_terminal::selection::SelectionType;
+
 use std::num::NonZeroUsize;
 
 /// Unique identifier for a terminal instance.

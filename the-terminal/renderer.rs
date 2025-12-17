@@ -193,52 +193,70 @@ impl ColorScheme {
 ///
 /// This function takes ownership of the RenderableContent since
 /// its display_iter is a consuming iterator.
+///
+/// The display_iter returns cells with `point.line` as absolute grid coordinates
+/// which can be negative when viewing scrollback history. We convert these to
+/// viewport-relative row indices (0, 1, 2...) by grouping cells by line and
+/// using the group iteration order.
 pub fn extract_cells(
   content: RenderableContent<'_>,
   colors: &ColorScheme,
   cols: usize,
   rows: usize,
 ) -> Vec<RenderCell> {
+  use itertools::Itertools;
+
   let mut cells = Vec::with_capacity(cols * rows);
 
-  for cell in content.display_iter {
-    let point = cell.point;
+  // Group cells by their line, then use enumeration index as viewport row.
+  // This handles both positive and negative line values correctly.
+  let linegroups = content.display_iter.chunk_by(|cell| cell.point.line);
 
-    // Skip cells outside viewport
-    if point.column.0 >= cols || point.line.0 as usize >= rows {
-      continue;
+  for (viewport_row, (_, line_cells)) in linegroups.into_iter().enumerate() {
+    // Stop if we've exceeded the viewport rows
+    if viewport_row >= rows {
+      break;
     }
 
-    // Skip wide character spacers - these are placeholder cells that follow
-    // double-width characters (like CJK characters). The actual character
-    // is in the cell before this one.
-    let flags = cell.flags;
-    if flags.contains(CellFlags::WIDE_CHAR_SPACER) {
-      continue;
+    for cell in line_cells {
+      let point = cell.point;
+
+      // Skip cells outside viewport columns
+      if point.column.0 >= cols {
+        continue;
+      }
+
+      // Skip wide character spacers - these are placeholder cells that follow
+      // double-width characters (like CJK characters). The actual character
+      // is in the cell before this one.
+      let flags = cell.flags;
+      if flags.contains(CellFlags::WIDE_CHAR_SPACER) {
+        continue;
+      }
+
+      let c = cell.c;
+
+      // Get colors, handling inverse
+      let mut fg = colors.resolve(cell.fg, true);
+      let mut bg = colors.resolve(cell.bg, false);
+
+      if flags.contains(CellFlags::INVERSE) {
+        std::mem::swap(&mut fg, &mut bg);
+      }
+
+      // Check if this is a wide character (takes 2 cells)
+      let is_wide = flags.contains(CellFlags::WIDE_CHAR);
+
+      cells.push(RenderCell {
+        col: point.column.0 as u16,
+        row: viewport_row as u16, // Use viewport row, not point.line
+        c,
+        fg,
+        bg,
+        flags: CellStyle::from(flags),
+        is_wide,
+      });
     }
-
-    let c = cell.c;
-
-    // Get colors, handling inverse
-    let mut fg = colors.resolve(cell.fg, true);
-    let mut bg = colors.resolve(cell.bg, false);
-
-    if flags.contains(CellFlags::INVERSE) {
-      std::mem::swap(&mut fg, &mut bg);
-    }
-
-    // Check if this is a wide character (takes 2 cells)
-    let is_wide = flags.contains(CellFlags::WIDE_CHAR);
-
-    cells.push(RenderCell {
-      col: point.column.0 as u16,
-      row: point.line.0 as u16,
-      c,
-      fg,
-      bg,
-      flags: CellStyle::from(flags),
-      is_wide,
-    });
   }
 
   cells

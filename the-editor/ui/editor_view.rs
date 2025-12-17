@@ -264,6 +264,10 @@ pub struct EditorView {
   last_click_time:           Option<std::time::Instant>,
   last_click_pos:            Option<(f32, f32)>,
   click_count:               u8,
+  // Terminal mouse selection state
+  terminal_selection_active: Option<the_terminal::TerminalId>,
+  // Terminal scroll accumulator for smooth scrolling
+  terminal_scroll_px:        f32,
   // Split separator interaction
   hovered_separator:         Option<SeparatorInfo>,
   dragging_separator:        Option<SeparatorDrag>,
@@ -368,6 +372,8 @@ impl EditorView {
       last_click_time: None,
       last_click_pos: None,
       click_count: 0,
+      terminal_selection_active: None,
+      terminal_scroll_px: 0.0,
       hovered_separator: None,
       dragging_separator: None,
       buffer_hover_index: None,
@@ -982,6 +988,82 @@ impl Component for EditorView {
         self.handle_mouse_event(mouse, cx)
       },
       Event::Scroll(delta) => {
+        use the_editor_renderer::ScrollDelta;
+
+        // Handle scroll for terminal views
+        // First try mouse position, then fall back to focused view
+        let terminal_id = if let Some((mouse_x, mouse_y)) = self.last_mouse_pos {
+          // Check if mouse is over a terminal view
+          self.screen_coords_to_node((mouse_x, mouse_y), cx)
+            .and_then(|node_id| {
+              let view = cx.editor.tree.get(node_id);
+              view.terminal()
+            })
+        } else {
+          // No mouse position - check if focused view is a terminal
+          let focused = cx.editor.tree.focus;
+          let view = cx.editor.tree.get(focused);
+          view.terminal()
+        };
+
+        if let Some(terminal_id) = terminal_id {
+          if let Some(term) = cx.editor.terminal(terminal_id) {
+            let line_height = self.cached_cell_height.max(1.0);
+
+            // Convert scroll delta to pixels (like Zed's pixel_delta)
+            let delta_px = match delta {
+              ScrollDelta::Lines { y, .. } => *y * line_height,
+              ScrollDelta::Pixels { y, .. } => *y,
+            };
+
+            // Accumulate and calculate line difference (Zed's approach)
+            let old_lines = (self.terminal_scroll_px / line_height) as i32;
+            self.terminal_scroll_px += delta_px;
+            let new_lines = (self.terminal_scroll_px / line_height) as i32;
+            let scroll_lines = new_lines - old_lines;
+
+            // Reset accumulator modulo terminal height to prevent overflow
+            let (_, rows) = term.dimensions();
+            let terminal_height = (rows as f32 * line_height).max(line_height);
+            self.terminal_scroll_px %= terminal_height;
+
+            if scroll_lines != 0 {
+              if term.mouse_mode() {
+                // Get terminal cell position for scroll event
+                let (col, row) = if let Some((mouse_x, mouse_y)) = self.last_mouse_pos {
+                  if let Some(node_id) = self.screen_coords_to_node((mouse_x, mouse_y), cx) {
+                    let view = cx.editor.tree.get(node_id);
+                    let view_area = view.area;
+                    let rel_x = mouse_x - self.content_x_offset() - view_area.x as f32 * self.cached_cell_width;
+                    let rel_y = mouse_y - view_area.y as f32 * self.cached_cell_height;
+                    (
+                      (rel_x / self.cached_cell_width).floor().max(0.0) as u16,
+                      (rel_y / self.cached_cell_height).floor().max(0.0) as u16,
+                    )
+                  } else {
+                    (1, 1)
+                  }
+                } else {
+                  (1, 1) // Default to top-left if no mouse position
+                };
+
+                // Send scroll events to terminal (SGR mouse mode)
+                // Button 64 = scroll up, 65 = scroll down
+                let button = if scroll_lines > 0 { 64 } else { 65 };
+                for _ in 0..scroll_lines.abs() {
+                  let report = format!("\x1b[<{};{};{}M", button, col + 1, row + 1);
+                  term.write(report.as_bytes());
+                }
+              } else {
+                // Normal scroll - scroll terminal history
+                term.scroll(scroll_lines);
+              }
+              request_redraw();
+            }
+          }
+          return EventResult::Consumed(None);
+        }
+
         // Handle scroll in explorer area if mouse is over it
         if let Some((mouse_x, _)) = self.last_mouse_pos {
           // Calculate viewport width from editor tree area and font
@@ -3357,6 +3439,14 @@ impl EditorView {
       );
     }
 
+    // Get selection range for highlighting
+    let selection_range = terminal.selection_range();
+    let selection_bg = theme
+      .get("ui.selection")
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.3, 0.4, 0.6, 0.5));
+
     // Draw cells
     for cell in cells {
       // Use floor() for pixel-perfect grid alignment (matches Zed's approach)
@@ -3373,7 +3463,32 @@ impl EditorView {
       // Calculate cell width (double for wide characters like CJK)
       let char_width = if cell.is_wide { font_width * 2.0 } else { font_width };
 
-      if cell.bg != colors.background {
+      // Check if cell is in selection
+      let in_selection = selection_range.map_or(false, |((start_col, start_row), (end_col, end_row))| {
+        let cell_row = cell.row as i32;
+        let cell_col = cell.col;
+
+        if cell_row < start_row || cell_row > end_row {
+          false
+        } else if cell_row == start_row && cell_row == end_row {
+          // Single line selection
+          cell_col >= start_col && cell_col <= end_col
+        } else if cell_row == start_row {
+          // First line of multi-line selection
+          cell_col >= start_col
+        } else if cell_row == end_row {
+          // Last line of multi-line selection
+          cell_col <= end_col
+        } else {
+          // Middle lines are fully selected
+          true
+        }
+      });
+
+      if in_selection {
+        // Draw selection highlight
+        renderer.draw_rect(x, y, char_width.ceil(), cell_height, selection_bg);
+      } else if cell.bg != colors.background {
         // Use ceil() on width to ensure full cell coverage
         renderer.draw_rect(x, y, char_width.ceil(), cell_height, cell_bg);
       }
@@ -4213,6 +4328,40 @@ impl EditorView {
               cx.editor.focus(node_id);
             }
 
+            // Check if this is a terminal view
+            let view = cx.editor.tree.get(node_id);
+            if let Some(terminal_id) = view.terminal() {
+              let view_area = view.area;
+
+              // Calculate terminal cell coordinates
+              let rel_x = mouse.position.0 - self.content_x_offset() - view_area.x as f32 * self.cached_cell_width;
+              let rel_y = mouse.position.1 - view_area.y as f32 * self.cached_cell_height - VIEW_PADDING_TOP;
+              let col = (rel_x / self.cached_cell_width).floor().max(0.0) as u16;
+              let row = (rel_y / self.cached_cell_height).floor().max(0.0) as i32;
+
+              if let Some(term) = cx.editor.terminal(terminal_id) {
+                if term.mouse_mode() {
+                  // Terminal wants mouse events - send to PTY
+                  // SGR mouse format: ESC [ < Cb ; Cx ; Cy M (press) / m (release)
+                  let cb = 0; // Left button = 0
+                  let report = format!("\x1b[<{};{};{}M", cb, col + 1, row + 1);
+                  term.write(report.as_bytes());
+                } else {
+                  // Terminal not in mouse mode - start selection
+                  use the_terminal::SelectionType;
+                  let selection_type = match self.click_count {
+                    2 => SelectionType::Semantic, // Word selection
+                    3 => SelectionType::Lines,    // Line selection
+                    _ => SelectionType::Simple,   // Character selection
+                  };
+                  term.start_selection(col, row, selection_type);
+                  self.terminal_selection_active = Some(terminal_id);
+                }
+                request_redraw();
+              }
+              return EventResult::Consumed(None);
+            }
+
             if let Some((view_id, doc_pos)) = self.screen_coords_to_doc_pos(mouse.position, cx) {
               let scrolloff = cx.editor.config().scrolloff;
 
@@ -4276,6 +4425,36 @@ impl EditorView {
           self.mouse_drag_anchor_range = None;
           self.mouse_drag_mode = DragSelectMode::Character;
           self.dragging_separator = None; // End separator drag
+
+          // Handle terminal mouse release
+          if let Some(terminal_id) = self.terminal_selection_active.take() {
+            if let Some(term) = cx.editor.terminal(terminal_id) {
+              if term.mouse_mode() {
+                // Send mouse release to PTY
+                if let Some(node_id) = self.screen_coords_to_node(mouse.position, cx) {
+                  let view = cx.editor.tree.get(node_id);
+                  if view.terminal() == Some(terminal_id) {
+                    let view_area = view.area;
+                    let rel_x = mouse.position.0 - self.content_x_offset() - view_area.x as f32 * self.cached_cell_width;
+                    let rel_y = mouse.position.1 - view_area.y as f32 * self.cached_cell_height - VIEW_PADDING_TOP;
+                    let col = (rel_x / self.cached_cell_width).floor().max(0.0) as u16;
+                    let row = (rel_y / self.cached_cell_height).floor().max(0.0) as u16;
+                    let report = format!("\x1b[<0;{};{}m", col + 1, row + 1);
+                    term.write(report.as_bytes());
+                  }
+                }
+              } else {
+                // Copy selected text to clipboard
+                if let Some(text) = term.selection_text() {
+                  if !text.is_empty() {
+                    let _ = cx.editor.registers.write('+', vec![text]);
+                  }
+                }
+              }
+              request_redraw();
+            }
+          }
+
           return EventResult::Consumed(None);
         }
       },
@@ -4357,6 +4536,34 @@ impl EditorView {
             self.dragging_separator = Some(drag);
           }
 
+          return EventResult::Consumed(None);
+        }
+
+        // Check if we're dragging terminal selection
+        if let Some(terminal_id) = self.terminal_selection_active {
+          if let Some(term) = cx.editor.terminal(terminal_id) {
+            // Find the terminal view to get coordinates
+            for (view, _is_focused) in cx.editor.tree.views() {
+              if view.terminal() == Some(terminal_id) {
+                let view_area = view.area;
+                let rel_x = mouse.position.0 - self.content_x_offset() - view_area.x as f32 * self.cached_cell_width;
+                let rel_y = mouse.position.1 - view_area.y as f32 * self.cached_cell_height - VIEW_PADDING_TOP;
+                let col = (rel_x / self.cached_cell_width).floor().max(0.0) as u16;
+                let row = (rel_y / self.cached_cell_height).floor().max(0.0) as i32;
+
+                if term.mouse_mode() {
+                  // Send mouse drag to PTY (button 32 = left button + motion flag)
+                  let report = format!("\x1b[<32;{};{}M", col + 1, row + 1);
+                  term.write(report.as_bytes());
+                } else {
+                  // Update selection
+                  term.update_selection(col, row);
+                }
+                request_redraw();
+                break;
+              }
+            }
+          }
           return EventResult::Consumed(None);
         }
 

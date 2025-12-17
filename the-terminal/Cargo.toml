@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 alacritty_terminal = "0.25"
 anyhow.workspace = true
+itertools = "0.14"
 log.workspace = true
 parking_lot.workspace = true
 tokio.workspace = true

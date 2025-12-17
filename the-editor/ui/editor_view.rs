@@ -3628,6 +3628,36 @@ impl EditorView {
       return None;
     }
 
+    // Handle terminal clipboard shortcuts
+    // Ctrl+Shift+C - copy selection to clipboard
+    if key.ctrl && key.shift && !key.alt && matches!(&key.code, Key::Char('c') | Key::Char('C')) {
+      if let Some(term) = cx.editor.terminal(terminal_id) {
+        if let Some(text) = term.selection_text() {
+          if !text.is_empty() {
+            let _ = cx.editor.registers.write('+', vec![text.clone()]);
+            cx.editor.set_status(format!("Copied {} chars to clipboard", text.len()));
+          }
+        }
+      }
+      return Some(EventResult::Consumed(None));
+    }
+
+    // Ctrl+Shift+V - paste from clipboard
+    if key.ctrl && key.shift && !key.alt && matches!(&key.code, Key::Char('v') | Key::Char('V')) {
+      if let Some(term) = cx.editor.terminal(terminal_id) {
+        // Get text from clipboard ('+' register)
+        if let Some(values) = cx.editor.registers.read('+', cx.editor) {
+          let text: String = values.collect::<Vec<_>>().join("\n");
+          if !text.is_empty() {
+            // Use bracketed paste if terminal supports it
+            let paste_text = format!("\x1b[200~{}\x1b[201~", text);
+            term.write(paste_text.as_bytes());
+          }
+        }
+      }
+      return Some(EventResult::Consumed(None));
+    }
+
     // Convert key to terminal bytes and send
     let bytes = self.key_to_terminal_bytes(key);
     if !bytes.is_empty() {

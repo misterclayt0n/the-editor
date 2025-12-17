@@ -541,6 +541,11 @@ impl View {
     }
   }
 
+  /// Set the terminal ID for this view, converting it to a terminal view.
+  pub fn set_terminal(&mut self, terminal_id: TerminalId) {
+    self.content = ViewContent::Terminal(terminal_id);
+  }
+
   pub fn add_to_history(&mut self, id: DocumentId) {
     if let Some(pos) = self.docs_access_history.iter().position(|&doc| doc == id) {
       self.docs_access_history.remove(pos);

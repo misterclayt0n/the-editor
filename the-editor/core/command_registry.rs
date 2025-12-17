@@ -2162,8 +2162,6 @@ fn hsplit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
 }
 
 fn terminal(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
-  use crate::core::tree::Layout;
-
   if event != PromptEvent::Validate {
     return Ok(());
   }
@@ -2171,8 +2169,8 @@ fn terminal(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
   // Get optional shell argument
   let shell = args.first();
 
-  // Open terminal in horizontal split by default
-  cx.editor.open_terminal_split(shell, Layout::Vertical)?;
+  // Open terminal in the current view, replacing its content
+  cx.editor.open_terminal(shell)?;
   cx.editor.set_status("Terminal opened");
   Ok(())
 }

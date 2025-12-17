@@ -2046,7 +2046,7 @@ impl Editor {
     self.terminals.get_mut(&id)
   }
 
-  /// Open a new terminal and create a view for it.
+  /// Open a terminal in the current view, replacing its content.
   /// Returns the terminal ID if successful.
   pub fn open_terminal(&mut self, shell: Option<&str>) -> anyhow::Result<TerminalId> {
     // Generate terminal ID
@@ -2077,10 +2077,9 @@ impl Editor {
     // Store terminal
     self.terminals.insert(id, terminal);
 
-    // Create and insert the view
-    let gutters = self.config().gutters.clone();
-    let view = View::new_terminal(id, gutters);
-    self.tree.insert(view);
+    // Replace the current view's content with the terminal
+    let view = self.tree.get_mut(self.tree.focus);
+    view.set_terminal(id);
 
     Ok(id)
   }
@@ -2111,7 +2110,7 @@ impl Editor {
     }
   }
 
-  /// Show a hidden terminal in a new view.
+  /// Show a terminal in a view, optionally replacing the current view or splitting.
   pub fn show_terminal(&mut self, id: TerminalId, action: Action) {
     // Mark terminal as visible
     if let Some(term) = self.terminals.get_mut(&id) {
@@ -2120,26 +2119,22 @@ impl Editor {
       return; // Terminal doesn't exist
     }
 
-    // Create a new view for the terminal
-    let gutters = self.config().gutters.clone();
-    let view = View::new_terminal(id, gutters);
-
     match action {
-      Action::Replace => {
-        let view_id = self.tree.insert(view);
-        self.focus(view_id);
+      Action::Replace | Action::Load => {
+        // Replace the current view's content with the terminal
+        let view = self.tree.get_mut(self.tree.focus);
+        view.set_terminal(id);
       }
       Action::HorizontalSplit => {
+        let gutters = self.config().gutters.clone();
+        let view = View::new_terminal(id, gutters);
         let view_id = self.tree.split(view, tree::Layout::Horizontal);
         self.focus(view_id);
       }
       Action::VerticalSplit => {
+        let gutters = self.config().gutters.clone();
+        let view = View::new_terminal(id, gutters);
         let view_id = self.tree.split(view, tree::Layout::Vertical);
-        self.focus(view_id);
-      }
-      Action::Load => {
-        // Load is not typically used for terminals, treat as Replace
-        let view_id = self.tree.insert(view);
         self.focus(view_id);
       }
     }

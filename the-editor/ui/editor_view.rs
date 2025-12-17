@@ -275,6 +275,15 @@ pub struct EditorView {
   buffer_tabs:               Vec<bufferline::BufferTab>,
   bufferline_height:         f32,
   buffer_pressed_index:      Option<usize>,
+  // RAD-style bufferline state
+  buffer_close_hover_index:  Option<usize>,
+  add_button_hovered:        bool,
+  add_button_pressed:        bool,
+  add_button_rect:           Option<crate::core::graphics::Rect>,
+  tab_animation_states:      std::collections::HashMap<crate::core::DocumentId, bufferline::TabAnimationState>,
+  add_button_state:          bufferline::AddButtonState,
+  bufferline_scroll_offset:  f32,
+  bufferline_max_scroll:     f32,
   // Tree explorer sidebar
   explorer:                  Option<Explorer>,
   // Explorer mouse interaction state
@@ -380,6 +389,14 @@ impl EditorView {
       buffer_tabs: Vec::new(),
       bufferline_height: 24.0,
       buffer_pressed_index: None,
+      buffer_close_hover_index: None,
+      add_button_hovered: false,
+      add_button_pressed: false,
+      add_button_rect: None,
+      tab_animation_states: std::collections::HashMap::new(),
+      add_button_state: bufferline::AddButtonState::default(),
+      bufferline_scroll_offset: 0.0,
+      bufferline_max_scroll: 0.0,
       explorer: None,
       explorer_px_width: 0.0,
       explorer_position: FileTreePosition::Left,
@@ -741,6 +758,7 @@ impl Component for EditorView {
       || self.eol_diagnostic_anim_active
       || self.underline_anim_active
       || self.inline_diagnostic_anim_active
+      || bufferline::needs_animation_update(&self.tab_animation_states, &self.add_button_state)
   }
 
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
@@ -1064,6 +1082,33 @@ impl Component for EditorView {
           return EventResult::Consumed(None);
         }
 
+        // Handle scroll in bufferline area
+        if let Some((_, mouse_y)) = self.last_mouse_pos {
+          if mouse_y < self.bufferline_height && self.bufferline_max_scroll > 0.0 {
+            use the_editor_renderer::ScrollDelta;
+
+            // Convert scroll delta to pixels for horizontal scroll
+            let scroll_px = match delta {
+              ScrollDelta::Lines { x, y, .. } => {
+                // For mouse wheel, prefer horizontal scroll (x), fallback to vertical (y)
+                let scroll_amount = if x.abs() > 0.001 { *x } else { *y };
+                scroll_amount * 40.0 // 40 pixels per scroll line
+              },
+              ScrollDelta::Pixels { x, y, .. } => {
+                // For trackpad, prefer horizontal scroll, fallback to vertical
+                if x.abs() > 0.001 { *x } else { *y }
+              },
+            };
+
+            // Update scroll offset
+            self.bufferline_scroll_offset =
+              (self.bufferline_scroll_offset + scroll_px).clamp(0.0, self.bufferline_max_scroll);
+            self.dirty_region.mark_all_dirty();
+            request_redraw();
+            return EventResult::Consumed(None);
+          }
+        }
+
         // Handle scroll in explorer area if mouse is over it
         if let Some((mouse_x, _)) = self.last_mouse_pos {
           // Calculate viewport width from editor tree area and font
@@ -1330,7 +1375,7 @@ impl Component for EditorView {
     if use_bufferline {
       // Offset bufferline by explorer width so it doesn't overlap (only for left-side
       // explorer)
-      self.bufferline_height = bufferline::render(
+      let result = bufferline::render(
         cx.editor,
         content_x_offset,
         0.0,
@@ -1338,12 +1383,47 @@ impl Component for EditorView {
         renderer,
         self.buffer_hover_index,
         self.buffer_pressed_index,
+        self.buffer_close_hover_index,
+        self.add_button_hovered,
+        self.add_button_pressed,
         &mut self.buffer_tabs,
+        &mut self.tab_animation_states,
+        &mut self.add_button_state,
+        self.bufferline_scroll_offset,
+        cx.dt,
       );
+      self.bufferline_height = result.height;
+      self.add_button_rect = result.add_button_rect;
+      self.bufferline_max_scroll = result.max_scroll;
+
+      // Auto-scroll to ensure active tab is visible
+      if let Some(active_idx) = result.active_tab_index {
+        if let Some(tab) = self.buffer_tabs.get(active_idx) {
+          let available_width = viewport_px_width - explorer_px_width - result.height - 12.0;
+          let visible_start = self.bufferline_scroll_offset;
+          let visible_end = visible_start + available_width;
+
+          // Tab positions are relative to the scroll offset, so we need the unscrolled positions
+          let tab_start = tab.start_x + self.bufferline_scroll_offset - content_x_offset - 4.0;
+          let tab_end = tab.end_x + self.bufferline_scroll_offset - content_x_offset - 4.0;
+
+          if tab_start < visible_start {
+            // Tab is to the left of visible area - scroll left
+            self.bufferline_scroll_offset = tab_start.max(0.0);
+          } else if tab_end > visible_end {
+            // Tab is to the right of visible area - scroll right
+            self.bufferline_scroll_offset = (tab_end - available_width).clamp(0.0, result.max_scroll);
+          }
+        }
+      }
     } else {
       self.buffer_tabs.clear();
       self.buffer_hover_index = None;
       self.buffer_pressed_index = None;
+      self.buffer_close_hover_index = None;
+      self.add_button_hovered = false;
+      self.add_button_pressed = false;
+      self.add_button_rect = None;
       self.bufferline_height = 0.0;
     }
 
@@ -4611,13 +4691,66 @@ impl EditorView {
       let within_bufferline = mouse.position.1 >= 0.0 && mouse.position.1 <= buffer_height;
 
       if within_bufferline {
+        let (mx, my) = mouse.position;
+
+        // Check if hovering over add button
+        let in_add_button = self.add_button_rect.map_or(false, |rect| {
+          let rx = rect.x as f32;
+          let ry = rect.y as f32;
+          let rw = rect.width as f32;
+          let rh = rect.height as f32;
+          mx >= rx && mx < rx + rw && my >= ry && my < ry + rh
+        });
+
+        // Find which tab is hit
         let hit_index = self
           .buffer_tabs
           .iter()
-          .position(|tab| mouse.position.0 >= tab.start_x && mouse.position.0 < tab.end_x);
+          .position(|tab| mx >= tab.start_x && mx < tab.end_x);
+
+        // Check if hovering over close button within a tab
+        let close_hit_index = hit_index.and_then(|idx| {
+          let tab = &self.buffer_tabs[idx];
+          if mx >= tab.close_start_x && mx < tab.close_end_x {
+            Some(idx)
+          } else {
+            None
+          }
+        });
+
+        // Update hover states
+        let hover_changed = self.buffer_hover_index != hit_index
+          || self.buffer_close_hover_index != close_hit_index
+          || self.add_button_hovered != in_add_button;
+
+        if hover_changed {
+          self.buffer_hover_index = hit_index;
+          self.buffer_close_hover_index = close_hit_index;
+          self.add_button_hovered = in_add_button;
+          self.dirty_region.mark_all_dirty();
+          request_redraw();
+        }
 
         match mouse.button {
+          // Left click press
           Some(the_editor_renderer::MouseButton::Left) if mouse.pressed => {
+            // Click on add button
+            if in_add_button {
+              self.add_button_pressed = true;
+              self.dirty_region.mark_all_dirty();
+              request_redraw();
+              return EventResult::Consumed(None);
+            }
+
+            // Click on close button
+            if let Some(idx) = close_hit_index {
+              self.buffer_pressed_index = Some(idx);
+              self.dirty_region.mark_all_dirty();
+              request_redraw();
+              return EventResult::Consumed(None);
+            }
+
+            // Click on tab (switch to buffer)
             if self.buffer_pressed_index != hit_index {
               self.buffer_pressed_index = hit_index;
               self.dirty_region.mark_all_dirty();
@@ -4648,37 +4781,82 @@ impl EditorView {
                 },
               }
             }
-            self.buffer_hover_index = hit_index;
             request_redraw();
             self.dirty_region.mark_all_dirty();
             return EventResult::Consumed(None);
           },
+
+          // Left click release
           Some(the_editor_renderer::MouseButton::Left) => {
+            // Release on add button - create scratch buffer
+            if self.add_button_pressed && in_add_button {
+              self.add_button_pressed = false;
+              cx.editor.create_scratch_buffer(Action::Replace);
+              self.dirty_region.mark_all_dirty();
+              request_redraw();
+              return EventResult::Consumed(None);
+            }
+            self.add_button_pressed = false;
+
+            // Release on close button - close the document
+            if let Some(idx) = close_hit_index {
+              if self.buffer_pressed_index == Some(idx) {
+                if let Some(tab) = self.buffer_tabs.get(idx) {
+                  match tab.kind {
+                    bufferline::BufferKind::Document(doc_id) => {
+                      // Close the document
+                      let _ = cx.editor.close_document(doc_id, false);
+                    },
+                  }
+                }
+              }
+            }
+
             if self.buffer_pressed_index.take().is_some() {
               self.dirty_region.mark_all_dirty();
             }
-            if self.buffer_hover_index != hit_index {
-              self.buffer_hover_index = hit_index;
-              request_redraw();
-              self.dirty_region.mark_all_dirty();
+            request_redraw();
+            return EventResult::Consumed(None);
+          },
+
+          // Middle click - close tab (raddebugger behavior)
+          Some(the_editor_renderer::MouseButton::Middle) if mouse.pressed => {
+            if let Some(idx) = hit_index {
+              if let Some(tab) = self.buffer_tabs.get(idx) {
+                match tab.kind {
+                  bufferline::BufferKind::Document(doc_id) => {
+                    let _ = cx.editor.close_document(doc_id, false);
+                    self.dirty_region.mark_all_dirty();
+                    request_redraw();
+                  },
+                }
+              }
             }
             return EventResult::Consumed(None);
           },
+
           _ => {
-            if self.buffer_hover_index != hit_index {
-              self.buffer_hover_index = hit_index;
-              self.dirty_region.mark_all_dirty();
-              request_redraw();
-            }
             return EventResult::Consumed(None);
           },
         }
       } else {
+        // Mouse left bufferline area - clear all hover states
         let mut changed = false;
         if self.buffer_hover_index.take().is_some() {
           changed = true;
         }
         if self.buffer_pressed_index.take().is_some() {
+          changed = true;
+        }
+        if self.buffer_close_hover_index.take().is_some() {
+          changed = true;
+        }
+        if self.add_button_hovered {
+          self.add_button_hovered = false;
+          changed = true;
+        }
+        if self.add_button_pressed {
+          self.add_button_pressed = false;
           changed = true;
         }
         if changed {

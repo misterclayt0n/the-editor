@@ -2334,6 +2334,45 @@ impl Renderer {
     self.cell_height
   }
 
+  /// Measure the width of the given text at the specified font size.
+  /// Returns the actual rendered width in pixels.
+  pub fn measure_text(&mut self, text: &str, font_size: f32) -> f32 {
+    if text.is_empty() {
+      return 0.0;
+    }
+
+    let metrics = Metrics::new(font_size, font_size * LINE_HEIGHT_FACTOR);
+
+    // Get a buffer from the pool or create a new one
+    let mut buffer = if let Some(mut pooled) = self.buffer_pool.buffers.pop() {
+      pooled.set_metrics(&mut self.font_system, metrics);
+      pooled
+    } else {
+      Buffer::new(&mut self.font_system, metrics)
+    };
+
+    buffer.set_size(&mut self.font_system, Some(f32::MAX), Some(font_size * 2.0));
+    buffer.set_wrap(&mut self.font_system, Wrap::None);
+
+    let attrs = Attrs::new()
+      .family(Family::Name(self.font_family.as_str()))
+      .metrics(metrics);
+
+    buffer.set_text(&mut self.font_system, text, &attrs, Shaping::Advanced);
+    buffer.shape_until_scroll(&mut self.font_system, false);
+
+    let width = buffer
+      .layout_runs()
+      .next()
+      .map(|run| run.line_w)
+      .unwrap_or(0.0);
+
+    // Return buffer to the pool
+    self.buffer_pool.buffers.push(buffer);
+
+    width
+  }
+
   /// Vertical offset from buffer top to actual text top.
   /// Used to compensate for cosmic-text's internal vertical padding.
   pub fn line_top_offset(&self) -> f32 {

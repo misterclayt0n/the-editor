@@ -322,6 +322,8 @@ pub struct Editor {
   last_view_focus:      Option<ViewId>,
   pub next_document_id: DocumentId,
   pub documents:        BTreeMap<DocumentId, Document>,
+  /// Counter for numbered scratch buffers ([scratch-1], [scratch-2], etc.)
+  scratch_counter:      u32,
 
   /// Terminal instances.
   pub terminals:         BTreeMap<TerminalId, Terminal>,
@@ -1905,6 +1907,7 @@ impl Editor {
       last_view_focus: None,
       next_document_id: DocumentId::default(),
       documents: BTreeMap::new(),
+      scratch_counter: 1,
       terminals: BTreeMap::new(),
       next_terminal_id: TerminalId::default(),
       terminal_event_rx: Some(rx),
@@ -2032,6 +2035,17 @@ impl Editor {
 
   pub fn is_special_buffer_running(&self, doc_id: DocumentId) -> bool {
     self.special_buffers.is_running(doc_id)
+  }
+
+  /// Create a new numbered scratch buffer ([scratch-1], [scratch-2], etc.)
+  /// and switch to it using the given action.
+  pub fn create_scratch_buffer(&mut self, action: Action) -> DocumentId {
+    let n = self.scratch_counter;
+    self.scratch_counter += 1;
+
+    let doc_id = self.new_file(action);
+    self.mark_special_buffer(doc_id, SpecialBufferKind::Scratch(n));
+    doc_id
   }
 
   // --- Terminal Methods ---

@@ -1,4 +1,5 @@
 use std::{
+  borrow::Cow,
   collections::{
     HashMap,
     HashSet,
@@ -13,13 +14,16 @@ use crate::core::DocumentId;
 pub enum SpecialBufferKind {
   Compilation,
   Acp,
+  /// Numbered scratch buffer (e.g., [scratch-1], [scratch-2])
+  Scratch(u32),
 }
 
 impl SpecialBufferKind {
-  pub const fn display_name(self) -> &'static str {
+  pub fn display_name(self) -> Cow<'static, str> {
     match self {
-      SpecialBufferKind::Compilation => COMPILATION_BUFFER_NAME,
-      SpecialBufferKind::Acp => ACP_BUFFER_NAME,
+      SpecialBufferKind::Compilation => Cow::Borrowed(COMPILATION_BUFFER_NAME),
+      SpecialBufferKind::Acp => Cow::Borrowed(ACP_BUFFER_NAME),
+      SpecialBufferKind::Scratch(n) => Cow::Owned(format!("[scratch-{}]", n)),
     }
   }
 }
@@ -29,7 +33,10 @@ pub const ACP_BUFFER_NAME: &str = "*acp*";
 
 impl fmt::Display for SpecialBufferKind {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str(self.display_name())
+    match self {
+      SpecialBufferKind::Scratch(n) => write!(f, "[scratch-{}]", n),
+      _ => f.write_str(&self.display_name()),
+    }
   }
 }
 

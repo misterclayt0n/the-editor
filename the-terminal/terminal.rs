@@ -313,6 +313,12 @@ impl Terminal {
     term.scroll_display(alacritty_terminal::grid::Scroll::Delta(delta));
   }
 
+  /// Scroll the terminal viewport to the bottom (current prompt).
+  pub fn scroll_to_bottom(&self) {
+    let mut term = self.term.lock();
+    term.scroll_display(alacritty_terminal::grid::Scroll::Bottom);
+  }
+
   /// Check if the terminal is in mouse mode (for mouse-aware programs like vim, less, tmux).
   pub fn mouse_mode(&self) -> bool {
     let term = self.term.lock();

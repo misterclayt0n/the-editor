@@ -3616,6 +3616,8 @@ impl EditorView {
     let bytes = self.key_to_terminal_bytes(key);
     if !bytes.is_empty() {
       if let Some(term) = cx.editor.terminal(terminal_id) {
+        // Scroll to bottom when typing (standard terminal behavior)
+        term.scroll_to_bottom();
         term.write(&bytes);
       }
       the_editor_event::request_redraw();

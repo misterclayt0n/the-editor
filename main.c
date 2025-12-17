@@ -1,12 +1,8 @@
 #include <stdio.h>
 
-int add(int a, int b) {
-  return a + b;
-}
-
 int main() {
-  int r = add(1, 2);
-
-  printf("hello world");
+  printf("hi fellas");
+  printf("helix has no auto reload");
+  printf("oh well");
   return 0;
 }

@@ -176,13 +176,31 @@ impl AutoReload {
           };
 
           let reload_result = {
-            let view = view_mut!(editor);
-            let doc = doc_mut!(editor, &doc_id);
-            let result = doc.reload(view, &editor.diff_providers);
-            if result.is_ok() {
-              view.ensure_cursor_in_view(doc, scrolloff);
+            // Find a view that has this document open (current view might be a terminal)
+            let view_id = editor
+              .tree
+              .views()
+              .find(|(v, _)| v.doc() == Some(doc_id))
+              .map(|(v, _)| v.id);
+
+            match view_id {
+              Some(view_id) => {
+                let view = view_mut!(editor, view_id);
+                let doc = doc_mut!(editor, &doc_id);
+                let result = doc.reload(view, &editor.diff_providers);
+                if result.is_ok() {
+                  view.ensure_cursor_in_view(doc, scrolloff);
+                }
+                result
+              },
+              None => {
+                // Document not currently displayed in any view, reload without view context
+                // This can happen if the document was opened but its view was closed
+                // while keeping the document in memory
+                let doc = doc_mut!(editor, &doc_id);
+                doc.reload_headless(&editor.diff_providers)
+              },
             }
-            result
           };
 
           match reload_result {

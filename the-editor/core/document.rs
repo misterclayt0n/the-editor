@@ -1277,6 +1277,52 @@ impl Document {
     Ok(())
   }
 
+  /// Reload the document without a specific view context.
+  /// Used when no view is currently displaying this document (e.g., auto-reload
+  /// while terminal is focused). Uses an existing view's selection for the transaction.
+  pub fn reload_headless(&mut self, provider_registry: &DiffProviderRegistry) -> Result<(), Error> {
+    let encoding = self.encoding;
+    let path = match self.path() {
+      None => return Ok(()),
+      Some(path) => {
+        match path.exists() {
+          true => path.to_owned(),
+          false => bail!("can't find file to reload from {:?}", self.display_name()),
+        }
+      },
+    };
+
+    self.detect_readonly();
+
+    let mut file = std::fs::File::open(&path)?;
+    let (rope, ..) = from_reader(&mut file, Some(encoding))?;
+
+    // Calculate the difference between the buffer and source text
+    let transaction = crate::core::diff::compare_ropes(self.text(), &rope);
+
+    // Find any view that has a selection for this document to apply the transaction
+    if let Some(&view_id) = self.selections.keys().next() {
+      self.apply(&transaction, view_id);
+    } else {
+      // No views have selections - just replace the text directly
+      self.text = rope;
+    }
+
+    // Skip history since we don't have a view context
+    self.reset_modified();
+    self.pickup_last_saved_time();
+    self.detect_indent_and_line_ending();
+
+    match provider_registry.get_diff_base(&path) {
+      Some(diff_base) => self.set_diff_base(diff_base),
+      None => self.diff_handle = None,
+    }
+
+    self.version_control_head = provider_registry.get_current_head_name(&path);
+
+    Ok(())
+  }
+
   /// Sets the [`Document`]'s encoding with the encoding correspondent to
   /// `label`.
   pub fn set_encoding(&mut self, label: &str) -> Result<(), Error> {

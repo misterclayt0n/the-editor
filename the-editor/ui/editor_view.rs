@@ -1028,7 +1028,7 @@ impl Component for EditorView {
             self.terminal_scroll_px %= terminal_height;
 
             if scroll_lines != 0 {
-              if term.mouse_mode() {
+              if term.mouse_mode() || term.alt_screen_mode() {
                 // Get terminal cell position for scroll event
                 let (col, row) = if let Some((mouse_x, mouse_y)) = self.last_mouse_pos {
                   if let Some(node_id) = self.screen_coords_to_node((mouse_x, mouse_y), cx) {
@@ -3440,7 +3440,12 @@ impl EditorView {
     }
 
     // Get selection range for highlighting
-    let selection_range = terminal.selection_range();
+    // Skip selection rendering when TUI app (vim, helix, etc.) controls the display
+    let selection_range = if terminal.alt_screen_mode() {
+      None
+    } else {
+      terminal.selection_range()
+    };
     let selection_bg = theme
       .get("ui.selection")
       .bg
@@ -4386,12 +4391,14 @@ impl EditorView {
               let row = (rel_y / self.cached_cell_height).floor().max(0.0) as i32;
 
               if let Some(term) = cx.editor.terminal(terminal_id) {
-                if term.mouse_mode() {
-                  // Terminal wants mouse events - send to PTY
+                if term.mouse_mode() || term.alt_screen_mode() {
+                  // Terminal or TUI app wants mouse events - send to PTY
                   // SGR mouse format: ESC [ < Cb ; Cx ; Cy M (press) / m (release)
                   let cb = 0; // Left button = 0
                   let report = format!("\x1b[<{};{};{}M", cb, col + 1, row + 1);
                   term.write(report.as_bytes());
+                  // Track so we can send release
+                  self.terminal_selection_active = Some(terminal_id);
                 } else {
                   // Terminal not in mouse mode - start selection
                   use the_terminal::SelectionType;
@@ -4475,7 +4482,7 @@ impl EditorView {
           // Handle terminal mouse release
           if let Some(terminal_id) = self.terminal_selection_active.take() {
             if let Some(term) = cx.editor.terminal(terminal_id) {
-              if term.mouse_mode() {
+              if term.mouse_mode() || term.alt_screen_mode() {
                 // Send mouse release to PTY
                 if let Some(node_id) = self.screen_coords_to_node(mouse.position, cx) {
                   let view = cx.editor.tree.get(node_id);
@@ -4598,7 +4605,7 @@ impl EditorView {
                 let row_unclamped = (rel_y / self.cached_cell_height).floor() as i32;
                 let (_cols, rows) = term.dimensions();
 
-                if term.mouse_mode() {
+                if term.mouse_mode() || term.alt_screen_mode() {
                   // Send mouse drag to PTY (button 32 = left button + motion flag)
                   let row = row_unclamped.max(0);
                   let report = format!("\x1b[<32;{};{}M", col + 1, row + 1);

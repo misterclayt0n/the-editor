@@ -334,6 +334,13 @@ impl Terminal {
     term.mode().contains(TermMode::SGR_MOUSE)
   }
 
+  /// Check if the terminal is in alternate screen mode.
+  /// TUI apps like vim, helix, less use this mode and control their own display/selection.
+  pub fn alt_screen_mode(&self) -> bool {
+    let term = self.term.lock();
+    term.mode().contains(TermMode::ALT_SCREEN)
+  }
+
   /// Get the current display offset (scroll position in history).
   pub fn display_offset(&self) -> usize {
     let term = self.term.lock();

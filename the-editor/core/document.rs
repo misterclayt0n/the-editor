@@ -2249,7 +2249,13 @@ impl Document {
 
   #[inline]
   pub fn selection(&self, view_id: ViewId) -> &Selection {
-    &self.selections[&view_id]
+    self.selections.get(&view_id).unwrap_or_else(|| {
+      panic!(
+        "selection() called for view {:?} which has no selection - \
+         ensure_view_init() was likely not called",
+        view_id
+      )
+    })
   }
 
   #[inline]

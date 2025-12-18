@@ -231,7 +231,6 @@ fn dir_entry_to_file_info(
 #[derive(Clone, Debug, Default)]
 struct State {
   focus:        bool,
-  open:         bool,
   current_root: PathBuf,
   area_width:   u16,
 }
@@ -241,7 +240,6 @@ impl State {
     Self {
       focus,
       current_root,
-      open: true,
       area_width: 0,
     }
   }
@@ -266,9 +264,9 @@ pub struct Explorer {
   #[allow(clippy::type_complexity)]
   on_next_key:      Option<Box<dyn FnMut(&mut Context, &mut Self, &KeyBinding) -> EventResult>>,
   column_width:     u16,
-  /// Opening/closing animation (0.0 -> 1.0 when opening, 1.0 -> 0.0 when
-  /// closing)
-  closing_anim:     Option<AnimationHandle<f32>>,
+  /// Width animation (0.0 = closed, 1.0 = fully open)
+  /// Uses retarget() to smoothly animate between states
+  width_anim:       AnimationHandle<f32>,
   /// Cache of git status for files
   git_status_cache: GitStatusCache,
   /// Path to reveal when the explorer is next opened.
@@ -285,6 +283,7 @@ impl Explorer {
       .unwrap_or_else(|_| "./".into())
       .canonicalize()?;
     let git_status_cache: GitStatusCache = Arc::new(Mutex::new(HashMap::new()));
+    let (duration, easing) = presets::FAST;
 
     let mut explorer = Self {
       tree:             Self::new_tree_view(current_root.clone(), Some(git_status_cache.clone()))?,
@@ -293,7 +292,8 @@ impl Explorer {
       state:            State::new(true, current_root.clone()),
       on_next_key:      None,
       column_width:     DEFAULT_EXPLORER_COLUMN_WIDTH,
-      closing_anim:     None,
+      // Start fully open (1.0)
+      width_anim:       AnimationHandle::new(1.0, 1.0, duration, easing),
       git_status_cache: git_status_cache.clone(),
       pending_reveal:   None,
     };
@@ -307,6 +307,7 @@ impl Explorer {
   #[cfg(test)]
   fn from_path(root: PathBuf, column_width: u16) -> Result<Self> {
     let git_status_cache: GitStatusCache = Arc::new(Mutex::new(HashMap::new()));
+    let (duration, easing) = presets::FAST;
     Ok(Self {
       tree: Self::new_tree_view(root.clone(), Some(git_status_cache.clone()))?,
       history: vec![],
@@ -314,7 +315,7 @@ impl Explorer {
       state: State::new(true, root),
       on_next_key: None,
       column_width,
-      closing_anim: None,
+      width_anim: AnimationHandle::new(1.0, 1.0, duration, easing),
       git_status_cache: Arc::new(Mutex::new(HashMap::new())),
       pending_reveal: None,
     })
@@ -394,7 +395,7 @@ impl Explorer {
   /// show the file location without stealing focus from the editor.
   pub fn reveal_file_quiet(&mut self, path: PathBuf) -> Result<()> {
     // If the explorer is closed, store the path to reveal when it opens
-    if !self.state.open {
+    if !self.is_opened() {
       log::debug!(
         "Explorer is not open, storing pending reveal for {:?}",
         path
@@ -420,23 +421,15 @@ impl Explorer {
 
   pub fn focus(&mut self) {
     self.state.focus = true;
-    // If explorer is currently closed, start opening animation
-    if !self.state.open {
-      self.state.open = true;
-      let (duration, easing) = presets::FAST;
-      // Animate from 0.0 (closed) to 1.0 (open)
-      self.closing_anim = Some(AnimationHandle::new(0.0, 1.0, duration, easing));
+    // Animate to fully open
+    self.width_anim.retarget(1.0);
 
-      // Execute any pending reveal from when the explorer was closed
-      if let Some(path) = self.pending_reveal.take() {
-        log::debug!("Executing pending reveal for {:?}", path);
-        if let Err(e) = self.reveal_file(path) {
-          log::warn!("Failed to execute pending reveal: {}", e);
-        }
+    // Execute any pending reveal from when the explorer was closed
+    if let Some(path) = self.pending_reveal.take() {
+      log::debug!("Executing pending reveal for {:?}", path);
+      if let Err(e) = self.reveal_file(path) {
+        log::warn!("Failed to execute pending reveal: {}", e);
       }
-    } else {
-      // Already open, just cancel any closing animation
-      self.closing_anim = None;
     }
   }
 
@@ -447,55 +440,35 @@ impl Explorer {
   /// Close the explorer with animation
   pub fn close(&mut self) {
     self.state.focus = false;
-    // Start closing animation instead of immediately closing
-    let (duration, easing) = presets::FAST;
-    self.closing_anim = Some(AnimationHandle::new(1.0, 0.0, duration, easing));
+    // Animate to fully closed
+    self.width_anim.retarget(0.0);
   }
 
-  /// Check if the explorer is currently animating (opening or closing)
-  pub fn is_closing(&self) -> bool {
-    self.closing_anim.is_some()
+  /// Check if the explorer is currently animating
+  pub fn is_animating(&self) -> bool {
+    !self.width_anim.is_complete() || self.tree.is_animating()
   }
 
-  /// Update the closing/opening animation. Returns true if explorer should be
-  /// removed.
+  /// Update the animation. Returns true if explorer just finished closing.
   pub fn update_closing(&mut self, dt: f32) -> bool {
     // Update tree animations even when explorer is not visible to keep them in sync
     self.tree.tick_animations(dt);
 
-    if let Some(ref mut anim) = self.closing_anim {
-      anim.update(dt);
-      if anim.is_complete() {
-        // Check if this was a closing or opening animation based on target value
-        let target = anim.target();
-        if *target == 0.0 {
-          // This was a closing animation
-          self.state.open = false;
-          self.closing_anim = None;
-          return true; // Explorer should be removed (but we keep it alive now)
-        } else {
-          // This was an opening animation, just clear the animation
-          self.closing_anim = None;
-        }
-      }
-    }
-    false
+    let was_closing = *self.width_anim.target() == 0.0 && !self.width_anim.is_complete();
+    self.width_anim.update(dt);
+
+    // Return true if we just finished closing
+    was_closing && self.width_anim.is_complete()
   }
 
   /// Get the animation progress (1.0 = fully open, 0.0 = fully closed)
-  /// Returns current animation value, or 1.0 if not animating (default to open
-  /// state)
   pub fn closing_progress(&self) -> f32 {
-    self
-      .closing_anim
-      .as_ref()
-      .map(|a| *a.current())
-      .unwrap_or(1.0)
+    *self.width_anim.current()
   }
 
-  /// Check if any explorer animation is currently active.
-  pub fn is_animating(&self) -> bool {
-    self.closing_anim.is_some() || self.tree.is_animating()
+  /// Check if explorer is open (target is open, regardless of animation)
+  pub fn is_opened(&self) -> bool {
+    *self.width_anim.target() > 0.0
   }
 
   pub fn is_focus(&self) -> bool {
@@ -1143,12 +1116,11 @@ impl Explorer {
 
     use crate::ui::UI_FONT_SIZE;
 
-    if !self.state.open && !self.is_closing() {
+    // Don't render if fully closed
+    let close_alpha = self.closing_progress();
+    if close_alpha <= 0.0 {
       return;
     }
-
-    // Get closing animation progress for alpha fade
-    let close_alpha = self.closing_progress();
 
     // Configure font to UI font size (independent of editor font size)
     let ui_font_family = surface.current_font_family().to_owned();
@@ -1333,10 +1305,6 @@ impl Explorer {
     } else {
       Ok(())
     }
-  }
-
-  pub fn is_opened(&self) -> bool {
-    self.state.open
   }
 
   pub fn column_width(&self) -> u16 {
@@ -1765,8 +1733,12 @@ mod test_explorer {
       "Explorer should not be focused after close()"
     );
     assert!(
-      explorer.is_closing(),
-      "Explorer should be in closing animation after close()"
+      !explorer.is_opened(),
+      "Explorer should not be open (target is 0) after close()"
+    );
+    assert!(
+      explorer.is_animating(),
+      "Explorer should be animating after close()"
     );
 
     // Simulate animation completion
@@ -1776,8 +1748,8 @@ mod test_explorer {
       "Explorer should not be open after animation completes"
     );
     assert!(
-      !explorer.is_closing(),
-      "Explorer should not be closing after animation completes"
+      explorer.closing_progress() == 0.0,
+      "Explorer width should be 0 after close animation completes"
     );
   }
 

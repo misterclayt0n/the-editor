@@ -388,17 +388,6 @@ pub struct TreeView<T: TreeViewItem> {
   global_alpha:         f32,
   /// Cached viewport height for scrolloff calculations
   viewport_height:      usize,
-  /// Folder expand/collapse animation: (folder_index, is_expanding, animation,
-  /// num_children) num_children is used for collapse animation to know how
-  /// many items to animate
-  folder_anim: Option<(
-    usize,
-    bool,
-    crate::core::animation::AnimationHandle<f32>,
-    usize,
-  )>,
-  /// Folder index pending close after collapse animation completes
-  pending_folder_close: Option<usize>,
 }
 
 impl<T: TreeViewItem> TreeView<T> {
@@ -438,8 +427,6 @@ impl<T: TreeViewItem> TreeView<T> {
       )),
       global_alpha:         1.0,
       viewport_height:      0, // Will be updated on first render
-      folder_anim:          None,
-      pending_folder_close: None,
     })
   }
 
@@ -580,24 +567,11 @@ impl<T: TreeViewItem> TreeView<T> {
         self.entrance_anim = None;
       }
     }
-
-    if let Some((_folder_idx, _is_expanding, ref mut anim, _num_children)) = self.folder_anim {
-      anim.update(dt);
-      if anim.is_complete() {
-        self.folder_anim = None;
-        if let Some(pending_idx) = self.pending_folder_close.take() {
-          if let Ok(folder) = self.get_mut(pending_idx) {
-            folder.close();
-          }
-          self.regenerate_index();
-        }
-      }
-    }
   }
 
   /// Check if any tree animation is currently active.
   pub fn is_animating(&self) -> bool {
-    !self.selection_anim.is_complete() || self.entrance_anim.is_some() || self.folder_anim.is_some()
+    !self.selection_anim.is_complete() || self.entrance_anim.is_some()
   }
 
   fn move_to_first_line(&mut self) {
@@ -677,26 +651,10 @@ impl<T: TreeViewItem> TreeView<T> {
     let is_opened = self.get(selected_index)?.is_opened;
 
     if is_opened {
-      // Count children before closing (for animation)
-      let num_children = self.get(selected_index)?.children.len();
-
-      if num_children > 0 {
-        // Start collapse animation - fast like picker
-        let (duration, easing) = crate::core::animation::presets::FAST;
-        self.folder_anim = Some((
-          selected_index,
-          false,
-          crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing),
-          num_children,
-        ));
-        // Mark folder for closing after animation completes
-        self.pending_folder_close = Some(selected_index);
-      } else {
-        // No children, just close immediately
-        let selected_item = self.get_mut(selected_index)?;
-        selected_item.close();
-        self.regenerate_index();
-      }
+      // Close folder immediately (no animation)
+      let selected_item = self.get_mut(selected_index)?;
+      selected_item.close();
+      self.regenerate_index();
       return Ok(());
     }
 
@@ -707,17 +665,6 @@ impl<T: TreeViewItem> TreeView<T> {
           TreeOp::GetChildsAndInsert => {
             if let Err(err) = current.open() {
               cx.editor.set_error(format!("{err}"))
-            } else {
-              // Count the new children for animation
-              let num_children = current.children.len();
-              // Start expand animation - fast like picker
-              let (duration, easing) = crate::core::animation::presets::FAST;
-              self.folder_anim = Some((
-                self.selected,
-                true,
-                crate::core::animation::AnimationHandle::new(0.0, 1.0, duration, easing),
-                num_children,
-              ));
             }
           },
           TreeOp::Noop => {},
@@ -1316,7 +1263,7 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
       file_icons,
     };
 
-    let (entrance_progress, folder_anim_state) = self.update_animations(cx.dt);
+    let entrance_progress = self.update_animations(cx.dt);
     let selection_anim_value = *self.selection_anim.current();
 
     // Configure font
@@ -1337,8 +1284,7 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
     let lines = self.render_lines(area);
 
     for (index, line) in lines.into_iter().enumerate() {
-      let (item_entrance, slide_offset) =
-        self.compute_item_animation(index, entrance_progress, folder_anim_state, &line);
+      let (item_entrance, slide_offset) = self.compute_item_animation(index, entrance_progress);
 
       let item_rect = ItemRect {
         x:      area_px.x + 4.0 - slide_offset,
@@ -1420,11 +1366,11 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
     }
   }
 
-  /// Updates all animations and returns (entrance_progress, folder_anim_state)
-  fn update_animations(&mut self, dt: f32) -> (f32, Option<(usize, bool, f32, bool, usize)>) {
+  /// Updates all animations and returns entrance_progress
+  fn update_animations(&mut self, dt: f32) -> f32 {
     self.selection_anim.update(dt);
 
-    let entrance_progress = if let Some(ref mut anim) = self.entrance_anim {
+    if let Some(ref mut anim) = self.entrance_anim {
       anim.update(dt);
       let progress = *anim.current();
       if anim.is_complete() {
@@ -1433,46 +1379,15 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
       progress
     } else {
       1.0
-    };
-
-    let folder_anim_state =
-      if let Some((folder_idx, is_expanding, ref mut anim, num_children)) = self.folder_anim {
-        anim.update(dt);
-        let progress = *anim.current();
-        let complete = anim.is_complete();
-        Some((folder_idx, is_expanding, progress, complete, num_children))
-      } else {
-        None
-      };
-
-    // Handle completed folder animation
-    if let Some((_, _, _, complete, _)) = folder_anim_state {
-      if complete {
-        self.folder_anim = None;
-        if let Some(folder_idx) = self.pending_folder_close.take() {
-          if let Ok(folder) = self.get_mut(folder_idx) {
-            folder.close();
-          }
-          self.regenerate_index();
-        }
-      }
     }
-
-    (entrance_progress, folder_anim_state)
   }
 
   /// Computes animation values for a single item
-  fn compute_item_animation(
-    &self,
-    index: usize,
-    entrance_progress: f32,
-    folder_anim_state: Option<(usize, bool, f32, bool, usize)>,
-    line: &RenderedLine,
-  ) -> (f32, f32) {
+  fn compute_item_animation(&self, index: usize, entrance_progress: f32) -> (f32, f32) {
     let global_alpha = self.global_alpha;
 
     // Entrance animation
-    let (mut item_entrance, slide_offset) = if entrance_progress < 1.0 {
+    if entrance_progress < 1.0 {
       let item_start = (index as f32 * 0.015).min(0.5);
       let item_duration = 0.5;
       let item_progress = ((entrance_progress - item_start) / item_duration).clamp(0.0, 1.0);
@@ -1480,32 +1395,7 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
       (item_progress * global_alpha, slide)
     } else {
       (global_alpha, 0.0)
-    };
-
-    // Folder expand/collapse animation
-    if let Some((folder_idx, is_expanding, progress, ..)) = folder_anim_state {
-      if self.is_descendant_of(line.parent_index, folder_idx) {
-        item_entrance *= if is_expanding {
-          progress
-        } else {
-          1.0 - progress
-        };
-      }
     }
-
-    (item_entrance, slide_offset)
-  }
-
-  /// Checks if an item is a descendant of a folder by walking up the parent
-  /// chain
-  fn is_descendant_of(&self, mut parent_index: Option<usize>, folder_idx: usize) -> bool {
-    while let Some(parent_idx) = parent_index {
-      if parent_idx == folder_idx {
-        return true;
-      }
-      parent_index = self.tree.get(parent_idx).and_then(|p| p.parent_index);
-    }
-    false
   }
 
   /// Draws all background layers for an item (hover, selection, ancestor

@@ -439,11 +439,10 @@ impl EditorView {
   /// Toggle the tree explorer sidebar
   pub fn toggle_explorer(&mut self, cx: &mut Context) {
     if let Some(ref mut explorer) = self.explorer {
-      // If explorer exists, toggle its visibility
-      if explorer.is_opened() && !explorer.is_closing() {
+      // Toggle based on target state, regardless of animation
+      if explorer.is_opened() {
         explorer.close();
-      } else if !explorer.is_opened() {
-        // Explorer exists but is closed - reopen it (preserving layout)
+      } else {
         explorer.focus();
       }
     } else {
@@ -482,7 +481,7 @@ impl EditorView {
   /// Close the tree explorer sidebar (with animation)
   pub fn close_explorer(&mut self) {
     if let Some(ref mut explorer) = self.explorer {
-      if explorer.is_opened() && !explorer.is_closing() {
+      if explorer.is_opened() {
         explorer.close();
       }
     }
@@ -1301,16 +1300,12 @@ impl Component for EditorView {
     // Note: We keep the explorer instance alive even when closed to preserve tree
     // layout.
     self.explorer_px_width = if let Some(ref mut explorer) = self.explorer {
-      // Update closing animation (but don't destroy explorer when complete)
+      // Update animation
       explorer.update_closing(cx.dt);
-      if explorer.is_opened() || explorer.is_closing() {
-        let explorer_width_cells = explorer.column_width();
-        let base_width = explorer_width_cells as f32 * ui_cell_width;
-        // Apply closing animation progress
-        base_width * explorer.closing_progress()
-      } else {
-        0.0
-      }
+      // Width is base_width * animation_progress (0.0 when closed, 1.0 when open)
+      let explorer_width_cells = explorer.column_width();
+      let base_width = explorer_width_cells as f32 * ui_cell_width;
+      base_width * explorer.closing_progress()
     } else {
       0.0
     };

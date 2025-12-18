@@ -1277,6 +1277,11 @@ impl Explorer {
     self.tree.set_hovered_row(row);
   }
 
+  /// Set the mouse position for glow effects
+  pub fn set_mouse_pos(&mut self, pos: Option<(f32, f32)>) {
+    self.tree.set_mouse_pos(pos);
+  }
+
   /// Scroll the tree view by delta lines (positive = down, negative = up)
   pub fn scroll(&mut self, delta: i32) {
     self.tree.scroll(delta);

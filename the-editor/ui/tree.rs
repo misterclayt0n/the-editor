@@ -382,6 +382,8 @@ pub struct TreeView<T: TreeViewItem> {
   prev_selected:        usize,
   /// Hovered visual row (for hover glow effect)
   hovered_row:          Option<usize>,
+  /// Current mouse position for glow effects
+  mouse_pos:            Option<(f32, f32)>,
   /// Entrance animation progress (0.0 -> 1.0), None when complete
   entrance_anim:        Option<crate::core::animation::AnimationHandle<f32>>,
   /// Global alpha multiplier (for closing animations, etc.)
@@ -419,6 +421,7 @@ impl<T: TreeViewItem> TreeView<T> {
       ),
       prev_selected:        0,
       hovered_row:          None,
+      mouse_pos:            None,
       entrance_anim:        Some(crate::core::animation::AnimationHandle::new(
         0.0,
         1.0,
@@ -798,6 +801,11 @@ impl<T: TreeViewItem> TreeView<T> {
   /// Get the currently hovered row
   pub fn hovered_row(&self) -> Option<usize> {
     self.hovered_row
+  }
+
+  /// Set the mouse position for glow effects
+  pub fn set_mouse_pos(&mut self, pos: Option<(f32, f32)>) {
+    self.mouse_pos = pos;
   }
 
   /// Set the global alpha multiplier (for closing animations)
@@ -1425,13 +1433,13 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
 
     let is_hovered = self.hovered_row == Some(index);
 
-    // Hover highlight
+    // Hover highlight with background fill
     if is_hovered && !line.selected {
       let hover_bg = Color::new(
         colors.selection_fill.r,
         colors.selection_fill.g,
         colors.selection_fill.b,
-        0.25 * item_entrance,
+        0.20 * item_entrance,
       );
       surface.draw_rounded_rect(
         rect.x,
@@ -1440,6 +1448,52 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
         rect.height,
         layout.radius,
         hover_bg,
+      );
+
+      // Mouse-following glow effect (raddebugger style)
+      if let Some((mouse_x, mouse_y)) = self.mouse_pos {
+        let glow_alpha = 0.06 * item_entrance;
+        let glow_color = Color::new(
+          colors.selection_stroke.r,
+          colors.selection_stroke.g,
+          colors.selection_stroke.b,
+          glow_alpha,
+        );
+        let glow_radius = (rect.height * 2.5).min(rect.width * 0.6);
+        surface.draw_rounded_rect_glow(
+          rect.x,
+          rect.y,
+          rect.width,
+          rect.height,
+          layout.radius,
+          mouse_x,
+          mouse_y,
+          glow_radius,
+          glow_color,
+        );
+      }
+
+      // Hover border with gradient thickness
+      let border_alpha = 0.5 * item_entrance;
+      let border_color = Color::new(
+        colors.selection_stroke.r,
+        colors.selection_stroke.g,
+        colors.selection_stroke.b,
+        border_alpha,
+      );
+      let bottom = (rect.height * 0.035).clamp(0.6, 1.2);
+      let side = (bottom * 1.55).min(bottom + 1.6);
+      let top = (bottom * 2.2).min(bottom + 2.4);
+      surface.draw_rounded_rect_stroke_fade(
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        layout.radius,
+        top,
+        side,
+        bottom,
+        border_color,
       );
     }
 

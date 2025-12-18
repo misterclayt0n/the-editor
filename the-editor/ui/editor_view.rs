@@ -4983,6 +4983,9 @@ impl EditorView {
                 request_redraw();
               }
 
+              // Always update mouse position for glow effect
+              explorer.set_mouse_pos(Some((mouse.position.0, mouse.position.1)));
+
               match mouse.button {
                 Some(the_editor_renderer::MouseButton::Left) if mouse.pressed => {
                   self.last_click_time = Some(std::time::Instant::now());
@@ -5005,6 +5008,7 @@ impl EditorView {
               if self.explorer_hovered_item.is_some() {
                 self.explorer_hovered_item = None;
                 explorer.set_hovered_row(None);
+                explorer.set_mouse_pos(None);
                 request_redraw();
               }
             }
@@ -5016,6 +5020,7 @@ impl EditorView {
             if self.explorer_hovered_item.is_some() {
               self.explorer_hovered_item = None;
               explorer.set_hovered_row(None);
+              explorer.set_mouse_pos(None);
               request_redraw();
             }
 

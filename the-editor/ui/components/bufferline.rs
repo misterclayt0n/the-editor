@@ -36,16 +36,45 @@ pub struct BufferTab {
 }
 
 /// Per-tab animation state using exponential decay
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct TabAnimationState {
   /// Hover state (0.0 = not hovered, 1.0 = fully hovered)
-  pub hover_t:        f32,
+  pub hover_t:         f32,
   /// Close button hover state
-  pub close_hover_t:  f32,
+  pub close_hover_t:   f32,
   /// Press/click state for the tab
-  pub pressed_t:      f32,
+  pub pressed_t:       f32,
   /// Press/click state for the close button
   pub close_pressed_t: f32,
+  /// Active/selected tab state
+  pub active_t:        f32,
+  /// Alive state for close animation (1.0 = visible, 0.0 = closed)
+  pub alive_t:         f32,
+  /// Flag indicating this tab is closing (triggers animation even at alive_t=1.0)
+  pub is_closing:      bool,
+  /// Cached tab width for close animation (so we know width during fade-out)
+  pub cached_width:    f32,
+  /// Cached tab position (start_x) for close animation
+  pub cached_start_x:  f32,
+  /// Tab index when last alive (for ordering closing tabs)
+  pub cached_index:    usize,
+}
+
+impl Default for TabAnimationState {
+  fn default() -> Self {
+    Self {
+      hover_t:         0.0,
+      close_hover_t:   0.0,
+      pressed_t:       0.0,
+      close_pressed_t: 0.0,
+      active_t:        0.0,
+      alive_t:         0.0, // Start at 0 so new tabs animate in
+      is_closing:      false,
+      cached_width:    0.0,
+      cached_start_x:  0.0,
+      cached_index:    0,
+    }
+  }
 }
 
 impl TabAnimationState {
@@ -57,19 +86,27 @@ impl TabAnimationState {
     is_close_hovered: bool,
     is_pressed: bool,
     is_close_pressed: bool,
+    is_active: bool,
+    is_alive: bool, // false when tab is closing
   ) {
     // Exponential decay formula: rate = 1 - 2^(-60 * dt)
     let rate = 1.0 - 2.0_f32.powf(-60.0 * dt);
+    // Slower rate for alive animation (more deliberate close)
+    let alive_rate = 1.0 - 2.0_f32.powf(-30.0 * dt);
 
     let hover_target = if is_hovered { 1.0 } else { 0.0 };
     let close_hover_target = if is_close_hovered { 1.0 } else { 0.0 };
     let press_target = if is_pressed { 1.0 } else { 0.0 };
     let close_press_target = if is_close_pressed { 1.0 } else { 0.0 };
+    let active_target = if is_active { 1.0 } else { 0.0 };
+    let alive_target = if is_alive { 1.0 } else { 0.0 };
 
     self.hover_t += (hover_target - self.hover_t) * rate;
     self.close_hover_t += (close_hover_target - self.close_hover_t) * rate;
     self.pressed_t += (press_target - self.pressed_t) * rate;
     self.close_pressed_t += (close_press_target - self.close_pressed_t) * rate;
+    self.active_t += (active_target - self.active_t) * rate;
+    self.alive_t += (alive_target - self.alive_t) * alive_rate;
 
     // Snap to target when close enough
     if (self.hover_t - hover_target).abs() < 0.01 {
@@ -84,6 +121,12 @@ impl TabAnimationState {
     if (self.close_pressed_t - close_press_target).abs() < 0.01 {
       self.close_pressed_t = close_press_target;
     }
+    if (self.active_t - active_target).abs() < 0.01 {
+      self.active_t = active_target;
+    }
+    if (self.alive_t - alive_target).abs() < 0.01 {
+      self.alive_t = alive_target;
+    }
   }
 
   /// Returns true if any animation is in progress
@@ -92,6 +135,11 @@ impl TabAnimationState {
       || self.close_hover_t > 0.01
       || self.pressed_t > 0.01
       || self.close_pressed_t > 0.01
+      || (self.active_t > 0.01 && self.active_t < 0.99)
+      // alive_t animation: opening (0->1) or closing (1->0)
+      || (self.alive_t > 0.005 && self.alive_t < 0.995)
+      // is_closing flag ensures we animate even when alive_t is still at 1.0
+      || self.is_closing
   }
 }
 
@@ -174,18 +222,30 @@ pub fn render(
   scroll_offset: f32,
   mouse_pos: Option<(f32, f32)>,
   dt: f32,
+  alive_t: f32, // Height animation for show/hide (0.0 = hidden/collapsed, 1.0 = fully visible)
 ) -> RenderResult {
   tabs.clear();
+
+  // Helper to apply alpha
+  let with_alpha = |color: Color, alpha: f32| -> Color {
+    Color::new(color.r, color.g, color.b, alpha.clamp(0.0, 1.0))
+  };
 
   let saved_font = surface.save_font_state();
   let ui_font_family = surface.current_font_family().to_owned();
   surface.configure_font(&ui_font_family, UI_FONT_SIZE);
 
   let base_cell_height = surface.cell_height().max(UI_FONT_SIZE + 4.0);
-  let cell_height = (base_cell_height + 10.0).max(UI_FONT_SIZE + 16.0);
-  let tab_height = (cell_height - 6.0).max(UI_FONT_SIZE + 8.0);
-  let tab_top = origin_y + (cell_height - tab_height) * 0.5;
+  let full_cell_height = (base_cell_height + 10.0).max(UI_FONT_SIZE + 16.0);
+  // For slide animation: visible_height is how much space the bufferline takes in layout
+  let visible_height = full_cell_height * alive_t;
+  let tab_height = (full_cell_height - 6.0).max(UI_FONT_SIZE + 8.0);
+  // Content slides up as alive_t decreases: alive_t=1 -> normal, alive_t=0 -> fully slid up
+  let y_slide_offset = -full_cell_height * (1.0 - alive_t);
+  let tab_top = origin_y + y_slide_offset + (full_cell_height - tab_height) * 0.5;
   let text_y = tab_top + (tab_height - UI_FONT_SIZE) * 0.5;
+  // cell_height is the visible space; we clip to this but render full-size content
+  let cell_height = visible_height;
 
   let theme = &editor.theme;
 
@@ -241,15 +301,18 @@ pub fn render(
     .map(theme_color_to_renderer_color)
     .unwrap_or_else(|| glow_rgb_from_base(button_base));
 
-  // Draw background
-  surface.draw_rect(origin_x, origin_y, viewport_width, cell_height, base_bg);
+  // Push scissor rect to clip bufferline content during slide animation
+  surface.push_scissor_rect(origin_x, origin_y, viewport_width, visible_height.max(0.0));
+
+  // Draw background (full height for slide effect)
+  surface.draw_rect(origin_x, origin_y + y_slide_offset, viewport_width, full_cell_height, base_bg);
 
   // Draw subtle separators
   let separator_color = base_bg.lerp(Color::WHITE, 0.05);
-  surface.draw_rect(origin_x, origin_y, viewport_width, 1.0, separator_color);
+  surface.draw_rect(origin_x, origin_y + y_slide_offset, viewport_width, 1.0, separator_color);
   surface.draw_rect(
     origin_x,
-    origin_y + cell_height - 1.0,
+    origin_y + y_slide_offset + full_cell_height - 1.0,
     viewport_width,
     1.0,
     separator_color,
@@ -261,6 +324,7 @@ pub fn render(
 
   // Collect documents to render
   let documents: Vec<_> = editor.documents().collect();
+  let doc_ids: std::collections::HashSet<_> = documents.iter().map(|d| d.id()).collect();
 
   // Layout constants
   let icon_size = (UI_FONT_SIZE * 1.0) as u32;
@@ -274,6 +338,14 @@ pub fn render(
   let left_margin = 4.0;
   let add_button_reserved = tab_height + 12.0;
   let available_width = viewport_width - left_margin - add_button_reserved;
+
+  // Mark closing tabs and update their animation state
+  for (id, anim) in animation_states.iter_mut() {
+    if !doc_ids.contains(id) {
+      anim.is_closing = true;
+      anim.update(dt, false, false, false, false, false, false);
+    }
+  }
 
   // Calculate natural width for each tab - sized exactly to content, no maximum
   let tab_widths: Vec<f32> = documents
@@ -317,10 +389,6 @@ pub fn render(
   surface.push_scissor_rect(clip_left, origin_y, clip_right - clip_left, cell_height);
 
   for (tab_index, doc) in documents.iter().enumerate() {
-    let draw_width = tab_widths[tab_index];
-    let tab_start = cursor_x;
-    let tab_end = cursor_x + draw_width;
-
     let doc_id = doc.id();
     let is_active = Some(doc_id) == current_doc_id;
     let is_hovered = Some(tab_index) == hover_index;
@@ -330,19 +398,30 @@ pub fn render(
 
     // Get or create animation state for this tab
     let anim = animation_states.entry(doc_id).or_default();
-    anim.update(dt, is_hovered, is_close_hovered, is_pressed, is_close_pressed);
+    anim.update(dt, is_hovered, is_close_hovered, is_pressed, is_close_pressed, is_active, true);
 
-    // Store tab bounds for hit testing (even if not visible, for scroll calculations)
+    // Apply alive_t to width for open/close animation
+    let base_width = tab_widths[tab_index];
+    let draw_width = base_width * anim.alive_t;
+    let tab_start = cursor_x;
+    let tab_end = cursor_x + draw_width;
+
+    // Cache position info for close animation (use base width, not animated)
+    anim.cached_width = base_width;
+    anim.cached_start_x = tab_start;
+    anim.cached_index = tab_index;
+
+    // Store tab bounds for hit testing (use animated width)
     tabs.push(BufferTab {
       kind: BufferKind::Document(doc_id),
       start_x: tab_start,
       end_x: tab_end,
-      close_start_x: tab_end - close_btn_width,
+      close_start_x: tab_end - close_btn_width * anim.alive_t,
       close_end_x: tab_end,
     });
 
-    // Skip rendering if tab is completely outside visible area
-    let is_visible = tab_end > clip_left && tab_start < clip_right;
+    // Skip rendering if tab is too small or completely outside visible area
+    let is_visible = draw_width > 1.0 && tab_end > clip_left && tab_start < clip_right;
     if !is_visible {
       cursor_x = tab_end + tab_spacing;
       continue;
@@ -358,17 +437,13 @@ pub fn render(
     let name_str = name.as_ref();
     let icon = file_icons::icon_for_file(name_str);
 
-    // Determine colors based on state
-    let (text_color, bg_alpha) = if is_active {
-      (active_text.lerp(Color::WHITE, 0.1), 0.15 + anim.hover_t * 0.1)
-    } else if anim.hover_t > 0.0 {
-      (
-        inactive_text.lerp(active_text, anim.hover_t),
-        anim.hover_t * 0.12,
-      )
-    } else {
-      (inactive_text, 0.0)
-    };
+    // Determine colors based on state - using active_t for smooth transitions
+    // Fade content based on alive_t for open/close animation
+    let content_opacity = anim.alive_t;
+    let blend = anim.active_t.max(anim.hover_t);
+    let text_color_base = inactive_text.lerp(active_text.lerp(Color::WHITE, 0.1), blend);
+    let text_color = with_alpha(text_color_base, text_color_base.a * content_opacity);
+    let bg_alpha = (0.15 * anim.active_t + anim.hover_t * 0.12 * (1.0 - anim.active_t)) * content_opacity;
 
     // Draw tab background (subtle fill on hover/active) - use clipped dimensions
     if bg_alpha > 0.0 && clipped_width > 0.0 {
@@ -376,15 +451,13 @@ pub fn render(
       surface.draw_rounded_rect(clipped_start_x, tab_top, clipped_width, tab_height, 3.0, bg_color);
     }
 
-    // Draw border/outline with directional thickness when hovered - use clipped dimensions
-    if (anim.hover_t > 0.1 || is_active) && clipped_width > 0.0 {
-      let border_strength = if is_active {
-        0.6 + anim.hover_t * 0.4
-      } else {
-        anim.hover_t * 0.8
-      };
+    // Draw border/outline with directional thickness - use clipped dimensions
+    // Using active_t for smooth transitions, faded by alive_t
+    if (anim.hover_t > 0.1 || anim.active_t > 0.1) && clipped_width > 0.0 && content_opacity > 0.1 {
+      let border_strength =
+        (0.6 * anim.active_t + anim.hover_t * 0.8 * (1.0 - anim.active_t * 0.5)) * content_opacity;
       let outline_color = with_alpha(
-        if is_active { active_border } else { button_base },
+        button_base.lerp(active_border, anim.active_t),
         border_strength,
       );
 
@@ -392,15 +465,16 @@ pub fn render(
       let side_thickness = (bottom_thickness * 1.55).min(bottom_thickness + 1.8);
       let top_thickness = (bottom_thickness * 2.3).min(bottom_thickness + 2.6);
 
+      let thickness_blend = anim.hover_t.max(anim.active_t);
       surface.draw_rounded_rect_stroke_fade(
         clipped_start_x,
         tab_top,
         clipped_width,
         tab_height,
         3.0,
-        top_thickness * anim.hover_t.max(if is_active { 0.5 } else { 0.0 }),
-        side_thickness * anim.hover_t.max(if is_active { 0.3 } else { 0.0 }),
-        bottom_thickness * anim.hover_t.max(if is_active { 0.2 } else { 0.0 }),
+        top_thickness * thickness_blend.max(anim.active_t * 0.5),
+        side_thickness * thickness_blend.max(anim.active_t * 0.3),
+        bottom_thickness * thickness_blend.max(anim.active_t * 0.2),
         outline_color,
       );
     }
@@ -413,9 +487,9 @@ pub fn render(
     // Draw mouse-following glow (raddebugger style)
     // When close button is hovered, only glow the close button area
     // When tab is hovered (but not close), glow the tab area excluding close button
-    if anim.hover_t > 0.01 && clipped_width > 0.0 {
+    if anim.hover_t > 0.01 && clipped_width > 0.0 && content_opacity > 0.1 {
       if let Some((mouse_x, mouse_y)) = mouse_pos {
-        let glow_alpha = 0.06 * anim.hover_t * (1.0 - anim.pressed_t * 0.5);
+        let glow_alpha = 0.06 * anim.hover_t * (1.0 - anim.pressed_t * 0.5) * content_opacity;
         let glow_color = Color::new(
           button_highlight.r,
           button_highlight.g,
@@ -461,8 +535,8 @@ pub fn render(
     }
 
     // Draw press glow - use clipped dimensions
-    if anim.pressed_t > 0.0 && clipped_width > 0.0 {
-      let glow_alpha = 0.15 * anim.pressed_t;
+    if anim.pressed_t > 0.0 && clipped_width > 0.0 && content_opacity > 0.1 {
+      let glow_alpha = 0.15 * anim.pressed_t * content_opacity;
       let press_glow = Color::new(
         button_highlight.r,
         button_highlight.g,
@@ -520,14 +594,15 @@ pub fn render(
       text_color,
     ));
 
-    // Draw close button - always visible, occupies full allocated space
-    let close_visible = close_x >= clip_left && close_x + close_btn_width <= clip_right;
+    // Draw close button - visible when tab is large enough
+    let close_visible =
+      content_opacity > 0.3 && close_x >= clip_left && close_x + close_btn_width <= clip_right;
 
     if close_visible {
       // Draw close button background on hover (full area)
       if anim.close_hover_t > 0.0 || anim.close_pressed_t > 0.0 {
-        let hover_alpha = anim.close_hover_t * 0.2;
-        let press_alpha = anim.close_pressed_t * 0.1;
+        let hover_alpha = anim.close_hover_t * 0.2 * content_opacity;
+        let press_alpha = anim.close_pressed_t * 0.1 * content_opacity;
         let close_bg = with_alpha(button_base, hover_alpha + press_alpha);
         surface.draw_rect(close_x, close_y, close_btn_width, close_height, close_bg);
       }
@@ -537,11 +612,11 @@ pub fn render(
         let shadow_height = (close_height * 0.35 * anim.close_pressed_t).min(close_height * 0.4);
 
         // Top dark shadow (pressed-in effect)
-        let shadow_alpha = 0.2 * anim.close_pressed_t;
+        let shadow_alpha = 0.2 * anim.close_pressed_t * content_opacity;
         surface.draw_rect(close_x, close_y, close_btn_width, shadow_height, with_alpha(Color::BLACK, shadow_alpha));
 
         // Bottom light highlight (reflection)
-        let light_alpha = 0.08 * anim.close_pressed_t;
+        let light_alpha = 0.08 * anim.close_pressed_t * content_opacity;
         surface.draw_rect(
           close_x,
           close_y + close_height - shadow_height,
@@ -551,9 +626,9 @@ pub fn render(
         );
       }
 
-      // Draw × character - always visible with base alpha, brighter on hover
-      let base_alpha = 0.4;
-      let hover_boost = anim.close_hover_t * 0.6;
+      // Draw × character - fades with content
+      let base_alpha = 0.4 * content_opacity;
+      let hover_boost = anim.close_hover_t * 0.6 * content_opacity;
       let x_color = with_alpha(
         inactive_text.lerp(active_text, anim.close_hover_t * 0.5),
         base_alpha + hover_boost,
@@ -572,9 +647,56 @@ pub fn render(
   // Pop scissor rect now that tabs are done
   surface.pop_scissor_rect();
 
-  // Clean up animation states for closed documents
-  let doc_ids: std::collections::HashSet<_> = documents.iter().map(|d| d.id()).collect();
-  animation_states.retain(|id, _| doc_ids.contains(id));
+  // Push scissor rect for closing tabs overlay
+  surface.push_scissor_rect(clip_left, origin_y, clip_right - clip_left, cell_height);
+
+  // Render closing tabs (already updated earlier in the function)
+  for (_id, anim) in animation_states.iter() {
+    if anim.is_closing && anim.alive_t > 0.01 {
+      // Render the closing tab with shrinking width at its last known position
+      let animated_width = anim.cached_width * anim.alive_t;
+      if animated_width > 0.5 {
+        let tab_start = anim.cached_start_x;
+        let tab_end = tab_start + animated_width;
+
+        // Skip if outside visible area
+        if tab_end > clip_left && tab_start < clip_right {
+          let clipped_start_x = tab_start.max(clip_left);
+          let clipped_end_x = tab_end.min(clip_right);
+          let clipped_width = (clipped_end_x - clipped_start_x).max(0.0);
+
+          // Draw shrinking tab background matching live tabs
+          if clipped_width > 0.0 {
+            let content_opacity = anim.alive_t;
+            // Use a visible background color that matches the active tab style
+            let bg_alpha = (0.2 + 0.1 * content_opacity).min(0.3);
+            let bg_color = with_alpha(active_accent, bg_alpha);
+            surface.draw_rounded_rect(clipped_start_x, tab_top, clipped_width, tab_height, 3.0, bg_color);
+
+            // Draw border for visibility (same style as active tabs)
+            let border_alpha = 0.6 * content_opacity;
+            let border_color = with_alpha(active_border, border_alpha);
+            surface.draw_rounded_rect_stroke(
+              clipped_start_x,
+              tab_top,
+              clipped_width,
+              tab_height,
+              3.0,
+              1.5,
+              border_color,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  surface.pop_scissor_rect();
+
+  // Remove animation states only when animation is complete (alive_t near 0)
+  animation_states.retain(|id, anim| {
+    doc_ids.contains(id) || anim.alive_t > 0.01
+  });
 
   // Draw add (+) button
   add_button_state.update(dt, add_button_hovered, add_button_pressed);
@@ -654,6 +776,9 @@ pub fn render(
   } else {
     None
   };
+
+  // Pop the main bufferline scissor rect (for slide animation clipping)
+  surface.pop_scissor_rect();
 
   surface.restore_font_state(saved_font);
 

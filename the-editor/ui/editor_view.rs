@@ -252,6 +252,7 @@ pub struct EditorView {
   // Signature help popup
   pub(crate) signature_help: Option<crate::ui::components::SignatureHelp>,
   bufferline_visible:        bool,
+  bufferline_alive_t:        f32, // Animation for show/hide (0.0 = hidden, 1.0 = visible)
   // Cached font metrics for mouse handling (updated during render)
   cached_cell_width:         f32,
   cached_cell_height:        f32,
@@ -284,6 +285,7 @@ pub struct EditorView {
   tab_animation_states:      std::collections::HashMap<crate::core::DocumentId, bufferline::TabAnimationState>,
   add_button_state:          bufferline::AddButtonState,
   bufferline_scroll_offset:  f32,
+  bufferline_scroll_target:  f32,
   bufferline_max_scroll:     f32,
   // Tree explorer sidebar
   explorer:                  Option<Explorer>,
@@ -373,6 +375,7 @@ impl EditorView {
       completion: None,
       signature_help: None,
       bufferline_visible: false,
+      bufferline_alive_t: 0.0,
       cached_cell_width: 12.0,  // Default, will be updated during render
       cached_cell_height: 24.0, // Default, will be updated during render
       cached_font_size: 18.0,   // Default, will be updated during render
@@ -398,6 +401,7 @@ impl EditorView {
       tab_animation_states: std::collections::HashMap::new(),
       add_button_state: bufferline::AddButtonState::default(),
       bufferline_scroll_offset: 0.0,
+      bufferline_scroll_target: 0.0,
       bufferline_max_scroll: 0.0,
       explorer: None,
       explorer_px_width: 0.0,
@@ -761,6 +765,8 @@ impl Component for EditorView {
       || self.underline_anim_active
       || self.inline_diagnostic_anim_active
       || bufferline::needs_animation_update(&self.tab_animation_states, &self.add_button_state)
+      || (self.bufferline_scroll_offset - self.bufferline_scroll_target).abs() > 0.5
+      || (self.bufferline_alive_t > 0.01 && self.bufferline_alive_t < 0.99) // bufferline show/hide animation
   }
 
   fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
@@ -1102,9 +1108,9 @@ impl Component for EditorView {
               },
             };
 
-            // Update scroll offset
-            self.bufferline_scroll_offset =
-              (self.bufferline_scroll_offset + scroll_px).clamp(0.0, self.bufferline_max_scroll);
+            // Update scroll target (animated toward in render)
+            self.bufferline_scroll_target =
+              (self.bufferline_scroll_target + scroll_px).clamp(0.0, self.bufferline_max_scroll);
             self.dirty_region.mark_all_dirty();
             request_redraw();
             return EventResult::Consumed(None);
@@ -1189,6 +1195,17 @@ impl Component for EditorView {
       self.dirty_region.mark_all_dirty();
     }
 
+    // Animate bufferline visibility using exponential decay (slower rate for deliberate animation)
+    {
+      let alive_rate = 1.0 - 2.0_f32.powf(-30.0 * cx.dt);
+      let target = if self.bufferline_visible { 1.0 } else { 0.0 };
+      self.bufferline_alive_t += (target - self.bufferline_alive_t) * alive_rate;
+      // Snap when close enough
+      if (self.bufferline_alive_t - target).abs() < 0.01 {
+        self.bufferline_alive_t = target;
+      }
+    }
+
     // Cache font metrics for mouse handling
     self.cached_cell_width = font_width;
     self.cached_cell_height = renderer.cell_height();
@@ -1211,7 +1228,8 @@ impl Component for EditorView {
     // The statusline is rendered as an overlay by the compositor, but we need to
     // prevent views from rendering underneath it
     let mut target_area = Rect::new(0, 0, area_width, total_rows).clip_bottom(1);
-    if use_bufferline {
+    // Reserve space for bufferline when visible or animating
+    if self.bufferline_alive_t > 0.01 {
       target_area = target_area.clip_top(1);
     }
 
@@ -1374,7 +1392,20 @@ impl Component for EditorView {
       FileTreePosition::Right => 0.0,
     };
 
-    if use_bufferline {
+    // Animate bufferline scroll offset toward target using exponential decay
+    // Use slower rate (-30) for smooth scrolling feel
+    {
+      let scroll_rate = 1.0 - 2.0_f32.powf(-30.0 * cx.dt);
+      self.bufferline_scroll_offset +=
+        (self.bufferline_scroll_target - self.bufferline_scroll_offset) * scroll_rate;
+      // Snap when close enough
+      if (self.bufferline_scroll_offset - self.bufferline_scroll_target).abs() < 0.5 {
+        self.bufferline_scroll_offset = self.bufferline_scroll_target;
+      }
+    }
+
+    // Render bufferline when visible or animating
+    if self.bufferline_alive_t > 0.01 {
       // Offset bufferline by explorer width so it doesn't overlap (only for left-side
       // explorer)
       let result = bufferline::render(
@@ -1395,6 +1426,7 @@ impl Component for EditorView {
         self.bufferline_scroll_offset,
         self.last_mouse_pos,
         cx.dt,
+        self.bufferline_alive_t, // height scale for slide animation (0.0 = collapsed, 1.0 = full)
       );
       self.bufferline_height = result.height;
       self.add_button_rect = result.add_button_rect;
@@ -1413,10 +1445,10 @@ impl Component for EditorView {
 
           if tab_start < visible_start {
             // Tab is to the left of visible area - scroll left
-            self.bufferline_scroll_offset = tab_start.max(0.0);
+            self.bufferline_scroll_target = tab_start.max(0.0);
           } else if tab_end > visible_end {
             // Tab is to the right of visible area - scroll right
-            self.bufferline_scroll_offset = (tab_end - available_width).clamp(0.0, result.max_scroll);
+            self.bufferline_scroll_target = (tab_end - available_width).clamp(0.0, result.max_scroll);
           }
         }
       }

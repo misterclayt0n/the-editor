@@ -651,7 +651,7 @@ impl<T: TreeViewItem> TreeView<T> {
     let is_opened = self.get(selected_index)?.is_opened;
 
     if is_opened {
-      // Close folder immediately (no animation)
+      // Close folder immediately
       let selected_item = self.get_mut(selected_index)?;
       selected_item.close();
       self.regenerate_index();
@@ -1249,9 +1249,18 @@ impl TreeColors {
 }
 
 impl<T: TreeViewItem + Clone> TreeView<T> {
+  /// Render the tree view
+  ///
+  /// # Arguments
+  /// * `area` - The area in cells (width is used, height determines visible items)
+  /// * `y_offset_px` - The Y offset in pixels where tree rendering should start
+  /// * `_prompt_area` - Area for prompt (currently unused)
+  /// * `surface` - The rendering surface
+  /// * `cx` - The context
   pub fn render(
     &mut self,
     area: Rect,
+    y_offset_px: f32,
     _prompt_area: Rect,
     surface: &mut Surface,
     cx: &mut Context,
@@ -1274,10 +1283,10 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
     let colors = TreeColors::from_theme(&cx.editor.theme);
     let layout = ItemLayout::new(UI_FONT_SIZE, cell_width);
 
-    // Calculate pixel positions
+    // Calculate pixel positions - use direct pixel y offset for accuracy
     let area_px = AreaPixels {
       x:     area.x as f32 * cell_width,
-      y:     area.y as f32 * (UI_FONT_SIZE + 4.0),
+      y:     y_offset_px,
       width: area.width as f32 * cell_width,
     };
 

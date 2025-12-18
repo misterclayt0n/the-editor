@@ -1086,11 +1086,12 @@ impl Explorer {
   fn render_tree(
     &mut self,
     area: Rect,
+    y_offset_px: f32,
     prompt_area: Rect,
     surface: &mut Surface,
     cx: &mut Context,
   ) {
-    self.tree.render(area, prompt_area, surface, cx);
+    self.tree.render(area, y_offset_px, prompt_area, surface, cx);
   }
 
   /// Render the explorer as a sidebar
@@ -1201,21 +1202,19 @@ impl Explorer {
     };
     surface.draw_rect(border_x, px_y, 1.0, px_height, border_color);
 
-    // Calculate tree area in cell units for tree rendering
-    // Tree starts below header
+    // Calculate tree area
+    // Tree starts below header separator
     let tree_start_y = sep_y + 1.0;
     let tree_height = px_height - header_height - 1.0;
 
-    // Convert to cell units for tree rendering (which expects Rect in cells)
     // The tree renders items with: item_height = UI_FONT_SIZE + 8.0, item_gap = 2.0
     // So each item takes UI_FONT_SIZE + 10.0 pixels total
     let tree_item_stride = UI_FONT_SIZE + 10.0;
-    let line_height = UI_FONT_SIZE + 4.0;
     let tree_area = Rect::new(
       (px_x / cell_width).floor() as u16,
-      (tree_start_y / line_height).floor() as u16,
+      0, // Y is now passed directly as pixels
       (px_width / cell_width).floor() as u16,
-      // Calculate height as number of items that fit, not line count
+      // Calculate height as number of items that fit
       (tree_height / tree_item_stride).floor() as u16,
     );
     let prompt_area = Rect::new(
@@ -1227,7 +1226,7 @@ impl Explorer {
 
     // Set tree global alpha for closing animation
     self.tree.set_global_alpha(close_alpha);
-    self.render_tree(tree_area, prompt_area, surface, cx);
+    self.render_tree(tree_area, tree_start_y, prompt_area, surface, cx);
   }
 
   fn render_help(&mut self, _area: Rect, _surface: &mut Surface, _cx: &mut Context) {

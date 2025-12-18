@@ -26,10 +26,7 @@ use crate::{
     Mode,
   },
   ui::{
-    components::{
-      button::Button,
-      statusline::StatusLine,
-    },
+    components::statusline::StatusLine,
     compositor::{
       Component,
       Compositor,
@@ -93,23 +90,6 @@ impl App {
     // Add statusline
     let statusline = Box::new(StatusLine::new());
     compositor.push(statusline);
-
-    // NOTE: This is a test button btw.
-    // Use layout engine to position button in top-right corner
-    use crate::core::layout::{
-      Alignment,
-      align,
-    };
-    let button_rect = align(area, 8, 2, Alignment::End);
-
-    let button = Box::new(
-      Button::new("Run")
-                .with_rect(button_rect) // Layout-calculated position instead of hardcoded
-                .color(the_editor_renderer::Color::rgb(0.6, 0.6, 0.8))
-                .visible(false)
-                .on_click(|| println!("Button clicked!")),
-    );
-    compositor.push(button);
 
     let conf = editor.config();
     Self {
@@ -1163,7 +1143,11 @@ impl App {
       // Apply integral line delta via the scroll function
       let v_lines = v_delta.round() as i32;
       if v_lines != 0 {
-        let direction = if v_lines > 0 { Direction::Forward } else { Direction::Backward };
+        let direction = if v_lines > 0 {
+          Direction::Forward
+        } else {
+          Direction::Backward
+        };
         // Temporarily set focus to this view for the scroll command
         let old_focus = self.editor.tree.focus;
         self.editor.tree.focus = view_id;
@@ -1175,7 +1159,12 @@ impl App {
           callback:             Vec::new(),
           jobs:                 &mut self.jobs,
         };
-        commands::scroll(&mut cmd_cx, v_lines.unsigned_abs() as usize, direction, false);
+        commands::scroll(
+          &mut cmd_cx,
+          v_lines.unsigned_abs() as usize,
+          direction,
+          false,
+        );
         self.editor.tree.focus = old_focus;
       }
 
@@ -1215,7 +1204,11 @@ impl App {
       if step.abs() > remaining.abs() {
         step = remaining;
       }
-      let step_i = if step >= 0.0 { step.floor() as i32 } else { step.ceil() as i32 };
+      let step_i = if step >= 0.0 {
+        step.floor() as i32
+      } else {
+        step.ceil() as i32
+      };
       if step_i == 0 {
         let forced = if remaining > 0.0 { 1 } else { -1 };
         *pending -= forced as f32;
@@ -1227,7 +1220,11 @@ impl App {
 
     let v_lines = apply_axis(&mut self.pending_scroll_lines);
     if v_lines != 0 {
-      let direction = if v_lines > 0 { Direction::Forward } else { Direction::Backward };
+      let direction = if v_lines > 0 {
+        Direction::Forward
+      } else {
+        Direction::Backward
+      };
       let mut cmd_cx = commands::Context {
         register:             self.editor.selected_register,
         count:                self.editor.count,
@@ -1236,7 +1233,12 @@ impl App {
         callback:             Vec::new(),
         jobs:                 &mut self.jobs,
       };
-      commands::scroll(&mut cmd_cx, v_lines.unsigned_abs() as usize, direction, false);
+      commands::scroll(
+        &mut cmd_cx,
+        v_lines.unsigned_abs() as usize,
+        direction,
+        false,
+      );
     }
 
     // Horizontal: adjust view_offset.horizontal_offset directly
@@ -1244,12 +1246,24 @@ impl App {
     if remaining_h.abs() >= 0.1 {
       let step_f = remaining_h * rate;
       let min_step = self.scroll_min_step_cols.copysign(remaining_h);
-      let mut step = if step_f.abs() < self.scroll_min_step_cols.abs() { min_step } else { step_f };
+      let mut step = if step_f.abs() < self.scroll_min_step_cols.abs() {
+        min_step
+      } else {
+        step_f
+      };
       if step.abs() > remaining_h.abs() {
         step = remaining_h;
       }
-      let step_i = if step >= 0.0 { step.floor() as i32 } else { step.ceil() as i32 };
-      let step_i = if step_i == 0 { if remaining_h > 0.0 { 1 } else { -1 } } else { step_i };
+      let step_i = if step >= 0.0 {
+        step.floor() as i32
+      } else {
+        step.ceil() as i32
+      };
+      let step_i = if step_i == 0 {
+        if remaining_h > 0.0 { 1 } else { -1 }
+      } else {
+        step_i
+      };
 
       let focus_view = self.editor.tree.focus;
       if let Some(view) = self.editor.tree.try_get(focus_view)

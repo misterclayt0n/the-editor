@@ -1362,6 +1362,42 @@ impl Component for Explorer {
       }
     }
 
+    // Ctrl+W - window prefix key (for consistency with editor)
+    if key_event.ctrl && !key_event.alt && !key_event.shift {
+      if let Key::Char('w') = key_event.code {
+        // Enter pending state for window commands
+        self.on_next_key = Some(Box::new(|_cx, explorer, key| {
+          // Handle h/l for focus switching
+          match key.code {
+            Key::Char('h') | Key::Left => {
+              // Move focus left - if explorer is on left, this is a no-op
+              // If explorer is on right, unfocus to editor
+              explorer.unfocus();
+              EventResult::Consumed(None)
+            },
+            Key::Char('l') | Key::Right => {
+              // Move focus right - if explorer is on left, unfocus to editor
+              // If explorer is on right, this is a no-op
+              explorer.unfocus();
+              EventResult::Consumed(None)
+            },
+            Key::Char('j') | Key::Down | Key::Char('k') | Key::Up => {
+              // Vertical movements - just unfocus to editor
+              explorer.unfocus();
+              EventResult::Consumed(None)
+            },
+            Key::Char('q') => {
+              // Ctrl+W q - close explorer
+              explorer.close();
+              EventResult::Consumed(None)
+            },
+            _ => EventResult::Consumed(None),
+          }
+        }));
+        return EventResult::Consumed(None);
+      }
+    }
+
     // Check for regular keys (no modifiers)
     if !key_event.ctrl && !key_event.alt && !key_event.shift {
       match key_event.code {

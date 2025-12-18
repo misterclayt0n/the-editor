@@ -9,6 +9,8 @@ use the_editor_renderer::{
   Key,
   KeyPress,
   TextSection,
+  TextSegment,
+  TextStyle,
 };
 use unicode_segmentation::{
   GraphemeCursor,
@@ -38,6 +40,14 @@ use crate::{
     },
   },
 };
+
+/// Bounds of the completion box for positioning the help box
+struct CompletionBounds {
+  x:      f32,
+  y:      f32,
+  width:  f32,
+  height: f32,
+}
 
 /// A completion item with range information
 /// The range specifies which part of the input should be replaced
@@ -105,6 +115,9 @@ pub enum PromptEvent {
   Abort,
 }
 
+/// Function type for generating documentation from input
+pub type DocFn = Box<dyn Fn(&str) -> Option<String> + Send>;
+
 /// A prompt component for handling command input
 pub struct Prompt {
   /// Current input text
@@ -124,6 +137,8 @@ pub struct Prompt {
   /// Callback function for handling events (validate, update, abort)
   /// If None, falls back to command execution
   callback_fn:            Option<CallbackFn>,
+  /// Documentation function to generate help text from input
+  doc_fn:                 Option<DocFn>,
   /// Maximum history size
   max_history:            usize,
   /// Prefix for the prompt (e.g., ":")
@@ -157,6 +172,7 @@ impl Prompt {
       selection: None,
       completion_fn: None,
       callback_fn: None,
+      doc_fn: None,
       max_history: 100,
       prefix,
       scroll_offset: 0,
@@ -197,6 +213,12 @@ impl Prompt {
   pub fn with_prefill(mut self, text: String) -> Self {
     self.cursor = text.len();
     self.input = text;
+    self
+  }
+
+  /// Set the documentation function for generating help text
+  pub fn with_doc_fn(mut self, doc_fn: impl Fn(&str) -> Option<String> + Send + 'static) -> Self {
+    self.doc_fn = Some(Box::new(doc_fn));
     self
   }
 
@@ -711,8 +733,7 @@ impl Prompt {
       }
 
       // Render completions if visible (above the prompt)
-      // Render completions if available
-      if !self.completions.is_empty() {
+      let completion_bounds = if !self.completions.is_empty() {
         self.render_completions_internal(
           surface,
           base_y,
@@ -720,7 +741,15 @@ impl Prompt {
           completion_width,
           cell_width,
           cx,
-        );
+        )
+      } else {
+        None
+      };
+
+      // Render help box to the right of completions
+      if let Some(bounds) = completion_bounds {
+        let screen_width = surface.width() as f32;
+        self.render_help_box(surface, &bounds, screen_width, cx);
       }
     }); // End overlay region
 
@@ -1111,6 +1140,132 @@ impl Prompt {
     }
   }
 
+  /// Render the help box above completions showing command documentation
+  /// Returns the height of the help box (0 if not rendered)
+  fn render_help_box(
+    &self,
+    surface: &mut Surface,
+    completion_bounds: &CompletionBounds,
+    screen_width: f32,
+    cx: &Context,
+  ) {
+    // Get documentation for selected completion or current input
+    let doc_text = self.doc_fn.as_ref().and_then(|doc_fn| {
+      if let Some(selection_idx) = self.selection {
+        // Use doc_fn with the selected completion's text
+        self
+          .completions
+          .get(selection_idx)
+          .and_then(|c| doc_fn(&c.text))
+      } else {
+        // No selection - try doc_fn with current input
+        doc_fn(&self.input)
+      }
+    });
+
+    let doc_text = match doc_text {
+      Some(doc) if !doc.is_empty() => doc,
+      _ => return,
+    };
+
+    const PADDING: f32 = 12.0;
+    const LINE_HEIGHT: f32 = 20.0;
+    const CORNER_RADIUS: f32 = 6.0;
+    const GAP: f32 = 8.0; // Gap between completion box and help box
+
+    // Get theme colors
+    let theme = &cx.editor.theme;
+    let bg_style = theme.get("ui.help");
+    let bg_color = bg_style
+      .bg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or_else(|| {
+        // Fallback to popup style
+        theme
+          .get("ui.popup")
+          .bg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::new(0.12, 0.12, 0.14, 0.95))
+      });
+
+    let text_color = bg_style
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or_else(|| {
+        theme
+          .get("ui.text")
+          .fg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::new(0.8, 0.75, 0.6, 1.0))
+      });
+
+    let border_color = theme
+      .get("ui.window")
+      .fg
+      .map(crate::ui::theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.3, 0.3, 0.35, 0.8));
+
+    // Position to the right of the completion box, anchored at the bottom (near statusline)
+    let box_x = completion_bounds.x + completion_bounds.width + GAP;
+    let available_width = screen_width - box_x - 10.0; // 10px margin from right edge
+
+    // Don't render if not enough space
+    if available_width < 150.0 {
+      return;
+    }
+
+    // Count lines and calculate dimensions
+    let lines: Vec<&str> = doc_text.lines().collect();
+    let line_count = lines.len();
+    let content_height = line_count as f32 * LINE_HEIGHT;
+    let box_height = content_height + PADDING * 2.0;
+    let box_width = available_width;
+
+    // Position at bottom (aligned with bottom of completions, just above statusline)
+    let completion_bottom = completion_bounds.y + completion_bounds.height;
+    let box_y = completion_bottom - box_height;
+
+    // Draw background
+    surface.draw_rounded_rect(box_x, box_y, box_width, box_height, CORNER_RADIUS, bg_color);
+
+    // Draw border
+    surface.draw_rounded_rect_stroke(
+      box_x,
+      box_y,
+      box_width,
+      box_height,
+      CORNER_RADIUS,
+      1.0,
+      border_color,
+    );
+
+    // Clip text to box bounds
+    surface.push_scissor_rect(box_x, box_y, box_width, box_height);
+
+    // Draw text lines
+    let text_x = box_x + PADDING;
+    let mut text_y = box_y + PADDING;
+
+    for line in lines {
+      if text_y > box_y + box_height - PADDING {
+        break; // Stop if we've exceeded the box height
+      }
+      surface.draw_text(TextSection {
+        position: (text_x, text_y),
+        texts:    vec![TextSegment {
+          content: line.to_string(),
+          style:   TextStyle {
+            size:  crate::ui::UI_FONT_SIZE,
+            color: text_color,
+          },
+        }],
+      });
+      text_y += LINE_HEIGHT;
+    }
+
+    surface.pop_scissor_rect();
+  }
+
   fn render_completions_internal(
     &mut self,
     surface: &mut Surface,
@@ -1119,9 +1274,10 @@ impl Prompt {
     completion_width: f32,
     cell_width: f32,
     cx: &Context,
-  ) {
+  ) -> Option<CompletionBounds> {
+    // Returns the bounds of the completion box, or None if no completions
     if self.completions.is_empty() {
-      return;
+      return None;
     }
 
     const COMPLETION_ITEM_HEIGHT: f32 = 24.0; // Taller items like picker
@@ -1312,6 +1468,13 @@ impl Prompt {
 
     // Pop the scissor rect for the entire completion box
     surface.pop_scissor_rect();
+
+    Some(CompletionBounds {
+      x:      completion_x,
+      y:      completion_y,
+      width:  completion_width,
+      height: completion_height,
+    })
   }
 
   // Helper functions (copied from picker)

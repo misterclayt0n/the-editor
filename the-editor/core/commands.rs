@@ -1995,17 +1995,22 @@ pub fn command_mode(cx: &mut Context) {
   // Set editor mode to Command so statusline shows COMMAND
   cx.editor.set_mode(Mode::Command);
 
-  // Clone the registry for use in the completion function
+  // Clone the registry for use in the completion and doc functions
   let registry = cx.editor.command_registry.clone();
+  let doc_registry = cx.editor.command_registry.clone();
 
   // Create completion function that uses the command registry
   let completion_fn = Arc::new(move |editor: &crate::editor::Editor, input: &str| {
     registry.complete_command_line(editor, input)
   });
 
-  // Create prompt with completion function
-  let mut prompt =
-    crate::ui::components::prompt::Prompt::new(String::new()).with_completion(completion_fn);
+  // Create prompt with completion and doc functions
+  let mut prompt = crate::ui::components::prompt::Prompt::new(String::new())
+    .with_completion(completion_fn)
+    .with_doc_fn(move |input: &str| {
+      let cmd_name = input.split_whitespace().next()?;
+      doc_registry.get(cmd_name).map(|cmd| cmd.generate_doc())
+    });
 
   cx.callback.push(Box::new(|compositor, cx| {
     // Find the statusline and trigger slide animation

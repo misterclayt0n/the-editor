@@ -407,7 +407,6 @@ pub struct Editor {
   pub input_handler: InputHandler,
 
   // Command mode support
-  pub command_prompt:      Option<crate::ui::components::Prompt>,
   pub command_registry:    crate::core::command_registry::CommandRegistry,
   pub command_history:     Vec<String>,
   // Font size override (for runtime zooming)
@@ -1955,7 +1954,6 @@ impl Editor {
       cursor_cache: CursorCache::default(),
       keymaps: Keymaps::default(),
       input_handler: InputHandler::new(Mode::Normal),
-      command_prompt: None,
       command_registry: crate::core::command_registry::CommandRegistry::new(),
       command_history: Vec::new(),
       font_size_override: None,
@@ -2388,10 +2386,6 @@ impl Editor {
     self.status_msg = Some((error, Severity::Error));
   }
 
-  pub fn init_command_prompt(&mut self) {
-    self.command_prompt = Some(crate::ui::components::Prompt::new(":".to_string()));
-  }
-
   pub fn set_mode(&mut self, mode: Mode) {
     self.mode = mode;
     self.input_handler.set_mode(mode);
@@ -2426,7 +2420,6 @@ impl Editor {
 
     // Exit command mode
     self.set_mode(Mode::Normal);
-    self.command_prompt = None;
   }
 
   #[inline]

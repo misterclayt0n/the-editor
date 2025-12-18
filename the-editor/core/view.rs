@@ -533,12 +533,9 @@ impl View {
     self.content.is_terminal()
   }
 
-  /// Set the document for this view. Panics if this is a terminal view.
+  /// Set the document for this view, converting it to a document view if needed.
   pub fn set_doc(&mut self, doc_id: DocumentId) {
-    match self.content {
-      ViewContent::Document(_) => self.content = ViewContent::Document(doc_id),
-      ViewContent::Terminal(_) => panic!("Cannot set document on a terminal view"),
-    }
+    self.content = ViewContent::Document(doc_id);
   }
 
   /// Set the terminal ID for this view, converting it to a terminal view.

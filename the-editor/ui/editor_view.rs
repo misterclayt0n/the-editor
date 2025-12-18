@@ -1187,7 +1187,11 @@ impl Component for EditorView {
     };
     let use_bufferline = match bufferline_mode {
       BufferLine::Always => true,
-      BufferLine::Multiple => cx.editor.documents.len() > 1,
+      BufferLine::Multiple => {
+        // Count both documents and visible terminals
+        let total_tabs = cx.editor.documents.len() + cx.editor.visible_terminals().count();
+        total_tabs > 1
+      },
       BufferLine::Never => false,
     };
     if self.bufferline_visible != use_bufferline {
@@ -4794,6 +4798,7 @@ impl EditorView {
             if let Some(idx) = hit_index {
               match self.buffer_tabs[idx].kind {
                 bufferline::BufferKind::Document(doc_id) => {
+                  // First, try to find an existing view showing this document
                   let target_view = cx
                     .editor
                     .tree
@@ -4803,10 +4808,24 @@ impl EditorView {
                   if let Some(view_id) = target_view {
                     cx.editor.focus(view_id);
                   } else if let Some(view_id) = cx.editor.focused_view_id() {
-                    cx.editor.focus(view_id);
-                    let current_doc = cx.editor.tree.get(view_id).doc();
-                    if current_doc != Some(doc_id) {
-                      cx.editor.switch(doc_id, Action::Replace, false);
+                    // Check if current view is a terminal
+                    let current_terminal = cx.editor.tree.get(view_id).terminal();
+                    if current_terminal.is_some() {
+                      // Current view is a terminal - replace it with the document
+                      // Note: We don't hide the terminal, just switch this view to show the document
+                      // The terminal stays "visible" in the bufferline for easy switching back
+                      let view = cx.editor.tree.get_mut(view_id);
+                      view.set_doc(doc_id);
+                      // Initialize the document for this view
+                      if let Some(doc) = cx.editor.documents.get_mut(&doc_id) {
+                        doc.ensure_view_init(view_id);
+                      }
+                    } else {
+                      // Current view is a document, use normal switch
+                      let current_doc = cx.editor.tree.get(view_id).doc();
+                      if current_doc != Some(doc_id) {
+                        cx.editor.switch(doc_id, Action::Replace, false);
+                      }
                     }
                   } else if let Some(new_view_id) = cx.editor.open_view_for_document(doc_id) {
                     cx.editor.focus(new_view_id);

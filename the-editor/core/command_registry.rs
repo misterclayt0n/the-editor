@@ -2171,7 +2171,6 @@ fn terminal(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
 
   // Open terminal in the current view, replacing its content
   cx.editor.open_terminal(shell)?;
-  cx.editor.set_status("Terminal opened");
   Ok(())
 }
 
@@ -2184,7 +2183,6 @@ fn terminal_hsplit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<(
 
   let shell = args.first();
   cx.editor.open_terminal_split(shell, Layout::Horizontal)?;
-  cx.editor.set_status("Terminal opened");
   Ok(())
 }
 
@@ -2197,7 +2195,6 @@ fn terminal_vsplit(cx: &mut Context, args: Args, event: PromptEvent) -> Result<(
 
   let shell = args.first();
   cx.editor.open_terminal_split(shell, Layout::Vertical)?;
-  cx.editor.set_status("Terminal opened");
   Ok(())
 }
 

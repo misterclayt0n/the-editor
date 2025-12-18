@@ -10,6 +10,8 @@ use the_editor_event::request_redraw;
 use the_editor_renderer::{
   Color,
   TextSection,
+  TextSegment,
+  TextStyle,
 };
 use the_terminal::{
   ColorScheme as TerminalColorScheme,
@@ -22,6 +24,7 @@ use crate::{
     animation::selection::{
       self as selection_anim,
     },
+    info::Info,
     commands::{
       self,
       MappableCommand,
@@ -1012,11 +1015,19 @@ impl Component for EditorView {
         use crate::keymap::KeymapResult;
         match self.keymaps.get(cx.editor.mode(), &key_press) {
           KeymapResult::Matched(command) => {
+            cx.editor.autoinfo = None;
             self.execute_command_sequence(cx, std::iter::once(command))
           },
-          KeymapResult::MatchedSequence(commands) => self.execute_command_sequence(cx, commands),
-          KeymapResult::Pending(_) => EventResult::Consumed(None),
+          KeymapResult::MatchedSequence(commands) => {
+            cx.editor.autoinfo = None;
+            self.execute_command_sequence(cx, commands)
+          },
+          KeymapResult::Pending(node) => {
+            cx.editor.autoinfo = Some(node.infobox());
+            EventResult::Consumed(None)
+          },
           KeymapResult::Cancelled(_) | KeymapResult::NotFound => {
+            cx.editor.autoinfo = None;
             cx.editor.count = None;
             EventResult::Ignored(None)
           },
@@ -4633,6 +4644,162 @@ impl EditorView {
     if let Some(ref mut sig_help) = self.signature_help {
       sig_help.render(area, renderer, cx);
     }
+
+    // Render keymap infobox if pending keys
+    if let Some(ref info) = cx.editor.autoinfo {
+      self.render_infobox(info, renderer, cx);
+    }
+  }
+
+  /// Render keymap infobox (which-key style popup) at bottom-right
+  fn render_infobox(&self, info: &Info, renderer: &mut Surface, cx: &Context) {
+    use crate::ui::{
+      UI_FONT_SIZE,
+      theme_color_to_renderer_color,
+    };
+
+    let theme = &cx.editor.theme;
+
+    // Get colors from theme
+    let bg_color = theme
+      .get("ui.popup")
+      .bg
+      .map(theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.12, 0.12, 0.15, 0.95));
+    let border_color = theme
+      .get("ui.popup")
+      .fg
+      .map(theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.3, 0.3, 0.35, 0.8));
+    let title_color = theme
+      .get("ui.text.focus")
+      .fg
+      .map(theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.9, 0.85, 0.6, 1.0));
+    let text_color = theme
+      .get("ui.text")
+      .fg
+      .map(theme_color_to_renderer_color)
+      .unwrap_or(Color::new(0.7, 0.7, 0.7, 1.0));
+
+    // Use UI font for consistent sizing
+    let font_family = renderer.current_font_family().to_string();
+    renderer.configure_font(&font_family, UI_FONT_SIZE);
+    let cell_width = renderer.cell_width();
+    let cell_height = renderer.cell_height();
+
+    // Calculate dimensions
+    let padding_x = 12.0;
+    let padding_y = 8.0;
+    let line_height = cell_height * 1.3;
+    let corner_radius = 6.0;
+    let border_thickness = 1.0;
+
+    // Position constraints
+    let statusline_height = 28.0;
+    let margin = 8.0;
+    let viewport_width = renderer.width() as f32;
+    let viewport_height = renderer.height() as f32;
+
+    // Calculate available height (viewport minus statusline, margins, and some top padding)
+    let min_top_margin = 40.0; // Keep some space at top
+    let available_height = viewport_height - statusline_height - margin - min_top_margin;
+
+    // Calculate content size with max height constraint
+    let title_width = info.title.len() as f32 * cell_width;
+    let content_width = info.width as f32 * cell_width;
+    let box_width = content_width.max(title_width) + padding_x * 2.0;
+
+    // Calculate how many lines we can show
+    let header_height = line_height * 1.5 + padding_y * 2.0; // title + separator + padding
+    let max_content_height = available_height - header_height;
+    let max_visible_lines = (max_content_height / line_height).floor() as usize;
+
+    let lines: Vec<&str> = info.text.lines().collect();
+    let total_lines = lines.len();
+    let (visible_lines, is_truncated) = if total_lines > max_visible_lines && max_visible_lines > 1 {
+      // Reserve one line for "..." indicator
+      (&lines[..max_visible_lines.saturating_sub(1)], true)
+    } else {
+      (&lines[..], false)
+    };
+
+    let displayed_lines = visible_lines.len() + if is_truncated { 1 } else { 0 };
+    let content_height = displayed_lines as f32 * line_height;
+    let box_height = header_height + content_height;
+
+    // Position at bottom-right (above statusline)
+    let box_x = viewport_width - box_width - margin;
+    let box_y = (viewport_height - box_height - statusline_height - margin).max(min_top_margin);
+
+    // Draw background with rounded corners
+    renderer.draw_rounded_rect(box_x, box_y, box_width, box_height, corner_radius, bg_color);
+
+    // Draw border
+    renderer.draw_rounded_rect_stroke(
+      box_x,
+      box_y,
+      box_width,
+      box_height,
+      corner_radius,
+      border_thickness,
+      border_color,
+    );
+
+    // Draw title
+    let title_x = box_x + padding_x;
+    let title_y = box_y + padding_y;
+    renderer.draw_text(TextSection {
+      position: (title_x, title_y),
+      texts:    vec![TextSegment {
+        content: info.title.to_string(),
+        style:   TextStyle {
+          size:  UI_FONT_SIZE,
+          color: title_color,
+        },
+      }],
+    });
+
+    // Draw separator line below title
+    let sep_y = title_y + line_height;
+    let sep_color = Color::new(border_color.r, border_color.g, border_color.b, 0.4);
+    renderer.draw_rect(box_x + padding_x, sep_y, box_width - padding_x * 2.0, 1.0, sep_color);
+
+    // Draw content (pre-formatted text with newlines)
+    let content_y = sep_y + line_height * 0.5;
+    for (i, line) in visible_lines.iter().enumerate() {
+      let y = content_y + (i as f32 * line_height);
+      renderer.draw_text(TextSection {
+        position: (title_x, y),
+        texts:    vec![TextSegment {
+          content: line.to_string(),
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: text_color,
+          },
+        }],
+      });
+    }
+
+    // Draw truncation indicator if needed
+    if is_truncated {
+      let truncate_y = content_y + (visible_lines.len() as f32 * line_height);
+      let more_count = total_lines - visible_lines.len();
+      let truncate_text = format!("... +{} more", more_count);
+      renderer.draw_text(TextSection {
+        position: (title_x, truncate_y),
+        texts:    vec![TextSegment {
+          content: truncate_text,
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: Color::new(text_color.r, text_color.g, text_color.b, 0.5),
+          },
+        }],
+      });
+    }
+
+    // Restore font configuration
+    renderer.configure_font(&font_family, self.cached_font_size);
   }
 
   fn dispatch_signature_help_event(

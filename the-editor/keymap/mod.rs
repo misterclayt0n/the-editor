@@ -20,7 +20,10 @@ use the_editor_renderer::{
   KeyPress,
 };
 
-use crate::core::commands::MappableCommand;
+use crate::core::{
+  commands::MappableCommand,
+  info::Info,
+};
 
 pub mod default;
 pub mod macros;
@@ -326,6 +329,48 @@ impl KeyTrieNode {
         self.order.push(k);
       }
     }
+  }
+
+  /// Generate an Info box displaying all keybindings in this node.
+  /// Keys with the same description are grouped together.
+  pub fn infobox(&self) -> Info {
+    // Build body: Vec<(keys_grouped, description)>
+    let mut body: Vec<(Vec<KeyBinding>, &str)> = Vec::with_capacity(self.map.len());
+
+    for key in &self.order {
+      let Some(trie) = self.map.get(key) else {
+        continue;
+      };
+
+      let desc = match trie {
+        KeyTrie::Command(cmd) => {
+          if cmd.name() == "no_op" {
+            continue;
+          }
+          cmd.doc()
+        },
+        KeyTrie::Node(n) => &n.name,
+        KeyTrie::Sequence(_) => "[sequence]",
+      };
+
+      // Group keys with the same description
+      if let Some(pos) = body.iter().position(|(_, d)| *d == desc) {
+        body[pos].0.push(*key);
+      } else {
+        body.push((vec![*key], desc));
+      }
+    }
+
+    // Convert to final format with owned strings
+    let items: Vec<(String, String)> = body
+      .into_iter()
+      .map(|(keys, desc)| {
+        let keys_str = keys.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+        (keys_str, desc.to_string())
+      })
+      .collect();
+
+    Info::new(self.name.clone(), &items)
   }
 }
 

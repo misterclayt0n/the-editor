@@ -156,8 +156,12 @@ pub struct Prompt {
   selection_anim:         f32,
   /// Last selected index (to detect selection changes)
   last_selection:         Option<usize>,
-  /// Completion list animation (0.0 = hidden, 1.0 = shown)
+  /// Completion list animation (0.0 = hidden, 1.0 = shown) - exponential decay
   completion_list_anim_t: f32,
+  /// Prompt opening animation (0.0 = closed, 1.0 = open) - exponential decay
+  prompt_open_t:          f32,
+  /// Help box animation (0.0 = hidden, 1.0 = shown) - exponential decay
+  help_box_anim_t:        f32,
 }
 
 impl Prompt {
@@ -183,6 +187,8 @@ impl Prompt {
       selection_anim: 1.0,
       last_selection: None,
       completion_list_anim_t: 0.0,
+      prompt_open_t: 0.0,
+      help_box_anim_t: 0.0,
     }
   }
 
@@ -403,6 +409,8 @@ impl Prompt {
     self.selection_anim = 1.0;
     self.last_selection = None;
     self.completion_list_anim_t = 0.0;
+    self.prompt_open_t = 0.0;
+    self.help_box_anim_t = 0.0;
   }
 
   /// Update scroll offset to keep cursor visible
@@ -446,32 +454,42 @@ impl Prompt {
     let viewport_width = surface.width() as f32;
     surface.draw_rect(0.0, base_y, viewport_width, STATUS_BAR_HEIGHT, bg_color);
 
-    // Update animations (time-based)
+    // Exponential decay rates (like bufferline tabs)
+    let fast_rate = 1.0 - 2.0_f32.powf(-45.0 * cx.dt); // Fast animations
+    let medium_rate = 1.0 - 2.0_f32.powf(-30.0 * cx.dt); // Medium animations
+
+    // Update prompt opening animation (exponential decay)
+    self.prompt_open_t += (1.0 - self.prompt_open_t) * fast_rate;
+
+    // Update glow animation (keep linear for sweeping effect)
     const GLOW_SPEED: f32 = 0.025; // Base speed for sweeping effect
     if self.glow_anim_t < 1.0 {
       let speed = GLOW_SPEED * 300.0; // Faster but still visible
       self.glow_anim_t = (self.glow_anim_t + speed * cx.dt).min(1.0);
     }
 
-    // Update selection animation (like picker)
-    const SELECTION_ANIM_SPEED: f32 = 15.0;
-    if self.selection_anim < 1.0 {
-      self.selection_anim = (self.selection_anim + cx.dt * SELECTION_ANIM_SPEED).min(1.0);
-    }
+    // Update selection animation (exponential decay)
+    self.selection_anim += (1.0 - self.selection_anim) * fast_rate;
 
-    // Update completion list animation
-    const COMPLETION_LIST_ANIM_SPEED: f32 = 12.0;
-    if !self.completions.is_empty() && self.completion_list_anim_t < 1.0 {
-      self.completion_list_anim_t =
-        (self.completion_list_anim_t + cx.dt * COMPLETION_LIST_ANIM_SPEED).min(1.0);
-    } else if self.completions.is_empty() {
-      self.completion_list_anim_t = 0.0;
-    }
+    // Update completion list animation (exponential decay)
+    let completion_target = if !self.completions.is_empty() { 1.0 } else { 0.0 };
+    self.completion_list_anim_t += (completion_target - self.completion_list_anim_t) * medium_rate;
 
-    // Draw bordered box around prompt area
+    // Update help box animation (exponential decay)
+    let help_target = if self.selection.is_some() && self.doc_fn.is_some() {
+      1.0
+    } else {
+      0.0
+    };
+    self.help_box_anim_t += (help_target - self.help_box_anim_t) * medium_rate;
+
+    // Draw bordered box around prompt area with opening animation
     const PROMPT_WIDTH_PERCENT: f32 = 0.25; // 25% of viewport width
-    let prompt_box_width = viewport_width * PROMPT_WIDTH_PERCENT;
-    let border_color = Color::new(0.3, 0.3, 0.35, 1.0);
+    let target_width = viewport_width * PROMPT_WIDTH_PERCENT;
+    // Apply exponential decay animation to width
+    let prompt_box_width = target_width * self.prompt_open_t;
+    let prompt_alpha = self.prompt_open_t;
+    let border_color = Color::new(0.3, 0.3, 0.35, prompt_alpha);
     const BORDER_THICKNESS: f32 = 1.0;
 
     // Calculate completion area for stencil mask (updated to match new rendering)
@@ -933,7 +951,7 @@ impl Prompt {
   fn recalculate_completions(&mut self, editor: &Editor) {
     self.selection = None; // Clear selection on recalculate
     self.completion_scroll = 0; // Reset scroll
-    self.completion_list_anim_t = 0.0; // Start animation
+    // Don't reset completion_list_anim_t here - exponential decay handles it smoothly
 
     if let Some(ref completion_fn) = self.completion_fn {
       self.completions = completion_fn(editor, &self.input);
@@ -1206,11 +1224,11 @@ impl Prompt {
       .unwrap_or(Color::new(0.3, 0.3, 0.35, 0.8));
 
     // Position to the right of the completion box, anchored at the bottom (near statusline)
-    let box_x = completion_bounds.x + completion_bounds.width + GAP;
-    let available_width = screen_width - box_x - 10.0; // 10px margin from right edge
+    let base_box_x = completion_bounds.x + completion_bounds.width + GAP;
+    let available_width = screen_width - base_box_x - 10.0; // 10px margin from right edge
 
-    // Don't render if not enough space
-    if available_width < 150.0 {
+    // Don't render if not enough space or animation not started
+    if available_width < 150.0 || self.help_box_anim_t < 0.01 {
       return;
     }
 
@@ -1221,12 +1239,25 @@ impl Prompt {
     let box_height = content_height + PADDING * 2.0;
     let box_width = available_width;
 
+    // Apply animation: slide from right and fade in
+    let anim_t = self.help_box_anim_t;
+    let slide_offset = (1.0 - anim_t) * 20.0; // Slide from right 20px
+    let box_x = base_box_x + slide_offset;
+
     // Position at bottom (aligned with bottom of completions, just above statusline)
     let completion_bottom = completion_bounds.y + completion_bounds.height;
     let box_y = completion_bottom - box_height;
 
+    // Apply alpha based on animation
+    let mut animated_bg = bg_color;
+    animated_bg.a *= anim_t;
+    let mut animated_border = border_color;
+    animated_border.a *= anim_t;
+    let mut animated_text = text_color;
+    animated_text.a *= anim_t;
+
     // Draw background
-    surface.draw_rounded_rect(box_x, box_y, box_width, box_height, CORNER_RADIUS, bg_color);
+    surface.draw_rounded_rect(box_x, box_y, box_width, box_height, CORNER_RADIUS, animated_bg);
 
     // Draw border
     surface.draw_rounded_rect_stroke(
@@ -1236,7 +1267,7 @@ impl Prompt {
       box_height,
       CORNER_RADIUS,
       1.0,
-      border_color,
+      animated_border,
     );
 
     // Clip text to box bounds
@@ -1256,7 +1287,7 @@ impl Prompt {
           content: line.to_string(),
           style:   TextStyle {
             size:  crate::ui::UI_FONT_SIZE,
-            color: text_color,
+            color: animated_text,
           },
         }],
       });
@@ -1324,7 +1355,15 @@ impl Prompt {
     let offset = self.completion_scroll;
     let visible_count = (self.completions.len() - offset).min(MAX_VISIBLE);
     let completion_height = visible_count as f32 * (COMPLETION_ITEM_HEIGHT + ITEM_GAP) - ITEM_GAP;
-    let completion_y = prompt_y - completion_height - 5.0; // 5px gap above prompt
+
+    // Apply animation: slide up from bottom and fade in
+    let anim_t = self.completion_list_anim_t;
+    let slide_offset = (1.0 - anim_t) * 15.0; // Slide up 15px
+    let completion_y = prompt_y - completion_height - 5.0 + slide_offset; // 5px gap above prompt
+
+    // Apply alpha to colors based on animation
+    let mut animated_bg = bg_color;
+    animated_bg.a *= anim_t;
 
     // Draw background with rounded corners
     surface.draw_rounded_rect(
@@ -1333,7 +1372,7 @@ impl Prompt {
       completion_width,
       completion_height,
       CORNER_RADIUS,
-      bg_color,
+      animated_bg,
     );
 
     // Clip all completion content to the box bounds
@@ -1737,9 +1776,14 @@ impl Component for Prompt {
 
   fn should_update(&self) -> bool {
     // Keep updating while animations are active or for input responsiveness
+    // For exponential decay, check if we're "close enough" to target (within 0.01)
     self.glow_anim_t < 1.0
-      || self.selection_anim < 1.0
-      || self.completion_list_anim_t < 1.0
+      || self.selection_anim < 0.99
+      || self.prompt_open_t < 0.99
+      || (self.completion_list_anim_t > 0.01 && self.completion_list_anim_t < 0.99)
+      || (!self.completions.is_empty() && self.completion_list_anim_t < 0.99)
+      || (self.completions.is_empty() && self.completion_list_anim_t > 0.01)
+      || self.help_box_anim_t > 0.01 && self.help_box_anim_t < 0.99
       || self.cursor_anim_active
       || !self.completions.is_empty() // Keep updating while completions are visible
   }

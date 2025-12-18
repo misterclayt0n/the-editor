@@ -2901,6 +2901,24 @@ impl Editor {
           return;
         };
 
+        // Check if current view is a terminal (no document)
+        let is_terminal_view = self
+          .tree
+          .try_get(view_id)
+          .is_some_and(|v| v.doc().is_none());
+
+        if is_terminal_view {
+          // Simply switch the terminal view to show the document
+          let view = self.tree.get_mut(view_id);
+          view.set_doc(id);
+
+          let doc = self.documents.get_mut(&id).unwrap();
+          doc.ensure_view_init(view.id);
+          doc.mark_as_focused();
+          self.touch_special_buffer(id);
+          return;
+        }
+
         let (remove_empty_scratch, previous_doc_id) = match self.tree.try_get(view_id) {
           Some(view) => {
             let Some(doc_id) = view.doc() else {
@@ -2912,15 +2930,15 @@ impl Editor {
               return;
             };
             let remove_empty_scratch = !doc.is_modified()
-                      // If the buffer has no path and is not modified, it is an empty scratch buffer.
-                      && doc.path().is_none()
-                      // If the buffer we are changing to is not this buffer
-                      && id != doc.id
-                      // Ensure the buffer is not displayed in any other splits.
-                      && !self
-                          .tree
-                          .traverse()
-                          .any(|(_, v)| v.doc() == Some(doc.id) && v.id != view.id);
+              // If the buffer has no path and is not modified, it is an empty scratch buffer.
+              && doc.path().is_none()
+              // If the buffer we are changing to is not this buffer
+              && id != doc.id
+              // Ensure the buffer is not displayed in any other splits.
+              && !self
+                .tree
+                .traverse()
+                .any(|(_, v)| v.doc() == Some(doc.id) && v.id != view.id);
             (remove_empty_scratch, doc.id)
           },
           None => {

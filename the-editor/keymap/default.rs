@@ -248,6 +248,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "K"                   => swap_view_up,
       "H"                   => swap_view_left,
       "J"                   => swap_view_down,
+      "C-p" | "p"           => goto_previous_buffer,
+      "C-n"                 => goto_next_buffer,
 
       "n" => { "New split scratch buffer"
           "C-s" | "s" => hsplit_new,

@@ -5619,26 +5619,38 @@ pub fn goto_previous_buffer(cx: &mut Context) {
 }
 
 fn goto_buffer(editor: &mut Editor, direction: Direction, count: usize) {
-  let Some(current) = view!(editor).doc() else { return };
+  if editor.documents.is_empty() {
+    return;
+  }
 
-  let id = match direction {
-    Direction::Forward => {
-      let iter = editor.documents.keys();
-      // skip 'count' times past current buffer
-      iter.cycle().skip_while(|id| *id != &current).nth(count)
+  // Get current document if in a buffer view, None if in terminal
+  let current = view!(editor).doc();
+
+  let id = match (current, direction) {
+    // In a buffer view - cycle from current position
+    (Some(current), Direction::Forward) => {
+      editor
+        .documents
+        .keys()
+        .cycle()
+        .skip_while(|id| *id != &current)
+        .nth(count)
     },
-    Direction::Backward => {
-      let iter = editor.documents.keys();
-      // skip 'count' times past current buffer
-      iter
+    (Some(current), Direction::Backward) => {
+      editor
+        .documents
+        .keys()
         .rev()
         .cycle()
         .skip_while(|id| *id != &current)
         .nth(count)
     },
-  }
-  .unwrap();
+    // In a terminal view - go to first/last buffer
+    (None, Direction::Forward) => editor.documents.keys().next(),
+    (None, Direction::Backward) => editor.documents.keys().next_back(),
+  };
 
+  let Some(id) = id else { return };
   let id = *id;
 
   editor.switch(id, Action::Replace, false);

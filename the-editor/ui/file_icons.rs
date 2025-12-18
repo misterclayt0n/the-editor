@@ -143,6 +143,11 @@ pub fn icon_for_file(filename: &str) -> FileIcon {
   FILE_GENERIC
 }
 
+/// Returns the terminal icon for terminal tabs in the bufferline.
+pub fn terminal_icon() -> FileIcon {
+  TERMINAL
+}
+
 /// Match exact filenames (case-insensitive for most)
 fn match_exact_filename(filename: &str) -> Option<FileIcon> {
   let lower = filename.to_lowercase();

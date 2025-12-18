@@ -2120,8 +2120,10 @@ impl Editor {
       .collect();
 
     for view_id in view_ids {
-      self.tree.remove(view_id);
+      self.close(view_id);
     }
+
+    self.ensure_view_exists();
   }
 
   /// Show a terminal in a view, optionally replacing the current view or splitting.
@@ -2174,8 +2176,10 @@ impl Editor {
       .collect();
 
     for view_id in view_ids {
-      self.tree.remove(view_id);
+      self.close(view_id);
     }
+
+    self.ensure_view_exists();
   }
 
   /// Close a terminal view (hides the terminal, keeping it alive).
@@ -3149,6 +3153,35 @@ impl Editor {
         doc.remove_view(id);
       }
     }
+  }
+
+  /// Ensure at least one view exists in the tree.
+  /// If no views exist, creates a new view with an existing document or a new scratch buffer.
+  /// This prevents crashes when all views are closed (e.g., when closing the last terminal).
+  fn ensure_view_exists(&mut self) {
+    if self.tree.views().next().is_some() {
+      return;
+    }
+
+    // No views left - create a new one with an existing document or a new scratch buffer
+    let doc_id = self
+      .documents
+      .iter()
+      .map(|(&doc_id, _)| doc_id)
+      .next()
+      .unwrap_or_else(|| {
+        self.new_document(Document::default(
+          self.config.clone(),
+          self.syn_loader.clone(),
+        ))
+      });
+
+    let view = View::new(doc_id, self.config().gutters.clone());
+    let view_id = self.tree.insert(view);
+    let doc = doc_mut!(self, &doc_id);
+    doc.ensure_view_init(view_id);
+    doc.mark_as_focused();
+    self.touch_special_buffer(doc_id);
   }
 
   pub fn close_document(&mut self, doc_id: DocumentId, force: bool) -> Result<(), CloseError> {

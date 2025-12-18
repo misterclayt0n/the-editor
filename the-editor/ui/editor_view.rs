@@ -282,7 +282,7 @@ pub struct EditorView {
   add_button_hovered:        bool,
   add_button_pressed:        bool,
   add_button_rect:           Option<crate::core::graphics::Rect>,
-  tab_animation_states:      std::collections::HashMap<crate::core::DocumentId, bufferline::TabAnimationState>,
+  tab_animation_states:      std::collections::HashMap<bufferline::BufferKind, bufferline::TabAnimationState>,
   add_button_state:          bufferline::AddButtonState,
   bufferline_scroll_offset:  f32,
   bufferline_scroll_target:  f32,
@@ -4815,6 +4815,20 @@ impl EditorView {
                       .set_error("No document view available to show this buffer");
                   }
                 },
+                bufferline::BufferKind::Terminal(terminal_id) => {
+                  // Find if there's already a view showing this terminal
+                  let target_view = cx
+                    .editor
+                    .tree
+                    .views()
+                    .find_map(|(view, _)| (view.terminal() == Some(terminal_id)).then_some(view.id));
+
+                  if let Some(view_id) = target_view {
+                    cx.editor.focus(view_id);
+                  } else {
+                    cx.editor.show_terminal(terminal_id, Action::Replace);
+                  }
+                },
               }
             }
             request_redraw();
@@ -4834,7 +4848,7 @@ impl EditorView {
             }
             self.add_button_pressed = false;
 
-            // Release on close button - close the document
+            // Release on close button - close the document or terminal
             if let Some(idx) = close_hit_index {
               if self.buffer_close_pressed_index == Some(idx) {
                 if let Some(tab) = self.buffer_tabs.get(idx) {
@@ -4842,6 +4856,9 @@ impl EditorView {
                     bufferline::BufferKind::Document(doc_id) => {
                       // Close the document
                       let _ = cx.editor.close_document(doc_id, false);
+                    },
+                    bufferline::BufferKind::Terminal(terminal_id) => {
+                      cx.editor.destroy_terminal(terminal_id);
                     },
                   }
                 }
@@ -4866,6 +4883,11 @@ impl EditorView {
                 match tab.kind {
                   bufferline::BufferKind::Document(doc_id) => {
                     let _ = cx.editor.close_document(doc_id, false);
+                    self.dirty_region.mark_all_dirty();
+                    request_redraw();
+                  },
+                  bufferline::BufferKind::Terminal(terminal_id) => {
+                    cx.editor.destroy_terminal(terminal_id);
                     self.dirty_region.mark_all_dirty();
                     request_redraw();
                   },

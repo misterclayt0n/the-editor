@@ -406,8 +406,13 @@ impl Tree {
 
   pub fn remove(&mut self, index: ViewId) {
     if self.focus == index {
-      // focus on something else
-      self.focus = self.prev();
+      // Check if this is the last view - if so, focus on root instead
+      // prev() would return the same view when there's only one
+      if self.views().count() == 1 {
+        self.focus = self.root;
+      } else {
+        self.focus = self.prev();
+      }
     }
 
     let parent = self.nodes[index].parent;

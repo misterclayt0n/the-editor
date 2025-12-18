@@ -4,6 +4,8 @@ use the_editor_renderer::{
   Color,
   TextSection,
 };
+use the_terminal::TerminalId;
+
 use crate::{
   core::{
     DocumentId,
@@ -19,9 +21,10 @@ use crate::{
   },
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BufferKind {
   Document(DocumentId),
+  Terminal(TerminalId),
 }
 
 /// Hit testing regions for a single tab
@@ -193,6 +196,20 @@ fn display_name(doc: &Document) -> std::borrow::Cow<'_, str> {
   doc.display_name()
 }
 
+fn format_terminal_title(working_dir: Option<&std::path::Path>) -> String {
+  match working_dir {
+    Some(path) => {
+      if let Ok(home) = std::env::var("HOME") {
+        if let Ok(stripped) = path.strip_prefix(&home) {
+          return format!("~/{}", stripped.display());
+        }
+      }
+      path.display().to_string()
+    },
+    None => "terminal".to_string(),
+  }
+}
+
 /// Render result containing height, scroll info, and add button bounds
 pub struct RenderResult {
   pub height:              f32,
@@ -217,7 +234,7 @@ pub fn render(
   add_button_hovered: bool,
   add_button_pressed: bool,
   tabs: &mut Vec<BufferTab>,
-  animation_states: &mut HashMap<DocumentId, TabAnimationState>,
+  animation_states: &mut HashMap<BufferKind, TabAnimationState>,
   add_button_state: &mut AddButtonState,
   scroll_offset: f32,
   mouse_pos: Option<(f32, f32)>,
@@ -318,13 +335,10 @@ pub fn render(
     separator_color,
   );
 
-  let current_doc_id = editor
+  // Get focused view content (document or terminal)
+  let focused_content = editor
     .focused_view_id()
-    .and_then(|view_id| editor.tree.try_get(view_id).and_then(|view| view.doc()));
-
-  // Collect documents to render
-  let documents: Vec<_> = editor.documents().collect();
-  let doc_ids: std::collections::HashSet<_> = documents.iter().map(|d| d.id()).collect();
+    .and_then(|view_id| editor.tree.try_get(view_id).map(|view| view.content));
 
   // Layout constants
   let icon_size = (UI_FONT_SIZE * 1.0) as u32;
@@ -339,23 +353,59 @@ pub fn render(
   let add_button_reserved = tab_height + 12.0;
   let available_width = viewport_width - left_margin - add_button_reserved;
 
+  // Collect tab items: documents first, then visible terminals
+  struct TabItem {
+    kind:        BufferKind,
+    title:       String,
+    icon:        file_icons::FileIcon,
+    is_modified: bool,
+  }
+
+  let mut tab_items: Vec<TabItem> = Vec::new();
+
+  // Add document tabs
+  for doc in editor.documents() {
+    let title = display_name(doc).to_string();
+    let icon = file_icons::icon_for_file(&title);
+    tab_items.push(TabItem {
+      kind: BufferKind::Document(doc.id()),
+      title,
+      icon,
+      is_modified: doc.is_modified(),
+    });
+  }
+
+  // Add visible terminal tabs
+  for terminal in editor.visible_terminals() {
+    let info = terminal.picker_info();
+    let title = format_terminal_title(info.working_directory.as_deref());
+    tab_items.push(TabItem {
+      kind: BufferKind::Terminal(info.id),
+      title,
+      icon: file_icons::terminal_icon(),
+      is_modified: false,
+    });
+  }
+
+  // Collect all tab kinds for closing animation check
+  let active_kinds: std::collections::HashSet<_> = tab_items.iter().map(|t| t.kind).collect();
+
   // Mark closing tabs and update their animation state
-  for (id, anim) in animation_states.iter_mut() {
-    if !doc_ids.contains(id) {
+  for (kind, anim) in animation_states.iter_mut() {
+    if !active_kinds.contains(kind) {
       anim.is_closing = true;
       anim.update(dt, false, false, false, false, false, false);
     }
   }
 
   // Calculate natural width for each tab - sized exactly to content, no maximum
-  let tab_widths: Vec<f32> = documents
+  let tab_widths: Vec<f32> = tab_items
     .iter()
-    .map(|doc| {
-      let name = display_name(doc);
-      let display_text = if doc.is_modified() {
-        format!("{} •", name)
+    .map(|item| {
+      let display_text = if item.is_modified {
+        format!("{} •", item.title)
       } else {
-        name.to_string()
+        item.title.clone()
       };
       let text_width = surface.measure_text(&display_text, UI_FONT_SIZE);
       (text_padding + icon_size as f32 + icon_padding + text_width + text_close_gap + close_btn_width)
@@ -375,10 +425,18 @@ pub fn render(
   let max_scroll = (total_content_width - available_width).max(0.0);
   let scroll_offset = scroll_offset.clamp(0.0, max_scroll);
 
-  // Find active tab index
-  let active_tab_index = documents
-    .iter()
-    .position(|doc| Some(doc.id()) == current_doc_id);
+  // Find active tab index based on focused content
+  let active_tab_index = tab_items.iter().position(|item| {
+    match (item.kind, focused_content) {
+      (BufferKind::Document(doc_id), Some(crate::core::view::ViewContent::Document(focused_id))) => {
+        doc_id == focused_id
+      },
+      (BufferKind::Terminal(term_id), Some(crate::core::view::ViewContent::Terminal(focused_id))) => {
+        term_id == focused_id
+      },
+      _ => false,
+    }
+  });
 
   // Start cursor at left margin minus scroll offset
   let mut cursor_x = origin_x + left_margin - scroll_offset;
@@ -388,16 +446,15 @@ pub fn render(
   // Push scissor rect to clip tab content to the visible area
   surface.push_scissor_rect(clip_left, origin_y, clip_right - clip_left, cell_height);
 
-  for (tab_index, doc) in documents.iter().enumerate() {
-    let doc_id = doc.id();
-    let is_active = Some(doc_id) == current_doc_id;
+  for (tab_index, item) in tab_items.iter().enumerate() {
+    let is_active = Some(tab_index) == active_tab_index;
     let is_hovered = Some(tab_index) == hover_index;
     let is_pressed = Some(tab_index) == pressed_index;
     let is_close_hovered = Some(tab_index) == close_hover_index;
     let is_close_pressed = Some(tab_index) == close_pressed_index;
 
     // Get or create animation state for this tab
-    let anim = animation_states.entry(doc_id).or_default();
+    let anim = animation_states.entry(item.kind).or_default();
     anim.update(dt, is_hovered, is_close_hovered, is_pressed, is_close_pressed, is_active, true);
 
     // Apply alive_t to width for open/close animation
@@ -413,7 +470,7 @@ pub fn render(
 
     // Store tab bounds for hit testing (use animated width)
     tabs.push(BufferTab {
-      kind: BufferKind::Document(doc_id),
+      kind: item.kind,
       start_x: tab_start,
       end_x: tab_end,
       close_start_x: tab_end - close_btn_width * anim.alive_t,
@@ -432,10 +489,9 @@ pub fn render(
     let clipped_end_x = tab_end.min(clip_right);
     let clipped_width = (clipped_end_x - clipped_start_x).max(0.0);
 
-    // Get file name and icon
-    let name = display_name(doc);
-    let name_str = name.as_ref();
-    let icon = file_icons::icon_for_file(name_str);
+    // Get tab title and icon from pre-computed item
+    let name_str = &item.title;
+    let icon = item.icon;
 
     // Determine colors based on state - using active_t for smooth transitions
     // Fade content based on alive_t for open/close animation
@@ -579,8 +635,8 @@ pub fn render(
       continue;
     }
 
-    // Full filename with modified indicator - no truncation ever
-    let display_text = if doc.is_modified() {
+    // Full title with modified indicator - no truncation ever
+    let display_text = if item.is_modified {
       format!("{} •", name_str)
     } else {
       name_str.to_string()
@@ -694,8 +750,8 @@ pub fn render(
   surface.pop_scissor_rect();
 
   // Remove animation states only when animation is complete (alive_t near 0)
-  animation_states.retain(|id, anim| {
-    doc_ids.contains(id) || anim.alive_t > 0.01
+  animation_states.retain(|kind, anim| {
+    active_kinds.contains(kind) || anim.alive_t > 0.01
   });
 
   // Draw add (+) button
@@ -793,7 +849,7 @@ pub fn render(
 
 /// Check if any tab animation is in progress (requires redraw)
 pub fn needs_animation_update(
-  animation_states: &HashMap<DocumentId, TabAnimationState>,
+  animation_states: &HashMap<BufferKind, TabAnimationState>,
   add_button_state: &AddButtonState,
 ) -> bool {
   add_button_state.is_animating() || animation_states.values().any(|s| s.is_animating())

@@ -1832,38 +1832,33 @@ fn buffer_close(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()>
     return Ok(());
   }
 
-  // Check if focused node is a document view
+  // Get the current view's document directly
   let Some(view_id) = cx.editor.focused_view_id() else {
-    cx.editor
-      .set_error("no active document view to close".to_string());
+    cx.editor.set_error("no active view".to_string());
     return Ok(());
   };
 
-  let doc_id = cx
-    .editor
-    .documents
-    .iter()
-    .find(|(_, doc)| doc.selections().contains_key(&view_id))
-    .map(|(id, _)| *id);
+  let Some(doc_id) = cx.editor.tree.get(view_id).doc() else {
+    cx.editor.set_error("current view is not a document".to_string());
+    return Ok(());
+  };
 
-  if let Some(doc_id) = doc_id {
-    if let Some(doc) = cx.editor.documents.get(&doc_id)
-      && doc.is_modified()
-    {
-      cx.editor
-        .set_error("unsaved changes, save first".to_string());
-      return Ok(());
-    }
-
-    match cx.editor.close_document(doc_id, false) {
-      Ok(_) => {},
-      Err(_) => {
-        cx.editor.set_error("failed to close buffer".to_string());
-        return Ok(());
-      },
-    }
-    cx.editor.set_status("buffer closed".to_string());
+  if let Some(doc) = cx.editor.documents.get(&doc_id)
+    && doc.is_modified()
+  {
+    cx.editor
+      .set_error("unsaved changes, save first".to_string());
+    return Ok(());
   }
+
+  match cx.editor.close_document(doc_id, false) {
+    Ok(_) => {},
+    Err(_) => {
+      cx.editor.set_error("failed to close buffer".to_string());
+      return Ok(());
+    },
+  }
+  cx.editor.set_status("buffer closed".to_string());
 
   Ok(())
 }

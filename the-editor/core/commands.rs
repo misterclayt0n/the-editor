@@ -7972,7 +7972,10 @@ pub fn jump_forward(cx: &mut Context) {
   let count = cx.count();
   let config = cx.editor.config();
   let view = view_mut!(cx.editor);
-  let doc_id = view.doc_id();
+  // Guard against terminal views which don't have documents
+  let Some(doc_id) = view.doc() else {
+    return;
+  };
 
   if let Some((id, selection)) = view.jumps.forward(count) {
     let new_doc_id = *id;

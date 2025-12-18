@@ -1400,6 +1400,11 @@ pub fn workspace_diagnostics(cx: &mut Context) {
 
 /// Select all references to the symbol under cursor in the current file
 pub fn select_references(cx: &mut Context) {
+  // Guard against terminal views
+  if crate::view!(cx.editor).is_terminal() {
+    return;
+  }
+
   let (view, doc) = current_ref!(cx.editor);
 
   let current_uri = match doc.url() {
@@ -1428,7 +1433,7 @@ pub fn select_references(cx: &mut Context) {
     return;
   }
 
-  let doc_id = view.doc_id();
+  let doc_id = doc.id();
   let view_id = view.id;
 
   cx.jobs.callback(async move {

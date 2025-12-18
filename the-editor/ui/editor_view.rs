@@ -87,6 +87,7 @@ use crate::{
 const VIEW_PADDING_LEFT: f32 = 0.0; // No visual padding - only scrolloff
 const VIEW_PADDING_TOP: f32 = 0.0;
 const VIEW_PADDING_BOTTOM: f32 = 0.0; // No reservation - statusbar is now an overlay
+const STATUSLINE_HEIGHT: f32 = 28.0; // Fixed statusline height (must match statusline.rs)
 const CURSOR_HEIGHT_EXTENSION: f32 = 4.0;
 
 /// Wrapper around syntax::OverlayHighlighter that maintains position and style
@@ -487,6 +488,19 @@ impl EditorView {
     match self.explorer_position {
       FileTreePosition::Left => self.explorer_px_width,
       FileTreePosition::Right => 0.0,
+    }
+  }
+
+  /// Get the y adjustment for content to align with the bufferline.
+  /// The bufferline uses UI_FONT_SIZE (fixed), while the layout reserves 1 cell row.
+  /// This adjustment accounts for the difference between bufferline height and cell height.
+  fn bufferline_y_adjustment(&self) -> f32 {
+    if self.bufferline_alive_t > 0.01 {
+      // Adjustment = actual bufferline height - 1 row of cell height
+      // This aligns the content right after the bufferline
+      self.bufferline_height - self.cached_cell_height
+    } else {
+      0.0
     }
   }
 
@@ -1061,7 +1075,7 @@ impl Component for EditorView {
                     let view = cx.editor.tree.get(node_id);
                     let view_area = view.area;
                     let rel_x = mouse_x - self.content_x_offset() - view_area.x as f32 * self.cached_cell_width;
-                    let rel_y = mouse_y - view_area.y as f32 * self.cached_cell_height;
+                    let rel_y = mouse_y - view_area.y as f32 * self.cached_cell_height - self.bufferline_y_adjustment();
                     (
                       (rel_x / self.cached_cell_width).floor().max(0.0) as u16,
                       (rel_y / self.cached_cell_height).floor().max(0.0) as u16,
@@ -1216,7 +1230,9 @@ impl Component for EditorView {
     self.cached_font_size = font_size;
 
     // Calculate tree area from renderer dimensions
-    let available_height = (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM);
+    // Subtract statusline height in pixels (not rows) to avoid variable gap at bottom
+    let available_height =
+      (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM) - STATUSLINE_HEIGHT;
     let available_height = available_height.max(font_size);
     let total_rows = ((available_height / self.cached_cell_height)
       .floor()
@@ -1228,11 +1244,11 @@ impl Component for EditorView {
     let available_width = viewport_px_width.max(font_width);
     let area_width = (available_width / font_width).floor().max(1.0) as u16;
 
-    // Reserve space at bottom for statusline (clip_bottom reserves 1 row)
-    // The statusline is rendered as an overlay by the compositor, but we need to
-    // prevent views from rendering underneath it
-    let mut target_area = Rect::new(0, 0, area_width, total_rows).clip_bottom(1);
-    // Reserve space for bufferline when visible or animating
+    // No clip_bottom needed - statusline height is already subtracted in pixels above
+    let mut target_area = Rect::new(0, 0, area_width, total_rows);
+    // Reserve 1 row for bufferline when visible. The actual pixel adjustment
+    // (bufferline_y_adjustment) handles the mismatch between bufferline height
+    // and cell height to prevent overlap or gaps.
     if self.bufferline_alive_t > 0.01 {
       target_area = target_area.clip_top(1);
     }
@@ -1575,7 +1591,9 @@ impl Component for EditorView {
       // Add content_x_offset to X offset - this is the key to consistent popup
       // positioning (only applies when explorer is on the left)
       let view_offset_x = content_x_offset + view_area.x as f32 * font_width;
-      let view_offset_y = view_area.y as f32 * (self.cached_cell_height);
+      // Add bufferline_y_adjustment to align content with actual bufferline height
+      let view_offset_y =
+        view_area.y as f32 * self.cached_cell_height + self.bufferline_y_adjustment();
       let mut base_y = view_offset_y + VIEW_PADDING_TOP;
 
       // Calculate visible lines for THIS view based on its height
@@ -4553,9 +4571,9 @@ impl EditorView {
           let gap_center_x =
             self.content_x_offset() + (area.x + area.width) as f32 * font_width + (font_width / 2.0);
           let x = gap_center_x - (SEPARATOR_WIDTH_PX / 2.0);
-          let y = area.y as f32 * (self.cached_cell_height);
+          let y = area.y as f32 * self.cached_cell_height + self.bufferline_y_adjustment();
           let width = SEPARATOR_WIDTH_PX;
-          let height = area.height as f32 * (self.cached_cell_height);
+          let height = area.height as f32 * self.cached_cell_height;
           renderer.draw_rect(x, y, width, height, separator_color);
         }
       }
@@ -4568,9 +4586,9 @@ impl EditorView {
           let gap_center_x =
             self.content_x_offset() + area.x as f32 * font_width - (font_width / 2.0);
           let x = gap_center_x - (SEPARATOR_WIDTH_PX / 2.0);
-          let y = area.y as f32 * (self.cached_cell_height);
+          let y = area.y as f32 * self.cached_cell_height + self.bufferline_y_adjustment();
           let width = SEPARATOR_WIDTH_PX;
-          let height = area.height as f32 * (self.cached_cell_height);
+          let height = area.height as f32 * self.cached_cell_height;
           renderer.draw_rect(x, y, width, height, separator_color);
         }
       }
@@ -4580,7 +4598,7 @@ impl EditorView {
       if let Some(down_id) = down_neighbor {
         if !tree.is_closing(down_id) {
           let x = self.content_x_offset() + area.x as f32 * font_width;
-          let sep_y = (area.y + area.height) as f32 * (self.cached_cell_height) - SEPARATOR_HEIGHT_PX;
+          let sep_y = (area.y + area.height) as f32 * self.cached_cell_height + self.bufferline_y_adjustment() - SEPARATOR_HEIGHT_PX;
           let width = area.width as f32 * font_width;
           let height = SEPARATOR_HEIGHT_PX;
           renderer.draw_rect(x, sep_y, width, height, separator_color);
@@ -4593,7 +4611,7 @@ impl EditorView {
         if tree.is_closing(up_id) {
           // Top neighbor is closing, draw separator at our animated top edge
           let x = self.content_x_offset() + area.x as f32 * font_width;
-          let sep_y = area.y as f32 * (self.cached_cell_height);
+          let sep_y = area.y as f32 * self.cached_cell_height + self.bufferline_y_adjustment();
           let width = area.width as f32 * font_width;
           let height = SEPARATOR_HEIGHT_PX;
           renderer.draw_rect(x, sep_y, width, height, separator_color);
@@ -5009,7 +5027,7 @@ impl EditorView {
 
               // Calculate terminal cell coordinates
               let rel_x = mouse.position.0 - self.content_x_offset() - view_area.x as f32 * self.cached_cell_width;
-              let rel_y = mouse.position.1 - view_area.y as f32 * self.cached_cell_height - VIEW_PADDING_TOP;
+              let rel_y = mouse.position.1 - view_area.y as f32 * self.cached_cell_height - self.bufferline_y_adjustment() - VIEW_PADDING_TOP;
               let col = (rel_x / self.cached_cell_width).floor().max(0.0) as u16;
               let row = (rel_y / self.cached_cell_height).floor().max(0.0) as i32;
 
@@ -5112,7 +5130,7 @@ impl EditorView {
                   if view.terminal() == Some(terminal_id) {
                     let view_area = view.area;
                     let rel_x = mouse.position.0 - self.content_x_offset() - view_area.x as f32 * self.cached_cell_width;
-                    let rel_y = mouse.position.1 - view_area.y as f32 * self.cached_cell_height - VIEW_PADDING_TOP;
+                    let rel_y = mouse.position.1 - view_area.y as f32 * self.cached_cell_height - self.bufferline_y_adjustment() - VIEW_PADDING_TOP;
                     let col = (rel_x / self.cached_cell_width).floor().max(0.0) as u16;
                     let row = (rel_y / self.cached_cell_height).floor().max(0.0) as u16;
                     let report = format!("\x1b[<0;{};{}m", col + 1, row + 1);
@@ -5223,7 +5241,7 @@ impl EditorView {
               if view.terminal() == Some(terminal_id) {
                 let view_area = view.area;
                 let rel_x = mouse.position.0 - self.content_x_offset() - view_area.x as f32 * self.cached_cell_width;
-                let rel_y = mouse.position.1 - view_area.y as f32 * self.cached_cell_height - VIEW_PADDING_TOP;
+                let rel_y = mouse.position.1 - view_area.y as f32 * self.cached_cell_height - self.bufferline_y_adjustment() - VIEW_PADDING_TOP;
                 let col = (rel_x / self.cached_cell_width).floor().max(0.0) as u16;
                 let row_unclamped = (rel_y / self.cached_cell_height).floor() as i32;
                 let (_cols, rows) = term.dimensions();
@@ -5389,8 +5407,10 @@ impl EditorView {
     }
 
     // Convert pixel coordinates to cell coordinates
+    // Account for bufferline y adjustment to align with view.area coordinates
     let mouse_col = (adjusted_mouse_x / cell_width) as u16;
-    let mouse_row = (mouse_y / cell_height) as u16;
+    let adjusted_mouse_y = mouse_y - self.bufferline_y_adjustment();
+    let mouse_row = (adjusted_mouse_y / cell_height) as u16;
 
     // Check views
     for (view, _) in cx.editor.tree.views() {
@@ -5425,8 +5445,10 @@ impl EditorView {
     }
 
     // Convert pixel coordinates to cell coordinates
+    // Account for bufferline y adjustment to align with view.area coordinates
     let mouse_col = (adjusted_mouse_x / cell_width) as u16;
-    let mouse_row = (mouse_y / cell_height) as u16;
+    let adjusted_mouse_y = mouse_y - self.bufferline_y_adjustment();
+    let mouse_row = (adjusted_mouse_y / cell_height) as u16;
 
     // Find which view was clicked
     for (view, _) in cx.editor.tree.views() {
@@ -5556,7 +5578,7 @@ impl EditorView {
       {
         let gap_center_x =
           self.content_x_offset() + (area.x + area.width) as f32 * font_width + (font_width / 2.0);
-        let sep_y = area.y as f32 * cell_height;
+        let sep_y = area.y as f32 * cell_height + self.bufferline_y_adjustment();
         let sep_height = area.height as f32 * cell_height;
 
         // Check if mouse is near this vertical separator
@@ -5580,7 +5602,8 @@ impl EditorView {
         .is_some()
       {
         let sep_x = self.content_x_offset() + area.x as f32 * font_width;
-        let sep_y = (area.y + area.height) as f32 * cell_height - SEPARATOR_HEIGHT_PX;
+        let sep_y =
+          (area.y + area.height) as f32 * cell_height + self.bufferline_y_adjustment() - SEPARATOR_HEIGHT_PX;
         let sep_width = area.width as f32 * font_width;
 
         // Check if mouse is near this horizontal separator

@@ -155,7 +155,7 @@ pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option
 
   // Get viewport pixel offsets (explorer width, bufferline height)
   // These are set by EditorView during render
-  let (explorer_px_offset, _bufferline_px_offset) = ctx.editor.viewport_pixel_offset;
+  let (explorer_px_offset, bufferline_px_offset) = ctx.editor.viewport_pixel_offset;
 
   // Calculate view position in pixels - must match how editor_view.rs renders
   // text Tree coordinates are 0-based (not offset by explorer), so we add
@@ -163,8 +163,16 @@ pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option
   let view_x = explorer_px_offset + (inner_area.x as f32 * doc_cell_w) + shake_offset_x;
 
   // For Y: inner_area.y is in cells (already includes bufferline offset via clip_top(1))
-  // Convert to pixels - DO NOT add bufferline_px_offset as that would double-count
-  let view_y = (inner_area.y as f32 * doc_cell_h) + shake_offset_y;
+  // The bufferline has a fixed pixel height that doesn't scale with font size,
+  // so we can't just multiply inner_area.y by doc_cell_h.
+  // If bufferline is present (inner_area.y > 0 and bufferline_px_offset > 0),
+  // use its fixed pixel height for the first row.
+  let view_y = if inner_area.y > 0 && bufferline_px_offset > 0.0 {
+    // Bufferline takes first row at fixed pixel height, remaining rows at doc_cell_h
+    bufferline_px_offset + ((inner_area.y as f32 - 1.0) * doc_cell_h) + shake_offset_y
+  } else {
+    (inner_area.y as f32 * doc_cell_h) + shake_offset_y
+  };
 
   // Calculate final screen position
   let x = view_x + (screen_col as f32 * doc_cell_w);

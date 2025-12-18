@@ -13,18 +13,17 @@ use the_editor_renderer::{
   TextSegment,
   TextStyle,
 };
+use the_editor_stdx::rope::RopeSliceExt;
 use the_terminal::{
   ColorScheme as TerminalColorScheme,
   CursorShape as TerminalCursorShape,
 };
-use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
   core::{
     animation::selection::{
       self as selection_anim,
     },
-    info::Info,
     commands::{
       self,
       MappableCommand,
@@ -43,6 +42,7 @@ use crate::{
       CursorKind,
       Rect,
     },
+    info::Info,
     layout::{
       Constraint as LayoutConstraint,
       Layout as UiLayout,
@@ -234,77 +234,78 @@ enum DragSelectMode {
 }
 
 pub struct EditorView {
-  pub keymaps:               Keymaps,
-  on_next_key:               Option<(OnKeyCallback, OnKeyCallbackKind)>,
+  pub keymaps:                   Keymaps,
+  on_next_key:                   Option<(OnKeyCallback, OnKeyCallbackKind)>,
   // Track last command for macro replay
-  last_insert:               (MappableCommand, Vec<KeyBinding>),
+  last_insert:                   (MappableCommand, Vec<KeyBinding>),
   // Rendering optimizations
-  dirty_region:              DirtyRegion,
-  command_batcher:           CommandBatcher,
-  last_cursor_pos:           Option<usize>,
-  last_selection_hash:       u64,
+  dirty_region:                  DirtyRegion,
+  command_batcher:               CommandBatcher,
+  last_cursor_pos:               Option<usize>,
+  last_selection_hash:           u64,
   // Cursor animation
-  cursor_animation:          Option<crate::core::animation::AnimationHandle<(f32, f32)>>,
+  cursor_animation:              Option<crate::core::animation::AnimationHandle<(f32, f32)>>,
   // Zoom animation state
-  zoom_anim_active:          bool,
-  selection_pulse_animating: bool,
-  noop_effect_animating:     bool,
+  zoom_anim_active:              bool,
+  selection_pulse_animating:     bool,
+  noop_effect_animating:         bool,
   // Gutter management
-  pub gutter_manager:        GutterManager,
+  pub gutter_manager:            GutterManager,
   // Completion popup
-  pub(crate) completion:     Option<crate::ui::components::Completion>,
+  pub(crate) completion:         Option<crate::ui::components::Completion>,
   // Signature help popup
-  pub(crate) signature_help: Option<crate::ui::components::SignatureHelp>,
-  bufferline_visible:        bool,
-  bufferline_alive_t:        f32, // Animation for show/hide (0.0 = hidden, 1.0 = visible)
+  pub(crate) signature_help:     Option<crate::ui::components::SignatureHelp>,
+  bufferline_visible:            bool,
+  bufferline_alive_t:            f32, // Animation for show/hide (0.0 = hidden, 1.0 = visible)
   // Cached font metrics for mouse handling (updated during render)
-  cached_cell_width:         f32,
-  cached_cell_height:        f32,
-  cached_font_size:          f32, // Font size corresponding to cached metrics
+  cached_cell_width:             f32,
+  cached_cell_height:            f32,
+  cached_font_size:              f32, // Font size corresponding to cached metrics
   // Mouse drag state for selection
-  mouse_pressed:             bool,
-  mouse_drag_anchor_range:   Option<crate::core::selection::Range>,
-  mouse_drag_mode:           DragSelectMode,
+  mouse_pressed:                 bool,
+  mouse_drag_anchor_range:       Option<crate::core::selection::Range>,
+  mouse_drag_mode:               DragSelectMode,
   // Multi-click detection (double/triple-click)
-  last_click_time:           Option<std::time::Instant>,
-  last_click_pos:            Option<(f32, f32)>,
-  click_count:               u8,
+  last_click_time:               Option<std::time::Instant>,
+  last_click_pos:                Option<(f32, f32)>,
+  click_count:                   u8,
   // Terminal mouse selection state
-  terminal_selection_active: Option<the_terminal::TerminalId>,
+  terminal_selection_active:     Option<the_terminal::TerminalId>,
   // Terminal scroll accumulator for smooth scrolling
-  terminal_scroll_px:        f32,
+  terminal_scroll_px:            f32,
   // Split separator interaction
-  hovered_separator:         Option<SeparatorInfo>,
-  dragging_separator:        Option<SeparatorDrag>,
-  buffer_hover_index:        Option<usize>,
-  buffer_tabs:               Vec<bufferline::BufferTab>,
-  bufferline_height:         f32,
-  buffer_pressed_index:      Option<usize>,
+  hovered_separator:             Option<SeparatorInfo>,
+  dragging_separator:            Option<SeparatorDrag>,
+  buffer_hover_index:            Option<usize>,
+  buffer_tabs:                   Vec<bufferline::BufferTab>,
+  bufferline_height:             f32,
+  buffer_pressed_index:          Option<usize>,
   // RAD-style bufferline state
-  buffer_close_hover_index:  Option<usize>,
-  buffer_close_pressed_index: Option<usize>,
-  add_button_hovered:        bool,
-  add_button_pressed:        bool,
-  add_button_rect:           Option<crate::core::graphics::Rect>,
-  tab_animation_states:      std::collections::HashMap<bufferline::BufferKind, bufferline::TabAnimationState>,
-  add_button_state:          bufferline::AddButtonState,
-  bufferline_scroll_offset:  f32,
-  bufferline_scroll_target:  f32,
-  bufferline_max_scroll:     f32,
+  buffer_close_hover_index:      Option<usize>,
+  buffer_close_pressed_index:    Option<usize>,
+  add_button_hovered:            bool,
+  add_button_pressed:            bool,
+  add_button_rect:               Option<crate::core::graphics::Rect>,
+  tab_animation_states:
+    std::collections::HashMap<bufferline::BufferKind, bufferline::TabAnimationState>,
+  add_button_state:              bufferline::AddButtonState,
+  bufferline_scroll_offset:      f32,
+  bufferline_scroll_target:      f32,
+  bufferline_max_scroll:         f32,
   // Tree explorer sidebar
-  explorer:                  Option<Explorer>,
+  explorer:                      Option<Explorer>,
   // Explorer mouse interaction state
-  explorer_px_width:         f32,
-  explorer_position:         FileTreePosition,
-  explorer_hovered_item:     Option<usize>,
+  explorer_px_width:             f32,
+  explorer_position:             FileTreePosition,
+  explorer_hovered_item:         Option<usize>,
   // Accumulator for fractional scroll amounts in explorer (for trackpad)
-  explorer_scroll_accum:     f32,
+  explorer_scroll_accum:         f32,
   // Track last mouse position for scroll targeting
-  last_mouse_pos:            Option<(f32, f32)>,
+  last_mouse_pos:                Option<(f32, f32)>,
   // Indent guide animation state (per indent level -> current opacity)
-  indent_guide_opacities:    std::collections::HashMap<usize, f32>,
+  indent_guide_opacities:        std::collections::HashMap<usize, f32>,
   // Track if indent guide animation is in progress
-  indent_guides_anim_active: bool,
+  indent_guides_anim_active:     bool,
   // Diagnostic glow animation state (per doc line -> current opacity)
   diagnostic_glow_opacities:     std::collections::HashMap<usize, f32>,
   // Track if diagnostic glow animation is in progress
@@ -320,11 +321,16 @@ pub struct EditorView {
   // Track if underline animation is in progress
   underline_anim_active:         bool,
   // Inline diagnostic animation state (per doc line -> full animation state)
-  inline_diagnostic_anim:        std::collections::HashMap<usize, super::inline_diagnostic_animation::InlineDiagnosticAnimState>,
+  inline_diagnostic_anim:
+    std::collections::HashMap<usize, super::inline_diagnostic_animation::InlineDiagnosticAnimState>,
   // Track if inline diagnostic animation is in progress
   inline_diagnostic_anim_active: bool,
   // Terminal escape prefix state: true when waiting for command after Ctrl+\
   terminal_escape_pending:       bool,
+  // Infobox animation state (0.0 → 1.0 appearance)
+  infobox_animation:             Option<crate::core::animation::AnimationHandle<f32>>,
+  // Track whether autoinfo was present last frame (to detect transitions)
+  had_autoinfo:                  bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -425,6 +431,8 @@ impl EditorView {
       inline_diagnostic_anim: std::collections::HashMap::new(),
       inline_diagnostic_anim_active: false,
       terminal_escape_pending: false,
+      infobox_animation: None,
+      had_autoinfo: false,
     }
   }
 
@@ -495,8 +503,9 @@ impl EditorView {
   }
 
   /// Get the y adjustment for content to align with the bufferline.
-  /// The bufferline uses UI_FONT_SIZE (fixed), while the layout reserves 1 cell row.
-  /// This adjustment accounts for the difference between bufferline height and cell height.
+  /// The bufferline uses UI_FONT_SIZE (fixed), while the layout reserves 1 cell
+  /// row. This adjustment accounts for the difference between bufferline
+  /// height and cell height.
   fn bufferline_y_adjustment(&self) -> f32 {
     if self.bufferline_alive_t > 0.01 {
       // Adjustment = actual bufferline height - 1 row of cell height
@@ -940,7 +949,9 @@ impl Component for EditorView {
               // Mark current line as dirty before insertion
               let focus_view = cx.editor.tree.focus;
               let view = cx.editor.tree.get(focus_view);
-              let Some(doc_id) = view.doc() else { return EventResult::Ignored(None) };
+              let Some(doc_id) = view.doc() else {
+                return EventResult::Ignored(None);
+              };
               let doc = &cx.editor.documents[&doc_id];
               let cursor_pos = doc
                 .selection(focus_view)
@@ -971,7 +982,9 @@ impl Component for EditorView {
               // Mark line as dirty after insertion (may be different if newline was inserted)
               let focus_view = cx.editor.tree.focus;
               let view = cx.editor.tree.get(focus_view);
-              let Some(doc_id) = view.doc() else { return EventResult::Consumed(None) };
+              let Some(doc_id) = view.doc() else {
+                return EventResult::Consumed(None);
+              };
               let doc = &cx.editor.documents[&doc_id];
               let new_cursor_pos = doc
                 .selection(focus_view)
@@ -1045,7 +1058,8 @@ impl Component for EditorView {
         // First try mouse position, then fall back to focused view
         let terminal_id = if let Some((mouse_x, mouse_y)) = self.last_mouse_pos {
           // Check if mouse is over a terminal view
-          self.screen_coords_to_node((mouse_x, mouse_y), cx)
+          self
+            .screen_coords_to_node((mouse_x, mouse_y), cx)
             .and_then(|node_id| {
               let view = cx.editor.tree.get(node_id);
               view.terminal()
@@ -1085,8 +1099,12 @@ impl Component for EditorView {
                   if let Some(node_id) = self.screen_coords_to_node((mouse_x, mouse_y), cx) {
                     let view = cx.editor.tree.get(node_id);
                     let view_area = view.area;
-                    let rel_x = mouse_x - self.content_x_offset() - view_area.x as f32 * self.cached_cell_width;
-                    let rel_y = mouse_y - view_area.y as f32 * self.cached_cell_height - self.bufferline_y_adjustment();
+                    let rel_x = mouse_x
+                      - self.content_x_offset()
+                      - view_area.x as f32 * self.cached_cell_width;
+                    let rel_y = mouse_y
+                      - view_area.y as f32 * self.cached_cell_height
+                      - self.bufferline_y_adjustment();
                     (
                       (rel_x / self.cached_cell_width).floor().max(0.0) as u16,
                       (rel_y / self.cached_cell_height).floor().max(0.0) as u16,
@@ -1224,7 +1242,8 @@ impl Component for EditorView {
       self.dirty_region.mark_all_dirty();
     }
 
-    // Animate bufferline visibility using exponential decay (slower rate for deliberate animation)
+    // Animate bufferline visibility using exponential decay (slower rate for
+    // deliberate animation)
     {
       let alive_rate = 1.0 - 2.0_f32.powf(-30.0 * cx.dt);
       let target = if self.bufferline_visible { 1.0 } else { 0.0 };
@@ -1241,7 +1260,8 @@ impl Component for EditorView {
     self.cached_font_size = font_size;
 
     // Calculate tree area from renderer dimensions
-    // Subtract statusline height in pixels (not rows) to avoid variable gap at bottom
+    // Subtract statusline height in pixels (not rows) to avoid variable gap at
+    // bottom
     let available_height =
       (renderer.height() as f32) - (VIEW_PADDING_TOP + VIEW_PADDING_BOTTOM) - STATUSLINE_HEIGHT;
     let available_height = available_height.max(font_size);
@@ -1255,7 +1275,8 @@ impl Component for EditorView {
     let available_width = viewport_px_width.max(font_width);
     let area_width = (available_width / font_width).floor().max(1.0) as u16;
 
-    // No clip_bottom needed - statusline height is already subtracted in pixels above
+    // No clip_bottom needed - statusline height is already subtracted in pixels
+    // above
     let mut target_area = Rect::new(0, 0, area_width, total_rows);
     // Reserve 1 row for bufferline when visible. The actual pixel adjustment
     // (bufferline_y_adjustment) handles the mismatch between bufferline height
@@ -1391,7 +1412,9 @@ impl Component for EditorView {
         .traverse()
         .filter_map(|(view_id, _)| {
           let view = cx.editor.tree.get(view_id);
-          view.terminal().map(|tid| (tid, view.area.width, view.area.height))
+          view
+            .terminal()
+            .map(|tid| (tid, view.area.width, view.area.height))
         })
         .collect();
 
@@ -1470,7 +1493,8 @@ impl Component for EditorView {
           let visible_start = self.bufferline_scroll_offset;
           let visible_end = visible_start + available_width;
 
-          // Tab positions are relative to the scroll offset, so we need the unscrolled positions
+          // Tab positions are relative to the scroll offset, so we need the unscrolled
+          // positions
           let tab_start = tab.start_x + self.bufferline_scroll_offset - content_x_offset - 4.0;
           let tab_end = tab.end_x + self.bufferline_scroll_offset - content_x_offset - 4.0;
 
@@ -1479,7 +1503,8 @@ impl Component for EditorView {
             self.bufferline_scroll_target = tab_start.max(0.0);
           } else if tab_end > visible_end {
             // Tab is to the right of visible area - scroll right
-            self.bufferline_scroll_target = (tab_end - available_width).clamp(0.0, result.max_scroll);
+            self.bufferline_scroll_target =
+              (tab_end - available_width).clamp(0.0, result.max_scroll);
           }
         }
       }
@@ -1953,7 +1978,11 @@ impl Component for EditorView {
           let mut animating = false;
 
           for (&line, current) in self.underline_opacities.iter_mut() {
-            let target = if underline_lines.contains(&line) { 1.0 } else { 0.0 };
+            let target = if underline_lines.contains(&line) {
+              1.0
+            } else {
+              0.0
+            };
             let delta = target - *current;
             if delta.abs() > 0.01 {
               animating = true;
@@ -1988,7 +2017,10 @@ impl Component for EditorView {
 
         // Update EOL diagnostic text animation state with debouncing
         {
-          use std::time::{Duration, Instant};
+          use std::time::{
+            Duration,
+            Instant,
+          };
           const EOL_DEBOUNCE: Duration = Duration::from_millis(350);
 
           let eol_diagnostic_lines: std::collections::HashSet<usize> = doc
@@ -2031,7 +2063,11 @@ impl Component for EditorView {
           let mut eol_animating = false;
 
           for (&line, current) in self.eol_diagnostic_opacities.iter_mut() {
-            let target = if eol_diagnostic_lines.contains(&line) { 1.0 } else { 0.0 };
+            let target = if eol_diagnostic_lines.contains(&line) {
+              1.0
+            } else {
+              0.0
+            };
             let delta = target - *current;
             if delta.abs() > 0.01 {
               eol_animating = true;
@@ -2068,8 +2104,7 @@ impl Component for EditorView {
             .diagnostics_handler
             .show_cursorline_diagnostics(doc, focus_view)
         };
-        let prepared_config =
-          inline_diagnostics_config.prepare(viewport.width, enable_cursor_line);
+        let prepared_config = inline_diagnostics_config.prepare(viewport.width, enable_cursor_line);
 
         // Update inline diagnostic animation state
         {
@@ -2134,7 +2169,6 @@ impl Component for EditorView {
         }
 
         if inline_decoration_enabled || eol_decoration_enabled {
-
           let eol_cursor_line_only = cx.editor.config().end_of_line_diagnostics_cursor_line_only;
           let inline_diag = crate::ui::text_decorations::diagnostics::InlineDiagnostics::new(
             doc,
@@ -2283,13 +2317,17 @@ impl Component for EditorView {
         };
 
         // Check if current line is closing-only (}, );, etc.)
-        let trimmed: String = cursor_line_text.chars().filter(|c| !c.is_whitespace()).collect();
+        let trimmed: String = cursor_line_text
+          .chars()
+          .filter(|c| !c.is_whitespace())
+          .collect();
         let is_cursor_line_closing = !trimmed.is_empty()
           && trimmed
             .chars()
             .all(|c| matches!(c, '}' | ')' | ']' | ',' | ';'));
 
-        // For closing-only lines, look at previous content lines to get effective indent
+        // For closing-only lines, look at previous content lines to get effective
+        // indent
         let cursor_indent_level = if is_cursor_line_closing {
           let mut effective_level = line_indent_level;
           for prev_line in (0..cursor_line).rev() {
@@ -2308,7 +2346,11 @@ impl Component for EditorView {
               .chars()
               .take_while(|c| c.is_whitespace() && *c != '\n')
               .count();
-            effective_level = if indent_width > 0 { prev_indent / indent_width } else { 0 };
+            effective_level = if indent_width > 0 {
+              prev_indent / indent_width
+            } else {
+              0
+            };
             break;
           }
           effective_level
@@ -2328,7 +2370,10 @@ impl Component for EditorView {
             return 0;
           }
           let line = doc_text.line(line_idx);
-          let indent_chars = line.chars().take_while(|c| c.is_whitespace() && *c != '\n').count();
+          let indent_chars = line
+            .chars()
+            .take_while(|c| c.is_whitespace() && *c != '\n')
+            .count();
           if indent_width > 0 {
             indent_chars / indent_width
           } else {
@@ -2396,7 +2441,10 @@ impl Component for EditorView {
             BASE_OPACITY
           };
 
-          let current = self.indent_guide_opacities.entry(level).or_insert(BASE_OPACITY);
+          let current = self
+            .indent_guide_opacities
+            .entry(level)
+            .or_insert(BASE_OPACITY);
           let delta = target - *current;
 
           // Check if still animating before updating
@@ -2427,7 +2475,11 @@ impl Component for EditorView {
         let max_line = doc_text.len_lines();
         for line in 0..max_line.min(10000) {
           // Cap to avoid huge allocations
-          let target = if diagnostic_lines.contains(&line) { 1.0 } else { 0.0 };
+          let target = if diagnostic_lines.contains(&line) {
+            1.0
+          } else {
+            0.0
+          };
 
           if let Some(current) = self.diagnostic_glow_opacities.get_mut(&line) {
             let delta = target - *current;
@@ -2665,8 +2717,7 @@ impl Component for EditorView {
                 // Find the highest severity diagnostic on this line
                 use crate::core::diagnostics::Severity;
                 let diagnostics = &doc.diagnostics;
-                let first_diag_idx =
-                  diagnostics.partition_point(|d| d.line < doc_line);
+                let first_diag_idx = diagnostics.partition_point(|d| d.line < doc_line);
                 let severity = diagnostics
                   .get(first_diag_idx..)
                   .and_then(|diags| diags.iter().find(|d| d.line == doc_line))
@@ -2674,34 +2725,38 @@ impl Component for EditorView {
 
                 // Get color based on severity
                 let glow_color = match severity {
-                  Some(Severity::Error) => cx
-                    .editor
-                    .theme
-                    .get("error")
-                    .fg
-                    .map(crate::ui::theme_color_to_renderer_color)
-                    .unwrap_or(Color::rgb(0.9, 0.3, 0.3)),
-                  Some(Severity::Warning) | None => cx
-                    .editor
-                    .theme
-                    .get("warning")
-                    .fg
-                    .map(crate::ui::theme_color_to_renderer_color)
-                    .unwrap_or(Color::rgb(0.9, 0.7, 0.3)),
-                  Some(Severity::Info) => cx
-                    .editor
-                    .theme
-                    .get("info")
-                    .fg
-                    .map(crate::ui::theme_color_to_renderer_color)
-                    .unwrap_or(Color::rgb(0.3, 0.7, 0.9)),
-                  Some(Severity::Hint) => cx
-                    .editor
-                    .theme
-                    .get("hint")
-                    .fg
-                    .map(crate::ui::theme_color_to_renderer_color)
-                    .unwrap_or(Color::rgb(0.5, 0.8, 0.5)),
+                  Some(Severity::Error) => {
+                    cx.editor
+                      .theme
+                      .get("error")
+                      .fg
+                      .map(crate::ui::theme_color_to_renderer_color)
+                      .unwrap_or(Color::rgb(0.9, 0.3, 0.3))
+                  },
+                  Some(Severity::Warning) | None => {
+                    cx.editor
+                      .theme
+                      .get("warning")
+                      .fg
+                      .map(crate::ui::theme_color_to_renderer_color)
+                      .unwrap_or(Color::rgb(0.9, 0.7, 0.3))
+                  },
+                  Some(Severity::Info) => {
+                    cx.editor
+                      .theme
+                      .get("info")
+                      .fg
+                      .map(crate::ui::theme_color_to_renderer_color)
+                      .unwrap_or(Color::rgb(0.3, 0.7, 0.9))
+                  },
+                  Some(Severity::Hint) => {
+                    cx.editor
+                      .theme
+                      .get("hint")
+                      .fg
+                      .map(crate::ui::theme_color_to_renderer_color)
+                      .unwrap_or(Color::rgb(0.5, 0.8, 0.5))
+                  },
                 };
 
                 // Draw gradient glow rectangle in gutter area only (stops at line content)
@@ -2712,13 +2767,15 @@ impl Component for EditorView {
                 let mut final_color = glow_color;
                 final_color.a = 0.3 * glow_opacity;
 
-                self.command_batcher.add_command(RenderCommand::GradientRect {
-                  x:      gutter_x,
-                  y,
-                  width:  glow_width,
-                  height: self.cached_cell_height,
-                  color:  final_color,
-                });
+                self
+                  .command_batcher
+                  .add_command(RenderCommand::GradientRect {
+                    x: gutter_x,
+                    y,
+                    width: glow_width,
+                    height: self.cached_cell_height,
+                    color: final_color,
+                  });
               }
             }
           }
@@ -3583,8 +3640,14 @@ impl EditorView {
     static DEBUG_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !DEBUG_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
       log::info!(
-        "TERMINAL DEBUG: font_size={}, cell_width={}, cell_height={}, cols={}, rows={}, line_top_offset={}",
-        self.cached_font_size, font_width, cell_height, cols, rows, renderer.line_top_offset()
+        "TERMINAL DEBUG: font_size={}, cell_width={}, cell_height={}, cols={}, rows={}, \
+         line_top_offset={}",
+        self.cached_font_size,
+        font_width,
+        cell_height,
+        cols,
+        rows,
+        renderer.line_top_offset()
       );
     }
 
@@ -3628,7 +3691,11 @@ impl EditorView {
       );
 
       // Calculate cell width (double for wide characters like CJK)
-      let char_width = if cell.is_wide { font_width * 2.0 } else { font_width };
+      let char_width = if cell.is_wide {
+        font_width * 2.0
+      } else {
+        font_width
+      };
 
       // Check if cell is in search match (single-line only for simplicity)
       // Note: end_col is exclusive
@@ -3653,29 +3720,31 @@ impl EditorView {
 
       // Check if cell is in selection
       // Note: end_col is exclusive (one past the last selected column)
-      let in_selection = selection_range.map_or(false, |((start_col, start_row), (end_col, end_row))| {
-        let cell_row = cell.row as i32;
-        let cell_col = cell.col;
+      let in_selection =
+        selection_range.map_or(false, |((start_col, start_row), (end_col, end_row))| {
+          let cell_row = cell.row as i32;
+          let cell_col = cell.col;
 
-        if cell_row < start_row || cell_row > end_row {
-          false
-        } else if cell_row == start_row && cell_row == end_row {
-          // Single line selection (end_col is exclusive)
-          cell_col >= start_col && cell_col < end_col
-        } else if cell_row == start_row {
-          // First line of multi-line selection
-          cell_col >= start_col
-        } else if cell_row == end_row {
-          // Last line of multi-line selection (end_col is exclusive)
-          cell_col < end_col
-        } else {
-          // Middle lines are fully selected
-          true
-        }
-      });
+          if cell_row < start_row || cell_row > end_row {
+            false
+          } else if cell_row == start_row && cell_row == end_row {
+            // Single line selection (end_col is exclusive)
+            cell_col >= start_col && cell_col < end_col
+          } else if cell_row == start_row {
+            // First line of multi-line selection
+            cell_col >= start_col
+          } else if cell_row == end_row {
+            // Last line of multi-line selection (end_col is exclusive)
+            cell_col < end_col
+          } else {
+            // Middle lines are fully selected
+            true
+          }
+        });
 
       // Draw background: search match takes priority over selection
-      // Use ceil() on both width and height to ensure full cell coverage and avoid gaps
+      // Use ceil() on both width and height to ensure full cell coverage and avoid
+      // gaps
       if in_search_match {
         renderer.draw_rect(x, y, char_width.ceil(), cell_height.ceil(), search_match_bg);
       } else if in_selection {
@@ -3693,14 +3762,14 @@ impl EditorView {
           cell.fg.2 as f32 / 255.0,
         );
 
-        let section =
-          TextSection::simple(x, y, cell.c.to_string(), self.cached_font_size, cell_fg);
+        let section = TextSection::simple(x, y, cell.c.to_string(), self.cached_font_size, cell_fg);
         renderer.draw_text_immediate(section);
       }
     }
 
     // Draw cursor if focused and not scrolled into history
-    // When display_offset > 0, the cursor is scrolled off the bottom of the viewport
+    // When display_offset > 0, the cursor is scrolled off the bottom of the
+    // viewport
     let display_offset = terminal.display_offset();
     if is_focused && cursor_info.visible && display_offset == 0 {
       // Use floor() for pixel-perfect cursor alignment
@@ -3716,7 +3785,7 @@ impl EditorView {
         TerminalCursorShape::Block => {
           // Draw block cursor with inverted colors
           renderer.draw_rect(cursor_x, cursor_y, font_width, cell_height, cursor_color);
-        }
+        },
         TerminalCursorShape::Underline => {
           // Draw underline cursor
           let underline_height = 2.0;
@@ -3727,12 +3796,12 @@ impl EditorView {
             underline_height,
             cursor_color,
           );
-        }
+        },
         TerminalCursorShape::Beam => {
           // Draw beam/bar cursor
           let beam_width = 2.0;
           renderer.draw_rect(cursor_x, cursor_y, beam_width, cell_height, cursor_color);
-        }
+        },
       }
     }
 
@@ -3793,11 +3862,7 @@ impl EditorView {
   ///
   /// Returns `Some(EventResult)` if the key was handled by terminal,
   /// `None` if normal editor handling should proceed.
-  fn handle_terminal_key(
-    &mut self,
-    key: &KeyBinding,
-    cx: &mut Context,
-  ) -> Option<EventResult> {
+  fn handle_terminal_key(&mut self, key: &KeyBinding, cx: &mut Context) -> Option<EventResult> {
     use the_editor_renderer::Key;
 
     // Check if focused view is a terminal
@@ -3813,35 +3878,35 @@ impl EditorView {
         // Ctrl+\ Ctrl+\ - send literal Ctrl+\ to terminal
         Key::Char('\\') if key.ctrl => {
           if let Some(term) = cx.editor.terminal(terminal_id) {
-            term.write(&[0x1c]); // Ctrl+\ = 0x1c
+            term.write(&[0x1C]); // Ctrl+\ = 0x1c
           }
           return Some(EventResult::Consumed(None));
-        }
+        },
         // Ctrl+\ q - close terminal
         Key::Char('q') => {
           cx.editor.close_terminal(terminal_id);
           // Focus next view or close the view
           return Some(EventResult::Consumed(None));
-        }
+        },
         // Ctrl+\ n - focus next view
         Key::Char('n') => {
           cx.editor.focus_next();
           return Some(EventResult::Consumed(None));
-        }
+        },
         // Ctrl+\ p - focus previous view
         Key::Char('p') => {
           cx.editor.focus_prev();
           return Some(EventResult::Consumed(None));
-        }
+        },
         // Ctrl+\ Escape - reserved
         Key::Escape => {
           return Some(EventResult::Consumed(None));
-        }
+        },
         // Unknown escape command - ignore
         _ => {
           cx.editor.set_status("Unknown terminal escape command");
           return Some(EventResult::Consumed(None));
-        }
+        },
       }
     }
 
@@ -3891,7 +3956,8 @@ impl EditorView {
         if let Some(text) = term.selection_text() {
           if !text.is_empty() {
             let _ = cx.editor.registers.write('+', vec![text.clone()]);
-            cx.editor.set_status(format!("Copied {} chars to clipboard", text.len()));
+            cx.editor
+              .set_status(format!("Copied {} chars to clipboard", text.len()));
           }
         }
       }
@@ -3944,32 +4010,32 @@ impl EditorView {
         } else {
           vec![]
         }
-      }
+      },
       // Alt (Meta) - send ESC prefix
       Key::Char(c) if key.alt => {
-        let mut bytes = vec![0x1b]; // ESC
+        let mut bytes = vec![0x1B]; // ESC
         bytes.extend(c.to_string().as_bytes());
         bytes
-      }
+      },
       // Regular characters
       Key::Char(c) => c.to_string().into_bytes(),
       // Enter
       Key::Enter | Key::NumpadEnter => vec![b'\r'],
       // Tab
       // Shift+Tab - send CSI Z (backtab/reverse tab)
-      Key::Tab if key.shift => vec![0x1b, b'[', b'Z'],
+      Key::Tab if key.shift => vec![0x1B, b'[', b'Z'],
       // Ctrl+Tab - some terminals use this, send CSI with modifier
-      Key::Tab if key.ctrl => vec![0x1b, b'[', b'2', b'7', b';', b'5', b'~'],
+      Key::Tab if key.ctrl => vec![0x1B, b'[', b'2', b'7', b';', b'5', b'~'],
       // Regular Tab
       Key::Tab => vec![b'\t'],
       // Alt+Backspace - send ESC + DEL (word delete in most shells)
-      Key::Backspace if key.alt => vec![0x1b, 0x7f],
+      Key::Backspace if key.alt => vec![0x1B, 0x7F],
       // Ctrl+Backspace - send DEL or could use CSI sequence
-      Key::Backspace if key.ctrl => vec![0x1b, 0x7f], // Same as Alt+Backspace for compatibility
+      Key::Backspace if key.ctrl => vec![0x1B, 0x7F], // Same as Alt+Backspace for compatibility
       // Backspace
-      Key::Backspace => vec![0x7f], // DEL
+      Key::Backspace => vec![0x7F], // DEL
       // Escape
-      Key::Escape => vec![0x1b],
+      Key::Escape => vec![0x1B],
       // Arrow keys with modifiers (CSI 1 ; modifier code)
       // Modifier codes: 2=Shift, 3=Alt, 5=Ctrl, 7=Ctrl+Alt
       Key::Up => Self::csi_with_modifiers(b'A', key),
@@ -4010,7 +4076,7 @@ impl EditorView {
     if modifier > 1 {
       format!("\x1b[1;{}{}", modifier, key_char as char).into_bytes()
     } else {
-      vec![0x1b, b'[', key_char]
+      vec![0x1B, b'[', key_char]
     }
   }
 
@@ -4026,7 +4092,8 @@ impl EditorView {
   }
 
   /// Calculate the modifier code for CSI sequences.
-  /// 1 = none, 2 = Shift, 3 = Alt, 4 = Shift+Alt, 5 = Ctrl, 6 = Ctrl+Shift, 7 = Ctrl+Alt, 8 = all
+  /// 1 = none, 2 = Shift, 3 = Alt, 4 = Shift+Alt, 5 = Ctrl, 6 = Ctrl+Shift, 7 =
+  /// Ctrl+Alt, 8 = all
   fn modifier_code(key: &KeyBinding) -> u8 {
     let mut code = 1u8;
     if key.shift {
@@ -4066,16 +4133,16 @@ impl EditorView {
           cx.editor.set_status("-- VI --");
         }
         // Stay in vi mode (don't exit)
-      }
+      },
       // Exit vi mode - Ctrl+C, i, or a
       Key::Char('c') if key.ctrl => {
         term.exit_vi_mode();
         cx.editor.set_status("");
-      }
+      },
       Key::Char('i') | Key::Char('a') if !key.ctrl && !key.alt => {
         term.exit_vi_mode();
         cx.editor.set_status("");
-      }
+      },
       // Toggle visual (character) selection - v
       Key::Char('v') if !key.ctrl && !key.alt => {
         term.vi_toggle_selection();
@@ -4084,7 +4151,7 @@ impl EditorView {
         } else {
           cx.editor.set_status("-- VI --");
         }
-      }
+      },
       // Toggle visual line selection - V
       Key::Char('V') if !key.ctrl && !key.alt => {
         term.vi_toggle_line_selection();
@@ -4093,7 +4160,7 @@ impl EditorView {
         } else {
           cx.editor.set_status("-- VI --");
         }
-      }
+      },
       // Yank selection
       Key::Char('y') if !key.ctrl && !key.alt => {
         // Get selection text and exit vi mode before borrowing other editor fields
@@ -4109,7 +4176,7 @@ impl EditorView {
         }
         the_editor_event::request_redraw();
         return Some(EventResult::Consumed(None));
-      }
+      },
       // Basic motions
       Key::Char('h') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::Left),
       Key::Char('j') if !key.ctrl && !key.alt => term.vi_motion(ViMotion::Down),
@@ -4145,22 +4212,22 @@ impl EditorView {
         let rows = term.dimensions().1 as i32;
         // Positive = scroll up (back toward history)
         term.vi_scroll(rows);
-      }
+      },
       Key::Char('f') if key.ctrl => {
         let rows = term.dimensions().1 as i32;
         // Negative = scroll down (forward toward current)
         term.vi_scroll(-rows);
-      }
+      },
       Key::Char('u') if key.ctrl => {
         let rows = term.dimensions().1 as i32;
         // Positive = scroll up (toward history)
         term.vi_scroll(rows / 2);
-      }
+      },
       Key::Char('d') if key.ctrl => {
         let rows = term.dimensions().1 as i32;
         // Negative = scroll down (toward current)
         term.vi_scroll(-rows / 2);
-      }
+      },
       // Go to top (gg) - requires two g presses
       Key::Char('g') if !key.ctrl && !key.alt => {
         if term.vi_pending_g() {
@@ -4171,72 +4238,77 @@ impl EditorView {
           // First g - set pending state
           term.vi_set_pending_g();
         }
-      }
+      },
       // Go to bottom (G)
       Key::Char('G') if !key.ctrl && !key.alt => {
         term.vi_clear_pending_g();
         term.vi_goto_bottom();
-      }
+      },
       // Search forward - / opens search prompt
       Key::Char('/') if !key.ctrl && !key.alt => {
         // Open search prompt via callback
         let term_id = terminal_id;
-        let callback: crate::ui::compositor::Callback =
-          Box::new(move |compositor, cx| {
-            // Set custom mode string to SEARCH
-            cx.editor.set_custom_mode_str("SEARCH".to_string());
+        let callback: crate::ui::compositor::Callback = Box::new(move |compositor, cx| {
+          // Set custom mode string to SEARCH
+          cx.editor.set_custom_mode_str("SEARCH".to_string());
 
-            // Trigger statusline slide animation like buffer search
-            for layer in compositor.layers.iter_mut() {
-              if let Some(statusline) = layer
-                .as_any_mut()
-                .downcast_mut::<crate::ui::components::statusline::StatusLine>()
-              {
-                statusline.slide_for_prompt(true);
-                break;
-              }
+          // Trigger statusline slide animation like buffer search
+          for layer in compositor.layers.iter_mut() {
+            if let Some(statusline) = layer
+              .as_any_mut()
+              .downcast_mut::<crate::ui::components::statusline::StatusLine>(
+            ) {
+              statusline.slide_for_prompt(true);
+              break;
             }
+          }
 
-            let prompt = crate::ui::components::Prompt::new(String::new())
-              .with_callback(move |cx, input, event| {
-                use crate::ui::components::prompt::PromptEvent;
-                log::debug!("Terminal search prompt callback: event={:?}, input='{}'", event, input);
-                match event {
-                  PromptEvent::Validate => {
-                    // Clear custom mode string
-                    cx.editor.clear_custom_mode_str();
-                    if !input.is_empty() {
-                      log::debug!("Terminal search: looking up terminal {}", term_id.0);
-                      if let Some(term) = cx.editor.terminal_mut(term_id) {
-                        log::debug!("Terminal search: got terminal, vi_mode={}", term.vi_mode());
-                        match term.vi_set_search(input) {
-                          Ok(()) => {
-                            log::debug!("Terminal search: pattern set, calling search_next");
-                            // Search for first match
-                            if term.vi_search_next() {
-                              cx.editor.set_status(format!("/{}", input));
-                            } else {
-                              cx.editor.set_status(format!("Pattern not found: {}", input));
-                            }
+          let prompt = crate::ui::components::Prompt::new(String::new()).with_callback(
+            move |cx, input, event| {
+              use crate::ui::components::prompt::PromptEvent;
+              log::debug!(
+                "Terminal search prompt callback: event={:?}, input='{}'",
+                event,
+                input
+              );
+              match event {
+                PromptEvent::Validate => {
+                  // Clear custom mode string
+                  cx.editor.clear_custom_mode_str();
+                  if !input.is_empty() {
+                    log::debug!("Terminal search: looking up terminal {}", term_id.0);
+                    if let Some(term) = cx.editor.terminal_mut(term_id) {
+                      log::debug!("Terminal search: got terminal, vi_mode={}", term.vi_mode());
+                      match term.vi_set_search(input) {
+                        Ok(()) => {
+                          log::debug!("Terminal search: pattern set, calling search_next");
+                          // Search for first match
+                          if term.vi_search_next() {
+                            cx.editor.set_status(format!("/{}", input));
+                          } else {
+                            cx.editor
+                              .set_status(format!("Pattern not found: {}", input));
                           }
-                          Err(e) => cx.editor.set_status(e),
-                        }
-                      } else {
-                        log::debug!("Terminal search: terminal not found!");
+                        },
+                        Err(e) => cx.editor.set_status(e),
                       }
+                    } else {
+                      log::debug!("Terminal search: terminal not found!");
                     }
                   }
-                  PromptEvent::Abort => {
-                    cx.editor.clear_custom_mode_str();
-                    cx.editor.set_status("-- VI --");
-                  }
-                  PromptEvent::Update => {}
-                }
-              });
-            compositor.push(Box::new(prompt));
-          });
+                },
+                PromptEvent::Abort => {
+                  cx.editor.clear_custom_mode_str();
+                  cx.editor.set_status("-- VI --");
+                },
+                PromptEvent::Update => {},
+              }
+            },
+          );
+          compositor.push(Box::new(prompt));
+        });
         return Some(EventResult::Consumed(Some(callback)));
-      }
+      },
       // Search next - n
       Key::Char('n') if !key.ctrl && !key.alt => {
         if term.vi_search_active() {
@@ -4246,7 +4318,7 @@ impl EditorView {
         } else {
           cx.editor.set_status("No search pattern");
         }
-      }
+      },
       // Search previous - N
       Key::Char('N') if !key.ctrl && !key.alt => {
         if term.vi_search_active() {
@@ -4256,9 +4328,9 @@ impl EditorView {
         } else {
           cx.editor.set_status("No search pattern");
         }
-      }
+      },
       // Other keys - ignore in vi mode
-      _ => {}
+      _ => {},
     }
 
     the_editor_event::request_redraw();
@@ -4284,13 +4356,11 @@ impl EditorView {
     let get_color = |key: &str, is_fg: bool| -> (u8, u8, u8) {
       let style = theme.get(key);
       let color = if is_fg { style.fg } else { style.bg };
-      color
-        .and_then(theme_color_to_rgb)
-        .unwrap_or(if is_fg {
-          (204, 204, 204)
-        } else {
-          (30, 30, 30)
-        })
+      color.and_then(theme_color_to_rgb).unwrap_or(if is_fg {
+        (204, 204, 204)
+      } else {
+        (30, 30, 30)
+      })
     };
 
     // Try to get terminal-specific colors from theme, fallback to UI colors
@@ -4579,8 +4649,9 @@ impl EditorView {
       if let Some(right_id) = right_neighbor {
         // Only draw if the right neighbor is not closing
         if !tree.is_closing(right_id) {
-          let gap_center_x =
-            self.content_x_offset() + (area.x + area.width) as f32 * font_width + (font_width / 2.0);
+          let gap_center_x = self.content_x_offset()
+            + (area.x + area.width) as f32 * font_width
+            + (font_width / 2.0);
           let x = gap_center_x - (SEPARATOR_WIDTH_PX / 2.0);
           let y = area.y as f32 * self.cached_cell_height + self.bufferline_y_adjustment();
           let width = SEPARATOR_WIDTH_PX;
@@ -4609,7 +4680,9 @@ impl EditorView {
       if let Some(down_id) = down_neighbor {
         if !tree.is_closing(down_id) {
           let x = self.content_x_offset() + area.x as f32 * font_width;
-          let sep_y = (area.y + area.height) as f32 * self.cached_cell_height + self.bufferline_y_adjustment() - SEPARATOR_HEIGHT_PX;
+          let sep_y = (area.y + area.height) as f32 * self.cached_cell_height
+            + self.bufferline_y_adjustment()
+            - SEPARATOR_HEIGHT_PX;
           let width = area.width as f32 * font_width;
           let height = SEPARATOR_HEIGHT_PX;
           renderer.draw_rect(x, sep_y, width, height, separator_color);
@@ -4646,13 +4719,36 @@ impl EditorView {
     }
 
     // Render keymap infobox if pending keys
+    let has_autoinfo = cx.editor.autoinfo.is_some();
+
+    // Detect transition: autoinfo just appeared
+    if has_autoinfo && !self.had_autoinfo {
+      // Start animation (exponential decay RAD style)
+      let (duration, easing) = crate::core::animation::presets::MEDIUM;
+      self.infobox_animation = Some(crate::core::animation::AnimationHandle::new(
+        0.0, 1.0, duration, easing,
+      ));
+    } else if !has_autoinfo {
+      // Clear animation when autoinfo disappears
+      self.infobox_animation = None;
+    }
+    self.had_autoinfo = has_autoinfo;
+
+    // Update and render infobox with animation
     if let Some(ref info) = cx.editor.autoinfo {
-      self.render_infobox(info, renderer, cx);
+      // Update animation
+      let anim_t = if let Some(ref mut anim) = self.infobox_animation {
+        anim.update(cx.dt);
+        *anim.current()
+      } else {
+        1.0 // Fallback to fully visible
+      };
+      self.render_infobox(info, renderer, cx, anim_t);
     }
   }
 
   /// Render keymap infobox (which-key style popup) at bottom-right
-  fn render_infobox(&self, info: &Info, renderer: &mut Surface, cx: &Context) {
+  fn render_infobox(&self, info: &Info, renderer: &mut Surface, cx: &Context, anim_t: f32) {
     use crate::ui::{
       UI_FONT_SIZE,
       theme_color_to_renderer_color,
@@ -4660,27 +4756,39 @@ impl EditorView {
 
     let theme = &cx.editor.theme;
 
-    // Get colors from theme
-    let bg_color = theme
+    // Animation effects (RAD Debugger style exponential decay)
+    let alpha = anim_t;
+    let scale = 0.92 + (anim_t * 0.08); // 92% → 100%
+    let slide_offset = (1.0 - anim_t) * 16.0; // Slide up from bottom
+
+    // Get colors from theme with animation alpha applied
+    let mut bg_color = theme
       .get("ui.popup")
       .bg
       .map(theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.12, 0.12, 0.15, 0.95));
-    let border_color = theme
+    bg_color.a *= alpha;
+
+    let mut border_color = theme
       .get("ui.popup")
       .fg
       .map(theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.3, 0.3, 0.35, 0.8));
-    let title_color = theme
+    border_color.a *= alpha;
+
+    let mut title_color = theme
       .get("ui.text.focus")
       .fg
       .map(theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.9, 0.85, 0.6, 1.0));
-    let text_color = theme
+    title_color.a *= alpha;
+
+    let mut text_color = theme
       .get("ui.text")
       .fg
       .map(theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.7, 0.7, 0.7, 1.0));
+    text_color.a *= alpha;
 
     // Use UI font for consistent sizing
     let font_family = renderer.current_font_family().to_string();
@@ -4701,7 +4809,8 @@ impl EditorView {
     let viewport_width = renderer.width() as f32;
     let viewport_height = renderer.height() as f32;
 
-    // Calculate available height (viewport minus statusline, margins, and some top padding)
+    // Calculate available height (viewport minus statusline, margins, and some top
+    // padding)
     let min_top_margin = 40.0; // Keep some space at top
     let available_height = viewport_height - statusline_height - margin - min_top_margin;
 
@@ -4717,7 +4826,8 @@ impl EditorView {
 
     let lines: Vec<&str> = info.text.lines().collect();
     let total_lines = lines.len();
-    let (visible_lines, is_truncated) = if total_lines > max_visible_lines && max_visible_lines > 1 {
+    let (visible_lines, is_truncated) = if total_lines > max_visible_lines && max_visible_lines > 1
+    {
       // Reserve one line for "..." indicator
       (&lines[..max_visible_lines.saturating_sub(1)], true)
     } else {
@@ -4728,9 +4838,18 @@ impl EditorView {
     let content_height = displayed_lines as f32 * line_height;
     let box_height = header_height + content_height;
 
-    // Position at bottom-right (above statusline)
-    let box_x = viewport_width - box_width - margin;
-    let box_y = (viewport_height - box_height - statusline_height - margin).max(min_top_margin);
+    // Calculate base position at bottom-right (above statusline)
+    let base_box_x = viewport_width - box_width - margin;
+    let base_box_y =
+      (viewport_height - box_height - statusline_height - margin).max(min_top_margin);
+
+    // Apply animation transforms (scale around center, slide up)
+    let scaled_width = box_width * scale;
+    let scaled_height = box_height * scale;
+    let box_x = base_box_x + (box_width - scaled_width) / 2.0;
+    let box_y = base_box_y + (box_height - scaled_height) / 2.0 + slide_offset;
+    let box_width = scaled_width;
+    let box_height = scaled_height;
 
     // Draw background with rounded corners
     renderer.draw_rounded_rect(box_x, box_y, box_width, box_height, corner_radius, bg_color);
@@ -4762,8 +4881,14 @@ impl EditorView {
 
     // Draw separator line below title
     let sep_y = title_y + line_height;
-    let sep_color = Color::new(border_color.r, border_color.g, border_color.b, 0.4);
-    renderer.draw_rect(box_x + padding_x, sep_y, box_width - padding_x * 2.0, 1.0, sep_color);
+    let sep_color = Color::new(border_color.r, border_color.g, border_color.b, 0.4 * alpha);
+    renderer.draw_rect(
+      box_x + padding_x,
+      sep_y,
+      box_width - padding_x * 2.0,
+      1.0,
+      sep_color,
+    );
 
     // Draw content (pre-formatted text with newlines)
     let content_y = sep_y + line_height * 0.5;
@@ -4792,7 +4917,7 @@ impl EditorView {
           content: truncate_text,
           style:   TextStyle {
             size:  UI_FONT_SIZE,
-            color: Color::new(text_color.r, text_color.g, text_color.b, 0.5),
+            color: Color::new(text_color.r, text_color.g, text_color.b, 0.5 * alpha),
           },
         }],
       });
@@ -4997,8 +5122,9 @@ impl EditorView {
                     let current_terminal = cx.editor.tree.get(view_id).terminal();
                     if current_terminal.is_some() {
                       // Current view is a terminal - replace it with the document
-                      // Note: We don't hide the terminal, just switch this view to show the document
-                      // The terminal stays "visible" in the bufferline for easy switching back
+                      // Note: We don't hide the terminal, just switch this view to show the
+                      // document The terminal stays "visible" in the
+                      // bufferline for easy switching back
                       let view = cx.editor.tree.get_mut(view_id);
                       view.set_doc(doc_id);
                       // Initialize the document for this view
@@ -5021,11 +5147,9 @@ impl EditorView {
                 },
                 bufferline::BufferKind::Terminal(terminal_id) => {
                   // Find if there's already a view showing this terminal
-                  let target_view = cx
-                    .editor
-                    .tree
-                    .views()
-                    .find_map(|(view, _)| (view.terminal() == Some(terminal_id)).then_some(view.id));
+                  let target_view = cx.editor.tree.views().find_map(|(view, _)| {
+                    (view.terminal() == Some(terminal_id)).then_some(view.id)
+                  });
 
                   if let Some(view_id) = target_view {
                     cx.editor.focus(view_id);
@@ -5193,8 +5317,13 @@ impl EditorView {
               let view_area = view.area;
 
               // Calculate terminal cell coordinates
-              let rel_x = mouse.position.0 - self.content_x_offset() - view_area.x as f32 * self.cached_cell_width;
-              let rel_y = mouse.position.1 - view_area.y as f32 * self.cached_cell_height - self.bufferline_y_adjustment() - VIEW_PADDING_TOP;
+              let rel_x = mouse.position.0
+                - self.content_x_offset()
+                - view_area.x as f32 * self.cached_cell_width;
+              let rel_y = mouse.position.1
+                - view_area.y as f32 * self.cached_cell_height
+                - self.bufferline_y_adjustment()
+                - VIEW_PADDING_TOP;
               let col = (rel_x / self.cached_cell_width).floor().max(0.0) as u16;
               let row = (rel_y / self.cached_cell_height).floor().max(0.0) as i32;
 
@@ -5296,8 +5425,13 @@ impl EditorView {
                   let view = cx.editor.tree.get(node_id);
                   if view.terminal() == Some(terminal_id) {
                     let view_area = view.area;
-                    let rel_x = mouse.position.0 - self.content_x_offset() - view_area.x as f32 * self.cached_cell_width;
-                    let rel_y = mouse.position.1 - view_area.y as f32 * self.cached_cell_height - self.bufferline_y_adjustment() - VIEW_PADDING_TOP;
+                    let rel_x = mouse.position.0
+                      - self.content_x_offset()
+                      - view_area.x as f32 * self.cached_cell_width;
+                    let rel_y = mouse.position.1
+                      - view_area.y as f32 * self.cached_cell_height
+                      - self.bufferline_y_adjustment()
+                      - VIEW_PADDING_TOP;
                     let col = (rel_x / self.cached_cell_width).floor().max(0.0) as u16;
                     let row = (rel_y / self.cached_cell_height).floor().max(0.0) as u16;
                     let report = format!("\x1b[<0;{};{}m", col + 1, row + 1);
@@ -5407,8 +5541,13 @@ impl EditorView {
             for (view, _is_focused) in cx.editor.tree.views() {
               if view.terminal() == Some(terminal_id) {
                 let view_area = view.area;
-                let rel_x = mouse.position.0 - self.content_x_offset() - view_area.x as f32 * self.cached_cell_width;
-                let rel_y = mouse.position.1 - view_area.y as f32 * self.cached_cell_height - self.bufferline_y_adjustment() - VIEW_PADDING_TOP;
+                let rel_x = mouse.position.0
+                  - self.content_x_offset()
+                  - view_area.x as f32 * self.cached_cell_width;
+                let rel_y = mouse.position.1
+                  - view_area.y as f32 * self.cached_cell_height
+                  - self.bufferline_y_adjustment()
+                  - VIEW_PADDING_TOP;
                 let col = (rel_x / self.cached_cell_width).floor().max(0.0) as u16;
                 let row_unclamped = (rel_y / self.cached_cell_height).floor() as i32;
                 let (_cols, rows) = term.dimensions();
@@ -5769,8 +5908,8 @@ impl EditorView {
         .is_some()
       {
         let sep_x = self.content_x_offset() + area.x as f32 * font_width;
-        let sep_y =
-          (area.y + area.height) as f32 * cell_height + self.bufferline_y_adjustment() - SEPARATOR_HEIGHT_PX;
+        let sep_y = (area.y + area.height) as f32 * cell_height + self.bufferline_y_adjustment()
+          - SEPARATOR_HEIGHT_PX;
         let sep_width = area.width as f32 * font_width;
 
         // Check if mouse is near this horizontal separator

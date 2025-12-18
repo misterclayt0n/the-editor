@@ -1,7 +1,9 @@
 //! File system change handler for the Explorer component.
 //!
 //! This handler listens for `FileSystemDidChange` events and triggers a refresh
-//! of the explorer's git status cache when relevant file changes occur.
+//! of the explorer's tree structure and git status cache when relevant file
+//! changes occur. This enables automatic updates when files are created or
+//! deleted by external processes.
 
 use notify::event::EventKind;
 use the_editor_event::register_hook;
@@ -33,15 +35,18 @@ pub fn register_hooks() {
       return Ok(());
     }
 
-    // Dispatch a job to refresh the explorer's git status
+    // Dispatch a job to refresh the explorer's tree and git status
     // We use dispatch_blocking since this is called from the file watcher callback
     job::dispatch_blocking(move |editor, compositor| {
-      // Find the EditorView component and refresh its explorer's git status
+      // Find the EditorView component and refresh its explorer
       if let Some(editor_view) = compositor.find::<EditorView>()
         && let Some(explorer) = editor_view.explorer_mut()
       {
-        // The refresh_git_status method spawns a background task that
-        // updates the shared git status cache
+        // Refresh tree structure first (for new/deleted files)
+        if let Err(e) = explorer.refresh() {
+          log::warn!("Failed to refresh explorer tree: {}", e);
+        }
+        // Then refresh git status (spawns a background task)
         explorer.refresh_git_status_with_providers(&editor.diff_providers);
       }
     });

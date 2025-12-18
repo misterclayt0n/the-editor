@@ -1419,6 +1419,10 @@ impl Component for EditorView {
         .collect();
 
       for (terminal_id, cols, rows) in terminal_resizes {
+        // Guard against zero dimensions that cause alacritty grid underflow
+        if cols == 0 || rows == 0 {
+          continue;
+        }
         if let Some(term) = cx.editor.terminal_mut(terminal_id) {
           term.resize(cols, rows, cell_width, cell_height);
         }

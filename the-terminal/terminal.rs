@@ -305,6 +305,11 @@ impl Terminal {
 
   /// Resize the terminal.
   pub fn resize(&mut self, cols: u16, rows: u16, cell_width: u16, cell_height: u16) {
+    // Guard against zero dimensions - alacritty grid will panic with underflow
+    if cols == 0 || rows == 0 {
+      return;
+    }
+
     if cols == self.cols && rows == self.rows {
       return;
     }

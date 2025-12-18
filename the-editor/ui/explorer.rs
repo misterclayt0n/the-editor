@@ -1227,6 +1227,34 @@ impl Explorer {
     // Set tree global alpha for closing animation
     self.tree.set_global_alpha(close_alpha);
     self.render_tree(tree_area, tree_start_y, prompt_area, surface, cx);
+
+    // Render search prompt if active
+    if let Some(prompt) = self.tree.prompt() {
+      let prompt_y = tree_start_y + tree_height - UI_FONT_SIZE - 8.0;
+      let prompt_height = UI_FONT_SIZE + 8.0;
+
+      // Draw prompt background
+      let prompt_bg = Color::new(
+        statusline_bg.r,
+        statusline_bg.g,
+        statusline_bg.b,
+        statusline_bg.a.max(0.9),
+      );
+      surface.draw_rect(px_x, prompt_y, px_width, prompt_height, prompt_bg);
+
+      // Draw separator above prompt
+      surface.draw_rect(px_x, prompt_y, px_width, 1.0, sep_color);
+
+      // Draw prompt text (prefix + input)
+      let prompt_text = format!("{}{}", prompt.prefix(), prompt.input());
+      surface.draw_text(TextSection::simple(
+        px_x + 8.0,
+        prompt_y + 4.0,
+        &prompt_text,
+        UI_FONT_SIZE,
+        text_color,
+      ));
+    }
   }
 
   fn render_help(&mut self, _area: Rect, _surface: &mut Surface, _cx: &mut Context) {

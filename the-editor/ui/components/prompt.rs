@@ -390,6 +390,11 @@ impl Prompt {
     &self.input
   }
 
+  /// Get the prompt prefix (e.g., "/" or ":")
+  pub fn prefix(&self) -> &str {
+    &self.prefix
+  }
+
   /// Set the input text
   pub fn set_input(&mut self, input: String) {
     self.input = input;

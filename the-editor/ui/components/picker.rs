@@ -2208,14 +2208,17 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         .map(|c| c.name.len() as f32 * cell_width)
         .collect();
 
-      // Sample items to get max column widths (limit to avoid performance issues)
-      let sample_count = len.min(100);
-      for idx in 0..sample_count {
+      // Sample ALL items to get max column widths for non-last columns
+      // This ensures keybindings and other intermediate columns are never truncated
+      for idx in 0..len {
         if let Some(item) = snapshot.get_matched_item(idx) {
+          // Only measure non-last columns fully (last column will be truncated anyway)
           for (col_idx, column) in visible_columns.iter().enumerate() {
-            let text = (column.format)(item.data, &self.editor_data);
-            let text_width = text.chars().count() as f32 * cell_width;
-            column_widths[col_idx] = column_widths[col_idx].max(text_width);
+            if col_idx < visible_columns.len() - 1 {
+              let text = (column.format)(item.data, &self.editor_data);
+              let text_width = text.chars().count() as f32 * cell_width;
+              column_widths[col_idx] = column_widths[col_idx].max(text_width);
+            }
           }
         }
       }
@@ -2225,7 +2228,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       let item_padding_y = 8.0;
       let item_height = line_height * scale + item_padding_y * 2.0;
       let item_gap = 3.0; // Small gap between items
-      let column_gap = 16.0; // Gap between columns
+      let column_gap = 24.0; // Gap between columns
 
       // Draw headers if enabled
       let header_height = if self.show_headers {
@@ -2438,32 +2441,38 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
           // Render each column with proper alignment
           let mut col_x = item_x + item_padding_x;
           let available_width = item_width - (item_padding_x * 2.0);
+          let num_columns = visible_columns.len();
 
           for (col_idx, column) in visible_columns.iter().enumerate() {
             let col_text = (column.format)(item.data, &self.editor_data);
             let col_width = column_widths[col_idx];
 
-            // Calculate max chars for this column
-            let remaining_width = (available_width - (col_x - item_x - item_padding_x)).max(0.0);
-            let max_chars = (remaining_width / cell_width).floor() as usize;
-
-            // Truncate if needed
-            let truncated = if max_chars > 3 && col_text.chars().count() > max_chars {
-              let truncate_to = max_chars.saturating_sub(3);
-              if column.truncate_start {
-                let char_count = col_text.chars().count();
-                let start_idx = char_count.saturating_sub(truncate_to);
-                let truncated: String = col_text.chars().skip(start_idx).collect();
-                format!("...{}", truncated)
+            // Only truncate the last column (typically Description)
+            // Non-last columns (Command, Keys) should always show full text
+            let is_last_column = col_idx == num_columns - 1;
+            let truncated = if is_last_column {
+              let remaining_width = (available_width - (col_x - item_x - item_padding_x)).max(0.0);
+              let max_chars = (remaining_width / cell_width).floor() as usize;
+              if max_chars > 3 && col_text.chars().count() > max_chars {
+                let truncate_to = max_chars.saturating_sub(3);
+                if column.truncate_start {
+                  let char_count = col_text.chars().count();
+                  let start_idx = char_count.saturating_sub(truncate_to);
+                  let truncated: String = col_text.chars().skip(start_idx).collect();
+                  format!("...{}", truncated)
+                } else {
+                  let truncated: String = col_text.chars().take(truncate_to).collect();
+                  format!("{}...", truncated)
+                }
               } else {
-                let truncated: String = col_text.chars().take(truncate_to).collect();
-                format!("{}...", truncated)
+                col_text
               }
             } else {
+              // Non-last columns: show full text, no truncation
               col_text
             };
 
-            if !truncated.is_empty() && max_chars > 0 {
+            if !truncated.is_empty() {
               surface.draw_text(TextSection {
                 position: (col_x, text_y),
                 texts:    vec![TextSegment {

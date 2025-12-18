@@ -558,9 +558,10 @@ pub fn render(
         inactive_text.lerp(active_text, anim.close_hover_t * 0.5),
         base_alpha + hover_boost,
       );
-      let x_font_size = UI_FONT_SIZE * 0.75;
+      let x_font_size = UI_FONT_SIZE * 1.2;
+      let x_text_width = surface.measure_text("×", x_font_size);
       // Center the × in the full button area
-      let x_x = close_x + (close_btn_width - x_font_size * 0.55) * 0.5;
+      let x_x = close_x + (close_btn_width - x_text_width) * 0.5;
       let x_y = close_y + (close_height - x_font_size) * 0.5;
       surface.draw_text(TextSection::simple(x_x, x_y, "×", x_font_size, x_color));
     }
@@ -633,8 +634,10 @@ pub fn render(
     // Draw + icon
     let base_alpha = 0.4;
     let hover_boost = add_button_state.hover_t * 0.6;
-    let plus_size = UI_FONT_SIZE * 0.9;
-    let plus_x = add_btn_x + (add_btn_size - plus_size * 0.4) * 0.5;
+    let plus_size = UI_FONT_SIZE * 1.2;
+    let plus_text_width = surface.measure_text("+", plus_size);
+    // Center the + in the button area
+    let plus_x = add_btn_x + (add_btn_size - plus_text_width) * 0.5;
     let plus_y = add_btn_y + (add_btn_size - plus_size) * 0.5;
     let plus_color = with_alpha(
       inactive_text.lerp(active_text, add_button_state.hover_t * 0.5),

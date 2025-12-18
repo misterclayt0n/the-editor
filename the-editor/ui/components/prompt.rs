@@ -1256,45 +1256,43 @@ impl Prompt {
     let mut animated_text = text_color;
     animated_text.a *= anim_t;
 
-    // Draw background
-    surface.draw_rounded_rect(box_x, box_y, box_width, box_height, CORNER_RADIUS, animated_bg);
+    // Use overlay region to mask underlying content
+    surface.with_overlay_region(box_x, box_y, box_width, box_height, |surface| {
+      // Draw background
+      surface.draw_rounded_rect(box_x, box_y, box_width, box_height, CORNER_RADIUS, animated_bg);
 
-    // Draw border
-    surface.draw_rounded_rect_stroke(
-      box_x,
-      box_y,
-      box_width,
-      box_height,
-      CORNER_RADIUS,
-      1.0,
-      animated_border,
-    );
+      // Draw border
+      surface.draw_rounded_rect_stroke(
+        box_x,
+        box_y,
+        box_width,
+        box_height,
+        CORNER_RADIUS,
+        1.0,
+        animated_border,
+      );
 
-    // Clip text to box bounds
-    surface.push_scissor_rect(box_x, box_y, box_width, box_height);
+      // Draw text lines
+      let text_x = box_x + PADDING;
+      let mut text_y = box_y + PADDING;
 
-    // Draw text lines
-    let text_x = box_x + PADDING;
-    let mut text_y = box_y + PADDING;
-
-    for line in lines {
-      if text_y > box_y + box_height - PADDING {
-        break; // Stop if we've exceeded the box height
+      for line in &lines {
+        if text_y > box_y + box_height - PADDING {
+          break; // Stop if we've exceeded the box height
+        }
+        surface.draw_text(TextSection {
+          position: (text_x, text_y),
+          texts:    vec![TextSegment {
+            content: line.to_string(),
+            style:   TextStyle {
+              size:  crate::ui::UI_FONT_SIZE,
+              color: animated_text,
+            },
+          }],
+        });
+        text_y += LINE_HEIGHT;
       }
-      surface.draw_text(TextSection {
-        position: (text_x, text_y),
-        texts:    vec![TextSegment {
-          content: line.to_string(),
-          style:   TextStyle {
-            size:  crate::ui::UI_FONT_SIZE,
-            color: animated_text,
-          },
-        }],
-      });
-      text_y += LINE_HEIGHT;
-    }
-
-    surface.pop_scissor_rect();
+    });
   }
 
   fn render_completions_internal(

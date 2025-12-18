@@ -4851,77 +4851,80 @@ impl EditorView {
     let box_width = scaled_width;
     let box_height = scaled_height;
 
-    // Draw background with rounded corners
-    renderer.draw_rounded_rect(box_x, box_y, box_width, box_height, corner_radius, bg_color);
+    // Use overlay region to mask underlying content
+    renderer.with_overlay_region(box_x, box_y, box_width, box_height, |renderer| {
+      // Draw background with rounded corners
+      renderer.draw_rounded_rect(box_x, box_y, box_width, box_height, corner_radius, bg_color);
 
-    // Draw border
-    renderer.draw_rounded_rect_stroke(
-      box_x,
-      box_y,
-      box_width,
-      box_height,
-      corner_radius,
-      border_thickness,
-      border_color,
-    );
+      // Draw border
+      renderer.draw_rounded_rect_stroke(
+        box_x,
+        box_y,
+        box_width,
+        box_height,
+        corner_radius,
+        border_thickness,
+        border_color,
+      );
 
-    // Draw title
-    let title_x = box_x + padding_x;
-    let title_y = box_y + padding_y;
-    renderer.draw_text(TextSection {
-      position: (title_x, title_y),
-      texts:    vec![TextSegment {
-        content: info.title.to_string(),
-        style:   TextStyle {
-          size:  UI_FONT_SIZE,
-          color: title_color,
-        },
-      }],
+      // Draw title
+      let title_x = box_x + padding_x;
+      let title_y = box_y + padding_y;
+      renderer.draw_text(TextSection {
+        position: (title_x, title_y),
+        texts:    vec![TextSegment {
+          content: info.title.to_string(),
+          style:   TextStyle {
+            size:  UI_FONT_SIZE,
+            color: title_color,
+          },
+        }],
+      });
+
+      // Draw separator line below title
+      let sep_y = title_y + line_height;
+      let sep_color = Color::new(border_color.r, border_color.g, border_color.b, 0.4 * alpha);
+      renderer.draw_rect(
+        box_x + padding_x,
+        sep_y,
+        box_width - padding_x * 2.0,
+        1.0,
+        sep_color,
+      );
+
+      // Draw content (pre-formatted text with newlines)
+      let content_y = sep_y + line_height * 0.5;
+      for (i, line) in visible_lines.iter().enumerate() {
+        let y = content_y + (i as f32 * line_height);
+        renderer.draw_text(TextSection {
+          position: (title_x, y),
+          texts:    vec![TextSegment {
+            content: line.to_string(),
+            style:   TextStyle {
+              size:  UI_FONT_SIZE,
+              color: text_color,
+            },
+          }],
+        });
+      }
+
+      // Draw truncation indicator if needed
+      if is_truncated {
+        let truncate_y = content_y + (visible_lines.len() as f32 * line_height);
+        let more_count = total_lines - visible_lines.len();
+        let truncate_text = format!("... +{} more", more_count);
+        renderer.draw_text(TextSection {
+          position: (title_x, truncate_y),
+          texts:    vec![TextSegment {
+            content: truncate_text,
+            style:   TextStyle {
+              size:  UI_FONT_SIZE,
+              color: Color::new(text_color.r, text_color.g, text_color.b, 0.5 * alpha),
+            },
+          }],
+        });
+      }
     });
-
-    // Draw separator line below title
-    let sep_y = title_y + line_height;
-    let sep_color = Color::new(border_color.r, border_color.g, border_color.b, 0.4 * alpha);
-    renderer.draw_rect(
-      box_x + padding_x,
-      sep_y,
-      box_width - padding_x * 2.0,
-      1.0,
-      sep_color,
-    );
-
-    // Draw content (pre-formatted text with newlines)
-    let content_y = sep_y + line_height * 0.5;
-    for (i, line) in visible_lines.iter().enumerate() {
-      let y = content_y + (i as f32 * line_height);
-      renderer.draw_text(TextSection {
-        position: (title_x, y),
-        texts:    vec![TextSegment {
-          content: line.to_string(),
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
-            color: text_color,
-          },
-        }],
-      });
-    }
-
-    // Draw truncation indicator if needed
-    if is_truncated {
-      let truncate_y = content_y + (visible_lines.len() as f32 * line_height);
-      let more_count = total_lines - visible_lines.len();
-      let truncate_text = format!("... +{} more", more_count);
-      renderer.draw_text(TextSection {
-        position: (title_x, truncate_y),
-        texts:    vec![TextSegment {
-          content: truncate_text,
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
-            color: Color::new(text_color.r, text_color.g, text_color.b, 0.5 * alpha),
-          },
-        }],
-      });
-    }
 
     // Restore font configuration
     renderer.configure_font(&font_family, self.cached_font_size);

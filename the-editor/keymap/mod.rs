@@ -25,6 +25,9 @@ use crate::core::{
   info::Info,
 };
 
+/// Mapping from command name to all key sequences that trigger it
+pub type ReverseKeymap = HashMap<String, Vec<Vec<KeyBinding>>>;
+
 pub mod default;
 pub mod macros;
 
@@ -554,6 +557,51 @@ impl Keymaps {
       },
       None => KeymapResult::Cancelled(self.state.drain(..).collect()),
     }
+  }
+
+  /// Build a reverse mapping from command names to their keybindings.
+  /// This allows looking up which keys trigger a given command.
+  pub fn reverse_map(&self) -> ReverseKeymap {
+    let mut result: ReverseKeymap = HashMap::new();
+
+    fn collect_bindings(
+      trie: &KeyTrie,
+      keys: &mut Vec<KeyBinding>,
+      result: &mut ReverseKeymap,
+    ) {
+      match trie {
+        KeyTrie::Command(cmd) => {
+          let name = cmd.name();
+          if name != "no_op" {
+            result.entry(name.to_string()).or_default().push(keys.clone());
+          }
+        },
+        KeyTrie::Sequence(cmds) => {
+          // For sequences, record under the first command's name
+          if let Some(cmd) = cmds.first() {
+            let name = cmd.name();
+            if name != "no_op" {
+              result.entry(name.to_string()).or_default().push(keys.clone());
+            }
+          }
+        },
+        KeyTrie::Node(node) => {
+          for (key, child) in &node.map {
+            keys.push(*key);
+            collect_bindings(child, keys, result);
+            keys.pop();
+          }
+        },
+      }
+    }
+
+    // Only collect from Normal mode (primary mode for command palette)
+    if let Some(keymap) = self.map.get(&Mode::Normal) {
+      let mut keys = Vec::new();
+      collect_bindings(keymap, &mut keys, &mut result);
+    }
+
+    result
   }
 }
 

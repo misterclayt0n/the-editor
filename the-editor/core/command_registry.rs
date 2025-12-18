@@ -286,6 +286,19 @@ impl CommandRegistry {
     names
   }
 
+  /// Get all unique typable commands (excludes aliases, returns one entry per command)
+  pub fn all_commands(&self) -> Vec<Arc<TypableCommand>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut commands: Vec<_> = self
+      .commands
+      .values()
+      .filter(|cmd| seen.insert(cmd.name)) // Only include first occurrence (by primary name)
+      .cloned()
+      .collect();
+    commands.sort_by(|a, b| a.name.cmp(b.name));
+    commands
+  }
+
   /// Get command completions that start with the given prefix
   pub fn completions(&self, prefix: &str) -> Vec<&str> {
     self

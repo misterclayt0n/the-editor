@@ -480,6 +480,10 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   preview_initialized:   bool,
   /// GIF animation state (current frame index, elapsed time)
   gif_anim_state:        Option<GifAnimationState>,
+  /// Whether preview panel is disabled (won't show even if there's room)
+  preview_disabled:      bool,
+  /// Whether to show column headers
+  show_headers:          bool,
 }
 
 /// State for GIF animation playback
@@ -590,6 +594,8 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
       pending_history: Vec::new(),
       preview_initialized: false,
       gif_anim_state: None,
+      preview_disabled: false,
+      show_headers: false,
     }
   }
 
@@ -675,6 +681,18 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
   {
     self.history_register = Some(register);
     self.history_format = Some(Arc::new(format));
+    self
+  }
+
+  /// Disable the preview panel entirely
+  pub fn without_preview(mut self) -> Self {
+    self.preview_disabled = true;
+    self
+  }
+
+  /// Show column headers at the top of the list
+  pub fn with_headers(mut self) -> Self {
+    self.show_headers = true;
     self
   }
 
@@ -1558,7 +1576,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
     // Need enough room for both panels + gap (minimum ~1200px for comfortable
     // split)
     let min_width_for_preview = 1200.0;
-    let should_show_preview = area.width as f32 > min_width_for_preview;
+    let should_show_preview =
+      !self.preview_disabled && area.width as f32 > min_width_for_preview;
 
     // Initialize or update preview animation
     let target_preview_value = if should_show_preview { 1.0 } else { 0.0 };
@@ -1877,9 +1896,21 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
     // Header height must account for prompt box padding
     let prompt_internal_padding = 8.0;
-    let header_height = line_height + 8.0 + prompt_internal_padding * 2.0;
+    let prompt_header_height = line_height + 8.0 + prompt_internal_padding * 2.0;
+
+    // Column headers height (when show_headers is enabled)
+    let column_headers_height = if self.show_headers {
+      line_height + 12.0 // line_height * scale + 12.0 but scale approaches 1.0
+    } else {
+      0.0
+    };
+
+    // Separator line + padding
+    let separator_height = 8.0;
+
     let bottom_padding = 16.0;
-    let available_height = max_height - header_height - bottom_padding;
+    let total_header_height = prompt_header_height + separator_height + column_headers_height;
+    let available_height = max_height - total_header_height - bottom_padding;
 
     // Calculate how many items can fit with gaps
     let max_rows = ((available_height + item_gap) / (actual_item_height + item_gap)).floor() as u32;
@@ -1895,7 +1926,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       0.0
     };
 
-    let height = header_height + rows_height + bottom_padding;
+    let height = total_header_height + rows_height + bottom_padding;
 
     // Smooth height animation for size changes
     let animated_height = match &mut self.height_anim {
@@ -1927,9 +1958,14 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
     // Apply scale animation (start at 95% scale) for visual effect
     let scale = 0.95 + 0.05 * ease;
     let x = target_x + (picker_width * (1.0 - scale)) / 2.0;
-    let y = target_y + (animated_height * (1.0 - scale)) / 2.0;
+    let unclamped_y = target_y + (animated_height * (1.0 - scale)) / 2.0;
     let picker_width_scaled = picker_width * scale;
     let height_scaled = animated_height * scale;
+
+    // Clamp y position to ensure picker stays within viewport
+    let min_y = area.y as f32 + 8.0; // Small top margin
+    let max_y = (area.y as f32 + area.height as f32 - height_scaled - 8.0).max(min_y);
+    let y = unclamped_y.clamp(min_y, max_y);
 
     // Apply alpha animation to foreground elements
     let alpha = ease;
@@ -2156,7 +2192,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       });
 
       // Draw separator
-      let sep_y = y + header_height * scale;
+      let sep_y = y + prompt_header_height * scale;
       surface.draw_rect(
         x + 4.0,
         sep_y,
@@ -2165,17 +2201,77 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
         sep_color_anim,
       );
 
-      // Draw results
-      let results_y = sep_y + 8.0;
-      // Use scroll_offset for rendering (VSCode-style independent scrolling)
-      let offset = self.scroll_offset;
-      let end = (offset + self.completion_height as u32).min(len);
+      // Calculate column widths from visible items for proper alignment
+      let visible_columns: Vec<_> = self.columns.iter().filter(|c| !c.hidden).collect();
+      let mut column_widths: Vec<f32> = visible_columns
+        .iter()
+        .map(|c| c.name.len() as f32 * cell_width)
+        .collect();
+
+      // Sample items to get max column widths (limit to avoid performance issues)
+      let sample_count = len.min(100);
+      for idx in 0..sample_count {
+        if let Some(item) = snapshot.get_matched_item(idx) {
+          for (col_idx, column) in visible_columns.iter().enumerate() {
+            let text = (column.format)(item.data, &self.editor_data);
+            let text_width = text.chars().count() as f32 * cell_width;
+            column_widths[col_idx] = column_widths[col_idx].max(text_width);
+          }
+        }
+      }
 
       // Increased padding for button-like items (made fatter)
       let item_padding_x = 12.0;
       let item_padding_y = 8.0;
       let item_height = line_height * scale + item_padding_y * 2.0;
       let item_gap = 3.0; // Small gap between items
+      let column_gap = 16.0; // Gap between columns
+
+      // Draw headers if enabled
+      let header_height = if self.show_headers {
+        let header_y = sep_y + 8.0;
+        let mut col_x = x + 8.0 + item_padding_x;
+
+        // Draw header background
+        let header_bg = Color::new(
+          button_fill_color.r,
+          button_fill_color.g,
+          button_fill_color.b,
+          0.3 * alpha,
+        );
+        surface.draw_rounded_rect(
+          x + 8.0,
+          header_y,
+          picker_width_scaled - 16.0,
+          line_height * scale + 8.0,
+          4.0,
+          header_bg,
+        );
+
+        for (col_idx, column) in visible_columns.iter().enumerate() {
+          let header_color = Color::new(text_color.r, text_color.g, text_color.b, 0.7 * alpha);
+          surface.draw_text(TextSection {
+            position: (col_x, header_y + 4.0),
+            texts:    vec![TextSegment {
+              content: column.name.to_string(),
+              style:   TextStyle {
+                size:  UI_FONT_SIZE * scale,
+                color: header_color,
+              },
+            }],
+          });
+          col_x += column_widths[col_idx] + column_gap;
+        }
+        line_height * scale + 12.0
+      } else {
+        0.0
+      };
+
+      // Draw results
+      let results_y = sep_y + 8.0 + header_height;
+      // Use scroll_offset for rendering (VSCode-style independent scrolling)
+      let offset = self.scroll_offset;
+      let end = (offset + self.completion_height as u32).min(len);
 
       // Cache layout info for mouse hit testing
       self.cached_layout = Some(PickerLayout {
@@ -2323,84 +2419,66 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
             }
           }
 
-          // Format item text from all visible columns
-          let mut display_text = String::new();
-          for (i, column) in self.columns.iter().filter(|c| !c.hidden).enumerate() {
-            if i > 0 {
-              display_text.push_str("  ");
-            }
-            display_text.push_str(&(column.format)(item.data, &self.editor_data));
-          }
-
-          // Skip rendering text if empty (should not happen, but safety check)
-          if display_text.is_empty() {
-            continue;
-          }
-
-          let prefix = "  ";
-
           // Position text with padding
-          let text_x = item_x + item_padding_x;
           let text_y = item_y + item_padding_y;
-
-          // Calculate available width for text (excluding padding)
-          let available_width = item_width - (item_padding_x * 2.0);
-          let prefix_width = prefix.len() as f32 * cell_width;
-          let text_available_width = available_width - prefix_width;
-          let max_chars = (text_available_width / cell_width).floor() as usize;
-
-          // Truncate text if it's too long
-          // Check if primary column uses truncate_start
-          let truncate_from_start = self
-            .columns
-            .iter()
-            .find(|c| c.filter && !c.hidden)
-            .map(|c| c.truncate_start)
-            .unwrap_or(false);
-
-          let truncated_text = if max_chars > 3 && display_text.chars().count() > max_chars {
-            let truncate_to = max_chars.saturating_sub(3);
-            if truncate_from_start {
-              // Truncate from start: "...filename"
-              let char_count = display_text.chars().count();
-              let start_idx = char_count.saturating_sub(truncate_to);
-              let truncated: String = display_text.chars().skip(start_idx).collect();
-              format!("...{}", truncated)
-            } else {
-              // Truncate from end: "filename..."
-              let truncated: String = display_text.chars().take(truncate_to).collect();
-              format!("{}...", truncated)
-            }
-          } else {
-            display_text
-          };
-
-          // Draw text in single color
           let item_color = if is_selected {
             selected_fg_anim
+          } else if is_hovered {
+            // Slightly brighter on hover
+            Color::new(
+              text_color.r.min(1.0),
+              text_color.g.min(1.0),
+              text_color.b.min(1.0),
+              alpha,
+            )
           } else {
             text_color_anim
           };
 
-          surface.draw_text(TextSection {
-            position: (text_x, text_y),
-            texts:    vec![
-              TextSegment {
-                content: prefix.to_string(),
-                style:   TextStyle {
-                  color: item_color,
-                  size:  UI_FONT_SIZE,
-                },
-              },
-              TextSegment {
-                content: truncated_text,
-                style:   TextStyle {
-                  color: item_color,
-                  size:  UI_FONT_SIZE,
-                },
-              },
-            ],
-          });
+          // Render each column with proper alignment
+          let mut col_x = item_x + item_padding_x;
+          let available_width = item_width - (item_padding_x * 2.0);
+
+          for (col_idx, column) in visible_columns.iter().enumerate() {
+            let col_text = (column.format)(item.data, &self.editor_data);
+            let col_width = column_widths[col_idx];
+
+            // Calculate max chars for this column
+            let remaining_width = (available_width - (col_x - item_x - item_padding_x)).max(0.0);
+            let max_chars = (remaining_width / cell_width).floor() as usize;
+
+            // Truncate if needed
+            let truncated = if max_chars > 3 && col_text.chars().count() > max_chars {
+              let truncate_to = max_chars.saturating_sub(3);
+              if column.truncate_start {
+                let char_count = col_text.chars().count();
+                let start_idx = char_count.saturating_sub(truncate_to);
+                let truncated: String = col_text.chars().skip(start_idx).collect();
+                format!("...{}", truncated)
+              } else {
+                let truncated: String = col_text.chars().take(truncate_to).collect();
+                format!("{}...", truncated)
+              }
+            } else {
+              col_text
+            };
+
+            if !truncated.is_empty() && max_chars > 0 {
+              surface.draw_text(TextSection {
+                position: (col_x, text_y),
+                texts:    vec![TextSegment {
+                  content: truncated,
+                  style:   TextStyle {
+                    size:  UI_FONT_SIZE * scale,
+                    color: item_color,
+                  },
+                }],
+              });
+            }
+
+            col_x += col_width + column_gap;
+          }
+
         }
       }
 

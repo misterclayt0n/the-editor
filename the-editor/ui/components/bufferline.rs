@@ -41,42 +41,59 @@ pub struct BufferTab {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TabAnimationState {
   /// Hover state (0.0 = not hovered, 1.0 = fully hovered)
-  pub hover_t:       f32,
+  pub hover_t:        f32,
   /// Close button hover state
-  pub close_hover_t: f32,
-  /// Press/click state
-  pub pressed_t:     f32,
+  pub close_hover_t:  f32,
+  /// Press/click state for the tab
+  pub pressed_t:      f32,
+  /// Press/click state for the close button
+  pub close_pressed_t: f32,
 }
 
 impl TabAnimationState {
   /// Update animation state using exponential decay
-  pub fn update(&mut self, dt: f32, is_hovered: bool, is_close_hovered: bool, is_pressed: bool) {
+  pub fn update(
+    &mut self,
+    dt: f32,
+    is_hovered: bool,
+    is_close_hovered: bool,
+    is_pressed: bool,
+    is_close_pressed: bool,
+  ) {
     // Exponential decay formula: rate = 1 - 2^(-60 * dt)
     let rate = 1.0 - 2.0_f32.powf(-60.0 * dt);
 
     let hover_target = if is_hovered { 1.0 } else { 0.0 };
-    let close_target = if is_close_hovered { 1.0 } else { 0.0 };
+    let close_hover_target = if is_close_hovered { 1.0 } else { 0.0 };
     let press_target = if is_pressed { 1.0 } else { 0.0 };
+    let close_press_target = if is_close_pressed { 1.0 } else { 0.0 };
 
     self.hover_t += (hover_target - self.hover_t) * rate;
-    self.close_hover_t += (close_target - self.close_hover_t) * rate;
+    self.close_hover_t += (close_hover_target - self.close_hover_t) * rate;
     self.pressed_t += (press_target - self.pressed_t) * rate;
+    self.close_pressed_t += (close_press_target - self.close_pressed_t) * rate;
 
     // Snap to target when close enough
     if (self.hover_t - hover_target).abs() < 0.01 {
       self.hover_t = hover_target;
     }
-    if (self.close_hover_t - close_target).abs() < 0.01 {
-      self.close_hover_t = close_target;
+    if (self.close_hover_t - close_hover_target).abs() < 0.01 {
+      self.close_hover_t = close_hover_target;
     }
     if (self.pressed_t - press_target).abs() < 0.01 {
       self.pressed_t = press_target;
+    }
+    if (self.close_pressed_t - close_press_target).abs() < 0.01 {
+      self.close_pressed_t = close_press_target;
     }
   }
 
   /// Returns true if any animation is in progress
   pub fn is_animating(&self) -> bool {
-    self.hover_t > 0.01 || self.close_hover_t > 0.01 || self.pressed_t > 0.01
+    self.hover_t > 0.01
+      || self.close_hover_t > 0.01
+      || self.pressed_t > 0.01
+      || self.close_pressed_t > 0.01
   }
 }
 
@@ -150,12 +167,14 @@ pub fn render(
   hover_index: Option<usize>,
   pressed_index: Option<usize>,
   close_hover_index: Option<usize>,
+  close_pressed_index: Option<usize>,
   add_button_hovered: bool,
   add_button_pressed: bool,
   tabs: &mut Vec<BufferTab>,
   animation_states: &mut HashMap<DocumentId, TabAnimationState>,
   add_button_state: &mut AddButtonState,
   scroll_offset: f32,
+  mouse_pos: Option<(f32, f32)>,
   dt: f32,
 ) -> RenderResult {
   tabs.clear();
@@ -249,7 +268,8 @@ pub fn render(
   let icon_size = (UI_FONT_SIZE * 1.0) as u32;
   let icon_padding = 6.0;
   let text_padding = 8.0;
-  let close_btn_size = 14.0_f32;
+  let text_close_gap = 8.0; // Gap between text and close button
+  let close_btn_width = UI_FONT_SIZE * 2.0; // Full-height close button width
   let tab_spacing = 2.0;
   let min_tab_width = text_padding * 2.0 + icon_size as f32 + 20.0;
 
@@ -268,7 +288,7 @@ pub fn render(
         name.to_string()
       };
       let text_width = surface.measure_text(&display_text, UI_FONT_SIZE);
-      (text_padding + icon_size as f32 + icon_padding + text_width + close_btn_size + text_padding * 1.5)
+      (text_padding + icon_size as f32 + icon_padding + text_width + text_close_gap + close_btn_width)
         .max(min_tab_width)
     })
     .collect();
@@ -308,18 +328,19 @@ pub fn render(
     let is_hovered = Some(tab_index) == hover_index;
     let is_pressed = Some(tab_index) == pressed_index;
     let is_close_hovered = Some(tab_index) == close_hover_index;
+    let is_close_pressed = Some(tab_index) == close_pressed_index;
 
     // Get or create animation state for this tab
     let anim = animation_states.entry(doc_id).or_default();
-    anim.update(dt, is_hovered, is_close_hovered, is_pressed);
+    anim.update(dt, is_hovered, is_close_hovered, is_pressed, is_close_pressed);
 
     // Store tab bounds for hit testing (even if not visible, for scroll calculations)
     tabs.push(BufferTab {
       kind: BufferKind::Document(doc_id),
       start_x: tab_start,
       end_x: tab_end,
-      close_start_x: tab_end - close_btn_size - text_padding,
-      close_end_x: tab_end - text_padding,
+      close_start_x: tab_end - close_btn_width,
+      close_end_x: tab_end,
     });
 
     // Skip rendering if tab is completely outside visible area
@@ -338,8 +359,6 @@ pub fn render(
     let name = display_name(doc);
     let name_str = name.as_ref();
     let icon = file_icons::icon_for_file(name_str);
-
-    let end_x = tab_end;
 
     // Determine colors based on state
     let (text_color, bg_alpha) = if is_active {
@@ -388,44 +407,86 @@ pub fn render(
       );
     }
 
-    // Draw hover glow layers - use clipped dimensions
-    if anim.hover_t > 0.1 && clipped_width > 0.0 {
-      let hover_strength = anim.hover_t * (1.0 - anim.pressed_t * 0.9);
-      if hover_strength > 0.0 {
-        Button::draw_hover_layers(
-          surface,
-          clipped_start_x,
-          tab_top,
-          clipped_width,
-          tab_height,
-          3.0,
-          button_highlight,
-          hover_strength,
+    // Close button dimensions (full height, positioned at right edge)
+    let close_x = tab_end - close_btn_width;
+    let close_y = tab_top;
+    let close_height = tab_height;
+
+    // Draw mouse-following glow (raddebugger style)
+    // When close button is hovered, only glow the close button area
+    // When tab is hovered (but not close), glow the tab area excluding close button
+    if anim.hover_t > 0.01 && clipped_width > 0.0 {
+      if let Some((mouse_x, mouse_y)) = mouse_pos {
+        let glow_alpha = 0.06 * anim.hover_t * (1.0 - anim.pressed_t * 0.5);
+        let glow_color = Color::new(
+          button_highlight.r,
+          button_highlight.g,
+          button_highlight.b,
+          glow_alpha,
         );
+
+        if anim.close_hover_t > 0.5 {
+          // Hovering close button - glow only the close button area
+          let close_clipped_x = close_x.max(clip_left);
+          let close_clipped_end = (close_x + close_btn_width).min(clip_right);
+          let close_clipped_width = (close_clipped_end - close_clipped_x).max(0.0);
+          if close_clipped_width > 0.0 {
+            let glow_radius = tab_height * 1.5;
+            surface.draw_rounded_rect_glow(
+              close_clipped_x,
+              tab_top,
+              close_clipped_width,
+              tab_height,
+              3.0,
+              mouse_x,
+              mouse_y,
+              glow_radius,
+              glow_color,
+            );
+          }
+        } else {
+          // Hovering tab (not close button) - glow the tab area
+          let glow_radius = (tab_height * 2.5).min(clipped_width * 0.6);
+          surface.draw_rounded_rect_glow(
+            clipped_start_x,
+            tab_top,
+            clipped_width,
+            tab_height,
+            3.0,
+            mouse_x,
+            mouse_y,
+            glow_radius,
+            glow_color,
+          );
+        }
       }
     }
 
     // Draw press glow - use clipped dimensions
     if anim.pressed_t > 0.0 && clipped_width > 0.0 {
-      let glow_alpha = 0.12 * anim.pressed_t;
-      let bottom_glow = Color::new(
+      let glow_alpha = 0.15 * anim.pressed_t;
+      let press_glow = Color::new(
         button_highlight.r,
         button_highlight.g,
         button_highlight.b,
         glow_alpha,
       );
-      let bottom_center_y = tab_top + tab_height + 1.5;
-      let bottom_radius = (clipped_width * 0.45).max(tab_height * 0.42);
+      // Glow centered on mouse or tab center
+      let (glow_x, glow_y) = mouse_pos.unwrap_or((
+        clipped_start_x + clipped_width * 0.5,
+        tab_top + tab_height * 0.5,
+      ));
+      let glow_radius = (tab_height * 2.0).min(clipped_width * 0.5);
       surface.draw_rounded_rect_glow(
         clipped_start_x,
         tab_top,
         clipped_width,
         tab_height,
         3.0,
-        clipped_start_x + clipped_width * 0.5,
-        bottom_center_y,
-        bottom_radius,
-        bottom_glow,
+        glow_x,
+        glow_y,
+        glow_radius,
+        press_glow,
       );
     }
 
@@ -461,29 +522,48 @@ pub fn render(
       text_color,
     ));
 
-    // Draw close button (only when hovering and visible - implicit style)
-    let close_x = end_x - close_btn_size - text_padding;
-    let close_y = tab_top + (tab_height - close_btn_size) * 0.5;
-    let close_visible = close_x >= clip_left && close_x + close_btn_size <= clip_right;
+    // Draw close button - always visible, occupies full allocated space
+    let close_visible = close_x >= clip_left && close_x + close_btn_width <= clip_right;
 
-    if anim.hover_t > 0.1 && close_visible {
-      let close_alpha = anim.hover_t * 0.5;
-
-      // Draw close button background on hover
-      if anim.close_hover_t > 0.0 {
-        let close_bg = with_alpha(button_base, anim.close_hover_t * 0.2);
-        surface.draw_rounded_rect(close_x, close_y, close_btn_size, close_btn_size, 3.0, close_bg);
+    if close_visible {
+      // Draw close button background on hover (full area)
+      if anim.close_hover_t > 0.0 || anim.close_pressed_t > 0.0 {
+        let hover_alpha = anim.close_hover_t * 0.2;
+        let press_alpha = anim.close_pressed_t * 0.1;
+        let close_bg = with_alpha(button_base, hover_alpha + press_alpha);
+        surface.draw_rect(close_x, close_y, close_btn_width, close_height, close_bg);
       }
 
-      // Draw small × character, well-centered
+      // Raddebugger-style click animation: top dark shadow + bottom light highlight
+      if anim.close_pressed_t > 0.01 {
+        let shadow_height = (close_height * 0.35 * anim.close_pressed_t).min(close_height * 0.4);
+
+        // Top dark shadow (pressed-in effect)
+        let shadow_alpha = 0.2 * anim.close_pressed_t;
+        surface.draw_rect(close_x, close_y, close_btn_width, shadow_height, with_alpha(Color::BLACK, shadow_alpha));
+
+        // Bottom light highlight (reflection)
+        let light_alpha = 0.08 * anim.close_pressed_t;
+        surface.draw_rect(
+          close_x,
+          close_y + close_height - shadow_height,
+          close_btn_width,
+          shadow_height,
+          with_alpha(Color::WHITE, light_alpha),
+        );
+      }
+
+      // Draw × character - always visible with base alpha, brighter on hover
+      let base_alpha = 0.4;
+      let hover_boost = anim.close_hover_t * 0.6;
       let x_color = with_alpha(
-        inactive_text.lerp(active_text, anim.close_hover_t * 0.6),
-        close_alpha + anim.close_hover_t * 0.5,
+        inactive_text.lerp(active_text, anim.close_hover_t * 0.5),
+        base_alpha + hover_boost,
       );
-      let x_font_size = 10.0;
-      // Center the × in the button area
-      let x_x = close_x + (close_btn_size - x_font_size * 0.55) * 0.5;
-      let x_y = close_y + (close_btn_size - x_font_size) * 0.5;
+      let x_font_size = UI_FONT_SIZE * 0.75;
+      // Center the × in the full button area
+      let x_x = close_x + (close_btn_width - x_font_size * 0.55) * 0.5;
+      let x_y = close_y + (close_height - x_font_size) * 0.5;
       surface.draw_text(TextSection::simple(x_x, x_y, "×", x_font_size, x_color));
     }
 

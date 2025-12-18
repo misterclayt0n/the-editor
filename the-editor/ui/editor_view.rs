@@ -277,6 +277,7 @@ pub struct EditorView {
   buffer_pressed_index:      Option<usize>,
   // RAD-style bufferline state
   buffer_close_hover_index:  Option<usize>,
+  buffer_close_pressed_index: Option<usize>,
   add_button_hovered:        bool,
   add_button_pressed:        bool,
   add_button_rect:           Option<crate::core::graphics::Rect>,
@@ -390,6 +391,7 @@ impl EditorView {
       bufferline_height: 24.0,
       buffer_pressed_index: None,
       buffer_close_hover_index: None,
+      buffer_close_pressed_index: None,
       add_button_hovered: false,
       add_button_pressed: false,
       add_button_rect: None,
@@ -1384,12 +1386,14 @@ impl Component for EditorView {
         self.buffer_hover_index,
         self.buffer_pressed_index,
         self.buffer_close_hover_index,
+        self.buffer_close_pressed_index,
         self.add_button_hovered,
         self.add_button_pressed,
         &mut self.buffer_tabs,
         &mut self.tab_animation_states,
         &mut self.add_button_state,
         self.bufferline_scroll_offset,
+        self.last_mouse_pos,
         cx.dt,
       );
       self.bufferline_height = result.height;
@@ -4744,7 +4748,7 @@ impl EditorView {
 
             // Click on close button
             if let Some(idx) = close_hit_index {
-              self.buffer_pressed_index = Some(idx);
+              self.buffer_close_pressed_index = Some(idx);
               self.dirty_region.mark_all_dirty();
               request_redraw();
               return EventResult::Consumed(None);
@@ -4800,7 +4804,7 @@ impl EditorView {
 
             // Release on close button - close the document
             if let Some(idx) = close_hit_index {
-              if self.buffer_pressed_index == Some(idx) {
+              if self.buffer_close_pressed_index == Some(idx) {
                 if let Some(tab) = self.buffer_tabs.get(idx) {
                   match tab.kind {
                     bufferline::BufferKind::Document(doc_id) => {
@@ -4812,7 +4816,11 @@ impl EditorView {
               }
             }
 
+            // Clear pressed states
             if self.buffer_pressed_index.take().is_some() {
+              self.dirty_region.mark_all_dirty();
+            }
+            if self.buffer_close_pressed_index.take().is_some() {
               self.dirty_region.mark_all_dirty();
             }
             request_redraw();
@@ -4849,6 +4857,9 @@ impl EditorView {
           changed = true;
         }
         if self.buffer_close_hover_index.take().is_some() {
+          changed = true;
+        }
+        if self.buffer_close_pressed_index.take().is_some() {
           changed = true;
         }
         if self.add_button_hovered {

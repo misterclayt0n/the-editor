@@ -4,8 +4,6 @@ use the_editor_renderer::{
   Color,
   TextSection,
 };
-
-use super::button::Button;
 use crate::{
   core::{
     DocumentId,
@@ -585,53 +583,63 @@ pub fn render(
   let add_btn_y = tab_top;
 
   let add_button_rect = if add_btn_x + add_btn_size < origin_x + viewport_width {
-    // Draw add button background on hover
-    if add_button_state.hover_t > 0.0 {
-      let add_bg = with_alpha(button_base, add_button_state.hover_t * 0.2);
-      surface.draw_rounded_rect(add_btn_x, add_btn_y, add_btn_size, add_btn_size, 3.0, add_bg);
+    // Draw add button background on hover (full area)
+    if add_button_state.hover_t > 0.0 || add_button_state.pressed_t > 0.0 {
+      let hover_alpha = add_button_state.hover_t * 0.2;
+      let press_alpha = add_button_state.pressed_t * 0.1;
+      let add_bg = with_alpha(button_base, hover_alpha + press_alpha);
+      surface.draw_rect(add_btn_x, add_btn_y, add_btn_size, add_btn_size, add_bg);
+    }
 
-      // Draw hover glow
-      if add_button_state.hover_t > 0.3 {
-        Button::draw_hover_layers(
-          surface,
+    // Mouse-following glow on hover (same as X button)
+    if add_button_state.hover_t > 0.01 {
+      if let Some((mouse_x, mouse_y)) = mouse_pos {
+        let glow_alpha = 0.06 * add_button_state.hover_t * (1.0 - add_button_state.pressed_t * 0.5);
+        let glow_color = Color::new(button_highlight.r, button_highlight.g, button_highlight.b, glow_alpha);
+        let glow_radius = add_btn_size * 1.5;
+        surface.draw_rounded_rect_glow(
           add_btn_x,
           add_btn_y,
           add_btn_size,
           add_btn_size,
           3.0,
-          button_highlight,
-          add_button_state.hover_t * 0.6,
+          mouse_x,
+          mouse_y,
+          glow_radius,
+          glow_color,
         );
       }
     }
 
-    // Draw press glow
-    if add_button_state.pressed_t > 0.0 {
-      let glow_alpha = 0.15 * add_button_state.pressed_t;
-      let bottom_glow = Color::new(
-        button_highlight.r,
-        button_highlight.g,
-        button_highlight.b,
-        glow_alpha,
-      );
-      surface.draw_rounded_rect_glow(
+    // Raddebugger-style click animation: top dark shadow + bottom light highlight
+    if add_button_state.pressed_t > 0.01 {
+      let shadow_height = (add_btn_size * 0.35 * add_button_state.pressed_t).min(add_btn_size * 0.4);
+
+      // Top dark shadow (pressed-in effect)
+      let shadow_alpha = 0.2 * add_button_state.pressed_t;
+      surface.draw_rect(add_btn_x, add_btn_y, add_btn_size, shadow_height, with_alpha(Color::BLACK, shadow_alpha));
+
+      // Bottom light highlight (reflection)
+      let light_alpha = 0.08 * add_button_state.pressed_t;
+      surface.draw_rect(
         add_btn_x,
-        add_btn_y,
+        add_btn_y + add_btn_size - shadow_height,
         add_btn_size,
-        add_btn_size,
-        3.0,
-        add_btn_x + add_btn_size * 0.5,
-        add_btn_y + add_btn_size + 1.0,
-        add_btn_size * 0.5,
-        bottom_glow,
+        shadow_height,
+        with_alpha(Color::WHITE, light_alpha),
       );
     }
 
     // Draw + icon
+    let base_alpha = 0.4;
+    let hover_boost = add_button_state.hover_t * 0.6;
     let plus_size = UI_FONT_SIZE * 0.9;
     let plus_x = add_btn_x + (add_btn_size - plus_size * 0.4) * 0.5;
     let plus_y = add_btn_y + (add_btn_size - plus_size) * 0.5;
-    let plus_color = inactive_text.lerp(active_text, add_button_state.hover_t);
+    let plus_color = with_alpha(
+      inactive_text.lerp(active_text, add_button_state.hover_t * 0.5),
+      base_alpha + hover_boost,
+    );
     surface.draw_text(TextSection::simple(plus_x, plus_y, "+", plus_size, plus_color));
 
     Some(Rect {

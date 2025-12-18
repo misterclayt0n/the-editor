@@ -1421,12 +1421,15 @@ impl Component for Completion {
 
     // Position popup using shared positioning utility
     // Pass None for bias to maintain current behavior (choose side with more space)
+    // min_y is the bufferline height (top boundary where popups cannot be placed)
+    let min_y = ctx.editor.viewport_pixel_offset.1;
     let popup_pos = position_popup_near_cursor(
       cursor,
       menu_width,
       menu_height,
       viewport_width,
       viewport_height,
+      min_y,
       slide_offset,
       scale,
       None,

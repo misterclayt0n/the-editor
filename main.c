@@ -7,5 +7,6 @@ int add(int a, int b) {
 int main() {
   int r = add(1, 2);
   printf("var = %d\n", r);
+  
   return 0;
 }

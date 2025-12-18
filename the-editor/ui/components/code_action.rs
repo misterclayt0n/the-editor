@@ -369,12 +369,15 @@ impl Component for CodeActionMenu {
     let viewport_width = surface.width() as f32;
     let viewport_height = surface.height() as f32;
 
+    // min_y is the bufferline height (top boundary where popups cannot be placed)
+    let min_y = cx.editor.viewport_pixel_offset.1;
     let popup_pos = position_popup_near_cursor(
       cursor,
       menu_width,
       menu_height,
       viewport_width,
       viewport_height,
+      min_y,
       slide_offset,
       scale,
       None,

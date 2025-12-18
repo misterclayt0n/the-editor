@@ -12,8 +12,14 @@ use crate::ui::{
 const CURSOR_POPUP_MARGIN: f32 = 4.0;
 
 /// Calculate available space above and below cursor for popup placement.
-pub fn calculate_available_space(cursor: CursorPosition, viewport_height: f32) -> (f32, f32) {
-  let available_above = (cursor.line_top - CURSOR_POPUP_MARGIN).max(0.0);
+/// `min_y` is the top boundary (e.g., bufferline height) where popups cannot be placed.
+pub fn calculate_available_space(
+  cursor: CursorPosition,
+  viewport_height: f32,
+  min_y: f32,
+) -> (f32, f32) {
+  // Available above is from cursor to the top boundary (min_y), not screen top
+  let available_above = (cursor.line_top - min_y - CURSOR_POPUP_MARGIN).max(0.0);
   let available_below = (viewport_height - cursor.line_bottom - CURSOR_POPUP_MARGIN).max(0.0);
   (available_above, available_below)
 }
@@ -23,14 +29,16 @@ pub fn calculate_available_space(cursor: CursorPosition, viewport_height: f32) -
 /// Respects bias preference: tries the preferred side first, but uses the other
 /// side if the preferred side doesn't have enough space. If no bias is
 /// provided, prefers the side with more space (below by default if equal).
+/// `min_y` is the top boundary (e.g., bufferline height) where popups cannot be placed.
 pub fn constrain_popup_height(
   cursor: CursorPosition,
   popup_height: f32,
   min_popup_height: f32,
   viewport_height: f32,
+  min_y: f32,
   bias: Option<PositionBias>,
 ) -> f32 {
-  let (available_above, available_below) = calculate_available_space(cursor, viewport_height);
+  let (available_above, available_below) = calculate_available_space(cursor, viewport_height, min_y);
 
   // Determine maximum popup height based on bias and available space
   let max_popup_height = match bias {
@@ -147,15 +155,16 @@ pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option
 
   // Get viewport pixel offsets (explorer width, bufferline height)
   // These are set by EditorView during render
-  let (explorer_px_offset, bufferline_px_offset) = ctx.editor.viewport_pixel_offset;
+  let (explorer_px_offset, _bufferline_px_offset) = ctx.editor.viewport_pixel_offset;
 
   // Calculate view position in pixels - must match how editor_view.rs renders
   // text Tree coordinates are 0-based (not offset by explorer), so we add
   // explorer_px_offset inner_area.x contains gutter offset in cells
   let view_x = explorer_px_offset + (inner_area.x as f32 * doc_cell_w) + shake_offset_x;
 
-  // For Y: inner_area.y is in cells, convert to pixels and add bufferline offset
-  let view_y = bufferline_px_offset + (inner_area.y as f32 * doc_cell_h) + shake_offset_y;
+  // For Y: inner_area.y is in cells (already includes bufferline offset via clip_top(1))
+  // Convert to pixels - DO NOT add bufferline_px_offset as that would double-count
+  let view_y = (inner_area.y as f32 * doc_cell_h) + shake_offset_y;
 
   // Calculate final screen position
   let x = view_x + (screen_col as f32 * doc_cell_w);
@@ -183,12 +192,14 @@ pub struct PopupPosition {
 /// side if there's not enough space. If no bias is provided, chooses the side
 /// with more space (below by default if equal). Accounts for animation
 /// slide_offset and scale.
+/// `min_y` is the top boundary (e.g., bufferline height) where popups cannot be placed.
 pub fn position_popup_near_cursor(
   cursor: CursorPosition,
   popup_width: f32,
   popup_height: f32,
   viewport_width: f32,
   viewport_height: f32,
+  min_y: f32,
   slide_offset: f32,
   scale: f32,
   bias: Option<PositionBias>,
@@ -198,7 +209,7 @@ pub fn position_popup_near_cursor(
   let anim_height = popup_height * scale;
 
   // Calculate available space to determine best placement
-  let (available_above, available_below) = calculate_available_space(cursor, viewport_height);
+  let (available_above, available_below) = calculate_available_space(cursor, viewport_height, min_y);
 
   // Determine which side to use based on bias and available space
   let use_below = match bias {
@@ -238,8 +249,8 @@ pub fn position_popup_near_cursor(
     cursor.line_top - CURSOR_POPUP_MARGIN - anim_height - slide_offset
   };
 
-  // Clamp Y to viewport bounds
-  let popup_y = popup_y.max(0.0).min(viewport_height - anim_height);
+  // Clamp Y to viewport bounds (min_y is the top boundary, e.g., below bufferline)
+  let popup_y = popup_y.max(min_y).min(viewport_height - anim_height);
 
   // Align popup with cursor column and clamp to viewport
   let mut popup_x = cursor.x;
@@ -256,12 +267,14 @@ pub fn position_popup_near_cursor(
 /// side if there's not enough space. If no bias is provided, chooses the side
 /// with more space (below by default if equal). Useful for signature help which
 /// should be centered on the cursor.
+/// `min_y` is the top boundary (e.g., bufferline height) where popups cannot be placed.
 pub fn position_popup_centered_on_cursor(
   cursor: CursorPosition,
   popup_width: f32,
   popup_height: f32,
   viewport_width: f32,
   viewport_height: f32,
+  min_y: f32,
   slide_offset: f32,
   scale: f32,
   bias: Option<PositionBias>,
@@ -271,7 +284,7 @@ pub fn position_popup_centered_on_cursor(
   let anim_height = popup_height * scale;
 
   // Calculate available space to determine best placement
-  let (available_above, available_below) = calculate_available_space(cursor, viewport_height);
+  let (available_above, available_below) = calculate_available_space(cursor, viewport_height, min_y);
 
   // Determine which side to use based on bias and available space
   let use_below = match bias {
@@ -311,8 +324,8 @@ pub fn position_popup_centered_on_cursor(
     cursor.line_top - CURSOR_POPUP_MARGIN - anim_height - slide_offset
   };
 
-  // Clamp Y to viewport bounds
-  let popup_y = popup_y.max(0.0).min(viewport_height - anim_height);
+  // Clamp Y to viewport bounds (min_y is the top boundary, e.g., below bufferline)
+  let popup_y = popup_y.max(min_y).min(viewport_height - anim_height);
 
   // Center popup horizontally on cursor, accounting for animation scale
   let mut popup_x = cursor.x - (popup_width - anim_width) / 2.0;

@@ -298,6 +298,7 @@ impl<T: PopupContent> PopupShell<T> {
     scale: f32,
     surface_width: f32,
     surface_height: f32,
+    min_y: f32,
   ) -> RectPx {
     let padding = self.style.padding;
     let min_outer_width = (self.limits.min_width as f32 * ui_cell_w)
@@ -338,6 +339,7 @@ impl<T: PopupContent> PopupShell<T> {
           outer_height,
           surface_width,
           surface_height,
+          min_y,
           slide_offset,
           scale,
           self.bias,
@@ -431,11 +433,14 @@ impl<T: PopupContent + 'static> Component for PopupShell<T> {
       // Pass bias to respect preferred positioning side
       // Use surface_height (not viewport_px.height) because cursor position is in
       // screen coordinates
+      // min_y is the bufferline height (top boundary where popups cannot be placed)
+      let min_y = ctx.editor.viewport_pixel_offset.1;
       let constrained_height = constrain_popup_height(
         cursor_pos,
         content_size.height + padding * 2.0,
         min_popup_height,
         surface_height,
+        min_y,
         self.bias,
       );
 
@@ -451,6 +456,8 @@ impl<T: PopupContent + 'static> Component for PopupShell<T> {
     };
     let scale = 0.95 + (eased * 0.05); // 95% -> 100%
 
+    // min_y is the bufferline height (top boundary where popups cannot be placed)
+    let min_y = ctx.editor.viewport_pixel_offset.1;
     let outer_rect = self.compute_outer_rect(
       viewport_px,
       content_size,
@@ -461,6 +468,7 @@ impl<T: PopupContent + 'static> Component for PopupShell<T> {
       scale,
       surface_width,
       surface_height,
+      min_y,
     );
 
     // Positioning function already handles viewport clamping, so we don't need

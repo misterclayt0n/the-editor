@@ -350,11 +350,14 @@ impl Component for SignatureHelp {
 
     // Constrain popup height to fit available space using shared utility
     // Pass None for bias to maintain current behavior (choose side with more space)
+    // min_y is the bufferline height (top boundary where popups cannot be placed)
+    let min_y = ctx.editor.viewport_pixel_offset.1;
     popup_height = constrain_popup_height(
       cursor,
       popup_height,
       min_popup_height,
       viewport_height,
+      min_y,
       None,
     );
 
@@ -399,6 +402,7 @@ impl Component for SignatureHelp {
       popup_height,
       viewport_width,
       viewport_height,
+      min_y,
       slide_offset,
       scale,
       None,

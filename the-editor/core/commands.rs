@@ -1326,7 +1326,7 @@ fn find_char_line_ending(editor: &mut Editor, pending: FindCharPending) {
     let cursor = range.cursor(text);
     let cursor_line = range.cursor_line(text);
 
-   let find_on_line = match pending.direction {
+    let find_on_line = match pending.direction {
       Direction::Forward => {
         let on_edge = line_end_char_index(&text, cursor_line) == cursor;
         let line = cursor_line + pending.count - 1 + (on_edge as usize);
@@ -2529,8 +2529,8 @@ pub fn terminal_picker(cx: &mut Context) {
   );
 
   // Create preview handler that captures terminal cells
-  let preview_handler: crate::ui::components::PreviewHandler =
-    std::sync::Arc::new(|path: &std::path::Path, ctx: &crate::ui::compositor::Context| {
+  let preview_handler: crate::ui::components::PreviewHandler = std::sync::Arc::new(
+    |path: &std::path::Path, ctx: &crate::ui::compositor::Context| {
       // Path is used as a key - we encode terminal ID in the path
       let terminal_id_str = path.file_name()?.to_str()?;
       let terminal_id_num: usize = terminal_id_str.parse().ok()?;
@@ -2549,7 +2549,8 @@ pub fn terminal_picker(cx: &mut Context) {
         rows,
         title: terminal.title().to_string(),
       }))
-    });
+    },
+  );
 
   let picker = Picker::new(columns, 2, items, (), |_| {})
     .with_action_handler(action_handler)
@@ -3143,8 +3144,12 @@ pub fn local_search(cx: &mut Context) {
 
       crate::ui::job::dispatch_blocking(move |editor, _compositor| {
         let view_id = editor.tree.focus;
-        let Some(doc_id) = editor.tree.get(view_id).doc() else { return };
-        let Some(doc) = editor.documents.get_mut(&doc_id) else { return };
+        let Some(doc_id) = editor.tree.get(view_id).doc() else {
+          return;
+        };
+        let Some(doc) = editor.documents.get_mut(&doc_id) else {
+          return;
+        };
         let text = doc.text();
         if line_num < text.len_lines() {
           // Convert byte offsets to char positions
@@ -7639,7 +7644,15 @@ pub fn scroll_animated(cx: &mut Context, offset: usize, direction: Direction, sy
       _ => Movement::Move,
     };
     let selection = doc.selection(view.id).clone().transform(|range| {
-      move_vertically_visual(doc_text, range, direction, offset, movement, &text_fmt, &mut annotations)
+      move_vertically_visual(
+        doc_text,
+        range,
+        direction,
+        offset,
+        movement,
+        &text_fmt,
+        &mut annotations,
+      )
     });
     drop(annotations);
     doc.set_selection(view.id, selection);
@@ -9085,7 +9098,7 @@ pub fn toggle_injections(cx: &mut Context) {
 // Context fade commands
 
 pub fn toggle_fade_mode(cx: &mut Context) {
-  cx.editor.fade_mode.enabled = !cx.editor.fade_mode.enabled; 
+  cx.editor.fade_mode.enabled = !cx.editor.fade_mode.enabled;
   eprintln!(
     "[FADE DEBUG] Toggle fade mode: enabled={}",
     cx.editor.fade_mode.enabled
@@ -9275,7 +9288,8 @@ pub fn acp_permission_popup(cx: &mut Context) {
 
 /// Open the command palette - a fuzzy finder for all available commands.
 /// Shows command name, keybindings, and description.
-/// Includes both static commands (like `move_char_left`) and typable commands (like `:write`).
+/// Includes both static commands (like `move_char_left`) and typable commands
+/// (like `:write`).
 pub fn command_palette(cx: &mut Context) {
   use std::sync::Arc;
 
@@ -9293,8 +9307,14 @@ pub fn command_palette(cx: &mut Context) {
   // Item type for the command palette - can be either static or typable command
   #[derive(Clone)]
   enum CommandItem {
-    Static { command: MappableCommand, bindings: String },
-    Typable { command: Arc<TypableCommand>, bindings: String },
+    Static {
+      command:  MappableCommand,
+      bindings: String,
+    },
+    Typable {
+      command:  Arc<TypableCommand>,
+      bindings: String,
+    },
   }
 
   impl CommandItem {
@@ -9332,7 +9352,13 @@ pub fn command_palette(cx: &mut Context) {
         .map(|seqs| {
           seqs
             .iter()
-            .map(|seq| seq.iter().map(ToString::to_string).collect::<Vec<_>>().join(" "))
+            .map(|seq| {
+              seq
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" ")
+            })
             .collect::<Vec<_>>()
             .join(", ")
         })
@@ -9355,20 +9381,34 @@ pub fn command_palette(cx: &mut Context) {
       .map(|seqs| {
         seqs
           .iter()
-          .map(|seq| seq.iter().map(ToString::to_string).collect::<Vec<_>>().join(" "))
+          .map(|seq| {
+            seq
+              .iter()
+              .map(ToString::to_string)
+              .collect::<Vec<_>>()
+              .join(" ")
+          })
           .collect::<Vec<_>>()
           .join(", ")
       })
       .unwrap_or_default();
 
-    items.push(CommandItem::Typable { command: cmd, bindings });
+    items.push(CommandItem::Typable {
+      command: cmd,
+      bindings,
+    });
   }
 
   // Define columns: name, bindings, doc
   let columns = [
     Column::new("Command", |item: &CommandItem, _: &()| item.name()),
-    Column::new("Keys", |item: &CommandItem, _: &()| item.bindings().to_string()).without_filtering(),
-    Column::new("Description", |item: &CommandItem, _: &()| item.doc().to_string()),
+    Column::new("Keys", |item: &CommandItem, _: &()| {
+      item.bindings().to_string()
+    })
+    .without_filtering(),
+    Column::new("Description", |item: &CommandItem, _: &()| {
+      item.doc().to_string()
+    }),
   ];
 
   // Clone the command registry for use in the action handler
@@ -9386,12 +9426,12 @@ pub fn command_palette(cx: &mut Context) {
 
         // Create a context and execute the command
         let mut ctx = Context {
-          register:             None,
-          count:                None,
+          register: None,
+          count: None,
           editor,
-          callback:             Vec::new(),
+          callback: Vec::new(),
           on_next_key_callback: None,
-          jobs:                 &mut jobs,
+          jobs: &mut jobs,
         };
 
         match item {

@@ -2301,126 +2301,18 @@ impl Component for EditorView {
           .map(crate::ui::theme_color_to_renderer_color)
           .unwrap_or(Color::rgb(0.3, 0.3, 0.35));
 
-        // Calculate cursor indent level based on LINE indentation
-        // For closing-only lines, use the indent of surrounding content
+        // Calculate cursor indent level based on LINE indentation (O(1) - single line)
         let cursor_line = doc_text.char_to_line(cursor_pos.min(doc_text.len_chars()));
         let cursor_line_text = doc_text.line(cursor_line);
         let line_indent_chars = cursor_line_text
           .chars()
           .take_while(|c| c.is_whitespace() && *c != '\n')
           .count();
-        let line_indent_level = if indent_width > 0 {
+        let cursor_indent_level = if indent_width > 0 {
           line_indent_chars / indent_width
         } else {
           0
         };
-
-        // Check if current line is closing-only (}, );, etc.)
-        let trimmed: String = cursor_line_text
-          .chars()
-          .filter(|c| !c.is_whitespace())
-          .collect();
-        let is_cursor_line_closing = !trimmed.is_empty()
-          && trimmed
-            .chars()
-            .all(|c| matches!(c, '}' | ')' | ']' | ',' | ';'));
-
-        // For closing-only lines, look at previous content lines to get effective
-        // indent
-        let cursor_indent_level = if is_cursor_line_closing {
-          let mut effective_level = line_indent_level;
-          for prev_line in (0..cursor_line).rev() {
-            let prev_text = doc_text.line(prev_line);
-            let prev_trimmed: String = prev_text.chars().filter(|c| !c.is_whitespace()).collect();
-            // Skip empty and closing-only lines
-            if prev_trimmed.is_empty()
-              || prev_trimmed
-                .chars()
-                .all(|c| matches!(c, '}' | ')' | ']' | ',' | ';'))
-            {
-              continue;
-            }
-            // Found a content line - use its indent level
-            let prev_indent = prev_text
-              .chars()
-              .take_while(|c| c.is_whitespace() && *c != '\n')
-              .count();
-            effective_level = if indent_width > 0 {
-              prev_indent / indent_width
-            } else {
-              0
-            };
-            break;
-          }
-          effective_level
-        } else {
-          line_indent_level
-        };
-
-        // Compute scope boundaries for each indent level
-        // scope_bounds[level] = (start_line, end_line) where this level is active
-        let total_lines = doc_text.len_lines();
-        let mut scope_bounds: std::collections::HashMap<usize, (usize, usize)> =
-          std::collections::HashMap::new();
-
-        // Helper to get indent level of a line
-        let get_line_indent = |line_idx: usize| -> usize {
-          if line_idx >= total_lines {
-            return 0;
-          }
-          let line = doc_text.line(line_idx);
-          let indent_chars = line
-            .chars()
-            .take_while(|c| c.is_whitespace() && *c != '\n')
-            .count();
-          if indent_width > 0 {
-            indent_chars / indent_width
-          } else {
-            0
-          }
-        };
-
-        // Helper to check if a line should NOT break scope boundaries
-        // This includes: empty lines, whitespace-only, and closing braces/punctuation
-        let is_scope_neutral = |line_idx: usize| -> bool {
-          if line_idx >= total_lines {
-            return false;
-          }
-          let line = doc_text.line(line_idx);
-          let trimmed: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-          // Empty/whitespace-only lines or closing-only chars don't break scope
-          trimmed.is_empty()
-            || trimmed
-              .chars()
-              .all(|c| matches!(c, '}' | ')' | ']' | ',' | ';'))
-        };
-
-        // For each indent level from cursor's level down to 0, find scope boundaries
-        for level in (0..=cursor_indent_level).rev() {
-          // Scan up from cursor to find scope start
-          let mut scope_start = cursor_line;
-          for line in (0..cursor_line).rev() {
-            let line_indent = get_line_indent(line);
-            // Don't break on scope-neutral lines (empty, closing braces)
-            if line_indent < level && !is_scope_neutral(line) {
-              break;
-            }
-            scope_start = line;
-          }
-
-          // Scan down from cursor to find scope end
-          let mut scope_end = cursor_line;
-          for line in (cursor_line + 1)..total_lines {
-            let line_indent = get_line_indent(line);
-            // Don't break on scope-neutral lines (empty, closing braces)
-            if line_indent < level && !is_scope_neutral(line) {
-              break;
-            }
-            scope_end = line;
-          }
-
-          scope_bounds.insert(level, (scope_start, scope_end));
-        }
 
         // Update indent guide animation state with exponential decay
         let anim_rate = 1.0 - 2.0_f32.powf(-60.0 * cx.dt);
@@ -2470,28 +2362,23 @@ impl Component for EditorView {
         let glow_anim_rate = 1.0 - 2.0_f32.powf(-30.0 * cx.dt);
         let mut glow_animating = false;
 
-        // Update existing entries and add new ones
-        let max_line = doc_text.len_lines();
-        for line in 0..max_line.min(10000) {
-          // Cap to avoid huge allocations
-          let target = if diagnostic_lines.contains(&line) {
-            1.0
-          } else {
-            0.0
-          };
-
-          if let Some(current) = self.diagnostic_glow_opacities.get_mut(&line) {
-            let delta = target - *current;
-            if delta.abs() > 0.01 {
-              glow_animating = true;
-              *current += glow_anim_rate * delta;
-            } else {
-              *current = target;
-            }
-          } else if target > 0.0 {
-            // New diagnostic line - start at 0 and animate in
+        // Add new diagnostic lines (O(diagnostic_count) instead of O(10000))
+        for &line in &diagnostic_lines {
+          if !self.diagnostic_glow_opacities.contains_key(&line) {
             self.diagnostic_glow_opacities.insert(line, 0.0);
             glow_animating = true;
+          }
+        }
+
+        // Animate existing entries toward their targets
+        for (line, current) in self.diagnostic_glow_opacities.iter_mut() {
+          let target = if diagnostic_lines.contains(line) { 1.0 } else { 0.0 };
+          let delta = target - *current;
+          if delta.abs() > 0.01 {
+            glow_animating = true;
+            *current += glow_anim_rate * delta;
+          } else {
+            *current = target;
           }
         }
 
@@ -2511,7 +2398,7 @@ impl Component for EditorView {
         // Helper to draw indent guides for a line
         let draw_indent_guides = |last_indent: usize,
                                   rel_row: usize,
-                                  doc_line: usize,
+                                  _doc_line: usize,
                                   batcher: &mut CommandBatcher,
                                   font_width: f32,
                                   font_size: f32,
@@ -2540,10 +2427,9 @@ impl Component for EditorView {
 
             // Only draw if visible in viewport
             if guide_x >= base_x && guide_x < base_x + (viewport_cols as f32) * font_width {
-              // Check if this line is within scope for this indent level
-              let in_scope = scope_bounds
-                .get(&i)
-                .is_some_and(|(start, end)| doc_line >= *start && doc_line <= *end);
+              // Simple "in scope" check: guide level <= cursor's indent level
+              // This avoids expensive O(n) scope boundary scanning
+              let in_scope = i <= cursor_indent_level;
 
               // Get animated opacity only if in scope, otherwise use base
               let opacity = if in_scope {

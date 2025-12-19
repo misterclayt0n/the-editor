@@ -1893,6 +1893,11 @@ impl Editor {
     let conf = config.load();
     let auto_pairs = (&conf.auto_pairs).into();
 
+    // Create file watcher with timing
+    let t = std::time::Instant::now();
+    let file_watcher = file_watcher::Watcher::new(&conf.file_watcher);
+    log::info!("[STARTUP] File watcher init: {:?}", t.elapsed());
+
     // Create channel for terminal events
     let (tx, rx) = unbounded_channel::<TerminalEvent>();
 
@@ -1923,7 +1928,7 @@ impl Editor {
       lsp_progress: crate::lsp::LspProgressMap::new(),
       diagnostics: Diagnostics::new(),
       diff_providers: DiffProviderRegistry::default(),
-      file_watcher: file_watcher::Watcher::new(&conf.file_watcher),
+      file_watcher,
       special_buffers: SpecialBuffers::default(),
       shell_job_cancels: HashMap::new(),
       // debug_adapters: dap::registry::Registry::new(),
@@ -1967,8 +1972,10 @@ impl Editor {
       viewport_pixel_offset: (0.0, 0.0),
     };
 
+    let t = std::time::Instant::now();
     let scopes = editor.theme.scopes().to_vec();
     (*editor.syn_loader).load().set_scopes(scopes);
+    log::info!("[STARTUP] Syntax scopes config: {:?}", t.elapsed());
 
     editor
   }

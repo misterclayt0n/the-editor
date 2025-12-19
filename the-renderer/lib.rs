@@ -14,7 +14,10 @@ mod text;
 mod text_cache;
 pub mod image;
 
-use std::sync::Arc;
+use std::{
+  sync::Arc,
+  time::Instant,
+};
 
 pub use color::Color;
 pub use error::{
@@ -315,8 +318,10 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
           // For now, this blocking call is unavoidable but unavoidable GPU initialization
           // can be mitigated by the renderer's improved shutdown (see renderer.rs Drop
           // impl).
+          let gpu_init_start = Instant::now();
           match pollster::block_on(Renderer::new(window.clone())) {
             Ok(mut renderer) => {
+              log::info!("[STARTUP] GPU init (Renderer::new): {:?}", gpu_init_start.elapsed());
               self.app.init(&mut renderer);
               self.renderer = Some(renderer);
               self.window = Some(window.clone());
@@ -363,7 +368,9 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
       match event {
         WindowEvent::CloseRequested => {
+          let t = Instant::now();
           let _ = self.renderer.take();
+          log::info!("[SHUTDOWN] Renderer drop: {:?}", t.elapsed());
           event_loop.exit();
         },
         WindowEvent::KeyboardInput {

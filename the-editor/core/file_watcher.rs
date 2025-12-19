@@ -65,32 +65,43 @@ impl Default for Config {
 }
 
 pub struct Watcher {
-  watcher: Option<RecommendedWatcher>,
-  filter:  Arc<WatchFilter>,
-  roots:   Vec<(PathBuf, usize)>,
-  config:  Config,
+  watcher:     Option<RecommendedWatcher>,
+  filter:      Arc<WatchFilter>,
+  roots:       Vec<(PathBuf, usize)>,
+  config:      Config,
+  initialized: bool,
 }
 
 impl Watcher {
+  /// Creates a new file watcher with lazy initialization.
+  /// The expensive workspace detection and gitignore loading is deferred
+  /// until the first file is opened (add_root is called).
   pub fn new(config: &Config) -> Self {
-    let mut watcher = Watcher {
-      watcher: None,
-      filter:  Arc::new(WatchFilter {
+    Watcher {
+      watcher:     None,
+      filter:      Arc::new(WatchFilter {
         filesentry_ignores: Gitignore::empty(),
         ignore_files:       Vec::new(),
         global_ignores:     Vec::new(),
         hidden:             true,
         watch_vcs:          true,
       }),
-      roots:   Vec::new(),
-      config:  config.clone(),
-    };
+      roots:       Vec::new(),
+      config:      config.clone(),
+      initialized: false,
+    }
+  }
 
-    watcher.reload(config);
-    watcher
+  /// Ensures the watcher is initialized. Called lazily on first use.
+  fn ensure_initialized(&mut self) {
+    if !self.initialized {
+      self.initialized = true;
+      self.reload(&self.config.clone());
+    }
   }
 
   pub fn reload(&mut self, config: &Config) {
+    self.initialized = true; // Mark as initialized when reload is called directly
     self.config = config.clone();
     let (workspace, no_workspace) = the_editor_loader::find_workspace();
 
@@ -179,6 +190,9 @@ impl Watcher {
   }
 
   pub fn add_root(&mut self, root: &Path) {
+    // Lazily initialize the watcher on first use
+    self.ensure_initialized();
+
     let root = match root.canonicalize() {
       Ok(root) => root,
       Err(err) => {

@@ -3,6 +3,7 @@
 use std::{
   path::Path,
   sync::Arc,
+  time::Instant,
 };
 
 use arc_swap::{
@@ -92,29 +93,40 @@ fn main() -> anyhow::Result<()> {
 
   setup_logging(verbosity)?;
 
+  let startup_total = Instant::now();
+
   // Register all event types and hooks up front.
+  let t = Instant::now();
   crate::event::register_all_events();
+  log::info!("[STARTUP] Event registration: {:?}", t.elapsed());
 
   // Spawn a Tokio runtime for async hooks/handlers (word index, LSP, etc.).
+  let t = Instant::now();
   let rt = tokio::runtime::Builder::new_multi_thread()
     .enable_all()
     .build()?;
   // Enter the runtime before constructing handlers that spawn tasks.
   let guard = rt.enter();
+  log::info!("[STARTUP] Tokio runtime: {:?}", t.elapsed());
 
   // Prepare theme loader.
+  let t = Instant::now();
   let mut theme_parent_dirs = vec![the_editor_loader::config_dir()];
   theme_parent_dirs.extend(the_editor_loader::runtime_dirs().iter().cloned());
   let theme_loader = Arc::new(theme::Loader::new(&theme_parent_dirs));
+  log::info!("[STARTUP] Theme loader: {:?}", t.elapsed());
 
   // Initial logical editor area (updated on window resize by renderer).
   let area = Rect::new(0, 0, 120, 40);
 
   // Load language configuration/loader.
+  let t = Instant::now();
   let lang_loader = crate::core::config::user_lang_loader()
     .unwrap_or_else(|_err| crate::core::config::default_lang_loader());
+  log::info!("[STARTUP] Language loader: {:?}", t.elapsed());
 
   // Load config from ~/.config/the-editor/config.toml (falls back to defaults).
+  let t = Instant::now();
   let config = match crate::core::config::Config::load_user() {
     Ok(cfg) => cfg,
     Err(err) => {
@@ -123,8 +135,10 @@ fn main() -> anyhow::Result<()> {
     },
   };
   let config_ptr = Arc::new(ArcSwap::from_pointee(config.clone()));
+  log::info!("[STARTUP] Config loading: {:?}", t.elapsed());
 
   // Build handlers and register hooks.
+  let t = Instant::now();
   let completion_hook = crate::handlers::completion_request::CompletionRequestHook::new();
   let completion_tx = completion_hook.spawn();
 
@@ -141,7 +155,9 @@ fn main() -> anyhow::Result<()> {
     word_index:      crate::handlers::word_index::Handler::spawn(),
   };
   crate::handlers::register_hooks(&handlers, &config.editor);
+  log::info!("[STARTUP] Handlers setup: {:?}", t.elapsed());
 
+  let t = Instant::now();
   let mut editor = Editor::new(
     area,
     theme_loader.clone(),
@@ -153,13 +169,16 @@ fn main() -> anyhow::Result<()> {
     handlers,
   );
   editor.set_keymaps(&config.keys);
+  log::info!("[STARTUP] Editor construction: {:?}", t.elapsed());
 
+  let t = Instant::now();
   let theme = config
     .theme
     .as_deref()
     .and_then(|name| theme_loader.load(name).ok())
     .unwrap_or_else(|| theme_loader.default_theme(config.editor.true_color));
   editor.set_theme(theme);
+  log::info!("[STARTUP] Theme loading: {:?}", t.elapsed());
 
   if let Some(dir) = working_dir {
     the_editor_stdx::env::set_current_working_dir(&dir)?;
@@ -172,6 +191,7 @@ fn main() -> anyhow::Result<()> {
     files.shift_remove(&first_path);
   }
 
+  let t = Instant::now();
   let opened = if load_tutor {
     if !files.is_empty() {
       log::warn!("Ignoring additional file arguments because --tutor was set");
@@ -190,20 +210,27 @@ fn main() -> anyhow::Result<()> {
       if opened == 1 { "" } else { "s" }
     ));
   }
+  log::info!("[STARTUP] File opening ({} files): {:?}", opened, t.elapsed());
 
   // Create the application wrapper with runtime handle
+  let t = Instant::now();
   let app = crate::application::App::new(editor, rt.handle().clone(), config_ptr.clone());
+  log::info!("[STARTUP] App creation: {:?}", t.elapsed());
 
   // Build window configuration from editor config
   let window_config = the_editor_renderer::WindowConfig::new("The Editor", 1024, 768)
     .with_decorations(config.editor.window_decorations);
+
+  log::info!("[STARTUP] Total pre-renderer: {:?}", startup_total.elapsed());
 
   let result = the_editor_renderer::run(window_config, app)
     .map_err(|e| anyhow::anyhow!("Failed to run renderer: {}", e));
 
   // Explicitly shutdown the runtime with a timeout to avoid blocking on exit
   // Drop the guard first to exit the runtime context
+  let t = Instant::now();
   drop(guard);
+  log::info!("[SHUTDOWN] Runtime guard drop: {:?}", t.elapsed());
 
   // Shutdown the runtime with a 5 second timeout for graceful cleanup.
   // Previous 100ms was too aggressive and caused:
@@ -215,7 +242,12 @@ fn main() -> anyhow::Result<()> {
   // - Close network connections gracefully
   // - Release GPU resources via wgpu
   // - Flush file buffers
+  let t = Instant::now();
   rt.shutdown_timeout(std::time::Duration::from_secs(5));
+  log::info!("[SHUTDOWN] Runtime shutdown (5s timeout): {:?}", t.elapsed());
+
+  // Flush logs before exiting to ensure shutdown timing is written
+  log::logger().flush();
 
   result
 }

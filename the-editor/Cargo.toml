@@ -13,6 +13,7 @@ path = "main.rs"
 [features]
 integration   = [  ]
 unicode-lines = [ "ropey/unicode_lines" ]
+tracy         = [ "tracy-client/enable", "tracy-client/ondemand", "the-editor-renderer/tracy", "tree-house/tracy" ]
 
 [dependencies]
 agent-client-protocol.workspace    = true
@@ -52,6 +53,8 @@ tokio.workspace                    = true
 tokio-stream.workspace             = true
 tokio-util.workspace               = true
 toml.workspace                     = true
+tracy-client.workspace             = true
+tracy-client-sys.workspace         = true
 tree-house.workspace               = true
 unicode-general-category.workspace = true
 unicode-segmentation.workspace     = true

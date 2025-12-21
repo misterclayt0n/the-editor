@@ -10,7 +10,11 @@ workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+tracy = [ "tracy-client/enable", "tracy-client/ondemand" ]
+
 [dependencies]
+tracy-client.workspace = true
 anyhow.workspace     = true
 bytemuck.workspace   = true
 env_logger.workspace = true

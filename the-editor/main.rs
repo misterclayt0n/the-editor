@@ -49,6 +49,7 @@ mod increment;
 mod input;
 pub mod keymap;
 mod lsp;
+mod profiling;
 mod snippets;
 mod ui;
 

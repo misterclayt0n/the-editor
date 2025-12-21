@@ -1638,6 +1638,7 @@ impl Document {
 
     // update tree-sitter syntax tree
     if let Some(syntax) = &mut self.syntax {
+      crate::profile_scope!("syntax_update");
       let loader = self.syn_loader.load();
       if let Err(err) = syntax.update(
         old_doc.slice(..),
@@ -1652,6 +1653,7 @@ impl Document {
 
     // Invalidate and re-query highlight cache for changed lines
     if let (Some(cache), Some(syntax)) = (&mut self.highlight_cache, &self.syntax) {
+      crate::profile_scope!("highlight_cache_update");
       // Calculate the range of affected lines from the changes
       if let Some((start_line, end_line)) =
         Self::calculate_changed_line_range(&old_doc, &self.text, transaction.changes())

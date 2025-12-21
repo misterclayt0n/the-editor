@@ -1073,22 +1073,10 @@ impl Renderer {
       self.cell_height = run.line_height.max(self.font_size);
       self.line_top_offset = run.line_top;
 
-      log::info!(
-        "RENDERER METRICS: font_size={}, advance_width={}, line_w={}, line_height={}, line_top={}, glyph_count={}",
-        self.font_size, advance_width, run.line_w, run.line_height, run.line_top,
-        run.glyphs.len()
-      );
-      if run.glyphs.len() >= 2 {
-        log::info!(
-          "GLYPH POSITIONS: g0.x={}, g1.x={}, g0.w={}, g1.w={}",
-          run.glyphs[0].x, run.glyphs[1].x, run.glyphs[0].w, run.glyphs[1].w
-        );
-      }
     } else {
       self.cell_height = self.font_size * LINE_HEIGHT_FACTOR;
       self.cell_width = (self.font_size * 0.6).max(1.0);
       self.line_top_offset = 0.0;
-      log::warn!("RENDERER METRICS: No layout run found, using fallback values");
     }
   }
 
@@ -1524,7 +1512,6 @@ impl Renderer {
         let error_msg = e.to_string();
         // Check if atlas is full
         if error_msg.contains("glyph texture atlas is full") {
-          log::warn!("Glyph texture atlas full, trimming and retrying...");
           // Trim unused glyphs from atlas
           self.text_atlas.trim();
           // Retry prepare after trimming
@@ -1621,7 +1608,6 @@ impl Renderer {
         let error_msg = e.to_string();
         // Check if atlas is full
         if error_msg.contains("glyph texture atlas is full") {
-          log::warn!("Glyph texture atlas full (overlay), trimming and retrying...");
           // Trim unused glyphs from atlas
           self.text_atlas.trim();
           // Retry prepare after trimming
@@ -2792,8 +2778,6 @@ impl Renderer {
     // caused by incomplete GPU resource cleanup.
     // An empty submit flushes pending operations without adding new work.
     self.queue.submit(vec![]);
-
-    log::debug!("Renderer shutdown complete - GPU operations flushed");
   }
 }
 

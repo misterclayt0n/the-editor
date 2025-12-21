@@ -415,6 +415,9 @@ impl Application for App {
   }
 
   fn render(&mut self, renderer: &mut Renderer) {
+    crate::profile_function!();
+    crate::profile_frame!();
+
     the_editor_event::start_frame();
 
     // Clear needs_redraw flag at the start of each frame.
@@ -500,8 +503,11 @@ impl Application for App {
     };
 
     // Render through the compositor.
-    let area = self.compositor.size();
-    self.compositor.render(area, renderer, &mut cx);
+    {
+      crate::profile_scope!("compositor_render");
+      let area = self.compositor.size();
+      self.compositor.render(area, renderer, &mut cx);
+    }
   }
 
   fn handle_event(&mut self, event: InputEvent, _renderer: &mut Renderer) -> bool {

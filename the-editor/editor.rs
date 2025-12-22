@@ -1118,6 +1118,16 @@ pub enum StatusLineElement {
 
   /// The base of current working directory
   CurrentWorkingDirectory,
+
+  // === the-editor extensions (not in Helix) ===
+  /// ACP (AI Code Partner) status indicator
+  AcpStatus,
+
+  /// Nix shell indicator (shows when running in nix-shell)
+  NixShell,
+
+  /// LSP server names with loading status
+  LspServers,
 }
 
 // Cursor shape is read and used on every rendered frame and so needs

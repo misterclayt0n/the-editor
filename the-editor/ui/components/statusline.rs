@@ -228,8 +228,7 @@ impl StatusLine {
       return Some(RenderedElement::new(format!(" {} ", frame)));
     }
 
-    // Reserve space even when not spinning to prevent layout shift
-    Some(RenderedElement::new("   ".to_string()))
+    None
   }
 
   fn render_file_name(editor: &Editor, doc: Option<&Document>) -> Option<RenderedElement> {
@@ -512,6 +511,46 @@ impl StatusLine {
     None
   }
 
+  // === the-editor extension element renderers ===
+
+  fn render_acp_status_element(editor: &Editor) -> Option<RenderedElement> {
+    let acp = editor.acp.as_ref().filter(|acp| acp.is_connected())?;
+
+    let text = if let Some(model_state) = acp.model_state() {
+      let model_id_str = model_state.current_model_id.to_string();
+      let model_display = format_model_display(&model_id_str);
+      format!(" ACP:{} ", model_display)
+    } else {
+      " ACP ".to_string()
+    };
+
+    Some(RenderedElement::new(text))
+  }
+
+  fn render_nix_shell_element() -> Option<RenderedElement> {
+    if *IN_NIX_SHELL {
+      Some(RenderedElement::new(" nix ".to_string()))
+    } else {
+      None
+    }
+  }
+
+  fn render_lsp_servers_element(_editor: &Editor, doc: Option<&Document>) -> Option<RenderedElement> {
+    let doc = doc?;
+    if doc.language_servers.is_empty() {
+      return None;
+    }
+
+    let server_names: Vec<&str> = doc
+      .language_servers
+      .iter()
+      .map(|(name, _)| name.as_str())
+      .collect();
+
+    let text = format!(" {} ", server_names.join(", "));
+    Some(RenderedElement::new(text))
+  }
+
   /// Render a single statusline element
   fn render_element(
     &self,
@@ -546,6 +585,10 @@ impl StatusLine {
       StatusLineElement::VersionControl => Self::render_version_control(doc),
       StatusLineElement::Register => Self::render_register(editor),
       StatusLineElement::CurrentWorkingDirectory => Self::render_current_working_directory(),
+      // the-editor extensions
+      StatusLineElement::AcpStatus => Self::render_acp_status_element(editor),
+      StatusLineElement::NixShell => Self::render_nix_shell_element(),
+      StatusLineElement::LspServers => Self::render_lsp_servers_element(editor, doc),
     }
   }
 

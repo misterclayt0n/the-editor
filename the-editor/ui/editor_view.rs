@@ -3904,6 +3904,8 @@ impl EditorView {
       },
       // Regular characters
       Key::Char(c) => c.to_string().into_bytes(),
+      // Alt+Enter - send ESC + CR (for nushell multiline, etc.)
+      Key::Enter if key.alt => vec![0x1B, b'\r'],
       // Enter
       Key::Enter | Key::NumpadEnter => vec![b'\r'],
       // Tab

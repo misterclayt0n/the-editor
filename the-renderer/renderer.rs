@@ -2249,8 +2249,15 @@ impl Renderer {
 
   /// Configure the monospaced font family and size used for layout calculations
   pub fn configure_font(&mut self, family: &str, size: f32) {
+    let size = size.max(1.0);
+
+    // Skip expensive recalculation if font hasn't changed
+    if self.font_family == family && (self.font_size - size).abs() < f32::EPSILON {
+      return;
+    }
+
     self.font_family = family.to_string();
-    self.font_size = size.max(1.0);
+    self.font_size = size;
     self.recalculate_metrics();
   }
 

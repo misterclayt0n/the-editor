@@ -9122,7 +9122,7 @@ pub fn update_fade_ranges(cx: &mut Context) {
   }
 
   let (view, doc) = current!(cx.editor);
-
+ 
   if let Some(syntax) = doc.syntax() {
     eprintln!("[FADE DEBUG] Syntax available, computing ranges");
     let text = doc.text().slice(..);
@@ -9654,7 +9654,6 @@ pub fn acp_stop(cx: &mut Context) {
   cx.editor.acp = None;
 
   // Clear response state
-  cx.editor.acp_response = None;
-
+  cx.editor.acp_response = None; 
   cx.editor.set_status("ACP agent stopped");
 }

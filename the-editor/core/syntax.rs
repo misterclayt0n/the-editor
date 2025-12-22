@@ -10,9 +10,19 @@ use std::{
     RangeBounds,
   },
   path::Path,
-  sync::Arc,
+  sync::{
+    Arc,
+    atomic::{
+      AtomicBool,
+      AtomicU64,
+      Ordering,
+    },
+  },
   time::Duration,
 };
+
+use parking_lot::Mutex;
+use ropey::Rope;
 
 use anyhow::{
   Context,
@@ -574,9 +584,196 @@ impl FileTypeGlobMatcher {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Syntax {
   inner: tree_house::Syntax,
+}
+
+/// Thread-safe syntax state with version tracking for async parsing.
+///
+/// This type wraps `Syntax` with version tracking to support background parsing.
+/// It separates "interpolation" (fast edit application ~100µs) from "reparsing"
+/// (full tree-sitter parse 10-100ms+), allowing the UI to remain responsive
+/// during edits.
+///
+/// # Architecture
+///
+/// When an edit occurs:
+/// 1. `interpolate()` is called synchronously - this applies `tree.edit()` to all
+///    layer trees, which just adjusts byte offsets (very fast, O(edits))
+/// 2. A background parse is spawned which clones the syntax state and runs the
+///    full `update()` call
+/// 3. When the background parse completes, the result is swapped in atomically
+///
+/// This allows the UI to render immediately with slightly stale syntax (but with
+/// correct byte offsets), while accurate highlighting follows within ~50-100ms.
+pub struct SyntaxState {
+  inner: Arc<SyntaxStateInner>,
+}
+
+struct SyntaxStateInner {
+  /// The actual syntax tree, protected by a mutex for interior mutability.
+  syntax: Mutex<Syntax>,
+
+  /// Version when last interpolation happened (fast path).
+  /// This is bumped every time `interpolate()` is called.
+  interpolated_version: AtomicU64,
+
+  /// Version when last full parse completed (accurate).
+  /// This is set when background parse results are swapped in.
+  parsed_version: AtomicU64,
+
+  /// Is a background parse currently in progress?
+  parse_pending: AtomicBool,
+}
+
+impl std::fmt::Debug for SyntaxStateInner {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("SyntaxStateInner")
+      .field("interpolated_version", &self.interpolated_version.load(Ordering::Relaxed))
+      .field("parsed_version", &self.parsed_version.load(Ordering::Relaxed))
+      .field("parse_pending", &self.parse_pending.load(Ordering::Relaxed))
+      .finish_non_exhaustive()
+  }
+}
+
+impl Clone for SyntaxState {
+  fn clone(&self) -> Self {
+    Self {
+      inner: Arc::clone(&self.inner),
+    }
+  }
+}
+
+impl std::fmt::Debug for SyntaxState {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("SyntaxState")
+      .field("inner", &self.inner)
+      .finish()
+  }
+}
+
+/// A snapshot of syntax state that can be sent to a background thread for parsing.
+pub struct SyntaxSnapshot {
+  /// Cloned syntax state for parsing.
+  pub syntax: Syntax,
+  /// The source text at the time of snapshot.
+  pub source: Rope,
+  /// The version at which this snapshot was taken.
+  pub version: u64,
+}
+
+impl SyntaxState {
+  /// Create a new syntax state with the given syntax.
+  pub fn new(syntax: Syntax) -> Self {
+    Self {
+      inner: Arc::new(SyntaxStateInner {
+        syntax:               Mutex::new(syntax),
+        interpolated_version: AtomicU64::new(0),
+        parsed_version:       AtomicU64::new(0),
+        parse_pending:        AtomicBool::new(false),
+      }),
+    }
+  }
+
+  /// Apply edits to existing trees without full reparse.
+  ///
+  /// This is the fast path (~100µs) that applies `tree.edit()` to all layer
+  /// trees. It just adjusts byte offsets in existing nodes - no actual parsing
+  /// happens. Call this synchronously in the edit path, then spawn a background
+  /// parse for accurate syntax.
+  pub fn interpolate(&self, edits: &[InputEdit]) {
+    let mut syntax = self.inner.syntax.lock();
+    syntax.inner.interpolate(edits);
+    self.inner.interpolated_version.fetch_add(1, Ordering::Release);
+  }
+
+  /// Take a snapshot of the current syntax state for background parsing.
+  ///
+  /// The snapshot includes a clone of the syntax tree and the current version.
+  /// Use this to send syntax to a background thread for parsing.
+  pub fn snapshot(&self, source: Rope) -> SyntaxSnapshot {
+    let syntax = self.inner.syntax.lock();
+    SyntaxSnapshot {
+      syntax:  Syntax {
+        inner: syntax.inner.clone(),
+      },
+      source,
+      version: self.inner.interpolated_version.load(Ordering::Acquire),
+    }
+  }
+
+  /// Swap in results from a completed background parse.
+  ///
+  /// This replaces the current syntax with the parsed result if the parsed
+  /// version is still relevant (no newer edits have occurred).
+  ///
+  /// Returns `true` if the swap was successful, `false` if the parsed result
+  /// was stale (newer edits arrived during parsing).
+  pub fn apply_parsed(&self, snapshot: SyntaxSnapshot) -> bool {
+    let current_version = self.inner.interpolated_version.load(Ordering::Acquire);
+
+    // Only apply if this parse is for the current version
+    if snapshot.version == current_version {
+      let mut syntax = self.inner.syntax.lock();
+      *syntax = snapshot.syntax;
+      self.inner.parsed_version.store(snapshot.version, Ordering::Release);
+      self.inner.parse_pending.store(false, Ordering::Release);
+      true
+    } else {
+      // Stale parse - more edits arrived during parsing
+      false
+    }
+  }
+
+  /// Check if we need another parse (edits arrived during the last parse).
+  pub fn needs_reparse(&self) -> bool {
+    let interpolated = self.inner.interpolated_version.load(Ordering::Acquire);
+    let parsed = self.inner.parsed_version.load(Ordering::Acquire);
+    interpolated > parsed
+  }
+
+  /// Returns the current interpolated version.
+  pub fn interpolated_version(&self) -> u64 {
+    self.inner.interpolated_version.load(Ordering::Acquire)
+  }
+
+  /// Returns the version of the last completed parse.
+  pub fn parsed_version(&self) -> u64 {
+    self.inner.parsed_version.load(Ordering::Acquire)
+  }
+
+  /// Check if a background parse is in progress.
+  pub fn is_parse_pending(&self) -> bool {
+    self.inner.parse_pending.load(Ordering::Acquire)
+  }
+
+  /// Mark that a background parse has started.
+  pub fn set_parse_pending(&self, pending: bool) {
+    self.inner.parse_pending.store(pending, Ordering::Release);
+  }
+
+  /// Check if we have accurate (fully parsed) syntax.
+  pub fn is_accurate(&self) -> bool {
+    let interpolated = self.inner.interpolated_version.load(Ordering::Acquire);
+    let parsed = self.inner.parsed_version.load(Ordering::Acquire);
+    parsed >= interpolated
+  }
+
+  /// Get read access to the current syntax.
+  ///
+  /// This returns a guard that holds the lock. For display purposes, use this
+  /// even if the syntax might be slightly stale.
+  pub fn syntax(&self) -> impl std::ops::Deref<Target = Syntax> + '_ {
+    self.inner.syntax.lock()
+  }
+
+  /// Get mutable access to the current syntax.
+  ///
+  /// Use this sparingly - prefer `interpolate()` + background parse for edits.
+  pub fn syntax_mut(&self) -> impl std::ops::DerefMut<Target = Syntax> + '_ {
+    self.inner.syntax.lock()
+  }
 }
 
 #[cfg(test)]
@@ -592,7 +789,7 @@ mod tests {
   }
 }
 
-const PARSE_TIMEOUT: Duration = Duration::from_millis(500); // half a second is pretty generous
+pub const PARSE_TIMEOUT: Duration = Duration::from_millis(500); // half a second is pretty generous
 
 /// Cache for syntax highlighting results to avoid re-querying tree-sitter on
 /// every frame.
@@ -737,6 +934,69 @@ impl Syntax {
       Ok(())
     } else {
       self.inner.update(source, PARSE_TIMEOUT, &edits, loader)
+    }
+  }
+
+  /// Apply edits to existing trees without full reparse.
+  ///
+  /// This is the fast path (~100µs) that applies `tree.edit()` to all layer
+  /// trees. It just adjusts byte offsets in existing nodes - no actual parsing
+  /// happens. Use this for immediate feedback after edits, followed by a full
+  /// `update()` call (potentially on a background thread) for accurate syntax.
+  pub fn interpolate(&mut self, old_source: RopeSlice, changeset: &ChangeSet) {
+    let edits = generate_edits(old_source, changeset);
+    if !edits.is_empty() {
+      self.inner.interpolate(&edits);
+    }
+  }
+
+  /// Update the syntax tree with pre-computed edits.
+  ///
+  /// This is used by background parsing where edits are computed once and
+  /// passed to the parse task.
+  pub fn update_with_edits(
+    &mut self,
+    source: RopeSlice,
+    edits: &[InputEdit],
+    loader: &Loader,
+  ) -> Result<(), Error> {
+    if edits.is_empty() {
+      Ok(())
+    } else {
+      self.inner.update(source, PARSE_TIMEOUT, edits, loader)
+    }
+  }
+
+  /// Try to update the syntax tree with a short timeout.
+  ///
+  /// Returns `Ok(true)` if the parse completed in time, `Ok(false)` if it timed
+  /// out, or `Err` if there was an error. Use this to try a fast synchronous
+  /// parse before falling back to async parsing.
+  pub fn try_update_with_short_timeout(
+    &mut self,
+    source: RopeSlice,
+    edits: &[InputEdit],
+    loader: &Loader,
+    timeout: Duration,
+  ) -> Result<bool, Error> {
+    if edits.is_empty() {
+      return Ok(true);
+    }
+    match self.inner.update(source, timeout, edits, loader) {
+      Ok(()) => Ok(true),
+      Err(Error::Timeout) => Ok(false),
+      Err(err) => Err(err),
+    }
+  }
+
+  /// Apply edits to existing trees without full reparse (interpolation).
+  ///
+  /// This is the fast path (~100µs) that applies `tree.edit()` to all layer
+  /// trees. It just adjusts byte offsets in existing nodes - no actual parsing
+  /// happens.
+  pub fn interpolate_with_edits(&mut self, edits: &[InputEdit]) {
+    if !edits.is_empty() {
+      self.inner.interpolate(edits);
     }
   }
 
@@ -956,7 +1216,10 @@ impl Syntax {
 
 pub type Highlighter<'a> = highlighter::Highlighter<'a, 'a, Loader>;
 
-fn generate_edits(old_text: RopeSlice, changeset: &ChangeSet) -> Vec<InputEdit> {
+/// Generate tree-sitter input edits from a changeset.
+///
+/// This is used both for synchronous interpolation and for background parsing.
+pub fn generate_edits(old_text: RopeSlice, changeset: &ChangeSet) -> Vec<InputEdit> {
   use tree_sitter::Point;
 
   use crate::core::transaction::Operation::*;

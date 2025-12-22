@@ -4826,6 +4826,7 @@ dependencies = [
 [[package]]
 name = "tree-house"
 version = "0.3.0"
+source = "git+https://github.com/misterclayt0n/tree-house#0017554dab0c78f79106c5ed5070ec0226162663"
 dependencies = [
  "arc-swap",
  "hashbrown 0.15.5",
@@ -4842,6 +4843,7 @@ dependencies = [
 [[package]]
 name = "tree-house-bindings"
 version = "0.2.2"
+source = "git+https://github.com/misterclayt0n/tree-house#0017554dab0c78f79106c5ed5070ec0226162663"
 dependencies = [
  "cc",
  "libloading",

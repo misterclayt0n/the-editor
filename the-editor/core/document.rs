@@ -92,6 +92,7 @@ use crate::{
     syntax::{
       self,
       Syntax,
+      generate_edits,
       config::{
         LanguageConfiguration,
         LanguageServerFeature,
@@ -132,6 +133,7 @@ use crate::{
     active::ActiveSnippet,
     render::SnippetRenderCtx,
   },
+  ui::job,
 };
 
 pub const BUF_SIZE: usize = 8192;
@@ -259,6 +261,11 @@ pub struct Document {
   pub color_swatches:                 Option<DocumentColorSwatches>,
   pub color_swatch_controller:        TaskController,
   syn_loader:                         Arc<ArcSwap<syntax::Loader>>,
+  /// The document version when the syntax tree was last fully parsed.
+  /// Used to detect if we need to re-parse after background parse completes.
+  syntax_parsed_version:              i32,
+  /// Controller for cancelling pending background syntax parses.
+  syntax_parse_controller:            TaskController,
   /// Cache for syntax highlight results to avoid re-querying tree-sitter every
   /// frame
   highlight_cache:                    Option<syntax::HighlightCache>,
@@ -739,6 +746,8 @@ impl Document {
       color_swatches: None,
       color_swatch_controller: TaskController::new(),
       syn_loader,
+      syntax_parsed_version: 0,
+      syntax_parse_controller: TaskController::new(),
       highlight_cache: None,
       soft_wrap_override: None,
       wrap_indicator_override: None,
@@ -1364,6 +1373,9 @@ impl Document {
     language_config: Option<Arc<syntax::config::LanguageConfiguration>>,
     loader: &syntax::Loader,
   ) {
+    // Cancel any pending background parse for the old language
+    self.syntax_parse_controller.cancel();
+
     self.language = language_config;
     self.syntax = self.language.as_ref().and_then(|config| {
       Syntax::new(self.text.slice(..), config.language(), loader)
@@ -1374,6 +1386,9 @@ impl Document {
         })
         .ok()
     });
+
+    // Reset parse version since we have a fresh syntax tree
+    self.syntax_parsed_version = self.version;
 
     // Clear highlight cache when language changes since highlights are no longer
     // valid
@@ -1395,6 +1410,38 @@ impl Document {
     let config = loader.language(language).config().clone();
     self.set_language(Some(config), loader);
     Ok(())
+  }
+
+  /// Called when a background syntax parse completes.
+  ///
+  /// This swaps in the parsed syntax if it's still relevant (no newer edits
+  /// have occurred since the parse started).
+  pub fn finish_background_parse(&mut self, parsed_syntax: Syntax, parse_version: i32) {
+    // Only apply if this parse is for the current or a recent version
+    // (we allow slightly stale parses to complete to avoid wasting work)
+    if parse_version < self.syntax_parsed_version {
+      // This parse is older than one we already have - discard
+      return;
+    }
+
+    if parse_version < self.version {
+      // Edits happened during parsing - we'll need another parse
+      // But still swap in this result as it's better than the interpolated tree
+      log::debug!(
+        "Background parse completed for version {} but current is {} - result is stale but usable",
+        parse_version,
+        self.version
+      );
+    }
+
+    // Swap in the parsed syntax
+    self.syntax = Some(parsed_syntax);
+    self.syntax_parsed_version = parse_version;
+
+    // Invalidate the entire highlight cache since we have a new syntax tree
+    if let Some(cache) = &mut self.highlight_cache {
+      cache.clear();
+    }
   }
 
   fn store_selection(&mut self, view_id: ViewId, selection: Selection) {
@@ -1636,18 +1683,64 @@ impl Document {
       })
     }
 
-    // update tree-sitter syntax tree
+    // Update tree-sitter syntax tree with pure async parsing.
+    //
+    // We always use async parsing because:
+    // 1. The tree-sitter parser timeout only affects parse(), not query execution
+    // 2. run_injection_query() and run_local_query() are the slow parts and have
+    //    no timeout support
+    // 3. Trying sync-then-async doesn't work when queries bypass the timeout
+    //
+    // Approach:
+    // 1. Interpolation (fast, ~100µs): Apply `tree.edit()` to all layer trees
+    //    for immediate display with correct byte offsets
+    // 2. Background parse: Clone syntax and run full update on background thread
     if let Some(syntax) = &mut self.syntax {
-      crate::profile_scope!("syntax_update");
-      let loader = self.syn_loader.load();
-      if let Err(err) = syntax.update(
-        old_doc.slice(..),
-        self.text.slice(..),
-        transaction.changes(),
-        &loader,
-      ) {
-        log::error!("TS parser failed, disabling TS for the current buffer: {err}");
-        self.syntax = None;
+      let edits = generate_edits(old_doc.slice(..), transaction.changes());
+      if !edits.is_empty() {
+        crate::profile_scope!("syntax_interpolate");
+
+        // Cancel any pending parse and get a handle for the new one
+        let task_handle = self.syntax_parse_controller.restart();
+
+        // Clone for background parse BEFORE interpolating
+        let mut syntax_for_bg = syntax.clone();
+
+        // Interpolate original for immediate display (~100µs)
+        // This adjusts byte offsets without running queries
+        syntax.interpolate_with_edits(&edits);
+
+        // Spawn background parse
+        let source = self.text.clone();
+        let syn_loader = Arc::clone(&self.syn_loader);
+        let doc_id = self.id;
+        let parse_version = self.version;
+
+        tokio::spawn(async move {
+          if task_handle.is_canceled() {
+            return;
+          }
+
+          let loader = syn_loader.load();
+          let result = syntax_for_bg.update_with_edits(source.slice(..), &edits, &loader);
+
+          if task_handle.is_canceled() {
+            return;
+          }
+
+          match result {
+            Ok(()) => {
+              job::dispatch_blocking(move |editor, _| {
+                if let Some(doc) = editor.document_mut(doc_id) {
+                  doc.finish_background_parse(syntax_for_bg, parse_version);
+                }
+              });
+            },
+            Err(err) => {
+              log::error!("Background TS parser failed: {err}");
+            },
+          }
+        });
       }
     }
 

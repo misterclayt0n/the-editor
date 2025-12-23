@@ -2092,9 +2092,11 @@ impl Editor {
       }
     };
 
-    // Create terminal config
+    // Create terminal config, using editor config shell if not explicitly provided
     let config = TerminalConfig {
-      shell: shell.map(String::from),
+      shell: shell
+        .map(String::from)
+        .or_else(|| self.config().shell.first().cloned()),
       ..Default::default()
     };
 

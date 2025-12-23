@@ -2,6 +2,7 @@ pub mod config;
 
 use std::{
   borrow::Cow,
+  cmp::Reverse,
   collections::HashMap,
   fmt,
   iter,
@@ -834,8 +835,10 @@ impl HighlightCache {
       }
     }
 
-    // Sort by start position for consistent iteration
-    highlights.sort_by_key(|(_, range)| range.start);
+    // Sort by (start, Reverse(end)) so longer ranges come first.
+    // Since rendering applies highlights via patch() (last wins), this ensures
+    // shorter/more-specific highlights take precedence over container highlights.
+    highlights.sort_by_key(|(_, range)| (range.start, Reverse(range.end)));
     highlights
   }
 

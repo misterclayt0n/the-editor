@@ -553,12 +553,6 @@ impl Explorer {
     };
 
     let folder_path = self.nearest_folder()?;
-    // Prefill with just the folder path (with trailing separator)
-    let prefill = format!(
-      "{}{}",
-      folder_path.to_string_lossy(),
-      std::path::MAIN_SEPARATOR
-    );
 
     // Set custom mode string for the statusline
     cx.editor.set_custom_mode_str("ADD FILE".to_string());
@@ -657,7 +651,6 @@ impl Explorer {
     });
 
     let prompt = Prompt::new(String::new())
-      .with_prefill(prefill)
       .with_completion(file_completion)
       .with_callback(move |cx, input, event| {
         match event {
@@ -669,7 +662,12 @@ impl Explorer {
               return;
             }
 
-            let path = the_editor_stdx::path::normalize(PathBuf::from(input));
+            // Resolve relative paths against the nearest folder
+            let path = if PathBuf::from(input).is_absolute() {
+              the_editor_stdx::path::normalize(PathBuf::from(input))
+            } else {
+              the_editor_stdx::path::normalize(folder_path.join(input))
+            };
             let is_folder = input.ends_with(std::path::MAIN_SEPARATOR);
 
             let result = if is_folder {

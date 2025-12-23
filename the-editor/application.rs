@@ -1226,25 +1226,29 @@ impl App {
 
     let v_lines = apply_axis(&mut self.pending_scroll_lines);
     if v_lines != 0 {
-      let direction = if v_lines > 0 {
-        Direction::Forward
-      } else {
-        Direction::Backward
-      };
-      let mut cmd_cx = commands::Context {
-        register:             self.editor.selected_register,
-        count:                self.editor.count,
-        editor:               &mut self.editor,
-        on_next_key_callback: None,
-        callback:             Vec::new(),
-        jobs:                 &mut self.jobs,
-      };
-      commands::scroll(
-        &mut cmd_cx,
-        v_lines.unsigned_abs() as usize,
-        direction,
-        false,
-      );
+      // Only scroll if focused view is a document (safety fallback for terminal views)
+      let focused = self.editor.tree.focus;
+      if self.editor.tree.try_get(focused).is_some_and(|v| v.is_document()) {
+        let direction = if v_lines > 0 {
+          Direction::Forward
+        } else {
+          Direction::Backward
+        };
+        let mut cmd_cx = commands::Context {
+          register:             self.editor.selected_register,
+          count:                self.editor.count,
+          editor:               &mut self.editor,
+          on_next_key_callback: None,
+          callback:             Vec::new(),
+          jobs:                 &mut self.jobs,
+        };
+        commands::scroll(
+          &mut cmd_cx,
+          v_lines.unsigned_abs() as usize,
+          direction,
+          false,
+        );
+      }
     }
 
     // Horizontal: adjust view_offset.horizontal_offset directly

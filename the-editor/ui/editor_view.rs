@@ -1204,6 +1204,7 @@ impl Component for EditorView {
             }
           }
         }
+
         EventResult::Ignored(None)
       },
       _ => EventResult::Ignored(None),

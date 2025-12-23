@@ -338,7 +338,7 @@ impl Explorer {
     Vec::truncate(&mut self.history, MAX_HISTORY_SIZE)
   }
 
-  fn change_root(&mut self, root: PathBuf) -> Result<()> {
+  pub fn change_root(&mut self, root: PathBuf) -> Result<()> {
     if self.state.current_root.eq(&root) {
       return Ok(());
     }

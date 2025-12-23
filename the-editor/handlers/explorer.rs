@@ -10,6 +10,7 @@ use the_editor_event::register_hook;
 
 use crate::{
   core::file_watcher::FileSystemDidChange,
+  event::WorkingDirectoryDidChange,
   ui::{
     EditorView,
     job,
@@ -51,6 +52,21 @@ pub fn register_hooks() {
       }
     });
 
+    Ok(())
+  });
+
+  register_hook!(move |event: &mut WorkingDirectoryDidChange| {
+    let new_cwd = event.new_cwd.clone();
+    job::dispatch_blocking(move |editor, compositor| {
+      if let Some(editor_view) = compositor.find::<EditorView>()
+        && let Some(explorer) = editor_view.explorer_mut()
+      {
+        if let Err(e) = explorer.change_root(new_cwd) {
+          log::warn!("Failed to change explorer root: {}", e);
+        }
+        explorer.refresh_git_status_with_providers(&editor.diff_providers);
+      }
+    });
     Ok(())
   });
 }

@@ -3782,6 +3782,7 @@ impl Editor {
   pub fn set_cwd(&mut self, path: &Path) -> std::io::Result<()> {
     self.last_cwd = the_editor_stdx::env::set_current_working_dir(path)?;
     self.clear_doc_relative_paths();
+    dispatch(crate::event::WorkingDirectoryDidChange { new_cwd: path.to_path_buf() });
     Ok(())
   }
 

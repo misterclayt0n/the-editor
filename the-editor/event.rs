@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use ropey::Rope;
 use the_editor_event::{
   events,
@@ -60,6 +62,8 @@ events! {
     OnModeSwitch<'a, 'cx> { old_mode: Mode, new_mode: Mode, cx: &'a mut commands::Context<'cx> }
     PostInsertChar<'a, 'cx> { c: char, cx: &'a mut commands::Context<'cx> }
     PostCommand<'a, 'cx> { command: &'a str, cx: &'a mut commands::Context<'cx> }
+
+    WorkingDirectoryDidChange { new_cwd: PathBuf }
 }
 
 // Register all events defined above with the global registry.
@@ -79,4 +83,5 @@ pub fn register_all_events() {
   register_event::<PostInsertChar<'_, '_>>();
   register_event::<PostCommand<'_, '_>>();
   register_event::<FileSystemDidChange>();
+  register_event::<WorkingDirectoryDidChange>();
 }

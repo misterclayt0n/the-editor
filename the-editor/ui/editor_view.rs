@@ -292,6 +292,8 @@ pub struct EditorView {
   bufferline_scroll_offset:      f32,
   bufferline_scroll_target:      f32,
   bufferline_max_scroll:         f32,
+  bufferline_user_scrolled:      bool, // True when user manually scrolled, disables auto-scroll
+  bufferline_last_active_idx:    Option<usize>, // Track active tab to detect changes
   // Tree explorer sidebar
   explorer:                      Option<Explorer>,
   // Explorer mouse interaction state
@@ -413,6 +415,8 @@ impl EditorView {
       bufferline_scroll_offset: 0.0,
       bufferline_scroll_target: 0.0,
       bufferline_max_scroll: 0.0,
+      bufferline_user_scrolled: false,
+      bufferline_last_active_idx: None,
       explorer: None,
       explorer_px_width: 0.0,
       explorer_position: FileTreePosition::Left,
@@ -1153,6 +1157,8 @@ impl Component for EditorView {
             // Update scroll target (animated toward in render)
             self.bufferline_scroll_target =
               (self.bufferline_scroll_target + scroll_px).clamp(0.0, self.bufferline_max_scroll);
+            // Mark that user manually scrolled - disables auto-scroll until active tab changes
+            self.bufferline_user_scrolled = true;
             self.dirty_region.mark_all_dirty();
             request_redraw();
             return EventResult::Consumed(None);
@@ -1486,25 +1492,33 @@ impl Component for EditorView {
       self.add_button_rect = result.add_button_rect;
       self.bufferline_max_scroll = result.max_scroll;
 
-      // Auto-scroll to ensure active tab is visible
-      if let Some(active_idx) = result.active_tab_index {
-        if let Some(tab) = self.buffer_tabs.get(active_idx) {
-          let available_width = viewport_px_width - explorer_px_width - result.height - 12.0;
-          let visible_start = self.bufferline_scroll_offset;
-          let visible_end = visible_start + available_width;
+      // Check if active tab changed - if so, reset user scroll flag and allow auto-scroll
+      if result.active_tab_index != self.bufferline_last_active_idx {
+        self.bufferline_user_scrolled = false;
+        self.bufferline_last_active_idx = result.active_tab_index;
+      }
 
-          // Tab positions are relative to the scroll offset, so we need the unscrolled
-          // positions
-          let tab_start = tab.start_x + self.bufferline_scroll_offset - content_x_offset - 4.0;
-          let tab_end = tab.end_x + self.bufferline_scroll_offset - content_x_offset - 4.0;
+      // Auto-scroll to ensure active tab is visible (only when user hasn't manually scrolled)
+      if !self.bufferline_user_scrolled {
+        if let Some(active_idx) = result.active_tab_index {
+          if let Some(tab) = self.buffer_tabs.get(active_idx) {
+            let available_width = viewport_px_width - explorer_px_width - result.height - 12.0;
+            let visible_start = self.bufferline_scroll_offset;
+            let visible_end = visible_start + available_width;
 
-          if tab_start < visible_start {
-            // Tab is to the left of visible area - scroll left
-            self.bufferline_scroll_target = tab_start.max(0.0);
-          } else if tab_end > visible_end {
-            // Tab is to the right of visible area - scroll right
-            self.bufferline_scroll_target =
-              (tab_end - available_width).clamp(0.0, result.max_scroll);
+            // Tab positions are relative to the scroll offset, so we need the unscrolled
+            // positions
+            let tab_start = tab.start_x + self.bufferline_scroll_offset - content_x_offset - 4.0;
+            let tab_end = tab.end_x + self.bufferline_scroll_offset - content_x_offset - 4.0;
+
+            if tab_start < visible_start {
+              // Tab is to the left of visible area - scroll left
+              self.bufferline_scroll_target = tab_start.max(0.0);
+            } else if tab_end > visible_end {
+              // Tab is to the right of visible area - scroll right
+              self.bufferline_scroll_target =
+                (tab_end - available_width).clamp(0.0, result.max_scroll);
+            }
           }
         }
       }

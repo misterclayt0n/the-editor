@@ -2144,17 +2144,28 @@ fn push_file_picker_with_root(cx: &mut Context, root: std::path::PathBuf) {
     },
   };
 
-  let selected_file = Arc::new(Mutex::new(None::<PathBuf>));
+  use crate::ui::components::PickerAction;
+
+  /// Selection from file picker including the path and action
+  struct FileSelection {
+    path:   PathBuf,
+    action: PickerAction,
+  }
+
+  let selection = Arc::new(Mutex::new(None::<FileSelection>));
 
   cx.callback.push(Box::new(move |compositor, _cx| {
-    let selected_for_picker = Arc::clone(&selected_file);
-    let picker = crate::ui::file_picker(root.clone(), move |path: &PathBuf| {
-      *selected_for_picker.lock().unwrap() = Some(path.clone());
+    let selection_for_picker = Arc::clone(&selection);
+    let picker = crate::ui::file_picker(root.clone(), move |path: &PathBuf, action: PickerAction| {
+      *selection_for_picker.lock().unwrap() = Some(FileSelection {
+        path: path.clone(),
+        action,
+      });
     });
 
     struct PickerWrapper {
-      picker:        crate::ui::components::Picker<PathBuf, crate::ui::FilePickerData>,
-      selected_file: Arc<Mutex<Option<PathBuf>>>,
+      picker:    crate::ui::components::Picker<PathBuf, crate::ui::FilePickerData>,
+      selection: Arc<Mutex<Option<FileSelection>>>,
     }
 
     impl crate::ui::compositor::Component for PickerWrapper {
@@ -2166,13 +2177,20 @@ fn push_file_picker_with_root(cx: &mut Context, root: std::path::PathBuf) {
         let result = self.picker.handle_event(event, ctx);
 
         if let crate::ui::compositor::EventResult::Consumed(Some(callback)) = result {
-          let selected = self.selected_file.lock().unwrap().take();
+          let selected = self.selection.lock().unwrap().take();
           return crate::ui::compositor::EventResult::Consumed(Some(Box::new(
             move |compositor, ctx| {
               callback(compositor, ctx);
-              if let Some(path) = selected {
+              if let Some(FileSelection { path, action }) = selected {
                 use crate::editor::Action;
-                if let Err(e) = ctx.editor.open(&path, Action::Replace) {
+
+                let editor_action = match action {
+                  PickerAction::Primary => Action::Replace,
+                  PickerAction::Secondary => Action::HorizontalSplit,
+                  PickerAction::Tertiary => Action::VerticalSplit,
+                };
+
+                if let Err(e) = ctx.editor.open(&path, editor_action) {
                   ctx.editor.set_error(format!("Failed to open file: {}", e));
                 }
               }
@@ -2206,7 +2224,7 @@ fn push_file_picker_with_root(cx: &mut Context, root: std::path::PathBuf) {
 
     compositor.push(Box::new(PickerWrapper {
       picker,
-      selected_file: Arc::clone(&selected_file),
+      selection: Arc::clone(&selection),
     }));
   }));
 }
@@ -6508,24 +6526,29 @@ pub fn workspace_vcs_diffs(cx: &mut Context) {
     ];
 
     let action_handler = std::sync::Arc::new(
-      move |entry: &WorkspaceDiffEntry, _: &(), _action: PickerAction| {
+      move |entry: &WorkspaceDiffEntry, _: &(), picker_action: PickerAction| {
         let entry = entry.clone();
+
+        let action = match picker_action {
+          PickerAction::Primary => Action::Replace,
+          PickerAction::Secondary => Action::HorizontalSplit,
+          PickerAction::Tertiary => Action::VerticalSplit,
+        };
+
         crate::ui::job::dispatch_blocking(move |editor, _compositor| {
           let mut doc_id = entry.doc_id;
 
           if doc_id.is_none() {
             if let Some(path) = &entry.path {
-              doc_id = editor.open(path, Action::Replace).ok();
+              doc_id = editor.open(path, action).ok();
             }
           }
 
           if let Some(doc_id) = doc_id {
-            let view_id = editor.tree.focus;
-            {
-              let view = editor.tree.get_mut(view_id);
-              view.set_doc(doc_id);
-            }
+            // Switch to the document with the appropriate action (may create split)
+            editor.switch(doc_id, action, false);
 
+            let view_id = editor.tree.focus;
             if let Some(doc) = editor.documents.get_mut(&doc_id) {
               let range = hunk_range(entry.block.hunk, doc.text().slice(..));
               doc.set_selection(view_id, Selection::single(range.anchor, range.head));

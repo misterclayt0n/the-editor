@@ -206,12 +206,15 @@ pub struct FilePickerData {
 }
 
 /// Create a file picker for the given directory
+///
+/// The callback receives the selected path and the action (Primary for Enter,
+/// Secondary for Ctrl+S horizontal split, Tertiary for Ctrl+V vertical split).
 pub fn file_picker<F>(
   root: std::path::PathBuf,
   on_select: F,
 ) -> components::Picker<std::path::PathBuf, FilePickerData>
 where
-  F: Fn(&std::path::PathBuf) + Send + Sync + 'static,
+  F: Fn(&std::path::PathBuf, components::PickerAction) + Send + Sync + 'static,
 {
   use ignore::WalkBuilder;
 
@@ -234,27 +237,8 @@ where
   // Create action handler that supports open, hsplit, and vsplit
   let action_handler = std::sync::Arc::new(
     move |path: &std::path::PathBuf, _data: &FilePickerData, action: components::PickerAction| {
-      match action {
-        components::PickerAction::Primary => {
-          // Primary action: open file normally
-          on_select(path);
-          true // Close picker
-        },
-        components::PickerAction::Secondary => {
-          // Secondary action: open in horizontal split (mocked for now)
-          // TODO: Implement actual horizontal split once window management is ready
-          eprintln!("[MOCK] Would open {:?} in horizontal split", path);
-          on_select(path); // For now, just open normally
-          true // Close picker
-        },
-        components::PickerAction::Tertiary => {
-          // Tertiary action: open in vertical split (mocked for now)
-          // TODO: Implement actual vertical split once window management is ready
-          eprintln!("[MOCK] Would open {:?} in vertical split", path);
-          on_select(path); // For now, just open normally
-          true // Close picker
-        },
-      }
+      on_select(path, action);
+      true // Close picker
     },
   );
 

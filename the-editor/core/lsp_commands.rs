@@ -1335,9 +1335,15 @@ pub fn workspace_diagnostics(cx: &mut Context) {
 
     // Create action handler to jump to diagnostic
     let action_handler = std::sync::Arc::new(
-      move |item: &DiagnosticItem, _: &(), _action: PickerAction| {
+      move |item: &DiagnosticItem, _: &(), picker_action: PickerAction| {
         // Clone item to move into the closure
         let item = item.clone();
+
+        let action = match picker_action {
+          PickerAction::Primary => crate::editor::Action::Replace,
+          PickerAction::Secondary => crate::editor::Action::HorizontalSplit,
+          PickerAction::Tertiary => crate::editor::Action::VerticalSplit,
+        };
 
         // Jump to the diagnostic location
         crate::ui::job::dispatch_blocking(move |editor, _compositor| {
@@ -1348,19 +1354,15 @@ pub fn workspace_diagnostics(cx: &mut Context) {
             .map(|_| item.doc_id)
             .or_else(|| {
               // Document might have been closed, try to open it
-              item
-                .path
-                .as_ref()
-                .and_then(|path| editor.open(path, crate::editor::Action::Replace).ok())
+              item.path.as_ref().and_then(|path| editor.open(path, action).ok())
             });
 
           if let Some(doc_id) = doc_id {
-            // Focus the document
-            let view_id = editor.tree.focus;
-            let view = editor.tree.get_mut(view_id);
-            view.set_doc(doc_id);
+            // Focus or switch to the document with the appropriate action
+            editor.switch(doc_id, action, false);
 
             // Set selection to the diagnostic location
+            let view_id = editor.tree.focus;
             let doc = editor.documents.get_mut(&doc_id).unwrap();
             doc.set_selection(
               view_id,

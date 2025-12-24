@@ -38,6 +38,7 @@ pub mod match_brackets;
 pub mod movement;
 pub mod object;
 pub mod position;
+pub mod quick_slots;
 pub mod registers;
 pub mod search;
 pub mod selection;

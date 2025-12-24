@@ -71,6 +71,18 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "C-0"       => default_font_size,
     "A-f"       => toggle_fade_mode,
 
+    // Quick slots (Alt+0-9)
+    "A-1"       => slot_1,
+    "A-2"       => slot_2,
+    "A-3"       => slot_3,
+    "A-4"       => slot_4,
+    "A-5"       => slot_5,
+    "A-6"       => slot_6,
+    "A-7"       => slot_7,
+    "A-8"       => slot_8,
+    "A-9"       => slot_9,
+    "A-0"       => slot_0,
+
     "%"         => select_all,
     "x"         => extend_line_below,
     "X"         => extend_to_line_bounds,

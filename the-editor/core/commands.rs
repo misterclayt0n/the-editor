@@ -565,6 +565,16 @@ impl MappableCommand {
         acp_stop, "stop the ACP agent",
         acp_permission_popup, "manage pending ACP permissions",
         command_palette, "open command palette",
+        slot_0, "toggle quick slot 0",
+        slot_1, "toggle quick slot 1",
+        slot_2, "toggle quick slot 2",
+        slot_3, "toggle quick slot 3",
+        slot_4, "toggle quick slot 4",
+        slot_5, "toggle quick slot 5",
+        slot_6, "toggle quick slot 6",
+        slot_7, "toggle quick slot 7",
+        slot_8, "toggle quick slot 8",
+        slot_9, "toggle quick slot 9",
   );
 }
 
@@ -9491,6 +9501,48 @@ pub fn command_palette(cx: &mut Context) {
   cx.callback.push(Box::new(move |compositor, _cx| {
     compositor.push(Box::new(picker));
   }));
+}
+
+// --- Quick Slot Commands ---
+
+pub fn slot_0(cx: &mut Context) {
+  cx.editor.slot_toggle(0);
+}
+
+pub fn slot_1(cx: &mut Context) {
+  cx.editor.slot_toggle(1);
+}
+
+pub fn slot_2(cx: &mut Context) {
+  cx.editor.slot_toggle(2);
+}
+
+pub fn slot_3(cx: &mut Context) {
+  cx.editor.slot_toggle(3);
+}
+
+pub fn slot_4(cx: &mut Context) {
+  cx.editor.slot_toggle(4);
+}
+
+pub fn slot_5(cx: &mut Context) {
+  cx.editor.slot_toggle(5);
+}
+
+pub fn slot_6(cx: &mut Context) {
+  cx.editor.slot_toggle(6);
+}
+
+pub fn slot_7(cx: &mut Context) {
+  cx.editor.slot_toggle(7);
+}
+
+pub fn slot_8(cx: &mut Context) {
+  cx.editor.slot_toggle(8);
+}
+
+pub fn slot_9(cx: &mut Context) {
+  cx.editor.slot_toggle(9);
 }
 
 /// Add fake permission requests for testing the permission popup.

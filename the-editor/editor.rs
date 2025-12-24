@@ -333,6 +333,9 @@ pub struct Editor {
   /// Sender cloned and given to each terminal for event dispatch.
   terminal_event_tx:     UnboundedSender<TerminalEvent>,
 
+  /// Quick slots for Alt+0-9 view bindings.
+  pub quick_slots: crate::core::quick_slots::QuickSlots,
+
   // We Flatten<> to resolve the inner DocumentSavedEventFuture. For that we need a stream of
   // streams, hence the Once<>. https://stackoverflow.com/a/66875668
   pub saves:       HashMap<DocumentId, UnboundedSender<Once<DocumentSavedEventFuture>>>,
@@ -1926,6 +1929,7 @@ impl Editor {
       next_terminal_id: TerminalId::default(),
       terminal_event_rx: Some(rx),
       terminal_event_tx: tx,
+      quick_slots: crate::core::quick_slots::QuickSlots::new(),
       saves: HashMap::new(),
       save_queue: SelectAll::new(),
       write_count: 0,
@@ -2219,6 +2223,237 @@ impl Editor {
   /// Get only visible terminals.
   pub fn visible_terminals(&self) -> impl Iterator<Item = &Terminal> {
     self.terminals.values().filter(|t| t.visible())
+  }
+
+  // --- Quick Slot Methods ---
+
+  /// Bind the current view to a quick slot (0-9).
+  pub fn slot_bind(&mut self, slot: u8) -> Result<(), &'static str> {
+    use crate::core::quick_slots::{
+      QuickSlot,
+      SlotContent,
+    };
+
+    if slot > 9 {
+      return Err("Slot must be 0-9");
+    }
+
+    let view = self.tree.try_get(self.tree.focus).ok_or("No focused view")?;
+
+    let content = match view.content {
+      crate::core::view::ViewContent::Document(doc_id) => SlotContent::Document(doc_id),
+      crate::core::view::ViewContent::Terminal(term_id) => SlotContent::Terminal(term_id),
+    };
+
+    // Unbind if this content is already bound to another slot
+    self.quick_slots.unbind_content(&content);
+
+    self.quick_slots.set(
+      slot,
+      QuickSlot {
+        content,
+        position: None, // Position captured when hiding
+        visible: true,
+      },
+    );
+
+    self.set_status(format!("Bound to slot {}", slot));
+    Ok(())
+  }
+
+  /// Unbind a quick slot.
+  pub fn slot_unbind(&mut self, slot: u8) {
+    if slot <= 9 {
+      self.quick_slots.clear(slot);
+      self.set_status(format!("Unbound slot {}", slot));
+    }
+  }
+
+  /// Toggle visibility of a slotted view.
+  pub fn slot_toggle(&mut self, slot: u8) {
+    if slot > 9 {
+      return;
+    }
+
+    let Some(quick_slot) = self.quick_slots.get(slot) else {
+      self.set_status(format!("Slot {} is empty", slot));
+      return;
+    };
+
+    if quick_slot.visible {
+      self.slot_hide(slot);
+    } else {
+      self.slot_show(slot);
+    }
+  }
+
+  /// Hide a slotted view (capture position and remove from tree).
+  fn slot_hide(&mut self, slot: u8) {
+    use crate::core::quick_slots::SlotContent;
+
+    let Some(quick_slot) = self.quick_slots.get(slot) else {
+      return;
+    };
+
+    let content = quick_slot.content;
+
+    // Find the view displaying this content
+    let view_id = self.find_view_for_slot_content(&content);
+    let Some(view_id) = view_id else {
+      // Content not visible, just mark as hidden
+      if let Some(qs) = self.quick_slots.get_mut(slot) {
+        qs.visible = false;
+      }
+      return;
+    };
+
+    // Capture position before removal
+    let position = self.tree.capture_position(view_id);
+
+    // Update slot state
+    if let Some(qs) = self.quick_slots.get_mut(slot) {
+      qs.position = position;
+      qs.visible = false;
+    }
+
+    // For terminals, mark as hidden
+    if let SlotContent::Terminal(term_id) = content {
+      if let Some(term) = self.terminals.get_mut(&term_id) {
+        term.set_visible(false);
+      }
+    }
+
+    // Close the view
+    self.close(view_id);
+    self.ensure_view_exists();
+  }
+
+  /// Show a slotted view (restore at captured position).
+  fn slot_show(&mut self, slot: u8) {
+    use crate::core::quick_slots::SlotContent;
+
+    let Some(quick_slot) = self.quick_slots.get(slot).cloned() else {
+      return;
+    };
+
+    // Check if content still exists
+    match &quick_slot.content {
+      SlotContent::Document(doc_id) => {
+        if !self.documents.contains_key(doc_id) {
+          // Document was closed, unbind the slot
+          self.quick_slots.clear(slot);
+          self.set_error("Document was closed");
+          return;
+        }
+      }
+      SlotContent::Terminal(term_id) => {
+        if !self.terminals.contains_key(term_id) {
+          // Terminal was destroyed, unbind the slot
+          self.quick_slots.clear(slot);
+          self.set_error("Terminal was destroyed");
+          return;
+        }
+      }
+    }
+
+    // Restore the view at the captured position
+    let view_id = if let Some(ref recipe) = quick_slot.position {
+      self.restore_view_at_position(&quick_slot.content, recipe)
+    } else {
+      // No position captured, use default split
+      self.show_content_default(&quick_slot.content)
+    };
+
+    if let Some(view_id) = view_id {
+      self.focus(view_id);
+
+      // Update slot state
+      if let Some(qs) = self.quick_slots.get_mut(slot) {
+        qs.visible = true;
+      }
+    }
+  }
+
+  /// Find the view displaying the given slot content.
+  fn find_view_for_slot_content(
+    &self,
+    content: &crate::core::quick_slots::SlotContent,
+  ) -> Option<ViewId> {
+    use crate::core::quick_slots::SlotContent;
+
+    match content {
+      SlotContent::Document(doc_id) => self
+        .tree
+        .views()
+        .find(|(view, _)| view.doc() == Some(*doc_id))
+        .map(|(view, _)| view.id),
+      SlotContent::Terminal(term_id) => self
+        .tree
+        .views()
+        .find(|(view, _)| view.terminal() == Some(*term_id))
+        .map(|(view, _)| view.id),
+    }
+  }
+
+  /// Restore a view at the position described by the recipe.
+  fn restore_view_at_position(
+    &mut self,
+    content: &crate::core::quick_slots::SlotContent,
+    recipe: &crate::core::quick_slots::PositionRecipe,
+  ) -> Option<ViewId> {
+    use crate::core::quick_slots::SlotContent;
+
+    // Determine the layout from the last step of the recipe
+    let layout = recipe
+      .path
+      .last()
+      .map(|step| step.layout)
+      .unwrap_or(tree::Layout::Vertical);
+
+    // Create the view based on content type
+    match content {
+      SlotContent::Document(doc_id) => {
+        let view = View::new(*doc_id, self.config().gutters.clone());
+        let view_id = self.tree.split(view, layout);
+
+        // TODO: Apply custom size if present
+        // if let Some(_size) = recipe.custom_size {
+        //   self.tree.set_view_custom_size(view_id, size);
+        // }
+
+        Some(view_id)
+      }
+      SlotContent::Terminal(term_id) => {
+        // Mark terminal visible
+        if let Some(term) = self.terminals.get_mut(term_id) {
+          term.set_visible(true);
+        }
+
+        let view = View::new_terminal(*term_id, self.config().gutters.clone());
+        let view_id = self.tree.split(view, layout);
+
+        Some(view_id)
+      }
+    }
+  }
+
+  /// Show content with default split (no position recipe).
+  fn show_content_default(
+    &mut self,
+    content: &crate::core::quick_slots::SlotContent,
+  ) -> Option<ViewId> {
+    use crate::core::quick_slots::SlotContent;
+
+    match content {
+      SlotContent::Document(doc_id) => {
+        self.switch(*doc_id, Action::VerticalSplit, false);
+        Some(self.tree.focus)
+      }
+      SlotContent::Terminal(term_id) => {
+        self.show_terminal(*term_id, Action::VerticalSplit);
+        Some(self.tree.focus)
+      }
+    }
   }
 
   /// Open a terminal in a split.

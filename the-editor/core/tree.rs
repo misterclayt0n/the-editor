@@ -1193,6 +1193,85 @@ impl Tree {
       }
     }
   }
+
+  /// Capture a view's position in the tree for later restoration.
+  ///
+  /// Returns a `PositionRecipe` that describes the path from root to the view,
+  /// which can be used to recreate the view at the same position later.
+  pub fn capture_position(
+    &self,
+    view_id: ViewId,
+  ) -> Option<super::quick_slots::PositionRecipe> {
+    use super::quick_slots::{
+      PositionRecipe,
+      SplitStep,
+    };
+
+    // Verify the view exists and is a View (not Container)
+    let node = self.nodes.get(view_id)?;
+    if !matches!(node.content, Content::View(_)) {
+      return None;
+    }
+
+    let mut path = Vec::new();
+    let mut current = view_id;
+
+    // Walk up the tree from view to root, recording the path
+    loop {
+      let node = self.nodes.get(current)?;
+      let parent_id = node.parent;
+
+      // Reached root (root is its own parent)
+      if parent_id == current {
+        break;
+      }
+
+      let parent = self.nodes.get(parent_id)?;
+      let container = match &parent.content {
+        Content::Container(c) => c,
+        _ => return None, // Parent should always be container
+      };
+
+      // Find our index in parent's children
+      let index = container.children.iter().position(|&id| id == current)?;
+
+      path.push(SplitStep {
+        layout:      container.layout,
+        index,
+        child_count: container.children.len(),
+      });
+
+      current = parent_id;
+    }
+
+    // Reverse so path goes root -> leaf
+    path.reverse();
+
+    // Capture custom size if view has one
+    let custom_size = self.get_view_custom_size(view_id);
+
+    Some(PositionRecipe { path, custom_size })
+  }
+
+  /// Get the custom size for a view, if set.
+  fn get_view_custom_size(&self, view_id: ViewId) -> Option<u16> {
+    let node = self.nodes.get(view_id)?;
+    let parent_id = node.parent;
+
+    // Root is its own parent, no custom size
+    if parent_id == view_id {
+      return None;
+    }
+
+    let parent = self.nodes.get(parent_id)?;
+    let container = match &parent.content {
+      Content::Container(c) => c,
+      _ => return None,
+    };
+
+    let index = container.children.iter().position(|&id| id == view_id)?;
+    container.child_sizes.get(index).copied().flatten()
+  }
 }
 
 #[derive(Debug)]

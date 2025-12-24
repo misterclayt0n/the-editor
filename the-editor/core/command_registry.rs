@@ -1041,6 +1041,31 @@ impl CommandRegistry {
         ..Signature::DEFAULT
       },
     ));
+
+    // Quick slots for Alt+0-9 bindings
+    self.register(TypableCommand::new(
+      "slot",
+      &[],
+      "Bind current view to a quick slot (0-9)",
+      slot_bind,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (1, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "slot-unbind",
+      &[],
+      "Unbind a quick slot (0-9)",
+      slot_unbind,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (1, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 
@@ -2911,7 +2936,48 @@ fn open_log(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
   }
 
   cx.editor.open(&the_editor_loader::log_file(), Action::Replace)?;
-  
+
+  Ok(())
+}
+
+fn slot_bind(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  let slot_str = args.first().ok_or_else(|| anyhow!("Slot number required (0-9)"))?;
+  let slot: u8 = slot_str
+    .parse()
+    .map_err(|_| anyhow!("Invalid slot number: {}", slot_str))?;
+
+  if slot > 9 {
+    bail!("Slot number must be 0-9");
+  }
+
+  cx.editor
+    .slot_bind(slot)
+    .map_err(|e| anyhow!("{}", e))?;
+
+  cx.editor.set_status(format!("Bound to slot {}", slot));
+  Ok(())
+}
+
+fn slot_unbind(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
+  if event != PromptEvent::Validate {
+    return Ok(());
+  }
+
+  let slot_str = args.first().ok_or_else(|| anyhow!("Slot number required (0-9)"))?;
+  let slot: u8 = slot_str
+    .parse()
+    .map_err(|_| anyhow!("Invalid slot number: {}", slot_str))?;
+
+  if slot > 9 {
+    bail!("Slot number must be 0-9");
+  }
+
+  cx.editor.slot_unbind(slot);
+  cx.editor.set_status(format!("Unbound slot {}", slot));
   Ok(())
 }
 

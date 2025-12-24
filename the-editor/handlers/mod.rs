@@ -34,6 +34,7 @@ pub mod explorer_reveal;
 pub mod hover;
 pub mod lsp;
 pub mod signature_help;
+pub mod theme_reload;
 pub mod word_index;
 
 #[derive(Debug)]
@@ -87,4 +88,5 @@ pub fn register_hooks(handlers: &Handlers, config: &EditorConfig) {
   auto_reload::register_hooks(config);
   explorer::register_hooks();
   explorer_reveal::register_hooks();
+  theme_reload::register_hooks();
 }

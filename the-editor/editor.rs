@@ -365,6 +365,8 @@ pub struct Editor {
   /// The currently applied editor theme. While previewing a theme, the
   /// previewed theme is set here.
   pub theme:        Theme,
+  /// Path to the current theme file (for hot reload). None for built-in themes.
+  pub theme_path:   Option<PathBuf>,
   /// Theme transition animation state
   theme_transition: Option<ThemeTransition>,
 
@@ -1938,6 +1940,7 @@ impl Editor {
       macro_recording: None,
       macro_replaying: Vec::new(),
       theme: theme_loader.default(),
+      theme_path: None, // Default theme has no file path
       language_servers,
       lsp_progress: crate::lsp::LspProgressMap::new(),
       diagnostics: Diagnostics::new(),
@@ -2779,6 +2782,12 @@ impl Editor {
   }
 
   pub fn set_theme(&mut self, theme: Theme) {
+    // Unwatch old theme path
+    self.unwatch_theme_path();
+    // Update theme path for hot reload support
+    self.theme_path = self.theme_loader.theme_path(theme.name());
+    // Watch new theme path
+    self.watch_theme_path();
     self.set_theme_impl(theme, ThemeAction::Set);
   }
 
@@ -3427,6 +3436,26 @@ impl Editor {
     if let Some(parent) = path.parent() {
       if self.file_watcher.is_tracking_root(parent) {
         self.file_watcher.remove_root(parent.to_path_buf());
+      }
+    }
+  }
+
+  /// Start watching the current theme file for hot reload.
+  fn watch_theme_path(&mut self) {
+    if let Some(ref path) = self.theme_path {
+      if let Some(parent) = path.parent() {
+        self.file_watcher.add_root(parent);
+      }
+    }
+  }
+
+  /// Stop watching the old theme file path.
+  fn unwatch_theme_path(&mut self) {
+    if let Some(ref path) = self.theme_path {
+      if let Some(parent) = path.parent() {
+        if self.file_watcher.is_tracking_root(parent) {
+          self.file_watcher.remove_root(parent.to_path_buf());
+        }
       }
     }
   }

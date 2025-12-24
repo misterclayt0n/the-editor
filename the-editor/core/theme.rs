@@ -238,6 +238,21 @@ impl Loader {
     }
   }
 
+  /// Returns the file path for a theme by name, if it exists.
+  /// Returns None for built-in themes (default, base16_default).
+  pub fn theme_path(&self, name: &str) -> Option<PathBuf> {
+    // Built-in themes don't have file paths
+    if name == "default" || name == "base16_default" {
+      return None;
+    }
+
+    let filename = format!("{}.toml", name);
+    self.theme_dirs.iter().find_map(|dir| {
+      let path = dir.join(&filename);
+      path.exists().then_some(path)
+    })
+  }
+
   /// Returns the default theme
   pub fn default(&self) -> Theme {
     DEFAULT_THEME.clone()

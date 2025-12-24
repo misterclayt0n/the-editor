@@ -2238,11 +2238,13 @@ impl Editor {
       std::num::NonZeroUsize::new_unchecked(self.next_terminal_id.0.get() + 1)
     });
 
-    // Default terminal config
-    let mut config = TerminalConfig::default();
-    if let Some(shell) = shell {
-      config.shell = Some(shell.to_string());
-    }
+    // Create terminal config, using editor config shell if not explicitly provided
+    let config = TerminalConfig {
+      shell: shell
+        .map(String::from)
+        .or_else(|| self.config().shell.first().cloned()),
+      ..Default::default()
+    };
 
     // Get initial size from tree area
     let area = self.tree.area();

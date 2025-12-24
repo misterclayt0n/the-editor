@@ -938,14 +938,17 @@ impl App {
           log::debug!("Terminal {:?} bell", id);
         },
         TerminalEvent::Exit { id, status } => {
-          // Terminal process exited
-          if let Some(term) = self.editor.terminal_mut(id) {
-            term.mark_exited(status);
+          // Terminal process exited - show status message then close the terminal
+          if self.editor.terminal(id).is_some() {
             let msg = match status {
+              Some(0) => "Terminal exited".to_string(),
               Some(code) => format!("Terminal exited with code {}", code),
               None => "Terminal exited".to_string(),
             };
             self.editor.set_status(msg);
+
+            // Destroy the terminal (removes from registry and closes views)
+            self.editor.destroy_terminal(id);
           }
         },
         TerminalEvent::ClipboardLoad { id } => {

@@ -2462,26 +2462,26 @@ impl Editor {
       .map(|step| step.layout)
       .unwrap_or(tree::Layout::Vertical);
 
-    // Create the view based on content type
-    match content {
+    // Create the view based on content type, with custom size applied immediately
+    let view_id = match content {
       SlotContent::Document(doc_id) => {
         let view = View::new(*doc_id, self.config().gutters.clone());
-        let view_id = self.tree.split(view, layout);
+        let view_id = self.tree.split_with_size(view, layout, recipe.custom_size);
 
         // Initialize the document's view state
         if let Some(doc) = self.documents.get_mut(doc_id) {
           doc.ensure_view_init(view_id);
         }
 
-        Some(view_id)
+        view_id
       }
       SlotContent::Terminal(term_id) => {
         let view = View::new_terminal(*term_id, self.config().gutters.clone());
-        let view_id = self.tree.split(view, layout);
-
-        Some(view_id)
+        self.tree.split_with_size(view, layout, recipe.custom_size)
       }
-    }
+    };
+
+    Some(view_id)
   }
 
   /// Show content with default split (no position recipe).

@@ -224,6 +224,16 @@ impl Tree {
   }
 
   pub fn split(&mut self, view: View, layout: Layout) -> ViewId {
+    self.split_with_size(view, layout, None)
+  }
+
+  /// Split with an optional custom size for the new view.
+  pub fn split_with_size(
+    &mut self,
+    view: View,
+    layout: Layout,
+    custom_size: Option<u16>,
+  ) -> ViewId {
     let focus = self.focus;
     let parent = self.nodes[focus].parent;
 
@@ -264,7 +274,7 @@ impl Tree {
         pos + 1
       };
       container.children.insert(pos, node);
-      container.child_sizes.insert(pos, None);
+      container.child_sizes.insert(pos, custom_size);
       self.nodes[node].parent = parent;
     } else {
       let mut split = Node::container(layout);
@@ -281,7 +291,7 @@ impl Tree {
       container.children.push(focus);
       container.child_sizes.push(None);
       container.children.push(node);
-      container.child_sizes.push(None);
+      container.child_sizes.push(custom_size);
       self.nodes[focus].parent = split;
       self.nodes[node].parent = split;
 
@@ -1253,7 +1263,8 @@ impl Tree {
     Some(PositionRecipe { path, custom_size })
   }
 
-  /// Get the custom size for a view, if set.
+  /// Get the size to use for restoring a view.
+  /// Returns the current actual size of the view based on the parent's layout direction.
   fn get_view_custom_size(&self, view_id: ViewId) -> Option<u16> {
     let node = self.nodes.get(view_id)?;
     let parent_id = node.parent;
@@ -1269,8 +1280,62 @@ impl Tree {
       _ => return None,
     };
 
-    let index = container.children.iter().position(|&id| id == view_id)?;
-    container.child_sizes.get(index).copied().flatten()
+    // Get the view's current area
+    let view_area = match &node.content {
+      Content::View(v) => v.area,
+      Content::Container(c) => c.area,
+    };
+
+    // Return width or height based on parent's layout direction
+    let size = match container.layout {
+      Layout::Vertical => view_area.width,
+      Layout::Horizontal => view_area.height,
+    };
+
+    Some(size)
+  }
+
+  /// Set the custom size for a view.
+  pub fn set_view_custom_size(&mut self, view_id: ViewId, size: u16) {
+    let Some(node) = self.nodes.get(view_id) else {
+      return;
+    };
+    let parent_id = node.parent;
+
+    // Root is its own parent, can't set size
+    if parent_id == view_id {
+      return;
+    }
+
+    let Some(parent) = self.nodes.get(parent_id) else {
+      return;
+    };
+
+    // Find index in parent's children
+    let index = match &parent.content {
+      Content::Container(c) => c.children.iter().position(|&id| id == view_id),
+      _ => return,
+    };
+
+    let Some(index) = index else {
+      return;
+    };
+
+    // Set the size
+    let container = match &mut self.nodes[parent_id].content {
+      Content::Container(c) => c,
+      _ => return,
+    };
+
+    // Ensure child_sizes vec is properly sized
+    while container.child_sizes.len() < container.children.len() {
+      container.child_sizes.push(None);
+    }
+
+    container.child_sizes[index] = Some(size);
+
+    // Recalculate layout
+    self.recalculate();
   }
 }
 

@@ -4883,8 +4883,9 @@ impl EditorView {
         if explorer.is_opened() {
           if in_explorer_area {
             // Calculate visual row from mouse Y position
-            // Header height is UI_FONT_SIZE + 8.0, separator is 1.0
-            let header_height = crate::ui::UI_FONT_SIZE + 8.0 + 1.0;
+            // Header height matches bufferline: (base_cell_height + 10.0).max(UI_FONT_SIZE + 16.0)
+            let base_cell_height = self.cached_cell_height.max(crate::ui::UI_FONT_SIZE + 4.0);
+            let header_height = (base_cell_height + 10.0).max(crate::ui::UI_FONT_SIZE + 16.0) + 1.0; // +1 for separator
             // Item height matches tree.rs: line_height (UI_FONT_SIZE) + item_padding_y
             // (4.0) * 2 Plus item_gap (2.0) between items
             let item_padding_y = 4.0;
@@ -4969,7 +4970,20 @@ impl EditorView {
       } else {
         self.cached_cell_height
       };
-      let within_bufferline = mouse.position.1 >= 0.0 && mouse.position.1 <= buffer_height;
+
+      // Check if mouse is within bufferline area, accounting for explorer position
+      let within_bufferline_y = mouse.position.1 >= 0.0 && mouse.position.1 <= buffer_height;
+      let within_bufferline_x = if self.explorer_px_width > 0.0 {
+        match self.explorer_position {
+          crate::editor::FileTreePosition::Left => mouse.position.0 >= self.explorer_px_width,
+          crate::editor::FileTreePosition::Right => {
+            mouse.position.0 < viewport_px_width - self.explorer_px_width
+          }
+        }
+      } else {
+        true // No explorer, full width is bufferline
+      };
+      let within_bufferline = within_bufferline_y && within_bufferline_x;
 
       if within_bufferline {
         let (mx, my) = mouse.position;

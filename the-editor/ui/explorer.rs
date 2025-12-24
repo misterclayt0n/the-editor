@@ -1126,6 +1126,7 @@ impl Explorer {
     surface.configure_font(&ui_font_family, UI_FONT_SIZE);
 
     let cell_width = surface.cell_width();
+    let cell_height = surface.cell_height();
 
     // Get theme colors
     let theme = &cx.editor.theme;
@@ -1162,8 +1163,9 @@ impl Explorer {
     // Draw background (full height)
     surface.draw_rect(px_x, px_y, px_width, px_height, bg_color);
 
-    // Draw header/title bar
-    let header_height = UI_FONT_SIZE + 8.0;
+    // Draw header/title bar - match bufferline height for visual consistency
+    let base_cell_height = cell_height.max(UI_FONT_SIZE + 4.0);
+    let header_height = (base_cell_height + 10.0).max(UI_FONT_SIZE + 16.0);
     surface.draw_rect(px_x, px_y, px_width, header_height, statusline_bg);
 
     // Draw title text
@@ -1178,9 +1180,11 @@ impl Explorer {
         text_color.a,
       )
     };
+    // Center title text vertically in the header
+    let title_y = px_y + (header_height - UI_FONT_SIZE) * 0.5;
     surface.draw_text(TextSection::simple(
       px_x + 8.0,
-      px_y + 2.0,
+      title_y,
       title,
       UI_FONT_SIZE,
       title_color,

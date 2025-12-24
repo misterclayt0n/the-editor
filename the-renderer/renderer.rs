@@ -213,9 +213,10 @@ struct ImageDrawCommand {
 }
 
 struct TextCommand {
-  position:  (f32, f32),
-  cache_key: crate::text_cache::ShapedTextKey, // Key to retrieve buffer from cache
-  bounds:    TextBounds,
+  position:     (f32, f32),
+  cache_key:    crate::text_cache::ShapedTextKey, // Key to retrieve buffer from cache
+  bounds:       TextBounds,
+  scissor_rect: Option<(f32, f32, f32, f32)>, // Scissor rect active when text was created
 }
 
 /// Pool of reusable text buffers for better performance
@@ -1458,9 +1459,8 @@ impl Renderer {
         .text_commands
         .iter()
         .filter(|command| {
-          // Check if text is within the active scissor rect (if any)
-          if let Some(&(scissor_x, scissor_y, scissor_width, scissor_height)) =
-            self.scissor_rect_stack.last()
+          // Check if text is within the scissor rect that was active when text was created
+          if let Some((scissor_x, scissor_y, scissor_width, scissor_height)) = command.scissor_rect
           {
             let text_x = command.position.0;
             let text_y = command.position.1;
@@ -1473,7 +1473,7 @@ impl Renderer {
               || text_y + text_height < scissor_y
               || text_y > scissor_y + scissor_height)
           } else {
-            // No scissor rect active, render all text
+            // No scissor rect was active when text was created, render it
             true
           }
         })
@@ -1484,12 +1484,23 @@ impl Renderer {
             .entries
             .get(&command.cache_key)
             .map(|entry| {
+              // Use scissor rect as bounds if one was active, otherwise use full screen
+              let bounds = if let Some((sx, sy, sw, sh)) = command.scissor_rect {
+                TextBounds {
+                  left:   sx as i32,
+                  top:    sy as i32,
+                  right:  (sx + sw) as i32,
+                  bottom: (sy + sh) as i32,
+                }
+              } else {
+                command.bounds
+              };
               TextArea {
                 buffer:        &entry.buffer,
                 left:          command.position.0,
                 top:           command.position.1,
                 scale:         1.0,
-                bounds:        command.bounds,
+                bounds,
                 default_color: GlyphColor::rgba(255, 255, 255, 255),
                 custom_glyphs: &[],
               }
@@ -1573,6 +1584,25 @@ impl Renderer {
       let overlay_text_areas: Vec<_> = self
         .overlay_text_commands
         .iter()
+        .filter(|command| {
+          // Check if text is within the scissor rect that was active when text was created
+          if let Some((scissor_x, scissor_y, scissor_width, scissor_height)) = command.scissor_rect
+          {
+            let text_x = command.position.0;
+            let text_y = command.position.1;
+            let text_width = (command.bounds.right - command.bounds.left) as f32;
+            let text_height = (command.bounds.bottom - command.bounds.top) as f32;
+
+            // Check if text intersects with scissor rect
+            !(text_x + text_width < scissor_x
+              || text_x > scissor_x + scissor_width
+              || text_y + text_height < scissor_y
+              || text_y > scissor_y + scissor_height)
+          } else {
+            // No scissor rect was active when text was created, render it
+            true
+          }
+        })
         .filter_map(|command| {
           // Get buffer from cache
           self
@@ -1580,12 +1610,23 @@ impl Renderer {
             .entries
             .get(&command.cache_key)
             .map(|entry| {
+              // Use scissor rect as bounds if one was active, otherwise use full screen
+              let bounds = if let Some((sx, sy, sw, sh)) = command.scissor_rect {
+                TextBounds {
+                  left:   sx as i32,
+                  top:    sy as i32,
+                  right:  (sx + sw) as i32,
+                  bottom: (sy + sh) as i32,
+                }
+              } else {
+                command.bounds
+              };
               TextArea {
                 buffer:        &entry.buffer,
                 left:          command.position.0,
                 top:           command.position.1,
                 scale:         1.0,
-                bounds:        command.bounds,
+                bounds,
                 default_color: GlyphColor::rgba(255, 255, 255, 255),
                 custom_glyphs: &[],
               }
@@ -1910,6 +1951,7 @@ impl Renderer {
       position: section.position,
       cache_key,
       bounds,
+      scissor_rect: self.scissor_rect_stack.last().copied(),
     };
 
     // Add to appropriate list based on overlay mode

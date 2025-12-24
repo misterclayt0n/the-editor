@@ -2297,8 +2297,6 @@ impl Editor {
 
   /// Hide a slotted view (capture position and remove from tree).
   fn slot_hide(&mut self, slot: u8) {
-    use crate::core::quick_slots::SlotContent;
-
     let Some(quick_slot) = self.quick_slots.get(slot) else {
       return;
     };
@@ -2326,13 +2324,6 @@ impl Editor {
       qs.position = position;
       qs.visible = false;
       qs.was_only_view = was_only_view;
-    }
-
-    // For terminals, mark as hidden
-    if let SlotContent::Terminal(term_id) = content {
-      if let Some(term) = self.terminals.get_mut(&term_id) {
-        term.set_visible(false);
-      }
     }
 
     // Handle full-screen mode: switch to a different buffer instead of closing
@@ -2485,11 +2476,6 @@ impl Editor {
         Some(view_id)
       }
       SlotContent::Terminal(term_id) => {
-        // Mark terminal visible
-        if let Some(term) = self.terminals.get_mut(term_id) {
-          term.set_visible(true);
-        }
-
         let view = View::new_terminal(*term_id, self.config().gutters.clone());
         let view_id = self.tree.split(view, layout);
 

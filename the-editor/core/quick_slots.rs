@@ -51,6 +51,8 @@ pub struct QuickSlot {
   pub position: Option<PositionRecipe>,
   /// Whether the slotted view is currently visible.
   pub visible: bool,
+  /// Whether this was the only view when hidden (full-screen mode).
+  pub was_only_view: bool,
 }
 
 /// Quick slots for Alt+0-9 bindings.
@@ -149,9 +151,10 @@ mod tests {
     slots.set(
       3,
       QuickSlot {
-        content:  SlotContent::Document(doc_id(1)),
-        position: None,
-        visible:  true,
+        content:       SlotContent::Document(doc_id(1)),
+        position:      None,
+        visible:       true,
+        was_only_view: false,
       },
     );
 
@@ -172,8 +175,9 @@ mod tests {
       7,
       QuickSlot {
         content,
-        position: None,
-        visible:  true,
+        position:      None,
+        visible:       true,
+        was_only_view: false,
       },
     );
 
@@ -193,8 +197,9 @@ mod tests {
       5,
       QuickSlot {
         content,
-        position: None,
-        visible:  true,
+        position:      None,
+        visible:       true,
+        was_only_view: false,
       },
     );
 

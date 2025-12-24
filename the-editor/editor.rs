@@ -2248,12 +2248,16 @@ impl Editor {
     // Unbind if this content is already bound to another slot
     self.quick_slots.unbind_content(&content);
 
+    // Check if this is the only view (full-screen mode)
+    let was_only_view = self.tree.views().count() == 1;
+
     self.quick_slots.set(
       slot,
       QuickSlot {
         content,
         position: None, // Position captured when hiding
         visible: true,
+        was_only_view,
       },
     );
 
@@ -2310,10 +2314,14 @@ impl Editor {
     // Capture position before removal
     let position = self.tree.capture_position(view_id);
 
+    // Check if this is the only view (full-screen mode)
+    let was_only_view = self.tree.views().count() == 1;
+
     // Update slot state
     if let Some(qs) = self.quick_slots.get_mut(slot) {
       qs.position = position;
       qs.visible = false;
+      qs.was_only_view = was_only_view;
     }
 
     // For terminals, mark as hidden
@@ -2354,6 +2362,18 @@ impl Editor {
           return;
         }
       }
+    }
+
+    // If was only view (full-screen mode), replace current content instead of split
+    if quick_slot.was_only_view {
+      let view_id = self.show_content_replace(&quick_slot.content);
+      if let Some(view_id) = view_id {
+        self.focus(view_id);
+        if let Some(qs) = self.quick_slots.get_mut(slot) {
+          qs.visible = true;
+        }
+      }
+      return;
     }
 
     // Restore the view at the captured position
@@ -2416,10 +2436,10 @@ impl Editor {
         let view = View::new(*doc_id, self.config().gutters.clone());
         let view_id = self.tree.split(view, layout);
 
-        // TODO: Apply custom size if present
-        // if let Some(_size) = recipe.custom_size {
-        //   self.tree.set_view_custom_size(view_id, size);
-        // }
+        // Initialize the document's view state
+        if let Some(doc) = self.documents.get_mut(doc_id) {
+          doc.ensure_view_init(view_id);
+        }
 
         Some(view_id)
       }
@@ -2451,6 +2471,25 @@ impl Editor {
       }
       SlotContent::Terminal(term_id) => {
         self.show_terminal(*term_id, Action::VerticalSplit);
+        Some(self.tree.focus)
+      }
+    }
+  }
+
+  /// Show content by replacing current view (for full-screen restore).
+  fn show_content_replace(
+    &mut self,
+    content: &crate::core::quick_slots::SlotContent,
+  ) -> Option<ViewId> {
+    use crate::core::quick_slots::SlotContent;
+
+    match content {
+      SlotContent::Document(doc_id) => {
+        self.switch(*doc_id, Action::Replace, false);
+        Some(self.tree.focus)
+      }
+      SlotContent::Terminal(term_id) => {
+        self.show_terminal(*term_id, Action::Replace);
         Some(self.tree.focus)
       }
     }

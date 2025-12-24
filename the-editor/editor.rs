@@ -2284,7 +2284,11 @@ impl Editor {
       return;
     };
 
-    if quick_slot.visible {
+    // Check if content is actually displayed (not just the visible flag)
+    // This handles the case where user switched buffers without using slot toggle
+    let is_actually_visible = self.find_view_for_slot_content(&quick_slot.content).is_some();
+
+    if is_actually_visible {
       self.slot_hide(slot);
     } else {
       self.slot_show(slot);
@@ -2331,9 +2335,15 @@ impl Editor {
       }
     }
 
-    // Close the view
-    self.close(view_id);
-    self.ensure_view_exists();
+    // Handle full-screen mode: switch to a different buffer instead of closing
+    if was_only_view {
+      // Find a different document to show, or create a scratch buffer
+      let alt_doc_id = self.find_alternate_document(&content);
+      self.switch(alt_doc_id, Action::Replace, false);
+    } else {
+      // Close the view (split mode)
+      self.close(view_id);
+    }
   }
 
   /// Show a slotted view (restore at captured position).
@@ -2413,6 +2423,37 @@ impl Editor {
         .find(|(view, _)| view.terminal() == Some(*term_id))
         .map(|(view, _)| view.id),
     }
+  }
+
+  /// Find an alternate document to show when hiding a slotted view in full-screen mode.
+  /// Returns a different document if available, otherwise creates a scratch buffer.
+  fn find_alternate_document(
+    &mut self,
+    hidden_content: &crate::core::quick_slots::SlotContent,
+  ) -> DocumentId {
+    use crate::core::quick_slots::SlotContent;
+
+    // Get the doc_id of the content being hidden (if it's a document)
+    let hidden_doc_id = match hidden_content {
+      SlotContent::Document(doc_id) => Some(*doc_id),
+      SlotContent::Terminal(_) => None,
+    };
+
+    // Try to find a different document
+    if let Some(alt_doc_id) = self
+      .documents
+      .keys()
+      .find(|&&doc_id| Some(doc_id) != hidden_doc_id)
+      .copied()
+    {
+      return alt_doc_id;
+    }
+
+    // No alternate document, create a scratch buffer
+    self.new_document(Document::default(
+      self.config.clone(),
+      self.syn_loader.clone(),
+    ))
   }
 
   /// Restore a view at the position described by the recipe.

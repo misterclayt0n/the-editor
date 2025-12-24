@@ -3866,6 +3866,41 @@ impl EditorView {
       return Some(EventResult::Consumed(None));
     }
 
+    // Alt+X - open command mode (: prompt)
+    if key.alt && !key.ctrl && !key.shift && matches!(&key.code, Key::Char('x')) {
+      let mut cmd_cx = commands::Context {
+        register:             cx.editor.selected_register,
+        count:                cx.editor.count,
+        editor:               cx.editor,
+        on_next_key_callback: None,
+        callback:             Vec::new(),
+        jobs:                 cx.jobs,
+      };
+      commands::command_mode(&mut cmd_cx);
+
+      // Process callbacks (command_mode pushes a callback to show the prompt)
+      let callbacks = cmd_cx.callback;
+      if callbacks.is_empty() {
+        return Some(EventResult::Consumed(None));
+      } else {
+        return Some(EventResult::Consumed(Some(Box::new(move |compositor, cx| {
+          for callback in callbacks {
+            callback(compositor, cx);
+          }
+        }))));
+      }
+    }
+
+    // Alt+0-9 - quick slots
+    if key.alt && !key.ctrl && !key.shift {
+      if let Key::Char(c) = &key.code {
+        if let Some(slot) = c.to_digit(10) {
+          cx.editor.slot_toggle(slot as u8);
+          return Some(EventResult::Consumed(None));
+        }
+      }
+    }
+
     // Convert key to terminal bytes and send
     let bytes = self.key_to_terminal_bytes(key);
     if !bytes.is_empty() {

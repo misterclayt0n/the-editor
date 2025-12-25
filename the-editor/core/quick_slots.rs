@@ -53,6 +53,9 @@ pub struct QuickSlot {
   pub visible: bool,
   /// Whether this was the only view when hidden (full-screen mode).
   pub was_only_view: bool,
+  /// Content that was displayed before showing this slot (for fullscreen restore).
+  /// Only set when `was_only_view` is true and we replaced another view.
+  pub previous_content: Option<SlotContent>,
 }
 
 /// Quick slots for Alt+0-9 bindings.
@@ -151,10 +154,11 @@ mod tests {
     slots.set(
       3,
       QuickSlot {
-        content:       SlotContent::Document(doc_id(1)),
-        position:      None,
-        visible:       true,
-        was_only_view: false,
+        content:          SlotContent::Document(doc_id(1)),
+        position:         None,
+        visible:          true,
+        was_only_view:    false,
+        previous_content: None,
       },
     );
 
@@ -175,9 +179,10 @@ mod tests {
       7,
       QuickSlot {
         content,
-        position:      None,
-        visible:       true,
-        was_only_view: false,
+        position:         None,
+        visible:          true,
+        was_only_view:    false,
+        previous_content: None,
       },
     );
 
@@ -197,9 +202,10 @@ mod tests {
       5,
       QuickSlot {
         content,
-        position:      None,
-        visible:       true,
-        was_only_view: false,
+        position:         None,
+        visible:          true,
+        was_only_view:    false,
+        previous_content: None,
       },
     );
 

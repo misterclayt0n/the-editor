@@ -2261,6 +2261,7 @@ impl Editor {
         position: None, // Position captured when hiding
         visible: true,
         was_only_view,
+        previous_content: None,
       },
     );
 
@@ -2331,9 +2332,21 @@ impl Editor {
 
     // Handle full-screen mode: switch to a different buffer instead of closing
     if was_only_view {
-      // Find a different document to show, or create a scratch buffer
-      let alt_doc_id = self.find_alternate_document(&content);
-      self.switch(alt_doc_id, Action::Replace, false);
+      // Try to restore to the previous content that was displayed before showing this slot
+      let previous_content = self.quick_slots.get(slot).and_then(|qs| qs.previous_content);
+
+      if let Some(prev_content) = previous_content {
+        // Restore to the previous content
+        self.show_content_replace(&prev_content);
+        // Clear previous_content after restoring
+        if let Some(qs) = self.quick_slots.get_mut(slot) {
+          qs.previous_content = None;
+        }
+      } else {
+        // Fall back to finding any alternate document
+        let alt_doc_id = self.find_alternate_document(&content);
+        self.switch(alt_doc_id, Action::Replace, false);
+      }
     } else {
       // Close the view (split mode)
       self.close(view_id);
@@ -2370,11 +2383,21 @@ impl Editor {
 
     // If was only view (full-screen mode), replace current content instead of split
     if quick_slot.was_only_view {
+      // Capture the current view's content before replacing (for toggle-back)
+      let current_content = self.tree.try_get(self.tree.focus).and_then(|view| {
+        match view.content {
+          crate::core::view::ViewContent::Document(doc_id) => Some(SlotContent::Document(doc_id)),
+          crate::core::view::ViewContent::Terminal(term_id) => Some(SlotContent::Terminal(term_id)),
+        }
+      });
+
       let view_id = self.show_content_replace(&quick_slot.content);
       if let Some(view_id) = view_id {
         self.focus(view_id);
         if let Some(qs) = self.quick_slots.get_mut(slot) {
           qs.visible = true;
+          // Store the previous content so we can restore it when hiding
+          qs.previous_content = current_content;
         }
       }
       return;

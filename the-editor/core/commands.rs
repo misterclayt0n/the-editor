@@ -5658,41 +5658,51 @@ pub fn goto_previous_buffer(cx: &mut Context) {
 }
 
 fn goto_buffer(editor: &mut Editor, direction: Direction, count: usize) {
-  if editor.documents.is_empty() {
+  use crate::core::view::ViewContent;
+
+  // Build a combined list of all viewable items: documents + visible terminals
+  let mut items: Vec<ViewContent> = editor
+    .documents
+    .keys()
+    .map(|&id| ViewContent::Document(id))
+    .collect();
+
+  // Add visible terminals after documents
+  for terminal in editor.visible_terminals() {
+    items.push(ViewContent::Terminal(terminal.id));
+  }
+
+  if items.is_empty() {
     return;
   }
 
-  // Get current document if in a buffer view, None if in terminal
-  let current = view!(editor).doc();
+  // Get current view content
+  let current = view!(editor).content;
 
-  let id = match (current, direction) {
-    // In a buffer view - cycle from current position
-    (Some(current), Direction::Forward) => {
-      editor
-        .documents
-        .keys()
-        .cycle()
-        .skip_while(|id| *id != &current)
-        .nth(count)
-    },
-    (Some(current), Direction::Backward) => {
-      editor
-        .documents
-        .keys()
-        .rev()
-        .cycle()
-        .skip_while(|id| *id != &current)
-        .nth(count)
-    },
-    // In a terminal view - go to first/last buffer
-    (None, Direction::Forward) => editor.documents.keys().next(),
-    (None, Direction::Backward) => editor.documents.keys().next_back(),
+  // Find current position in the combined list
+  let current_idx = items.iter().position(|item| *item == current);
+
+  let target = match (current_idx, direction) {
+    // Found current item - cycle from current position
+    (Some(idx), Direction::Forward) => {
+      let new_idx = (idx + count) % items.len();
+      Some(items[new_idx])
+    }
+    (Some(idx), Direction::Backward) => {
+      let new_idx = (idx + items.len() - (count % items.len())) % items.len();
+      Some(items[new_idx])
+    }
+    // Current item not in list (e.g., hidden terminal) - go to first/last
+    (None, Direction::Forward) => items.first().copied(),
+    (None, Direction::Backward) => items.last().copied(),
   };
 
-  let Some(id) = id else { return };
-  let id = *id;
+  let Some(target) = target else { return };
 
-  editor.switch(id, Action::Replace, false);
+  match target {
+    ViewContent::Document(id) => editor.switch(id, Action::Replace, false),
+    ViewContent::Terminal(id) => editor.show_terminal(id, Action::Replace),
+  }
 }
 
 pub fn move_line_up(cx: &mut Context) {

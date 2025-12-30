@@ -644,23 +644,11 @@ impl CommandRegistry {
     self.register(TypableCommand::new(
       "sh",
       &["shell", "shell-command"],
-      "Run shell command asynchronously and stream output to the compilation buffer",
+      "Run shell command in the shell terminal",
       crate::core::commands::cmd_shell_spawn,
       CommandCompleter::none(),
       Signature {
         positionals: (0, None),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "kill-shell",
-      &["kill-shell"],
-      "Terminate the running shell command for the focused compilation buffer",
-      crate::core::commands::cmd_kill_shell,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
         ..Signature::DEFAULT
       },
     ));

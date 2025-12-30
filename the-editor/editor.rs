@@ -332,6 +332,8 @@ pub struct Editor {
   terminal_event_rx:     Option<UnboundedReceiver<TerminalEvent>>,
   /// Sender cloned and given to each terminal for event dispatch.
   terminal_event_tx:     UnboundedSender<TerminalEvent>,
+  /// The dedicated terminal for shell commands (@, #).
+  shell_terminal_id:     Option<TerminalId>,
 
   /// Quick slots for Alt+0-9 view bindings.
   pub quick_slots: crate::core::quick_slots::QuickSlots,
@@ -1931,6 +1933,7 @@ impl Editor {
       next_terminal_id: TerminalId::default(),
       terminal_event_rx: Some(rx),
       terminal_event_tx: tx,
+      shell_terminal_id: None,
       quick_slots: crate::core::quick_slots::QuickSlots::new(),
       saves: HashMap::new(),
       save_queue: SelectAll::new(),
@@ -2226,6 +2229,65 @@ impl Editor {
   /// Get only visible terminals.
   pub fn visible_terminals(&self) -> impl Iterator<Item = &Terminal> {
     self.terminals.values().filter(|t| t.visible())
+  }
+
+  // --- Shell Terminal Methods ---
+
+  /// Get or create the dedicated shell terminal for shell commands (@, #).
+  /// If the terminal exists and is alive, returns it. If it exited, respawns it.
+  /// If it doesn't exist, creates a new one in a horizontal split.
+  pub fn get_or_create_shell_terminal(&mut self) -> anyhow::Result<TerminalId> {
+    // Check if we have an existing shell terminal that is still alive
+    if let Some(id) = self.shell_terminal_id {
+      let is_alive = self
+        .terminals
+        .get(&id)
+        .is_some_and(|terminal| !terminal.is_exited());
+
+      if is_alive {
+        // Terminal exists and is alive - ensure it's visible
+        self.ensure_shell_terminal_visible(id);
+        return Ok(id);
+      }
+      // Terminal exited or was removed - clear the reference
+      self.shell_terminal_id = None;
+    }
+
+    // Create a new shell terminal in a horizontal split
+    let id = self.open_terminal_split(None, crate::core::tree::Layout::Horizontal)?;
+    self.shell_terminal_id = Some(id);
+    Ok(id)
+  }
+
+  /// Ensure the shell terminal is visible.
+  /// If it's hidden, show it in a horizontal split.
+  fn ensure_shell_terminal_visible(&mut self, id: TerminalId) {
+    // Check if terminal is already visible in some view
+    let is_visible = self
+      .tree
+      .views()
+      .any(|(view, _)| view.terminal() == Some(id));
+
+    if !is_visible {
+      // Show the terminal in a horizontal split
+      self.show_terminal(id, Action::HorizontalSplit);
+    }
+  }
+
+  /// Send a command to the shell terminal.
+  /// Writes the command followed by a newline to execute it.
+  pub fn send_to_shell_terminal(&mut self, command: &str) -> anyhow::Result<()> {
+    let id = self.get_or_create_shell_terminal()?;
+
+    if let Some(terminal) = self.terminals.get(&id) {
+      // Write the command followed by newline to execute
+      terminal.write_str(command);
+      terminal.write_str("\n");
+      // Scroll to bottom to show the command output
+      terminal.scroll_to_bottom();
+    }
+
+    Ok(())
   }
 
   // --- Quick Slot Methods ---

@@ -10,10 +10,7 @@ use std::{
   },
   fmt,
   fs::File,
-  io::{
-    self,
-    Cursor,
-  },
+  io::Cursor,
   num::NonZeroUsize,
   path::{
     Path,
@@ -23,7 +20,6 @@ use std::{
 };
 
 use anyhow::{
-  Context as _,
   anyhow,
   bail,
   ensure,
@@ -137,7 +133,6 @@ use crate::{
       Range,
       Selection,
     },
-    special_buffer::SpecialBufferKind,
     surround,
     syntax::{
       Syntax,
@@ -184,13 +179,6 @@ pub type OnKeyCallback = Box<dyn FnOnce(&mut Context, KeyPress) + 'static>;
 
 // NOTE: For now we're only adding Context to this callback but I can see how we
 // might need to trigger UI elements from this tho.
-// Import compositor types
-use tokio::io::{
-  AsyncBufReadExt,
-  AsyncRead,
-  BufReader,
-};
-
 use crate::ui::compositor;
 
 // Callback now takes both Compositor and Context like in Helix
@@ -551,7 +539,6 @@ impl MappableCommand {
         shell_keep_pipe, "shell keep pipe",
         shell_command, "shell command",
         repeat_last_shell, "repeat last shell",
-        kill_shell, "kill shell",
         increment, "increment",
         decrement, "decrement",
         noop, "noop",
@@ -8430,420 +8417,6 @@ async fn shell_impl_async(
   Ok(Tendril::from(output))
 }
 
-#[derive(Clone, Copy)]
-enum ShellStream {
-  Stdout,
-  Stderr,
-}
-
-fn first_view_id_for_doc(editor: &Editor, doc_id: DocumentId) -> Option<ViewId> {
-  editor
-    .tree
-    .views()
-    .find(|(view, _)| view.doc() == Some(doc_id))
-    .map(|(view, _)| view.id)
-}
-
-fn replace_document_text(editor: &mut Editor, doc_id: DocumentId, text: &str) {
-  if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
-    if let Some(doc) = editor.documents.get_mut(&doc_id) {
-      // Ensure the view has a selection initialized for this document
-      doc.ensure_view_init(view_id);
-      let len = doc.text().len_chars();
-      let selection = Selection::point(text.chars().count());
-      let transaction =
-        Transaction::change(doc.text(), std::iter::once((0, len, Some(text.into()))))
-          .with_selection(selection);
-      doc.apply(&transaction, view_id);
-    }
-  }
-}
-
-fn append_document_text(editor: &mut Editor, doc_id: DocumentId, text: &str) {
-  if text.is_empty() {
-    return;
-  }
-  if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
-    if let Some(doc) = editor.documents.get_mut(&doc_id) {
-      // Ensure the view has a selection initialized for this document
-      doc.ensure_view_init(view_id);
-      let end = doc.text().len_chars();
-      let selection = doc.selection(view_id).clone();
-      let transaction =
-        Transaction::change(doc.text(), std::iter::once((end, end, Some(text.into()))))
-          .with_selection(selection);
-      doc.apply(&transaction, view_id);
-    }
-  }
-}
-
-fn resolve_compilation_buffer(
-  editor: &mut Editor,
-  current_doc_id: Option<DocumentId>,
-) -> DocumentId {
-  use crate::{
-    core::special_buffer::SpecialBufferKind,
-    editor::Action,
-  };
-
-  // If current view is already a compilation buffer, reuse it
-  if let Some(doc_id) = current_doc_id
-    && editor.special_buffer_kind(doc_id) == Some(SpecialBufferKind::Compilation)
-  {
-    editor.touch_special_buffer(doc_id);
-    configure_compilation_buffer(editor, doc_id);
-    return doc_id;
-  }
-
-  if let Some(last_id) = editor.last_special_buffer(SpecialBufferKind::Compilation) {
-    if editor.documents.contains_key(&last_id) {
-      editor.touch_special_buffer(last_id);
-      configure_compilation_buffer(editor, last_id);
-      return last_id;
-    }
-    editor.clear_special_buffer(last_id);
-  }
-
-  let doc_id = editor.new_file(Action::HorizontalSplit);
-  editor.mark_special_buffer(doc_id, SpecialBufferKind::Compilation);
-  configure_compilation_buffer(editor, doc_id);
-  doc_id
-}
-
-fn configure_compilation_buffer(editor: &mut Editor, doc_id: DocumentId) {
-  let preferred_view = first_view_id_for_doc(editor, doc_id);
-  let shell_command = {
-    let config = editor.config();
-    config.shell.clone()
-  };
-  let shell_language = shell_language_for_command(&shell_command);
-  let loader = editor.syn_loader.load();
-
-  if let Some(doc) = editor.documents.get_mut(&doc_id) {
-    doc.set_special_buffer_ephemeral(true);
-    if let Some(view_id) = preferred_view {
-      doc.set_preferred_special_buffer_view(Some(view_id));
-    }
-    match shell_language {
-      Some(language_id) => {
-        if let Err(err) = doc.set_language_by_language_id(language_id, &loader) {
-          log::warn!(
-            "failed to set syntax for shell buffer (language: {}): {}",
-            language_id,
-            err
-          );
-        }
-      },
-      None => doc.set_language(None, &loader),
-    }
-  }
-}
-
-fn ensure_compilation_buffer_visible(
-  editor: &mut Editor,
-  doc_id: DocumentId,
-  origin_view: Option<ViewId>,
-) {
-  if let Some(view_id) = first_view_id_for_doc(editor, doc_id) {
-    if let Some(doc) = editor.documents.get_mut(&doc_id) {
-      doc.set_preferred_special_buffer_view(Some(view_id));
-    }
-    return;
-  }
-
-  let preferred_view = editor
-    .documents
-    .get(&doc_id)
-    .and_then(|doc| doc.preferred_special_buffer_view());
-
-  if let Some(view_id) = preferred_view {
-    if editor.tree.try_get(view_id).is_some() {
-      editor.replace_document_in_view(view_id, doc_id, false);
-      if let Some(doc) = editor.documents.get_mut(&doc_id) {
-        doc.set_preferred_special_buffer_view(Some(view_id));
-      }
-      return;
-    }
-  }
-
-  let restore_focus = origin_view.filter(|view_id| editor.tree.try_get(*view_id).is_some());
-
-  editor.switch(doc_id, Action::HorizontalSplit, false);
-
-  let new_view = first_view_id_for_doc(editor, doc_id);
-
-  if let Some(doc) = editor.documents.get_mut(&doc_id) {
-    if let Some(view_id) = new_view {
-      doc.set_preferred_special_buffer_view(Some(view_id));
-      if let Some(restore) = restore_focus {
-        if restore != view_id && editor.tree.try_get(restore).is_some() {
-          editor.focus(restore);
-        }
-      }
-    }
-  }
-}
-
-// ============================================================================
-// Shell Buffer Management
-// ============================================================================
-
-enum ShellProcessResult {
-  Completed(std::process::ExitStatus),
-  Killed,
-}
-
-fn format_exit_status(result: &ShellProcessResult) -> String {
-  match result {
-    ShellProcessResult::Completed(status) => {
-      if status.success() {
-        "[process exited successfully]\n".to_string()
-      } else if let Some(code) = status.code() {
-        format!("[process exited with status {code}]\n")
-      } else {
-        "[process terminated by signal]\n".to_string()
-      }
-    },
-    ShellProcessResult::Killed => "[process terminated by user]\n".to_string(),
-  }
-}
-
-#[cfg(unix)]
-fn configure_process_group(process: &mut tokio::process::Command) {
-  unsafe {
-    process.pre_exec(|| set_new_process_group());
-  }
-}
-
-#[cfg(unix)]
-fn set_new_process_group() -> io::Result<()> {
-  unsafe {
-    if libc::setpgid(0, 0) != 0 {
-      return Err(io::Error::last_os_error());
-    }
-  }
-  Ok(())
-}
-
-#[cfg(not(unix))]
-fn configure_process_group(_process: &mut tokio::process::Command) {}
-
-#[cfg(unix)]
-fn kill_process_group(child_id: Option<u32>) {
-  if let Some(pid) = child_id {
-    unsafe {
-      let pgid = -(pid as i32);
-      let _ = libc::kill(pgid, libc::SIGTERM);
-    }
-  }
-}
-
-#[cfg(not(unix))]
-fn kill_process_group(_child_id: Option<u32>) {}
-
-fn normalized_shell_name(raw: &str) -> Option<String> {
-  let trimmed = raw.trim_matches(|c| matches!(c, '"' | '\''));
-  if trimmed.is_empty() {
-    return None;
-  }
-
-  let path = Path::new(trimmed);
-
-  path
-    .file_stem()
-    .or_else(|| path.file_name())
-    .and_then(|segment| segment.to_str())
-    .map(|segment| segment.to_ascii_lowercase())
-}
-
-fn detect_shell_program(shell: &[String]) -> Option<String> {
-  let mut program = normalized_shell_name(shell.first()?.as_str())?;
-
-  if program == "env" {
-    for arg in shell.iter().skip(1) {
-      if arg.starts_with('-') || arg.contains('=') {
-        continue;
-      }
-      if let Some(candidate) = normalized_shell_name(arg) {
-        program = candidate;
-        break;
-      }
-    }
-    if program == "env" {
-      return None;
-    }
-  }
-
-  Some(program)
-}
-
-fn shell_language_for_command(shell: &[String]) -> Option<&'static str> {
-  let program = detect_shell_program(shell)?;
-  match program.as_str() {
-    "sh" | "bash" | "dash" | "ash" | "ksh" | "mksh" | "zsh" | "csh" | "tcsh" | "yash" => {
-      Some("bash")
-    },
-    "fish" => Some("fish"),
-    "nu" | "nushell" => Some("nu"),
-    "pwsh" | "powershell" => Some("powershell"),
-    _ => None,
-  }
-}
-
-fn forward_shell_stream<R>(
-  reader: R,
-  doc_id: DocumentId,
-  _stream: ShellStream,
-) -> tokio::task::JoinHandle<anyhow::Result<()>>
-where
-  R: AsyncRead + Unpin + Send + 'static,
-{
-  tokio::spawn(async move {
-    let mut lines = BufReader::new(reader).lines();
-    while let Some(line) = lines.next_line().await? {
-      let mut text = line;
-      text.push('\n');
-      crate::ui::job::dispatch({
-        let text = text.clone();
-        move |editor, _| {
-          append_document_text(editor, doc_id, &text);
-        }
-      })
-      .await;
-    }
-    Ok(())
-  })
-}
-
-async fn run_shell_process(
-  shell: Vec<String>,
-  command: String,
-  doc_id: DocumentId,
-  mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
-) -> anyhow::Result<ShellProcessResult> {
-  use std::process::Stdio;
-
-  use tokio::process::Command;
-
-  ensure!(!shell.is_empty(), "No shell set");
-
-  let mut process = Command::new(&shell[0]);
-  process
-    .args(&shell[1..])
-    .arg(&command)
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
-
-  configure_process_group(&mut process);
-
-  let mut child = process.spawn().context("Failed to spawn shell command")?;
-
-  let stdout_handle = child
-    .stdout
-    .take()
-    .map(|stdout| forward_shell_stream(stdout, doc_id, ShellStream::Stdout));
-  let stderr_handle = child
-    .stderr
-    .take()
-    .map(|stderr| forward_shell_stream(stderr, doc_id, ShellStream::Stderr));
-
-  let result = tokio::select! {
-    status = child.wait() => {
-      ShellProcessResult::Completed(status.context("Failed to await shell command")?)
-    }
-    cancel = &mut cancel_rx => {
-      if cancel.is_ok() {
-        kill_process_group(child.id());
-        if let Err(err) = child.start_kill() {
-          log::error!("Failed to kill shell process: {}", err);
-        }
-        let _ = child.wait().await;
-        ShellProcessResult::Killed
-      } else {
-        ShellProcessResult::Completed(
-          child.wait().await.context("Failed to await shell command")?
-        )
-      }
-    }
-  };
-
-  if let Some(handle) = stdout_handle {
-    handle.await.context("stdout task failed")??;
-  }
-  if let Some(handle) = stderr_handle {
-    handle.await.context("stderr task failed")??;
-  }
-
-  Ok(result)
-}
-
-fn run_shell_in_compilation_buffer(
-  editor: &mut Editor,
-  jobs: &mut crate::ui::job::Jobs,
-  current_doc_id: Option<DocumentId>,
-  command: String,
-) -> anyhow::Result<DocumentId> {
-  let origin_view = editor.focused_view_id();
-  let doc_id = resolve_compilation_buffer(editor, current_doc_id);
-  ensure_compilation_buffer_visible(editor, doc_id, origin_view);
-  editor.touch_special_buffer(doc_id);
-
-  if editor.is_special_buffer_running(doc_id) {
-    bail!("A shell command is already running in the compilation buffer");
-  }
-
-  let header = format!("$ {}\n\n", command);
-  replace_document_text(editor, doc_id, &header);
-
-  let shell = editor.config().shell.clone();
-  editor.set_special_buffer_running(doc_id, true);
-  let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
-  editor.register_shell_job_cancel(doc_id, cancel_tx);
-
-  let job_command = command.clone();
-  jobs.spawn(async move {
-    let result = run_shell_process(shell, job_command.clone(), doc_id, cancel_rx).await;
-
-    match result {
-      Ok(outcome) => {
-        let exit_text = format_exit_status(&outcome);
-        let status_message = match outcome {
-          ShellProcessResult::Completed(_) => format!("Command finished ({})", job_command),
-          ShellProcessResult::Killed => format!("Command killed ({})", job_command),
-        };
-        crate::ui::job::dispatch(move |editor, _| {
-          append_document_text(editor, doc_id, &exit_text);
-          editor.set_status(status_message);
-          editor.set_special_buffer_running(doc_id, false);
-          editor.clear_shell_job_cancel(doc_id);
-        })
-        .await;
-      },
-      Err(err) => {
-        let error_line = format!("[error] {err}\n");
-        let status_message = format!("Command failed ({job_command}): {err}");
-        log::error!("shell command failed: {err}");
-        crate::ui::job::dispatch(move |editor, _| {
-          append_document_text(editor, doc_id, &error_line);
-          editor.set_error(status_message);
-          editor.set_special_buffer_running(doc_id, false);
-          editor.clear_shell_job_cancel(doc_id);
-        })
-        .await;
-      },
-    }
-
-    Ok(())
-  });
-
-  Ok(doc_id)
-}
-
-fn spawn_shell_command_context(cx: &mut Context, command: String) -> anyhow::Result<DocumentId> {
-  let current_doc_id = view!(cx.editor).doc();
-  run_shell_in_compilation_buffer(cx.editor, cx.jobs, current_doc_id, command)
-}
-
 pub fn shell_command(cx: &mut Context) {
   use crate::ui::components::prompt::history_completion;
 
@@ -8855,9 +8428,6 @@ pub fn shell_command(cx: &mut Context) {
 
   // Set mode to Command so prompt is shown
   cx.editor.set_mode(Mode::Command);
-
-  // Capture the current document ID
-  let current_doc_id = view!(cx.editor).doc();
 
   // Create prompt with callback and shell history completions
   let mut prompt = crate::ui::components::Prompt::new(String::new())
@@ -8885,26 +8455,26 @@ pub fn shell_command(cx: &mut Context) {
             log::warn!("Failed to store shell command in history: {}", err);
           }
 
-          match run_shell_in_compilation_buffer(cx.editor, cx.jobs, current_doc_id, command.clone())
-          {
+          // Send command to shell terminal
+          match cx.editor.send_to_shell_terminal(&command) {
             Ok(_) => {
-              cx.editor.set_status(format!("running: {}", command));
-            },
+              cx.editor.set_status(format!("$ {}", command));
+            }
             Err(err) => {
               cx.editor.set_error(err.to_string());
-            },
+            }
           }
 
           // Clear custom mode string on validation
           cx.editor.clear_custom_mode_str();
-        },
+        }
         PromptEvent::Abort => {
           // Clear custom mode string on abort
           cx.editor.clear_custom_mode_str();
-        },
+        }
         PromptEvent::Update => {
           // Do nothing during updates
-        },
+        }
       }
     });
 
@@ -8937,15 +8507,14 @@ pub fn repeat_last_shell(cx: &mut Context) {
     .map(|cmd| cmd.to_string());
 
   if let Some(command) = last_command {
-    let current_doc_id = view!(cx.editor).doc();
-
-    match run_shell_in_compilation_buffer(cx.editor, cx.jobs, current_doc_id, command.clone()) {
+    // Send command to shell terminal
+    match cx.editor.send_to_shell_terminal(&command) {
       Ok(_) => {
-        cx.editor.set_status(format!("running: {}", command));
-      },
+        cx.editor.set_status(format!("$ {}", command));
+      }
       Err(err) => {
         cx.editor.set_error(err.to_string());
-      },
+      }
     }
   } else {
     cx.editor
@@ -8969,58 +8538,18 @@ pub fn cmd_shell_spawn(
   if command.is_empty() {
     return Ok(());
   }
-  let command = command.to_string();
 
-  match spawn_shell_command_context(cx, command.clone()) {
+  // Send command to shell terminal
+  match cx.editor.send_to_shell_terminal(command) {
     Ok(_) => {
-      cx.editor.set_status(format!("running ({command})"));
+      cx.editor.set_status(format!("$ {command}"));
       Ok(())
-    },
+    }
     Err(err) => {
       let message = err.to_string();
       cx.editor.set_error(message);
       Err(err)
-    },
-  }
-}
-
-pub fn cmd_kill_shell(
-  cx: &mut Context,
-  _args: Args,
-  event: crate::ui::components::prompt::PromptEvent,
-) -> anyhow::Result<()> {
-  use crate::ui::components::prompt::PromptEvent;
-  if matches!(event, PromptEvent::Validate) {
-    kill_shell(cx);
-  }
-  Ok(())
-}
-
-pub fn kill_shell(cx: &mut Context) {
-  let Some(view_id) = cx.editor.focused_view_id() else {
-    cx.editor
-      .set_error("no active view available to kill shell");
-    return;
-  };
-  let Some(doc_id) = cx.editor.tree.get(view_id).doc() else {
-    cx.editor.set_error("focused view is not a document");
-    return;
-  };
-
-  if cx.editor.special_buffer_kind(doc_id) != Some(SpecialBufferKind::Compilation) {
-    cx.editor.set_error("focused buffer is not a shell buffer");
-    return;
-  }
-
-  if !cx.editor.is_special_buffer_running(doc_id) {
-    cx.editor.set_status("no running shell command to kill");
-    return;
-  }
-
-  if cx.editor.cancel_shell_job(doc_id) {
-    cx.editor.set_status("stopping shell command…");
-  } else {
-    cx.editor.set_error("shell command is already completing");
+    }
   }
 }
 

@@ -2290,11 +2290,19 @@ impl Editor {
 
     // Check if content is actually displayed (not just the visible flag)
     // This handles the case where user switched buffers without using slot toggle
-    let is_actually_visible = self.find_view_for_slot_content(&quick_slot.content).is_some();
+    let slot_view_id = self.find_view_for_slot_content(&quick_slot.content);
 
-    if is_actually_visible {
-      self.slot_hide(slot);
+    if let Some(view_id) = slot_view_id {
+      // Slotted content is visible
+      if view_id == self.tree.focus {
+        // Already focused - hide it
+        self.slot_hide(slot);
+      } else {
+        // Visible but not focused - just focus it
+        self.focus(view_id);
+      }
     } else {
+      // Not visible - show it
       self.slot_show(slot);
     }
   }

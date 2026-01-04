@@ -10,6 +10,7 @@ use the_editor_renderer::{
 };
 
 use crate::{
+  Editor,
   core::{
     animation::breathing::BreathingAnimation,
     diagnostics::Severity,
@@ -38,14 +39,14 @@ use crate::{
     },
     theme_color_to_renderer_color,
   },
-  Editor,
 };
 
 /// Nix icon SVG data for statusline indicator
 const NIX_ICON: &[u8] = include_bytes!("../../../assets/icons/nix.svg");
 
 /// Check if we're running inside a Nix shell (cached at startup)
-static IN_NIX_SHELL: Lazy<bool> = Lazy::new(|| the_editor_stdx::env::env_var_is_set("IN_NIX_SHELL"));
+static IN_NIX_SHELL: Lazy<bool> =
+  Lazy::new(|| the_editor_stdx::env::env_var_is_set("IN_NIX_SHELL"));
 
 /// Formats a model ID for display in the statusline.
 fn format_model_display(model_id: &str) -> String {
@@ -73,7 +74,11 @@ fn format_model_display(model_id: &str) -> String {
     .collect::<Vec<_>>()
     .join("-");
 
-  if without_date.is_empty() { model_part.to_string() } else { without_date }
+  if without_date.is_empty() {
+    model_part.to_string()
+  } else {
+    without_date
+  }
 }
 
 // Visual constants
@@ -92,12 +97,20 @@ struct RenderedElement {
 impl RenderedElement {
   fn new(text: String) -> Self {
     let width = measure_text(&text);
-    Self { text, style: None, width }
+    Self {
+      text,
+      style: None,
+      width,
+    }
   }
 
   fn with_style(text: String, style: Style) -> Self {
     let width = measure_text(&text);
-    Self { text, style: Some(style), width }
+    Self {
+      text,
+      style: Some(style),
+      width,
+    }
   }
 }
 
@@ -133,7 +146,7 @@ impl StatusLine {
       slide_offset:        0.0,
       should_slide:        false,
       slide_anim_t:        1.0,
-      status_msg_anim_t:   0.0,
+      status_msg_anim_t:   1.0, // Start completed to avoid infinite redraw loop when no status msg
       status_msg_slide_x:  0.0,
       last_status_msg:     None,
       lsp_breathing_anims: HashMap::new(),
@@ -168,7 +181,7 @@ impl StatusLine {
       // Unfocused views show empty space to prevent layout shift
       let width = measure_text(&mode_config.normal);
       return Some(RenderedElement {
-        text:  " ".repeat((width / (FONT_SIZE * 0.6)) as usize),
+        text: " ".repeat((width / (FONT_SIZE * 0.6)) as usize),
         style: None,
         width,
       });
@@ -265,7 +278,10 @@ impl StatusLine {
   fn render_file_base_name(doc: Option<&Document>) -> Option<RenderedElement> {
     let doc = doc?;
     let text = if let Some(path) = doc.path() {
-      let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("[No Name]");
+      let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("[No Name]");
       format!(" {} ", name)
     } else {
       " [scratch] ".to_string()
@@ -275,12 +291,20 @@ impl StatusLine {
 
   fn render_file_modification_indicator(doc: Option<&Document>) -> Option<RenderedElement> {
     let doc = doc?;
-    if doc.is_modified() { Some(RenderedElement::new("[+]".to_string())) } else { None }
+    if doc.is_modified() {
+      Some(RenderedElement::new("[+]".to_string()))
+    } else {
+      None
+    }
   }
 
   fn render_read_only_indicator(doc: Option<&Document>) -> Option<RenderedElement> {
     let doc = doc?;
-    if doc.readonly { Some(RenderedElement::new("[readonly]".to_string())) } else { None }
+    if doc.readonly {
+      Some(RenderedElement::new("[readonly]".to_string()))
+    } else {
+      None
+    }
   }
 
   fn render_file_encoding(doc: Option<&Document>) -> Option<RenderedElement> {
@@ -535,7 +559,10 @@ impl StatusLine {
     }
   }
 
-  fn render_lsp_servers_element(_editor: &Editor, doc: Option<&Document>) -> Option<RenderedElement> {
+  fn render_lsp_servers_element(
+    _editor: &Editor,
+    doc: Option<&Document>,
+  ) -> Option<RenderedElement> {
     let doc = doc?;
     if doc.language_servers.is_empty() {
       return None;
@@ -632,12 +659,17 @@ impl StatusLine {
           let bg_color = theme_color_to_renderer_color(bg);
           surface.draw_rect(current_x, y, elem.width, STATUS_BAR_HEIGHT, bg_color);
         }
-        style.fg.map(theme_color_to_renderer_color).unwrap_or(base_color)
+        style
+          .fg
+          .map(theme_color_to_renderer_color)
+          .unwrap_or(base_color)
       } else {
         base_color
       };
 
-      surface.draw_text(TextSection::simple(current_x, text_y, &elem.text, FONT_SIZE, color));
+      surface.draw_text(TextSection::simple(
+        current_x, text_y, &elem.text, FONT_SIZE, color,
+      ));
       current_x += elem.width;
     }
 
@@ -705,29 +737,37 @@ impl StatusLine {
         && now.saturating_duration_since(*last_seen) < ANIMATION_GRACE_PERIOD
     });
 
-    let lsp_text = lsp_servers.iter().map(|(name, _)| *name).collect::<Vec<_>>().join(",");
+    let lsp_text = lsp_servers
+      .iter()
+      .map(|(name, _)| *name)
+      .collect::<Vec<_>>()
+      .join(",");
     let lsp_width = measure_text(&lsp_text);
 
-    let lsp_color =
-      if lsp_servers.iter().any(|(_, id)| self.lsp_breathing_anims.contains_key(id)) {
-        let (anim, _) = lsp_servers
-          .iter()
-          .find_map(|(_, id)| self.lsp_breathing_anims.get(id))
-          .unwrap();
+    let lsp_color = if lsp_servers
+      .iter()
+      .any(|(_, id)| self.lsp_breathing_anims.contains_key(id))
+    {
+      let (anim, _) = lsp_servers
+        .iter()
+        .find_map(|(_, id)| self.lsp_breathing_anims.get(id))
+        .unwrap();
 
-        let loading_style = editor.theme.get("ui.statusline.lsp.loading");
-        let color = loading_style
-          .fg
-          .or_else(|| editor.theme.get("ui.statusline").fg)
-          .map(theme_color_to_renderer_color)
-          .unwrap_or(base_color);
-        anim.apply_to_color(color, now)
-      } else {
-        base_color
-      };
+      let loading_style = editor.theme.get("ui.statusline.lsp.loading");
+      let color = loading_style
+        .fg
+        .or_else(|| editor.theme.get("ui.statusline").fg)
+        .map(theme_color_to_renderer_color)
+        .unwrap_or(base_color);
+      anim.apply_to_color(color, now)
+    } else {
+      base_color
+    };
 
     let text_y = y + (STATUS_BAR_HEIGHT - FONT_SIZE) * 0.5;
-    surface.draw_text(TextSection::simple(x, text_y, &lsp_text, FONT_SIZE, lsp_color));
+    surface.draw_text(TextSection::simple(
+      x, text_y, &lsp_text, FONT_SIZE, lsp_color,
+    ));
 
     lsp_width + 8.0 // text + spacing
   }
@@ -779,7 +819,9 @@ impl StatusLine {
     };
 
     let text_y = y + (STATUS_BAR_HEIGHT - FONT_SIZE) * 0.5;
-    surface.draw_text(TextSection::simple(x, text_y, &acp_text, FONT_SIZE, acp_color));
+    surface.draw_text(TextSection::simple(
+      x, text_y, &acp_text, FONT_SIZE, acp_color,
+    ));
 
     acp_width + 8.0
   }
@@ -829,37 +871,51 @@ impl StatusLine {
     }
 
     let msg_color = match severity {
-      Severity::Error => editor
-        .theme
-        .get("error")
-        .fg
-        .map(theme_color_to_renderer_color)
-        .unwrap_or(Color::new(0.9, 0.3, 0.3, 1.0)),
-      Severity::Warning => editor
-        .theme
-        .get("warning")
-        .fg
-        .map(theme_color_to_renderer_color)
-        .unwrap_or(Color::new(0.9, 0.7, 0.3, 1.0)),
-      Severity::Info => editor
-        .theme
-        .get("info")
-        .fg
-        .map(theme_color_to_renderer_color)
-        .unwrap_or(Color::new(0.4, 0.7, 0.9, 1.0)),
-      Severity::Hint => editor
-        .theme
-        .get("hint")
-        .fg
-        .map(theme_color_to_renderer_color)
-        .unwrap_or(Color::new(0.5, 0.5, 0.5, 1.0)),
+      Severity::Error => {
+        editor
+          .theme
+          .get("error")
+          .fg
+          .map(theme_color_to_renderer_color)
+          .unwrap_or(Color::new(0.9, 0.3, 0.3, 1.0))
+      },
+      Severity::Warning => {
+        editor
+          .theme
+          .get("warning")
+          .fg
+          .map(theme_color_to_renderer_color)
+          .unwrap_or(Color::new(0.9, 0.7, 0.3, 1.0))
+      },
+      Severity::Info => {
+        editor
+          .theme
+          .get("info")
+          .fg
+          .map(theme_color_to_renderer_color)
+          .unwrap_or(Color::new(0.4, 0.7, 0.9, 1.0))
+      },
+      Severity::Hint => {
+        editor
+          .theme
+          .get("hint")
+          .fg
+          .map(theme_color_to_renderer_color)
+          .unwrap_or(Color::new(0.5, 0.5, 0.5, 1.0))
+      },
     };
 
     let animated_color = Color::new(msg_color.r, msg_color.g, msg_color.b, msg_color.a * eased);
 
     let anim_x = x + self.status_msg_slide_x;
     let text_y = y + (STATUS_BAR_HEIGHT - FONT_SIZE) * 0.5;
-    surface.draw_text(TextSection::simple(anim_x, text_y, status_msg.as_ref(), FONT_SIZE, animated_color));
+    surface.draw_text(TextSection::simple(
+      anim_x,
+      text_y,
+      status_msg.as_ref(),
+      FONT_SIZE,
+      animated_color,
+    ));
 
     measure_text(status_msg.as_ref())
   }
@@ -903,8 +959,11 @@ impl Component for StatusLine {
 
     // Update horizontal slide animation
     const PROMPT_WIDTH_PERCENT: f32 = 0.25;
-    let target_offset =
-      if self.should_slide { surface.width() as f32 * PROMPT_WIDTH_PERCENT + 16.0 } else { 0.0 };
+    let target_offset = if self.should_slide {
+      surface.width() as f32 * PROMPT_WIDTH_PERCENT + 16.0
+    } else {
+      0.0
+    };
 
     const SLIDE_SPEED: f32 = 0.15;
     if self.slide_anim_t < 1.0 {
@@ -950,18 +1009,36 @@ impl Component for StatusLine {
       };
 
       // Render left section
-      let left_elements =
-        self.render_section(&statusline_config.left, &cx.editor, doc, view_ref, statusline_config, focused);
+      let left_elements = self.render_section(
+        &statusline_config.left,
+        &cx.editor,
+        doc,
+        view_ref,
+        statusline_config,
+        focused,
+      );
       let left_width = Self::section_width(&left_elements);
 
       // Render right section
-      let right_elements =
-        self.render_section(&statusline_config.right, &cx.editor, doc, view_ref, statusline_config, focused);
+      let right_elements = self.render_section(
+        &statusline_config.right,
+        &cx.editor,
+        doc,
+        view_ref,
+        statusline_config,
+        focused,
+      );
       let right_width = Self::section_width(&right_elements);
 
       // Render center section
-      let center_elements =
-        self.render_section(&statusline_config.center, &cx.editor, doc, view_ref, statusline_config, focused);
+      let center_elements = self.render_section(
+        &statusline_config.center,
+        &cx.editor,
+        doc,
+        view_ref,
+        statusline_config,
+        focused,
+      );
       let center_width = Self::section_width(&center_elements);
 
       // Calculate positions using Helix's layout algorithm
@@ -984,7 +1061,14 @@ impl Component for StatusLine {
         let left_boundary = left_x + left_width + SECTION_SPACING;
         let right_boundary = right_x - SECTION_SPACING;
         if center_x >= left_boundary && center_x + center_width <= right_boundary {
-          Self::draw_elements(surface, &center_elements, center_x, bar_y, text_color, theme);
+          Self::draw_elements(
+            surface,
+            &center_elements,
+            center_x,
+            bar_y,
+            text_color,
+            theme,
+          );
         }
       }
     });

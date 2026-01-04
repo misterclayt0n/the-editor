@@ -178,3 +178,49 @@ the user and ask for further feedback and clarifications.
 
 The user is a domain expert and will be able to not only assist, but to also suggest
 and think about the proper solutions in these cases.
+
+## JUJUTSU POLICY
+
+This project uses Jujutsu (jj) for version control. Commits should be made frequently
+to track progress through each phase of work. Never push to upstream - focus on local
+commits only.
+
+### Commit Format
+```
+<context>: <commit message>
+```
+
+Examples:
+- `renderer: optimize text cache`
+- `editor: fix theme transition at startup`
+- `animation: mark complete when start equals target`
+
+Keep messages simple and lowercase. No periods at the end.
+
+### Key Commands
+```bash
+jj log      # View commit history
+jj status   # Check current changes
+jj new      # Create a new commit
+jj describe # Set/update commit message
+```
+
+### Workflow
+1. Make changes for a logical unit of work
+2. Run `jj status` to review changes
+3. Run `jj new` to create a commit
+4. Run `jj describe -m "context: message"` to set the commit message
+5. Repeat for each phase of work
+
+### WARNING
+NEVER COMMIT CODE THAT DOES NOT COMPILE. EVER. ALWAYS RUN:
+
+```sh
+cargo check
+```
+
+TO SEE IF THINGS WORK BEFORE COMMITING.
+
+### Rebasing Policy
+**Always ask before performing a rebase.** Never merge - rebase is the default strategy.
+If a rebase is needed, explain why and get explicit approval first.

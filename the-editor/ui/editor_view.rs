@@ -775,7 +775,6 @@ impl Component for EditorView {
     // popup animations
     if self.dirty_region.needs_redraw() {
       crate::profile_message!("editor_view: dirty_region");
-      log::trace!("editor_view.should_update: dirty_region");
       return true;
     }
     if self
@@ -784,27 +783,22 @@ impl Component for EditorView {
       .is_some_and(|anim| !anim.is_complete())
     {
       crate::profile_message!("editor_view: cursor_animation");
-      log::trace!("editor_view.should_update: cursor_animation");
       return true;
     }
     if self.zoom_anim_active {
       crate::profile_message!("editor_view: zoom_anim");
-      log::trace!("editor_view.should_update: zoom_anim");
       return true;
     }
     if self.selection_pulse_animating {
       crate::profile_message!("editor_view: selection_pulse");
-      log::trace!("editor_view.should_update: selection_pulse");
       return true;
     }
     if self.noop_effect_animating {
       crate::profile_message!("editor_view: noop_effect");
-      log::trace!("editor_view.should_update: noop_effect");
       return true;
     }
     if self.completion.as_ref().is_some_and(|c| c.is_animating()) {
       crate::profile_message!("editor_view: completion");
-      log::trace!("editor_view.should_update: completion");
       return true;
     }
     if self
@@ -813,57 +807,46 @@ impl Component for EditorView {
       .is_some_and(|s| s.is_animating())
     {
       crate::profile_message!("editor_view: signature_help");
-      log::trace!("editor_view.should_update: signature_help");
       return true;
     }
     if self.dragging_separator.is_some() {
       crate::profile_message!("editor_view: dragging_separator");
-      log::trace!("editor_view.should_update: dragging_separator");
       return true;
     }
     if self.explorer.as_ref().is_some_and(|e| e.is_animating()) {
       crate::profile_message!("editor_view: explorer");
-      log::trace!("editor_view.should_update: explorer");
       return true;
     }
     if self.indent_guides_anim_active {
       crate::profile_message!("editor_view: indent_guides");
-      log::trace!("editor_view.should_update: indent_guides");
       return true;
     }
     if self.diagnostic_glow_anim_active {
       crate::profile_message!("editor_view: diagnostic_glow");
-      log::trace!("editor_view.should_update: diagnostic_glow");
       return true;
     }
     if self.eol_diagnostic_anim_active {
       crate::profile_message!("editor_view: eol_diagnostic");
-      log::trace!("editor_view.should_update: eol_diagnostic");
       return true;
     }
     if self.underline_anim_active {
       crate::profile_message!("editor_view: underline");
-      log::trace!("editor_view.should_update: underline");
       return true;
     }
     if self.inline_diagnostic_anim_active {
       crate::profile_message!("editor_view: inline_diagnostic");
-      log::trace!("editor_view.should_update: inline_diagnostic");
       return true;
     }
     if bufferline::needs_animation_update(&self.tab_animation_states, &self.add_button_state) {
       crate::profile_message!("editor_view: bufferline");
-      log::trace!("editor_view.should_update: bufferline");
       return true;
     }
     if (self.bufferline_scroll_offset - self.bufferline_scroll_target).abs() > 0.5 {
       crate::profile_message!("editor_view: bufferline_scroll");
-      log::trace!("editor_view.should_update: bufferline_scroll");
       return true;
     }
     if self.bufferline_alive_t > 0.01 && self.bufferline_alive_t < 0.99 {
       crate::profile_message!("editor_view: bufferline_alive");
-      log::trace!("editor_view.should_update: bufferline_alive");
       return true;
     }
     false
@@ -2443,10 +2426,15 @@ impl Component for EditorView {
             BASE_OPACITY
           };
 
-          let current = self
-            .indent_guide_opacities
-            .entry(level)
-            .or_insert(BASE_OPACITY);
+          // Initialize to target on first access to avoid startup animation
+          let is_new = !self.indent_guide_opacities.contains_key(&level);
+          let current = self.indent_guide_opacities.entry(level).or_insert(target); // Initialize to target, not BASE_OPACITY
+
+          if is_new {
+            // Just initialized - no animation needed
+            continue;
+          }
+
           let delta = target - *current;
 
           // Check if still animating before updating

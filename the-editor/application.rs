@@ -684,28 +684,24 @@ impl Application for App {
     // First check editor needs_redraw.
     if self.editor.needs_redraw {
       crate::profile_message!("redraw: editor.needs_redraw");
-      log::trace!("wants_redraw: editor.needs_redraw");
       return true;
     }
 
     // Keep redrawing while a theme transition is active.
     if self.editor.is_theme_transitioning() {
       crate::profile_message!("redraw: theme_transitioning");
-      log::trace!("wants_redraw: theme_transitioning");
       return true;
     }
 
     // Keep redrawing while split animations are active.
     if self.editor.tree.has_active_animations() {
       crate::profile_message!("redraw: tree_animations");
-      log::trace!("wants_redraw: tree_animations");
       return true;
     }
 
     // Keep redrawing while any LSP is loading (for breathing animation).
     if self.editor.lsp_progress.has_active_progress() {
       crate::profile_message!("redraw: lsp_progress");
-      log::trace!("wants_redraw: lsp_progress");
       return true;
     }
 
@@ -717,7 +713,6 @@ impl Application for App {
       .map_or(false, |r| r.is_streaming)
     {
       crate::profile_message!("redraw: acp_streaming");
-      log::trace!("wants_redraw: acp_streaming");
       return true;
     }
 
@@ -727,7 +722,6 @@ impl Application for App {
       && (self.pending_scroll_lines.abs() > 0.1 || self.pending_scroll_cols.abs() > 0.1)
     {
       crate::profile_message!("redraw: scroll_animation");
-      log::trace!("wants_redraw: scroll_animation");
       return true;
     }
 
@@ -742,20 +736,18 @@ impl Application for App {
           .is_some_and(|doc| doc.has_active_scroll_animation(view.id))
         {
           crate::profile_message!("redraw: view_scroll_animation");
-          log::trace!("wants_redraw: view_scroll_animation");
           return true;
         }
       }
     }
 
     // Then check if any component needs updates.
-    for (i, layer) in self.compositor.layers.iter().enumerate() {
+    for layer in self.compositor.layers.iter() {
       // Check if it's a button with active animation.
       if let Some(button) = layer.as_any().downcast_ref::<Button>()
         && button.should_update()
       {
         crate::profile_message!("redraw: button_animation");
-        log::trace!("wants_redraw: button[{}]", i);
         return true;
       }
 
@@ -764,7 +756,6 @@ impl Application for App {
         // Log which layer index requested update for debugging
         crate::profile_plot!("redraw_layer_idx", i);
         crate::profile_message!("redraw: component_should_update");
-        log::trace!("wants_redraw: layer[{}].should_update", i);
         return true;
       }
     }

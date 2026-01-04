@@ -13,7 +13,6 @@ use nucleo::{
     Normalization,
   },
 };
-use ropey::Rope;
 use the_editor_lsp_types::types as lsp;
 use the_editor_renderer::{
   Color,
@@ -21,7 +20,6 @@ use the_editor_renderer::{
   TextSegment,
   TextStyle,
 };
-use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
   core::{
@@ -51,6 +49,7 @@ use crate::{
   ui::{
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
+    components::markdown::Markdown,
     compositor::{
       Component,
       Context,
@@ -82,60 +81,6 @@ struct CompletionApplyPlan {
   trigger_signature_help: bool,
 }
 
-fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
-  let mut lines = Vec::new();
-  let mut current_line = String::new();
-  let mut current_width = 0;
-
-  for word in text.split_whitespace() {
-    let word_len = word.len();
-
-    // Break long tokens that exceed the available width
-    if word_len > max_width {
-      if !current_line.is_empty() {
-        lines.push(std::mem::take(&mut current_line));
-        current_width = 0;
-      }
-
-      let mut chunk = String::new();
-      for ch in word.chars() {
-        if chunk.chars().count() >= max_width {
-          lines.push(std::mem::take(&mut chunk));
-        }
-        chunk.push(ch);
-      }
-      if !chunk.is_empty() {
-        current_line = chunk;
-        current_width = current_line.chars().count();
-      }
-      continue;
-    }
-
-    if current_width + word_len + (current_width != 0) as usize > max_width
-      && !current_line.is_empty()
-    {
-      // Start new line
-      lines.push(std::mem::take(&mut current_line));
-      current_line = word.to_string();
-      current_width = word_len;
-    } else {
-      // Add to current line
-      if !current_line.is_empty() {
-        current_line.push(' ');
-        current_width += 1;
-      }
-      current_line.push_str(word);
-      current_width += word_len;
-    }
-  }
-
-  if !current_line.is_empty() {
-    lines.push(current_line);
-  }
-
-  lines
-}
-
 fn truncate_to_width(text: &str, max_width: f32, char_width: f32) -> String {
   if max_width <= 0.0 {
     return String::new();
@@ -147,7 +92,6 @@ fn truncate_to_width(text: &str, max_width: f32, char_width: f32) -> String {
     return String::new();
   }
 
-  let mut chars = text.chars();
   let count = text.chars().count();
   if count <= max_chars {
     return text.to_string();
@@ -157,292 +101,9 @@ fn truncate_to_width(text: &str, max_width: f32, char_width: f32) -> String {
     return "…".to_string();
   }
 
-  let mut truncated = String::with_capacity(max_chars);
-  for _ in 0..(max_chars - 1) {
-    if let Some(ch) = chars.next() {
-      truncated.push(ch);
-    } else {
-      break;
-    }
-  }
+  let mut truncated: String = text.chars().take(max_chars - 1).collect();
   truncated.push('…');
   truncated
-}
-
-fn build_completion_doc_lines(
-  markdown: &str,
-  max_chars: usize,
-  ctx: &mut Context,
-  base_text_color: Color,
-) -> Vec<Vec<TextSegment>> {
-  let mut render_lines: Vec<Vec<TextSegment>> = Vec::new();
-  let mut in_fence = false;
-  let mut fence_lang: Option<String> = None;
-  let mut fence_buf: Vec<String> = Vec::new();
-  let max_chars = max_chars.max(4);
-
-  for raw_line in markdown.lines() {
-    if raw_line.starts_with("```") {
-      if in_fence {
-        let code = fence_buf.join("\n");
-        render_lines.extend(highlight_completion_code_block_lines(
-          fence_lang.as_deref(),
-          &code,
-          max_chars,
-          ctx,
-        ));
-        render_lines.push(empty_doc_line(base_text_color));
-        in_fence = false;
-        fence_lang = None;
-        fence_buf.clear();
-      } else {
-        in_fence = true;
-        let lang = raw_line.trim_start_matches("```").trim();
-        fence_lang = if lang.is_empty() {
-          None
-        } else {
-          Some(lang.to_string())
-        };
-      }
-      continue;
-    }
-
-    if in_fence {
-      fence_buf.push(raw_line.to_string());
-      continue;
-    }
-
-    if raw_line.trim().is_empty() {
-      render_lines.push(empty_doc_line(base_text_color));
-      continue;
-    }
-
-    let wrapped_lines = wrap_text(raw_line, max_chars);
-    if wrapped_lines.is_empty() {
-      render_lines.push(empty_doc_line(base_text_color));
-    } else {
-      for line in wrapped_lines {
-        render_lines.push(vec![TextSegment {
-          content: line,
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
-            color: base_text_color,
-          },
-        }]);
-      }
-    }
-  }
-
-  if in_fence {
-    let code = fence_buf.join("\n");
-    render_lines.extend(highlight_completion_code_block_lines(
-      fence_lang.as_deref(),
-      &code,
-      max_chars,
-      ctx,
-    ));
-  }
-
-  if render_lines.is_empty() {
-    render_lines.push(empty_doc_line(base_text_color));
-  }
-
-  render_lines
-}
-
-fn highlight_completion_code_block_lines(
-  lang_hint: Option<&str>,
-  code: &str,
-  max_chars: usize,
-  ctx: &mut Context,
-) -> Vec<Vec<TextSegment>> {
-  let theme = &ctx.editor.theme;
-  let code_style = theme.get("markup.raw");
-  let default_code_color = code_style
-    .fg
-    .map(crate::ui::theme_color_to_renderer_color)
-    .unwrap_or(Color::new(0.8, 0.8, 0.8, 1.0));
-
-  let rope = Rope::from(code);
-  let slice = rope.slice(..);
-
-  let loader = ctx.editor.syn_loader.load();
-  let language = lang_hint
-    .and_then(|name| loader.language_for_name(name.to_string()))
-    .or_else(|| loader.language_for_match(slice));
-
-  let spans = language
-    .and_then(|lang| crate::core::syntax::Syntax::new(slice, lang, &loader).ok())
-    .map(|syntax| syntax.collect_highlights(slice, &loader, 0..slice.len_bytes()))
-    .unwrap_or_else(Vec::new);
-
-  let mut lines: Vec<Vec<TextSegment>> = Vec::new();
-  let total_lines = rope.len_lines();
-
-  let mut char_spans: Vec<(usize, usize, Color)> = Vec::with_capacity(spans.len());
-  for (hl, byte_range) in spans.into_iter() {
-    let style = theme.highlight(hl);
-    let color = style
-      .fg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(default_code_color);
-    let start_char = slice.byte_to_char(slice.floor_char_boundary(byte_range.start));
-    let end_char = slice.byte_to_char(slice.ceil_char_boundary(byte_range.end));
-    if start_char < end_char {
-      char_spans.push((start_char, end_char, color));
-    }
-  }
-  char_spans.sort_by_key(|(s, _e, _)| *s);
-
-  for line_idx in 0..total_lines {
-    let line_slice = rope.line(line_idx);
-    let mut line_string = line_slice.to_string();
-    if line_string.ends_with('\n') {
-      line_string.pop();
-    }
-
-    let wrapped_line_strings = wrap_text(&line_string, max_chars);
-    if wrapped_line_strings.is_empty() {
-      lines.push(vec![TextSegment {
-        content: String::new(),
-        style:   TextStyle {
-          size:  UI_FONT_SIZE,
-          color: default_code_color,
-        },
-      }]);
-      continue;
-    }
-
-    for wrapped_line in wrapped_line_strings {
-      if wrapped_line.is_empty() {
-        lines.push(vec![TextSegment {
-          content: String::new(),
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
-            color: default_code_color,
-          },
-        }]);
-        continue;
-      }
-
-      let wrapped_rope = Rope::from(wrapped_line.as_str());
-      let wrapped_slice = wrapped_rope.slice(..);
-
-      let wrapped_spans = language
-        .and_then(|lang| crate::core::syntax::Syntax::new(wrapped_slice, lang, &loader).ok())
-        .map(|syntax| {
-          syntax.collect_highlights(wrapped_slice, &loader, 0..wrapped_slice.len_bytes())
-        })
-        .unwrap_or_else(Vec::new);
-
-      let mut wrapped_char_spans: Vec<(usize, usize, Color)> =
-        Vec::with_capacity(wrapped_spans.len());
-      for (hl, byte_range) in wrapped_spans.into_iter() {
-        let style = theme.highlight(hl);
-        let color = style
-          .fg
-          .map(crate::ui::theme_color_to_renderer_color)
-          .unwrap_or(default_code_color);
-        let start_char =
-          wrapped_slice.byte_to_char(wrapped_slice.floor_char_boundary(byte_range.start));
-        let end_char = wrapped_slice.byte_to_char(wrapped_slice.ceil_char_boundary(byte_range.end));
-        if start_char < end_char {
-          wrapped_char_spans.push((start_char, end_char, color));
-        }
-      }
-      wrapped_char_spans.sort_by_key(|(s, _e, _)| *s);
-
-      let mut segments: Vec<TextSegment> = Vec::new();
-      let mut cursor = 0usize;
-      let wrapped_line_chars = wrapped_line.chars().count();
-
-      for (s, e, color) in wrapped_char_spans.iter().cloned() {
-        if e <= cursor || s >= wrapped_line_chars {
-          continue;
-        }
-        let seg_start = s.max(cursor);
-        let seg_end = e.min(wrapped_line_chars);
-
-        if seg_start > cursor {
-          let prefix = slice_chars_to_string(&wrapped_line, cursor, seg_start);
-          if !prefix.is_empty() {
-            segments.push(TextSegment {
-              content: prefix,
-              style:   TextStyle {
-                size:  UI_FONT_SIZE,
-                color: default_code_color,
-              },
-            });
-          }
-        }
-
-        let content = slice_chars_to_string(&wrapped_line, seg_start, seg_end);
-        if !content.is_empty() {
-          segments.push(TextSegment {
-            content,
-            style: TextStyle {
-              size: UI_FONT_SIZE,
-              color,
-            },
-          });
-        }
-        cursor = seg_end;
-      }
-
-      if cursor < wrapped_line_chars {
-        let tail = slice_chars_to_string(&wrapped_line, cursor, wrapped_line_chars);
-        if !tail.is_empty() {
-          segments.push(TextSegment {
-            content: tail,
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
-              color: default_code_color,
-            },
-          });
-        }
-      }
-
-      if segments.is_empty() {
-        segments.push(TextSegment {
-          content: wrapped_line,
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
-            color: default_code_color,
-          },
-        });
-      }
-
-      lines.push(segments);
-    }
-  }
-
-  lines
-}
-
-fn slice_chars_to_string(s: &str, start: usize, end: usize) -> String {
-  if start >= end {
-    return String::new();
-  }
-  let mut buf = String::with_capacity(end.saturating_sub(start));
-  for (i, ch) in s.chars().enumerate() {
-    if i >= end {
-      break;
-    }
-    if i >= start {
-      buf.push(ch);
-    }
-  }
-  buf
-}
-
-fn empty_doc_line(color: Color) -> Vec<TextSegment> {
-  vec![TextSegment {
-    content: String::new(),
-    style:   TextStyle {
-      size: UI_FONT_SIZE,
-      color,
-    },
-  }]
 }
 
 /// Completion popup component
@@ -752,6 +413,28 @@ impl Completion {
       return;
     }
 
+    // Get current document's language for syntax highlighting the detail
+    let (_view, current_doc) = crate::current!(ctx.editor);
+    let language = current_doc.language_name().unwrap_or("");
+
+    // Combine detail and doc like Helix does:
+    // - detail gets wrapped in a code block with the current language
+    // - doc is appended as-is (it's already markdown from the LSP)
+    let markdown_content = match (detail, doc) {
+      (Some(detail), Some(doc)) => format!("```{}\n{}\n```\n{}", language, detail, doc),
+      (Some(detail), None) => format!("```{}\n{}\n```", language, detail),
+      (None, Some(doc)) => doc.to_string(),
+      (None, None) => return,
+    };
+
+    // Create Markdown renderer and parse content
+    let md = Markdown::new(markdown_content, ctx.editor.syn_loader.clone());
+    let line_groups = md.parse(Some(&ctx.editor.theme));
+
+    if line_groups.is_empty() {
+      return;
+    }
+
     // Get window dimensions
     let window_width = surface.width() as f32;
     let window_height = surface.height() as f32;
@@ -760,47 +443,54 @@ impl Completion {
     const MIN_DOC_WIDTH: f32 = 200.0;
     const MAX_DOC_WIDTH: f32 = 500.0;
     const MIN_DOC_HEIGHT: f32 = 100.0;
+    const MAX_DOC_HEIGHT: f32 = 400.0;
     const DOC_PADDING: f32 = 8.0;
+    const SPACING: f32 = 8.0;
+
+    // Calculate content size for dynamic sizing
+    let max_chars_available =
+      ((MAX_DOC_WIDTH - DOC_PADDING * 2.0) / ui_char_width).floor() as usize;
+    let (content_width_chars, content_height_lines) = md.required_size(max_chars_available);
+    let font_size = UI_FONT_SIZE;
+    let line_height = ui_line_height.max(font_size + 4.0);
+
+    // Calculate ideal dimensions based on content
+    let ideal_width = (content_width_chars as f32 * ui_char_width + DOC_PADDING * 2.0)
+      .max(MIN_DOC_WIDTH)
+      .min(MAX_DOC_WIDTH);
+    let ideal_height = (content_height_lines as f32 * line_height + DOC_PADDING * 2.0)
+      .max(MIN_DOC_HEIGHT)
+      .min(MAX_DOC_HEIGHT);
 
     // Calculate available space on each side
     let space_on_right = window_width - (completion_x + completion_width);
     let space_on_left = completion_x;
     let space_below = window_height - (completion_y + completion_height);
 
-    const SPACING: f32 = 8.0;
-
     // Determine best placement and calculate dimensions
     let (doc_x, doc_y, doc_width, doc_height) = if space_on_right >= MIN_DOC_WIDTH + SPACING {
-      // Position to the right - available space is from completion edge to window
-      // edge
+      // Position to the right
       let available_width = space_on_right - SPACING;
-      let doc_width = available_width.min(MAX_DOC_WIDTH);
+      let doc_width = ideal_width.min(available_width);
       let doc_x = completion_x + completion_width + SPACING;
       let doc_y = completion_y;
-      let doc_height = completion_height
-        .max(MIN_DOC_HEIGHT)
-        .min(window_height - doc_y);
+      let doc_height = ideal_height.min(window_height - doc_y);
       (doc_x, doc_y, doc_width, doc_height)
     } else if space_on_left >= MIN_DOC_WIDTH + SPACING {
       // Position to the left
       let available_width = space_on_left - SPACING;
-      let doc_width = available_width.min(MAX_DOC_WIDTH);
+      let doc_width = ideal_width.min(available_width);
       let doc_x = completion_x - doc_width - SPACING;
       let doc_y = completion_y;
-      let doc_height = completion_height
-        .max(MIN_DOC_HEIGHT)
-        .min(window_height - doc_y);
+      let doc_height = ideal_height.min(window_height - doc_y);
       (doc_x, doc_y, doc_width, doc_height)
     } else if space_below >= MIN_DOC_HEIGHT + SPACING {
       // Position below completion
       let doc_x = completion_x;
       let doc_y = completion_y + completion_height + SPACING;
-      let doc_width = completion_width
-        .max(MIN_DOC_WIDTH)
-        .min(MAX_DOC_WIDTH)
-        .min(window_width - doc_x);
+      let doc_width = ideal_width.min(window_width - doc_x);
       let available_height = space_below - SPACING;
-      let doc_height = available_height.min(MIN_DOC_HEIGHT * 2.0);
+      let doc_height = ideal_height.min(available_height);
       (doc_x, doc_y, doc_width, doc_height)
     } else {
       // Not enough space anywhere, don't render
@@ -818,30 +508,21 @@ impl Completion {
       return;
     }
 
-    // Get theme colors (same as completion popup)
+    // Get theme colors
     let theme = &ctx.editor.theme;
     let bg_style = theme.get("ui.popup");
-    let text_style = theme.get("ui.text");
 
-    // Background should be opaque (don't apply animation alpha to background)
     let bg_color = bg_style
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.12, 0.12, 0.15, 1.0));
-
-    // Apply animation alpha only to text
-    let text_color = text_style
-      .fg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
-    let base_text_color = text_color;
 
     surface.with_overlay_region(doc_x, doc_y, doc_width, doc_height, |surface| {
       // Draw background
       let corner_radius = 6.0;
       surface.draw_rounded_rect(doc_x, doc_y, doc_width, doc_height, corner_radius, bg_color);
 
-      // Draw border (keep it opaque)
+      // Draw border
       let border_color = Color::new(0.3, 0.3, 0.35, 0.8);
       surface.draw_rounded_rect_stroke(
         doc_x,
@@ -855,36 +536,10 @@ impl Completion {
 
       // Render documentation content
       let mut y_offset = doc_y + DOC_PADDING;
-      let font_size = UI_FONT_SIZE;
-      let line_height = ui_line_height.max(font_size + 4.0);
-      let max_chars_per_line = ((doc_width - DOC_PADDING * 2.0) / ui_char_width)
-        .floor()
-        .max(4.0) as usize;
-      let mut line_groups: Vec<Vec<TextSegment>> = Vec::new();
-
-      if let Some(detail_text) = detail {
-        let detail_color = Color::new(0.7, 0.8, 0.9, 1.0);
-        let mut detail_lines =
-          build_completion_doc_lines(detail_text, max_chars_per_line, ctx, detail_color);
-        line_groups.append(&mut detail_lines);
-        if doc.is_some() {
-          line_groups.push(empty_doc_line(detail_color));
-        }
-      }
-
-      if let Some(doc_text) = doc {
-        let mut doc_lines =
-          build_completion_doc_lines(doc_text, max_chars_per_line, ctx, base_text_color);
-        line_groups.append(&mut doc_lines);
-      }
-
-      if line_groups.is_empty() {
-        line_groups.push(empty_doc_line(base_text_color));
-      }
-
       let max_lines_by_height = ((doc_height - DOC_PADDING * 2.0) / line_height)
         .floor()
         .max(0.0) as usize;
+
       if max_lines_by_height == 0 {
         return;
       }

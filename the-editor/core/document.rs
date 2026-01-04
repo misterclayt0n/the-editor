@@ -92,11 +92,11 @@ use crate::{
     syntax::{
       self,
       Syntax,
-      generate_edits,
       config::{
         LanguageConfiguration,
         LanguageServerFeature,
       },
+      generate_edits,
     },
     text_annotations::{
       InlineAnnotation,
@@ -276,6 +276,8 @@ pub struct Document {
   wrap_indicator_override:            Option<String>,
   /// Whether this document is a special buffer (for UI rendering decisions)
   pub special_buffer:                 Option<SpecialBufferMetadata>,
+  /// Per-document font size override (for per-buffer zoom)
+  pub font_size_override:             Option<f32>,
 }
 
 /// Inlay hints for a single `(Document, View)` combo.
@@ -752,6 +754,7 @@ impl Document {
       soft_wrap_override: None,
       wrap_indicator_override: None,
       special_buffer: None,
+      font_size_override: None,
     }
   }
 
@@ -1288,7 +1291,8 @@ impl Document {
 
   /// Reload the document without a specific view context.
   /// Used when no view is currently displaying this document (e.g., auto-reload
-  /// while terminal is focused). Uses an existing view's selection for the transaction.
+  /// while terminal is focused). Uses an existing view's selection for the
+  /// transaction.
   pub fn reload_headless(&mut self, provider_registry: &DiffProviderRegistry) -> Result<(), Error> {
     let encoding = self.encoding;
     let path = match self.path() {
@@ -1687,13 +1691,13 @@ impl Document {
     //
     // We always use async parsing because:
     // 1. The tree-sitter parser timeout only affects parse(), not query execution
-    // 2. run_injection_query() and run_local_query() are the slow parts and have
-    //    no timeout support
+    // 2. run_injection_query() and run_local_query() are the slow parts and have no
+    //    timeout support
     // 3. Trying sync-then-async doesn't work when queries bypass the timeout
     //
     // Approach:
-    // 1. Interpolation (fast, ~100µs): Apply `tree.edit()` to all layer trees
-    //    for immediate display with correct byte offsets
+    // 1. Interpolation (fast, ~100µs): Apply `tree.edit()` to all layer trees for
+    //    immediate display with correct byte offsets
     // 2. Background parse: Clone syntax and run full update on background thread
     if let Some(syntax) = &mut self.syntax {
       let edits = generate_edits(old_doc.slice(..), transaction.changes());
@@ -2392,8 +2396,8 @@ impl Document {
   pub fn selection(&self, view_id: ViewId) -> &Selection {
     self.selections.get(&view_id).unwrap_or_else(|| {
       panic!(
-        "selection() called for view {:?} which has no selection - \
-         ensure_view_init() was likely not called",
+        "selection() called for view {:?} which has no selection - ensure_view_init() was likely \
+         not called",
         view_id
       )
     })

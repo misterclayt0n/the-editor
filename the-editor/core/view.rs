@@ -11,7 +11,6 @@ use std::{
 };
 
 use ropey::RopeSlice;
-
 use the_terminal::TerminalId;
 
 use crate::{
@@ -187,11 +186,11 @@ pub struct ViewPosition {
 #[derive(Debug, Clone, Copy)]
 pub struct ScrollAnimation {
   /// Target vertical offset in lines (fractional for sub-line precision)
-  pub target_vertical:   f32,
+  pub target_vertical:    f32,
   /// Current animated vertical offset in lines
-  pub current_vertical:  f32,
+  pub current_vertical:   f32,
   /// Target horizontal offset in columns
-  pub target_horizontal: f32,
+  pub target_horizontal:  f32,
   /// Current animated horizontal offset in columns
   pub current_horizontal: f32,
 }
@@ -426,10 +425,10 @@ impl ViewContent {
 
 #[derive(Clone)]
 pub struct View {
-  pub id:      ViewId,
-  pub area:    Rect,
+  pub id:                  ViewId,
+  pub area:                Rect,
   /// The content displayed by this view - either a document or terminal.
-  pub content: ViewContent,
+  pub content:             ViewContent,
   pub jumps:               JumpList,
   pub docs_access_history: Vec<DocumentId>,
 
@@ -454,6 +453,9 @@ pub struct View {
   pub rendered_gutter_width:      Option<u16>,
   /// Whether inline diagnostics should be rendered for this view.
   pub inline_diagnostics_enabled: bool,
+  /// Per-view font size override. Falls back to editor global override, then
+  /// config default.
+  pub font_size_override:         Option<f32>,
 }
 
 impl fmt::Debug for View {
@@ -482,6 +484,7 @@ impl View {
       zoom_anim: 1.0, // Start fully loaded for existing views
       rendered_gutter_width: None,
       inline_diagnostics_enabled: true,
+      font_size_override: None,
     }
   }
 
@@ -502,6 +505,7 @@ impl View {
       zoom_anim: 1.0,
       rendered_gutter_width: None,
       inline_diagnostics_enabled: false, // Terminals don't have diagnostics
+      font_size_override: None,
     }
   }
 
@@ -515,7 +519,10 @@ impl View {
   /// Get the document ID, panicking if this is not a document view.
   /// Use this only when you're certain the view is a document view.
   pub fn doc_id(&self) -> DocumentId {
-    self.content.document().expect("View is not a document view")
+    self
+      .content
+      .document()
+      .expect("View is not a document view")
   }
 
   /// Get the terminal ID if this is a terminal view.
@@ -533,7 +540,8 @@ impl View {
     self.content.is_terminal()
   }
 
-  /// Set the document for this view, converting it to a document view if needed.
+  /// Set the document for this view, converting it to a document view if
+  /// needed.
   pub fn set_doc(&mut self, doc_id: DocumentId) {
     self.content = ViewContent::Document(doc_id);
   }

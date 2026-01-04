@@ -2153,12 +2153,13 @@ fn push_file_picker_with_root(cx: &mut Context, root: std::path::PathBuf) {
 
   cx.callback.push(Box::new(move |compositor, _cx| {
     let selection_for_picker = Arc::clone(&selection);
-    let picker = crate::ui::file_picker(root.clone(), move |path: &PathBuf, action: PickerAction| {
-      *selection_for_picker.lock().unwrap() = Some(FileSelection {
-        path: path.clone(),
-        action,
+    let picker =
+      crate::ui::file_picker(root.clone(), move |path: &PathBuf, action: PickerAction| {
+        *selection_for_picker.lock().unwrap() = Some(FileSelection {
+          path: path.clone(),
+          action,
+        });
       });
-    });
 
     struct PickerWrapper {
       picker:    crate::ui::components::Picker<PathBuf, crate::ui::FilePickerData>,
@@ -5273,30 +5274,71 @@ pub fn toggle_statusline(cx: &mut Context) {
 }
 
 pub fn increase_font_size(cx: &mut Context) {
-  let new_size = (cx
-    .editor
-    .font_size_override
-    .unwrap_or(cx.editor.config().font_size)
-    + 2.0)
-    .min(72.0);
-  cx.editor.font_size_override = Some(new_size);
-  cx.editor.set_status(format!("Font size: {}", new_size));
+  let per_buffer = cx.editor.config().per_buffer_font_size;
+  let default_font_size = cx.editor.config().font_size;
+  let editor_override = cx.editor.font_size_override;
+
+  log::debug!(
+    "increase_font_size: per_buffer={}, default={}, editor_override={:?}",
+    per_buffer,
+    default_font_size,
+    editor_override
+  );
+
+  if per_buffer {
+    let (_, doc) = current!(cx.editor);
+    let current_size = doc
+      .font_size_override
+      .or(editor_override)
+      .unwrap_or(default_font_size);
+    let new_size = (current_size + 2.0).min(72.0);
+    log::debug!(
+      "Per-buffer mode: current={}, new={}",
+      current_size,
+      new_size
+    );
+    doc.font_size_override = Some(new_size);
+    cx.editor.set_status(format!("Font size: {}", new_size));
+  } else {
+    let new_size = (editor_override.unwrap_or(default_font_size) + 2.0).min(72.0);
+    log::debug!("Global mode: new={}", new_size);
+    cx.editor.font_size_override = Some(new_size);
+    cx.editor.set_status(format!("Font size: {}", new_size));
+  }
 }
 
 pub fn decrease_font_size(cx: &mut Context) {
-  let new_size = (cx
-    .editor
-    .font_size_override
-    .unwrap_or(cx.editor.config().font_size)
-    - 2.0)
-    .max(8.0);
-  cx.editor.font_size_override = Some(new_size);
-  cx.editor.set_status(format!("Font size: {}", new_size));
+  let per_buffer = cx.editor.config().per_buffer_font_size;
+  let default_font_size = cx.editor.config().font_size;
+  let editor_override = cx.editor.font_size_override;
+
+  if per_buffer {
+    let (_, doc) = current!(cx.editor);
+    let current_size = doc
+      .font_size_override
+      .or(editor_override)
+      .unwrap_or(default_font_size);
+    let new_size = (current_size - 2.0).max(8.0);
+    doc.font_size_override = Some(new_size);
+    cx.editor.set_status(format!("Font size: {}", new_size));
+  } else {
+    let new_size = (editor_override.unwrap_or(default_font_size) - 2.0).max(8.0);
+    cx.editor.font_size_override = Some(new_size);
+    cx.editor.set_status(format!("Font size: {}", new_size));
+  }
 }
 
 pub fn default_font_size(cx: &mut Context) {
   let default_size = cx.editor.config().font_size;
-  cx.editor.font_size_override = Some(default_size);
+  let per_buffer = cx.editor.config().per_buffer_font_size;
+
+  if per_buffer {
+    let (_, doc) = current!(cx.editor);
+    doc.font_size_override = None;
+  } else {
+    cx.editor.font_size_override = Some(default_size);
+  }
+
   cx.editor
     .set_status(format!("Fallback to default font size: {}", default_size));
 }
@@ -5674,11 +5716,11 @@ fn goto_buffer(editor: &mut Editor, direction: Direction, count: usize) {
     (Some(idx), Direction::Forward) => {
       let new_idx = (idx + count) % items.len();
       Some(items[new_idx])
-    }
+    },
     (Some(idx), Direction::Backward) => {
       let new_idx = (idx + items.len() - (count % items.len())) % items.len();
       Some(items[new_idx])
-    }
+    },
     // Current item not in list (e.g., hidden terminal) - go to first/last
     (None, Direction::Forward) => items.first().copied(),
     (None, Direction::Backward) => items.last().copied(),
@@ -8459,22 +8501,22 @@ pub fn shell_command(cx: &mut Context) {
           match cx.editor.send_to_shell_terminal(&command) {
             Ok(_) => {
               cx.editor.set_status(format!("$ {}", command));
-            }
+            },
             Err(err) => {
               cx.editor.set_error(err.to_string());
-            }
+            },
           }
 
           // Clear custom mode string on validation
           cx.editor.clear_custom_mode_str();
-        }
+        },
         PromptEvent::Abort => {
           // Clear custom mode string on abort
           cx.editor.clear_custom_mode_str();
-        }
+        },
         PromptEvent::Update => {
           // Do nothing during updates
-        }
+        },
       }
     });
 
@@ -8511,10 +8553,10 @@ pub fn repeat_last_shell(cx: &mut Context) {
     match cx.editor.send_to_shell_terminal(&command) {
       Ok(_) => {
         cx.editor.set_status(format!("$ {}", command));
-      }
+      },
       Err(err) => {
         cx.editor.set_error(err.to_string());
-      }
+      },
     }
   } else {
     cx.editor
@@ -8544,12 +8586,12 @@ pub fn cmd_shell_spawn(
     Ok(_) => {
       cx.editor.set_status(format!("$ {command}"));
       Ok(())
-    }
+    },
     Err(err) => {
       let message = err.to_string();
       cx.editor.set_error(message);
       Err(err)
-    }
+    },
   }
 }
 
@@ -8694,7 +8736,7 @@ pub fn update_fade_ranges(cx: &mut Context) {
   }
 
   let (view, doc) = current!(cx.editor);
- 
+
   if let Some(syntax) = doc.syntax() {
     eprintln!("[FADE DEBUG] Syntax available, computing ranges");
     let text = doc.text().slice(..);
@@ -9268,6 +9310,6 @@ pub fn acp_stop(cx: &mut Context) {
   cx.editor.acp = None;
 
   // Clear response state
-  cx.editor.acp_response = None; 
+  cx.editor.acp_response = None;
   cx.editor.set_status("ACP agent stopped");
 }

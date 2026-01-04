@@ -1157,7 +1157,8 @@ impl Component for EditorView {
             // Update scroll target (animated toward in render)
             self.bufferline_scroll_target =
               (self.bufferline_scroll_target + scroll_px).clamp(0.0, self.bufferline_max_scroll);
-            // Mark that user manually scrolled - disables auto-scroll until active tab changes
+            // Mark that user manually scrolled - disables auto-scroll until active tab
+            // changes
             self.bufferline_user_scrolled = true;
             self.dirty_region.mark_all_dirty();
             request_redraw();
@@ -1222,10 +1223,32 @@ impl Component for EditorView {
     const SEPARATOR_WIDTH_PX: f32 = 2.0;
     const SEPARATOR_HEIGHT_PX: f32 = 2.0;
 
-    let font_size = cx
-      .editor
-      .font_size_override
-      .unwrap_or(cx.editor.config().font_size);
+    // Get font size with fallback chain based on config
+    let per_buffer_enabled = cx.editor.config().per_buffer_font_size;
+    let font_size = if per_buffer_enabled {
+      // Per-buffer mode: document override -> editor override -> config default
+      let doc_override = cx
+        .editor
+        .tree
+        .try_get(cx.editor.tree.focus)
+        .and_then(|view| view.doc())
+        .and_then(|doc_id| cx.editor.documents.get(&doc_id))
+        .and_then(|doc| doc.font_size_override);
+      let size = doc_override
+        .or(cx.editor.font_size_override)
+        .unwrap_or(cx.editor.config().font_size);
+      log::trace!(
+        "Per-buffer font size: doc_override={:?}, final={}",
+        doc_override,
+        size
+      );
+      size
+    } else {
+      // Global mode: editor override -> config default
+      cx.editor
+        .font_size_override
+        .unwrap_or(cx.editor.config().font_size)
+    };
     let font_family = renderer.current_font_family().to_string();
     renderer.configure_font(&font_family, font_size);
     let font_width = renderer.cell_width().max(1.0);
@@ -1492,13 +1515,15 @@ impl Component for EditorView {
       self.add_button_rect = result.add_button_rect;
       self.bufferline_max_scroll = result.max_scroll;
 
-      // Check if active tab changed - if so, reset user scroll flag and allow auto-scroll
+      // Check if active tab changed - if so, reset user scroll flag and allow
+      // auto-scroll
       if result.active_tab_index != self.bufferline_last_active_idx {
         self.bufferline_user_scrolled = false;
         self.bufferline_last_active_idx = result.active_tab_index;
       }
 
-      // Auto-scroll to ensure active tab is visible (only when user hasn't manually scrolled)
+      // Auto-scroll to ensure active tab is visible (only when user hasn't manually
+      // scrolled)
       if !self.bufferline_user_scrolled {
         if let Some(active_idx) = result.active_tab_index {
           if let Some(tab) = self.buffer_tabs.get(active_idx) {
@@ -2387,7 +2412,11 @@ impl Component for EditorView {
 
         // Animate existing entries toward their targets
         for (line, current) in self.diagnostic_glow_opacities.iter_mut() {
-          let target = if diagnostic_lines.contains(line) { 1.0 } else { 0.0 };
+          let target = if diagnostic_lines.contains(line) {
+            1.0
+          } else {
+            0.0
+          };
           let delta = target - *current;
           if delta.abs() > 0.01 {
             glow_animating = true;
@@ -3897,11 +3926,13 @@ impl EditorView {
       if callbacks.is_empty() {
         return Some(EventResult::Consumed(None));
       } else {
-        return Some(EventResult::Consumed(Some(Box::new(move |compositor, cx| {
-          for callback in callbacks {
-            callback(compositor, cx);
-          }
-        }))));
+        return Some(EventResult::Consumed(Some(Box::new(
+          move |compositor, cx| {
+            for callback in callbacks {
+              callback(compositor, cx);
+            }
+          },
+        ))));
       }
     }
 
@@ -4897,7 +4928,8 @@ impl EditorView {
         if explorer.is_opened() {
           if in_explorer_area {
             // Calculate visual row from mouse Y position
-            // Header height matches bufferline: (base_cell_height + 10.0).max(UI_FONT_SIZE + 16.0)
+            // Header height matches bufferline: (base_cell_height + 10.0).max(UI_FONT_SIZE
+            // + 16.0)
             let base_cell_height = self.cached_cell_height.max(crate::ui::UI_FONT_SIZE + 4.0);
             let header_height = (base_cell_height + 10.0).max(crate::ui::UI_FONT_SIZE + 16.0) + 1.0; // +1 for separator
             // Item height matches tree.rs: line_height (UI_FONT_SIZE) + item_padding_y
@@ -4992,7 +5024,7 @@ impl EditorView {
           crate::editor::FileTreePosition::Left => mouse.position.0 >= self.explorer_px_width,
           crate::editor::FileTreePosition::Right => {
             mouse.position.0 < viewport_px_width - self.explorer_px_width
-          }
+          },
         }
       } else {
         true // No explorer, full width is bufferline

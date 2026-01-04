@@ -326,14 +326,14 @@ pub struct Editor {
   scratch_counter:      u32,
 
   /// Terminal instances.
-  pub terminals:         BTreeMap<TerminalId, Terminal>,
-  pub next_terminal_id:  TerminalId,
+  pub terminals:        BTreeMap<TerminalId, Terminal>,
+  pub next_terminal_id: TerminalId,
   /// Channel for receiving terminal events (title changes, exits, etc.)
-  terminal_event_rx:     Option<UnboundedReceiver<TerminalEvent>>,
+  terminal_event_rx:    Option<UnboundedReceiver<TerminalEvent>>,
   /// Sender cloned and given to each terminal for event dispatch.
-  terminal_event_tx:     UnboundedSender<TerminalEvent>,
+  terminal_event_tx:    UnboundedSender<TerminalEvent>,
   /// The dedicated terminal for shell commands (@, #).
-  shell_terminal_id:     Option<TerminalId>,
+  shell_terminal_id:    Option<TerminalId>,
 
   /// Quick slots for Alt+0-9 view bindings.
   pub quick_slots: crate::core::quick_slots::QuickSlots,
@@ -710,172 +710,175 @@ where
 pub struct EditorConfig {
   /// Padding to keep between the edge of the screen and the cursor when
   /// scrolling. Defaults to 5.
-  pub scrolloff:                 usize,
+  pub scrolloff:                                usize,
   /// Number of lines to scroll at once. Defaults to 3
-  pub scroll_lines:              isize,
+  pub scroll_lines:                             isize,
   /// Mouse support. Defaults to true.
-  pub mouse:                     bool,
+  pub mouse:                                    bool,
   /// Shell to use for shell commands. Defaults to ["cmd", "/C"] on Windows and
   /// ["sh", "-c"] otherwise.
-  pub shell:                     Vec<String>,
+  pub shell:                                    Vec<String>,
   /// Line number mode.
-  pub line_number:               LineNumber,
+  pub line_number:                              LineNumber,
   /// Highlight the lines cursors are currently on. Defaults to false.
-  pub cursorline:                bool,
+  pub cursorline:                               bool,
   /// Highlight the columns cursors are currently on. Defaults to false.
-  pub cursorcolumn:              bool,
+  pub cursorcolumn:                             bool,
   #[serde(deserialize_with = "deserialize_gutter_seq_or_struct")]
-  pub gutters:                   GutterConfig,
+  pub gutters:                                  GutterConfig,
   /// Middle click paste support. Defaults to true.
-  pub middle_click_paste:        bool,
+  pub middle_click_paste:                       bool,
   /// Automatic insertion of pairs to parentheses, brackets,
   /// etc. Optionally, this can be a list of 2-tuples to specify a
   /// global list of characters to pair. Defaults to true.
-  pub auto_pairs:                AutoPairConfig,
+  pub auto_pairs:                               AutoPairConfig,
   /// Automatic auto-completion, automatically pop up without user trigger.
   /// Defaults to true.
-  pub auto_completion:           bool,
+  pub auto_completion:                          bool,
   /// Enable filepath completion.
   /// Show files and directories if an existing path at the cursor was
   /// recognized, either absolute or relative to the current opened document
   /// or current working directory (if the buffer is not yet saved).
   /// Defaults to true.
-  pub path_completion:           bool,
+  pub path_completion:                          bool,
   /// Configures completion of words from open buffers.
   /// Defaults to enabled with a trigger length of 7.
-  pub word_completion:           WordCompletion,
+  pub word_completion:                          WordCompletion,
   /// Automatic formatting on save. Defaults to true.
-  pub auto_format:               bool,
+  pub auto_format:                              bool,
   /// Default register used for yank/paste. Defaults to '"'
-  pub default_yank_register:     char,
+  pub default_yank_register:                    char,
   /// Automatic save on focus lost and/or after delay.
   /// Time delay in milliseconds since last edit after which auto save timer
   /// triggers. Time delay defaults to false with 3000ms delay. Focus lost
   /// defaults to false.
   #[serde(deserialize_with = "deserialize_auto_save")]
-  pub auto_save:                 AutoSave,
+  pub auto_save:                                AutoSave,
   /// Set a global text_width
-  pub text_width:                usize,
+  pub text_width:                               usize,
   /// Time in milliseconds since last keypress before idle timers trigger.
   /// Used for various UI timeouts. Defaults to 250ms.
   #[serde(
     serialize_with = "serialize_duration_millis",
     deserialize_with = "deserialize_duration_millis"
   )]
-  pub idle_timeout:              Duration,
+  pub idle_timeout:                             Duration,
   /// Time in milliseconds after typing a word character before auto completions
   /// are shown, set to 5 for instant. Defaults to 250ms.
   #[serde(
     serialize_with = "serialize_duration_millis",
     deserialize_with = "deserialize_duration_millis"
   )]
-  pub completion_timeout:        Duration,
+  pub completion_timeout:                       Duration,
   /// Whether to insert the completion suggestion on hover. Defaults to true.
-  pub preview_completion_insert: bool,
-  pub completion_trigger_len:    u8,
+  pub preview_completion_insert:                bool,
+  pub completion_trigger_len:                   u8,
   /// Whether to instruct the LSP to replace the entire word when applying a
   /// completion or to only insert new text
-  pub completion_replace:        bool,
+  pub completion_replace:                       bool,
   /// `true` if helix should automatically add a line comment token if you're
   /// currently in a comment and press `enter`.
-  pub continue_comments:         bool,
+  pub continue_comments:                        bool,
   /// Whether to display infoboxes. Defaults to true.
-  pub auto_info:                 bool,
-  pub file_picker:               FilePickerConfig,
+  pub auto_info:                                bool,
+  pub file_picker:                              FilePickerConfig,
   /// Configuration of the statusline elements
-  pub statusline:                StatusLineConfig,
+  pub statusline:                               StatusLineConfig,
   /// Shape for cursor in each mode
-  pub cursor_shape:              CursorShapeConfig,
+  pub cursor_shape:                             CursorShapeConfig,
   /// Set to `true` to override automatic detection of truecolor support.
-  pub true_color:                bool,
+  pub true_color:                               bool,
   /// Set to `true` to override automatic detection of undercurl support.
-  pub undercurl:                 bool,
+  pub undercurl:                                bool,
   /// Search configuration.
   #[serde(default)]
-  pub search:                    SearchConfig,
-  pub lsp:                       LspConfig,
+  pub search:                                   SearchConfig,
+  pub lsp:                                      LspConfig,
   /// Column numbers at which to draw the rulers. Defaults to `[]`, meaning no
   /// rulers.
-  pub rulers:                    Vec<u16>,
+  pub rulers:                                   Vec<u16>,
   #[serde(default)]
-  pub whitespace:                WhitespaceConfig,
+  pub whitespace:                               WhitespaceConfig,
   /// Persistently display open buffers along the top
-  pub bufferline:                BufferLine,
+  pub bufferline:                               BufferLine,
   /// Vertical indent width guides.
-  pub indent_guides:             IndentGuidesConfig,
+  pub indent_guides:                            IndentGuidesConfig,
   /// Whether to color modes with different colors. Defaults to `false`.
-  pub color_modes:               bool,
-  pub soft_wrap:                 SoftWrap,
+  pub color_modes:                              bool,
+  pub soft_wrap:                                SoftWrap,
   // Smooth scrolling animation
-  pub smooth_scroll_enabled:     bool,
-  pub scroll_lerp_factor:        f32,
-  pub scroll_min_step_lines:     f32,
-  pub scroll_min_step_cols:      f32,
+  pub smooth_scroll_enabled:                    bool,
+  pub scroll_lerp_factor:                       f32,
+  pub scroll_min_step_lines:                    f32,
+  pub scroll_min_step_cols:                     f32,
   // Cursor animation
-  pub cursor_anim_enabled:       bool,
-  pub cursor_lerp_factor:        f32,
+  pub cursor_anim_enabled:                      bool,
+  pub cursor_lerp_factor:                       f32,
   // Status message animation
-  pub status_msg_anim_enabled:   bool,
+  pub status_msg_anim_enabled:                  bool,
   /// Workspace specific lsp ceiling dirs
-  pub workspace_lsp_roots:       Vec<PathBuf>,
+  pub workspace_lsp_roots:                      Vec<PathBuf>,
   /// Which line ending to choose for new documents. Defaults to `native`. i.e.
   /// `crlf` on Windows, otherwise `lf`.
-  pub default_line_ending:       LineEndingConfig,
+  pub default_line_ending:                      LineEndingConfig,
   /// Whether to automatically insert a trailing line-ending on write if
   /// missing. Defaults to `true`.
-  pub insert_final_newline:      bool,
+  pub insert_final_newline:                     bool,
   /// Whether to use atomic operations to write documents to disk.
   /// This prevents data loss if the editor is interrupted while writing the
   /// file, but may confuse some file watching/hot reloading programs.
   /// Defaults to `true`.
-  pub atomic_save:               bool,
+  pub atomic_save:                              bool,
   /// Whether to automatically remove all trailing line-endings after the final
   /// one on write. Defaults to `false`.
-  pub trim_final_newlines:       bool,
+  pub trim_final_newlines:                      bool,
   /// Whether to automatically remove all whitespace characters preceding
   /// line-endings on write. Defaults to `false`.
-  pub trim_trailing_whitespace:  bool,
+  pub trim_trailing_whitespace:                 bool,
   /// Enables smart tab
-  pub smart_tab:                 Option<SmartTabConfig>,
+  pub smart_tab:                                Option<SmartTabConfig>,
   /// Draw border around popups.
-  pub popup_border:              PopupBorderConfig,
+  pub popup_border:                             PopupBorderConfig,
   /// Which indent heuristic to use when a new line is inserted
   #[serde(default)]
-  pub indent_heuristic:          IndentationHeuristic,
+  pub indent_heuristic:                         IndentationHeuristic,
   /// labels characters used in jumpmode
   #[serde(
     serialize_with = "serialize_alphabet",
     deserialize_with = "deserialize_alphabet"
   )]
-  pub jump_label_alphabet:       Vec<char>,
+  pub jump_label_alphabet:                      Vec<char>,
   /// Display diagnostic below the line they occur.
-  pub inline_diagnostics:                      InlineDiagnosticsConfig,
-  pub end_of_line_diagnostics:                 DiagnosticFilter,
+  pub inline_diagnostics:                       InlineDiagnosticsConfig,
+  pub end_of_line_diagnostics:                  DiagnosticFilter,
   /// Only show end-of-line diagnostics on the cursor line. Defaults to `false`.
   pub end_of_line_diagnostics_cursor_line_only: bool,
   // Set to override the default clipboard provider
-  pub clipboard_provider:        ClipboardProvider,
+  pub clipboard_provider:                       ClipboardProvider,
   /// Whether to read settings from [EditorConfig](https://editorconfig.org) files. Defaults to
   /// `true`.
-  pub editor_config:             bool,
+  pub editor_config:                            bool,
   /// Whether to render rainbow colors for matching brackets. Defaults to
   /// `false`.
-  pub rainbow_brackets:          bool,
+  pub rainbow_brackets:                         bool,
   /// Font size for the editor buffer. Defaults to 22.0.
-  pub font_size:                 f32,
+  pub font_size:                                f32,
+  /// Enable per-buffer font sizes (each view can have independent zoom level).
+  /// Defaults to false.
+  pub per_buffer_font_size:                     bool,
   /// Whether to show window decorations (title bar, borders). Defaults to
   /// `true`.
-  pub window_decorations:        bool,
+  pub window_decorations:                       bool,
   /// Whether to enable smooth theme transitions. Defaults to `true`.
-  pub theme_transition_enabled:  bool,
+  pub theme_transition_enabled:                 bool,
   /// Theme transition speed (lerp factor, 0.0-1.0). Defaults to 0.15.
-  pub theme_transition_speed:    f32,
+  pub theme_transition_speed:                   f32,
   /// File watcher config.
-  pub file_watcher:              file_watcher::Config,
+  pub file_watcher:                             file_watcher::Config,
   /// Auto reload config.
-  pub auto_reload:               AutoReloadConfig,
+  pub auto_reload:                              AutoReloadConfig,
   /// File tree (explorer) configuration.
-  pub file_tree:                 FileTreeConfig,
+  pub file_tree:                                FileTreeConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
@@ -1807,81 +1810,82 @@ impl Default for WordCompletion {
 impl Default for EditorConfig {
   fn default() -> Self {
     Self {
-      scrolloff:                 5,
-      scroll_lines:              3,
-      mouse:                     true,
-      shell:                     if cfg!(windows) {
+      scrolloff:                                5,
+      scroll_lines:                             3,
+      mouse:                                    true,
+      shell:                                    if cfg!(windows) {
         vec!["cmd".to_owned(), "/C".to_owned()]
       } else {
         vec!["sh".to_owned(), "-c".to_owned()]
       },
-      line_number:               LineNumber::Absolute,
-      cursorline:                false,
-      cursorcolumn:              false,
-      gutters:                   GutterConfig::default(),
-      middle_click_paste:        true,
-      auto_pairs:                AutoPairConfig::default(),
-      auto_completion:           true,
-      path_completion:           true,
-      word_completion:           WordCompletion::default(),
-      auto_format:               true,
-      default_yank_register:     '"',
-      auto_save:                 AutoSave::default(),
-      idle_timeout:              Duration::from_millis(250),
-      completion_timeout:        Duration::from_millis(250),
-      preview_completion_insert: true,
-      completion_trigger_len:    2,
-      auto_info:                 true,
-      file_picker:               FilePickerConfig::default(),
-      statusline:                StatusLineConfig::default(),
-      cursor_shape:              CursorShapeConfig::default(),
-      true_color:                true,
-      undercurl:                 false,
-      search:                    SearchConfig::default(),
-      lsp:                       LspConfig::default(),
-      rulers:                    Vec::new(),
-      whitespace:                WhitespaceConfig::default(),
-      bufferline:                BufferLine::default(),
-      indent_guides:             IndentGuidesConfig::default(),
-      color_modes:               false,
-      soft_wrap:                 SoftWrap {
+      line_number:                              LineNumber::Absolute,
+      cursorline:                               false,
+      cursorcolumn:                             false,
+      gutters:                                  GutterConfig::default(),
+      middle_click_paste:                       true,
+      auto_pairs:                               AutoPairConfig::default(),
+      auto_completion:                          true,
+      path_completion:                          true,
+      word_completion:                          WordCompletion::default(),
+      auto_format:                              true,
+      default_yank_register:                    '"',
+      auto_save:                                AutoSave::default(),
+      idle_timeout:                             Duration::from_millis(250),
+      completion_timeout:                       Duration::from_millis(250),
+      preview_completion_insert:                true,
+      completion_trigger_len:                   2,
+      auto_info:                                true,
+      file_picker:                              FilePickerConfig::default(),
+      statusline:                               StatusLineConfig::default(),
+      cursor_shape:                             CursorShapeConfig::default(),
+      true_color:                               true,
+      undercurl:                                false,
+      search:                                   SearchConfig::default(),
+      lsp:                                      LspConfig::default(),
+      rulers:                                   Vec::new(),
+      whitespace:                               WhitespaceConfig::default(),
+      bufferline:                               BufferLine::default(),
+      indent_guides:                            IndentGuidesConfig::default(),
+      color_modes:                              false,
+      soft_wrap:                                SoftWrap {
         enable: Some(false),
         ..SoftWrap::default()
       },
-      text_width:                80,
-      completion_replace:        false,
-      continue_comments:         true,
-      workspace_lsp_roots:       Vec::new(),
-      default_line_ending:       LineEndingConfig::default(),
-      insert_final_newline:      true,
-      atomic_save:               true,
-      trim_final_newlines:       false,
-      trim_trailing_whitespace:  false,
-      smart_tab:                 Some(SmartTabConfig::default()),
-      popup_border:              PopupBorderConfig::None,
-      indent_heuristic:          IndentationHeuristic::default(),
-      jump_label_alphabet:       ('a'..='z').collect(),
+      text_width:                               80,
+      completion_replace:                       false,
+      continue_comments:                        true,
+      workspace_lsp_roots:                      Vec::new(),
+      default_line_ending:                      LineEndingConfig::default(),
+      insert_final_newline:                     true,
+      atomic_save:                              true,
+      trim_final_newlines:                      false,
+      trim_trailing_whitespace:                 false,
+      smart_tab:                                Some(SmartTabConfig::default()),
+      popup_border:                             PopupBorderConfig::None,
+      indent_heuristic:                         IndentationHeuristic::default(),
+      jump_label_alphabet:                      ('a'..='z').collect(),
       inline_diagnostics:                       InlineDiagnosticsConfig::default(),
       end_of_line_diagnostics:                  DiagnosticFilter::Enable(Severity::Hint),
       end_of_line_diagnostics_cursor_line_only: false,
       clipboard_provider:                       ClipboardProvider::default(),
-      editor_config:             true,
-      rainbow_brackets:          false,
+      editor_config:                            true,
+      rainbow_brackets:                         false,
       // Animations defaults
-      smooth_scroll_enabled:     true,
-      scroll_lerp_factor:        0.25,
-      scroll_min_step_lines:     0.75,
-      scroll_min_step_cols:      1.0,
-      cursor_anim_enabled:       true,
-      cursor_lerp_factor:        0.25,
-      status_msg_anim_enabled:   true,
-      font_size:                 22.0,
-      window_decorations:        true,
-      theme_transition_enabled:  true,
-      theme_transition_speed:    0.15,
-      file_watcher:              file_watcher::Config::default(),
-      auto_reload:               AutoReloadConfig::default(),
-      file_tree:                 FileTreeConfig::default(),
+      smooth_scroll_enabled:                    true,
+      scroll_lerp_factor:                       0.25,
+      scroll_min_step_lines:                    0.75,
+      scroll_min_step_cols:                     1.0,
+      cursor_anim_enabled:                      true,
+      cursor_lerp_factor:                       0.25,
+      status_msg_anim_enabled:                  true,
+      font_size:                                22.0,
+      per_buffer_font_size:                     false,
+      window_decorations:                       true,
+      theme_transition_enabled:                 true,
+      theme_transition_speed:                   0.15,
+      file_watcher:                             file_watcher::Config::default(),
+      auto_reload:                              AutoReloadConfig::default(),
+      file_tree:                                FileTreeConfig::default(),
     }
   }
 }
@@ -2110,10 +2114,18 @@ impl Editor {
       ..Default::default()
     };
 
-    // Spawn the terminal with default cell dimensions (will be updated on first resize)
-    // Default cell size: 12x24 pixels (typical monospace font dimensions)
-    let terminal =
-      Terminal::spawn(id, cols, rows, 12, 24, config, self.terminal_event_tx.clone())?;
+    // Spawn the terminal with default cell dimensions (will be updated on first
+    // resize) Default cell size: 12x24 pixels (typical monospace font
+    // dimensions)
+    let terminal = Terminal::spawn(
+      id,
+      cols,
+      rows,
+      12,
+      24,
+      config,
+      self.terminal_event_tx.clone(),
+    )?;
 
     // Store terminal
     self.terminals.insert(id, terminal);
@@ -2153,7 +2165,8 @@ impl Editor {
     self.ensure_view_exists();
   }
 
-  /// Show a terminal in a view, optionally replacing the current view or splitting.
+  /// Show a terminal in a view, optionally replacing the current view or
+  /// splitting.
   pub fn show_terminal(&mut self, id: TerminalId, action: Action) {
     // Mark terminal as visible
     if let Some(term) = self.terminals.get_mut(&id) {
@@ -2167,24 +2180,25 @@ impl Editor {
         // Replace the current view's content with the terminal
         let view = self.tree.get_mut(self.tree.focus);
         view.set_terminal(id);
-      }
+      },
       Action::HorizontalSplit => {
         let gutters = self.config().gutters.clone();
         let view = View::new_terminal(id, gutters);
         let view_id = self.tree.split(view, tree::Layout::Horizontal);
         self.focus(view_id);
-      }
+      },
       Action::VerticalSplit => {
         let gutters = self.config().gutters.clone();
         let view = View::new_terminal(id, gutters);
         let view_id = self.tree.split(view, tree::Layout::Vertical);
         self.focus(view_id);
-      }
+      },
     }
   }
 
   /// Destroy a terminal completely (kill process and remove from registry).
-  /// Use `hide_terminal` if you want to keep the terminal alive but close the view.
+  /// Use `hide_terminal` if you want to keep the terminal alive but close the
+  /// view.
   pub fn destroy_terminal(&mut self, id: TerminalId) {
     // Remove terminal (Drop impl will signal PTY shutdown)
     self.terminals.remove(&id);
@@ -2234,8 +2248,8 @@ impl Editor {
   // --- Shell Terminal Methods ---
 
   /// Get or create the dedicated shell terminal for shell commands (@, #).
-  /// If the terminal exists and is alive, returns it. If it exited, respawns it.
-  /// If it doesn't exist, creates a new one in a horizontal split.
+  /// If the terminal exists and is alive, returns it. If it exited, respawns
+  /// it. If it doesn't exist, creates a new one in a horizontal split.
   pub fn get_or_create_shell_terminal(&mut self) -> anyhow::Result<TerminalId> {
     // Check if we have an existing shell terminal that is still alive
     if let Some(id) = self.shell_terminal_id {
@@ -2303,7 +2317,10 @@ impl Editor {
       return Err("Slot must be 0-9");
     }
 
-    let view = self.tree.try_get(self.tree.focus).ok_or("No focused view")?;
+    let view = self
+      .tree
+      .try_get(self.tree.focus)
+      .ok_or("No focused view")?;
 
     let content = match view.content {
       crate::core::view::ViewContent::Document(doc_id) => SlotContent::Document(doc_id),
@@ -2316,16 +2333,13 @@ impl Editor {
     // Check if this is the only view (full-screen mode)
     let was_only_view = self.tree.views().count() == 1;
 
-    self.quick_slots.set(
-      slot,
-      QuickSlot {
-        content,
-        position: None, // Position captured when hiding
-        visible: true,
-        was_only_view,
-        previous_content: None,
-      },
-    );
+    self.quick_slots.set(slot, QuickSlot {
+      content,
+      position: None, // Position captured when hiding
+      visible: true,
+      was_only_view,
+      previous_content: None,
+    });
 
     self.set_status(format!("Bound to slot {}", slot));
     Ok(())
@@ -2402,8 +2416,12 @@ impl Editor {
 
     // Handle full-screen mode: switch to a different buffer instead of closing
     if was_only_view {
-      // Try to restore to the previous content that was displayed before showing this slot
-      let previous_content = self.quick_slots.get(slot).and_then(|qs| qs.previous_content);
+      // Try to restore to the previous content that was displayed before showing this
+      // slot
+      let previous_content = self
+        .quick_slots
+        .get(slot)
+        .and_then(|qs| qs.previous_content);
 
       if let Some(prev_content) = previous_content {
         // Restore to the previous content
@@ -2440,7 +2458,7 @@ impl Editor {
           self.set_error("Document was closed");
           return;
         }
-      }
+      },
       SlotContent::Terminal(term_id) => {
         if !self.terminals.contains_key(term_id) {
           // Terminal was destroyed, unbind the slot
@@ -2448,7 +2466,7 @@ impl Editor {
           self.set_error("Terminal was destroyed");
           return;
         }
-      }
+      },
     }
 
     // If was only view (full-screen mode), replace current content instead of split
@@ -2499,21 +2517,26 @@ impl Editor {
     use crate::core::quick_slots::SlotContent;
 
     match content {
-      SlotContent::Document(doc_id) => self
-        .tree
-        .views()
-        .find(|(view, _)| view.doc() == Some(*doc_id))
-        .map(|(view, _)| view.id),
-      SlotContent::Terminal(term_id) => self
-        .tree
-        .views()
-        .find(|(view, _)| view.terminal() == Some(*term_id))
-        .map(|(view, _)| view.id),
+      SlotContent::Document(doc_id) => {
+        self
+          .tree
+          .views()
+          .find(|(view, _)| view.doc() == Some(*doc_id))
+          .map(|(view, _)| view.id)
+      },
+      SlotContent::Terminal(term_id) => {
+        self
+          .tree
+          .views()
+          .find(|(view, _)| view.terminal() == Some(*term_id))
+          .map(|(view, _)| view.id)
+      },
     }
   }
 
-  /// Find an alternate document to show when hiding a slotted view in full-screen mode.
-  /// Returns a different document if available, otherwise creates a scratch buffer.
+  /// Find an alternate document to show when hiding a slotted view in
+  /// full-screen mode. Returns a different document if available, otherwise
+  /// creates a scratch buffer.
   fn find_alternate_document(
     &mut self,
     hidden_content: &crate::core::quick_slots::SlotContent,
@@ -2570,11 +2593,11 @@ impl Editor {
         }
 
         view_id
-      }
+      },
       SlotContent::Terminal(term_id) => {
         let view = View::new_terminal(*term_id, self.config().gutters.clone());
         self.tree.split_with_size(view, layout, recipe.custom_size)
-      }
+      },
     };
 
     Some(view_id)
@@ -2591,11 +2614,11 @@ impl Editor {
       SlotContent::Document(doc_id) => {
         self.switch(*doc_id, Action::VerticalSplit, false);
         Some(self.tree.focus)
-      }
+      },
       SlotContent::Terminal(term_id) => {
         self.show_terminal(*term_id, Action::VerticalSplit);
         Some(self.tree.focus)
-      }
+      },
     }
   }
 
@@ -2610,11 +2633,11 @@ impl Editor {
       SlotContent::Document(doc_id) => {
         self.switch(*doc_id, Action::Replace, false);
         Some(self.tree.focus)
-      }
+      },
       SlotContent::Terminal(term_id) => {
         self.show_terminal(*term_id, Action::Replace);
         Some(self.tree.focus)
-      }
+      },
     }
   }
 
@@ -2648,10 +2671,18 @@ impl Editor {
     let cols = (area.width / 2).max(10);
     let rows = (area.height / 2).max(5);
 
-    // Spawn the terminal with default cell dimensions (will be updated on first resize)
-    // Default cell size: 12x24 pixels (typical monospace font dimensions)
-    let terminal =
-      Terminal::spawn(id, cols, rows, 12, 24, config, self.terminal_event_tx.clone())?;
+    // Spawn the terminal with default cell dimensions (will be updated on first
+    // resize) Default cell size: 12x24 pixels (typical monospace font
+    // dimensions)
+    let terminal = Terminal::spawn(
+      id,
+      cols,
+      rows,
+      12,
+      24,
+      config,
+      self.terminal_event_tx.clone(),
+    )?;
 
     // Store terminal
     self.terminals.insert(id, terminal);
@@ -2680,28 +2711,28 @@ impl Editor {
         TerminalEvent::Wakeup(_) => {
           // Terminal needs redraw
           self.needs_redraw = true;
-        }
+        },
         TerminalEvent::Title { id, title } => {
           if let Some(terminal) = self.terminals.get_mut(&id) {
             terminal.set_title(title);
           }
-        }
+        },
         TerminalEvent::Exit { id, status } => {
           if let Some(terminal) = self.terminals.get_mut(&id) {
             terminal.mark_exited(status);
           }
           // Optionally auto-close the terminal view
           // self.close_terminal(id);
-        }
+        },
         TerminalEvent::Bell(_) => {
           // Could trigger a visual bell effect
-        }
+        },
         TerminalEvent::ClipboardStore { content, .. } => {
           // Copy to system clipboard via the '+' register
           if let Err(e) = self.registers.write('+', vec![content]) {
             log::warn!("Failed to write to clipboard: {}", e);
           }
-        }
+        },
         TerminalEvent::ClipboardLoad { id } => {
           // Paste from clipboard to terminal via the '+' register
           if let Some(contents) = self.registers.read('+', self) {
@@ -2710,8 +2741,8 @@ impl Editor {
               terminal.write_str(&text);
             }
           }
-        }
-        _ => {}
+        },
+        _ => {},
       }
     }
   }
@@ -3427,7 +3458,10 @@ impl Editor {
         return;
       },
       Action::HorizontalSplit | Action::VerticalSplit => {
-        let focus_lost = self.tree.try_get(self.tree.focus).and_then(|view| view.doc());
+        let focus_lost = self
+          .tree
+          .try_get(self.tree.focus)
+          .and_then(|view| view.doc());
         // copy the current view, unless there is no view yet
         let view = self
                     .tree
@@ -3595,7 +3629,8 @@ impl Editor {
   }
 
   pub fn close(&mut self, id: ViewId) {
-    // Start the close animation - selections will be cleaned up when animation completes
+    // Start the close animation - selections will be cleaned up when animation
+    // completes
     self.tree.start_close(id);
     self._refresh();
   }
@@ -3611,14 +3646,16 @@ impl Editor {
   }
 
   /// Ensure at least one view exists in the tree.
-  /// If no views exist, creates a new view with an existing document or a new scratch buffer.
-  /// This prevents crashes when all views are closed (e.g., when closing the last terminal).
+  /// If no views exist, creates a new view with an existing document or a new
+  /// scratch buffer. This prevents crashes when all views are closed (e.g.,
+  /// when closing the last terminal).
   fn ensure_view_exists(&mut self) {
     if self.tree.views().next().is_some() {
       return;
     }
 
-    // No views left - create a new one with an existing document or a new scratch buffer
+    // No views left - create a new one with an existing document or a new scratch
+    // buffer
     let doc_id = self
       .documents
       .iter()
@@ -3784,7 +3821,9 @@ impl Editor {
 
         // Update jumplist selections with new document changes.
         for (view, _focused) in self.tree.views_mut() {
-          let Some(view_doc_id) = view.doc() else { continue };
+          let Some(view_doc_id) = view.doc() else {
+            continue;
+          };
           let doc = doc_mut!(self, &view_doc_id);
           view.sync_changes(doc);
         }
@@ -4209,7 +4248,9 @@ impl Editor {
   pub fn set_cwd(&mut self, path: &Path) -> std::io::Result<()> {
     self.last_cwd = the_editor_stdx::env::set_current_working_dir(path)?;
     self.clear_doc_relative_paths();
-    dispatch(crate::event::WorkingDirectoryDidChange { new_cwd: path.to_path_buf() });
+    dispatch(crate::event::WorkingDirectoryDidChange {
+      new_cwd: path.to_path_buf(),
+    });
     Ok(())
   }
 

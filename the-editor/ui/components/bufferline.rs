@@ -30,9 +30,9 @@ pub enum BufferKind {
 /// Hit testing regions for a single tab
 #[derive(Debug, Clone, Copy)]
 pub struct BufferTab {
-  pub kind:         BufferKind,
-  pub start_x:      f32,
-  pub end_x:        f32,
+  pub kind:          BufferKind,
+  pub start_x:       f32,
+  pub end_x:         f32,
   /// Close button hit region (only valid when tab is hovered)
   pub close_start_x: f32,
   pub close_end_x:   f32,
@@ -53,7 +53,8 @@ pub struct TabAnimationState {
   pub active_t:        f32,
   /// Alive state for close animation (1.0 = visible, 0.0 = closed)
   pub alive_t:         f32,
-  /// Flag indicating this tab is closing (triggers animation even at alive_t=1.0)
+  /// Flag indicating this tab is closing (triggers animation even at
+  /// alive_t=1.0)
   pub is_closing:      bool,
   /// Cached tab width for close animation (so we know width during fade-out)
   pub cached_width:    f32,
@@ -254,14 +255,17 @@ pub fn render(
 
   let base_cell_height = surface.cell_height().max(UI_FONT_SIZE + 4.0);
   let full_cell_height = (base_cell_height + 10.0).max(UI_FONT_SIZE + 16.0);
-  // For slide animation: visible_height is how much space the bufferline takes in layout
+  // For slide animation: visible_height is how much space the bufferline takes in
+  // layout
   let visible_height = full_cell_height * alive_t;
   let tab_height = (full_cell_height - 6.0).max(UI_FONT_SIZE + 8.0);
-  // Content slides up as alive_t decreases: alive_t=1 -> normal, alive_t=0 -> fully slid up
+  // Content slides up as alive_t decreases: alive_t=1 -> normal, alive_t=0 ->
+  // fully slid up
   let y_slide_offset = -full_cell_height * (1.0 - alive_t);
   let tab_top = origin_y + y_slide_offset + (full_cell_height - tab_height) * 0.5;
   let text_y = tab_top + (tab_height - UI_FONT_SIZE) * 0.5;
-  // cell_height is the visible space; we clip to this but render full-size content
+  // cell_height is the visible space; we clip to this but render full-size
+  // content
   let cell_height = visible_height;
 
   let theme = &editor.theme;
@@ -322,11 +326,23 @@ pub fn render(
   surface.push_scissor_rect(origin_x, origin_y, viewport_width, visible_height.max(0.0));
 
   // Draw background (full height for slide effect)
-  surface.draw_rect(origin_x, origin_y + y_slide_offset, viewport_width, full_cell_height, base_bg);
+  surface.draw_rect(
+    origin_x,
+    origin_y + y_slide_offset,
+    viewport_width,
+    full_cell_height,
+    base_bg,
+  );
 
   // Draw subtle separators
   let separator_color = base_bg.lerp(Color::WHITE, 0.05);
-  surface.draw_rect(origin_x, origin_y + y_slide_offset, viewport_width, 1.0, separator_color);
+  surface.draw_rect(
+    origin_x,
+    origin_y + y_slide_offset,
+    viewport_width,
+    1.0,
+    separator_color,
+  );
   surface.draw_rect(
     origin_x,
     origin_y + y_slide_offset + full_cell_height - 1.0,
@@ -408,7 +424,12 @@ pub fn render(
         item.title.clone()
       };
       let text_width = surface.measure_text(&display_text, UI_FONT_SIZE);
-      (text_padding + icon_size as f32 + icon_padding + text_width + text_close_gap + close_btn_width)
+      (text_padding
+        + icon_size as f32
+        + icon_padding
+        + text_width
+        + text_close_gap
+        + close_btn_width)
         .max(min_tab_width)
     })
     .collect();
@@ -428,12 +449,14 @@ pub fn render(
   // Find active tab index based on focused content
   let active_tab_index = tab_items.iter().position(|item| {
     match (item.kind, focused_content) {
-      (BufferKind::Document(doc_id), Some(crate::core::view::ViewContent::Document(focused_id))) => {
-        doc_id == focused_id
-      },
-      (BufferKind::Terminal(term_id), Some(crate::core::view::ViewContent::Terminal(focused_id))) => {
-        term_id == focused_id
-      },
+      (
+        BufferKind::Document(doc_id),
+        Some(crate::core::view::ViewContent::Document(focused_id)),
+      ) => doc_id == focused_id,
+      (
+        BufferKind::Terminal(term_id),
+        Some(crate::core::view::ViewContent::Terminal(focused_id)),
+      ) => term_id == focused_id,
       _ => false,
     }
   });
@@ -455,7 +478,15 @@ pub fn render(
 
     // Get or create animation state for this tab
     let anim = animation_states.entry(item.kind).or_default();
-    anim.update(dt, is_hovered, is_close_hovered, is_pressed, is_close_pressed, is_active, true);
+    anim.update(
+      dt,
+      is_hovered,
+      is_close_hovered,
+      is_pressed,
+      is_close_pressed,
+      is_active,
+      true,
+    );
 
     // Apply alive_t to width for open/close animation
     let base_width = tab_widths[tab_index];
@@ -470,11 +501,11 @@ pub fn render(
 
     // Store tab bounds for hit testing (use animated width)
     tabs.push(BufferTab {
-      kind: item.kind,
-      start_x: tab_start,
-      end_x: tab_end,
+      kind:          item.kind,
+      start_x:       tab_start,
+      end_x:         tab_end,
       close_start_x: tab_end - close_btn_width * anim.alive_t,
-      close_end_x: tab_end,
+      close_end_x:   tab_end,
     });
 
     // Skip rendering if tab is too small or completely outside visible area
@@ -499,12 +530,20 @@ pub fn render(
     let blend = anim.active_t.max(anim.hover_t);
     let text_color_base = inactive_text.lerp(active_text.lerp(Color::WHITE, 0.1), blend);
     let text_color = with_alpha(text_color_base, text_color_base.a * content_opacity);
-    let bg_alpha = (0.15 * anim.active_t + anim.hover_t * 0.12 * (1.0 - anim.active_t)) * content_opacity;
+    let bg_alpha =
+      (0.15 * anim.active_t + anim.hover_t * 0.12 * (1.0 - anim.active_t)) * content_opacity;
 
     // Draw tab background (subtle fill on hover/active) - use clipped dimensions
     if bg_alpha > 0.0 && clipped_width > 0.0 {
       let bg_color = with_alpha(active_accent, bg_alpha);
-      surface.draw_rounded_rect(clipped_start_x, tab_top, clipped_width, tab_height, 3.0, bg_color);
+      surface.draw_rounded_rect(
+        clipped_start_x,
+        tab_top,
+        clipped_width,
+        tab_height,
+        3.0,
+        bg_color,
+      );
     }
 
     // Draw border/outline with directional thickness - use clipped dimensions
@@ -623,7 +662,14 @@ pub fn render(
     let icon_y = tab_top + (tab_height - icon_size as f32) * 0.5;
     let icon_color = text_color;
     if icon_x >= clip_left && icon_x + icon_size as f32 <= clip_right {
-      surface.draw_svg_icon(icon.svg_data, icon_x, icon_y, icon_size, icon_size, icon_color);
+      surface.draw_svg_icon(
+        icon.svg_data,
+        icon_x,
+        icon_y,
+        icon_size,
+        icon_size,
+        icon_color,
+      );
     }
 
     // Draw file name - full text, no truncation
@@ -669,7 +715,13 @@ pub fn render(
 
         // Top dark shadow (pressed-in effect)
         let shadow_alpha = 0.2 * anim.close_pressed_t * content_opacity;
-        surface.draw_rect(close_x, close_y, close_btn_width, shadow_height, with_alpha(Color::BLACK, shadow_alpha));
+        surface.draw_rect(
+          close_x,
+          close_y,
+          close_btn_width,
+          shadow_height,
+          with_alpha(Color::BLACK, shadow_alpha),
+        );
 
         // Bottom light highlight (reflection)
         let light_alpha = 0.08 * anim.close_pressed_t * content_opacity;
@@ -727,7 +779,14 @@ pub fn render(
             // Use a visible background color that matches the active tab style
             let bg_alpha = (0.2 + 0.1 * content_opacity).min(0.3);
             let bg_color = with_alpha(active_accent, bg_alpha);
-            surface.draw_rounded_rect(clipped_start_x, tab_top, clipped_width, tab_height, 3.0, bg_color);
+            surface.draw_rounded_rect(
+              clipped_start_x,
+              tab_top,
+              clipped_width,
+              tab_height,
+              3.0,
+              bg_color,
+            );
 
             // Draw border for visibility (same style as active tabs)
             let border_alpha = 0.6 * content_opacity;
@@ -750,9 +809,7 @@ pub fn render(
   surface.pop_scissor_rect();
 
   // Remove animation states only when animation is complete (alive_t near 0)
-  animation_states.retain(|kind, anim| {
-    active_kinds.contains(kind) || anim.alive_t > 0.01
-  });
+  animation_states.retain(|kind, anim| active_kinds.contains(kind) || anim.alive_t > 0.01);
 
   // Draw add (+) button
   add_button_state.update(dt, add_button_hovered, add_button_pressed);
@@ -774,7 +831,12 @@ pub fn render(
     if add_button_state.hover_t > 0.01 {
       if let Some((mouse_x, mouse_y)) = mouse_pos {
         let glow_alpha = 0.06 * add_button_state.hover_t * (1.0 - add_button_state.pressed_t * 0.5);
-        let glow_color = Color::new(button_highlight.r, button_highlight.g, button_highlight.b, glow_alpha);
+        let glow_color = Color::new(
+          button_highlight.r,
+          button_highlight.g,
+          button_highlight.b,
+          glow_alpha,
+        );
         let glow_radius = add_btn_size * 1.5;
         surface.draw_rounded_rect_glow(
           add_btn_x,
@@ -792,11 +854,18 @@ pub fn render(
 
     // Raddebugger-style click animation: top dark shadow + bottom light highlight
     if add_button_state.pressed_t > 0.01 {
-      let shadow_height = (add_btn_size * 0.35 * add_button_state.pressed_t).min(add_btn_size * 0.4);
+      let shadow_height =
+        (add_btn_size * 0.35 * add_button_state.pressed_t).min(add_btn_size * 0.4);
 
       // Top dark shadow (pressed-in effect)
       let shadow_alpha = 0.2 * add_button_state.pressed_t;
-      surface.draw_rect(add_btn_x, add_btn_y, add_btn_size, shadow_height, with_alpha(Color::BLACK, shadow_alpha));
+      surface.draw_rect(
+        add_btn_x,
+        add_btn_y,
+        add_btn_size,
+        shadow_height,
+        with_alpha(Color::BLACK, shadow_alpha),
+      );
 
       // Bottom light highlight (reflection)
       let light_alpha = 0.08 * add_button_state.pressed_t;
@@ -821,7 +890,9 @@ pub fn render(
       inactive_text.lerp(active_text, add_button_state.hover_t * 0.5),
       base_alpha + hover_boost,
     );
-    surface.draw_text(TextSection::simple(plus_x, plus_y, "+", plus_size, plus_color));
+    surface.draw_text(TextSection::simple(
+      plus_x, plus_y, "+", plus_size, plus_color,
+    ));
 
     Some(Rect {
       x:      add_btn_x as u16,

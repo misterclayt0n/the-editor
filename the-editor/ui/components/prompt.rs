@@ -477,7 +477,11 @@ impl Prompt {
     self.selection_anim += (1.0 - self.selection_anim) * fast_rate;
 
     // Update completion list animation (exponential decay)
-    let completion_target = if !self.completions.is_empty() { 1.0 } else { 0.0 };
+    let completion_target = if !self.completions.is_empty() {
+      1.0
+    } else {
+      0.0
+    };
     self.completion_list_anim_t += (completion_target - self.completion_list_anim_t) * medium_rate;
 
     // Update help box animation (exponential decay)
@@ -956,7 +960,8 @@ impl Prompt {
   fn recalculate_completions(&mut self, editor: &Editor) {
     self.selection = None; // Clear selection on recalculate
     self.completion_scroll = 0; // Reset scroll
-    // Don't reset completion_list_anim_t here - exponential decay handles it smoothly
+    // Don't reset completion_list_anim_t here - exponential decay handles it
+    // smoothly
 
     if let Some(ref completion_fn) = self.completion_fn {
       self.completions = completion_fn(editor, &self.input);
@@ -1228,7 +1233,8 @@ impl Prompt {
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.3, 0.3, 0.35, 0.8));
 
-    // Position to the right of the completion box, anchored at the bottom (near statusline)
+    // Position to the right of the completion box, anchored at the bottom (near
+    // statusline)
     let base_box_x = completion_bounds.x + completion_bounds.width + GAP;
     let available_width = screen_width - base_box_x - 10.0; // 10px margin from right edge
 
@@ -1249,7 +1255,8 @@ impl Prompt {
     let slide_offset = (1.0 - anim_t) * 20.0; // Slide from right 20px
     let box_x = base_box_x + slide_offset;
 
-    // Position at bottom (aligned with bottom of completions, just above statusline)
+    // Position at bottom (aligned with bottom of completions, just above
+    // statusline)
     let completion_bottom = completion_bounds.y + completion_bounds.height;
     let box_y = completion_bottom - box_height;
 
@@ -1264,7 +1271,14 @@ impl Prompt {
     // Use overlay region to mask underlying content
     surface.with_overlay_region(box_x, box_y, box_width, box_height, |surface| {
       // Draw background
-      surface.draw_rounded_rect(box_x, box_y, box_width, box_height, CORNER_RADIUS, animated_bg);
+      surface.draw_rounded_rect(
+        box_x,
+        box_y,
+        box_width,
+        box_height,
+        CORNER_RADIUS,
+        animated_bg,
+      );
 
       // Draw border
       surface.draw_rounded_rect_stroke(

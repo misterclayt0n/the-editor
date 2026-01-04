@@ -83,6 +83,8 @@ macro_rules! profile_plot {
 macro_rules! profile_message {
   ($msg:expr) => {
     #[cfg(feature = "tracy")]
-    tracy_client::message!($msg, 0);
+    if let Some(client) = tracy_client::Client::running() {
+      client.message($msg, 0);
+    }
   };
 }

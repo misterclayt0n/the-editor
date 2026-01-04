@@ -368,7 +368,11 @@ impl KeyTrieNode {
     let items: Vec<(String, String)> = body
       .into_iter()
       .map(|(keys, desc)| {
-        let keys_str = keys.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+        let keys_str = keys
+          .iter()
+          .map(ToString::to_string)
+          .collect::<Vec<_>>()
+          .join(", ");
         (keys_str, desc.to_string())
       })
       .collect();
@@ -564,16 +568,15 @@ impl Keymaps {
   pub fn reverse_map(&self) -> ReverseKeymap {
     let mut result: ReverseKeymap = HashMap::new();
 
-    fn collect_bindings(
-      trie: &KeyTrie,
-      keys: &mut Vec<KeyBinding>,
-      result: &mut ReverseKeymap,
-    ) {
+    fn collect_bindings(trie: &KeyTrie, keys: &mut Vec<KeyBinding>, result: &mut ReverseKeymap) {
       match trie {
         KeyTrie::Command(cmd) => {
           let name = cmd.name();
           if name != "no_op" {
-            result.entry(name.to_string()).or_default().push(keys.clone());
+            result
+              .entry(name.to_string())
+              .or_default()
+              .push(keys.clone());
           }
         },
         KeyTrie::Sequence(cmds) => {
@@ -581,7 +584,10 @@ impl Keymaps {
           if let Some(cmd) = cmds.first() {
             let name = cmd.name();
             if name != "no_op" {
-              result.entry(name.to_string()).or_default().push(keys.clone());
+              result
+                .entry(name.to_string())
+                .or_default()
+                .push(keys.clone());
             }
           }
         },

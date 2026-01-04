@@ -1089,7 +1089,9 @@ impl Explorer {
     surface: &mut Surface,
     cx: &mut Context,
   ) {
-    self.tree.render(area, y_offset_px, prompt_area, surface, cx);
+    self
+      .tree
+      .render(area, y_offset_px, prompt_area, surface, cx);
   }
 
   /// Render the explorer as a sidebar

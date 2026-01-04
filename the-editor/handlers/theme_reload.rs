@@ -54,10 +54,10 @@ fn on_file_did_change(event: &mut FileSystemDidChange) {
       Ok(new_theme) => {
         editor.set_theme(new_theme);
         editor.set_status(format!("Theme '{}' reloaded", theme_name));
-      }
+      },
       Err(err) => {
         editor.set_error(format!("Failed to reload theme '{}': {}", theme_name, err));
-      }
+      },
     }
   });
 }

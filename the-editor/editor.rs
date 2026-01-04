@@ -2915,6 +2915,31 @@ impl Editor {
     self.set_theme_impl(theme, ThemeAction::Set);
   }
 
+  /// Set the theme without animation (for initial setup).
+  pub fn set_theme_instant(&mut self, theme: Theme) {
+    // Unwatch old theme path
+    self.unwatch_theme_path();
+    // Update theme path for hot reload support
+    self.theme_path = self.theme_loader.theme_path(theme.name());
+    // Watch new theme path
+    self.watch_theme_path();
+
+    // `ui.selection` is the only scope required to be able to render a theme.
+    if theme.find_highlight_exact("ui.selection").is_none() {
+      self.set_error("Invalid theme: `ui.selection` required");
+      return;
+    }
+
+    let scopes = theme.scopes();
+    (*self.syn_loader).load().set_scopes(scopes.to_vec());
+
+    // Set theme directly without transition
+    self.last_theme = None;
+    self.theme_transition = None;
+    self.theme = theme;
+    self._refresh();
+  }
+
   fn set_theme_impl(&mut self, theme: Theme, preview: ThemeAction) {
     // `ui.selection` is the only scope required to be able to render a theme.
     if theme.find_highlight_exact("ui.selection").is_none() {

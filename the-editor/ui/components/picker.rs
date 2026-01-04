@@ -1576,8 +1576,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
     // Need enough room for both panels + gap (minimum ~1200px for comfortable
     // split)
     let min_width_for_preview = 1200.0;
-    let should_show_preview =
-      !self.preview_disabled && area.width as f32 > min_width_for_preview;
+    let should_show_preview = !self.preview_disabled && area.width as f32 > min_width_for_preview;
 
     // Initialize or update preview animation
     let target_preview_value = if should_show_preview { 1.0 } else { 0.0 };
@@ -2487,7 +2486,6 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
             col_x += col_width + column_gap;
           }
-
         }
       }
 
@@ -2849,7 +2847,12 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 preview_alpha,
               );
             },
-            PreviewData::Terminal { cells, cols, rows, title: _ } => {
+            PreviewData::Terminal {
+              cells,
+              cols,
+              rows,
+              title: _,
+            } => {
               // Render terminal preview
               let padding = 12.0;
               let content_x = preview_x + padding;
@@ -2884,54 +2887,48 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
               surface.draw_rect(term_x, term_y, term_width, term_height, term_bg);
 
               // Draw cells that are within the visible area
-              surface.with_overlay_region(
-                term_x,
-                term_y,
-                term_width,
-                term_height,
-                |surface| {
-                  for cell in cells {
-                    // Only render cells within visible bounds
-                    if cell.col >= display_cols || cell.row >= display_rows {
-                      continue;
-                    }
-
-                    let cx = term_x + cell.col as f32 * cell_width;
-                    let cy = term_y + cell.row as f32 * cell_height;
-
-                    // Draw background if not default
-                    if cell.bg != (30, 30, 30) {
-                      let bg = Color::new(
-                        cell.bg.0 as f32 / 255.0,
-                        cell.bg.1 as f32 / 255.0,
-                        cell.bg.2 as f32 / 255.0,
-                        preview_alpha,
-                      );
-                      surface.draw_rect(cx, cy, cell_width, cell_height, bg);
-                    }
-
-                    // Draw character
-                    if cell.c != ' ' && cell.c != '\0' {
-                      let fg = Color::new(
-                        cell.fg.0 as f32 / 255.0,
-                        cell.fg.1 as f32 / 255.0,
-                        cell.fg.2 as f32 / 255.0,
-                        preview_alpha,
-                      );
-                      surface.draw_text(TextSection {
-                        position: (cx, cy + UI_FONT_SIZE),
-                        texts:    vec![TextSegment {
-                          content: cell.c.to_string(),
-                          style:   TextStyle {
-                            size:  UI_FONT_SIZE,
-                            color: fg,
-                          },
-                        }],
-                      });
-                    }
+              surface.with_overlay_region(term_x, term_y, term_width, term_height, |surface| {
+                for cell in cells {
+                  // Only render cells within visible bounds
+                  if cell.col >= display_cols || cell.row >= display_rows {
+                    continue;
                   }
-                },
-              );
+
+                  let cx = term_x + cell.col as f32 * cell_width;
+                  let cy = term_y + cell.row as f32 * cell_height;
+
+                  // Draw background if not default
+                  if cell.bg != (30, 30, 30) {
+                    let bg = Color::new(
+                      cell.bg.0 as f32 / 255.0,
+                      cell.bg.1 as f32 / 255.0,
+                      cell.bg.2 as f32 / 255.0,
+                      preview_alpha,
+                    );
+                    surface.draw_rect(cx, cy, cell_width, cell_height, bg);
+                  }
+
+                  // Draw character
+                  if cell.c != ' ' && cell.c != '\0' {
+                    let fg = Color::new(
+                      cell.fg.0 as f32 / 255.0,
+                      cell.fg.1 as f32 / 255.0,
+                      cell.fg.2 as f32 / 255.0,
+                      preview_alpha,
+                    );
+                    surface.draw_text(TextSection {
+                      position: (cx, cy + UI_FONT_SIZE),
+                      texts:    vec![TextSegment {
+                        content: cell.c.to_string(),
+                        style:   TextStyle {
+                          size:  UI_FONT_SIZE,
+                          color: fg,
+                        },
+                      }],
+                    });
+                  }
+                }
+              });
             },
             PreviewData::Placeholder(placeholder) => {
               // Show placeholder text centered

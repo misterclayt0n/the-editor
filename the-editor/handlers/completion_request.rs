@@ -278,7 +278,13 @@ fn request_completions(
   // If no URI (scratch file), show path completions if available and return
   if uri_str.is_none() {
     if !path_completion_items.is_empty() {
-      show_completion(editor, compositor, path_completion_items, trigger_offset, doc_id);
+      show_completion(
+        editor,
+        compositor,
+        path_completion_items,
+        trigger_offset,
+        doc_id,
+      );
     }
     return;
   }
@@ -297,7 +303,13 @@ fn request_completions(
   let Some(lsp_uri) = lsp_uri else {
     // No valid LSP URI but we have path completions, show them
     if !path_completion_items.is_empty() {
-      show_completion(editor, compositor, path_completion_items, trigger_offset, doc_id);
+      show_completion(
+        editor,
+        compositor,
+        path_completion_items,
+        trigger_offset,
+        doc_id,
+      );
     }
     return;
   };
@@ -352,15 +364,11 @@ fn request_completions(
           .collect();
         sorted_items.sort_by(|a, b| {
           let sort_a = match a {
-            CompletionItem::Lsp(lsp) => {
-              lsp.item.sort_text.as_deref().unwrap_or(&lsp.item.label)
-            },
+            CompletionItem::Lsp(lsp) => lsp.item.sort_text.as_deref().unwrap_or(&lsp.item.label),
             _ => "",
           };
           let sort_b = match b {
-            CompletionItem::Lsp(lsp) => {
-              lsp.item.sort_text.as_deref().unwrap_or(&lsp.item.label)
-            },
+            CompletionItem::Lsp(lsp) => lsp.item.sort_text.as_deref().unwrap_or(&lsp.item.label),
             _ => "",
           };
           sort_a.cmp(sort_b)
@@ -375,10 +383,17 @@ fn request_completions(
     }
   }
 
-  // If we have no LSP completions but have path completions, show them immediately
+  // If we have no LSP completions but have path completions, show them
+  // immediately
   if requests.is_empty() {
     if !path_completion_items.is_empty() {
-      show_completion(editor, compositor, path_completion_items, trigger_offset, doc_id);
+      show_completion(
+        editor,
+        compositor,
+        path_completion_items,
+        trigger_offset,
+        doc_id,
+      );
     }
     return;
   }

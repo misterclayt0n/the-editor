@@ -22,9 +22,9 @@ pub enum SlotContent {
 #[derive(Clone, Debug)]
 pub struct SplitStep {
   /// The layout direction of this container.
-  pub layout: Layout,
+  pub layout:      Layout,
   /// Which child index within this container (0-based).
-  pub index: usize,
+  pub index:       usize,
   /// Total number of children in this container at capture time.
   pub child_count: usize,
 }
@@ -37,7 +37,7 @@ pub struct SplitStep {
 pub struct PositionRecipe {
   /// Path from root to the target position.
   /// Each step describes a container in the path.
-  pub path: Vec<SplitStep>,
+  pub path:        Vec<SplitStep>,
   /// The custom size this view had, if any (None = Fill).
   pub custom_size: Option<u16>,
 }
@@ -46,15 +46,16 @@ pub struct PositionRecipe {
 #[derive(Clone, Debug)]
 pub struct QuickSlot {
   /// The content bound to this slot.
-  pub content: SlotContent,
+  pub content:          SlotContent,
   /// Position recipe for restoration (captured when hiding).
-  pub position: Option<PositionRecipe>,
+  pub position:         Option<PositionRecipe>,
   /// Whether the slotted view is currently visible.
-  pub visible: bool,
+  pub visible:          bool,
   /// Whether this was the only view when hidden (full-screen mode).
-  pub was_only_view: bool,
-  /// Content that was displayed before showing this slot (for fullscreen restore).
-  /// Only set when `was_only_view` is true and we replaced another view.
+  pub was_only_view:    bool,
+  /// Content that was displayed before showing this slot (for fullscreen
+  /// restore). Only set when `was_only_view` is true and we replaced another
+  /// view.
   pub previous_content: Option<SlotContent>,
 }
 
@@ -97,19 +98,15 @@ impl QuickSlots {
 
   /// Find the slot number for a given content, if bound.
   pub fn find_slot_for_content(&self, content: &SlotContent) -> Option<u8> {
-    self
-      .slots
-      .iter()
-      .enumerate()
-      .find_map(|(i, slot)| {
-        slot.as_ref().and_then(|s| {
-          if &s.content == content {
-            Some(i as u8)
-          } else {
-            None
-          }
-        })
+    self.slots.iter().enumerate().find_map(|(i, slot)| {
+      slot.as_ref().and_then(|s| {
+        if &s.content == content {
+          Some(i as u8)
+        } else {
+          None
+        }
       })
+    })
   }
 
   /// Unbind any slot containing the given content.
@@ -151,16 +148,13 @@ mod tests {
     assert!(slots.get(5).is_none());
 
     // Set a slot
-    slots.set(
-      3,
-      QuickSlot {
-        content:          SlotContent::Document(doc_id(1)),
-        position:         None,
-        visible:          true,
-        was_only_view:    false,
-        previous_content: None,
-      },
-    );
+    slots.set(3, QuickSlot {
+      content:          SlotContent::Document(doc_id(1)),
+      position:         None,
+      visible:          true,
+      was_only_view:    false,
+      previous_content: None,
+    });
 
     assert!(slots.get(3).is_some());
     assert_eq!(slots.get(3).unwrap().visible, true);
@@ -175,16 +169,13 @@ mod tests {
     let mut slots = QuickSlots::new();
 
     let content = SlotContent::Document(doc_id(42));
-    slots.set(
-      7,
-      QuickSlot {
-        content,
-        position:         None,
-        visible:          true,
-        was_only_view:    false,
-        previous_content: None,
-      },
-    );
+    slots.set(7, QuickSlot {
+      content,
+      position: None,
+      visible: true,
+      was_only_view: false,
+      previous_content: None,
+    });
 
     assert_eq!(slots.find_slot_for_content(&content), Some(7));
     assert_eq!(
@@ -198,16 +189,13 @@ mod tests {
     let mut slots = QuickSlots::new();
 
     let content = SlotContent::Document(doc_id(1));
-    slots.set(
-      5,
-      QuickSlot {
-        content,
-        position:         None,
-        visible:          true,
-        was_only_view:    false,
-        previous_content: None,
-      },
-    );
+    slots.set(5, QuickSlot {
+      content,
+      position: None,
+      visible: true,
+      was_only_view: false,
+      previous_content: None,
+    });
 
     assert!(slots.get(5).is_some());
     slots.unbind_content(&content);

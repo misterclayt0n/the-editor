@@ -22,9 +22,6 @@ use std::{
   time::Duration,
 };
 
-use parking_lot::Mutex;
-use ropey::Rope;
-
 use anyhow::{
   Context,
   Result,
@@ -41,7 +38,11 @@ use config::{
 };
 use foldhash::HashSet;
 use once_cell::sync::OnceCell;
-use ropey::RopeSlice;
+use parking_lot::Mutex;
+use ropey::{
+  Rope,
+  RopeSlice,
+};
 use the_editor_loader::grammar::get_language;
 use the_editor_stdx::rope::{
   RopeSliceExt as _,
@@ -592,22 +593,23 @@ pub struct Syntax {
 
 /// Thread-safe syntax state with version tracking for async parsing.
 ///
-/// This type wraps `Syntax` with version tracking to support background parsing.
-/// It separates "interpolation" (fast edit application ~100µs) from "reparsing"
-/// (full tree-sitter parse 10-100ms+), allowing the UI to remain responsive
-/// during edits.
+/// This type wraps `Syntax` with version tracking to support background
+/// parsing. It separates "interpolation" (fast edit application ~100µs) from
+/// "reparsing" (full tree-sitter parse 10-100ms+), allowing the UI to remain
+/// responsive during edits.
 ///
 /// # Architecture
 ///
 /// When an edit occurs:
-/// 1. `interpolate()` is called synchronously - this applies `tree.edit()` to all
-///    layer trees, which just adjusts byte offsets (very fast, O(edits))
+/// 1. `interpolate()` is called synchronously - this applies `tree.edit()` to
+///    all layer trees, which just adjusts byte offsets (very fast, O(edits))
 /// 2. A background parse is spawned which clones the syntax state and runs the
 ///    full `update()` call
 /// 3. When the background parse completes, the result is swapped in atomically
 ///
-/// This allows the UI to render immediately with slightly stale syntax (but with
-/// correct byte offsets), while accurate highlighting follows within ~50-100ms.
+/// This allows the UI to render immediately with slightly stale syntax (but
+/// with correct byte offsets), while accurate highlighting follows within
+/// ~50-100ms.
 pub struct SyntaxState {
   inner: Arc<SyntaxStateInner>,
 }
@@ -631,8 +633,14 @@ struct SyntaxStateInner {
 impl std::fmt::Debug for SyntaxStateInner {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_struct("SyntaxStateInner")
-      .field("interpolated_version", &self.interpolated_version.load(Ordering::Relaxed))
-      .field("parsed_version", &self.parsed_version.load(Ordering::Relaxed))
+      .field(
+        "interpolated_version",
+        &self.interpolated_version.load(Ordering::Relaxed),
+      )
+      .field(
+        "parsed_version",
+        &self.parsed_version.load(Ordering::Relaxed),
+      )
       .field("parse_pending", &self.parse_pending.load(Ordering::Relaxed))
       .finish_non_exhaustive()
   }
@@ -654,12 +662,13 @@ impl std::fmt::Debug for SyntaxState {
   }
 }
 
-/// A snapshot of syntax state that can be sent to a background thread for parsing.
+/// A snapshot of syntax state that can be sent to a background thread for
+/// parsing.
 pub struct SyntaxSnapshot {
   /// Cloned syntax state for parsing.
-  pub syntax: Syntax,
+  pub syntax:  Syntax,
   /// The source text at the time of snapshot.
-  pub source: Rope,
+  pub source:  Rope,
   /// The version at which this snapshot was taken.
   pub version: u64,
 }
@@ -686,7 +695,10 @@ impl SyntaxState {
   pub fn interpolate(&self, edits: &[InputEdit]) {
     let mut syntax = self.inner.syntax.lock();
     syntax.inner.interpolate(edits);
-    self.inner.interpolated_version.fetch_add(1, Ordering::Release);
+    self
+      .inner
+      .interpolated_version
+      .fetch_add(1, Ordering::Release);
   }
 
   /// Take a snapshot of the current syntax state for background parsing.
@@ -696,7 +708,7 @@ impl SyntaxState {
   pub fn snapshot(&self, source: Rope) -> SyntaxSnapshot {
     let syntax = self.inner.syntax.lock();
     SyntaxSnapshot {
-      syntax:  Syntax {
+      syntax: Syntax {
         inner: syntax.inner.clone(),
       },
       source,
@@ -718,7 +730,10 @@ impl SyntaxState {
     if snapshot.version == current_version {
       let mut syntax = self.inner.syntax.lock();
       *syntax = snapshot.syntax;
-      self.inner.parsed_version.store(snapshot.version, Ordering::Release);
+      self
+        .inner
+        .parsed_version
+        .store(snapshot.version, Ordering::Release);
       self.inner.parse_pending.store(false, Ordering::Release);
       true
     } else {

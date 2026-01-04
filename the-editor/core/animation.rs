@@ -258,8 +258,9 @@ pub enum Easing {
   EaseOutQuart,
   /// Quartic ease in and out
   EaseInOutQuart,
-  /// Exponential decay (raddebugger style) - frame-rate adaptive, no fixed duration
-  /// Uses formula: current += (target - current) * rate, where rate = 1 - 2^(-60 * dt)
+  /// Exponential decay (raddebugger style) - frame-rate adaptive, no fixed
+  /// duration Uses formula: current += (target - current) * rate, where rate
+  /// = 1 - 2^(-60 * dt)
   ExponentialDecay,
 }
 
@@ -318,7 +319,8 @@ impl Easing {
     }
   }
 
-  /// Check if this easing uses exponential decay (rate-based, not duration-based)
+  /// Check if this easing uses exponential decay (rate-based, not
+  /// duration-based)
   pub fn is_exponential_decay(self) -> bool {
     matches!(self, Easing::ExponentialDecay)
   }
@@ -330,8 +332,8 @@ pub trait Animatable: Clone + std::fmt::Debug {
   /// t is in the range [0.0, 1.0] where 0.0 = self, 1.0 = target
   fn lerp(&self, target: &Self, t: f32) -> Self;
 
-  /// Check if this value is close enough to target (for exponential decay completion)
-  /// Default epsilon is 0.5 (suitable for pixel-based animations)
+  /// Check if this value is close enough to target (for exponential decay
+  /// completion) Default epsilon is 0.5 (suitable for pixel-based animations)
   fn is_close(&self, target: &Self) -> bool;
 }
 

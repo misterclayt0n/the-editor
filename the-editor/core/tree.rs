@@ -465,7 +465,11 @@ impl Tree {
     let parent = self.nodes[index].parent;
     let (layout, is_first) = match &self.nodes[parent].content {
       Content::Container(container) => {
-        let pos = container.children.iter().position(|&id| id == index).unwrap_or(0);
+        let pos = container
+          .children
+          .iter()
+          .position(|&id| id == index)
+          .unwrap_or(0);
         (container.layout, pos == 0)
       },
       _ => (Layout::Vertical, false),
@@ -1073,7 +1077,8 @@ impl Tree {
   }
 
   /// Update all active area animations with the given delta time.
-  /// Returns the list of view IDs that were fully closed this frame (for cleanup).
+  /// Returns the list of view IDs that were fully closed this frame (for
+  /// cleanup).
   pub fn update_animations(&mut self, dt: f32) -> Vec<ViewId> {
     // Track which closing views have completed their animations
     let mut completed_closes = Vec::new();
@@ -1208,10 +1213,7 @@ impl Tree {
   ///
   /// Returns a `PositionRecipe` that describes the path from root to the view,
   /// which can be used to recreate the view at the same position later.
-  pub fn capture_position(
-    &self,
-    view_id: ViewId,
-  ) -> Option<super::quick_slots::PositionRecipe> {
+  pub fn capture_position(&self, view_id: ViewId) -> Option<super::quick_slots::PositionRecipe> {
     use super::quick_slots::{
       PositionRecipe,
       SplitStep,
@@ -1246,7 +1248,7 @@ impl Tree {
       let index = container.children.iter().position(|&id| id == current)?;
 
       path.push(SplitStep {
-        layout:      container.layout,
+        layout: container.layout,
         index,
         child_count: container.children.len(),
       });
@@ -1264,7 +1266,8 @@ impl Tree {
   }
 
   /// Get the size to use for restoring a view.
-  /// Returns the current actual size of the view based on the parent's layout direction.
+  /// Returns the current actual size of the view based on the parent's layout
+  /// direction.
   fn get_view_custom_size(&self, view_id: ViewId) -> Option<u16> {
     let node = self.nodes.get(view_id)?;
     let parent_id = node.parent;

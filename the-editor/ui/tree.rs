@@ -377,19 +377,19 @@ pub struct TreeView<T: TreeViewItem> {
   visible_tree_indices: Vec<usize>,
 
   /// Selection animation (0.0 -> 1.0 when selection changes)
-  selection_anim:       crate::core::animation::AnimationHandle<f32>,
+  selection_anim:  crate::core::animation::AnimationHandle<f32>,
   /// Previous selected index for animation
-  prev_selected:        usize,
+  prev_selected:   usize,
   /// Hovered visual row (for hover glow effect)
-  hovered_row:          Option<usize>,
+  hovered_row:     Option<usize>,
   /// Current mouse position for glow effects
-  mouse_pos:            Option<(f32, f32)>,
+  mouse_pos:       Option<(f32, f32)>,
   /// Entrance animation progress (0.0 -> 1.0), None when complete
-  entrance_anim:        Option<crate::core::animation::AnimationHandle<f32>>,
+  entrance_anim:   Option<crate::core::animation::AnimationHandle<f32>>,
   /// Global alpha multiplier (for closing animations, etc.)
-  global_alpha:         f32,
+  global_alpha:    f32,
   /// Cached viewport height for scrolloff calculations
-  viewport_height:      usize,
+  viewport_height: usize,
 }
 
 impl<T: TreeViewItem> TreeView<T> {
@@ -1260,7 +1260,8 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
   /// Render the tree view
   ///
   /// # Arguments
-  /// * `area` - The area in cells (width is used, height determines visible items)
+  /// * `area` - The area in cells (width is used, height determines visible
+  ///   items)
   /// * `y_offset_px` - The Y offset in pixels where tree rendering should start
   /// * `_prompt_area` - Area for prompt (currently unused)
   /// * `surface` - The rendering surface

@@ -659,7 +659,8 @@ impl Completion {
   }
 
   /// Update the completion items (for progressive loading from LSP)
-  /// This merges new items with existing ones, re-deduplicating by label and provider
+  /// This merges new items with existing ones, re-deduplicating by label and
+  /// provider
   pub fn update_items(&mut self, new_items: Vec<CompletionItem>) {
     use std::collections::HashSet;
 

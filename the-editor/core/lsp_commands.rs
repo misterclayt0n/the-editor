@@ -915,7 +915,9 @@ pub fn document_symbols(cx: &mut Context) {
             };
             let view = editor.tree.get_mut(view_id);
             let Some(doc_id) = view.doc() else { return };
-            let Some(doc) = editor.documents.get_mut(&doc_id) else { return };
+            let Some(doc) = editor.documents.get_mut(&doc_id) else {
+              return;
+            };
 
             // Convert LSP range to editor range
             if let Some(range) =
@@ -1213,7 +1215,9 @@ pub fn document_diagnostics(cx: &mut Context) {
           };
           let view = editor.tree.get_mut(view_id);
           let Some(doc_id) = view.doc() else { return };
-          let Some(doc) = editor.documents.get_mut(&doc_id) else { return };
+          let Some(doc) = editor.documents.get_mut(&doc_id) else {
+            return;
+          };
 
           // Set selection to the diagnostic location
           doc.set_selection(view.id, Selection::single(diag.range.start, diag.range.end));
@@ -1354,7 +1358,10 @@ pub fn workspace_diagnostics(cx: &mut Context) {
             .map(|_| item.doc_id)
             .or_else(|| {
               // Document might have been closed, try to open it
-              item.path.as_ref().and_then(|path| editor.open(path, action).ok())
+              item
+                .path
+                .as_ref()
+                .and_then(|path| editor.open(path, action).ok())
             });
 
           if let Some(doc_id) = doc_id {

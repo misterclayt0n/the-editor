@@ -413,7 +413,11 @@ impl Theme {
       Style::new().fg(Color::Rgb(red, green, blue))
     } else {
       // Use get() to handle stale highlight indices after theme switch
-      self.highlights.get(highlight.idx()).copied().unwrap_or_default()
+      self
+        .highlights
+        .get(highlight.idx())
+        .copied()
+        .unwrap_or_default()
     }
   }
 

@@ -508,6 +508,9 @@ impl Application for App {
       let area = self.compositor.size();
       self.compositor.render(area, renderer, &mut cx);
     }
+
+    // Mark frame boundary for Tracy
+    crate::profile_frame!();
   }
 
   fn handle_event(&mut self, event: InputEvent, _renderer: &mut Renderer) -> bool {
@@ -673,26 +676,36 @@ impl Application for App {
   }
 
   fn wants_redraw(&self) -> bool {
+    crate::profile_scope!("wants_redraw");
+
     // Check if any component needs updates (e.g., for animations).
     use crate::ui::components::button::Button;
 
     // First check editor needs_redraw.
     if self.editor.needs_redraw {
+      crate::profile_message!("redraw: editor.needs_redraw");
+      log::trace!("wants_redraw: editor.needs_redraw");
       return true;
     }
 
     // Keep redrawing while a theme transition is active.
     if self.editor.is_theme_transitioning() {
+      crate::profile_message!("redraw: theme_transitioning");
+      log::trace!("wants_redraw: theme_transitioning");
       return true;
     }
 
     // Keep redrawing while split animations are active.
     if self.editor.tree.has_active_animations() {
+      crate::profile_message!("redraw: tree_animations");
+      log::trace!("wants_redraw: tree_animations");
       return true;
     }
 
     // Keep redrawing while any LSP is loading (for breathing animation).
     if self.editor.lsp_progress.has_active_progress() {
+      crate::profile_message!("redraw: lsp_progress");
+      log::trace!("wants_redraw: lsp_progress");
       return true;
     }
 
@@ -703,6 +716,8 @@ impl Application for App {
       .as_ref()
       .map_or(false, |r| r.is_streaming)
     {
+      crate::profile_message!("redraw: acp_streaming");
+      log::trace!("wants_redraw: acp_streaming");
       return true;
     }
 
@@ -711,6 +726,8 @@ impl Application for App {
     if self.smooth_scroll_enabled
       && (self.pending_scroll_lines.abs() > 0.1 || self.pending_scroll_cols.abs() > 0.1)
     {
+      crate::profile_message!("redraw: scroll_animation");
+      log::trace!("wants_redraw: scroll_animation");
       return true;
     }
 
@@ -724,22 +741,30 @@ impl Application for App {
           .get(&doc_id)
           .is_some_and(|doc| doc.has_active_scroll_animation(view.id))
         {
+          crate::profile_message!("redraw: view_scroll_animation");
+          log::trace!("wants_redraw: view_scroll_animation");
           return true;
         }
       }
     }
 
     // Then check if any component needs updates.
-    for layer in self.compositor.layers.iter() {
+    for (i, layer) in self.compositor.layers.iter().enumerate() {
       // Check if it's a button with active animation.
       if let Some(button) = layer.as_any().downcast_ref::<Button>()
         && button.should_update()
       {
+        crate::profile_message!("redraw: button_animation");
+        log::trace!("wants_redraw: button[{}]", i);
         return true;
       }
 
       // Other components can also request redraws via should_update.
       if layer.should_update() {
+        // Log which layer index requested update for debugging
+        crate::profile_plot!("redraw_layer_idx", i);
+        crate::profile_message!("redraw: component_should_update");
+        log::trace!("wants_redraw: layer[{}].should_update", i);
         return true;
       }
     }
@@ -1229,9 +1254,15 @@ impl App {
 
     let v_lines = apply_axis(&mut self.pending_scroll_lines);
     if v_lines != 0 {
-      // Only scroll if focused view is a document (safety fallback for terminal views)
+      // Only scroll if focused view is a document (safety fallback for terminal
+      // views)
       let focused = self.editor.tree.focus;
-      if self.editor.tree.try_get(focused).is_some_and(|v| v.is_document()) {
+      if self
+        .editor
+        .tree
+        .try_get(focused)
+        .is_some_and(|v| v.is_document())
+      {
         let direction = if v_lines > 0 {
           Direction::Forward
         } else {

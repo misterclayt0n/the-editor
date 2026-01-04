@@ -18,8 +18,9 @@ use crate::ui::{
 
 const CONTINUATION_INDENT: &str = "  ";
 
-/// Wrap a highlighted line (Vec<TextSegment>) into multiple lines when it exceeds max_chars.
-/// Continuation lines are indented with 2 spaces and preserve syntax highlighting.
+/// Wrap a highlighted line (Vec<TextSegment>) into multiple lines when it
+/// exceeds max_chars. Continuation lines are indented with 2 spaces and
+/// preserve syntax highlighting.
 fn wrap_highlighted_line(
   segments: Vec<TextSegment>,
   max_chars: usize,
@@ -51,7 +52,11 @@ fn wrap_highlighted_line(
       continue;
     }
 
-    let effective_max = if is_continuation { continuation_max } else { max_chars };
+    let effective_max = if is_continuation {
+      continuation_max
+    } else {
+      max_chars
+    };
 
     // If segment fits entirely on current line
     if current_width + seg_len <= effective_max {
@@ -63,7 +68,11 @@ fn wrap_highlighted_line(
     // Need to split this segment
     let mut seg_pos = 0;
     while seg_pos < seg_len {
-      let effective_max = if is_continuation { continuation_max } else { max_chars };
+      let effective_max = if is_continuation {
+        continuation_max
+      } else {
+        max_chars
+      };
       let remaining_space = effective_max.saturating_sub(current_width);
 
       if remaining_space == 0 {
@@ -274,7 +283,11 @@ pub fn highlight_code_block(
     }
 
     // Wrap long lines, preserving syntax highlighting
-    result.extend(wrap_highlighted_line(segments, max_chars, default_code_color));
+    result.extend(wrap_highlighted_line(
+      segments,
+      max_chars,
+      default_code_color,
+    ));
   }
 
   result

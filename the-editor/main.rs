@@ -178,7 +178,8 @@ fn main() -> anyhow::Result<()> {
     .as_deref()
     .and_then(|name| theme_loader.load(name).ok())
     .unwrap_or_else(|| theme_loader.default_theme(config.editor.true_color));
-  editor.set_theme(theme);
+  // Use instant theme setting at startup to avoid triggering animation
+  editor.set_theme_instant(theme);
   log::info!("[STARTUP] Theme loading: {:?}", t.elapsed());
 
   if let Some(dir) = working_dir {
@@ -211,7 +212,11 @@ fn main() -> anyhow::Result<()> {
       if opened == 1 { "" } else { "s" }
     ));
   }
-  log::info!("[STARTUP] File opening ({} files): {:?}", opened, t.elapsed());
+  log::info!(
+    "[STARTUP] File opening ({} files): {:?}",
+    opened,
+    t.elapsed()
+  );
 
   // Create the application wrapper with runtime handle
   let t = Instant::now();
@@ -222,7 +227,10 @@ fn main() -> anyhow::Result<()> {
   let window_config = the_editor_renderer::WindowConfig::new("The Editor", 1024, 768)
     .with_decorations(config.editor.window_decorations);
 
-  log::info!("[STARTUP] Total pre-renderer: {:?}", startup_total.elapsed());
+  log::info!(
+    "[STARTUP] Total pre-renderer: {:?}",
+    startup_total.elapsed()
+  );
 
   let result = the_editor_renderer::run(window_config, app)
     .map_err(|e| anyhow::anyhow!("Failed to run renderer: {}", e));
@@ -245,7 +253,10 @@ fn main() -> anyhow::Result<()> {
   // - Flush file buffers
   let t = Instant::now();
   rt.shutdown_timeout(std::time::Duration::from_secs(5));
-  log::info!("[SHUTDOWN] Runtime shutdown (5s timeout): {:?}", t.elapsed());
+  log::info!(
+    "[SHUTDOWN] Runtime shutdown (5s timeout): {:?}",
+    t.elapsed()
+  );
 
   // Flush logs before exiting to ensure shutdown timing is written
   log::logger().flush();

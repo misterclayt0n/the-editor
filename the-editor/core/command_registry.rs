@@ -23,11 +23,11 @@ use super::{
 };
 use crate::{
   doc,
-  try_current_ref,
   editor::{
     Action,
     Editor,
   },
+  try_current_ref,
   ui::components::prompt::{
     Completion,
     PromptEvent,
@@ -286,7 +286,8 @@ impl CommandRegistry {
     names
   }
 
-  /// Get all unique typable commands (excludes aliases, returns one entry per command)
+  /// Get all unique typable commands (excludes aliases, returns one entry per
+  /// command)
   pub fn all_commands(&self) -> Vec<Arc<TypableCommand>> {
     let mut seen = std::collections::HashSet::new();
     let mut commands: Vec<_> = self
@@ -1000,7 +1001,6 @@ impl CommandRegistry {
       },
     ));
 
-    
     self.register(TypableCommand::new(
       "log-open",
       &[],
@@ -1875,7 +1875,8 @@ fn buffer_close(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()>
   };
 
   let Some(doc_id) = cx.editor.tree.get(view_id).doc() else {
-    cx.editor.set_error("current view is not a document".to_string());
+    cx.editor
+      .set_error("current view is not a document".to_string());
     return Ok(());
   };
 
@@ -2581,7 +2582,8 @@ pub(super) fn buffers_remaining_impl(editor: &mut Editor) -> anyhow::Result<()> 
 
   if let Some(first) = modified_ids.first() {
     // Get current document ID if we're in a document view (not terminal)
-    let current_doc_id = try_current_ref!(editor).map(|(_, doc): (_, &crate::core::document::Document)| doc.id());
+    let current_doc_id =
+      try_current_ref!(editor).map(|(_, doc): (_, &crate::core::document::Document)| doc.id());
 
     // If the current document is unmodified (or we're in a terminal view),
     // and there are modified documents, switch focus to the first modified doc.
@@ -2923,7 +2925,8 @@ fn open_log(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
     return Ok(());
   }
 
-  cx.editor.open(&the_editor_loader::log_file(), Action::Replace)?;
+  cx.editor
+    .open(&the_editor_loader::log_file(), Action::Replace)?;
 
   Ok(())
 }
@@ -2933,7 +2936,9 @@ fn slot_bind(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
     return Ok(());
   }
 
-  let slot_str = args.first().ok_or_else(|| anyhow!("Slot number required (0-9)"))?;
+  let slot_str = args
+    .first()
+    .ok_or_else(|| anyhow!("Slot number required (0-9)"))?;
   let slot: u8 = slot_str
     .parse()
     .map_err(|_| anyhow!("Invalid slot number: {}", slot_str))?;
@@ -2942,9 +2947,7 @@ fn slot_bind(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
     bail!("Slot number must be 0-9");
   }
 
-  cx.editor
-    .slot_bind(slot)
-    .map_err(|e| anyhow!("{}", e))?;
+  cx.editor.slot_bind(slot).map_err(|e| anyhow!("{}", e))?;
 
   cx.editor.set_status(format!("Bound to slot {}", slot));
   Ok(())
@@ -2955,7 +2958,9 @@ fn slot_unbind(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
     return Ok(());
   }
 
-  let slot_str = args.first().ok_or_else(|| anyhow!("Slot number required (0-9)"))?;
+  let slot_str = args
+    .first()
+    .ok_or_else(|| anyhow!("Slot number required (0-9)"))?;
   let slot: u8 = slot_str
     .parse()
     .map_err(|_| anyhow!("Invalid slot number: {}", slot_str))?;

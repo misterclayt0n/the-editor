@@ -87,7 +87,10 @@ pub struct InlineDiagnostics<'a> {
   eol_diagnostics:      crate::core::diagnostics::DiagnosticFilter,
   eol_cursor_line_only: bool,
   eol_opacities:        &'a std::collections::HashMap<usize, f32>,
-  inline_anim_states:   &'a std::collections::HashMap<usize, crate::ui::inline_diagnostic_animation::InlineDiagnosticAnimState>,
+  inline_anim_states: &'a std::collections::HashMap<
+    usize,
+    crate::ui::inline_diagnostic_animation::InlineDiagnosticAnimState,
+  >,
   cursor_line:          usize,
   styles:               Styles,
   base_x:               f32,
@@ -109,7 +112,10 @@ impl<'a> InlineDiagnostics<'a> {
     eol_diagnostics: crate::core::diagnostics::DiagnosticFilter,
     eol_cursor_line_only: bool,
     eol_opacities: &'a std::collections::HashMap<usize, f32>,
-    inline_anim_states: &'a std::collections::HashMap<usize, crate::ui::inline_diagnostic_animation::InlineDiagnosticAnimState>,
+    inline_anim_states: &'a std::collections::HashMap<
+      usize,
+      crate::ui::inline_diagnostic_animation::InlineDiagnosticAnimState,
+    >,
     base_x: f32,
     base_y: f32,
     line_height: f32,
@@ -137,7 +143,8 @@ impl<'a> InlineDiagnostics<'a> {
   }
 
   /// Get animation state for a document line
-  /// Returns None if line has no animation state (still in debounce or not tracked)
+  /// Returns None if line has no animation state (still in debounce or not
+  /// tracked)
   fn get_anim_state(
     &self,
     doc_line: usize,
@@ -145,7 +152,8 @@ impl<'a> InlineDiagnostics<'a> {
     self.inline_anim_states.get(&doc_line).copied()
   }
 
-  /// Draw a single decoration grapheme at the specified column and row (no animation)
+  /// Draw a single decoration grapheme at the specified column and row (no
+  /// animation)
   fn draw_decoration(
     &self,
     surface: &mut Surface,
@@ -178,7 +186,6 @@ impl<'a> InlineDiagnostics<'a> {
     surface.draw_decoration_grapheme(g, color, x, y);
   }
 
-
   /// Draw end-of-line diagnostic (message at line end, potentially multi-line)
   fn draw_eol_diagnostic(
     &self,
@@ -192,7 +199,8 @@ impl<'a> InlineDiagnostics<'a> {
       return 0;
     }
 
-    // Get animation opacity - if not in map, don't render (still in debounce period)
+    // Get animation opacity - if not in map, don't render (still in debounce
+    // period)
     let Some(opacity) = self.eol_opacities.get(&doc_line).copied() else {
       return 0;
     };
@@ -211,7 +219,6 @@ impl<'a> InlineDiagnostics<'a> {
     // Apply opacity to color
     let mut color = self.styles.severity_style(diag.severity());
     color.a *= opacity;
-
 
     let mut end_col = start_col_in_view as u16;
 
@@ -247,7 +254,8 @@ impl<'a> InlineDiagnostics<'a> {
     end_col.saturating_sub(start_col_in_view as u16)
   }
 
-  /// Draw a full diagnostic message with box-drawing in virtual lines (with animation)
+  /// Draw a full diagnostic message with box-drawing in virtual lines (with
+  /// animation)
   fn draw_diagnostic(
     &self,
     surface: &mut Surface,
@@ -472,7 +480,8 @@ impl Decoration for InlineDiagnostics<'_> {
       DiagnosticFilter::Disable => None,
     };
 
-    // Only render EOL diagnostic if not in cursor-line-only mode, or if we're on the cursor line
+    // Only render EOL diagnostic if not in cursor-line-only mode, or if we're on
+    // the cursor line
     let show_eol = !self.eol_cursor_line_only || doc_line == self.cursor_line;
     if show_eol {
       if let Some((eol_diagnostic, _)) = eol_diagnostic {

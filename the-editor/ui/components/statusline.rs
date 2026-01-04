@@ -1077,10 +1077,37 @@ impl Component for StatusLine {
   }
 
   fn should_update(&self) -> bool {
-    self.anim_t < 1.0
-      || self.slide_anim_t < 1.0
-      || self.status_msg_anim_t < 1.0
-      || !self.lsp_breathing_anims.is_empty()
-      || self.acp_breathing_anim.is_some()
+    if self.anim_t < 1.0 {
+      crate::profile_message!("statusline: anim_t");
+      log::trace!("statusline.should_update: anim_t={}", self.anim_t);
+      return true;
+    }
+    if self.slide_anim_t < 1.0 {
+      crate::profile_message!("statusline: slide_anim_t");
+      log::trace!(
+        "statusline.should_update: slide_anim_t={}",
+        self.slide_anim_t
+      );
+      return true;
+    }
+    if self.status_msg_anim_t < 1.0 {
+      crate::profile_message!("statusline: status_msg_anim_t");
+      log::trace!(
+        "statusline.should_update: status_msg_anim_t={}",
+        self.status_msg_anim_t
+      );
+      return true;
+    }
+    if !self.lsp_breathing_anims.is_empty() {
+      crate::profile_message!("statusline: lsp_breathing");
+      log::trace!("statusline.should_update: lsp_breathing");
+      return true;
+    }
+    if self.acp_breathing_anim.is_some() {
+      crate::profile_message!("statusline: acp_breathing");
+      log::trace!("statusline.should_update: acp_breathing");
+      return true;
+    }
+    false
   }
 }

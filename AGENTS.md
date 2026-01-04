@@ -212,6 +212,20 @@ jj describe # Set/update commit message
 4. Run `jj describe -m "context: message"` to set the commit message
 5. Repeat for each phase of work
 
+### Commit Frequency
+**Every TODO item completed should result in a commit.** This is a core primitive:
+- When using the TodoWrite tool, each task marked as `completed` should have a corresponding commit
+- Don't batch multiple unrelated changes into a single commit
+- A commit should represent one logical unit of work (one bug fix, one feature, one refactor)
+- If a task requires multiple steps, each significant step can be its own commit
+
+Example workflow with TODOs:
+```
+TODO: Fix theme animation at startup     -> commit: "editor: fix theme transition at startup"
+TODO: Fix cursor animation completion    -> commit: "animation: mark complete when start equals target"  
+TODO: Update documentation               -> commit: "docs: add jujutsu policy"
+```
+
 ### WARNING
 NEVER COMMIT CODE THAT DOES NOT COMPILE. EVER. ALWAYS RUN:
 

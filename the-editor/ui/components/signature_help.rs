@@ -304,7 +304,7 @@ impl Component for SignatureHelp {
     let signature_line_count = signature_lines.len().max(1);
 
     let doc_lines = if let Some(doc) = &sig.signature_doc {
-      build_doc_render_lines(doc, wrap_chars, ui_char_width, ctx, text_color)
+      build_doc_render_lines(doc, wrap_chars, ctx)
     } else {
       Vec::new()
     };
@@ -826,14 +826,11 @@ fn signature_wrap_break(ch: char) -> bool {
 }
 
 /// Build documentation render lines with markdown and syntax highlighting
-/// support. Uses shared markdown utilities.
+/// support. Uses shared markdown utilities with cell-based wrapping.
 fn build_doc_render_lines(
   markdown: &str,
-  max_chars: usize,
-  cell_width: f32,
+  max_width_cells: usize,
   ctx: &mut Context,
-  _default_text_color: Color,
 ) -> Vec<Vec<TextSegment>> {
-  let wrap_width = max_chars as f32 * cell_width;
-  super::markdown::build_markdown_lines(markdown, wrap_width, cell_width, ctx)
+  super::markdown::build_markdown_lines_cells(markdown, max_width_cells as u16, ctx)
 }

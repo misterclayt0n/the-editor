@@ -439,24 +439,8 @@ impl Completion {
     const DOC_PADDING: f32 = 8.0;
     const SPACING: f32 = 8.0;
 
-    // Create Markdown renderer for size calculation
-    let md = Markdown::new(markdown_content.clone(), ctx.editor.syn_loader.clone());
-
-    // Calculate content size for dynamic sizing using cell-based width
-    let max_chars_available = ((MAX_DOC_WIDTH - DOC_PADDING * 2.0) / ui_char_width)
-      .floor()
-      .max(4.0) as usize;
-    let (content_width_chars, content_height_lines) = md.required_size(max_chars_available);
     let font_size = UI_FONT_SIZE;
     let line_height = ui_line_height.max(font_size + 4.0);
-
-    // Calculate ideal dimensions based on content
-    let ideal_width = (content_width_chars as f32 * ui_char_width + DOC_PADDING * 2.0)
-      .max(MIN_DOC_WIDTH)
-      .min(MAX_DOC_WIDTH);
-    let ideal_height = (content_height_lines as f32 * line_height + DOC_PADDING * 2.0)
-      .max(MIN_DOC_HEIGHT)
-      .min(MAX_DOC_HEIGHT);
 
     // Calculate available space on each side
     let space_on_right = window_width - (completion_x + completion_width);
@@ -464,42 +448,52 @@ impl Completion {
     let space_below = window_height - (completion_y + completion_height);
 
     // Determine best placement and calculate dimensions
+    // Key insight from Helix: use AVAILABLE width, not content-based width
     let (doc_x, doc_y, doc_width, doc_height) = if space_on_right >= MIN_DOC_WIDTH + SPACING {
-      // Position to the right
-      let available_width = space_on_right - SPACING;
-      let doc_width = ideal_width.min(available_width);
+      // Position to the right - use all available space up to MAX_DOC_WIDTH
+      let available_width = (space_on_right - SPACING).min(MAX_DOC_WIDTH);
       let doc_x = completion_x + completion_width + SPACING;
       let doc_y = completion_y;
-      let doc_height = ideal_height.min(window_height - doc_y);
-      (doc_x, doc_y, doc_width, doc_height)
+      let available_height = (window_height - doc_y).min(MAX_DOC_HEIGHT);
+      (doc_x, doc_y, available_width, available_height)
     } else if space_on_left >= MIN_DOC_WIDTH + SPACING {
-      // Position to the left
-      let available_width = space_on_left - SPACING;
-      let doc_width = ideal_width.min(available_width);
-      let doc_x = completion_x - doc_width - SPACING;
+      // Position to the left - use all available space up to MAX_DOC_WIDTH
+      let available_width = (space_on_left - SPACING).min(MAX_DOC_WIDTH);
+      let doc_x = completion_x - available_width - SPACING;
       let doc_y = completion_y;
-      let doc_height = ideal_height.min(window_height - doc_y);
-      (doc_x, doc_y, doc_width, doc_height)
+      let available_height = (window_height - doc_y).min(MAX_DOC_HEIGHT);
+      (doc_x, doc_y, available_width, available_height)
     } else if space_below >= MIN_DOC_HEIGHT + SPACING {
-      // Position below completion
+      // Position below completion - use full width
       let doc_x = completion_x;
       let doc_y = completion_y + completion_height + SPACING;
-      let doc_width = ideal_width.min(window_width - doc_x);
-      let available_height = space_below - SPACING;
-      let doc_height = ideal_height.min(available_height);
-      (doc_x, doc_y, doc_width, doc_height)
+      let doc_width = (window_width - doc_x).min(MAX_DOC_WIDTH);
+      let available_height = (space_below - SPACING).min(MAX_DOC_HEIGHT);
+      (doc_x, doc_y, doc_width, available_height)
     } else {
       // Not enough space anywhere, don't render
       return;
     };
 
+    // Now calculate actual content size based on available width
+    let max_chars_available = ((doc_width - DOC_PADDING * 2.0) / ui_char_width)
+      .floor()
+      .max(4.0) as usize;
+    let md = Markdown::new(markdown_content.clone(), ctx.editor.syn_loader.clone());
+    let (_content_width_chars, content_height_lines) = md.required_size(max_chars_available);
+
+    // Adjust height based on actual content (but don't exceed available)
+    let content_height = (content_height_lines as f32 * line_height + DOC_PADDING * 2.0)
+      .max(MIN_DOC_HEIGHT)
+      .min(doc_height);
+
     // Final safety check - ensure we're within viewport
     if doc_x < 0.0
       || doc_y < 0.0
       || doc_x + doc_width > window_width
-      || doc_y + doc_height > window_height
+      || doc_y + content_height > window_height
       || doc_width < 100.0
-      || doc_height < 50.0
+      || content_height < 50.0
     {
       return;
     }
@@ -524,10 +518,17 @@ impl Completion {
       return;
     }
 
-    surface.with_overlay_region(doc_x, doc_y, doc_width, doc_height, |surface| {
+    surface.with_overlay_region(doc_x, doc_y, doc_width, content_height, |surface| {
       // Draw background
       let corner_radius = 6.0;
-      surface.draw_rounded_rect(doc_x, doc_y, doc_width, doc_height, corner_radius, bg_color);
+      surface.draw_rounded_rect(
+        doc_x,
+        doc_y,
+        doc_width,
+        content_height,
+        corner_radius,
+        bg_color,
+      );
 
       // Draw border
       let border_color = Color::new(0.3, 0.3, 0.35, 0.8);
@@ -535,7 +536,7 @@ impl Completion {
         doc_x,
         doc_y,
         doc_width,
-        doc_height,
+        content_height,
         corner_radius,
         1.0,
         border_color,
@@ -543,7 +544,7 @@ impl Completion {
 
       // Render documentation content
       let mut y_offset = doc_y + DOC_PADDING;
-      let max_lines_by_height = ((doc_height - DOC_PADDING * 2.0) / line_height)
+      let max_lines_by_height = ((content_height - DOC_PADDING * 2.0) / line_height)
         .floor()
         .max(0.0) as usize;
 
@@ -551,8 +552,8 @@ impl Completion {
         return;
       }
 
-      let max_text_y = doc_y + doc_height - DOC_PADDING;
-      surface.push_scissor_rect(doc_x, doc_y, doc_width, doc_height);
+      let max_text_y = doc_y + content_height - DOC_PADDING;
+      surface.push_scissor_rect(doc_x, doc_y, doc_width, content_height);
 
       for segments in line_groups.into_iter().take(max_lines_by_height) {
         if y_offset > max_text_y {

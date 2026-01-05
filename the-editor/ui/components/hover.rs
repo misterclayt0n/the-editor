@@ -294,17 +294,11 @@ impl PopupContent for HoverContent {
 
   fn render(&mut self, frame: &mut PopupFrame<'_>, ctx: &mut Context) {
     let inner = frame.inner();
-    let outer = frame.outer();
     let wrap_width = inner.width.max(1.0);
     let cell_width = UI_FONT_WIDTH.max(1.0);
 
     let alpha = frame.alpha();
-    let (text_x, mut text_y) = frame.inner_origin();
-    text_y += UI_FONT_SIZE;
-    if self.scroll_offset > 0 {
-      let padding_above = (inner.y - outer.y).max(0.0);
-      text_y -= padding_above.min(UI_FONT_SIZE);
-    }
+    let (text_x, text_y) = frame.inner_origin();
 
     let mut new_scroll_offset = self.scroll_offset;
 
@@ -323,13 +317,15 @@ impl PopupContent for HoverContent {
         new_scroll_offset = new_scroll_offset.min(max_scroll);
         let text_bottom_bound = inner.y + inner.height;
 
+        // Render lines starting at text_y (no extra offset needed)
+        let mut current_y = text_y;
         for segments in layout
           .lines
           .iter()
           .skip(new_scroll_offset)
           .take(visible_lines)
         {
-          if text_y > text_bottom_bound {
+          if current_y > text_bottom_bound {
             break;
           }
 
@@ -343,12 +339,12 @@ impl PopupContent for HoverContent {
             .collect();
 
           let section = TextSection {
-            position: (text_x, text_y),
+            position: (text_x, current_y),
             texts,
           };
 
           frame.surface().draw_text(section);
-          text_y += layout.line_height;
+          current_y += layout.line_height;
         }
 
         if total_lines > visible_lines {

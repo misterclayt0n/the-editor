@@ -432,12 +432,17 @@ impl Completion {
     let window_height = surface.height() as f32;
 
     // Constants for doc popup
-    const MIN_DOC_WIDTH: f32 = 200.0;
-    const MAX_DOC_WIDTH: f32 = 500.0;
-    const MIN_DOC_HEIGHT: f32 = 100.0;
-    const MAX_DOC_HEIGHT: f32 = 400.0;
+    // Use character-based limits like Helix (120 chars max width)
+    const MIN_DOC_WIDTH_CHARS: u16 = 30;
+    const MAX_DOC_WIDTH_CHARS: u16 = 120;
+    const MAX_DOC_HEIGHT_LINES: u16 = 26;
     const DOC_PADDING: f32 = 8.0;
     const SPACING: f32 = 8.0;
+
+    // Convert to pixels
+    let min_doc_width = MIN_DOC_WIDTH_CHARS as f32 * ui_char_width;
+    let max_doc_width = MAX_DOC_WIDTH_CHARS as f32 * ui_char_width;
+    let max_doc_height = MAX_DOC_HEIGHT_LINES as f32 * ui_line_height;
 
     let font_size = UI_FONT_SIZE;
     let line_height = ui_line_height.max(font_size + 4.0);
@@ -449,26 +454,26 @@ impl Completion {
 
     // Determine best placement and calculate dimensions
     // Key insight from Helix: use AVAILABLE width, not content-based width
-    let (doc_x, doc_y, doc_width, doc_height) = if space_on_right >= MIN_DOC_WIDTH + SPACING {
-      // Position to the right - use all available space up to MAX_DOC_WIDTH
-      let available_width = (space_on_right - SPACING).min(MAX_DOC_WIDTH);
+    let (doc_x, doc_y, doc_width, doc_height) = if space_on_right >= min_doc_width + SPACING {
+      // Position to the right - use all available space up to max_doc_width
+      let available_width = (space_on_right - SPACING).min(max_doc_width);
       let doc_x = completion_x + completion_width + SPACING;
       let doc_y = completion_y;
-      let available_height = (window_height - doc_y).min(MAX_DOC_HEIGHT);
+      let available_height = (window_height - doc_y).min(max_doc_height);
       (doc_x, doc_y, available_width, available_height)
-    } else if space_on_left >= MIN_DOC_WIDTH + SPACING {
-      // Position to the left - use all available space up to MAX_DOC_WIDTH
-      let available_width = (space_on_left - SPACING).min(MAX_DOC_WIDTH);
+    } else if space_on_left >= min_doc_width + SPACING {
+      // Position to the left - use all available space up to max_doc_width
+      let available_width = (space_on_left - SPACING).min(max_doc_width);
       let doc_x = completion_x - available_width - SPACING;
       let doc_y = completion_y;
-      let available_height = (window_height - doc_y).min(MAX_DOC_HEIGHT);
+      let available_height = (window_height - doc_y).min(max_doc_height);
       (doc_x, doc_y, available_width, available_height)
-    } else if space_below >= MIN_DOC_HEIGHT + SPACING {
+    } else if space_below >= ui_line_height * 6.0 + SPACING {
       // Position below completion - use full width
       let doc_x = completion_x;
       let doc_y = completion_y + completion_height + SPACING;
-      let doc_width = (window_width - doc_x).min(MAX_DOC_WIDTH);
-      let available_height = (space_below - SPACING).min(MAX_DOC_HEIGHT);
+      let doc_width = (window_width - doc_x).min(max_doc_width);
+      let available_height = (space_below - SPACING).min(max_doc_height);
       (doc_x, doc_y, doc_width, available_height)
     } else {
       // Not enough space anywhere, don't render
@@ -484,7 +489,7 @@ impl Completion {
 
     // Adjust height based on actual content (but don't exceed available)
     let content_height = (content_height_lines as f32 * line_height + DOC_PADDING * 2.0)
-      .max(MIN_DOC_HEIGHT)
+      .max(ui_line_height * 4.0)
       .min(doc_height);
 
     // Final safety check - ensure we're within viewport
@@ -492,8 +497,8 @@ impl Completion {
       || doc_y < 0.0
       || doc_x + doc_width > window_width
       || doc_y + content_height > window_height
-      || doc_width < 100.0
-      || content_height < 50.0
+      || doc_width < min_doc_width
+      || content_height < ui_line_height * 3.0
     {
       return;
     }

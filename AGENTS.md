@@ -206,10 +206,10 @@ jj describe # Set/update commit message
 ```
 
 ### Workflow
-1. Make changes for a logical unit of work
+1. Separate things into logical units of work (these are your TODOs) and make changes for each of these
 2. Run `jj status` to review changes
-3. Run `jj new` to create a commit
-4. Run `jj describe -m "context: message"` to set the commit message
+3. Run `jj describe -m "context: message"` to set the commit message
+4. Run `jj new` to create a new commit with a new set of changes (the next TODO)
 5. Repeat for each phase of work
 
 ### Commit Frequency

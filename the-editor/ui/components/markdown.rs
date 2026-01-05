@@ -322,11 +322,12 @@ impl Markdown {
 
   /// Calculate the required size for rendering this markdown content.
   ///
-  /// Returns `(width, height)` in characters, accounting for wrapping at
+  /// Returns `(width, height)` in display cells, accounting for wrapping at
   /// `max_width`.
   pub fn required_size(&self, max_width: usize) -> (usize, usize) {
     let lines = self.parse(None);
-    required_size_from_lines(&lines, max_width)
+    let (w, h) = super::text_wrap::required_size(&lines, max_width as u16);
+    (w as usize, h as usize)
   }
 }
 
@@ -336,27 +337,6 @@ fn push_line(current: &mut Vec<TextSegment>, lines: &mut Vec<Vec<TextSegment>>) 
   if !segments.is_empty() {
     lines.push(segments);
   }
-}
-
-/// Calculate required size from parsed lines
-fn required_size_from_lines(lines: &[Vec<TextSegment>], max_width: usize) -> (usize, usize) {
-  let mut width = 0usize;
-  let mut height = 0usize;
-
-  for line in lines {
-    let line_width: usize = line.iter().map(|s| s.content.chars().count()).sum();
-
-    if line_width <= max_width {
-      width = width.max(line_width);
-      height += 1;
-    } else {
-      // Line needs wrapping
-      width = width.max(max_width);
-      height += (line_width + max_width - 1) / max_width;
-    }
-  }
-
-  (width.min(max_width), height)
 }
 
 // ============================================================================
@@ -520,10 +500,11 @@ fn highlight_code_block_internal(
 /// Highlight a code block with syntax highlighting.
 ///
 /// This is the public API that takes a Context for access to theme and loader.
+/// Uses word-aware wrapping when max_width_cells > 0.
 pub fn highlight_code_block(
   lang_hint: Option<&str>,
   code: &str,
-  max_chars: usize,
+  max_width_cells: usize,
   ctx: &mut Context,
 ) -> Vec<Vec<TextSegment>> {
   let theme = &ctx.editor.theme;
@@ -531,18 +512,9 @@ pub fn highlight_code_block(
 
   let lines = highlight_code_block_internal(code, lang_hint.unwrap_or(""), Some(theme), &loader);
 
-  // Apply line wrapping if needed
-  if max_chars > 0 {
-    let default_color = theme
-      .get(BLOCK_STYLE)
-      .fg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.8, 0.8, 0.8, 1.0));
-
-    lines
-      .into_iter()
-      .flat_map(|line| wrap_highlighted_line(line, max_chars, default_color))
-      .collect()
+  // Apply word-aware wrapping if needed
+  if max_width_cells > 0 {
+    super::text_wrap::wrap_lines(&lines, max_width_cells as u16, false)
   } else {
     lines
   }
@@ -610,10 +582,11 @@ pub fn wrap_text_preserve_breaks(text: &str, max_chars: usize) -> Vec<String> {
   lines
 }
 
-/// Build render lines from markdown text (legacy API).
+/// Build render lines from markdown text.
 ///
-/// This function is kept for backward compatibility. New code should use
-/// `Markdown::new(...).parse(...)` directly.
+/// This function parses markdown and wraps it using word-aware wrapping.
+/// The `max_width_cells` parameter specifies the maximum width in display cells
+/// (characters for monospace fonts).
 pub fn build_markdown_lines(
   markdown: &str,
   wrap_width: f32,
@@ -623,33 +596,37 @@ pub fn build_markdown_lines(
   let md = Markdown::new(markdown.to_string(), ctx.editor.syn_loader.clone());
   let lines = md.parse(Some(&ctx.editor.theme));
 
-  let max_chars = (wrap_width / cell_width).floor().max(4.0) as usize;
+  // Convert pixel width to cell width for wrapping
+  let max_width_cells = (wrap_width / cell_width.max(1.0)).floor().max(4.0) as u16;
 
-  // Apply wrapping to each line
-  if max_chars > 0 {
-    let text_color = ctx
-      .editor
-      .theme
-      .get(TEXT_STYLE)
-      .fg
-      .map(crate::ui::theme_color_to_renderer_color)
-      .unwrap_or(Color::new(0.9, 0.9, 0.9, 1.0));
-
-    lines
-      .into_iter()
-      .flat_map(|line| wrap_highlighted_line(line, max_chars, text_color))
-      .collect()
-  } else {
-    lines
-  }
+  // Use word-aware wrapping from text_wrap module
+  super::text_wrap::wrap_lines(&lines, max_width_cells, false)
 }
 
-/// Estimate the rendered width of a line of text segments.
+/// Build render lines from markdown with explicit cell width.
+///
+/// This is the preferred API - it takes max_width directly in cells,
+/// avoiding the pixel-to-cell conversion that can cause inconsistencies.
+pub fn build_markdown_lines_cells(
+  markdown: &str,
+  max_width_cells: u16,
+  ctx: &mut Context,
+) -> Vec<Vec<TextSegment>> {
+  let md = Markdown::new(markdown.to_string(), ctx.editor.syn_loader.clone());
+  let lines = md.parse(Some(&ctx.editor.theme));
+
+  // Use word-aware wrapping from text_wrap module
+  super::text_wrap::wrap_lines(&lines, max_width_cells, false)
+}
+
+/// Estimate the rendered width of a line of text segments in pixels.
 pub fn estimate_line_width(segments: &[TextSegment], cell_width: f32) -> f32 {
-  segments
-    .iter()
-    .map(|seg| seg.content.chars().count() as f32 * cell_width)
-    .sum()
+  super::text_wrap::line_width_pixels(segments, cell_width)
+}
+
+/// Get the display width of a line in cells.
+pub fn line_width_cells(segments: &[TextSegment]) -> u16 {
+  super::text_wrap::line_width(segments)
 }
 
 /// Calculate scroll lines from a scroll delta.
@@ -669,117 +646,6 @@ pub fn scroll_lines_from_delta(delta: &the_editor_renderer::ScrollDelta) -> i32 
       (*y / line_height).round() as i32
     },
   }
-}
-
-// ============================================================================
-// Line wrapping helper
-// ============================================================================
-
-const CONTINUATION_INDENT: &str = "  ";
-
-/// Wrap a highlighted line into multiple lines when it exceeds max_chars.
-fn wrap_highlighted_line(
-  segments: Vec<TextSegment>,
-  max_chars: usize,
-  default_color: Color,
-) -> Vec<Vec<TextSegment>> {
-  if max_chars == 0 {
-    return vec![segments];
-  }
-
-  let total_chars: usize = segments.iter().map(|s| s.content.chars().count()).sum();
-  if total_chars <= max_chars {
-    return vec![segments];
-  }
-
-  let mut result: Vec<Vec<TextSegment>> = Vec::new();
-  let mut current_line: Vec<TextSegment> = Vec::new();
-  let mut current_width = 0usize;
-  let mut is_continuation = false;
-
-  let continuation_max = max_chars.saturating_sub(CONTINUATION_INDENT.len());
-
-  for segment in segments {
-    let seg_chars: Vec<char> = segment.content.chars().collect();
-    let seg_len = seg_chars.len();
-
-    if seg_len == 0 {
-      continue;
-    }
-
-    let effective_max = if is_continuation {
-      continuation_max
-    } else {
-      max_chars
-    };
-
-    if current_width + seg_len <= effective_max {
-      current_line.push(segment);
-      current_width += seg_len;
-      continue;
-    }
-
-    let mut seg_pos = 0;
-    while seg_pos < seg_len {
-      let effective_max = if is_continuation {
-        continuation_max
-      } else {
-        max_chars
-      };
-      let remaining_space = effective_max.saturating_sub(current_width);
-
-      if remaining_space == 0 {
-        if !current_line.is_empty() {
-          result.push(std::mem::take(&mut current_line));
-        }
-        is_continuation = true;
-        current_line.push(TextSegment {
-          content: CONTINUATION_INDENT.to_string(),
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
-            color: default_color,
-          },
-        });
-        current_width = CONTINUATION_INDENT.len();
-        continue;
-      }
-
-      let take_count = (seg_len - seg_pos).min(remaining_space);
-      let chunk: String = seg_chars[seg_pos..seg_pos + take_count].iter().collect();
-
-      if !chunk.is_empty() {
-        current_line.push(TextSegment {
-          content: chunk,
-          style:   segment.style.clone(),
-        });
-        current_width += take_count;
-      }
-      seg_pos += take_count;
-
-      if seg_pos < seg_len {
-        result.push(std::mem::take(&mut current_line));
-        is_continuation = true;
-        current_line.push(TextSegment {
-          content: CONTINUATION_INDENT.to_string(),
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
-            color: default_color,
-          },
-        });
-        current_width = CONTINUATION_INDENT.len();
-      }
-    }
-  }
-
-  if !current_line.is_empty() {
-    result.push(current_line);
-  }
-
-  if result.is_empty() {
-    result.push(vec![]);
-  }
-
-  result
 }
 
 // ============================================================================
@@ -900,7 +766,7 @@ mod tests {
   }
 
   #[test]
-  fn test_wrap_highlighted_line_short() {
+  fn test_wrap_line_short() {
     let segments = vec![TextSegment {
       content: "short".to_string(),
       style:   TextStyle {
@@ -908,12 +774,12 @@ mod tests {
         color: Color::new(1.0, 1.0, 1.0, 1.0),
       },
     }];
-    let result = wrap_highlighted_line(segments, 80, Color::new(1.0, 1.0, 1.0, 1.0));
+    let result = super::text_wrap::wrap_line(&segments, 80, false);
     assert_eq!(result.len(), 1);
   }
 
   #[test]
-  fn test_wrap_highlighted_line_long() {
+  fn test_wrap_line_long() {
     let segments = vec![TextSegment {
       content: "this is a very long line that needs wrapping".to_string(),
       style:   TextStyle {
@@ -921,7 +787,7 @@ mod tests {
         color: Color::new(1.0, 1.0, 1.0, 1.0),
       },
     }];
-    let result = wrap_highlighted_line(segments, 20, Color::new(1.0, 1.0, 1.0, 1.0));
+    let result = super::text_wrap::wrap_line(&segments, 20, false);
     assert!(result.len() >= 2);
   }
 }

@@ -427,14 +427,6 @@ impl Completion {
       (None, None) => return,
     };
 
-    // Create Markdown renderer and parse content
-    let md = Markdown::new(markdown_content, ctx.editor.syn_loader.clone());
-    let line_groups = md.parse(Some(&ctx.editor.theme));
-
-    if line_groups.is_empty() {
-      return;
-    }
-
     // Get window dimensions
     let window_width = surface.width() as f32;
     let window_height = surface.height() as f32;
@@ -447,9 +439,13 @@ impl Completion {
     const DOC_PADDING: f32 = 8.0;
     const SPACING: f32 = 8.0;
 
-    // Calculate content size for dynamic sizing
-    let max_chars_available =
-      ((MAX_DOC_WIDTH - DOC_PADDING * 2.0) / ui_char_width).floor() as usize;
+    // Create Markdown renderer for size calculation
+    let md = Markdown::new(markdown_content.clone(), ctx.editor.syn_loader.clone());
+
+    // Calculate content size for dynamic sizing using cell-based width
+    let max_chars_available = ((MAX_DOC_WIDTH - DOC_PADDING * 2.0) / ui_char_width)
+      .floor()
+      .max(4.0) as usize;
     let (content_width_chars, content_height_lines) = md.required_size(max_chars_available);
     let font_size = UI_FONT_SIZE;
     let line_height = ui_line_height.max(font_size + 4.0);
@@ -516,6 +512,17 @@ impl Completion {
       .bg
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.12, 0.12, 0.15, 1.0));
+
+    // Now wrap content to actual doc_width (render-time wrapping)
+    let actual_max_chars = ((doc_width - DOC_PADDING * 2.0) / ui_char_width)
+      .floor()
+      .max(4.0) as u16;
+    let line_groups =
+      super::markdown::build_markdown_lines_cells(&markdown_content, actual_max_chars, ctx);
+
+    if line_groups.is_empty() {
+      return;
+    }
 
     surface.with_overlay_region(doc_x, doc_y, doc_width, doc_height, |surface| {
       // Draw background

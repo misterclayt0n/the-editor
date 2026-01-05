@@ -310,11 +310,11 @@ pub struct Renderer {
   mask_instance_capacity: usize,
 
   // Text metrics / font tracking.
-  font_family:      String,
-  font_size:        f32,
-  cell_width:       f32,
-  cell_height:      f32,
-  line_top_offset:  f32, // Vertical offset from buffer top to actual text top
+  font_family:     String,
+  font_size:       f32,
+  cell_width:      f32,
+  cell_height:     f32,
+  line_top_offset: f32, // Vertical offset from buffer top to actual text top
 
   // Performance optimization: disable ligature protection for better performance
   disable_ligature_protection: bool,
@@ -1073,7 +1073,6 @@ impl Renderer {
       self.cell_width = advance_width.max(1.0);
       self.cell_height = run.line_height.max(self.font_size);
       self.line_top_offset = run.line_top;
-
     } else {
       self.cell_height = self.font_size * LINE_HEIGHT_FACTOR;
       self.cell_width = (self.font_size * 0.6).max(1.0);
@@ -1459,7 +1458,8 @@ impl Renderer {
         .text_commands
         .iter()
         .filter(|command| {
-          // Check if text is within the scissor rect that was active when text was created
+          // Check if text is within the scissor rect that was active when text was
+          // created
           if let Some((scissor_x, scissor_y, scissor_width, scissor_height)) = command.scissor_rect
           {
             let text_x = command.position.0;
@@ -1496,10 +1496,10 @@ impl Renderer {
                 command.bounds
               };
               TextArea {
-                buffer:        &entry.buffer,
-                left:          command.position.0,
-                top:           command.position.1,
-                scale:         1.0,
+                buffer: &entry.buffer,
+                left: command.position.0,
+                top: command.position.1,
+                scale: 1.0,
                 bounds,
                 default_color: GlyphColor::rgba(255, 255, 255, 255),
                 custom_glyphs: &[],
@@ -1585,7 +1585,8 @@ impl Renderer {
         .overlay_text_commands
         .iter()
         .filter(|command| {
-          // Check if text is within the scissor rect that was active when text was created
+          // Check if text is within the scissor rect that was active when text was
+          // created
           if let Some((scissor_x, scissor_y, scissor_width, scissor_height)) = command.scissor_rect
           {
             let text_x = command.position.0;
@@ -1622,10 +1623,10 @@ impl Renderer {
                 command.bounds
               };
               TextArea {
-                buffer:        &entry.buffer,
-                left:          command.position.0,
-                top:           command.position.1,
-                scale:         1.0,
+                buffer: &entry.buffer,
+                left: command.position.0,
+                top: command.position.1,
+                scale: 1.0,
                 bounds,
                 default_color: GlyphColor::rgba(255, 255, 255, 255),
                 custom_glyphs: &[],

@@ -7,12 +7,12 @@
 mod color;
 mod error;
 pub mod event;
+pub mod image;
 mod powerline_glyphs;
 mod renderer;
 pub mod svg_icon;
 mod text;
 mod text_cache;
-pub mod image;
 
 use std::{
   sync::Arc,
@@ -321,7 +321,10 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
           let gpu_init_start = Instant::now();
           match pollster::block_on(Renderer::new(window.clone())) {
             Ok(mut renderer) => {
-              log::info!("[STARTUP] GPU init (Renderer::new): {:?}", gpu_init_start.elapsed());
+              log::info!(
+                "[STARTUP] GPU init (Renderer::new): {:?}",
+                gpu_init_start.elapsed()
+              );
               self.app.init(&mut renderer);
               self.renderer = Some(renderer);
               self.window = Some(window.clone());

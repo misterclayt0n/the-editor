@@ -88,29 +88,43 @@ impl EventListener for EventProxy {
     let terminal_event = match event {
       AlacrittyEvent::Wakeup => TerminalEvent::Wakeup(self.id),
       AlacrittyEvent::Bell => TerminalEvent::Bell(self.id),
-      AlacrittyEvent::Exit => TerminalEvent::Exit { id: self.id, status: None },
+      AlacrittyEvent::Exit => {
+        TerminalEvent::Exit {
+          id:     self.id,
+          status: None,
+        }
+      },
       AlacrittyEvent::Title(title) => TerminalEvent::Title { id: self.id, title },
-      AlacrittyEvent::ClipboardLoad(_, _) => TerminalEvent::ClipboardLoad { id: self.id },
+      AlacrittyEvent::ClipboardLoad(..) => TerminalEvent::ClipboardLoad { id: self.id },
       AlacrittyEvent::ClipboardStore(_, content) => {
-        TerminalEvent::ClipboardStore { id: self.id, content }
-      }
+        TerminalEvent::ClipboardStore {
+          id: self.id,
+          content,
+        }
+      },
       AlacrittyEvent::CursorBlinkingChange => return,
       AlacrittyEvent::MouseCursorDirty => return,
       AlacrittyEvent::ResetTitle => {
-        TerminalEvent::Title { id: self.id, title: String::new() }
-      }
+        TerminalEvent::Title {
+          id:    self.id,
+          title: String::new(),
+        }
+      },
       AlacrittyEvent::TextAreaSizeRequest(_) => return,
-      AlacrittyEvent::ColorRequest(_, _) => return,
+      AlacrittyEvent::ColorRequest(..) => return,
       AlacrittyEvent::PtyWrite(text) => {
         // Write response back to PTY (for terminal queries like device attributes)
         if let Some(sender) = self.event_loop_sender.get() {
           let _ = sender.send(Msg::Input(text.into_bytes().into()));
         }
         return;
-      }
+      },
       AlacrittyEvent::ChildExit(status) => {
-        TerminalEvent::Exit { id: self.id, status: Some(status) }
-      }
+        TerminalEvent::Exit {
+          id:     self.id,
+          status: Some(status),
+        }
+      },
     };
 
     if self.sender.send(terminal_event).is_ok() {
@@ -174,8 +188,8 @@ pub struct Terminal {
   /// Pending 'g' key for gg motion.
   vi_pending_g: bool,
 
-  /// Current search match range for highlighting (start_col, start_row, end_col, end_row).
-  /// Uses grid coordinates (not viewport-relative).
+  /// Current search match range for highlighting (start_col, start_row,
+  /// end_col, end_row). Uses grid coordinates (not viewport-relative).
   vi_search_match: Option<(AlacPoint, AlacPoint)>,
 }
 
@@ -195,14 +209,15 @@ impl Terminal {
 
     let event_proxy = EventProxy {
       id,
-      sender:            event_sender.clone(),
+      sender: event_sender.clone(),
       event_loop_sender: Arc::clone(&event_loop_sender_cell),
     };
 
     // Determine shell
-    let shell = config.shell.clone().unwrap_or_else(|| {
-      std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
-    });
+    let shell = config
+      .shell
+      .clone()
+      .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()));
 
     // Create terminal config
     let term_config = TermConfig::default();
@@ -219,7 +234,7 @@ impl Terminal {
     // Pass -i flag for interactive mode - most shells need this to work properly
     // in a pseudo-terminal context (bash, zsh, fish, nu all support -i)
     let pty_config = PtyOptions {
-      shell:             Some(tty::Shell::new(shell, vec!["-i".to_string()])),
+      shell: Some(tty::Shell::new(shell, vec!["-i".to_string()])),
       working_directory: config.working_directory.clone(),
       ..Default::default()
     };
@@ -228,7 +243,11 @@ impl Terminal {
     let pty = tty::new(&pty_config, window_size, id.0.get() as u64)?;
 
     // Create the terminal
-    let term = Term::new(term_config, &TermSize::new(cols as usize, rows as usize), event_proxy);
+    let term = Term::new(
+      term_config,
+      &TermSize::new(cols as usize, rows as usize),
+      event_proxy,
+    );
     let term = Arc::new(FairMutex::new(term));
 
     // Create the event loop
@@ -236,7 +255,7 @@ impl Terminal {
       Arc::clone(&term),
       EventProxy {
         id,
-        sender:            event_sender.clone(),
+        sender: event_sender.clone(),
         event_loop_sender: Arc::clone(&event_loop_sender_cell),
       },
       pty,
@@ -246,7 +265,8 @@ impl Terminal {
 
     // Start the event loop
     let event_loop_sender = event_loop.channel();
-    // Set the sender in the OnceLock so EventProxy can use it for PtyWrite responses
+    // Set the sender in the OnceLock so EventProxy can use it for PtyWrite
+    // responses
     let _ = event_loop_sender_cell.set(event_loop_sender.clone());
     let _handle = event_loop.spawn();
 
@@ -336,7 +356,9 @@ impl Terminal {
 
   /// Write input bytes to the terminal.
   pub fn write(&self, data: &[u8]) {
-    let _ = self.event_loop_sender.send(Msg::Input(data.to_vec().into()));
+    let _ = self
+      .event_loop_sender
+      .send(Msg::Input(data.to_vec().into()));
   }
 
   /// Write a string to the terminal.
@@ -361,7 +383,8 @@ impl Terminal {
     let term = self.term.lock();
     let content = term.renderable_content();
 
-    // Handle hidden cursor - alacritty sets shape to Hidden when SHOW_CURSOR mode is off
+    // Handle hidden cursor - alacritty sets shape to Hidden when SHOW_CURSOR mode
+    // is off
     let (shape, visible) = match content.cursor.shape {
       alacritty_terminal::vte::ansi::CursorShape::Block => (CursorShape::Block, true),
       alacritty_terminal::vte::ansi::CursorShape::Underline => (CursorShape::Underline, true),
@@ -390,7 +413,8 @@ impl Terminal {
     term.scroll_display(alacritty_terminal::grid::Scroll::Bottom);
   }
 
-  /// Check if the terminal is in mouse mode (for mouse-aware programs like vim, less, tmux).
+  /// Check if the terminal is in mouse mode (for mouse-aware programs like vim,
+  /// less, tmux).
   pub fn mouse_mode(&self) -> bool {
     let term = self.term.lock();
     term.mode().contains(TermMode::MOUSE_MODE)
@@ -403,7 +427,8 @@ impl Terminal {
   }
 
   /// Check if the terminal is in alternate screen mode.
-  /// TUI apps like vim, helix, less use this mode and control their own display/selection.
+  /// TUI apps like vim, helix, less use this mode and control their own
+  /// display/selection.
   pub fn alt_screen_mode(&self) -> bool {
     let term = self.term.lock();
     term.mode().contains(TermMode::ALT_SCREEN)
@@ -460,9 +485,10 @@ impl Terminal {
   }
 
   /// Get the selection range for rendering purposes.
-  /// Returns viewport-relative coordinates: ((start_col, start_row), (end_col, end_row)).
-  /// Note: end_col is EXCLUSIVE (one past the last selected column) to match vim-style
-  /// character selection where both anchor and cursor cells should be included.
+  /// Returns viewport-relative coordinates: ((start_col, start_row), (end_col,
+  /// end_row)). Note: end_col is EXCLUSIVE (one past the last selected
+  /// column) to match vim-style character selection where both anchor and
+  /// cursor cells should be included.
   pub fn selection_range(&self) -> Option<((u16, i32), (u16, i32))> {
     // For vi mode selection, compute range directly from anchor and cursor
     // to ensure both cells are always included (vim-style selection)
@@ -490,7 +516,7 @@ impl Terminal {
             (0, start.line.0 + display_offset),
             (cols, end.line.0 + display_offset),
           ))
-        }
+        },
         _ => {
           // Character selection: use actual column positions
           // Return inclusive range with exclusive end (end_col + 1)
@@ -498,7 +524,7 @@ impl Terminal {
             (start.column.0 as u16, start.line.0 + display_offset),
             (end.column.0 as u16 + 1, end.line.0 + display_offset),
           ))
-        }
+        },
       }
     } else {
       // Fall back to alacritty's selection for mouse selections
@@ -507,15 +533,22 @@ impl Terminal {
       term.selection.as_ref().and_then(|sel| {
         let range = sel.to_range(&term)?;
         Some((
-          (range.start.column.0 as u16, range.start.line.0 + display_offset),
-          (range.end.column.0 as u16 + 1, range.end.line.0 + display_offset),
+          (
+            range.start.column.0 as u16,
+            range.start.line.0 + display_offset,
+          ),
+          (
+            range.end.column.0 as u16 + 1,
+            range.end.line.0 + display_offset,
+          ),
         ))
       })
     }
   }
 
-  // Note: Raw terminal access is available through render_cells() and cursor_info().
-  // Direct term() access is intentionally not exposed to keep EventProxy private.
+  // Note: Raw terminal access is available through render_cells() and
+  // cursor_info(). Direct term() access is intentionally not exposed to keep
+  // EventProxy private.
 
   // ==========================================================================
   // Visibility and Lifecycle
@@ -607,7 +640,8 @@ impl Terminal {
   }
 
   /// Scroll vi mode by pages.
-  /// Positive lines = scroll up (toward history), negative = scroll down (toward current).
+  /// Positive lines = scroll up (toward history), negative = scroll down
+  /// (toward current).
   pub fn vi_scroll(&mut self, lines: i32) {
     if let Some(cursor) = self.vi_mode_cursor.take() {
       let mut term = self.term.lock();
@@ -789,7 +823,7 @@ impl Terminal {
         self.vi_search = Some(search);
         self.vi_search_pattern = pattern.to_string();
         Ok(())
-      }
+      },
       Err(e) => Err(format!("Invalid regex: {}", e)),
     }
   }
@@ -883,8 +917,9 @@ impl Terminal {
   }
 
   /// Get the current search match range for rendering.
-  /// Returns viewport-relative coordinates: ((start_col, start_row), (end_col, end_row)).
-  /// Note: end_col is EXCLUSIVE (one past the last matched column).
+  /// Returns viewport-relative coordinates: ((start_col, start_row), (end_col,
+  /// end_row)). Note: end_col is EXCLUSIVE (one past the last matched
+  /// column).
   pub fn vi_search_match_range(&self) -> Option<((u16, i32), (u16, i32))> {
     let (start, end) = self.vi_search_match?;
     let term = self.term.lock();
@@ -911,6 +946,8 @@ impl Drop for Terminal {
 
 #[cfg(test)]
 mod tests {
+  use alacritty_terminal::term::cell::Flags;
+
   use crate::test_utils::{
     cell_flags,
     char_at,
@@ -919,7 +956,6 @@ mod tests {
     row_content,
     test_term,
   };
-  use alacritty_terminal::term::cell::Flags;
 
   // ============================================================
   // Cursor Movement Tests (CSI sequences)
@@ -1378,7 +1414,10 @@ mod tests {
     fn test_osc_hyperlink_text_visible() {
       let mut term = test_term(40, 5);
       // OSC 8 hyperlink
-      feed_str(&mut term, "\x1b]8;;https://example.com\x1b\\Link\x1b]8;;\x1b\\");
+      feed_str(
+        &mut term,
+        "\x1b]8;;https://example.com\x1b\\Link\x1b]8;;\x1b\\",
+      );
 
       // The text "Link" should be visible
       let line = row_content(&term, 0);

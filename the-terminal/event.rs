@@ -9,10 +9,7 @@ pub enum TerminalEvent {
   Wakeup(TerminalId),
 
   /// Terminal title changed (via OSC escape sequence).
-  Title {
-    id:    TerminalId,
-    title: String,
-  },
+  Title { id: TerminalId, title: String },
 
   /// Bell character received.
   Bell(TerminalId),
@@ -24,9 +21,7 @@ pub enum TerminalEvent {
   },
 
   /// Terminal requests clipboard content (paste).
-  ClipboardLoad {
-    id: TerminalId,
-  },
+  ClipboardLoad { id: TerminalId },
 
   /// Terminal provides clipboard content (copy).
   ClipboardStore {
@@ -35,10 +30,7 @@ pub enum TerminalEvent {
   },
 
   /// Cursor visibility changed.
-  CursorVisibility {
-    id:      TerminalId,
-    visible: bool,
-  },
+  CursorVisibility { id: TerminalId, visible: bool },
 
   /// Mouse cursor shape changed.
   MouseCursorShape {
@@ -57,9 +49,10 @@ pub enum MouseCursorShape {
 
 #[cfg(test)]
 mod tests {
+  use std::num::NonZeroUsize;
+
   use super::*;
   use crate::TerminalId;
-  use std::num::NonZeroUsize;
 
   fn make_id(n: usize) -> TerminalId {
     TerminalId(NonZeroUsize::new(n).unwrap())
@@ -79,13 +72,16 @@ mod tests {
   #[test]
   fn test_terminal_event_title() {
     let id = make_id(1);
-    let event = TerminalEvent::Title { id, title: "MyTerminal".to_string() };
+    let event = TerminalEvent::Title {
+      id,
+      title: "MyTerminal".to_string(),
+    };
 
     match event {
       TerminalEvent::Title { id: eid, title } => {
         assert_eq!(eid, id);
         assert_eq!(title, "MyTerminal");
-      }
+      },
       _ => panic!("Expected Title event"),
     }
   }
@@ -104,13 +100,16 @@ mod tests {
   #[test]
   fn test_terminal_event_exit_with_status() {
     let id = make_id(1);
-    let event = TerminalEvent::Exit { id, status: Some(0) };
+    let event = TerminalEvent::Exit {
+      id,
+      status: Some(0),
+    };
 
     match event {
       TerminalEvent::Exit { id: eid, status } => {
         assert_eq!(eid, id);
         assert_eq!(status, Some(0));
-      }
+      },
       _ => panic!("Expected Exit event"),
     }
   }
@@ -124,7 +123,7 @@ mod tests {
       TerminalEvent::Exit { id: eid, status } => {
         assert_eq!(eid, id);
         assert_eq!(status, None);
-      }
+      },
       _ => panic!("Expected Exit event"),
     }
   }
@@ -132,13 +131,16 @@ mod tests {
   #[test]
   fn test_terminal_event_clipboard_store() {
     let id = make_id(1);
-    let event = TerminalEvent::ClipboardStore { id, content: "copied text".to_string() };
+    let event = TerminalEvent::ClipboardStore {
+      id,
+      content: "copied text".to_string(),
+    };
 
     match event {
       TerminalEvent::ClipboardStore { id: eid, content } => {
         assert_eq!(eid, id);
         assert_eq!(content, "copied text");
-      }
+      },
       _ => panic!("Expected ClipboardStore event"),
     }
   }
@@ -170,7 +172,7 @@ mod tests {
       TerminalEvent::CursorVisibility { id: eid, visible } => {
         assert_eq!(eid, id);
         assert!(visible);
-      }
+      },
       _ => panic!("Expected CursorVisibility event"),
     }
   }
@@ -178,13 +180,16 @@ mod tests {
   #[test]
   fn test_terminal_event_mouse_cursor_shape() {
     let id = make_id(1);
-    let event = TerminalEvent::MouseCursorShape { id, shape: MouseCursorShape::Pointer };
+    let event = TerminalEvent::MouseCursorShape {
+      id,
+      shape: MouseCursorShape::Pointer,
+    };
 
     match event {
       TerminalEvent::MouseCursorShape { id: eid, shape } => {
         assert_eq!(eid, id);
         assert_eq!(shape, MouseCursorShape::Pointer);
-      }
+      },
       _ => panic!("Expected MouseCursorShape event"),
     }
   }

@@ -1,16 +1,22 @@
 //! Terminal emulation crate for the-editor.
 //!
-//! This crate provides terminal emulation using `alacritty_terminal` as the backend.
-//! It exposes a `Terminal` type that can be embedded as a view in the editor.
+//! This crate provides terminal emulation using `alacritty_terminal` as the
+//! backend. It exposes a `Terminal` type that can be embedded as a view in the
+//! editor.
 
 mod config;
 mod event;
 mod renderer;
 mod terminal;
 
-#[cfg(test)]
-mod test_utils;
+#[cfg(test)] mod test_utils;
 
+use std::num::NonZeroUsize;
+
+// Re-export selection types for mouse handling
+pub use alacritty_terminal::selection::SelectionType;
+// Re-export vi mode types for terminal vim mode
+pub use alacritty_terminal::vi_mode::ViMotion;
 pub use config::TerminalConfig;
 pub use event::TerminalEvent;
 pub use renderer::{
@@ -23,14 +29,6 @@ pub use terminal::{
   Terminal,
   TerminalPickerInfo,
 };
-
-// Re-export selection types for mouse handling
-pub use alacritty_terminal::selection::SelectionType;
-
-// Re-export vi mode types for terminal vim mode
-pub use alacritty_terminal::vi_mode::ViMotion;
-
-use std::num::NonZeroUsize;
 
 /// Unique identifier for a terminal instance.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]

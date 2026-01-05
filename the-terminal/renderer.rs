@@ -1,6 +1,7 @@
 //! Terminal cell extraction for rendering.
 //!
-//! This module provides utilities to extract renderable cells from the terminal state.
+//! This module provides utilities to extract renderable cells from the terminal
+//! state.
 
 use alacritty_terminal::{
   term::{
@@ -17,17 +18,17 @@ use alacritty_terminal::{
 #[derive(Debug, Clone)]
 pub struct RenderCell {
   /// Column position (0-indexed).
-  pub col: u16,
+  pub col:     u16,
   /// Row position (0-indexed, from top of viewport).
-  pub row: u16,
+  pub row:     u16,
   /// Character to display.
-  pub c: char,
+  pub c:       char,
   /// Foreground color as RGB.
-  pub fg: (u8, u8, u8),
+  pub fg:      (u8, u8, u8),
   /// Background color as RGB.
-  pub bg: (u8, u8, u8),
+  pub bg:      (u8, u8, u8),
   /// Cell flags for styling.
-  pub flags: CellStyle,
+  pub flags:   CellStyle,
   /// Whether this is a wide character (takes 2 cells).
   pub is_wide: bool,
 }
@@ -48,9 +49,8 @@ impl From<CellFlags> for CellStyle {
     Self {
       bold:          flags.contains(CellFlags::BOLD),
       italic:        flags.contains(CellFlags::ITALIC),
-      underline:     flags.intersects(
-        CellFlags::UNDERLINE | CellFlags::DOUBLE_UNDERLINE | CellFlags::UNDERCURL,
-      ),
+      underline:     flags
+        .intersects(CellFlags::UNDERLINE | CellFlags::DOUBLE_UNDERLINE | CellFlags::UNDERCURL),
       strikethrough: flags.contains(CellFlags::STRIKEOUT),
       dim:           flags.contains(CellFlags::DIM),
       inverse:       flags.contains(CellFlags::INVERSE),
@@ -146,7 +146,7 @@ impl ColorScheme {
         } else {
           self.background
         }
-      }
+      },
     }
   }
 
@@ -179,12 +179,12 @@ impl ColorScheme {
           if g == 0 { 0 } else { 55 + g * 40 },
           if b == 0 { 0 } else { 55 + b * 40 },
         )
-      }
+      },
       // Grayscale (232-255)
       232..=255 => {
         let gray = 8 + (idx - 232) * 10;
         (gray, gray, gray)
-      }
+      },
     }
   }
 }
@@ -194,10 +194,10 @@ impl ColorScheme {
 /// This function takes ownership of the RenderableContent since
 /// its display_iter is a consuming iterator.
 ///
-/// The display_iter returns cells with `point.line` as absolute grid coordinates
-/// which can be negative when viewing scrollback history. We convert these to
-/// viewport-relative row indices (0, 1, 2...) by grouping cells by line and
-/// using the group iteration order.
+/// The display_iter returns cells with `point.line` as absolute grid
+/// coordinates which can be negative when viewing scrollback history. We
+/// convert these to viewport-relative row indices (0, 1, 2...) by grouping
+/// cells by line and using the group iteration order.
 pub fn extract_cells(
   content: RenderableContent<'_>,
   colors: &ColorScheme,
@@ -309,14 +309,38 @@ mod tests {
     fn test_resolve_named_colors() {
       let scheme = ColorScheme::default();
 
-      assert_eq!(scheme.resolve(Color::Named(NamedColor::Black), true), scheme.black);
-      assert_eq!(scheme.resolve(Color::Named(NamedColor::Red), true), scheme.red);
-      assert_eq!(scheme.resolve(Color::Named(NamedColor::Green), true), scheme.green);
-      assert_eq!(scheme.resolve(Color::Named(NamedColor::Yellow), true), scheme.yellow);
-      assert_eq!(scheme.resolve(Color::Named(NamedColor::Blue), true), scheme.blue);
-      assert_eq!(scheme.resolve(Color::Named(NamedColor::Magenta), true), scheme.magenta);
-      assert_eq!(scheme.resolve(Color::Named(NamedColor::Cyan), true), scheme.cyan);
-      assert_eq!(scheme.resolve(Color::Named(NamedColor::White), true), scheme.white);
+      assert_eq!(
+        scheme.resolve(Color::Named(NamedColor::Black), true),
+        scheme.black
+      );
+      assert_eq!(
+        scheme.resolve(Color::Named(NamedColor::Red), true),
+        scheme.red
+      );
+      assert_eq!(
+        scheme.resolve(Color::Named(NamedColor::Green), true),
+        scheme.green
+      );
+      assert_eq!(
+        scheme.resolve(Color::Named(NamedColor::Yellow), true),
+        scheme.yellow
+      );
+      assert_eq!(
+        scheme.resolve(Color::Named(NamedColor::Blue), true),
+        scheme.blue
+      );
+      assert_eq!(
+        scheme.resolve(Color::Named(NamedColor::Magenta), true),
+        scheme.magenta
+      );
+      assert_eq!(
+        scheme.resolve(Color::Named(NamedColor::Cyan), true),
+        scheme.cyan
+      );
+      assert_eq!(
+        scheme.resolve(Color::Named(NamedColor::White), true),
+        scheme.white
+      );
     }
 
     #[test]
@@ -369,7 +393,10 @@ mod tests {
         scheme.resolve(Color::Named(NamedColor::Background), false),
         scheme.background
       );
-      assert_eq!(scheme.resolve(Color::Named(NamedColor::Cursor), true), scheme.cursor);
+      assert_eq!(
+        scheme.resolve(Color::Named(NamedColor::Cursor), true),
+        scheme.cursor
+      );
     }
 
     #[test]
@@ -389,12 +416,24 @@ mod tests {
       // Indexed 8-15 map to bright colors
       assert_eq!(scheme.resolve(Color::Indexed(8), true), scheme.bright_black);
       assert_eq!(scheme.resolve(Color::Indexed(9), true), scheme.bright_red);
-      assert_eq!(scheme.resolve(Color::Indexed(10), true), scheme.bright_green);
-      assert_eq!(scheme.resolve(Color::Indexed(11), true), scheme.bright_yellow);
+      assert_eq!(
+        scheme.resolve(Color::Indexed(10), true),
+        scheme.bright_green
+      );
+      assert_eq!(
+        scheme.resolve(Color::Indexed(11), true),
+        scheme.bright_yellow
+      );
       assert_eq!(scheme.resolve(Color::Indexed(12), true), scheme.bright_blue);
-      assert_eq!(scheme.resolve(Color::Indexed(13), true), scheme.bright_magenta);
+      assert_eq!(
+        scheme.resolve(Color::Indexed(13), true),
+        scheme.bright_magenta
+      );
       assert_eq!(scheme.resolve(Color::Indexed(14), true), scheme.bright_cyan);
-      assert_eq!(scheme.resolve(Color::Indexed(15), true), scheme.bright_white);
+      assert_eq!(
+        scheme.resolve(Color::Indexed(15), true),
+        scheme.bright_white
+      );
     }
 
     #[test]
@@ -480,13 +519,25 @@ mod tests {
     fn test_resolve_true_color_rgb() {
       let scheme = ColorScheme::default();
 
-      let rgb = Rgb { r: 128, g: 64, b: 32 };
+      let rgb = Rgb {
+        r: 128,
+        g: 64,
+        b: 32,
+      };
       assert_eq!(scheme.resolve(Color::Spec(rgb), true), (128, 64, 32));
 
-      let rgb = Rgb { r: 0, g: 255, b: 128 };
+      let rgb = Rgb {
+        r: 0,
+        g: 255,
+        b: 128,
+      };
       assert_eq!(scheme.resolve(Color::Spec(rgb), true), (0, 255, 128));
 
-      let rgb = Rgb { r: 255, g: 255, b: 255 };
+      let rgb = Rgb {
+        r: 255,
+        g: 255,
+        b: 255,
+      };
       assert_eq!(scheme.resolve(Color::Spec(rgb), true), (255, 255, 255));
     }
   }
@@ -766,8 +817,8 @@ mod tests {
       let scheme = ColorScheme::default();
 
       // Bright red should have higher values than regular red
-      let (r1, _, _) = scheme.red;
-      let (r2, _, _) = scheme.bright_red;
+      let (r1, ..) = scheme.red;
+      let (r2, ..) = scheme.bright_red;
       assert!(r2 >= r1, "Bright red should be >= regular red");
     }
   }

@@ -66,7 +66,8 @@ async fn run<Hook: AsyncHook>(mut hook: Hook, mut rx: mpsc::Receiver<Hook::Event
 /// Send an event to a channel without blocking.
 ///
 /// This function is designed to be called from synchronous code that needs to
-/// communicate with async tasks. It prioritizes responsiveness over reliability:
+/// communicate with async tasks. It prioritizes responsiveness over
+/// reliability:
 /// - Attempts a non-blocking send
 /// - If the channel is full, the event is dropped (no blocking)
 ///

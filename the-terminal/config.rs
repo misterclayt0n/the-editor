@@ -22,19 +22,20 @@ pub struct TerminalConfig {
 impl Default for TerminalConfig {
   fn default() -> Self {
     Self {
-      shell: None,
-      env: Vec::new(),
+      shell:             None,
+      env:               Vec::new(),
       working_directory: None,
-      mouse_reporting: true,
-      scrollback_lines: 10000,
+      mouse_reporting:   true,
+      scrollback_lines:  10000,
     }
   }
 }
 
 #[cfg(test)]
 mod tests {
-  use super::*;
   use std::path::PathBuf;
+
+  use super::*;
 
   #[test]
   fn test_terminal_config_default() {
@@ -49,7 +50,10 @@ mod tests {
 
   #[test]
   fn test_terminal_config_custom_shell() {
-    let config = TerminalConfig { shell: Some("/bin/zsh".to_string()), ..Default::default() };
+    let config = TerminalConfig {
+      shell: Some("/bin/zsh".to_string()),
+      ..Default::default()
+    };
 
     assert_eq!(config.shell, Some("/bin/zsh".to_string()));
   }
@@ -65,28 +69,39 @@ mod tests {
     };
 
     assert_eq!(config.env.len(), 2);
-    assert_eq!(config.env[0], ("TERM".to_string(), "xterm-256color".to_string()));
+    assert_eq!(
+      config.env[0],
+      ("TERM".to_string(), "xterm-256color".to_string())
+    );
     assert_eq!(config.env[1], ("EDITOR".to_string(), "vim".to_string()));
   }
 
   #[test]
   fn test_terminal_config_working_directory() {
-    let config =
-      TerminalConfig { working_directory: Some(PathBuf::from("/home/user")), ..Default::default() };
+    let config = TerminalConfig {
+      working_directory: Some(PathBuf::from("/home/user")),
+      ..Default::default()
+    };
 
     assert_eq!(config.working_directory, Some(PathBuf::from("/home/user")));
   }
 
   #[test]
   fn test_terminal_config_mouse_reporting_disabled() {
-    let config = TerminalConfig { mouse_reporting: false, ..Default::default() };
+    let config = TerminalConfig {
+      mouse_reporting: false,
+      ..Default::default()
+    };
 
     assert!(!config.mouse_reporting);
   }
 
   #[test]
   fn test_terminal_config_scrollback_custom() {
-    let config = TerminalConfig { scrollback_lines: 5000, ..Default::default() };
+    let config = TerminalConfig {
+      scrollback_lines: 5000,
+      ..Default::default()
+    };
 
     assert_eq!(config.scrollback_lines, 5000);
   }

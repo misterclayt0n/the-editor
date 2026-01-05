@@ -12,6 +12,7 @@ pub mod popup;
 pub mod prompt;
 pub mod signature_help;
 pub mod statusline;
+pub mod text_wrap;
 
 // Completion, SignatureHelp, Hover, CodeActionMenu, AcpOverlay, and
 // AcpPermissionPopup are used internally by the editor

@@ -767,6 +767,7 @@ mod tests {
 
   #[test]
   fn test_wrap_line_short() {
+    use crate::ui::components::text_wrap;
     let segments = vec![TextSegment {
       content: "short".to_string(),
       style:   TextStyle {
@@ -774,12 +775,13 @@ mod tests {
         color: Color::new(1.0, 1.0, 1.0, 1.0),
       },
     }];
-    let result = super::text_wrap::wrap_line(&segments, 80, false);
+    let result = text_wrap::wrap_line(&segments, 80, false);
     assert_eq!(result.len(), 1);
   }
 
   #[test]
   fn test_wrap_line_long() {
+    use crate::ui::components::text_wrap;
     let segments = vec![TextSegment {
       content: "this is a very long line that needs wrapping".to_string(),
       style:   TextStyle {
@@ -787,7 +789,7 @@ mod tests {
         color: Color::new(1.0, 1.0, 1.0, 1.0),
       },
     }];
-    let result = super::text_wrap::wrap_line(&segments, 20, false);
+    let result = text_wrap::wrap_line(&segments, 20, false);
     assert!(result.len() >= 2);
   }
 }

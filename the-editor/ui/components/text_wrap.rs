@@ -365,14 +365,14 @@ mod tests {
       TextSegment {
         content: "hello ".to_string(),
         style:   TextStyle {
-          size:  UI_FONT_SIZE,
+          size:  14.0,
           color: Color::RED,
         },
       },
       TextSegment {
         content: "world".to_string(),
         style:   TextStyle {
-          size:  UI_FONT_SIZE,
+          size:  14.0,
           color: Color::BLUE,
         },
       },

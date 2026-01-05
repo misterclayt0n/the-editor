@@ -187,20 +187,28 @@ impl HoverContent {
     });
 
     if layout_is_stale {
-      let lines = build_hover_render_lines(&entry.markdown, wrap_width, cell_width, ctx);
+      // Convert pixel width to cell width for consistent wrapping
+      let max_width_cells = (wrap_width / cell_width.max(1.0)).floor().max(4.0) as u16;
+
+      // Use cell-based markdown building for consistent wrapping
+      let lines =
+        super::markdown::build_markdown_lines_cells(&entry.markdown, max_width_cells, ctx);
       let visible_lines = lines.len().min(MAX_VISIBLE_LINES);
-      let mut content_width = lines
+
+      // Calculate actual content width from wrapped lines
+      let content_width_cells = lines
         .iter()
         .take(visible_lines)
-        .map(|segments| super::markdown::estimate_line_width(segments, cell_width))
-        .fold(0.0, f32::max);
+        .map(|segments| super::markdown::line_width_cells(segments))
+        .max()
+        .unwrap_or(0);
 
-      if content_width <= 0.0 {
-        content_width = 0.0;
-      }
-      content_width = content_width.min(wrap_width);
-      let min_width = (MIN_CONTENT_CHARS as f32 * cell_width).min(wrap_width);
-      content_width = content_width.max(min_width);
+      // Apply min width constraint
+      let min_width_cells = (MIN_CONTENT_CHARS as u16).min(max_width_cells);
+      let final_width_cells = content_width_cells
+        .max(min_width_cells)
+        .min(max_width_cells);
+      let content_width = final_width_cells as f32 * cell_width;
 
       self.layout = Some(HoverLayout {
         lines,
@@ -434,9 +442,8 @@ fn hover_contents_to_string(contents: lsp::HoverContents) -> String {
 
 pub(crate) fn build_hover_render_lines(
   markdown: &str,
-  wrap_width: f32,
-  cell_width: f32,
+  max_width_cells: u16,
   ctx: &mut Context,
 ) -> Vec<Vec<TextSegment>> {
-  super::markdown::build_markdown_lines(markdown, wrap_width, cell_width, ctx)
+  super::markdown::build_markdown_lines_cells(markdown, max_width_cells, ctx)
 }

@@ -14,6 +14,11 @@ use crate::{
   ui::{
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
+    components::popup::{
+      DOC_POPUP_MAX_HEIGHT_LINES,
+      DOC_POPUP_MAX_WIDTH_CHARS,
+      DOC_POPUP_MIN_WIDTH_CHARS,
+    },
     compositor::{
       Component,
       Context,
@@ -28,13 +33,6 @@ use crate::{
     },
   },
 };
-
-/// Signature help layout constants tuned for a compact, Zed-like look.
-const MAX_CONTENT_CHARS: usize = 56;
-const MIN_CONTENT_CHARS: usize = 20;
-const MAX_DOC_VISIBLE_LINES: usize = 8;
-const POPUP_MIN_WIDTH: f32 = 200.0;
-const POPUP_MAX_WIDTH: f32 = 520.0;
 const POPUP_PADDING: f32 = 10.0;
 const DOC_SECTION_GAP: f32 = 6.0;
 const VIEWPORT_SIDE_MARGIN: f32 = 12.0;
@@ -287,10 +285,10 @@ impl Component for SignatureHelp {
     let available_content_width =
       (viewport_width - VIEWPORT_SIDE_MARGIN * 2.0 - padding * 2.0).max(ui_char_width);
     let available_chars = ((available_content_width / ui_char_width).floor() as usize).max(1);
-    let wrap_chars = if available_chars < MIN_CONTENT_CHARS {
+    let wrap_chars = if available_chars < DOC_POPUP_MIN_WIDTH_CHARS as usize {
       available_chars
     } else {
-      available_chars.min(MAX_CONTENT_CHARS)
+      available_chars.min(DOC_POPUP_MAX_WIDTH_CHARS as usize)
     };
 
     let signature_lines = wrap_signature_lines_with_syntax(
@@ -310,7 +308,7 @@ impl Component for SignatureHelp {
     };
 
     let doc_line_count = doc_lines.len();
-    let mut visible_doc_lines = doc_line_count.min(MAX_DOC_VISIBLE_LINES);
+    let mut visible_doc_lines = doc_line_count.min(DOC_POPUP_MAX_HEIGHT_LINES as usize);
 
     let mut content_chars = signature_lines
       .iter()
@@ -328,15 +326,17 @@ impl Component for SignatureHelp {
       content_chars = content_chars.max(max_doc_chars);
     }
 
-    let preferred_min = if available_chars >= MIN_CONTENT_CHARS {
-      MIN_CONTENT_CHARS
+    let preferred_min = if available_chars >= DOC_POPUP_MIN_WIDTH_CHARS as usize {
+      DOC_POPUP_MIN_WIDTH_CHARS as usize
     } else {
       available_chars
     };
     content_chars = content_chars.max(preferred_min).min(wrap_chars).max(1);
 
     let content_width = content_chars as f32 * ui_char_width;
-    let mut popup_width = (content_width + padding * 2.0).clamp(POPUP_MIN_WIDTH, POPUP_MAX_WIDTH);
+    let popup_min_width = DOC_POPUP_MIN_WIDTH_CHARS as f32 * ui_char_width;
+    let popup_max_width = DOC_POPUP_MAX_WIDTH_CHARS as f32 * ui_char_width;
+    let mut popup_width = (content_width + padding * 2.0).clamp(popup_min_width, popup_max_width);
     let available_popup_width =
       (viewport_width - VIEWPORT_SIDE_MARGIN * 2.0).max(padding * 2.0 + ui_char_width);
     popup_width = popup_width.min(available_popup_width).min(viewport_width);

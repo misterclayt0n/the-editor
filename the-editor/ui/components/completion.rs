@@ -48,7 +48,6 @@ use crate::{
   },
   ui::{
     UI_FONT_SIZE,
-    UI_FONT_WIDTH,
     components::popup::{
       DOC_POPUP_MAX_HEIGHT_LINES,
       DOC_POPUP_MAX_WIDTH_CHARS,
@@ -1069,7 +1068,9 @@ impl Component for Completion {
     };
 
     surface.configure_font(&font_state.family, UI_FONT_SIZE);
-    let ui_char_width = surface.cell_width().max(UI_FONT_WIDTH.max(1.0));
+    // Use actual measured cell width, matching PopupShell's approach
+    // Do NOT use UI_FONT_WIDTH as fallback - it causes size mismatch with hover
+    let ui_char_width = surface.cell_width().max(1.0);
     let ui_line_height = surface.cell_height().max(UI_FONT_SIZE + 4.0);
 
     // First pass: find the longest label to determine kind column alignment

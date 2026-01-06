@@ -152,7 +152,6 @@ use crate::{
     uri::Uri,
     view::View,
   },
-  current_ref,
   doc_mut,
   event::{
     DocumentDidClose,
@@ -172,6 +171,7 @@ use crate::{
     Call,
     LanguageServerId,
   },
+  try_current_ref,
   view,
   view_mut,
 };
@@ -4032,7 +4032,10 @@ impl Editor {
   /// or `None` if the primary cursor is not visible on screen.
   pub fn cursor(&self) -> (Option<Position>, CursorKind) {
     let config = self.config();
-    let (view, doc) = current_ref!(self);
+    // Use try_current_ref to safely handle terminal views
+    let Some((view, doc)) = try_current_ref!(self) else {
+      return (None, CursorKind::default());
+    };
     if let Some(mut pos) = self.cursor_cache.get(view, doc) {
       let inner = view.inner_area(doc);
       pos.col += inner.x as usize;

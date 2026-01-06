@@ -49,13 +49,10 @@ use crate::{
   ui::{
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
-    components::{
-      markdown::Markdown,
-      popup::{
-        DOC_POPUP_MAX_HEIGHT_LINES,
-        DOC_POPUP_MAX_WIDTH_CHARS,
-        DOC_POPUP_MIN_WIDTH_CHARS,
-      },
+    components::popup::{
+      DOC_POPUP_MAX_HEIGHT_LINES,
+      DOC_POPUP_MAX_WIDTH_CHARS,
+      DOC_POPUP_MIN_WIDTH_CHARS,
     },
     compositor::{
       Component,
@@ -435,72 +432,111 @@ impl Completion {
     let window_width = surface.width() as f32;
     let window_height = surface.height() as f32;
 
-    // Use shared constants for doc popup sizing
-    // DOC_PADDING must match PopupShell's default padding (12.0px) for consistent
-    // sizing
+    // Constants for doc popup sizing (matching PopupShell's defaults)
     const DOC_PADDING: f32 = 12.0;
     const SPACING: f32 = 8.0;
 
-    // Convert to pixels using shared constants
-    let min_doc_width = DOC_POPUP_MIN_WIDTH_CHARS as f32 * ui_char_width;
-    let max_doc_width = DOC_POPUP_MAX_WIDTH_CHARS as f32 * ui_char_width;
-    let max_doc_height = DOC_POPUP_MAX_HEIGHT_LINES as f32 * ui_line_height;
-
-    let font_size = UI_FONT_SIZE;
-    let line_height = ui_line_height.max(font_size + 4.0);
+    let line_height = ui_line_height.max(UI_FONT_SIZE + 4.0);
 
     // Calculate available space on each side
     let space_on_right = window_width - (completion_x + completion_width);
     let space_on_left = completion_x;
     let space_below = window_height - (completion_y + completion_height);
 
-    // Determine best placement and calculate dimensions
-    // Key insight from Helix: use AVAILABLE width, not content-based width
-    let (doc_x, doc_y, doc_width, doc_height) = if space_on_right >= min_doc_width + SPACING {
-      // Position to the right - use all available space up to max_doc_width
-      let available_width = (space_on_right - SPACING).min(max_doc_width);
-      let doc_x = completion_x + completion_width + SPACING;
-      let doc_y = completion_y;
-      let available_height = (window_height - doc_y).min(max_doc_height);
-      (doc_x, doc_y, available_width, available_height)
-    } else if space_on_left >= min_doc_width + SPACING {
-      // Position to the left - use all available space up to max_doc_width
-      let available_width = (space_on_left - SPACING).min(max_doc_width);
-      let doc_x = completion_x - available_width - SPACING;
-      let doc_y = completion_y;
-      let available_height = (window_height - doc_y).min(max_doc_height);
-      (doc_x, doc_y, available_width, available_height)
-    } else if space_below >= ui_line_height * 6.0 + SPACING {
-      // Position below completion - use full width
-      let doc_x = completion_x;
-      let doc_y = completion_y + completion_height + SPACING;
-      let doc_width = (window_width - doc_x).min(max_doc_width);
-      let available_height = (space_below - SPACING).min(max_doc_height);
-      (doc_x, doc_y, doc_width, available_height)
+    // Convert shared constants to pixels (these are OUTER dimensions, matching
+    // PopupShell) The char/line counts represent the outer popup size, not
+    // inner content area
+    let min_width_px = DOC_POPUP_MIN_WIDTH_CHARS as f32 * ui_char_width;
+    let max_width_px = DOC_POPUP_MAX_WIDTH_CHARS as f32 * ui_char_width;
+    let max_height_px = DOC_POPUP_MAX_HEIGHT_LINES as f32 * line_height;
+
+    // Determine placement side and calculate max available dimensions
+    enum Placement {
+      Right { x: f32, y: f32 },
+      Left { y: f32 },
+      Below { x: f32, y: f32 },
+    }
+
+    let (placement, max_avail_width, max_avail_height) = if space_on_right >= min_width_px + SPACING
+    {
+      // Position to the right
+      let x = completion_x + completion_width + SPACING;
+      let y = completion_y;
+      let avail_w = (space_on_right - SPACING).min(max_width_px);
+      let avail_h = (window_height - y).min(max_height_px);
+      (Placement::Right { x, y }, avail_w, avail_h)
+    } else if space_on_left >= min_width_px + SPACING {
+      // Position to the left
+      let y = completion_y;
+      let avail_w = (space_on_left - SPACING).min(max_width_px);
+      let avail_h = (window_height - y).min(max_height_px);
+      (Placement::Left { y }, avail_w, avail_h)
+    } else if space_below >= line_height * 6.0 + SPACING {
+      // Position below completion
+      let x = completion_x;
+      let y = completion_y + completion_height + SPACING;
+      let avail_w = (window_width - x).min(max_width_px);
+      let avail_h = (space_below - SPACING).min(max_height_px);
+      (Placement::Below { x, y }, avail_w, avail_h)
     } else {
-      // Not enough space anywhere, don't render
+      // Not enough space anywhere
       return;
     };
 
-    // Now calculate actual content size based on available width
-    let max_chars_available = ((doc_width - DOC_PADDING * 2.0) / ui_char_width)
-      .floor()
-      .max(4.0) as usize;
-    let md = Markdown::new(markdown_content.clone(), ctx.editor.syn_loader.clone());
-    let (_content_width_chars, content_height_lines) = md.required_size(max_chars_available);
+    // Calculate inner content area (excluding padding)
+    let inner_max_width = (max_avail_width - DOC_PADDING * 2.0).max(0.0);
+    let inner_max_height = (max_avail_height - DOC_PADDING * 2.0).max(0.0);
 
-    // Adjust height based on actual content (but don't exceed available)
-    let content_height = (content_height_lines as f32 * line_height + DOC_PADDING * 2.0)
-      .max(ui_line_height * 4.0)
-      .min(doc_height);
+    // Convert to cells for wrapping
+    let max_width_cells = (inner_max_width / ui_char_width).floor().max(4.0) as u16;
+
+    // Wrap content at max available width
+    let line_groups =
+      super::markdown::build_markdown_lines_cells(&markdown_content, max_width_cells, ctx);
+
+    if line_groups.is_empty() {
+      return;
+    }
+
+    // Measure actual content dimensions from wrapped lines (like hover does)
+    let visible_lines = line_groups.len().min(DOC_POPUP_MAX_HEIGHT_LINES as usize);
+    let content_width_cells = line_groups
+      .iter()
+      .take(visible_lines)
+      .map(|segments| super::markdown::line_width_cells(segments))
+      .max()
+      .unwrap_or(0);
+
+    // Apply min/max constraints to content width
+    let min_width_cells = DOC_POPUP_MIN_WIDTH_CHARS.min(max_width_cells);
+    let final_width_cells = content_width_cells
+      .max(min_width_cells)
+      .min(max_width_cells);
+    let content_width = final_width_cells as f32 * ui_char_width;
+
+    // Calculate final popup dimensions
+    let popup_width = (content_width + DOC_PADDING * 2.0).min(max_avail_width);
+    let content_height = (visible_lines as f32 * line_height).min(inner_max_height);
+    let popup_height = content_height + DOC_PADDING * 2.0;
+
+    // Calculate final position based on placement
+    let (doc_x, doc_y) = match placement {
+      Placement::Right { x, y } => (x, y),
+      Placement::Left { y } => {
+        // For left placement, position so right edge is at completion_x - SPACING
+        let x = completion_x - popup_width - SPACING;
+        (x.max(0.0), y)
+      },
+      Placement::Below { x, y } => (x, y),
+    };
 
     // Final safety check - ensure we're within viewport
     if doc_x < 0.0
       || doc_y < 0.0
-      || doc_x + doc_width > window_width
-      || doc_y + content_height > window_height
-      || doc_width < min_doc_width
-      || content_height < ui_line_height * 3.0
+      || doc_x + popup_width > window_width
+      || doc_y + popup_height > window_height
+      || popup_width < min_width_px
+      || popup_height < line_height * 3.0
     {
       return;
     }
@@ -514,25 +550,14 @@ impl Completion {
       .map(crate::ui::theme_color_to_renderer_color)
       .unwrap_or(Color::new(0.12, 0.12, 0.15, 1.0));
 
-    // Now wrap content to actual doc_width (render-time wrapping)
-    let actual_max_chars = ((doc_width - DOC_PADDING * 2.0) / ui_char_width)
-      .floor()
-      .max(4.0) as u16;
-    let line_groups =
-      super::markdown::build_markdown_lines_cells(&markdown_content, actual_max_chars, ctx);
-
-    if line_groups.is_empty() {
-      return;
-    }
-
-    surface.with_overlay_region(doc_x, doc_y, doc_width, content_height, |surface| {
+    surface.with_overlay_region(doc_x, doc_y, popup_width, popup_height, |surface| {
       // Draw background
       let corner_radius = 6.0;
       surface.draw_rounded_rect(
         doc_x,
         doc_y,
-        doc_width,
-        content_height,
+        popup_width,
+        popup_height,
         corner_radius,
         bg_color,
       );
@@ -542,28 +567,22 @@ impl Completion {
       surface.draw_rounded_rect_stroke(
         doc_x,
         doc_y,
-        doc_width,
-        content_height,
+        popup_width,
+        popup_height,
         corner_radius,
         1.0,
         border_color,
       );
 
       // Render documentation content
-      let mut y_offset = doc_y + DOC_PADDING;
-      let max_lines_by_height = ((content_height - DOC_PADDING * 2.0) / line_height)
-        .floor()
-        .max(0.0) as usize;
+      let text_x = doc_x + DOC_PADDING;
+      let mut text_y = doc_y + DOC_PADDING;
+      let max_text_y = doc_y + popup_height - DOC_PADDING;
 
-      if max_lines_by_height == 0 {
-        return;
-      }
+      surface.push_scissor_rect(doc_x, doc_y, popup_width, popup_height);
 
-      let max_text_y = doc_y + content_height - DOC_PADDING;
-      surface.push_scissor_rect(doc_x, doc_y, doc_width, content_height);
-
-      for segments in line_groups.into_iter().take(max_lines_by_height) {
-        if y_offset > max_text_y {
+      for segments in line_groups.into_iter().take(visible_lines) {
+        if text_y > max_text_y {
           break;
         }
 
@@ -576,10 +595,10 @@ impl Completion {
           .collect();
 
         surface.draw_text(TextSection {
-          position: (doc_x + DOC_PADDING, y_offset),
+          position: (text_x, text_y),
           texts,
         });
-        y_offset += line_height;
+        text_y += line_height;
       }
 
       surface.pop_scissor_rect();

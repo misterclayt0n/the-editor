@@ -102,18 +102,10 @@ pub struct CursorPosition {
 /// Calculate cursor position in screen coordinates using document font metrics.
 /// Returns None if cursor is not visible.
 pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option<CursorPosition> {
-  // Configure the document font to get correct metrics
-  // This is important because the surface may have UI font configured (e.g.,
-  // after explorer render)
   let font_family = surface.current_font_family().to_owned();
-  let font_size = ctx
-    .editor
-    .font_size_override
-    .unwrap_or(ctx.editor.config().font_size);
-  surface.configure_font(&font_family, font_size);
-
-  let doc_cell_w = surface.cell_width().max(1.0);
-  let doc_cell_h = surface.cell_height().max(1.0);
+  let per_buffer_enabled = ctx.editor.config().per_buffer_font_size;
+  let default_font_size = ctx.editor.config().font_size;
+  let editor_font_override = ctx.editor.font_size_override;
 
   let view_id = ctx.editor.focused_view_id()?;
   let tree = &ctx.editor.tree;
@@ -123,6 +115,32 @@ pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option
   let view = tree.get(view_id);
   let doc_id = view.doc()?;
   let doc = &ctx.editor.documents[&doc_id];
+
+  // Get the font size for this view's document (per-buffer aware)
+  let view_font_size = if per_buffer_enabled {
+    // Per-buffer mode: document override -> editor override -> config default
+    doc
+      .font_size_override
+      .or(editor_font_override)
+      .unwrap_or(default_font_size)
+  } else {
+    // Global mode: editor override -> config default
+    editor_font_override.unwrap_or(default_font_size)
+  };
+
+  // Layout font size is used for view area calculations (consistent across views)
+  let layout_font_size = editor_font_override.unwrap_or(default_font_size);
+
+  // Configure surface with layout font to get layout metrics
+  surface.configure_font(&font_family, layout_font_size);
+  let layout_cell_w = surface.cell_width().max(1.0);
+  let layout_cell_h = surface.cell_height().max(1.0);
+
+  // Configure surface with view font to get view-specific metrics
+  surface.configure_font(&font_family, view_font_size);
+  let view_cell_w = surface.cell_width().max(1.0);
+  let view_cell_h = surface.cell_height().max(1.0);
+
   let text = doc.text();
   let cursor_pos = doc.selection(view.id).primary().cursor(text.slice(..));
 
@@ -139,13 +157,35 @@ pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option
   let rel_row = line.saturating_sub(anchor_line);
   let screen_col = col.saturating_sub(view_offset.horizontal_offset);
 
-  let inner_area = animated_area.clip_left(view.gutter_offset(doc));
+  // Get gutter width - this is in view font cells since gutter uses view font
+  let gutter_offset = view.gutter_offset(doc);
 
-  // Check if cursor is visible within the animated viewport
-  if rel_row >= usize::from(inner_area.height) {
+  // When per-buffer is enabled, inner_area dimensions are in layout cells,
+  // but we need to check visibility using view font cells (effective viewport)
+  let (check_width, check_height) = if per_buffer_enabled {
+    // Use effective_viewport if available, otherwise calculate from layout area
+    if let Some((w, h)) = view.effective_viewport {
+      (w as usize, h as usize)
+    } else {
+      // Fallback: convert layout area to view font cells
+      let view_pixel_width = animated_area.width as f32 * layout_cell_w;
+      let view_pixel_height = animated_area.height as f32 * layout_cell_h;
+      let gutter_pixel_width = gutter_offset as f32 * view_cell_w;
+      let content_pixel_width = (view_pixel_width - gutter_pixel_width).max(view_cell_w);
+      let content_cols = (content_pixel_width / view_cell_w).floor().max(1.0) as usize;
+      let content_rows = (view_pixel_height / view_cell_h).floor().max(1.0) as usize;
+      (content_cols, content_rows)
+    }
+  } else {
+    let inner = animated_area.clip_left(gutter_offset);
+    (inner.width as usize, inner.height as usize)
+  };
+
+  // Check if cursor is visible within the viewport
+  if rel_row >= check_height {
     return None;
   }
-  if screen_col >= usize::from(inner_area.width) {
+  if screen_col >= check_width {
     return None;
   }
 
@@ -160,28 +200,34 @@ pub fn calculate_cursor_position(ctx: &Context, surface: &mut Surface) -> Option
   // These are set by EditorView during render
   let (explorer_px_offset, bufferline_px_offset) = ctx.editor.viewport_pixel_offset;
 
-  // Calculate view position in pixels - must match how editor_view.rs renders
-  // text Tree coordinates are 0-based (not offset by explorer), so we add
-  // explorer_px_offset inner_area.x contains gutter offset in cells
-  let view_x = explorer_px_offset + (inner_area.x as f32 * doc_cell_w) + shake_offset_x;
+  // Calculate view position in pixels using LAYOUT metrics for base positioning
+  // (since animated_area is in layout cells), then use VIEW metrics for cursor
+  // offset within the view.
+  //
+  // The gutter width in pixels uses view font (gutter renders with view font)
+  let gutter_pixel_width = gutter_offset as f32 * view_cell_w;
 
-  // For Y: inner_area.y is in cells (already includes bufferline offset via
-  // clip_top(1)) The bufferline has a fixed pixel height that doesn't scale
-  // with font size, so we can't just multiply inner_area.y by doc_cell_h.
-  // If bufferline is present (inner_area.y > 0 and bufferline_px_offset > 0),
-  // use its fixed pixel height for the first row.
-  let view_y = if inner_area.y > 0 && bufferline_px_offset > 0.0 {
-    // Bufferline takes first row at fixed pixel height, remaining rows at
-    // doc_cell_h
-    bufferline_px_offset + ((inner_area.y as f32 - 1.0) * doc_cell_h) + shake_offset_y
+  let view_x = explorer_px_offset
+    + (animated_area.x as f32 * layout_cell_w)
+    + gutter_pixel_width
+    + shake_offset_x;
+
+  // For Y: animated_area.y is in layout cells (already includes bufferline offset
+  // via clip_top(1)). The bufferline has a fixed pixel height that doesn't scale
+  // with font size.
+  let view_y = if animated_area.y > 0 && bufferline_px_offset > 0.0 {
+    // Bufferline takes first row at fixed pixel height, remaining rows use layout
+    // cell height for base positioning
+    bufferline_px_offset + ((animated_area.y as f32 - 1.0) * layout_cell_h) + shake_offset_y
   } else {
-    (inner_area.y as f32 * doc_cell_h) + shake_offset_y
+    (animated_area.y as f32 * layout_cell_h) + shake_offset_y
   };
 
-  // Calculate final screen position
-  let x = view_x + (screen_col as f32 * doc_cell_w);
-  let line_top = view_y + (rel_row as f32 * doc_cell_h);
-  let line_bottom = line_top + doc_cell_h;
+  // Calculate final screen position using VIEW font metrics for cursor offset
+  // (since text is rendered with view font)
+  let x = view_x + (screen_col as f32 * view_cell_w);
+  let line_top = view_y + (rel_row as f32 * view_cell_h);
+  let line_bottom = line_top + view_cell_h;
 
   Some(CursorPosition {
     x,

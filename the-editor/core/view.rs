@@ -456,6 +456,12 @@ pub struct View {
   /// Per-view font size override. Falls back to editor global override, then
   /// config default.
   pub font_size_override:         Option<f32>,
+  /// Effective viewport dimensions in characters/lines for this view.
+  /// Updated during rendering to account for per-buffer font sizes.
+  /// When Some, this is used instead of calculating from `area` for
+  /// scroll calculations. Width is content width (excluding gutter),
+  /// height is number of visible lines.
+  pub effective_viewport:         Option<(u16, u16)>,
 }
 
 impl fmt::Debug for View {
@@ -485,6 +491,7 @@ impl View {
       rendered_gutter_width: None,
       inline_diagnostics_enabled: true,
       font_size_override: None,
+      effective_viewport: None,
     }
   }
 
@@ -506,6 +513,7 @@ impl View {
       rendered_gutter_width: None,
       inline_diagnostics_enabled: false, // Terminals don't have diagnostics
       font_size_override: None,
+      effective_viewport: None,
     }
   }
 
@@ -561,18 +569,36 @@ impl View {
   pub fn inner_area(&self, doc: &Document) -> Rect {
     // Don't clip_bottom here - the tree's area is already clipped for the global
     // statusline Unlike Helix which renders one statusline per view, we have a
-    // single global statusline
-    self.area.clip_left(self.gutter_offset(doc))
+    // single global statusline.
+    //
+    // When effective_viewport is set (per-buffer font size mode), use those
+    // dimensions instead. This ensures scroll calculations use the correct
+    // character/line counts for the view's actual font size.
+    if let Some((width, height)) = self.effective_viewport {
+      Rect::new(self.area.x, self.area.y, width, height)
+    } else {
+      self.area.clip_left(self.gutter_offset(doc))
+    }
   }
 
   pub fn inner_height(&self) -> usize {
     // Don't clip_bottom here - the tree's area is already clipped for the global
-    // statusline
-    self.area.height.into()
+    // statusline.
+    // When effective_viewport is set, use that height.
+    if let Some((_, height)) = self.effective_viewport {
+      height as usize
+    } else {
+      self.area.height.into()
+    }
   }
 
   pub fn inner_width(&self, doc: &Document) -> u16 {
-    self.area.clip_left(self.gutter_offset(doc)).width
+    // When effective_viewport is set, use that width.
+    if let Some((width, _)) = self.effective_viewport {
+      width
+    } else {
+      self.area.clip_left(self.gutter_offset(doc)).width
+    }
   }
 
   pub fn gutters(&self) -> &[GutterType] {

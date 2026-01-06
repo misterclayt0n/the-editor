@@ -43,11 +43,7 @@ use crate::{
       Rect,
     },
     info::Info,
-    layout::{
-      Constraint as LayoutConstraint,
-      Layout as UiLayout,
-      center,
-    },
+    layout::center,
     position::{
       Position,
       char_idx_at_visual_offset,
@@ -1295,35 +1291,43 @@ impl Component for EditorView {
     const SEPARATOR_WIDTH_PX: f32 = 2.0;
     const SEPARATOR_HEIGHT_PX: f32 = 2.0;
 
-    // Get font size with fallback chain based on config
+    // Get font configuration
     let per_buffer_enabled = cx.editor.config().per_buffer_font_size;
-    let font_size = if per_buffer_enabled {
-      // Per-buffer mode: document override -> editor override -> config default
-      let doc_override = cx
-        .editor
-        .tree
-        .try_get(cx.editor.tree.focus)
-        .and_then(|view| view.doc())
-        .and_then(|doc_id| cx.editor.documents.get(&doc_id))
-        .and_then(|doc| doc.font_size_override);
-      let size = doc_override
-        .or(cx.editor.font_size_override)
-        .unwrap_or(cx.editor.config().font_size);
-      log::trace!(
-        "Per-buffer font size: doc_override={:?}, final={}",
-        doc_override,
-        size
-      );
-      size
-    } else {
-      // Global mode: editor override -> config default
-      cx.editor
-        .font_size_override
-        .unwrap_or(cx.editor.config().font_size)
-    };
+    let default_font_size = cx.editor.config().font_size;
+    let editor_font_override = cx.editor.font_size_override;
     let font_family = renderer.current_font_family().to_string();
-    renderer.configure_font(&font_family, font_size);
-    let font_width = renderer.cell_width().max(1.0);
+
+    // Helper to get font size for a specific view
+    let get_view_font_size =
+      |editor: &crate::editor::Editor, view_id: crate::core::ViewId| -> f32 {
+        if per_buffer_enabled {
+          // Per-buffer mode: document override -> editor override -> config default
+          editor
+            .tree
+            .try_get(view_id)
+            .and_then(|view| view.doc())
+            .and_then(|doc_id| editor.documents.get(&doc_id))
+            .and_then(|doc| doc.font_size_override)
+            .or(editor_font_override)
+            .unwrap_or(default_font_size)
+        } else {
+          // Global mode: editor override -> config default
+          editor_font_override.unwrap_or(default_font_size)
+        }
+      };
+
+    // Use a consistent "layout font size" for tree area calculations.
+    // This ensures view areas don't change when focus switches between views
+    // with different font sizes. We use the global font (editor override or config
+    // default).
+    let layout_font_size = editor_font_override.unwrap_or(default_font_size);
+    renderer.configure_font(&font_family, layout_font_size);
+    let layout_font_width = renderer.cell_width().max(1.0);
+    let layout_cell_height = renderer.cell_height();
+
+    // For compatibility with existing code paths that expect font_width/font_size
+    let font_width = layout_font_width;
+    let font_size = layout_font_size;
 
     let bufferline_mode = {
       let config = cx.editor.config();
@@ -1355,10 +1359,11 @@ impl Component for EditorView {
       }
     }
 
-    // Cache font metrics for mouse handling
-    self.cached_cell_width = font_width;
-    self.cached_cell_height = renderer.cell_height();
-    self.cached_font_size = font_size;
+    // Cache layout font metrics for mouse handling and UI consistency
+    // These use the layout font size (not per-view font) for consistent behavior
+    self.cached_cell_width = layout_font_width;
+    self.cached_cell_height = layout_cell_height;
+    self.cached_font_size = layout_font_size;
 
     // Calculate tree area from renderer dimensions
     // Subtract statusline height in pixels (not rows) to avoid variable gap at
@@ -1435,6 +1440,58 @@ impl Component for EditorView {
           .saturating_sub(explorer_width_buffer_cells),
         target_area.height,
       );
+    }
+
+    // When per-buffer font size is enabled, pre-calculate effective viewport
+    // dimensions for each view. This allows ensure_cursor_in_view to use the
+    // correct cell counts based on each view's font size.
+    if per_buffer_enabled {
+      let view_ids: Vec<_> = cx.editor.tree.views().map(|(view, _)| view.id).collect();
+      for view_id in view_ids {
+        let view = cx.editor.tree.get(view_id);
+        let Some(doc_id) = view.doc() else {
+          // Clear effective_viewport for terminal views
+          let view = cx.editor.tree.get_mut(view_id);
+          view.effective_viewport = None;
+          continue;
+        };
+
+        // Get font size for this view's document
+        let view_font_size = get_view_font_size(&cx.editor, view_id);
+        renderer.configure_font(&font_family, view_font_size);
+        let view_font_width = renderer.cell_width().max(1.0);
+        let view_cell_height = renderer.cell_height();
+
+        // Calculate pixel dimensions from layout cells
+        let view_area = view.area;
+        let view_pixel_width = view_area.width as f32 * layout_font_width;
+        let view_pixel_height = view_area.height as f32 * layout_cell_height;
+
+        // Calculate gutter width in view font
+        let gutter_cols = {
+          let doc = &cx.editor.documents[&doc_id];
+          self.gutter_manager.total_width(view, doc) as f32
+        };
+        let gutter_pixel_width = gutter_cols * view_font_width;
+
+        // Content dimensions in view font cells
+        let content_pixel_width = (view_pixel_width - gutter_pixel_width).max(view_font_width);
+        let content_cols = (content_pixel_width / view_font_width).floor().max(1.0) as u16;
+        let content_rows = (view_pixel_height / view_cell_height).floor().max(1.0) as u16;
+
+        // Store effective viewport on the view
+        let view = cx.editor.tree.get_mut(view_id);
+        view.effective_viewport = Some((content_cols, content_rows));
+      }
+      // Restore layout font configuration
+      renderer.configure_font(&font_family, layout_font_size);
+    } else {
+      // Clear effective_viewport when per-buffer is disabled
+      let view_ids: Vec<_> = cx.editor.tree.views().map(|(view, _)| view.id).collect();
+      for view_id in view_ids {
+        let view = cx.editor.tree.get_mut(view_id);
+        view.effective_viewport = None;
+      }
     }
 
     // Resize tree if needed
@@ -1696,6 +1753,12 @@ impl Component for EditorView {
       // Get current view and document
       let focus_view = current_view_id;
 
+      // Configure font for this specific view (per-buffer font size support)
+      let view_font_size = get_view_font_size(&cx.editor, current_view_id);
+      renderer.configure_font(&font_family, view_font_size);
+      let view_font_width = renderer.cell_width().max(1.0);
+      let view_cell_height = renderer.cell_height();
+
       // Update zoom animation using exponential decay
       // Formula: rate = 1 - 2^(-speed * dt)
       // Speed 10 gives ~200-300ms fade, speed 8 gives ~350ms
@@ -1735,32 +1798,36 @@ impl Component for EditorView {
         .unwrap_or(view.area);
 
       // Calculate base coordinates from view's area (convert cell coords to pixels)
-      // Add content_x_offset to X offset - this is the key to consistent popup
-      // positioning (only applies when explorer is on the left)
-      let view_offset_x = content_x_offset + view_area.x as f32 * font_width;
+      // IMPORTANT: Use layout_font_width/layout_cell_height for pixel positioning
+      // since view_area coordinates are in cells calculated using the layout
+      // font. The view's own font metrics are only used for text rendering
+      // within the view.
+      let view_offset_x = content_x_offset + view_area.x as f32 * layout_font_width;
       // Add bufferline_y_adjustment to align content with actual bufferline height
-      let view_offset_y =
-        view_area.y as f32 * self.cached_cell_height + self.bufferline_y_adjustment();
+      let view_offset_y = view_area.y as f32 * layout_cell_height + self.bufferline_y_adjustment();
       let mut base_y = view_offset_y + VIEW_PADDING_TOP;
 
-      // Calculate visible lines for THIS view based on its height
-      // view.area.height is already in rows/cells
-      let content_rows = view_area.height;
+      // Calculate pixel dimensions for this view's area
+      let view_pixel_width = view_area.width as f32 * layout_font_width;
+      let view_pixel_height = view_area.height as f32 * layout_cell_height;
+
+      // Calculate how many rows/cols fit with this view's font
+      let _content_cols = (view_pixel_width / view_font_width).floor() as u16;
+      let content_rows = (view_pixel_height / view_cell_height).floor() as u16;
 
       // Calculate bottom edge for clipping (to prevent text from rendering into
       // separator)
       let has_horizontal_split_below =
         view_area.y + view_area.height < cx.editor.tree.area().height;
       let has_vertical_split_right = view_area.x + view_area.width < cx.editor.tree.area().width;
-      let view_bottom_edge_px = view_offset_y
-        + (view_area.height as f32 * (self.cached_cell_height))
+      let view_bottom_edge_px = view_offset_y + view_pixel_height
         - if has_horizontal_split_below {
           SEPARATOR_HEIGHT_PX
         } else {
           0.0
         };
 
-      let scissor_width = (view_area.width as f32 * font_width)
+      let scissor_width = view_pixel_width
         - if has_vertical_split_right {
           SEPARATOR_WIDTH_PX
         } else {
@@ -1781,7 +1848,7 @@ impl Component for EditorView {
           view_offset_x,
           base_y,
           is_focused,
-          font_width,
+          view_font_width,
           renderer,
           cx.editor,
         );
@@ -1814,48 +1881,46 @@ impl Component for EditorView {
         doc.get_viewport_highlights(start_byte..end_byte, &loader)
       };
 
+      // Calculate gutter width in view font cells (gutter uses view font for
+      // rendering)
       let gutter_cols = {
         let doc = &cx.editor.documents[&doc_id];
-        (self.gutter_manager.total_width(view, doc) as u16).min(view_area.width)
+        self.gutter_manager.total_width(view, doc) as u16
       };
 
-      let (gutter_rect, mut content_rect) = if gutter_cols > 0 {
-        let layout = UiLayout::horizontal().constraints(vec![
-          LayoutConstraint::Length(gutter_cols),
-          LayoutConstraint::Fill(1),
-        ]);
-        let mut chunks = layout.split(view_area).into_iter();
-        (
-          chunks.next().unwrap_or(Rect::new(
-            view_area.x,
-            view_area.y,
-            gutter_cols,
-            view_area.height,
-          )),
-          chunks.next().unwrap_or(Rect::new(
-            view_area.x + gutter_cols,
-            view_area.y,
-            view_area.width.saturating_sub(gutter_cols),
-            view_area.height,
-          )),
-        )
-      } else {
-        (
-          Rect::new(view_area.x, view_area.y, 0, view_area.height),
-          Rect::new(view_area.x, view_area.y, view_area.width, view_area.height),
-        )
+      // Calculate gutter pixel width using view font (gutter text uses view font)
+      let gutter_pixel_width = gutter_cols as f32 * view_font_width;
+
+      // Content area in pixels (total view pixels minus gutter)
+      let content_pixel_width = (view_pixel_width - gutter_pixel_width).max(view_font_width);
+
+      // Calculate content dimensions in view font cells (how many chars/lines
+      // actually fit)
+      let content_cols_view = (content_pixel_width / view_font_width).floor().max(1.0) as u16;
+      let content_rows_view = content_rows; // Already calculated above
+
+      // Create viewport in view font cells - this is what the document formatter
+      // needs to know how many characters/lines actually fit with this font
+      let viewport = Rect::new(0, 0, content_cols_view, content_rows_view);
+
+      // For positioning, we still need layout-based rects (in layout cells)
+      // These are used to calculate pixel offsets for the view's position on screen
+      let gutter_cols_layout = (gutter_pixel_width / layout_font_width).ceil().max(0.0) as u16;
+      let (gutter_rect, content_rect) = {
+        let gutter_rect = Rect::new(
+          view_area.x,
+          view_area.y,
+          gutter_cols_layout.min(view_area.width),
+          view_area.height,
+        );
+        let content_rect = Rect::new(
+          view_area.x + gutter_cols_layout,
+          view_area.y,
+          view_area.width.saturating_sub(gutter_cols_layout).max(1),
+          view_area.height,
+        );
+        (gutter_rect, content_rect)
       };
-
-      if content_rect.width == 0 {
-        content_rect.width = 1;
-      }
-
-      let viewport = Rect::new(
-        content_rect.x,
-        content_rect.y,
-        content_rect.width,
-        content_rect.height,
-      );
 
       let mut clear_pulse = false;
 
@@ -1881,9 +1946,12 @@ impl Component for EditorView {
         }
 
         // Add content_x_offset to gutter and content X positions (only for left-side
-        // explorer)
-        let gutter_x = content_x_offset + gutter_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
-        let mut base_x = content_x_offset + content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
+        // explorer). Use layout_font_width since gutter_rect/content_rect are in layout
+        // cells.
+        let gutter_x =
+          content_x_offset + gutter_rect.x as f32 * layout_font_width + VIEW_PADDING_LEFT;
+        let mut base_x =
+          content_x_offset + content_rect.x as f32 * layout_font_width + VIEW_PADDING_LEFT;
 
         // Apply screen shake if active
         let (shake_offset_x, shake_offset_y) = if let Some(shake) = doc.screen_shake(focus_view) {
@@ -2118,9 +2186,9 @@ impl Component for EditorView {
             &cx.editor.theme,
             base_x,
             base_y,
-            self.cached_cell_height,
-            font_width,
-            font_size,
+            view_cell_height,
+            view_font_width,
+            view_font_size,
             view_offset.horizontal_offset,
             &self.underline_opacities,
           );
@@ -2293,9 +2361,9 @@ impl Component for EditorView {
             &self.inline_diagnostic_anim,
             base_x,
             base_y,
-            self.cached_cell_height,
-            font_width,
-            self.cached_font_size,
+            view_cell_height,
+            view_font_width,
+            view_font_size,
             viewport.width,
             view_offset.horizontal_offset,
           );
@@ -2311,7 +2379,7 @@ impl Component for EditorView {
             viewport.width,
             base_x,
             base_y,
-            self.cached_cell_height,
+            view_cell_height,
           );
           decoration_manager.add_decoration(inlay_hints_decoration);
         }
@@ -2368,9 +2436,10 @@ impl Component for EditorView {
         let viewport_cols = viewport.width as usize;
 
         // Calculate view's right edge in pixels for clipping (accounting for vertical
-        // separator and explorer offset)
+        // separator and explorer offset). Use layout_font_width since content_rect is
+        // in layout cells.
         let view_right_edge_px = explorer_px_width
-          + (content_rect.x + content_rect.width) as f32 * font_width
+          + (content_rect.x + content_rect.width) as f32 * layout_font_width
           - if has_vertical_split_right {
             SEPARATOR_WIDTH_PX
           } else {
@@ -2523,6 +2592,7 @@ impl Component for EditorView {
                                   batcher: &mut CommandBatcher,
                                   font_width: f32,
                                   font_size: f32,
+                                  cell_height: f32,
                                   base_y: f32| {
           if !indent_guides_config.render || last_indent == 0 || indent_width == 0 {
             return;
@@ -2540,7 +2610,7 @@ impl Component for EditorView {
             return;
           }
 
-          let y = base_y + (rel_row as f32) * self.cached_cell_height;
+          let y = base_y + (rel_row as f32) * cell_height;
 
           // Draw guides at each indent level
           for i in starting_indent..end_indent {
@@ -2639,7 +2709,8 @@ impl Component for EditorView {
           // TODO: Re-enable once we properly track all dirty regions
 
           // Calculate y position early (needed for gutter rendering)
-          let y = base_y + (rel_row as f32) * self.cached_cell_height;
+          // Use view_cell_height for proper line spacing with the view's font
+          let y = base_y + (rel_row as f32) * view_cell_height;
 
           // Get doc_line early, before horizontal scrolling checks
           let doc_line = doc_text.char_to_line(g.char_idx.min(doc_text.len_chars()));
@@ -2655,8 +2726,9 @@ impl Component for EditorView {
                 last_doc_line_end_row,
                 current_doc_line,
                 &mut self.command_batcher,
-                font_width,
-                font_size,
+                view_font_width,
+                view_font_size,
+                view_cell_height,
                 base_y,
               );
             }
@@ -2712,8 +2784,8 @@ impl Component for EditorView {
               renderer,
               gutter_x,
               y,
-              font_width,
-              font_size,
+              view_font_width,
+              view_font_size,
               normal,
             );
 
@@ -2837,13 +2909,13 @@ impl Component for EditorView {
             flush_line_batch(
               &mut line_batch,
               &mut self.command_batcher,
-              font_width,
-              font_size,
+              view_font_width,
+              view_font_size,
             );
             current_row = rel_row;
           }
 
-          let x = base_x + (rel_col as f32) * font_width;
+          let x = base_x + (rel_col as f32) * view_font_width;
 
           // Call decoration hook for this grapheme
           decoration_manager.decorate_grapheme(&g);
@@ -2873,8 +2945,8 @@ impl Component for EditorView {
             self.command_batcher.add_command(RenderCommand::Selection {
               x,
               y,
-              width: (draw_cols as f32) * font_width,
-              height: self.cached_cell_height,
+              width: (draw_cols as f32) * view_font_width,
+              height: view_cell_height,
               color: selection_fill_color,
             });
           }
@@ -2933,7 +3005,7 @@ impl Component for EditorView {
 
           // Draw cursor if at this position (only for focused view)
           if is_cursor_here && is_focused {
-            let cursor_w = width_cols.max(1) as f32 * font_width;
+            let cursor_w = width_cols.max(1) as f32 * view_font_width;
             // Cursor animation using the animation system
             let (anim_x, anim_y) = if is_primary_cursor_here {
               if cx.editor.config().cursor_anim_enabled {
@@ -3009,7 +3081,7 @@ impl Component for EditorView {
             let max_cursor_width = (view_right_edge_px - anim_x).max(0.0);
             let clipped_cursor_w = cursor_w.min(max_cursor_width);
 
-            let cursor_height = self.cached_cell_height;
+            let cursor_height = view_cell_height;
             let max_cursor_height = (view_bottom_edge_px - cursor_y).max(0.0);
             let clipped_cursor_h = cursor_height.min(max_cursor_height);
 
@@ -3044,13 +3116,13 @@ impl Component for EditorView {
             });
           } else if is_cursor_here && !is_focused {
             // Draw hollow cursor for unfocused views to indicate cursor position
-            let cursor_w = width_cols.max(1) as f32 * font_width;
+            let cursor_w = width_cols.max(1) as f32 * view_font_width;
 
             // Clip cursor to stay within view bounds
             let max_cursor_width = (view_right_edge_px - x).max(0.0);
             let clipped_cursor_w = cursor_w.min(max_cursor_width);
 
-            let cursor_height = self.cached_cell_height;
+            let cursor_height = view_cell_height;
             let max_cursor_height = (view_bottom_edge_px - y).max(0.0);
             let clipped_cursor_h = cursor_height.min(max_cursor_height);
 
@@ -3155,8 +3227,8 @@ impl Component for EditorView {
 
                 // Add to line batch for efficient rendering, but only if within view bounds
                 // Check if text would be within view (not bleeding into separator bars)
-                let text_end_x = x + (draw_cols as f32 * font_width);
-                let text_bottom_y = y + font_size;
+                let text_end_x = x + (draw_cols as f32 * view_font_width);
+                let text_bottom_y = y + view_font_size;
                 if x < view_right_edge_px
                   && text_end_x <= view_right_edge_px
                   && text_bottom_y <= view_bottom_edge_px
@@ -3172,8 +3244,8 @@ impl Component for EditorView {
         flush_line_batch(
           &mut line_batch,
           &mut self.command_batcher,
-          font_width,
-          font_size,
+          view_font_width,
+          view_font_size,
         );
 
         // Draw indent guides for the last line
@@ -3183,8 +3255,9 @@ impl Component for EditorView {
             last_doc_line_end_row,
             current_doc_line,
             &mut self.command_batcher,
-            font_width,
-            font_size,
+            view_font_width,
+            view_font_size,
+            view_cell_height,
             base_y,
           );
         }
@@ -3278,8 +3351,8 @@ impl Component for EditorView {
           self.command_batcher.add_command(RenderCommand::Cursor {
             x,
             y,
-            width: font_width,
-            height: self.cached_cell_height,
+            width: view_font_width,
+            height: view_cell_height,
             color: primary_cursor_color,
             kind: cursor_kind,
             primary: true,
@@ -3289,8 +3362,8 @@ impl Component for EditorView {
             self.command_batcher.add_command(RenderCommand::Cursor {
               x,
               y,
-              width: font_width,
-              height: self.cached_cell_height,
+              width: view_font_width,
+              height: view_cell_height,
               color: primary_cursor_color,
               kind: cursor_kind,
               primary: false,
@@ -3331,30 +3404,32 @@ impl Component for EditorView {
 
               if screen_row >= 0 && screen_row < viewport.height as isize {
                 // Convert screen row/col to pixel coordinates
+                // Use layout metrics for base positioning, view font for character-level
+                // offsets
                 let mut effect_base_x =
-                  content_x_offset + content_rect.x as f32 * font_width + VIEW_PADDING_LEFT;
+                  content_x_offset + content_rect.x as f32 * layout_font_width + VIEW_PADDING_LEFT;
                 let mut effect_base_y = (content_rect.y + screen_row as u16) as f32
-                  * (self.cached_cell_height)
+                  * layout_cell_height
                   + VIEW_PADDING_TOP;
                 effect_base_x += shake_offset_x;
                 effect_base_y += shake_offset_y;
-                let effect_x = effect_base_x + screen_col as f32 * font_width;
+                let effect_x = effect_base_x + screen_col as f32 * view_font_width;
                 let effect_y = effect_base_y;
-                let effect_center_x = effect_x + font_width * 0.5;
-                let effect_center_y = effect_y + font_size * 0.6;
+                let effect_center_x = effect_x + view_font_width * 0.5;
+                let effect_center_y = effect_y + view_font_size * 0.6;
 
                 // Render noop effects (delete/insert)
                 use crate::core::view::NoopEffectKind;
                 match effect.kind {
                   NoopEffectKind::Delete => {
                     let num_sparks = 8;
-                    let max_distance = font_width * 2.6;
+                    let max_distance = view_font_width * 2.6;
                     let decay = (1.0 - progress).powf(0.6);
 
                     // Compact flash to emphasise the origin
                     if progress < 0.2 {
                       let flash_strength = (0.2 - progress) / 0.2;
-                      let flash_size = font_width * (1.6 + flash_strength * 0.9);
+                      let flash_size = view_font_width * (1.6 + flash_strength * 0.9);
                       self.command_batcher.add_command(RenderCommand::Rect {
                         x:      effect_center_x - flash_size / 2.0,
                         y:      effect_center_y - flash_size / 2.0,
@@ -3365,7 +3440,7 @@ impl Component for EditorView {
                     }
 
                     // Glowing ember at the center
-                    let core_size = font_width * (0.28 + (1.0 - progress) * 0.35);
+                    let core_size = view_font_width * (0.28 + (1.0 - progress) * 0.35);
                     let core_alpha = (0.85 - progress).max(0.0);
                     self.command_batcher.add_command(RenderCommand::Rect {
                       x:      effect_center_x - core_size / 2.0,
@@ -3396,7 +3471,7 @@ impl Component for EditorView {
                       let spark_x = effect_center_x + angle.cos() * distance;
                       let spark_y = effect_center_y + angle.sin() * distance;
 
-                      let spark_size = font_width * (0.18 + decay * 0.35);
+                      let spark_size = view_font_width * (0.18 + decay * 0.35);
                       let spark_color = Color::rgba(1.0, 0.55 + decay * 0.25, 0.25, decay * 0.9);
 
                       self.command_batcher.add_command(RenderCommand::Rect {
@@ -3437,7 +3512,7 @@ impl Component for EditorView {
                     let launch_progress = (progress / launch_duration).clamp(0.0, 1.0);
 
                     // Rocket travels upward from below the line before bursting
-                    let start_y = effect_center_y + font_size * 1.0;
+                    let start_y = effect_center_y + view_font_size * 1.0;
                     let rocket_y =
                       start_y - (start_y - effect_center_y) * launch_progress.powf(0.75);
                     let rocket_x = effect_center_x;
@@ -3445,7 +3520,7 @@ impl Component for EditorView {
                     if progress < launch_duration {
                       // Rocket head
                       let rocket_alpha = (1.0 - progress).powf(0.4);
-                      let rocket_size = font_width * 0.18;
+                      let rocket_size = view_font_width * 0.18;
                       self.command_batcher.add_command(RenderCommand::Rect {
                         x:      rocket_x - rocket_size / 2.0,
                         y:      rocket_y - rocket_size / 2.0,
@@ -3455,7 +3530,7 @@ impl Component for EditorView {
                       });
 
                       // Rocket glow
-                      let glow_size = font_width * (0.4 + launch_progress * 0.8);
+                      let glow_size = view_font_width * (0.4 + launch_progress * 0.8);
                       self.command_batcher.add_command(RenderCommand::Rect {
                         x:      rocket_x - glow_size / 2.0,
                         y:      rocket_y - glow_size / 2.0,
@@ -3472,8 +3547,8 @@ impl Component for EditorView {
                           continue;
                         }
                         let tail_y = start_y - (start_y - rocket_y) * t;
-                        let offset = (step as f32 * 1.2).sin() * font_width * 0.08;
-                        let tail_size = font_width * (0.18 - t * 0.08);
+                        let offset = (step as f32 * 1.2).sin() * view_font_width * 0.08;
+                        let tail_size = view_font_width * (0.18 - t * 0.08);
                         self.command_batcher.add_command(RenderCommand::Rect {
                           x:      rocket_x + offset - tail_size / 2.0,
                           y:      tail_y - tail_size / 2.0,
@@ -3486,7 +3561,7 @@ impl Component for EditorView {
 
                     if burst_phase > 0.0 {
                       let burst_strength = (1.0 - burst_phase).powf(0.4);
-                      let burst_radius = font_width * (0.4 + burst_phase.powf(0.65) * 2.6);
+                      let burst_radius = view_font_width * (0.4 + burst_phase.powf(0.65) * 2.6);
 
                       // Core burst halo
                       let halo_alpha = (1.0 - burst_phase).powf(1.2) * 0.5;
@@ -3508,7 +3583,7 @@ impl Component for EditorView {
                         let spark_x = effect_center_x + angle.cos() * distance;
                         let spark_y = effect_center_y + angle.sin() * distance;
 
-                        let spark_size = font_width * (0.22 + burst_strength * 0.18);
+                        let spark_size = view_font_width * (0.22 + burst_strength * 0.18);
                         let spark_alpha = (1.0 - burst_phase).powf(0.8) * 0.8;
                         self.command_batcher.add_command(RenderCommand::Rect {
                           x:      spark_x - spark_size / 2.0,
@@ -3545,10 +3620,10 @@ impl Component for EditorView {
                       for g in 0..glitter_points {
                         let theta = (g as f32 * 1.73 + burst_phase * 6.0).sin();
                         let radial = burst_radius * 0.6 * (g as f32 * 0.37).cos().abs();
-                        let jitter = (g as f32 * 2.1).sin() * font_width * 0.1;
+                        let jitter = (g as f32 * 2.1).sin() * view_font_width * 0.1;
                         let glitter_x = effect_center_x + theta * radial + jitter;
                         let glitter_y = effect_center_y + theta.cos() * radial * 0.7;
-                        let glitter_size = font_width * 0.12;
+                        let glitter_size = view_font_width * 0.12;
                         let glitter_alpha = (1.0 - burst_phase).powf(0.5) * 0.35;
                         if glitter_alpha > 0.0 {
                           self.command_batcher.add_command(RenderCommand::Rect {

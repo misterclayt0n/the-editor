@@ -37,6 +37,21 @@ pub enum PositionBias {
   Below,
 }
 
+// ============================================================================
+// Shared popup size constants (matching Helix)
+// ============================================================================
+
+/// Maximum width for documentation/content popups in characters.
+/// Matches Helix's MAX_WIDTH = 120.
+pub const DOC_POPUP_MAX_WIDTH_CHARS: u16 = 120;
+
+/// Minimum width for documentation/content popups in characters.
+pub const DOC_POPUP_MIN_WIDTH_CHARS: u16 = 30;
+
+/// Maximum height for documentation/content popups in lines.
+/// Matches Helix's MAX_HEIGHT = 26.
+pub const DOC_POPUP_MAX_HEIGHT_LINES: u16 = 26;
+
 /// Layout limits expressed in UI character units.
 #[derive(Clone, Copy, Debug)]
 pub struct PopupLimits {

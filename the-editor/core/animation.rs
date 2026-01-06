@@ -487,13 +487,22 @@ impl<T: Animatable> Animation<T> {
     // Standard duration-based easing
     self.elapsed += dt;
 
-    if self.elapsed >= self.duration {
+    // Animation is only truly complete when both time AND frame count requirements
+    // are met
+    let time_complete = self.elapsed >= self.duration;
+    let frames_complete = self.frame_count >= MIN_ANIMATION_FRAMES;
+
+    if time_complete && frames_complete {
       // Animation complete
       self.current = self.target.clone();
       true
     } else {
-      // Calculate interpolation factor with easing
-      let t = self.elapsed / self.duration;
+      // Calculate interpolation factor with easing.
+      // Use the slower of time-based or frame-based progress to ensure smooth
+      // animation even when dt is large relative to duration.
+      let time_t = (self.elapsed / self.duration).min(1.0);
+      let frame_t = self.frame_count as f32 / MIN_ANIMATION_FRAMES as f32;
+      let t = time_t.min(frame_t);
       let eased_t = self.easing.apply(t);
       self.current = self.start.lerp(&self.target, eased_t);
       false
@@ -693,13 +702,20 @@ mod tests {
     // At t=0, current should be start
     assert_eq!(*anim.current(), 0.0);
 
-    // At t=0.5s, current should be halfway
-    let complete = anim.update(0.5);
+    // Animation uses min(time_progress, frame_progress) for interpolation.
+    // With MIN_ANIMATION_FRAMES=3, each frame contributes 1/3 = 0.33 progress.
+    // Frame 1: time_t=0.33, frame_t=0.33 -> t=0.33 -> current=3.3
+    let complete = anim.update(0.33);
     assert!(!complete);
-    assert!((anim.current() - 5.0).abs() < 0.001);
+    assert!((anim.current() - 3.3).abs() < 0.1);
 
-    // At t=1.0s, current should be end
-    let complete = anim.update(0.5);
+    // Frame 2: time_t=0.66, frame_t=0.66 -> t=0.66 -> current=6.6
+    let complete = anim.update(0.33);
+    assert!(!complete);
+    assert!((anim.current() - 6.6).abs() < 0.1);
+
+    // Frame 3: time_t=1.0, frame_t=1.0 -> complete
+    let complete = anim.update(0.34);
     assert!(complete);
     assert_eq!(*anim.current(), 10.0);
   }
@@ -713,12 +729,15 @@ mod tests {
     assert!(manager.has_active_animations());
     assert_eq!(manager.active_count(), 1);
 
-    // Update halfway
-    manager.update(0.5);
+    // Animations need MIN_ANIMATION_FRAMES (3) to complete
+    manager.update(0.33);
     assert!(manager.has_active_animations());
 
-    // Update to completion
-    manager.update(0.5);
+    manager.update(0.33);
+    assert!(manager.has_active_animations());
+
+    // Third update completes the animation
+    manager.update(0.34);
     assert!(!manager.has_active_animations());
   }
 
@@ -748,14 +767,17 @@ mod tests {
     let mut handle =
       AnimationHandle::new(0.0_f32, 10.0_f32, Duration::from_secs(1), Easing::Linear);
 
-    handle.update(0.5);
-    assert!((handle.current() - 5.0).abs() < 0.001);
+    // First frame: frame_t = 1/3 = 0.33, so current = 0.33 * 10 = 3.3
+    handle.update(0.33);
+    assert!((handle.current() - 3.3).abs() < 0.1);
 
-    // Retarget to 20.0 from current position
+    // Retarget to 20.0 from current position (3.3)
     handle.retarget(20.0);
-    assert_eq!(*handle.current(), 5.0); // Should stay at current position
+    assert!((handle.current() - 3.3).abs() < 0.1); // Should stay at current position
 
-    handle.update(0.5);
-    assert!((handle.current() - 12.5).abs() < 0.001); // Halfway from 5.0 to 20.0
+    // After retarget, frame_count resets to 0. Next update: frame_t = 1/3
+    // Progress from 3.3 to 20.0: range = 16.7, so 3.3 + 0.33 * 16.7 = 8.8
+    handle.update(0.33);
+    assert!((handle.current() - 8.8).abs() < 0.2);
   }
 }

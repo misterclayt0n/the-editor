@@ -414,7 +414,9 @@ impl Completion {
     }
 
     // Get current document's language for syntax highlighting the detail
-    let (_view, current_doc) = crate::current!(ctx.editor);
+    let Some((_view, current_doc)) = crate::try_current_ref!(ctx.editor) else {
+      return;
+    };
     let language = current_doc.language_name().unwrap_or("");
 
     // Combine detail and doc like Helix does:
@@ -683,8 +685,10 @@ impl Completion {
           None
         };
 
-        // Now borrow doc mutably
-        let (view, doc) = crate::current!(ctx.editor);
+        // Now borrow doc mutably - guard against terminal views
+        let Some((view, doc)) = crate::try_current!(ctx.editor) else {
+          return;
+        };
 
         let Some(plan) = self.plan_lsp_transaction(doc, view.id, &lsp_item.item, offset_encoding)
         else {
@@ -747,7 +751,10 @@ impl Completion {
         });
       },
       CompletionItem::Other(other) => {
-        let (view, doc) = crate::current!(ctx.editor);
+        // Guard against terminal views
+        let Some((view, doc)) = crate::try_current!(ctx.editor) else {
+          return;
+        };
 
         // For non-LSP completions, replace from trigger to cursor with the label
         let cursor = doc

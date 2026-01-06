@@ -602,21 +602,8 @@ pub struct AnimationHandle<T: Animatable + 'static> {
 impl<T: Animatable + 'static> AnimationHandle<T> {
   /// Create a new animation handle
   pub fn new(from: T, to: T, duration: Duration, easing: Easing) -> Self {
-    // If start and target are already close, mark as complete immediately
-    let elapsed = if from.is_close(&to) {
-      duration.as_secs_f32() // Mark complete
-    } else {
-      0.0
-    };
     Self {
-      animation: Animation {
-        current: from.clone(),
-        start: from,
-        target: to,
-        duration: duration.as_secs_f32(),
-        elapsed,
-        easing,
-      },
+      animation: Animation::new(from, to, duration, easing),
     }
   }
 

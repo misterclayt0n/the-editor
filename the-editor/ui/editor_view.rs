@@ -245,6 +245,9 @@ pub struct EditorView {
   last_selection_hash:           u64,
   // Cursor animation
   cursor_animation:              Option<crate::core::animation::AnimationHandle<(f32, f32)>>,
+  /// Last rendered cursor screen position (x, y). Used to animate cursor from
+  /// previous position to new position. None on first render.
+  last_cursor_screen_pos:        Option<(f32, f32)>,
   // Zoom animation state
   zoom_anim_active:              bool,
   selection_pulse_animating:     bool,
@@ -380,6 +383,7 @@ impl EditorView {
       last_cursor_pos: None,
       last_selection_hash: 0,
       cursor_animation: None,
+      last_cursor_screen_pos: None,
       zoom_anim_active: false,
       selection_pulse_animating: false,
       noop_effect_animating: false,
@@ -2933,28 +2937,43 @@ impl Component for EditorView {
             // Cursor animation using the animation system
             let (anim_x, anim_y) = if is_primary_cursor_here {
               if cx.editor.config().cursor_anim_enabled {
-                // Check if we need to start or retarget the animation
-                if let Some(ref mut anim) = self.cursor_animation {
-                  // Check if target position changed
-                  if anim.target() != &(x, y) {
-                    // Retarget to new position
-                    anim.retarget((x, y));
+                // Check if we have a previous cursor position to animate from
+                let result = if let Some(last_pos) = self.last_cursor_screen_pos {
+                  if let Some(ref mut anim) = self.cursor_animation {
+                    // Animation exists - check if target position changed
+                    if anim.target() != &(x, y) {
+                      // Retarget to new position
+                      anim.retarget((x, y));
+                    }
+                    // Update animation with time delta
+                    anim.update(cx.dt);
+                    *anim.current()
+                  } else {
+                    // No animation exists but we have a last position - create animation
+                    // from last position to current position
+                    let (duration, easing) = crate::core::animation::presets::CURSOR;
+                    let mut anim = crate::core::animation::AnimationHandle::new(
+                      last_pos,
+                      (x, y),
+                      duration,
+                      easing,
+                    );
+                    anim.update(cx.dt);
+                    let current = *anim.current();
+                    self.cursor_animation = Some(anim);
+                    current
                   }
-                  // Update animation with time delta
-                  anim.update(cx.dt);
-                  *anim.current()
                 } else {
-                  // No animation exists, create one using cursor preset
-                  let (duration, easing) = crate::core::animation::presets::CURSOR;
-                  let anim =
-                    crate::core::animation::AnimationHandle::new((x, y), (x, y), duration, easing);
-                  let current = *anim.current();
-                  self.cursor_animation = Some(anim);
-                  current
-                }
+                  // First render - no previous position, just show cursor at current pos
+                  (x, y)
+                };
+                // Always update last position to target for next frame
+                self.last_cursor_screen_pos = Some((x, y));
+                result
               } else {
                 // Animation disabled, use exact position
                 self.cursor_animation = None;
+                self.last_cursor_screen_pos = Some((x, y));
                 (x, y)
               }
             } else {
@@ -3192,28 +3211,38 @@ impl Component for EditorView {
 
           // Apply cursor animation for empty documents too
           let (x, y) = if cx.editor.config().cursor_anim_enabled {
-            if let Some(ref mut anim) = self.cursor_animation {
-              // Check if target position changed
-              if anim.target() != &(target_x, target_y) {
-                anim.retarget((target_x, target_y));
+            let result = if let Some(last_pos) = self.last_cursor_screen_pos {
+              if let Some(ref mut anim) = self.cursor_animation {
+                // Check if target position changed
+                if anim.target() != &(target_x, target_y) {
+                  anim.retarget((target_x, target_y));
+                }
+                anim.update(cx.dt);
+                *anim.current()
+              } else {
+                // No animation exists but we have a last position - create animation
+                let (duration, easing) = crate::core::animation::presets::CURSOR;
+                let mut anim = crate::core::animation::AnimationHandle::new(
+                  last_pos,
+                  (target_x, target_y),
+                  duration,
+                  easing,
+                );
+                anim.update(cx.dt);
+                let current = *anim.current();
+                self.cursor_animation = Some(anim);
+                current
               }
-              anim.update(cx.dt);
-              *anim.current()
             } else {
-              // No animation exists, create one
-              let (duration, easing) = crate::core::animation::presets::CURSOR;
-              let anim = crate::core::animation::AnimationHandle::new(
-                (target_x, target_y),
-                (target_x, target_y),
-                duration,
-                easing,
-              );
-              let current = *anim.current();
-              self.cursor_animation = Some(anim);
-              current
-            }
+              // First render - no previous position
+              (target_x, target_y)
+            };
+            // Always update last position to target for next frame
+            self.last_cursor_screen_pos = Some((target_x, target_y));
+            result
           } else {
             self.cursor_animation = None;
+            self.last_cursor_screen_pos = Some((target_x, target_y));
             (target_x, target_y)
           };
 

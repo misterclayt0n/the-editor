@@ -19,8 +19,6 @@ use crate::{
       align_view,
     },
   },
-  current,
-  current_ref,
   editor::Action,
   lsp::{
     self,
@@ -29,6 +27,8 @@ use crate::{
     lsp::types as lsp_types,
     util::lsp_range_to_range,
   },
+  try_current,
+  try_current_ref,
   ui::{
     compositor::Compositor,
     job::Callback,
@@ -187,7 +187,10 @@ fn goto_single_impl<P>(
     lsp_types::TextDocumentIdentifier,
   ) -> Option<BoxFuture<'static, lsp::Result<Option<lsp_types::GotoDefinitionResponse>>>>,
 {
-  let (view, doc) = current_ref!(cx.editor);
+  // LSP commands don't work on terminal views
+  let Some((view, doc)) = try_current_ref!(cx.editor) else {
+    return;
+  };
 
   // Collect all the futures with their offset encodings
   let requests: Vec<_> = doc
@@ -287,7 +290,10 @@ pub fn goto_implementation(cx: &mut Context) {
 }
 
 pub fn goto_reference(cx: &mut Context) {
-  let (view, doc) = current_ref!(cx.editor);
+  // LSP commands don't work on terminal views
+  let Some((view, doc)) = try_current_ref!(cx.editor) else {
+    return;
+  };
 
   // Collect all the futures with their offset encodings
   let requests: Vec<_> = doc
@@ -386,7 +392,10 @@ fn action_fixes_diagnostics(action: &lsp_types::CodeActionOrCommand) -> bool {
 }
 
 pub fn code_action(cx: &mut Context) {
-  let (view, doc) = current_ref!(cx.editor);
+  // LSP commands don't work on terminal views
+  let Some((view, doc)) = try_current_ref!(cx.editor) else {
+    return;
+  };
 
   // Get selection range
   let selection = doc.selection(view.id).primary();
@@ -491,7 +500,10 @@ pub fn code_action(cx: &mut Context) {
 }
 
 pub fn rename_symbol(cx: &mut Context) {
-  let (view, doc) = current_ref!(cx.editor);
+  // LSP commands don't work on terminal views
+  let Some((view, doc)) = try_current_ref!(cx.editor) else {
+    return;
+  };
 
   // Check if any language server supports rename
   if doc
@@ -539,7 +551,10 @@ pub fn rename_symbol(cx: &mut Context) {
           // Clear custom mode string
           cx.editor.clear_custom_mode_str();
 
-          let (view, doc) = current!(cx.editor);
+          // LSP commands don't work on terminal views
+          let Some((view, doc)) = try_current!(cx.editor) else {
+            return;
+          };
 
           // Get language server
           let Some(language_server) = doc
@@ -818,7 +833,10 @@ pub fn document_symbols(cx: &mut Context) {
     }
   }
 
-  let (_view, doc) = current_ref!(cx.editor);
+  // LSP commands don't work on terminal views
+  let Some((_view, doc)) = try_current_ref!(cx.editor) else {
+    return;
+  };
 
   // Get current document URL
   let current_url = doc.url();
@@ -963,7 +981,10 @@ pub fn document_symbols(cx: &mut Context) {
 }
 /// Workspace symbols picker - navigate across entire workspace by symbols
 pub fn workspace_symbols(cx: &mut Context) {
-  let (_view, doc) = current_ref!(cx.editor);
+  // LSP commands don't work on terminal views
+  let Some((_view, doc)) = try_current_ref!(cx.editor) else {
+    return;
+  };
 
   // Collect all workspace symbols from language servers
   let requests: Vec<_> = doc
@@ -1135,7 +1156,10 @@ pub fn workspace_symbols(cx: &mut Context) {
 }
 /// Document diagnostics picker - view all diagnostics in current file
 pub fn document_diagnostics(cx: &mut Context) {
-  let (_view, doc) = current_ref!(cx.editor);
+  // LSP commands don't work on terminal views
+  let Some((_view, doc)) = try_current_ref!(cx.editor) else {
+    return;
+  };
 
   // Get document diagnostics
   let diagnostics = doc.diagnostics();
@@ -1409,12 +1433,10 @@ pub fn workspace_diagnostics(cx: &mut Context) {
 
 /// Select all references to the symbol under cursor in the current file
 pub fn select_references(cx: &mut Context) {
-  // Guard against terminal views
-  if crate::view!(cx.editor).is_terminal() {
+  // LSP commands don't work on terminal views
+  let Some((view, doc)) = try_current_ref!(cx.editor) else {
     return;
-  }
-
-  let (view, doc) = current_ref!(cx.editor);
+  };
 
   let current_uri = match doc.url() {
     Some(uri) => uri,

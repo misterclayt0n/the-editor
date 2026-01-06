@@ -1079,22 +1079,26 @@ pub mod completers {
 
   /// Filename completer that inserts current file's directory on empty input
   pub fn filename_with_current_dir(editor: &Editor, input: &str) -> Vec<Completion> {
-    use crate::current_ref;
-
     // If input is empty, suggest the current file's directory
     if input.is_empty() {
-      let (_view, doc) = current_ref!(editor);
-      if let Some(path) = doc.path() {
-        if let Some(parent) = path.parent() {
-          let dir_path = parent.to_string_lossy().to_string() + "/";
-          return vec![Completion {
-            range: 0..,
-            text:  dir_path,
-            doc:   Some("Current file's directory".to_string()),
-          }];
+      // Safely get the current document (handles terminal views gracefully)
+      if let Some(view_id) = editor.focused_view_id() {
+        if let Some(doc_id) = editor.tree.get(view_id).doc() {
+          if let Some(doc) = editor.documents.get(&doc_id) {
+            if let Some(path) = doc.path() {
+              if let Some(parent) = path.parent() {
+                let dir_path = parent.to_string_lossy().to_string() + "/";
+                return vec![Completion {
+                  range: 0..,
+                  text:  dir_path,
+                  doc:   Some("Current file's directory".to_string()),
+                }];
+              }
+            }
+          }
         }
       }
-      // Fall through to normal completion if no current file
+      // Fall through to normal completion if no current file or terminal view
     }
 
     // Otherwise, use normal filename completion

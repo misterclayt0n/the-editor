@@ -16,9 +16,8 @@ use crate::{
     },
     line_ending::NATIVE_LINE_ENDING,
   },
-  current_ref,
-  doc,
   editor::Editor,
+  try_current_ref,
 };
 
 /// A key-value store for saving sets of values.
@@ -56,7 +55,8 @@ impl Registers {
     match name {
       '_' => Some(RegisterValues::new(iter::empty())),
       '#' => {
-        let (view, doc) = current_ref!(editor);
+        // Returns None for terminal views (no document)
+        let (view, doc) = try_current_ref!(editor)?;
         let selections = doc.selection(view.id).len();
         // ExactSizeIterator is implemented for Range<usize> but
         // not RangeInclusive<usize>.
@@ -65,12 +65,15 @@ impl Registers {
         ))
       },
       '.' => {
-        let (view, doc) = current_ref!(editor);
+        // Returns None for terminal views (no document)
+        let (view, doc) = try_current_ref!(editor)?;
         let text = doc.text().slice(..);
         Some(RegisterValues::new(doc.selection(view.id).fragments(text)))
       },
       '%' => {
-        let path = doc!(editor).display_name();
+        // Returns None for terminal views (no document)
+        let (_, doc) = try_current_ref!(editor)?;
+        let path = doc.display_name();
         Some(RegisterValues::new(iter::once(path)))
       },
       '*' | '+' => {

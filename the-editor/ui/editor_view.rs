@@ -849,6 +849,14 @@ impl Component for EditorView {
       crate::profile_message!("editor_view: bufferline_alive");
       return true;
     }
+    if self
+      .infobox_animation
+      .as_ref()
+      .is_some_and(|anim| !anim.is_complete())
+    {
+      crate::profile_message!("editor_view: infobox_animation");
+      return true;
+    }
     false
   }
 

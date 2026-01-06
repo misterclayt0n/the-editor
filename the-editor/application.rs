@@ -484,8 +484,9 @@ impl Application for App {
     let now = std::time::Instant::now();
     let raw_dt = now.duration_since(self.last_frame_time).as_secs_f32();
     // Cap dt to prevent animations from completing instantly on first frame
-    // or after long pauses (e.g., system sleep). 100ms = 10fps minimum.
-    let dt = raw_dt.min(0.1);
+    // or after long pauses (e.g., system sleep). 25ms cap ensures even the
+    // shortest animations (like cursor at 25ms) get multiple frames to run.
+    let dt = raw_dt.min(0.025);
     self.last_frame_time = now;
 
     // Apply smooth scrolling animation prior to rendering this frame.

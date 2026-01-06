@@ -411,23 +411,31 @@ impl Animatable for Color {
 }
 
 /// Represents an active animation
+/// Minimum number of frames an animation must run before it can be considered
+/// complete. This ensures smooth animations even when dt is large or start ==
+/// target.
+const MIN_ANIMATION_FRAMES: u32 = 3;
+
 #[derive(Debug)]
 pub struct Animation<T: Animatable> {
   /// Starting value
-  start:    T,
+  start:       T,
   /// Target value
-  target:   T,
+  target:      T,
   /// Current value (updated each frame)
-  current:  T,
+  current:     T,
   /// Duration of the animation in seconds
-  duration: f32,
+  duration:    f32,
   /// Time elapsed since animation started (in seconds)
-  elapsed:  f32,
+  elapsed:     f32,
   /// Easing function to use
-  easing:   Easing,
+  easing:      Easing,
   /// Whether update() has been called at least once.
   /// Used to prevent is_complete() from returning true before animation starts.
-  started:  bool,
+  started:     bool,
+  /// Number of frames the animation has been updated.
+  /// Used to ensure animations run for at least MIN_ANIMATION_FRAMES.
+  frame_count: u32,
 }
 
 impl<T: Animatable> Animation<T> {
@@ -442,6 +450,7 @@ impl<T: Animatable> Animation<T> {
       elapsed: 0.0,
       easing,
       started: false,
+      frame_count: 0,
     }
   }
 
@@ -449,6 +458,7 @@ impl<T: Animatable> Animation<T> {
   /// Returns true if the animation is complete
   pub fn update(&mut self, dt: f32) -> bool {
     self.started = true;
+    self.frame_count = self.frame_count.saturating_add(1);
 
     // Handle exponential decay specially (raddebugger style)
     if self.easing.is_exponential_decay() {
@@ -496,11 +506,13 @@ impl<T: Animatable> Animation<T> {
   }
 
   /// Check if animation is complete.
-  /// Returns false if update() hasn't been called yet, even if elapsed >=
-  /// duration. This ensures animations aren't considered "complete" before
-  /// they've had a chance to run.
+  /// Returns false if:
+  /// - update() hasn't been called yet (started == false)
+  /// - The animation hasn't run for at least MIN_ANIMATION_FRAMES frames
+  /// This ensures animations have a chance to run smoothly even when dt is
+  /// large or start == target.
   pub fn is_complete(&self) -> bool {
-    self.started && self.elapsed >= self.duration
+    self.started && self.frame_count >= MIN_ANIMATION_FRAMES && self.elapsed >= self.duration
   }
 
   /// Get the target value
@@ -513,9 +525,11 @@ impl<T: Animatable> Animation<T> {
     self.start = self.current.clone();
     self.target = new_target;
     self.elapsed = 0.0;
+    self.frame_count = 0;
     // Don't reset started - the animation is already running, just with a new
-    // target. This allows is_complete() to work correctly after
-    // retargeting.
+    // target. This allows is_complete() to work correctly after retargeting,
+    // while frame_count reset ensures the animation gets MIN_ANIMATION_FRAMES
+    // to run smoothly.
   }
 }
 
@@ -716,12 +730,17 @@ mod tests {
     assert_eq!(*handle.current(), 0.0);
     assert!(!handle.is_complete());
 
-    handle.update(0.5);
-    assert!((handle.current() - 5.0).abs() < 0.001);
+    handle.update(0.33);
+    assert!((handle.current() - 3.3).abs() < 0.1);
+    assert!(!handle.is_complete()); // Not complete yet - needs MIN_ANIMATION_FRAMES
 
-    handle.update(0.5);
+    handle.update(0.33);
+    assert!((handle.current() - 6.6).abs() < 0.1);
+    assert!(!handle.is_complete()); // Still not complete - only 2 frames
+
+    handle.update(0.34);
     assert_eq!(*handle.current(), 10.0);
-    assert!(handle.is_complete());
+    assert!(handle.is_complete()); // Now complete - 3 frames and elapsed >= duration
   }
 
   #[test]

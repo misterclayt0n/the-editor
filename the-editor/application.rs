@@ -412,6 +412,11 @@ impl Application for App {
       let (view, doc) = crate::current!(self.editor);
       doc.set_selection(view.id, Selection::point(0));
     }
+
+    // Reset frame time after initialization to ensure first render has a
+    // reasonable dt. GPU init can take several seconds, which would cause
+    // animations to complete instantly on first frame.
+    self.last_frame_time = std::time::Instant::now();
   }
 
   fn render(&mut self, renderer: &mut Renderer) {
@@ -477,7 +482,10 @@ impl Application for App {
 
     // Calculate delta time for time-based animations
     let now = std::time::Instant::now();
-    let dt = now.duration_since(self.last_frame_time).as_secs_f32();
+    let raw_dt = now.duration_since(self.last_frame_time).as_secs_f32();
+    // Cap dt to prevent animations from completing instantly on first frame
+    // or after long pauses (e.g., system sleep). 100ms = 10fps minimum.
+    let dt = raw_dt.min(0.1);
     self.last_frame_time = now;
 
     // Apply smooth scrolling animation prior to rendering this frame.

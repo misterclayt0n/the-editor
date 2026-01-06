@@ -24,6 +24,8 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] VCS indicator.
   - [x] Explorer should react to the open file - Auto reveal.
   - [x] Basic file operations -> Create/Delete files/folders.
+  - [ ] Drag & drop.
+  - [ ] Follow up files doesn't work.
   
 - [ ] Command palette.
 - [x] "reload-all" prompt command.
@@ -46,9 +48,12 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Workspace features - Still reasoning about this.
 - [ ] Tab completion in the file prompt should look for the correct directory entry, not just scroll (This is a special case tho, the behavior is correct for all other cases).
 
+- [ ] Fix animations not working when I first start the editor for some reason. 
+
 - [ ] Terminal
-  - [x] Basic stuff
-  - [x] Mouse handling
+  - [x] Basic stuff.
+  - [x] Mouse handling.
+  - [ ] Leader key handling in the terminal (control x probably).
 
 - [x] ACP Integration - We're pausing this for now, I think we're at a reasonable state currently.
   - [x] Model picker.
@@ -60,20 +65,12 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Render TODOs
   - [ ] Opencode shell comamnds are not happening in the same nix enviroment as the one the editor is currently set.
 
-- [ ] Since we now have a lot of special buffers, we need a system to easily toggle them, maybe in an overlay. We should be able to bind arbitrary buffers to this system tho, not just special buffers.
-
-Now I kinda want this editor to look nice so here's some ideas:
-- [ ] Cursor breathing animation.
-- [ ] Render jumplist picker.
-- [ ] Improve the window splitting animation (it currently sucks).
-- [ ] File tree on click animation.
-- [ ] File open should have a totally different animation - already open files should have one animation (if any) and recently open files should have another one (see raddebugger's animation on this)
+- [x] Since we now have a lot of special buffers, we need a system to easily toggle them, maybe in an overlay. We should be able to bind arbitrary buffers to this system tho, not just special buffers.
   
 ### Fixes
 - [x] Render fonts correctly in the picker prompt menu (they're too spaced).
 - [x] Fix panic in prompt because it can't handle unicode properly.
 - [x] Render tabs in hover component.
-- [ ] Fix indent guides (sometimes it will be rendered as blank for some reason). - Hard to reproduce tho.
 - [x] Some lsp diagnostics are not really being rendered into virtual lines.
 - [x] Fix overflow in lsp helper completer popup.
 - [x] Our code for handling lsp positioning (completer, signature helper, hover) does not work at all when we resize the-editor's window. It kinda just appears out of the blue.
@@ -82,10 +79,9 @@ Now I kinda want this editor to look nice so here's some ideas:
 - [x] Review how completer "accept" works - It does not automatically import files for instance, it also for some reason inserts the arguments of the function, and that's not ok.
 - [x] Highlight on yank should grab color from theme config.
 - [x] LSP diagnostics sometimes do not update correctly.
-- [ ] Fix an issue regarding the touchpad scrolling (wayland in particular, simple way to reproduce this is block the screen and unlock it afterwards)
-- [ ] Correctly stream in shell command (force redraw on every stream).
+- [x] Fix an issue regarding the touchpad scrolling (wayland in particular, simple way to reproduce this is block the screen and unlock it afterwards)
 - [x] Freeze on completer happens a lot, also hard to reproduce tho. "Kinda" fixed I guess
-- [ ] Fix cursor alignment on lsp components to account for bufferline when rendered.
+- [x] Fix cursor alignment on lsp components to account for bufferline when rendered.
 
 ### Beyond
 - [x] File watcher (I'll wait to see helix's implementation on this, they're making big advancements: https://github.com/helix-editor/helix/pull/14544).

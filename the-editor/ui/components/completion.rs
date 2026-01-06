@@ -436,7 +436,9 @@ impl Completion {
     let window_height = surface.height() as f32;
 
     // Use shared constants for doc popup sizing
-    const DOC_PADDING: f32 = 8.0;
+    // DOC_PADDING must match PopupShell's default padding (12.0px) for consistent
+    // sizing
+    const DOC_PADDING: f32 = 12.0;
     const SPACING: f32 = 8.0;
 
     // Convert to pixels using shared constants

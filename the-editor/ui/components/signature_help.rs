@@ -33,7 +33,9 @@ use crate::{
     },
   },
 };
-const POPUP_PADDING: f32 = 10.0;
+/// Popup padding - must match PopupShell's default padding (12.0px) for
+/// consistent sizing
+const POPUP_PADDING: f32 = 12.0;
 const DOC_SECTION_GAP: f32 = 6.0;
 const VIEWPORT_SIDE_MARGIN: f32 = 12.0;
 /// Pixel gap between cursor and popup (matches completion popup)

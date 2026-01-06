@@ -57,6 +57,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Basic stuff.
   - [x] Mouse handling.
   - [ ] Leader key handling in the terminal (control x probably).
+  - [ ] We cannot have 2 different views for the same terminal instance, we need to disallow that.
 
 - [x] ACP Integration - We're pausing this for now, I think we're at a reasonable state currently.
   - [x] Model picker.

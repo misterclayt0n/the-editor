@@ -11,7 +11,6 @@ use crate::{
   },
   ui::{
     UI_FONT_SIZE,
-    UI_FONT_WIDTH,
     compositor::{
       Callback,
       Component,
@@ -81,6 +80,9 @@ impl Default for PopupStyle {
 pub struct PopupConstraints {
   pub max_width:  f32,
   pub max_height: f32,
+  /// Actual measured cell width for the UI font (in pixels).
+  /// Use this for calculating character counts instead of UI_FONT_WIDTH.
+  pub cell_width: f32,
 }
 
 /// Reported size for popup content in physical pixels.
@@ -128,19 +130,28 @@ impl RectPx {
 
 /// Rendering context handed to popup contents during drawing.
 pub struct PopupFrame<'a> {
-  surface: &'a mut Surface,
-  outer:   RectPx,
-  inner:   RectPx,
-  alpha:   f32,
+  surface:    &'a mut Surface,
+  outer:      RectPx,
+  inner:      RectPx,
+  alpha:      f32,
+  /// Actual measured cell width for the UI font (in pixels).
+  cell_width: f32,
 }
 
 impl<'a> PopupFrame<'a> {
-  fn new(surface: &'a mut Surface, outer: RectPx, inner: RectPx, alpha: f32) -> Self {
+  fn new(
+    surface: &'a mut Surface,
+    outer: RectPx,
+    inner: RectPx,
+    alpha: f32,
+    cell_width: f32,
+  ) -> Self {
     Self {
       surface,
       outer,
       inner,
       alpha,
+      cell_width,
     }
   }
 
@@ -163,20 +174,27 @@ impl<'a> PopupFrame<'a> {
   pub fn inner_origin(&self) -> (f32, f32) {
     (self.inner.x, self.inner.y)
   }
+
+  /// Get the actual measured cell width for the UI font.
+  pub fn cell_width(&self) -> f32 {
+    self.cell_width
+  }
 }
 
 /// Behaviour required from popup content.
 pub trait PopupContent {
   /// Measure intrinsic content size (excluding shell padding) within
-  /// constraints.
+  /// constraints. The `constraints.cell_width` field contains the actual
+  /// measured cell width for the UI font - use this for character calculations.
   fn measure(
     &mut self,
-    surface: &Surface,
+    surface: &mut Surface,
     ctx: &mut Context,
     constraints: PopupConstraints,
   ) -> PopupSize;
 
-  /// Render the content inside the provided frame.
+  /// Render the content inside the provided frame. Use `frame.cell_width()`
+  /// for accurate character width calculations.
   fn render(&mut self, frame: &mut PopupFrame<'_>, ctx: &mut Context);
 
   /// Handle events before the shell applies auto-close behaviour.
@@ -374,15 +392,20 @@ impl<T: PopupContent> PopupShell<T> {
 
   fn measure_with_surface(
     &mut self,
-    surface: &Surface,
+    surface: &mut Surface,
     ctx: &mut Context,
     viewport: Rect,
-  ) -> PopupSize {
+  ) -> (PopupSize, f32) {
     let doc_cell_w = surface.cell_width();
     let doc_cell_h = surface.cell_height();
     let viewport_px = Self::viewport_rect(viewport, doc_cell_w, doc_cell_h);
-    let ui_cell_w = UI_FONT_WIDTH.max(1.0);
-    let ui_cell_h = (UI_FONT_SIZE + 4.0).max(1.0);
+
+    // Configure UI font and get actual measured cell width
+    let font_state = surface.save_font_state();
+    surface.configure_font(&font_state.family, UI_FONT_SIZE);
+    let ui_cell_w = surface.cell_width().max(1.0);
+    let ui_cell_h = surface.cell_height().max(1.0);
+    surface.restore_font_state(font_state);
 
     let padding = self.style.padding * 2.0;
     let max_inner_width =
@@ -393,15 +416,19 @@ impl<T: PopupContent> PopupShell<T> {
     let constraints = PopupConstraints {
       max_width:  max_inner_width,
       max_height: max_inner_height,
+      cell_width: ui_cell_w,
     };
 
-    self.contents.measure(surface, ctx, constraints)
+    let size = self.contents.measure(surface, ctx, constraints);
+    (size, ui_cell_w)
   }
 }
 
 impl<T: PopupContent + 'static> Component for PopupShell<T> {
   fn render(&mut self, area: Rect, surface: &mut Surface, ctx: &mut Context) {
-    let mut content_size = self.measure_with_surface(surface, ctx, area);
+    // measure_with_surface configures the font temporarily and returns the measured
+    // cell width
+    let (mut content_size, measured_cell_w) = self.measure_with_surface(surface, ctx, area);
 
     self.animation.update(ctx.dt);
     let eased = *self.animation.current();
@@ -413,7 +440,8 @@ impl<T: PopupContent + 'static> Component for PopupShell<T> {
     let cursor = self.anchor_position(ctx, surface);
 
     surface.configure_font(&font_state.family, UI_FONT_SIZE);
-    let ui_cell_w = surface.cell_width().max(UI_FONT_WIDTH.max(1.0));
+    // Use measured cell width from measure_with_surface for consistency
+    let ui_cell_w = measured_cell_w;
     let ui_cell_h = surface.cell_height().max((UI_FONT_SIZE + 4.0).max(1.0));
 
     // Get surface dimensions for positioning (cursor position is in screen
@@ -530,7 +558,7 @@ impl<T: PopupContent + 'static> Component for PopupShell<T> {
           );
         }
 
-        let mut frame = PopupFrame::new(surface, outer_rect, inner_rect, eased);
+        let mut frame = PopupFrame::new(surface, outer_rect, inner_rect, eased, ui_cell_w);
         self.contents.render(&mut frame, ctx);
         drop(frame);
 

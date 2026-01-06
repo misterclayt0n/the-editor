@@ -24,7 +24,6 @@ use crate::{
   },
   ui::{
     UI_FONT_SIZE,
-    UI_FONT_WIDTH,
     components::popup::{
       PopupConstraints,
       PopupContent,
@@ -728,7 +727,7 @@ impl AcpOverlayContent {
 impl PopupContent for AcpOverlayContent {
   fn measure(
     &mut self,
-    _surface: &Surface,
+    _surface: &mut Surface,
     ctx: &mut Context,
     constraints: PopupConstraints,
   ) -> PopupSize {
@@ -742,7 +741,8 @@ impl PopupContent for AcpOverlayContent {
     }
 
     let wrap_width = constraints.max_width;
-    let cell_width = UI_FONT_WIDTH.max(1.0);
+    // Use the actual measured cell width from constraints
+    let cell_width = constraints.cell_width.max(1.0);
 
     let Some(layout) = self.ensure_layout(cell_width, ctx, wrap_width) else {
       return PopupSize::ZERO;
@@ -777,17 +777,12 @@ impl PopupContent for AcpOverlayContent {
     }
 
     let inner = frame.inner();
-    let outer = frame.outer();
     let wrap_width = inner.width.max(1.0);
-    let cell_width = UI_FONT_WIDTH.max(1.0);
+    // Use the actual measured cell width from frame
+    let cell_width = frame.cell_width().max(1.0);
 
     let alpha = frame.alpha();
-    let (text_x, mut text_y) = frame.inner_origin();
-    text_y += UI_FONT_SIZE;
-    if self.scroll_offset > 0 {
-      let padding_above = (inner.y - outer.y).max(0.0);
-      text_y -= padding_above.min(UI_FONT_SIZE);
-    }
+    let (text_x, text_y) = frame.inner_origin();
 
     let mut new_scroll_offset = self.scroll_offset;
 
@@ -814,8 +809,9 @@ impl PopupContent for AcpOverlayContent {
           .chain(layout.response_lines.iter())
           .collect();
 
+        let mut current_y = text_y;
         for segments in all_lines.iter().skip(new_scroll_offset).take(visible_lines) {
-          if text_y > text_bottom_bound {
+          if current_y > text_bottom_bound {
             break;
           }
 
@@ -829,12 +825,12 @@ impl PopupContent for AcpOverlayContent {
             .collect();
 
           let section = TextSection {
-            position: (text_x, text_y),
+            position: (text_x, current_y),
             texts,
           };
 
           frame.surface().draw_text(section);
-          text_y += layout.line_height;
+          current_y += layout.line_height;
         }
 
         // Draw scrollbar if needed

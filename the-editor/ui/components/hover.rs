@@ -14,7 +14,6 @@ use crate::{
   },
   ui::{
     UI_FONT_SIZE,
-    UI_FONT_WIDTH,
     components::popup::{
       PopupConstraints,
       PopupContent,
@@ -269,7 +268,7 @@ impl HoverContent {
 impl PopupContent for HoverContent {
   fn measure(
     &mut self,
-    _surface: &Surface,
+    _surface: &mut Surface,
     ctx: &mut Context,
     constraints: PopupConstraints,
   ) -> PopupSize {
@@ -278,7 +277,8 @@ impl PopupContent for HoverContent {
     }
 
     let wrap_width = constraints.max_width;
-    let cell_width = UI_FONT_WIDTH.max(1.0);
+    // Use the actual measured cell width from constraints
+    let cell_width = constraints.cell_width.max(1.0);
 
     let Some(layout) = self.ensure_layout(cell_width, ctx, wrap_width) else {
       return PopupSize::ZERO;
@@ -295,7 +295,8 @@ impl PopupContent for HoverContent {
   fn render(&mut self, frame: &mut PopupFrame<'_>, ctx: &mut Context) {
     let inner = frame.inner();
     let wrap_width = inner.width.max(1.0);
-    let cell_width = UI_FONT_WIDTH.max(1.0);
+    // Use the actual measured cell width from frame
+    let cell_width = frame.cell_width().max(1.0);
 
     let alpha = frame.alpha();
     let (text_x, text_y) = frame.inner_origin();

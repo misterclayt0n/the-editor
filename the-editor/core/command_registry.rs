@@ -2426,9 +2426,11 @@ fn lsp_stop(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
     return Ok(());
   }
 
-  use crate::current;
+  use crate::try_current_ref;
 
-  let (_view, doc) = current!(cx.editor);
+  let Some((_view, doc)) = try_current_ref!(cx.editor) else {
+    bail!("lsp-stop requires a document view");
+  };
 
   // Get the list of language servers running for this document
   let language_servers: Vec<_> = doc
@@ -2472,60 +2474,70 @@ fn lsp_stop(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
 }
 
 fn goto_line_number(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
-  use crate::current;
+  use crate::try_current;
+
+  // Early return for terminal views - :goto doesn't apply
+  let Some(_) = try_current!(cx.editor) else {
+    bail!("goto requires a document view");
+  };
 
   match event {
     PromptEvent::Abort => {
       // Restore original selection
       if let Some(last_selection) = cx.editor.last_selection.take() {
-        let (view, doc) = current!(cx.editor);
-        doc.set_selection(view.id, last_selection);
+        if let Some((view, doc)) = try_current!(cx.editor) {
+          doc.set_selection(view.id, last_selection);
+        }
       }
     },
     PromptEvent::Validate => {
       // Save to jumplist
       if let Some(last_selection) = cx.editor.last_selection.take() {
-        let (view, doc) = current!(cx.editor);
-        view.jumps.push((doc.id(), last_selection));
+        if let Some((view, doc)) = try_current!(cx.editor) {
+          view.jumps.push((doc.id(), last_selection));
+        }
       }
     },
     PromptEvent::Update => {
       if args.is_empty() {
         // Restore original selection if no input
         if let Some(last_selection) = cx.editor.last_selection.as_ref() {
-          let (view, doc) = current!(cx.editor);
-          doc.set_selection(view.id, last_selection.clone());
+          if let Some((view, doc)) = try_current!(cx.editor) {
+            doc.set_selection(view.id, last_selection.clone());
+          }
         }
         return Ok(());
       }
 
       // Save original selection on first update
       if cx.editor.last_selection.is_none() {
-        let (view, doc) = current!(cx.editor);
-        cx.editor.last_selection = Some(doc.selection(view.id).clone());
+        if let Some((view, doc)) = try_current!(cx.editor) {
+          cx.editor.last_selection = Some(doc.selection(view.id).clone());
+        }
       }
 
       // Parse line number and navigate
       if let Ok(line) = args[0].parse::<usize>() {
         use crate::core::selection::Selection;
 
-        let (view, doc) = current!(cx.editor);
-        let text = doc.text();
+        if let Some((view, doc)) = try_current!(cx.editor) {
+          let text = doc.text();
 
-        // Convert to 0-indexed
-        let line = line
-          .saturating_sub(1)
-          .min(text.len_lines().saturating_sub(1));
+          // Convert to 0-indexed
+          let line = line
+            .saturating_sub(1)
+            .min(text.len_lines().saturating_sub(1));
 
-        // Get position at start of line - find the start character of the line
-        let line_start = text.line_to_char(line);
+          // Get position at start of line - find the start character of the line
+          let line_start = text.line_to_char(line);
 
-        // Create selection at the line
-        let selection = Selection::single(line_start, line_start);
-        doc.set_selection(view.id, selection);
+          // Create selection at the line
+          let selection = Selection::single(line_start, line_start);
+          doc.set_selection(view.id, selection);
 
-        // Ensure cursor in view
-        crate::core::view::align_view(doc, view, crate::core::view::Align::Center);
+          // Ensure cursor in view
+          crate::core::view::align_view(doc, view, crate::core::view::Align::Center);
+        }
       }
     },
   }
@@ -2717,14 +2729,16 @@ fn reload(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
     return Ok(());
   }
 
-  use crate::current;
+  use crate::try_current;
 
-  let view_id = cx
-    .editor
-    .focused_view_id()
-    .expect("no active document view available");
+  let Some(view_id) = cx.editor.focused_view_id() else {
+    bail!("reload requires a document view");
+  };
 
-  let (view, doc) = current!(cx.editor);
+  let Some((view, doc)) = try_current!(cx.editor) else {
+    bail!("reload requires a document view");
+  };
+
   if let Err(error) = doc.reload(view, &cx.editor.diff_providers) {
     cx.editor.set_error(format!("{}", error));
     return Ok(());

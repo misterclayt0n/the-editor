@@ -27,7 +27,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [ ] Drag & drop.
   - [ ] Follow up files doesn't work.
   
-- [ ] Command palette.
+- [x] Command palette.
 - [x] "reload-all" prompt command.
 
 - [x] Add command history in all prompts - Thinking about this, maybe we don't need command history in the regular prompt, as we need in the shell, search, select (and similar). The main idea is that we don't want to have to repeat typing in commands used often, and that's not really the prompt itself (most commands have aliases to them, so why do we need history in those cases?). That seems overall reasonable.
@@ -48,7 +48,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [ ] Workspace features - Still reasoning about this.
 - [ ] Tab completion in the file prompt should look for the correct directory entry, not just scroll (This is a special case tho, the behavior is correct for all other cases).
 
-- [ ] Fix animations not working when I first start the editor for some reason. 
+- [x] Fix animations not working when I first start the editor for some reason. 
 
 - [ ] Add clipboard control to prompt.
 - [ ] Fix font per buffer that does not allow 2 buffers in split views with different font sizes (the entire font size of all windows adapt depending upon which buffer I'm focused).

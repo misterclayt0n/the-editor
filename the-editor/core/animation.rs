@@ -425,6 +425,9 @@ pub struct Animation<T: Animatable> {
   elapsed:  f32,
   /// Easing function to use
   easing:   Easing,
+  /// Whether update() has been called at least once.
+  /// Used to prevent is_complete() from returning true before animation starts.
+  started:  bool,
 }
 
 impl<T: Animatable> Animation<T> {
@@ -438,12 +441,15 @@ impl<T: Animatable> Animation<T> {
       duration: duration_secs,
       elapsed: 0.0,
       easing,
+      started: false,
     }
   }
 
   /// Update the animation with the time delta
   /// Returns true if the animation is complete
   pub fn update(&mut self, dt: f32) -> bool {
+    self.started = true;
+
     // Handle exponential decay specially (raddebugger style)
     if self.easing.is_exponential_decay() {
       // Rate formula: 1 - 2^(-60 * dt)
@@ -489,9 +495,12 @@ impl<T: Animatable> Animation<T> {
     &self.current
   }
 
-  /// Check if animation is complete
+  /// Check if animation is complete.
+  /// Returns false if update() hasn't been called yet, even if elapsed >=
+  /// duration. This ensures animations aren't considered "complete" before
+  /// they've had a chance to run.
   pub fn is_complete(&self) -> bool {
-    self.elapsed >= self.duration
+    self.started && self.elapsed >= self.duration
   }
 
   /// Get the target value
@@ -504,6 +513,9 @@ impl<T: Animatable> Animation<T> {
     self.start = self.current.clone();
     self.target = new_target;
     self.elapsed = 0.0;
+    // Don't reset started - the animation is already running, just with a new
+    // target. This allows is_complete() to work correctly after
+    // retargeting.
   }
 }
 

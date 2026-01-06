@@ -19,8 +19,8 @@ use crate::{
     document::SCRATCH_BUFFER_NAME,
     position::coords_at_pos,
   },
-  current_ref,
   editor::Editor,
+  try_current_ref,
 };
 
 /// Variables that can be expanded in the command mode (`:`) via the expansion
@@ -254,7 +254,26 @@ fn expand_inner<'a>(editor: &Editor, content: Cow<'a, str>) -> Result<Cow<'a, st
 // known strings like the scratch buffer name or line ending strings though, so
 // this function returns a `Cow<'static, str>` instead.
 fn expand_variable(editor: &Editor, variable: Variable) -> Result<Cow<'static, str>> {
-  let (view, doc) = current_ref!(editor);
+  // Variables that don't require a document
+  match variable {
+    Variable::CurrentWorkingDirectory => {
+      return Ok(Cow::Owned(
+        current_working_dir().to_string_lossy().to_string(),
+      ));
+    },
+    Variable::WorkspaceDirectory => {
+      return Ok(Cow::Owned(find_workspace().0.to_string_lossy().to_string()));
+    },
+    _ => {},
+  }
+
+  // Variables that require a document - return error for terminal views
+  let Some((view, doc)) = try_current_ref!(editor) else {
+    bail!(
+      "Variable %{{{}}} is not available in terminal view",
+      variable.as_str()
+    );
+  };
   let text = doc.text().slice(..);
 
   match variable {
@@ -278,14 +297,6 @@ fn expand_variable(editor: &Editor, variable: Variable) -> Result<Cow<'static, s
       }
     },
     Variable::LineEnding => Ok(Cow::Borrowed(doc.line_ending.as_str())),
-    Variable::CurrentWorkingDirectory => {
-      Ok(Cow::Owned(
-        current_working_dir().to_string_lossy().to_string(),
-      ))
-    },
-    Variable::WorkspaceDirectory => {
-      Ok(Cow::Owned(find_workspace().0.to_string_lossy().to_string()))
-    },
     Variable::Language => {
       Ok(match doc.language_name() {
         Some(lang) => Cow::Owned(lang.to_owned()),
@@ -305,6 +316,8 @@ fn expand_variable(editor: &Editor, variable: Variable) -> Result<Cow<'static, s
       let end_line = doc.selection(view.id).primary().line_range(text).1;
       Ok(Cow::Owned((end_line + 1).to_string()))
     },
+    // These are handled above and will never reach here
+    Variable::CurrentWorkingDirectory | Variable::WorkspaceDirectory => unreachable!(),
   }
 }
 

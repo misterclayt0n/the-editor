@@ -15,6 +15,9 @@ use crate::{
   ui::{
     UI_FONT_SIZE,
     components::popup::{
+      DOC_POPUP_MAX_HEIGHT_LINES,
+      DOC_POPUP_MAX_WIDTH_CHARS,
+      DOC_POPUP_MIN_WIDTH_CHARS,
       PopupConstraints,
       PopupContent,
       PopupFrame,
@@ -33,12 +36,6 @@ use crate::{
   },
 };
 
-const MAX_VISIBLE_LINES: usize = 26;
-const MIN_CONTENT_CHARS: usize = 30;
-const HOVER_MIN_WIDTH_CHARS: u16 = 30;
-const HOVER_MAX_WIDTH_CHARS: u16 = 120;
-const HOVER_MAX_HEIGHT_LINES: u16 = 26;
-
 /// Hover popup component rendered inside a generic popup shell.
 pub struct Hover {
   popup: PopupShell<HoverContent>,
@@ -50,9 +47,9 @@ impl Hover {
   pub fn new(hovers: Vec<(String, lsp::Hover)>) -> Self {
     let content = HoverContent::new(hovers);
     let popup_limits = PopupLimits {
-      min_width: HOVER_MIN_WIDTH_CHARS,
-      max_width: HOVER_MAX_WIDTH_CHARS,
-      max_height: HOVER_MAX_HEIGHT_LINES,
+      min_width: DOC_POPUP_MIN_WIDTH_CHARS,
+      max_width: DOC_POPUP_MAX_WIDTH_CHARS,
+      max_height: DOC_POPUP_MAX_HEIGHT_LINES,
       ..PopupLimits::default()
     };
     let popup = PopupShell::new(Self::ID, content)
@@ -192,7 +189,7 @@ impl HoverContent {
       // Use cell-based markdown building for consistent wrapping
       let lines =
         super::markdown::build_markdown_lines_cells(&entry.markdown, max_width_cells, ctx);
-      let visible_lines = lines.len().min(MAX_VISIBLE_LINES);
+      let visible_lines = lines.len().min(DOC_POPUP_MAX_HEIGHT_LINES as usize);
 
       // Calculate actual content width from wrapped lines
       let content_width_cells = lines
@@ -203,7 +200,7 @@ impl HoverContent {
         .unwrap_or(0);
 
       // Apply min width constraint
-      let min_width_cells = (MIN_CONTENT_CHARS as u16).min(max_width_cells);
+      let min_width_cells = DOC_POPUP_MIN_WIDTH_CHARS.min(max_width_cells);
       let final_width_cells = content_width_cells
         .max(min_width_cells)
         .min(max_width_cells);

@@ -50,6 +50,9 @@ So, this is just a simple todo list that will grant me some sort of base for the
 
 - [ ] Fix animations not working when I first start the editor for some reason. 
 
+- [ ] Add clipboard control to prompt.
+- [ ] Fix font per buffer that does not allow 2 buffers in split views with different font sizes (the entire font size of all windows adapt depending upon which buffer I'm focused).
+
 - [ ] Terminal
   - [x] Basic stuff.
   - [x] Mouse handling.
@@ -64,7 +67,6 @@ So, this is just a simple todo list that will grant me some sort of base for the
   - [x] Fix the issue where every time I save a file it gets autoreloaded.
   - [x] Render TODOs
   - [ ] Opencode shell comamnds are not happening in the same nix enviroment as the one the editor is currently set.
-
 - [x] Since we now have a lot of special buffers, we need a system to easily toggle them, maybe in an overlay. We should be able to bind arbitrary buffers to this system tho, not just special buffers.
   
 ### Fixes

@@ -49,7 +49,14 @@ use crate::{
   ui::{
     UI_FONT_SIZE,
     UI_FONT_WIDTH,
-    components::markdown::Markdown,
+    components::{
+      markdown::Markdown,
+      popup::{
+        DOC_POPUP_MAX_HEIGHT_LINES,
+        DOC_POPUP_MAX_WIDTH_CHARS,
+        DOC_POPUP_MIN_WIDTH_CHARS,
+      },
+    },
     compositor::{
       Component,
       Context,
@@ -63,9 +70,6 @@ use crate::{
     },
   },
 };
-
-/// Minimum width for documentation preview panel
-const MIN_DOC_WIDTH: u16 = 30;
 
 /// Maximum width for completion menu
 const MAX_MENU_WIDTH: u16 = 60;
@@ -431,18 +435,14 @@ impl Completion {
     let window_width = surface.width() as f32;
     let window_height = surface.height() as f32;
 
-    // Constants for doc popup
-    // Use character-based limits like Helix (120 chars max width)
-    const MIN_DOC_WIDTH_CHARS: u16 = 30;
-    const MAX_DOC_WIDTH_CHARS: u16 = 120;
-    const MAX_DOC_HEIGHT_LINES: u16 = 26;
+    // Use shared constants for doc popup sizing
     const DOC_PADDING: f32 = 8.0;
     const SPACING: f32 = 8.0;
 
-    // Convert to pixels
-    let min_doc_width = MIN_DOC_WIDTH_CHARS as f32 * ui_char_width;
-    let max_doc_width = MAX_DOC_WIDTH_CHARS as f32 * ui_char_width;
-    let max_doc_height = MAX_DOC_HEIGHT_LINES as f32 * ui_line_height;
+    // Convert to pixels using shared constants
+    let min_doc_width = DOC_POPUP_MIN_WIDTH_CHARS as f32 * ui_char_width;
+    let max_doc_width = DOC_POPUP_MAX_WIDTH_CHARS as f32 * ui_char_width;
+    let max_doc_height = DOC_POPUP_MAX_HEIGHT_LINES as f32 * ui_line_height;
 
     let font_size = UI_FONT_SIZE;
     let line_height = ui_line_height.max(font_size + 4.0);

@@ -1104,7 +1104,13 @@ impl Component for EditorView {
             cx.editor.autoinfo = Some(node.infobox());
             EventResult::Consumed(None)
           },
-          KeymapResult::Cancelled(_) | KeymapResult::NotFound => {
+          KeymapResult::Cancelled(_) => {
+            // ESC was pressed to cancel pending keys - consume the event
+            cx.editor.autoinfo = None;
+            cx.editor.count = None;
+            EventResult::Consumed(None)
+          },
+          KeymapResult::NotFound => {
             cx.editor.autoinfo = None;
             cx.editor.count = None;
             EventResult::Ignored(None)
@@ -3180,9 +3186,36 @@ impl Component for EditorView {
         // the cursor (only for focused view)
         if grapheme_count == 0 && is_focused {
           // Render cursor at position 0 for empty document
-          let x = base_x;
+          let target_x = base_x;
           // Use full cell height without centering for better legibility
-          let y = base_y;
+          let target_y = base_y;
+
+          // Apply cursor animation for empty documents too
+          let (x, y) = if cx.editor.config().cursor_anim_enabled {
+            if let Some(ref mut anim) = self.cursor_animation {
+              // Check if target position changed
+              if anim.target() != &(target_x, target_y) {
+                anim.retarget((target_x, target_y));
+              }
+              anim.update(cx.dt);
+              *anim.current()
+            } else {
+              // No animation exists, create one
+              let (duration, easing) = crate::core::animation::presets::CURSOR;
+              let anim = crate::core::animation::AnimationHandle::new(
+                (target_x, target_y),
+                (target_x, target_y),
+                duration,
+                easing,
+              );
+              let current = *anim.current();
+              self.cursor_animation = Some(anim);
+              current
+            }
+          } else {
+            self.cursor_animation = None;
+            (target_x, target_y)
+          };
 
           // Get cursor shape from config based on current mode
           let cursor_kind = cx.editor.config().cursor_shape.from_mode(cx.editor.mode());

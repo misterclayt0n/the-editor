@@ -585,6 +585,24 @@ impl<T: PopupContent + 'static> Component for PopupShell<T> {
   }
 
   fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> EventResult {
+    // For scroll events, check if mouse is hovering over the popup before consuming
+    // This enables hover-to-scroll: only scroll the popup if mouse is over it
+    if matches!(event, Event::Scroll(_)) {
+      if let Some(rect) = &self.last_outer_rect {
+        let mouse_over_popup = if let Some((mx, my)) = ctx.last_mouse_pos {
+          mx >= rect.x && mx <= rect.x + rect.width && my >= rect.y && my <= rect.y + rect.height
+        } else {
+          // No mouse position known - don't consume, let underlying component handle
+          false
+        };
+
+        if !mouse_over_popup {
+          // Mouse is outside popup - let event bubble to underlying components
+          return EventResult::Ignored(None);
+        }
+      }
+    }
+
     match self.contents.handle_event(event, ctx) {
       EventResult::Consumed(cb) => EventResult::Consumed(cb),
       EventResult::Ignored(cb) => {

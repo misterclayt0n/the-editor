@@ -41,6 +41,15 @@ const VIEWPORT_SIDE_MARGIN: f32 = 12.0;
 /// Pixel gap between cursor and popup (matches completion popup)
 const CURSOR_POPUP_MARGIN: f32 = 4.0;
 
+/// Cached bounds for hover detection
+#[derive(Clone, Copy)]
+struct SignatureHelpBounds {
+  x:      f32,
+  y:      f32,
+  width:  f32,
+  height: f32,
+}
+
 /// Signature help popup component
 pub struct SignatureHelp {
   /// Language for syntax highlighting
@@ -60,6 +69,8 @@ pub struct SignatureHelp {
   last_doc_total_lines:   usize,
   /// Deferred scroll amount to apply once layout is ready
   pending_doc_scroll:     i32,
+  /// Cached bounds for hover-to-scroll detection
+  cached_bounds:          Option<SignatureHelpBounds>,
 }
 
 impl SignatureHelp {
@@ -84,6 +95,7 @@ impl SignatureHelp {
       last_doc_visible_lines: 0,
       last_doc_total_lines: 0,
       pending_doc_scroll: 0,
+      cached_bounds: None,
     }
   }
 
@@ -180,9 +192,27 @@ impl SignatureHelp {
 }
 
 impl Component for SignatureHelp {
-  fn handle_event(&mut self, event: &Event, _ctx: &mut Context) -> EventResult {
+  fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> EventResult {
     match event {
       Event::Scroll(delta) => {
+        // Check if mouse is over the popup before consuming scroll (hover-to-scroll)
+        if let Some(bounds) = &self.cached_bounds {
+          let mouse_over_popup = if let Some((mx, my)) = ctx.last_mouse_pos {
+            mx >= bounds.x
+              && mx <= bounds.x + bounds.width
+              && my >= bounds.y
+              && my <= bounds.y + bounds.height
+          } else {
+            // No mouse position known - don't consume, let underlying component handle
+            false
+          };
+
+          if !mouse_over_popup {
+            // Mouse is outside popup - let event bubble to underlying components
+            return EventResult::Ignored(None);
+          }
+        }
+
         self.scroll_docs(delta);
         EventResult::Consumed(None)
       },
@@ -414,6 +444,14 @@ impl Component for SignatureHelp {
     let anim_height = popup_height * scale;
     let anim_x = popup_pos.x;
     let anim_y = popup_pos.y;
+
+    // Cache bounds for hover detection in scroll events
+    self.cached_bounds = Some(SignatureHelpBounds {
+      x:      anim_x,
+      y:      anim_y,
+      width:  anim_width,
+      height: anim_height,
+    });
 
     // Draw background
     let corner_radius = 6.0;

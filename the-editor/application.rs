@@ -68,6 +68,9 @@ pub struct App {
 
   // Delta time tracking for time-based animations
   last_frame_time: std::time::Instant,
+
+  // Last known mouse position for hover-based scroll routing
+  last_mouse_pos: Option<(f32, f32)>,
 }
 
 impl App {
@@ -109,6 +112,7 @@ impl App {
       trackpad_scroll_lines: 0.0,
       trackpad_scroll_cols: 0.0,
       last_frame_time: std::time::Instant::now(),
+      last_mouse_pos: None,
     }
   }
 
@@ -509,6 +513,7 @@ impl Application for App {
       scroll: None,
       jobs: &mut self.jobs,
       dt,
+      last_mouse_pos: self.last_mouse_pos,
     };
 
     // Render through the compositor.
@@ -560,10 +565,11 @@ impl Application for App {
       let event = Event::Key(binding);
 
       let mut cx = Context {
-        editor: &mut self.editor,
-        scroll: None,
-        jobs:   &mut self.jobs,
-        dt:     0.0, // Events don't use delta time
+        editor:         &mut self.editor,
+        scroll:         None,
+        jobs:           &mut self.jobs,
+        dt:             0.0, // Events don't use delta time
+        last_mouse_pos: self.last_mouse_pos,
       };
 
       return self.compositor.handle_event(&event, &mut cx);
@@ -576,10 +582,11 @@ impl Application for App {
       let event = Event::Key(binding);
 
       let mut cx = Context {
-        editor: &mut self.editor,
-        scroll: None,
-        jobs:   &mut self.jobs,
-        dt:     0.0,
+        editor:         &mut self.editor,
+        scroll:         None,
+        jobs:           &mut self.jobs,
+        dt:             0.0,
+        last_mouse_pos: self.last_mouse_pos,
       };
 
       return self.compositor.handle_event(&event, &mut cx);
@@ -590,10 +597,11 @@ impl Application for App {
       let event = Event::Key(binding);
 
       let mut cx = Context {
-        editor: &mut self.editor,
-        scroll: None,
-        jobs:   &mut self.jobs,
-        dt:     0.0,
+        editor:         &mut self.editor,
+        scroll:         None,
+        jobs:           &mut self.jobs,
+        dt:             0.0,
+        last_mouse_pos: self.last_mouse_pos,
       };
 
       return self.compositor.handle_event(&event, &mut cx);
@@ -604,10 +612,11 @@ impl Application for App {
       // Try to pass scroll to compositor first (for pickers, etc.)
       let event = Event::Scroll(scroll);
       let mut cx = Context {
-        editor: &mut self.editor,
-        scroll: None,
-        jobs:   &mut self.jobs,
-        dt:     0.0,
+        editor:         &mut self.editor,
+        scroll:         None,
+        jobs:           &mut self.jobs,
+        dt:             0.0,
+        last_mouse_pos: self.last_mouse_pos,
       };
       let handled = self.compositor.handle_event(&event, &mut cx);
 
@@ -623,13 +632,17 @@ impl Application for App {
 
     // Handle mouse events.
     if let Some(mouse) = result.mouse {
+      // Track mouse position for hover-based scroll routing
+      self.last_mouse_pos = Some(mouse.position);
+
       let event = Event::Mouse(mouse);
 
       let mut cx = Context {
-        editor: &mut self.editor,
-        scroll: None,
-        jobs:   &mut self.jobs,
-        dt:     0.0,
+        editor:         &mut self.editor,
+        scroll:         None,
+        jobs:           &mut self.jobs,
+        dt:             0.0,
+        last_mouse_pos: self.last_mouse_pos,
       };
 
       return self.compositor.handle_event(&event, &mut cx);
@@ -642,10 +655,11 @@ impl Application for App {
         let event = Event::Key(*binding);
 
         let mut cx = Context {
-          editor: &mut self.editor,
-          scroll: None,
-          jobs:   &mut self.jobs,
-          dt:     0.0,
+          editor:         &mut self.editor,
+          scroll:         None,
+          jobs:           &mut self.jobs,
+          dt:             0.0,
+          last_mouse_pos: self.last_mouse_pos,
         };
 
         return self.compositor.handle_event(&event, &mut cx);
@@ -662,10 +676,11 @@ impl Application for App {
           let event = Event::Key(binding);
 
           let mut cx = Context {
-            editor: &mut self.editor,
-            scroll: None,
-            jobs:   &mut self.jobs,
-            dt:     0.0,
+            editor:         &mut self.editor,
+            scroll:         None,
+            jobs:           &mut self.jobs,
+            dt:             0.0,
+            last_mouse_pos: self.last_mouse_pos,
           };
 
           if self.compositor.handle_event(&event, &mut cx) {

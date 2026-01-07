@@ -41,10 +41,11 @@ pub enum Event {
 pub type Surface = Renderer;
 
 pub struct Context<'a> {
-  pub editor: &'a mut Editor,
-  pub scroll: Option<usize>,
-  pub jobs:   &'a mut Jobs,
-  pub dt:     f32, // Delta time in seconds since last frame
+  pub editor:         &'a mut Editor,
+  pub scroll:         Option<usize>,
+  pub jobs:           &'a mut Jobs,
+  pub dt:             f32, // Delta time in seconds since last frame
+  pub last_mouse_pos: Option<(f32, f32)>, // Last known mouse position for hover detection
 }
 
 impl Context<'_> {

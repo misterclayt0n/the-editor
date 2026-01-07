@@ -1,14 +1,14 @@
 ### TODO
 So, this is just a simple todo list that will grant me some sort of base for the editor's missing features overall. Note that this document represents my personal vision on what the editor shall become, but will likely change over time.
 
-- [ ] Image rendering.
+- [x] Image rendering.
 - [x] Local search in buffer (https://x.com/neogoose_btw/status/1981778716721393859/photo/1).
 - [x] End of line diagnostics.
 - [x] Buffer line
 
 - [ ] VCS
   - [ ] First class jujutsu support (jujutsu will have priority over git).
-  - [ ] Git blame (this will likely only support git btw).
+  - [ ] Git blame.
   
 - [ ] Configuration
   - [ ] Custom font loading.

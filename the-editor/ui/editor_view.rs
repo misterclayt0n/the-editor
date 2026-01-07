@@ -301,6 +301,8 @@ pub struct EditorView {
   explorer_hovered_item:         Option<usize>,
   // Accumulator for fractional scroll amounts in explorer (for trackpad)
   explorer_scroll_accum:         f32,
+  // Accumulator for fractional scroll amounts in document views (for trackpad hover-scroll)
+  doc_scroll_accum:              f32,
   // Track last mouse position for scroll targeting
   last_mouse_pos:                Option<(f32, f32)>,
   // Indent guide animation state (per indent level -> current opacity)
@@ -422,6 +424,7 @@ impl EditorView {
       explorer_position: FileTreePosition::Left,
       explorer_hovered_item: None,
       explorer_scroll_accum: 0.0,
+      doc_scroll_accum: 0.0,
       last_mouse_pos: None,
       indent_guide_opacities: std::collections::HashMap::new(),
       indent_guides_anim_active: false,
@@ -1276,6 +1279,78 @@ impl Component for EditorView {
                 }
                 return EventResult::Consumed(None);
               }
+            }
+          }
+        }
+
+        // Handle scroll for document views based on mouse hover position
+        // This enables hover-to-scroll: scrolling the view under the cursor without
+        // requiring focus. Uses Helix's pattern of temporarily swapping focus.
+        let mouse_pos = self.last_mouse_pos.or(cx.last_mouse_pos);
+        if let Some((mouse_x, mouse_y)) = mouse_pos {
+          if let Some(view_id) = self.screen_coords_to_node((mouse_x, mouse_y), cx) {
+            let view = cx.editor.tree.get(view_id);
+            // Only handle document views (terminals are handled above)
+            if view.doc().is_some() {
+              let line_height = self.cached_cell_height.max(1.0);
+
+              // Convert scroll delta to lines, accumulating fractional amounts for trackpad
+              let delta_lines = match delta {
+                ScrollDelta::Lines { y, .. } => {
+                  // Discrete scroll (mouse wheel) - use directly, reset accumulator
+                  self.doc_scroll_accum = 0.0;
+                  -*y
+                },
+                ScrollDelta::Pixels { y, .. } => {
+                  // Continuous scroll (trackpad) - accumulate fractional amounts
+                  -*y / line_height
+                },
+              };
+
+              // Accumulate scroll amount
+              self.doc_scroll_accum += delta_lines;
+
+              // Extract integer lines to scroll
+              let lines_to_scroll = self.doc_scroll_accum.trunc() as i32;
+
+              // Keep fractional remainder for next event
+              self.doc_scroll_accum -= lines_to_scroll as f32;
+
+              if lines_to_scroll != 0 {
+                // Helix pattern: temporarily swap focus to hovered view, scroll, restore focus
+                let current_focus = cx.editor.tree.focus;
+                cx.editor.tree.focus = view_id;
+
+                // Determine scroll direction
+                let direction = if lines_to_scroll > 0 {
+                  crate::core::movement::Direction::Forward
+                } else {
+                  crate::core::movement::Direction::Backward
+                };
+
+                // Use commands::scroll which properly handles view offset calculation
+                let mut cmd_cx = crate::core::commands::Context {
+                  register:             cx.editor.selected_register,
+                  count:                cx.editor.count,
+                  editor:               cx.editor,
+                  on_next_key_callback: None,
+                  callback:             Vec::new(),
+                  jobs:                 cx.jobs,
+                };
+
+                crate::core::commands::scroll(
+                  &mut cmd_cx,
+                  lines_to_scroll.unsigned_abs() as usize,
+                  direction,
+                  false, // don't sync cursor - just scroll the view
+                );
+
+                // Restore original focus
+                cmd_cx.editor.tree.focus = current_focus;
+
+                request_redraw();
+              }
+              return EventResult::Consumed(None);
             }
           }
         }

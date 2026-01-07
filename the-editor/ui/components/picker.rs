@@ -1272,13 +1272,32 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
 }
 
 impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
-  fn handle_event(&mut self, event: &Event, _ctx: &mut Context) -> EventResult {
+  fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> EventResult {
     if !self.visible {
       return EventResult::Ignored(None);
     }
 
     // Handle scroll events (VSCode-style: scroll view without changing selection)
+    // Only consume if mouse is hovering over the picker (hover-to-scroll)
     if let Event::Scroll(delta) = event {
+      // Check if mouse is over the picker before consuming scroll
+      if let Some(layout) = &self.cached_layout {
+        let mouse_over_picker = if let Some((mx, my)) = ctx.last_mouse_pos {
+          mx >= layout.x
+            && mx <= layout.x + layout.picker_width
+            && my >= layout.y
+            && my <= layout.y + layout.height
+        } else {
+          // No mouse position known - default to consuming (picker has focus)
+          true
+        };
+
+        if !mouse_over_picker {
+          // Mouse is outside picker - let underlying component handle scroll
+          return EventResult::Ignored(None);
+        }
+      }
+
       use the_editor_renderer::ScrollDelta;
 
       let scroll_lines = match delta {

@@ -322,18 +322,19 @@ impl Tree {
     // Set up animations for all views that changed size/position
     let (duration, easing) = presets::FAST;
     for (id, node) in &self.nodes {
-      if let Content::View(view) = &node.content {
-        if let Some(&old_area) = old_areas.get(&id) {
-          // Existing view that changed area - animate from old to new
-          if old_area != view.area {
-            self.area_animations.insert(
-              id,
-              AreaAnimation::new(old_area, view.area, duration, easing),
-            );
+      let Content::View(view) = &node.content else {
+        continue;
+      };
+
+      let start_area = match old_areas.get(&id) {
+        Some(&old_area) => {
+          if old_area == view.area {
+            continue;
           }
-        } else {
-          // New view - animate sliding in from the edge
-          let start_area = match layout {
+          old_area
+        },
+        None => {
+          match layout {
             Layout::Horizontal => {
               // For horizontal splits, slide in from bottom edge
               Rect {
@@ -352,13 +353,14 @@ impl Tree {
                 height: view.area.height,
               }
             },
-          };
-          self.area_animations.insert(
-            id,
-            AreaAnimation::new(start_area, view.area, duration, easing),
-          );
-        }
-      }
+          }
+        },
+      };
+
+      self.area_animations.insert(
+        id,
+        AreaAnimation::new(start_area, view.area, duration, easing),
+      );
     }
 
     node

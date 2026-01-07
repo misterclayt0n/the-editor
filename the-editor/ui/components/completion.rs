@@ -106,6 +106,15 @@ fn truncate_to_width(text: &str, max_width: f32, char_width: f32) -> String {
   truncated
 }
 
+/// Cached bounds for hover detection
+#[derive(Clone, Copy)]
+struct CompletionBounds {
+  x:      f32,
+  y:      f32,
+  width:  f32,
+  height: f32,
+}
+
 /// Completion popup component
 pub struct Completion {
   /// All completion items
@@ -132,6 +141,8 @@ pub struct Completion {
   animation:       crate::core::animation::AnimationHandle<f32>,
   /// Handler for resolving incomplete completion items
   resolve_handler: ResolveHandler,
+  /// Cached bounds for hover-to-scroll detection
+  cached_bounds:   Option<CompletionBounds>,
 }
 
 impl Completion {
@@ -156,6 +167,7 @@ impl Completion {
       doc_resolved: false,
       animation,
       resolve_handler: ResolveHandler::new(),
+      cached_bounds: None,
     };
 
     // Initial scoring
@@ -940,6 +952,52 @@ impl Completion {
 
 impl Component for Completion {
   fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> EventResult {
+    // Handle scroll events (hover-to-scroll support)
+    if let Event::Scroll(delta) = event {
+      // Check if mouse is over the completion popup before consuming scroll
+      if let Some(bounds) = &self.cached_bounds {
+        let mouse_over_completion = if let Some((mx, my)) = ctx.last_mouse_pos {
+          mx >= bounds.x
+            && mx <= bounds.x + bounds.width
+            && my >= bounds.y
+            && my <= bounds.y + bounds.height
+        } else {
+          // No mouse position known - don't consume, let editor handle
+          false
+        };
+
+        if mouse_over_completion {
+          use the_editor_renderer::ScrollDelta;
+
+          let scroll_lines = match delta {
+            ScrollDelta::Lines { y, .. } => *y,
+            ScrollDelta::Pixels { y, .. } => {
+              // Approximate: 20 pixels per line
+              *y / 20.0
+            },
+          };
+
+          // Scroll the completion list
+          if scroll_lines < 0.0 {
+            // Scroll down (move selection down)
+            let amount = (scroll_lines.abs() as usize).max(1);
+            self.move_down(amount);
+            self.trigger_resolve();
+          } else if scroll_lines > 0.0 {
+            // Scroll up (move selection up)
+            let amount = (scroll_lines as usize).max(1);
+            self.move_up(amount);
+            self.trigger_resolve();
+          }
+
+          return EventResult::Consumed(None);
+        }
+      }
+
+      // Mouse not over completion - let underlying component handle scroll
+      return EventResult::Ignored(None);
+    }
+
     let Event::Key(key) = event else {
       return EventResult::Ignored(None);
     };
@@ -1138,6 +1196,14 @@ impl Component for Completion {
     let anim_height = menu_height * scale;
     let anim_x = popup_pos.x;
     let anim_y = popup_pos.y;
+
+    // Cache bounds for hover detection in scroll events
+    self.cached_bounds = Some(CompletionBounds {
+      x:      anim_x,
+      y:      anim_y,
+      width:  anim_width,
+      height: anim_height,
+    });
 
     // Draw background
     let corner_radius = 6.0;

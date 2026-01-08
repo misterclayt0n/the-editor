@@ -38,7 +38,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [x] Add paths in the completer.
 - [x] Different cursor shapes.
 
-- [ ] Scrolling should not depend on me having to click to focus. Just hovering my cursor in the correct component should scroll it.
+- [x] Scrolling should not depend on me having to click to focus. Just hovering my cursor in the correct component should scroll it.
 
 - [x] Reimagine the compile command:
   - [x] Kill processes.
@@ -51,7 +51,7 @@ So, this is just a simple todo list that will grant me some sort of base for the
 - [x] Fix animations not working when I first start the editor for some reason. 
 
 - [ ] Add clipboard control to prompt.
-- [ ] Fix font per buffer that does not allow 2 buffers in split views with different font sizes (the entire font size of all windows adapt depending upon which buffer I'm focused).
+- [x] Fix font per buffer that does not allow 2 buffers in split views with different font sizes (the entire font size of all windows adapt depending upon which buffer I'm focused).
 
 - [ ] Terminal
   - [x] Basic stuff.

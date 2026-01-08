@@ -4131,7 +4131,14 @@ impl EditorView {
       return None;
     }
 
-    // If keymap is in pending state (e.g., after Ctrl+W), pass keys through
+    // Ctrl+Space - terminal leader key (like space in normal buffers)
+    // Pass through to keymap processing to trigger the C-space prefix node
+    if key.ctrl && !key.alt && !key.shift && matches!(&key.code, Key::Char(' ')) {
+      return None;
+    }
+
+    // If keymap is in pending state (e.g., after Ctrl+W or Ctrl+Space), pass keys
+    // through
     if !self.keymaps.pending().is_empty() {
       return None;
     }

@@ -1,12 +1,18 @@
 use std::{
-  collections::HashSet,
+  collections::{
+    HashMap,
+    HashSet,
+  },
   fs,
   path::{
     Path,
     PathBuf,
   },
   process::Command,
-  sync::mpsc::channel,
+  sync::{
+    Arc,
+    Mutex,
+  },
   time::SystemTime,
 };
 
@@ -16,6 +22,12 @@ use anyhow::{
   anyhow,
   bail,
 };
+use indicatif::{
+  MultiProgress,
+  ProgressBar,
+  ProgressStyle,
+};
+use rayon::prelude::*;
 use serde::{
   Deserialize,
   Serialize,
@@ -72,6 +84,95 @@ pub enum GrammarSource {
 const BUILD_TARGET: &str = env!("BUILD_TARGET");
 const REMOTE_NAME: &str = "origin";
 
+impl ProgressTracking {
+  /// Attempts to create a progress bar for a grammar.
+  /// Returns the PB and the total PB if successful.
+  fn acquire_bar(&mut self, id: &str, ctx: &ProgressContext) -> Option<(ProgressBar, ProgressBar)> {
+    self.active_grammars.insert(id.to_string());
+    self.in_progress_grammars.insert(id.to_string());
+
+    let can_show = if self.visible_progress_bars.len() < self.max_visible {
+      true
+    } else if let Some(to_remove) = self.finished_grammars.iter().next().cloned() {
+      self.remove_bar(&to_remove);
+      true
+    } else {
+      false
+    };
+
+    if can_show {
+      let pb = ctx.multi.add(ProgressBar::new_spinner());
+      pb.set_style(ctx.style.clone());
+      pb.set_prefix(format!("[{}]", id));
+      pb.set_message("Processing...");
+      pb.enable_steady_tick(std::time::Duration::from_millis(200));
+
+      self
+        .visible_progress_bars
+        .insert(id.to_string(), pb.clone());
+      Some((pb, ctx.total.clone()))
+    } else {
+      None
+    }
+  }
+
+  fn remove_bar(&mut self, id: &str) {
+    if let Some(pb) = self.visible_progress_bars.remove(id) {
+      pb.finish_and_clear();
+    }
+    self.finished_grammars.remove(id);
+  }
+
+  fn mark_finished(&mut self, id: &str, ctx: &ProgressContext) {
+    // 1. Remove from active/in-progress tracking
+    self.active_grammars.remove(id);
+    self.in_progress_grammars.remove(id);
+
+    // 2. Remove the bar from the screen immediately to free up a slot
+    if let Some(pb) = self.visible_progress_bars.remove(id) {
+      pb.finish_and_clear();
+    }
+    self.try_fill_slots(ctx);
+  }
+
+  /// Checks if there are running jobs that don't have a bar yet
+  /// and assigns them one if slots are available.
+  fn try_fill_slots(&mut self, ctx: &ProgressContext) {
+    while self.visible_progress_bars.len() < self.max_visible {
+      // Find a grammar that is in progress but has no visible bar
+      let next_id = self
+        .in_progress_grammars
+        .iter()
+        .find(|id| !self.visible_progress_bars.contains_key(*id))
+        .cloned();
+
+      if let Some(id) = next_id {
+        let pb = ctx.multi.add(ProgressBar::new_spinner());
+        pb.set_style(ctx.style.clone());
+        pb.set_prefix(format!("[{}]", id));
+        pb.set_message("Processing...");
+        pb.enable_steady_tick(std::time::Duration::from_millis(200));
+
+        self.visible_progress_bars.insert(id, pb);
+      } else {
+        break; // No more jobs waiting for a bar
+      }
+    }
+  }
+}
+
+impl Default for ProgressTracking {
+  fn default() -> Self {
+    Self {
+      active_grammars:       HashSet::new(),
+      visible_progress_bars: HashMap::new(),
+      in_progress_grammars:  HashSet::new(),
+      finished_grammars:     HashSet::new(),
+      max_visible:           20,
+    }
+  }
+}
+
 #[cfg(target_arch = "wasm32")]
 pub fn get_language(name: &str) -> Result<Option<Grammar>> {
   unimplemented!()
@@ -102,8 +203,28 @@ pub fn fetch_grammars() -> Result<()> {
   let mut grammars = get_grammar_configs()?;
   grammars.retain(|grammar| !matches!(grammar.source, GrammarSource::Local { .. }));
 
-  println!("Fetching {} grammars", grammars.len());
-  let results = run_parallel(grammars, fetch_grammar);
+  let multi = MultiProgress::new();
+  let spinner_style = ProgressStyle::default_spinner()
+    .template("{spinner:.green} {prefix:.bold.dim} {wide_msg}")
+    .unwrap();
+
+  let total_pb = multi.add(ProgressBar::new(grammars.len() as u64));
+  total_pb.set_style(
+    ProgressStyle::default_bar()
+      .template("{msg} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+      .unwrap()
+      .progress_chars("█▓▒░ "),
+  );
+  total_pb.set_message("Fetching grammars");
+
+  // Create a shared progress bar context that will be passed to all workers
+  let progress_context = ProgressContext {
+    multi: Arc::new(multi),
+    style: spinner_style,
+    total: total_pb.clone(),
+  };
+
+  let results = run_parallel(grammars, fetch_grammar, Some(&progress_context));
 
   let mut errors = Vec::new();
   let mut git_updated = Vec::new();
@@ -118,6 +239,8 @@ pub fn fetch_grammars() -> Result<()> {
       Err(e) => errors.push((grammar_id, e)),
     }
   }
+
+  total_pb.finish_with_message("Grammar fetching complete");
 
   non_git.sort_unstable();
   git_updated.sort_unstable_by(|a, b| a.0.cmp(&b.0));
@@ -160,16 +283,40 @@ pub fn build_grammars(target: Option<String>) -> Result<()> {
   ensure_git_is_available()?;
 
   let grammars = get_grammar_configs()?;
-  println!("Building {} grammars", grammars.len());
-  let results = run_parallel(grammars, move |grammar| {
-    build_grammar(grammar, target.as_deref())
-  });
+
+  let multi = MultiProgress::new();
+  let spinner_style = ProgressStyle::default_spinner()
+    .template("{spinner:.green} {prefix:.bold.dim} {wide_msg}")
+    .unwrap();
+
+  let total_pb = multi.add(ProgressBar::new(grammars.len() as u64));
+  total_pb.set_style(
+    ProgressStyle::default_bar()
+      .template("{msg} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+      .unwrap()
+      .progress_chars("█▓▒░ "),
+  );
+  total_pb.set_message("Building grammars");
+
+  // Create a shared progress bar context that will be passed to all workers
+  let progress_context = ProgressContext {
+    multi: Arc::new(multi),
+    style: spinner_style,
+    total: total_pb.clone(),
+  };
+
+  let results = run_parallel(
+    grammars,
+    move |grammar| build_grammar(&grammar, target.as_deref()),
+    Some(&progress_context),
+  );
 
   let mut errors = Vec::new();
   let mut already_built = 0;
   let mut built = Vec::new();
 
   for (grammar_id, res) in results {
+    progress_context.total.inc(1);
     match res {
       Ok(BuildStatus::AlreadyBuilt) => already_built += 1,
       Ok(BuildStatus::Built) => built.push(grammar_id),
@@ -177,6 +324,7 @@ pub fn build_grammars(target: Option<String>) -> Result<()> {
     }
   }
 
+  total_pb.finish_with_message("Grammar building complete");
   built.sort_unstable();
 
   if already_built != 0 {
@@ -252,28 +400,62 @@ pub fn get_grammar_names() -> Result<Option<HashSet<String>>> {
   Ok(grammars)
 }
 
-fn run_parallel<F, Res>(grammars: Vec<GrammarConfiguration>, job: F) -> Vec<(String, Result<Res>)>
+#[derive(Clone)]
+struct ProgressContext {
+  multi: Arc<MultiProgress>,
+  style: ProgressStyle,
+  total: ProgressBar,
+}
+
+struct ProgressTracking {
+  active_grammars:       HashSet<String>,
+  visible_progress_bars: HashMap<String, ProgressBar>,
+  in_progress_grammars:  HashSet<String>,
+  finished_grammars:     HashSet<String>,
+  max_visible:           usize,
+}
+
+static PROGRESS_TRACKER: Mutex<Option<ProgressTracking>> = Mutex::new(None);
+
+fn run_parallel<F, Res>(
+  grammars: Vec<GrammarConfiguration>,
+  job: F,
+  progress: Option<&ProgressContext>,
+) -> Vec<(String, Result<Res>)>
 where
-  F: Fn(GrammarConfiguration) -> Result<Res> + Send + 'static + Clone,
+  F: Fn(GrammarConfiguration) -> Result<Res> + Send + Sync + 'static,
   Res: Send + 'static,
 {
-  let pool = threadpool::Builder::new().build();
-  let (tx, rx) = channel();
-
-  for grammar in grammars {
-    let tx = tx.clone();
-    let job = job.clone();
-
-    pool.execute(move || {
-      // Ignore any SendErrors, if any job in another thread has encountered an
-      // error the Receiver will be closed causing this send to fail.
-      let _ = tx.send((grammar.grammar_id.clone(), job(grammar)));
-    });
+  if progress.is_some() {
+    let mut lock = PROGRESS_TRACKER.lock().unwrap();
+    lock.get_or_insert_with(ProgressTracking::default);
   }
 
-  drop(tx);
+  grammars
+    .into_par_iter()
+    .map(|grammar| {
+      let grammar_id = grammar.grammar_id.clone();
 
-  rx.iter().collect()
+      progress.as_ref().and_then(|ctx| {
+        PROGRESS_TRACKER
+          .lock()
+          .unwrap()
+          .as_mut()?
+          .acquire_bar(&grammar_id, ctx)
+      });
+
+      let result = job(grammar);
+
+      if let Some(ctx) = progress {
+        let mut lock = PROGRESS_TRACKER.lock().unwrap();
+        if let Some(t) = lock.as_mut() {
+          t.mark_finished(&grammar_id, ctx);
+        }
+      }
+
+      (grammar_id, result)
+    })
+    .collect()
 }
 
 enum FetchStatus {
@@ -283,9 +465,10 @@ enum FetchStatus {
 }
 
 fn fetch_grammar(grammar: GrammarConfiguration) -> Result<FetchStatus> {
+  // Fetch progress will be reported by the progress bar in the spinner
   if let GrammarSource::Git {
     remote, revision, ..
-  } = grammar.source
+  } = &grammar.source
   {
     let grammar_dir = crate::runtime_dirs()
             .first()
@@ -305,12 +488,12 @@ fn fetch_grammar(grammar: GrammarConfiguration) -> Result<FetchStatus> {
     }
 
     // ensure the remote matches the configured remote
-    if get_remote_url(&grammar_dir).as_ref() != Some(&remote) {
-      set_remote(&grammar_dir, &remote)?;
+    if get_remote_url(&grammar_dir).as_ref() != Some(remote) {
+      set_remote(&grammar_dir, remote)?;
     }
 
     // ensure the revision matches the configured revision
-    if get_revision(&grammar_dir).as_ref() != Some(&revision) {
+    if get_revision(&grammar_dir).as_ref() != Some(revision) {
       // Fetch the exact revision from the remote.
       // Supported by server-side git since v2.5.0 (July 2015),
       // enabled by default on major git hosts.
@@ -319,11 +502,13 @@ fn fetch_grammar(grammar: GrammarConfiguration) -> Result<FetchStatus> {
         "--depth",
         "1",
         REMOTE_NAME,
-        &revision,
+        revision,
       ])?;
-      git(&grammar_dir, ["checkout", &revision])?;
+      git(&grammar_dir, ["checkout", revision])?;
 
-      Ok(FetchStatus::GitUpdated { revision })
+      Ok(FetchStatus::GitUpdated {
+        revision: revision.to_string(),
+      })
     } else {
       Ok(FetchStatus::GitUpToDate)
     }
@@ -385,7 +570,7 @@ enum BuildStatus {
   Built,
 }
 
-fn build_grammar(grammar: GrammarConfiguration, target: Option<&str>) -> Result<BuildStatus> {
+fn build_grammar(grammar: &GrammarConfiguration, target: Option<&str>) -> Result<BuildStatus> {
   let grammar_dir = if let GrammarSource::Local { path } = &grammar.source {
     PathBuf::from(&path)
   } else {
@@ -425,7 +610,7 @@ fn build_grammar(grammar: GrammarConfiguration, target: Option<&str>) -> Result<
 
 fn build_tree_sitter_library(
   src_path: &Path,
-  grammar: GrammarConfiguration,
+  grammar: &GrammarConfiguration,
   target: Option<&str>,
 ) -> Result<BuildStatus> {
   let header_path = src_path;
@@ -513,6 +698,7 @@ fn build_tree_sitter_library(
           .arg(format!("/Fo{}", object_file.display()))
           .arg("/c")
           .arg(scanner_path);
+
         let output = cpp_command
           .output()
           .context("Failed to execute C++ compiler")?;
@@ -569,6 +755,7 @@ fn build_tree_sitter_library(
           .arg("-std=c++14")
           .arg("-c")
           .arg(scanner_path);
+
         let output = cpp_command
           .output()
           .context("Failed to execute C++ compiler")?;

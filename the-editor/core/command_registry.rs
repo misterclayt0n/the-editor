@@ -1082,21 +1082,20 @@ pub mod completers {
     // If input is empty, suggest the current file's directory
     if input.is_empty() {
       // Safely get the current document (handles terminal views gracefully)
-      if let Some(view_id) = editor.focused_view_id() {
-        if let Some(doc_id) = editor.tree.get(view_id).doc() {
-          if let Some(doc) = editor.documents.get(&doc_id) {
-            if let Some(path) = doc.path() {
-              if let Some(parent) = path.parent() {
-                let dir_path = parent.to_string_lossy().to_string() + "/";
-                return vec![Completion {
-                  range: 0..,
-                  text:  dir_path,
-                  doc:   Some("Current file's directory".to_string()),
-                }];
-              }
-            }
-          }
-        }
+      let current_dir = editor
+        .focused_view_id()
+        .and_then(|id| editor.tree.get(id).doc())
+        .and_then(|doc_id| editor.documents.get(&doc_id))
+        .and_then(|doc| doc.path())
+        .and_then(|path| path.parent())
+        .map(|parent| parent.to_string_lossy().to_string() + "/");
+
+      if let Some(dir_path) = current_dir {
+        return vec![Completion {
+          range: 0..,
+          text:  dir_path,
+          doc:   Some("Current file's directory".to_string()),
+        }];
       }
       // Fall through to normal completion if no current file or terminal view
     }

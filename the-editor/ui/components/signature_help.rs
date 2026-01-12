@@ -1,35 +1,17 @@
 use ropey::Rope;
-use the_editor_renderer::{
-  Color,
-  Key,
-  ScrollDelta,
-  TextSection,
-  TextSegment,
-  TextStyle,
-};
+use the_editor_renderer::{Color, Key, ScrollDelta, TextSection, TextSegment, TextStyle};
 use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::{
   core::graphics::Rect,
   ui::{
-    UI_FONT_SIZE,
-    UI_FONT_WIDTH,
+    UI_FONT_SIZE, UI_FONT_WIDTH,
     components::popup::{
-      DOC_POPUP_MAX_HEIGHT_LINES,
-      DOC_POPUP_MAX_WIDTH_CHARS,
-      DOC_POPUP_MIN_WIDTH_CHARS,
+      DOC_POPUP_MAX_HEIGHT_LINES, DOC_POPUP_MAX_WIDTH_CHARS, DOC_POPUP_MIN_WIDTH_CHARS,
     },
-    compositor::{
-      Component,
-      Context,
-      Event,
-      EventResult,
-      Surface,
-    },
+    compositor::{Component, Context, Event, EventResult, Surface},
     popup_positioning::{
-      calculate_cursor_position,
-      constrain_popup_height,
-      position_popup_centered_on_cursor,
+      calculate_cursor_position, constrain_popup_height, position_popup_centered_on_cursor,
     },
   },
 };
@@ -44,33 +26,33 @@ const CURSOR_POPUP_MARGIN: f32 = 4.0;
 /// Cached bounds for hover detection
 #[derive(Clone, Copy)]
 struct SignatureHelpBounds {
-  x:      f32,
-  y:      f32,
-  width:  f32,
+  x: f32,
+  y: f32,
+  width: f32,
   height: f32,
 }
 
 /// Signature help popup component
 pub struct SignatureHelp {
   /// Language for syntax highlighting
-  language:               String,
+  language: String,
   /// Active signature index
-  active_signature:       usize,
+  active_signature: usize,
   /// All available signatures
-  signatures:             Vec<crate::handlers::signature_help::Signature>,
+  signatures: Vec<crate::handlers::signature_help::Signature>,
   /// Appearance animation
-  animation:              crate::core::animation::AnimationHandle<f32>,
+  animation: crate::core::animation::AnimationHandle<f32>,
   /// Whether the popup is visible
-  visible:                bool,
+  visible: bool,
   /// Scroll offset for long documentation blocks
-  doc_scroll:             usize,
+  doc_scroll: usize,
   /// Cached doc metadata for scroll handling
   last_doc_visible_lines: usize,
-  last_doc_total_lines:   usize,
+  last_doc_total_lines: usize,
   /// Deferred scroll amount to apply once layout is ready
-  pending_doc_scroll:     i32,
+  pending_doc_scroll: i32,
   /// Cached bounds for hover-to-scroll detection
-  cached_bounds:          Option<SignatureHelpBounds>,
+  cached_bounds: Option<SignatureHelpBounds>,
 }
 
 impl SignatureHelp {
@@ -447,9 +429,9 @@ impl Component for SignatureHelp {
 
     // Cache bounds for hover detection in scroll events
     self.cached_bounds = Some(SignatureHelpBounds {
-      x:      anim_x,
-      y:      anim_y,
-      width:  anim_width,
+      x: anim_x,
+      y: anim_y,
+      width: anim_width,
       height: anim_height,
     });
 
@@ -486,7 +468,7 @@ impl Component for SignatureHelp {
         let line_y = first_line_baseline + line_idx as f32 * line_height;
         let mut section = TextSection {
           position: (text_x, line_y),
-          texts:    Vec::new(),
+          texts: Vec::new(),
         };
 
         for segment in &line.segments {
@@ -502,7 +484,7 @@ impl Component for SignatureHelp {
           }
           section.texts.push(TextSegment {
             content: segment.text.clone(),
-            style:   TextStyle {
+            style: TextStyle {
               size: UI_FONT_SIZE,
               color,
             },
@@ -512,8 +494,8 @@ impl Component for SignatureHelp {
         if section.texts.is_empty() {
           section.texts.push(TextSegment {
             content: String::new(),
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
               color: text_color,
             },
           });
@@ -527,10 +509,10 @@ impl Component for SignatureHelp {
         let index_x = (anim_x + anim_width - padding - index_width).max(text_x);
         surface.draw_text(TextSection {
           position: (index_x, first_line_baseline),
-          texts:    vec![TextSegment {
+          texts: vec![TextSegment {
             content: index_text,
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
               color: text_color,
             },
           }],
@@ -615,9 +597,9 @@ impl Component for SignatureHelp {
 
 #[derive(Clone)]
 struct SignatureSegment {
-  text:        String,
+  text: String,
   highlighted: bool,
-  color:       Color,
+  color: Color,
 }
 
 #[derive(Clone)]
@@ -642,9 +624,9 @@ fn wrap_signature_lines_with_syntax(
   if total_chars == 0 {
     return vec![SignatureLine {
       segments: vec![SignatureSegment {
-        text:        String::new(),
+        text: String::new(),
         highlighted: false,
-        color:       default_text_color,
+        color: default_text_color,
       }],
       char_len: 0,
     }];
@@ -753,9 +735,9 @@ fn build_signature_line_with_syntax(
   if start_char >= end_char {
     return SignatureLine {
       segments: vec![SignatureSegment {
-        text:        String::new(),
+        text: String::new(),
         highlighted: false,
-        color:       default_color,
+        color: default_color,
       }],
       char_len: 0,
     };
@@ -845,9 +827,9 @@ fn build_signature_line_with_syntax(
 
   if segments.is_empty() {
     segments.push(SignatureSegment {
-      text:        String::new(),
+      text: String::new(),
       highlighted: false,
-      color:       default_color,
+      color: default_color,
     });
   }
 

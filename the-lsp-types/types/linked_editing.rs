@@ -1,15 +1,8 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  DynamicRegistrationClientCapabilities,
-  Range,
-  StaticRegistrationOptions,
-  TextDocumentPositionParams,
-  TextDocumentRegistrationOptions,
-  WorkDoneProgressOptions,
+  DynamicRegistrationClientCapabilities, Range, StaticRegistrationOptions,
+  TextDocumentPositionParams, TextDocumentRegistrationOptions, WorkDoneProgressOptions,
   WorkDoneProgressParams,
 };
 

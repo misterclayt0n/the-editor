@@ -4,11 +4,7 @@ use ropey::RopeSlice;
 use tree_house::tree_sitter::Node;
 
 use crate::core::{
-  movement::Direction::{
-    self,
-    Backward,
-    Forward,
-  },
+  movement::Direction::{self, Backward, Forward},
   syntax::Syntax,
 };
 

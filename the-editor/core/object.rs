@@ -3,10 +3,7 @@ use tree_house::TreeCursor;
 
 use crate::core::{
   movement::Direction,
-  selection::{
-    Range,
-    Selection,
-  },
+  selection::{Range, Selection},
   syntax::Syntax,
 };
 

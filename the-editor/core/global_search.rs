@@ -1,32 +1,15 @@
 use std::{
-  path::{
-    Path,
-    PathBuf,
-  },
+  path::{Path, PathBuf},
   sync::{
     Arc,
-    atomic::{
-      AtomicBool,
-      Ordering,
-    },
+    atomic::{AtomicBool, Ordering},
   },
 };
 
-use anyhow::{
-  Result,
-  anyhow,
-};
+use anyhow::{Result, anyhow};
 use grep_regex::RegexMatcherBuilder;
-use grep_searcher::{
-  BinaryDetection,
-  SearcherBuilder,
-  sinks,
-};
-use ignore::{
-  DirEntry,
-  WalkBuilder,
-  WalkState,
-};
+use grep_searcher::{BinaryDetection, SearcherBuilder, sinks};
+use ignore::{DirEntry, WalkBuilder, WalkState};
 use ropey::Rope;
 use the_editor_loader as loader;
 
@@ -53,8 +36,8 @@ pub(crate) fn filter_picker_entry(entry: &DirEntry, root: &Path, dedup_symlinks:
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileResult {
-  pub path:      PathBuf,
-  pub line_num:  usize,
+  pub path: PathBuf,
+  pub line_num: usize,
   pub line_text: String,
 }
 
@@ -71,9 +54,9 @@ impl FileResult {
 
 #[derive(Clone)]
 pub struct SearchOptions {
-  pub smart_case:  bool,
+  pub smart_case: bool,
   pub file_picker: FilePickerConfig,
-  pub documents:   Arc<Vec<(Option<PathBuf>, Rope)>>,
+  pub documents: Arc<Vec<(Option<PathBuf>, Rope)>>,
 }
 
 pub enum MatchControl {
@@ -186,4 +169,5 @@ pub(crate) fn walk_workspace_matches(
   Ok(())
 }
 
-#[cfg(test)] mod tests;
+#[cfg(test)]
+mod tests;

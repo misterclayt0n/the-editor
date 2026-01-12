@@ -27,44 +27,35 @@ mod permissions;
 use std::path::PathBuf;
 
 pub use client::EditorClient;
-pub use context::{
-  ContextVisualizer,
-  PromptContext,
-};
+pub use context::{ContextVisualizer, PromptContext};
 pub use handle::AcpHandle;
-pub use permissions::{
-  PendingPermission,
-  PermissionManager,
-};
-use serde::{
-  Deserialize,
-  Serialize,
-};
+pub use permissions::{PendingPermission, PermissionManager};
+use serde::{Deserialize, Serialize};
 
 /// Configuration for ACP integration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
 pub struct AcpConfig {
   /// Command to spawn ACP agent (e.g., ["opencode", "acp"])
-  pub command:       Vec<String>,
+  pub command: Vec<String>,
   /// Working directory for agent (defaults to workspace root)
-  pub cwd:           Option<PathBuf>,
+  pub cwd: Option<PathBuf>,
   /// Number of context lines to include before/after selection
   pub context_lines: usize,
   /// Auto-start agent on editor launch
-  pub auto_start:    bool,
+  pub auto_start: bool,
   /// Request timeout in seconds
-  pub timeout_secs:  u64,
+  pub timeout_secs: u64,
 }
 
 impl Default for AcpConfig {
   fn default() -> Self {
     Self {
-      command:       vec!["opencode".into(), "acp".into()],
-      cwd:           None,
+      command: vec!["opencode".into(), "acp".into()],
+      cwd: None,
       context_lines: 50,
-      auto_start:    false,
-      timeout_secs:  120,
+      auto_start: false,
+      timeout_secs: 120,
     }
   }
 }
@@ -77,13 +68,13 @@ pub enum StreamEvent {
   /// Agent is making a tool call
   ToolCall {
     /// Human-readable title of the tool call
-    title:     String,
+    title: String,
     /// Tool kind (read, edit, execute, etc.)
-    kind:      Option<String>,
+    kind: Option<String>,
     /// Raw input parameters as JSON
     raw_input: Option<serde_json::Value>,
     /// Current status of the tool call
-    status:    ToolCallStatus,
+    status: ToolCallStatus,
   },
   /// Agent's execution plan (TODOs) has been updated
   PlanUpdate(agent_client_protocol::Plan),

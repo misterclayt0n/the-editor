@@ -69,17 +69,17 @@ pub enum Key {
 #[derive(Debug, Clone)]
 pub struct KeyPress {
   /// The key that was pressed or released
-  pub code:    Key,
+  pub code: Key,
   /// True if the key was pressed, false if released
   pub pressed: bool,
   /// True if Shift was held during the event
-  pub shift:   bool,
+  pub shift: bool,
   /// True if Ctrl/Cmd was held during the event
-  pub ctrl:    bool,
+  pub ctrl: bool,
   /// True if Alt/Option was held during the event
-  pub alt:     bool,
+  pub alt: bool,
   /// True if Super/Win/Cmd was held during the event
-  pub super_:  bool,
+  pub super_: bool,
 }
 
 /// Mouse button identifiers
@@ -99,9 +99,9 @@ pub struct MouseEvent {
   /// Cursor position in window coordinates (x, y)
   pub position: (f32, f32),
   /// Button involved in the event (None for motion events)
-  pub button:   Option<MouseButton>,
+  pub button: Option<MouseButton>,
   /// True if the button was pressed, false if released
-  pub pressed:  bool,
+  pub pressed: bool,
 }
 
 /// Mouse scroll delta reported by the windowing backend.

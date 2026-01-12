@@ -1,37 +1,24 @@
-use std::{
-  collections::HashMap,
-  path::PathBuf,
-  sync::Weak,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Weak};
 
-use globset::{
-  GlobBuilder,
-  GlobSetBuilder,
-};
-use log::{
-  debug,
-  error,
-};
+use globset::{GlobBuilder, GlobSetBuilder};
+use log::{debug, error};
 use the_editor_lsp_types::types as lsp;
 use tokio::sync::mpsc;
 
-use crate::lsp::{
-  Client,
-  LanguageServerId,
-};
+use crate::lsp::{Client, LanguageServerId};
 
 enum Event {
   FileChanged {
     path: PathBuf,
   },
   Register {
-    client_id:       LanguageServerId,
-    client:          Weak<Client>,
+    client_id: LanguageServerId,
+    client: Weak<Client>,
     registration_id: String,
-    options:         lsp::DidChangeWatchedFilesRegistrationOptions,
+    options: lsp::DidChangeWatchedFilesRegistrationOptions,
   },
   Unregister {
-    client_id:       LanguageServerId,
+    client_id: LanguageServerId,
     registration_id: String,
   },
   RemoveClient {
@@ -41,7 +28,7 @@ enum Event {
 
 #[derive(Default)]
 struct ClientState {
-  client:     Weak<Client>,
+  client: Weak<Client>,
   registered: HashMap<String, globset::GlobSet>,
 }
 

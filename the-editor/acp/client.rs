@@ -4,16 +4,9 @@
 //! responds to requests and notifications from the ACP agent.
 
 use agent_client_protocol as acp;
-use tokio::sync::{
-  mpsc,
-  oneshot,
-};
+use tokio::sync::{mpsc, oneshot};
 
-use super::{
-  PendingPermission,
-  StreamEvent,
-  ToolCallStatus,
-};
+use super::{PendingPermission, StreamEvent, ToolCallStatus};
 
 /// The editor's ACP client implementation.
 ///
@@ -22,7 +15,7 @@ use super::{
 /// channels.
 pub struct EditorClient {
   /// Channel to send streaming events back to the editor
-  event_tx:      mpsc::UnboundedSender<StreamEvent>,
+  event_tx: mpsc::UnboundedSender<StreamEvent>,
   /// Channel to send permission requests to the editor
   permission_tx: mpsc::UnboundedSender<PendingPermission>,
 }
@@ -74,9 +67,9 @@ impl acp::Client for EditorClient {
     if self.permission_tx.send(permission).is_err() {
       log::error!("[ACP] Failed to send permission request - channel closed");
       return Err(acp::Error {
-        code:    -32603,
+        code: -32603,
         message: "Internal error: permission channel closed".into(),
-        data:    None,
+        data: None,
       });
     }
 
@@ -86,14 +79,14 @@ impl acp::Client for EditorClient {
         log::info!("[ACP] Permission response received: {}", option_id);
         Ok(acp::RequestPermissionResponse {
           outcome: acp::RequestPermissionOutcome::Selected { option_id },
-          meta:    None,
+          meta: None,
         })
       },
       Err(_) => {
         log::error!("[ACP] Permission response channel closed");
         Ok(acp::RequestPermissionResponse {
           outcome: acp::RequestPermissionOutcome::Cancelled,
-          meta:    None,
+          meta: None,
         })
       },
     }
@@ -110,9 +103,9 @@ impl acp::Client for EditorClient {
     if let Some(parent) = args.path.parent() {
       if let Err(e) = tokio::fs::create_dir_all(parent).await {
         return Err(acp::Error {
-          code:    -32603,
+          code: -32603,
           message: format!("Failed to create directories: {}", e),
-          data:    None,
+          data: None,
         });
       }
     }
@@ -120,9 +113,9 @@ impl acp::Client for EditorClient {
     // Write the file
     if let Err(e) = tokio::fs::write(&args.path, &args.content).await {
       return Err(acp::Error {
-        code:    -32603,
+        code: -32603,
         message: format!("Failed to write file: {}", e),
-        data:    None,
+        data: None,
       });
     }
 
@@ -142,9 +135,9 @@ impl acp::Client for EditorClient {
       Ok(content) => content,
       Err(e) => {
         return Err(acp::Error {
-          code:    -32603,
+          code: -32603,
           message: format!("Failed to read file: {}", e),
-          data:    None,
+          data: None,
         });
       },
     };
@@ -267,19 +260,17 @@ impl acp::Client for EditorClient {
         if let Some(status) = status {
           // Get the title from the update or use a placeholder
           let title = update.fields.title.unwrap_or_default();
-          let kind = update.fields.kind.map(|k| {
-            match k {
-              acp::ToolKind::Read => "read".to_string(),
-              acp::ToolKind::Edit => "edit".to_string(),
-              acp::ToolKind::Delete => "delete".to_string(),
-              acp::ToolKind::Move => "move".to_string(),
-              acp::ToolKind::Search => "search".to_string(),
-              acp::ToolKind::Execute => "execute".to_string(),
-              acp::ToolKind::Think => "think".to_string(),
-              acp::ToolKind::Fetch => "fetch".to_string(),
-              acp::ToolKind::SwitchMode => "switch_mode".to_string(),
-              acp::ToolKind::Other => "other".to_string(),
-            }
+          let kind = update.fields.kind.map(|k| match k {
+            acp::ToolKind::Read => "read".to_string(),
+            acp::ToolKind::Edit => "edit".to_string(),
+            acp::ToolKind::Delete => "delete".to_string(),
+            acp::ToolKind::Move => "move".to_string(),
+            acp::ToolKind::Search => "search".to_string(),
+            acp::ToolKind::Execute => "execute".to_string(),
+            acp::ToolKind::Think => "think".to_string(),
+            acp::ToolKind::Fetch => "fetch".to_string(),
+            acp::ToolKind::SwitchMode => "switch_mode".to_string(),
+            acp::ToolKind::Other => "other".to_string(),
           });
 
           let _ = self.event_tx.send(StreamEvent::ToolCall {

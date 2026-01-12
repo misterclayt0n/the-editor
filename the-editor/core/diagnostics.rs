@@ -1,22 +1,13 @@
 //! LSP diagnostic utility types.
-use std::{
-  fmt,
-  sync::Arc,
-};
+use std::{fmt, sync::Arc};
 
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 pub use the_editor_stdx::range::Range;
 
 use crate::core::{
   doc_formatter::FormattedGrapheme,
   document::Document,
-  position::{
-    Position,
-    softwrapped_dimensions,
-  },
+  position::{Position, softwrapped_dimensions},
   text_annotations::LineAnnotation,
   text_format::TextFormat,
 };
@@ -52,19 +43,19 @@ pub enum DiagnosticTag {
 /// Corresponds to [`lsp_types::Diagnostic`](https://docs.rs/lsp-types/0.94.0/lsp_types/struct.Diagnostic.html)
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
-  pub range:          Range,
+  pub range: Range,
   // whether this diagnostic ends at the end of(or inside) a word
-  pub ends_at_word:   bool,
+  pub ends_at_word: bool,
   pub starts_at_word: bool,
-  pub zero_width:     bool,
-  pub line:           usize,
-  pub message:        String,
-  pub severity:       Option<Severity>,
-  pub code:           Option<NumberOrString>,
-  pub provider:       DiagnosticProvider,
-  pub tags:           Vec<DiagnosticTag>,
-  pub source:         Option<String>,
-  pub data:           Option<serde_json::Value>,
+  pub zero_width: bool,
+  pub line: usize,
+  pub message: String,
+  pub severity: Option<Severity>,
+  pub code: Option<NumberOrString>,
+  pub provider: DiagnosticProvider,
+  pub tags: Vec<DiagnosticTag>,
+  pub source: Option<String>,
+  pub data: Option<serde_json::Value>,
 }
 
 /// The source of a diagnostic.
@@ -75,7 +66,7 @@ pub struct Diagnostic {
 pub enum DiagnosticProvider {
   Lsp {
     /// The ID of the language server which sent the diagnostic.
-    server_id:  LanguageServerId,
+    server_id: LanguageServerId,
     /// An optional identifier under which diagnostics are managed by the
     /// client.
     ///
@@ -140,11 +131,10 @@ impl<'de> Deserialize<'de> for DiagnosticFilter {
       "info" => Ok(DiagnosticFilter::Enable(Severity::Info)),
       "warning" => Ok(DiagnosticFilter::Enable(Severity::Warning)),
       "error" => Ok(DiagnosticFilter::Enable(Severity::Error)),
-      variant => {
-        Err(serde::de::Error::unknown_variant(variant, &[
-          "disable", "hint", "info", "warning", "error",
-        ]))
-      },
+      variant => Err(serde::de::Error::unknown_variant(
+        variant,
+        &["disable", "hint", "info", "warning", "error"],
+      )),
     }
   }
 }
@@ -168,21 +158,24 @@ impl Serialize for DiagnosticFilter {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 pub struct InlineDiagnosticsConfig {
-  pub cursor_line:          DiagnosticFilter,
-  pub other_lines:          DiagnosticFilter,
+  pub cursor_line: DiagnosticFilter,
+  pub other_lines: DiagnosticFilter,
   pub min_diagnostic_width: u16,
-  pub prefix_len:           u16,
-  pub max_wrap:             u16,
-  pub max_diagnostics:      usize,
+  pub prefix_len: u16,
+  pub max_wrap: u16,
+  pub max_diagnostics: usize,
 }
 
 impl InlineDiagnosticsConfig {
   pub fn disabled(&self) -> bool {
-    matches!(self, Self {
-      cursor_line: DiagnosticFilter::Disable,
-      other_lines: DiagnosticFilter::Disable,
-      ..
-    })
+    matches!(
+      self,
+      Self {
+        cursor_line: DiagnosticFilter::Disable,
+        other_lines: DiagnosticFilter::Disable,
+        ..
+      }
+    )
   }
 
   pub fn prepare(&self, width: u16, enable_cursor_line: bool) -> Self {
@@ -208,14 +201,14 @@ impl InlineDiagnosticsConfig {
     };
 
     TextFormat {
-      soft_wrap:                true,
-      tab_width:                4,
-      max_wrap:                 self.max_wrap.min(width / 4),
-      max_indent_retain:        0,
-      wrap_indicator:           "".into(),
+      soft_wrap: true,
+      tab_width: 4,
+      max_wrap: self.max_wrap.min(width / 4),
+      max_indent_retain: 0,
+      wrap_indicator: "".into(),
       wrap_indicator_highlight: None,
-      viewport_width:           width,
-      soft_wrap_at_text_width:  true,
+      viewport_width: width,
+      soft_wrap_at_text_width: true,
     }
   }
 }
@@ -223,22 +216,22 @@ impl InlineDiagnosticsConfig {
 impl Default for InlineDiagnosticsConfig {
   fn default() -> Self {
     InlineDiagnosticsConfig {
-      cursor_line:          DiagnosticFilter::Enable(Severity::Warning),
-      other_lines:          DiagnosticFilter::Disable,
+      cursor_line: DiagnosticFilter::Enable(Severity::Warning),
+      other_lines: DiagnosticFilter::Disable,
       min_diagnostic_width: 40,
-      prefix_len:           1,
-      max_wrap:             20,
-      max_diagnostics:      10,
+      prefix_len: 1,
+      max_wrap: 20,
+      max_diagnostics: 10,
     }
   }
 }
 
 pub struct InlineDiagnosticAccumulator<'a> {
-  idx:         usize,
-  doc:         &'a Document,
-  pub stack:   Vec<(&'a Diagnostic, u16)>,
-  pub config:  InlineDiagnosticsConfig,
-  cursor:      usize,
+  idx: usize,
+  doc: &'a Document,
+  pub stack: Vec<(&'a Diagnostic, u16)>,
+  pub config: InlineDiagnosticsConfig,
+  cursor: usize,
   cursor_line: bool,
 }
 
@@ -370,8 +363,8 @@ impl<'a> InlineDiagnosticAccumulator<'a> {
 }
 
 pub(crate) struct InlineDiagnostics<'a> {
-  state:          InlineDiagnosticAccumulator<'a>,
-  width:          u16,
+  state: InlineDiagnosticAccumulator<'a>,
+  width: u16,
   horizontal_off: usize,
 }
 

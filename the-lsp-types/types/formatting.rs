@@ -1,17 +1,10 @@
 use std::collections::HashMap;
 
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  DocumentSelector,
-  DynamicRegistrationClientCapabilities,
-  Range,
-  TextDocumentIdentifier,
-  TextDocumentPositionParams,
-  WorkDoneProgressParams,
+  DocumentSelector, DynamicRegistrationClientCapabilities, Range, TextDocumentIdentifier,
+  TextDocumentPositionParams, WorkDoneProgressParams,
 };
 
 pub type DocumentFormattingClientCapabilities = DynamicRegistrationClientCapabilities;
@@ -133,26 +126,26 @@ mod tests {
   fn formatting_options() {
     test_serialization(
       &FormattingOptions {
-        tab_size:                 123,
-        insert_spaces:            true,
-        properties:               HashMap::new(),
+        tab_size: 123,
+        insert_spaces: true,
+        properties: HashMap::new(),
         trim_trailing_whitespace: None,
-        insert_final_newline:     None,
-        trim_final_newlines:      None,
+        insert_final_newline: None,
+        trim_final_newlines: None,
       },
       r#"{"tabSize":123,"insertSpaces":true}"#,
     );
 
     test_serialization(
       &FormattingOptions {
-        tab_size:                 123,
-        insert_spaces:            true,
-        properties:               vec![("prop".to_string(), FormattingProperty::Number(1))]
+        tab_size: 123,
+        insert_spaces: true,
+        properties: vec![("prop".to_string(), FormattingProperty::Number(1))]
           .into_iter()
           .collect(),
         trim_trailing_whitespace: None,
-        insert_final_newline:     None,
-        trim_final_newlines:      None,
+        insert_final_newline: None,
+        trim_final_newlines: None,
       },
       r#"{"tabSize":123,"insertSpaces":true,"prop":1}"#,
     );

@@ -10,10 +10,7 @@
 //! global anyway and never dropped) so we can just store the entire vtable
 //! inline.
 
-use std::ptr::{
-  self,
-  NonNull,
-};
+use std::ptr::{self, NonNull};
 
 use anyhow::Result;
 

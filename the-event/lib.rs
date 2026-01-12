@@ -35,22 +35,10 @@
 //! compositor from its rendering backend.
 
 use anyhow::Result;
-pub use cancel::{
-  TaskController,
-  TaskHandle,
-  cancelable_future,
-};
-pub use debounce::{
-  AsyncHook,
-  send_blocking,
-};
+pub use cancel::{TaskController, TaskHandle, cancelable_future};
+pub use debounce::{AsyncHook, send_blocking};
 pub use redraw::{
-  RenderLockGuard,
-  RequestRedrawOnDrop,
-  lock_frame,
-  redraw_requested,
-  request_redraw,
-  start_frame,
+  RenderLockGuard, RequestRedrawOnDrop, lock_frame, redraw_requested, request_redraw, start_frame,
 };
 pub use registry::Event;
 
@@ -59,10 +47,12 @@ mod debounce;
 mod hook;
 mod redraw;
 mod registry;
-#[doc(hidden)] pub mod runtime;
+#[doc(hidden)]
+pub mod runtime;
 pub mod status;
 
-#[cfg(test)] mod test;
+#[cfg(test)]
+mod test;
 
 pub fn register_event<E: Event + 'static>() {
   registry::with_mut(|registry| registry.register_event::<E>())

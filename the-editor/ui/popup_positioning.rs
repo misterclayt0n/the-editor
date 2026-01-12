@@ -2,10 +2,7 @@ use std::time::Instant;
 
 use crate::ui::{
   components::popup::PositionBias,
-  compositor::{
-    Context,
-    Surface,
-  },
+  compositor::{Context, Surface},
 };
 
 /// Pixel gap between cursor and popup
@@ -92,9 +89,9 @@ pub fn constrain_popup_height(
 #[derive(Clone, Copy, Debug)]
 pub struct CursorPosition {
   /// X coordinate of cursor (left edge of character)
-  pub x:           f32,
+  pub x: f32,
   /// Y coordinate of top of cursor line
-  pub line_top:    f32,
+  pub line_top: f32,
   /// Y coordinate of bottom of cursor line (baseline)
   pub line_bottom: f32,
 }

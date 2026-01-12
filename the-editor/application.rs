@@ -1,47 +1,24 @@
-use std::{
-  collections::HashMap,
-  sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
-use the_editor_renderer::{
-  Application,
-  InputEvent,
-  Key,
-  Renderer,
-  ScrollDelta,
-};
+use the_editor_renderer::{Application, InputEvent, Key, Renderer, ScrollDelta};
 
 use crate::{
-  core::{
-    commands,
-    graphics::Rect,
-    movement::Direction,
-  },
+  core::{commands, graphics::Rect, movement::Direction},
   editor::Editor,
   input::InputHandler,
-  keymap::{
-    KeyBinding,
-    KeyTrie,
-    Keymaps,
-    Mode,
-  },
+  keymap::{KeyBinding, KeyTrie, Keymaps, Mode},
   ui::{
     components::statusline::StatusLine,
-    compositor::{
-      Component,
-      Compositor,
-      Context,
-      Event,
-    },
+    compositor::{Component, Compositor, Context, Event},
     editor_view::EditorView,
     job::Jobs,
   },
 };
 
 pub struct App {
-  pub compositor:    Compositor,
-  pub editor:        Editor,
-  pub jobs:          Jobs,
+  pub compositor: Compositor,
+  pub editor: Editor,
+  pub jobs: Jobs,
   pub input_handler: InputHandler,
 
   // GlobalConfig pointer for runtime updates
@@ -54,17 +31,17 @@ pub struct App {
 
   // Smooth scrolling configuration and state
   smooth_scroll_enabled: bool,
-  scroll_lerp_factor:    f32, // fraction of remaining distance per frame (0..1)
+  scroll_lerp_factor: f32, // fraction of remaining distance per frame (0..1)
   scroll_min_step_lines: f32, // minimum line step when animating
-  scroll_min_step_cols:  f32, // minimum column step when animating
+  scroll_min_step_cols: f32, // minimum column step when animating
 
   // Accumulated pending scroll deltas to animate (lines/cols)
   pending_scroll_lines: f32,
-  pending_scroll_cols:  f32,
+  pending_scroll_cols: f32,
 
   // Trackpad fractional scroll accumulation (separate from animation)
   trackpad_scroll_lines: f32,
-  trackpad_scroll_cols:  f32,
+  trackpad_scroll_cols: f32,
 
   // Delta time tracking for time-based animations
   last_frame_time: std::time::Instant,
@@ -194,11 +171,7 @@ impl App {
     server_id: crate::lsp::LanguageServerId,
     call: crate::lsp::Call,
   ) {
-    use crate::lsp::{
-      Call,
-      MethodCall,
-      Notification,
-    };
+    use crate::lsp::{Call, MethodCall, Notification};
 
     match call {
       Call::Notification(notification) => {
@@ -284,9 +257,9 @@ impl App {
               id
             );
             Err(crate::lsp::jsonrpc::Error {
-              code:    crate::lsp::jsonrpc::ErrorCode::MethodNotFound,
+              code: crate::lsp::jsonrpc::ErrorCode::MethodNotFound,
               message: format!("Method not found: {}", method),
-              data:    None,
+              data: None,
             })
           },
           Err(err) => {
@@ -296,9 +269,9 @@ impl App {
               err
             );
             Err(crate::lsp::jsonrpc::Error {
-              code:    crate::lsp::jsonrpc::ErrorCode::ParseError,
+              code: crate::lsp::jsonrpc::ErrorCode::ParseError,
               message: format!("Malformed method call: {}", method),
-              data:    None,
+              data: None,
             })
           },
           Ok(MethodCall::WorkDoneProgressCreate(params)) => {
@@ -317,9 +290,9 @@ impl App {
               use crate::lsp::lsp::types::ApplyWorkspaceEditResponse;
               Ok(
                 serde_json::to_value(ApplyWorkspaceEditResponse {
-                  applied:        result.is_ok(),
+                  applied: result.is_ok(),
                   failure_reason: result.as_ref().err().map(|err| err.kind.to_string()),
-                  failed_change:  result
+                  failed_change: result
                     .as_ref()
                     .err()
                     .map(|err| err.failed_change_idx as u32),
@@ -328,9 +301,9 @@ impl App {
               )
             } else {
               Err(crate::lsp::jsonrpc::Error {
-                code:    crate::lsp::jsonrpc::ErrorCode::InvalidRequest,
+                code: crate::lsp::jsonrpc::ErrorCode::InvalidRequest,
                 message: "Language server not found".to_string(),
-                data:    None,
+                data: None,
               })
             }
           },
@@ -355,9 +328,9 @@ impl App {
               Ok(serde_json::to_value(result).unwrap())
             } else {
               Err(crate::lsp::jsonrpc::Error {
-                code:    crate::lsp::jsonrpc::ErrorCode::InvalidRequest,
+                code: crate::lsp::jsonrpc::ErrorCode::InvalidRequest,
                 message: "Language server not found".to_string(),
-                data:    None,
+                data: None,
               })
             }
           },
@@ -376,9 +349,9 @@ impl App {
             // Other method calls we don't handle yet
             log::warn!("Unimplemented language server method: {}", method);
             Err(crate::lsp::jsonrpc::Error {
-              code:    crate::lsp::jsonrpc::ErrorCode::MethodNotFound,
+              code: crate::lsp::jsonrpc::ErrorCode::MethodNotFound,
               message: format!("Method not implemented: {}", method),
-              data:    None,
+              data: None,
             })
           },
         };
@@ -565,10 +538,10 @@ impl Application for App {
       let event = Event::Key(binding);
 
       let mut cx = Context {
-        editor:         &mut self.editor,
-        scroll:         None,
-        jobs:           &mut self.jobs,
-        dt:             0.0, // Events don't use delta time
+        editor: &mut self.editor,
+        scroll: None,
+        jobs: &mut self.jobs,
+        dt: 0.0, // Events don't use delta time
         last_mouse_pos: self.last_mouse_pos,
       };
 
@@ -582,10 +555,10 @@ impl Application for App {
       let event = Event::Key(binding);
 
       let mut cx = Context {
-        editor:         &mut self.editor,
-        scroll:         None,
-        jobs:           &mut self.jobs,
-        dt:             0.0,
+        editor: &mut self.editor,
+        scroll: None,
+        jobs: &mut self.jobs,
+        dt: 0.0,
         last_mouse_pos: self.last_mouse_pos,
       };
 
@@ -597,10 +570,10 @@ impl Application for App {
       let event = Event::Key(binding);
 
       let mut cx = Context {
-        editor:         &mut self.editor,
-        scroll:         None,
-        jobs:           &mut self.jobs,
-        dt:             0.0,
+        editor: &mut self.editor,
+        scroll: None,
+        jobs: &mut self.jobs,
+        dt: 0.0,
         last_mouse_pos: self.last_mouse_pos,
       };
 
@@ -612,10 +585,10 @@ impl Application for App {
       // Try to pass scroll to compositor first (for pickers, etc.)
       let event = Event::Scroll(scroll);
       let mut cx = Context {
-        editor:         &mut self.editor,
-        scroll:         None,
-        jobs:           &mut self.jobs,
-        dt:             0.0,
+        editor: &mut self.editor,
+        scroll: None,
+        jobs: &mut self.jobs,
+        dt: 0.0,
         last_mouse_pos: self.last_mouse_pos,
       };
       let handled = self.compositor.handle_event(&event, &mut cx);
@@ -638,10 +611,10 @@ impl Application for App {
       let event = Event::Mouse(mouse);
 
       let mut cx = Context {
-        editor:         &mut self.editor,
-        scroll:         None,
-        jobs:           &mut self.jobs,
-        dt:             0.0,
+        editor: &mut self.editor,
+        scroll: None,
+        jobs: &mut self.jobs,
+        dt: 0.0,
         last_mouse_pos: self.last_mouse_pos,
       };
 
@@ -655,10 +628,10 @@ impl Application for App {
         let event = Event::Key(*binding);
 
         let mut cx = Context {
-          editor:         &mut self.editor,
-          scroll:         None,
-          jobs:           &mut self.jobs,
-          dt:             0.0,
+          editor: &mut self.editor,
+          scroll: None,
+          jobs: &mut self.jobs,
+          dt: 0.0,
           last_mouse_pos: self.last_mouse_pos,
         };
 
@@ -676,10 +649,10 @@ impl Application for App {
           let event = Event::Key(binding);
 
           let mut cx = Context {
-            editor:         &mut self.editor,
-            scroll:         None,
-            jobs:           &mut self.jobs,
-            dt:             0.0,
+            editor: &mut self.editor,
+            scroll: None,
+            jobs: &mut self.jobs,
+            dt: 0.0,
             last_mouse_pos: self.last_mouse_pos,
           };
 
@@ -820,11 +793,7 @@ impl App {
           raw_input,
           status,
         } => {
-          use crate::core::tool_display::{
-            ToolDisplayInfo,
-            ToolKind,
-            ToolStatus,
-          };
+          use crate::core::tool_display::{ToolDisplayInfo, ToolKind, ToolStatus};
 
           // Convert our status to tool_display status
           let (display_status, error_msg) = match &status {
@@ -1118,12 +1087,12 @@ impl App {
       };
 
       let mut cmd_cx = commands::Context {
-        register:             self.editor.selected_register,
-        count:                self.editor.count,
-        editor:               &mut self.editor,
+        register: self.editor.selected_register,
+        count: self.editor.count,
+        editor: &mut self.editor,
         on_next_key_callback: None,
-        callback:             Vec::new(),
-        jobs:                 &mut self.jobs,
+        callback: Vec::new(),
+        jobs: &mut self.jobs,
       };
 
       commands::scroll(&mut cmd_cx, lines.unsigned_abs() as usize, direction, false);
@@ -1201,12 +1170,12 @@ impl App {
         let old_focus = self.editor.tree.focus;
         self.editor.tree.focus = view_id;
         let mut cmd_cx = commands::Context {
-          register:             self.editor.selected_register,
-          count:                self.editor.count,
-          editor:               &mut self.editor,
+          register: self.editor.selected_register,
+          count: self.editor.count,
+          editor: &mut self.editor,
           on_next_key_callback: None,
-          callback:             Vec::new(),
-          jobs:                 &mut self.jobs,
+          callback: Vec::new(),
+          jobs: &mut self.jobs,
         };
         commands::scroll(
           &mut cmd_cx,
@@ -1284,12 +1253,12 @@ impl App {
           Direction::Backward
         };
         let mut cmd_cx = commands::Context {
-          register:             self.editor.selected_register,
-          count:                self.editor.count,
-          editor:               &mut self.editor,
+          register: self.editor.selected_register,
+          count: self.editor.count,
+          editor: &mut self.editor,
           on_next_key_callback: None,
-          callback:             Vec::new(),
-          jobs:                 &mut self.jobs,
+          callback: Vec::new(),
+          jobs: &mut self.jobs,
         };
         commands::scroll(
           &mut cmd_cx,

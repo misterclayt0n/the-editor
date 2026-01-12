@@ -1,85 +1,35 @@
 use std::{
-  collections::{
-    HashMap,
-    HashSet,
-  },
+  collections::{HashMap, HashSet},
   time::Instant,
 };
 
 use the_editor_event::request_redraw;
-use the_editor_renderer::{
-  Color,
-  TextSection,
-  TextSegment,
-  TextStyle,
-};
+use the_editor_renderer::{Color, TextSection, TextSegment, TextStyle};
 use the_editor_stdx::rope::RopeSliceExt;
-use the_terminal::{
-  ColorScheme as TerminalColorScheme,
-  CursorShape as TerminalCursorShape,
-};
+use the_terminal::{ColorScheme as TerminalColorScheme, CursorShape as TerminalCursorShape};
 
 use crate::{
   core::{
-    animation::selection::{
-      self as selection_anim,
-    },
-    commands::{
-      self,
-      MappableCommand,
-      OnKeyCallback,
-      OnKeyCallbackKind,
-    },
+    animation::selection::{self as selection_anim},
+    commands::{self, MappableCommand, OnKeyCallback, OnKeyCallbackKind},
     diagnostics::DiagnosticFilter,
     doc_formatter::DocumentFormatter,
-    grapheme::{
-      Grapheme,
-      next_grapheme_boundary,
-      prev_grapheme_boundary,
-    },
-    graphics::{
-      Color as ThemeColor,
-      CursorKind,
-      Rect,
-    },
+    grapheme::{Grapheme, next_grapheme_boundary, prev_grapheme_boundary},
+    graphics::{Color as ThemeColor, CursorKind, Rect},
     info::Info,
     layout::center,
-    position::{
-      Position,
-      char_idx_at_visual_offset,
-      visual_offset_from_block,
-    },
+    position::{Position, char_idx_at_visual_offset, visual_offset_from_block},
     tree::Direction,
   },
-  editor::{
-    Action,
-    BufferLine,
-    CompleteAction as EditorCompleteAction,
-    Editor,
-    FileTreePosition,
-  },
-  keymap::{
-    KeyBinding,
-    KeyTrie,
-    Keymaps,
-    Mode,
-  },
+  editor::{Action, BufferLine, CompleteAction as EditorCompleteAction, Editor, FileTreePosition},
+  keymap::{KeyBinding, KeyTrie, Keymaps, Mode},
   ui::{
     Explorer,
     components::bufferline,
-    compositor::{
-      Component,
-      Context,
-      Event,
-      EventResult,
-      Surface,
-    },
+    compositor::{Component, Context, Event, EventResult, Surface},
     gutter::GutterManager,
     render_cache::DirtyRegion,
-    render_commands::{
-      CommandBatcher,
-      RenderCommand,
-    },
+    render_commands::{CommandBatcher, RenderCommand},
   },
 };
 
@@ -92,7 +42,7 @@ const CURSOR_HEIGHT_EXTENSION: f32 = 4.0;
 /// Wrapper around syntax::OverlayHighlighter that maintains position and style
 struct OverlayHighlighter<'t> {
   inner: crate::core::syntax::OverlayHighlighter,
-  pos:   usize,
+  pos: usize,
   theme: &'t crate::core::theme::Theme,
   style: crate::core::graphics::Style,
 }
@@ -230,143 +180,143 @@ enum DragSelectMode {
 }
 
 pub struct EditorView {
-  pub keymaps:                   Keymaps,
-  on_next_key:                   Option<(OnKeyCallback, OnKeyCallbackKind)>,
+  pub keymaps: Keymaps,
+  on_next_key: Option<(OnKeyCallback, OnKeyCallbackKind)>,
   // Track last command for macro replay
-  last_insert:                   (MappableCommand, Vec<KeyBinding>),
+  last_insert: (MappableCommand, Vec<KeyBinding>),
   // Rendering optimizations
-  dirty_region:                  DirtyRegion,
-  command_batcher:               CommandBatcher,
-  last_cursor_pos:               Option<usize>,
-  last_selection_hash:           u64,
+  dirty_region: DirtyRegion,
+  command_batcher: CommandBatcher,
+  last_cursor_pos: Option<usize>,
+  last_selection_hash: u64,
   // Cursor animation
-  cursor_animation:              Option<crate::core::animation::AnimationHandle<(f32, f32)>>,
+  cursor_animation: Option<crate::core::animation::AnimationHandle<(f32, f32)>>,
   /// Last rendered cursor screen position (x, y). Used to animate cursor from
   /// previous position to new position. None on first render.
-  last_cursor_screen_pos:        Option<(f32, f32)>,
+  last_cursor_screen_pos: Option<(f32, f32)>,
   // Zoom animation state
-  zoom_anim_active:              bool,
-  selection_pulse_animating:     bool,
-  noop_effect_animating:         bool,
+  zoom_anim_active: bool,
+  selection_pulse_animating: bool,
+  noop_effect_animating: bool,
   // Gutter management
-  pub gutter_manager:            GutterManager,
+  pub gutter_manager: GutterManager,
   // Completion popup
-  pub(crate) completion:         Option<crate::ui::components::Completion>,
+  pub(crate) completion: Option<crate::ui::components::Completion>,
   // Signature help popup
-  pub(crate) signature_help:     Option<crate::ui::components::SignatureHelp>,
-  bufferline_visible:            bool,
-  bufferline_alive_t:            f32, // Animation for show/hide (0.0 = hidden, 1.0 = visible)
+  pub(crate) signature_help: Option<crate::ui::components::SignatureHelp>,
+  bufferline_visible: bool,
+  bufferline_alive_t: f32, // Animation for show/hide (0.0 = hidden, 1.0 = visible)
   // Cached font metrics for mouse handling (updated during render)
-  cached_cell_width:             f32,
-  cached_cell_height:            f32,
-  cached_font_size:              f32, // Font size corresponding to cached metrics
+  cached_cell_width: f32,
+  cached_cell_height: f32,
+  cached_font_size: f32, // Font size corresponding to cached metrics
   // Mouse drag state for selection
-  mouse_pressed:                 bool,
-  mouse_drag_anchor_range:       Option<crate::core::selection::Range>,
-  mouse_drag_mode:               DragSelectMode,
+  mouse_pressed: bool,
+  mouse_drag_anchor_range: Option<crate::core::selection::Range>,
+  mouse_drag_mode: DragSelectMode,
   // Multi-click detection (double/triple-click)
-  last_click_time:               Option<std::time::Instant>,
-  last_click_pos:                Option<(f32, f32)>,
-  click_count:                   u8,
+  last_click_time: Option<std::time::Instant>,
+  last_click_pos: Option<(f32, f32)>,
+  click_count: u8,
   // Terminal mouse selection state
-  terminal_selection_active:     Option<the_terminal::TerminalId>,
+  terminal_selection_active: Option<the_terminal::TerminalId>,
   // Terminal scroll accumulator for smooth scrolling
-  terminal_scroll_px:            f32,
+  terminal_scroll_px: f32,
   // Split separator interaction
-  hovered_separator:             Option<SeparatorInfo>,
-  dragging_separator:            Option<SeparatorDrag>,
-  buffer_hover_index:            Option<usize>,
-  buffer_tabs:                   Vec<bufferline::BufferTab>,
-  bufferline_height:             f32,
-  buffer_pressed_index:          Option<usize>,
+  hovered_separator: Option<SeparatorInfo>,
+  dragging_separator: Option<SeparatorDrag>,
+  buffer_hover_index: Option<usize>,
+  buffer_tabs: Vec<bufferline::BufferTab>,
+  bufferline_height: f32,
+  buffer_pressed_index: Option<usize>,
   // RAD-style bufferline state
-  buffer_close_hover_index:      Option<usize>,
-  buffer_close_pressed_index:    Option<usize>,
-  add_button_hovered:            bool,
-  add_button_pressed:            bool,
-  add_button_rect:               Option<crate::core::graphics::Rect>,
+  buffer_close_hover_index: Option<usize>,
+  buffer_close_pressed_index: Option<usize>,
+  add_button_hovered: bool,
+  add_button_pressed: bool,
+  add_button_rect: Option<crate::core::graphics::Rect>,
   tab_animation_states:
     std::collections::HashMap<bufferline::BufferKind, bufferline::TabAnimationState>,
-  add_button_state:              bufferline::AddButtonState,
-  bufferline_scroll_offset:      f32,
-  bufferline_scroll_target:      f32,
-  bufferline_max_scroll:         f32,
-  bufferline_user_scrolled:      bool, // True when user manually scrolled, disables auto-scroll
-  bufferline_last_active_idx:    Option<usize>, // Track active tab to detect changes
+  add_button_state: bufferline::AddButtonState,
+  bufferline_scroll_offset: f32,
+  bufferline_scroll_target: f32,
+  bufferline_max_scroll: f32,
+  bufferline_user_scrolled: bool, // True when user manually scrolled, disables auto-scroll
+  bufferline_last_active_idx: Option<usize>, // Track active tab to detect changes
   // Tree explorer sidebar
-  explorer:                      Option<Explorer>,
+  explorer: Option<Explorer>,
   // Explorer mouse interaction state
-  explorer_px_width:             f32,
-  explorer_position:             FileTreePosition,
-  explorer_hovered_item:         Option<usize>,
+  explorer_px_width: f32,
+  explorer_position: FileTreePosition,
+  explorer_hovered_item: Option<usize>,
   // Accumulator for fractional scroll amounts in explorer (for trackpad)
-  explorer_scroll_accum:         f32,
+  explorer_scroll_accum: f32,
   // Accumulator for fractional scroll amounts in document views (for trackpad hover-scroll)
-  doc_scroll_accum:              f32,
+  doc_scroll_accum: f32,
   // Track last mouse position for scroll targeting
-  last_mouse_pos:                Option<(f32, f32)>,
+  last_mouse_pos: Option<(f32, f32)>,
   // Indent guide animation state (per indent level -> current opacity)
-  indent_guide_opacities:        std::collections::HashMap<usize, f32>,
+  indent_guide_opacities: std::collections::HashMap<usize, f32>,
   // Track if indent guide animation is in progress
-  indent_guides_anim_active:     bool,
+  indent_guides_anim_active: bool,
   // Diagnostic glow animation state (per doc line -> current opacity)
-  diagnostic_glow_opacities:     std::collections::HashMap<usize, f32>,
+  diagnostic_glow_opacities: std::collections::HashMap<usize, f32>,
   // Track if diagnostic glow animation is in progress
-  diagnostic_glow_anim_active:   bool,
+  diagnostic_glow_anim_active: bool,
   // EOL diagnostic text animation state (per doc line -> current opacity)
-  eol_diagnostic_opacities:      std::collections::HashMap<usize, f32>,
+  eol_diagnostic_opacities: std::collections::HashMap<usize, f32>,
   // Track if EOL diagnostic animation is in progress
-  eol_diagnostic_anim_active:    bool,
+  eol_diagnostic_anim_active: bool,
   // EOL diagnostic debounce: pending lines waiting to be animated (line -> first seen time)
-  eol_diagnostic_pending:        std::collections::HashMap<usize, std::time::Instant>,
+  eol_diagnostic_pending: std::collections::HashMap<usize, std::time::Instant>,
   // Underline animation state (per doc line -> current opacity)
-  underline_opacities:           std::collections::HashMap<usize, f32>,
+  underline_opacities: std::collections::HashMap<usize, f32>,
   // Track if underline animation is in progress
-  underline_anim_active:         bool,
+  underline_anim_active: bool,
   // Inline diagnostic animation state (per doc line -> full animation state)
   inline_diagnostic_anim:
     std::collections::HashMap<usize, super::inline_diagnostic_animation::InlineDiagnosticAnimState>,
   // Track if inline diagnostic animation is in progress
   inline_diagnostic_anim_active: bool,
   // Terminal escape prefix state: true when waiting for command after Ctrl+\
-  terminal_escape_pending:       bool,
+  terminal_escape_pending: bool,
   // Infobox animation state (0.0 → 1.0 appearance)
-  infobox_animation:             Option<crate::core::animation::AnimationHandle<f32>>,
+  infobox_animation: Option<crate::core::animation::AnimationHandle<f32>>,
   // Track whether autoinfo was present last frame (to detect transitions)
-  had_autoinfo:                  bool,
+  had_autoinfo: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct SeparatorInfo {
   /// Which view this separator is attached to
-  view_id:    crate::core::ViewId,
+  view_id: crate::core::ViewId,
   /// Is this a vertical (true) or horizontal (false) separator
-  vertical:   bool,
+  vertical: bool,
   /// Position in pixels (x for vertical, y for horizontal)
-  position:   f32,
+  position: f32,
   /// View area bounds for hit testing
-  view_x:     u16,
-  view_y:     u16,
+  view_x: u16,
+  view_y: u16,
   view_width: u16,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct SeparatorDrag {
-  separator:         SeparatorInfo,
-  start_mouse_px:    f32, // Mouse position when drag started (x or y depending on separator type)
-  start_split_px:    f32, // Initial separator position in pixels
+  separator: SeparatorInfo,
+  start_mouse_px: f32, // Mouse position when drag started (x or y depending on separator type)
+  start_split_px: f32, // Initial separator position in pixels
   accumulated_cells: i32, // Total cells we've already applied
 }
 
 impl EditorView {
   fn key_binding_to_key_press(binding: &KeyBinding) -> the_editor_renderer::KeyPress {
     the_editor_renderer::KeyPress {
-      code:    binding.code,
+      code: binding.code,
       pressed: true,
-      shift:   binding.shift,
-      ctrl:    binding.ctrl,
-      alt:     binding.alt,
-      super_:  false,
+      shift: binding.shift,
+      ctrl: binding.ctrl,
+      alt: binding.alt,
+      super_: false,
     }
   }
 
@@ -708,12 +658,12 @@ impl EditorView {
 
 /// Wrapper for syntax highlighting that tracks position and styles
 struct SyntaxHighlighter<'h, 'r, 't> {
-  inner:      Option<crate::core::syntax::Highlighter<'h>>,
-  text:       ropey::RopeSlice<'r>,
-  pos:        usize, // Character index of next highlight event
-  theme:      &'t crate::core::theme::Theme,
+  inner: Option<crate::core::syntax::Highlighter<'h>>,
+  text: ropey::RopeSlice<'r>,
+  pos: usize, // Character index of next highlight event
+  theme: &'t crate::core::theme::Theme,
   text_style: crate::core::graphics::Style,
-  style:      crate::core::graphics::Style, // Current accumulated style
+  style: crate::core::graphics::Style, // Current accumulated style
 }
 
 impl<'h, 'r, 't> SyntaxHighlighter<'h, 'r, 't> {
@@ -906,22 +856,22 @@ impl Component for EditorView {
         if let Some((callback, _)) = self.on_next_key.take() {
           // Execute the on_next_key callback
           let mut cmd_cx = commands::Context {
-            register:             cx.editor.selected_register,
-            count:                cx.editor.count,
-            editor:               cx.editor,
+            register: cx.editor.selected_register,
+            count: cx.editor.count,
+            editor: cx.editor,
             on_next_key_callback: None,
-            callback:             Vec::new(),
-            jobs:                 cx.jobs,
+            callback: Vec::new(),
+            jobs: cx.jobs,
           };
 
           // Convert KeyBinding to KeyPress for the callback
           let key_press = the_editor_renderer::KeyPress {
-            code:    key.code,
+            code: key.code,
             pressed: true,
-            shift:   key.shift,
-            ctrl:    key.ctrl,
-            alt:     key.alt,
-            super_:  false,
+            shift: key.shift,
+            ctrl: key.ctrl,
+            alt: key.alt,
+            super_: false,
           };
           callback(&mut cmd_cx, key_press);
 
@@ -1034,12 +984,12 @@ impl Component for EditorView {
 
               // Insert the character
               let mut cmd_cx = commands::Context {
-                register:             cx.editor.selected_register,
-                count:                cx.editor.count,
-                editor:               cx.editor,
+                register: cx.editor.selected_register,
+                count: cx.editor.count,
+                editor: cx.editor,
                 on_next_key_callback: None,
-                callback:             Vec::new(),
-                jobs:                 cx.jobs,
+                callback: Vec::new(),
+                jobs: cx.jobs,
               };
 
               commands::insert_char(&mut cmd_cx, *ch);
@@ -1084,12 +1034,12 @@ impl Component for EditorView {
 
         // Convert to KeyPress for keymap lookup
         let key_press = the_editor_renderer::KeyPress {
-          code:    key.code,
+          code: key.code,
           pressed: true,
-          shift:   key.shift,
-          ctrl:    key.ctrl,
-          alt:     key.alt,
-          super_:  false,
+          shift: key.shift,
+          ctrl: key.ctrl,
+          alt: key.alt,
+          super_: false,
         };
 
         // Process through keymap for non-insert modes
@@ -1330,12 +1280,12 @@ impl Component for EditorView {
 
                 // Use commands::scroll which properly handles view offset calculation
                 let mut cmd_cx = crate::core::commands::Context {
-                  register:             cx.editor.selected_register,
-                  count:                cx.editor.count,
-                  editor:               cx.editor,
+                  register: cx.editor.selected_register,
+                  count: cx.editor.count,
+                  editor: cx.editor,
                   on_next_key_callback: None,
-                  callback:             Vec::new(),
-                  jobs:                 cx.jobs,
+                  callback: Vec::new(),
+                  jobs: cx.jobs,
                 };
 
                 crate::core::commands::scroll(
@@ -2114,10 +2064,7 @@ impl Component for EditorView {
         let selection_hash = {
           use std::{
             collections::hash_map::DefaultHasher,
-            hash::{
-              Hash,
-              Hasher,
-            },
+            hash::{Hash, Hasher},
           };
           let mut hasher = DefaultHasher::new();
           for range in selection.ranges() {
@@ -2271,10 +2218,7 @@ impl Component for EditorView {
 
         // Update EOL diagnostic text animation state with debouncing
         {
-          use std::time::{
-            Duration,
-            Instant,
-          };
+          use std::time::{Duration, Instant};
           const EOL_DEBOUNCE: Duration = Duration::from_millis(350);
 
           let eol_diagnostic_lines: std::collections::HashSet<usize> = doc
@@ -2362,10 +2306,7 @@ impl Component for EditorView {
 
         // Update inline diagnostic animation state
         {
-          use super::inline_diagnostic_animation::{
-            InlineDiagnosticAnimTarget,
-            update_animation,
-          };
+          use super::inline_diagnostic_animation::{InlineDiagnosticAnimTarget, update_animation};
           use crate::core::diagnostics::Severity;
 
           // Compute which lines are DISPLAYING inline diagnostics (not just have them)
@@ -2878,38 +2819,34 @@ impl Component for EditorView {
 
                 // Get color based on severity
                 let glow_color = match severity {
-                  Some(Severity::Error) => {
-                    cx.editor
-                      .theme
-                      .get("error")
-                      .fg
-                      .map(crate::ui::theme_color_to_renderer_color)
-                      .unwrap_or(Color::rgb(0.9, 0.3, 0.3))
-                  },
-                  Some(Severity::Warning) | None => {
-                    cx.editor
-                      .theme
-                      .get("warning")
-                      .fg
-                      .map(crate::ui::theme_color_to_renderer_color)
-                      .unwrap_or(Color::rgb(0.9, 0.7, 0.3))
-                  },
-                  Some(Severity::Info) => {
-                    cx.editor
-                      .theme
-                      .get("info")
-                      .fg
-                      .map(crate::ui::theme_color_to_renderer_color)
-                      .unwrap_or(Color::rgb(0.3, 0.7, 0.9))
-                  },
-                  Some(Severity::Hint) => {
-                    cx.editor
-                      .theme
-                      .get("hint")
-                      .fg
-                      .map(crate::ui::theme_color_to_renderer_color)
-                      .unwrap_or(Color::rgb(0.5, 0.8, 0.5))
-                  },
+                  Some(Severity::Error) => cx
+                    .editor
+                    .theme
+                    .get("error")
+                    .fg
+                    .map(crate::ui::theme_color_to_renderer_color)
+                    .unwrap_or(Color::rgb(0.9, 0.3, 0.3)),
+                  Some(Severity::Warning) | None => cx
+                    .editor
+                    .theme
+                    .get("warning")
+                    .fg
+                    .map(crate::ui::theme_color_to_renderer_color)
+                    .unwrap_or(Color::rgb(0.9, 0.7, 0.3)),
+                  Some(Severity::Info) => cx
+                    .editor
+                    .theme
+                    .get("info")
+                    .fg
+                    .map(crate::ui::theme_color_to_renderer_color)
+                    .unwrap_or(Color::rgb(0.3, 0.7, 0.9)),
+                  Some(Severity::Hint) => cx
+                    .editor
+                    .theme
+                    .get("hint")
+                    .fg
+                    .map(crate::ui::theme_color_to_renderer_color)
+                    .unwrap_or(Color::rgb(0.5, 0.8, 0.5)),
                 };
 
                 // Draw gradient glow rectangle in gutter area only (stops at line content)
@@ -3181,12 +3118,12 @@ impl Component for EditorView {
             };
 
             self.command_batcher.add_command(RenderCommand::Cursor {
-              x:       anim_x,
-              y:       cursor_y,
-              width:   clipped_cursor_w,
-              height:  clipped_cursor_h,
-              color:   cursor_color,
-              kind:    cursor_kind_for_position,
+              x: anim_x,
+              y: cursor_y,
+              width: clipped_cursor_w,
+              height: clipped_cursor_h,
+              color: cursor_color,
+              kind: cursor_kind_for_position,
               primary: is_primary_cursor_here,
             });
           } else if is_cursor_here && !is_focused {
@@ -3506,11 +3443,11 @@ impl Component for EditorView {
                       let flash_strength = (0.2 - progress) / 0.2;
                       let flash_size = view_font_width * (1.6 + flash_strength * 0.9);
                       self.command_batcher.add_command(RenderCommand::Rect {
-                        x:      effect_center_x - flash_size / 2.0,
-                        y:      effect_center_y - flash_size / 2.0,
-                        width:  flash_size,
+                        x: effect_center_x - flash_size / 2.0,
+                        y: effect_center_y - flash_size / 2.0,
+                        width: flash_size,
                         height: flash_size,
-                        color:  Color::rgba(1.0, 0.85, 0.4, flash_strength * 0.7),
+                        color: Color::rgba(1.0, 0.85, 0.4, flash_strength * 0.7),
                       });
                     }
 
@@ -3518,11 +3455,11 @@ impl Component for EditorView {
                     let core_size = view_font_width * (0.28 + (1.0 - progress) * 0.35);
                     let core_alpha = (0.85 - progress).max(0.0);
                     self.command_batcher.add_command(RenderCommand::Rect {
-                      x:      effect_center_x - core_size / 2.0,
-                      y:      effect_center_y - core_size / 2.0,
-                      width:  core_size,
+                      x: effect_center_x - core_size / 2.0,
+                      y: effect_center_y - core_size / 2.0,
+                      width: core_size,
                       height: core_size,
-                      color:  Color::rgba(1.0, 0.72, 0.33, core_alpha),
+                      color: Color::rgba(1.0, 0.72, 0.33, core_alpha),
                     });
 
                     // Soft halo expanding outward
@@ -3530,11 +3467,11 @@ impl Component for EditorView {
                     if halo_alpha > 0.0 {
                       let halo_size = core_size * (2.6 + progress * 1.4);
                       self.command_batcher.add_command(RenderCommand::Rect {
-                        x:      effect_center_x - halo_size / 2.0,
-                        y:      effect_center_y - halo_size / 2.0,
-                        width:  halo_size,
+                        x: effect_center_x - halo_size / 2.0,
+                        y: effect_center_y - halo_size / 2.0,
+                        width: halo_size,
                         height: halo_size,
-                        color:  Color::rgba(1.0, 0.55, 0.2, halo_alpha),
+                        color: Color::rgba(1.0, 0.55, 0.2, halo_alpha),
                       });
                     }
 
@@ -3550,11 +3487,11 @@ impl Component for EditorView {
                       let spark_color = Color::rgba(1.0, 0.55 + decay * 0.25, 0.25, decay * 0.9);
 
                       self.command_batcher.add_command(RenderCommand::Rect {
-                        x:      spark_x - spark_size / 2.0,
-                        y:      spark_y - spark_size / 2.0,
-                        width:  spark_size,
+                        x: spark_x - spark_size / 2.0,
+                        y: spark_y - spark_size / 2.0,
+                        width: spark_size,
                         height: spark_size,
-                        color:  spark_color,
+                        color: spark_color,
                       });
 
                       // trailing embers following each spark
@@ -3571,11 +3508,11 @@ impl Component for EditorView {
                         let trail_alpha = decay * (0.6 / trail_step as f32);
 
                         self.command_batcher.add_command(RenderCommand::Rect {
-                          x:      trail_x - spark_size / 2.0,
-                          y:      trail_y - spark_size / 2.0,
-                          width:  spark_size,
+                          x: trail_x - spark_size / 2.0,
+                          y: trail_y - spark_size / 2.0,
+                          width: spark_size,
                           height: spark_size,
-                          color:  Color::rgba(0.9, 0.4, 0.15, trail_alpha),
+                          color: Color::rgba(0.9, 0.4, 0.15, trail_alpha),
                         });
                       }
                     }
@@ -3597,21 +3534,21 @@ impl Component for EditorView {
                       let rocket_alpha = (1.0 - progress).powf(0.4);
                       let rocket_size = view_font_width * 0.18;
                       self.command_batcher.add_command(RenderCommand::Rect {
-                        x:      rocket_x - rocket_size / 2.0,
-                        y:      rocket_y - rocket_size / 2.0,
-                        width:  rocket_size,
+                        x: rocket_x - rocket_size / 2.0,
+                        y: rocket_y - rocket_size / 2.0,
+                        width: rocket_size,
                         height: rocket_size,
-                        color:  Color::rgba(0.9, 0.95, 1.0, rocket_alpha * 0.9),
+                        color: Color::rgba(0.9, 0.95, 1.0, rocket_alpha * 0.9),
                       });
 
                       // Rocket glow
                       let glow_size = view_font_width * (0.4 + launch_progress * 0.8);
                       self.command_batcher.add_command(RenderCommand::Rect {
-                        x:      rocket_x - glow_size / 2.0,
-                        y:      rocket_y - glow_size / 2.0,
-                        width:  glow_size,
+                        x: rocket_x - glow_size / 2.0,
+                        y: rocket_y - glow_size / 2.0,
+                        width: glow_size,
                         height: glow_size,
-                        color:  Color::rgba(0.5, 0.85, 1.0, rocket_alpha * 0.6),
+                        color: Color::rgba(0.5, 0.85, 1.0, rocket_alpha * 0.6),
                       });
 
                       // Trailing sparks along the path
@@ -3625,11 +3562,11 @@ impl Component for EditorView {
                         let offset = (step as f32 * 1.2).sin() * view_font_width * 0.08;
                         let tail_size = view_font_width * (0.18 - t * 0.08);
                         self.command_batcher.add_command(RenderCommand::Rect {
-                          x:      rocket_x + offset - tail_size / 2.0,
-                          y:      tail_y - tail_size / 2.0,
-                          width:  tail_size,
+                          x: rocket_x + offset - tail_size / 2.0,
+                          y: tail_y - tail_size / 2.0,
+                          width: tail_size,
                           height: tail_size,
-                          color:  Color::rgba(0.4, 0.8, 1.0, tail_alpha * 0.7),
+                          color: Color::rgba(0.4, 0.8, 1.0, tail_alpha * 0.7),
                         });
                       }
                     }
@@ -3642,11 +3579,11 @@ impl Component for EditorView {
                       let halo_alpha = (1.0 - burst_phase).powf(1.2) * 0.5;
                       let halo_size = burst_radius * 0.9;
                       self.command_batcher.add_command(RenderCommand::Rect {
-                        x:      effect_center_x - halo_size / 2.0,
-                        y:      effect_center_y - halo_size / 2.0,
-                        width:  halo_size,
+                        x: effect_center_x - halo_size / 2.0,
+                        y: effect_center_y - halo_size / 2.0,
+                        width: halo_size,
                         height: halo_size,
-                        color:  Color::rgba(0.6, 0.9, 1.0, halo_alpha),
+                        color: Color::rgba(0.6, 0.9, 1.0, halo_alpha),
                       });
 
                       // Firework petals
@@ -3661,11 +3598,11 @@ impl Component for EditorView {
                         let spark_size = view_font_width * (0.22 + burst_strength * 0.18);
                         let spark_alpha = (1.0 - burst_phase).powf(0.8) * 0.8;
                         self.command_batcher.add_command(RenderCommand::Rect {
-                          x:      spark_x - spark_size / 2.0,
-                          y:      spark_y - spark_size / 2.0,
-                          width:  spark_size,
+                          x: spark_x - spark_size / 2.0,
+                          y: spark_y - spark_size / 2.0,
+                          width: spark_size,
                           height: spark_size,
-                          color:  Color::rgba(0.45, 0.95, 1.0, spark_alpha),
+                          color: Color::rgba(0.45, 0.95, 1.0, spark_alpha),
                         });
 
                         // Petal trails
@@ -3681,11 +3618,11 @@ impl Component for EditorView {
                           let trail_alpha = spark_alpha * (0.55 / trail_step as f32);
 
                           self.command_batcher.add_command(RenderCommand::Rect {
-                            x:      trail_x - spark_size / 2.5,
-                            y:      trail_y - spark_size / 2.5,
-                            width:  spark_size / 1.6,
+                            x: trail_x - spark_size / 2.5,
+                            y: trail_y - spark_size / 2.5,
+                            width: spark_size / 1.6,
                             height: spark_size / 1.6,
-                            color:  Color::rgba(0.35, 0.9, 1.0, trail_alpha.max(0.0)),
+                            color: Color::rgba(0.35, 0.9, 1.0, trail_alpha.max(0.0)),
                           });
                         }
                       }
@@ -3702,11 +3639,11 @@ impl Component for EditorView {
                         let glitter_alpha = (1.0 - burst_phase).powf(0.5) * 0.35;
                         if glitter_alpha > 0.0 {
                           self.command_batcher.add_command(RenderCommand::Rect {
-                            x:      glitter_x - glitter_size / 2.0,
-                            y:      glitter_y - glitter_size / 2.0,
-                            width:  glitter_size,
+                            x: glitter_x - glitter_size / 2.0,
+                            y: glitter_y - glitter_size / 2.0,
+                            width: glitter_size,
                             height: glitter_size,
-                            color:  Color::rgba(0.75, 0.95, 1.0, glitter_alpha),
+                            color: Color::rgba(0.75, 0.95, 1.0, glitter_alpha),
                           });
                         }
                       }
@@ -4198,12 +4135,12 @@ impl EditorView {
     // Alt+X - open command mode (: prompt)
     if key.alt && !key.ctrl && !key.shift && matches!(&key.code, Key::Char('x')) {
       let mut cmd_cx = commands::Context {
-        register:             cx.editor.selected_register,
-        count:                cx.editor.count,
-        editor:               cx.editor,
+        register: cx.editor.selected_register,
+        count: cx.editor.count,
+        editor: cx.editor,
         on_next_key_callback: None,
-        callback:             Vec::new(),
-        jobs:                 cx.jobs,
+        callback: Vec::new(),
+        jobs: cx.jobs,
       };
       commands::command_mode(&mut cmd_cx);
 
@@ -4834,12 +4771,12 @@ impl EditorView {
     cx.editor.clear_status();
 
     let mut cmd_cx = commands::Context {
-      register:             cx.editor.selected_register,
-      count:                cx.editor.count,
-      editor:               cx.editor,
+      register: cx.editor.selected_register,
+      count: cx.editor.count,
+      editor: cx.editor,
       on_next_key_callback: None,
-      callback:             Vec::new(),
-      jobs:                 cx.jobs,
+      callback: Vec::new(),
+      jobs: cx.jobs,
     };
 
     cmd_fn(&mut cmd_cx);
@@ -5003,10 +4940,7 @@ impl EditorView {
 
   /// Render keymap infobox (which-key style popup) at bottom-right
   fn render_infobox(&self, info: &Info, renderer: &mut Surface, cx: &Context, anim_t: f32) {
-    use crate::ui::{
-      UI_FONT_SIZE,
-      theme_color_to_renderer_color,
-    };
+    use crate::ui::{UI_FONT_SIZE, theme_color_to_renderer_color};
 
     let theme = &cx.editor.theme;
 
@@ -5126,10 +5060,10 @@ impl EditorView {
       let title_y = box_y + padding_y;
       renderer.draw_text(TextSection {
         position: (title_x, title_y),
-        texts:    vec![TextSegment {
+        texts: vec![TextSegment {
           content: info.title.to_string(),
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
+          style: TextStyle {
+            size: UI_FONT_SIZE,
             color: title_color,
           },
         }],
@@ -5152,10 +5086,10 @@ impl EditorView {
         let y = content_y + (i as f32 * line_height);
         renderer.draw_text(TextSection {
           position: (title_x, y),
-          texts:    vec![TextSegment {
+          texts: vec![TextSegment {
             content: line.to_string(),
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
               color: text_color,
             },
           }],
@@ -5169,10 +5103,10 @@ impl EditorView {
         let truncate_text = format!("... +{} more", more_count);
         renderer.draw_text(TextSection {
           position: (title_x, truncate_y),
-          texts:    vec![TextSegment {
+          texts: vec![TextSegment {
             content: truncate_text,
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
               color: Color::new(text_color.r, text_color.g, text_color.b, 0.5 * alpha),
             },
           }],
@@ -5756,12 +5690,12 @@ impl EditorView {
 
               // Paste from clipboard ('+' register)
               let mut cmd_cx = commands::Context {
-                register:             Some('+'),
-                count:                cx.editor.count,
-                editor:               cx.editor,
+                register: Some('+'),
+                count: cx.editor.count,
+                editor: cx.editor,
                 on_next_key_callback: None,
-                callback:             Vec::new(),
-                jobs:                 cx.jobs,
+                callback: Vec::new(),
+                jobs: cx.jobs,
               };
 
               commands::paste_after(&mut cmd_cx);
@@ -6170,11 +6104,11 @@ impl EditorView {
           && (mouse_x - gap_center_x).abs() < SEPARATOR_HOVER_THRESHOLD
         {
           return Some(SeparatorInfo {
-            view_id:    view.id,
-            vertical:   true,
-            position:   gap_center_x,
-            view_x:     area.x,
-            view_y:     area.y,
+            view_id: view.id,
+            vertical: true,
+            position: gap_center_x,
+            view_x: area.x,
+            view_y: area.y,
             view_width: area.width,
           });
         }
@@ -6196,11 +6130,11 @@ impl EditorView {
           && (mouse_y - sep_center_y).abs() < SEPARATOR_HOVER_THRESHOLD
         {
           return Some(SeparatorInfo {
-            view_id:    view.id,
-            vertical:   false,
-            position:   sep_center_y,
-            view_x:     area.x,
-            view_y:     area.y,
+            view_id: view.id,
+            vertical: false,
+            position: sep_center_y,
+            view_x: area.x,
+            view_y: area.y,
             view_width: area.width,
           });
         }

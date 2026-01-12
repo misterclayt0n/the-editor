@@ -2,51 +2,25 @@ use std::{
   borrow::Cow,
   collections::HashMap,
   io::Read,
-  path::{
-    Path,
-    PathBuf,
-  },
+  path::{Path, PathBuf},
   sync::{
-    Arc,
-    Mutex,
-    atomic::{
-      AtomicUsize,
-      Ordering,
-    },
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
   },
 };
 
-use arc_swap::{
-  ArcSwap,
-  access::DynAccess,
-};
-use nucleo::{
-  Config,
-  Nucleo,
-};
-use ropey::{
-  Rope,
-  RopeSlice,
-};
+use arc_swap::{ArcSwap, access::DynAccess};
+use nucleo::{Config, Nucleo};
+use ropey::{Rope, RopeSlice};
 use the_editor_event::request_redraw;
-use the_editor_renderer::{
-  Color,
-  Key,
-  TextSection,
-  TextSegment,
-  TextStyle,
-};
+use the_editor_renderer::{Color, Key, TextSection, TextSegment, TextStyle};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::button::Button;
 use crate::{
   core::{
     document::Document,
-    syntax::{
-      self,
-      HighlightCache,
-      config::LanguageConfiguration,
-    },
+    syntax::{self, HighlightCache, config::LanguageConfiguration},
   },
   editor::EditorConfig as AppEditorConfig,
 };
@@ -85,8 +59,8 @@ pub struct TerminalPreview {
   /// Rendered cells from the terminal
   pub cells: Vec<the_terminal::RenderCell>,
   /// Terminal dimensions (cols, rows)
-  pub cols:  u16,
-  pub rows:  u16,
+  pub cols: u16,
+  pub rows: u16,
   /// Terminal title for display
   pub title: String,
 }
@@ -94,7 +68,7 @@ pub struct TerminalPreview {
 /// A single animation frame
 pub struct AnimationFrame {
   /// RGBA pixel data
-  pub pixels:   Vec<u8>,
+  pub pixels: Vec<u8>,
   /// Delay before next frame in milliseconds
   pub delay_ms: u32,
 }
@@ -104,7 +78,7 @@ pub struct ImagePreview {
   /// Animation frames (at least one for static images)
   pub frames: Vec<AnimationFrame>,
   /// Image width
-  pub width:  u32,
+  pub width: u32,
   /// Image height
   pub height: u32,
 }
@@ -129,16 +103,16 @@ impl ImagePreview {
 }
 
 pub(crate) struct PreviewDocument {
-  text:       Rope,
+  text: Rope,
   highlights: HighlightCache,
 }
 
 /// Preview data prepared for rendering (to avoid borrow issues)
 enum PreviewData {
   Document {
-    lines:       Vec<String>,
+    lines: Vec<String>,
     /// Syntax highlights: (highlight, byte_range)
-    highlights:  Vec<(crate::core::syntax::Highlight, std::ops::Range<usize>)>,
+    highlights: Vec<(crate::core::syntax::Highlight, std::ops::Range<usize>)>,
     /// Offset of the first line in the document (for scrolled views)
     line_offset: usize,
     /// Byte offset of the first line in the document
@@ -149,11 +123,11 @@ enum PreviewData {
   },
   Image {
     /// Current frame's pixel data
-    pixels:      Vec<u8>,
+    pixels: Vec<u8>,
     /// Image width
-    width:       u32,
+    width: u32,
     /// Image height
-    height:      u32,
+    height: u32,
     /// Whether this is an animated image
     is_animated: bool,
   },
@@ -161,8 +135,8 @@ enum PreviewData {
     /// Rendered cells
     cells: Vec<the_terminal::RenderCell>,
     /// Terminal dimensions
-    cols:  u16,
-    rows:  u16,
+    cols: u16,
+    rows: u16,
     /// Terminal title
     title: String,
   },
@@ -171,7 +145,7 @@ enum PreviewData {
 
 enum PreviewJobKind {
   DocumentSnapshot {
-    text:     Rope,
+    text: Rope,
     language: Option<Arc<LanguageConfiguration>>,
   },
   Filesystem,
@@ -179,21 +153,12 @@ enum PreviewJobKind {
 
 use crate::{
   core::{
-    graphics::{
-      CursorKind,
-      Rect,
-    },
+    graphics::{CursorKind, Rect},
     position::Position,
   },
   ui::{
-    UI_FONT_SIZE,
-    UI_FONT_WIDTH,
-    compositor::{
-      Component,
-      Context,
-      Event,
-      EventResult,
-    },
+    UI_FONT_SIZE, UI_FONT_WIDTH,
+    compositor::{Component, Context, Event, EventResult},
   },
 };
 
@@ -202,12 +167,12 @@ pub type ColumnFormatFn<T, D> = for<'a> fn(&'a T, &'a D) -> String;
 
 /// A column in the picker table
 pub struct Column<T, D> {
-  pub name:           Arc<str>,
-  pub format:         ColumnFormatFn<T, D>,
+  pub name: Arc<str>,
+  pub format: ColumnFormatFn<T, D>,
   /// Whether this column should be used for nucleo matching/filtering
-  pub filter:         bool,
+  pub filter: bool,
   /// Whether this column is hidden (data-only, not displayed)
-  pub hidden:         bool,
+  pub hidden: bool,
   /// Whether to truncate from the start (true) or end (false) when text is too
   /// long Useful for file paths where you want to see the filename at the end
   pub truncate_start: bool,
@@ -228,10 +193,10 @@ impl<T, D> Column<T, D> {
   /// Create a hidden column (not displayed, data-only)
   pub fn hidden(name: impl Into<Arc<str>>) -> Self {
     Self {
-      name:           name.into(),
-      format:         |_, _| unreachable!("hidden column should never be formatted"),
-      filter:         false,
-      hidden:         true,
+      name: name.into(),
+      format: |_, _| unreachable!("hidden column should never be formatted"),
+      filter: false,
+      hidden: true,
       truncate_start: false,
     }
   }
@@ -306,7 +271,7 @@ impl ParsedQuery {
         // Column-specific filter: "name:foo"
         if !column_name.is_empty() && !pattern.is_empty() {
           filters.push(QueryFilter::Column {
-            name:    column_name.to_string(),
+            name: column_name.to_string(),
             pattern: pattern.to_string(),
           });
         }
@@ -379,10 +344,10 @@ fn inject_nucleo_item<T, D>(
 /// Injector for adding items to the picker asynchronously
 #[derive(Clone)]
 pub struct Injector<T, D> {
-  dst:            nucleo::Injector<T>,
-  columns:        Arc<[Column<T, D>]>,
-  editor_data:    Arc<D>,
-  version:        usize,
+  dst: nucleo::Injector<T>,
+  columns: Arc<[Column<T, D>]>,
+  editor_data: Arc<D>,
+  version: usize,
   picker_version: Arc<AtomicUsize>,
 }
 
@@ -400,116 +365,116 @@ impl<T, D> Injector<T, D> {
 /// Generic picker component for fuzzy finding
 pub struct Picker<T: 'static + Send + Sync, D: 'static> {
   /// Nucleo matcher for fuzzy finding
-  matcher:               Nucleo<T>,
+  matcher: Nucleo<T>,
   /// Columns for the picker table
-  columns:               Arc<[Column<T, D>]>,
+  columns: Arc<[Column<T, D>]>,
   /// Primary column index (default for filtering)
-  primary_column:        usize,
+  primary_column: usize,
   /// Editor data passed to column formatters
-  editor_data:           Arc<D>,
+  editor_data: Arc<D>,
   /// Current cursor position in results
-  cursor:                u32,
+  cursor: u32,
   /// Search query
-  query:                 String,
+  query: String,
   /// Cursor position in query
-  query_cursor:          usize,
+  query_cursor: usize,
   /// Version counter for invalidating background tasks
-  version:               Arc<AtomicUsize>,
+  version: Arc<AtomicUsize>,
   /// Callback when item is selected (deprecated, use action_handler instead)
-  on_select:             Box<dyn Fn(&T) + Send>,
+  on_select: Box<dyn Fn(&T) + Send>,
   /// Action handler for picker actions (open, split, etc.)
-  action_handler:        Option<ActionHandler<T, D>>,
+  action_handler: Option<ActionHandler<T, D>>,
   /// Callback when picker is closed
-  on_close:              Option<Box<dyn FnOnce() + Send>>,
+  on_close: Option<Box<dyn FnOnce() + Send>>,
   /// Callback when item is hovered (receives Some(&T) on hover, None on
   /// unhover)
-  on_hover:              Option<Arc<dyn Fn(Option<&T>) + Send + Sync>>,
+  on_hover: Option<Arc<dyn Fn(Option<&T>) + Send + Sync>>,
   /// Last hovered item index (for detecting hover changes)
-  last_hovered:          Option<u32>,
+  last_hovered: Option<u32>,
   /// Whether picker is visible
-  visible:               bool,
+  visible: bool,
   /// Number of visible rows
-  completion_height:     u16,
+  completion_height: u16,
   /// Entrance animation
-  entrance_anim:         crate::core::animation::AnimationHandle<f32>,
+  entrance_anim: crate::core::animation::AnimationHandle<f32>,
   /// Preview panel fade animation
-  preview_anim:          Option<crate::core::animation::AnimationHandle<f32>>,
+  preview_anim: Option<crate::core::animation::AnimationHandle<f32>>,
   /// Hovered item index (for hover effects)
-  hovered_item:          Option<u32>,
+  hovered_item: Option<u32>,
   /// Mouse position for hover effects
-  hover_pos:             Option<(f32, f32)>,
+  hover_pos: Option<(f32, f32)>,
   /// Cached layout info for mouse hit testing
-  cached_layout:         Option<PickerLayout>,
+  cached_layout: Option<PickerLayout>,
   /// Previous cursor position for smooth animation
-  prev_cursor:           u32,
+  prev_cursor: u32,
   /// Selection animation
-  selection_anim:        crate::core::animation::AnimationHandle<f32>,
+  selection_anim: crate::core::animation::AnimationHandle<f32>,
   /// Input cursor animation
-  query_cursor_anim:     Option<crate::core::animation::AnimationHandle<f32>>,
+  query_cursor_anim: Option<crate::core::animation::AnimationHandle<f32>>,
   /// Scroll offset for independent scrolling (VSCode-style)
-  scroll_offset:         u32,
+  scroll_offset: u32,
   /// Whether nucleo is still processing matches
-  matcher_running:       bool,
+  matcher_running: bool,
   /// Height animation for smooth size transitions
-  height_anim:           Option<crate::core::animation::AnimationHandle<f32>>,
+  height_anim: Option<crate::core::animation::AnimationHandle<f32>>,
   /// Preview callback to get file path from item, optionally with line range
   /// Returns (PathBuf, Option<(start_line, end_line)>) where lines are
   /// 0-indexed
   preview_fn: Option<Arc<dyn Fn(&T) -> Option<(PathBuf, Option<(usize, usize)>)> + Send + Sync>>,
   /// Custom preview handler for loading previews
-  preview_handler:       Option<PreviewHandler>,
+  preview_handler: Option<PreviewHandler>,
   /// Cache of loaded previews
-  preview_cache:         HashMap<PathBuf, CachedPreview>,
+  preview_cache: HashMap<PathBuf, CachedPreview>,
   /// Pending updates produced by asynchronous preview loading
-  preview_updates:       Arc<Mutex<Vec<(PathBuf, CachedPreview)>>>,
+  preview_updates: Arc<Mutex<Vec<(PathBuf, CachedPreview)>>>,
   /// Dynamic query callback for async item fetching
-  dyn_query_callback:    Option<DynQueryCallback<T, D>>,
+  dyn_query_callback: Option<DynQueryCallback<T, D>>,
   /// Debounce timer for dynamic queries (milliseconds)
   dyn_query_debounce_ms: u64,
   /// Time when query was last changed (for debouncing)
-  last_query_change:     Option<std::time::Instant>,
+  last_query_change: Option<std::time::Instant>,
   /// Last query that was sent to dynamic callback
-  last_dyn_query:        String,
+  last_dyn_query: String,
   /// Register to store picker history (selected items)
-  history_register:      Option<char>,
+  history_register: Option<char>,
   /// Format function to convert items to strings for history register
-  history_format:        Option<Arc<dyn Fn(&T, &D) -> String + Send + Sync>>,
+  history_format: Option<Arc<dyn Fn(&T, &D) -> String + Send + Sync>>,
   /// Pending items to add to history (flushed during render)
-  pending_history:       Vec<String>,
+  pending_history: Vec<String>,
   /// Whether preview animation has been initialized
-  preview_initialized:   bool,
+  preview_initialized: bool,
   /// GIF animation state (current frame index, elapsed time)
-  gif_anim_state:        Option<GifAnimationState>,
+  gif_anim_state: Option<GifAnimationState>,
   /// Whether preview panel is disabled (won't show even if there's room)
-  preview_disabled:      bool,
+  preview_disabled: bool,
   /// Whether to show column headers
-  show_headers:          bool,
+  show_headers: bool,
 }
 
 /// State for GIF animation playback
 struct GifAnimationState {
   /// Path of the currently animating GIF
-  path:          PathBuf,
+  path: PathBuf,
   /// Current frame index
   current_frame: usize,
   /// Time elapsed on current frame in seconds
   frame_elapsed: f32,
   /// Total number of frames
-  total_frames:  usize,
+  total_frames: usize,
   /// Delay for each frame in seconds (cached for quick lookup)
-  frame_delays:  Vec<f32>,
+  frame_delays: Vec<f32>,
 }
 
 #[derive(Clone)]
 struct PickerLayout {
-  x:             f32,
-  y:             f32,
-  picker_width:  f32,
-  height:        f32,
-  results_y:     f32,
-  item_height:   f32,
-  item_gap:      f32,
-  offset:        u32,
+  x: f32,
+  y: f32,
+  picker_width: f32,
+  height: f32,
+  results_y: f32,
+  item_height: f32,
+  item_gap: f32,
+  offset: u32,
   visible_count: u32,
 }
 
@@ -602,10 +567,10 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
   /// Get an injector for adding items asynchronously
   pub fn injector(&self) -> Injector<T, D> {
     Injector {
-      dst:            self.matcher.injector(),
-      columns:        self.columns.clone(),
-      editor_data:    self.editor_data.clone(),
-      version:        self.version.load(Ordering::Relaxed),
+      dst: self.matcher.injector(),
+      columns: self.columns.clone(),
+      editor_data: self.editor_data.clone(),
+      version: self.version.load(Ordering::Relaxed),
       picker_version: self.version.clone(),
     }
   }
@@ -937,10 +902,7 @@ impl<T: 'static + Send + Sync, D: 'static> Picker<T, D> {
 
   /// Update the search query
   fn update_query(&mut self) {
-    use nucleo::pattern::{
-      CaseMatching,
-      Normalization,
-    };
+    use nucleo::pattern::{CaseMatching, Normalization};
 
     // Parse the query into filters
     let parsed = ParsedQuery::parse(&self.query);
@@ -1708,10 +1670,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 byte_offset: start_byte,
               }
             },
-            CachedPreview::Directory(entries) => {
-              PreviewData::Directory {
-                entries: entries.clone(),
-              }
+            CachedPreview::Directory(entries) => PreviewData::Directory {
+              entries: entries.clone(),
             },
             CachedPreview::Image(img) => {
               // Determine which frame to show
@@ -1761,13 +1721,11 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 is_animated,
               }
             },
-            CachedPreview::Terminal(term) => {
-              PreviewData::Terminal {
-                cells: term.cells.clone(),
-                cols:  term.cols,
-                rows:  term.rows,
-                title: term.title.clone(),
-              }
+            CachedPreview::Terminal(term) => PreviewData::Terminal {
+              cells: term.cells.clone(),
+              cols: term.cols,
+              rows: term.rows,
+              title: term.title.clone(),
             },
             CachedPreview::Binary => PreviewData::Placeholder(Cow::Borrowed("<Binary file>")),
             CachedPreview::LargeFile => {
@@ -2200,11 +2158,11 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
       // Draw match count (count_text and count_width already calculated above)
       surface.draw_text(TextSection {
         position: (x + picker_width_scaled - count_width - 16.0, y + 8.0),
-        texts:    vec![TextSegment {
+        texts: vec![TextSegment {
           content: count_text,
-          style:   TextStyle {
+          style: TextStyle {
             color: count_color_anim,
-            size:  UI_FONT_SIZE,
+            size: UI_FONT_SIZE,
           },
         }],
       });
@@ -2273,10 +2231,10 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
           let header_color = Color::new(text_color.r, text_color.g, text_color.b, 0.7 * alpha);
           surface.draw_text(TextSection {
             position: (col_x, header_y + 4.0),
-            texts:    vec![TextSegment {
+            texts: vec![TextSegment {
               content: column.name.to_string(),
-              style:   TextStyle {
-                size:  UI_FONT_SIZE * scale,
+              style: TextStyle {
+                size: UI_FONT_SIZE * scale,
                 color: header_color,
               },
             }],
@@ -2493,10 +2451,10 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
             if !truncated.is_empty() {
               surface.draw_text(TextSection {
                 position: (col_x, text_y),
-                texts:    vec![TextSegment {
+                texts: vec![TextSegment {
                   content: truncated,
-                  style:   TextStyle {
-                    size:  UI_FONT_SIZE * scale,
+                  style: TextStyle {
+                    size: UI_FONT_SIZE * scale,
                     color: item_color,
                   },
                 }],
@@ -2674,8 +2632,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                         // Add ellipsis and stop
                         segments.push(TextSegment {
                           content: "...".to_string(),
-                          style:   TextStyle {
-                            size:  UI_FONT_SIZE,
+                          style: TextStyle {
+                            size: UI_FONT_SIZE,
                             color: text_color_preview,
                           },
                         });
@@ -2715,8 +2673,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                           // Start new segment
                           segments.push(TextSegment {
                             content: ch.to_string(),
-                            style:   TextStyle {
-                              size:  UI_FONT_SIZE,
+                            style: TextStyle {
+                              size: UI_FONT_SIZE,
                               color: active_color,
                             },
                           });
@@ -2725,8 +2683,8 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                         // First segment
                         segments.push(TextSegment {
                           content: ch.to_string(),
-                          style:   TextStyle {
-                            size:  UI_FONT_SIZE,
+                          style: TextStyle {
+                            size: UI_FONT_SIZE,
                             color: active_color,
                           },
                         });
@@ -2740,7 +2698,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                     if !segments.is_empty() {
                       surface.draw_text(TextSection {
                         position: (content_x, text_y),
-                        texts:    segments,
+                        texts: segments,
                       });
                     }
 
@@ -2800,10 +2758,10 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
                     surface.draw_text(TextSection {
                       position: (content_x, text_y),
-                      texts:    vec![TextSegment {
+                      texts: vec![TextSegment {
                         content: display_text,
-                        style:   TextStyle {
-                          size:  UI_FONT_SIZE,
+                        style: TextStyle {
+                          size: UI_FONT_SIZE,
                           color: entry_color,
                         },
                       }],
@@ -2818,10 +2776,10 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
                     surface.draw_text(TextSection {
                       position: (content_x, text_y),
-                      texts:    vec![TextSegment {
+                      texts: vec![TextSegment {
                         content: more_text,
-                        style:   TextStyle {
-                          size:  UI_FONT_SIZE,
+                        style: TextStyle {
+                          size: UI_FONT_SIZE,
                           color: text_color_preview,
                         },
                       }],
@@ -2937,10 +2895,10 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                     );
                     surface.draw_text(TextSection {
                       position: (cx, cy + UI_FONT_SIZE),
-                      texts:    vec![TextSegment {
+                      texts: vec![TextSegment {
                         content: cell.c.to_string(),
-                        style:   TextStyle {
-                          size:  UI_FONT_SIZE,
+                        style: TextStyle {
+                          size: UI_FONT_SIZE,
                           color: fg,
                         },
                       }],
@@ -2957,10 +2915,10 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
               surface.draw_text(TextSection {
                 position: (text_x, text_y),
-                texts:    vec![TextSegment {
+                texts: vec![TextSegment {
                   content: placeholder.to_string(),
-                  style:   TextStyle {
-                    size:  UI_FONT_SIZE,
+                  style: TextStyle {
+                    size: UI_FONT_SIZE,
                     color: text_color_preview,
                   },
                 }],
@@ -2976,10 +2934,10 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
 
           surface.draw_text(TextSection {
             position: (text_x, text_y),
-            texts:    vec![TextSegment {
+            texts: vec![TextSegment {
               content: placeholder.to_string(),
-              style:   TextStyle {
-                size:  UI_FONT_SIZE,
+              style: TextStyle {
+                size: UI_FONT_SIZE,
                 color: text_color_preview,
               },
             }],
@@ -3158,11 +3116,9 @@ fn load_filesystem_preview(
             let frames = decoded
               .frames
               .into_iter()
-              .map(|f| {
-                AnimationFrame {
-                  pixels:   f.pixels,
-                  delay_ms: f.delay_ms,
-                }
+              .map(|f| AnimationFrame {
+                pixels: f.pixels,
+                delay_ms: f.delay_ms,
               })
               .collect();
             return CachedPreview::Image(ImagePreview {
@@ -3239,7 +3195,7 @@ mod tests {
 
   #[derive(Debug, Clone, PartialEq)]
   struct TestItem {
-    name:  String,
+    name: String,
     value: u32,
   }
 
@@ -3282,7 +3238,7 @@ mod tests {
     });
 
     let item = TestItem {
-      name:  "test".to_string(),
+      name: "test".to_string(),
       value: 42,
     };
     let data = TestData {
@@ -3301,11 +3257,11 @@ mod tests {
 
     let items = vec![
       TestItem {
-        name:  "foo".to_string(),
+        name: "foo".to_string(),
         value: 1,
       },
       TestItem {
-        name:  "bar".to_string(),
+        name: "bar".to_string(),
         value: 2,
       },
     ];
@@ -3329,7 +3285,7 @@ mod tests {
     ];
 
     let items = vec![TestItem {
-      name:  "test".to_string(),
+      name: "test".to_string(),
       value: 42,
     }];
 
@@ -3350,7 +3306,7 @@ mod tests {
     ];
 
     let items = vec![TestItem {
-      name:  "test".to_string(),
+      name: "test".to_string(),
       value: 42,
     }];
 
@@ -3371,7 +3327,7 @@ mod tests {
     ];
 
     let items = vec![TestItem {
-      name:  "test".to_string(),
+      name: "test".to_string(),
       value: 42,
     }];
 
@@ -3405,7 +3361,7 @@ mod tests {
     let injector = picker.injector();
 
     let item = TestItem {
-      name:  "injected".to_string(),
+      name: "injected".to_string(),
       value: 100,
     };
 
@@ -3425,7 +3381,7 @@ mod tests {
     picker.close();
 
     let item = TestItem {
-      name:  "injected".to_string(),
+      name: "injected".to_string(),
       value: 100,
     };
 
@@ -3441,11 +3397,11 @@ mod tests {
 
     let items = vec![
       TestItem {
-        name:  "foo".to_string(),
+        name: "foo".to_string(),
         value: 1,
       },
       TestItem {
-        name:  "bar".to_string(),
+        name: "bar".to_string(),
         value: 2,
       },
     ];
@@ -3469,11 +3425,11 @@ mod tests {
 
     let items = vec![
       TestItem {
-        name:  "foo".to_string(),
+        name: "foo".to_string(),
         value: 1,
       },
       TestItem {
-        name:  "bar".to_string(),
+        name: "bar".to_string(),
         value: 2,
       },
     ];
@@ -3498,11 +3454,11 @@ mod tests {
 
     let items = vec![
       TestItem {
-        name:  "foo".to_string(),
+        name: "foo".to_string(),
         value: 1,
       },
       TestItem {
-        name:  "bar".to_string(),
+        name: "bar".to_string(),
         value: 2,
       },
     ];
@@ -3521,17 +3477,14 @@ mod tests {
 
   #[test]
   fn test_action_handler_primary() {
-    use std::sync::{
-      Arc,
-      Mutex,
-    };
+    use std::sync::{Arc, Mutex};
 
     let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
       item.name.clone()
     })];
 
     let items = vec![TestItem {
-      name:  "foo".to_string(),
+      name: "foo".to_string(),
       value: 1,
     }];
 
@@ -3560,17 +3513,14 @@ mod tests {
 
   #[test]
   fn test_action_handler_secondary() {
-    use std::sync::{
-      Arc,
-      Mutex,
-    };
+    use std::sync::{Arc, Mutex};
 
     let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
       item.name.clone()
     })];
 
     let items = vec![TestItem {
-      name:  "bar".to_string(),
+      name: "bar".to_string(),
       value: 2,
     }];
 
@@ -3599,17 +3549,14 @@ mod tests {
 
   #[test]
   fn test_action_handler_tertiary() {
-    use std::sync::{
-      Arc,
-      Mutex,
-    };
+    use std::sync::{Arc, Mutex};
 
     let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
       item.name.clone()
     })];
 
     let items = vec![TestItem {
-      name:  "baz".to_string(),
+      name: "baz".to_string(),
       value: 3,
     }];
 
@@ -3638,17 +3585,14 @@ mod tests {
 
   #[test]
   fn test_fallback_to_on_select() {
-    use std::sync::{
-      Arc,
-      Mutex,
-    };
+    use std::sync::{Arc, Mutex};
 
     let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
       item.name.clone()
     })];
 
     let items = vec![TestItem {
-      name:  "fallback".to_string(),
+      name: "fallback".to_string(),
       value: 99,
     }];
 
@@ -3671,10 +3615,7 @@ mod tests {
 
   #[test]
   fn test_action_handler_with_editor_data() {
-    use std::sync::{
-      Arc,
-      Mutex,
-    };
+    use std::sync::{Arc, Mutex};
 
     struct CustomData {
       prefix: String,
@@ -3685,7 +3626,7 @@ mod tests {
     })];
 
     let items = vec![TestItem {
-      name:  "test".to_string(),
+      name: "test".to_string(),
       value: 42,
     }];
 
@@ -3747,28 +3688,37 @@ mod tests {
   fn test_query_parser_column_specific() {
     let parsed = ParsedQuery::parse("name:foo");
     assert_eq!(parsed.filters.len(), 1);
-    assert_eq!(parsed.filters[0], QueryFilter::Column {
-      name:    "name".to_string(),
-      pattern: "foo".to_string(),
-    });
+    assert_eq!(
+      parsed.filters[0],
+      QueryFilter::Column {
+        name: "name".to_string(),
+        pattern: "foo".to_string(),
+      }
+    );
   }
 
   #[test]
   fn test_query_parser_multiple_filters() {
     let parsed = ParsedQuery::parse("name:foo bar type:baz");
     assert_eq!(parsed.filters.len(), 3);
-    assert_eq!(parsed.filters[0], QueryFilter::Column {
-      name:    "name".to_string(),
-      pattern: "foo".to_string(),
-    });
+    assert_eq!(
+      parsed.filters[0],
+      QueryFilter::Column {
+        name: "name".to_string(),
+        pattern: "foo".to_string(),
+      }
+    );
     assert_eq!(
       parsed.filters[1],
       QueryFilter::AllColumns("bar".to_string())
     );
-    assert_eq!(parsed.filters[2], QueryFilter::Column {
-      name:    "type".to_string(),
-      pattern: "baz".to_string(),
-    });
+    assert_eq!(
+      parsed.filters[2],
+      QueryFilter::Column {
+        name: "type".to_string(),
+        pattern: "baz".to_string(),
+      }
+    );
   }
 
   #[test]
@@ -3816,10 +3766,13 @@ mod tests {
     // Only first colon is used as separator
     let parsed = ParsedQuery::parse("url:http://example.com");
     assert_eq!(parsed.filters.len(), 1);
-    assert_eq!(parsed.filters[0], QueryFilter::Column {
-      name:    "url".to_string(),
-      pattern: "http://example.com".to_string(),
-    });
+    assert_eq!(
+      parsed.filters[0],
+      QueryFilter::Column {
+        name: "url".to_string(),
+        pattern: "http://example.com".to_string(),
+      }
+    );
   }
 
   #[test]
@@ -3830,15 +3783,15 @@ mod tests {
 
     let items = vec![
       TestItem {
-        name:  "foo".to_string(),
+        name: "foo".to_string(),
         value: 1,
       },
       TestItem {
-        name:  "bar".to_string(),
+        name: "bar".to_string(),
         value: 2,
       },
       TestItem {
-        name:  "foobar".to_string(),
+        name: "foobar".to_string(),
         value: 3,
       },
     ];
@@ -3871,11 +3824,11 @@ mod tests {
 
     let items = vec![
       TestItem {
-        name:  "foo".to_string(),
+        name: "foo".to_string(),
         value: 1,
       },
       TestItem {
-        name:  "bar".to_string(),
+        name: "bar".to_string(),
         value: 2,
       },
     ];
@@ -3902,11 +3855,11 @@ mod tests {
 
     let items = vec![
       TestItem {
-        name:  "alpha".to_string(),
+        name: "alpha".to_string(),
         value: 1,
       },
       TestItem {
-        name:  "beta".to_string(),
+        name: "beta".to_string(),
         value: 2,
       },
     ];
@@ -3926,10 +3879,7 @@ mod tests {
 
   #[test]
   fn test_dynamic_query_callback_called_after_debounce() {
-    use std::sync::{
-      Arc,
-      Mutex,
-    };
+    use std::sync::{Arc, Mutex};
 
     let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
       item.name.clone()
@@ -3966,10 +3916,7 @@ mod tests {
 
   #[test]
   fn test_dynamic_query_callback_not_called_for_same_query() {
-    use std::sync::{
-      Arc,
-      Mutex,
-    };
+    use std::sync::{Arc, Mutex};
 
     let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
       item.name.clone()
@@ -4036,10 +3983,7 @@ mod tests {
 
   #[test]
   fn test_dynamic_query_injector_works() {
-    use std::sync::{
-      Arc,
-      Mutex,
-    };
+    use std::sync::{Arc, Mutex};
 
     let columns = vec![Column::new("Name", |item: &TestItem, _data: &()| {
       item.name.clone()
@@ -4052,11 +3996,11 @@ mod tests {
       // Simulate async query results
       let items = vec![
         TestItem {
-          name:  format!("result_{}", query),
+          name: format!("result_{}", query),
           value: 1,
         },
         TestItem {
-          name:  format!("another_{}", query),
+          name: format!("another_{}", query),
           value: 2,
         },
       ];

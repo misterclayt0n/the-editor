@@ -18,24 +18,11 @@ pub mod text_wrap;
 // AcpPermissionPopup are used internally by the editor
 pub(crate) use acp_overlay::AcpOverlay;
 pub(crate) use acp_permission::AcpPermissionPopup;
-pub(crate) use code_action::{
-  CodeActionEntry,
-  CodeActionMenu,
-};
+pub(crate) use code_action::{CodeActionEntry, CodeActionMenu};
 pub(crate) use completion::Completion;
 pub(crate) use confirmation_popup::{
-  ConfirmationButton,
-  ConfirmationConfig,
-  ConfirmationPopup,
-  ConfirmationResult,
+  ConfirmationButton, ConfirmationConfig, ConfirmationPopup, ConfirmationResult,
 };
-pub use picker::{
-  CachedPreview,
-  Column,
-  Picker,
-  PickerAction,
-  PreviewHandler,
-  TerminalPreview,
-};
+pub use picker::{CachedPreview, Column, Picker, PickerAction, PreviewHandler, TerminalPreview};
 pub use prompt::Prompt;
 pub(crate) use signature_help::SignatureHelp;

@@ -1,24 +1,12 @@
 use std::collections::HashMap;
 
-use the_editor_renderer::{
-  Color,
-  TextSection,
-};
+use the_editor_renderer::{Color, TextSection};
 use the_terminal::TerminalId;
 
 use crate::{
-  core::{
-    DocumentId,
-    document::Document,
-    graphics::Rect,
-  },
+  core::{DocumentId, document::Document, graphics::Rect},
   editor::Editor,
-  ui::{
-    UI_FONT_SIZE,
-    compositor::Surface,
-    file_icons,
-    theme_color_to_renderer_color,
-  },
+  ui::{UI_FONT_SIZE, compositor::Surface, file_icons, theme_color_to_renderer_color},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -30,53 +18,53 @@ pub enum BufferKind {
 /// Hit testing regions for a single tab
 #[derive(Debug, Clone, Copy)]
 pub struct BufferTab {
-  pub kind:          BufferKind,
-  pub start_x:       f32,
-  pub end_x:         f32,
+  pub kind: BufferKind,
+  pub start_x: f32,
+  pub end_x: f32,
   /// Close button hit region (only valid when tab is hovered)
   pub close_start_x: f32,
-  pub close_end_x:   f32,
+  pub close_end_x: f32,
 }
 
 /// Per-tab animation state using exponential decay
 #[derive(Debug, Clone, Copy)]
 pub struct TabAnimationState {
   /// Hover state (0.0 = not hovered, 1.0 = fully hovered)
-  pub hover_t:         f32,
+  pub hover_t: f32,
   /// Close button hover state
-  pub close_hover_t:   f32,
+  pub close_hover_t: f32,
   /// Press/click state for the tab
-  pub pressed_t:       f32,
+  pub pressed_t: f32,
   /// Press/click state for the close button
   pub close_pressed_t: f32,
   /// Active/selected tab state
-  pub active_t:        f32,
+  pub active_t: f32,
   /// Alive state for close animation (1.0 = visible, 0.0 = closed)
-  pub alive_t:         f32,
+  pub alive_t: f32,
   /// Flag indicating this tab is closing (triggers animation even at
   /// alive_t=1.0)
-  pub is_closing:      bool,
+  pub is_closing: bool,
   /// Cached tab width for close animation (so we know width during fade-out)
-  pub cached_width:    f32,
+  pub cached_width: f32,
   /// Cached tab position (start_x) for close animation
-  pub cached_start_x:  f32,
+  pub cached_start_x: f32,
   /// Tab index when last alive (for ordering closing tabs)
-  pub cached_index:    usize,
+  pub cached_index: usize,
 }
 
 impl Default for TabAnimationState {
   fn default() -> Self {
     Self {
-      hover_t:         0.0,
-      close_hover_t:   0.0,
-      pressed_t:       0.0,
+      hover_t: 0.0,
+      close_hover_t: 0.0,
+      pressed_t: 0.0,
       close_pressed_t: 0.0,
-      active_t:        0.0,
-      alive_t:         0.0, // Start at 0 so new tabs animate in
-      is_closing:      false,
-      cached_width:    0.0,
-      cached_start_x:  0.0,
-      cached_index:    0,
+      active_t: 0.0,
+      alive_t: 0.0, // Start at 0 so new tabs animate in
+      is_closing: false,
+      cached_width: 0.0,
+      cached_start_x: 0.0,
+      cached_index: 0,
     }
   }
 }
@@ -150,7 +138,7 @@ impl TabAnimationState {
 /// State for the add (+) button
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AddButtonState {
-  pub hover_t:   f32,
+  pub hover_t: f32,
   pub pressed_t: f32,
 }
 
@@ -213,11 +201,11 @@ fn format_terminal_title(working_dir: Option<&std::path::Path>) -> String {
 
 /// Render result containing height, scroll info, and add button bounds
 pub struct RenderResult {
-  pub height:              f32,
-  pub add_button_rect:     Option<Rect>,
+  pub height: f32,
+  pub add_button_rect: Option<Rect>,
   pub total_content_width: f32,
-  pub max_scroll:          f32,
-  pub active_tab_index:    Option<usize>,
+  pub max_scroll: f32,
+  pub active_tab_index: Option<usize>,
 }
 
 /// Render the bufferline with RAD-style tabs and horizontal scrolling
@@ -371,9 +359,9 @@ pub fn render(
 
   // Collect tab items: documents first, then visible terminals
   struct TabItem {
-    kind:        BufferKind,
-    title:       String,
-    icon:        file_icons::FileIcon,
+    kind: BufferKind,
+    title: String,
+    icon: file_icons::FileIcon,
     is_modified: bool,
   }
 
@@ -447,8 +435,9 @@ pub fn render(
   let scroll_offset = scroll_offset.clamp(0.0, max_scroll);
 
   // Find active tab index based on focused content
-  let active_tab_index = tab_items.iter().position(|item| {
-    match (item.kind, focused_content) {
+  let active_tab_index = tab_items
+    .iter()
+    .position(|item| match (item.kind, focused_content) {
       (
         BufferKind::Document(doc_id),
         Some(crate::core::view::ViewContent::Document(focused_id)),
@@ -458,8 +447,7 @@ pub fn render(
         Some(crate::core::view::ViewContent::Terminal(focused_id)),
       ) => term_id == focused_id,
       _ => false,
-    }
-  });
+    });
 
   // Start cursor at left margin minus scroll offset
   let mut cursor_x = origin_x + left_margin - scroll_offset;
@@ -501,11 +489,11 @@ pub fn render(
 
     // Store tab bounds for hit testing (use animated width)
     tabs.push(BufferTab {
-      kind:          item.kind,
-      start_x:       tab_start,
-      end_x:         tab_end,
+      kind: item.kind,
+      start_x: tab_start,
+      end_x: tab_end,
       close_start_x: tab_end - close_btn_width * anim.alive_t,
-      close_end_x:   tab_end,
+      close_end_x: tab_end,
     });
 
     // Skip rendering if tab is too small or completely outside visible area
@@ -895,9 +883,9 @@ pub fn render(
     ));
 
     Some(Rect {
-      x:      add_btn_x as u16,
-      y:      add_btn_y as u16,
-      width:  add_btn_size as u16,
+      x: add_btn_x as u16,
+      y: add_btn_y as u16,
+      width: add_btn_size as u16,
       height: add_btn_size as u16,
     })
   } else {

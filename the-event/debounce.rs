@@ -1,11 +1,7 @@
 //! Utilities for declaring an async (usually debounced) hook
 
 use tokio::{
-  sync::mpsc::{
-    self,
-    Sender,
-    error::TrySendError,
-  },
+  sync::mpsc::{self, Sender, error::TrySendError},
   time::Instant,
 };
 

@@ -2,23 +2,11 @@ use the_editor_event::send_blocking;
 use tokio::sync::mpsc::Sender;
 
 use crate::{
-  core::{
-    DocumentId,
-    ViewId,
-  },
-  editor::{
-    Editor,
-    EditorConfig,
-  },
+  core::{DocumentId, ViewId},
+  editor::{Editor, EditorConfig},
   handlers::{
-    completion::{
-      CompletionEvent,
-      CompletionHandler,
-    },
-    lsp::{
-      SignatureHelpEvent,
-      SignatureHelpInvoked,
-    },
+    completion::{CompletionEvent, CompletionHandler},
+    lsp::{SignatureHelpEvent, SignatureHelpInvoked},
   },
 };
 
@@ -45,11 +33,11 @@ pub enum AutoSaveEvent {
 
 pub struct Handlers {
   // only public because most of the actual implementation is in helix-term right now :/
-  pub completions:     CompletionHandler,
+  pub completions: CompletionHandler,
   pub signature_hints: Sender<SignatureHelpEvent>,
-  pub auto_save:       Sender<AutoSaveEvent>,
+  pub auto_save: Sender<AutoSaveEvent>,
   pub document_colors: Sender<lsp::DocumentColorsEvent>,
-  pub word_index:      word_index::Handler,
+  pub word_index: word_index::Handler,
 }
 
 impl Handlers {

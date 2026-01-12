@@ -1,7 +1,4 @@
-use ropey::{
-  Rope,
-  RopeSlice,
-};
+use ropey::{Rope, RopeSlice};
 
 #[cfg(target_os = "windows")]
 pub const NATIVE_LINE_ENDING: LineEnding = LineEnding::Crlf;

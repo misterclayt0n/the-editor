@@ -1,69 +1,33 @@
-use std::{
-  cmp::Reverse,
-  sync::Arc,
-};
+use std::{cmp::Reverse, sync::Arc};
 
 use nucleo::{
-  Config,
-  Utf32Str,
-  pattern::{
-    Atom,
-    AtomKind,
-    CaseMatching,
-    Normalization,
-  },
+  Config, Utf32Str,
+  pattern::{Atom, AtomKind, CaseMatching, Normalization},
 };
 use the_editor_lsp_types::types as lsp;
-use the_editor_renderer::{
-  Color,
-  TextSection,
-  TextSegment,
-  TextStyle,
-};
+use the_editor_renderer::{Color, TextSection, TextSegment, TextStyle};
 
 use crate::{
   core::{
     ViewId,
     document::SavePoint,
-    graphics::{
-      CursorKind,
-      Rect,
-    },
+    graphics::{CursorKind, Rect},
     position::Position,
     transaction::Transaction,
   },
   editor::CompleteAction,
   handlers::{
-    completion::{
-      CompletionItem,
-      CompletionProvider,
-      LspCompletionItem,
-    },
+    completion::{CompletionItem, CompletionProvider, LspCompletionItem},
     completion_resolve::ResolveHandler,
   },
-  snippets::{
-    active::ActiveSnippet,
-    elaborate::Snippet,
-    render::RenderedSnippet,
-  },
+  snippets::{active::ActiveSnippet, elaborate::Snippet, render::RenderedSnippet},
   ui::{
     UI_FONT_SIZE,
     components::popup::{
-      DOC_POPUP_MAX_HEIGHT_LINES,
-      DOC_POPUP_MAX_WIDTH_CHARS,
-      DOC_POPUP_MIN_WIDTH_CHARS,
+      DOC_POPUP_MAX_HEIGHT_LINES, DOC_POPUP_MAX_WIDTH_CHARS, DOC_POPUP_MIN_WIDTH_CHARS,
     },
-    compositor::{
-      Component,
-      Context,
-      Event,
-      EventResult,
-      Surface,
-    },
-    popup_positioning::{
-      calculate_cursor_position,
-      position_popup_near_cursor,
-    },
+    compositor::{Component, Context, Event, EventResult, Surface},
+    popup_positioning::{calculate_cursor_position, position_popup_near_cursor},
   },
 };
 
@@ -76,8 +40,8 @@ const MAX_VISIBLE_ITEMS: usize = 15;
 const CURSOR_POPUP_MARGIN: f32 = 4.0;
 
 struct CompletionApplyPlan {
-  transaction:            Transaction,
-  snippet:                Option<RenderedSnippet>,
+  transaction: Transaction,
+  snippet: Option<RenderedSnippet>,
   trigger_signature_help: bool,
 }
 
@@ -109,40 +73,40 @@ fn truncate_to_width(text: &str, max_width: f32, char_width: f32) -> String {
 /// Cached bounds for hover detection
 #[derive(Clone, Copy)]
 struct CompletionBounds {
-  x:      f32,
-  y:      f32,
-  width:  f32,
+  x: f32,
+  y: f32,
+  width: f32,
   height: f32,
 }
 
 /// Completion popup component
 pub struct Completion {
   /// All completion items
-  items:           Vec<CompletionItem>,
+  items: Vec<CompletionItem>,
   /// Filtered item indices (sorted by score)
-  filtered:        Vec<(u32, u32)>, // (index, score)
+  filtered: Vec<(u32, u32)>, // (index, score)
   /// Currently selected item index (into filtered list)
-  cursor:          usize,
+  cursor: usize,
   /// Current filter string (text typed since trigger)
-  filter:          String,
+  filter: String,
   /// Trigger offset in document (where completion started)
-  trigger_offset:  usize,
+  trigger_offset: usize,
   /// Savepoint for preview functionality
-  savepoint:       Option<Arc<SavePoint>>,
+  savepoint: Option<Arc<SavePoint>>,
   /// Whether preview is enabled
   preview_enabled: bool,
   /// Whether to replace (vs insert) mode
-  replace_mode:    bool,
+  replace_mode: bool,
   /// Scroll offset for the list
-  scroll_offset:   usize,
+  scroll_offset: usize,
   /// Whether documentation has been resolved for current selection
-  doc_resolved:    bool,
+  doc_resolved: bool,
   /// Appearance animation
-  animation:       crate::core::animation::AnimationHandle<f32>,
+  animation: crate::core::animation::AnimationHandle<f32>,
   /// Handler for resolving incomplete completion items
   resolve_handler: ResolveHandler,
   /// Cached bounds for hover-to-scroll detection
-  cached_bounds:   Option<CompletionBounds>,
+  cached_bounds: Option<CompletionBounds>,
 }
 
 impl Completion {
@@ -406,11 +370,9 @@ impl Completion {
     let (detail, doc) = match item {
       CompletionItem::Lsp(lsp_item) => {
         let detail = lsp_item.item.detail.as_deref();
-        let doc = lsp_item.item.documentation.as_ref().and_then(|d| {
-          match d {
-            lsp::Documentation::String(s) => Some(s.as_str()),
-            lsp::Documentation::MarkupContent(content) => Some(content.value.as_str()),
-          }
+        let doc = lsp_item.item.documentation.as_ref().and_then(|d| match d {
+          lsp::Documentation::String(s) => Some(s.as_str()),
+          lsp::Documentation::MarkupContent(content) => Some(content.value.as_str()),
         });
         (detail, doc)
       },
@@ -861,8 +823,7 @@ impl Completion {
     offset_encoding: crate::lsp::OffsetEncoding,
   ) -> Option<CompletionApplyPlan> {
     use crate::lsp::util::{
-      generate_transaction_from_completion_edit,
-      generate_transaction_from_snippet,
+      generate_transaction_from_completion_edit, generate_transaction_from_snippet,
     };
 
     let selection = doc.selection(view_id).clone();
@@ -1199,9 +1160,9 @@ impl Component for Completion {
 
     // Cache bounds for hover detection in scroll events
     self.cached_bounds = Some(CompletionBounds {
-      x:      anim_x,
-      y:      anim_y,
-      width:  anim_width,
+      x: anim_x,
+      y: anim_y,
+      width: anim_width,
       height: anim_height,
     });
 
@@ -1238,20 +1199,16 @@ impl Component for Completion {
         let is_selected = self.scroll_offset + row == self.cursor;
 
         let (label, kind, deprecated) = match item {
-          CompletionItem::Lsp(lsp_item) => {
-            (
-              lsp_item.item.label.as_str(),
-              Self::format_kind(lsp_item.item.kind),
-              Self::is_deprecated(&lsp_item.item),
-            )
-          },
-          CompletionItem::Other(other) => {
-            (
-              other.label.as_str(),
-              other.kind.as_deref().unwrap_or(""),
-              false,
-            )
-          },
+          CompletionItem::Lsp(lsp_item) => (
+            lsp_item.item.label.as_str(),
+            Self::format_kind(lsp_item.item.kind),
+            Self::is_deprecated(&lsp_item.item),
+          ),
+          CompletionItem::Other(other) => (
+            other.label.as_str(),
+            other.kind.as_deref().unwrap_or(""),
+            false,
+          ),
         };
 
         let item_y = anim_y + item_padding + (row as f32 * line_height * scale);
@@ -1301,10 +1258,10 @@ impl Component for Completion {
         // Draw label
         surface.draw_text(TextSection {
           position: (anim_x + 8.0 * scale, item_y),
-          texts:    vec![TextSegment {
+          texts: vec![TextSegment {
             content: label_text,
-            style:   TextStyle {
-              size:  UI_FONT_SIZE * scale,
+            style: TextStyle {
+              size: UI_FONT_SIZE * scale,
               color: label_color,
             },
           }],
@@ -1313,10 +1270,10 @@ impl Component for Completion {
         // Draw kind at aligned column
         surface.draw_text(TextSection {
           position: (anim_x + 8.0 * scale + kind_column_offset * scale, item_y),
-          texts:    vec![TextSegment {
+          texts: vec![TextSegment {
             content: kind_text,
-            style:   TextStyle {
-              size:  UI_FONT_SIZE * scale,
+            style: TextStyle {
+              size: UI_FONT_SIZE * scale,
               color: kind_color,
             },
           }],

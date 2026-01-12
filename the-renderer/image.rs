@@ -28,7 +28,7 @@ pub struct DecodedImage {
   /// RGBA pixel data (4 bytes per pixel)
   pub pixels: Vec<u8>,
   /// Width in pixels
-  pub width:  u32,
+  pub width: u32,
   /// Height in pixels
   pub height: u32,
 }
@@ -49,7 +49,7 @@ impl DecodedImage {
 #[derive(Clone)]
 pub struct AnimationFrame {
   /// RGBA pixel data (4 bytes per pixel), fully composited
-  pub pixels:   Vec<u8>,
+  pub pixels: Vec<u8>,
   /// Delay before showing the next frame, in milliseconds
   pub delay_ms: u32,
 }
@@ -60,7 +60,7 @@ pub struct DecodedAnimation {
   /// Animation frames in order
   pub frames: Vec<AnimationFrame>,
   /// Canvas width in pixels
-  pub width:  u32,
+  pub width: u32,
   /// Canvas height in pixels
   pub height: u32,
 }
@@ -191,11 +191,7 @@ pub fn decode_animated_gif(data: &[u8]) -> Option<DecodedAnimation> {
 pub fn decode_animated_gif_with_max_size(data: &[u8], max_size: u32) -> Option<DecodedAnimation> {
   use std::io::Cursor;
 
-  use image::{
-    AnimationDecoder,
-    codecs::gif::GifDecoder,
-    imageops::FilterType,
-  };
+  use image::{AnimationDecoder, codecs::gif::GifDecoder, imageops::FilterType};
 
   let cursor = Cursor::new(data);
   let decoder = GifDecoder::new(cursor).ok()?;

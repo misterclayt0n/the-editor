@@ -1,20 +1,11 @@
 use std::borrow::Cow;
 
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::types::{
-  Command,
-  Diagnostic,
-  PartialResultParams,
-  Range,
-  TextDocumentIdentifier,
-  WorkDoneProgressOptions,
-  WorkDoneProgressParams,
-  WorkspaceEdit,
+  Command, Diagnostic, PartialResultParams, Range, TextDocumentIdentifier, WorkDoneProgressOptions,
+  WorkDoneProgressParams, WorkspaceEdit,
 };
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
@@ -383,8 +374,8 @@ mod tests {
     test_serialization(
       &vec![
         CodeActionOrCommand::Command(Command {
-          title:     "title".to_string(),
-          command:   "command".to_string(),
+          title: "title".to_string(),
+          command: "command".to_string(),
           arguments: None,
         }),
         CodeActionOrCommand::CodeAction(CodeAction {

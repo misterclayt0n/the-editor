@@ -63,10 +63,7 @@ impl TextShapeCache {
   fn hash_line_with_idx(line_idx: usize, text: &str) -> u64 {
     use std::{
       collections::hash_map::DefaultHasher,
-      hash::{
-        Hash,
-        Hasher,
-      },
+      hash::{Hash, Hasher},
     };
 
     let mut hasher = DefaultHasher::new();
@@ -80,21 +77,21 @@ impl TextShapeCache {
 #[derive(Debug, Clone)]
 pub struct DirtyRegion {
   /// Dirty lines that need redrawing
-  dirty_lines:     Vec<usize>,
+  dirty_lines: Vec<usize>,
   /// Whether the entire viewport is dirty
   pub full_redraw: bool,
   /// Viewport bounds for optimization
-  viewport_start:  usize,
-  viewport_end:    usize,
+  viewport_start: usize,
+  viewport_end: usize,
 }
 
 impl DirtyRegion {
   pub fn new() -> Self {
     Self {
-      dirty_lines:    Vec::new(),
-      full_redraw:    true, // Start with full redraw - IMPORTANT for initial render
+      dirty_lines: Vec::new(),
+      full_redraw: true, // Start with full redraw - IMPORTANT for initial render
       viewport_start: 0,
-      viewport_end:   0,
+      viewport_end: 0,
     }
   }
 

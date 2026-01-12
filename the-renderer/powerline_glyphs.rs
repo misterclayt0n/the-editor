@@ -1,10 +1,4 @@
-use tiny_skia::{
-  FillRule,
-  Paint,
-  PathBuilder,
-  Pixmap,
-  Transform,
-};
+use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Transform};
 
 /// Bézier coefficient for approximating circular arcs with cubic Bézier curves
 /// c = (√2 - 1) × 4/3 ≈ 0.5522847498

@@ -3,54 +3,26 @@ use std::{
   cmp::Ordering,
   collections::HashMap,
   fs::DirEntry,
-  path::{
-    Path,
-    PathBuf,
-  },
-  sync::{
-    Arc,
-    Mutex,
-  },
+  path::{Path, PathBuf},
+  sync::{Arc, Mutex},
 };
 
-use anyhow::{
-  Result,
-  bail,
-  ensure,
-};
+use anyhow::{Result, bail, ensure};
 use the_editor_renderer::Key;
 
 use crate::{
   core::{
-    animation::{
-      AnimationHandle,
-      presets,
-    },
-    graphics::{
-      CursorKind,
-      Rect,
-    },
+    animation::{AnimationHandle, presets},
+    graphics::{CursorKind, Rect},
     position::Position,
   },
   doc,
-  editor::{
-    Action,
-    Editor,
-  },
+  editor::{Action, Editor},
   keymap::KeyBinding,
   ui::{
-    GitFileStatus,
-    TreeOp,
-    TreeView,
-    TreeViewItem,
+    GitFileStatus, TreeOp, TreeView, TreeViewItem,
     components::Prompt,
-    compositor::{
-      Component,
-      Context,
-      Event,
-      EventResult,
-      Surface,
-    },
+    compositor::{Component, Context, Event, EventResult, Surface},
   },
 };
 
@@ -63,8 +35,8 @@ enum FileType {
 
 #[derive(Debug, Clone)]
 struct FileInfo {
-  file_type:        FileType,
-  path:             PathBuf,
+  file_type: FileType,
+  path: PathBuf,
   git_status_cache: Option<GitStatusCache>,
 }
 
@@ -93,12 +65,10 @@ impl FileInfo {
   fn get_text(&self) -> Cow<'static, str> {
     let text = match self.file_type {
       FileType::Root => self.path.display().to_string(),
-      FileType::File | FileType::Folder => {
-        self
-          .path
-          .file_name()
-          .map_or("/".into(), |p| p.to_string_lossy().into_owned())
-      },
+      FileType::File | FileType::Folder => self
+        .path
+        .file_name()
+        .map_or("/".into(), |p| p.to_string_lossy().into_owned()),
     };
 
     #[cfg(test)]
@@ -230,9 +200,9 @@ fn dir_entry_to_file_info(
 
 #[derive(Clone, Debug, Default)]
 struct State {
-  focus:        bool,
+  focus: bool,
   current_root: PathBuf,
-  area_width:   u16,
+  area_width: u16,
 }
 
 impl State {
@@ -246,7 +216,7 @@ impl State {
 }
 
 struct ExplorerHistory {
-  tree:         TreeView<FileInfo>,
+  tree: TreeView<FileInfo>,
   current_root: PathBuf,
 }
 
@@ -257,21 +227,21 @@ pub use crate::editor::FileTreePosition as ExplorerPosition;
 type GitStatusCache = Arc<Mutex<HashMap<PathBuf, GitFileStatus>>>;
 
 pub struct Explorer {
-  tree:             TreeView<FileInfo>,
-  history:          Vec<ExplorerHistory>,
-  show_help:        bool,
-  state:            State,
+  tree: TreeView<FileInfo>,
+  history: Vec<ExplorerHistory>,
+  show_help: bool,
+  state: State,
   #[allow(clippy::type_complexity)]
-  on_next_key:      Option<Box<dyn FnMut(&mut Context, &mut Self, &KeyBinding) -> EventResult>>,
-  column_width:     u16,
+  on_next_key: Option<Box<dyn FnMut(&mut Context, &mut Self, &KeyBinding) -> EventResult>>,
+  column_width: u16,
   /// Width animation (0.0 = closed, 1.0 = fully open)
   /// Uses retarget() to smoothly animate between states
-  width_anim:       AnimationHandle<f32>,
+  width_anim: AnimationHandle<f32>,
   /// Cache of git status for files
   git_status_cache: GitStatusCache,
   /// Path to reveal when the explorer is next opened.
   /// This is set when auto-reveal is triggered while the explorer is closed.
-  pending_reveal:   Option<PathBuf>,
+  pending_reveal: Option<PathBuf>,
 }
 
 /// Default column width for the explorer
@@ -286,16 +256,16 @@ impl Explorer {
     let (duration, easing) = presets::FAST;
 
     let mut explorer = Self {
-      tree:             Self::new_tree_view(current_root.clone(), Some(git_status_cache.clone()))?,
-      history:          vec![],
-      show_help:        false,
-      state:            State::new(true, current_root.clone()),
-      on_next_key:      None,
-      column_width:     DEFAULT_EXPLORER_COLUMN_WIDTH,
+      tree: Self::new_tree_view(current_root.clone(), Some(git_status_cache.clone()))?,
+      history: vec![],
+      show_help: false,
+      state: State::new(true, current_root.clone()),
+      on_next_key: None,
+      column_width: DEFAULT_EXPLORER_COLUMN_WIDTH,
       // Start fully open (1.0)
-      width_anim:       AnimationHandle::new(1.0, 1.0, duration, easing),
+      width_anim: AnimationHandle::new(1.0, 1.0, duration, easing),
       git_status_cache: git_status_cache.clone(),
-      pending_reveal:   None,
+      pending_reveal: None,
     };
 
     // Start initial git status refresh
@@ -547,10 +517,7 @@ impl Explorer {
   fn new_create_file_or_folder_prompt(&mut self, cx: &mut Context) -> Result<EventResult> {
     use std::sync::Arc;
 
-    use crate::ui::components::prompt::{
-      Completion,
-      PromptEvent,
-    };
+    use crate::ui::components::prompt::{Completion, PromptEvent};
 
     let folder_path = self.nearest_folder()?;
 
@@ -766,10 +733,7 @@ impl Explorer {
   fn new_rename_prompt(&mut self, cx: &mut Context) -> Result<EventResult> {
     use std::sync::Arc;
 
-    use crate::ui::components::prompt::{
-      Completion,
-      PromptEvent,
-    };
+    use crate::ui::components::prompt::{Completion, PromptEvent};
 
     let path = self.tree.current_item()?.path.clone();
     let prefill = path.to_string_lossy().to_string();
@@ -837,8 +801,8 @@ impl Explorer {
 
         items.push(Completion {
           range: 0..,
-          text:  completion_text,
-          doc:   Some(if is_dir { "directory" } else { "file" }.to_string()),
+          text: completion_text,
+          doc: Some(if is_dir { "directory" } else { "file" }.to_string()),
         });
       }
 
@@ -934,10 +898,7 @@ impl Explorer {
 
   fn new_remove_file_prompt(&mut self, _cx: &mut Context) -> Result<EventResult> {
     use crate::ui::components::{
-      ConfirmationButton,
-      ConfirmationConfig,
-      ConfirmationPopup,
-      ConfirmationResult,
+      ConfirmationButton, ConfirmationConfig, ConfirmationPopup, ConfirmationResult,
     };
 
     let item = self.tree.current_item()?;
@@ -996,10 +957,7 @@ impl Explorer {
 
   fn new_remove_folder_prompt(&mut self, _cx: &mut Context) -> Result<EventResult> {
     use crate::ui::components::{
-      ConfirmationButton,
-      ConfirmationConfig,
-      ConfirmationPopup,
-      ConfirmationResult,
+      ConfirmationButton, ConfirmationConfig, ConfirmationPopup, ConfirmationResult,
     };
 
     let item = self.tree.current_item()?;
@@ -1110,10 +1068,7 @@ impl Explorer {
     surface: &mut Surface,
     cx: &mut Context,
   ) {
-    use the_editor_renderer::{
-      Color,
-      TextSection,
-    };
+    use the_editor_renderer::{Color, TextSection};
 
     use crate::ui::UI_FONT_SIZE;
 
@@ -1523,28 +1478,21 @@ fn render_block(area: Rect, _surface: &mut Surface, borders: Borders) -> Rect {
   // Compute inner area based on border side
   // We don't actually render a block widget, just calculate the usable area
   match borders {
-    Borders::LEFT => {
-      Rect {
-        x: area.x.saturating_add(1),
-        width: area.width.saturating_sub(1),
-        ..area
-      }
+    Borders::LEFT => Rect {
+      x: area.x.saturating_add(1),
+      width: area.width.saturating_sub(1),
+      ..area
     },
-    Borders::RIGHT => {
-      Rect {
-        width: area.width.saturating_sub(1),
-        ..area
-      }
+    Borders::RIGHT => Rect {
+      width: area.width.saturating_sub(1),
+      ..area
     },
   }
 }
 
 #[cfg(test)]
 mod test_explorer {
-  use std::{
-    fs,
-    path::PathBuf,
-  };
+  use std::{fs, path::PathBuf};
 
   use super::Explorer;
   use crate::core::graphics::Rect;

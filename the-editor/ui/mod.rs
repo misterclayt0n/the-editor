@@ -17,18 +17,9 @@ pub mod tree;
 pub use editor_view::EditorView;
 // Explorer-related exports (currently work in progress)
 #[allow(unused_imports)]
-pub use explorer::{
-  Explorer,
-  ExplorerPosition,
-};
+pub use explorer::{Explorer, ExplorerPosition};
 #[allow(unused_imports)]
-pub use tree::{
-  GitFileStatus,
-  TreeOp,
-  TreeView,
-  TreeViewItem,
-  tree_view_help,
-};
+pub use tree::{GitFileStatus, TreeOp, TreeView, TreeViewItem, tree_view_help};
 
 // UI Font constants - used across all UI components for consistency
 pub const UI_FONT_SIZE: f32 = 14.0;
@@ -99,14 +90,8 @@ pub fn show_signature_help(
   use the_editor_lsp_types::types as lsp;
 
   use crate::handlers::{
-    lsp::{
-      SignatureHelpEvent,
-      SignatureHelpInvoked,
-    },
-    signature_help::{
-      Signature,
-      active_param_range,
-    },
+    lsp::{SignatureHelpEvent, SignatureHelpInvoked},
+    signature_help::{Signature, active_param_range},
   };
 
   let config = &editor.config();
@@ -161,11 +146,9 @@ pub fn show_signature_help(
       let active_param_range_val = active_param_range(&s, response.active_parameter);
 
       let signature_doc = if config.lsp.display_signature_help_docs {
-        s.documentation.map(|doc| {
-          match doc {
-            lsp::Documentation::String(s) => s,
-            lsp::Documentation::MarkupContent(markup) => markup.value,
-          }
+        s.documentation.map(|doc| match doc {
+          lsp::Documentation::String(s) => s,
+          lsp::Documentation::MarkupContent(markup) => markup.value,
         })
       } else {
         None
@@ -294,7 +277,7 @@ pub struct FileExplorerData {
 pub enum FileExplorerSelection {
   /// Open the target path with the given picker action
   Open {
-    path:   std::path::PathBuf,
+    path: std::path::PathBuf,
     action: components::PickerAction,
   },
   /// Enter the selected directory (the path is already normalized)

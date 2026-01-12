@@ -1,16 +1,9 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::types::{
-  Command,
-  DynamicRegistrationClientCapabilities,
-  PartialResultParams,
-  Range,
-  TextDocumentIdentifier,
-  WorkDoneProgressParams,
+  Command, DynamicRegistrationClientCapabilities, PartialResultParams, Range,
+  TextDocumentIdentifier, WorkDoneProgressParams,
 };
 
 pub type CodeLensClientCapabilities = DynamicRegistrationClientCapabilities;

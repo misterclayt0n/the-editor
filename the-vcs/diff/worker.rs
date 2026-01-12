@@ -1,44 +1,26 @@
 use std::sync::Arc;
 
-use imara_diff::{
-  IndentHeuristic,
-  IndentLevel,
-  InternedInput,
-};
+use imara_diff::{IndentHeuristic, IndentLevel, InternedInput};
 use parking_lot::RwLock;
-use ropey::{
-  Rope,
-  RopeSlice,
-};
+use ropey::{Rope, RopeSlice};
 use tokio::{
-  sync::{
-    Notify,
-    mpsc::UnboundedReceiver,
-  },
-  time::{
-    Duration,
-    timeout,
-    timeout_at,
-  },
+  sync::{Notify, mpsc::UnboundedReceiver},
+  time::{Duration, timeout, timeout_at},
 };
 
 use super::line_cache::InternedRopeLines;
 use crate::diff::{
-  ALGORITHM,
-  DIFF_DEBOUNCE_TIME_ASYNC,
-  DIFF_DEBOUNCE_TIME_SYNC,
-  DiffInner,
-  Event,
-  RenderLock,
+  ALGORITHM, DIFF_DEBOUNCE_TIME_ASYNC, DIFF_DEBOUNCE_TIME_SYNC, DiffInner, Event, RenderLock,
 };
 
-#[cfg(test)] mod test;
+#[cfg(test)]
+mod test;
 
 pub(super) struct DiffWorker {
-  pub channel:              UnboundedReceiver<Event>,
-  pub diff:                 Arc<RwLock<DiffInner>>,
+  pub channel: UnboundedReceiver<Event>,
+  pub diff: Arc<RwLock<DiffInner>>,
   pub diff_finished_notify: Arc<Notify>,
-  pub diff_alloc:           imara_diff::Diff,
+  pub diff_alloc: imara_diff::Diff,
 }
 
 impl DiffWorker {
@@ -127,16 +109,16 @@ impl DiffWorker {
 }
 
 struct EventAccumulator {
-  diff_base:   Option<Rope>,
-  doc:         Option<Rope>,
+  diff_base: Option<Rope>,
+  doc: Option<Rope>,
   render_lock: Option<RenderLock>,
 }
 
 impl EventAccumulator {
   fn new() -> EventAccumulator {
     EventAccumulator {
-      diff_base:   None,
-      doc:         None,
+      diff_base: None,
+      doc: None,
       render_lock: None,
     }
   }

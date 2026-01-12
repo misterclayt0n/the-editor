@@ -1,10 +1,7 @@
 use ropey::RopeSlice;
 
 use crate::core::{
-  selection::{
-    Range,
-    Selection,
-  },
+  selection::{Range, Selection},
   syntax::Syntax,
 };
 

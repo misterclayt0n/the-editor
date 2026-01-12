@@ -1,12 +1,7 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  DynamicRegistrationClientCapabilities,
-  PartialResultParams,
-  TextDocumentPositionParams,
+  DynamicRegistrationClientCapabilities, PartialResultParams, TextDocumentPositionParams,
   WorkDoneProgressParams,
 };
 

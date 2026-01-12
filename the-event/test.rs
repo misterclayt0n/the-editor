@@ -1,23 +1,14 @@
 use std::{
   sync::{
     Arc,
-    atomic::{
-      AtomicUsize,
-      Ordering,
-    },
+    atomic::{AtomicUsize, Ordering},
   },
   time::Duration,
 };
 
 use parking_lot::Mutex;
 
-use crate::{
-  dispatch,
-  events,
-  register_dynamic_hook,
-  register_event,
-  register_hook,
-};
+use crate::{dispatch, events, register_dynamic_hook, register_event, register_hook};
 #[test]
 fn smoke_test() {
   events! {

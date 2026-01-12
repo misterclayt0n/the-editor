@@ -1,25 +1,14 @@
 use std::{
   collections::HashMap,
-  sync::{
-    Arc,
-    Mutex,
-  },
+  sync::{Arc, Mutex},
 };
 
-use the_editor_event::{
-  TaskController,
-  send_blocking,
-};
+use the_editor_event::{TaskController, send_blocking};
 use the_editor_lsp_types::types as lsp;
 use tokio::sync::mpsc::Sender;
 
 use crate::{
-  core::{
-    DocumentId,
-    ViewId,
-    document::SavePoint,
-    transaction::Transaction,
-  },
+  core::{DocumentId, ViewId, document::SavePoint, transaction::Transaction},
   lsp::LanguageServerId,
 };
 
@@ -27,11 +16,11 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct LspCompletionItem {
   /// The raw LSP completion item
-  pub item:              lsp::CompletionItem,
+  pub item: lsp::CompletionItem,
   /// The LSP server that provided this completion
-  pub provider:          LanguageServerId,
+  pub provider: LanguageServerId,
   /// Whether this item has been resolved (documentation fetched)
-  pub resolved:          bool,
+  pub resolved: bool,
   /// Provider priority for sorting
   pub provider_priority: i8,
 }
@@ -62,11 +51,11 @@ impl PartialEq for LspCompletionItem {
 /// Non-LSP completion item (e.g., from word or path completion)
 #[derive(Debug, PartialEq, Clone)]
 pub struct OtherCompletionItem {
-  pub transaction:   Transaction,
-  pub label:         String,
-  pub kind:          Option<String>,
+  pub transaction: Transaction,
+  pub label: String,
+  pub kind: Option<String>,
   pub documentation: Option<String>,
-  pub provider:      CompletionProvider,
+  pub provider: CompletionProvider,
 }
 
 impl OtherCompletionItem {
@@ -148,7 +137,7 @@ impl From<LanguageServerId> for CompletionProvider {
 
 #[derive(Clone)]
 pub struct CompletionHandler {
-  event_tx:               Sender<CompletionEvent>,
+  event_tx: Sender<CompletionEvent>,
   pub active_completions: Arc<Mutex<HashMap<CompletionProvider, ResponseContext>>>,
   pub request_controller: Arc<Mutex<TaskController>>,
 }
@@ -175,8 +164,8 @@ pub struct ResponseContext {
   /// typing, the completions should be recomputed by the server instead of
   /// filtered.
   pub is_incomplete: bool,
-  pub priority:      i8,
-  pub savepoint:     Arc<SavePoint>,
+  pub priority: i8,
+  pub savepoint: Arc<SavePoint>,
 }
 
 #[derive(Debug)]
@@ -184,21 +173,21 @@ pub enum CompletionEvent {
   /// Auto completion was triggered by typing a word char
   AutoTrigger {
     cursor: usize,
-    doc:    DocumentId,
-    view:   ViewId,
+    doc: DocumentId,
+    view: ViewId,
   },
   /// Auto completion was triggered by typing a trigger char
   /// specified by the LSP
   TriggerChar {
     cursor: usize,
-    doc:    DocumentId,
-    view:   ViewId,
+    doc: DocumentId,
+    view: ViewId,
   },
   /// A completion was manually requested (c-x)
   ManualTrigger {
     cursor: usize,
-    doc:    DocumentId,
-    view:   ViewId,
+    doc: DocumentId,
+    view: ViewId,
   },
   /// Some text was deleted and the cursor is now at `pos`
   DeleteText { cursor: usize },

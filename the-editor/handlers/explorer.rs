@@ -11,10 +11,7 @@ use the_editor_event::register_hook;
 use crate::{
   core::file_watcher::FileSystemDidChange,
   event::WorkingDirectoryDidChange,
-  ui::{
-    EditorView,
-    job,
-  },
+  ui::{EditorView, job},
 };
 
 /// Register hooks for explorer file watching.

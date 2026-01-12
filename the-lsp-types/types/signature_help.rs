@@ -1,15 +1,8 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  Documentation,
-  MarkupKind,
-  TextDocumentPositionParams,
-  TextDocumentRegistrationOptions,
-  WorkDoneProgressOptions,
-  WorkDoneProgressParams,
+  Documentation, MarkupKind, TextDocumentPositionParams, TextDocumentRegistrationOptions,
+  WorkDoneProgressOptions, WorkDoneProgressParams,
 };
 
 #[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]

@@ -1,27 +1,13 @@
-use the_editor_renderer::{
-  Color,
-  MouseButton,
-  Renderer,
-  TextSection,
-};
+use the_editor_renderer::{Color, MouseButton, Renderer, TextSection};
 
 use crate::{
   core::{
-    graphics::{
-      CursorKind,
-      Rect,
-    },
+    graphics::{CursorKind, Rect},
     position::Position,
   },
   editor::Editor,
   ui::{
-    compositor::{
-      Component,
-      Context,
-      Event,
-      EventResult,
-      Surface,
-    },
+    compositor::{Component, Context, Event, EventResult, Surface},
     theme_color_to_renderer_color,
   },
 };
@@ -32,13 +18,13 @@ pub struct Button {
   label: String,
 
   // Appearance
-  base_color:     Color, // Outline and text color base; glow derives from this
+  base_color: Color, // Outline and text color base; glow derives from this
   color_override: bool,
 
   // State
-  visible:         bool,
-  hovered:         bool,
-  pressed:         bool,
+  visible: bool,
+  hovered: bool,
+  pressed: bool,
   hover_cursor_px: Option<(f32, f32)>, // cursor position in pixels relative to button top-left
 
   // Click state animation (0.0 = not pressed, 1.0 = fully pressed)
@@ -48,42 +34,42 @@ pub struct Button {
   on_click: Option<Box<dyn FnMut() + 'static>>,
 
   // Cached font metrics for mouse handling
-  cached_char_width:  f32,
+  cached_char_width: f32,
   cached_line_height: f32,
 
   // Position and size in the compositor
-  rect:               Rect,
+  rect: Rect,
   // Last rendered area (for mouse hit testing)
   last_rendered_area: Rect,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct ButtonPalette {
-  text:           Color,
-  outline:        Color,
-  fill:           Option<Color>,
-  accent_text:    Color,
+  text: Color,
+  outline: Color,
+  fill: Option<Color>,
+  accent_text: Color,
   accent_outline: Color,
-  accent_fill:    Option<Color>,
-  hover_glow:     Color,
-  press_glow:     Color,
+  accent_fill: Option<Color>,
+  hover_glow: Color,
+  press_glow: Color,
 }
 
 impl Button {
   pub fn new(label: impl Into<String>) -> Self {
     Self {
-      label:              label.into(),
-      base_color:         Color::new(0.45, 0.47, 0.50, 1.0), // neutral gray by default
-      color_override:     false,
-      visible:            true,
-      hovered:            false,
-      pressed:            false,
-      hover_cursor_px:    None,
-      anim_t:             0.0,
-      on_click:           None,
-      cached_char_width:  12.0, // Default fallback values
+      label: label.into(),
+      base_color: Color::new(0.45, 0.47, 0.50, 1.0), // neutral gray by default
+      color_override: false,
+      visible: true,
+      hovered: false,
+      pressed: false,
+      hover_cursor_px: None,
+      anim_t: 0.0,
+      on_click: None,
+      cached_char_width: 12.0, // Default fallback values
       cached_line_height: 20.0,
-      rect:               Rect::new(0, 0, 10, 2), // Default size
+      rect: Rect::new(0, 0, 10, 2), // Default size
       last_rendered_area: Rect::new(0, 0, 10, 2),
     }
   }
@@ -166,14 +152,14 @@ impl Button {
       let base = self.base_color;
       let glow = Self::glow_rgb_from_base(base);
       return ButtonPalette {
-        text:           base,
-        outline:        base,
-        fill:           None,
-        accent_text:    glow,
+        text: base,
+        outline: base,
+        fill: None,
+        accent_text: glow,
         accent_outline: glow,
-        accent_fill:    None,
-        hover_glow:     glow,
-        press_glow:     glow,
+        accent_fill: None,
+        hover_glow: glow,
+        press_glow: glow,
       };
     }
 

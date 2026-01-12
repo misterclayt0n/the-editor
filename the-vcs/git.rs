@@ -1,20 +1,9 @@
-use std::{
-  io::Read,
-  path::Path,
-  sync::Arc,
-};
+use std::{io::Read, path::Path, sync::Arc};
 
-use anyhow::{
-  Context,
-  Result,
-  bail,
-};
+use anyhow::{Context, Result, bail};
 use arc_swap::ArcSwap;
 use gix::{
-  Commit,
-  ObjectId,
-  Repository,
-  ThreadSafeRepository,
+  Commit, ObjectId, Repository, ThreadSafeRepository,
   bstr::ByteSlice,
   diff::Rewrites,
   dir::entry::Status,
@@ -24,16 +13,14 @@ use gix::{
   status::{
     UntrackedFiles,
     index_worktree::Item,
-    plumbing::index_as_worktree::{
-      Change,
-      EntryStatus,
-    },
+    plumbing::index_as_worktree::{Change, EntryStatus},
   },
 };
 
 use crate::FileChange;
 
-#[cfg(test)] mod test;
+#[cfg(test)]
+mod test;
 
 #[inline]
 fn get_repo_dir(file: &Path) -> Result<&Path> {
@@ -117,11 +104,11 @@ fn open_repo(path: &Path) -> Result<ThreadSafeRepository> {
   // windows and has some overhead hence it's disabled on other platforms.
   // `gitoxide` doesn't use this as default
   let config = gix::open::permissions::Config {
-    system:     true,
-    git:        true,
-    user:       true,
-    env:        true,
-    includes:   true,
+    system: true,
+    git: true,
+    user: true,
+    env: true,
+    includes: true,
     git_binary: cfg!(windows),
   };
   // change options for config permissions without touching anything else
@@ -202,11 +189,9 @@ fn status(repo: &Repository, f: impl Fn(Result<FileChange>) -> bool) -> Result<(
         source,
         dirwalk_entry,
         ..
-      } => {
-        FileChange::Renamed {
-          from_path: work_dir.join(source.rela_path().to_path()?),
-          to_path:   work_dir.join(dirwalk_entry.rela_path.to_path()?),
-        }
+      } => FileChange::Renamed {
+        from_path: work_dir.join(source.rela_path().to_path()?),
+        to_path: work_dir.join(dirwalk_entry.rela_path.to_path()?),
       },
       _ => continue,
     };

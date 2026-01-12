@@ -1,42 +1,27 @@
-use std::{
-  borrow::Cow,
-  iter,
-  slice,
-};
+use std::{borrow::Cow, iter, slice};
 
 use ropey::RopeSlice;
-use smallvec::{
-  SmallVec,
-  smallvec,
-};
+use smallvec::{SmallVec, smallvec};
 use the_editor_stdx::{
   range::is_subset,
-  rope::{
-    self,
-    RopeSliceExt,
-  },
+  rope::{self, RopeSliceExt},
 };
 use tree_house::tree_sitter::Node;
 
 use crate::core::{
   grapheme::{
-    ensure_grapheme_boundary_next,
-    ensure_grapheme_boundary_prev,
-    next_grapheme_boundary,
+    ensure_grapheme_boundary_next, ensure_grapheme_boundary_prev, next_grapheme_boundary,
     prev_grapheme_boundary,
   },
   line_ending::get_line_ending,
   movement::Direction,
-  transaction::{
-    Assoc,
-    ChangeSet,
-  },
+  transaction::{Assoc, ChangeSet},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Range {
-  pub anchor:         usize,
-  pub head:           usize,
+  pub anchor: usize,
+  pub head: usize,
   pub old_visual_pos: Option<(u32, u32)>,
 }
 
@@ -168,8 +153,8 @@ impl Range {
   pub fn flip(&self) -> Self {
     // NOTE: We're returning Self directly here instead of Self::new() for clarity.
     Self {
-      anchor:         self.head,
-      head:           self.anchor,
+      anchor: self.head,
+      head: self.anchor,
       old_visual_pos: self.old_visual_pos,
     }
   }
@@ -243,24 +228,18 @@ impl Range {
     }
 
     let positions_to_map = match self.anchor.cmp(&self.head) {
-      Ordering::Equal => {
-        [
-          (&mut self.anchor, Assoc::AfterSticky),
-          (&mut self.head, Assoc::AfterSticky),
-        ]
-      },
-      Ordering::Less => {
-        [
-          (&mut self.anchor, Assoc::AfterSticky),
-          (&mut self.head, Assoc::BeforeSticky),
-        ]
-      },
-      Ordering::Greater => {
-        [
-          (&mut self.head, Assoc::AfterSticky),
-          (&mut self.anchor, Assoc::BeforeSticky),
-        ]
-      },
+      Ordering::Equal => [
+        (&mut self.anchor, Assoc::AfterSticky),
+        (&mut self.head, Assoc::AfterSticky),
+      ],
+      Ordering::Less => [
+        (&mut self.anchor, Assoc::AfterSticky),
+        (&mut self.head, Assoc::BeforeSticky),
+      ],
+      Ordering::Greater => [
+        (&mut self.head, Assoc::AfterSticky),
+        (&mut self.anchor, Assoc::BeforeSticky),
+      ],
     };
 
     changes.update_positions(positions_to_map.into_iter());
@@ -275,14 +254,14 @@ impl Range {
 
     if self.anchor <= self.head {
       Self {
-        anchor:         self.anchor.min(from),
-        head:           self.head.max(to),
+        anchor: self.anchor.min(from),
+        head: self.head.max(to),
         old_visual_pos: None,
       }
     } else {
       Self {
-        anchor:         self.anchor.max(to),
-        head:           self.head.min(from),
+        anchor: self.anchor.max(to),
+        head: self.head.min(from),
         old_visual_pos: None,
       }
     }
@@ -295,14 +274,14 @@ impl Range {
   pub fn merge(&self, other: Self) -> Self {
     if self.anchor > self.head && other.anchor > other.head {
       Self {
-        anchor:         self.anchor.max(other.anchor),
-        head:           self.head.min(other.head),
+        anchor: self.anchor.max(other.anchor),
+        head: self.head.min(other.head),
         old_visual_pos: None,
       }
     } else {
       Self {
-        anchor:         self.from().min(other.from()),
-        head:           self.to().max(other.to()),
+        anchor: self.from().min(other.from()),
+        head: self.to().max(other.to()),
         old_visual_pos: None,
       }
     }
@@ -351,23 +330,19 @@ impl Range {
         let pos = ensure_grapheme_boundary_prev(slice, self.anchor);
         (pos, pos)
       },
-      Ordering::Less => {
-        (
-          ensure_grapheme_boundary_prev(slice, self.anchor),
-          ensure_grapheme_boundary_next(slice, self.head),
-        )
-      },
-      Ordering::Greater => {
-        (
-          ensure_grapheme_boundary_next(slice, self.anchor),
-          ensure_grapheme_boundary_prev(slice, self.head),
-        )
-      },
+      Ordering::Less => (
+        ensure_grapheme_boundary_prev(slice, self.anchor),
+        ensure_grapheme_boundary_next(slice, self.head),
+      ),
+      Ordering::Greater => (
+        ensure_grapheme_boundary_next(slice, self.anchor),
+        ensure_grapheme_boundary_prev(slice, self.head),
+      ),
     };
 
     Range {
-      anchor:         new_anchor,
-      head:           new_head,
+      anchor: new_anchor,
+      head: new_head,
       old_visual_pos: if new_anchor == self.anchor {
         self.old_visual_pos
       } else {
@@ -393,8 +368,8 @@ impl Range {
   pub fn min_width_1(&self, slice: RopeSlice) -> Self {
     if self.anchor == self.head {
       Range {
-        anchor:         self.anchor,
-        head:           next_grapheme_boundary(slice, self.head),
+        anchor: self.anchor,
+        head: next_grapheme_boundary(slice, self.head),
         old_visual_pos: self.old_visual_pos,
       }
     } else {
@@ -413,7 +388,7 @@ impl From<Range> for the_editor_stdx::Range {
   fn from(range: Range) -> Self {
     Self {
       start: range.from(),
-      end:   range.to(),
+      end: range.to(),
     }
   }
 }
@@ -423,7 +398,7 @@ impl From<Range> for the_editor_stdx::Range {
 /// primary range).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
-  ranges:        SmallVec<[Range; 1]>,
+  ranges: SmallVec<[Range; 1]>,
   primary_index: usize,
 }
 
@@ -530,24 +505,18 @@ impl Selection {
       use std::cmp::Ordering;
       range.old_visual_pos = None;
       match range.anchor.cmp(&range.head) {
-        Ordering::Equal => {
-          [
-            (&mut range.anchor, Assoc::AfterSticky),
-            (&mut range.head, Assoc::AfterSticky),
-          ]
-        },
-        Ordering::Less => {
-          [
-            (&mut range.anchor, Assoc::AfterSticky),
-            (&mut range.head, Assoc::BeforeSticky),
-          ]
-        },
-        Ordering::Greater => {
-          [
-            (&mut range.head, Assoc::AfterSticky),
-            (&mut range.anchor, Assoc::BeforeSticky),
-          ]
-        },
+        Ordering::Equal => [
+          (&mut range.anchor, Assoc::AfterSticky),
+          (&mut range.head, Assoc::AfterSticky),
+        ],
+        Ordering::Less => [
+          (&mut range.anchor, Assoc::AfterSticky),
+          (&mut range.head, Assoc::BeforeSticky),
+        ],
+        Ordering::Greater => [
+          (&mut range.head, Assoc::AfterSticky),
+          (&mut range.anchor, Assoc::BeforeSticky),
+        ],
       }
     });
     changes.update_positions(positions_to_map);
@@ -569,7 +538,7 @@ impl Selection {
   /// Constructs a selection holding a single range.
   pub fn single(anchor: usize, head: usize) -> Self {
     Self {
-      ranges:        smallvec![Range::new(anchor, head)],
+      ranges: smallvec![Range::new(anchor, head)],
       primary_index: 0,
     }
   }
@@ -737,7 +706,7 @@ impl From<Range> for Selection {
 
 pub struct LineRangeIter<'a> {
   ranges: iter::Peekable<slice::Iter<'a, Range>>,
-  slice:  RopeSlice<'a>,
+  slice: RopeSlice<'a>,
 }
 
 impl Iterator for LineRangeIter<'_> {
@@ -1265,28 +1234,32 @@ mod test {
       &rope::Regex::new(r"\s+").unwrap(),
     );
 
-    assert_eq!(result.ranges(), &[
-      // TODO: rather than this behavior, maybe we want it
-      // to be based on which side is the anchor?
-      //
-      // We get a leading zero-width range when there's
-      // a leading match because ranges are inclusive on
-      // the left.  Imagine, for example, if the entire
-      // selection range were matched: you'd still want
-      // at least one range to remain after the split.
-      Range::new(0, 0),
-      Range::new(1, 5),
-      Range::new(6, 9),
-      Range::new(11, 13),
-      Range::new(16, 19),
-      // In contrast to the comment above, there is no
-      // _trailing_ zero-width range despite the trailing
-      // match, because ranges are exclusive on the right.
-    ]);
+    assert_eq!(
+      result.ranges(),
+      &[
+        // TODO: rather than this behavior, maybe we want it
+        // to be based on which side is the anchor?
+        //
+        // We get a leading zero-width range when there's
+        // a leading match because ranges are inclusive on
+        // the left.  Imagine, for example, if the entire
+        // selection range were matched: you'd still want
+        // at least one range to remain after the split.
+        Range::new(0, 0),
+        Range::new(1, 5),
+        Range::new(6, 9),
+        Range::new(11, 13),
+        Range::new(16, 19),
+        // In contrast to the comment above, there is no
+        // _trailing_ zero-width range despite the trailing
+        // match, because ranges are exclusive on the right.
+      ]
+    );
 
-    assert_eq!(result.fragments(text.slice(..)).collect::<Vec<_>>(), &[
-      "", "abcd", "efg", "rs", "xyz"
-    ]);
+    assert_eq!(
+      result.fragments(text.slice(..)).collect::<Vec<_>>(),
+      &["", "abcd", "efg", "rs", "xyz"]
+    );
   }
 
   #[test]
@@ -1304,11 +1277,10 @@ mod test {
 
     let result = selection.merge_consecutive_ranges();
 
-    assert_eq!(result.ranges(), &[
-      Range::new(0, 10),
-      Range::new(15, 20),
-      Range::new(25, 30)
-    ]);
+    assert_eq!(
+      result.ranges(),
+      &[Range::new(0, 10), Range::new(15, 20), Range::new(25, 30)]
+    );
     assert_eq!(result.primary_index, 2);
 
     let selection = Selection::new(smallvec![Range::new(0, 1)], 0);

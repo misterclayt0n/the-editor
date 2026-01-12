@@ -1,15 +1,8 @@
 use the_editor_renderer::Color;
 
 use crate::{
-  core::{
-    context_fade::RelevantRanges,
-    doc_formatter::FormattedGrapheme,
-    position::Position,
-  },
-  ui::{
-    compositor::Surface,
-    text_decorations::Decoration,
-  },
+  core::{context_fade::RelevantRanges, doc_formatter::FormattedGrapheme, position::Position},
+  ui::{compositor::Surface, text_decorations::Decoration},
 };
 
 /// A decoration that fades out text that is not in the relevant ranges
@@ -17,7 +10,7 @@ pub struct FadeDecoration {
   /// The ranges that should remain visible (not faded)
   relevant_ranges: RelevantRanges,
   /// The opacity to apply to faded text (0.0 = invisible, 1.0 = fully visible)
-  fade_alpha:      f32,
+  fade_alpha: f32,
 }
 
 impl FadeDecoration {

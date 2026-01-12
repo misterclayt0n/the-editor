@@ -1,13 +1,7 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  FullDocumentDiagnosticReport,
-  PartialResultParams,
-  UnchangedDocumentDiagnosticReport,
-  Url,
+  FullDocumentDiagnosticReport, PartialResultParams, UnchangedDocumentDiagnosticReport, Url,
   WorkDoneProgressParams,
 };
 

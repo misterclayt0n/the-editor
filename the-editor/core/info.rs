@@ -1,7 +1,4 @@
-use std::{
-  borrow::Cow,
-  fmt::Write,
-};
+use std::{borrow::Cow, fmt::Write};
 
 use unicode_width::UnicodeWidthStr;
 
@@ -11,11 +8,11 @@ use crate::core::registers::Registers;
 /// Info box used in editor. Rendering logic will be in other crate.
 pub struct Info {
   /// Title shown at top.
-  pub title:  Cow<'static, str>,
+  pub title: Cow<'static, str>,
   /// Text body, should contain newlines.
-  pub text:   String,
+  pub text: String,
   /// Body width.
-  pub width:  u16,
+  pub width: u16,
   /// Body height.
   pub height: u16,
 }

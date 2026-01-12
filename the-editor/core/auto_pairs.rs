@@ -8,13 +8,9 @@ use ropey::Rope;
 use smallvec::SmallVec;
 
 use crate::core::{
-  Tendril,
-  grapheme,
+  Tendril, grapheme,
   movement::Direction,
-  selection::{
-    Range,
-    Selection,
-  },
+  selection::{Range, Selection},
   transaction::Transaction,
 };
 
@@ -36,7 +32,7 @@ pub struct AutoPairs(HashMap<char, Pair>);
 /// Represents the config for a particular pairing.
 #[derive(Debug, Clone, Copy)]
 pub struct Pair {
-  pub open:  char,
+  pub open: char,
   pub close: char,
 }
 
@@ -79,7 +75,7 @@ impl From<&(char, char)> for Pair {
 impl From<(&char, &char)> for Pair {
   fn from((open, close): (&char, &char)) -> Self {
     Self {
-      open:  *open,
+      open: *open,
       close: *close,
     }
   }

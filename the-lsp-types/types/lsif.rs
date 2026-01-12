@@ -4,15 +4,9 @@
 //!
 //! Based on <https://microsoft.github.io/language-server-protocol/specifications/lsif/0.6.0/specification/>
 
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
-use crate::types::{
-  Range,
-  Url,
-};
+use crate::types::{Range, Url};
 
 pub type Id = crate::types::NumberOrString;
 
@@ -26,7 +20,7 @@ pub enum LocationOrRangeId {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entry {
-  pub id:   Id,
+  pub id: Id,
   #[serde(flatten)]
   pub data: Element,
 }
@@ -41,10 +35,10 @@ pub enum Element {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToolInfo {
-  pub name:    String,
+  pub name: String,
   #[serde(default = "Default::default")]
   #[serde(skip_serializing_if = "Vec::is_empty")]
-  pub args:    Vec<String>,
+  pub args: Vec<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub version: Option<String>,
 }
@@ -58,7 +52,7 @@ pub enum Encoding {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct RangeBasedDocumentSymbol {
-  pub id:       Id,
+  pub id: Id,
   #[serde(default = "Default::default")]
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub children: Vec<RangeBasedDocumentSymbol>,
@@ -76,9 +70,9 @@ pub enum DocumentSymbolOrRangeBasedVec {
 #[serde(rename_all = "camelCase")]
 pub struct DefinitionTag {
   /// The text covered by the range     
-  text:       String,
+  text: String,
   /// The symbol kind.
-  kind:       crate::types::SymbolKind,
+  kind: crate::types::SymbolKind,
   /// Indicates if this symbol is deprecated.
   #[serde(default)]
   #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -89,16 +83,16 @@ pub struct DefinitionTag {
   full_range: Range,
   /// Optional detail information for the definition.
   #[serde(skip_serializing_if = "Option::is_none")]
-  detail:     Option<String>,
+  detail: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeclarationTag {
   /// The text covered by the range     
-  text:       String,
+  text: String,
   /// The symbol kind.
-  kind:       crate::types::SymbolKind,
+  kind: crate::types::SymbolKind,
   /// Indicates if this symbol is deprecated.
   #[serde(default)]
   deprecated: bool,
@@ -108,7 +102,7 @@ pub struct DeclarationTag {
   full_range: Range,
   /// Optional detail information for the definition.
   #[serde(skip_serializing_if = "Option::is_none")]
-  detail:     Option<String>,
+  detail: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -146,7 +140,7 @@ pub enum Vertex {
     #[serde(flatten)]
     range: Range,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tag:   Option<RangeTag>,
+    tag: Option<RangeTag>,
   },
   /// <https://github.com/Microsoft/language-server-protocol/blob/master/indexFormat/specification.md#result-set>
   ResultSet(ResultSet),
@@ -194,9 +188,9 @@ pub enum EventScope {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Event {
-  pub kind:  EventKind,
+  pub kind: EventKind,
   pub scope: EventScope,
-  pub data:  Id,
+  pub data: Id,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -236,7 +230,7 @@ pub enum Edge {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EdgeData {
-  pub in_v:  Id,
+  pub in_v: Id,
   pub out_v: Id,
 }
 
@@ -267,9 +261,9 @@ pub enum ItemKind {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Item {
-  pub document:  Id,
+  pub document: Id,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub property:  Option<ItemKind>,
+  pub property: Option<ItemKind>,
   #[serde(flatten)]
   pub edge_data: EdgeDataMultiIn,
 }
@@ -277,7 +271,7 @@ pub struct Item {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Document {
-  pub uri:         Url,
+  pub uri: Url,
   pub language_id: String,
 }
 
@@ -296,8 +290,8 @@ pub struct Project {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub resource: Option<Url>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub content:  Option<String>,
-  pub kind:     String,
+  pub content: Option<String>,
+  pub kind: String,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -323,8 +317,8 @@ pub struct MetaData {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Repository {
-  pub r#type:    String,
-  pub url:       String,
+  pub r#type: String,
+  pub url: String,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub commit_id: Option<String>,
 }
@@ -332,14 +326,14 @@ pub struct Repository {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageInformation {
-  pub name:       String,
-  pub manager:    String,
+  pub name: String,
+  pub manager: String,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub uri:        Option<Url>,
+  pub uri: Option<Url>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub content:    Option<String>,
+  pub content: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub repository: Option<Repository>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub version:    Option<String>,
+  pub version: Option<String>,
 }

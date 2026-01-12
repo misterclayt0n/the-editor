@@ -1,17 +1,8 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  Command,
-  InsertTextFormat,
-  Range,
-  StaticRegistrationOptions,
-  TextDocumentPositionParams,
-  TextDocumentRegistrationOptions,
-  WorkDoneProgressOptions,
-  WorkDoneProgressParams,
+  Command, InsertTextFormat, Range, StaticRegistrationOptions, TextDocumentPositionParams,
+  TextDocumentRegistrationOptions, WorkDoneProgressOptions, WorkDoneProgressParams,
 };
 
 /// Client capabilities specific to inline completions.
@@ -92,7 +83,7 @@ pub struct SelectedCompletionInfo {
   pub range: Range,
   /// The text the range will be replaced with if this completion is
   /// accepted.
-  pub text:  String,
+  pub text: String,
 }
 
 /// Provides information about the context in which an inline completion was
@@ -103,7 +94,7 @@ pub struct SelectedCompletionInfo {
 #[serde(rename_all = "camelCase")]
 pub struct InlineCompletionContext {
   /// Describes how the inline completion was triggered.
-  pub trigger_kind:             InlineCompletionTriggerKind,
+  pub trigger_kind: InlineCompletionTriggerKind,
   /// Provides information about the currently selected item in the
   /// autocomplete widget if it is visible.
   ///
@@ -148,7 +139,7 @@ pub struct InlineCompletionList {
 pub struct InlineCompletionItem {
   /// The text to replace the range with. Must be set.
   /// Is used both for the preview and the accept operation.
-  pub insert_text:        String,
+  pub insert_text: String,
   /// A text that is used to decide if this inline completion should be
   /// shown. When `falsy` the [`InlineCompletionItem::insertText`] is
   /// used.
@@ -156,18 +147,18 @@ pub struct InlineCompletionItem {
   /// An inline completion is shown if the text to replace is a prefix of the
   /// filter text.
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub filter_text:        Option<String>,
+  pub filter_text: Option<String>,
   /// The range to replace.
   /// Must begin and end on the same line.
   ///
   /// Prefer replacements over insertions to provide a better experience when
   /// the user deletes typed text.
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub range:              Option<Range>,
+  pub range: Option<Range>,
   /// An optional command that is executed *after* inserting this
   /// completion.
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub command:            Option<Command>,
+  pub command: Option<Command>,
   /// The format of the insert text. The format applies to the `insertText`.
   /// If omitted defaults to `InsertTextFormat.PlainText`.
   #[serde(skip_serializing_if = "Option::is_none")]

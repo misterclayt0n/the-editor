@@ -2,86 +2,44 @@ use std::{
   collections::HashMap,
   ffi::OsStr,
   future::Future,
-  path::{
-    Path,
-    PathBuf,
-  },
+  path::{Path, PathBuf},
   process::Stdio,
   sync::{
-    Arc,
-    OnceLock,
-    atomic::{
-      AtomicU64,
-      Ordering,
-    },
+    Arc, OnceLock,
+    atomic::{AtomicU64, Ordering},
   },
 };
 
 use futures_util::future::BoxFuture;
-use log::{
-  debug,
-  error,
-  warn,
-};
+use log::{debug, error, warn};
 use parking_lot::Mutex;
 use ropey::Rope;
 use serde::Deserialize;
 use serde_json::Value;
-use the_editor_loader::{
-  VERSION_AND_GIT_HASH,
-  find_workspace,
-};
+use the_editor_loader::{VERSION_AND_GIT_HASH, find_workspace};
 use the_editor_lsp_types::types as lsp;
 use the_editor_stdx::path;
 use tokio::{
-  io::{
-    BufReader,
-    BufWriter,
-  },
-  process::{
-    Child,
-    Command,
-  },
+  io::{BufReader, BufWriter},
+  process::{Child, Command},
   sync::{
-    Notify,
-    OnceCell,
-    mpsc::{
-      UnboundedReceiver,
-      UnboundedSender,
-      channel,
-    },
+    Notify, OnceCell,
+    mpsc::{UnboundedReceiver, UnboundedSender, channel},
   },
 };
 
 use crate::{
-  core::{
-    syntax::config::LanguageServerFeature,
-    transaction::ChangeSet,
-  },
+  core::{syntax::config::LanguageServerFeature, transaction::ChangeSet},
   lsp::{
-    Call,
-    Error,
-    LanguageServerId,
-    OffsetEncoding,
-    Result,
+    Call, Error, LanguageServerId, OffsetEncoding, Result,
     file_operations::FileOperationsInterest,
-    find_lsp_workspace,
-    jsonrpc,
+    find_lsp_workspace, jsonrpc,
     lsp::types::{
-      CodeActionCapabilityResolveSupport,
-      DidChangeWorkspaceFoldersParams,
-      OneOf,
-      PositionEncodingKind,
-      SignatureHelp,
-      Url,
-      WorkspaceFolder,
-      WorkspaceFoldersChangeEvent,
+      CodeActionCapabilityResolveSupport, DidChangeWorkspaceFoldersParams, OneOf,
+      PositionEncodingKind, SignatureHelp, Url, WorkspaceFolder, WorkspaceFoldersChangeEvent,
       notification::DidChangeWorkspaceFolders,
     },
-    transport::{
-      Payload,
-      Transport,
-    },
+    transport::{Payload, Transport},
   },
 };
 
@@ -98,20 +56,20 @@ fn workspace_for_uri(uri: lsp::Url) -> WorkspaceFolder {
 
 #[derive(Debug)]
 pub struct Client {
-  id:                                 LanguageServerId,
-  name:                               String,
-  _process:                           Child,
-  server_tx:                          UnboundedSender<Payload>,
-  request_counter:                    AtomicU64,
-  pub(crate) capabilities:            OnceCell<lsp::ServerCapabilities>,
+  id: LanguageServerId,
+  name: String,
+  _process: Child,
+  server_tx: UnboundedSender<Payload>,
+  request_counter: AtomicU64,
+  pub(crate) capabilities: OnceCell<lsp::ServerCapabilities>,
   pub(crate) file_operation_interest: OnceLock<FileOperationsInterest>,
-  config:                             Option<Value>,
-  root_path:                          std::path::PathBuf,
-  root_uri:                           Option<lsp::Url>,
-  workspace_folders:                  Mutex<Vec<lsp::WorkspaceFolder>>,
-  initialize_notify:                  Arc<Notify>,
+  config: Option<Value>,
+  root_path: std::path::PathBuf,
+  root_uri: Option<lsp::Url>,
+  workspace_folders: Mutex<Vec<lsp::WorkspaceFolder>>,
+  initialize_notify: Arc<Notify>,
   /// workspace folders added while the server is still initializing
-  req_timeout:                        u64,
+  req_timeout: u64,
 }
 
 impl Client {
@@ -477,16 +435,14 @@ impl Client {
       .capabilities()
       .position_encoding
       .as_ref()
-      .and_then(|encoding| {
-        match encoding.as_str() {
-          "utf-8" => Some(OffsetEncoding::Utf8),
-          "utf-16" => Some(OffsetEncoding::Utf16),
-          "utf-32" => Some(OffsetEncoding::Utf32),
-          encoding => {
-            warn!("Server provided invalid position encoding {encoding}, defaulting to utf-16");
-            None
-          },
-        }
+      .and_then(|encoding| match encoding.as_str() {
+        "utf-8" => Some(OffsetEncoding::Utf8),
+        "utf-16" => Some(OffsetEncoding::Utf16),
+        "utf-32" => Some(OffsetEncoding::Utf32),
+        encoding => {
+          warn!("Server provided invalid position encoding {encoding}, defaulting to utf-16");
+          None
+        },
       })
       .unwrap_or_default()
   }
@@ -538,14 +494,14 @@ impl Client {
       .and_then(|params| {
         let request = jsonrpc::MethodCall {
           jsonrpc: Some(jsonrpc::Version::V2),
-          id:      id.clone(),
-          method:  R::METHOD.to_string(),
-          params:  Self::value_into_params(params),
+          id: id.clone(),
+          method: R::METHOD.to_string(),
+          params: Self::value_into_params(params),
         };
         let (tx, rx) = channel::<Result<Value>>(1);
         server_tx
           .send(Payload::Request {
-            chan:  tx,
+            chan: tx,
             value: request,
           })
           .map_err(|e| Error::Other(e.into()))?;
@@ -586,8 +542,8 @@ impl Client {
 
     let notification = jsonrpc::Notification {
       jsonrpc: Some(jsonrpc::Version::V2),
-      method:  R::METHOD.to_string(),
-      params:  Self::value_into_params(params),
+      method: R::METHOD.to_string(),
+      params: Self::value_into_params(params),
     };
 
     if let Err(err) = server_tx.send(Payload::Notification(notification)) {
@@ -605,30 +561,21 @@ impl Client {
     id: jsonrpc::Id,
     result: core::result::Result<Value, jsonrpc::Error>,
   ) -> Result<()> {
-    use jsonrpc::{
-      Failure,
-      Output,
-      Success,
-      Version,
-    };
+    use jsonrpc::{Failure, Output, Success, Version};
 
     let server_tx = self.server_tx.clone();
 
     let output = match result {
-      Ok(result) => {
-        Output::Success(Success {
-          jsonrpc: Some(Version::V2),
-          id,
-          result,
-        })
-      },
-      Err(error) => {
-        Output::Failure(Failure {
-          jsonrpc: Some(Version::V2),
-          id,
-          error,
-        })
-      },
+      Ok(result) => Output::Success(Success {
+        jsonrpc: Some(Version::V2),
+        id,
+        result,
+      }),
+      Err(error) => Output::Failure(Failure {
+        jsonrpc: Some(Version::V2),
+        id,
+        error,
+      }),
     };
 
     server_tx
@@ -649,14 +596,14 @@ impl Client {
 
     #[allow(deprecated)]
     let params = lsp::InitializeParams {
-      process_id:                Some(std::process::id()),
-      workspace_folders:         Some(self.workspace_folders.lock().clone()),
+      process_id: Some(std::process::id()),
+      workspace_folders: Some(self.workspace_folders.lock().clone()),
       // root_path is obsolete, but some clients like pyright still use it so we specify both.
       // clients will prefer _uri if possible
-      root_path:                 self.root_path.to_str().map(|path| path.to_owned()),
-      root_uri:                  self.root_uri.clone(),
-      initialization_options:    self.config.clone(),
-      capabilities:              lsp::ClientCapabilities {
+      root_path: self.root_path.to_str().map(|path| path.to_owned()),
+      root_uri: self.root_uri.clone(),
+      initialization_options: self.config.clone(),
+      capabilities: lsp::ClientCapabilities {
         workspace: Some(lsp::WorkspaceClientCapabilities {
           configuration: Some(true),
           did_change_configuration: Some(lsp::DynamicRegistrationClientCapabilities {
@@ -675,18 +622,18 @@ impl Client {
             refresh_support: Some(false),
           }),
           workspace_edit: Some(lsp::WorkspaceEditClientCapabilities {
-            document_changes:          Some(true),
-            resource_operations:       Some(vec![
+            document_changes: Some(true),
+            resource_operations: Some(vec![
               lsp::ResourceOperationKind::Create,
               lsp::ResourceOperationKind::Rename,
               lsp::ResourceOperationKind::Delete,
             ]),
-            failure_handling:          Some(lsp::FailureHandlingKind::Abort),
-            normalizes_line_endings:   Some(false),
+            failure_handling: Some(lsp::FailureHandlingKind::Abort),
+            normalizes_line_endings: Some(false),
             change_annotation_support: None,
           }),
           did_change_watched_files: Some(lsp::DidChangeWatchedFilesClientCapabilities {
-            dynamic_registration:     Some(true),
+            dynamic_registration: Some(true),
             relative_pattern_support: Some(false),
           }),
           file_operations: Some(lsp::WorkspaceFileOperationsClientCapabilities {
@@ -728,8 +675,8 @@ impl Client {
           }),
           signature_help: Some(lsp::SignatureHelpClientCapabilities {
             signature_information: Some(lsp::SignatureInformationSettings {
-              documentation_format:     Some(vec![lsp::MarkupKind::Markdown]),
-              parameter_information:    Some(lsp::ParameterInformationSettings {
+              documentation_format: Some(vec![lsp::MarkupKind::Markdown]),
+              parameter_information: Some(lsp::ParameterInformationSettings {
                 label_offset_support: Some(true),
               }),
               active_parameter_support: Some(true),
@@ -737,10 +684,10 @@ impl Client {
             ..Default::default()
           }),
           rename: Some(lsp::RenameClientCapabilities {
-            dynamic_registration:             Some(false),
-            prepare_support:                  Some(true),
+            dynamic_registration: Some(false),
+            prepare_support: Some(true),
             prepare_support_default_behavior: None,
-            honors_change_annotations:        Some(false),
+            honors_change_annotations: Some(false),
           }),
           formatting: Some(lsp::DocumentFormattingClientCapabilities {
             dynamic_registration: Some(false),
@@ -783,7 +730,7 @@ impl Client {
           }),
           inlay_hint: Some(lsp::InlayHintClientCapabilities {
             dynamic_registration: Some(false),
-            resolve_support:      None,
+            resolve_support: None,
           }),
           ..Default::default()
         }),
@@ -801,12 +748,12 @@ impl Client {
         }),
         ..Default::default()
       },
-      trace:                     None,
-      client_info:               Some(lsp::ClientInfo {
-        name:    String::from("the_editor"),
+      trace: None,
+      client_info: Some(lsp::ClientInfo {
+        name: String::from("the_editor"),
         version: Some(String::from(VERSION_AND_GIT_HASH)),
       }),
-      locale:                    None, // TODO
+      locale: None, // TODO
       work_done_progress_params: lsp::WorkDoneProgressParams::default(),
     };
 
@@ -946,10 +893,7 @@ impl Client {
     // Calculation is therefore a bunch trickier.
     use ropey::RopeSlice;
 
-    use crate::{
-      core::transaction::Operation::*,
-      lsp::util::pos_to_lsp_pos,
-    };
+    use crate::{core::transaction::Operation::*, lsp::util::pos_to_lsp_pos};
     fn traverse(
       pos: lsp::Position,
       text: RopeSlice,
@@ -1000,8 +944,8 @@ impl Client {
 
           // deletion
           changes.push(lsp::TextDocumentContentChangeEvent {
-            range:        Some(lsp::Range::new(start, end)),
-            text:         "".to_string(),
+            range: Some(lsp::Range::new(start, end)),
+            text: "".to_string(),
             range_length: None,
           });
         },
@@ -1025,8 +969,8 @@ impl Client {
           };
 
           changes.push(lsp::TextDocumentContentChangeEvent {
-            range:        Some(lsp::Range::new(start, end)),
-            text:         s.to_string(),
+            range: Some(lsp::Range::new(start, end)),
+            text: s.to_string(),
             range_length: None,
           });
         },
@@ -1063,9 +1007,9 @@ impl Client {
       lsp::TextDocumentSyncKind::FULL => {
         vec![lsp::TextDocumentContentChangeEvent {
           // range = None -> whole document
-          range:        None, // Some(Range)
+          range: None,        // Some(Range)
           range_length: None, // u64 apparently deprecated
-          text:         new_text.to_string(),
+          text: new_text.to_string(),
         }]
       },
       lsp::TextDocumentSyncKind::INCREMENTAL => {
@@ -1101,14 +1045,12 @@ impl Client {
       lsp::TextDocumentSyncCapability::Options(lsp::TextDocumentSyncOptions {
         save: options,
         ..
-      }) => {
-        match options.as_ref()? {
-          lsp::TextDocumentSyncSaveOptions::Supported(true) => false,
-          lsp::TextDocumentSyncSaveOptions::SaveOptions(lsp::SaveOptions { include_text }) => {
-            include_text.unwrap_or(false)
-          },
-          lsp::TextDocumentSyncSaveOptions::Supported(false) => return None,
-        }
+      }) => match options.as_ref()? {
+        lsp::TextDocumentSyncSaveOptions::Supported(true) => false,
+        lsp::TextDocumentSyncSaveOptions::SaveOptions(lsp::SaveOptions { include_text }) => {
+          include_text.unwrap_or(false)
+        },
+        lsp::TextDocumentSyncSaveOptions::Supported(false) => return None,
       },
       // see: https://github.com/microsoft/language-server-protocol/issues/288
       lsp::TextDocumentSyncCapability::Kind(..) => false,
@@ -1134,14 +1076,14 @@ impl Client {
     capabilities.completion_provider.as_ref()?;
 
     let params = lsp::CompletionParams {
-      text_document_position:    lsp::TextDocumentPositionParams {
+      text_document_position: lsp::TextDocumentPositionParams {
         text_document,
         position,
       },
-      context:                   Some(context),
+      context: Some(context),
       // TODO: support these tokens by async receiving and updating the choice list
       work_done_progress_params: lsp::WorkDoneProgressParams { work_done_token },
-      partial_result_params:     lsp::PartialResultParams {
+      partial_result_params: lsp::PartialResultParams {
         partial_result_token: None,
       },
     };
@@ -1190,8 +1132,8 @@ impl Client {
         text_document,
         position,
       },
-      work_done_progress_params:     lsp::WorkDoneProgressParams { work_done_token },
-      context:                       None,
+      work_done_progress_params: lsp::WorkDoneProgressParams { work_done_token },
+      context: None,
       // lsp::SignatureHelpContext
     };
 
@@ -1262,7 +1204,7 @@ impl Client {
         text_document,
         position,
       },
-      work_done_progress_params:     lsp::WorkDoneProgressParams { work_done_token },
+      work_done_progress_params: lsp::WorkDoneProgressParams { work_done_token },
       // lsp::SignatureHelpContext
     };
 
@@ -1342,8 +1284,8 @@ impl Client {
         text_document,
         position,
       },
-      work_done_progress_params:     lsp::WorkDoneProgressParams { work_done_token },
-      partial_result_params:         lsp::PartialResultParams {
+      work_done_progress_params: lsp::WorkDoneProgressParams { work_done_token },
+      partial_result_params: lsp::PartialResultParams {
         partial_result_token: None,
       },
     };
@@ -1367,8 +1309,8 @@ impl Client {
         text_document,
         position,
       },
-      work_done_progress_params:     lsp::WorkDoneProgressParams { work_done_token },
-      partial_result_params:         lsp::PartialResultParams {
+      work_done_progress_params: lsp::WorkDoneProgressParams { work_done_token },
+      partial_result_params: lsp::PartialResultParams {
         partial_result_token: None,
       },
     };
@@ -1488,15 +1430,15 @@ impl Client {
     }
 
     let params = lsp::ReferenceParams {
-      text_document_position:    lsp::TextDocumentPositionParams {
+      text_document_position: lsp::TextDocumentPositionParams {
         text_document,
         position,
       },
-      context:                   lsp::ReferenceContext {
+      context: lsp::ReferenceContext {
         include_declaration,
       },
       work_done_progress_params: lsp::WorkDoneProgressParams { work_done_token },
-      partial_result_params:     lsp::PartialResultParams {
+      partial_result_params: lsp::PartialResultParams {
         partial_result_token: None,
       },
     };
@@ -1638,8 +1580,8 @@ impl Client {
     capabilities.execute_command_provider.as_ref()?;
 
     let params = lsp::ExecuteCommandParams {
-      command:                   command.command,
-      arguments:                 command.arguments.unwrap_or_default(),
+      command: command.command,
+      arguments: command.arguments.unwrap_or_default(),
       work_done_progress_params: lsp::WorkDoneProgressParams {
         work_done_token: None,
       },

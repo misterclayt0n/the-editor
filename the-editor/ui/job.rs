@@ -1,36 +1,14 @@
-use std::{
-  cell::RefCell,
-  rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use futures_util::{
-  future::{
-    BoxFuture,
-    Future,
-    FutureExt,
-    LocalBoxFuture,
-  },
-  stream::{
-    FuturesUnordered,
-    StreamExt,
-  },
+  future::{BoxFuture, Future, FutureExt, LocalBoxFuture},
+  stream::{FuturesUnordered, StreamExt},
 };
 use once_cell::sync::OnceCell;
-use the_editor_event::{
-  runtime_local,
-  send_blocking,
-  status::StatusMessage,
-};
-use tokio::sync::mpsc::{
-  Receiver,
-  Sender,
-  channel,
-};
+use the_editor_event::{runtime_local, send_blocking, status::StatusMessage};
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 
-use crate::{
-  editor::Editor,
-  ui::compositor::Compositor,
-};
+use crate::{editor::Editor, ui::compositor::Compositor};
 
 pub type EditorCompositorCallback = Box<dyn FnOnce(&mut Editor, &mut Compositor) + Send>;
 pub type EditorCallback = Box<dyn FnOnce(&mut Editor) + Send>;
@@ -75,19 +53,19 @@ pub type LocalJobFuture = LocalBoxFuture<'static, anyhow::Result<Option<LocalCal
 pub struct Job {
   pub future: BoxFuture<'static, anyhow::Result<Option<Callback>>>,
   /// Do we need to wait for this job to finish before exiting?
-  pub wait:   bool,
+  pub wait: bool,
 }
 
 pub struct LocalJob {
   pub future: LocalJobFuture,
   /// Do we need to wait for this job to finish before exiting?
-  pub wait:   bool,
+  pub wait: bool,
 }
 
 pub struct Jobs {
   /// jobs that need to complete before we exit.
-  pub wait_futures:    FuturesUnordered<JobFuture>,
-  pub callbacks:       Receiver<Callback>,
+  pub wait_futures: FuturesUnordered<JobFuture>,
+  pub callbacks: Receiver<Callback>,
   /// Local callbacks stored in an Rc<RefCell<>> since they're !Send and only
   /// accessed from main thread
   pub local_callbacks: Rc<RefCell<Vec<LocalCallback>>>,
@@ -98,7 +76,7 @@ impl Job {
   pub fn new<F: Future<Output = anyhow::Result<()>> + Send + 'static>(f: F) -> Self {
     Self {
       future: f.map(|r| r.map(|()| None)).boxed(),
-      wait:   false,
+      wait: false,
     }
   }
 
@@ -107,7 +85,7 @@ impl Job {
   ) -> Self {
     Self {
       future: f.map(|r| r.map(Some)).boxed(),
-      wait:   false,
+      wait: false,
     }
   }
 
@@ -121,7 +99,7 @@ impl LocalJob {
   pub fn new<F: Future<Output = anyhow::Result<()>> + 'static>(f: F) -> Self {
     Self {
       future: f.map(|r| r.map(|()| None)).boxed_local(),
-      wait:   false,
+      wait: false,
     }
   }
 
@@ -130,7 +108,7 @@ impl LocalJob {
   ) -> Self {
     Self {
       future: f.boxed_local(),
-      wait:   false,
+      wait: false,
     }
   }
 
@@ -183,11 +161,9 @@ impl Jobs {
   ) {
     match call {
       Ok(None) => {},
-      Ok(Some(call)) => {
-        match call {
-          Callback::EditorCompositor(call) => call(editor, compositor),
-          Callback::Editor(call) => call(editor),
-        }
+      Ok(Some(call)) => match call {
+        Callback::EditorCompositor(call) => call(editor, compositor),
+        Callback::Editor(call) => call(editor),
       },
       Err(e) => {
         editor.set_error(format!("Async job failed: {}", e));
@@ -203,11 +179,9 @@ impl Jobs {
   ) {
     match call {
       Ok(None) => {},
-      Ok(Some(call)) => {
-        match call {
-          LocalCallback::EditorCompositor(call) => call(editor, compositor),
-          LocalCallback::Editor(call) => call(editor),
-        }
+      Ok(Some(call)) => match call {
+        LocalCallback::EditorCompositor(call) => call(editor, compositor),
+        LocalCallback::Editor(call) => call(editor),
       },
       Err(e) => {
         editor.set_error(format!("Async job failed: {}", e));

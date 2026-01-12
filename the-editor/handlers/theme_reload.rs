@@ -6,10 +6,7 @@
 use notify::event::EventKind;
 use the_editor_event::register_hook;
 
-use crate::{
-  core::file_watcher::FileSystemDidChange,
-  ui::job,
-};
+use crate::{core::file_watcher::FileSystemDidChange, ui::job};
 
 pub(crate) fn register_hooks() {
   register_hook!(move |event: &mut FileSystemDidChange| {

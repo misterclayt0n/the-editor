@@ -1,22 +1,11 @@
-use std::{
-  collections::HashMap,
-  sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::types::{
-  Diagnostic,
-  PartialResultParams,
-  StaticRegistrationOptions,
-  TextDocumentIdentifier,
-  TextDocumentRegistrationOptions,
-  WorkDoneProgressOptions,
-  WorkDoneProgressParams,
+  Diagnostic, PartialResultParams, StaticRegistrationOptions, TextDocumentIdentifier,
+  TextDocumentRegistrationOptions, WorkDoneProgressOptions, WorkDoneProgressParams,
 };
 
 /// Client capabilities specific to diagnostic pull requests.
@@ -202,7 +191,7 @@ pub struct RelatedFullDocumentDiagnosticReport {
   #[serde(with = "crate::types::url_map")]
   #[serde(skip_serializing_if = "Option::is_none")]
   #[serde(default)]
-  pub related_documents:               Option<HashMap<Url, DocumentDiagnosticReportKind>>,
+  pub related_documents: Option<HashMap<Url, DocumentDiagnosticReportKind>>,
   // relatedDocuments?: { [uri: string]: FullDocumentDiagnosticReport |
   // UnchangedDocumentDiagnosticReport; };
   #[serde(flatten)]
@@ -226,7 +215,7 @@ pub struct RelatedUnchangedDocumentDiagnosticReport {
   #[serde(with = "crate::types::url_map")]
   #[serde(skip_serializing_if = "Option::is_none")]
   #[serde(default)]
-  pub related_documents:                    Option<HashMap<Url, DocumentDiagnosticReportKind>>,
+  pub related_documents: Option<HashMap<Url, DocumentDiagnosticReportKind>>,
   // relatedDocuments?: { [uri: string]: FullDocumentDiagnosticReport |
   // UnchangedDocumentDiagnosticReport; };
   #[serde(flatten)]

@@ -2,36 +2,30 @@ use the_editor_renderer::Color;
 
 use crate::{
   core::{
-    diagnostics::{
-      Diagnostic,
-      Severity,
-    },
+    diagnostics::{Diagnostic, Severity},
     doc_formatter::FormattedGrapheme,
     document::Document,
   },
   theme::Theme,
-  ui::{
-    compositor::Surface,
-    text_decorations::Decoration,
-  },
+  ui::{compositor::Surface, text_decorations::Decoration},
 };
 
 /// Decoration for rendering underlines beneath diagnostic ranges
 pub struct DiagnosticUnderlines<'a> {
-  diagnostics:       &'a [Diagnostic],
-  diagnostic_idx:    usize,
+  diagnostics: &'a [Diagnostic],
+  diagnostic_idx: usize,
   current_underline: Option<(usize, usize, Severity)>, // (start_col, end_col, severity)
-  base_x:            f32,
-  base_y:            f32,
-  line_height:       f32,
-  font_width:        f32,
-  font_size:         f32,
+  base_x: f32,
+  base_y: f32,
+  line_height: f32,
+  font_width: f32,
+  font_size: f32,
   horizontal_offset: usize,
-  hint_color:        Color,
-  info_color:        Color,
-  warning_color:     Color,
-  error_color:       Color,
-  opacities:         &'a std::collections::HashMap<usize, f32>,
+  hint_color: Color,
+  info_color: Color,
+  warning_color: Color,
+  error_color: Color,
+  opacities: &'a std::collections::HashMap<usize, f32>,
 }
 
 impl<'a> DiagnosticUnderlines<'a> {

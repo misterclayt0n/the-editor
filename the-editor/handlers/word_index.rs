@@ -3,54 +3,29 @@
 //! This provides an eventually consistent set of words used in any open
 //! buffers. This set is later used for lexical completion.
 
-use std::{
-  borrow::Cow,
-  collections::HashMap,
-  iter,
-  mem,
-  sync::Arc,
-  time::Duration,
-};
+use std::{borrow::Cow, collections::HashMap, iter, mem, sync::Arc, time::Duration};
 
 use parking_lot::RwLock;
-use ropey::{
-  Rope,
-  RopeSlice,
-};
-use the_editor_event::{
-  AsyncHook,
-  register_hook,
-};
+use ropey::{Rope, RopeSlice};
+use the_editor_event::{AsyncHook, register_hook};
 use the_editor_stdx::rope::RopeSliceExt;
-use tokio::{
-  sync::mpsc,
-  time::Instant,
-};
+use tokio::{sync::mpsc, time::Instant};
 
 use super::Handlers;
 use crate::{
   core::{
-    DocumentId,
-    chars::char_is_word,
-    fuzzy::fuzzy_match,
-    movement,
-    selection::Range,
+    DocumentId, chars::char_is_word, fuzzy::fuzzy_match, movement, selection::Range,
     transaction::ChangeSet,
   },
   doc,
-  event::{
-    ConfigDidChange,
-    DocumentDidChange,
-    DocumentDidClose,
-    DocumentDidOpen,
-  },
+  event::{ConfigDidChange, DocumentDidChange, DocumentDidClose, DocumentDidOpen},
 };
 
 #[derive(Debug)]
 struct Change {
   old_text: Rope,
-  text:     Rope,
-  changes:  ChangeSet,
+  text: Rope,
+  changes: ChangeSet,
 }
 
 #[derive(Debug)]
@@ -67,14 +42,14 @@ enum Event {
 pub struct Handler {
   pub(super) index: WordIndex,
   /// A sender into an async hook which debounces updates to the index.
-  hook:             mpsc::Sender<Event>,
+  hook: mpsc::Sender<Event>,
   /// A sender to a tokio task which coordinates the indexing of documents.
   ///
   /// See [WordIndex::run]. A supervisor-like task is in charge of spawning
   /// tasks to update the index. This ensures that consecutive edits to a
   /// document trigger the correct order of insertions and deletions into the
   /// word set.
-  coordinator:      mpsc::UnboundedSender<Event>,
+  coordinator: mpsc::UnboundedSender<Event>,
 }
 
 impl Handler {
@@ -84,7 +59,7 @@ impl Handler {
     tokio::spawn(index.clone().run(rx));
     Self {
       hook: Hook {
-        changes:     HashMap::default(),
+        changes: HashMap::default(),
         coordinator: tx.clone(),
       }
       .spawn(),
@@ -96,7 +71,7 @@ impl Handler {
 
 #[derive(Debug)]
 struct Hook {
-  changes:     HashMap<DocumentId, Change>,
+  changes: HashMap<DocumentId, Change>,
   coordinator: mpsc::UnboundedSender<Event>,
 }
 
@@ -256,29 +231,27 @@ impl WordIndex {
   async fn run(self, mut events: mpsc::UnboundedReceiver<Event>) {
     while let Some(event) = events.recv().await {
       let this = self.clone();
-      tokio::task::spawn_blocking(move || {
-        match event {
-          Event::Insert(text) => {
-            this.add_document(&text);
+      tokio::task::spawn_blocking(move || match event {
+        Event::Insert(text) => {
+          this.add_document(&text);
+        },
+        Event::Update(
+          _doc,
+          Change {
+            old_text,
+            text,
+            changes,
+            ..
           },
-          Event::Update(
-            _doc,
-            Change {
-              old_text,
-              text,
-              changes,
-              ..
-            },
-          ) => {
-            this.update_document(&old_text, &text, &changes);
-          },
-          Event::Delete(_doc, text) => {
-            this.remove_document(&text);
-          },
-          Event::Clear => {
-            this.clear();
-          },
-        }
+        ) => {
+          this.update_document(&old_text, &text, &changes);
+        },
+        Event::Delete(_doc, text) => {
+          this.remove_document(&text);
+        },
+        Event::Clear => {
+          this.clear();
+        },
       })
       .await
       .unwrap();
@@ -421,11 +394,14 @@ pub(crate) fn register_hooks(handlers: &Handlers) {
     if !event.ghost_transaction && event.doc.word_completion_enabled() {
       the_editor_event::send_blocking(
         &tx,
-        Event::Update(event.doc.id(), Change {
-          old_text: event.old_text.clone(),
-          text:     event.doc.text().clone(),
-          changes:  event.changes.clone(),
-        }),
+        Event::Update(
+          event.doc.id(),
+          Change {
+            old_text: event.old_text.clone(),
+            text: event.doc.text().clone(),
+            changes: event.changes.clone(),
+          },
+        ),
       );
     }
     Ok(())

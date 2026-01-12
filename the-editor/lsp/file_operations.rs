@@ -1,15 +1,12 @@
 use std::path::Path;
 
-use globset::{
-  GlobBuilder,
-  GlobSet,
-};
+use globset::{GlobBuilder, GlobSet};
 use log::error;
 use the_editor_lsp_types::types as lsp;
 
 #[derive(Default, Debug)]
 pub(crate) struct FileOperationFilter {
-  dir_globs:  GlobSet,
+  dir_globs: GlobSet,
   file_globs: GlobSet,
 }
 
@@ -85,7 +82,7 @@ pub(crate) struct FileOperationsInterest {
   // TODO: support other notifications
   // did_create: FileOperationFilter,
   // will_create: FileOperationFilter,
-  pub did_rename:  FileOperationFilter,
+  pub did_rename: FileOperationFilter,
   pub will_rename: FileOperationFilter,
   // did_delete: FileOperationFilter,
   // will_delete: FileOperationFilter,
@@ -101,7 +98,7 @@ impl FileOperationsInterest {
       return FileOperationsInterest::default();
     };
     FileOperationsInterest {
-      did_rename:  FileOperationFilter::new(capabilities.did_rename.as_ref()),
+      did_rename: FileOperationFilter::new(capabilities.did_rename.as_ref()),
       will_rename: FileOperationFilter::new(capabilities.will_rename.as_ref()),
     }
   }

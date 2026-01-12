@@ -1,17 +1,10 @@
 use std::{
   fmt,
-  path::{
-    Path,
-    PathBuf,
-  },
+  path::{Path, PathBuf},
 };
 
 use anyhow::Result;
-use clap::{
-  ArgAction,
-  Parser,
-  ValueEnum,
-};
+use clap::{ArgAction, Parser, ValueEnum};
 use indexmap::IndexMap;
 
 use crate::core::position::Position;
@@ -19,17 +12,17 @@ use crate::core::position::Position;
 #[derive(Clone, Debug)]
 pub struct CliOptions {
   pub display_version: bool,
-  pub load_tutor:      bool,
-  pub fetch_grammars:  bool,
-  pub build_grammars:  bool,
-  pub health:          bool,
+  pub load_tutor: bool,
+  pub fetch_grammars: bool,
+  pub build_grammars: bool,
+  pub health: bool,
   pub health_category: Option<String>,
-  pub split:           Option<SplitMode>,
-  pub verbosity:       u8,
-  pub log_file:        Option<PathBuf>,
-  pub config_file:     Option<PathBuf>,
-  pub working_dir:     Option<PathBuf>,
-  pub files:           IndexMap<PathBuf, Vec<Position>>,
+  pub split: Option<SplitMode>,
+  pub verbosity: u8,
+  pub log_file: Option<PathBuf>,
+  pub config_file: Option<PathBuf>,
+  pub working_dir: Option<PathBuf>,
+  pub files: IndexMap<PathBuf, Vec<Position>>,
 }
 
 impl CliOptions {

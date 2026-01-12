@@ -3,24 +3,15 @@
 
 use std::borrow::Cow;
 
-use ropey::{
-  Rope,
-  RopeSlice,
-};
+use ropey::{Rope, RopeSlice};
 use smallvec::SmallVec;
 use the_editor_stdx::rope::RopeSliceExt;
 
 use crate::core::{
   Tendril,
-  selection::{
-    Range,
-    Selection,
-  },
+  selection::{Range, Selection},
   syntax::config::BlockCommentToken,
-  transaction::{
-    Change,
-    Transaction,
-  },
+  transaction::{Change, Transaction},
 };
 
 pub const DEFAULT_COMMENT_TOKEN: &str = "#";
@@ -135,20 +126,20 @@ pub fn toggle_line_comments(doc: &Rope, selection: &Selection, token: Option<&st
 #[derive(Debug, PartialEq, Eq)]
 pub enum CommentChange {
   Commented {
-    range:        Range,
-    start_pos:    usize,
-    end_pos:      usize,
+    range: Range,
+    start_pos: usize,
+    end_pos: usize,
     start_margin: bool,
-    end_margin:   bool,
-    start_token:  String,
-    end_token:    String,
+    end_margin: bool,
+    start_token: String,
+    end_token: String,
   },
   Uncommented {
-    range:       Range,
-    start_pos:   usize,
-    end_pos:     usize,
+    range: Range,
+    start_pos: usize,
+    end_pos: usize,
     start_token: String,
-    end_token:   String,
+    end_token: String,
   },
   Whitespace {
     range: Range,
@@ -441,13 +432,16 @@ mod test {
 
     assert_eq!(
       res,
-      (false, vec![CommentChange::Uncommented {
-        range:       Range::new(0, 5),
-        start_pos:   0,
-        end_pos:     4,
-        start_token: "/*".to_string(),
-        end_token:   "*/".to_string(),
-      }])
+      (
+        false,
+        vec![CommentChange::Uncommented {
+          range: Range::new(0, 5),
+          start_pos: 0,
+          end_pos: 4,
+          start_token: "/*".to_string(),
+          end_token: "*/".to_string(),
+        }]
+      )
     );
 
     // comment

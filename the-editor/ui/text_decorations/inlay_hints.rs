@@ -2,17 +2,11 @@ use the_editor_renderer::Color;
 
 use crate::{
   core::{
-    doc_formatter::FormattedGrapheme,
-    document::DocumentInlayHints,
-    position::Position,
+    doc_formatter::FormattedGrapheme, document::DocumentInlayHints, position::Position,
     text_annotations::InlineAnnotation,
   },
   theme::Theme,
-  ui::{
-    UI_FONT_WIDTH,
-    compositor::Surface,
-    text_decorations::Decoration,
-  },
+  ui::{UI_FONT_WIDTH, compositor::Surface, text_decorations::Decoration},
 };
 
 /// Inlay hints decoration that shows LSP inlay hints aligned to the right
@@ -20,33 +14,33 @@ use crate::{
 /// anchor character
 pub struct InlayHints<'a> {
   // All inlay hint annotations
-  type_hints:      &'a [InlineAnnotation],
+  type_hints: &'a [InlineAnnotation],
   parameter_hints: &'a [InlineAnnotation],
-  other_hints:     &'a [InlineAnnotation],
+  other_hints: &'a [InlineAnnotation],
 
   // Styling
-  type_color:      Color,
+  type_color: Color,
   parameter_color: Color,
-  other_color:     Color,
+  other_color: Color,
 
   // Cursor position for filtering
   cursor_pos: usize,
 
   // Rendering state
-  base_x:         f32,
-  base_y:         f32,
-  line_height:    f32,
+  base_x: f32,
+  base_y: f32,
+  line_height: f32,
   viewport_width: u16,
 
   // Track current position in hint arrays
-  type_idx:      usize,
+  type_idx: usize,
   parameter_idx: usize,
-  other_idx:     usize,
+  other_idx: usize,
 
   // Pending hints to render at end of line
-  pending_hints:    Vec<(String, u16, Color)>, // (text, col, color)
+  pending_hints: Vec<(String, u16, Color)>, // (text, col, color)
   current_doc_line: usize,
-  last_col:         u16, // Track the rightmost column on current line
+  last_col: u16, // Track the rightmost column on current line
 }
 
 impl<'a> InlayHints<'a> {

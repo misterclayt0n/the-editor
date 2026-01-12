@@ -1,15 +1,9 @@
 use std::collections::HashMap;
 
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::types::{
-  Range,
-  Url,
-};
+use crate::types::{Range, Url};
 
 #[derive(Eq, PartialEq, Clone, Copy, Deserialize, Serialize)]
 #[serde(transparent)]

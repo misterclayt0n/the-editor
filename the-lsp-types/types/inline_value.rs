@@ -1,16 +1,8 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  DynamicRegistrationClientCapabilities,
-  Range,
-  StaticRegistrationOptions,
-  TextDocumentIdentifier,
-  TextDocumentRegistrationOptions,
-  WorkDoneProgressOptions,
-  WorkDoneProgressParams,
+  DynamicRegistrationClientCapabilities, Range, StaticRegistrationOptions, TextDocumentIdentifier,
+  TextDocumentRegistrationOptions, WorkDoneProgressOptions, WorkDoneProgressParams,
 };
 
 pub type InlineValueClientCapabilities = DynamicRegistrationClientCapabilities;
@@ -192,25 +184,22 @@ pub struct InlineValueWorkspaceClientCapabilities {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::types::{
-    Position,
-    tests::test_serialization,
-  };
+  use crate::types::{Position, tests::test_serialization};
 
   #[test]
   fn inline_values() {
     test_serialization(
       &InlineValueText {
         range: Range::new(Position::new(0, 0), Position::new(0, 4)),
-        text:  "one".to_owned(),
+        text: "one".to_owned(),
       },
       r#"{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}},"text":"one"}"#,
     );
 
     test_serialization(
       &InlineValue::VariableLookup(InlineValueVariableLookup {
-        range:                 Range::new(Position::new(1, 0), Position::new(1, 4)),
-        variable_name:         None,
+        range: Range::new(Position::new(1, 0), Position::new(1, 4)),
+        variable_name: None,
         case_sensitive_lookup: false,
       }),
       r#"{"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":4}},"caseSensitiveLookup":false}"#,
@@ -218,7 +207,7 @@ mod tests {
 
     test_serialization(
       &InlineValue::EvaluatableExpression(InlineValueEvaluatableExpression {
-        range:      Range::new(Position::new(2, 0), Position::new(2, 4)),
+        range: Range::new(Position::new(2, 0), Position::new(2, 4)),
         expression: None,
       }),
       r#"{"range":{"start":{"line":2,"character":0},"end":{"line":2,"character":4}}}"#,

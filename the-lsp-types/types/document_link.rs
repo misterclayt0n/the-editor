@@ -1,15 +1,8 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::types::{
-  PartialResultParams,
-  Range,
-  TextDocumentIdentifier,
-  Url,
-  WorkDoneProgressOptions,
+  PartialResultParams, Range, TextDocumentIdentifier, Url, WorkDoneProgressOptions,
   WorkDoneProgressParams,
 };
 
@@ -54,7 +47,7 @@ pub struct DocumentLinkParams {
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
 pub struct DocumentLink {
   /// The range this link applies to.
-  pub range:  Range,
+  pub range: Range,
   /// The uri this link points to.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub target: Option<Url>,

@@ -1,12 +1,7 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  PartialResultParams,
-  StaticTextDocumentColorProviderOptions,
-  TextDocumentIdentifier,
+  PartialResultParams, StaticTextDocumentColorProviderOptions, TextDocumentIdentifier,
   WorkDoneProgressParams,
 };
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]

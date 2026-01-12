@@ -1,7 +1,4 @@
-use std::time::{
-  Duration,
-  Instant,
-};
+use std::time::{Duration, Instant};
 
 use the_editor_renderer::Color;
 
@@ -52,14 +49,14 @@ pub mod selection {
   #[derive(Debug, Clone, Copy)]
   pub struct PulseSample {
     pub elapsed: f32,
-    pub energy:  f32,
+    pub energy: f32,
   }
 
   #[derive(Debug, Clone)]
   pub struct SelectionPulse {
     started_at: Instant,
-    duration:   Duration,
-    kind:       SelectionPulseKind,
+    duration: Duration,
+    kind: SelectionPulseKind,
   }
 
   impl SelectionPulse {
@@ -117,7 +114,7 @@ pub mod selection {
 
   #[derive(Debug, Clone, Copy)]
   pub struct GlowFrame {
-    pub color:  Color,
+    pub color: Color,
     pub active: bool,
   }
 
@@ -147,7 +144,7 @@ pub mod selection {
     blended.a = alpha_source * alpha_wave;
 
     GlowFrame {
-      color:  blended,
+      color: blended,
       active: amplitude > 0.0,
     }
   }
@@ -163,10 +160,10 @@ pub mod breathing {
   /// Used for indicating ongoing processes like LSP loading
   #[derive(Debug, Clone)]
   pub struct BreathingAnimation {
-    started_at:     Instant,
+    started_at: Instant,
     cycle_duration: Duration,
-    min_alpha:      f32,
-    max_alpha:      f32,
+    min_alpha: f32,
+    max_alpha: f32,
   }
 
   impl BreathingAnimation {
@@ -182,10 +179,10 @@ pub mod breathing {
     /// Create a new breathing animation with default parameters
     pub fn new() -> Self {
       Self {
-        started_at:     Instant::now(),
+        started_at: Instant::now(),
         cycle_duration: Self::DEFAULT_CYCLE_DURATION,
-        min_alpha:      Self::DEFAULT_MIN_ALPHA,
-        max_alpha:      Self::DEFAULT_MAX_ALPHA,
+        min_alpha: Self::DEFAULT_MIN_ALPHA,
+        max_alpha: Self::DEFAULT_MAX_ALPHA,
       }
     }
 
@@ -419,20 +416,20 @@ const MIN_ANIMATION_FRAMES: u32 = 3;
 #[derive(Debug)]
 pub struct Animation<T: Animatable> {
   /// Starting value
-  start:       T,
+  start: T,
   /// Target value
-  target:      T,
+  target: T,
   /// Current value (updated each frame)
-  current:     T,
+  current: T,
   /// Duration of the animation in seconds
-  duration:    f32,
+  duration: f32,
   /// Time elapsed since animation started (in seconds)
-  elapsed:     f32,
+  elapsed: f32,
   /// Easing function to use
-  easing:      Easing,
+  easing: Easing,
   /// Whether update() has been called at least once.
   /// Used to prevent is_complete() from returning true before animation starts.
-  started:     bool,
+  started: bool,
   /// Number of frames the animation has been updated.
   /// Used to ensure animations run for at least MIN_ANIMATION_FRAMES.
   frame_count: u32,
@@ -548,7 +545,7 @@ pub struct AnimationId(usize);
 
 /// Manages all active animations
 pub struct AnimationManager {
-  next_id:    usize,
+  next_id: usize,
   animations: Vec<(AnimationId, Box<dyn AnimationTrait>)>,
 }
 
@@ -578,7 +575,7 @@ impl AnimationManager {
   /// Create a new animation manager
   pub fn new() -> Self {
     Self {
-      next_id:    0,
+      next_id: 0,
       animations: Vec::new(),
     }
   }

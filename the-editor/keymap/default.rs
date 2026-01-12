@@ -1,9 +1,6 @@
 use std::collections::HashMap;
 
-use super::{
-  KeyTrie,
-  Mode,
-};
+use super::{KeyTrie, Mode};
 
 pub fn default() -> HashMap<Mode, KeyTrie> {
   let normal = crate::keymap!({ "Normal"

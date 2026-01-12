@@ -1,16 +1,13 @@
 //! Provides [Range] type expanding on [RangeBounds].
 
-use std::ops::{
-  self,
-  RangeBounds,
-};
+use std::ops::{self, RangeBounds};
 
 /// A range of `char`s within the text.
 /// TODO: Change this name.
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct Range<T = usize> {
   pub start: T,
-  pub end:   T,
+  pub end: T,
 }
 
 impl<T: PartialOrd> Range<T> {

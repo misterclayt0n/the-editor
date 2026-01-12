@@ -1,9 +1,4 @@
-use std::{
-  fs::File,
-  io::Write,
-  path::Path,
-  process::Command,
-};
+use std::{fs::File, io::Write, path::Path, process::Command};
 
 use tempfile::TempDir;
 
@@ -114,7 +109,8 @@ fn directory() {
 #[cfg(any(unix, windows))]
 #[test]
 fn symlink() {
-  #[cfg(unix)] use std::os::unix::fs::symlink;
+  #[cfg(unix)]
+  use std::os::unix::fs::symlink;
   #[cfg(not(unix))]
   use std::os::windows::fs::symlink_file as symlink;
 
@@ -136,7 +132,8 @@ fn symlink() {
 #[cfg(any(unix, windows))]
 #[test]
 fn symlink_to_git_repo() {
-  #[cfg(unix)] use std::os::unix::fs::symlink;
+  #[cfg(unix)]
+  use std::os::unix::fs::symlink;
   #[cfg(not(unix))]
   use std::os::windows::fs::symlink_file as symlink;
 

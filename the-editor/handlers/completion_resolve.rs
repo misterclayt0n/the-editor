@@ -10,25 +10,14 @@
 /// > completion item as a parameter.
 use std::sync::Arc;
 
-use the_editor_event::{
-  AsyncHook,
-  TaskController,
-  cancelable_future,
-  send_blocking,
-};
+use the_editor_event::{AsyncHook, TaskController, cancelable_future, send_blocking};
 use the_editor_lsp_types::types as lsp;
 use tokio::{
   sync::mpsc::Sender,
-  time::{
-    Duration,
-    Instant,
-  },
+  time::{Duration, Instant},
 };
 
-use super::completion::{
-  CompletionItem,
-  LspCompletionItem,
-};
+use super::completion::{CompletionItem, LspCompletionItem};
 use crate::lsp::LanguageServerId;
 
 /// Handler for resolving completion items asynchronously
@@ -36,14 +25,14 @@ pub struct ResolveHandler {
   /// The last item we requested resolution for (to avoid duplicates)
   last_request: Option<Arc<LspCompletionItem>>,
   /// Channel to send resolve requests
-  resolver:     Sender<ResolveRequest>,
+  resolver: Sender<ResolveRequest>,
 }
 
 impl ResolveHandler {
   pub fn new() -> Self {
     Self {
       last_request: None,
-      resolver:     ResolveTimeout::default().spawn(),
+      resolver: ResolveTimeout::default().spawn(),
     }
   }
 
@@ -58,16 +47,19 @@ impl ResolveHandler {
     // Check if item actually needs resolution
     // An item is considered fully resolved if it has non-empty documentation,
     // detail, and additional_text_edits
-    let is_resolved = item.item.documentation.as_ref().is_some_and(|docs| {
-      match docs {
+    let is_resolved = item
+      .item
+      .documentation
+      .as_ref()
+      .is_some_and(|docs| match docs {
         lsp::Documentation::String(text) => !text.is_empty(),
         lsp::Documentation::MarkupContent(markup) => !markup.value.is_empty(),
-      }
-    }) && item
-      .item
-      .detail
-      .as_ref()
-      .is_some_and(|detail| !detail.is_empty())
+      })
+      && item
+        .item
+        .detail
+        .as_ref()
+        .is_some_and(|detail| !detail.is_empty())
       && item
         .item
         .additional_text_edits
@@ -89,16 +81,19 @@ impl ResolveHandler {
     let item_arc = Arc::new(item.clone());
     self.last_request = Some(item_arc.clone());
 
-    send_blocking(&self.resolver, ResolveRequest {
-      item:     item_arc,
-      provider: item.provider,
-    });
+    send_blocking(
+      &self.resolver,
+      ResolveRequest {
+        item: item_arc,
+        provider: item.provider,
+      },
+    );
   }
 }
 
 /// A request to resolve a completion item
 struct ResolveRequest {
-  item:     Arc<LspCompletionItem>,
+  item: Arc<LspCompletionItem>,
   provider: LanguageServerId,
 }
 
@@ -106,9 +101,9 @@ struct ResolveRequest {
 #[derive(Default)]
 struct ResolveTimeout {
   /// The next pending request (will be sent after debounce)
-  next_request:    Option<ResolveRequest>,
+  next_request: Option<ResolveRequest>,
   /// The currently in-flight request (being processed by LSP)
-  in_flight:       Option<Arc<LspCompletionItem>>,
+  in_flight: Option<Arc<LspCompletionItem>>,
   /// Task controller for cancellation
   task_controller: TaskController,
 }
@@ -205,13 +200,11 @@ impl ResolveRequest {
 
     // Await the resolution (this is the potentially slow LSP call)
     let resolved = match resolve_future.await {
-      Ok(item) => {
-        CompletionItem::Lsp(LspCompletionItem {
-          item,
-          resolved: true,
-          ..*self.item
-        })
-      },
+      Ok(item) => CompletionItem::Lsp(LspCompletionItem {
+        item,
+        resolved: true,
+        ..*self.item
+      }),
       Err(err) => {
         log::error!("Completion resolve request failed: {}", err);
         // Mark as resolved so we don't keep trying

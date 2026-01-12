@@ -1,27 +1,19 @@
 use std::{
   collections::HashMap,
-  hash::{
-    Hash,
-    Hasher,
-  },
+  hash::{Hash, Hasher},
 };
 
-use glyphon::{
-  Buffer,
-  FontSystem,
-  Metrics,
-  Shaping,
-};
+use glyphon::{Buffer, FontSystem, Metrics, Shaping};
 
 /// Key for caching shaped text buffers
 #[derive(Clone, Debug)]
 pub struct ShapedTextKey {
   /// The text content
-  pub text:    String,
+  pub text: String,
   /// Font metrics (size and line height)
   pub metrics: (u32, u32), // Store as fixed point
   /// Text color as RGBA bytes
-  pub color:   [u8; 4],
+  pub color: [u8; 4],
 }
 
 impl Hash for ShapedTextKey {
@@ -43,27 +35,27 @@ impl Eq for ShapedTextKey {}
 /// A cached shaped text buffer
 pub struct CachedShapedText {
   /// The shaped buffer ready for rendering
-  pub buffer:          Buffer,
+  pub buffer: Buffer,
   /// Frame when this was last used
   pub last_used_frame: u64,
   /// Generation number for invalidation
-  pub generation:      u64,
+  pub generation: u64,
 }
 
 /// Cache for shaped text to avoid re-shaping identical text
 pub struct ShapedTextCache {
   /// Map from text key to cached shaped buffer
-  pub entries:            HashMap<ShapedTextKey, CachedShapedText>,
+  pub entries: HashMap<ShapedTextKey, CachedShapedText>,
   /// Current frame number for LRU tracking
-  pub current_frame:      u64,
+  pub current_frame: u64,
   /// Generation counter for cache invalidation
   pub current_generation: u64,
   /// Maximum number of cached entries
-  max_entries:            usize,
+  max_entries: usize,
   /// Number of cache hits for statistics
-  pub hits:               u64,
+  pub hits: u64,
   /// Number of cache misses for statistics
-  pub misses:             u64,
+  pub misses: u64,
 }
 
 impl ShapedTextCache {
@@ -97,10 +89,7 @@ impl ShapedTextCache {
       buffer.set_size(font_system, Some(width), Some(height));
 
       // Set the text and shape it
-      use glyphon::{
-        Attrs,
-        Family,
-      };
+      use glyphon::{Attrs, Family};
       let attrs = Attrs::new().family(Family::SansSerif).metrics(metrics);
 
       buffer.set_text(font_system, &key.text, &attrs, Shaping::Advanced);
@@ -187,15 +176,15 @@ mod tests {
   fn test_cache_key_equality_ignores_position() {
     // Same text, color, and metrics should be equal regardless of position
     let key1 = ShapedTextKey {
-      text:    "Hello".to_string(),
+      text: "Hello".to_string(),
       metrics: (1400, 1680),
-      color:   [255, 255, 255, 255],
+      color: [255, 255, 255, 255],
     };
 
     let key2 = ShapedTextKey {
-      text:    "Hello".to_string(),
+      text: "Hello".to_string(),
       metrics: (1400, 1680),
-      color:   [255, 255, 255, 255],
+      color: [255, 255, 255, 255],
     };
 
     assert_eq!(key1, key2);
@@ -204,15 +193,15 @@ mod tests {
   #[test]
   fn test_cache_key_different_text() {
     let key1 = ShapedTextKey {
-      text:    "Hello".to_string(),
+      text: "Hello".to_string(),
       metrics: (1400, 1680),
-      color:   [255, 255, 255, 255],
+      color: [255, 255, 255, 255],
     };
 
     let key2 = ShapedTextKey {
-      text:    "World".to_string(),
+      text: "World".to_string(),
       metrics: (1400, 1680),
-      color:   [255, 255, 255, 255],
+      color: [255, 255, 255, 255],
     };
 
     assert_ne!(key1, key2);
@@ -221,15 +210,15 @@ mod tests {
   #[test]
   fn test_cache_key_different_color() {
     let key1 = ShapedTextKey {
-      text:    "Hello".to_string(),
+      text: "Hello".to_string(),
       metrics: (1400, 1680),
-      color:   [255, 255, 255, 255],
+      color: [255, 255, 255, 255],
     };
 
     let key2 = ShapedTextKey {
-      text:    "Hello".to_string(),
+      text: "Hello".to_string(),
       metrics: (1400, 1680),
-      color:   [255, 0, 0, 255],
+      color: [255, 0, 0, 255],
     };
 
     assert_ne!(key1, key2);
@@ -240,21 +229,21 @@ mod tests {
     let mut cache = ShapedTextCache::new(2); // Small cache for testing
 
     let key1 = ShapedTextKey {
-      text:    "First".to_string(),
+      text: "First".to_string(),
       metrics: (1400, 1680),
-      color:   [255, 255, 255, 255],
+      color: [255, 255, 255, 255],
     };
 
     let key2 = ShapedTextKey {
-      text:    "Second".to_string(),
+      text: "Second".to_string(),
       metrics: (1400, 1680),
-      color:   [255, 255, 255, 255],
+      color: [255, 255, 255, 255],
     };
 
     let key3 = ShapedTextKey {
-      text:    "Third".to_string(),
+      text: "Third".to_string(),
       metrics: (1400, 1680),
-      color:   [255, 255, 255, 255],
+      color: [255, 255, 255, 255],
     };
 
     // Add two entries
@@ -288,9 +277,9 @@ mod tests {
     let metrics = Metrics::new(14.0, 16.8);
 
     let key = ShapedTextKey {
-      text:    "Test".to_string(),
+      text: "Test".to_string(),
       metrics: (1400, 1680),
-      color:   [255, 255, 255, 255],
+      color: [255, 255, 255, 255],
     };
 
     // First access is a miss
@@ -316,9 +305,9 @@ mod tests {
     let metrics = Metrics::new(14.0, 16.8);
 
     let key = ShapedTextKey {
-      text:    "Test".to_string(),
+      text: "Test".to_string(),
       metrics: (1400, 1680),
-      color:   [255, 255, 255, 255],
+      color: [255, 255, 255, 255],
     };
 
     cache.get_or_shape(key.clone(), &mut font_system, metrics, 100.0, 100.0);
@@ -344,9 +333,9 @@ mod tests {
     let metrics = Metrics::new(14.0, 16.8);
 
     let key = ShapedTextKey {
-      text:    "Test".to_string(),
+      text: "Test".to_string(),
       metrics: (1400, 1680),
-      color:   [255, 255, 255, 255],
+      color: [255, 255, 255, 255],
     };
 
     cache.get_or_shape(key.clone(), &mut font_system, metrics, 100.0, 100.0);

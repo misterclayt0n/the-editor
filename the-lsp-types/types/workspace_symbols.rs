@@ -1,20 +1,8 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  LSPAny,
-  Location,
-  OneOf,
-  PartialResultParams,
-  SymbolInformation,
-  SymbolKind,
-  SymbolKindCapability,
-  SymbolTag,
-  TagSupport,
-  Url,
-  WorkDoneProgressParams,
+  LSPAny, Location, OneOf, PartialResultParams, SymbolInformation, SymbolKind,
+  SymbolKindCapability, SymbolTag, TagSupport, Url, WorkDoneProgressParams,
 };
 
 #[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]

@@ -1,175 +1,76 @@
 use std::{
   borrow::Cow,
-  char::{
-    ToLowercase,
-    ToUppercase,
-  },
-  collections::{
-    HashMap,
-    HashSet,
-  },
+  char::{ToLowercase, ToUppercase},
+  collections::{HashMap, HashSet},
   fmt,
   fs::File,
   io::Cursor,
   num::NonZeroUsize,
-  path::{
-    Path,
-    PathBuf,
-  },
+  path::{Path, PathBuf},
   str::FromStr,
 };
 
-use anyhow::{
-  anyhow,
-  bail,
-  ensure,
-};
+use anyhow::{anyhow, bail, ensure};
 use imara_diff::{
-  Algorithm as ImaraAlgorithm,
-  Diff as ImaraDiff,
-  IndentHeuristic,
-  IndentLevel,
-  InternedInput,
+  Algorithm as ImaraAlgorithm, Diff as ImaraDiff, IndentHeuristic, IndentLevel, InternedInput,
 };
 use once_cell::sync::Lazy;
 use regex::Regex;
-use ropey::{
-  Rope,
-  RopeSlice,
-};
-use serde::{
-  Deserialize,
-  Deserializer,
-  de,
-};
+use ropey::{Rope, RopeSlice};
+use serde::{Deserialize, Deserializer, de};
 use smallvec::SmallVec;
 use the_editor_loader::find_workspace;
-use the_editor_renderer::{
-  Key,
-  KeyPress,
-};
+use the_editor_renderer::{Key, KeyPress};
 use the_editor_stdx::{
-  path::{
-    self,
-    find_paths,
-  },
+  path::{self, find_paths},
   rope::RopeSliceExt,
 };
-use the_editor_vcs::{
-  DiffProviderRegistry,
-  Hunk,
-};
+use the_editor_vcs::{DiffProviderRegistry, Hunk};
 use url::Url;
 
 // Re-export LSP commands so they can be bound directly from keymaps.
 pub use crate::core::lsp_commands::{
-  code_action,
-  document_diagnostics,
-  document_symbols,
-  goto_declaration,
-  goto_definition,
-  goto_implementation,
-  goto_reference,
-  goto_type_definition,
-  rename_symbol,
-  select_references,
-  workspace_diagnostics,
-  workspace_symbols,
+  code_action, document_diagnostics, document_symbols, goto_declaration, goto_definition,
+  goto_implementation, goto_reference, goto_type_definition, rename_symbol, select_references,
+  workspace_diagnostics, workspace_symbols,
 };
 use crate::{
   core::{
-    DocumentId,
-    Tendril,
-    ViewId,
+    DocumentId, Tendril, ViewId,
     animation::selection::SelectionPulseKind,
     auto_pairs,
     chars::char_is_word,
-    command_line::{
-      self,
-      Args,
-    },
+    command_line::{self, Args},
     comment,
-    document::{
-      self,
-      Document,
-    },
-    global_search::{
-      self as global_search_utils,
-      FileResult,
-      MatchControl,
-      SearchOptions,
-    },
-    grapheme::{
-      self,
-      next_grapheme_boundary,
-    },
+    document::{self, Document},
+    global_search::{self as global_search_utils, FileResult, MatchControl, SearchOptions},
+    grapheme::{self, next_grapheme_boundary},
     history::UndoKind,
     indent,
     info::Info,
-    line_ending::{
-      get_line_ending_of_str,
-      line_end_char_index,
-    },
+    line_ending::{get_line_ending_of_str, line_end_char_index},
     match_brackets,
     movement::{
-      self,
-      Direction,
-      Movement,
-      move_horizontally,
-      move_vertically,
-      move_vertically_visual,
+      self, Direction, Movement, move_horizontally, move_vertically, move_vertically_visual,
     },
     object,
-    position::{
-      Position,
-      char_idx_at_visual_offset,
-    },
-    search::{
-      self,
-      CharMatcher,
-    },
-    selection::{
-      self,
-      Range,
-      Selection,
-    },
+    position::{Position, char_idx_at_visual_offset},
+    search::{self, CharMatcher},
+    selection::{self, Range, Selection},
     surround,
-    syntax::{
-      Syntax,
-      config::BlockCommentToken,
-    },
-    text_annotations::{
-      Overlay,
-      TextAnnotations,
-    },
+    syntax::{Syntax, config::BlockCommentToken},
+    text_annotations::{Overlay, TextAnnotations},
     text_format::TextFormat,
     textobject,
-    transaction::{
-      Deletion,
-      Transaction,
-    },
+    transaction::{Deletion, Transaction},
     tree,
-    view::{
-      Align,
-      View,
-      align_view,
-    },
+    view::{Align, View, align_view},
   },
-  current,
-  current_ref,
-  doc,
-  doc_mut,
-  editor::{
-    Action,
-    Editor,
-  },
+  current, current_ref, doc, doc_mut,
+  editor::{Action, Editor},
   event::PostInsertChar,
-  keymap::{
-    KeyBinding,
-    Mode,
-  },
-  view,
-  view_mut,
+  keymap::{KeyBinding, Mode},
+  view, view_mut,
 };
 
 type MoveFn =
@@ -188,13 +89,13 @@ pub type Callback = Box<dyn FnOnce(&mut compositor::Compositor, &mut compositor:
 pub enum MappableCommand {
   Static {
     name: &'static str,
-    fun:  fn(&mut Context),
-    doc:  &'static str,
+    fun: fn(&mut Context),
+    doc: &'static str,
   },
   Typable {
-    name:    String,
+    name: String,
     command: String,
-    args:    String,
+    args: String,
   },
   Macro {
     name: String,
@@ -573,19 +474,17 @@ impl fmt::Debug for MappableCommand {
         name,
         command,
         args,
-      } => {
-        f.debug_struct("MappableCommand")
-          .field("name", name)
-          .field("command", command)
-          .field("args", args)
-          .finish()
-      },
-      MappableCommand::Macro { name, keys } => {
-        f.debug_tuple("MappableCommand")
-          .field(name)
-          .field(keys)
-          .finish()
-      },
+      } => f
+        .debug_struct("MappableCommand")
+        .field("name", name)
+        .field("command", command)
+        .field("args", args)
+        .finish(),
+      MappableCommand::Macro { name, keys } => f
+        .debug_tuple("MappableCommand")
+        .field(name)
+        .field(keys)
+        .finish(),
     }
   }
 }
@@ -612,18 +511,16 @@ impl FromStr for MappableCommand {
       }
 
       return Ok(MappableCommand::Typable {
-        name:    s.to_string(),
+        name: s.to_string(),
         command: command.to_string(),
-        args:    args.to_string(),
+        args: args.to_string(),
       });
     }
 
     if let Some(keys) = s.strip_prefix('@') {
-      return parse_macro(keys).map(|keys| {
-        MappableCommand::Macro {
-          name: s.to_string(),
-          keys,
-        }
+      return parse_macro(keys).map(|keys| MappableCommand::Macro {
+        name: s.to_string(),
+        keys,
       });
     }
 
@@ -692,11 +589,9 @@ pub fn lookup_static_command(name: &str) -> Option<MappableCommand> {
 }
 
 pub fn command_fn_by_name(name: &str) -> Option<fn(&mut Context)> {
-  lookup_static_command(name).and_then(|cmd| {
-    match cmd {
-      MappableCommand::Static { fun, .. } => Some(fun),
-      _ => None,
-    }
+  lookup_static_command(name).and_then(|cmd| match cmd {
+    MappableCommand::Static { fun, .. } => Some(fun),
+    _ => None,
   })
 }
 
@@ -760,12 +655,12 @@ pub enum OnKeyCallbackKind {
 }
 
 pub struct Context<'a> {
-  pub register:             Option<char>,
-  pub count:                Option<NonZeroUsize>,
-  pub editor:               &'a mut Editor,
+  pub register: Option<char>,
+  pub count: Option<NonZeroUsize>,
+  pub editor: &'a mut Editor,
   pub on_next_key_callback: Option<(OnKeyCallback, OnKeyCallbackKind)>,
-  pub callback:             Vec<Callback>,
-  pub jobs:                 &'a mut crate::ui::job::Jobs,
+  pub callback: Vec<Callback>,
+  pub jobs: &'a mut crate::ui::job::Jobs,
 }
 
 enum Operation {
@@ -837,8 +732,8 @@ fn push_jump(view: &mut View, doc: &mut Document) {
 pub struct FindCharPending {
   pub direction: Direction,
   pub inclusive: bool,
-  pub extend:    bool,
-  pub count:     usize,
+  pub extend: bool,
+  pub count: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1398,16 +1293,12 @@ fn find_prev_char_impl(
 }
 
 pub fn perform_find_char(editor: &mut Editor, pending: FindCharPending, input: FindCharInput) {
-  editor.apply_motion(move |editor| {
-    match input {
-      FindCharInput::LineEnding => find_char_line_ending(editor, pending),
-      FindCharInput::Char(ch) => {
-        match pending.direction {
-          Direction::Forward => find_char_impl(editor, &find_next_char_impl, pending, ch),
-          Direction::Backward => find_char_impl(editor, &find_prev_char_impl, pending, ch),
-        }
-      },
-    }
+  editor.apply_motion(move |editor| match input {
+    FindCharInput::LineEnding => find_char_line_ending(editor, pending),
+    FindCharInput::Char(ch) => match pending.direction {
+      Direction::Forward => find_char_impl(editor, &find_next_char_impl, pending, ch),
+      Direction::Backward => find_char_impl(editor, &find_prev_char_impl, pending, ch),
+    },
   });
 }
 
@@ -1450,10 +1341,7 @@ pub fn repeat_last_motion(cx: &mut Context) {
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
-  core::grapheme::{
-    nth_next_grapheme_boundary,
-    nth_prev_grapheme_boundary,
-  },
+  core::grapheme::{nth_next_grapheme_boundary, nth_prev_grapheme_boundary},
   editor::SmartTabConfig,
 };
 
@@ -2135,17 +2023,14 @@ pub fn select_regex(cx: &mut Context) {
 fn push_file_picker_with_root(cx: &mut Context, root: std::path::PathBuf) {
   use std::{
     path::PathBuf,
-    sync::{
-      Arc,
-      Mutex,
-    },
+    sync::{Arc, Mutex},
   };
 
   use crate::ui::components::PickerAction;
 
   /// Selection from file picker including the path and action
   struct FileSelection {
-    path:   PathBuf,
+    path: PathBuf,
     action: PickerAction,
   }
 
@@ -2162,7 +2047,7 @@ fn push_file_picker_with_root(cx: &mut Context, root: std::path::PathBuf) {
       });
 
     struct PickerWrapper {
-      picker:    crate::ui::components::Picker<PathBuf, crate::ui::FilePickerData>,
+      picker: crate::ui::components::Picker<PathBuf, crate::ui::FilePickerData>,
       selection: Arc<Mutex<Option<FileSelection>>>,
     }
 
@@ -2228,7 +2113,7 @@ fn push_file_picker_with_root(cx: &mut Context, root: std::path::PathBuf) {
 }
 
 struct FileExplorerComponent {
-  picker:    crate::ui::components::Picker<(std::path::PathBuf, bool), crate::ui::FileExplorerData>,
+  picker: crate::ui::components::Picker<(std::path::PathBuf, bool), crate::ui::FileExplorerData>,
   selection: std::sync::Arc<std::sync::Mutex<Option<crate::ui::FileExplorerSelection>>>,
 }
 
@@ -2326,16 +2211,14 @@ impl crate::ui::compositor::Component for FileExplorerComponent {
 }
 
 fn push_file_explorer_with_root(cx: &mut Context, root: std::path::PathBuf) {
-  cx.callback.push(Box::new(move |compositor, ctx| {
-    match FileExplorerComponent::new(root.clone()) {
+  cx.callback.push(Box::new(
+    move |compositor, ctx| match FileExplorerComponent::new(root.clone()) {
       Ok(component) => compositor.push(Box::new(component)),
-      Err(err) => {
-        ctx
-          .editor
-          .set_error(format!("Failed to read directory: {}", err))
-      },
-    }
-  }));
+      Err(err) => ctx
+        .editor
+        .set_error(format!("Failed to read directory: {}", err)),
+    },
+  ));
 }
 
 pub fn file_picker(cx: &mut Context) {
@@ -2346,34 +2229,28 @@ pub fn file_picker(cx: &mut Context) {
 pub fn buffer_picker(cx: &mut Context) {
   use std::path::PathBuf;
 
-  use crate::core::{
-    DocumentId,
-    document::SCRATCH_BUFFER_NAME,
-    special_buffer::SpecialBufferKind,
-  };
+  use crate::core::{DocumentId, document::SCRATCH_BUFFER_NAME, special_buffer::SpecialBufferKind};
 
   let current = view!(cx.editor).doc();
 
   struct BufferMeta {
-    id:             DocumentId,
-    path:           Option<PathBuf>,
-    is_modified:    bool,
-    is_current:     bool,
+    id: DocumentId,
+    path: Option<PathBuf>,
+    is_modified: bool,
+    is_current: bool,
     special_buffer: Option<SpecialBufferKind>,
-    is_running:     bool,
-    focused_at:     std::time::Instant,
+    is_running: bool,
+    focused_at: std::time::Instant,
   }
 
-  let new_meta = |doc: &Document| {
-    BufferMeta {
-      id:             doc.id(),
-      path:           doc.path().cloned(),
-      is_modified:    doc.is_modified(),
-      is_current:     Some(doc.id()) == current,
-      special_buffer: doc.special_buffer_kind(),
-      is_running:     cx.editor.is_special_buffer_running(doc.id()),
-      focused_at:     doc.focused_at,
-    }
+  let new_meta = |doc: &Document| BufferMeta {
+    id: doc.id(),
+    path: doc.path().cloned(),
+    is_modified: doc.is_modified(),
+    is_current: Some(doc.id()) == current,
+    special_buffer: doc.special_buffer_kind(),
+    is_running: cx.editor.is_special_buffer_running(doc.id()),
+    focused_at: doc.focused_at,
   };
 
   let mut items = cx
@@ -2386,10 +2263,7 @@ pub fn buffer_picker(cx: &mut Context) {
   // mru
   items.sort_unstable_by_key(|item| std::cmp::Reverse(item.focused_at));
 
-  use crate::ui::components::{
-    Column,
-    Picker,
-  };
+  use crate::ui::components::{Column, Picker};
 
   let columns = [
     Column::new("id", |meta: &BufferMeta, _| meta.id.to_string()),
@@ -2417,10 +2291,7 @@ pub fn buffer_picker(cx: &mut Context) {
       }
     }),
   ];
-  use crate::{
-    editor::Action,
-    ui::components::PickerAction,
-  };
+  use crate::{editor::Action, ui::components::PickerAction};
 
   let action_handler = std::sync::Arc::new(
     move |meta: &BufferMeta, _: &(), picker_action: PickerAction| {
@@ -2458,13 +2329,7 @@ pub fn terminal_picker(cx: &mut Context) {
 
   use crate::{
     editor::Action,
-    ui::components::{
-      CachedPreview,
-      Column,
-      Picker,
-      PickerAction,
-      TerminalPreview,
-    },
+    ui::components::{CachedPreview, Column, Picker, PickerAction, TerminalPreview},
   };
 
   // Get current view's terminal (if any) to mark as current
@@ -2475,12 +2340,12 @@ pub fn terminal_picker(cx: &mut Context) {
     .and_then(|view| view.terminal());
 
   struct TerminalMeta {
-    id:         TerminalId,
-    title:      String,
-    visible:    bool,
-    exited:     bool,
+    id: TerminalId,
+    title: String,
+    visible: bool,
+    exited: bool,
     is_current: bool,
-    cwd:        Option<PathBuf>,
+    cwd: Option<PathBuf>,
     created_at: std::time::Instant,
   }
 
@@ -2490,12 +2355,12 @@ pub fn terminal_picker(cx: &mut Context) {
     .map(|term| {
       let info = term.picker_info();
       TerminalMeta {
-        id:         info.id,
-        title:      info.title,
-        visible:    info.visible,
-        exited:     info.exited,
+        id: info.id,
+        title: info.title,
+        visible: info.visible,
+        exited: info.exited,
         is_current: Some(info.id) == current_terminal,
-        cwd:        info.working_directory,
+        cwd: info.working_directory,
         created_at: info.created_at,
       }
     })
@@ -2584,28 +2449,19 @@ pub fn terminal_picker(cx: &mut Context) {
 }
 
 pub fn jumplist_picker(cx: &mut Context) {
-  use std::path::{
-    Path,
-    PathBuf,
-  };
+  use std::path::{Path, PathBuf};
 
   use crate::{
-    core::{
-      DocumentId,
-      document::SCRATCH_BUFFER_NAME,
-    },
-    ui::components::{
-      Column,
-      Picker,
-    },
+    core::{DocumentId, document::SCRATCH_BUFFER_NAME},
+    ui::components::{Column, Picker},
   };
 
   struct JumpMeta {
-    id:         DocumentId,
-    path:       Option<PathBuf>,
-    selection:  Selection,
-    text:       String,
-    line:       usize,
+    id: DocumentId,
+    path: Option<PathBuf>,
+    selection: Selection,
+    text: String,
+    line: usize,
     is_current: bool,
   }
 
@@ -2666,10 +2522,7 @@ pub fn jumplist_picker(cx: &mut Context) {
     Column::new("contents", |item: &JumpMeta, _| item.text.clone()),
   ];
 
-  use crate::{
-    editor::Action,
-    ui::components::PickerAction,
-  };
+  use crate::{editor::Action, ui::components::PickerAction};
 
   let action_handler = std::sync::Arc::new(
     move |meta: &JumpMeta, _: &(), picker_action: PickerAction| {
@@ -2729,10 +2582,7 @@ pub fn changed_file_picker(cx: &mut Context) {
 
   use the_editor_vcs::FileChange;
 
-  use crate::ui::components::{
-    Column,
-    Picker,
-  };
+  use crate::ui::components::{Column, Picker};
 
   pub struct FileChangeData {
     cwd: PathBuf,
@@ -2746,15 +2596,16 @@ pub fn changed_file_picker(cx: &mut Context) {
   }
 
   let columns = [
-    Column::new("change", |change: &FileChange, _data: &FileChangeData| {
-      match change {
+    Column::new(
+      "change",
+      |change: &FileChange, _data: &FileChangeData| match change {
         FileChange::Untracked { .. } => "+ untracked".to_string(),
         FileChange::Modified { .. } => "~ modified".to_string(),
         FileChange::Conflict { .. } => "x conflict".to_string(),
         FileChange::Deleted { .. } => "- deleted".to_string(),
         FileChange::Renamed { .. } => "> renamed".to_string(),
-      }
-    }),
+      },
+    ),
     Column::new("path", |change: &FileChange, data: &FileChangeData| {
       let display_path = |path: &PathBuf| {
         path
@@ -2775,10 +2626,7 @@ pub fn changed_file_picker(cx: &mut Context) {
     }),
   ];
 
-  use crate::{
-    editor::Action,
-    ui::components::PickerAction,
-  };
+  use crate::{editor::Action, ui::components::PickerAction};
 
   let action_handler = std::sync::Arc::new(
     move |meta: &FileChange, _: &FileChangeData, picker_action: PickerAction| {
@@ -2813,14 +2661,12 @@ pub fn changed_file_picker(cx: &mut Context) {
   cx.editor
     .diff_providers
     .clone()
-    .for_each_changed_file(cwd, move |change| {
-      match change {
-        Ok(change) => injector.push(change).is_ok(),
-        Err(err) => {
-          log::error!("Failed to get file changes: {}", err);
-          true
-        },
-      }
+    .for_each_changed_file(cwd, move |change| match change {
+      Ok(change) => injector.push(change).is_ok(),
+      Err(err) => {
+        log::error!("Failed to get file changes: {}", err);
+        true
+      },
     });
 
   cx.callback.push(Box::new(move |compositor, _cx| {
@@ -2829,25 +2675,14 @@ pub fn changed_file_picker(cx: &mut Context) {
 }
 
 pub fn global_search(cx: &mut Context) {
-  use std::{
-    sync::Arc,
-    thread,
-  };
+  use std::{sync::Arc, thread};
 
   use grep_regex::RegexMatcherBuilder;
-  use the_editor_stdx::{
-    env,
-    path,
-  };
+  use the_editor_stdx::{env, path};
 
   use crate::{
     editor::Action,
-    ui::components::{
-      Column,
-      Picker,
-      PickerAction,
-      picker::Injector,
-    },
+    ui::components::{Column, Picker, PickerAction, picker::Injector},
   };
 
   #[derive(Clone)]
@@ -2863,9 +2698,9 @@ pub fn global_search(cx: &mut Context) {
     .collect();
 
   let search_options = Arc::new(SearchOptions {
-    smart_case:  editor_config.search.smart_case,
+    smart_case: editor_config.search.smart_case,
     file_picker: editor_config.file_picker.clone(),
-    documents:   Arc::new(documents_snapshot),
+    documents: Arc::new(documents_snapshot),
   });
 
   let config = Arc::new(GlobalSearchConfig {
@@ -3040,31 +2875,23 @@ pub fn global_search(cx: &mut Context) {
 }
 
 pub fn local_search(cx: &mut Context) {
-  use std::{
-    sync::Arc,
-    thread,
-  };
+  use std::{sync::Arc, thread};
 
   use crate::{
     editor::Action,
-    ui::components::{
-      Column,
-      Picker,
-      PickerAction,
-      picker::Injector,
-    },
+    ui::components::{Column, Picker, PickerAction, picker::Injector},
   };
 
   #[derive(Clone)]
   struct LocalSearchResult {
-    line_num:    usize,  // 0-indexed line number
-    line_text:   String, // Full line content
-    match_start: usize,  // Byte offset of match in line
-    match_end:   usize,  // Byte offset of match end in line
+    line_num: usize,    // 0-indexed line number
+    line_text: String,  // Full line content
+    match_start: usize, // Byte offset of match in line
+    match_end: usize,   // Byte offset of match end in line
   }
 
   struct LocalSearchConfig {
-    smart_case:    bool,
+    smart_case: bool,
     document_text: Arc<Rope>,
   }
 
@@ -3074,7 +2901,7 @@ pub fn local_search(cx: &mut Context) {
 
   let editor_config = cx.editor.config();
   let config = Arc::new(LocalSearchConfig {
-    smart_case:    editor_config.search.smart_case,
+    smart_case: editor_config.search.smart_case,
     document_text: Arc::new(document_text),
   });
 
@@ -3419,13 +3246,11 @@ fn insert_with_indent(cx: &mut Context, cursor_fallback: IndentFallbackPos) {
     } else {
       // move cursor to the fallback position
       let pos = match cursor_fallback {
-        IndentFallbackPos::LineStart => {
-          text
-            .line(cursor_line)
-            .first_non_whitespace_char()
-            .map(|ws_offset| ws_offset + cursor_line_start)
-            .unwrap_or(cursor_line_start)
-        },
+        IndentFallbackPos::LineStart => text
+          .line(cursor_line)
+          .first_non_whitespace_char()
+          .map(|ws_offset| ws_offset + cursor_line_start)
+          .unwrap_or(cursor_line_start),
         IndentFallbackPos::LineEnd => line_end_char_index(&text, cursor_line),
       };
 
@@ -3517,19 +3342,17 @@ fn open(cx: &mut Context, open: Open, comment_continuation: CommentContinuation)
     let line = text.line(curr_line_num);
     let indent = match line.first_non_whitespace_char() {
       Some(pos) if continue_comment_token.is_some() => line.slice(..pos).to_string(),
-      _ => {
-        indent::indent_for_newline(
-          &loader,
-          doc.syntax(),
-          &config.indent_heuristic,
-          &doc.indent_style,
-          doc.tab_width(),
-          text,
-          above_next_new_line_num,
-          above_next_line_end_index,
-          curr_line_num,
-        )
-      },
+      _ => indent::indent_for_newline(
+        &loader,
+        doc.syntax(),
+        &config.indent_heuristic,
+        &doc.indent_style,
+        doc.tab_width(),
+        text,
+        above_next_new_line_num,
+        above_next_line_end_index,
+        curr_line_num,
+      ),
     };
 
     let indent_len = indent.len();
@@ -4079,11 +3902,9 @@ fn goto_next_tabstop_impl(cx: &mut Context, direction: Direction) {
   };
   let tabstop = match direction {
     Direction::Forward => Some(snippet.next_tabstop(doc.selection(view_id))),
-    Direction::Backward => {
-      snippet
-        .prev_tabstop(doc.selection(view_id))
-        .map(|selection| (selection, false))
-    },
+    Direction::Backward => snippet
+      .prev_tabstop(doc.selection(view_id))
+      .map(|selection| (selection, false)),
   };
   let Some((selection, last_tabstop)) = tabstop else {
     return;
@@ -4188,19 +4009,17 @@ pub fn insert_newline(cx: &mut Context) {
 
         let indent = match line.first_non_whitespace_char() {
           Some(pos) if continue_comment_token.is_some() => line.slice(..pos).to_string(),
-          _ => {
-            indent::indent_for_newline(
-              &loader,
-              doc.syntax(),
-              &config.indent_heuristic,
-              &doc.indent_style,
-              doc.tab_width(),
-              text,
-              current_line,
-              pos,
-              current_line,
-            )
-          },
+          _ => indent::indent_for_newline(
+            &loader,
+            doc.syntax(),
+            &config.indent_heuristic,
+            &doc.indent_style,
+            doc.tab_width(),
+            text,
+            current_line,
+            pos,
+            current_line,
+          ),
         };
 
         // If we are between pairs (such as brackets), we want to
@@ -4520,10 +4339,7 @@ pub fn copy_selection_on_prev_line(cx: &mut Context) {
 //
 // TODO: implement a variant of that uses visual lines and respects virtual text
 fn copy_selection_on_line(cx: &mut Context, direction: Direction) {
-  use crate::core::position::{
-    pos_at_visual_coords,
-    visual_coords_at_pos,
-  };
+  use crate::core::position::{pos_at_visual_coords, visual_coords_at_pos};
 
   let count = cx.count();
   let (view, doc) = current!(cx.editor);
@@ -4694,22 +4510,18 @@ fn extend_line_impl(cx: &mut Context, extend: Extend) {
     let (anchor, head) = if range.from() == start && range.to() == end {
       match extend {
         Extend::Above => (end, text.line_to_char(start_line.saturating_sub(count))),
-        Extend::Below => {
-          (
-            start,
-            text.line_to_char((end_line + count + 1).min(text.len_lines())),
-          )
-        },
+        Extend::Below => (
+          start,
+          text.line_to_char((end_line + count + 1).min(text.len_lines())),
+        ),
       }
     } else {
       match extend {
         Extend::Above => (end, text.line_to_char(start_line.saturating_sub(count - 1))),
-        Extend::Below => {
-          (
-            start,
-            text.line_to_char((end_line + count).min(text.len_lines())),
-          )
-        },
+        Extend::Below => (
+          start,
+          text.line_to_char((end_line + count).min(text.len_lines())),
+        ),
       }
     };
 
@@ -4758,13 +4570,11 @@ pub fn surround_add(cx: &mut Context) {
         close.push(c);
         (open, close, 2)
       },
-      Key::Enter | Key::NumpadEnter => {
-        (
-          doc.line_ending.as_str().into(),
-          doc.line_ending.as_str().into(),
-          2 * doc.line_ending.len_chars(),
-        )
-      },
+      Key::Enter | Key::NumpadEnter => (
+        doc.line_ending.as_str().into(),
+        doc.line_ending.as_str().into(),
+        2 * doc.line_ending.len_chars(),
+      ),
       _ => return,
     };
 
@@ -4974,15 +4784,13 @@ fn select_textobject(cx: &mut Context, objtype: textobject::TextObject) {
             'e' => textobject_treesitter("entry", range),
             'x' => textobject_treesitter("xml-element", range),
             'p' => textobject::textobject_paragraph(text, range, objtype, count),
-            'm' => {
-              textobject::textobject_pair_surround_closest(
-                doc.syntax(),
-                text,
-                range,
-                objtype,
-                count,
-              )
-            },
+            'm' => textobject::textobject_pair_surround_closest(
+              doc.syntax(),
+              text,
+              range,
+              objtype,
+              count,
+            ),
             'g' => textobject_change(range),
             // TODO: cancel new ranges if inconsistent surround matches across lines
             ch if !ch.is_ascii_alphanumeric() => {
@@ -5185,10 +4993,9 @@ pub fn record_macro(cx: &mut Context) {
       })
       .collect::<String>();
     match cx.editor.registers.write(reg, vec![s]) {
-      Ok(_) => {
-        cx.editor
-          .set_status(format!("Recorded to register [{}]", reg))
-      },
+      Ok(_) => cx
+        .editor
+        .set_status(format!("Recorded to register [{}]", reg)),
       Err(err) => cx.editor.set_error(err.to_string()),
     }
   } else {
@@ -6213,16 +6020,12 @@ fn goto_next_change_impl(cx: &mut Context, direction: Direction) {
 
       let diff = diff_handle.load();
       let hunk_idx = match direction {
-        Direction::Forward => {
-          diff
-            .next_hunk(cursor_line)
-            .map(|idx| (idx + count).min(diff.len() - 1))
-        },
-        Direction::Backward => {
-          diff
-            .prev_hunk(cursor_line)
-            .map(|idx| idx.saturating_sub(count))
-        },
+        Direction::Forward => diff
+          .next_hunk(cursor_line)
+          .map(|idx| (idx + count).min(diff.len() - 1)),
+        Direction::Backward => diff
+          .prev_hunk(cursor_line)
+          .map(|idx| idx.saturating_sub(count)),
       };
       let Some(hunk_idx) = hunk_idx else {
         return range;
@@ -6263,18 +6066,18 @@ fn hunk_range(hunk: Hunk, text: RopeSlice) -> Range {
 
 #[derive(Clone)]
 struct DiffBlockDisplay {
-  hunk:          Hunk,
-  kind:          DiffChangeKind,
-  summary:       String,
-  line_display:  String,
+  hunk: Hunk,
+  kind: DiffChangeKind,
+  summary: String,
+  line_display: String,
   preview_range: Option<(usize, usize)>,
 }
 
 #[derive(Clone)]
 struct WorkspaceDiffEntry {
-  block:     DiffBlockDisplay,
-  doc_id:    Option<DocumentId>,
-  path:      Option<PathBuf>,
+  block: DiffBlockDisplay,
+  doc_id: Option<DocumentId>,
+  path: Option<PathBuf>,
   file_name: String,
 }
 
@@ -6475,11 +6278,7 @@ pub fn document_vcs_diffs(cx: &mut Context) {
   }
 
   cx.callback.push(Box::new(move |compositor, _cx| {
-    use crate::ui::components::{
-      Column,
-      Picker,
-      PickerAction,
-    };
+    use crate::ui::components::{Column, Picker, PickerAction};
 
     let columns = vec![
       Column::new("Change", |entry: &DiffBlockDisplay, _: &()| {
@@ -6553,11 +6352,7 @@ pub fn workspace_vcs_diffs(cx: &mut Context) {
   let open_docs = std::sync::Arc::new(open_docs);
 
   cx.callback.push(Box::new(move |compositor, _cx| {
-    use crate::ui::components::{
-      Column,
-      Picker,
-      PickerAction,
-    };
+    use crate::ui::components::{Column, Picker, PickerAction};
 
     let columns = vec![
       Column::new("Change", |entry: &WorkspaceDiffEntry, _: &()| {
@@ -6621,23 +6416,21 @@ pub fn workspace_vcs_diffs(cx: &mut Context) {
     let injector = picker.injector();
 
     let open_docs_for_iter = std::sync::Arc::clone(&open_docs);
-    diff_providers_for_iter.for_each_changed_file(cwd.clone(), move |change| {
-      match change {
-        Ok(change) => {
-          let entries =
-            build_workspace_diff_entries(&change, &diff_providers, &open_docs_for_iter, &cwd);
-          for entry in entries {
-            if injector.push(entry).is_err() {
-              return false;
-            }
+    diff_providers_for_iter.for_each_changed_file(cwd.clone(), move |change| match change {
+      Ok(change) => {
+        let entries =
+          build_workspace_diff_entries(&change, &diff_providers, &open_docs_for_iter, &cwd);
+        for entry in entries {
+          if injector.push(entry).is_err() {
+            return false;
           }
-          true
-        },
-        Err(err) => {
-          log::error!("Failed to enumerate changed files: {}", err);
-          true
-        },
-      }
+        }
+        true
+      },
+      Err(err) => {
+        log::error!("Failed to enumerate changed files: {}", err);
+        true
+      },
     });
 
     compositor.push(Box::new(picker));
@@ -6684,13 +6477,11 @@ fn build_workspace_diff_entries(
 
   hunks
     .into_iter()
-    .map(|hunk| {
-      WorkspaceDiffEntry {
-        block: DiffBlockDisplay::new(hunk, &doc_text, &diff_base_text),
-        doc_id,
-        path: Some(absolute_path.clone()),
-        file_name: display_name.clone(),
-      }
+    .map(|hunk| WorkspaceDiffEntry {
+      block: DiffBlockDisplay::new(hunk, &doc_text, &diff_base_text),
+      doc_id,
+      path: Some(absolute_path.clone()),
+      file_name: display_name.clone(),
     })
     .collect()
 }
@@ -7188,18 +6979,14 @@ fn search_impl(
   // Use the original selection to determine start position, not the current
   // cursor
   let start = match direction {
-    Direction::Forward => {
-      text.char_to_byte(grapheme::ensure_grapheme_boundary_next(
-        text,
-        original_selection.primary().to(),
-      ))
-    },
-    Direction::Backward => {
-      text.char_to_byte(grapheme::ensure_grapheme_boundary_prev(
-        text,
-        original_selection.primary().from(),
-      ))
-    },
+    Direction::Forward => text.char_to_byte(grapheme::ensure_grapheme_boundary_next(
+      text,
+      original_selection.primary().to(),
+    )),
+    Direction::Backward => text.char_to_byte(grapheme::ensure_grapheme_boundary_prev(
+      text,
+      original_selection.primary().from(),
+    )),
   };
 
   // A regex::Match returns byte-positions in the str. In the case where we
@@ -7249,11 +7036,9 @@ fn search_impl(
 
     let selection = match movement {
       Movement::Extend => original_selection.clone().push(range),
-      Movement::Move => {
-        original_selection
-          .clone()
-          .replace(original_selection.primary_index(), range)
-      },
+      Movement::Move => original_selection
+        .clone()
+        .replace(original_selection.primary_index(), range),
     };
 
     doc.set_selection(view.id, selection);
@@ -8146,10 +7931,7 @@ pub fn shell_append_output(cx: &mut Context) {
 }
 
 pub fn shell_keep_pipe(cx: &mut Context) {
-  use crate::ui::components::prompt::{
-    PromptEvent,
-    history_completion,
-  };
+  use crate::ui::components::prompt::{PromptEvent, history_completion};
 
   // Shell history is stored in the '|' register (pipe register)
   const SHELL_HISTORY_REGISTER: char = '|';
@@ -8237,10 +8019,7 @@ pub fn shell_keep_pipe(cx: &mut Context) {
 }
 
 fn shell_prompt(cx: &mut Context, mode_str: &str, behavior: ShellBehavior) {
-  use crate::ui::components::prompt::{
-    PromptEvent,
-    history_completion,
-  };
+  use crate::ui::components::prompt::{PromptEvent, history_completion};
 
   // Shell history is stored in the '|' register (pipe register)
   const SHELL_HISTORY_REGISTER: char = '|';
@@ -8764,11 +8543,7 @@ pub fn update_fade_ranges(cx: &mut Context) {
 /// The selection text is sent to the agent, and the response will be
 /// streamed back via the ACP overlay.
 pub fn acp_prompt(cx: &mut Context) {
-  use crate::{
-    acp::PromptContext,
-    editor::AcpResponseState,
-    ui::components::AcpOverlay,
-  };
+  use crate::{acp::PromptContext, editor::AcpResponseState, ui::components::AcpOverlay};
 
   // Check if ACP is connected
   if cx.editor.acp.is_none() {
@@ -8825,11 +8600,11 @@ pub fn acp_prompt(cx: &mut Context) {
   // Initialize ACP response state
   cx.editor.acp_response = Some(AcpResponseState {
     context_summary: context_summary.clone(),
-    input_prompt:    prompt_text.clone(),
-    response_text:   String::new(),
-    is_streaming:    true,
-    model_name:      model_name.clone(),
-    plan:            None,
+    input_prompt: prompt_text.clone(),
+    response_text: String::new(),
+    is_streaming: true,
+    model_name: model_name.clone(),
+    plan: None,
   });
 
   cx.editor.set_status(format!(
@@ -8910,23 +8685,18 @@ pub fn command_palette(cx: &mut Context) {
   use crate::{
     core::command_registry::TypableCommand,
     keymap::ReverseKeymap,
-    ui::components::{
-      Column,
-      Picker,
-      PickerAction,
-      prompt::PromptEvent,
-    },
+    ui::components::{Column, Picker, PickerAction, prompt::PromptEvent},
   };
 
   // Item type for the command palette - can be either static or typable command
   #[derive(Clone)]
   enum CommandItem {
     Static {
-      command:  MappableCommand,
+      command: MappableCommand,
       bindings: String,
     },
     Typable {
-      command:  Arc<TypableCommand>,
+      command: Arc<TypableCommand>,
       bindings: String,
     },
   }
@@ -9062,13 +8832,16 @@ pub fn command_palette(cx: &mut Context) {
 
         // Process any callbacks generated by the command
         for callback in ctx.callback {
-          callback(compositor, &mut crate::ui::compositor::Context {
-            editor:         ctx.editor,
-            scroll:         None,
-            jobs:           ctx.jobs,
-            dt:             0.016, // ~60fps frame time for any animations
-            last_mouse_pos: None,
-          });
+          callback(
+            compositor,
+            &mut crate::ui::compositor::Context {
+              editor: ctx.editor,
+              scroll: None,
+              jobs: ctx.jobs,
+              dt: 0.016, // ~60fps frame time for any animations
+              last_mouse_pos: None,
+            },
+          );
         }
       });
 
@@ -9136,11 +8909,7 @@ pub fn acp_test_permissions(cx: &mut Context) {
   use std::sync::Arc;
 
   use agent_client_protocol::{
-    PermissionOption,
-    PermissionOptionId,
-    PermissionOptionKind,
-    ToolCallId,
-    ToolCallUpdate,
+    PermissionOption, PermissionOptionId, PermissionOptionKind, ToolCallId, ToolCallUpdate,
     ToolCallUpdateFields,
   };
   use tokio::sync::oneshot;
@@ -9151,13 +8920,13 @@ pub fn acp_test_permissions(cx: &mut Context) {
   let make_options = || {
     vec![
       PermissionOption {
-        id:   PermissionOptionId(Arc::from("allow")),
+        id: PermissionOptionId(Arc::from("allow")),
         name: "Allow".to_string(),
         kind: PermissionOptionKind::AllowOnce,
         meta: None,
       },
       PermissionOption {
-        id:   PermissionOptionId(Arc::from("reject")),
+        id: PermissionOptionId(Arc::from("reject")),
         name: "Reject".to_string(),
         kind: PermissionOptionKind::RejectOnce,
         meta: None,
@@ -9177,15 +8946,15 @@ pub fn acp_test_permissions(cx: &mut Context) {
   for (i, title) in test_permissions.iter().enumerate() {
     let (tx, _rx) = oneshot::channel();
     cx.editor.acp_permissions.push(PendingPermission {
-      tool_call:   ToolCallUpdate {
-        id:     ToolCallId(Arc::from(format!("test-{}", i))),
+      tool_call: ToolCallUpdate {
+        id: ToolCallId(Arc::from(format!("test-{}", i))),
         fields: ToolCallUpdateFields {
           title: Some(title.to_string()),
           ..Default::default()
         },
-        meta:   None,
+        meta: None,
       },
-      options:     make_options(),
+      options: make_options(),
       response_tx: tx,
     });
   }
@@ -9197,18 +8966,11 @@ pub fn acp_test_permissions(cx: &mut Context) {
 ///
 /// Shows a picker with all available models from the ACP agent.
 pub fn acp_select_model(cx: &mut Context) {
-  use std::sync::{
-    Arc,
-    mpsc,
-  };
+  use std::sync::{Arc, mpsc};
 
   use agent_client_protocol as acp;
 
-  use crate::ui::components::{
-    Column,
-    Picker,
-    PickerAction,
-  };
+  use crate::ui::components::{Column, Picker, PickerAction};
 
   let Some(ref handle) = cx.editor.acp else {
     cx.editor
@@ -9233,7 +8995,7 @@ pub fn acp_select_model(cx: &mut Context) {
   /// Editor data for the model picker
   struct ModelPickerData {
     current_model_id: acp::ModelId,
-    tx:               mpsc::Sender<acp::ModelId>,
+    tx: mpsc::Sender<acp::ModelId>,
   }
 
   let current_model_id = model_state.current_model_id.clone();

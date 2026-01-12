@@ -1,24 +1,11 @@
-use std::{
-  borrow::Cow,
-  cmp::Ordering,
-  mem::replace,
-};
+use std::{borrow::Cow, cmp::Ordering, mem::replace};
 
 use ropey::RopeSlice;
-use the_editor_stdx::rope::{
-  RopeGraphemes,
-  RopeSliceExt,
-};
-use unicode_segmentation::{
-  Graphemes,
-  UnicodeSegmentation,
-};
+use the_editor_stdx::rope::{RopeGraphemes, RopeSliceExt};
+use unicode_segmentation::{Graphemes, UnicodeSegmentation};
 
 use crate::core::{
-  grapheme::{
-    Grapheme,
-    GraphemeStr,
-  },
+  grapheme::{Grapheme, GraphemeStr},
   position::Position,
   syntax::Highlight,
   text_annotations::TextAnnotations,
@@ -61,7 +48,7 @@ impl GraphemeSource {
 #[derive(Debug, Clone)]
 struct GraphemeWithSource<'a> {
   grapheme: Grapheme<'a>,
-  source:   GraphemeSource,
+  source: GraphemeSource,
 }
 
 impl<'a> GraphemeWithSource<'a> {
@@ -79,7 +66,7 @@ impl<'a> GraphemeWithSource<'a> {
   fn placeholder() -> Self {
     GraphemeWithSource {
       grapheme: Grapheme::Other { g: " ".into() },
-      source:   GraphemeSource::Document { codepoints: 0 },
+      source: GraphemeSource::Document { codepoints: 0 },
     }
   }
 
@@ -110,17 +97,17 @@ impl<'a> GraphemeWithSource<'a> {
 
 #[derive(Debug)]
 pub struct DocumentFormatter<'t> {
-  text_fmt:    &'t TextFormat,
+  text_fmt: &'t TextFormat,
   annotations: &'t TextAnnotations<'t>,
 
   /// The visual position at the end of the last yielded word boundary.
   visual_pos: Position,
-  graphemes:  RopeGraphemes<'t>,
+  graphemes: RopeGraphemes<'t>,
   /// The character pos of the `graphemes` iter used for inserting annotations.
-  char_pos:   usize,
+  char_pos: usize,
   /// The line pos of the `graphemes` iter used for inserting annotations.
-  line_pos:   usize,
-  exhausted:  bool,
+  line_pos: usize,
+  exhausted: bool,
 
   inline_annotation_graphemes: Option<(Graphemes<'t>, Option<Highlight>)>,
 
@@ -128,14 +115,14 @@ pub struct DocumentFormatter<'t> {
   /// The indentation of the current line.
   /// Is set to `None` if the indentation level is not yet known
   /// because no non-whitespace graphemes have been encountered yet.
-  indent_level:    Option<usize>,
+  indent_level: Option<usize>,
   /// In case a long word needs to be split a single grapheme might need to be
   /// wrapped while the rest of the word stays on the same line.
   peeked_grapheme: Option<GraphemeWithSource<'t>>,
   /// A first-in first-out (fifo) buffer for the Graphemes of any given word.
-  word_buf:        Vec<GraphemeWithSource<'t>>,
+  word_buf: Vec<GraphemeWithSource<'t>>,
   /// The index of the next grapheme that will be yielded from the `word_buf`.
-  word_i:          usize,
+  word_i: usize,
 }
 
 impl<'t> DocumentFormatter<'t> {
@@ -221,7 +208,7 @@ impl<'t> DocumentFormatter<'t> {
         // and correct position computations.
         return Some(GraphemeWithSource {
           grapheme: Grapheme::Other { g: " ".into() },
-          source:   GraphemeSource::Document { codepoints: 0 },
+          source: GraphemeSource::Document { codepoints: 0 },
         });
       };
 
@@ -362,13 +349,13 @@ impl<'t> DocumentFormatter<'t> {
 
 #[derive(Debug, Clone)]
 pub struct FormattedGrapheme<'a> {
-  pub raw:        Grapheme<'a>,
-  pub source:     GraphemeSource,
+  pub raw: Grapheme<'a>,
+  pub source: GraphemeSource,
   pub visual_pos: Position,
   /// Document line at the start of the grapheme
-  pub line_idx:   usize,
+  pub line_idx: usize,
   /// Document char position at the start of the grapheme
-  pub char_idx:   usize,
+  pub char_idx: usize,
 }
 
 impl FormattedGrapheme<'_> {
@@ -413,11 +400,11 @@ impl<'t> Iterator for DocumentFormatter<'t> {
     };
 
     let grapheme = FormattedGrapheme {
-      raw:        grapheme.grapheme,
-      source:     grapheme.source,
+      raw: grapheme.grapheme,
+      source: grapheme.source,
       visual_pos: self.visual_pos,
-      line_idx:   self.line_pos,
-      char_idx:   self.char_pos,
+      line_idx: self.line_pos,
+      char_idx: self.char_pos,
     };
 
     self.char_pos += grapheme.doc_chars();
@@ -449,9 +436,7 @@ mod doc_formatter_tests {
 
   use super::*;
   use crate::core::{
-    position::Position,
-    text_annotations::TextAnnotations,
-    text_format::TextFormat,
+    position::Position, text_annotations::TextAnnotations, text_format::TextFormat,
   };
 
   #[test]
@@ -508,9 +493,12 @@ mod doc_formatter_tests {
   fn grapheme_with_source_whitespace() {
     let space =
       GraphemeWithSource::new(" ".into(), 0, 4, GraphemeSource::Document { codepoints: 1 });
-    let tab = GraphemeWithSource::new("\t".into(), 0, 4, GraphemeSource::Document {
-      codepoints: 1,
-    });
+    let tab = GraphemeWithSource::new(
+      "\t".into(),
+      0,
+      4,
+      GraphemeSource::Document { codepoints: 1 },
+    );
 
     assert!(space.is_whitespace());
     assert!(tab.is_whitespace());
@@ -518,9 +506,12 @@ mod doc_formatter_tests {
 
   #[test]
   fn grapheme_with_source_newline() {
-    let newline = GraphemeWithSource::new("\n".into(), 0, 4, GraphemeSource::Document {
-      codepoints: 1,
-    });
+    let newline = GraphemeWithSource::new(
+      "\n".into(),
+      0,
+      4,
+      GraphemeSource::Document { codepoints: 1 },
+    );
 
     assert!(newline.is_newline());
     assert!(!newline.is_eof());
@@ -529,11 +520,11 @@ mod doc_formatter_tests {
   #[test]
   fn formatted_grapheme_methods() {
     let formatted = FormattedGrapheme {
-      raw:        Grapheme::Other { g: "test".into() },
-      source:     GraphemeSource::Document { codepoints: 4 },
+      raw: Grapheme::Other { g: "test".into() },
+      source: GraphemeSource::Document { codepoints: 4 },
       visual_pos: Position { row: 1, col: 5 },
-      line_idx:   0,
-      char_idx:   0,
+      line_idx: 0,
+      char_idx: 0,
     };
 
     assert!(!formatted.is_virtual());
@@ -545,11 +536,11 @@ mod doc_formatter_tests {
   #[test]
   fn formatted_grapheme_virtual() {
     let virtual_formatted = FormattedGrapheme {
-      raw:        Grapheme::Other { g: "virt".into() },
-      source:     GraphemeSource::VirtualText { highlight: None },
+      raw: Grapheme::Other { g: "virt".into() },
+      source: GraphemeSource::VirtualText { highlight: None },
       visual_pos: Position { row: 0, col: 0 },
-      line_idx:   0,
-      char_idx:   0,
+      line_idx: 0,
+      char_idx: 0,
     };
 
     assert!(virtual_formatted.is_virtual());
@@ -558,14 +549,14 @@ mod doc_formatter_tests {
 
   fn create_test_text_format() -> TextFormat {
     TextFormat {
-      soft_wrap:                false,
-      tab_width:                4,
-      max_wrap:                 3,
-      max_indent_retain:        4,
-      wrap_indicator:           "↪".into(),
+      soft_wrap: false,
+      tab_width: 4,
+      max_wrap: 3,
+      max_indent_retain: 4,
+      wrap_indicator: "↪".into(),
       wrap_indicator_highlight: None,
-      viewport_width:           80,
-      soft_wrap_at_text_width:  false,
+      viewport_width: 80,
+      soft_wrap_at_text_width: false,
     }
   }
 

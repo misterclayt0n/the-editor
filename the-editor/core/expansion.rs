@@ -1,21 +1,12 @@
 use std::borrow::Cow;
 
-use anyhow::{
-  Result,
-  anyhow,
-  bail,
-};
+use anyhow::{Result, anyhow, bail};
 use the_editor_loader::find_workspace;
 use the_editor_stdx::env::current_working_dir;
 
 use crate::{
   core::{
-    command_line::{
-      ExpansionKind,
-      Token,
-      TokenKind,
-      Tokenizer,
-    },
+    command_line::{ExpansionKind, Token, TokenKind, Tokenizer},
     document::SCRATCH_BUFFER_NAME,
     position::coords_at_pos,
   },
@@ -158,10 +149,7 @@ pub fn expand<'a>(editor: &Editor, token: Token<'a>) -> Result<Cow<'a, str>> {
 
 /// Expand a shell command.
 pub fn expand_shell<'a>(editor: &Editor, content: Cow<'a, str>) -> Result<Cow<'a, str>> {
-  use std::process::{
-    Command,
-    Stdio,
-  };
+  use std::process::{Command, Stdio};
 
   // Recursively expand the expansion's content before executing the shell
   // command.
@@ -297,17 +285,13 @@ fn expand_variable(editor: &Editor, variable: Variable) -> Result<Cow<'static, s
       }
     },
     Variable::LineEnding => Ok(Cow::Borrowed(doc.line_ending.as_str())),
-    Variable::Language => {
-      Ok(match doc.language_name() {
-        Some(lang) => Cow::Owned(lang.to_owned()),
-        None => Cow::Borrowed("text"),
-      })
-    },
-    Variable::Selection => {
-      Ok(Cow::Owned(
-        doc.selection(view.id).primary().fragment(text).to_string(),
-      ))
-    },
+    Variable::Language => Ok(match doc.language_name() {
+      Some(lang) => Cow::Owned(lang.to_owned()),
+      None => Cow::Borrowed("text"),
+    }),
+    Variable::Selection => Ok(Cow::Owned(
+      doc.selection(view.id).primary().fragment(text).to_string(),
+    )),
     Variable::SelectionLineStart => {
       let start_line = doc.selection(view.id).primary().line_range(text).0;
       Ok(Cow::Owned((start_line + 1).to_string()))
@@ -392,11 +376,7 @@ mod tests {
 
     use crate::{
       core::{
-        command_line::{
-          ExpansionKind,
-          Token,
-          TokenKind,
-        },
+        command_line::{ExpansionKind, Token, TokenKind},
         theme,
       },
       editor::Editor,
@@ -417,11 +397,11 @@ mod tests {
     let word_index_tx = crate::handlers::word_index::Handler::spawn();
 
     let handlers = Handlers {
-      completions:     crate::handlers::completion::CompletionHandler::new(completion_tx),
+      completions: crate::handlers::completion::CompletionHandler::new(completion_tx),
       signature_hints: signature_tx,
-      auto_save:       auto_save_tx,
+      auto_save: auto_save_tx,
       document_colors: colors_tx,
-      word_index:      word_index_tx,
+      word_index: word_index_tx,
     };
 
     let editor = Editor::new(
@@ -437,8 +417,8 @@ mod tests {
 
     // Test Unicode expansion - U+25CF (BLACK CIRCLE)
     let token = Token {
-      kind:          TokenKind::Expansion(ExpansionKind::Unicode),
-      content:       Cow::Borrowed("25CF"),
+      kind: TokenKind::Expansion(ExpansionKind::Unicode),
+      content: Cow::Borrowed("25CF"),
       content_start: 3,
       is_terminated: true,
     };
@@ -455,11 +435,7 @@ mod tests {
 
     use crate::{
       core::{
-        command_line::{
-          ExpansionKind,
-          Token,
-          TokenKind,
-        },
+        command_line::{ExpansionKind, Token, TokenKind},
         theme,
       },
       editor::Editor,
@@ -479,11 +455,11 @@ mod tests {
     let word_index_tx = crate::handlers::word_index::Handler::spawn();
 
     let handlers = Handlers {
-      completions:     crate::handlers::completion::CompletionHandler::new(completion_tx),
+      completions: crate::handlers::completion::CompletionHandler::new(completion_tx),
       signature_hints: signature_tx,
-      auto_save:       auto_save_tx,
+      auto_save: auto_save_tx,
       document_colors: colors_tx,
-      word_index:      word_index_tx,
+      word_index: word_index_tx,
     };
 
     let editor = Editor::new(
@@ -499,8 +475,8 @@ mod tests {
 
     // Test invalid Unicode codepoint
     let token = Token {
-      kind:          TokenKind::Expansion(ExpansionKind::Unicode),
-      content:       Cow::Borrowed("ZZZZ"),
+      kind: TokenKind::Expansion(ExpansionKind::Unicode),
+      content: Cow::Borrowed("ZZZZ"),
       content_start: 3,
       is_terminated: true,
     };
@@ -515,11 +491,7 @@ mod tests {
 
     use arc_swap::ArcSwap;
 
-    use crate::{
-      core::theme,
-      editor::Editor,
-      handlers::Handlers,
-    };
+    use crate::{core::theme, editor::Editor, handlers::Handlers};
 
     let theme_dirs = vec![the_editor_loader::config_dir()];
     let theme_loader = Arc::new(theme::Loader::new(&theme_dirs));
@@ -534,11 +506,11 @@ mod tests {
     let word_index_tx = crate::handlers::word_index::Handler::spawn();
 
     let handlers = Handlers {
-      completions:     crate::handlers::completion::CompletionHandler::new(completion_tx),
+      completions: crate::handlers::completion::CompletionHandler::new(completion_tx),
       signature_hints: signature_tx,
-      auto_save:       auto_save_tx,
+      auto_save: auto_save_tx,
       document_colors: colors_tx,
-      word_index:      word_index_tx,
+      word_index: word_index_tx,
     };
 
     let editor = Editor::new(

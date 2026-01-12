@@ -5,23 +5,14 @@
 
 use std::any::TypeId;
 
-use anyhow::{
-  Result,
-  bail,
-};
-use hashbrown::{
-  HashMap,
-  hash_map::Entry,
-};
+use anyhow::{Result, bail};
+use hashbrown::{HashMap, hash_map::Entry};
 use parking_lot::RwLock;
 
-use crate::{
-  hook::ErasedHook,
-  runtime_local,
-};
+use crate::{hook::ErasedHook, runtime_local};
 
 pub struct Registry {
-  events:   HashMap<&'static str, TypeId, foldhash::fast::FixedState>,
+  events: HashMap<&'static str, TypeId, foldhash::fast::FixedState>,
   handlers: HashMap<&'static str, Vec<ErasedHook>, foldhash::fast::FixedState>,
 }
 

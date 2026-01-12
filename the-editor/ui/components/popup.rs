@@ -2,28 +2,15 @@ use the_editor_renderer::Color;
 
 use crate::{
   core::{
-    animation::{
-      self,
-      AnimationHandle,
-    },
+    animation::{self, AnimationHandle},
     graphics::Rect,
     position::Position,
   },
   ui::{
     UI_FONT_SIZE,
-    compositor::{
-      Callback,
-      Component,
-      Context,
-      Event,
-      EventResult,
-      Surface,
-    },
+    compositor::{Callback, Component, Context, Event, EventResult, Surface},
     popup_positioning::{
-      CursorPosition,
-      calculate_cursor_position,
-      constrain_popup_height,
-      position_popup_near_cursor,
+      CursorPosition, calculate_cursor_position, constrain_popup_height, position_popup_near_cursor,
     },
   },
 };
@@ -55,8 +42,8 @@ pub const DOC_POPUP_MAX_HEIGHT_LINES: u16 = 26;
 /// Layout limits expressed in UI character units.
 #[derive(Clone, Copy, Debug)]
 pub struct PopupLimits {
-  pub min_width:  u16,
-  pub max_width:  u16,
+  pub min_width: u16,
+  pub max_width: u16,
   pub min_height: u16,
   pub max_height: u16,
 }
@@ -64,8 +51,8 @@ pub struct PopupLimits {
 impl Default for PopupLimits {
   fn default() -> Self {
     Self {
-      min_width:  12,
-      max_width:  120,
+      min_width: 12,
+      max_width: 120,
       min_height: 4,
       max_height: 26,
     }
@@ -75,16 +62,16 @@ impl Default for PopupLimits {
 /// Visual styling for popup chrome.
 #[derive(Clone, Copy, Debug)]
 pub struct PopupStyle {
-  pub padding:          f32,
-  pub corner_radius:    f32,
+  pub padding: f32,
+  pub corner_radius: f32,
   pub border_thickness: f32,
 }
 
 impl Default for PopupStyle {
   fn default() -> Self {
     Self {
-      padding:          12.0,
-      corner_radius:    6.0,
+      padding: 12.0,
+      corner_radius: 6.0,
       border_thickness: 1.0,
     }
   }
@@ -93,7 +80,7 @@ impl Default for PopupStyle {
 /// Measurement constraints for popup content in physical pixels.
 #[derive(Clone, Copy, Debug)]
 pub struct PopupConstraints {
-  pub max_width:  f32,
+  pub max_width: f32,
   pub max_height: f32,
   /// Actual measured cell width for the UI font (in pixels).
   /// Use this for calculating character counts instead of UI_FONT_WIDTH.
@@ -103,13 +90,13 @@ pub struct PopupConstraints {
 /// Reported size for popup content in physical pixels.
 #[derive(Clone, Copy, Debug)]
 pub struct PopupSize {
-  pub width:  f32,
+  pub width: f32,
   pub height: f32,
 }
 
 impl PopupSize {
   pub const ZERO: Self = Self {
-    width:  0.0,
+    width: 0.0,
     height: 0.0,
   };
 }
@@ -117,9 +104,9 @@ impl PopupSize {
 /// Rectangle in physical pixels.
 #[derive(Clone, Copy, Debug)]
 pub struct RectPx {
-  pub x:      f32,
-  pub y:      f32,
-  pub width:  f32,
+  pub x: f32,
+  pub y: f32,
+  pub width: f32,
   pub height: f32,
 }
 
@@ -127,9 +114,9 @@ impl RectPx {
   pub fn inset(&self, padding: f32) -> Self {
     let pad2 = padding * 2.0;
     Self {
-      x:      self.x + padding,
-      y:      self.y + padding,
-      width:  (self.width - pad2).max(0.0),
+      x: self.x + padding,
+      y: self.y + padding,
+      width: (self.width - pad2).max(0.0),
       height: (self.height - pad2).max(0.0),
     }
   }
@@ -145,10 +132,10 @@ impl RectPx {
 
 /// Rendering context handed to popup contents during drawing.
 pub struct PopupFrame<'a> {
-  surface:    &'a mut Surface,
-  outer:      RectPx,
-  inner:      RectPx,
-  alpha:      f32,
+  surface: &'a mut Surface,
+  outer: RectPx,
+  inner: RectPx,
+  alpha: f32,
   /// Actual measured cell width for the UI font (in pixels).
   cell_width: f32,
 }
@@ -225,14 +212,14 @@ pub trait PopupContent {
 
 /// Generic popup wrapper that handles anchoring, layout, chrome, and clipping.
 pub struct PopupShell<T: PopupContent> {
-  id:              &'static str,
-  contents:        T,
-  anchor:          Option<Position>,
-  bias:            Option<PositionBias>,
-  auto_close:      bool,
-  limits:          PopupLimits,
-  style:           PopupStyle,
-  animation:       AnimationHandle<f32>,
+  id: &'static str,
+  contents: T,
+  anchor: Option<Position>,
+  bias: Option<PositionBias>,
+  auto_close: bool,
+  limits: PopupLimits,
+  style: PopupStyle,
+  animation: AnimationHandle<f32>,
   last_outer_size: Option<(u16, u16)>,
   last_outer_rect: Option<RectPx>,
 }
@@ -307,9 +294,9 @@ impl<T: PopupContent> PopupShell<T> {
 
   fn viewport_rect(area: Rect, cell_w: f32, cell_h: f32) -> RectPx {
     RectPx {
-      x:      area.x as f32 * cell_w,
-      y:      area.y as f32 * cell_h,
-      width:  area.width as f32 * cell_w,
+      x: area.x as f32 * cell_w,
+      y: area.y as f32 * cell_h,
+      width: area.width as f32 * cell_w,
       height: area.height as f32 * cell_h,
     }
   }
@@ -429,7 +416,7 @@ impl<T: PopupContent> PopupShell<T> {
       ((self.limits.max_height as f32 * ui_cell_h).min(viewport_px.height) - padding).max(0.0);
 
     let constraints = PopupConstraints {
-      max_width:  max_inner_width,
+      max_width: max_inner_width,
       max_height: max_inner_height,
       cell_width: ui_cell_w,
     };

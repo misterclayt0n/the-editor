@@ -1,25 +1,14 @@
 use std::{
   collections::HashSet,
   fs,
-  path::{
-    Path,
-    PathBuf,
-  },
+  path::{Path, PathBuf},
   process::Command,
   sync::mpsc::channel,
   time::SystemTime,
 };
 
-use anyhow::{
-  Context,
-  Result,
-  anyhow,
-  bail,
-};
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use anyhow::{Context, Result, anyhow, bail};
+use serde::{Deserialize, Serialize};
 use tempfile::TempPath;
 use tree_house::tree_sitter::Grammar;
 
@@ -36,7 +25,7 @@ const DYLIB_EXTENSION: &str = "wasm";
 struct Configuration {
   #[serde(rename = "use-grammars")]
   pub grammar_selection: Option<GrammarSelection>,
-  pub grammar:           Vec<GrammarConfiguration>,
+  pub grammar: Vec<GrammarConfiguration>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,7 +40,7 @@ pub enum GrammarSelection {
 pub struct GrammarConfiguration {
   #[serde(rename = "name")]
   pub grammar_id: String,
-  pub source:     GrammarSource,
+  pub source: GrammarSource,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,10 +51,10 @@ pub enum GrammarSource {
   },
   Git {
     #[serde(rename = "git")]
-    remote:   String,
+    remote: String,
     #[serde(rename = "rev")]
     revision: String,
-    subpath:  Option<String>,
+    subpath: Option<String>,
   },
 }
 
@@ -209,20 +198,16 @@ fn get_grammar_configs() -> Result<Vec<GrammarConfiguration>> {
     .try_into()?;
 
   let grammars = match config.grammar_selection {
-    Some(GrammarSelection::Only { only: selections }) => {
-      config
-        .grammar
-        .into_iter()
-        .filter(|grammar| selections.contains(&grammar.grammar_id))
-        .collect()
-    },
-    Some(GrammarSelection::Except { except: rejections }) => {
-      config
-        .grammar
-        .into_iter()
-        .filter(|grammar| !rejections.contains(&grammar.grammar_id))
-        .collect()
-    },
+    Some(GrammarSelection::Only { only: selections }) => config
+      .grammar
+      .into_iter()
+      .filter(|grammar| selections.contains(&grammar.grammar_id))
+      .collect(),
+    Some(GrammarSelection::Except { except: rejections }) => config
+      .grammar
+      .into_iter()
+      .filter(|grammar| !rejections.contains(&grammar.grammar_id))
+      .collect(),
     None => config.grammar,
   };
 
@@ -236,16 +221,14 @@ pub fn get_grammar_names() -> Result<Option<HashSet<String>>> {
 
   let grammars = match config.grammar_selection {
     Some(GrammarSelection::Only { only: selections }) => Some(selections),
-    Some(GrammarSelection::Except { except: rejections }) => {
-      Some(
-        config
-          .grammar
-          .into_iter()
-          .map(|grammar| grammar.grammar_id)
-          .filter(|id| !rejections.contains(id))
-          .collect(),
-      )
-    },
+    Some(GrammarSelection::Except { except: rejections }) => Some(
+      config
+        .grammar
+        .into_iter()
+        .map(|grammar| grammar.grammar_id)
+        .filter(|id| !rejections.contains(id))
+        .collect(),
+    ),
     None => None,
   };
 
@@ -314,13 +297,10 @@ fn fetch_grammar(grammar: GrammarConfiguration) -> Result<FetchStatus> {
       // Fetch the exact revision from the remote.
       // Supported by server-side git since v2.5.0 (July 2015),
       // enabled by default on major git hosts.
-      git(&grammar_dir, [
-        "fetch",
-        "--depth",
-        "1",
-        REMOTE_NAME,
-        &revision,
-      ])?;
+      git(
+        &grammar_dir,
+        ["fetch", "--depth", "1", REMOTE_NAME, &revision],
+      )?;
       git(&grammar_dir, ["checkout", &revision])?;
 
       Ok(FetchStatus::GitUpdated { revision })
@@ -335,12 +315,10 @@ fn fetch_grammar(grammar: GrammarConfiguration) -> Result<FetchStatus> {
 // Sets the remote for a repository to the given URL, creating the remote if
 // it does not yet exist.
 fn set_remote(repository_dir: &Path, remote_url: &str) -> Result<String> {
-  git(repository_dir, [
-    "remote",
-    "set-url",
-    REMOTE_NAME,
-    remote_url,
-  ])
+  git(
+    repository_dir,
+    ["remote", "set-url", REMOTE_NAME, remote_url],
+  )
   .or_else(|_| git(repository_dir, ["remote", "add", REMOTE_NAME, remote_url]))
 }
 

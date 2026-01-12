@@ -1,9 +1,6 @@
 use std::num::NonZeroUsize;
 
-use smartstring::{
-  LazyCompact,
-  SmartString,
-};
+use smartstring::{LazyCompact, SmartString};
 
 pub mod animation;
 pub mod auto_pairs;

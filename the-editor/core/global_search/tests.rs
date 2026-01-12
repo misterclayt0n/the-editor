@@ -1,21 +1,13 @@
 use std::{
   fs,
   path::Path,
-  sync::{
-    Arc,
-    Mutex,
-  },
+  sync::{Arc, Mutex},
 };
 
 use ropey::Rope;
 use tempfile::tempdir;
 
-use super::{
-  FileResult,
-  MatchControl,
-  SearchOptions,
-  walk_workspace_matches,
-};
+use super::{FileResult, MatchControl, SearchOptions, walk_workspace_matches};
 use crate::editor::FilePickerConfig;
 
 fn collect_matches<P: AsRef<Path>>(
@@ -47,9 +39,9 @@ fn finds_matches_in_workspace_files() {
   fs::write(&file, "alpha\nbeta\nglobal_search matches here\n").unwrap();
 
   let options = SearchOptions {
-    smart_case:  true,
+    smart_case: true,
     file_picker: FilePickerConfig::default(),
-    documents:   Arc::new(Vec::new()),
+    documents: Arc::new(Vec::new()),
   };
 
   let matches = collect_matches("global_search", temp.path(), &options);
@@ -70,9 +62,9 @@ fn uses_open_document_contents() {
 
   let edited_contents = Rope::from_str("unsaved global_search change\n");
   let options = SearchOptions {
-    smart_case:  true,
+    smart_case: true,
     file_picker: FilePickerConfig::default(),
-    documents:   Arc::new(vec![(Some(file.clone()), edited_contents)]),
+    documents: Arc::new(vec![(Some(file.clone()), edited_contents)]),
   };
 
   let matches = collect_matches("global_search", temp.path(), &options);
@@ -99,9 +91,9 @@ fn avoids_duplicate_results_from_symlinks() {
   symlink(&original, &link).unwrap();
 
   let options = SearchOptions {
-    smart_case:  true,
+    smart_case: true,
     file_picker: FilePickerConfig::default(),
-    documents:   Arc::new(Vec::new()),
+    documents: Arc::new(Vec::new()),
   };
 
   let matches = collect_matches("global_search", temp.path(), &options);

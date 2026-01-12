@@ -1,44 +1,19 @@
-use anyhow::{
-  anyhow,
-  bail,
-};
+use anyhow::{anyhow, bail};
 use futures_executor::block_on;
 use the_editor_lsp_types::types as lsp;
-use the_editor_renderer::{
-  Color,
-  Key,
-  TextSection,
-  TextSegment,
-  TextStyle,
-};
+use the_editor_renderer::{Color, Key, TextSection, TextSegment, TextStyle};
 
 use crate::{
   core::{
-    animation::{
-      AnimationHandle,
-      presets,
-    },
-    graphics::{
-      CursorKind,
-      Rect,
-    },
+    animation::{AnimationHandle, presets},
+    graphics::{CursorKind, Rect},
     position::Position,
   },
   lsp::LanguageServerId,
   ui::{
-    UI_FONT_SIZE,
-    UI_FONT_WIDTH,
-    compositor::{
-      Component,
-      Context,
-      Event,
-      EventResult,
-      Surface,
-    },
-    popup_positioning::{
-      calculate_cursor_position,
-      position_popup_near_cursor,
-    },
+    UI_FONT_SIZE, UI_FONT_WIDTH,
+    compositor::{Component, Context, Event, EventResult, Surface},
+    popup_positioning::{calculate_cursor_position, position_popup_near_cursor},
     theme_color_to_renderer_color,
   },
 };
@@ -50,15 +25,15 @@ const VERTICAL_PADDING: f32 = 10.0;
 const MIN_MENU_WIDTH: f32 = 220.0;
 
 pub struct CodeActionEntry {
-  pub action:             lsp::CodeActionOrCommand,
+  pub action: lsp::CodeActionOrCommand,
   pub language_server_id: LanguageServerId,
 }
 
 pub struct CodeActionMenu {
-  entries:       Vec<CodeActionEntry>,
-  cursor:        usize,
+  entries: Vec<CodeActionEntry>,
+  cursor: usize,
   scroll_offset: usize,
-  animation:     AnimationHandle<f32>,
+  animation: AnimationHandle<f32>,
 }
 
 impl CodeActionMenu {
@@ -233,11 +208,9 @@ impl Component for CodeActionMenu {
     };
 
     match (key.code, key.ctrl, key.alt, key.shift) {
-      (Key::Escape, ..) => {
-        EventResult::Consumed(Some(Box::new(|compositor, _| {
-          compositor.remove(Self::ID);
-        })))
-      },
+      (Key::Escape, ..) => EventResult::Consumed(Some(Box::new(|compositor, _| {
+        compositor.remove(Self::ID);
+      }))),
       (Key::Up, ..) | (Key::Char('p'), true, ..) | (Key::Char('k'), false, false, false) => {
         self.move_cursor(-1);
         EventResult::Consumed(None)
@@ -268,19 +241,15 @@ impl Component for CodeActionMenu {
         }
         EventResult::Consumed(None)
       },
-      (Key::Enter | Key::NumpadEnter, ..) => {
-        match self.apply_selected(cx) {
-          Ok(()) => {
-            EventResult::Consumed(Some(Box::new(|compositor, _| {
-              compositor.remove(Self::ID);
-            })))
-          },
-          Err(err) => {
-            cx.editor
-              .set_error(format!("Failed to apply code action: {err}"));
-            EventResult::Consumed(None)
-          },
-        }
+      (Key::Enter | Key::NumpadEnter, ..) => match self.apply_selected(cx) {
+        Ok(()) => EventResult::Consumed(Some(Box::new(|compositor, _| {
+          compositor.remove(Self::ID);
+        }))),
+        Err(err) => {
+          cx.editor
+            .set_error(format!("Failed to apply code action: {err}"));
+          EventResult::Consumed(None)
+        },
       },
       _ => EventResult::Ignored(None),
     }
@@ -428,10 +397,10 @@ impl Component for CodeActionMenu {
 
         surface.draw_text(TextSection {
           position: (anim_x + HORIZONTAL_PADDING, y),
-          texts:    vec![TextSegment {
+          texts: vec![TextSegment {
             content: title,
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
               color: fg,
             },
           }],
@@ -441,10 +410,10 @@ impl Component for CodeActionMenu {
           let kind_text = truncate_to_width(kind, kind_column_width, char_width);
           surface.draw_text(TextSection {
             position: (kind_x, y),
-            texts:    vec![TextSegment {
+            texts: vec![TextSegment {
               content: kind_text,
-              style:   TextStyle {
-                size:  UI_FONT_SIZE,
+              style: TextStyle {
+                size: UI_FONT_SIZE,
                 color: detail,
               },
             }],

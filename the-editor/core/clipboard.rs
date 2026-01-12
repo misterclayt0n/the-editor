@@ -2,10 +2,7 @@
 
 use std::borrow::Cow;
 
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Clone, Copy)]
@@ -75,15 +72,15 @@ mod external {
   pub struct Command {
     command: Cow<'static, str>,
     #[serde(default)]
-    args:    Cow<'static, [Cow<'static, str>]>,
+    args: Cow<'static, [Cow<'static, str>]>,
   }
 
   #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
   #[serde(rename_all = "kebab-case")]
   pub struct CommandProvider {
-    yank:          Command,
-    paste:         Command,
-    yank_primary:  Option<Command>,
+    yank: Command,
+    paste: Command,
+    yank_primary: Option<Command>,
     paste_primary: Option<Command>,
   }
 
@@ -118,10 +115,7 @@ mod external {
 
     #[cfg(target_os = "macos")]
     fn default() -> Self {
-      use the_editor_stdx::env::{
-        binary_exists,
-        env_var_is_set,
-      };
+      use the_editor_stdx::env::{binary_exists, env_var_is_set};
 
       if env_var_is_set("TMUX") && binary_exists("tmux") {
         Self::Tmux
@@ -134,10 +128,7 @@ mod external {
 
     #[cfg(not(any(windows, target_os = "macos")))]
     fn default() -> Self {
-      use the_editor_stdx::env::{
-        binary_exists,
-        env_var_is_set,
-      };
+      use the_editor_stdx::env::{binary_exists, env_var_is_set};
 
       fn is_exit_success(program: &str, args: &[&str]) -> bool {
         std::process::Command::new(program)
@@ -195,12 +186,10 @@ mod external {
         Self::Termux => builtin_name("termux", &TERMUX),
         #[cfg(windows)]
         Self::Windows => "windows".into(),
-        Self::Custom(command_provider) => {
-          Cow::Owned(format!(
-            "custom ({}+{})",
-            command_provider.yank.command, command_provider.paste.command
-          ))
-        },
+        Self::Custom(command_provider) => Cow::Owned(format!(
+          "custom ({}+{})",
+          command_provider.yank.command, command_provider.paste.command
+        )),
         Self::None => "none".into(),
       }
     }
@@ -233,14 +222,12 @@ mod external {
         Self::Tmux => yank_from_builtin(TMUX, clipboard_type),
         Self::Termux => yank_from_builtin(TERMUX, clipboard_type),
         #[cfg(target_os = "windows")]
-        Self::Windows => {
-          match clipboard_type {
-            ClipboardType::Clipboard => {
-              let contents = clipboard_win::get_clipboard(clipboard_win::formats::Unicode)?;
-              Ok(contents)
-            },
-            ClipboardType::Selection => Ok(String::new()),
-          }
+        Self::Windows => match clipboard_type {
+          ClipboardType::Clipboard => {
+            let contents = clipboard_win::get_clipboard(clipboard_win::formats::Unicode)?;
+            Ok(contents)
+          },
+          ClipboardType::Selection => Ok(String::new()),
         },
         Self::Custom(command_provider) => {
           execute_command(&command_provider.yank, None, true)?.ok_or(ClipboardError::MissingStdout)
@@ -278,28 +265,24 @@ mod external {
         Self::Tmux => paste_to_builtin(TMUX, content, clipboard_type),
         Self::Termux => paste_to_builtin(TERMUX, content, clipboard_type),
         #[cfg(target_os = "windows")]
-        Self::Windows => {
-          match clipboard_type {
-            ClipboardType::Clipboard => {
-              clipboard_win::set_clipboard(clipboard_win::formats::Unicode, content)?;
-              Ok(())
-            },
-            ClipboardType::Selection => Ok(()),
-          }
+        Self::Windows => match clipboard_type {
+          ClipboardType::Clipboard => {
+            clipboard_win::set_clipboard(clipboard_win::formats::Unicode, content)?;
+            Ok(())
+          },
+          ClipboardType::Selection => Ok(()),
         },
-        Self::Custom(command_provider) => {
-          match clipboard_type {
-            ClipboardType::Clipboard => {
-              execute_command(&command_provider.paste, Some(content), false).map(|_| ())
-            },
-            ClipboardType::Selection => {
-              if let Some(cmd) = &command_provider.paste_primary {
-                execute_command(cmd, Some(content), false).map(|_| ())
-              } else {
-                Ok(())
-              }
-            },
-          }
+        Self::Custom(command_provider) => match clipboard_type {
+          ClipboardType::Clipboard => {
+            execute_command(&command_provider.paste, Some(content), false).map(|_| ())
+          },
+          ClipboardType::Selection => {
+            if let Some(cmd) = &command_provider.paste_primary {
+              execute_command(cmd, Some(content), false).map(|_| ())
+            } else {
+              Ok(())
+            }
+          },
         },
         Self::None => Ok(()),
       }
@@ -398,10 +381,7 @@ mod external {
   ) -> Result<Option<String>> {
     use std::{
       io::Write,
-      process::{
-        Command,
-        Stdio,
-      },
+      process::{Command, Stdio},
     };
 
     let stdin = input.map(|_| Stdio::piped()).unwrap_or_else(Stdio::null);
@@ -422,11 +402,9 @@ mod external {
       use std::os::unix::process::CommandExt;
 
       unsafe {
-        command_mut = command_mut.pre_exec(|| {
-          match libc::setsid() {
-            -1 => Err(std::io::Error::last_os_error()),
-            _ => Ok(()),
-          }
+        command_mut = command_mut.pre_exec(|| match libc::setsid() {
+          -1 => Err(std::io::Error::last_os_error()),
+          _ => Ok(()),
         });
       }
     }

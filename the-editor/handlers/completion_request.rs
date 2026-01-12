@@ -5,45 +5,22 @@
 /// ! language servers.
 use std::time::Duration;
 
-use the_editor_event::{
-  AsyncHook,
-  TaskController,
-  TaskHandle,
-  cancelable_future,
-  register_hook,
-};
+use the_editor_event::{AsyncHook, TaskController, TaskHandle, cancelable_future, register_hook};
 use the_editor_lsp_types::types as lsp;
 use the_editor_stdx::rope::RopeSliceExt;
-use tokio::{
-  task::JoinSet,
-  time::Instant,
-};
+use tokio::{task::JoinSet, time::Instant};
 
 use super::{
   Handlers,
-  completion::{
-    CompletionEvent,
-    CompletionItem,
-    LspCompletionItem,
-  },
+  completion::{CompletionEvent, CompletionItem, LspCompletionItem},
   completion_path,
 };
 use crate::{
-  core::{
-    DocumentId,
-    ViewId,
-  },
+  core::{DocumentId, ViewId},
   editor::Editor,
-  event::{
-    OnModeSwitch,
-    PostCommand,
-    PostInsertChar,
-  },
+  event::{OnModeSwitch, PostCommand, PostInsertChar},
   keymap::Mode,
-  lsp::{
-    LanguageServerId,
-    OffsetEncoding,
-  },
+  lsp::{LanguageServerId, OffsetEncoding},
   ui,
 };
 
@@ -63,9 +40,9 @@ const ALL_RESULTS_TIMEOUT: Duration = Duration::from_millis(1000);
 #[derive(Debug, Clone, Copy)]
 pub struct PendingTrigger {
   pub cursor: usize,
-  pub doc:    DocumentId,
-  pub view:   ViewId,
-  pub kind:   TriggerKind,
+  pub doc: DocumentId,
+  pub view: ViewId,
+  pub kind: TriggerKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +57,7 @@ pub struct CompletionRequestHook {
   /// The pending trigger (if any)
   pending_trigger: Option<PendingTrigger>,
   /// The currently in-flight trigger (being processed)
-  in_flight:       Option<PendingTrigger>,
+  in_flight: Option<PendingTrigger>,
   /// Task controller for canceling in-flight requests
   task_controller: TaskController,
 }
@@ -89,7 +66,7 @@ impl CompletionRequestHook {
   pub fn new() -> Self {
     Self {
       pending_trigger: None,
-      in_flight:       None,
+      in_flight: None,
       task_controller: TaskController::new(),
     }
   }
@@ -190,7 +167,7 @@ impl AsyncHook for CompletionRequestHook {
 
 /// Response from a single completion provider
 struct CompletionResponse {
-  items:    Vec<CompletionItem>,
+  items: Vec<CompletionItem>,
   provider: LanguageServerId,
   priority: i8,
 }
@@ -323,7 +300,7 @@ fn request_completions(
   for (priority_index, client) in doc.language_servers().enumerate() {
     let server_id = client.id();
     let context = lsp::CompletionContext {
-      trigger_kind:      lsp_trigger_kind,
+      trigger_kind: lsp_trigger_kind,
       trigger_character: lsp_trigger_char.clone(),
     };
 
@@ -578,8 +555,7 @@ pub fn register_completion_hooks(handlers: &Handlers) {
   // Hook: Trigger completion on character insertion
   register_hook!(move |event: &mut PostInsertChar<'_, '_>| {
     use crate::handlers::completion_request_helpers::{
-      trigger_auto_completion,
-      update_completion_filter,
+      trigger_auto_completion, update_completion_filter,
     };
 
     let c = event.c;
@@ -614,8 +590,7 @@ pub fn register_completion_hooks(handlers: &Handlers) {
   let completions_command = handlers.completions.clone();
   register_hook!(move |event: &mut PostCommand<'_, '_>| {
     use crate::handlers::completion_request_helpers::{
-      clear_completions,
-      update_completion_filter,
+      clear_completions, update_completion_filter,
     };
 
     if event.cx.editor.mode == Mode::Insert {

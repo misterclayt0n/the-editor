@@ -6,28 +6,19 @@
 //! TODO: Add `jujutsu` support
 
 use std::{
-  path::{
-    Path,
-    PathBuf,
-  },
+  path::{Path, PathBuf},
   sync::Arc,
 };
 
-use anyhow::{
-  Result,
-  anyhow,
-  bail,
-};
+use anyhow::{Result, anyhow, bail};
 use arc_swap::ArcSwap;
 
-#[cfg(feature = "git")] mod git;
+#[cfg(feature = "git")]
+mod git;
 
 mod diff;
 
-pub use diff::{
-  DiffHandle,
-  Hunk,
-};
+pub use diff::{DiffHandle, Hunk};
 
 mod status;
 
@@ -44,30 +35,32 @@ impl DiffProviderRegistry {
   /// Get the given file from the VCS. This provides the unedited document as a
   /// "base" for a diff to be created.
   pub fn get_diff_base(&self, file: &Path) -> Option<Vec<u8>> {
-    self.providers.iter().find_map(|provider| {
-      match provider.get_diff_base(file) {
+    self
+      .providers
+      .iter()
+      .find_map(|provider| match provider.get_diff_base(file) {
         Ok(res) => Some(res),
         Err(err) => {
           log::debug!("{err:#?}");
           log::debug!("failed to open diff base for {}", file.display());
           None
         },
-      }
-    })
+      })
   }
 
   /// Get the current name of the current [HEAD](https://stackoverflow.com/questions/2304087/what-is-head-in-git).
   pub fn get_current_head_name(&self, file: &Path) -> Option<Arc<ArcSwap<Box<str>>>> {
-    self.providers.iter().find_map(|provider| {
-      match provider.get_current_head_name(file) {
+    self
+      .providers
+      .iter()
+      .find_map(|provider| match provider.get_current_head_name(file) {
         Ok(res) => Some(res),
         Err(err) => {
           log::debug!("{err:#?}");
           log::debug!("failed to obtain current head name for {}", file.display());
           None
         },
-      }
-    })
+      })
   }
 
   /// Get the workspace root (repository working directory) for a given file

@@ -1,49 +1,21 @@
-use std::{
-  collections::btree_map::Entry,
-  fmt::Display,
-};
+use std::{collections::btree_map::Entry, fmt::Display};
 
-use the_editor_event::{
-  dispatch,
-  register_hook,
-};
+use the_editor_event::{dispatch, register_hook};
 use the_editor_lsp_types::types::{
-  Command,
-  Diagnostic,
-  DocumentChangeOperation,
-  DocumentChanges,
-  OneOf,
-  ResourceOp,
-  TextEdit,
+  Command, Diagnostic, DocumentChangeOperation, DocumentChanges, OneOf, ResourceOp, TextEdit,
   WorkspaceEdit,
 };
 
 use super::Handlers;
 use crate::{
-  core::{
-    DocumentId,
-    diagnostics::DiagnosticProvider,
-    uri::Uri,
-  },
+  core::{DocumentId, diagnostics::DiagnosticProvider, uri::Uri},
   doc_mut,
-  editor::{
-    Action,
-    Editor,
-  },
+  editor::{Action, Editor},
   event::{
-    DiagnosticsDidChange,
-    DocumentDidChange,
-    DocumentDidClose,
-    DocumentDidOpen,
-    LanguageServerInitialized,
-    PostCommand,
-    PostInsertChar,
+    DiagnosticsDidChange, DocumentDidChange, DocumentDidClose, DocumentDidOpen,
+    LanguageServerInitialized, PostCommand, PostInsertChar,
   },
-  lsp::{
-    LanguageServerId,
-    OffsetEncoding,
-    util::generate_transaction_from_edits,
-  },
+  lsp::{LanguageServerId, OffsetEncoding, util::generate_transaction_from_edits},
   view_mut,
 };
 
@@ -66,7 +38,7 @@ pub enum SignatureHelpEvent {
 
 #[derive(Debug)]
 pub struct ApplyEditError {
-  pub kind:              ApplyEditErrorKind,
+  pub kind: ApplyEditErrorKind,
   pub failed_change_idx: usize,
 }
 
@@ -168,11 +140,9 @@ impl Editor {
             let edits = document_edit
               .edits
               .iter()
-              .map(|edit| {
-                match edit {
-                  OneOf::Left(text_edit) => text_edit,
-                  OneOf::Right(annotated_text_edit) => &annotated_text_edit.text_edit,
-                }
+              .map(|edit| match edit {
+                OneOf::Left(text_edit) => text_edit,
+                OneOf::Right(annotated_text_edit) => &annotated_text_edit.text_edit,
               })
               .cloned()
               .collect();
@@ -183,11 +153,9 @@ impl Editor {
                 edits,
                 offset_encoding,
               )
-              .map_err(|kind| {
-                ApplyEditError {
-                  kind,
-                  failed_change_idx: i,
-                }
+              .map_err(|kind| ApplyEditError {
+                kind,
+                failed_change_idx: i,
               })?;
           }
         },
@@ -196,23 +164,21 @@ impl Editor {
           for (i, operation) in operations.iter().enumerate() {
             match operation {
               DocumentChangeOperation::Op(op) => {
-                self.apply_document_resource_op(op).map_err(|err| {
-                  ApplyEditError {
-                    kind:              err,
+                self
+                  .apply_document_resource_op(op)
+                  .map_err(|err| ApplyEditError {
+                    kind: err,
                     failed_change_idx: i,
-                  }
-                })?;
+                  })?;
               },
 
               DocumentChangeOperation::Edit(document_edit) => {
                 let edits = document_edit
                   .edits
                   .iter()
-                  .map(|edit| {
-                    match edit {
-                      OneOf::Left(text_edit) => text_edit,
-                      OneOf::Right(annotated_text_edit) => &annotated_text_edit.text_edit,
-                    }
+                  .map(|edit| match edit {
+                    OneOf::Left(text_edit) => text_edit,
+                    OneOf::Right(annotated_text_edit) => &annotated_text_edit.text_edit,
                   })
                   .cloned()
                   .collect();
@@ -223,11 +189,9 @@ impl Editor {
                     edits,
                     offset_encoding,
                   )
-                  .map_err(|kind| {
-                    ApplyEditError {
-                      kind,
-                      failed_change_idx: i,
-                    }
+                  .map_err(|kind| ApplyEditError {
+                    kind,
+                    failed_change_idx: i,
                   })?;
               },
             }
@@ -244,11 +208,9 @@ impl Editor {
         let text_edits = text_edits.to_vec();
         self
           .apply_text_edits(uri, None, text_edits, offset_encoding)
-          .map_err(|kind| {
-            ApplyEditError {
-              kind,
-              failed_change_idx: i,
-            }
+          .map_err(|kind| ApplyEditError {
+            kind,
+            failed_change_idx: i,
           })?;
       }
     }

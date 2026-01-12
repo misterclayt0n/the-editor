@@ -3,29 +3,15 @@ use std::{
   num::NonZeroUsize,
   sync::{
     Arc,
-    atomic::{
-      self,
-      AtomicUsize,
-    },
+    atomic::{self, AtomicUsize},
   },
   time::Duration,
 };
 
-use the_editor_event::{
-  AsyncHook,
-  request_redraw,
-  send_blocking,
-};
-use tokio::{
-  sync::mpsc::Sender,
-  time::Instant,
-};
+use the_editor_event::{AsyncHook, request_redraw, send_blocking};
+use tokio::{sync::mpsc::Sender, time::Instant};
 
-use crate::core::{
-  DocumentId,
-  ViewId,
-  document::Document,
-};
+use crate::core::{DocumentId, ViewId, document::Document};
 
 #[derive(Debug)]
 pub enum DiagnosticEvent {
@@ -35,7 +21,7 @@ pub enum DiagnosticEvent {
 
 struct DiagnosticTimeout {
   active_generation: Arc<AtomicUsize>,
-  generation:        usize,
+  generation: usize,
 }
 
 const TIMEOUT: Duration = Duration::from_millis(350);
@@ -70,11 +56,11 @@ impl AsyncHook for DiagnosticTimeout {
 
 pub struct DiagnosticsHandler {
   active_generation: Arc<AtomicUsize>,
-  generation:        Cell<usize>,
-  last_doc:          Cell<DocumentId>,
-  last_cursor_line:  Cell<usize>,
-  pub active:        bool,
-  pub events:        Sender<DiagnosticEvent>,
+  generation: Cell<usize>,
+  last_doc: Cell<DocumentId>,
+  last_cursor_line: Cell<usize>,
+  pub active: bool,
+  pub events: Sender<DiagnosticEvent>,
 }
 
 // make sure we never share handlers across multiple views this is a stop
@@ -93,7 +79,7 @@ impl DiagnosticsHandler {
     let active_generation = Arc::new(AtomicUsize::new(0));
     let events = DiagnosticTimeout {
       active_generation: active_generation.clone(),
-      generation:        0,
+      generation: 0,
     }
     .spawn();
     Self {
@@ -134,9 +120,12 @@ impl DiagnosticsHandler {
       self.last_doc.set(doc.id());
       self.last_cursor_line.set(cursor_line);
       self.generation.set(self.generation.get() + 1);
-      send_blocking(&self.events, DiagnosticEvent::CursorLineChanged {
-        generation: self.generation.get(),
-      });
+      send_blocking(
+        &self.events,
+        DiagnosticEvent::CursorLineChanged {
+          generation: self.generation.get(),
+        },
+      );
       false
     }
   }

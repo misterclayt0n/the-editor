@@ -1,20 +1,11 @@
 //! A queue of async messages/errors that will be shown in the editor
 
-use std::{
-  borrow::Cow,
-  time::Duration,
-};
+use std::{borrow::Cow, time::Duration};
 
 use once_cell::sync::OnceCell;
-use tokio::sync::mpsc::{
-  Receiver,
-  Sender,
-};
+use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::{
-  runtime_local,
-  send_blocking,
-};
+use crate::{runtime_local, send_blocking};
 
 /// Describes the severity level of a [`StatusMessage`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
@@ -27,14 +18,14 @@ pub enum Severity {
 
 pub struct StatusMessage {
   pub severity: Severity,
-  pub message:  Cow<'static, str>,
+  pub message: Cow<'static, str>,
 }
 
 impl From<anyhow::Error> for StatusMessage {
   fn from(err: anyhow::Error) -> Self {
     StatusMessage {
       severity: Severity::Error,
-      message:  err.to_string().into(),
+      message: err.to_string().into(),
     }
   }
 }
@@ -43,7 +34,7 @@ impl From<&'static str> for StatusMessage {
   fn from(msg: &'static str) -> Self {
     StatusMessage {
       severity: Severity::Info,
-      message:  msg.into(),
+      message: msg.into(),
     }
   }
 }

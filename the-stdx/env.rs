@@ -1,14 +1,8 @@
 //! Functions for working with the host environment.
 use std::{
   borrow::Cow,
-  ffi::{
-    OsStr,
-    OsString,
-  },
-  path::{
-    Path,
-    PathBuf,
-  },
+  ffi::{OsStr, OsString},
+  path::{Path, PathBuf},
   sync::RwLock,
 };
 
@@ -69,11 +63,9 @@ pub fn which<T: AsRef<OsStr>>(
   binary_name: T,
 ) -> Result<std::path::PathBuf, ExecutableNotFoundError> {
   let binary_name = binary_name.as_ref();
-  which::which(binary_name).map_err(|err| {
-    ExecutableNotFoundError {
-      command: binary_name.to_string_lossy().into_owned(),
-      inner:   err,
-    }
+  which::which(binary_name).map_err(|err| ExecutableNotFoundError {
+    command: binary_name.to_string_lossy().into_owned(),
+    inner: err,
   })
 }
 
@@ -174,7 +166,7 @@ pub fn expand<S: AsRef<OsStr> + ?Sized>(src: &S) -> Cow<'_, OsStr> {
 #[derive(Debug)]
 pub struct ExecutableNotFoundError {
   command: String,
-  inner:   which::Error,
+  inner: which::Error,
 }
 
 impl std::fmt::Display for ExecutableNotFoundError {
@@ -187,16 +179,9 @@ impl std::error::Error for ExecutableNotFoundError {}
 
 #[cfg(test)]
 mod tests {
-  use std::ffi::{
-    OsStr,
-    OsString,
-  };
+  use std::ffi::{OsStr, OsString};
 
-  use super::{
-    current_working_dir,
-    expand_impl,
-    set_current_working_dir,
-  };
+  use super::{current_working_dir, expand_impl, set_current_working_dir};
 
   #[test]
   fn current_dir_is_set() {

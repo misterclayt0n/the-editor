@@ -4,20 +4,12 @@ use std::{
   borrow::Cow,
   ffi::OsString,
   ops::Range,
-  path::{
-    Component,
-    MAIN_SEPARATOR_STR,
-    Path,
-    PathBuf,
-  },
+  path::{Component, MAIN_SEPARATOR_STR, Path, PathBuf},
 };
 
 pub use etcetera::home_dir;
 use once_cell::sync::Lazy;
-use regex_cursor::{
-  Input,
-  engines::meta::Regex,
-};
+use regex_cursor::{Input, engines::meta::Regex};
 use ropey::RopeSlice;
 
 use crate::env::current_working_dir;
@@ -316,19 +308,13 @@ pub fn expand<T: AsRef<Path> + ?Sized>(path: &T) -> Cow<'_, Path> {
 mod tests {
   use std::{
     ffi::OsStr,
-    path::{
-      Component,
-      Path,
-    },
+    path::{Component, Path},
   };
 
   use regex_cursor::Input;
   use ropey::RopeSlice;
 
-  use crate::path::{
-    self,
-    compile_path_regex,
-  };
+  use crate::path::{self, compile_path_regex};
 
   #[test]
   fn expand_tilde() {
@@ -454,9 +440,11 @@ mod tests {
           "/home/foo"
         ]
       );
-      assert_matches!(regex, r#"--> helix-stdx/src/path.rs:427:13"#, [
-        "helix-stdx/src/path.rs"
-      ]);
+      assert_matches!(
+        regex,
+        r#"--> helix-stdx/src/path.rs:427:13"#,
+        ["helix-stdx/src/path.rs"]
+      );
       assert_matches!(
         regex,
         r#"PATH=/foo/bar:/bar/baz:${foo:-/foo}/bar:${PATH}"#,

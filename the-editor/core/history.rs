@@ -1,9 +1,6 @@
 use std::{
   num::NonZeroUsize,
-  time::{
-    Duration,
-    Instant,
-  },
+  time::{Duration, Instant},
 };
 
 use once_cell::sync::Lazy;
@@ -11,20 +8,13 @@ use regex::Regex;
 use ropey::Rope;
 
 use crate::core::{
-  selection::{
-    Range,
-    Selection,
-  },
-  transaction::{
-    Assoc,
-    ChangeSet,
-    Transaction,
-  },
+  selection::{Range, Selection},
+  transaction::{Assoc, ChangeSet, Transaction},
 };
 
 #[derive(Debug, Clone)]
 pub struct State {
-  pub doc:       Rope,
+  pub doc: Rope,
   pub selection: Selection,
 }
 
@@ -69,19 +59,19 @@ pub struct State {
 #[derive(Debug)]
 pub struct History {
   revisions: Vec<Revision>,
-  current:   usize,
+  current: usize,
 }
 
 /// A single point in history. See [History] for more information.
 #[derive(Debug, Clone)]
 struct Revision {
-  parent:      usize,
-  last_child:  Option<NonZeroUsize>,
+  parent: usize,
+  last_child: Option<NonZeroUsize>,
   transaction: Transaction,
   // We need an inversion for undos because delete transactions don't store
   // the deleted text.
-  inversion:   Transaction,
-  timestamp:   Instant,
+  inversion: Transaction,
+  timestamp: Instant,
 }
 
 impl Default for History {
@@ -89,13 +79,13 @@ impl Default for History {
     // Add a dummy root revision with empty transaction
     Self {
       revisions: vec![Revision {
-        parent:      0,
-        last_child:  None,
+        parent: 0,
+        last_child: None,
         transaction: Transaction::from(ChangeSet::new("".into())),
-        inversion:   Transaction::from(ChangeSet::new("".into())),
-        timestamp:   Instant::now(),
+        inversion: Transaction::from(ChangeSet::new("".into())),
+        timestamp: Instant::now(),
       }],
-      current:   0,
+      current: 0,
     }
   }
 }
@@ -278,12 +268,10 @@ impl History {
       .binary_search_by(|rev| rev.timestamp.cmp(&instant));
     let revision = match search_result {
       Ok(revision) => revision,
-      Err(insert_point) => {
-        match insert_point {
-          0 => 0,
-          n if n == self.revisions.len() => n - 1,
-          i => self.revision_closer_to_instant(i, instant),
-        }
+      Err(insert_point) => match insert_point {
+        0 => 0,
+        n if n == self.revisions.len() => n - 1,
+        i => self.revision_closer_to_instant(i, instant),
       },
     };
     self.jump_to(revision)
@@ -411,10 +399,7 @@ impl std::str::FromStr for UndoKind {
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::core::transaction::{
-    self,
-    Transaction,
-  };
+  use crate::core::transaction::{self, Transaction};
 
   #[test]
   fn test_undo_redo() {

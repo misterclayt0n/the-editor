@@ -1,7 +1,4 @@
-use serde::{
-  Serialize,
-  de::DeserializeOwned,
-};
+use serde::{Serialize, de::DeserializeOwned};
 
 use super::*;
 

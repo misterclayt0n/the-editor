@@ -1,9 +1,6 @@
 use std::collections::HashMap;
 
-use the_editor_renderer::{
-  Color,
-  TextSection,
-};
+use the_editor_renderer::{Color, TextSection};
 
 use crate::core::graphics::CursorKind;
 
@@ -12,111 +9,111 @@ use crate::core::graphics::CursorKind;
 pub enum RenderCommand {
   /// Draw a rectangle
   Rect {
-    x:      f32,
-    y:      f32,
-    width:  f32,
+    x: f32,
+    y: f32,
+    width: f32,
     height: f32,
-    color:  Color,
+    color: Color,
   },
   /// Draw text with specific attributes
   Text { section: TextSection },
   /// Draw cursor
   Cursor {
-    x:       f32,
-    y:       f32,
-    width:   f32,
-    height:  f32,
-    color:   Color,
-    kind:    CursorKind,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: Color,
+    kind: CursorKind,
     primary: bool,
   },
   /// Draw selection background
   Selection {
-    x:      f32,
-    y:      f32,
-    width:  f32,
+    x: f32,
+    y: f32,
+    width: f32,
     height: f32,
-    color:  Color,
+    color: Color,
   },
   /// Draw a horizontal gradient rectangle (fades left to right)
   GradientRect {
-    x:      f32,
-    y:      f32,
-    width:  f32,
+    x: f32,
+    y: f32,
+    width: f32,
     height: f32,
-    color:  Color,
+    color: Color,
   },
 }
 
 /// Groups render commands by type and state for batching
 pub struct CommandBatcher {
   /// Pending commands grouped by render state
-  rect_batch:          Vec<RectCommand>,
+  rect_batch: Vec<RectCommand>,
   gradient_rect_batch: Vec<GradientRectCommand>,
-  text_batch:          HashMap<TextBatchKey, Vec<TextCommand>>,
-  selection_batch:     Vec<SelectionCommand>,
-  cursor_batch:        Vec<CursorCommand>,
+  text_batch: HashMap<TextBatchKey, Vec<TextCommand>>,
+  selection_batch: Vec<SelectionCommand>,
+  cursor_batch: Vec<CursorCommand>,
 }
 
 #[derive(Debug, Clone)]
 struct RectCommand {
-  x:      f32,
-  y:      f32,
-  width:  f32,
+  x: f32,
+  y: f32,
+  width: f32,
   height: f32,
-  color:  Color,
+  color: Color,
 }
 
 #[derive(Debug, Clone)]
 struct GradientRectCommand {
-  x:      f32,
-  y:      f32,
-  width:  f32,
+  x: f32,
+  y: f32,
+  width: f32,
   height: f32,
-  color:  Color,
+  color: Color,
 }
 
 #[derive(Debug, Clone)]
 struct TextCommand {
   text: String,
-  x:    f32,
-  y:    f32,
+  x: f32,
+  y: f32,
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 struct TextBatchKey {
-  font_size: u32,     // Store as fixed point for hashing
-  color:     [u8; 4], // Store as bytes for hashing
+  font_size: u32, // Store as fixed point for hashing
+  color: [u8; 4], // Store as bytes for hashing
 }
 
 #[derive(Debug, Clone)]
 struct SelectionCommand {
-  x:      f32,
-  y:      f32,
-  width:  f32,
+  x: f32,
+  y: f32,
+  width: f32,
   height: f32,
-  color:  Color,
+  color: Color,
 }
 
 #[derive(Debug, Clone)]
 struct CursorCommand {
-  x:       f32,
-  y:       f32,
-  width:   f32,
-  height:  f32,
-  color:   Color,
-  kind:    CursorKind,
+  x: f32,
+  y: f32,
+  width: f32,
+  height: f32,
+  color: Color,
+  kind: CursorKind,
   primary: bool,
 }
 
 impl CommandBatcher {
   pub fn new() -> Self {
     Self {
-      rect_batch:          Vec::new(),
+      rect_batch: Vec::new(),
       gradient_rect_batch: Vec::new(),
-      text_batch:          HashMap::new(),
-      selection_batch:     Vec::new(),
-      cursor_batch:        Vec::new(),
+      text_batch: HashMap::new(),
+      selection_batch: Vec::new(),
+      cursor_batch: Vec::new(),
     }
   }
 
@@ -362,7 +359,7 @@ impl CommandBatcher {
     if let Some(segment) = first_segment {
       TextBatchKey {
         font_size: (segment.style.size * 100.0) as u32,
-        color:     [
+        color: [
           (segment.style.color.r * 255.0) as u8,
           (segment.style.color.g * 255.0) as u8,
           (segment.style.color.b * 255.0) as u8,
@@ -373,7 +370,7 @@ impl CommandBatcher {
       // Default key for empty sections
       TextBatchKey {
         font_size: 1600, // 16.0 * 100
-        color:     [255, 255, 255, 255],
+        color: [255, 255, 255, 255],
       }
     }
   }

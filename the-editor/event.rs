@@ -1,24 +1,14 @@
 use std::path::PathBuf;
 
 use ropey::Rope;
-use the_editor_event::{
-  events,
-  register_event,
-};
+use the_editor_event::{events, register_event};
 
 use crate::{
   core::{
-    DocumentId,
-    ViewId,
-    commands,
-    document::Document,
-    file_watcher::FileSystemDidChange,
+    DocumentId, ViewId, commands, document::Document, file_watcher::FileSystemDidChange,
     transaction::ChangeSet,
   },
-  editor::{
-    Editor,
-    EditorConfig,
-  },
+  editor::{Editor, EditorConfig},
   keymap::Mode,
   lsp::LanguageServerId,
 };

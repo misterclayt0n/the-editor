@@ -1,54 +1,23 @@
 #![allow(deprecated)]
 
-use std::{
-  borrow::Cow,
-  collections::HashMap,
-};
+use std::{borrow::Cow, collections::HashMap};
 
-use ropey::{
-  Rope,
-  RopeSlice,
-};
+use ropey::{Rope, RopeSlice};
 use the_editor_stdx::rope::RopeSliceExt;
 use tree_house::{
   TREE_SITTER_MATCH_LIMIT,
   tree_sitter::{
-    self,
-    Capture,
-    Grammar,
-    InactiveQueryCursor,
-    Node,
-    Pattern,
-    Query,
-    QueryMatch,
-    RopeInput,
-    query::{
-      InvalidPredicateError,
-      UserPredicate,
-    },
+    self, Capture, Grammar, InactiveQueryCursor, Node, Pattern, Query, QueryMatch, RopeInput,
+    query::{InvalidPredicateError, UserPredicate},
   },
 };
 
 use crate::core::{
   Tendril,
-  chars::{
-    char_is_line_ending,
-    char_is_whitespace,
-  },
-  grapheme::{
-    grapheme_width,
-    tab_width_at,
-  },
-  position::{
-    Position,
-    pos_at_visual_coords,
-    visual_coords_at_pos,
-  },
-  syntax::{
-    self,
-    Syntax,
-    config::IndentationHeuristic,
-  },
+  chars::{char_is_line_ending, char_is_whitespace},
+  grapheme::{grapheme_width, tab_width_at},
+  position::{Position, pos_at_visual_coords, visual_coords_at_pos},
+  syntax::{self, Syntax, config::IndentationHeuristic},
 };
 
 /// Enum representing indentation style.
@@ -347,8 +316,8 @@ fn is_first_in_line(node: &Node, text: RopeSlice, new_line_byte_pos: Option<u32>
 #[derive(Debug, Default)]
 pub struct IndentQueryPredicates {
   not_kind_eq: Vec<(Capture, Box<str>)>,
-  same_line:   Option<(Capture, Capture, bool)>,
-  one_line:    Option<(Capture, bool)>,
+  same_line: Option<(Capture, Capture, bool)>,
+  one_line: Option<(Capture, bool)>,
 }
 
 impl IndentQueryPredicates {
@@ -400,16 +369,16 @@ impl IndentQueryPredicates {
 
 #[derive(Debug)]
 pub struct IndentQuery {
-  query:                       Query,
-  properties:                  HashMap<Pattern, IndentScope>,
-  predicates:                  HashMap<Pattern, IndentQueryPredicates>,
-  indent_capture:              Option<Capture>,
-  indent_always_capture:       Option<Capture>,
-  outdent_capture:             Option<Capture>,
-  outdent_always_capture:      Option<Capture>,
-  align_capture:               Option<Capture>,
-  anchor_capture:              Option<Capture>,
-  extend_capture:              Option<Capture>,
+  query: Query,
+  properties: HashMap<Pattern, IndentScope>,
+  predicates: HashMap<Pattern, IndentQueryPredicates>,
+  indent_capture: Option<Capture>,
+  indent_always_capture: Option<Capture>,
+  outdent_capture: Option<Capture>,
+  outdent_always_capture: Option<Capture>,
+  align_capture: Option<Capture>,
+  anchor_capture: Option<Capture>,
+  extend_capture: Option<Capture>,
   extend_prevent_once_capture: Option<Capture>,
 }
 
@@ -417,62 +386,57 @@ impl IndentQuery {
   pub fn new(grammar: Grammar, source: &str) -> Result<Self, tree_sitter::query::ParseError> {
     let mut properties = HashMap::new();
     let mut predicates: HashMap<Pattern, IndentQueryPredicates> = HashMap::new();
-    let query = Query::new(grammar, source, |pattern, predicate| {
-      match predicate {
-        UserPredicate::SetProperty { key: "scope", val } => {
-          let scope = match val {
-            Some("all") => IndentScope::All,
-            Some("tail") => IndentScope::Tail,
-            Some(other) => return Err(format!("unknown scope (#set! scope \"{other}\")").into()),
-            None => return Err("missing scope value (#set! scope ...)".into()),
-          };
+    let query = Query::new(grammar, source, |pattern, predicate| match predicate {
+      UserPredicate::SetProperty { key: "scope", val } => {
+        let scope = match val {
+          Some("all") => IndentScope::All,
+          Some("tail") => IndentScope::Tail,
+          Some(other) => return Err(format!("unknown scope (#set! scope \"{other}\")").into()),
+          None => return Err("missing scope value (#set! scope ...)".into()),
+        };
 
-          properties.insert(pattern, scope);
+        properties.insert(pattern, scope);
 
-          Ok(())
-        },
-        UserPredicate::Other(predicate) => {
-          let name = predicate.name();
-          match name {
-            "not-kind-eq?" => {
-              predicate.check_arg_count(2)?;
-              let capture = predicate.capture_arg(0)?;
-              let not_expected_kind = predicate.str_arg(1)?;
+        Ok(())
+      },
+      UserPredicate::Other(predicate) => {
+        let name = predicate.name();
+        match name {
+          "not-kind-eq?" => {
+            predicate.check_arg_count(2)?;
+            let capture = predicate.capture_arg(0)?;
+            let not_expected_kind = predicate.str_arg(1)?;
 
-              predicates
-                .entry(pattern)
-                .or_default()
-                .not_kind_eq
-                .push((capture, not_expected_kind.into()));
-              Ok(())
-            },
-            "same-line?" | "not-same-line?" => {
-              predicate.check_arg_count(2)?;
-              let capture1 = predicate.capture_arg(0)?;
-              let capture2 = predicate.capture_arg(1)?;
-              let negated = name == "not-same-line?";
+            predicates
+              .entry(pattern)
+              .or_default()
+              .not_kind_eq
+              .push((capture, not_expected_kind.into()));
+            Ok(())
+          },
+          "same-line?" | "not-same-line?" => {
+            predicate.check_arg_count(2)?;
+            let capture1 = predicate.capture_arg(0)?;
+            let capture2 = predicate.capture_arg(1)?;
+            let negated = name == "not-same-line?";
 
-              predicates.entry(pattern).or_default().same_line =
-                Some((capture1, capture2, negated));
-              Ok(())
-            },
-            "one-line?" | "not-one-line?" => {
-              predicate.check_arg_count(1)?;
-              let capture = predicate.capture_arg(0)?;
-              let negated = name == "not-one-line?";
+            predicates.entry(pattern).or_default().same_line = Some((capture1, capture2, negated));
+            Ok(())
+          },
+          "one-line?" | "not-one-line?" => {
+            predicate.check_arg_count(1)?;
+            let capture = predicate.capture_arg(0)?;
+            let negated = name == "not-one-line?";
 
-              predicates.entry(pattern).or_default().one_line = Some((capture, negated));
-              Ok(())
-            },
-            _ => {
-              Err(InvalidPredicateError::unknown(UserPredicate::Other(
-                predicate,
-              )))
-            },
-          }
-        },
-        _ => Err(InvalidPredicateError::unknown(predicate)),
-      }
+            predicates.entry(pattern).or_default().one_line = Some((capture, negated));
+            Ok(())
+          },
+          _ => Err(InvalidPredicateError::unknown(UserPredicate::Other(
+            predicate,
+          ))),
+        }
+      },
+      _ => Err(InvalidPredicateError::unknown(predicate)),
     })?;
 
     Ok(Self {
@@ -503,14 +467,14 @@ impl IndentQuery {
 ///   indentation
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Indentation<'a> {
-  indent:         usize,
-  indent_always:  usize,
-  outdent:        usize,
+  indent: usize,
+  indent_always: usize,
+  outdent: usize,
   outdent_always: usize,
   /// The alignment, as a string containing only tabs & spaces. Storing this as
   /// a string instead of e.g. the (visual) width ensures that the alignment
   /// is preserved even if the tab width changes.
-  align:          Option<RopeSlice<'a>>,
+  align: Option<RopeSlice<'a>>,
 }
 
 impl<'a> Indentation<'a> {
@@ -613,7 +577,7 @@ impl<'a> Indentation<'a> {
 #[derive(Debug)]
 struct IndentCapture<'a> {
   capture_type: IndentCaptureType<'a>,
-  scope:        IndentScope,
+  scope: IndentScope,
 }
 #[derive(Debug, Clone, PartialEq)]
 enum IndentCaptureType<'a> {
@@ -1214,29 +1178,21 @@ mod test {
 
   #[test]
   fn add_capture() {
-    let indent = || {
-      Indentation {
-        indent: 1,
-        ..Default::default()
-      }
+    let indent = || Indentation {
+      indent: 1,
+      ..Default::default()
     };
-    let indent_always = || {
-      Indentation {
-        indent_always: 1,
-        ..Default::default()
-      }
+    let indent_always = || Indentation {
+      indent_always: 1,
+      ..Default::default()
     };
-    let outdent = || {
-      Indentation {
-        outdent: 1,
-        ..Default::default()
-      }
+    let outdent = || Indentation {
+      outdent: 1,
+      ..Default::default()
     };
-    let outdent_always = || {
-      Indentation {
-        outdent_always: 1,
-        ..Default::default()
-      }
+    let outdent_always = || Indentation {
+      outdent_always: 1,
+      ..Default::default()
     };
 
     fn add_capture<'a>(
@@ -1357,11 +1313,9 @@ mod test {
         ..Default::default()
       },
     ];
-    let align = no_align.clone().map(|indent| {
-      Indentation {
-        align: Some(RopeSlice::from("12345")),
-        ..indent
-      }
+    let align = no_align.clone().map(|indent| Indentation {
+      align: Some(RopeSlice::from("12345")),
+      ..indent
     });
     let different_align = Indentation {
       align: Some(RopeSlice::from("123456")),

@@ -12,7 +12,7 @@ use tiny_skia::Pixmap;
 #[derive(Clone)]
 pub struct RasterizedIcon {
   pub pixmap: Pixmap,
-  pub width:  u32,
+  pub width: u32,
   pub height: u32,
 }
 
@@ -20,14 +20,14 @@ pub struct RasterizedIcon {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct IconCacheKey {
   svg_hash: u64,
-  width:    u32,
-  height:   u32,
+  width: u32,
+  height: u32,
 }
 
 /// Cache for rasterized SVG icons.
 pub struct SvgIconCache {
   /// Cached rasterized icons keyed by (hash, size)
-  cache:    HashMap<IconCacheKey, RasterizedIcon>,
+  cache: HashMap<IconCacheKey, RasterizedIcon>,
   /// Parsed SVG trees keyed by hash (to avoid re-parsing)
   svg_data: HashMap<u64, Vec<u8>>,
 }
@@ -35,17 +35,14 @@ pub struct SvgIconCache {
 impl SvgIconCache {
   pub fn new() -> Self {
     Self {
-      cache:    HashMap::new(),
+      cache: HashMap::new(),
       svg_data: HashMap::new(),
     }
   }
 
   /// Hash SVG data for cache lookup.
   fn hash_svg(data: &[u8]) -> u64 {
-    use std::hash::{
-      Hash,
-      Hasher,
-    };
+    use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     data.hash(&mut hasher);
     hasher.finish()

@@ -1,41 +1,24 @@
 use std::{
   borrow::Cow,
-  ops::{
-    Index,
-    IndexMut,
-  },
+  ops::{Index, IndexMut},
   sync::Arc,
 };
 
-use ropey::{
-  Rope,
-  RopeSlice,
-};
+use ropey::{Rope, RopeSlice};
 use smallvec::SmallVec;
 use the_editor_stdx::Range;
 
 use crate::{
   core::{
     Tendril,
-    indent::{
-      IndentStyle,
-      normalize_indentation,
-    },
+    indent::{IndentStyle, normalize_indentation},
     movement::Direction,
-    selection::{
-      self,
-      Selection,
-    },
+    selection::{self, Selection},
     transaction::Transaction,
   },
   snippets::{
     TabstopIdx,
-    elaborate::{
-      self,
-      Snippet,
-      SnippetElement,
-      Transform,
-    },
+    elaborate::{self, Snippet, SnippetElement, Transform},
   },
 };
 
@@ -51,7 +34,7 @@ pub enum TabstopKind {
 pub struct Tabstop {
   pub ranges: SmallVec<[Range; 1]>,
   pub parent: Option<TabstopIdx>,
-  pub kind:   TabstopKind,
+  pub kind: TabstopKind,
 }
 
 impl Tabstop {
@@ -88,7 +71,7 @@ impl Tabstop {
 #[derive(Debug, Default, PartialEq)]
 pub struct RenderedSnippet {
   pub tabstops: Vec<Tabstop>,
-  pub ranges:   Vec<Range>,
+  pub ranges: Vec<Range>,
 }
 
 impl RenderedSnippet {
@@ -118,11 +101,9 @@ impl Snippet {
         Tabstop {
           ranges: SmallVec::new(),
           parent: tabstop.parent,
-          kind:   match &tabstop.kind {
-            elaborate::TabstopKind::Choice { choices } => {
-              TabstopKind::Choice {
-                choices: choices.clone(),
-              }
+          kind: match &tabstop.kind {
+            elaborate::TabstopKind::Choice { choices } => TabstopKind::Choice {
+              choices: choices.clone(),
             },
             // start out as empty: the first non-empty placeholder will change this to
             // a placeholder automatically
@@ -205,31 +186,31 @@ impl Snippet {
 
 pub type VariableResolver = dyn FnMut(&str) -> Option<Cow<str>>;
 pub struct SnippetRenderCtx {
-  pub resolve_var:  Box<VariableResolver>,
-  pub tab_width:    usize,
+  pub resolve_var: Box<VariableResolver>,
+  pub tab_width: usize,
   pub indent_style: IndentStyle,
-  pub line_ending:  &'static str,
+  pub line_ending: &'static str,
 }
 
 impl SnippetRenderCtx {
   #[cfg(test)]
   pub(super) fn test_ctx() -> SnippetRenderCtx {
     SnippetRenderCtx {
-      resolve_var:  Box::new(|_| None),
-      tab_width:    4,
+      resolve_var: Box::new(|_| None),
+      tab_width: 4,
       indent_style: IndentStyle::Spaces(4),
-      line_ending:  "\n",
+      line_ending: "\n",
     }
   }
 }
 
 struct SnippetRender<'a> {
-  ctx:        &'a mut SnippetRenderCtx,
-  dst:        &'a mut RenderedSnippet,
-  src:        &'a Snippet,
-  indent:     RopeSlice<'a>,
-  text:       Tendril,
-  off:        usize,
+  ctx: &'a mut SnippetRenderCtx,
+  dst: &'a mut RenderedSnippet,
+  src: &'a Snippet,
+  indent: RopeSlice<'a>,
+  text: Tendril,
+  off: usize,
   at_newline: bool,
 }
 
@@ -252,10 +233,13 @@ impl SnippetRender<'_> {
         // so we can access selections and other document content without allocating
         if let Some(val) = (self.ctx.resolve_var)(name) {
           if let Some(transform) = transform {
-            self.push_multiline_str(&transform.apply((&*val).into(), Range {
-              start: 0,
-              end:   val.chars().count(),
-            }));
+            self.push_multiline_str(&transform.apply(
+              (&*val).into(),
+              Range {
+                start: 0,
+                end: val.chars().count(),
+              },
+            ));
           } else {
             self.push_multiline_str(&val)
           }
@@ -328,10 +312,7 @@ mod tests {
   use super::TabstopKind;
   use crate::snippets::{
     elaborate::Snippet,
-    render::{
-      SnippetRenderCtx,
-      Tabstop,
-    },
+    render::{SnippetRenderCtx, Tabstop},
   };
 
   fn assert_snippet(snippet: &str, expect: &str, tabstops: &[Tabstop]) {
@@ -362,40 +343,24 @@ mod tests {
       "macro_rules! name {\n\t    () => {\n\t        \n\t    };\n\t}",
       &[
         Tabstop {
-          ranges: vec![Range {
-            start: 13,
-            end:   17,
-          }]
-          .into(),
+          ranges: vec![Range { start: 13, end: 17 }].into(),
           parent: None,
-          kind:   TabstopKind::Placeholder,
+          kind: TabstopKind::Placeholder,
         },
         Tabstop {
-          ranges: vec![Range {
-            start: 42,
-            end:   42,
-          }]
-          .into(),
+          ranges: vec![Range { start: 42, end: 42 }].into(),
           parent: None,
-          kind:   TabstopKind::Empty,
+          kind: TabstopKind::Empty,
         },
         Tabstop {
-          ranges: vec![Range {
-            start: 26,
-            end:   26,
-          }]
-          .into(),
+          ranges: vec![Range { start: 26, end: 26 }].into(),
           parent: None,
-          kind:   TabstopKind::Empty,
+          kind: TabstopKind::Empty,
         },
         Tabstop {
-          ranges: vec![Range {
-            start: 53,
-            end:   53,
-          }]
-          .into(),
+          ranges: vec![Range { start: 53, end: 53 }].into(),
           parent: None,
-          kind:   TabstopKind::Empty,
+          kind: TabstopKind::Empty,
         },
       ],
     );

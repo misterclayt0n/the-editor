@@ -1,40 +1,30 @@
-use std::{
-  collections::HashMap,
-  time::Duration,
-};
+use std::{collections::HashMap, time::Duration};
 
 use slotmap::HopSlotMap;
 
 use crate::core::{
   ViewId,
-  animation::{
-    AnimationHandle,
-    Easing,
-    presets,
-  },
+  animation::{AnimationHandle, Easing, presets},
   graphics::Rect,
-  layout::{
-    Constraint as LayoutConstraint,
-    Layout as UiLayout,
-  },
+  layout::{Constraint as LayoutConstraint, Layout as UiLayout},
   view::View,
 };
 
 // Helper struct to track area animations for views
 #[derive(Debug)]
 struct AreaAnimation {
-  x:      AnimationHandle<f32>,
-  y:      AnimationHandle<f32>,
-  width:  AnimationHandle<f32>,
+  x: AnimationHandle<f32>,
+  y: AnimationHandle<f32>,
+  width: AnimationHandle<f32>,
   height: AnimationHandle<f32>,
 }
 
 impl AreaAnimation {
   fn new(from: Rect, to: Rect, duration: Duration, easing: Easing) -> Self {
     Self {
-      x:      AnimationHandle::new(from.x as f32, to.x as f32, duration, easing),
-      y:      AnimationHandle::new(from.y as f32, to.y as f32, duration, easing),
-      width:  AnimationHandle::new(from.width as f32, to.width as f32, duration, easing),
+      x: AnimationHandle::new(from.x as f32, to.x as f32, duration, easing),
+      y: AnimationHandle::new(from.y as f32, to.y as f32, duration, easing),
+      width: AnimationHandle::new(from.width as f32, to.width as f32, duration, easing),
       height: AnimationHandle::new(from.height as f32, to.height as f32, duration, easing),
     }
   }
@@ -56,9 +46,9 @@ impl AreaAnimation {
 
   fn current(&self) -> Rect {
     Rect {
-      x:      *self.x.current() as u16,
-      y:      *self.y.current() as u16,
-      width:  (*self.width.current() as u16).max(1),
+      x: *self.x.current() as u16,
+      y: *self.y.current() as u16,
+      width: (*self.width.current() as u16).max(1),
       height: (*self.height.current() as u16).max(1),
     }
   }
@@ -75,11 +65,11 @@ struct ClosingViewInfo {
 //
 #[derive(Debug)]
 pub struct Tree {
-  root:      ViewId,
+  root: ViewId,
   // (container, index inside the container)
   pub focus: ViewId,
   // fullscreen: bool,
-  area:      Rect,
+  area: Rect,
 
   nodes: HopSlotMap<ViewId, Node>,
 
@@ -95,7 +85,7 @@ pub struct Tree {
 
 #[derive(Debug)]
 pub struct Node {
-  parent:  ViewId,
+  parent: ViewId,
   content: Content,
 }
 
@@ -108,14 +98,14 @@ pub enum Content {
 impl Node {
   pub fn container(layout: Layout) -> Self {
     Self {
-      parent:  ViewId::default(),
+      parent: ViewId::default(),
       content: Content::Container(Box::new(Container::new(layout))),
     }
   }
 
   pub fn view(view: View) -> Self {
     Self {
-      parent:  ViewId::default(),
+      parent: ViewId::default(),
       content: Content::View(Box::new(view)),
     }
   }
@@ -138,9 +128,9 @@ pub enum Direction {
 
 #[derive(Debug)]
 pub struct Container {
-  layout:      Layout,
-  children:    Vec<ViewId>,
-  area:        Rect,
+  layout: Layout,
+  children: Vec<ViewId>,
+  area: Rect,
   /// Custom sizes for children (in cells). None means use Fill behavior.
   child_sizes: Vec<Option<u16>>,
 }
@@ -338,18 +328,18 @@ impl Tree {
             Layout::Horizontal => {
               // For horizontal splits, slide in from bottom edge
               Rect {
-                x:      view.area.x,
-                y:      view.area.y + view.area.height,
-                width:  view.area.width,
+                x: view.area.x,
+                y: view.area.y + view.area.height,
+                width: view.area.width,
                 height: 0,
               }
             },
             Layout::Vertical => {
               // For vertical splits, slide in from right edge
               Rect {
-                x:      view.area.x + view.area.width,
-                y:      view.area.y,
-                width:  0,
+                x: view.area.x + view.area.width,
+                y: view.area.y,
+                width: 0,
                 height: view.area.height,
               }
             },
@@ -486,17 +476,17 @@ impl Tree {
         if is_first {
           // Top view: slide upward off screen (y stays at top, height = 0)
           Rect {
-            x:      current_area.x,
-            y:      current_area.y,
-            width:  current_area.width,
+            x: current_area.x,
+            y: current_area.y,
+            width: current_area.width,
             height: 0,
           }
         } else {
           // Bottom view: slide downward off screen (y moves to bottom, height = 0)
           Rect {
-            x:      current_area.x,
-            y:      current_area.y + current_area.height,
-            width:  current_area.width,
+            x: current_area.x,
+            y: current_area.y + current_area.height,
+            width: current_area.width,
             height: 0,
           }
         }
@@ -505,17 +495,17 @@ impl Tree {
         if is_first {
           // Left view: slide leftward off screen (x stays at left, width = 0)
           Rect {
-            x:      current_area.x,
-            y:      current_area.y,
-            width:  0,
+            x: current_area.x,
+            y: current_area.y,
+            width: 0,
             height: current_area.height,
           }
         } else {
           // Right view: slide rightward off screen (x moves to right, width = 0)
           Rect {
-            x:      current_area.x + current_area.width,
-            y:      current_area.y,
-            width:  0,
+            x: current_area.x + current_area.width,
+            y: current_area.y,
+            width: 0,
             height: current_area.height,
           }
         }
@@ -585,17 +575,17 @@ impl Tree {
         if sibling_area.y > closing_area.y {
           // Sibling is below - expand upward
           Rect {
-            x:      sibling_area.x,
-            y:      closing_area.y,
-            width:  sibling_area.width,
+            x: sibling_area.x,
+            y: closing_area.y,
+            width: sibling_area.width,
             height: sibling_area.height + closing_area.height,
           }
         } else {
           // Sibling is above - expand downward
           Rect {
-            x:      sibling_area.x,
-            y:      sibling_area.y,
-            width:  sibling_area.width,
+            x: sibling_area.x,
+            y: sibling_area.y,
+            width: sibling_area.width,
             height: sibling_area.height + closing_area.height,
           }
         }
@@ -604,17 +594,17 @@ impl Tree {
         if sibling_area.x > closing_area.x {
           // Sibling is to the right - expand leftward
           Rect {
-            x:      closing_area.x,
-            y:      sibling_area.y,
-            width:  sibling_area.width + closing_area.width,
+            x: closing_area.x,
+            y: sibling_area.y,
+            width: sibling_area.width + closing_area.width,
             height: sibling_area.height,
           }
         } else {
           // Sibling is to the left - expand rightward
           Rect {
-            x:      sibling_area.x,
-            y:      sibling_area.y,
-            width:  sibling_area.width + closing_area.width,
+            x: sibling_area.x,
+            y: sibling_area.y,
+            width: sibling_area.width + closing_area.width,
             height: sibling_area.height,
           }
         }
@@ -664,28 +654,27 @@ impl Tree {
 
   pub fn views(&self) -> impl Iterator<Item = (&View, bool)> {
     let focus = self.focus;
-    self.nodes.iter().filter_map(move |(key, node)| {
-      match node {
-        Node {
-          content: Content::View(view),
-          ..
-        } => Some((view.as_ref(), focus == key)),
-        _ => None,
-      }
+    self.nodes.iter().filter_map(move |(key, node)| match node {
+      Node {
+        content: Content::View(view),
+        ..
+      } => Some((view.as_ref(), focus == key)),
+      _ => None,
     })
   }
 
   pub fn views_mut(&mut self) -> impl Iterator<Item = (&mut View, bool)> {
     let focus = self.focus;
-    self.nodes.iter_mut().filter_map(move |(key, node)| {
-      match node {
+    self
+      .nodes
+      .iter_mut()
+      .filter_map(move |(key, node)| match node {
         Node {
           content: Content::View(view),
           ..
         } => Some((view.as_mut(), focus == key)),
         _ => None,
-      }
-    })
+      })
   }
 
   /// Get reference to a [View] by index.
@@ -893,14 +882,12 @@ impl Tree {
     let mut child_id = match direction {
       // index wise in the child list the Up and Left represents a -1
       // thus reversed iterator.
-      Direction::Up | Direction::Left => {
-        children
-          .iter()
-          .rev()
-          .skip_while(|i| **i != id)
-          .copied()
-          .nth(1)?
-      },
+      Direction::Up | Direction::Left => children
+        .iter()
+        .rev()
+        .skip_while(|i| **i != id)
+        .copied()
+        .nth(1)?,
       // Down and Right => +1 index wise in the child list
       Direction::Down | Direction::Right => {
         children.iter().skip_while(|i| **i != id).copied().nth(1)?
@@ -1216,10 +1203,7 @@ impl Tree {
   /// Returns a `PositionRecipe` that describes the path from root to the view,
   /// which can be used to recreate the view at the same position later.
   pub fn capture_position(&self, view_id: ViewId) -> Option<super::quick_slots::PositionRecipe> {
-    use super::quick_slots::{
-      PositionRecipe,
-      SplitStep,
-    };
+    use super::quick_slots::{PositionRecipe, SplitStep};
 
     // Verify the view exists and is a View (not Container)
     let node = self.nodes.get(view_id)?;
@@ -1346,7 +1330,7 @@ impl Tree {
 
 #[derive(Debug)]
 pub struct Traverse<'a> {
-  tree:  &'a Tree,
+  tree: &'a Tree,
   stack: Vec<ViewId>, // TODO: reuse the one we use on update
 }
 
@@ -1398,17 +1382,14 @@ impl DoubleEndedIterator for Traverse<'_> {
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::{
-    core::DocumentId,
-    editor::GutterConfig,
-  };
+  use crate::{core::DocumentId, editor::GutterConfig};
 
   #[test]
   fn find_split_in_direction() {
     let mut tree = Tree::new(Rect {
-      x:      0,
-      y:      0,
-      width:  180,
+      x: 0,
+      y: 0,
+      width: 180,
       height: 80,
     });
     let mut view = View::new(DocumentId::default(), GutterConfig::default());
@@ -1460,9 +1441,9 @@ mod test {
   #[test]
   fn swap_split_in_direction() {
     let mut tree = Tree::new(Rect {
-      x:      0,
-      y:      0,
-      width:  180,
+      x: 0,
+      y: 0,
+      width: 180,
       height: 80,
     });
 
@@ -1578,9 +1559,9 @@ mod test {
   fn all_vertical_views_have_same_width() {
     let tree_area_width = 180;
     let mut tree = Tree::new(Rect {
-      x:      0,
-      y:      0,
-      width:  tree_area_width,
+      x: 0,
+      y: 0,
+      width: tree_area_width,
       height: 80,
     });
     let mut view = View::new(DocumentId::default(), GutterConfig::default());
@@ -1617,9 +1598,9 @@ mod test {
   fn vsplit_gap_rounding() {
     let (tree_area_width, tree_area_height) = (80, 24);
     let mut tree = Tree::new(Rect {
-      x:      0,
-      y:      0,
-      width:  tree_area_width,
+      x: 0,
+      y: 0,
+      width: tree_area_width,
       height: tree_area_height,
     });
     let mut view = View::new(DocumentId::default(), GutterConfig::default());

@@ -8,14 +8,8 @@ use std::path::PathBuf;
 use the_editor_event::register_hook;
 
 use crate::{
-  event::{
-    DocumentDidOpen,
-    DocumentFocusGained,
-  },
-  ui::{
-    EditorView,
-    job,
-  },
+  event::{DocumentDidOpen, DocumentFocusGained},
+  ui::{EditorView, job},
 };
 
 fn reveal_file_in_explorer(path: PathBuf) {

@@ -6,19 +6,9 @@
 use alacritty_terminal::{
   event::VoidListener,
   grid::Dimensions,
-  index::{
-    Column,
-    Line,
-  },
-  term::{
-    Config as TermConfig,
-    Term,
-    test::TermSize,
-  },
-  vte::ansi::{
-    Processor,
-    StdSyncHandler,
-  },
+  index::{Column, Line},
+  term::{Config as TermConfig, Term, test::TermSize},
+  vte::ansi::{Processor, StdSyncHandler},
 };
 
 use crate::renderer::ColorScheme;

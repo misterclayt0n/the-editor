@@ -9,11 +9,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use ropey::RopeSlice;
 
-use crate::core::{
-  document::Document,
-  selection::Range,
-  view::View,
-};
+use crate::core::{document::Document, selection::Range, view::View};
 
 /// Context information gathered for an ACP prompt.
 #[derive(Debug, Clone)]
@@ -21,17 +17,17 @@ pub struct PromptContext {
   /// The selected text that forms the prompt
   pub selection_text: String,
   /// The file path of the current document (if any)
-  pub file_path:      Option<PathBuf>,
+  pub file_path: Option<PathBuf>,
   /// The language of the current document (if detected)
-  pub language:       Option<String>,
+  pub language: Option<String>,
   /// Line number where the selection starts (1-indexed)
-  pub start_line:     usize,
+  pub start_line: usize,
   /// Line number where the selection ends (1-indexed)
-  pub end_line:       usize,
+  pub end_line: usize,
   /// Lines before the selection for context
-  pub lines_before:   String,
+  pub lines_before: String,
   /// Lines after the selection for context
-  pub lines_after:    String,
+  pub lines_after: String,
   /// The workspace root directory
   pub workspace_root: Option<PathBuf>,
 }

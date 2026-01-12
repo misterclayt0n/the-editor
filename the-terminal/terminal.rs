@@ -2,84 +2,44 @@
 
 use std::{
   path::PathBuf,
-  sync::{
-    Arc,
-    OnceLock,
-  },
+  sync::{Arc, OnceLock},
   time::Instant,
 };
 
 use alacritty_terminal::{
-  event::{
-    Event as AlacrittyEvent,
-    EventListener,
-    WindowSize,
-  },
-  event_loop::{
-    EventLoop,
-    EventLoopSender,
-    Msg,
-  },
+  event::{Event as AlacrittyEvent, EventListener, WindowSize},
+  event_loop::{EventLoop, EventLoopSender, Msg},
   grid::Dimensions,
-  index::{
-    Column,
-    Direction as AlacDirection,
-    Line,
-    Point as AlacPoint,
-    Side,
-  },
-  selection::{
-    Selection,
-    SelectionType,
-  },
+  index::{Column, Direction as AlacDirection, Line, Point as AlacPoint, Side},
+  selection::{Selection, SelectionType},
   sync::FairMutex,
-  term::{
-    Config as TermConfig,
-    Term,
-    TermMode,
-    search::RegexSearch,
-    test::TermSize,
-  },
-  tty::{
-    self,
-    Options as PtyOptions,
-  },
-  vi_mode::{
-    ViModeCursor,
-    ViMotion,
-  },
+  term::{Config as TermConfig, Term, TermMode, search::RegexSearch, test::TermSize},
+  tty::{self, Options as PtyOptions},
+  vi_mode::{ViModeCursor, ViMotion},
 };
 use tokio::sync::mpsc;
 
 use crate::{
-  TerminalConfig,
-  TerminalEvent,
-  TerminalId,
-  renderer::{
-    ColorScheme,
-    CursorInfo,
-    CursorShape,
-    RenderCell,
-    extract_cells,
-  },
+  TerminalConfig, TerminalEvent, TerminalId,
+  renderer::{ColorScheme, CursorInfo, CursorShape, RenderCell, extract_cells},
 };
 
 /// Display info for the terminal picker.
 #[derive(Debug, Clone)]
 pub struct TerminalPickerInfo {
-  pub id:                TerminalId,
-  pub title:             String,
-  pub visible:           bool,
-  pub exited:            bool,
-  pub exit_status:       Option<i32>,
+  pub id: TerminalId,
+  pub title: String,
+  pub visible: bool,
+  pub exited: bool,
+  pub exit_status: Option<i32>,
   pub working_directory: Option<PathBuf>,
-  pub created_at:        Instant,
+  pub created_at: Instant,
 }
 
 /// Event proxy that forwards alacritty events to our channel.
 struct EventProxy {
-  id:                TerminalId,
-  sender:            mpsc::UnboundedSender<TerminalEvent>,
+  id: TerminalId,
+  sender: mpsc::UnboundedSender<TerminalEvent>,
   event_loop_sender: Arc<OnceLock<EventLoopSender>>,
 }
 
@@ -88,27 +48,21 @@ impl EventListener for EventProxy {
     let terminal_event = match event {
       AlacrittyEvent::Wakeup => TerminalEvent::Wakeup(self.id),
       AlacrittyEvent::Bell => TerminalEvent::Bell(self.id),
-      AlacrittyEvent::Exit => {
-        TerminalEvent::Exit {
-          id:     self.id,
-          status: None,
-        }
+      AlacrittyEvent::Exit => TerminalEvent::Exit {
+        id: self.id,
+        status: None,
       },
       AlacrittyEvent::Title(title) => TerminalEvent::Title { id: self.id, title },
       AlacrittyEvent::ClipboardLoad(..) => TerminalEvent::ClipboardLoad { id: self.id },
-      AlacrittyEvent::ClipboardStore(_, content) => {
-        TerminalEvent::ClipboardStore {
-          id: self.id,
-          content,
-        }
+      AlacrittyEvent::ClipboardStore(_, content) => TerminalEvent::ClipboardStore {
+        id: self.id,
+        content,
       },
       AlacrittyEvent::CursorBlinkingChange => return,
       AlacrittyEvent::MouseCursorDirty => return,
-      AlacrittyEvent::ResetTitle => {
-        TerminalEvent::Title {
-          id:    self.id,
-          title: String::new(),
-        }
+      AlacrittyEvent::ResetTitle => TerminalEvent::Title {
+        id: self.id,
+        title: String::new(),
       },
       AlacrittyEvent::TextAreaSizeRequest(_) => return,
       AlacrittyEvent::ColorRequest(..) => return,
@@ -119,11 +73,9 @@ impl EventListener for EventProxy {
         }
         return;
       },
-      AlacrittyEvent::ChildExit(status) => {
-        TerminalEvent::Exit {
-          id:     self.id,
-          status: Some(status),
-        }
+      AlacrittyEvent::ChildExit(status) => TerminalEvent::Exit {
+        id: self.id,
+        status: Some(status),
       },
     };
 
@@ -572,13 +524,13 @@ impl Terminal {
   /// Get display info for the terminal picker.
   pub fn picker_info(&self) -> TerminalPickerInfo {
     TerminalPickerInfo {
-      id:                self.id,
-      title:             self.title().to_string(),
-      visible:           self.visible,
-      exited:            self.exited,
-      exit_status:       self.exit_status,
+      id: self.id,
+      title: self.title().to_string(),
+      visible: self.visible,
+      exited: self.exited,
+      exit_status: self.exit_status,
       working_directory: self.config.working_directory.clone(),
-      created_at:        self.created_at,
+      created_at: self.created_at,
     }
   }
 
@@ -948,14 +900,7 @@ impl Drop for Terminal {
 mod tests {
   use alacritty_terminal::term::cell::Flags;
 
-  use crate::test_utils::{
-    cell_flags,
-    char_at,
-    cursor_pos,
-    feed_str,
-    row_content,
-    test_term,
-  };
+  use crate::test_utils::{cell_flags, char_at, cursor_pos, feed_str, row_content, test_term};
 
   // ============================================================
   // Cursor Movement Tests (CSI sequences)

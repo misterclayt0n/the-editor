@@ -1,13 +1,7 @@
-use std::{
-  collections::HashMap,
-  time::Instant,
-};
+use std::{collections::HashMap, time::Instant};
 
 use once_cell::sync::Lazy;
-use the_editor_renderer::{
-  Color,
-  TextSection,
-};
+use the_editor_renderer::{Color, TextSection};
 
 use crate::{
   Editor,
@@ -15,28 +9,17 @@ use crate::{
     animation::breathing::BreathingAnimation,
     diagnostics::Severity,
     document::Document,
-    graphics::{
-      Rect,
-      Style,
-    },
+    graphics::{Rect, Style},
     indent::IndentStyle,
     line_ending::LineEnding,
     view::View,
   },
-  editor::{
-    ModeConfig,
-    StatusLineConfig,
-    StatusLineElement,
-  },
+  editor::{ModeConfig, StatusLineConfig, StatusLineElement},
   keymap::Mode,
   lsp::LanguageServerId,
   theme::Theme,
   ui::{
-    compositor::{
-      Component,
-      Context,
-      Surface,
-    },
+    compositor::{Component, Context, Surface},
     theme_color_to_renderer_color,
   },
 };
@@ -89,7 +72,7 @@ const SECTION_SPACING: f32 = 8.0; // Space between left/center/right sections
 
 /// A rendered element with its text content and optional custom style
 struct RenderedElement {
-  text:  String,
+  text: String,
   style: Option<Style>,
   width: f32,
 }
@@ -122,35 +105,35 @@ fn measure_text(text: &str) -> f32 {
 
 /// StatusLine component with Helix-compatible configuration
 pub struct StatusLine {
-  visible:             bool,
-  target_visible:      bool,
-  anim_t:              f32,
-  status_bar_y:        f32,
-  slide_offset:        f32,
-  should_slide:        bool,
-  slide_anim_t:        f32,
-  status_msg_anim_t:   f32,
-  status_msg_slide_x:  f32,
-  last_status_msg:     Option<String>,
+  visible: bool,
+  target_visible: bool,
+  anim_t: f32,
+  status_bar_y: f32,
+  slide_offset: f32,
+  should_slide: bool,
+  slide_anim_t: f32,
+  status_msg_anim_t: f32,
+  status_msg_slide_x: f32,
+  last_status_msg: Option<String>,
   lsp_breathing_anims: HashMap<LanguageServerId, (BreathingAnimation, Instant)>,
-  acp_breathing_anim:  Option<BreathingAnimation>,
+  acp_breathing_anim: Option<BreathingAnimation>,
 }
 
 impl StatusLine {
   pub fn new() -> Self {
     Self {
-      visible:             true,
-      target_visible:      true,
-      anim_t:              1.0,
-      status_bar_y:        0.0,
-      slide_offset:        0.0,
-      should_slide:        false,
-      slide_anim_t:        1.0,
-      status_msg_anim_t:   1.0, // Start completed to avoid infinite redraw loop when no status msg
-      status_msg_slide_x:  0.0,
-      last_status_msg:     None,
+      visible: true,
+      target_visible: true,
+      anim_t: 1.0,
+      status_bar_y: 0.0,
+      slide_offset: 0.0,
+      should_slide: false,
+      slide_anim_t: 1.0,
+      status_msg_anim_t: 1.0, // Start completed to avoid infinite redraw loop when no status msg
+      status_msg_slide_x: 0.0,
+      last_status_msg: None,
       lsp_breathing_anims: HashMap::new(),
-      acp_breathing_anim:  None,
+      acp_breathing_anim: None,
     }
   }
 
@@ -871,38 +854,30 @@ impl StatusLine {
     }
 
     let msg_color = match severity {
-      Severity::Error => {
-        editor
-          .theme
-          .get("error")
-          .fg
-          .map(theme_color_to_renderer_color)
-          .unwrap_or(Color::new(0.9, 0.3, 0.3, 1.0))
-      },
-      Severity::Warning => {
-        editor
-          .theme
-          .get("warning")
-          .fg
-          .map(theme_color_to_renderer_color)
-          .unwrap_or(Color::new(0.9, 0.7, 0.3, 1.0))
-      },
-      Severity::Info => {
-        editor
-          .theme
-          .get("info")
-          .fg
-          .map(theme_color_to_renderer_color)
-          .unwrap_or(Color::new(0.4, 0.7, 0.9, 1.0))
-      },
-      Severity::Hint => {
-        editor
-          .theme
-          .get("hint")
-          .fg
-          .map(theme_color_to_renderer_color)
-          .unwrap_or(Color::new(0.5, 0.5, 0.5, 1.0))
-      },
+      Severity::Error => editor
+        .theme
+        .get("error")
+        .fg
+        .map(theme_color_to_renderer_color)
+        .unwrap_or(Color::new(0.9, 0.3, 0.3, 1.0)),
+      Severity::Warning => editor
+        .theme
+        .get("warning")
+        .fg
+        .map(theme_color_to_renderer_color)
+        .unwrap_or(Color::new(0.9, 0.7, 0.3, 1.0)),
+      Severity::Info => editor
+        .theme
+        .get("info")
+        .fg
+        .map(theme_color_to_renderer_color)
+        .unwrap_or(Color::new(0.4, 0.7, 0.9, 1.0)),
+      Severity::Hint => editor
+        .theme
+        .get("hint")
+        .fg
+        .map(theme_color_to_renderer_color)
+        .unwrap_or(Color::new(0.5, 0.5, 0.5, 1.0)),
     };
 
     let animated_color = Color::new(msg_color.r, msg_color.g, msg_color.b, msg_color.a * eased);

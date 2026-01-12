@@ -1,19 +1,10 @@
 pub mod config;
 pub mod grammar;
 
-use std::path::{
-  Path,
-  PathBuf,
-};
+use std::path::{Path, PathBuf};
 
-use etcetera::base_strategy::{
-  BaseStrategy,
-  choose_base_strategy,
-};
-use the_editor_stdx::{
-  env::current_working_dir,
-  path,
-};
+use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
+use the_editor_stdx::{env::current_working_dir, path};
 
 pub const VERSION_AND_GIT_HASH: &str = env!("VERSION_AND_GIT_HASH");
 

@@ -6,31 +6,18 @@
 use core::slice;
 use std::{
   borrow::Cow,
-  fmt::{
-    self,
-    Debug,
-    Display,
-  },
+  fmt::{self, Debug, Display},
   marker::PhantomData,
   ops::Deref,
   ptr::NonNull,
 };
 
-use ropey::{
-  RopeSlice,
-  str_utils::byte_to_char_idx,
-};
-use unicode_segmentation::{
-  GraphemeCursor,
-  GraphemeIncomplete,
-};
+use ropey::{RopeSlice, str_utils::byte_to_char_idx};
+use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 use unicode_width::UnicodeWidthStr;
 
 use crate::core::{
-  chars::{
-    char_is_whitespace,
-    char_is_word,
-  },
+  chars::{char_is_whitespace, char_is_word},
   line_ending::LineEnding,
 };
 
@@ -54,10 +41,8 @@ impl<'a> Grapheme<'a> {
 
   pub fn new(g: GraphemeStr<'a>, visual_x: usize, tab_width: u16) -> Grapheme<'a> {
     match g {
-      g if g == "\t" => {
-        Grapheme::Tab {
-          width: tab_width_at(visual_x, tab_width),
-        }
+      g if g == "\t" => Grapheme::Tab {
+        width: tab_width_at(visual_x, tab_width),
       },
       _ if LineEnding::from_str(&g).is_some() => Grapheme::Newline,
       _ => Grapheme::Other { g },
@@ -116,8 +101,8 @@ impl Display for Grapheme<'_> {
 /// A highly compressed `Cow<'a, str>` that holds
 /// atmost u31::MAX bytes and is readonly.
 pub struct GraphemeStr<'a> {
-  ptr:     NonNull<u8>,
-  len:     u32,
+  ptr: NonNull<u8>,
+  len: u32,
   phantom: PhantomData<&'a str>,
 }
 
@@ -285,8 +270,8 @@ impl Drop for GraphemeStr<'_> {
 impl<'a> From<&'a str> for GraphemeStr<'a> {
   fn from(value: &'a str) -> Self {
     GraphemeStr {
-      ptr:     unsafe { NonNull::new_unchecked(value.as_bytes().as_ptr() as *mut u8) },
-      len:     i32::try_from(value.len()).unwrap() as u32,
+      ptr: unsafe { NonNull::new_unchecked(value.as_bytes().as_ptr() as *mut u8) },
+      len: i32::try_from(value.len()).unwrap() as u32,
       phantom: PhantomData,
     }
   }
@@ -297,8 +282,8 @@ impl From<String> for GraphemeStr<'_> {
     let len = value.len();
     let ptr = Box::into_raw(value.into_bytes().into_boxed_slice()) as *mut u8;
     GraphemeStr {
-      ptr:     unsafe { NonNull::new_unchecked(ptr) },
-      len:     (i32::try_from(len).unwrap() as u32) | Self::MASK_OWNED,
+      ptr: unsafe { NonNull::new_unchecked(ptr) },
+      len: (i32::try_from(len).unwrap() as u32) | Self::MASK_OWNED,
       phantom: PhantomData,
     }
   }

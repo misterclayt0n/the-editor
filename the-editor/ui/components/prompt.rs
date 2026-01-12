@@ -1,51 +1,28 @@
-use std::{
-  collections::VecDeque,
-  ops::RangeFrom,
-  sync::Arc,
-};
+use std::{collections::VecDeque, ops::RangeFrom, sync::Arc};
 
-use the_editor_renderer::{
-  Color,
-  Key,
-  KeyPress,
-  TextSection,
-  TextSegment,
-  TextStyle,
-};
-use unicode_segmentation::{
-  GraphemeCursor,
-  UnicodeSegmentation,
-};
+use the_editor_renderer::{Color, Key, KeyPress, TextSection, TextSegment, TextStyle};
+use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
 
 use crate::{
   core::{
     command_line,
     commands::Context as CommandContext,
-    graphics::{
-      CursorKind,
-      Rect,
-    },
+    graphics::{CursorKind, Rect},
     position::Position,
   },
   editor::Editor,
   ui::{
     UI_FONT_SIZE,
     components::button::Button,
-    compositor::{
-      Component,
-      Context,
-      Event,
-      EventResult,
-      Surface,
-    },
+    compositor::{Component, Context, Event, EventResult, Surface},
   },
 };
 
 /// Bounds of the completion box for positioning the help box
 struct CompletionBounds {
-  x:      f32,
-  y:      f32,
-  width:  f32,
+  x: f32,
+  y: f32,
+  width: f32,
   height: f32,
 }
 
@@ -56,9 +33,9 @@ pub struct Completion {
   /// Range in the input to replace (from position onwards)
   pub range: RangeFrom<usize>,
   /// The completion text
-  pub text:  String,
+  pub text: String,
   /// Optional documentation/description
-  pub doc:   Option<String>,
+  pub doc: Option<String>,
 }
 
 /// Function type for generating completions
@@ -87,12 +64,10 @@ pub fn history_completion(register: char) -> CompletionFn {
         // Deduplicate entries
         seen.insert(value.to_string())
       })
-      .map(|value| {
-        Completion {
-          range: 0..,
-          text:  value.to_string(),
-          doc:   None,
-        }
+      .map(|value| Completion {
+        range: 0..,
+        text: value.to_string(),
+        doc: None,
       })
       .collect()
   })
@@ -121,47 +96,47 @@ pub type DocFn = Box<dyn Fn(&str) -> Option<String> + Send>;
 /// A prompt component for handling command input
 pub struct Prompt {
   /// Current input text
-  input:                  String,
+  input: String,
   /// Cursor position within the input
-  cursor:                 usize,
+  cursor: usize,
   /// Command history (previous commands)
-  history:                VecDeque<String>,
+  history: VecDeque<String>,
   /// Current position in history during navigation
-  history_pos:            Option<usize>,
+  history_pos: Option<usize>,
   /// Current completions based on input
-  completions:            Vec<Completion>,
+  completions: Vec<Completion>,
   /// Index of selected completion
-  selection:              Option<usize>,
+  selection: Option<usize>,
   /// Completion function to generate completions
-  completion_fn:          Option<CompletionFn>,
+  completion_fn: Option<CompletionFn>,
   /// Callback function for handling events (validate, update, abort)
   /// If None, falls back to command execution
-  callback_fn:            Option<CallbackFn>,
+  callback_fn: Option<CallbackFn>,
   /// Documentation function to generate help text from input
-  doc_fn:                 Option<DocFn>,
+  doc_fn: Option<DocFn>,
   /// Maximum history size
-  max_history:            usize,
+  max_history: usize,
   /// Prefix for the prompt (e.g., ":")
-  prefix:                 String,
+  prefix: String,
   /// Horizontal scroll offset (in characters)
-  scroll_offset:          usize,
+  scroll_offset: usize,
   /// Cursor animation state
-  cursor_pos_smooth:      Option<f32>,
-  cursor_anim_active:     bool,
+  cursor_pos_smooth: Option<f32>,
+  cursor_anim_active: bool,
   /// Border glow animation (0.0 = start, 1.0 = done)
-  glow_anim_t:            f32,
+  glow_anim_t: f32,
   /// Completion scroll offset (for scrolling through many completions)
-  completion_scroll:      usize,
+  completion_scroll: usize,
   /// Selection animation (0.0 = start, 1.0 = done)
-  selection_anim:         f32,
+  selection_anim: f32,
   /// Last selected index (to detect selection changes)
-  last_selection:         Option<usize>,
+  last_selection: Option<usize>,
   /// Completion list animation (0.0 = hidden, 1.0 = shown) - exponential decay
   completion_list_anim_t: f32,
   /// Prompt opening animation (0.0 = closed, 1.0 = open) - exponential decay
-  prompt_open_t:          f32,
+  prompt_open_t: f32,
   /// Help box animation (0.0 = hidden, 1.0 = shown) - exponential decay
-  help_box_anim_t:        f32,
+  help_box_anim_t: f32,
 }
 
 impl Prompt {
@@ -1301,10 +1276,10 @@ impl Prompt {
         }
         surface.draw_text(TextSection {
           position: (text_x, text_y),
-          texts:    vec![TextSegment {
+          texts: vec![TextSegment {
             content: line.to_string(),
-            style:   TextStyle {
-              size:  crate::ui::UI_FONT_SIZE,
+            style: TextStyle {
+              size: crate::ui::UI_FONT_SIZE,
               color: animated_text,
             },
           }],
@@ -1526,9 +1501,9 @@ impl Prompt {
     surface.pop_scissor_rect();
 
     Some(CompletionBounds {
-      x:      completion_x,
-      y:      completion_y,
-      width:  completion_width,
+      x: completion_x,
+      y: completion_y,
+      width: completion_width,
       height: completion_height,
     })
   }
@@ -1569,11 +1544,11 @@ impl Component for Prompt {
 
     // Convert KeyBinding to KeyPress for handle_key
     let key_press = KeyPress {
-      code:    key_binding.code,
-      shift:   key_binding.shift,
-      ctrl:    key_binding.ctrl,
-      alt:     key_binding.alt,
-      super_:  false,
+      code: key_binding.code,
+      shift: key_binding.shift,
+      ctrl: key_binding.ctrl,
+      alt: key_binding.alt,
+      super_: false,
       pressed: true,
     };
 
@@ -1624,12 +1599,12 @@ impl Component for Prompt {
 
           let registry = cx.editor.command_registry.clone();
           let mut cmd_cx = CommandContext {
-            editor:               cx.editor,
-            count:                None,
-            register:             None,
-            callback:             Vec::new(),
+            editor: cx.editor,
+            count: None,
+            register: None,
+            callback: Vec::new(),
             on_next_key_callback: None,
-            jobs:                 cx.jobs,
+            jobs: cx.jobs,
           };
           let _ = registry.execute(&mut cmd_cx, &command, &args_line, PromptEvent::Abort);
         }
@@ -1677,12 +1652,12 @@ impl Component for Prompt {
 
             // Create CommandContext and execute command inside the callback
             let mut cmd_cx = CommandContext {
-              editor:               cx.editor,
-              count:                None,
-              register:             None,
-              callback:             Vec::new(),
+              editor: cx.editor,
+              count: None,
+              register: None,
+              callback: Vec::new(),
               on_next_key_callback: None,
-              jobs:                 cx.jobs,
+              jobs: cx.jobs,
             };
 
             let result = registry.execute(&mut cmd_cx, &command, &args_line, PromptEvent::Validate);
@@ -1752,12 +1727,12 @@ impl Component for Prompt {
           if preview_enabled_commands.contains(&command.as_str()) {
             let registry = cx.editor.command_registry.clone();
             let mut cmd_cx = CommandContext {
-              editor:               cx.editor,
-              count:                None,
-              register:             None,
-              callback:             Vec::new(),
+              editor: cx.editor,
+              count: None,
+              register: None,
+              callback: Vec::new(),
               on_next_key_callback: None,
-              jobs:                 cx.jobs,
+              jobs: cx.jobs,
             };
             let _ = registry.execute(&mut cmd_cx, &command, &args_line, PromptEvent::Update);
           }
@@ -1774,9 +1749,9 @@ impl Component for Prompt {
     let prompt_y = surface.height() as f32 - STATUS_BAR_HEIGHT;
 
     let prompt_area = Rect {
-      x:      0,
-      y:      prompt_y as u16,
-      width:  surface.width() as u16,
+      x: 0,
+      y: prompt_y as u16,
+      width: surface.width() as u16,
       height: STATUS_BAR_HEIGHT as u16,
     };
 
@@ -1852,13 +1827,13 @@ mod tests {
         vec![
           Completion {
             range: 0..,
-            text:  "quit".to_string(),
-            doc:   None,
+            text: "quit".to_string(),
+            doc: None,
           },
           Completion {
             range: 0..,
-            text:  "query".to_string(),
-            doc:   None,
+            text: "query".to_string(),
+            doc: None,
           },
         ]
       } else {

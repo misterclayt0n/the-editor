@@ -10,14 +10,14 @@ pub struct TextStyle {
   /// Text color
   pub color: Color,
   /// Font size in pixels
-  pub size:  f32,
+  pub size: f32,
 }
 
 impl Default for TextStyle {
   fn default() -> Self {
     Self {
       color: Color::WHITE,
-      size:  16.0,
+      size: 16.0,
     }
   }
 }
@@ -31,7 +31,7 @@ pub struct TextSegment {
   /// The text content
   pub content: String,
   /// Style to apply to this segment
-  pub style:   TextStyle,
+  pub style: TextStyle,
 }
 
 impl TextSegment {
@@ -39,7 +39,7 @@ impl TextSegment {
   pub fn new(content: impl Into<String>) -> Self {
     Self {
       content: content.into(),
-      style:   TextStyle::default(),
+      style: TextStyle::default(),
     }
   }
 
@@ -71,7 +71,7 @@ pub struct TextSection {
   /// Screen position (x, y) in pixels from top-left
   pub position: (f32, f32),
   /// Text segments in this section
-  pub texts:    Vec<TextSegment>,
+  pub texts: Vec<TextSegment>,
 }
 
 impl TextSection {
@@ -79,7 +79,7 @@ impl TextSection {
   pub fn new(x: f32, y: f32) -> Self {
     Self {
       position: (x, y),
-      texts:    Vec::new(),
+      texts: Vec::new(),
     }
   }
 
@@ -96,9 +96,9 @@ impl TextSection {
   pub fn simple(x: f32, y: f32, content: impl Into<String>, size: f32, color: Color) -> Self {
     Self {
       position: (x, y),
-      texts:    vec![TextSegment {
+      texts: vec![TextSegment {
         content: content.into(),
-        style:   TextStyle { color, size },
+        style: TextStyle { color, size },
       }],
     }
   }

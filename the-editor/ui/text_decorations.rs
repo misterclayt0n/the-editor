@@ -1,22 +1,10 @@
 use std::cmp::Ordering;
 
-use the_editor_renderer::{
-  Color,
-  TextSection,
-  TextSegment,
-  TextStyle,
-};
+use the_editor_renderer::{Color, TextSection, TextSegment, TextStyle};
 
 use crate::{
-  core::{
-    doc_formatter::FormattedGrapheme,
-    position::Position,
-  },
-  ui::{
-    UI_FONT_SIZE,
-    UI_FONT_WIDTH,
-    compositor::Surface,
-  },
+  core::{doc_formatter::FormattedGrapheme, position::Position},
+  ui::{UI_FONT_SIZE, UI_FONT_WIDTH, compositor::Surface},
 };
 
 pub mod diagnostic_underlines;
@@ -227,9 +215,9 @@ impl DecorationRenderer for Surface {
   fn draw_decoration_grapheme(&mut self, grapheme: &str, color: Color, x: f32, y: f32) {
     self.draw_text(TextSection {
       position: (x, y),
-      texts:    vec![TextSegment {
+      texts: vec![TextSegment {
         content: grapheme.to_string(),
-        style:   TextStyle {
+        style: TextStyle {
           size: UI_FONT_SIZE,
           color,
         },
@@ -272,9 +260,9 @@ impl DecorationRenderer for Surface {
       // Render full text
       self.draw_text(TextSection {
         position: (x, y),
-        texts:    vec![TextSegment {
+        texts: vec![TextSegment {
           content: text.to_string(),
-          style:   TextStyle {
+          style: TextStyle {
             size: UI_FONT_SIZE,
             color,
           },
@@ -301,9 +289,9 @@ impl DecorationRenderer for Surface {
 
       self.draw_text(TextSection {
         position: (x, y),
-        texts:    vec![TextSegment {
+        texts: vec![TextSegment {
           content: display,
-          style:   TextStyle {
+          style: TextStyle {
             size: UI_FONT_SIZE,
             color,
           },
@@ -349,9 +337,9 @@ impl DecorationRenderer for Surface {
       // Render full text
       self.draw_text(TextSection {
         position: (x, y),
-        texts:    vec![TextSegment {
+        texts: vec![TextSegment {
           content: text.to_string(),
-          style:   TextStyle {
+          style: TextStyle {
             size: font_size,
             color,
           },
@@ -378,9 +366,9 @@ impl DecorationRenderer for Surface {
 
       self.draw_text(TextSection {
         position: (x, y),
-        texts:    vec![TextSegment {
+        texts: vec![TextSegment {
           content: display,
-          style:   TextStyle {
+          style: TextStyle {
             size: font_size,
             color,
           },

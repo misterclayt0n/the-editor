@@ -1,21 +1,12 @@
-use std::{
-  iter::Peekable,
-  sync::Arc,
-};
+use std::{iter::Peekable, sync::Arc};
 
 use imara_diff::Algorithm;
 pub use imara_diff::Hunk;
-use parking_lot::{
-  RwLock,
-  RwLockReadGuard,
-};
+use parking_lot::{RwLock, RwLockReadGuard};
 use ropey::Rope;
 use the_editor_event::RenderLockGuard;
 use tokio::{
-  sync::mpsc::{
-    UnboundedSender,
-    unbounded_channel,
-  },
+  sync::mpsc::{UnboundedSender, unbounded_channel},
   task::JoinHandle,
   time::Instant,
 };
@@ -27,28 +18,28 @@ mod worker;
 
 /// A rendering lock passed to the differ the prevents redraws from occurring
 struct RenderLock {
-  pub lock:    RenderLockGuard,
+  pub lock: RenderLockGuard,
   pub timeout: Option<Instant>,
 }
 
 struct Event {
-  text:        Rope,
-  is_base:     bool,
+  text: Rope,
+  is_base: bool,
   render_lock: Option<RenderLock>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct DiffInner {
   diff_base: Rope,
-  doc:       Rope,
-  hunks:     Vec<Hunk>,
+  doc: Rope,
+  hunks: Vec<Hunk>,
 }
 
 /// Representation of a diff that can be updated.
 #[derive(Clone, Debug)]
 pub struct DiffHandle {
-  channel:  UnboundedSender<Event>,
-  diff:     Arc<RwLock<DiffInner>>,
+  channel: UnboundedSender<Event>,
+  diff: Arc<RwLock<DiffInner>>,
   inverted: bool,
 }
 
@@ -61,10 +52,10 @@ impl DiffHandle {
     let (sender, receiver) = unbounded_channel();
     let diff: Arc<RwLock<DiffInner>> = Arc::default();
     let worker = DiffWorker {
-      channel:              receiver,
-      diff:                 diff.clone(),
+      channel: receiver,
+      diff: diff.clone(),
       diff_finished_notify: Arc::default(),
-      diff_alloc:           imara_diff::Diff::default(),
+      diff_alloc: imara_diff::Diff::default(),
     };
     let handle = tokio::task::spawn(worker.run(diff_base, doc));
     let differ = DiffHandle {
@@ -83,7 +74,7 @@ impl DiffHandle {
   /// Load the actual diff
   pub fn load(&self) -> Diff<'_> {
     Diff {
-      diff:     self.diff.read(),
+      diff: self.diff.read(),
       inverted: self.inverted,
     }
   }
@@ -136,7 +127,7 @@ const MAX_DIFF_BYTES: usize = MAX_DIFF_LINES * 128;
 /// non-overlapping order
 #[derive(Debug)]
 pub struct Diff<'a> {
-  diff:     RwLockReadGuard<'a, DiffInner>,
+  diff: RwLockReadGuard<'a, DiffInner>,
   inverted: bool,
 }
 
@@ -246,10 +237,10 @@ impl Diff<'_> {
     I: Iterator<Item = (usize, usize)>,
   {
     HunksInLineRangesIter {
-      hunks:       &self.diff.hunks,
+      hunks: &self.diff.hunks,
       line_ranges: line_ranges.peekable(),
-      inverted:    self.inverted,
-      cursor:      0,
+      inverted: self.inverted,
+      cursor: 0,
     }
   }
 
@@ -287,10 +278,10 @@ impl Diff<'_> {
 }
 
 pub struct HunksInLineRangesIter<'a, I: Iterator<Item = (usize, usize)>> {
-  hunks:       &'a [Hunk],
+  hunks: &'a [Hunk],
   line_ranges: Peekable<I>,
-  inverted:    bool,
-  cursor:      usize,
+  inverted: bool,
+  cursor: usize,
 }
 
 impl<'a, I: Iterator<Item = (usize, usize)>> Iterator for HunksInLineRangesIter<'a, I> {

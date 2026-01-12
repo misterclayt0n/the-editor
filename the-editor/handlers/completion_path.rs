@@ -3,21 +3,14 @@
 //! Provides file and directory completion when users type paths (e.g., `/`,
 //! `./`, `~/`). Similar to Helix's path completion feature.
 
-use std::{
-  fs,
-  path::PathBuf,
-};
+use std::{fs, path::PathBuf};
 
 use ropey::Rope;
 use the_editor_stdx::path::get_path_suffix;
 
 use crate::{
   core::transaction::Transaction,
-  handlers::completion::{
-    CompletionItem,
-    CompletionProvider,
-    OtherCompletionItem,
-  },
+  handlers::completion::{CompletionItem, CompletionProvider, OtherCompletionItem},
 };
 
 /// Perform path completion at the given cursor position

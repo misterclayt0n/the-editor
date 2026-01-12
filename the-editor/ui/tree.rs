@@ -1,24 +1,13 @@
-use std::{
-  borrow::Cow,
-  cmp::Ordering,
-};
+use std::{borrow::Cow, cmp::Ordering};
 
 use anyhow::Result;
 
 use crate::{
-  core::{
-    graphics::Rect,
-    movement::Direction,
-  },
+  core::{graphics::Rect, movement::Direction},
   keymap::KeyBinding,
   ui::{
     components::Prompt,
-    compositor::{
-      Context,
-      Event,
-      EventResult,
-      Surface,
-    },
+    compositor::{Context, Event, EventResult, Surface},
   },
 };
 
@@ -112,10 +101,10 @@ pub enum TreeOp {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Tree<T> {
-  item:         T,
+  item: T,
   parent_index: Option<usize>,
-  index:        usize,
-  children:     Vec<Self>,
+  index: usize,
+  children: Vec<Self>,
 
   /// Why do we need this property?
   /// Can't we just use `!children.is_empty()`?
@@ -136,10 +125,10 @@ pub struct Tree<T> {
 impl<T: Clone> Clone for Tree<T> {
   fn clone(&self) -> Self {
     Self {
-      item:         self.item.clone(),
-      index:        self.index,
-      children:     self.children.clone(),
-      is_opened:    self.is_opened,
+      item: self.item.clone(),
+      index: self.index,
+      children: self.children.clone(),
+      is_opened: self.is_opened,
       parent_index: self.parent_index,
     }
   }
@@ -149,7 +138,7 @@ impl<T: Clone> Clone for Tree<T> {
 struct TreeIter<'a, T> {
   current_index_forward: usize,
   current_index_reverse: isize,
-  tree:                  &'a Tree<T>,
+  tree: &'a Tree<T>,
 }
 
 impl<'a, T> Iterator for TreeIter<'a, T> {
@@ -261,7 +250,7 @@ impl<T> Tree<T> {
 
   fn iter(&self) -> TreeIter<'_, T> {
     TreeIter {
-      tree:                  self,
+      tree: self,
       current_index_forward: 0,
       current_index_reverse: (self.len() - 1) as isize,
     }
@@ -287,11 +276,9 @@ impl<T> Tree<T> {
         }
       },
 
-      Direction::Backward => {
-        match self.iter().take(start_index).rposition(predicate.clone()) {
-          Some(index) => Some(index),
-          None => self.iter().rposition(predicate),
-        }
+      Direction::Backward => match self.iter().take(start_index).rposition(predicate.clone()) {
+        Some(index) => Some(index),
+        None => self.iter().rposition(predicate),
       },
     }
   }
@@ -332,7 +319,7 @@ impl<T> Tree<T> {
 #[derive(Clone, Debug)]
 struct SavedView {
   selected: usize,
-  winline:  usize,
+  winline: usize,
 }
 
 pub struct TreeView<T: TreeViewItem> {
@@ -346,7 +333,7 @@ pub struct TreeView<T: TreeViewItem> {
   selected: usize,
 
   backward_jumps: Vec<usize>,
-  forward_jumps:  Vec<usize>,
+  forward_jumps: Vec<usize>,
 
   saved_view: Option<SavedView>,
 
@@ -357,8 +344,8 @@ pub struct TreeView<T: TreeViewItem> {
   column: usize,
 
   /// For implementing horizontal scoll
-  max_len:           usize,
-  count:             usize,
+  max_len: usize,
+  count: usize,
   tree_symbol_style: String,
 
   #[allow(clippy::type_complexity)]
@@ -377,17 +364,17 @@ pub struct TreeView<T: TreeViewItem> {
   visible_tree_indices: Vec<usize>,
 
   /// Selection animation (0.0 -> 1.0 when selection changes)
-  selection_anim:  crate::core::animation::AnimationHandle<f32>,
+  selection_anim: crate::core::animation::AnimationHandle<f32>,
   /// Previous selected index for animation
-  prev_selected:   usize,
+  prev_selected: usize,
   /// Hovered visual row (for hover glow effect)
-  hovered_row:     Option<usize>,
+  hovered_row: Option<usize>,
   /// Current mouse position for glow effects
-  mouse_pos:       Option<(f32, f32)>,
+  mouse_pos: Option<(f32, f32)>,
   /// Entrance animation progress (0.0 -> 1.0), None when complete
-  entrance_anim:   Option<crate::core::animation::AnimationHandle<f32>>,
+  entrance_anim: Option<crate::core::animation::AnimationHandle<f32>>,
   /// Global alpha multiplier (for closing animations, etc.)
-  global_alpha:    f32,
+  global_alpha: f32,
   /// Cached viewport height for scrolloff calculations
   viewport_height: usize,
 }
@@ -399,37 +386,35 @@ impl<T: TreeViewItem> TreeView<T> {
     let (duration, easing) = crate::core::animation::presets::FAST;
     let (entrance_dur, entrance_ease) = crate::core::animation::presets::MEDIUM;
     Ok(Self {
-      tree:                 Tree::new(root, items),
-      selected:             0,
-      backward_jumps:       vec![],
-      forward_jumps:        vec![],
-      saved_view:           None,
-      winline:              0,
-      column:               0,
-      max_len:              0,
-      count:                0,
-      tree_symbol_style:    "ui.text".into(),
-      pre_render:           None,
-      on_opened_fn:         None,
-      on_folded_fn:         None,
-      on_next_key:          None,
-      search_prompt:        None,
-      search_str:           "".into(),
+      tree: Tree::new(root, items),
+      selected: 0,
+      backward_jumps: vec![],
+      forward_jumps: vec![],
+      saved_view: None,
+      winline: 0,
+      column: 0,
+      max_len: 0,
+      count: 0,
+      tree_symbol_style: "ui.text".into(),
+      pre_render: None,
+      on_opened_fn: None,
+      on_folded_fn: None,
+      on_next_key: None,
+      search_prompt: None,
+      search_str: "".into(),
       visible_tree_indices: Vec::new(),
-      selection_anim:       crate::core::animation::AnimationHandle::new(
-        1.0, 1.0, duration, easing,
-      ),
-      prev_selected:        0,
-      hovered_row:          None,
-      mouse_pos:            None,
-      entrance_anim:        Some(crate::core::animation::AnimationHandle::new(
+      selection_anim: crate::core::animation::AnimationHandle::new(1.0, 1.0, duration, easing),
+      prev_selected: 0,
+      hovered_row: None,
+      mouse_pos: None,
+      entrance_anim: Some(crate::core::animation::AnimationHandle::new(
         0.0,
         1.0,
         entrance_dur,
         entrance_ease,
       )),
-      global_alpha:         1.0,
-      viewport_height:      0, // Will be updated on first render
+      global_alpha: 1.0,
+      viewport_height: 0, // Will be updated on first render
     })
   }
 
@@ -464,34 +449,31 @@ impl<T: TreeViewItem> TreeView<T> {
   pub fn reveal_item(&mut self, segments: Vec<String>) -> Result<()> {
     // Expand the tree
     let root = self.tree.item.name();
-    segments
-      .iter()
-      .fold(Ok(&mut self.tree), |current_tree, segment| {
-        match current_tree {
-          Err(err) => Err(err),
-          Ok(current_tree) => {
-            match current_tree
-              .children
-              .iter_mut()
-              .find(|tree| tree.item.name().eq(segment))
-            {
-              Some(tree) => {
-                if !tree.is_opened {
-                  tree.open()?;
-                }
-                Ok(tree)
-              },
-              None => {
-                Err(anyhow::anyhow!(format!(
-                  "Unable to find path: '{}'. current_segment = '{segment}'. current_root = \
+    segments.iter().fold(
+      Ok(&mut self.tree),
+      |current_tree, segment| match current_tree {
+        Err(err) => Err(err),
+        Ok(current_tree) => {
+          match current_tree
+            .children
+            .iter_mut()
+            .find(|tree| tree.item.name().eq(segment))
+          {
+            Some(tree) => {
+              if !tree.is_opened {
+                tree.open()?;
+              }
+              Ok(tree)
+            },
+            None => Err(anyhow::anyhow!(format!(
+              "Unable to find path: '{}'. current_segment = '{segment}'. current_root = \
                    '{root}'",
-                  segments.join("/"),
-                )))
-              },
-            }
-          },
-        }
-      })?;
+              segments.join("/"),
+            ))),
+          }
+        },
+      },
+    )?;
 
     // Locate the item
     self.regenerate_index();
@@ -689,7 +671,7 @@ impl<T: TreeViewItem> TreeView<T> {
   fn saved_view(&self) -> SavedView {
     self.saved_view.clone().unwrap_or(SavedView {
       selected: self.selected,
-      winline:  self.winline,
+      winline: self.winline,
     })
   }
 
@@ -968,7 +950,7 @@ impl<T: TreeViewItem> TreeView<T> {
   fn save_view(&mut self) {
     self.saved_view = Some(SavedView {
       selected: self.selected,
-      winline:  self.winline,
+      winline: self.winline,
     })
   }
 
@@ -1011,27 +993,27 @@ impl<T: TreeViewItem> TreeView<T> {
 
 #[derive(Clone)]
 struct RenderedLine {
-  indent:                      String,
-  content:                     String,
-  selected:                    bool,
+  indent: String,
+  content: String,
+  selected: bool,
   is_ancestor_of_current_item: bool,
   /// The actual tree index of this item
-  tree_index:                  usize,
+  tree_index: usize,
   /// Parent's tree index (for folder animation)
-  parent_index:                Option<usize>,
+  parent_index: Option<usize>,
   /// Nesting level (0 = root)
-  level:                       usize,
+  level: usize,
   /// Whether this item is a folder (directory)
-  is_folder:                   bool,
+  is_folder: bool,
   /// Whether this folder is opened (only meaningful if is_folder is true)
-  is_opened:                   bool,
+  is_opened: bool,
   /// Git status for this file
-  git_status:                  GitFileStatus,
+  git_status: GitFileStatus,
 }
 struct RenderTreeParams<'a, T> {
-  tree:     &'a Tree<T>,
-  prefix:   &'a String,
-  level:    usize,
+  tree: &'a Tree<T>,
+  prefix: &'a String,
+  level: usize,
   selected: usize,
 }
 
@@ -1089,30 +1071,30 @@ fn render_tree<T: TreeViewItem>(
 
 /// Pixel-space area for rendering
 struct AreaPixels {
-  x:     f32,
-  y:     f32,
+  x: f32,
+  y: f32,
   width: f32,
 }
 
 /// Rectangle for a single tree item
 struct ItemRect {
-  x:      f32,
-  y:      f32,
-  width:  f32,
+  x: f32,
+  y: f32,
+  width: f32,
   height: f32,
 }
 
 /// Layout constants for tree item rendering
 struct ItemLayout {
-  padding_x:    f32,
-  padding_y:    f32,
-  height:       f32,
-  gap:          f32,
-  radius:       f32,
-  icon_size:    u32,
-  icon_sizef:   f32,
+  padding_x: f32,
+  padding_y: f32,
+  height: f32,
+  gap: f32,
+  radius: f32,
+  icon_size: u32,
+  icon_sizef: f32,
   indent_width: f32,
-  icon_gap:     f32,
+  icon_gap: f32,
 }
 
 impl ItemLayout {
@@ -1138,13 +1120,13 @@ impl ItemLayout {
 
 /// Theme colors for tree rendering
 struct TreeColors {
-  text:             the_editor_renderer::Color,
-  selection_fill:   the_editor_renderer::Color,
+  text: the_editor_renderer::Color,
+  selection_fill: the_editor_renderer::Color,
   selection_stroke: the_editor_renderer::Color,
-  git_modified:     the_editor_renderer::Color,
-  git_new:          the_editor_renderer::Color,
-  git_deleted:      the_editor_renderer::Color,
-  git_conflict:     the_editor_renderer::Color,
+  git_modified: the_editor_renderer::Color,
+  git_new: the_editor_renderer::Color,
+  git_deleted: the_editor_renderer::Color,
+  git_conflict: the_editor_renderer::Color,
 }
 
 impl TreeColors {
@@ -1276,10 +1258,7 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
   ) {
     use the_editor_renderer::TextSection;
 
-    use crate::ui::{
-      UI_FONT_SIZE,
-      file_icons,
-    };
+    use crate::ui::{UI_FONT_SIZE, file_icons};
 
     let entrance_progress = self.update_animations(cx.dt);
     let selection_anim_value = *self.selection_anim.current();
@@ -1294,8 +1273,8 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
 
     // Calculate pixel positions - use direct pixel y offset for accuracy
     let area_px = AreaPixels {
-      x:     area.x as f32 * cell_width,
-      y:     y_offset_px,
+      x: area.x as f32 * cell_width,
+      y: y_offset_px,
       width: area.width as f32 * cell_width,
     };
 
@@ -1305,9 +1284,9 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
       let (item_entrance, slide_offset) = self.compute_item_animation(index, entrance_progress);
 
       let item_rect = ItemRect {
-        x:      area_px.x + 4.0 - slide_offset,
-        y:      area_px.y + index as f32 * (layout.height + layout.gap),
-        width:  area_px.width - 8.0,
+        x: area_px.x + 4.0 - slide_offset,
+        y: area_px.y + index as f32 * (layout.height + layout.gap),
+        width: area_px.width - 8.0,
         height: layout.height,
       };
 
@@ -1639,9 +1618,9 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
     self.winline = self.winline.min(area.height.saturating_sub(1) as usize);
     let skip = self.selected.saturating_sub(self.winline);
     let params = RenderTreeParams {
-      tree:     &self.tree,
-      prefix:   &"".to_string(),
-      level:    0,
+      tree: &self.tree,
+      prefix: &"".to_string(),
+      level: 0,
       selected: self.selected,
     };
 
@@ -1665,20 +1644,20 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
 
     struct RetainAncestorResult {
       skipped_ancestors: Vec<RenderedLine>,
-      remaining_lines:   Vec<RenderedLine>,
+      remaining_lines: Vec<RenderedLine>,
     }
     fn retain_ancestors(lines: Vec<RenderedLine>, skip: usize) -> RetainAncestorResult {
       if skip == 0 {
         return RetainAncestorResult {
           skipped_ancestors: vec![],
-          remaining_lines:   lines,
+          remaining_lines: lines,
         };
       }
       if let Some(line) = lines.get(0) {
         if line.selected {
           return RetainAncestorResult {
             skipped_ancestors: vec![],
-            remaining_lines:   lines,
+            remaining_lines: lines,
           };
         }
       }
@@ -1702,7 +1681,7 @@ impl<T: TreeViewItem + Clone> TreeView<T> {
           .into_iter()
           .chain(result.skipped_ancestors.into_iter())
           .collect(),
-        remaining_lines:   result.remaining_lines,
+        remaining_lines: result.remaining_lines,
       }
     }
 
@@ -2052,10 +2031,7 @@ fn index_elems<T>(parent_index: usize, elems: Vec<Tree<T>>) -> Vec<Tree<T>> {
 #[cfg(test)]
 mod test_tree_view {
 
-  use super::{
-    TreeView,
-    TreeViewItem,
-  };
+  use super::{TreeView, TreeViewItem};
   use crate::core::graphics::Rect;
 
   #[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
@@ -3051,16 +3027,13 @@ krabby_patty
 
   mod static_tree {
     use super::dummy_area;
-    use crate::ui::{
-      TreeView,
-      TreeViewItem,
-    };
+    use crate::ui::{TreeView, TreeViewItem};
 
     #[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
     /// This is used for test cases where the structure of the tree has to be
     /// known upfront
     pub struct StaticItem<'a> {
-      pub name:     &'a str,
+      pub name: &'a str,
       pub children: Option<Vec<StaticItem<'a>>>,
     }
 
@@ -3109,13 +3082,19 @@ krabby_patty
     // and the nearest ancestor has higher precedence than further ancestors
     use static_tree::*;
 
-    let mut view = TreeView::build_tree(parent("root", vec![
-      parent("a", vec![child("aa"), child("ab")]),
-      parent("b", vec![parent("ba", vec![parent("baa", vec![
-        child("baaa"),
-        child("baab"),
-      ])])]),
-    ]))
+    let mut view = TreeView::build_tree(parent(
+      "root",
+      vec![
+        parent("a", vec![child("aa"), child("ab")]),
+        parent(
+          "b",
+          vec![parent(
+            "ba",
+            vec![parent("baa", vec![child("baaa"), child("baab")])],
+          )],
+        ),
+      ],
+    ))
     .unwrap();
 
     assert_eq!(
@@ -3314,13 +3293,16 @@ mod test_tree {
 
   #[test]
   fn test_get() {
-    let result = Tree::new("root", vec![
-      Tree::new("foo", vec![Tree::new("bar", vec![])]),
-      Tree::new("spam", vec![Tree::new("jar", vec![Tree::new(
-        "yo",
-        vec![],
-      )])]),
-    ]);
+    let result = Tree::new(
+      "root",
+      vec![
+        Tree::new("foo", vec![Tree::new("bar", vec![])]),
+        Tree::new(
+          "spam",
+          vec![Tree::new("jar", vec![Tree::new("yo", vec![])])],
+        ),
+      ],
+    );
     assert_eq!(result.get(0).unwrap().item, "root");
     assert_eq!(result.get(1).unwrap().item, "foo");
     assert_eq!(result.get(2).unwrap().item, "bar");
@@ -3331,10 +3313,13 @@ mod test_tree {
 
   #[test]
   fn test_iter() {
-    let tree = Tree::new("spam", vec![
-      Tree::new("jar", vec![Tree::new("yo", vec![])]),
-      Tree::new("foo", vec![Tree::new("bar", vec![])]),
-    ]);
+    let tree = Tree::new(
+      "spam",
+      vec![
+        Tree::new("jar", vec![Tree::new("yo", vec![])]),
+        Tree::new("foo", vec![Tree::new("bar", vec![])]),
+      ],
+    );
 
     let mut iter = tree.iter();
     assert_eq!(iter.next().map(|tree| tree.item), Some("spam"));
@@ -3348,10 +3333,13 @@ mod test_tree {
 
   #[test]
   fn test_iter_double_ended() {
-    let tree = Tree::new("spam", vec![
-      Tree::new("jar", vec![Tree::new("yo", vec![])]),
-      Tree::new("foo", vec![Tree::new("bar", vec![])]),
-    ]);
+    let tree = Tree::new(
+      "spam",
+      vec![
+        Tree::new("jar", vec![Tree::new("yo", vec![])]),
+        Tree::new("foo", vec![Tree::new("bar", vec![])]),
+      ],
+    );
 
     let mut iter = tree.iter();
     assert_eq!(iter.next_back().map(|tree| tree.item), Some("bar"));
@@ -3364,20 +3352,26 @@ mod test_tree {
 
   #[test]
   fn test_len() {
-    let tree = Tree::new("spam", vec![
-      Tree::new("jar", vec![Tree::new("yo", vec![])]),
-      Tree::new("foo", vec![Tree::new("bar", vec![])]),
-    ]);
+    let tree = Tree::new(
+      "spam",
+      vec![
+        Tree::new("jar", vec![Tree::new("yo", vec![])]),
+        Tree::new("foo", vec![Tree::new("bar", vec![])]),
+      ],
+    );
 
     assert_eq!(tree.len(), 5)
   }
 
   #[test]
   fn test_find_forward() {
-    let tree = Tree::new(".cargo", vec![
-      Tree::new("jar", vec![Tree::new("Cargo.toml", vec![])]),
-      Tree::new("Cargo.toml", vec![Tree::new("bar", vec![])]),
-    ]);
+    let tree = Tree::new(
+      ".cargo",
+      vec![
+        Tree::new("jar", vec![Tree::new("Cargo.toml", vec![])]),
+        Tree::new("Cargo.toml", vec![Tree::new("bar", vec![])]),
+      ],
+    );
     let result = tree.find(0, Direction::Forward, |tree| {
       tree.item.to_lowercase().contains(&"cargo".to_lowercase())
     });
@@ -3411,10 +3405,13 @@ mod test_tree {
 
   #[test]
   fn test_find_backward() {
-    let tree = Tree::new(".cargo", vec![
-      Tree::new("jar", vec![Tree::new("Cargo.toml", vec![])]),
-      Tree::new("Cargo.toml", vec![Tree::new("bar", vec![])]),
-    ]);
+    let tree = Tree::new(
+      ".cargo",
+      vec![
+        Tree::new("jar", vec![Tree::new("Cargo.toml", vec![])]),
+        Tree::new("Cargo.toml", vec![Tree::new("bar", vec![])]),
+      ],
+    );
     let result = tree.find(0, Direction::Backward, |tree| {
       tree.item.to_lowercase().contains(&"cargo".to_lowercase())
     });

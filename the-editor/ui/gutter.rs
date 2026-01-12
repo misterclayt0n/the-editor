@@ -1,20 +1,10 @@
-use the_editor_renderer::{
-  Color,
-  TextSection,
-};
+use the_editor_renderer::{Color, TextSection};
 
 use crate::{
-  core::{
-    document::Document,
-    position::Position,
-    view::View,
-  },
+  core::{document::Document, position::Position, view::View},
   editor::Editor,
   theme::Theme,
-  ui::compositor::{
-    Event,
-    Surface,
-  },
+  ui::compositor::{Event, Surface},
 };
 
 /// Result of gutter event handling
@@ -28,11 +18,11 @@ pub enum GutterEventResult {
 /// Information about a line being rendered in the gutter
 pub struct GutterLineInfo {
   /// Document line number (0-indexed)
-  pub doc_line:          usize,
+  pub doc_line: usize,
   /// Visual line number in viewport (0-indexed, relative to viewport top)
-  pub visual_line:       usize,
+  pub visual_line: usize,
   /// Whether this line is selected (cursor is on this line)
-  pub selected:          bool,
+  pub selected: bool,
   /// Whether this is the first visual line of a wrapped line
   pub first_visual_line: bool,
 }
@@ -221,14 +211,14 @@ impl Default for GutterManager {
 
 /// Line numbers gutter
 pub struct LineNumberGutter {
-  enabled:   bool,
+  enabled: bool,
   min_width: usize,
 }
 
 impl LineNumberGutter {
   pub fn new() -> Self {
     Self {
-      enabled:   true,
+      enabled: true,
       min_width: 3,
     }
   }
@@ -338,46 +328,38 @@ impl Gutter for DiagnosticGutter {
 
     use crate::core::diagnostics::Severity;
     let (symbol, color) = match diag.severity {
-      Some(Severity::Error) => {
-        (
-          "●",
-          theme
-            .get("error")
-            .fg
-            .map(crate::ui::theme_color_to_renderer_color)
-            .unwrap_or(Color::rgb(0.9, 0.3, 0.3)),
-        )
-      },
-      Some(Severity::Warning) | None => {
-        (
-          "●",
-          theme
-            .get("warning")
-            .fg
-            .map(crate::ui::theme_color_to_renderer_color)
-            .unwrap_or(Color::rgb(0.9, 0.7, 0.3)),
-        )
-      },
-      Some(Severity::Info) => {
-        (
-          "●",
-          theme
-            .get("info")
-            .fg
-            .map(crate::ui::theme_color_to_renderer_color)
-            .unwrap_or(Color::rgb(0.3, 0.7, 0.9)),
-        )
-      },
-      Some(Severity::Hint) => {
-        (
-          "●",
-          theme
-            .get("hint")
-            .fg
-            .map(crate::ui::theme_color_to_renderer_color)
-            .unwrap_or(Color::rgb(0.5, 0.8, 0.5)),
-        )
-      },
+      Some(Severity::Error) => (
+        "●",
+        theme
+          .get("error")
+          .fg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::rgb(0.9, 0.3, 0.3)),
+      ),
+      Some(Severity::Warning) | None => (
+        "●",
+        theme
+          .get("warning")
+          .fg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::rgb(0.9, 0.7, 0.3)),
+      ),
+      Some(Severity::Info) => (
+        "●",
+        theme
+          .get("info")
+          .fg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::rgb(0.3, 0.7, 0.9)),
+      ),
+      Some(Severity::Hint) => (
+        "●",
+        theme
+          .get("hint")
+          .fg
+          .map(crate::ui::theme_color_to_renderer_color)
+          .unwrap_or(Color::rgb(0.5, 0.8, 0.5)),
+      ),
     };
 
     Some((symbol.to_string(), color))

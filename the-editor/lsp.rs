@@ -6,10 +6,7 @@ mod transport;
 
 use std::{
   collections::HashMap,
-  path::{
-    Path,
-    PathBuf,
-  },
+  path::{Path, PathBuf},
   sync::Arc,
 };
 
@@ -17,29 +14,15 @@ use arc_swap::ArcSwap;
 pub use client::Client;
 use futures_util::stream::select_all::SelectAll;
 pub use jsonrpc::Call;
-use log::{
-  debug,
-  error,
-};
+use log::{debug, error};
 pub use lsp::types::Url;
 use slotmap::SlotMap;
 pub use the_editor_lsp_types as lsp;
 use the_editor_lsp_types::types::{
-  ApplyWorkspaceEditParams,
-  ConfigurationParams,
-  InitializedParams,
-  LogMessageParams,
-  ProgressParams,
-  ProgressToken,
-  PublishDiagnosticsParams,
-  RegistrationParams,
-  ShowDocumentParams,
-  ShowMessageParams,
-  UnregistrationParams,
-  WorkDoneProgress,
-  WorkDoneProgressBegin,
-  WorkDoneProgressCreateParams,
-  WorkDoneProgressReport,
+  ApplyWorkspaceEditParams, ConfigurationParams, InitializedParams, LogMessageParams,
+  ProgressParams, ProgressToken, PublishDiagnosticsParams, RegistrationParams, ShowDocumentParams,
+  ShowMessageParams, UnregistrationParams, WorkDoneProgress, WorkDoneProgressBegin,
+  WorkDoneProgressCreateParams, WorkDoneProgressReport,
 };
 use the_editor_stdx::path;
 use thiserror::Error;
@@ -47,9 +30,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::core::syntax::config::{
-  LanguageConfiguration,
-  LanguageServerConfiguration,
-  LanguageServerFeatures,
+  LanguageConfiguration, LanguageServerConfiguration, LanguageServerFeatures,
 };
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
@@ -89,34 +70,21 @@ pub enum OffsetEncoding {
 
 pub mod util {
   use log::warn;
-  use ropey::{
-    Rope,
-    RopeSlice,
-  };
+  use ropey::{Rope, RopeSlice};
   pub use the_editor_lsp_types::types as lsp;
 
   use crate::{
     core::{
-      Tendril,
-      chars,
+      Tendril, chars,
       diagnostics::NumberOrString,
-      line_ending::{
-        line_end_byte_index,
-        line_end_char_index,
-      },
-      selection::{
-        Range,
-        Selection,
-      },
+      line_ending::{line_end_byte_index, line_end_char_index},
+      selection::{Range, Selection},
       transaction::Transaction,
     },
     lsp::OffsetEncoding,
     snippets::{
       elaborate::Snippet,
-      render::{
-        RenderedSnippet,
-        SnippetRenderCtx,
-      },
+      render::{RenderedSnippet, SnippetRenderCtx},
     },
   };
   // use crate::snippets::
@@ -133,21 +101,17 @@ pub mod util {
     use crate::core::diagnostics::Severity::*;
 
     let range = Range::new(diag.range.start, diag.range.end);
-    let severity = diag.severity.map(|s| {
-      match s {
-        Hint => lsp::DiagnosticSeverity::HINT,
-        Info => lsp::DiagnosticSeverity::INFORMATION,
-        Warning => lsp::DiagnosticSeverity::WARNING,
-        Error => lsp::DiagnosticSeverity::ERROR,
-      }
+    let severity = diag.severity.map(|s| match s {
+      Hint => lsp::DiagnosticSeverity::HINT,
+      Info => lsp::DiagnosticSeverity::INFORMATION,
+      Warning => lsp::DiagnosticSeverity::WARNING,
+      Error => lsp::DiagnosticSeverity::ERROR,
     });
 
     let code = match diag.code.clone() {
-      Some(x) => {
-        match x {
-          NumberOrString::Number(x) => Some(lsp::NumberOrString::Number(x)),
-          NumberOrString::String(x) => Some(lsp::NumberOrString::String(x)),
-        }
+      Some(x) => match x {
+        NumberOrString::Number(x) => Some(lsp::NumberOrString::Number(x)),
+        NumberOrString::String(x) => Some(lsp::NumberOrString::String(x)),
       },
       None => None,
     };
@@ -155,11 +119,9 @@ pub mod util {
     let new_tags: Vec<_> = diag
       .tags
       .iter()
-      .map(|tag| {
-        match tag {
-          crate::core::diagnostics::DiagnosticTag::Unnecessary => lsp::DiagnosticTag::UNNECESSARY,
-          crate::core::diagnostics::DiagnosticTag::Deprecated => lsp::DiagnosticTag::DEPRECATED,
-        }
+      .map(|tag| match tag {
+        crate::core::diagnostics::DiagnosticTag::Unnecessary => lsp::DiagnosticTag::UNNECESSARY,
+        crate::core::diagnostics::DiagnosticTag::Deprecated => lsp::DiagnosticTag::DEPRECATED,
       })
       .collect();
 
@@ -606,10 +568,10 @@ impl Notification {
 
 #[derive(Debug)]
 pub struct Registry {
-  inner:                  SlotMap<LanguageServerId, Arc<Client>>,
-  inner_by_name:          HashMap<LanguageServerName, Vec<Arc<Client>>>,
-  syn_loader:             Arc<ArcSwap<crate::core::syntax::Loader>>,
-  pub incoming:           SelectAll<UnboundedReceiverStream<(LanguageServerId, Call)>>,
+  inner: SlotMap<LanguageServerId, Arc<Client>>,
+  inner_by_name: HashMap<LanguageServerName, Vec<Arc<Client>>>,
+  syn_loader: Arc<ArcSwap<crate::core::syntax::Loader>>,
+  pub incoming: SelectAll<UnboundedReceiverStream<(LanguageServerId, Call)>>,
   pub file_event_handler: file_event::Handler,
 }
 
@@ -794,7 +756,7 @@ impl Registry {
 pub enum ProgressStatus {
   Created,
   Started {
-    title:    String,
+    title: String,
     progress: WorkDoneProgress,
   },
 }
@@ -843,11 +805,9 @@ impl LspProgressMap {
   }
 
   pub fn title(&self, id: LanguageServerId, token: &ProgressToken) -> Option<&String> {
-    self.progress(id, token).and_then(|p| {
-      match p {
-        ProgressStatus::Created => None,
-        ProgressStatus::Started { title, .. } => Some(title),
-      }
+    self.progress(id, token).and_then(|p| match p {
+      ProgressStatus::Created => None,
+      ProgressStatus::Started { title, .. } => Some(title),
     })
   }
 
@@ -886,14 +846,13 @@ impl LspProgressMap {
     token: ProgressToken,
     status: WorkDoneProgressBegin,
   ) {
-    self
-      .0
-      .entry(id)
-      .or_default()
-      .insert(token, ProgressStatus::Started {
-        title:    status.title.clone(),
+    self.0.entry(id).or_default().insert(
+      token,
+      ProgressStatus::Started {
+        title: status.title.clone(),
         progress: WorkDoneProgress::Begin(status),
-      });
+      },
+    );
   }
 
   /// Updates the progress of `token` for server with `id` to report state
@@ -904,12 +863,15 @@ impl LspProgressMap {
     token: ProgressToken,
     status: WorkDoneProgressReport,
   ) {
-    self.0.entry(id).or_default().entry(token).and_modify(|e| {
-      match e {
+    self
+      .0
+      .entry(id)
+      .or_default()
+      .entry(token)
+      .and_modify(|e| match e {
         ProgressStatus::Created => (),
         ProgressStatus::Started { progress, .. } => *progress = WorkDoneProgress::Report(status),
-      }
-    });
+      });
   }
 }
 
@@ -1081,10 +1043,7 @@ mod tests {
   use ropey::Rope;
 
   use super::util::*;
-  use crate::lsp::{
-    OffsetEncoding,
-    util::generate_transaction_from_edits,
-  };
+  use crate::lsp::{OffsetEncoding, util::generate_transaction_from_edits};
 
   #[test]
   fn converts_lsp_pos_to_pos() {
@@ -1113,34 +1072,30 @@ mod tests {
 
   #[test]
   fn emoji_format_gh_4791() {
-    use the_editor_lsp_types::types::{
-      Position,
-      Range,
-      TextEdit,
-    };
+    use the_editor_lsp_types::types::{Position, Range, TextEdit};
 
     let edits = vec![
       TextEdit {
-        range:    Range {
+        range: Range {
           start: Position {
-            line:      0,
+            line: 0,
             character: 1,
           },
-          end:   Position {
-            line:      1,
+          end: Position {
+            line: 1,
             character: 0,
           },
         },
         new_text: "\n  ".to_string(),
       },
       TextEdit {
-        range:    Range {
+        range: Range {
           start: Position {
-            line:      1,
+            line: 1,
             character: 7,
           },
-          end:   Position {
-            line:      2,
+          end: Position {
+            line: 2,
             character: 0,
           },
         },

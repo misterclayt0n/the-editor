@@ -1,16 +1,8 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  PartialResultParams,
-  Position,
-  Range,
-  StaticTextDocumentRegistrationOptions,
-  TextDocumentIdentifier,
-  WorkDoneProgressOptions,
-  WorkDoneProgressParams,
+  PartialResultParams, Position, Range, StaticTextDocumentRegistrationOptions,
+  TextDocumentIdentifier, WorkDoneProgressOptions, WorkDoneProgressParams,
 };
 #[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

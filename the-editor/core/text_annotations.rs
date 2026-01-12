@@ -1,19 +1,10 @@
-use std::{
-  cell::Cell,
-  cmp::Ordering,
-  fmt::Debug,
-  ops::Range,
-  ptr::NonNull,
-};
+use std::{cell::Cell, cmp::Ordering, fmt::Debug, ops::Range, ptr::NonNull};
 
 use crate::core::{
   Tendril,
   doc_formatter::FormattedGrapheme,
   position::Position,
-  syntax::{
-    Highlight,
-    OverlayHighlights,
-  },
+  syntax::{Highlight, OverlayHighlights},
 };
 
 /// An inline annotation is continuous text shown
@@ -21,7 +12,7 @@ use crate::core::{
 /// `char_idx`
 #[derive(Debug, Clone)]
 pub struct InlineAnnotation {
-  pub text:     Tendril,
+  pub text: Tendril,
   pub char_idx: usize,
 }
 
@@ -185,17 +176,17 @@ pub trait LineAnnotation {
 
 #[derive(Debug)]
 struct Layer<'a, A, M> {
-  annotations:   &'a [A],
+  annotations: &'a [A],
   current_index: Cell<usize>,
-  metadata:      M,
+  metadata: M,
 }
 
 impl<A, M: Clone> Clone for Layer<'_, A, M> {
   fn clone(&self) -> Self {
     Layer {
-      annotations:   self.annotations,
+      annotations: self.annotations,
       current_index: self.current_index.clone(),
-      metadata:      self.metadata.clone(),
+      metadata: self.metadata.clone(),
     }
   }
 }
@@ -288,8 +279,8 @@ impl<T: ?Sized> Drop for RawBox<T> {
 #[derive(Default)]
 pub struct TextAnnotations<'a> {
   inline_annotations: Vec<Layer<'a, InlineAnnotation, Option<Highlight>>>,
-  overlays:           Vec<Layer<'a, Overlay, Option<Highlight>>>,
-  line_annotations:   Vec<(Cell<usize>, RawBox<dyn LineAnnotation + 'a>)>,
+  overlays: Vec<Layer<'a, Overlay, Option<Highlight>>>,
+  line_annotations: Vec<(Cell<usize>, RawBox<dyn LineAnnotation + 'a>)>,
 }
 
 impl Debug for TextAnnotations<'_> {

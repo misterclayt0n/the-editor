@@ -1,47 +1,15 @@
-use std::{
-  borrow::Cow,
-  fs,
-  path::Path,
-  sync::Arc,
-};
+use std::{borrow::Cow, fs, path::Path, sync::Arc};
 
 use anyhow::anyhow;
 use glyphon::{
-  Attrs,
-  AttrsOwned,
-  Buffer,
-  Cache,
-  Color as GlyphColor,
-  Family,
-  FontSystem,
-  Metrics,
-  Resolution,
-  Shaping,
-  SwashCache,
-  TextArea,
-  TextAtlas,
-  TextBounds,
-  TextRenderer,
-  Viewport,
-  Wrap,
+  Attrs, AttrsOwned, Buffer, Cache, Color as GlyphColor, Family, FontSystem, Metrics, Resolution,
+  Shaping, SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport, Wrap,
 };
-use wgpu::{
-  self,
-  CompositeAlphaMode,
-  util::DeviceExt,
-};
-use winit::{
-  dpi::PhysicalSize,
-  window::Window,
-};
+use wgpu::{self, CompositeAlphaMode, util::DeviceExt};
+use winit::{dpi::PhysicalSize, window::Window};
 
 use crate::{
-  Color,
-  RendererError,
-  Result,
-  TextSection,
-  TextSegment,
-  TextStyle,
+  Color, RendererError, Result, TextSection, TextSegment, TextStyle,
   powerline_glyphs::PowerlineGlyph,
 };
 
@@ -49,9 +17,9 @@ const LINE_HEIGHT_FACTOR: f32 = 1.3;
 
 /// Atlas for Powerline glyph textures
 struct PowerlineAtlas {
-  textures:   std::collections::HashMap<PowerlineGlyph, wgpu::Texture>,
-  views:      std::collections::HashMap<PowerlineGlyph, wgpu::TextureView>,
-  sampler:    wgpu::Sampler,
+  textures: std::collections::HashMap<PowerlineGlyph, wgpu::Texture>,
+  views: std::collections::HashMap<PowerlineGlyph, wgpu::TextureView>,
+  sampler: wgpu::Sampler,
   bind_group: Option<wgpu::BindGroup>,
 }
 
@@ -76,31 +44,31 @@ impl PowerlineAtlas {
     for glyph in glyphs {
       if let Some(pixmap) = powerline_glyphs::render_powerline_glyph(glyph, width, height) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-          label:           Some("Powerline Glyph"),
-          size:            wgpu::Extent3d {
+          label: Some("Powerline Glyph"),
+          size: wgpu::Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
           },
           mip_level_count: 1,
-          sample_count:    1,
-          dimension:       wgpu::TextureDimension::D2,
-          format:          wgpu::TextureFormat::Rgba8Unorm,
-          usage:           wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-          view_formats:    &[],
+          sample_count: 1,
+          dimension: wgpu::TextureDimension::D2,
+          format: wgpu::TextureFormat::Rgba8Unorm,
+          usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+          view_formats: &[],
         });
 
         queue.write_texture(
           wgpu::TexelCopyTextureInfo {
-            texture:   &texture,
+            texture: &texture,
             mip_level: 0,
-            origin:    wgpu::Origin3d::ZERO,
-            aspect:    wgpu::TextureAspect::All,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
           },
           pixmap.data(), // RGBA8 bytes
           wgpu::TexelCopyBufferLayout {
-            offset:         0,
-            bytes_per_row:  Some(4 * width),
+            offset: 0,
+            bytes_per_row: Some(4 * width),
             rows_per_image: Some(height),
           },
           wgpu::Extent3d {
@@ -139,16 +107,16 @@ impl PowerlineAtlas {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct RectInstance {
-  position:      [f32; 2],
-  size:          [f32; 2],
-  color:         [f32; 4],
+  position: [f32; 2],
+  size: [f32; 2],
+  color: [f32; 4],
   corner_radius: f32,
-  _pad0:         [f32; 2],
-  glow_center:   [f32; 2],
-  glow_radius:   f32,
-  effect_kind:   f32,
-  effect_time:   f32,      // Animation progress [0..1]
-  _pad1:         [f32; 3], // Padding to align to 16 bytes
+  _pad0: [f32; 2],
+  glow_center: [f32; 2],
+  glow_radius: f32,
+  effect_kind: f32,
+  effect_time: f32, // Animation progress [0..1]
+  _pad1: [f32; 3],  // Padding to align to 16 bytes
 }
 
 /// Vertex data for a rectangle (using instanced rendering)
@@ -169,7 +137,7 @@ struct RectUniforms {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct BlurUniforms {
-  direction:  [f32; 2],
+  direction: [f32; 2],
   resolution: [f32; 2],
 }
 
@@ -177,7 +145,7 @@ struct BlurUniforms {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct ImageVertex {
-  position:  [f32; 2],
+  position: [f32; 2],
   tex_coord: [f32; 2],
 }
 
@@ -185,37 +153,37 @@ struct ImageVertex {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct ImageUniforms {
-  screen_size:   [f32; 2],
+  screen_size: [f32; 2],
   rect_position: [f32; 2],
-  rect_size:     [f32; 2],
-  alpha:         f32,
-  _pad:          f32,
+  rect_size: [f32; 2],
+  alpha: f32,
+  _pad: f32,
 }
 
 /// Command to draw an image (processed in end_frame)
 struct ImageDrawCommand {
   /// RGBA pixel data
-  pixels:      Vec<u8>,
+  pixels: Vec<u8>,
   /// Image width
-  width:       u32,
+  width: u32,
   /// Image height
-  height:      u32,
+  height: u32,
   /// Draw position X
-  x:           f32,
+  x: f32,
   /// Draw position Y
-  y:           f32,
+  y: f32,
   /// Draw width (may differ from image width for scaling)
-  draw_width:  f32,
+  draw_width: f32,
   /// Draw height (may differ from image height for scaling)
   draw_height: f32,
   /// Alpha multiplier
-  alpha:       f32,
+  alpha: f32,
 }
 
 struct TextCommand {
-  position:     (f32, f32),
-  cache_key:    crate::text_cache::ShapedTextKey, // Key to retrieve buffer from cache
-  bounds:       TextBounds,
+  position: (f32, f32),
+  cache_key: crate::text_cache::ShapedTextKey, // Key to retrieve buffer from cache
+  bounds: TextBounds,
   scissor_rect: Option<(f32, f32, f32, f32)>, // Scissor rect active when text was created
 }
 
@@ -228,9 +196,9 @@ struct BufferPool {
 /// Saved font state for save/restore operations
 #[derive(Clone, Debug)]
 pub struct FontState {
-  pub family:      String,
-  pub size:        f32,
-  pub cell_width:  f32,
+  pub family: String,
+  pub size: f32,
+  pub cell_width: f32,
   pub cell_height: f32,
 }
 
@@ -240,56 +208,56 @@ pub struct RendererConfig {
   /// Background color for clearing the screen
   pub background_color: Color,
   /// Enable vertical sync
-  pub vsync:            bool,
+  pub vsync: bool,
 }
 
 impl Default for RendererConfig {
   fn default() -> Self {
     Self {
       background_color: Color::new(0.1, 0.1, 0.15, 1.0),
-      vsync:            true,
+      vsync: true,
     }
   }
 }
 
 /// The main renderer struct that manages GPU resources and drawing operations
 pub struct Renderer {
-  surface:        wgpu::Surface<'static>,
-  device:         wgpu::Device,
-  queue:          wgpu::Queue,
-  config:         wgpu::SurfaceConfiguration,
-  size:           PhysicalSize<u32>,
+  surface: wgpu::Surface<'static>,
+  device: wgpu::Device,
+  queue: wgpu::Queue,
+  config: wgpu::SurfaceConfiguration,
+  size: PhysicalSize<u32>,
   /// Tracks a resize that needs a surface reconfigure. Applied in begin_frame.
   pending_resize: Option<PhysicalSize<u32>>,
 
-  cache:                 Cache,
-  font_system:           FontSystem,
-  swash_cache:           SwashCache,
-  viewport:              Viewport,
-  text_atlas:            TextAtlas,
-  text_renderer:         TextRenderer, // For regular text with stencil masking
+  cache: Cache,
+  font_system: FontSystem,
+  swash_cache: SwashCache,
+  viewport: Viewport,
+  text_atlas: TextAtlas,
+  text_renderer: TextRenderer, // For regular text with stencil masking
   overlay_text_renderer: TextRenderer, // For overlay text without stencil masking
 
   // Frame state.
-  current_output:  Option<wgpu::SurfaceTexture>,
-  current_view:    Option<wgpu::TextureView>,
+  current_output: Option<wgpu::SurfaceTexture>,
+  current_view: Option<wgpu::TextureView>,
   current_encoder: Option<wgpu::CommandEncoder>,
 
   // Stencil buffer for masking regions
   stencil_texture: wgpu::Texture,
-  stencil_view:    wgpu::TextureView,
+  stencil_view: wgpu::TextureView,
 
   // Configuration.
   background_color: Color,
 
   // Pending draw data for the current frame.
-  rect_instances:        Vec<RectInstance>,
-  text_commands:         Vec<TextCommand>,
+  rect_instances: Vec<RectInstance>,
+  text_commands: Vec<TextCommand>,
   overlay_text_commands: Vec<TextCommand>, // Text that ignores stencil mask (for UI overlays)
 
   // Text batching for performance
   pending_text_batch: Option<(TextSection, f32, f32)>, // Accumulate text segments
-  is_overlay_mode:    bool,                            /* Whether current text should be added
+  is_overlay_mode: bool,                               /* Whether current text should be added
                                                         * to overlay_text_commands */
 
   // Scissor rect stack for clipping text to specific regions
@@ -299,21 +267,22 @@ pub struct Renderer {
   stencil_mask_rects: Vec<(f32, f32, f32, f32)>, // (x, y, width, height)
 
   // Rectangle pipeline resources.
-  rect_render_pipeline:   wgpu::RenderPipeline,
-  rect_vertex_buffer:     wgpu::Buffer,
-  rect_uniform_buffer:    wgpu::Buffer,
-  rect_bind_group:        wgpu::BindGroup,
+  rect_render_pipeline: wgpu::RenderPipeline,
+  rect_vertex_buffer: wgpu::Buffer,
+  rect_uniform_buffer: wgpu::Buffer,
+  rect_bind_group: wgpu::BindGroup,
   // Reusable instance buffers for performance
-  rect_instance_buffer:   Option<wgpu::Buffer>,
+  rect_instance_buffer: Option<wgpu::Buffer>,
   rect_instance_capacity: usize,
-  mask_instance_buffer:   Option<wgpu::Buffer>,
+  mask_instance_buffer: Option<wgpu::Buffer>,
   mask_instance_capacity: usize,
 
   // Text metrics / font tracking.
-  font_family:     String,
-  font_size:       f32,
-  cell_width:      f32,
-  cell_height:     f32,
+  font_family: String,
+  font_size: f32,    // Logical font size (before scaling)
+  scale_factor: f64, // Display scale factor (e.g., 2.0 for Retina)
+  cell_width: f32,
+  cell_height: f32,
   line_top_offset: f32, // Vertical offset from buffer top to actual text top
 
   // Performance optimization: disable ligature protection for better performance
@@ -326,15 +295,15 @@ pub struct Renderer {
   shaped_text_cache: crate::text_cache::ShapedTextCache,
 
   // Blur effect resources
-  blur_pipeline:          wgpu::RenderPipeline,
+  blur_pipeline: wgpu::RenderPipeline,
   blur_bind_group_layout: wgpu::BindGroupLayout,
-  blur_sampler:           wgpu::Sampler,
-  blur_uniform_buffer:    wgpu::Buffer,
+  blur_sampler: wgpu::Sampler,
+  blur_uniform_buffer: wgpu::Buffer,
   intermediate_texture_1: Option<wgpu::Texture>,
-  intermediate_view_1:    Option<wgpu::TextureView>,
+  intermediate_view_1: Option<wgpu::TextureView>,
   intermediate_texture_2: Option<wgpu::Texture>,
-  intermediate_view_2:    Option<wgpu::TextureView>,
-  blur_vertex_buffer:     wgpu::Buffer,
+  intermediate_view_2: Option<wgpu::TextureView>,
+  blur_vertex_buffer: wgpu::Buffer,
 
   // Powerline glyph atlas
   powerline_atlas: PowerlineAtlas,
@@ -346,18 +315,19 @@ pub struct Renderer {
   pending_cursor_icon: Option<winit::window::CursorIcon>,
 
   // Image rendering pipeline
-  image_render_pipeline:   wgpu::RenderPipeline,
-  image_vertex_buffer:     wgpu::Buffer,
-  image_uniform_buffer:    wgpu::Buffer,
+  image_render_pipeline: wgpu::RenderPipeline,
+  image_vertex_buffer: wgpu::Buffer,
+  image_uniform_buffer: wgpu::Buffer,
   image_bind_group_layout: wgpu::BindGroupLayout,
-  image_sampler:           wgpu::Sampler,
-  image_draw_commands:     Vec<ImageDrawCommand>,
+  image_sampler: wgpu::Sampler,
+  image_draw_commands: Vec<ImageDrawCommand>,
 }
 
 impl Renderer {
   /// Create a new renderer with the given window
   pub async fn new(window: Arc<Window>) -> Result<Self> {
     let size = window.inner_size();
+    let scale_factor = window.scale_factor();
 
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
       backends: wgpu::Backends::PRIMARY,
@@ -370,8 +340,8 @@ impl Renderer {
 
     let adapter = instance
       .request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference:       wgpu::PowerPreference::LowPower,
-        compatible_surface:     Some(&surface),
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: Some(&surface),
         force_fallback_adapter: false,
       })
       .await
@@ -380,10 +350,10 @@ impl Renderer {
     let (device, queue) = adapter
       .request_device(&wgpu::DeviceDescriptor {
         required_features: wgpu::Features::empty(),
-        required_limits:   wgpu::Limits::default(),
-        label:             None,
-        memory_hints:      Default::default(),
-        trace:             Default::default(),
+        required_limits: wgpu::Limits::default(),
+        label: None,
+        memory_hints: Default::default(),
+        trace: Default::default(),
       })
       .await
       .map_err(|e| RendererError::Configuration(format!("Failed to create device: {e}")))?;
@@ -440,44 +410,44 @@ impl Renderer {
 
     // Rectangle pipeline setup.
     let rect_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-      label:  Some("Rectangle Shader"),
+      label: Some("Rectangle Shader"),
       source: wgpu::ShaderSource::Wgsl(include_str!("rect.wgsl").into()),
     });
 
     let rect_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-      label:              Some("Rectangle Uniform Buffer"),
-      size:               std::mem::size_of::<RectUniforms>() as u64,
-      usage:              wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      label: Some("Rectangle Uniform Buffer"),
+      size: std::mem::size_of::<RectUniforms>() as u64,
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false,
     });
 
     let rect_bind_group_layout =
       device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label:   Some("Rectangle Bind Group Layout"),
+        label: Some("Rectangle Bind Group Layout"),
         entries: &[wgpu::BindGroupLayoutEntry {
-          binding:    0,
+          binding: 0,
           visibility: wgpu::ShaderStages::VERTEX,
-          ty:         wgpu::BindingType::Buffer {
-            ty:                 wgpu::BufferBindingType::Uniform,
+          ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
             has_dynamic_offset: false,
-            min_binding_size:   None,
+            min_binding_size: None,
           },
-          count:      None,
+          count: None,
         }],
       });
 
     let rect_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      label:   Some("Rectangle Bind Group"),
-      layout:  &rect_bind_group_layout,
+      label: Some("Rectangle Bind Group"),
+      layout: &rect_bind_group_layout,
       entries: &[wgpu::BindGroupEntry {
-        binding:  0,
+        binding: 0,
         resource: rect_uniform_buffer.as_entire_binding(),
       }],
     });
 
     let rect_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-      label:                Some("Rectangle Pipeline Layout"),
-      bind_group_layouts:   &[&rect_bind_group_layout],
+      label: Some("Rectangle Pipeline Layout"),
+      bind_group_layouts: &[&rect_bind_group_layout],
       push_constant_ranges: &[],
     });
 
@@ -497,125 +467,125 @@ impl Renderer {
     ];
 
     let rect_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-      label:    Some("Rectangle Vertex Buffer"),
+      label: Some("Rectangle Vertex Buffer"),
       contents: bytemuck::cast_slice(&rect_vertices),
-      usage:    wgpu::BufferUsages::VERTEX,
+      usage: wgpu::BufferUsages::VERTEX,
     });
 
     let rect_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-      label:         Some("Rectangle Render Pipeline"),
-      layout:        Some(&rect_pipeline_layout),
-      vertex:        wgpu::VertexState {
-        module:              &rect_shader,
-        entry_point:         Some("vs_main"),
-        buffers:             &[
+      label: Some("Rectangle Render Pipeline"),
+      layout: Some(&rect_pipeline_layout),
+      vertex: wgpu::VertexState {
+        module: &rect_shader,
+        entry_point: Some("vs_main"),
+        buffers: &[
           wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<RectVertex>() as u64,
-            step_mode:    wgpu::VertexStepMode::Vertex,
-            attributes:   &[wgpu::VertexAttribute {
-              offset:          0,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[wgpu::VertexAttribute {
+              offset: 0,
               shader_location: 0,
-              format:          wgpu::VertexFormat::Float32x2,
+              format: wgpu::VertexFormat::Float32x2,
             }],
           },
           wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<RectInstance>() as u64,
-            step_mode:    wgpu::VertexStepMode::Instance,
-            attributes:   &[
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
               wgpu::VertexAttribute {
-                offset:          0,
+                offset: 0,
                 shader_location: 1,
-                format:          wgpu::VertexFormat::Float32x2,
+                format: wgpu::VertexFormat::Float32x2,
               },
               wgpu::VertexAttribute {
-                offset:          8,
+                offset: 8,
                 shader_location: 2,
-                format:          wgpu::VertexFormat::Float32x2,
+                format: wgpu::VertexFormat::Float32x2,
               },
               wgpu::VertexAttribute {
-                offset:          16,
+                offset: 16,
                 shader_location: 3,
-                format:          wgpu::VertexFormat::Float32x4,
+                format: wgpu::VertexFormat::Float32x4,
               },
               wgpu::VertexAttribute {
-                offset:          32,
+                offset: 32,
                 shader_location: 4,
-                format:          wgpu::VertexFormat::Float32,
+                format: wgpu::VertexFormat::Float32,
               },
               wgpu::VertexAttribute {
-                offset:          44,
+                offset: 44,
                 shader_location: 5,
-                format:          wgpu::VertexFormat::Float32x2,
+                format: wgpu::VertexFormat::Float32x2,
               },
               wgpu::VertexAttribute {
-                offset:          52,
+                offset: 52,
                 shader_location: 6,
-                format:          wgpu::VertexFormat::Float32,
+                format: wgpu::VertexFormat::Float32,
               },
               wgpu::VertexAttribute {
-                offset:          56,
+                offset: 56,
                 shader_location: 7,
-                format:          wgpu::VertexFormat::Float32,
+                format: wgpu::VertexFormat::Float32,
               },
               wgpu::VertexAttribute {
-                offset:          60,
+                offset: 60,
                 shader_location: 8,
-                format:          wgpu::VertexFormat::Float32,
+                format: wgpu::VertexFormat::Float32,
               },
             ],
           },
         ],
         compilation_options: wgpu::PipelineCompilationOptions::default(),
       },
-      fragment:      Some(wgpu::FragmentState {
-        module:              &rect_shader,
-        entry_point:         Some("fs_main"),
-        targets:             &[Some(wgpu::ColorTargetState {
-          format:     surface_format,
-          blend:      Some(wgpu::BlendState::ALPHA_BLENDING),
+      fragment: Some(wgpu::FragmentState {
+        module: &rect_shader,
+        entry_point: Some("fs_main"),
+        targets: &[Some(wgpu::ColorTargetState {
+          format: surface_format,
+          blend: Some(wgpu::BlendState::ALPHA_BLENDING),
           write_mask: wgpu::ColorWrites::ALL,
         })],
         compilation_options: wgpu::PipelineCompilationOptions::default(),
       }),
-      primitive:     wgpu::PrimitiveState {
-        topology:           wgpu::PrimitiveTopology::TriangleStrip,
+      primitive: wgpu::PrimitiveState {
+        topology: wgpu::PrimitiveTopology::TriangleStrip,
         strip_index_format: None,
-        front_face:         wgpu::FrontFace::Ccw,
-        cull_mode:          None,
-        unclipped_depth:    false,
-        polygon_mode:       wgpu::PolygonMode::Fill,
-        conservative:       false,
+        front_face: wgpu::FrontFace::Ccw,
+        cull_mode: None,
+        unclipped_depth: false,
+        polygon_mode: wgpu::PolygonMode::Fill,
+        conservative: false,
       },
       depth_stencil: Some(wgpu::DepthStencilState {
-        format:              wgpu::TextureFormat::Stencil8,
+        format: wgpu::TextureFormat::Stencil8,
         depth_write_enabled: false,
-        depth_compare:       wgpu::CompareFunction::Always,
-        stencil:             wgpu::StencilState {
-          front:      wgpu::StencilFaceState {
-            compare:       wgpu::CompareFunction::Always,
-            fail_op:       wgpu::StencilOperation::Keep,
+        depth_compare: wgpu::CompareFunction::Always,
+        stencil: wgpu::StencilState {
+          front: wgpu::StencilFaceState {
+            compare: wgpu::CompareFunction::Always,
+            fail_op: wgpu::StencilOperation::Keep,
             depth_fail_op: wgpu::StencilOperation::Keep,
-            pass_op:       wgpu::StencilOperation::Replace,
+            pass_op: wgpu::StencilOperation::Replace,
           },
-          back:       wgpu::StencilFaceState {
-            compare:       wgpu::CompareFunction::Always,
-            fail_op:       wgpu::StencilOperation::Keep,
+          back: wgpu::StencilFaceState {
+            compare: wgpu::CompareFunction::Always,
+            fail_op: wgpu::StencilOperation::Keep,
             depth_fail_op: wgpu::StencilOperation::Keep,
-            pass_op:       wgpu::StencilOperation::Replace,
+            pass_op: wgpu::StencilOperation::Replace,
           },
-          read_mask:  0xFF,
+          read_mask: 0xFF,
           write_mask: 0xFF,
         },
-        bias:                wgpu::DepthBiasState::default(),
+        bias: wgpu::DepthBiasState::default(),
       }),
-      multisample:   wgpu::MultisampleState::default(),
-      multiview:     None,
-      cache:         None,
+      multisample: wgpu::MultisampleState::default(),
+      multiview: None,
+      cache: None,
     });
 
     // Blur pipeline setup
     let blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-      label:  Some("Blur Shader"),
+      label: Some("Blur Shader"),
       source: wgpu::ShaderSource::Wgsl(include_str!("blur.wgsl").into()),
     });
 
@@ -631,48 +601,48 @@ impl Renderer {
     });
 
     let blur_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-      label:              Some("Blur Uniform Buffer"),
-      size:               std::mem::size_of::<BlurUniforms>() as u64,
-      usage:              wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      label: Some("Blur Uniform Buffer"),
+      size: std::mem::size_of::<BlurUniforms>() as u64,
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false,
     });
 
     let blur_bind_group_layout =
       device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label:   Some("Blur Bind Group Layout"),
+        label: Some("Blur Bind Group Layout"),
         entries: &[
           wgpu::BindGroupLayoutEntry {
-            binding:    0,
+            binding: 0,
             visibility: wgpu::ShaderStages::FRAGMENT,
-            ty:         wgpu::BindingType::Texture {
-              sample_type:    wgpu::TextureSampleType::Float { filterable: true },
+            ty: wgpu::BindingType::Texture {
+              sample_type: wgpu::TextureSampleType::Float { filterable: true },
               view_dimension: wgpu::TextureViewDimension::D2,
-              multisampled:   false,
+              multisampled: false,
             },
-            count:      None,
+            count: None,
           },
           wgpu::BindGroupLayoutEntry {
-            binding:    1,
+            binding: 1,
             visibility: wgpu::ShaderStages::FRAGMENT,
-            ty:         wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-            count:      None,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
           },
           wgpu::BindGroupLayoutEntry {
-            binding:    2,
+            binding: 2,
             visibility: wgpu::ShaderStages::FRAGMENT,
-            ty:         wgpu::BindingType::Buffer {
-              ty:                 wgpu::BufferBindingType::Uniform,
+            ty: wgpu::BindingType::Buffer {
+              ty: wgpu::BufferBindingType::Uniform,
               has_dynamic_offset: false,
-              min_binding_size:   None,
+              min_binding_size: None,
             },
-            count:      None,
+            count: None,
           },
         ],
       });
 
     let blur_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-      label:                Some("Blur Pipeline Layout"),
-      bind_group_layouts:   &[&blur_bind_group_layout],
+      label: Some("Blur Pipeline Layout"),
+      bind_group_layouts: &[&blur_bind_group_layout],
       push_constant_ranges: &[],
     });
 
@@ -690,63 +660,63 @@ impl Renderer {
     ];
 
     let blur_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-      label:    Some("Blur Vertex Buffer"),
+      label: Some("Blur Vertex Buffer"),
       contents: bytemuck::cast_slice(&blur_vertices),
-      usage:    wgpu::BufferUsages::VERTEX,
+      usage: wgpu::BufferUsages::VERTEX,
     });
 
     let blur_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-      label:         Some("Blur Render Pipeline"),
-      layout:        Some(&blur_pipeline_layout),
-      vertex:        wgpu::VertexState {
-        module:              &blur_shader,
-        entry_point:         Some("vs_main"),
-        buffers:             &[wgpu::VertexBufferLayout {
+      label: Some("Blur Render Pipeline"),
+      layout: Some(&blur_pipeline_layout),
+      vertex: wgpu::VertexState {
+        module: &blur_shader,
+        entry_point: Some("vs_main"),
+        buffers: &[wgpu::VertexBufferLayout {
           array_stride: std::mem::size_of::<RectVertex>() as u64,
-          step_mode:    wgpu::VertexStepMode::Vertex,
-          attributes:   &[wgpu::VertexAttribute {
-            offset:          0,
+          step_mode: wgpu::VertexStepMode::Vertex,
+          attributes: &[wgpu::VertexAttribute {
+            offset: 0,
             shader_location: 0,
-            format:          wgpu::VertexFormat::Float32x2,
+            format: wgpu::VertexFormat::Float32x2,
           }],
         }],
         compilation_options: wgpu::PipelineCompilationOptions::default(),
       },
-      fragment:      Some(wgpu::FragmentState {
-        module:              &blur_shader,
-        entry_point:         Some("fs_main"),
-        targets:             &[Some(wgpu::ColorTargetState {
-          format:     surface_format,
-          blend:      Some(wgpu::BlendState::ALPHA_BLENDING),
+      fragment: Some(wgpu::FragmentState {
+        module: &blur_shader,
+        entry_point: Some("fs_main"),
+        targets: &[Some(wgpu::ColorTargetState {
+          format: surface_format,
+          blend: Some(wgpu::BlendState::ALPHA_BLENDING),
           write_mask: wgpu::ColorWrites::ALL,
         })],
         compilation_options: wgpu::PipelineCompilationOptions::default(),
       }),
-      primitive:     wgpu::PrimitiveState {
-        topology:           wgpu::PrimitiveTopology::TriangleList,
+      primitive: wgpu::PrimitiveState {
+        topology: wgpu::PrimitiveTopology::TriangleList,
         strip_index_format: None,
-        front_face:         wgpu::FrontFace::Ccw,
-        cull_mode:          None,
-        unclipped_depth:    false,
-        polygon_mode:       wgpu::PolygonMode::Fill,
-        conservative:       false,
+        front_face: wgpu::FrontFace::Ccw,
+        cull_mode: None,
+        unclipped_depth: false,
+        polygon_mode: wgpu::PolygonMode::Fill,
+        conservative: false,
       },
       depth_stencil: None,
-      multisample:   wgpu::MultisampleState::default(),
-      multiview:     None,
-      cache:         None,
+      multisample: wgpu::MultisampleState::default(),
+      multiview: None,
+      cache: None,
     });
 
     // Image pipeline setup
     let image_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-      label:  Some("Image Shader"),
+      label: Some("Image Shader"),
       source: wgpu::ShaderSource::Wgsl(include_str!("image.wgsl").into()),
     });
 
     let image_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-      label:              Some("Image Uniform Buffer"),
-      size:               std::mem::size_of::<ImageUniforms>() as u64,
-      usage:              wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      label: Some("Image Uniform Buffer"),
+      size: std::mem::size_of::<ImageUniforms>() as u64,
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false,
     });
 
@@ -763,116 +733,116 @@ impl Renderer {
 
     let image_bind_group_layout =
       device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label:   Some("Image Bind Group Layout"),
+        label: Some("Image Bind Group Layout"),
         entries: &[
           wgpu::BindGroupLayoutEntry {
-            binding:    0,
+            binding: 0,
             visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty:         wgpu::BindingType::Buffer {
-              ty:                 wgpu::BufferBindingType::Uniform,
+            ty: wgpu::BindingType::Buffer {
+              ty: wgpu::BufferBindingType::Uniform,
               has_dynamic_offset: false,
-              min_binding_size:   None,
+              min_binding_size: None,
             },
-            count:      None,
+            count: None,
           },
           wgpu::BindGroupLayoutEntry {
-            binding:    1,
+            binding: 1,
             visibility: wgpu::ShaderStages::FRAGMENT,
-            ty:         wgpu::BindingType::Texture {
-              sample_type:    wgpu::TextureSampleType::Float { filterable: true },
+            ty: wgpu::BindingType::Texture {
+              sample_type: wgpu::TextureSampleType::Float { filterable: true },
               view_dimension: wgpu::TextureViewDimension::D2,
-              multisampled:   false,
+              multisampled: false,
             },
-            count:      None,
+            count: None,
           },
           wgpu::BindGroupLayoutEntry {
-            binding:    2,
+            binding: 2,
             visibility: wgpu::ShaderStages::FRAGMENT,
-            ty:         wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-            count:      None,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
           },
         ],
       });
 
     let image_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-      label:                Some("Image Pipeline Layout"),
-      bind_group_layouts:   &[&image_bind_group_layout],
+      label: Some("Image Pipeline Layout"),
+      bind_group_layouts: &[&image_bind_group_layout],
       push_constant_ranges: &[],
     });
 
     // Quad vertices with texture coordinates
     let image_vertices = [
       ImageVertex {
-        position:  [0.0, 0.0],
+        position: [0.0, 0.0],
         tex_coord: [0.0, 0.0],
       },
       ImageVertex {
-        position:  [1.0, 0.0],
+        position: [1.0, 0.0],
         tex_coord: [1.0, 0.0],
       },
       ImageVertex {
-        position:  [0.0, 1.0],
+        position: [0.0, 1.0],
         tex_coord: [0.0, 1.0],
       },
       ImageVertex {
-        position:  [1.0, 1.0],
+        position: [1.0, 1.0],
         tex_coord: [1.0, 1.0],
       },
     ];
 
     let image_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-      label:    Some("Image Vertex Buffer"),
+      label: Some("Image Vertex Buffer"),
       contents: bytemuck::cast_slice(&image_vertices),
-      usage:    wgpu::BufferUsages::VERTEX,
+      usage: wgpu::BufferUsages::VERTEX,
     });
 
     let image_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-      label:         Some("Image Render Pipeline"),
-      layout:        Some(&image_pipeline_layout),
-      vertex:        wgpu::VertexState {
-        module:              &image_shader,
-        entry_point:         Some("vs_main"),
-        buffers:             &[wgpu::VertexBufferLayout {
+      label: Some("Image Render Pipeline"),
+      layout: Some(&image_pipeline_layout),
+      vertex: wgpu::VertexState {
+        module: &image_shader,
+        entry_point: Some("vs_main"),
+        buffers: &[wgpu::VertexBufferLayout {
           array_stride: std::mem::size_of::<ImageVertex>() as u64,
-          step_mode:    wgpu::VertexStepMode::Vertex,
-          attributes:   &[
+          step_mode: wgpu::VertexStepMode::Vertex,
+          attributes: &[
             wgpu::VertexAttribute {
-              offset:          0,
+              offset: 0,
               shader_location: 0,
-              format:          wgpu::VertexFormat::Float32x2,
+              format: wgpu::VertexFormat::Float32x2,
             },
             wgpu::VertexAttribute {
-              offset:          8,
+              offset: 8,
               shader_location: 1,
-              format:          wgpu::VertexFormat::Float32x2,
+              format: wgpu::VertexFormat::Float32x2,
             },
           ],
         }],
         compilation_options: wgpu::PipelineCompilationOptions::default(),
       },
-      fragment:      Some(wgpu::FragmentState {
-        module:              &image_shader,
-        entry_point:         Some("fs_main"),
-        targets:             &[Some(wgpu::ColorTargetState {
-          format:     surface_format,
-          blend:      Some(wgpu::BlendState::ALPHA_BLENDING),
+      fragment: Some(wgpu::FragmentState {
+        module: &image_shader,
+        entry_point: Some("fs_main"),
+        targets: &[Some(wgpu::ColorTargetState {
+          format: surface_format,
+          blend: Some(wgpu::BlendState::ALPHA_BLENDING),
           write_mask: wgpu::ColorWrites::ALL,
         })],
         compilation_options: wgpu::PipelineCompilationOptions::default(),
       }),
-      primitive:     wgpu::PrimitiveState {
-        topology:           wgpu::PrimitiveTopology::TriangleStrip,
+      primitive: wgpu::PrimitiveState {
+        topology: wgpu::PrimitiveTopology::TriangleStrip,
         strip_index_format: None,
-        front_face:         wgpu::FrontFace::Ccw,
-        cull_mode:          None,
-        unclipped_depth:    false,
-        polygon_mode:       wgpu::PolygonMode::Fill,
-        conservative:       false,
+        front_face: wgpu::FrontFace::Ccw,
+        cull_mode: None,
+        unclipped_depth: false,
+        polygon_mode: wgpu::PolygonMode::Fill,
+        conservative: false,
       },
       depth_stencil: None,
-      multisample:   wgpu::MultisampleState::default(),
-      multiview:     None,
-      cache:         None,
+      multisample: wgpu::MultisampleState::default(),
+      multiview: None,
+      cache: None,
     });
 
     // Glyphon initialization.
@@ -883,26 +853,26 @@ impl Renderer {
     let mut text_atlas = TextAtlas::new(&device, &queue, &cache, surface_format);
     // Configure text renderer with stencil test to exclude masked regions
     let text_stencil_state = wgpu::DepthStencilState {
-      format:              wgpu::TextureFormat::Stencil8,
+      format: wgpu::TextureFormat::Stencil8,
       depth_write_enabled: false,
-      depth_compare:       wgpu::CompareFunction::Always,
-      stencil:             wgpu::StencilState {
-        front:      wgpu::StencilFaceState {
-          compare:       wgpu::CompareFunction::Equal, // Only render where stencil == 0
-          fail_op:       wgpu::StencilOperation::Keep,
+      depth_compare: wgpu::CompareFunction::Always,
+      stencil: wgpu::StencilState {
+        front: wgpu::StencilFaceState {
+          compare: wgpu::CompareFunction::Equal, // Only render where stencil == 0
+          fail_op: wgpu::StencilOperation::Keep,
           depth_fail_op: wgpu::StencilOperation::Keep,
-          pass_op:       wgpu::StencilOperation::Keep,
+          pass_op: wgpu::StencilOperation::Keep,
         },
-        back:       wgpu::StencilFaceState {
-          compare:       wgpu::CompareFunction::Equal, // Only render where stencil == 0
-          fail_op:       wgpu::StencilOperation::Keep,
+        back: wgpu::StencilFaceState {
+          compare: wgpu::CompareFunction::Equal, // Only render where stencil == 0
+          fail_op: wgpu::StencilOperation::Keep,
           depth_fail_op: wgpu::StencilOperation::Keep,
-          pass_op:       wgpu::StencilOperation::Keep,
+          pass_op: wgpu::StencilOperation::Keep,
         },
-        read_mask:  0xFF,
+        read_mask: 0xFF,
         write_mask: 0x00, // Don't write to stencil, only read
       },
-      bias:                wgpu::DepthBiasState::default(),
+      bias: wgpu::DepthBiasState::default(),
     };
 
     let text_renderer = TextRenderer::new(
@@ -920,25 +890,28 @@ impl Renderer {
       None, // No stencil masking for overlay text
     );
 
-    viewport.update(&queue, Resolution {
-      width:  config.width,
-      height: config.height,
-    });
+    viewport.update(
+      &queue,
+      Resolution {
+        width: config.width,
+        height: config.height,
+      },
+    );
 
     // Create stencil buffer for masking regions
     let stencil_texture = device.create_texture(&wgpu::TextureDescriptor {
-      label:           Some("Stencil Texture"),
-      size:            wgpu::Extent3d {
-        width:                 config.width.max(1),
-        height:                config.height.max(1),
+      label: Some("Stencil Texture"),
+      size: wgpu::Extent3d {
+        width: config.width.max(1),
+        height: config.height.max(1),
         depth_or_array_layers: 1,
       },
       mip_level_count: 1,
-      sample_count:    1,
-      dimension:       wgpu::TextureDimension::D2,
-      format:          wgpu::TextureFormat::Stencil8,
-      usage:           wgpu::TextureUsages::RENDER_ATTACHMENT,
-      view_formats:    &[],
+      sample_count: 1,
+      dimension: wgpu::TextureDimension::D2,
+      format: wgpu::TextureFormat::Stencil8,
+      usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+      view_formats: &[],
     });
     let stencil_view = stencil_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -997,6 +970,7 @@ impl Renderer {
       mask_instance_capacity: 0,
       font_family: default_family,
       font_size: 16.0,
+      scale_factor,
       cell_width: 8.0,
       cell_height: 16.0,
       line_top_offset: 0.0,
@@ -1017,9 +991,9 @@ impl Renderer {
       intermediate_texture_2: None,
       intermediate_view_2: None,
       powerline_atlas: PowerlineAtlas {
-        textures:   std::collections::HashMap::new(),
-        views:      std::collections::HashMap::new(),
-        sampler:    temp_powerline_sampler,
+        textures: std::collections::HashMap::new(),
+        views: std::collections::HashMap::new(),
+        sampler: temp_powerline_sampler,
         bind_group: None,
       },
       svg_icon_cache: crate::svg_icon::SvgIconCache::new(),
@@ -1046,7 +1020,9 @@ impl Renderer {
   }
 
   fn recalculate_metrics(&mut self) {
-    let metrics = Metrics::new(self.font_size, self.font_size * LINE_HEIGHT_FACTOR);
+    // Apply scale factor to font size for proper HiDPI rendering
+    let scaled_font_size = self.font_size * self.scale_factor as f32;
+    let metrics = Metrics::new(scaled_font_size, scaled_font_size * LINE_HEIGHT_FACTOR);
     let mut buffer = Buffer::new(&mut self.font_system, metrics);
     buffer.set_wrap(&mut self.font_system, Wrap::None);
 
@@ -1071,11 +1047,11 @@ impl Renderer {
       };
 
       self.cell_width = advance_width.max(1.0);
-      self.cell_height = run.line_height.max(self.font_size);
+      self.cell_height = run.line_height.max(scaled_font_size);
       self.line_top_offset = run.line_top;
     } else {
-      self.cell_height = self.font_size * LINE_HEIGHT_FACTOR;
-      self.cell_width = (self.font_size * 0.6).max(1.0);
+      self.cell_height = scaled_font_size * LINE_HEIGHT_FACTOR;
+      self.cell_width = (scaled_font_size * 0.6).max(1.0);
       self.line_top_offset = 0.0;
     }
   }
@@ -1088,6 +1064,20 @@ impl Renderer {
       self.size = new_size;
       self.pending_resize = Some(new_size);
     }
+  }
+
+  /// Update the display scale factor (e.g., when window moves to a different monitor)
+  pub fn set_scale_factor(&mut self, scale_factor: f64) {
+    if (self.scale_factor - scale_factor).abs() < f64::EPSILON {
+      return;
+    }
+    self.scale_factor = scale_factor;
+    self.recalculate_metrics();
+  }
+
+  /// Get the current scale factor
+  pub fn scale_factor(&self) -> f64 {
+    self.scale_factor
   }
 
   /// Update viewport dimensions. Returns true if the size changed.
@@ -1107,25 +1097,28 @@ impl Renderer {
       self.config.width = new_size.width.max(1);
       self.config.height = new_size.height.max(1);
       self.surface.configure(&self.device, &self.config);
-      self.viewport.update(&self.queue, Resolution {
-        width:  self.config.width,
-        height: self.config.height,
-      });
+      self.viewport.update(
+        &self.queue,
+        Resolution {
+          width: self.config.width,
+          height: self.config.height,
+        },
+      );
 
       // Recreate stencil texture for new size
       self.stencil_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-        label:           Some("Stencil Texture"),
-        size:            wgpu::Extent3d {
-          width:                 self.config.width,
-          height:                self.config.height,
+        label: Some("Stencil Texture"),
+        size: wgpu::Extent3d {
+          width: self.config.width,
+          height: self.config.height,
           depth_or_array_layers: 1,
         },
         mip_level_count: 1,
-        sample_count:    1,
-        dimension:       wgpu::TextureDimension::D2,
-        format:          wgpu::TextureFormat::Stencil8,
-        usage:           wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats:    &[],
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Stencil8,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
       });
       self.stencil_view = self
         .stencil_texture
@@ -1227,25 +1220,25 @@ impl Renderer {
     // Clear background and stencil buffer
     {
       let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label:                    Some("Clear Pass"),
-        color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
-          view:           &view,
+        label: Some("Clear Pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: &view,
           resolve_target: None,
-          ops:            wgpu::Operations {
-            load:  wgpu::LoadOp::Clear(linear_clear_color(self.background_color)),
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Clear(linear_clear_color(self.background_color)),
             store: wgpu::StoreOp::Store,
           },
         })],
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-          view:        &self.stencil_view,
-          depth_ops:   None,
+          view: &self.stencil_view,
+          depth_ops: None,
           stencil_ops: Some(wgpu::Operations {
-            load:  wgpu::LoadOp::Clear(0), // Clear stencil to 0
+            load: wgpu::LoadOp::Clear(0), // Clear stencil to 0
             store: wgpu::StoreOp::Store,
           }),
         }),
-        timestamp_writes:         None,
-        occlusion_query_set:      None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
       });
     }
 
@@ -1263,25 +1256,25 @@ impl Renderer {
       );
 
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label:                    Some("Rectangle Render Pass"),
-        color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
-          view:           &view,
+        label: Some("Rectangle Render Pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: &view,
           resolve_target: None,
-          ops:            wgpu::Operations {
-            load:  wgpu::LoadOp::Load,
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Load,
             store: wgpu::StoreOp::Store,
           },
         })],
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-          view:        &self.stencil_view,
-          depth_ops:   None,
+          view: &self.stencil_view,
+          depth_ops: None,
           stencil_ops: Some(wgpu::Operations {
-            load:  wgpu::LoadOp::Load,
+            load: wgpu::LoadOp::Load,
             store: wgpu::StoreOp::Store,
           }),
         }),
-        timestamp_writes:         None,
-        occlusion_query_set:      None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
       });
 
       pass.set_pipeline(&self.rect_render_pipeline);
@@ -1300,16 +1293,16 @@ impl Renderer {
         .iter()
         .map(|(mask_x, mask_y, mask_width, mask_height)| {
           RectInstance {
-            position:      [*mask_x, *mask_y],
-            size:          [*mask_width, *mask_height],
-            color:         [0.0, 0.0, 0.0, 0.0], // Invisible, we're only writing to stencil
+            position: [*mask_x, *mask_y],
+            size: [*mask_width, *mask_height],
+            color: [0.0, 0.0, 0.0, 0.0], // Invisible, we're only writing to stencil
             corner_radius: 0.0,
-            _pad0:         [0.0, 0.0],
-            glow_center:   [0.0, 0.0],
-            glow_radius:   0.0,
-            effect_kind:   0.0,
-            effect_time:   0.0,
-            _pad1:         [0.0, 0.0, 0.0],
+            _pad0: [0.0, 0.0],
+            glow_center: [0.0, 0.0],
+            glow_radius: 0.0,
+            effect_kind: 0.0,
+            effect_time: 0.0,
+            _pad1: [0.0, 0.0, 0.0],
           }
         })
         .collect();
@@ -1325,25 +1318,25 @@ impl Renderer {
 
       // Render pass that writes to stencil
       let mut mask_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label:                    Some("Stencil Write Pass"),
-        color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
-          view:           &view,
+        label: Some("Stencil Write Pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: &view,
           resolve_target: None,
-          ops:            wgpu::Operations {
-            load:  wgpu::LoadOp::Load,
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Load,
             store: wgpu::StoreOp::Store,
           },
         })],
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-          view:        &self.stencil_view,
-          depth_ops:   None,
+          view: &self.stencil_view,
+          depth_ops: None,
           stencil_ops: Some(wgpu::Operations {
-            load:  wgpu::LoadOp::Load,
+            load: wgpu::LoadOp::Load,
             store: wgpu::StoreOp::Store,
           }),
         }),
-        timestamp_writes:         None,
-        occlusion_query_set:      None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
       });
 
       mask_pass.set_pipeline(&self.rect_render_pipeline);
@@ -1360,37 +1353,37 @@ impl Renderer {
       for cmd in self.image_draw_commands.drain(..) {
         // Create texture for this image
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-          label:           Some("Image Texture"),
-          size:            wgpu::Extent3d {
-            width:                 cmd.width,
-            height:                cmd.height,
+          label: Some("Image Texture"),
+          size: wgpu::Extent3d {
+            width: cmd.width,
+            height: cmd.height,
             depth_or_array_layers: 1,
           },
           mip_level_count: 1,
-          sample_count:    1,
-          dimension:       wgpu::TextureDimension::D2,
-          format:          wgpu::TextureFormat::Rgba8UnormSrgb,
-          usage:           wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-          view_formats:    &[],
+          sample_count: 1,
+          dimension: wgpu::TextureDimension::D2,
+          format: wgpu::TextureFormat::Rgba8UnormSrgb,
+          usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+          view_formats: &[],
         });
 
         // Upload pixel data
         self.queue.write_texture(
           wgpu::TexelCopyTextureInfo {
-            texture:   &texture,
+            texture: &texture,
             mip_level: 0,
-            origin:    wgpu::Origin3d::ZERO,
-            aspect:    wgpu::TextureAspect::All,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
           },
           &cmd.pixels,
           wgpu::TexelCopyBufferLayout {
-            offset:         0,
-            bytes_per_row:  Some(4 * cmd.width),
+            offset: 0,
+            bytes_per_row: Some(4 * cmd.width),
             rows_per_image: Some(cmd.height),
           },
           wgpu::Extent3d {
-            width:                 cmd.width,
-            height:                cmd.height,
+            width: cmd.width,
+            height: cmd.height,
             depth_or_array_layers: 1,
           },
         );
@@ -1399,11 +1392,11 @@ impl Renderer {
 
         // Update uniforms
         let uniforms = ImageUniforms {
-          screen_size:   [self.config.width as f32, self.config.height as f32],
+          screen_size: [self.config.width as f32, self.config.height as f32],
           rect_position: [cmd.x, cmd.y],
-          rect_size:     [cmd.draw_width, cmd.draw_height],
-          alpha:         cmd.alpha,
-          _pad:          0.0,
+          rect_size: [cmd.draw_width, cmd.draw_height],
+          alpha: cmd.alpha,
+          _pad: 0.0,
         };
         self
           .queue
@@ -1411,19 +1404,19 @@ impl Renderer {
 
         // Create bind group for this image
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-          label:   Some("Image Bind Group"),
-          layout:  &self.image_bind_group_layout,
+          label: Some("Image Bind Group"),
+          layout: &self.image_bind_group_layout,
           entries: &[
             wgpu::BindGroupEntry {
-              binding:  0,
+              binding: 0,
               resource: self.image_uniform_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
-              binding:  1,
+              binding: 1,
               resource: wgpu::BindingResource::TextureView(&texture_view),
             },
             wgpu::BindGroupEntry {
-              binding:  2,
+              binding: 2,
               resource: wgpu::BindingResource::Sampler(&self.image_sampler),
             },
           ],
@@ -1431,18 +1424,18 @@ impl Renderer {
 
         // Render the image
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-          label:                    Some("Image Render Pass"),
-          color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
-            view:           &view,
+          label: Some("Image Render Pass"),
+          color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: &view,
             resolve_target: None,
-            ops:            wgpu::Operations {
-              load:  wgpu::LoadOp::Load,
+            ops: wgpu::Operations {
+              load: wgpu::LoadOp::Load,
               store: wgpu::StoreOp::Store,
             },
           })],
           depth_stencil_attachment: None,
-          timestamp_writes:         None,
-          occlusion_query_set:      None,
+          timestamp_writes: None,
+          occlusion_query_set: None,
         });
 
         pass.set_pipeline(&self.image_render_pipeline);
@@ -1487,9 +1480,9 @@ impl Renderer {
               // Use scissor rect as bounds if one was active, otherwise use full screen
               let bounds = if let Some((sx, sy, sw, sh)) = command.scissor_rect {
                 TextBounds {
-                  left:   sx as i32,
-                  top:    sy as i32,
-                  right:  (sx + sw) as i32,
+                  left: sx as i32,
+                  top: sy as i32,
+                  right: (sx + sw) as i32,
                   bottom: (sy + sh) as i32,
                 }
               } else {
@@ -1546,26 +1539,26 @@ impl Renderer {
 
       // Always attach stencil buffer (text renderer pipeline expects it)
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label:                    Some("Text Render Pass"),
-        color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
-          view:           &view,
+        label: Some("Text Render Pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: &view,
           resolve_target: None,
-          ops:            wgpu::Operations {
-            load:  wgpu::LoadOp::Load,
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Load,
             store: wgpu::StoreOp::Store,
           },
         })],
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-          view:        &self.stencil_view,
-          depth_ops:   None,
+          view: &self.stencil_view,
+          depth_ops: None,
           stencil_ops: Some(wgpu::Operations {
-            load:  wgpu::LoadOp::Load, /* Load existing stencil values (will be 0 without mask,
-                                        * 1 in mask area) */
+            load: wgpu::LoadOp::Load, /* Load existing stencil values (will be 0 without mask,
+                                       * 1 in mask area) */
             store: wgpu::StoreOp::Store,
           }),
         }),
-        timestamp_writes:         None,
-        occlusion_query_set:      None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
       });
 
       // Set stencil reference to 0 (text renders where stencil == 0, i.e., not in
@@ -1614,9 +1607,9 @@ impl Renderer {
               // Use scissor rect as bounds if one was active, otherwise use full screen
               let bounds = if let Some((sx, sy, sw, sh)) = command.scissor_rect {
                 TextBounds {
-                  left:   sx as i32,
-                  top:    sy as i32,
-                  right:  (sx + sw) as i32,
+                  left: sx as i32,
+                  top: sy as i32,
+                  right: (sx + sw) as i32,
                   bottom: (sy + sh) as i32,
                 }
               } else {
@@ -1674,18 +1667,18 @@ impl Renderer {
       // Render overlay text without stencil (overlay text renderer has no stencil
       // configured)
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label:                    Some("Overlay Text Render Pass"),
-        color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
-          view:           &view,
+        label: Some("Overlay Text Render Pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: &view,
           resolve_target: None,
-          ops:            wgpu::Operations {
-            load:  wgpu::LoadOp::Load,
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Load,
             store: wgpu::StoreOp::Store,
           },
         })],
         depth_stencil_attachment: None, // No stencil for overlay text
-        timestamp_writes:         None,
-        occlusion_query_set:      None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
       });
 
       self
@@ -1699,20 +1692,20 @@ impl Renderer {
     if let Some(dest_texture) = self.intermediate_texture_1.as_ref() {
       encoder.copy_texture_to_texture(
         wgpu::TexelCopyTextureInfo {
-          texture:   &output.texture,
+          texture: &output.texture,
           mip_level: 0,
-          origin:    wgpu::Origin3d::ZERO,
-          aspect:    wgpu::TextureAspect::All,
+          origin: wgpu::Origin3d::ZERO,
+          aspect: wgpu::TextureAspect::All,
         },
         wgpu::TexelCopyTextureInfo {
-          texture:   dest_texture,
+          texture: dest_texture,
           mip_level: 0,
-          origin:    wgpu::Origin3d::ZERO,
-          aspect:    wgpu::TextureAspect::All,
+          origin: wgpu::Origin3d::ZERO,
+          aspect: wgpu::TextureAspect::All,
         },
         wgpu::Extent3d {
-          width:                 self.config.width,
-          height:                self.config.height,
+          width: self.config.width,
+          height: self.config.height,
           depth_or_array_layers: 1,
         },
       );
@@ -1810,9 +1803,9 @@ impl Renderer {
   pub fn draw_decoration_grapheme(&mut self, grapheme: &str, color: Color, x: f32, y: f32) {
     self.draw_text(TextSection {
       position: (x, y),
-      texts:    vec![TextSegment {
+      texts: vec![TextSegment {
         content: grapheme.to_string(),
-        style:   TextStyle {
+        style: TextStyle {
           size: self.font_size,
           color,
         },
@@ -1844,22 +1837,25 @@ impl Renderer {
     // Get first color for cache key
     let first_color = section.texts[0].style.color;
 
+    // Apply scale factor to font size for proper HiDPI text rendering
+    let scaled_font_size = self.font_size * self.scale_factor as f32;
+
     // Create cache key (position-independent for better cache reuse)
+    // Use scaled font size in cache key so cache invalidates on scale factor change
     let cache_key = crate::text_cache::ShapedTextKey {
-      text:    full_text.clone(),
+      text: full_text.clone(),
       metrics: (
-        (self.font_size * 100.0) as u32,
+        (scaled_font_size * 100.0) as u32,
         (self.cell_height * 100.0) as u32,
       ),
-      color:   [
+      color: [
         (first_color.r * 255.0) as u8,
         (first_color.g * 255.0) as u8,
         (first_color.b * 255.0) as u8,
         (first_color.a * 255.0) as u8,
       ],
     };
-
-    let base_metrics = Metrics::new(self.font_size, self.cell_height);
+    let base_metrics = Metrics::new(scaled_font_size, self.cell_height);
 
     // Check if we already have this text shaped in cache
     if !self.shaped_text_cache.entries.contains_key(&cache_key) {
@@ -1891,8 +1887,9 @@ impl Renderer {
         cursor += segment.content.len();
 
         // Use consistent cell_height for all segments to prevent accumulated
-        // positioning errors
-        let seg_metrics = Metrics::new(segment.style.size, self.cell_height);
+        // positioning errors. Scale segment font size by scale_factor for HiDPI.
+        let scaled_segment_size = segment.style.size * self.scale_factor as f32;
+        let seg_metrics = Metrics::new(scaled_segment_size, self.cell_height);
         let attrs = Attrs::new()
           .family(Family::Name(family.as_str()))
           .metrics(seg_metrics)
@@ -1942,9 +1939,9 @@ impl Renderer {
 
     // Store the command with cache key for deferred rendering
     let bounds = TextBounds {
-      left:   0,
-      top:    0,
-      right:  self.config.width as i32,
+      left: 0,
+      top: 0,
+      right: self.config.width as i32,
       bottom: self.config.height as i32,
     };
 
@@ -1966,16 +1963,16 @@ impl Renderer {
   /// Draw a rectangle at the specified position with the given size and color
   pub fn draw_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: Color) {
     self.rect_instances.push(RectInstance {
-      position:      [x, y],
-      size:          [width, height],
-      color:         color_to_linear(color),
+      position: [x, y],
+      size: [width, height],
+      color: color_to_linear(color),
       corner_radius: 0.0,
-      _pad0:         [0.0, 0.0],
-      glow_center:   [0.0, 0.0],
-      glow_radius:   0.0,
-      effect_kind:   0.0,
-      effect_time:   0.0,
-      _pad1:         [0.0, 0.0, 0.0],
+      _pad0: [0.0, 0.0],
+      glow_center: [0.0, 0.0],
+      glow_radius: 0.0,
+      effect_kind: 0.0,
+      effect_time: 0.0,
+      _pad1: [0.0, 0.0, 0.0],
     });
   }
 
@@ -2013,16 +2010,16 @@ impl Renderer {
     color: Color,
   ) {
     self.rect_instances.push(RectInstance {
-      position:      [x, y],
-      size:          [width, height],
-      color:         color_to_linear(color),
+      position: [x, y],
+      size: [width, height],
+      color: color_to_linear(color),
       corner_radius: 0.0,
-      _pad0:         [0.0, 0.0],
-      glow_center:   [0.0, 0.0],
-      glow_radius:   0.0,
-      effect_kind:   6.0, // Horizontal gradient
-      effect_time:   0.0,
-      _pad1:         [0.0, 0.0, 0.0],
+      _pad0: [0.0, 0.0],
+      glow_center: [0.0, 0.0],
+      glow_radius: 0.0,
+      effect_kind: 6.0, // Horizontal gradient
+      effect_time: 0.0,
+      _pad1: [0.0, 0.0, 0.0],
     });
   }
 
@@ -2307,9 +2304,9 @@ impl Renderer {
   /// Save the current font state for later restoration
   pub fn save_font_state(&self) -> FontState {
     FontState {
-      family:      self.font_family.clone(),
-      size:        self.font_size,
-      cell_width:  self.cell_width,
+      family: self.font_family.clone(),
+      size: self.font_size,
+      cell_width: self.cell_width,
       cell_height: self.cell_height,
     }
   }
@@ -2372,12 +2369,15 @@ impl Renderer {
 
   /// Measure the width of the given text at the specified font size.
   /// Returns the actual rendered width in pixels.
+  /// Note: font_size is expected to be a logical size; it will be scaled by scale_factor.
   pub fn measure_text(&mut self, text: &str, font_size: f32) -> f32 {
     if text.is_empty() {
       return 0.0;
     }
 
-    let metrics = Metrics::new(font_size, font_size * LINE_HEIGHT_FACTOR);
+    // Scale font size for proper HiDPI text measurement
+    let scaled_font_size = font_size * self.scale_factor as f32;
+    let metrics = Metrics::new(scaled_font_size, scaled_font_size * LINE_HEIGHT_FACTOR);
 
     // Get a buffer from the pool or create a new one
     let mut buffer = if let Some(mut pooled) = self.buffer_pool.buffers.pop() {
@@ -2387,7 +2387,11 @@ impl Renderer {
       Buffer::new(&mut self.font_system, metrics)
     };
 
-    buffer.set_size(&mut self.font_system, Some(f32::MAX), Some(font_size * 2.0));
+    buffer.set_size(
+      &mut self.font_system,
+      Some(f32::MAX),
+      Some(scaled_font_size * 2.0),
+    );
     buffer.set_wrap(&mut self.font_system, Wrap::None);
 
     let attrs = Attrs::new()
@@ -2510,20 +2514,20 @@ impl Renderer {
     if needs_recreate {
       // Create two intermediate textures for ping-pong blur
       let texture_desc = wgpu::TextureDescriptor {
-        label:           Some("Intermediate Blur Texture 1"),
-        size:            wgpu::Extent3d {
+        label: Some("Intermediate Blur Texture 1"),
+        size: wgpu::Extent3d {
           width,
           height,
           depth_or_array_layers: 1,
         },
         mip_level_count: 1,
-        sample_count:    1,
-        dimension:       wgpu::TextureDimension::D2,
-        format:          self.config.format,
-        usage:           wgpu::TextureUsages::RENDER_ATTACHMENT
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: self.config.format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
           | wgpu::TextureUsages::TEXTURE_BINDING
           | wgpu::TextureUsages::COPY_DST,
-        view_formats:    &[],
+        view_formats: &[],
       };
 
       let texture_1 = self.device.create_texture(&texture_desc);
@@ -2577,18 +2581,18 @@ impl Renderer {
       let instance_buffer = self.rect_instance_buffer.as_ref().unwrap();
 
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label:                    Some("Pre-blur Rectangle Pass"),
-        color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
+        label: Some("Pre-blur Rectangle Pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
           view,
           resolve_target: None,
           ops: wgpu::Operations {
-            load:  wgpu::LoadOp::Load,
+            load: wgpu::LoadOp::Load,
             store: wgpu::StoreOp::Store,
           },
         })],
         depth_stencil_attachment: None,
-        timestamp_writes:         None,
-        occlusion_query_set:      None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
       });
 
       pass.set_pipeline(&self.rect_render_pipeline);
@@ -2644,19 +2648,19 @@ impl Renderer {
     // First pass: Horizontal blur (texture 1 -> texture 2)
     {
       let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label:   Some("Blur Horizontal Bind Group"),
-        layout:  &self.blur_bind_group_layout,
+        label: Some("Blur Horizontal Bind Group"),
+        layout: &self.blur_bind_group_layout,
         entries: &[
           wgpu::BindGroupEntry {
-            binding:  0,
+            binding: 0,
             resource: wgpu::BindingResource::TextureView(intermediate_view_1),
           },
           wgpu::BindGroupEntry {
-            binding:  1,
+            binding: 1,
             resource: wgpu::BindingResource::Sampler(&self.blur_sampler),
           },
           wgpu::BindGroupEntry {
-            binding:  2,
+            binding: 2,
             resource: self.blur_uniform_buffer.as_entire_binding(),
           },
         ],
@@ -2673,18 +2677,18 @@ impl Renderer {
       );
 
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label:                    Some("Blur Horizontal Pass"),
-        color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
-          view:           intermediate_view_2,
+        label: Some("Blur Horizontal Pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: intermediate_view_2,
           resolve_target: None,
-          ops:            wgpu::Operations {
-            load:  wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
             store: wgpu::StoreOp::Store,
           },
         })],
         depth_stencil_attachment: None,
-        timestamp_writes:         None,
-        occlusion_query_set:      None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
       });
 
       pass.set_pipeline(&self.blur_pipeline);
@@ -2696,19 +2700,19 @@ impl Renderer {
     // Second pass: Vertical blur (texture 2 -> current view, clipped to rect)
     {
       let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label:   Some("Blur Vertical Bind Group"),
-        layout:  &self.blur_bind_group_layout,
+        label: Some("Blur Vertical Bind Group"),
+        layout: &self.blur_bind_group_layout,
         entries: &[
           wgpu::BindGroupEntry {
-            binding:  0,
+            binding: 0,
             resource: wgpu::BindingResource::TextureView(intermediate_view_2),
           },
           wgpu::BindGroupEntry {
-            binding:  1,
+            binding: 1,
             resource: wgpu::BindingResource::Sampler(&self.blur_sampler),
           },
           wgpu::BindGroupEntry {
-            binding:  2,
+            binding: 2,
             resource: self.blur_uniform_buffer.as_entire_binding(),
           },
         ],
@@ -2725,18 +2729,18 @@ impl Renderer {
       );
 
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label:                    Some("Blur Vertical Pass"),
-        color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
-          view:           current_view,
+        label: Some("Blur Vertical Pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: current_view,
           resolve_target: None,
-          ops:            wgpu::Operations {
-            load:  wgpu::LoadOp::Load, // Preserve existing content
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Load, // Preserve existing content
             store: wgpu::StoreOp::Store,
           },
         })],
         depth_stencil_attachment: None,
-        timestamp_writes:         None,
-        occlusion_query_set:      None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
       });
 
       pass.set_pipeline(&self.blur_pipeline);
@@ -2761,9 +2765,9 @@ impl Renderer {
       let buffer_size = (new_capacity * std::mem::size_of::<RectInstance>()) as u64;
 
       self.rect_instance_buffer = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
-        label:              Some("Rect Instance Buffer"),
-        size:               buffer_size,
-        usage:              wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        label: Some("Rect Instance Buffer"),
+        size: buffer_size,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
       }));
       self.rect_instance_capacity = new_capacity;
@@ -2779,9 +2783,9 @@ impl Renderer {
       let buffer_size = (new_capacity * std::mem::size_of::<RectInstance>()) as u64;
 
       self.mask_instance_buffer = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
-        label:              Some("Mask Instance Buffer"),
-        size:               buffer_size,
-        usage:              wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        label: Some("Mask Instance Buffer"),
+        size: buffer_size,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
       }));
       self.mask_instance_capacity = new_capacity;

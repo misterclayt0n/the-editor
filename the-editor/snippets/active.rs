@@ -1,42 +1,29 @@
-use std::ops::{
-  Index,
-  IndexMut,
-};
+use std::ops::{Index, IndexMut};
 
 use foldhash::HashSet;
 use ropey::Rope;
 use the_editor_stdx::{
   Range,
-  range::{
-    is_exact_subset,
-    is_subset,
-  },
+  range::{is_exact_subset, is_subset},
 };
 
 use crate::{
   core::{
     movement::Direction,
     selection::Selection,
-    transaction::{
-      Assoc,
-      ChangeSet,
-      Transaction,
-    },
+    transaction::{Assoc, ChangeSet, Transaction},
   },
   snippets::{
     TabstopIdx,
-    render::{
-      RenderedSnippet,
-      Tabstop,
-    },
+    render::{RenderedSnippet, Tabstop},
   },
 };
 
 pub struct ActiveSnippet {
-  ranges:          Vec<Range>,
+  ranges: Vec<Range>,
   active_tabstops: HashSet<TabstopIdx>,
   current_tabstop: TabstopIdx,
-  tabstops:        Vec<Tabstop>,
+  tabstops: Vec<Tabstop>,
 }
 
 impl Index<TabstopIdx> for ActiveSnippet {
@@ -55,8 +42,8 @@ impl IndexMut<TabstopIdx> for ActiveSnippet {
 impl ActiveSnippet {
   pub fn new(snippet: RenderedSnippet) -> Option<Self> {
     let snippet = Self {
-      ranges:          snippet.ranges,
-      tabstops:        snippet.tabstops,
+      ranges: snippet.ranges,
+      tabstops: snippet.tabstops,
       active_tabstops: HashSet::default(),
       current_tabstop: TabstopIdx(0),
     };
@@ -251,22 +238,13 @@ impl ActiveSnippet {
 
 #[cfg(test)]
 mod tests {
-  use std::iter::{
-    self,
-  };
+  use std::iter::{self};
 
   use ropey::Rope;
 
   use crate::{
-    core::{
-      selection::Selection,
-      transaction::Transaction,
-    },
-    snippets::{
-      active::ActiveSnippet,
-      elaborate::Snippet,
-      render::SnippetRenderCtx,
-    },
+    core::{selection::Selection, transaction::Transaction},
+    snippets::{active::ActiveSnippet, elaborate::Snippet, render::SnippetRenderCtx},
   };
 
   #[test]

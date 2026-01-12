@@ -9,7 +9,8 @@ mod event;
 mod renderer;
 mod terminal;
 
-#[cfg(test)] mod test_utils;
+#[cfg(test)]
+mod test_utils;
 
 use std::num::NonZeroUsize;
 
@@ -19,16 +20,8 @@ pub use alacritty_terminal::selection::SelectionType;
 pub use alacritty_terminal::vi_mode::ViMotion;
 pub use config::TerminalConfig;
 pub use event::TerminalEvent;
-pub use renderer::{
-  ColorScheme,
-  CursorInfo,
-  CursorShape,
-  RenderCell,
-};
-pub use terminal::{
-  Terminal,
-  TerminalPickerInfo,
-};
+pub use renderer::{ColorScheme, CursorInfo, CursorShape, RenderCell};
+pub use terminal::{Terminal, TerminalPickerInfo};
 
 /// Unique identifier for a terminal instance.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]

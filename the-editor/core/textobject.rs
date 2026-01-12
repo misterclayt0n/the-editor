@@ -3,30 +3,17 @@ use std::fmt::Display;
 use ropey::RopeSlice;
 
 use crate::core::{
-  chars::{
-    CharCategory,
-    categorize_char,
-    char_is_whitespace,
-  },
-  grapheme::{
-    next_grapheme_boundary,
-    prev_grapheme_boundary,
-  },
+  chars::{CharCategory, categorize_char, char_is_whitespace},
+  grapheme::{next_grapheme_boundary, prev_grapheme_boundary},
   line_ending::rope_is_line_ending,
   movement::Direction,
   selection::Range,
   surround,
-  syntax::{
-    self,
-    Syntax,
-  },
+  syntax::{self, Syntax},
 };
 
 fn find_word_boundary(slice: RopeSlice, mut pos: usize, direction: Direction, long: bool) -> usize {
-  use CharCategory::{
-    Eol,
-    Whitespace,
-  };
+  use CharCategory::{Eol, Whitespace};
 
   let iter = match direction {
     Direction::Forward => slice.chars_at(pos),
@@ -246,24 +233,22 @@ fn textobject_pair_surround_impl(
     None => surround::find_nth_closest_pairs_pos(syntax, slice, range, count),
   };
   pair_pos
-    .map(|(anchor, head)| {
-      match textobject {
-        TextObject::Inside => {
-          if anchor < head {
-            Range::new(next_grapheme_boundary(slice, anchor), head)
-          } else {
-            Range::new(anchor, next_grapheme_boundary(slice, head))
-          }
-        },
-        TextObject::Around => {
-          if anchor < head {
-            Range::new(anchor, next_grapheme_boundary(slice, head))
-          } else {
-            Range::new(next_grapheme_boundary(slice, anchor), head)
-          }
-        },
-        TextObject::Movement => unreachable!(),
-      }
+    .map(|(anchor, head)| match textobject {
+      TextObject::Inside => {
+        if anchor < head {
+          Range::new(next_grapheme_boundary(slice, anchor), head)
+        } else {
+          Range::new(anchor, next_grapheme_boundary(slice, head))
+        }
+      },
+      TextObject::Around => {
+        if anchor < head {
+          Range::new(anchor, next_grapheme_boundary(slice, head))
+        } else {
+          Range::new(next_grapheme_boundary(slice, anchor), head)
+        }
+      },
+      TextObject::Movement => unreachable!(),
     })
     .unwrap_or(range)
 }
@@ -310,88 +295,103 @@ pub fn textobject_treesitter(
 mod test {
   use ropey::Rope;
 
-  use super::{
-    TextObject::*,
-    *,
-  };
+  use super::{TextObject::*, *};
   use crate::core::selection::Range;
 
   #[test]
   fn test_textobject_word() {
     // (text, [(char position, textobject, final range), ...])
     let tests = &[
-      ("cursor at beginning of doc", vec![
-        (0, Inside, (0, 6)),
-        (0, Around, (0, 7)),
-      ]),
-      ("cursor at middle of word", vec![
-        (13, Inside, (10, 16)),
-        (10, Inside, (10, 16)),
-        (15, Inside, (10, 16)),
-        (13, Around, (10, 17)),
-        (10, Around, (10, 17)),
-        (15, Around, (10, 17)),
-      ]),
-      ("cursor between word whitespace", vec![
-        (6, Inside, (6, 6)),
-        (6, Around, (6, 6)),
-      ]),
-      ("cursor on word before newline\n", vec![
-        (22, Inside, (22, 29)),
-        (28, Inside, (22, 29)),
-        (25, Inside, (22, 29)),
-        (22, Around, (21, 29)),
-        (28, Around, (21, 29)),
-        (25, Around, (21, 29)),
-      ]),
-      ("cursor on newline\nnext line", vec![
-        (17, Inside, (17, 17)),
-        (17, Around, (17, 17)),
-      ]),
-      ("cursor on word after newline\nnext line", vec![
-        (29, Inside, (29, 33)),
-        (30, Inside, (29, 33)),
-        (32, Inside, (29, 33)),
-        (29, Around, (29, 34)),
-        (30, Around, (29, 34)),
-        (32, Around, (29, 34)),
-      ]),
-      ("cursor on #$%:;* punctuation", vec![
-        (13, Inside, (10, 16)),
-        (10, Inside, (10, 16)),
-        (15, Inside, (10, 16)),
-        (13, Around, (10, 17)),
-        (10, Around, (10, 17)),
-        (15, Around, (10, 17)),
-      ]),
-      ("cursor on punc%^#$:;.tuation", vec![
-        (14, Inside, (14, 21)),
-        (20, Inside, (14, 21)),
-        (17, Inside, (14, 21)),
-        (14, Around, (14, 21)),
-        (20, Around, (14, 21)),
-        (17, Around, (14, 21)),
-      ]),
-      ("cursor in   extra whitespace", vec![
-        (9, Inside, (9, 9)),
-        (10, Inside, (10, 10)),
-        (11, Inside, (11, 11)),
-        (9, Around, (9, 9)),
-        (10, Around, (10, 10)),
-        (11, Around, (11, 11)),
-      ]),
-      ("cursor on word   with extra whitespace", vec![
-        (11, Inside, (10, 14)),
-        (11, Around, (10, 17)),
-      ]),
-      ("cursor at end with extra   whitespace", vec![
-        (28, Inside, (27, 37)),
-        (28, Around, (24, 37)),
-      ]),
-      ("cursor at end of doc", vec![
-        (19, Inside, (17, 20)),
-        (19, Around, (16, 20)),
-      ]),
+      (
+        "cursor at beginning of doc",
+        vec![(0, Inside, (0, 6)), (0, Around, (0, 7))],
+      ),
+      (
+        "cursor at middle of word",
+        vec![
+          (13, Inside, (10, 16)),
+          (10, Inside, (10, 16)),
+          (15, Inside, (10, 16)),
+          (13, Around, (10, 17)),
+          (10, Around, (10, 17)),
+          (15, Around, (10, 17)),
+        ],
+      ),
+      (
+        "cursor between word whitespace",
+        vec![(6, Inside, (6, 6)), (6, Around, (6, 6))],
+      ),
+      (
+        "cursor on word before newline\n",
+        vec![
+          (22, Inside, (22, 29)),
+          (28, Inside, (22, 29)),
+          (25, Inside, (22, 29)),
+          (22, Around, (21, 29)),
+          (28, Around, (21, 29)),
+          (25, Around, (21, 29)),
+        ],
+      ),
+      (
+        "cursor on newline\nnext line",
+        vec![(17, Inside, (17, 17)), (17, Around, (17, 17))],
+      ),
+      (
+        "cursor on word after newline\nnext line",
+        vec![
+          (29, Inside, (29, 33)),
+          (30, Inside, (29, 33)),
+          (32, Inside, (29, 33)),
+          (29, Around, (29, 34)),
+          (30, Around, (29, 34)),
+          (32, Around, (29, 34)),
+        ],
+      ),
+      (
+        "cursor on #$%:;* punctuation",
+        vec![
+          (13, Inside, (10, 16)),
+          (10, Inside, (10, 16)),
+          (15, Inside, (10, 16)),
+          (13, Around, (10, 17)),
+          (10, Around, (10, 17)),
+          (15, Around, (10, 17)),
+        ],
+      ),
+      (
+        "cursor on punc%^#$:;.tuation",
+        vec![
+          (14, Inside, (14, 21)),
+          (20, Inside, (14, 21)),
+          (17, Inside, (14, 21)),
+          (14, Around, (14, 21)),
+          (20, Around, (14, 21)),
+          (17, Around, (14, 21)),
+        ],
+      ),
+      (
+        "cursor in   extra whitespace",
+        vec![
+          (9, Inside, (9, 9)),
+          (10, Inside, (10, 10)),
+          (11, Inside, (11, 11)),
+          (9, Around, (9, 9)),
+          (10, Around, (10, 10)),
+          (11, Around, (11, 11)),
+        ],
+      ),
+      (
+        "cursor on word   with extra whitespace",
+        vec![(11, Inside, (10, 14)), (11, Around, (10, 17))],
+      ),
+      (
+        "cursor at end with extra   whitespace",
+        vec![(28, Inside, (27, 37)), (28, Around, (24, 37))],
+      ),
+      (
+        "cursor at end of doc",
+        vec![(19, Inside, (17, 20)), (19, Around, (16, 20))],
+      ),
     ];
 
     for (sample, scenario) in tests {
@@ -503,58 +503,73 @@ mod test {
     // (text, [(cursor position, textobject, final range, surround char, count),
     // ...])
     let tests = &[
-      ("simple (single) surround pairs", vec![
-        (3, Inside, (3, 3), '(', 1),
-        (7, Inside, (8, 14), ')', 1),
-        (10, Inside, (8, 14), '(', 1),
-        (14, Inside, (8, 14), ')', 1),
-        (3, Around, (3, 3), '(', 1),
-        (7, Around, (7, 15), ')', 1),
-        (10, Around, (7, 15), '(', 1),
-        (14, Around, (7, 15), ')', 1),
-      ]),
-      ("samexx 'single' surround pairs", vec![
-        (3, Inside, (3, 3), '\'', 1),
-        (7, Inside, (7, 7), '\'', 1),
-        (10, Inside, (8, 14), '\'', 1),
-        (14, Inside, (14, 14), '\'', 1),
-        (3, Around, (3, 3), '\'', 1),
-        (7, Around, (7, 7), '\'', 1),
-        (10, Around, (7, 15), '\'', 1),
-        (14, Around, (14, 14), '\'', 1),
-      ]),
-      ("(nested (surround (pairs)) 3 levels)", vec![
-        (0, Inside, (1, 35), '(', 1),
-        (6, Inside, (1, 35), ')', 1),
-        (8, Inside, (9, 25), '(', 1),
-        (8, Inside, (9, 35), ')', 2),
-        (20, Inside, (9, 25), '(', 2),
-        (20, Inside, (1, 35), ')', 3),
-        (0, Around, (0, 36), '(', 1),
-        (6, Around, (0, 36), ')', 1),
-        (8, Around, (8, 26), '(', 1),
-        (8, Around, (8, 36), ')', 2),
-        (20, Around, (8, 26), '(', 2),
-        (20, Around, (0, 36), ')', 3),
-      ]),
-      ("(mixed {surround [pair] same} line)", vec![
-        (2, Inside, (1, 34), '(', 1),
-        (9, Inside, (8, 28), '{', 1),
-        (18, Inside, (18, 22), '[', 1),
-        (2, Around, (0, 35), '(', 1),
-        (9, Around, (7, 29), '{', 1),
-        (18, Around, (17, 23), '[', 1),
-      ]),
-      ("(stepped (surround) pairs (should) skip)", vec![
-        (22, Inside, (1, 39), '(', 1),
-        (22, Around, (0, 40), '(', 1),
-      ]),
-      ("[surround pairs{\non different]\nlines}", vec![
-        (7, Inside, (1, 29), '[', 1),
-        (15, Inside, (16, 36), '{', 1),
-        (7, Around, (0, 30), '[', 1),
-        (15, Around, (15, 37), '{', 1),
-      ]),
+      (
+        "simple (single) surround pairs",
+        vec![
+          (3, Inside, (3, 3), '(', 1),
+          (7, Inside, (8, 14), ')', 1),
+          (10, Inside, (8, 14), '(', 1),
+          (14, Inside, (8, 14), ')', 1),
+          (3, Around, (3, 3), '(', 1),
+          (7, Around, (7, 15), ')', 1),
+          (10, Around, (7, 15), '(', 1),
+          (14, Around, (7, 15), ')', 1),
+        ],
+      ),
+      (
+        "samexx 'single' surround pairs",
+        vec![
+          (3, Inside, (3, 3), '\'', 1),
+          (7, Inside, (7, 7), '\'', 1),
+          (10, Inside, (8, 14), '\'', 1),
+          (14, Inside, (14, 14), '\'', 1),
+          (3, Around, (3, 3), '\'', 1),
+          (7, Around, (7, 7), '\'', 1),
+          (10, Around, (7, 15), '\'', 1),
+          (14, Around, (14, 14), '\'', 1),
+        ],
+      ),
+      (
+        "(nested (surround (pairs)) 3 levels)",
+        vec![
+          (0, Inside, (1, 35), '(', 1),
+          (6, Inside, (1, 35), ')', 1),
+          (8, Inside, (9, 25), '(', 1),
+          (8, Inside, (9, 35), ')', 2),
+          (20, Inside, (9, 25), '(', 2),
+          (20, Inside, (1, 35), ')', 3),
+          (0, Around, (0, 36), '(', 1),
+          (6, Around, (0, 36), ')', 1),
+          (8, Around, (8, 26), '(', 1),
+          (8, Around, (8, 36), ')', 2),
+          (20, Around, (8, 26), '(', 2),
+          (20, Around, (0, 36), ')', 3),
+        ],
+      ),
+      (
+        "(mixed {surround [pair] same} line)",
+        vec![
+          (2, Inside, (1, 34), '(', 1),
+          (9, Inside, (8, 28), '{', 1),
+          (18, Inside, (18, 22), '[', 1),
+          (2, Around, (0, 35), '(', 1),
+          (9, Around, (7, 29), '{', 1),
+          (18, Around, (17, 23), '[', 1),
+        ],
+      ),
+      (
+        "(stepped (surround) pairs (should) skip)",
+        vec![(22, Inside, (1, 39), '(', 1), (22, Around, (0, 40), '(', 1)],
+      ),
+      (
+        "[surround pairs{\non different]\nlines}",
+        vec![
+          (7, Inside, (1, 29), '[', 1),
+          (15, Inside, (16, 36), '{', 1),
+          (7, Around, (0, 30), '[', 1),
+          (15, Around, (15, 37), '{', 1),
+        ],
+      ),
     ];
 
     for (sample, scenario) in tests {

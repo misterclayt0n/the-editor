@@ -1,10 +1,7 @@
 //! Functions for managine file metadata.
 //! From <https://github.com/Freaky/faccess>
 
-use std::{
-  io,
-  path::Path,
-};
+use std::{io, path::Path};
 
 use bitflags::bitflags;
 
@@ -25,10 +22,7 @@ bitflags! {
 
 #[cfg(unix)]
 mod imp {
-  use std::os::unix::fs::{
-    MetadataExt,
-    PermissionsExt,
-  };
+  use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
   use rustix::fs::Access;
 
@@ -80,10 +74,7 @@ mod imp {
     #[cfg(target_os = "macos")]
     {
       use std::{
-        fs::{
-          File,
-          FileTimes,
-        },
+        fs::{File, FileTimes},
         os::macos::fs::FileTimesExt,
       };
 
@@ -110,84 +101,40 @@ mod imp {
 
   use std::{
     ffi::c_void,
-    fs::{
-      File,
-      FileTimes,
-    },
+    fs::{File, FileTimes},
     os::windows::{
       ffi::OsStrExt,
-      fs::{
-        FileTimesExt,
-        OpenOptionsExt,
-      },
+      fs::{FileTimesExt, OpenOptionsExt},
       io::AsRawHandle,
     },
   };
 
   use windows_sys::Win32::{
-    Foundation::{
-      CloseHandle,
-      ERROR_SUCCESS,
-      HANDLE,
-      LocalFree,
-    },
+    Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, LocalFree},
     Security::{
-      ACCESS_ALLOWED_CALLBACK_ACE,
-      ACL,
-      ACL_SIZE_INFORMATION,
-      AccessCheck,
-      AclSizeInformation,
-      Authorization::{
-        GetNamedSecurityInfoW,
-        SE_FILE_OBJECT,
-        SetNamedSecurityInfoW,
-      },
-      DACL_SECURITY_INFORMATION,
-      GENERIC_MAPPING,
-      GROUP_SECURITY_INFORMATION,
-      GetAce,
-      GetAclInformation,
-      GetSidIdentifierAuthority,
-      INHERITED_ACE,
-      ImpersonateSelf,
-      IsValidAcl,
-      IsValidSid,
-      LABEL_SECURITY_INFORMATION,
-      MapGenericMask,
-      OBJECT_SECURITY_INFORMATION,
-      OWNER_SECURITY_INFORMATION,
-      PRIVILEGE_SET,
-      PROTECTED_DACL_SECURITY_INFORMATION,
-      PSECURITY_DESCRIPTOR,
-      PSID,
-      RevertToSelf,
-      SID_IDENTIFIER_AUTHORITY,
-      SecurityImpersonation,
-      TOKEN_DUPLICATE,
-      TOKEN_QUERY,
+      ACCESS_ALLOWED_CALLBACK_ACE, ACL, ACL_SIZE_INFORMATION, AccessCheck, AclSizeInformation,
+      Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW},
+      DACL_SECURITY_INFORMATION, GENERIC_MAPPING, GROUP_SECURITY_INFORMATION, GetAce,
+      GetAclInformation, GetSidIdentifierAuthority, INHERITED_ACE, ImpersonateSelf, IsValidAcl,
+      IsValidSid, LABEL_SECURITY_INFORMATION, MapGenericMask, OBJECT_SECURITY_INFORMATION,
+      OWNER_SECURITY_INFORMATION, PRIVILEGE_SET, PROTECTED_DACL_SECURITY_INFORMATION,
+      PSECURITY_DESCRIPTOR, PSID, RevertToSelf, SID_IDENTIFIER_AUTHORITY, SecurityImpersonation,
+      TOKEN_DUPLICATE, TOKEN_QUERY,
     },
     Storage::FileSystem::{
-      BY_HANDLE_FILE_INFORMATION,
-      FILE_ACCESS_RIGHTS,
-      FILE_ALL_ACCESS,
-      FILE_GENERIC_EXECUTE,
-      FILE_GENERIC_READ,
-      FILE_GENERIC_WRITE,
-      GetFileInformationByHandle,
+      BY_HANDLE_FILE_INFORMATION, FILE_ACCESS_RIGHTS, FILE_ALL_ACCESS, FILE_GENERIC_EXECUTE,
+      FILE_GENERIC_READ, FILE_GENERIC_WRITE, GetFileInformationByHandle,
     },
-    System::Threading::{
-      GetCurrentThread,
-      OpenThreadToken,
-    },
+    System::Threading::{GetCurrentThread, OpenThreadToken},
   };
 
   use super::*;
 
   struct SecurityDescriptor {
-    sd:    PSECURITY_DESCRIPTOR,
+    sd: PSECURITY_DESCRIPTOR,
     owner: PSID,
     group: PSID,
-    dacl:  *mut ACL,
+    dacl: *mut ACL,
   }
 
   impl Drop for SecurityDescriptor {
@@ -368,10 +315,10 @@ mod imp {
     let mut result = 0;
 
     let mapping = GENERIC_MAPPING {
-      GenericRead:    FILE_GENERIC_READ,
-      GenericWrite:   FILE_GENERIC_WRITE,
+      GenericRead: FILE_GENERIC_READ,
+      GenericWrite: FILE_GENERIC_WRITE,
       GenericExecute: FILE_GENERIC_EXECUTE,
-      GenericAll:     FILE_ALL_ACCESS,
+      GenericAll: FILE_ALL_ACCESS,
     };
 
     unsafe { MapGenericMask(&mut mode, &mapping) };

@@ -2,18 +2,13 @@ use std::ops::DerefMut;
 
 use nucleo::{
   Config,
-  pattern::{
-    Atom,
-    AtomKind,
-    CaseMatching,
-    Normalization,
-  },
+  pattern::{Atom, AtomKind, CaseMatching, Normalization},
 };
 use parking_lot::Mutex;
 
 pub struct LazyMutex<T> {
   inner: Mutex<Option<T>>,
-  init:  fn() -> T,
+  init: fn() -> T,
 }
 
 impl<T> LazyMutex<T> {

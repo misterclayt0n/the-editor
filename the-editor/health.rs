@@ -1,35 +1,18 @@
 use std::{
   collections::HashSet,
-  io::{
-    self,
-    Write,
-  },
+  io::{self, Write},
 };
 
 use anyhow::Result;
-use config::{
-  default_lang_config,
-  user_lang_config,
-};
+use config::{default_lang_config, user_lang_config};
 use crossterm::{
-  style::{
-    Color,
-    StyledContent,
-    Stylize,
-  },
+  style::{Color, StyledContent, Stylize},
   terminal,
   tty::IsTty,
 };
-use the_editor_loader::grammar::{
-  self,
-  load_runtime_file,
-};
+use the_editor_loader::grammar::{self, load_runtime_file};
 
-use crate::core::config::{
-  self,
-  Config,
-  ConfigLoadError,
-};
+use crate::core::config::{self, Config, ConfigLoadError};
 
 #[derive(Copy, Clone)]
 pub enum TsFeature {
@@ -265,16 +248,12 @@ fn languages(selection: Option<HashSet<String>>) -> io::Result<()> {
     .language
     .sort_unstable_by_key(|language| language.language_id.clone());
 
-  let check_binary_with_name = |cmd: Option<(&str, &str)>| {
-    match cmd {
-      Some((name, cmd)) => {
-        match the_editor_stdx::env::which(cmd) {
-          Ok(_) => color(fit(&format!("✓ {}", name)), Color::Green),
-          Err(_) => color(fit(&format!("✘ {}", name)), Color::Red),
-        }
-      },
-      None => color(fit("None"), Color::Yellow),
-    }
+  let check_binary_with_name = |cmd: Option<(&str, &str)>| match cmd {
+    Some((name, cmd)) => match the_editor_stdx::env::which(cmd) {
+      Ok(_) => color(fit(&format!("✓ {}", name)), Color::Green),
+      Err(_) => color(fit(&format!("✘ {}", name)), Color::Red),
+    },
+    None => color(fit("None"), Color::Yellow),
   };
   let check_binary = |cmd: Option<&str>| check_binary_with_name(cmd.map(|c| (c, c)));
 

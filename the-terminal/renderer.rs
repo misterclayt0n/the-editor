@@ -4,31 +4,25 @@
 //! state.
 
 use alacritty_terminal::{
-  term::{
-    RenderableContent,
-    cell::Flags as CellFlags,
-  },
-  vte::ansi::{
-    Color,
-    NamedColor,
-  },
+  term::{RenderableContent, cell::Flags as CellFlags},
+  vte::ansi::{Color, NamedColor},
 };
 
 /// A single cell to be rendered.
 #[derive(Debug, Clone)]
 pub struct RenderCell {
   /// Column position (0-indexed).
-  pub col:     u16,
+  pub col: u16,
   /// Row position (0-indexed, from top of viewport).
-  pub row:     u16,
+  pub row: u16,
   /// Character to display.
-  pub c:       char,
+  pub c: char,
   /// Foreground color as RGB.
-  pub fg:      (u8, u8, u8),
+  pub fg: (u8, u8, u8),
   /// Background color as RGB.
-  pub bg:      (u8, u8, u8),
+  pub bg: (u8, u8, u8),
   /// Cell flags for styling.
-  pub flags:   CellStyle,
+  pub flags: CellStyle,
   /// Whether this is a wide character (takes 2 cells).
   pub is_wide: bool,
 }
@@ -36,24 +30,24 @@ pub struct RenderCell {
 /// Style flags for a cell.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CellStyle {
-  pub bold:          bool,
-  pub italic:        bool,
-  pub underline:     bool,
+  pub bold: bool,
+  pub italic: bool,
+  pub underline: bool,
   pub strikethrough: bool,
-  pub dim:           bool,
-  pub inverse:       bool,
+  pub dim: bool,
+  pub inverse: bool,
 }
 
 impl From<CellFlags> for CellStyle {
   fn from(flags: CellFlags) -> Self {
     Self {
-      bold:          flags.contains(CellFlags::BOLD),
-      italic:        flags.contains(CellFlags::ITALIC),
-      underline:     flags
+      bold: flags.contains(CellFlags::BOLD),
+      italic: flags.contains(CellFlags::ITALIC),
+      underline: flags
         .intersects(CellFlags::UNDERLINE | CellFlags::DOUBLE_UNDERLINE | CellFlags::UNDERCURL),
       strikethrough: flags.contains(CellFlags::STRIKEOUT),
-      dim:           flags.contains(CellFlags::DIM),
-      inverse:       flags.contains(CellFlags::INVERSE),
+      dim: flags.contains(CellFlags::DIM),
+      inverse: flags.contains(CellFlags::INVERSE),
     }
   }
 }
@@ -61,50 +55,50 @@ impl From<CellFlags> for CellStyle {
 /// Terminal 16-color scheme with bright variants.
 #[derive(Debug, Clone)]
 pub struct ColorScheme {
-  pub foreground:     (u8, u8, u8),
-  pub background:     (u8, u8, u8),
-  pub cursor:         (u8, u8, u8),
-  pub black:          (u8, u8, u8),
-  pub red:            (u8, u8, u8),
-  pub green:          (u8, u8, u8),
-  pub yellow:         (u8, u8, u8),
-  pub blue:           (u8, u8, u8),
-  pub magenta:        (u8, u8, u8),
-  pub cyan:           (u8, u8, u8),
-  pub white:          (u8, u8, u8),
-  pub bright_black:   (u8, u8, u8),
-  pub bright_red:     (u8, u8, u8),
-  pub bright_green:   (u8, u8, u8),
-  pub bright_yellow:  (u8, u8, u8),
-  pub bright_blue:    (u8, u8, u8),
+  pub foreground: (u8, u8, u8),
+  pub background: (u8, u8, u8),
+  pub cursor: (u8, u8, u8),
+  pub black: (u8, u8, u8),
+  pub red: (u8, u8, u8),
+  pub green: (u8, u8, u8),
+  pub yellow: (u8, u8, u8),
+  pub blue: (u8, u8, u8),
+  pub magenta: (u8, u8, u8),
+  pub cyan: (u8, u8, u8),
+  pub white: (u8, u8, u8),
+  pub bright_black: (u8, u8, u8),
+  pub bright_red: (u8, u8, u8),
+  pub bright_green: (u8, u8, u8),
+  pub bright_yellow: (u8, u8, u8),
+  pub bright_blue: (u8, u8, u8),
   pub bright_magenta: (u8, u8, u8),
-  pub bright_cyan:    (u8, u8, u8),
-  pub bright_white:   (u8, u8, u8),
+  pub bright_cyan: (u8, u8, u8),
+  pub bright_white: (u8, u8, u8),
 }
 
 impl Default for ColorScheme {
   fn default() -> Self {
     // Default dark theme colors
     Self {
-      foreground:     (204, 204, 204),
-      background:     (30, 30, 30),
-      cursor:         (255, 255, 255),
-      black:          (0, 0, 0),
-      red:            (204, 0, 0),
-      green:          (0, 204, 0),
-      yellow:         (204, 204, 0),
-      blue:           (0, 0, 204),
-      magenta:        (204, 0, 204),
-      cyan:           (0, 204, 204),
-      white:          (204, 204, 204),
-      bright_black:   (128, 128, 128),
-      bright_red:     (255, 0, 0),
-      bright_green:   (0, 255, 0),
-      bright_yellow:  (255, 255, 0),
-      bright_blue:    (0, 0, 255),
+      foreground: (204, 204, 204),
+      background: (30, 30, 30),
+      cursor: (255, 255, 255),
+      black: (0, 0, 0),
+      red: (204, 0, 0),
+      green: (0, 204, 0),
+      yellow: (204, 204, 0),
+      blue: (0, 0, 204),
+      magenta: (204, 0, 204),
+      cyan: (0, 204, 204),
+      white: (204, 204, 204),
+      bright_black: (128, 128, 128),
+      bright_red: (255, 0, 0),
+      bright_green: (0, 255, 0),
+      bright_yellow: (255, 255, 0),
+      bright_blue: (0, 0, 255),
       bright_magenta: (255, 0, 255),
-      bright_cyan:    (0, 255, 255),
-      bright_white:   (255, 255, 255),
+      bright_cyan: (0, 255, 255),
+      bright_white: (255, 255, 255),
     }
   }
 }
@@ -265,9 +259,9 @@ pub fn extract_cells(
 /// Terminal cursor information for rendering.
 #[derive(Debug, Clone)]
 pub struct CursorInfo {
-  pub col:     u16,
-  pub row:     u16,
-  pub shape:   CursorShape,
+  pub col: u16,
+  pub row: u16,
+  pub shape: CursorShape,
   pub visible: bool,
 }
 
@@ -289,11 +283,7 @@ impl Default for CursorShape {
 mod tests {
   use alacritty_terminal::{
     term::cell::Flags as CellFlags,
-    vte::ansi::{
-      Color,
-      NamedColor,
-      Rgb,
-    },
+    vte::ansi::{Color, NamedColor, Rgb},
   };
 
   use super::*;
@@ -668,11 +658,7 @@ mod tests {
 
   mod cell_extraction {
     use super::*;
-    use crate::test_utils::{
-      feed_str,
-      test_colors,
-      test_term,
-    };
+    use crate::test_utils::{feed_str, test_colors, test_term};
 
     #[test]
     fn test_extract_cells_basic() {

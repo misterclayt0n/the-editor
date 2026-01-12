@@ -1,9 +1,6 @@
 use std::{
   fmt,
-  path::{
-    Path,
-    PathBuf,
-  },
+  path::{Path, PathBuf},
   sync::Arc,
 };
 
@@ -51,7 +48,7 @@ impl fmt::Display for Uri {
 #[derive(Debug)]
 pub struct UrlConversionError {
   source: url::Url,
-  kind:   UrlConversionErrorKind,
+  kind: UrlConversionErrorKind,
 }
 
 #[derive(Debug)]
@@ -103,11 +100,9 @@ impl TryFrom<&url::Url> for Uri {
   type Error = UrlConversionError;
 
   fn try_from(url: &url::Url) -> Result<Self, Self::Error> {
-    convert_url_to_uri(url).map_err(|kind| {
-      Self::Error {
-        source: url.clone(),
-        kind,
-      }
+    convert_url_to_uri(url).map_err(|kind| Self::Error {
+      source: url.clone(),
+      kind,
     })
   }
 }

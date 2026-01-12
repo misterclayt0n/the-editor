@@ -15,26 +15,20 @@ pub enum TerminalEvent {
   Bell(TerminalId),
 
   /// Child process exited.
-  Exit {
-    id:     TerminalId,
-    status: Option<i32>,
-  },
+  Exit { id: TerminalId, status: Option<i32> },
 
   /// Terminal requests clipboard content (paste).
   ClipboardLoad { id: TerminalId },
 
   /// Terminal provides clipboard content (copy).
-  ClipboardStore {
-    id:      TerminalId,
-    content: String,
-  },
+  ClipboardStore { id: TerminalId, content: String },
 
   /// Cursor visibility changed.
   CursorVisibility { id: TerminalId, visible: bool },
 
   /// Mouse cursor shape changed.
   MouseCursorShape {
-    id:    TerminalId,
+    id: TerminalId,
     shape: MouseCursorShape,
   },
 }

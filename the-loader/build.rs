@@ -1,8 +1,4 @@
-use std::{
-  borrow::Cow,
-  path::Path,
-  process::Command,
-};
+use std::{borrow::Cow, path::Path, process::Command};
 
 const MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
 const MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");

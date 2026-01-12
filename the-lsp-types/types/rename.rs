@@ -1,13 +1,7 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  Range,
-  TextDocumentPositionParams,
-  WorkDoneProgressOptions,
-  WorkDoneProgressParams,
+  Range, TextDocumentPositionParams, WorkDoneProgressOptions, WorkDoneProgressParams,
 };
 
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
@@ -88,7 +82,7 @@ impl PrepareSupportDefaultBehavior {
 pub enum PrepareRenameResponse {
   Range(Range),
   RangeWithPlaceholder {
-    range:       Range,
+    range: Range,
     placeholder: String,
   },
   #[serde(rename_all = "camelCase")]

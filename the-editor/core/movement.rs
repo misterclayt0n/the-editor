@@ -1,37 +1,19 @@
-use std::{
-  borrow::Cow,
-  cmp::Reverse,
-  iter,
-};
+use std::{borrow::Cow, cmp::Reverse, iter};
 
-use ropey::{
-  RopeSlice,
-  iter::Chars,
-};
+use ropey::{RopeSlice, iter::Chars};
 use tree_house::tree_sitter::Node;
 
 use crate::core::{
-  chars::{
-    CharCategory,
-    categorize_char,
-    char_is_line_ending,
-  },
+  chars::{CharCategory, categorize_char, char_is_line_ending},
   grapheme::{
-    next_grapheme_boundary,
-    nth_next_grapheme_boundary,
-    nth_prev_grapheme_boundary,
+    next_grapheme_boundary, nth_next_grapheme_boundary, nth_prev_grapheme_boundary,
     prev_grapheme_boundary,
   },
   line_ending::rope_is_line_ending,
   position::{
-    char_idx_at_visual_block_offset,
-    char_idx_at_visual_offset,
-    visual_offset_from_block,
+    char_idx_at_visual_block_offset, char_idx_at_visual_offset, visual_offset_from_block,
   },
-  selection::{
-    Range,
-    Selection,
-  },
+  selection::{Range, Selection},
   syntax,
   syntax::Syntax,
   text_annotations::TextAnnotations,
@@ -570,16 +552,12 @@ pub fn goto_treesitter_object(
     )?;
 
     let node = match dir {
-      Direction::Forward => {
-        nodes
-          .filter(|n| n.start_byte() > byte_pos)
-          .min_by_key(|n| (n.start_byte(), Reverse(n.end_byte())))?
-      },
-      Direction::Backward => {
-        nodes
-          .filter(|n| n.end_byte() < byte_pos)
-          .max_by_key(|n| (n.end_byte(), Reverse(n.start_byte())))?
-      },
+      Direction::Forward => nodes
+        .filter(|n| n.start_byte() > byte_pos)
+        .min_by_key(|n| (n.start_byte(), Reverse(n.end_byte())))?,
+      Direction::Backward => nodes
+        .filter(|n| n.end_byte() < byte_pos)
+        .max_by_key(|n| (n.end_byte(), Reverse(n.start_byte())))?,
     };
 
     let len = slice.len_bytes();

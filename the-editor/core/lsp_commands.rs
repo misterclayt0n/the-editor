@@ -1,45 +1,25 @@
-use std::{
-  cmp::Ordering,
-  collections::HashSet,
-};
+use std::{cmp::Ordering, collections::HashSet};
 
-use futures_util::{
-  StreamExt,
-  future::BoxFuture,
-  stream::FuturesOrdered,
-};
+use futures_util::{StreamExt, future::BoxFuture, stream::FuturesOrdered};
 
 use crate::{
   core::{
     commands::Context,
     selection::Selection,
     syntax::config::LanguageServerFeature,
-    view::{
-      Align,
-      align_view,
-    },
+    view::{Align, align_view},
   },
   editor::Action,
-  lsp::{
-    self,
-    Client,
-    OffsetEncoding,
-    lsp::types as lsp_types,
-    util::lsp_range_to_range,
-  },
-  try_current,
-  try_current_ref,
-  ui::{
-    compositor::Compositor,
-    job::Callback,
-  },
+  lsp::{self, Client, OffsetEncoding, lsp::types as lsp_types, util::lsp_range_to_range},
+  try_current, try_current_ref,
+  ui::{compositor::Compositor, job::Callback},
 };
 
 /// Wrapper around `lsp::Location` that includes the offset encoding
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Location {
-  uri:             lsp_types::Url,
-  range:           lsp_types::Range,
+  uri: lsp_types::Url,
+  range: lsp_types::Range,
   offset_encoding: OffsetEncoding,
 }
 
@@ -93,11 +73,7 @@ fn goto_impl(
   compositor: &mut Compositor,
   locations: Vec<Location>,
 ) {
-  use crate::ui::components::{
-    Column,
-    Picker,
-    PickerAction,
-  };
+  use crate::ui::components::{Column, Picker, PickerAction};
 
   match locations.as_slice() {
     [location] => {
@@ -213,27 +189,25 @@ fn goto_single_impl<P>(
 
     while let Some(response) = futures.next().await {
       match response {
-        Ok((response, offset_encoding)) => {
-          match response {
-            Some(lsp_types::GotoDefinitionResponse::Scalar(lsp_location)) => {
-              locations.push(lsp_location_to_location(lsp_location, offset_encoding));
-            },
-            Some(lsp_types::GotoDefinitionResponse::Array(lsp_locations)) => {
-              locations.extend(
-                lsp_locations
-                  .into_iter()
-                  .map(|location| lsp_location_to_location(location, offset_encoding)),
-              );
-            },
-            Some(lsp_types::GotoDefinitionResponse::Link(lsp_locations)) => {
-              locations.extend(lsp_locations.into_iter().map(|location_link| {
-                let location =
-                  lsp_types::Location::new(location_link.target_uri, location_link.target_range);
-                lsp_location_to_location(location, offset_encoding)
-              }));
-            },
-            None => (),
-          }
+        Ok((response, offset_encoding)) => match response {
+          Some(lsp_types::GotoDefinitionResponse::Scalar(lsp_location)) => {
+            locations.push(lsp_location_to_location(lsp_location, offset_encoding));
+          },
+          Some(lsp_types::GotoDefinitionResponse::Array(lsp_locations)) => {
+            locations.extend(
+              lsp_locations
+                .into_iter()
+                .map(|location| lsp_location_to_location(location, offset_encoding)),
+            );
+          },
+          Some(lsp_types::GotoDefinitionResponse::Link(lsp_locations)) => {
+            locations.extend(lsp_locations.into_iter().map(|location_link| {
+              let location =
+                lsp_types::Location::new(location_link.target_uri, location_link.target_range);
+              lsp_location_to_location(location, offset_encoding)
+            }));
+          },
+          None => (),
         },
         Err(err) => {
           log::error!("Error requesting {}: {err}", error_msg);
@@ -353,15 +327,13 @@ fn classify_code_action(action: &lsp_types::CodeActionOrCommand) -> u32 {
     let mut components = kind.as_str().split('.');
     match components.next() {
       Some("quickfix") => 0,
-      Some("refactor") => {
-        match components.next() {
-          Some("extract") => 1,
-          Some("inline") => 2,
-          Some("rewrite") => 3,
-          Some("move") => 4,
-          Some("surround") => 5,
-          _ => 7,
-        }
+      Some("refactor") => match components.next() {
+        Some("extract") => 1,
+        Some("inline") => 2,
+        Some("rewrite") => 3,
+        Some("move") => 4,
+        Some("surround") => 5,
+        _ => 7,
       },
       Some("source") => 6,
       _ => 7,
@@ -447,17 +419,13 @@ pub fn code_action(cx: &mut Context) {
         Ok(Some(actions)) => {
           let enabled_actions = actions
             .into_iter()
-            .filter(|action| {
-              match action {
-                lsp_types::CodeActionOrCommand::CodeAction(action) => action.disabled.is_none(),
-                _ => true,
-              }
+            .filter(|action| match action {
+              lsp_types::CodeActionOrCommand::CodeAction(action) => action.disabled.is_none(),
+              _ => true,
             })
-            .map(|action| {
-              crate::ui::components::CodeActionEntry {
-                action,
-                language_server_id,
-              }
+            .map(|action| crate::ui::components::CodeActionEntry {
+              action,
+              language_server_id,
             });
           all_actions.extend(enabled_actions);
         },
@@ -768,10 +736,10 @@ fn apply_workspace_edit(
 /// Flat symbol for picker display
 #[derive(Debug, Clone)]
 struct FlatSymbol {
-  name:            String,
-  kind:            lsp_types::SymbolKind,
-  range:           lsp_types::Range,
-  uri:             lsp_types::Url,
+  name: String,
+  kind: lsp_types::SymbolKind,
+  range: lsp_types::Range,
+  uri: lsp_types::Url,
   offset_encoding: OffsetEncoding,
 }
 
@@ -864,30 +832,28 @@ pub fn document_symbols(cx: &mut Context) {
 
     for (future, offset_encoding) in requests {
       match future.await {
-        Ok(Some(response)) => {
-          match response {
-            lsp_types::DocumentSymbolResponse::Flat(symbols) => {
-              for symbol in symbols {
-                all_symbols.push(FlatSymbol {
-                  name: symbol.name,
-                  kind: symbol.kind,
-                  range: symbol.location.range,
-                  uri: symbol.location.uri.clone(),
-                  offset_encoding,
-                });
-              }
-            },
-            lsp_types::DocumentSymbolResponse::Nested(symbols) => {
-              for symbol in symbols {
-                flatten_document_symbol(
-                  &mut all_symbols,
-                  current_url_clone.clone(),
-                  symbol,
-                  offset_encoding,
-                );
-              }
-            },
-          }
+        Ok(Some(response)) => match response {
+          lsp_types::DocumentSymbolResponse::Flat(symbols) => {
+            for symbol in symbols {
+              all_symbols.push(FlatSymbol {
+                name: symbol.name,
+                kind: symbol.kind,
+                range: symbol.location.range,
+                uri: symbol.location.uri.clone(),
+                offset_encoding,
+              });
+            }
+          },
+          lsp_types::DocumentSymbolResponse::Nested(symbols) => {
+            for symbol in symbols {
+              flatten_document_symbol(
+                &mut all_symbols,
+                current_url_clone.clone(),
+                symbol,
+                offset_encoding,
+              );
+            }
+          },
         },
         Ok(None) => {},
         Err(err) => {
@@ -903,11 +869,7 @@ pub fn document_symbols(cx: &mut Context) {
       }
 
       // Create picker columns
-      use crate::ui::components::{
-        Column,
-        Picker,
-        PickerAction,
-      };
+      use crate::ui::components::{Column, Picker, PickerAction};
 
       let columns = vec![
         Column::new("Kind", |symbol: &FlatSymbol, _: &()| {
@@ -1042,11 +1004,7 @@ pub fn workspace_symbols(cx: &mut Context) {
       }
 
       // Create picker columns
-      use crate::ui::components::{
-        Column,
-        Picker,
-        PickerAction,
-      };
+      use crate::ui::components::{Column, Picker, PickerAction};
 
       let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
@@ -1178,11 +1136,7 @@ pub fn document_diagnostics(cx: &mut Context) {
   cx.callback.push(Box::new(move |compositor, _cx| {
     use crate::{
       core::diagnostics::Severity,
-      ui::components::{
-        Column,
-        Picker,
-        PickerAction,
-      },
+      ui::components::{Column, Picker, PickerAction},
     };
 
     let columns = vec![
@@ -1207,12 +1161,10 @@ pub fn document_diagnostics(cx: &mut Context) {
       ),
       Column::new(
         "Code",
-        |diag: &crate::core::diagnostics::Diagnostic, _: &()| {
-          match &diag.code {
-            Some(crate::core::diagnostics::NumberOrString::Number(n)) => n.to_string(),
-            Some(crate::core::diagnostics::NumberOrString::String(s)) => s.clone(),
-            None => String::new(),
-          }
+        |diag: &crate::core::diagnostics::Diagnostic, _: &()| match &diag.code {
+          Some(crate::core::diagnostics::NumberOrString::Number(n)) => n.to_string(),
+          Some(crate::core::diagnostics::NumberOrString::String(s)) => s.clone(),
+          None => String::new(),
         },
       ),
       Column::new(
@@ -1282,9 +1234,9 @@ pub fn workspace_diagnostics(cx: &mut Context) {
   #[derive(Debug, Clone)]
   struct DiagnosticItem {
     diagnostic: crate::core::diagnostics::Diagnostic,
-    doc_id:     crate::core::DocumentId,
-    path:       Option<std::path::PathBuf>,
-    file_name:  String,
+    doc_id: crate::core::DocumentId,
+    path: Option<std::path::PathBuf>,
+    file_name: String,
   }
 
   let mut all_diagnostics = Vec::new();
@@ -1307,9 +1259,9 @@ pub fn workspace_diagnostics(cx: &mut Context) {
     for diag in diagnostics.iter() {
       all_diagnostics.push(DiagnosticItem {
         diagnostic: diag.clone(),
-        doc_id:     *doc_id,
-        path:       path.clone(),
-        file_name:  file_name.clone(),
+        doc_id: *doc_id,
+        path: path.clone(),
+        file_name: file_name.clone(),
       });
     }
   }
@@ -1322,11 +1274,7 @@ pub fn workspace_diagnostics(cx: &mut Context) {
   cx.callback.push(Box::new(move |compositor, _cx| {
     use crate::{
       core::diagnostics::Severity,
-      ui::components::{
-        Column,
-        Picker,
-        PickerAction,
-      },
+      ui::components::{Column, Picker, PickerAction},
     };
 
     let columns = vec![

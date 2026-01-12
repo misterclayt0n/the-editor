@@ -8,38 +8,16 @@
 //! - Tool call indicators with icons
 //! - A streaming indicator when response is in progress
 
-use the_editor_renderer::{
-  Color,
-  Key,
-  ScrollDelta,
-  TextSection,
-  TextSegment,
-  TextStyle,
-};
+use the_editor_renderer::{Color, Key, ScrollDelta, TextSection, TextSegment, TextStyle};
 
 use crate::{
-  core::{
-    graphics::Rect,
-    position::Position,
-  },
+  core::{graphics::Rect, position::Position},
   ui::{
     UI_FONT_SIZE,
     components::popup::{
-      PopupConstraints,
-      PopupContent,
-      PopupFrame,
-      PopupLimits,
-      PopupShell,
-      PopupSize,
+      PopupConstraints, PopupContent, PopupFrame, PopupLimits, PopupShell, PopupSize,
     },
-    compositor::{
-      Callback,
-      Component,
-      Context,
-      Event,
-      EventResult,
-      Surface,
-    },
+    compositor::{Callback, Component, Context, Event, EventResult, Surface},
     popup_positioning::calculate_cursor_position,
   },
 };
@@ -60,8 +38,8 @@ impl AcpOverlay {
   pub fn new() -> Self {
     let content = AcpOverlayContent::new();
     let popup_limits = PopupLimits {
-      min_width:  ACP_MIN_WIDTH_CHARS,
-      max_width:  ACP_MAX_WIDTH_CHARS,
+      min_width: ACP_MIN_WIDTH_CHARS,
+      max_width: ACP_MAX_WIDTH_CHARS,
       min_height: 6,
       max_height: ACP_MAX_HEIGHT_LINES,
     };
@@ -148,25 +126,25 @@ fn current_cursor_anchor(ctx: &Context, surface: &mut Surface) -> Option<Positio
 }
 
 struct AcpOverlayContent {
-  layout:             Option<AcpLayout>,
-  scroll_offset:      usize,
+  layout: Option<AcpLayout>,
+  scroll_offset: usize,
   /// Cached response text length to detect changes
-  last_response_len:  usize,
+  last_response_len: usize,
   /// Cached streaming state
   last_was_streaming: bool,
   /// Cached plan entry count to detect changes
-  last_plan_len:      usize,
+  last_plan_len: usize,
 }
 
 #[derive(Clone)]
 struct AcpLayout {
-  header_lines:   Vec<Vec<TextSegment>>,
-  plan_lines:     Vec<Vec<TextSegment>>,
+  header_lines: Vec<Vec<TextSegment>>,
+  plan_lines: Vec<Vec<TextSegment>>,
   response_lines: Vec<Vec<TextSegment>>,
-  visible_lines:  usize,
-  line_height:    f32,
-  content_width:  f32,
-  wrap_width:     f32,
+  visible_lines: usize,
+  line_height: f32,
+  content_width: f32,
+  wrap_width: f32,
 }
 
 impl AcpLayout {
@@ -259,7 +237,7 @@ fn build_acp_render_lines(
         let tool_line = truncate_to_width(&tool_line, max_chars);
         render_lines.push(vec![TextSegment {
           content: tool_line,
-          style:   TextStyle {
+          style: TextStyle {
             size: UI_FONT_SIZE,
             color,
           },
@@ -275,8 +253,8 @@ fn build_acp_render_lines(
         let error_line = truncate_to_width(raw_line, max_chars);
         render_lines.push(vec![TextSegment {
           content: error_line,
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
+          style: TextStyle {
+            size: UI_FONT_SIZE,
             color: error_color,
           },
         }]);
@@ -328,8 +306,8 @@ fn build_acp_render_lines(
       if !prev_was_empty && !render_lines.is_empty() {
         render_lines.push(vec![TextSegment {
           content: String::new(),
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
+          style: TextStyle {
+            size: UI_FONT_SIZE,
             color: base_text_color,
           },
         }]);
@@ -345,8 +323,8 @@ fn build_acp_render_lines(
     for line in wrapped {
       render_lines.push(vec![TextSegment {
         content: line,
-        style:   TextStyle {
-          size:  UI_FONT_SIZE,
+        style: TextStyle {
+          size: UI_FONT_SIZE,
           color: base_text_color,
         },
       }]);
@@ -411,10 +389,7 @@ fn build_plan_lines(
   max_chars: usize,
   ctx: &Context,
 ) -> Vec<Vec<TextSegment>> {
-  use agent_client_protocol::{
-    PlanEntryPriority,
-    PlanEntryStatus,
-  };
+  use agent_client_protocol::{PlanEntryPriority, PlanEntryStatus};
 
   if plan.entries.is_empty() {
     return Vec::new();
@@ -456,8 +431,8 @@ fn build_plan_lines(
   let separator = "─".repeat(max_chars.min(60));
   lines.push(vec![TextSegment {
     content: separator.clone(),
-    style:   TextStyle {
-      size:  UI_FONT_SIZE,
+    style: TextStyle {
+      size: UI_FONT_SIZE,
       color: dim_color,
     },
   }]);
@@ -493,8 +468,8 @@ fn build_plan_lines(
   // Add separator after plan entries
   lines.push(vec![TextSegment {
     content: separator,
-    style:   TextStyle {
-      size:  UI_FONT_SIZE,
+    style: TextStyle {
+      size: UI_FONT_SIZE,
       color: dim_color,
     },
   }]);
@@ -505,11 +480,11 @@ fn build_plan_lines(
 impl AcpOverlayContent {
   fn new() -> Self {
     Self {
-      layout:             None,
-      scroll_offset:      0,
-      last_response_len:  0,
+      layout: None,
+      scroll_offset: 0,
+      last_response_len: 0,
       last_was_streaming: false,
-      last_plan_len:      0,
+      last_plan_len: 0,
     }
   }
 
@@ -592,8 +567,8 @@ impl AcpOverlayContent {
       let header_text = truncate_to_width(&header_text, max_chars);
       header_lines.push(vec![TextSegment {
         content: header_text,
-        style:   TextStyle {
-          size:  UI_FONT_SIZE,
+        style: TextStyle {
+          size: UI_FONT_SIZE,
           color: header_color,
         },
       }]);
@@ -603,8 +578,8 @@ impl AcpOverlayContent {
         let summary = truncate_to_width(&state.context_summary, max_chars);
         header_lines.push(vec![TextSegment {
           content: summary,
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
+          style: TextStyle {
+            size: UI_FONT_SIZE,
             color: dim_color,
           },
         }]);
@@ -623,8 +598,8 @@ impl AcpOverlayContent {
         let separator = "─".repeat(max_chars.min(60));
         header_lines.push(vec![TextSegment {
           content: separator,
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
+          style: TextStyle {
+            size: UI_FONT_SIZE,
             color: dim_color,
           },
         }]);
@@ -751,7 +726,7 @@ impl PopupContent for AcpOverlayContent {
     let content_height = layout.inner_height().min(constraints.max_height);
 
     PopupSize {
-      width:  layout.content_width.min(constraints.max_width),
+      width: layout.content_width.min(constraints.max_width),
       height: content_height,
     }
   }

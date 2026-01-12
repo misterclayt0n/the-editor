@@ -14,56 +14,30 @@
 //! - Commands are sent via `command_tx` (fire-and-forget)
 //! - Results/errors come back via `event_rx` (polled in main loop)
 
-use std::{
-  path::PathBuf,
-  process::Stdio,
-  sync::Arc,
-  thread::JoinHandle,
-};
+use std::{path::PathBuf, process::Stdio, sync::Arc, thread::JoinHandle};
 
-use agent_client_protocol::{
-  self as acp,
-  Agent,
-};
-use anyhow::{
-  Context as _,
-  Result,
-  bail,
-};
+use agent_client_protocol::{self as acp, Agent};
+use anyhow::{Context as _, Result, bail};
 use parking_lot::Mutex;
 use tokio::{
-  process::{
-    Child,
-    Command,
-  },
-  sync::{
-    mpsc,
-    oneshot,
-  },
+  process::{Child, Command},
+  sync::{mpsc, oneshot},
 };
-use tokio_util::compat::{
-  TokioAsyncReadCompatExt,
-  TokioAsyncWriteCompatExt,
-};
+use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
-use super::{
-  AcpConfig,
-  EditorClient,
-  PendingPermission,
-  StreamEvent,
-};
+use super::{AcpConfig, EditorClient, PendingPermission, StreamEvent};
 
 /// Commands sent to the ACP thread.
 enum AcpCommand {
   /// Send a prompt to the agent (fire-and-forget, results via event_tx)
   Prompt {
     session_id: acp::SessionId,
-    content:    Vec<acp::ContentBlock>,
+    content: Vec<acp::ContentBlock>,
   },
   /// Set the session model
   SetModel {
     session_id: acp::SessionId,
-    model_id:   acp::ModelId,
+    model_id: acp::ModelId,
   },
   /// Cancel the current in-flight request
   Cancel,
@@ -77,17 +51,17 @@ enum AcpCommand {
 /// with it. It is designed to be held in the `Editor` struct.
 pub struct AcpHandle {
   /// The current session ID
-  session_id:        Arc<Mutex<Option<acp::SessionId>>>,
+  session_id: Arc<Mutex<Option<acp::SessionId>>>,
   /// Current model state (available models and current selection)
-  model_state:       Arc<Mutex<Option<acp::SessionModelState>>>,
+  model_state: Arc<Mutex<Option<acp::SessionModelState>>>,
   /// Receiver for streaming events from the agent
-  pub event_rx:      mpsc::UnboundedReceiver<StreamEvent>,
+  pub event_rx: mpsc::UnboundedReceiver<StreamEvent>,
   /// Receiver for permission requests from the agent
   pub permission_rx: mpsc::UnboundedReceiver<PendingPermission>,
   /// Channel to send commands to the ACP thread
-  command_tx:        mpsc::UnboundedSender<AcpCommand>,
+  command_tx: mpsc::UnboundedSender<AcpCommand>,
   /// Handle to the ACP thread (for cleanup)
-  _thread:           JoinHandle<()>,
+  _thread: JoinHandle<()>,
 }
 
 impl AcpHandle {
@@ -208,14 +182,14 @@ impl AcpHandle {
     log::info!("Initializing ACP connection...");
     conn
       .initialize(acp::InitializeRequest {
-        protocol_version:    acp::V1,
+        protocol_version: acp::V1,
         client_capabilities: acp::ClientCapabilities::default(),
-        client_info:         Some(acp::Implementation {
-          name:    "the-editor".to_string(),
-          title:   Some("The Editor".to_string()),
+        client_info: Some(acp::Implementation {
+          name: "the-editor".to_string(),
+          title: Some("The Editor".to_string()),
           version: env!("CARGO_PKG_VERSION").to_string(),
         }),
-        meta:                None,
+        meta: None,
       })
       .await
       .context("Failed to initialize ACP connection")?;

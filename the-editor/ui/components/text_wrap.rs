@@ -7,11 +7,7 @@
 //! The key insight from Helix is that text should be wrapped at **render time**
 //! using the actual available width, not pre-wrapped with estimated widths.
 
-use the_editor_renderer::{
-  Color,
-  TextSegment,
-  TextStyle,
-};
+use the_editor_renderer::{Color, TextSegment, TextStyle};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -19,8 +15,8 @@ use unicode_width::UnicodeWidthStr;
 #[derive(Clone)]
 pub struct StyledGrapheme<'a> {
   pub symbol: &'a str,
-  pub style:  TextStyle,
-  pub width:  u16,
+  pub style: TextStyle,
+  pub width: u16,
 }
 
 /// Word wrapper that wraps styled text segments at word boundaries.
@@ -29,13 +25,13 @@ pub struct StyledGrapheme<'a> {
 /// type. It wraps text at render time using the actual available width.
 pub struct WordWrapper<'a> {
   /// Iterator over styled graphemes
-  graphemes:      Vec<StyledGrapheme<'a>>,
+  graphemes: Vec<StyledGrapheme<'a>>,
   /// Current position in graphemes
-  pos:            usize,
+  pos: usize,
   /// Maximum line width in display cells
   max_line_width: u16,
   /// Whether to trim leading whitespace on wrapped lines
-  trim:           bool,
+  trim: bool,
 }
 
 impl<'a> WordWrapper<'a> {
@@ -191,7 +187,7 @@ fn graphemes_to_segments(graphemes: &[StyledGrapheme<'_>]) -> Vec<TextSegment> {
       if !current_content.is_empty() {
         segments.push(TextSegment {
           content: std::mem::take(&mut current_content),
-          style:   current_style.clone(),
+          style: current_style.clone(),
         });
       }
       current_content = grapheme.symbol.to_string();
@@ -202,7 +198,7 @@ fn graphemes_to_segments(graphemes: &[StyledGrapheme<'_>]) -> Vec<TextSegment> {
   if !current_content.is_empty() {
     segments.push(TextSegment {
       content: current_content,
-      style:   current_style,
+      style: current_style,
     });
   }
 
@@ -328,8 +324,8 @@ mod tests {
   fn make_segment(content: &str) -> TextSegment {
     TextSegment {
       content: content.to_string(),
-      style:   TextStyle {
-        size:  14.0,
+      style: TextStyle {
+        size: 14.0,
         color: Color::WHITE,
       },
     }
@@ -364,15 +360,15 @@ mod tests {
     let segments = vec![
       TextSegment {
         content: "hello ".to_string(),
-        style:   TextStyle {
-          size:  14.0,
+        style: TextStyle {
+          size: 14.0,
           color: Color::RED,
         },
       },
       TextSegment {
         content: "world".to_string(),
-        style:   TextStyle {
-          size:  14.0,
+        style: TextStyle {
+          size: 14.0,
           color: Color::BLUE,
         },
       },
@@ -386,9 +382,10 @@ mod tests {
 
   #[test]
   fn test_required_size() {
-    let lines = vec![vec![make_segment("short")], vec![make_segment(
-      "a longer line that needs wrapping",
-    )]];
+    let lines = vec![
+      vec![make_segment("short")],
+      vec![make_segment("a longer line that needs wrapping")],
+    ];
     let (width, height) = required_size(&lines, 15);
     assert!(width <= 15);
     assert!(height >= 3); // first line + wrapped second line

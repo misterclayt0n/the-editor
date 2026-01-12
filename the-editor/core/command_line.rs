@@ -28,15 +28,7 @@
 //! This module also defines structs for configuring the parsing of the command
 //! line for a command. See `Flag` and `Signature`.
 
-use std::{
-  borrow::Cow,
-  collections::HashMap,
-  error::Error,
-  fmt,
-  ops,
-  slice,
-  vec,
-};
+use std::{borrow::Cow, collections::HashMap, error::Error, fmt, ops, slice, vec};
 
 /// Splits a command line into the command and arguments parts.
 ///
@@ -69,13 +61,13 @@ pub struct Flag {
   /// This value should be supplied when reading a flag out of the [Args] with
   /// [Args::get_flag] and [Args::has_flag]. The `:sort` command
   /// implementation for example should ask for `args.has_flag("reverse")`.
-  pub name:        &'static str,
+  pub name: &'static str,
   /// The character that can be used as a shorthand for the flag, optionally.
   ///
   /// For example a flag like "reverse" mentioned above might take an alias
   /// `Some('r')` to allow specifying the flag as `-r`.
-  pub alias:       Option<char>,
-  pub doc:         &'static str,
+  pub alias: Option<char>,
+  pub doc: &'static str,
   /// The completion values to use when specifying an argument for a flag.
   ///
   /// This should be set to `None` for boolean flags and `Some(&["foo", "bar",
@@ -88,9 +80,9 @@ impl Flag {
   // This allows defining flags with the `..Flag::DEFAULT` shorthand. The `name`
   // and `doc` fields should always be overwritten.
   pub const DEFAULT: Self = Self {
-    name:        "",
-    doc:         "",
-    alias:       None,
+    name: "",
+    doc: "",
+    alias: None,
     completions: None,
   };
 }
@@ -149,11 +141,11 @@ pub struct Signature {
   /// * `:toggle --bar foo` has one positional "foo" and one flag "--bar".
   /// * `:toggle --bar foo --baz` has two positionals `["foo", "--baz"]` and one
   ///   flag "--bar".
-  pub raw_after:   Option<u8>,
+  pub raw_after: Option<u8>,
   /// A set of flags that a command may accept.
   ///
   /// See the `Flag` struct for more info.
-  pub flags:       &'static [Flag],
+  pub flags: &'static [Flag],
   /// Do not set this field. Use `..Signature::DEFAULT` to construct a
   /// `Signature` instead.
   // This field allows adding new fields later with minimal code changes. This works like a
@@ -167,9 +159,9 @@ impl Signature {
   // The `positionals` field should always be overwritten.
   pub const DEFAULT: Self = Self {
     positionals: (0, None),
-    raw_after:   None,
-    flags:       &[],
-    _dummy:      (),
+    raw_after: None,
+    flags: &[],
+    _dummy: (),
   };
 
   fn check_positional_count(&self, actual: usize) -> Result<(), ParseArgsError<'static>> {
@@ -185,8 +177,8 @@ impl Signature {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseArgsError<'a> {
   WrongPositionalCount {
-    min:    usize,
-    max:    Option<usize>,
+    min: usize,
+    max: Option<usize>,
     actual: usize,
   },
   UnterminatedToken {
@@ -364,7 +356,7 @@ pub enum TokenKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token<'a> {
-  pub kind:          TokenKind,
+  pub kind: TokenKind,
   /// The byte index into the input where the token's content starts.
   ///
   /// For quoted text this means the byte after the quote. For expansions this
@@ -375,7 +367,7 @@ pub struct Token<'a> {
   /// Usually this content borrows from the input but an owned value may be used
   /// in cases of escaping. On Unix systems a raw token like `a\ b` has the
   /// contents `"a b"`.
-  pub content:       Cow<'a, str>,
+  pub content: Cow<'a, str>,
   /// Whether the token's opening delimiter is closed.
   ///
   /// For example a quote `"foo"` is closed but not `"foo` or an expansion
@@ -395,9 +387,9 @@ impl<'a> Token<'a> {
 
   pub fn expand(content: impl Into<Cow<'a, str>>) -> Self {
     Self {
-      kind:          TokenKind::Expand,
+      kind: TokenKind::Expand,
       content_start: 0,
-      content:       content.into(),
+      content: content.into(),
       is_terminated: true,
     }
   }
@@ -405,13 +397,13 @@ impl<'a> Token<'a> {
 
 #[derive(Debug)]
 pub struct Tokenizer<'a> {
-  input:    &'a str,
+  input: &'a str,
   /// Whether to return errors in the iterator for failed validations like
   /// unterminated strings or expansions. When this is set to `false` the
   /// iterator will never return `Err`.
   validate: bool,
   /// The current byte index of the input being considered.
-  pos:      usize,
+  pos: usize,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -586,9 +578,9 @@ impl<'a> Tokenizer<'a> {
           Err(ParseArgsError::MissingExpansionDelimiter { expansion: kind })
         } else {
           Ok(Token {
-            kind:          TokenKind::ExpansionKind,
+            kind: TokenKind::ExpansionKind,
             content_start: kind_start,
-            content:       Cow::Borrowed(kind),
+            content: Cow::Borrowed(kind),
             is_terminated: false,
           })
         });
@@ -762,27 +754,27 @@ pub enum CompletionState {
 /// `Signature`. See the `Signature` type for more details.
 #[derive(Debug)]
 pub struct Args<'a> {
-  signature:        Signature,
+  signature: Signature,
   /// Whether to validate the arguments.
   /// See the `ParseArgsError` type for the validations.
-  validate:         bool,
+  validate: bool,
   /// Whether args pushed with `Self::push` should be treated as positionals
   /// even if they start with '-'.
   only_positionals: bool,
-  state:            CompletionState,
-  positionals:      Vec<Cow<'a, str>>,
-  flags:            HashMap<&'static str, Cow<'a, str>>,
+  state: CompletionState,
+  positionals: Vec<Cow<'a, str>>,
+  flags: HashMap<&'static str, Cow<'a, str>>,
 }
 
 impl Default for Args<'_> {
   fn default() -> Self {
     Self {
-      signature:        Signature::DEFAULT,
-      validate:         Default::default(),
+      signature: Signature::DEFAULT,
+      validate: Default::default(),
       only_positionals: Default::default(),
-      state:            CompletionState::default(),
-      positionals:      Default::default(),
-      flags:            Default::default(),
+      state: CompletionState::default(),
+      positionals: Default::default(),
+      flags: Default::default(),
     }
   }
 }
@@ -1101,11 +1093,10 @@ mod test {
     // The backslash at the start of the double quote makes the quote be treated as
     // raw. For the backslash before the ending quote the token is already
     // considered raw so the backslash and quote are treated literally.
-    assert_tokens(r#"echo \"hello        world\""#, &[
-      "echo",
-      r#""hello"#,
-      r#"world\""#,
-    ]);
+    assert_tokens(
+      r#"echo \"hello        world\""#,
+      &["echo", r#""hello"#, r#"world\""#],
+    );
   }
 
   #[test]
@@ -1143,27 +1134,28 @@ mod test {
     // the parser here.
     assert_tokens(r#"echo "%%hello world""#, &["echo", "%%hello world"]);
     // Different kinds of quotes nested:
-    assert_tokens(r#"echo "%sh{echo 'hello world'}""#, &[
-      "echo",
-      r#"%sh{echo 'hello world'}"#,
-    ]);
+    assert_tokens(
+      r#"echo "%sh{echo 'hello world'}""#,
+      &["echo", r#"%sh{echo 'hello world'}"#],
+    );
     // Nesting of the expansion delimiter:
     assert_tokens(r#"echo %{hello {x} world}"#, &["echo", "hello {x} world"]);
-    assert_tokens(r#"echo %{hello {{😎}} world}"#, &[
-      "echo",
-      "hello {{😎}} world",
-    ]);
+    assert_tokens(
+      r#"echo %{hello {{😎}} world}"#,
+      &["echo", "hello {{😎}} world"],
+    );
 
     // Balanced nesting:
-    assert_tokens(r#"echo %{hello {}} world}"#, &[
-      "echo", "hello {}", "world}",
-    ]);
+    assert_tokens(
+      r#"echo %{hello {}} world}"#,
+      &["echo", "hello {}", "world}"],
+    );
 
     // Recursive expansions:
-    assert_tokens(r#"echo %sh{echo "%{cursor_line}"}"#, &[
-      "echo",
-      r#"echo "%{cursor_line}""#,
-    ]);
+    assert_tokens(
+      r#"echo %sh{echo "%{cursor_line}"}"#,
+      &["echo", r#"echo "%{cursor_line}""#],
+    );
     // Completion should provide variable names here. (Unbalanced nesting)
     assert_incomplete_tokens(r#"echo %sh{echo "%{c"#, &["echo", r#"echo "%{c"#]);
     assert_incomplete_tokens(r#"echo %{hello {{} world}"#, &["echo", "hello {{} world}"]);
@@ -1208,15 +1200,15 @@ mod test {
       positionals: (1, Some(2)),
       flags: &[
         Flag {
-          name:        "foo",
-          alias:       Some('f'),
-          doc:         "",
+          name: "foo",
+          alias: Some('f'),
+          doc: "",
           completions: None,
         },
         Flag {
-          name:        "bar",
-          alias:       Some('b'),
-          doc:         "",
+          name: "bar",
+          alias: Some('b'),
+          doc: "",
           completions: Some(&[]),
         },
       ],

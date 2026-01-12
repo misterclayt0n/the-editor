@@ -1,16 +1,8 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  DocumentSelector,
-  DynamicRegistrationClientCapabilities,
-  PartialResultParams,
-  Range,
-  TextDocumentIdentifier,
-  TextEdit,
-  WorkDoneProgressParams,
+  DocumentSelector, DynamicRegistrationClientCapabilities, PartialResultParams, Range,
+  TextDocumentIdentifier, TextEdit, WorkDoneProgressParams,
 };
 
 pub type DocumentColorClientCapabilities = DynamicRegistrationClientCapabilities;
@@ -82,11 +74,11 @@ pub struct ColorInformation {
 #[serde(rename_all = "camelCase")]
 pub struct Color {
   /// The red component of this color in the range [0-1].
-  pub red:   f32,
+  pub red: f32,
   /// The green component of this color in the range [0-1].
   pub green: f32,
   /// The blue component of this color in the range [0-1].
-  pub blue:  f32,
+  pub blue: f32,
   /// The alpha component of this color in the range [0-1].
   pub alpha: f32,
 }

@@ -4,18 +4,9 @@
 //! events, converting raw keyboard/text events into a single stream of
 //! processed events.
 
-use the_editor_renderer::{
-  InputEvent,
-  Key,
-  KeyPress,
-  MouseEvent,
-  ScrollDelta,
-};
+use the_editor_renderer::{InputEvent, Key, KeyPress, MouseEvent, ScrollDelta};
 
-use crate::keymap::{
-  KeyBinding,
-  Mode,
-};
+use crate::keymap::{KeyBinding, Mode};
 
 /// Unified key event after processing and normalization.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,17 +17,17 @@ pub enum UnifiedKey {
   Special(SpecialKey),
   /// A modified character (e.g., Ctrl+A, Shift+Space).
   Modified {
-    key:   char,
+    key: char,
     shift: bool,
-    ctrl:  bool,
-    alt:   bool,
+    ctrl: bool,
+    alt: bool,
   },
   /// A modified special key (e.g., Alt+Backspace, Ctrl+Delete).
   ModifiedSpecial {
-    key:   SpecialKey,
+    key: SpecialKey,
     shift: bool,
-    ctrl:  bool,
-    alt:   bool,
+    ctrl: bool,
+    alt: bool,
   },
   /// Escape key (special handling in many contexts).
   Escape,
@@ -88,13 +79,13 @@ pub enum ProcessedInput {
 #[derive(Debug, Clone)]
 pub struct InputProcessor {
   /// Current editor mode.
-  mode:         Mode,
+  mode: Mode,
   /// Whether we're waiting for a character (e.g., after 'r' command).
   pending_char: bool,
   /// Accumulated modifiers from keyboard events.
-  shift_held:   bool,
-  ctrl_held:    bool,
-  alt_held:     bool,
+  shift_held: bool,
+  ctrl_held: bool,
+  alt_held: bool,
 }
 
 impl InputProcessor {
@@ -154,46 +145,36 @@ impl InputProcessor {
     let unified = match key_press.code {
       Key::Escape => Some(UnifiedKey::Escape),
       // Special keys with modifiers need special handling
-      Key::Enter if has_modifiers => {
-        Some(UnifiedKey::ModifiedSpecial {
-          key:   SpecialKey::Enter,
-          shift: key_press.shift,
-          ctrl:  key_press.ctrl,
-          alt:   key_press.alt,
-        })
-      },
-      Key::NumpadEnter if has_modifiers => {
-        Some(UnifiedKey::ModifiedSpecial {
-          key:   SpecialKey::NumpadEnter,
-          shift: key_press.shift,
-          ctrl:  key_press.ctrl,
-          alt:   key_press.alt,
-        })
-      },
-      Key::Tab if has_modifiers => {
-        Some(UnifiedKey::ModifiedSpecial {
-          key:   SpecialKey::Tab,
-          shift: key_press.shift,
-          ctrl:  key_press.ctrl,
-          alt:   key_press.alt,
-        })
-      },
-      Key::Backspace if has_modifiers => {
-        Some(UnifiedKey::ModifiedSpecial {
-          key:   SpecialKey::Backspace,
-          shift: key_press.shift,
-          ctrl:  key_press.ctrl,
-          alt:   key_press.alt,
-        })
-      },
-      Key::Delete if has_modifiers => {
-        Some(UnifiedKey::ModifiedSpecial {
-          key:   SpecialKey::Delete,
-          shift: key_press.shift,
-          ctrl:  key_press.ctrl,
-          alt:   key_press.alt,
-        })
-      },
+      Key::Enter if has_modifiers => Some(UnifiedKey::ModifiedSpecial {
+        key: SpecialKey::Enter,
+        shift: key_press.shift,
+        ctrl: key_press.ctrl,
+        alt: key_press.alt,
+      }),
+      Key::NumpadEnter if has_modifiers => Some(UnifiedKey::ModifiedSpecial {
+        key: SpecialKey::NumpadEnter,
+        shift: key_press.shift,
+        ctrl: key_press.ctrl,
+        alt: key_press.alt,
+      }),
+      Key::Tab if has_modifiers => Some(UnifiedKey::ModifiedSpecial {
+        key: SpecialKey::Tab,
+        shift: key_press.shift,
+        ctrl: key_press.ctrl,
+        alt: key_press.alt,
+      }),
+      Key::Backspace if has_modifiers => Some(UnifiedKey::ModifiedSpecial {
+        key: SpecialKey::Backspace,
+        shift: key_press.shift,
+        ctrl: key_press.ctrl,
+        alt: key_press.alt,
+      }),
+      Key::Delete if has_modifiers => Some(UnifiedKey::ModifiedSpecial {
+        key: SpecialKey::Delete,
+        shift: key_press.shift,
+        ctrl: key_press.ctrl,
+        alt: key_press.alt,
+      }),
       // Unmodified special keys
       Key::Enter => Some(UnifiedKey::Special(SpecialKey::Enter)),
       Key::NumpadEnter => Some(UnifiedKey::Special(SpecialKey::NumpadEnter)),
@@ -224,10 +205,10 @@ impl InputProcessor {
       Key::Char(ch) if key_press.ctrl || key_press.alt || key_press.shift => {
         // Modified character.
         Some(UnifiedKey::Modified {
-          key:   ch,
+          key: ch,
           shift: key_press.shift,
-          ctrl:  key_press.ctrl,
-          alt:   key_press.alt,
+          ctrl: key_press.ctrl,
+          alt: key_press.alt,
         })
       },
       Key::Char(ch) => {
@@ -263,10 +244,10 @@ impl InputProcessor {
         // NOTE: Check if it might be a modified key based on our modifier state.
         if self.ctrl_held || self.alt_held {
           events.push(ProcessedInput::Key(UnifiedKey::Modified {
-            key:   ch,
+            key: ch,
             shift: self.shift_held,
-            ctrl:  self.ctrl_held,
-            alt:   self.alt_held,
+            ctrl: self.ctrl_held,
+            alt: self.alt_held,
           }));
         } else {
           events.push(ProcessedInput::Key(UnifiedKey::Character(ch)));
@@ -394,7 +375,7 @@ pub enum InputState {
 /// Main input handler with explicit state management.
 pub struct InputHandler {
   processor: InputProcessor,
-  state:     InputState,
+  state: InputState,
 }
 
 impl InputHandler {
@@ -514,31 +495,26 @@ impl InputHandler {
 #[derive(Debug, Default)]
 pub struct InputResult {
   /// Keys to be looked up in keymap.
-  pub keys:         Option<Vec<KeyBinding>>,
+  pub keys: Option<Vec<KeyBinding>>,
   /// Mouse event to handle.
-  pub mouse:        Option<MouseEvent>,
+  pub mouse: Option<MouseEvent>,
   /// Scroll event to handle.
-  pub scroll:       Option<ScrollDelta>,
+  pub scroll: Option<ScrollDelta>,
   /// Character for pending callback (e.g., replace command).
   pub pending_char: Option<char>,
   /// Character to insert in insert mode.
-  pub insert_char:  Option<char>,
+  pub insert_char: Option<char>,
   /// Key for command mode.
-  pub command_key:  Option<KeyBinding>,
+  pub command_key: Option<KeyBinding>,
   /// Whether the input was consumed by a callback.
-  pub consumed:     bool,
+  pub consumed: bool,
   /// Whether a pending operation was cancelled.
-  pub cancelled:    bool,
+  pub cancelled: bool,
 }
 
 #[cfg(test)]
 mod tests {
-  use the_editor_renderer::{
-    InputEvent,
-    Key,
-    KeyPress,
-    MouseButton,
-  };
+  use the_editor_renderer::{InputEvent, Key, KeyPress, MouseButton};
 
   use super::*;
 
@@ -758,8 +734,8 @@ mod tests {
 
     let mouse = MouseEvent {
       position: (100.0, 200.0),
-      button:   Some(MouseButton::Left),
-      pressed:  true,
+      button: Some(MouseButton::Left),
+      pressed: true,
     };
     let event = InputEvent::Mouse(mouse.clone());
     let result = handler.handle_input(event);

@@ -1,21 +1,11 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
 use crate::types::{
-  DynamicRegistrationClientCapabilities,
-  PartialResultParams,
-  Range,
-  SymbolKind,
-  SymbolTag,
+  DynamicRegistrationClientCapabilities, PartialResultParams, Range, SymbolKind, SymbolTag,
   TextDocumentPositionParams,
-  progress::{
-    WorkDoneProgressOptions,
-    WorkDoneProgressParams,
-  },
+  progress::{WorkDoneProgressOptions, WorkDoneProgressParams},
 };
 
 pub type CallHierarchyClientCapabilities = DynamicRegistrationClientCapabilities;

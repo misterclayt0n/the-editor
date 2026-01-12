@@ -128,11 +128,9 @@ pub fn take_until<'a, F>(pattern: F) -> impl Parser<'a, Output = &'a str>
 where
   F: Fn(char) -> bool,
 {
-  move |input: &'a str| {
-    match input.find(&pattern) {
-      Some(index) if index != 0 => Ok((&input[index..], &input[0..index])),
-      _ => Err(input),
-    }
+  move |input: &'a str| match input.find(&pattern) {
+    Some(index) if index != 0 => Ok((&input[index..], &input[0..index])),
+    _ => Err(input),
   }
 }
 
@@ -156,18 +154,16 @@ pub fn take_while<'a, F>(pattern: F) -> impl Parser<'a, Output = &'a str>
 where
   F: Fn(char) -> bool,
 {
-  move |input: &'a str| {
-    match input
-      .char_indices()
-      .take_while(|(_p, c)| pattern(*c))
-      .last()
-    {
-      Some((index, c)) => {
-        let index = index + c.len_utf8();
-        Ok((&input[index..], &input[0..index]))
-      },
-      _ => Err(input),
-    }
+  move |input: &'a str| match input
+    .char_indices()
+    .take_while(|(_p, c)| pattern(*c))
+    .last()
+  {
+    Some((index, c)) => {
+      let index = index + c.len_utf8();
+      Ok((&input[index..], &input[0..index]))
+    },
+    _ => Err(input),
   }
 }
 
@@ -322,16 +318,12 @@ where
   P: Parser<'a>,
   F: Fn(P::Output) -> Option<T>,
 {
-  move |input| {
-    match parser.parse(input) {
-      Ok((next_input, value)) => {
-        match filter_map_fn(value) {
-          Some(value) => Ok((next_input, value)),
-          None => Err(input),
-        }
-      },
-      Err(_) => Err(input),
-    }
+  move |input| match parser.parse(input) {
+    Ok((next_input, value)) => match filter_map_fn(value) {
+      Some(value) => Ok((next_input, value)),
+      None => Err(input),
+    },
+    Err(_) => Err(input),
   }
 }
 
@@ -418,11 +410,9 @@ where
   P1: Parser<'a, Output = T>,
   P2: Parser<'a, Output = T>,
 {
-  move |input| {
-    match parser1.parse(input) {
-      ok @ Ok(_) => ok,
-      Err(_) => parser2.parse(input),
-    }
+  move |input| match parser1.parse(input) {
+    ok @ Ok(_) => ok,
+    Err(_) => parser2.parse(input),
   }
 }
 
@@ -448,11 +438,9 @@ pub fn optional<'a, P, T>(parser: P) -> impl Parser<'a, Output = Option<T>>
 where
   P: Parser<'a, Output = T>,
 {
-  move |input| {
-    match parser.parse(input) {
-      Ok((next_input, value)) => Ok((next_input, Some(value))),
-      Err(_) => Ok((input, None)),
-    }
+  move |input| match parser.parse(input) {
+    Ok((next_input, value)) => Ok((next_input, Some(value))),
+    Err(_) => Ok((input, None)),
   }
 }
 

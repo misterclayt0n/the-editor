@@ -1,15 +1,8 @@
 #![recursion_limit = "512"]
 
-use std::{
-  path::Path,
-  sync::Arc,
-  time::Instant,
-};
+use std::{path::Path, sync::Arc, time::Instant};
 
-use arc_swap::{
-  ArcSwap,
-  access::Map,
-};
+use arc_swap::{ArcSwap, access::Map};
 use smallvec::SmallVec;
 use the_editor_event::AsyncHook;
 
@@ -17,23 +10,13 @@ use crate::{
   cli::CliOptions,
   core::{
     config::Config,
-    document::{
-      Document,
-      DocumentOpenError,
-    },
+    document::{Document, DocumentOpenError},
     graphics::Rect,
     position::Position,
-    selection::{
-      Range,
-      Selection,
-    },
+    selection::{Range, Selection},
     theme,
   },
-  editor::{
-    Action,
-    Editor,
-    EditorConfig,
-  },
+  editor::{Action, Editor, EditorConfig},
   handlers::Handlers,
 };
 
@@ -149,11 +132,11 @@ fn main() -> anyhow::Result<()> {
   let (colors_tx, _colors_rx) = tokio::sync::mpsc::channel(100);
 
   let handlers = Handlers {
-    completions:     crate::handlers::completion::CompletionHandler::new(completion_tx),
+    completions: crate::handlers::completion::CompletionHandler::new(completion_tx),
     signature_hints: signature_tx,
-    auto_save:       auto_save_tx,
+    auto_save: auto_save_tx,
     document_colors: colors_tx,
-    word_index:      crate::handlers::word_index::Handler::spawn(),
+    word_index: crate::handlers::word_index::Handler::spawn(),
   };
   crate::handlers::register_hooks(&handlers, &config.editor);
   log::info!("[STARTUP] Handlers setup: {:?}", t.elapsed());

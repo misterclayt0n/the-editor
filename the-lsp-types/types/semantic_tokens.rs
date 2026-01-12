@@ -1,19 +1,10 @@
 use std::borrow::Cow;
 
-use serde::{
-  Deserialize,
-  Serialize,
-  ser::SerializeSeq,
-};
+use serde::{Deserialize, Serialize, ser::SerializeSeq};
 
 use crate::types::{
-  PartialResultParams,
-  Range,
-  StaticRegistrationOptions,
-  TextDocumentIdentifier,
-  TextDocumentRegistrationOptions,
-  WorkDoneProgressOptions,
-  WorkDoneProgressParams,
+  PartialResultParams, Range, StaticRegistrationOptions, TextDocumentIdentifier,
+  TextDocumentRegistrationOptions, WorkDoneProgressOptions, WorkDoneProgressParams,
 };
 /// A set of predefined token types. This set is not fixed
 /// and clients can specify additional token types via the
@@ -153,10 +144,10 @@ pub struct SemanticTokensLegend {
 /// The actual tokens.
 #[derive(Debug, Eq, PartialEq, Copy, Clone, Default)]
 pub struct SemanticToken {
-  pub delta_line:             u32,
-  pub delta_start:            u32,
-  pub length:                 u32,
-  pub token_type:             u32,
+  pub delta_line: u32,
+  pub delta_start: u32,
+  pub length: u32,
+  pub token_type: u32,
   pub token_modifiers_bitset: u32,
 }
 
@@ -174,14 +165,12 @@ impl SemanticToken {
 
     Result::Ok(
       chunks
-        .map(|chunk| {
-          SemanticToken {
-            delta_line:             chunk[0],
-            delta_start:            chunk[1],
-            length:                 chunk[2],
-            token_type:             chunk[3],
-            token_modifiers_bitset: chunk[4],
-          }
+        .map(|chunk| SemanticToken {
+          delta_line: chunk[0],
+          delta_start: chunk[1],
+          length: chunk[2],
+          token_type: chunk[3],
+          token_modifiers_bitset: chunk[4],
         })
         .collect(),
     )
@@ -292,7 +281,7 @@ impl From<SemanticTokensPartialResult> for SemanticTokensResult {
 #[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticTokensEdit {
-  pub start:        u32,
+  pub start: u32,
   pub delete_count: u32,
 
   #[serde(
@@ -333,7 +322,7 @@ pub struct SemanticTokensDelta {
   pub result_id: Option<String>,
   /// For a detailed description how these edits are structured please see
   /// <https://github.com/microsoft/vscode-extension-samples/blob/5ae1f7787122812dcc84e37427ca90af5ee09f14/semantic-tokens-sample/vscode.proposed.d.ts#L131>
-  pub edits:     Vec<SemanticTokensEdit>,
+  pub edits: Vec<SemanticTokensEdit>,
 }
 
 /// Capabilities specific to the `textDocument/semanticTokens/*` requests.
@@ -562,17 +551,14 @@ impl From<SemanticTokensPartialResult> for SemanticTokensRangeResult {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::types::tests::{
-    test_deserialization,
-    test_serialization,
-  };
+  use crate::types::tests::{test_deserialization, test_serialization};
 
   #[test]
   fn test_semantic_tokens_support_serialization() {
     test_serialization(
       &SemanticTokens {
         result_id: None,
-        data:      vec![],
+        data: vec![],
       },
       r#"{"data":[]}"#,
     );
@@ -580,11 +566,11 @@ mod tests {
     test_serialization(
       &SemanticTokens {
         result_id: None,
-        data:      vec![SemanticToken {
-          delta_line:             2,
-          delta_start:            5,
-          length:                 3,
-          token_type:             0,
+        data: vec![SemanticToken {
+          delta_line: 2,
+          delta_start: 5,
+          length: 3,
+          token_type: 0,
           token_modifiers_bitset: 3,
         }],
       },
@@ -594,19 +580,19 @@ mod tests {
     test_serialization(
       &SemanticTokens {
         result_id: None,
-        data:      vec![
+        data: vec![
           SemanticToken {
-            delta_line:             2,
-            delta_start:            5,
-            length:                 3,
-            token_type:             0,
+            delta_line: 2,
+            delta_start: 5,
+            length: 3,
+            token_type: 0,
             token_modifiers_bitset: 3,
           },
           SemanticToken {
-            delta_line:             0,
-            delta_start:            5,
-            length:                 4,
-            token_type:             1,
+            delta_line: 0,
+            delta_start: 5,
+            length: 4,
+            token_type: 1,
             token_modifiers_bitset: 0,
           },
         ],
@@ -617,50 +603,62 @@ mod tests {
 
   #[test]
   fn test_semantic_tokens_support_deserialization() {
-    test_deserialization(r#"{"data":[]}"#, &SemanticTokens {
-      result_id: None,
-      data:      vec![],
-    });
+    test_deserialization(
+      r#"{"data":[]}"#,
+      &SemanticTokens {
+        result_id: None,
+        data: vec![],
+      },
+    );
 
-    test_deserialization(r#"{"data":[2,5,3,0,3]}"#, &SemanticTokens {
-      result_id: None,
-      data:      vec![SemanticToken {
-        delta_line:             2,
-        delta_start:            5,
-        length:                 3,
-        token_type:             0,
-        token_modifiers_bitset: 3,
-      }],
-    });
-
-    test_deserialization(r#"{"data":[2,5,3,0,3,0,5,4,1,0]}"#, &SemanticTokens {
-      result_id: None,
-      data:      vec![
-        SemanticToken {
-          delta_line:             2,
-          delta_start:            5,
-          length:                 3,
-          token_type:             0,
+    test_deserialization(
+      r#"{"data":[2,5,3,0,3]}"#,
+      &SemanticTokens {
+        result_id: None,
+        data: vec![SemanticToken {
+          delta_line: 2,
+          delta_start: 5,
+          length: 3,
+          token_type: 0,
           token_modifiers_bitset: 3,
-        },
-        SemanticToken {
-          delta_line:             0,
-          delta_start:            5,
-          length:                 4,
-          token_type:             1,
-          token_modifiers_bitset: 0,
-        },
-      ],
-    });
+        }],
+      },
+    );
+
+    test_deserialization(
+      r#"{"data":[2,5,3,0,3,0,5,4,1,0]}"#,
+      &SemanticTokens {
+        result_id: None,
+        data: vec![
+          SemanticToken {
+            delta_line: 2,
+            delta_start: 5,
+            length: 3,
+            token_type: 0,
+            token_modifiers_bitset: 3,
+          },
+          SemanticToken {
+            delta_line: 0,
+            delta_start: 5,
+            length: 4,
+            token_type: 1,
+            token_modifiers_bitset: 0,
+          },
+        ],
+      },
+    );
   }
 
   #[test]
   #[should_panic]
   fn test_semantic_tokens_support_deserialization_err() {
-    test_deserialization(r#"{"data":[1]}"#, &SemanticTokens {
-      result_id: None,
-      data:      vec![],
-    });
+    test_deserialization(
+      r#"{"data":[1]}"#,
+      &SemanticTokens {
+        result_id: None,
+        data: vec![],
+      },
+    );
   }
 
   #[test]
@@ -668,53 +666,56 @@ mod tests {
     test_deserialization(
       r#"{"start":0,"deleteCount":1,"data":[2,5,3,0,3,0,5,4,1,0]}"#,
       &SemanticTokensEdit {
-        start:        0,
+        start: 0,
         delete_count: 1,
-        data:         Some(vec![
+        data: Some(vec![
           SemanticToken {
-            delta_line:             2,
-            delta_start:            5,
-            length:                 3,
-            token_type:             0,
+            delta_line: 2,
+            delta_start: 5,
+            length: 3,
+            token_type: 0,
             token_modifiers_bitset: 3,
           },
           SemanticToken {
-            delta_line:             0,
-            delta_start:            5,
-            length:                 4,
-            token_type:             1,
+            delta_line: 0,
+            delta_start: 5,
+            length: 4,
+            token_type: 1,
             token_modifiers_bitset: 0,
           },
         ]),
       },
     );
 
-    test_deserialization(r#"{"start":0,"deleteCount":1}"#, &SemanticTokensEdit {
-      start:        0,
-      delete_count: 1,
-      data:         None,
-    });
+    test_deserialization(
+      r#"{"start":0,"deleteCount":1}"#,
+      &SemanticTokensEdit {
+        start: 0,
+        delete_count: 1,
+        data: None,
+      },
+    );
   }
 
   #[test]
   fn test_semantic_tokens_edit_support_serialization() {
     test_serialization(
       &SemanticTokensEdit {
-        start:        0,
+        start: 0,
         delete_count: 1,
-        data:         Some(vec![
+        data: Some(vec![
           SemanticToken {
-            delta_line:             2,
-            delta_start:            5,
-            length:                 3,
-            token_type:             0,
+            delta_line: 2,
+            delta_start: 5,
+            length: 3,
+            token_type: 0,
             token_modifiers_bitset: 3,
           },
           SemanticToken {
-            delta_line:             0,
-            delta_start:            5,
-            length:                 4,
-            token_type:             1,
+            delta_line: 0,
+            delta_start: 5,
+            length: 4,
+            token_type: 1,
             token_modifiers_bitset: 0,
           },
         ]),
@@ -724,9 +725,9 @@ mod tests {
 
     test_serialization(
       &SemanticTokensEdit {
-        start:        0,
+        start: 0,
         delete_count: 1,
-        data:         None,
+        data: None,
       },
       r#"{"start":0,"deleteCount":1}"#,
     );

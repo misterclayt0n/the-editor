@@ -8,31 +8,13 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use pulldown_cmark::{
-  CodeBlockKind,
-  Event,
-  HeadingLevel,
-  Options,
-  Parser,
-  Tag,
-  TagEnd,
-};
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ropey::Rope;
-use the_editor_renderer::{
-  Color,
-  TextSegment,
-  TextStyle,
-};
+use the_editor_renderer::{Color, TextSegment, TextStyle};
 
 use crate::{
-  core::{
-    syntax::Loader,
-    theme::Theme,
-  },
-  ui::{
-    UI_FONT_SIZE,
-    compositor::Context,
-  },
+  core::{syntax::Loader, theme::Theme},
+  ui::{UI_FONT_SIZE, compositor::Context},
 };
 
 // ============================================================================
@@ -64,7 +46,7 @@ const INDENT: &str = "  ";
 /// loader for highlighting code blocks. Call `parse()` to convert to renderable
 /// lines.
 pub struct Markdown {
-  contents:      String,
+  contents: String,
   config_loader: Arc<ArcSwap<Loader>>,
 }
 
@@ -115,21 +97,19 @@ impl Markdown {
 
     // Transform <code>...</code> HTML into Code events
     let mut in_html_code = false;
-    let parser = parser.filter_map(|event| {
-      match event {
-        Event::Html(tag)
-          if tag.starts_with("<code") && matches!(tag.chars().nth(5), Some(' ' | '>')) =>
-        {
-          in_html_code = true;
-          None
-        },
-        Event::Html(tag) if *tag == *"</code>" => {
-          in_html_code = false;
-          None
-        },
-        Event::Text(text) if in_html_code => Some(Event::Code(text)),
-        _ => Some(event),
-      }
+    let parser = parser.filter_map(|event| match event {
+      Event::Html(tag)
+        if tag.starts_with("<code") && matches!(tag.chars().nth(5), Some(' ' | '>')) =>
+      {
+        in_html_code = true;
+        None
+      },
+      Event::Html(tag) if *tag == *"</code>" => {
+        in_html_code = false;
+        None
+      },
+      Event::Text(text) if in_html_code => Some(Event::Code(text)),
+      _ => Some(event),
     });
 
     for event in parser {
@@ -167,8 +147,8 @@ impl Markdown {
           let prefix = get_indent(list_stack.len()) + bullet.as_str();
           current_line.push(TextSegment {
             content: prefix,
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
               color: bullet_color,
             },
           });
@@ -179,8 +159,8 @@ impl Markdown {
           if current_line.is_empty() && !list_stack.is_empty() {
             current_line.push(TextSegment {
               content: get_indent(list_stack.len()),
-              style:   TextStyle {
-                size:  UI_FONT_SIZE,
+              style: TextStyle {
+                size: UI_FONT_SIZE,
                 color: text_color,
               },
             });
@@ -215,15 +195,13 @@ impl Markdown {
           } else {
             // Regular text with appropriate styling
             let color = match tags.last() {
-              Some(Tag::Heading { level, .. }) => {
-                match level {
-                  HeadingLevel::H1 => heading_colors[0],
-                  HeadingLevel::H2 => heading_colors[1],
-                  HeadingLevel::H3 => heading_colors[2],
-                  HeadingLevel::H4 => heading_colors[3],
-                  HeadingLevel::H5 => heading_colors[4],
-                  HeadingLevel::H6 => heading_colors[5],
-                }
+              Some(Tag::Heading { level, .. }) => match level {
+                HeadingLevel::H1 => heading_colors[0],
+                HeadingLevel::H2 => heading_colors[1],
+                HeadingLevel::H3 => heading_colors[2],
+                HeadingLevel::H4 => heading_colors[3],
+                HeadingLevel::H5 => heading_colors[4],
+                HeadingLevel::H6 => heading_colors[5],
               },
               // Note: We can't do italic/bold/strikethrough with just Color,
               // so we use distinct colors as visual hints
@@ -259,7 +237,7 @@ impl Markdown {
 
             current_line.push(TextSegment {
               content: text.to_string(),
-              style:   TextStyle {
+              style: TextStyle {
                 size: UI_FONT_SIZE,
                 color,
               },
@@ -270,8 +248,8 @@ impl Markdown {
           // Inline code
           current_line.push(TextSegment {
             content: text.to_string(),
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
               color: code_color,
             },
           });
@@ -282,8 +260,8 @@ impl Markdown {
           if !list_stack.is_empty() {
             current_line.push(TextSegment {
               content: get_indent(list_stack.len()),
-              style:   TextStyle {
-                size:  UI_FONT_SIZE,
+              style: TextStyle {
+                size: UI_FONT_SIZE,
                 color: text_color,
               },
             });
@@ -292,8 +270,8 @@ impl Markdown {
         Event::Rule => {
           lines.push(vec![TextSegment {
             content: "───".to_string(),
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
               color: rule_color,
             },
           }]);
@@ -434,8 +412,8 @@ fn highlight_code_block_internal(
         if !text.is_empty() {
           segments.push(TextSegment {
             content: text,
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
               color: default_code_color,
             },
           });
@@ -452,7 +430,7 @@ fn highlight_code_block_internal(
         if !text.is_empty() {
           segments.push(TextSegment {
             content: text,
-            style:   TextStyle {
+            style: TextStyle {
               size: UI_FONT_SIZE,
               color,
             },
@@ -468,8 +446,8 @@ fn highlight_code_block_internal(
       if !text.is_empty() {
         segments.push(TextSegment {
           content: text,
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
+          style: TextStyle {
+            size: UI_FONT_SIZE,
             color: default_code_color,
           },
         });
@@ -480,8 +458,8 @@ fn highlight_code_block_internal(
     if segments.is_empty() && !line_string.is_empty() {
       segments.push(TextSegment {
         content: line_string,
-        style:   TextStyle {
-          size:  UI_FONT_SIZE,
+        style: TextStyle {
+          size: UI_FONT_SIZE,
           color: default_code_color,
         },
       });
@@ -770,8 +748,8 @@ mod tests {
     use crate::ui::components::text_wrap;
     let segments = vec![TextSegment {
       content: "short".to_string(),
-      style:   TextStyle {
-        size:  UI_FONT_SIZE,
+      style: TextStyle {
+        size: UI_FONT_SIZE,
         color: Color::new(1.0, 1.0, 1.0, 1.0),
       },
     }];
@@ -784,8 +762,8 @@ mod tests {
     use crate::ui::components::text_wrap;
     let segments = vec![TextSegment {
       content: "this is a very long line that needs wrapping".to_string(),
-      style:   TextStyle {
-        size:  UI_FONT_SIZE,
+      style: TextStyle {
+        size: UI_FONT_SIZE,
         color: Color::new(1.0, 1.0, 1.0, 1.0),
       },
     }];

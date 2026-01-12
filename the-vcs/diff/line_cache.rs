@@ -13,39 +13,30 @@
 //! of the slice to static to circumvent that project.
 use std::mem::transmute;
 
-use imara_diff::{
-  InternedInput,
-  Interner,
-};
-use ropey::{
-  Rope,
-  RopeSlice,
-};
+use imara_diff::{InternedInput, Interner};
+use ropey::{Rope, RopeSlice};
 
-use super::{
-  MAX_DIFF_BYTES,
-  MAX_DIFF_LINES,
-};
+use super::{MAX_DIFF_BYTES, MAX_DIFF_LINES};
 
 /// A cache that stores the `lines` of a rope as a vector.
 /// It allows safely reusing the allocation of the vec when updating the rope
 pub(crate) struct InternedRopeLines {
-  diff_base:            Box<Rope>,
-  doc:                  Box<Rope>,
+  diff_base: Box<Rope>,
+  doc: Box<Rope>,
   num_tokens_diff_base: u32,
-  interned:             InternedInput<RopeSlice<'static>>,
+  interned: InternedInput<RopeSlice<'static>>,
 }
 
 impl InternedRopeLines {
   pub fn new(diff_base: Rope, doc: Rope) -> InternedRopeLines {
     let mut res = InternedRopeLines {
-      interned:             InternedInput {
-        before:   Vec::with_capacity(diff_base.len_lines()),
-        after:    Vec::with_capacity(doc.len_lines()),
+      interned: InternedInput {
+        before: Vec::with_capacity(diff_base.len_lines()),
+        after: Vec::with_capacity(doc.len_lines()),
         interner: Interner::new(diff_base.len_lines() + doc.len_lines()),
       },
-      diff_base:            Box::new(diff_base),
-      doc:                  Box::new(doc),
+      diff_base: Box::new(diff_base),
+      doc: Box::new(doc),
       // will be populated by update_diff_base_impl
       num_tokens_diff_base: 0,
     };

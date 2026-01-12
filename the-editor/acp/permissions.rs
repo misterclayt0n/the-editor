@@ -6,19 +6,15 @@
 
 use std::sync::Arc;
 
-use agent_client_protocol::{
-  PermissionOption,
-  PermissionOptionId,
-  ToolCallUpdate,
-};
+use agent_client_protocol::{PermissionOption, PermissionOptionId, ToolCallUpdate};
 use tokio::sync::oneshot;
 
 /// A pending permission request from the ACP agent.
 pub struct PendingPermission {
   /// The tool call requiring permission
-  pub tool_call:   ToolCallUpdate,
+  pub tool_call: ToolCallUpdate,
   /// Available options for the user to choose from
-  pub options:     Vec<PermissionOption>,
+  pub options: Vec<PermissionOption>,
   /// Channel to send the user's selected option
   pub response_tx: oneshot::Sender<PermissionOptionId>,
 }

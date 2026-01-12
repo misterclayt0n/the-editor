@@ -2,10 +2,7 @@ use std::{
   io,
   sync::{
     Arc,
-    atomic::{
-      self,
-      AtomicBool,
-    },
+    atomic::{self, AtomicBool},
   },
   time::SystemTime,
 };
@@ -14,18 +11,10 @@ use notify::event::EventKind;
 use the_editor_event::register_hook;
 
 use crate::{
-  core::{
-    document::Document,
-    file_watcher::FileSystemDidChange,
-  },
-  doc,
-  doc_mut,
+  core::{document::Document, file_watcher::FileSystemDidChange},
+  doc, doc_mut,
   editor::EditorConfig,
-  event::{
-    ConfigDidChange,
-    DocumentDidClose,
-    DocumentDidOpen,
-  },
+  event::{ConfigDidChange, DocumentDidClose, DocumentDidOpen},
   ui::job,
   view_mut,
 };
@@ -72,14 +61,14 @@ pub(crate) fn register_hooks(config: &EditorConfig) {
 }
 
 struct AutoReload {
-  enable:             AtomicBool,
+  enable: AtomicBool,
   prompt_if_modified: AtomicBool,
 }
 
 impl AutoReload {
   fn new(config: &EditorConfig) -> Self {
     Self {
-      enable:             AtomicBool::new(config.auto_reload.enable),
+      enable: AtomicBool::new(config.auto_reload.enable),
       prompt_if_modified: AtomicBool::new(config.auto_reload.prompt_if_modified),
     }
   }

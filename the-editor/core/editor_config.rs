@@ -12,39 +12,30 @@
 use std::{
   collections::HashMap,
   fs,
-  num::{
-    NonZeroU8,
-    NonZeroU16,
-  },
+  num::{NonZeroU8, NonZeroU16},
   path::Path,
   str::FromStr,
 };
 
 use encoding_rs::Encoding;
-use globset::{
-  GlobBuilder,
-  GlobMatcher,
-};
+use globset::{GlobBuilder, GlobMatcher};
 
 use crate::core::{
-  indent::{
-    IndentStyle,
-    MAX_INDENT,
-  },
+  indent::{IndentStyle, MAX_INDENT},
   line_ending::LineEnding,
 };
 
 /// Configuration declared for a path in `.editorconfig` files.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct EditorConfig {
-  pub indent_style:             Option<IndentStyle>,
-  pub tab_width:                Option<NonZeroU8>,
-  pub line_ending:              Option<LineEnding>,
-  pub encoding:                 Option<&'static Encoding>,
+  pub indent_style: Option<IndentStyle>,
+  pub tab_width: Option<NonZeroU8>,
+  pub line_ending: Option<LineEnding>,
+  pub encoding: Option<&'static Encoding>,
   // pub spelling_language: Option<SpellingLanguage>,
   pub trim_trailing_whitespace: Option<bool>,
-  pub insert_final_newline:     Option<bool>,
-  pub max_line_length:          Option<NonZeroU16>,
+  pub insert_final_newline: Option<bool>,
+  pub max_line_length: Option<NonZeroU16>,
 }
 
 impl EditorConfig {
@@ -56,25 +47,27 @@ impl EditorConfig {
     let mut configs = Vec::new();
     // <https://spec.editorconfig.org/#file-processing>
     for ancestor in path.ancestors() {
-            let editor_config_file = ancestor.join(".editorconfig");
-            let Ok(contents) = fs::read_to_string(&editor_config_file) else {
-                continue;
-            };
-            let ini = match contents.parse::<Ini>() {
-                Ok(ini) => ini,
-                Err(err) => {
-                    println!("Ignoring EditorConfig file at '{editor_config_file:?}' because a glob failed to compile: {err}");
-                    continue;
-                }
-            };
-            let is_root = ini.pairs.get("root").map(AsRef::as_ref) == Some("true");
-            configs.push((ini, ancestor));
-            // > The search shall stop if an EditorConfig file is found with the `root` key set to
-            // > `true` in the preamble or when reaching the root filesystem directory.
-            if is_root {
-                break;
-            }
-        }
+      let editor_config_file = ancestor.join(".editorconfig");
+      let Ok(contents) = fs::read_to_string(&editor_config_file) else {
+        continue;
+      };
+      let ini = match contents.parse::<Ini>() {
+        Ok(ini) => ini,
+        Err(err) => {
+          println!(
+            "Ignoring EditorConfig file at '{editor_config_file:?}' because a glob failed to compile: {err}"
+          );
+          continue;
+        },
+      };
+      let is_root = ini.pairs.get("root").map(AsRef::as_ref) == Some("true");
+      configs.push((ini, ancestor));
+      // > The search shall stop if an EditorConfig file is found with the `root` key set to
+      // > `true` in the preamble or when reaching the root filesystem directory.
+      if is_root {
+        break;
+      }
+    }
 
     let mut pairs = Pairs::new();
     // Reverse the configuration stack so that the `.editorconfig` files closest to
@@ -125,8 +118,9 @@ impl EditorConfig {
         Some(IndentSize::Spaces(spaces)) => Some(spaces),
         _ => None,
       });
-    let indent_style = pairs.get("indent_style").and_then(|value| {
-      match value.as_ref() {
+    let indent_style = pairs
+      .get("indent_style")
+      .and_then(|value| match value.as_ref() {
         "tab" => Some(IndentStyle::Tabs),
         "space" => {
           let spaces = match indent_size {
@@ -137,17 +131,16 @@ impl EditorConfig {
           Some(IndentStyle::Spaces(spaces.clamp(1, MAX_INDENT)))
         },
         _ => None,
-      }
-    });
-    let line_ending = pairs.get("end_of_line").and_then(|value| {
-      match value.as_ref() {
+      });
+    let line_ending = pairs
+      .get("end_of_line")
+      .and_then(|value| match value.as_ref() {
         "lf" => Some(LineEnding::LF),
         "crlf" => Some(LineEnding::Crlf),
         #[cfg(feature = "unicode-lines")]
         "cr" => Some(LineEnding::CR),
         _ => None,
-      }
-    });
+      });
     let encoding = pairs.get("charset").and_then(|value| {
       match value.as_ref() {
         "latin1" => Some(encoding_rs::WINDOWS_1252),
@@ -159,20 +152,22 @@ impl EditorConfig {
         _ => None,
       }
     });
-    let trim_trailing_whitespace = pairs.get("trim_trailing_whitespace").and_then(|value| {
-      match value.as_ref() {
-        "true" => Some(true),
-        "false" => Some(false),
-        _ => None,
-      }
-    });
-    let insert_final_newline = pairs.get("insert_final_newline").and_then(|value| {
-      match value.as_ref() {
-        "true" => Some(true),
-        "false" => Some(false),
-        _ => None,
-      }
-    });
+    let trim_trailing_whitespace =
+      pairs
+        .get("trim_trailing_whitespace")
+        .and_then(|value| match value.as_ref() {
+          "true" => Some(true),
+          "false" => Some(false),
+          _ => None,
+        });
+    let insert_final_newline =
+      pairs
+        .get("insert_final_newline")
+        .and_then(|value| match value.as_ref() {
+          "true" => Some(true),
+          "false" => Some(false),
+          _ => None,
+        });
     // This option is not in the spec but is supported by some editors.
     // <https://github.com/editorconfig/editorconfig/wiki/EditorConfig-Properties#max_line_length>
     let max_line_length = pairs
@@ -195,13 +190,13 @@ type Pairs = HashMap<Box<str>, Box<str>>;
 
 #[derive(Debug)]
 struct Section {
-  glob:  GlobMatcher,
+  glob: GlobMatcher,
   pairs: Pairs,
 }
 
 #[derive(Debug, Default)]
 struct Ini {
-  pairs:    Pairs,
+  pairs: Pairs,
   sections: Vec<Section>,
 }
 
@@ -228,42 +223,42 @@ impl FromStr for Ini {
         continue;
       }
       if let Some(section) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-                // > * Section Header: starts with a `[` and ends with a `]`. These lines define
-                // >   globs...
+        // > * Section Header: starts with a `[` and ends with a `]`. These lines define
+        // >   globs...
 
-                // <https://spec.editorconfig.org/#glob-expressions>
-                // We need to modify the glob string slightly since EditorConfig's glob flavor
-                // doesn't match `globset`'s exactly. `globset` only allows '**' at the beginning
-                // or end of a glob or between two '/'s. (This replacement is not very fancy but
-                // should cover most practical cases.)
-                let mut glob_str = section.replace("**.", "**/*.");
-                if !is_glob_relative(section) {
-                    glob_str.insert_str(0, "**/");
-                }
-                let glob = GlobBuilder::new(&glob_str)
-                    .literal_separator(true)
-                    .backslash_escape(true)
-                    .empty_alternates(true)
-                    .build()?;
-                ini.sections.push(Section {
-                    glob: glob.compile_matcher(),
-                    pairs: Pairs::new(),
-                });
-            } else if let Some((key, value)) = line.split_once('=') {
-                // > * Key-Value Pair (or Pair): contains a key and a value, separated by an `=`.
-                // >     * Key: The part before the first `=` on the line.
-                // >     * Value: The part, if any, after the first `=` on the line.
-                // >     * Keys and values are trimmed of leading and trailing whitespace, but
-                // >       include any whitespace that is between non-whitespace characters.
-                // >     * If a value is not provided, then the value is an empty string.
-                let key = key.trim().to_lowercase().into_boxed_str();
-                let value = value.trim().to_lowercase().into_boxed_str();
-                if let Some(section) = ini.sections.last_mut() {
-                    section.pairs.insert(key, value);
-                } else {
-                    ini.pairs.insert(key, value);
-                }
-            }
+        // <https://spec.editorconfig.org/#glob-expressions>
+        // We need to modify the glob string slightly since EditorConfig's glob flavor
+        // doesn't match `globset`'s exactly. `globset` only allows '**' at the beginning
+        // or end of a glob or between two '/'s. (This replacement is not very fancy but
+        // should cover most practical cases.)
+        let mut glob_str = section.replace("**.", "**/*.");
+        if !is_glob_relative(section) {
+          glob_str.insert_str(0, "**/");
+        }
+        let glob = GlobBuilder::new(&glob_str)
+          .literal_separator(true)
+          .backslash_escape(true)
+          .empty_alternates(true)
+          .build()?;
+        ini.sections.push(Section {
+          glob: glob.compile_matcher(),
+          pairs: Pairs::new(),
+        });
+      } else if let Some((key, value)) = line.split_once('=') {
+        // > * Key-Value Pair (or Pair): contains a key and a value, separated by an `=`.
+        // >     * Key: The part before the first `=` on the line.
+        // >     * Value: The part, if any, after the first `=` on the line.
+        // >     * Keys and values are trimmed of leading and trailing whitespace, but
+        // >       include any whitespace that is between non-whitespace characters.
+        // >     * If a value is not provided, then the value is an empty string.
+        let key = key.trim().to_lowercase().into_boxed_str();
+        let value = value.trim().to_lowercase().into_boxed_str();
+        if let Some(section) = ini.sections.last_mut() {
+          section.pairs.insert(key, value);
+        } else {
+          ini.pairs.insert(key, value);
+        }
+      }
     }
     Ok(ini)
   }
@@ -325,14 +320,20 @@ mod test {
         insert_final_newline = true
         "#;
 
-    assert_eq!(editor_config("a.txt", source), EditorConfig {
-      indent_style: Some(IndentStyle::Spaces(4)),
-      ..Default::default()
-    });
-    assert_eq!(editor_config("pkg/Makefile", source), EditorConfig {
-      indent_style: Some(IndentStyle::Tabs),
-      ..Default::default()
-    });
+    assert_eq!(
+      editor_config("a.txt", source),
+      EditorConfig {
+        indent_style: Some(IndentStyle::Spaces(4)),
+        ..Default::default()
+      }
+    );
+    assert_eq!(
+      editor_config("pkg/Makefile", source),
+      EditorConfig {
+        indent_style: Some(IndentStyle::Tabs),
+        ..Default::default()
+      }
+    );
     assert_eq!(
       editor_config("docs/config/editor.txt", source),
       EditorConfig {

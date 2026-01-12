@@ -10,13 +10,8 @@
 // * some variable names have been lengthened for readability
 
 use serde::{
-  Deserialize,
-  Serialize,
-  de::{
-    self,
-    DeserializeOwned,
-    Visitor,
-  },
+  Deserialize, Serialize,
+  de::{self, DeserializeOwned, Visitor},
 };
 use serde_json::Value;
 
@@ -78,10 +73,10 @@ impl Serialize for ErrorCode {
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct Error {
-  pub code:    ErrorCode,
+  pub code: ErrorCode,
   pub message: String,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub data:    Option<Value>,
+  pub data: Option<Value>,
 }
 
 impl Error {
@@ -90,9 +85,9 @@ impl Error {
     M: Into<String>,
   {
     Error {
-      code:    ErrorCode::InvalidParams,
+      code: ErrorCode::InvalidParams,
       message: message.into(),
-      data:    None,
+      data: None,
     }
   }
 }
@@ -235,19 +230,19 @@ impl From<Params> for Value {
 #[serde(deny_unknown_fields)]
 pub struct MethodCall {
   pub jsonrpc: Option<Version>,
-  pub method:  String,
+  pub method: String,
   #[serde(default = "default_params", skip_serializing_if = "Params::is_none")]
-  pub params:  Params,
-  pub id:      Id,
+  pub params: Params,
+  pub id: Id,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Notification {
   pub jsonrpc: Option<Version>,
-  pub method:  String,
+  pub method: String,
   #[serde(default = "default_params", skip_serializing_if = "Params::is_none")]
-  pub params:  Params,
+  pub params: Params,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -298,16 +293,16 @@ pub enum Request {
 pub struct Success {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub jsonrpc: Option<Version>,
-  pub result:  Value,
-  pub id:      Id,
+  pub result: Value,
+  pub id: Id,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 pub struct Failure {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub jsonrpc: Option<Version>,
-  pub error:   Error,
-  pub id:      Id,
+  pub error: Error,
+  pub id: Id,
 }
 
 // Note that failure comes first because we're not using
@@ -354,9 +349,9 @@ fn method_call_serialize() {
 
   let m = MethodCall {
     jsonrpc: Some(Version::V2),
-    method:  "update".to_owned(),
-    params:  Params::Array(vec![Value::from(1), Value::from(2)]),
-    id:      Id::Num(1),
+    method: "update".to_owned(),
+    params: Params::Array(vec![Value::from(1), Value::from(2)]),
+    id: Id::Num(1),
   };
 
   let serialized = serde_json::to_string(&m).unwrap();
@@ -372,8 +367,8 @@ fn notification_serialize() {
 
   let n = Notification {
     jsonrpc: Some(Version::V2),
-    method:  "update".to_owned(),
-    params:  Params::Array(vec![Value::from(1), Value::from(2)]),
+    method: "update".to_owned(),
+    params: Params::Array(vec![Value::from(1), Value::from(2)]),
   };
 
   let serialized = serde_json::to_string(&n).unwrap();
@@ -389,9 +384,9 @@ fn serialize_skip_none_params() {
 
   let m = MethodCall {
     jsonrpc: Some(Version::V2),
-    method:  "shutdown".to_owned(),
-    params:  Params::None,
-    id:      Id::Num(1),
+    method: "shutdown".to_owned(),
+    params: Params::None,
+    id: Id::Num(1),
   };
 
   let serialized = serde_json::to_string(&m).unwrap();
@@ -402,8 +397,8 @@ fn serialize_skip_none_params() {
 
   let n = Notification {
     jsonrpc: Some(Version::V2),
-    method:  "exit".to_owned(),
-    params:  Params::None,
+    method: "exit".to_owned(),
+    params: Params::None,
   };
 
   let serialized = serde_json::to_string(&n).unwrap();
@@ -437,8 +432,8 @@ fn success_output_deserialize() {
     deserialized,
     Output::Success(Success {
       jsonrpc: Some(Version::V2),
-      result:  Value::from(1),
-      id:      Id::Num(1),
+      result: Value::from(1),
+      id: Id::Num(1),
     })
   );
 }
@@ -455,8 +450,8 @@ fn success_output_deserialize_with_extra_fields() {
     deserialized,
     Output::Success(Success {
       jsonrpc: Some(Version::V2),
-      result:  Value::from(1),
-      id:      Id::Num(1),
+      result: Value::from(1),
+      id: Id::Num(1),
     })
   );
 }

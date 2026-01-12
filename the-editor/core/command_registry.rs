@@ -1,37 +1,17 @@
-use std::{
-  collections::HashMap,
-  fmt,
-  sync::Arc,
-};
+use std::{collections::HashMap, fmt, sync::Arc};
 
-use anyhow::{
-  Result,
-  anyhow,
-  bail,
-};
+use anyhow::{Result, anyhow, bail};
 
 use super::{
-  command_line::{
-    Args,
-    CompletionState,
-    Signature,
-    Token,
-    Tokenizer,
-  },
+  command_line::{Args, CompletionState, Signature, Token, Tokenizer},
   commands::Context,
   expansion,
 };
 use crate::{
   doc,
-  editor::{
-    Action,
-    Editor,
-  },
+  editor::{Action, Editor},
   try_current_ref,
-  ui::components::prompt::{
-    Completion,
-    PromptEvent,
-  },
+  ui::components::prompt::{Completion, PromptEvent},
 };
 
 /// Type alias for a command function that takes a context, parsed arguments,
@@ -48,7 +28,7 @@ pub struct CommandCompleter {
   /// Completers for positional arguments (index-based)
   pub positional: &'static [Completer],
   /// Completer for variadic arguments (all remaining args use this)
-  pub variadic:   Completer,
+  pub variadic: Completer,
 }
 
 impl CommandCompleter {
@@ -56,7 +36,7 @@ impl CommandCompleter {
   pub const fn none() -> Self {
     Self {
       positional: &[],
-      variadic:   completers::none,
+      variadic: completers::none,
     }
   }
 
@@ -64,7 +44,7 @@ impl CommandCompleter {
   pub const fn all(completer: Completer) -> Self {
     Self {
       positional: &[],
-      variadic:   completer,
+      variadic: completer,
     }
   }
 
@@ -87,13 +67,13 @@ impl CommandCompleter {
 #[derive(Clone)]
 pub struct TypableCommand {
   /// Command name (primary identifier)
-  pub name:      &'static str,
+  pub name: &'static str,
   /// Command aliases (alternative names)
-  pub aliases:   &'static [&'static str],
+  pub aliases: &'static [&'static str],
   /// Short documentation string
-  pub doc:       &'static str,
+  pub doc: &'static str,
   /// The function to execute
-  pub fun:       CommandFn,
+  pub fun: CommandFn,
   /// Completion configuration for arguments
   pub completer: CommandCompleter,
   /// Command signature (positional args, flags, etc.)
@@ -320,12 +300,10 @@ impl CommandRegistry {
       return self
         .command_names()
         .into_iter()
-        .map(|name| {
-          Completion {
-            range: 0..,
-            text:  name.to_string(),
-            doc:   self.get(name).map(|cmd| cmd.doc.to_string()),
-          }
+        .map(|name| Completion {
+          range: 0..,
+          text: name.to_string(),
+          doc: self.get(name).map(|cmd| cmd.doc.to_string()),
         })
         .collect();
     }
@@ -351,12 +329,10 @@ impl CommandRegistry {
         .command_names()
         .into_iter()
         .filter(|name| name.to_lowercase().contains(&input_lower))
-        .map(|name| {
-          Completion {
-            range: 0..,
-            text:  name.to_string(),
-            doc:   self.get(name).map(|cmd| cmd.doc.to_string()),
-          }
+        .map(|name| Completion {
+          range: 0..,
+          text: name.to_string(),
+          doc: self.get(name).map(|cmd| cmd.doc.to_string()),
         })
         .collect()
     } else {
@@ -386,12 +362,10 @@ impl CommandRegistry {
 
             // Get the text being completed
             let (arg_input, arg_start_offset) = match &last_token {
-              Some(token) if !token.is_terminated => {
-                (
-                  token.content.as_ref(),
-                  first_word.len() + 1 + token.content_start,
-                )
-              },
+              Some(token) if !token.is_terminated => (
+                token.content.as_ref(),
+                first_word.len() + 1 + token.content_start,
+              ),
               _ => ("", input.len()),
             };
 
@@ -427,12 +401,10 @@ impl CommandRegistry {
               .flags
               .iter()
               .filter(|flag| flag.name.contains(flag_input))
-              .map(|flag| {
-                Completion {
-                  range: flag_start_offset..,
-                  text:  format!("--{}", flag.name),
-                  doc:   Some(flag.doc.to_string()),
-                }
+              .map(|flag| Completion {
+                range: flag_start_offset..,
+                text: format!("--{}", flag.name),
+                doc: Some(flag.doc.to_string()),
               })
               .collect()
           },
@@ -440,24 +412,20 @@ impl CommandRegistry {
             // Complete flag argument
             if let Some(completions) = flag.completions {
               let (arg_input, arg_start_offset) = match &last_token {
-                Some(token) if !token.is_terminated => {
-                  (
-                    token.content.as_ref(),
-                    first_word.len() + 1 + token.content_start,
-                  )
-                },
+                Some(token) if !token.is_terminated => (
+                  token.content.as_ref(),
+                  first_word.len() + 1 + token.content_start,
+                ),
                 _ => ("", input.len()),
               };
 
               completions
                 .iter()
                 .filter(|val| val.contains(arg_input))
-                .map(|val| {
-                  Completion {
-                    range: arg_start_offset..,
-                    text:  val.to_string(),
-                    doc:   None,
-                  }
+                .map(|val| Completion {
+                  range: arg_start_offset..,
+                  text: val.to_string(),
+                  doc: None,
                 })
                 .collect()
             } else {
@@ -1093,8 +1061,8 @@ pub mod completers {
       if let Some(dir_path) = current_dir {
         return vec![Completion {
           range: 0..,
-          text:  dir_path,
-          doc:   Some("Current file's directory".to_string()),
+          text: dir_path,
+          doc: Some("Current file's directory".to_string()),
         }];
       }
       // Fall through to normal completion if no current file or terminal view
@@ -1106,10 +1074,7 @@ pub mod completers {
 
   /// Filename completer implementation with optional gitignore support
   fn filename_impl(_editor: &Editor, input: &str, git_ignore: bool) -> Vec<Completion> {
-    use std::{
-      borrow::Cow,
-      path::Path,
-    };
+    use std::{borrow::Cow, path::Path};
 
     use ignore::WalkBuilder;
     use the_editor_stdx::path::expand_tilde;
@@ -1198,23 +1163,19 @@ pub mod completers {
           // Fuzzy match: check if file name contains the prefix
           path.to_lowercase().contains(&file_name_lower)
         })
-        .map(|(path, _is_dir)| {
-          Completion {
-            range: replace_range.clone(),
-            text:  path,
-            doc:   None,
-          }
+        .map(|(path, _is_dir)| Completion {
+          range: replace_range.clone(),
+          text: path,
+          doc: None,
         })
         .collect()
     } else {
       // No prefix - return all entries (append to current path)
       entries
-        .map(|(path, _is_dir)| {
-          Completion {
-            range: range_for_no_prefix.clone(),
-            text:  path,
-            doc:   None,
-          }
+        .map(|(path, _is_dir)| Completion {
+          range: range_for_no_prefix.clone(),
+          text: path,
+          doc: None,
         })
         .collect()
     };
@@ -1262,12 +1223,10 @@ pub mod completers {
     theme_names
       .into_iter()
       .filter(|name| name.to_lowercase().contains(&input_lower))
-      .map(|name| {
-        Completion {
-          range: 0..,
-          text:  name,
-          doc:   None,
-        }
+      .map(|name| Completion {
+        range: 0..,
+        text: name,
+        doc: None,
       })
       .collect()
   }
@@ -1281,22 +1240,17 @@ pub mod completers {
       .command_names()
       .into_iter()
       .filter(|name| name.to_lowercase().contains(&input_lower))
-      .map(|name| {
-        Completion {
-          range: 0..,
-          text:  name.to_string(),
-          doc:   None,
-        }
+      .map(|name| Completion {
+        range: 0..,
+        text: name.to_string(),
+        doc: None,
       })
       .collect()
   }
 
   /// Directory completer - only shows directories (not files)
   pub fn directory(_editor: &Editor, input: &str) -> Vec<Completion> {
-    use std::{
-      borrow::Cow,
-      path::Path,
-    };
+    use std::{borrow::Cow, path::Path};
 
     use ignore::WalkBuilder;
     use the_editor_stdx::path::expand_tilde;
@@ -1383,23 +1337,19 @@ pub mod completers {
 
       entries
         .filter(|path| path.to_lowercase().contains(&file_name_lower))
-        .map(|path| {
-          Completion {
-            range: replace_range.clone(),
-            text:  path,
-            doc:   None,
-          }
+        .map(|path| Completion {
+          range: replace_range.clone(),
+          text: path,
+          doc: None,
         })
         .collect()
     } else {
       // No prefix - return all entries (append to current path)
       entries
-        .map(|path| {
-          Completion {
-            range: range_for_no_prefix.clone(),
-            text:  path,
-            doc:   None,
-          }
+        .map(|path| Completion {
+          range: range_for_no_prefix.clone(),
+          text: path,
+          doc: None,
         })
         .collect()
     };
@@ -1421,10 +1371,7 @@ pub mod completers {
 
     // Test wrapper for filename_impl that doesn't require an Editor
     fn filename_impl_for_test(input: &str, git_ignore: bool) -> Vec<Completion> {
-      use std::{
-        borrow::Cow,
-        path::Path,
-      };
+      use std::{borrow::Cow, path::Path};
 
       use ignore::WalkBuilder;
       use the_editor_stdx::path::expand_tilde;
@@ -1502,22 +1449,18 @@ pub mod completers {
 
         entries
           .filter(|(path, _)| path.to_lowercase().contains(&file_name_lower))
-          .map(|(path, _is_dir)| {
-            Completion {
-              range: replace_range.clone(),
-              text:  path,
-              doc:   None,
-            }
+          .map(|(path, _is_dir)| Completion {
+            range: replace_range.clone(),
+            text: path,
+            doc: None,
           })
           .collect()
       } else {
         entries
-          .map(|(path, _is_dir)| {
-            Completion {
-              range: range_for_no_prefix.clone(),
-              text:  path,
-              doc:   None,
-            }
+          .map(|(path, _is_dir)| Completion {
+            range: range_for_no_prefix.clone(),
+            text: path,
+            doc: None,
           })
           .collect()
       };
@@ -1624,12 +1567,10 @@ pub mod completers {
         ("dir2/", true),
       ];
 
-      items.sort_by(|a, b| {
-        match (a.1, b.1) {
-          (true, false) => std::cmp::Ordering::Less,
-          (false, true) => std::cmp::Ordering::Greater,
-          _ => a.0.cmp(b.0),
-        }
+      items.sort_by(|a, b| match (a.1, b.1) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.0.cmp(b.0),
       });
 
       // First two should be directories
@@ -2388,18 +2329,16 @@ fn lsp_restart(cx: &mut Context, args: Args, event: PromptEvent) -> Result<()> {
   let document_ids_to_refresh: Vec<_> = cx
     .editor
     .documents()
-    .filter_map(|doc| {
-      match doc.language_config() {
-        Some(doc_config)
-          if doc_config
-            .language_servers
-            .iter()
-            .any(|ls| language_servers_to_match.contains(&ls.name.to_string())) =>
-        {
-          Some(doc.id())
-        },
-        _ => None,
-      }
+    .filter_map(|doc| match doc.language_config() {
+      Some(doc_config)
+        if doc_config
+          .language_servers
+          .iter()
+          .any(|ls| language_servers_to_match.contains(&ls.name.to_string())) =>
+      {
+        Some(doc.id())
+      },
+      _ => None,
     })
     .collect();
 
@@ -2759,10 +2698,7 @@ fn reload_all(cx: &mut Context, _args: Args, event: PromptEvent) -> Result<()> {
     return Ok(());
   }
 
-  use crate::{
-    doc_mut,
-    view_mut,
-  };
+  use crate::{doc_mut, view_mut};
 
   let view_id = cx
     .editor
@@ -3031,10 +2967,7 @@ mod tests {
 
   #[test]
   fn test_args_parsing_basic() {
-    use crate::core::command_line::{
-      Args,
-      Signature,
-    };
+    use crate::core::command_line::{Args, Signature};
 
     // Test parsing simple positional arguments
     let sig = Signature {
@@ -3052,10 +2985,7 @@ mod tests {
 
   #[test]
   fn test_args_parsing_quoted() {
-    use crate::core::command_line::{
-      Args,
-      Signature,
-    };
+    use crate::core::command_line::{Args, Signature};
 
     // Test parsing quoted arguments
     let sig = Signature::DEFAULT;
@@ -3073,23 +3003,19 @@ mod tests {
 
   #[test]
   fn test_args_parsing_flags() {
-    use crate::core::command_line::{
-      Args,
-      Flag,
-      Signature,
-    };
+    use crate::core::command_line::{Args, Flag, Signature};
 
     const FLAGS: &[Flag] = &[
       Flag {
-        name:        "force",
-        alias:       Some('f'),
-        doc:         "Force operation",
+        name: "force",
+        alias: Some('f'),
+        doc: "Force operation",
         completions: None,
       },
       Flag {
-        name:        "verbose",
-        alias:       Some('v'),
-        doc:         "Verbose output",
+        name: "verbose",
+        alias: Some('v'),
+        doc: "Verbose output",
         completions: None,
       },
     ];
@@ -3111,16 +3037,12 @@ mod tests {
 
   #[test]
   fn test_args_parsing_flag_with_argument() {
-    use crate::core::command_line::{
-      Args,
-      Flag,
-      Signature,
-    };
+    use crate::core::command_line::{Args, Flag, Signature};
 
     const FLAGS: &[Flag] = &[Flag {
-      name:        "output",
-      alias:       Some('o'),
-      doc:         "Output file",
+      name: "output",
+      alias: Some('o'),
+      doc: "Output file",
       completions: Some(&["file.txt", "output.txt"]),
     }];
 
@@ -3142,19 +3064,16 @@ mod tests {
 
   #[test]
   fn test_command_documentation_generation() {
-    use crate::core::command_line::{
-      Flag,
-      Signature,
-    };
+    use crate::core::command_line::{Flag, Signature};
 
     fn test_cmd(_cx: &mut Context, _args: Args, _event: PromptEvent) -> Result<()> {
       Ok(())
     }
 
     const FLAGS: &[Flag] = &[Flag {
-      name:        "force",
-      alias:       Some('f'),
-      doc:         "Force the operation",
+      name: "force",
+      alias: Some('f'),
+      doc: "Force the operation",
       completions: None,
     }];
 
@@ -3183,10 +3102,7 @@ mod tests {
 
   #[test]
   fn test_args_wrong_positional_count() {
-    use crate::core::command_line::{
-      Args,
-      Signature,
-    };
+    use crate::core::command_line::{Args, Signature};
 
     // Require exactly 1 positional argument
     let sig = Signature {
@@ -3207,17 +3123,12 @@ mod tests {
 
   #[test]
   fn test_args_completion_state() {
-    use crate::core::command_line::{
-      Args,
-      CompletionState,
-      Flag,
-      Signature,
-    };
+    use crate::core::command_line::{Args, CompletionState, Flag, Signature};
 
     const FLAGS: &[Flag] = &[Flag {
-      name:        "output",
-      alias:       Some('o'),
-      doc:         "Output file",
+      name: "output",
+      alias: Some('o'),
+      doc: "Output file",
       completions: Some(&["file.txt"]),
     }];
 

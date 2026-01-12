@@ -1,58 +1,26 @@
-use std::{
-  collections::HashMap,
-  sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Context;
-use log::{
-  debug,
-  error,
-  warn,
-};
+use log::{debug, error, warn};
 use lsp::notification::Notification as _;
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use the_editor_lsp_types::types as lsp;
 use tokio::{
-  io::{
-    AsyncBufRead,
-    AsyncBufReadExt,
-    AsyncReadExt,
-    AsyncWriteExt,
-    BufReader,
-    BufWriter,
-  },
-  process::{
-    ChildStderr,
-    ChildStdin,
-    ChildStdout,
-  },
+  io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter},
+  process::{ChildStderr, ChildStdin, ChildStdout},
   sync::{
-    Mutex,
-    Notify,
-    mpsc::{
-      Sender,
-      UnboundedReceiver,
-      UnboundedSender,
-      unbounded_channel,
-    },
+    Mutex, Notify,
+    mpsc::{Sender, UnboundedReceiver, UnboundedSender, unbounded_channel},
   },
 };
 
-use crate::lsp::{
-  Error,
-  LanguageServerId,
-  Result,
-  jsonrpc,
-};
+use crate::lsp::{Error, LanguageServerId, Result, jsonrpc};
 
 #[derive(Debug)]
 pub enum Payload {
   Request {
-    chan:  Sender<Result<Value>>,
+    chan: Sender<Result<Value>>,
     value: jsonrpc::MethodCall,
   },
   Notification(jsonrpc::Notification),
@@ -72,8 +40,8 @@ enum ServerMessage {
 
 #[derive(Debug)]
 pub struct Transport {
-  id:               LanguageServerId,
-  name:             String,
+  id: LanguageServerId,
+  name: String,
   pending_requests: Mutex<HashMap<jsonrpc::Id, Sender<Result<Value>>>>,
 }
 
@@ -338,8 +306,8 @@ impl Transport {
           let notification =
             ServerMessage::Call(jsonrpc::Call::Notification(jsonrpc::Notification {
               jsonrpc: None,
-              method:  lsp::notification::Exit::METHOD.to_string(),
-              params:  jsonrpc::Params::None,
+              method: lsp::notification::Exit::METHOD.to_string(),
+              params: jsonrpc::Params::None,
             }));
           match transport
             .process_server_message(&client_tx, notification, &transport.name)
@@ -383,10 +351,7 @@ impl Transport {
     fn is_initialize(payload: &Payload) -> bool {
       use lsp::{
         notification::Initialized,
-        request::{
-          Initialize,
-          Request,
-        },
+        request::{Initialize, Request},
       };
       match payload {
         Payload::Request {
@@ -403,10 +368,7 @@ impl Transport {
     }
 
     fn is_shutdown(payload: &Payload) -> bool {
-      use lsp::request::{
-        Request,
-        Shutdown,
-      };
+      use lsp::request::{Request, Shutdown};
       matches!(payload, Payload::Request { value: jsonrpc::MethodCall { method, .. }, .. } if method == Shutdown::METHOD)
     }
 

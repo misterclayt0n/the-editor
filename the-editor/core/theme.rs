@@ -1,41 +1,19 @@
 use std::{
-  collections::{
-    HashMap,
-    HashSet,
-  },
-  path::{
-    Path,
-    PathBuf,
-  },
+  collections::{HashMap, HashSet},
+  path::{Path, PathBuf},
   str,
 };
 
-use anyhow::{
-  Result,
-  anyhow,
-};
+use anyhow::{Result, anyhow};
 use log::warn;
 use once_cell::sync::Lazy;
-use serde::{
-  Deserialize,
-  Deserializer,
-};
+use serde::{Deserialize, Deserializer};
 use the_editor_loader::merge_toml_values;
-use toml::{
-  Value,
-  map::Map,
-};
+use toml::{Value, map::Map};
 
-pub use crate::core::graphics::{
-  Color,
-  Modifier,
-  Style,
-};
+pub use crate::core::graphics::{Color, Modifier, Style};
 use crate::{
-  core::{
-    graphics::UnderlineStyle,
-    syntax::Highlight,
-  },
+  core::{graphics::UnderlineStyle, syntax::Highlight},
   hashmap,
 };
 
@@ -49,18 +27,14 @@ pub static BASE16_DEFAULT_THEME_DATA: Lazy<Value> = Lazy::new(|| {
   toml::from_str(str::from_utf8(bytes).unwrap()).expect("Failed to parse base 16 default theme")
 });
 
-pub static DEFAULT_THEME: Lazy<Theme> = Lazy::new(|| {
-  Theme {
-    name: "default".into(),
-    ..Theme::from(DEFAULT_THEME_DATA.clone())
-  }
+pub static DEFAULT_THEME: Lazy<Theme> = Lazy::new(|| Theme {
+  name: "default".into(),
+  ..Theme::from(DEFAULT_THEME_DATA.clone())
 });
 
-pub static BASE16_DEFAULT_THEME: Lazy<Theme> = Lazy::new(|| {
-  Theme {
-    name: "base16_default".into(),
-    ..Theme::from(BASE16_DEFAULT_THEME_DATA.clone())
-  }
+pub static BASE16_DEFAULT_THEME: Lazy<Theme> = Lazy::new(|| Theme {
+  name: "base16_default".into(),
+  ..Theme::from(BASE16_DEFAULT_THEME_DATA.clone())
 });
 
 #[derive(Clone, Debug)]
@@ -269,10 +243,10 @@ pub struct Theme {
   name: String,
 
   // UI styles are stored in a HashMap
-  styles:         HashMap<String, Style>,
+  styles: HashMap<String, Style>,
   // tree-sitter highlight styles are stored in a Vec to optimize lookups
-  scopes:         Vec<String>,
-  highlights:     Vec<Style>,
+  scopes: Vec<String>,
+  highlights: Vec<Style>,
   rainbow_length: usize,
 }
 
@@ -342,14 +316,12 @@ fn build_theme_values(
 
   for (i, style) in values
     .remove("rainbow")
-    .and_then(|value| {
-      match palette.parse_style_array(value) {
-        Ok(styles) => Some(styles),
-        Err(err) => {
-          warnings.push(err);
-          None
-        },
-      }
+    .and_then(|value| match palette.parse_style_array(value) {
+      Ok(styles) => Some(styles),
+      Err(err) => {
+        warnings.push(err);
+        None
+      },
     })
     .unwrap_or_else(default_rainbow)
     .into_iter()

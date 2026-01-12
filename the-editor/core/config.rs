@@ -1,33 +1,17 @@
-use std::{
-  collections::HashMap,
-  fs,
-  io::Error as IOError,
-};
+use std::{collections::HashMap, fs, io::Error as IOError};
 
 use serde::Deserialize;
 use the_editor_loader::merge_toml_values;
-use toml::{
-  Value,
-  de::Error as TomlError,
-};
+use toml::{Value, de::Error as TomlError};
 
 use crate::{
   core::{
     // Per-file .editorconfig is handled in core/editor_config.rs
     // The top-level application EditorConfig lives in crate::editor
-    syntax::{
-      Loader,
-      LoaderError,
-      config::Configuration,
-    },
+    syntax::{Loader, LoaderError, config::Configuration},
   },
   editor::EditorConfig,
-  keymap::{
-    self,
-    KeyTrie,
-    Mode,
-    default,
-  },
+  keymap::{self, KeyTrie, Mode, default},
 };
 
 /// Language configuration based on built-in languages.toml.
@@ -76,16 +60,16 @@ pub fn user_lang_loader() -> Result<Loader, LanguageLoaderError> {
 
 #[derive(Debug, Clone)]
 pub struct Config {
-  pub theme:  Option<String>,
-  pub keys:   HashMap<Mode, KeyTrie>,
+  pub theme: Option<String>,
+  pub keys: HashMap<Mode, KeyTrie>,
   pub editor: EditorConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfigRaw {
-  pub theme:  Option<String>,
-  pub keys:   Option<HashMap<Mode, KeyTrie>>,
+  pub theme: Option<String>,
+  pub keys: Option<HashMap<Mode, KeyTrie>>,
   pub editor: Option<Value>,
 }
 
@@ -120,11 +104,9 @@ impl Config {
           (None, Some(val)) | (Some(val), None) => {
             val.try_into().map_err(ConfigLoadError::BadConfig)?
           },
-          (Some(global), Some(local)) => {
-            merge_toml_values(global, local, 3)
-              .try_into()
-              .map_err(ConfigLoadError::BadConfig)?
-          },
+          (Some(global), Some(local)) => merge_toml_values(global, local, 3)
+            .try_into()
+            .map_err(ConfigLoadError::BadConfig)?,
         };
 
         Config {
@@ -248,8 +230,8 @@ impl Config {
 impl Default for Config {
   fn default() -> Self {
     Self {
-      theme:  None,
-      keys:   default::default(),
+      theme: None,
+      keys: default::default(),
       editor: EditorConfig::default(),
     }
   }

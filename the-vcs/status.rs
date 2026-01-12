@@ -1,7 +1,4 @@
-use std::path::{
-  Path,
-  PathBuf,
-};
+use std::path::{Path, PathBuf};
 
 /// States for a file having been changed.
 pub enum FileChange {
@@ -16,7 +13,7 @@ pub enum FileChange {
   /// File has been renamed.
   Renamed {
     from_path: PathBuf,
-    to_path:   PathBuf,
+    to_path: PathBuf,
   },
 }
 

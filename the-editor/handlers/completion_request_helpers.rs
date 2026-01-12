@@ -3,10 +3,7 @@
 /// These functions are used by hooks to manage completion state in a
 /// centralized way, following Helix's architecture pattern.
 use crate::{
-  core::{
-    chars::char_is_word,
-    commands,
-  },
+  core::{chars::char_is_word, commands},
   editor::Editor,
   handlers::completion::CompletionEvent,
   ui,

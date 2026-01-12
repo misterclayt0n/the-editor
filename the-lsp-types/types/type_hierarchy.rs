@@ -1,21 +1,9 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  DynamicRegistrationClientCapabilities,
-  LSPAny,
-  PartialResultParams,
-  Range,
-  StaticRegistrationOptions,
-  SymbolKind,
-  SymbolTag,
-  TextDocumentPositionParams,
-  TextDocumentRegistrationOptions,
-  Url,
-  WorkDoneProgressOptions,
-  WorkDoneProgressParams,
+  DynamicRegistrationClientCapabilities, LSPAny, PartialResultParams, Range,
+  StaticRegistrationOptions, SymbolKind, SymbolTag, TextDocumentPositionParams,
+  TextDocumentRegistrationOptions, Url, WorkDoneProgressOptions, WorkDoneProgressParams,
 };
 
 pub type TypeHierarchyClientCapabilities = DynamicRegistrationClientCapabilities;
@@ -31,9 +19,9 @@ pub struct TypeHierarchyRegistrationOptions {
   #[serde(flatten)]
   pub text_document_registration_options: TextDocumentRegistrationOptions,
   #[serde(flatten)]
-  pub type_hierarchy_options:             TypeHierarchyOptions,
+  pub type_hierarchy_options: TypeHierarchyOptions,
   #[serde(flatten)]
-  pub static_registration_options:        StaticRegistrationOptions,
+  pub static_registration_options: StaticRegistrationOptions,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
@@ -41,7 +29,7 @@ pub struct TypeHierarchyPrepareParams {
   #[serde(flatten)]
   pub text_document_position_params: TextDocumentPositionParams,
   #[serde(flatten)]
-  pub work_done_progress_params:     WorkDoneProgressParams,
+  pub work_done_progress_params: WorkDoneProgressParams,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
@@ -51,7 +39,7 @@ pub struct TypeHierarchySupertypesParams {
   #[serde(flatten)]
   pub work_done_progress_params: WorkDoneProgressParams,
   #[serde(flatten)]
-  pub partial_result_params:     PartialResultParams,
+  pub partial_result_params: PartialResultParams,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
@@ -61,7 +49,7 @@ pub struct TypeHierarchySubtypesParams {
   #[serde(flatten)]
   pub work_done_progress_params: WorkDoneProgressParams,
   #[serde(flatten)]
-  pub partial_result_params:     PartialResultParams,
+  pub partial_result_params: PartialResultParams,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]

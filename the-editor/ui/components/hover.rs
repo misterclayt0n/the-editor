@@ -1,37 +1,15 @@
 use the_editor_lsp_types::types as lsp;
-use the_editor_renderer::{
-  Color,
-  Key,
-  ScrollDelta,
-  TextSection,
-  TextSegment,
-};
+use the_editor_renderer::{Color, Key, ScrollDelta, TextSection, TextSegment};
 
 use crate::{
-  core::{
-    graphics::Rect,
-    position::Position,
-  },
+  core::{graphics::Rect, position::Position},
   ui::{
     UI_FONT_SIZE,
     components::popup::{
-      DOC_POPUP_MAX_HEIGHT_LINES,
-      DOC_POPUP_MAX_WIDTH_CHARS,
-      DOC_POPUP_MIN_WIDTH_CHARS,
-      PopupConstraints,
-      PopupContent,
-      PopupFrame,
-      PopupLimits,
-      PopupShell,
-      PopupSize,
+      DOC_POPUP_MAX_HEIGHT_LINES, DOC_POPUP_MAX_WIDTH_CHARS, DOC_POPUP_MIN_WIDTH_CHARS,
+      PopupConstraints, PopupContent, PopupFrame, PopupLimits, PopupShell, PopupSize,
     },
-    compositor::{
-      Component,
-      Context,
-      Event,
-      EventResult,
-      Surface,
-    },
+    compositor::{Component, Context, Event, EventResult, Surface},
     popup_positioning::calculate_cursor_position,
   },
 };
@@ -120,24 +98,24 @@ fn current_cursor_anchor(ctx: &Context, surface: &mut Surface) -> Option<Positio
 }
 
 struct HoverContent {
-  entries:       Vec<HoverEntry>,
-  layout:        Option<HoverLayout>,
+  entries: Vec<HoverEntry>,
+  layout: Option<HoverLayout>,
   scroll_offset: usize,
 }
 
 struct HoverEntry {
   #[allow(dead_code)]
-  server:   String,
+  server: String,
   markdown: String,
 }
 
 #[derive(Clone)]
 struct HoverLayout {
-  lines:         Vec<Vec<TextSegment>>,
+  lines: Vec<Vec<TextSegment>>,
   visible_lines: usize,
-  line_height:   f32,
+  line_height: f32,
   content_width: f32,
-  wrap_width:    f32,
+  wrap_width: f32,
 }
 
 impl HoverLayout {
@@ -150,11 +128,9 @@ impl HoverContent {
   fn new(hovers: Vec<(String, lsp::Hover)>) -> Self {
     let entries = hovers
       .into_iter()
-      .map(|(server, hover)| {
-        HoverEntry {
-          server,
-          markdown: hover_contents_to_string(hover.contents),
-        }
+      .map(|(server, hover)| HoverEntry {
+        server,
+        markdown: hover_contents_to_string(hover.contents),
       })
       .collect::<Vec<_>>();
 
@@ -284,7 +260,7 @@ impl PopupContent for HoverContent {
     let content_height = layout.inner_height().min(constraints.max_height);
 
     PopupSize {
-      width:  layout.content_width.min(constraints.max_width),
+      width: layout.content_width.min(constraints.max_width),
       height: content_height,
     }
   }
@@ -423,13 +399,11 @@ fn hover_contents_to_string(contents: lsp::HoverContents) -> String {
 
   match contents {
     lsp::HoverContents::Scalar(contents) => marked_string_to_markdown(contents),
-    lsp::HoverContents::Array(contents) => {
-      contents
-        .into_iter()
-        .map(marked_string_to_markdown)
-        .collect::<Vec<_>>()
-        .join("\n\n")
-    },
+    lsp::HoverContents::Array(contents) => contents
+      .into_iter()
+      .map(marked_string_to_markdown)
+      .collect::<Vec<_>>()
+      .join("\n\n"),
     lsp::HoverContents::Markup(contents) => contents.value,
   }
 }

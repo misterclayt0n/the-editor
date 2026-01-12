@@ -1,20 +1,8 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  Command,
-  LSPAny,
-  Location,
-  MarkupContent,
-  Position,
-  Range,
-  StaticRegistrationOptions,
-  TextDocumentIdentifier,
-  TextDocumentRegistrationOptions,
-  TextEdit,
-  WorkDoneProgressOptions,
+  Command, LSPAny, Location, MarkupContent, Position, Range, StaticRegistrationOptions,
+  TextDocumentIdentifier, TextDocumentRegistrationOptions, TextEdit, WorkDoneProgressOptions,
   WorkDoneProgressParams,
 };
 

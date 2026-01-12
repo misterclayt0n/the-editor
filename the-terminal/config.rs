@@ -22,11 +22,11 @@ pub struct TerminalConfig {
 impl Default for TerminalConfig {
   fn default() -> Self {
     Self {
-      shell:             None,
-      env:               Vec::new(),
+      shell: None,
+      env: Vec::new(),
       working_directory: None,
-      mouse_reporting:   true,
-      scrollback_lines:  10000,
+      mouse_reporting: true,
+      scrollback_lines: 10000,
     }
   }
 }
@@ -109,11 +109,11 @@ mod tests {
   #[test]
   fn test_terminal_config_all_custom() {
     let config = TerminalConfig {
-      shell:             Some("/bin/fish".to_string()),
-      env:               vec![("FOO".to_string(), "bar".to_string())],
+      shell: Some("/bin/fish".to_string()),
+      env: vec![("FOO".to_string(), "bar".to_string())],
       working_directory: Some(PathBuf::from("/tmp")),
-      mouse_reporting:   false,
-      scrollback_lines:  20000,
+      mouse_reporting: false,
+      scrollback_lines: 20000,
     };
 
     assert_eq!(config.shell, Some("/bin/fish".to_string()));

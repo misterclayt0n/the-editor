@@ -1,33 +1,17 @@
 use core::slice;
 use std::{
   borrow::Borrow,
-  path::{
-    Path,
-    PathBuf,
-  },
+  path::{Path, PathBuf},
   sync::Arc,
 };
 
-use ignore::gitignore::{
-  Gitignore,
-  GitignoreBuilder,
-};
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use notify::{
-  Config as NotifyConfig,
-  Event as NotifyEvent,
-  RecommendedWatcher,
-  RecursiveMode,
+  Config as NotifyConfig, Event as NotifyEvent, RecommendedWatcher, RecursiveMode,
   Watcher as NotifyWatcher,
 };
-use serde::{
-  Deserialize,
-  Serialize,
-};
-use the_editor_event::{
-  dispatch,
-  events,
-  request_redraw,
-};
+use serde::{Deserialize, Serialize};
+use the_editor_event::{dispatch, events, request_redraw};
 
 events! {
   FileSystemDidChange {
@@ -39,36 +23,36 @@ events! {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct Config {
-  pub enable:            bool,
-  pub watch_vcs:         bool,
+  pub enable: bool,
+  pub watch_vcs: bool,
   pub require_workspace: bool,
-  pub hidden:            bool,
-  pub ignore:            bool,
-  pub git_ignore:        bool,
-  pub git_global:        bool,
-  pub max_depth:         Option<usize>,
+  pub hidden: bool,
+  pub ignore: bool,
+  pub git_ignore: bool,
+  pub git_global: bool,
+  pub max_depth: Option<usize>,
 }
 
 impl Default for Config {
   fn default() -> Self {
     Self {
-      enable:            true,
-      watch_vcs:         true,
+      enable: true,
+      watch_vcs: true,
       require_workspace: true,
-      hidden:            true,
-      ignore:            true,
-      git_ignore:        true,
-      git_global:        true,
-      max_depth:         Some(10),
+      hidden: true,
+      ignore: true,
+      git_ignore: true,
+      git_global: true,
+      max_depth: Some(10),
     }
   }
 }
 
 pub struct Watcher {
-  watcher:     Option<RecommendedWatcher>,
-  filter:      Arc<WatchFilter>,
-  roots:       Vec<(PathBuf, usize)>,
-  config:      Config,
+  watcher: Option<RecommendedWatcher>,
+  filter: Arc<WatchFilter>,
+  roots: Vec<(PathBuf, usize)>,
+  config: Config,
   initialized: bool,
 }
 
@@ -78,16 +62,16 @@ impl Watcher {
   /// until the first file is opened (add_root is called).
   pub fn new(config: &Config) -> Self {
     Watcher {
-      watcher:     None,
-      filter:      Arc::new(WatchFilter {
+      watcher: None,
+      filter: Arc::new(WatchFilter {
         filesentry_ignores: Gitignore::empty(),
-        ignore_files:       Vec::new(),
-        global_ignores:     Vec::new(),
-        hidden:             true,
-        watch_vcs:          true,
+        ignore_files: Vec::new(),
+        global_ignores: Vec::new(),
+        hidden: true,
+        watch_vcs: true,
       }),
-      roots:       Vec::new(),
-      config:      config.clone(),
+      roots: Vec::new(),
+      config: config.clone(),
       initialized: false,
     }
   }
@@ -238,7 +222,7 @@ impl Watcher {
 }
 
 struct IgnoreFiles {
-  root:    PathBuf,
+  root: PathBuf,
   ignores: Vec<Arc<Gitignore>>,
 }
 
@@ -377,10 +361,10 @@ impl IgnoreFiles {
 /// By default we ignore ignored.
 pub struct WatchFilter {
   filesentry_ignores: Gitignore,
-  ignore_files:       Vec<IgnoreFiles>,
-  global_ignores:     Vec<Arc<Gitignore>>,
-  hidden:             bool,
-  watch_vcs:          bool,
+  ignore_files: Vec<IgnoreFiles>,
+  global_ignores: Vec<Arc<Gitignore>>,
+  hidden: bool,
+  watch_vcs: bool,
 }
 
 impl WatchFilter {

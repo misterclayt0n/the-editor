@@ -1,179 +1,80 @@
 use std::{
   borrow::Cow,
   cell::Cell,
-  collections::{
-    BTreeMap,
-    HashMap,
-  },
+  collections::{BTreeMap, HashMap},
   fmt::Write,
   fs,
-  io::{
-    self,
-    stdin,
-  },
-  num::{
-    NonZeroU8,
-    NonZeroUsize,
-  },
-  path::{
-    Path,
-    PathBuf,
-  },
+  io::{self, stdin},
+  num::{NonZeroU8, NonZeroUsize},
+  path::{Path, PathBuf},
   pin::Pin,
   sync::Arc,
   time::Duration,
 };
 
-use anyhow::{
-  Error,
-  anyhow,
-  bail,
-};
+use anyhow::{Error, anyhow, bail};
 use arc_swap::{
   ArcSwap,
-  access::{
-    DynAccess,
-    DynGuard,
-  },
+  access::{DynAccess, DynGuard},
 };
 use foldhash::HashSet;
 use futures_executor::block_on;
 use futures_util::{
-  StreamExt,
-  future,
-  stream::{
-    Flatten,
-    Once,
-    select_all::SelectAll,
-  },
+  StreamExt, future,
+  stream::{Flatten, Once, select_all::SelectAll},
 };
 use ropey::Rope;
-use serde::{
-  Deserialize,
-  Deserializer,
-  Serialize,
-  Serializer,
-  ser::SerializeMap,
-};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeMap};
 use the_editor_event::dispatch;
 use the_editor_stdx::path::canonicalize;
 use the_editor_vcs::DiffProviderRegistry;
-use the_terminal::{
-  Terminal,
-  TerminalConfig,
-  TerminalEvent,
-  TerminalId,
-};
+use the_terminal::{Terminal, TerminalConfig, TerminalEvent, TerminalId};
 use tokio::{
   sync::{
-    mpsc::{
-      UnboundedReceiver,
-      UnboundedSender,
-      unbounded_channel,
-    },
+    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
     oneshot,
   },
-  time::{
-    Instant,
-    Sleep,
-    sleep,
-  },
+  time::{Instant, Sleep, sleep},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
   core::{
-    DocumentId,
-    ViewId,
+    DocumentId, ViewId,
     auto_pairs::AutoPairs,
     chars::char_is_whitespace,
     clipboard::ClipboardProvider,
-    diagnostics::{
-      DiagnosticFilter,
-      DiagnosticProvider,
-      InlineDiagnosticsConfig,
-      Severity,
-    },
+    diagnostics::{DiagnosticFilter, DiagnosticProvider, InlineDiagnosticsConfig, Severity},
     document::{
-      Document,
-      DocumentOpenError,
-      DocumentSavedEvent,
-      DocumentSavedEventFuture,
-      DocumentSavedEventResult,
-      SavePoint,
+      Document, DocumentOpenError, DocumentSavedEvent, DocumentSavedEventFuture,
+      DocumentSavedEventResult, SavePoint,
     },
     file_watcher,
-    graphics::{
-      CursorKind,
-      Rect,
-    },
+    graphics::{CursorKind, Rect},
     info::Info,
-    line_ending::{
-      LineEnding,
-      NATIVE_LINE_ENDING,
-      line_end_char_index,
-      str_is_line_ending,
-    },
+    line_ending::{LineEnding, NATIVE_LINE_ENDING, line_end_char_index, str_is_line_ending},
     position::Position,
     registers::Registers,
-    selection::{
-      Range,
-      Selection,
-    },
-    special_buffer::{
-      SpecialBufferKind,
-      SpecialBuffers,
-    },
+    selection::{Range, Selection},
+    special_buffer::{SpecialBufferKind, SpecialBuffers},
     syntax::{
       self,
-      config::{
-        AutoPairConfig,
-        IndentationHeuristic,
-        LanguageServerFeature,
-        SoftWrap,
-      },
+      config::{AutoPairConfig, IndentationHeuristic, LanguageServerFeature, SoftWrap},
     },
-    theme::{
-      self,
-      Style,
-      Theme,
-      ThemeAction,
-    },
-    transaction::{
-      Change,
-      Operation,
-      Transaction,
-    },
-    tree::{
-      self,
-      Tree,
-    },
+    theme::{self, Style, Theme, ThemeAction},
+    transaction::{Change, Operation, Transaction},
+    tree::{self, Tree},
     uri::Uri,
     view::View,
   },
   doc_mut,
-  event::{
-    DocumentDidClose,
-    DocumentDidOpen,
-    DocumentFocusGained,
-    DocumentFocusLost,
-  },
+  event::{DocumentDidClose, DocumentDidOpen, DocumentFocusGained, DocumentFocusLost},
   handlers::Handlers,
   input::InputHandler,
-  keymap::{
-    KeyBinding,
-    KeyTrie,
-    Keymaps,
-    Mode,
-  },
-  lsp::{
-    Call,
-    LanguageServerId,
-  },
-  try_current_ref,
-  view,
-  view_mut,
+  keymap::{KeyBinding, KeyTrie, Keymaps, Mode},
+  lsp::{Call, LanguageServerId},
+  try_current_ref, view, view_mut,
 };
 
 /// Error thrown on failed document closed
@@ -199,15 +100,15 @@ pub enum EditorEvent {
 /// State for smooth theme transitions
 struct ThemeTransition {
   /// The source theme we're transitioning from
-  from_theme:          Theme,
+  from_theme: Theme,
   /// The target theme we're transitioning to
-  to_theme:            Theme,
+  to_theme: Theme,
   /// Animation progress (0.0 = from_theme, 1.0 = to_theme)
-  progress:            f32,
+  progress: f32,
   /// Cached interpolated theme to avoid reallocating every frame
   cached_interpolated: Option<Theme>,
   /// Progress value when cache was created
-  last_cached_at:      f32,
+  last_cached_at: f32,
 }
 
 /// Interpolate between two theme colors
@@ -246,8 +147,8 @@ fn interpolate_style(
   t: f32,
 ) -> crate::core::graphics::Style {
   crate::core::graphics::Style {
-    fg:              interpolate_color(from.fg, to.fg, t),
-    bg:              interpolate_color(from.bg, to.bg, t),
+    fg: interpolate_color(from.fg, to.fg, t),
+    bg: interpolate_color(from.bg, to.bg, t),
     underline_color: interpolate_color(from.underline_color, to.underline_color, t),
     // For non-color properties, snap at 50%
     underline_style: if t > 0.5 {
@@ -255,12 +156,12 @@ fn interpolate_style(
     } else {
       from.underline_style
     },
-    add_modifier:    if t > 0.5 {
+    add_modifier: if t > 0.5 {
       to.add_modifier
     } else {
       from.add_modifier
     },
-    sub_modifier:    if t > 0.5 {
+    sub_modifier: if t > 0.5 {
       to.sub_modifier
     } else {
       from.sub_modifier
@@ -270,10 +171,7 @@ fn interpolate_style(
 
 /// Create a fully interpolated theme between two themes at progress t
 fn create_interpolated_theme(from: &Theme, to: &Theme, t: f32) -> Theme {
-  use std::collections::{
-    HashMap,
-    HashSet,
-  };
+  use std::collections::{HashMap, HashSet};
 
   // Interpolate UI styles
   let mut interpolated_styles = HashMap::new();
@@ -313,62 +211,62 @@ fn create_interpolated_theme(from: &Theme, to: &Theme, t: f32) -> Theme {
 
 pub struct Editor {
   /// Current editing mode.
-  pub mode:             Mode,
+  pub mode: Mode,
   /// Custom mode string override (e.g., "RENAME" for rename symbol)
   /// If set, this is displayed in the statusline instead of the mode name
-  pub custom_mode_str:  Option<String>,
-  pub tree:             Tree,
+  pub custom_mode_str: Option<String>,
+  pub tree: Tree,
   /// Most recently focused document view.
-  last_view_focus:      Option<ViewId>,
+  last_view_focus: Option<ViewId>,
   pub next_document_id: DocumentId,
-  pub documents:        BTreeMap<DocumentId, Document>,
+  pub documents: BTreeMap<DocumentId, Document>,
   /// Counter for numbered scratch buffers ([scratch-1], [scratch-2], etc.)
-  scratch_counter:      u32,
+  scratch_counter: u32,
 
   /// Terminal instances.
-  pub terminals:        BTreeMap<TerminalId, Terminal>,
+  pub terminals: BTreeMap<TerminalId, Terminal>,
   pub next_terminal_id: TerminalId,
   /// Channel for receiving terminal events (title changes, exits, etc.)
-  terminal_event_rx:    Option<UnboundedReceiver<TerminalEvent>>,
+  terminal_event_rx: Option<UnboundedReceiver<TerminalEvent>>,
   /// Sender cloned and given to each terminal for event dispatch.
-  terminal_event_tx:    UnboundedSender<TerminalEvent>,
+  terminal_event_tx: UnboundedSender<TerminalEvent>,
   /// The dedicated terminal for shell commands (@, #).
-  shell_terminal_id:    Option<TerminalId>,
+  shell_terminal_id: Option<TerminalId>,
 
   /// Quick slots for Alt+0-9 view bindings.
   pub quick_slots: crate::core::quick_slots::QuickSlots,
 
   // We Flatten<> to resolve the inner DocumentSavedEventFuture. For that we need a stream of
   // streams, hence the Once<>. https://stackoverflow.com/a/66875668
-  pub saves:       HashMap<DocumentId, UnboundedSender<Once<DocumentSavedEventFuture>>>,
-  pub save_queue:  SelectAll<Flatten<UnboundedReceiverStream<Once<DocumentSavedEventFuture>>>>,
+  pub saves: HashMap<DocumentId, UnboundedSender<Once<DocumentSavedEventFuture>>>,
+  pub save_queue: SelectAll<Flatten<UnboundedReceiverStream<Once<DocumentSavedEventFuture>>>>,
   pub write_count: usize,
 
-  pub count:             Option<std::num::NonZeroUsize>,
+  pub count: Option<std::num::NonZeroUsize>,
   pub selected_register: Option<char>,
-  pub registers:         Registers,
-  pub macro_recording:   Option<(char, Vec<KeyBinding>)>,
-  pub macro_replaying:   Vec<char>,
-  pub language_servers:  crate::lsp::Registry,
-  pub lsp_progress:      crate::lsp::LspProgressMap,
-  pub diagnostics:       Diagnostics,
-  pub diff_providers:    DiffProviderRegistry,
-  pub file_watcher:      file_watcher::Watcher,
-  pub special_buffers:   SpecialBuffers,
-  shell_job_cancels:     HashMap<DocumentId, oneshot::Sender<()>>,
+  pub registers: Registers,
+  pub macro_recording: Option<(char, Vec<KeyBinding>)>,
+  pub macro_replaying: Vec<char>,
+  pub language_servers: crate::lsp::Registry,
+  pub lsp_progress: crate::lsp::LspProgressMap,
+  pub diagnostics: Diagnostics,
+  pub diff_providers: DiffProviderRegistry,
+  pub file_watcher: file_watcher::Watcher,
+  pub special_buffers: SpecialBuffers,
+  shell_job_cancels: HashMap<DocumentId, oneshot::Sender<()>>,
 
   // pub debug_adapters: dap::registry::Registry,
   // pub breakpoints:    HashMap<PathBuf, Vec<Breakpoint>>,
-  pub syn_loader:   Arc<ArcSwap<syntax::Loader>>,
+  pub syn_loader: Arc<ArcSwap<syntax::Loader>>,
   pub theme_loader: Arc<theme::Loader>,
   /// last_theme is used for theme previews. We store the current theme here,
   /// and if previewing is cancelled, we can return to it.
-  pub last_theme:   Option<Theme>,
+  pub last_theme: Option<Theme>,
   /// The currently applied editor theme. While previewing a theme, the
   /// previewed theme is set here.
-  pub theme:        Theme,
+  pub theme: Theme,
   /// Path to the current theme file (for hot reload). None for built-in themes.
-  pub theme_path:   Option<PathBuf>,
+  pub theme_path: Option<PathBuf>,
   /// Theme transition animation state
   theme_transition: Option<ThemeTransition>,
 
@@ -378,22 +276,22 @@ pub struct Editor {
   pub last_selection: Option<Selection>,
 
   pub status_msg: Option<(Cow<'static, str>, Severity)>,
-  pub autoinfo:   Option<Info>,
+  pub autoinfo: Option<Info>,
 
-  pub config:     Arc<dyn DynAccess<EditorConfig>>,
+  pub config: Arc<dyn DynAccess<EditorConfig>>,
   pub auto_pairs: Option<AutoPairs>,
-  pub keymaps:    Keymaps,
+  pub keymaps: Keymaps,
 
-  pub idle_timer:      Pin<Box<Sleep>>,
-  redraw_timer:        Pin<Box<Sleep>>,
-  last_motion:         Option<Motion>,
+  pub idle_timer: Pin<Box<Sleep>>,
+  redraw_timer: Pin<Box<Sleep>>,
+  last_motion: Option<Motion>,
   pub last_completion: Option<CompleteAction>,
-  last_cwd:            Option<PathBuf>,
+  last_cwd: Option<PathBuf>,
 
   pub exit_code: i32,
 
   pub config_events: (UnboundedSender<ConfigEvent>, UnboundedReceiver<ConfigEvent>),
-  pub needs_redraw:  bool,
+  pub needs_redraw: bool,
   /// Cached position of the cursor calculated during rendering.
   /// The content of `cursor_cache` is returned by `Editor::cursor` if
   /// set to `Some(_)`. The value will be cleared after it's used.
@@ -406,18 +304,18 @@ pub struct Editor {
   /// This cache is only a performance optimization to
   /// avoid calculating the cursor position multiple
   /// times during rendering and should not be set by other functions.
-  pub handlers:      Handlers,
+  pub handlers: Handlers,
 
   pub mouse_down_range: Option<Range>,
-  pub cursor_cache:     CursorCache,
+  pub cursor_cache: CursorCache,
 
   pub input_handler: InputHandler,
 
   // Command mode support
-  pub command_registry:    crate::core::command_registry::CommandRegistry,
-  pub command_history:     Vec<String>,
+  pub command_registry: crate::core::command_registry::CommandRegistry,
+  pub command_history: Vec<String>,
   // Font size override (for runtime zooming)
-  pub font_size_override:  Option<f32>,
+  pub font_size_override: Option<f32>,
   /// Flag to indicate that the next insert/delete operation should trigger
   /// a visual effect (easter egg from the noop command).
   pub noop_effect_pending: bool,
@@ -426,13 +324,13 @@ pub struct Editor {
   pub fade_mode: FadeMode,
 
   /// ACP (Agent Client Protocol) integration state
-  pub acp:                     Option<crate::acp::AcpHandle>,
+  pub acp: Option<crate::acp::AcpHandle>,
   /// ACP configuration
-  pub acp_config:              crate::acp::AcpConfig,
+  pub acp_config: crate::acp::AcpConfig,
   /// Permission manager for ACP agent requests
-  pub acp_permissions:         crate::acp::PermissionManager,
+  pub acp_permissions: crate::acp::PermissionManager,
   /// Current ACP response state for overlay display
-  pub acp_response:            Option<AcpResponseState>,
+  pub acp_response: Option<AcpResponseState>,
   /// Pending model selection from the picker (polled in event loop)
   pub pending_model_selection: Option<std::sync::mpsc::Receiver<agent_client_protocol::ModelId>>,
 
@@ -447,34 +345,34 @@ pub struct AcpResponseState {
   /// Summary of context sent (e.g., "src/lib.rs:42-48")
   pub context_summary: String,
   /// The input/prompt sent to the agent
-  pub input_prompt:    String,
+  pub input_prompt: String,
   /// Accumulated response text (markdown)
-  pub response_text:   String,
+  pub response_text: String,
   /// Whether we're currently receiving a streaming response
-  pub is_streaming:    bool,
+  pub is_streaming: bool,
   /// Model name (e.g., "claude-sonnet")
-  pub model_name:      String,
+  pub model_name: String,
   /// Agent's execution plan (TODOs)
-  pub plan:            Option<agent_client_protocol::Plan>,
+  pub plan: Option<agent_client_protocol::Plan>,
 }
 
 /// State for the context-aware code fading feature
 #[derive(Debug, Clone)]
 pub struct FadeMode {
   /// Whether fade mode is currently active
-  pub enabled:         bool,
+  pub enabled: bool,
   /// The ranges of code that should remain visible (not faded)
   pub relevant_ranges: Option<crate::core::context_fade::RelevantRanges>,
   /// The analyzer used to compute relevant ranges
-  pub analyzer:        crate::core::context_fade::ContextAnalyzer,
+  pub analyzer: crate::core::context_fade::ContextAnalyzer,
 }
 
 impl Default for FadeMode {
   fn default() -> Self {
     Self {
-      enabled:         false,
+      enabled: false,
       relevant_ranges: None,
-      analyzer:        crate::core::context_fade::ContextAnalyzer::default(),
+      analyzer: crate::core::context_fade::ContextAnalyzer::default(),
     }
   }
 }
@@ -506,8 +404,8 @@ pub enum CompleteAction {
   },
   Applied {
     trigger_offset: usize,
-    changes:        Vec<Change>,
-    placeholder:    bool,
+    changes: Vec<Change>,
+    placeholder: bool,
   },
 }
 
@@ -543,7 +441,7 @@ where
 #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct GutterConfig {
   /// Gutter Layout
-  pub layout:       Vec<GutterType>,
+  pub layout: Vec<GutterType>,
   /// Options specific to the "line-numbers" gutter
   pub line_numbers: GutterLineNumbersConfig,
 }
@@ -551,7 +449,7 @@ pub struct GutterConfig {
 impl Default for GutterConfig {
   fn default() -> Self {
     Self {
-      layout:       vec![
+      layout: vec![
         // Empty - no gutters by default (no line numbers, no padding)
       ],
       line_numbers: GutterLineNumbersConfig::default(),
@@ -632,50 +530,50 @@ pub struct FilePickerConfig {
   /// Enables ignoring hidden files.
   /// Whether to hide hidden files in file picker and global search results.
   /// Defaults to true.
-  pub hidden:            bool,
+  pub hidden: bool,
   /// Enables following symlinks.
   /// Whether to follow symbolic links in file picker and file or directory
   /// completions. Defaults to true.
-  pub follow_symlinks:   bool,
+  pub follow_symlinks: bool,
   /// Hides symlinks that point into the current directory. Defaults to true.
   pub deduplicate_links: bool,
   /// Enables reading ignore files from parent directories. Defaults to true.
-  pub parents:           bool,
+  pub parents: bool,
   /// Enables reading `.ignore` files.
   /// Whether to hide files listed in .ignore in file picker and global search
   /// results. Defaults to true.
-  pub ignore:            bool,
+  pub ignore: bool,
   /// Enables reading `.gitignore` files.
   /// Whether to hide files listed in .gitignore in file picker and global
   /// search results. Defaults to true.
-  pub git_ignore:        bool,
+  pub git_ignore: bool,
   /// Enables reading global .gitignore, whose path is specified in git's
   /// config: `core.excludefile` option. Whether to hide files listed in
   /// global .gitignore in file picker and global search results. Defaults to
   /// true.
-  pub git_global:        bool,
+  pub git_global: bool,
   /// Enables reading `.git/info/exclude` files.
   /// Whether to hide files listed in .git/info/exclude in file picker and
   /// global search results. Defaults to true.
-  pub git_exclude:       bool,
+  pub git_exclude: bool,
   /// WalkBuilder options
   /// Maximum Depth to recurse directories in file picker and global search.
   /// Defaults to `None`.
-  pub max_depth:         Option<usize>,
+  pub max_depth: Option<usize>,
 }
 
 impl Default for FilePickerConfig {
   fn default() -> Self {
     Self {
-      hidden:            true,
-      follow_symlinks:   true,
+      hidden: true,
+      follow_symlinks: true,
       deduplicate_links: true,
-      parents:           true,
-      ignore:            true,
-      git_ignore:        true,
-      git_global:        true,
-      git_exclude:       true,
-      max_depth:         None,
+      parents: true,
+      ignore: true,
+      git_ignore: true,
+      git_global: true,
+      git_exclude: true,
+      max_depth: None,
     }
   }
 }
@@ -710,188 +608,188 @@ where
 pub struct EditorConfig {
   /// Padding to keep between the edge of the screen and the cursor when
   /// scrolling. Defaults to 5.
-  pub scrolloff:                                usize,
+  pub scrolloff: usize,
   /// Number of lines to scroll at once. Defaults to 3
-  pub scroll_lines:                             isize,
+  pub scroll_lines: isize,
   /// Mouse support. Defaults to true.
-  pub mouse:                                    bool,
+  pub mouse: bool,
   /// Shell to use for shell commands. Defaults to ["cmd", "/C"] on Windows and
   /// ["sh", "-c"] otherwise.
-  pub shell:                                    Vec<String>,
+  pub shell: Vec<String>,
   /// Line number mode.
-  pub line_number:                              LineNumber,
+  pub line_number: LineNumber,
   /// Highlight the lines cursors are currently on. Defaults to false.
-  pub cursorline:                               bool,
+  pub cursorline: bool,
   /// Highlight the columns cursors are currently on. Defaults to false.
-  pub cursorcolumn:                             bool,
+  pub cursorcolumn: bool,
   #[serde(deserialize_with = "deserialize_gutter_seq_or_struct")]
-  pub gutters:                                  GutterConfig,
+  pub gutters: GutterConfig,
   /// Middle click paste support. Defaults to true.
-  pub middle_click_paste:                       bool,
+  pub middle_click_paste: bool,
   /// Automatic insertion of pairs to parentheses, brackets,
   /// etc. Optionally, this can be a list of 2-tuples to specify a
   /// global list of characters to pair. Defaults to true.
-  pub auto_pairs:                               AutoPairConfig,
+  pub auto_pairs: AutoPairConfig,
   /// Automatic auto-completion, automatically pop up without user trigger.
   /// Defaults to true.
-  pub auto_completion:                          bool,
+  pub auto_completion: bool,
   /// Enable filepath completion.
   /// Show files and directories if an existing path at the cursor was
   /// recognized, either absolute or relative to the current opened document
   /// or current working directory (if the buffer is not yet saved).
   /// Defaults to true.
-  pub path_completion:                          bool,
+  pub path_completion: bool,
   /// Configures completion of words from open buffers.
   /// Defaults to enabled with a trigger length of 7.
-  pub word_completion:                          WordCompletion,
+  pub word_completion: WordCompletion,
   /// Automatic formatting on save. Defaults to true.
-  pub auto_format:                              bool,
+  pub auto_format: bool,
   /// Default register used for yank/paste. Defaults to '"'
-  pub default_yank_register:                    char,
+  pub default_yank_register: char,
   /// Automatic save on focus lost and/or after delay.
   /// Time delay in milliseconds since last edit after which auto save timer
   /// triggers. Time delay defaults to false with 3000ms delay. Focus lost
   /// defaults to false.
   #[serde(deserialize_with = "deserialize_auto_save")]
-  pub auto_save:                                AutoSave,
+  pub auto_save: AutoSave,
   /// Set a global text_width
-  pub text_width:                               usize,
+  pub text_width: usize,
   /// Time in milliseconds since last keypress before idle timers trigger.
   /// Used for various UI timeouts. Defaults to 250ms.
   #[serde(
     serialize_with = "serialize_duration_millis",
     deserialize_with = "deserialize_duration_millis"
   )]
-  pub idle_timeout:                             Duration,
+  pub idle_timeout: Duration,
   /// Time in milliseconds after typing a word character before auto completions
   /// are shown, set to 5 for instant. Defaults to 250ms.
   #[serde(
     serialize_with = "serialize_duration_millis",
     deserialize_with = "deserialize_duration_millis"
   )]
-  pub completion_timeout:                       Duration,
+  pub completion_timeout: Duration,
   /// Whether to insert the completion suggestion on hover. Defaults to true.
-  pub preview_completion_insert:                bool,
-  pub completion_trigger_len:                   u8,
+  pub preview_completion_insert: bool,
+  pub completion_trigger_len: u8,
   /// Whether to instruct the LSP to replace the entire word when applying a
   /// completion or to only insert new text
-  pub completion_replace:                       bool,
+  pub completion_replace: bool,
   /// `true` if helix should automatically add a line comment token if you're
   /// currently in a comment and press `enter`.
-  pub continue_comments:                        bool,
+  pub continue_comments: bool,
   /// Whether to display infoboxes. Defaults to true.
-  pub auto_info:                                bool,
-  pub file_picker:                              FilePickerConfig,
+  pub auto_info: bool,
+  pub file_picker: FilePickerConfig,
   /// Configuration of the statusline elements
-  pub statusline:                               StatusLineConfig,
+  pub statusline: StatusLineConfig,
   /// Shape for cursor in each mode
-  pub cursor_shape:                             CursorShapeConfig,
+  pub cursor_shape: CursorShapeConfig,
   /// Set to `true` to override automatic detection of truecolor support.
-  pub true_color:                               bool,
+  pub true_color: bool,
   /// Set to `true` to override automatic detection of undercurl support.
-  pub undercurl:                                bool,
+  pub undercurl: bool,
   /// Search configuration.
   #[serde(default)]
-  pub search:                                   SearchConfig,
-  pub lsp:                                      LspConfig,
+  pub search: SearchConfig,
+  pub lsp: LspConfig,
   /// Column numbers at which to draw the rulers. Defaults to `[]`, meaning no
   /// rulers.
-  pub rulers:                                   Vec<u16>,
+  pub rulers: Vec<u16>,
   #[serde(default)]
-  pub whitespace:                               WhitespaceConfig,
+  pub whitespace: WhitespaceConfig,
   /// Persistently display open buffers along the top
-  pub bufferline:                               BufferLine,
+  pub bufferline: BufferLine,
   /// Vertical indent width guides.
-  pub indent_guides:                            IndentGuidesConfig,
+  pub indent_guides: IndentGuidesConfig,
   /// Whether to color modes with different colors. Defaults to `false`.
-  pub color_modes:                              bool,
-  pub soft_wrap:                                SoftWrap,
+  pub color_modes: bool,
+  pub soft_wrap: SoftWrap,
   // Smooth scrolling animation
-  pub smooth_scroll_enabled:                    bool,
-  pub scroll_lerp_factor:                       f32,
-  pub scroll_min_step_lines:                    f32,
-  pub scroll_min_step_cols:                     f32,
+  pub smooth_scroll_enabled: bool,
+  pub scroll_lerp_factor: f32,
+  pub scroll_min_step_lines: f32,
+  pub scroll_min_step_cols: f32,
   // Cursor animation
-  pub cursor_anim_enabled:                      bool,
-  pub cursor_lerp_factor:                       f32,
+  pub cursor_anim_enabled: bool,
+  pub cursor_lerp_factor: f32,
   // Status message animation
-  pub status_msg_anim_enabled:                  bool,
+  pub status_msg_anim_enabled: bool,
   /// Workspace specific lsp ceiling dirs
-  pub workspace_lsp_roots:                      Vec<PathBuf>,
+  pub workspace_lsp_roots: Vec<PathBuf>,
   /// Which line ending to choose for new documents. Defaults to `native`. i.e.
   /// `crlf` on Windows, otherwise `lf`.
-  pub default_line_ending:                      LineEndingConfig,
+  pub default_line_ending: LineEndingConfig,
   /// Whether to automatically insert a trailing line-ending on write if
   /// missing. Defaults to `true`.
-  pub insert_final_newline:                     bool,
+  pub insert_final_newline: bool,
   /// Whether to use atomic operations to write documents to disk.
   /// This prevents data loss if the editor is interrupted while writing the
   /// file, but may confuse some file watching/hot reloading programs.
   /// Defaults to `true`.
-  pub atomic_save:                              bool,
+  pub atomic_save: bool,
   /// Whether to automatically remove all trailing line-endings after the final
   /// one on write. Defaults to `false`.
-  pub trim_final_newlines:                      bool,
+  pub trim_final_newlines: bool,
   /// Whether to automatically remove all whitespace characters preceding
   /// line-endings on write. Defaults to `false`.
-  pub trim_trailing_whitespace:                 bool,
+  pub trim_trailing_whitespace: bool,
   /// Enables smart tab
-  pub smart_tab:                                Option<SmartTabConfig>,
+  pub smart_tab: Option<SmartTabConfig>,
   /// Draw border around popups.
-  pub popup_border:                             PopupBorderConfig,
+  pub popup_border: PopupBorderConfig,
   /// Which indent heuristic to use when a new line is inserted
   #[serde(default)]
-  pub indent_heuristic:                         IndentationHeuristic,
+  pub indent_heuristic: IndentationHeuristic,
   /// labels characters used in jumpmode
   #[serde(
     serialize_with = "serialize_alphabet",
     deserialize_with = "deserialize_alphabet"
   )]
-  pub jump_label_alphabet:                      Vec<char>,
+  pub jump_label_alphabet: Vec<char>,
   /// Display diagnostic below the line they occur.
-  pub inline_diagnostics:                       InlineDiagnosticsConfig,
-  pub end_of_line_diagnostics:                  DiagnosticFilter,
+  pub inline_diagnostics: InlineDiagnosticsConfig,
+  pub end_of_line_diagnostics: DiagnosticFilter,
   /// Only show end-of-line diagnostics on the cursor line. Defaults to `false`.
   pub end_of_line_diagnostics_cursor_line_only: bool,
   // Set to override the default clipboard provider
-  pub clipboard_provider:                       ClipboardProvider,
+  pub clipboard_provider: ClipboardProvider,
   /// Whether to read settings from [EditorConfig](https://editorconfig.org) files. Defaults to
   /// `true`.
-  pub editor_config:                            bool,
+  pub editor_config: bool,
   /// Whether to render rainbow colors for matching brackets. Defaults to
   /// `false`.
-  pub rainbow_brackets:                         bool,
+  pub rainbow_brackets: bool,
   /// Font size for the editor buffer. Defaults to 22.0.
-  pub font_size:                                f32,
+  pub font_size: f32,
   /// Enable per-buffer font sizes (each view can have independent zoom level).
   /// Defaults to false.
-  pub per_buffer_font_size:                     bool,
+  pub per_buffer_font_size: bool,
   /// Whether to show window decorations (title bar, borders). Defaults to
   /// `true`.
-  pub window_decorations:                       bool,
+  pub window_decorations: bool,
   /// Whether to enable smooth theme transitions. Defaults to `true`.
-  pub theme_transition_enabled:                 bool,
+  pub theme_transition_enabled: bool,
   /// Theme transition speed (lerp factor, 0.0-1.0). Defaults to 0.15.
-  pub theme_transition_speed:                   f32,
+  pub theme_transition_speed: f32,
   /// File watcher config.
-  pub file_watcher:                             file_watcher::Config,
+  pub file_watcher: file_watcher::Config,
   /// Auto reload config.
-  pub auto_reload:                              AutoReloadConfig,
+  pub auto_reload: AutoReloadConfig,
   /// File tree (explorer) configuration.
-  pub file_tree:                                FileTreeConfig,
+  pub file_tree: FileTreeConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AutoReloadConfig {
-  pub enable:             bool,
+  pub enable: bool,
   pub prompt_if_modified: bool,
 }
 
 impl Default for AutoReloadConfig {
   fn default() -> Self {
     AutoReloadConfig {
-      enable:             true,
+      enable: true,
       prompt_if_modified: false,
     }
   }
@@ -912,7 +810,7 @@ pub enum FileTreePosition {
 pub struct FileTreeConfig {
   /// Position of the file tree panel. Can be "left" or "right".
   /// Defaults to "left".
-  pub position:    FileTreePosition,
+  pub position: FileTreePosition,
   /// Auto-reveal the current file in the explorer when switching documents.
   /// When enabled, the file tree will expand folders and select the currently
   /// focused file, similar to "Reveal in Side Bar" in VS Code or Zed.
@@ -923,7 +821,7 @@ pub struct FileTreeConfig {
 impl Default for FileTreeConfig {
   fn default() -> Self {
     Self {
-      position:    FileTreePosition::Left,
+      position: FileTreePosition::Left,
       auto_reveal: false,
     }
   }
@@ -932,14 +830,14 @@ impl Default for FileTreeConfig {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SmartTabConfig {
-  pub enable:         bool,
+  pub enable: bool,
   pub supersede_menu: bool,
 }
 
 impl Default for SmartTabConfig {
   fn default() -> Self {
     SmartTabConfig {
-      enable:         true,
+      enable: true,
       supersede_menu: false,
     }
   }
@@ -949,24 +847,24 @@ impl Default for SmartTabConfig {
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 pub struct LspConfig {
   /// Enables LSP
-  pub enable:                             bool,
+  pub enable: bool,
   /// Display LSP messagess from $/progress below statusline
-  pub display_progress_messages:          bool,
+  pub display_progress_messages: bool,
   /// Display LSP messages from window/showMessage below statusline
-  pub display_messages:                   bool,
+  pub display_messages: bool,
   /// Enable automatic pop up of signature help (parameter hints)
-  pub auto_signature_help:                bool,
+  pub auto_signature_help: bool,
   /// Display docs under signature help popup
-  pub display_signature_help_docs:        bool,
+  pub display_signature_help_docs: bool,
   /// Display inlay hints
-  pub display_inlay_hints:                bool,
+  pub display_inlay_hints: bool,
   /// Maximum displayed length of inlay hints (excluding the added trailing
   /// `…`). If it's `None`, there's no limit
-  pub inlay_hints_length_limit:           Option<NonZeroU8>,
+  pub inlay_hints_length_limit: Option<NonZeroU8>,
   /// Display document color swatches
-  pub display_color_swatches:             bool,
+  pub display_color_swatches: bool,
   /// Whether to enable snippet support
-  pub snippets:                           bool,
+  pub snippets: bool,
   /// Whether to include declaration in the goto reference query
   pub goto_reference_include_declaration: bool,
 }
@@ -974,16 +872,16 @@ pub struct LspConfig {
 impl Default for LspConfig {
   fn default() -> Self {
     Self {
-      enable:                             true,
-      display_progress_messages:          false,
-      display_messages:                   true,
-      auto_signature_help:                true,
-      display_signature_help_docs:        true,
-      display_inlay_hints:                false,
-      inlay_hints_length_limit:           None,
-      snippets:                           true,
+      enable: true,
+      display_progress_messages: false,
+      display_messages: true,
+      auto_signature_help: true,
+      display_signature_help_docs: true,
+      display_inlay_hints: false,
+      inlay_hints_length_limit: None,
+      snippets: true,
       goto_reference_include_declaration: true,
-      display_color_swatches:             true,
+      display_color_swatches: true,
     }
   }
 }
@@ -993,7 +891,7 @@ impl Default for LspConfig {
 pub struct SearchConfig {
   /// Smart case: Case insensitive searching unless pattern contains upper case
   /// characters. Defaults to true.
-  pub smart_case:  bool,
+  pub smart_case: bool,
   /// Whether the search should wrap after depleting the matches. Default to
   /// true.
   pub wrap_around: bool,
@@ -1002,12 +900,12 @@ pub struct SearchConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct StatusLineConfig {
-  pub left:                  Vec<StatusLineElement>,
-  pub center:                Vec<StatusLineElement>,
-  pub right:                 Vec<StatusLineElement>,
-  pub separator:             String,
-  pub mode:                  ModeConfig,
-  pub diagnostics:           Vec<Severity>,
+  pub left: Vec<StatusLineElement>,
+  pub center: Vec<StatusLineElement>,
+  pub right: Vec<StatusLineElement>,
+  pub separator: String,
+  pub mode: ModeConfig,
+  pub diagnostics: Vec<Severity>,
   pub workspace_diagnostics: Vec<Severity>,
 }
 
@@ -1016,24 +914,24 @@ impl Default for StatusLineConfig {
     use StatusLineElement as E;
 
     Self {
-      left:                  vec![
+      left: vec![
         E::Mode,
         E::Spinner,
         E::FileName,
         E::ReadOnlyIndicator,
         E::FileModificationIndicator,
       ],
-      center:                vec![],
-      right:                 vec![
+      center: vec![],
+      right: vec![
         E::Diagnostics,
         E::Selections,
         E::Register,
         E::Position,
         E::FileEncoding,
       ],
-      separator:             String::from("│"),
-      mode:                  ModeConfig::default(),
-      diagnostics:           vec![Severity::Warning, Severity::Error],
+      separator: String::from("│"),
+      mode: ModeConfig::default(),
+      diagnostics: vec![Severity::Warning, Severity::Error],
       workspace_diagnostics: vec![Severity::Warning, Severity::Error],
     }
   }
@@ -1566,14 +1464,14 @@ impl std::str::FromStr for GutterType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WhitespaceConfig {
-  pub render:     WhitespaceRender,
+  pub render: WhitespaceRender,
   pub characters: WhitespaceCharacters,
 }
 
 impl Default for WhitespaceConfig {
   fn default() -> Self {
     Self {
-      render:     WhitespaceRender::Basic(WhitespaceRenderValue::None),
+      render: WhitespaceRender::Basic(WhitespaceRenderValue::None),
       characters: WhitespaceCharacters::default(),
     }
   }
@@ -1585,10 +1483,10 @@ pub enum WhitespaceRender {
   Basic(WhitespaceRenderValue),
   Specific {
     default: Option<WhitespaceRenderValue>,
-    space:   Option<WhitespaceRenderValue>,
-    nbsp:    Option<WhitespaceRenderValue>,
-    nnbsp:   Option<WhitespaceRenderValue>,
-    tab:     Option<WhitespaceRenderValue>,
+    space: Option<WhitespaceRenderValue>,
+    nbsp: Option<WhitespaceRenderValue>,
+    nnbsp: Option<WhitespaceRenderValue>,
+    tab: Option<WhitespaceRenderValue>,
     newline: Option<WhitespaceRenderValue>,
   },
 }
@@ -1651,7 +1549,7 @@ pub struct AutoSave {
   pub after_delay: AutoSaveAfterDelay,
   /// Auto save on focus lost. Defaults to false.
   #[serde(default)]
-  pub focus_lost:  bool,
+  pub focus_lost: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -1659,7 +1557,7 @@ pub struct AutoSave {
 pub struct AutoSaveAfterDelay {
   #[serde(default)]
   /// Enable auto save after delay. Defaults to false.
-  pub enable:  bool,
+  pub enable: bool,
   #[serde(default = "default_auto_save_delay")]
   /// Time delay in milliseconds. Defaults to [DEFAULT_AUTO_SAVE_DELAY].
   pub timeout: u64,
@@ -1668,7 +1566,7 @@ pub struct AutoSaveAfterDelay {
 impl Default for AutoSaveAfterDelay {
   fn default() -> Self {
     Self {
-      enable:  false,
+      enable: false,
       timeout: DEFAULT_AUTO_SAVE_DELAY,
     }
   }
@@ -1690,12 +1588,10 @@ where
   }
 
   match AutoSaveToml::deserialize(deserializer)? {
-    AutoSaveToml::EnableFocusLost(focus_lost) => {
-      Ok(AutoSave {
-        focus_lost,
-        ..Default::default()
-      })
-    },
+    AutoSaveToml::EnableFocusLost(focus_lost) => Ok(AutoSave {
+      focus_lost,
+      ..Default::default()
+    }),
     AutoSaveToml::AutoSave(auto_save) => Ok(auto_save),
   }
 }
@@ -1703,23 +1599,23 @@ where
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WhitespaceCharacters {
-  pub space:   char,
-  pub nbsp:    char,
-  pub nnbsp:   char,
-  pub tab:     char,
-  pub tabpad:  char,
+  pub space: char,
+  pub nbsp: char,
+  pub nnbsp: char,
+  pub tab: char,
+  pub tabpad: char,
   pub newline: char,
 }
 
 impl Default for WhitespaceCharacters {
   fn default() -> Self {
     Self {
-      space:   '·', // U+00B7
-      nbsp:    '⍽', // U+237D
-      nnbsp:   '␣', // U+2423
-      tab:     '→', // U+2192
+      space: '·',   // U+00B7
+      nbsp: '⍽',    // U+237D
+      nnbsp: '␣',   // U+2423
+      tab: '→',     // U+2192
       newline: '⏎', // U+23CE
-      tabpad:  ' ',
+      tabpad: ' ',
     }
   }
 }
@@ -1727,8 +1623,8 @@ impl Default for WhitespaceCharacters {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct IndentGuidesConfig {
-  pub render:      bool,
-  pub character:   char,
+  pub render: bool,
+  pub character: char,
   pub skip_levels: u8,
 }
 
@@ -1736,8 +1632,8 @@ impl Default for IndentGuidesConfig {
   fn default() -> Self {
     Self {
       skip_levels: 0,
-      render:      false,
-      character:   '│',
+      render: false,
+      character: '│',
     }
   }
 }
@@ -1794,14 +1690,14 @@ pub enum PopupBorderConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 pub struct WordCompletion {
-  pub enable:         bool,
+  pub enable: bool,
   pub trigger_length: NonZeroU8,
 }
 
 impl Default for WordCompletion {
   fn default() -> Self {
     Self {
-      enable:         true,
+      enable: true,
       trigger_length: NonZeroU8::new(7).unwrap(),
     }
   }
@@ -1810,82 +1706,82 @@ impl Default for WordCompletion {
 impl Default for EditorConfig {
   fn default() -> Self {
     Self {
-      scrolloff:                                5,
-      scroll_lines:                             3,
-      mouse:                                    true,
-      shell:                                    if cfg!(windows) {
+      scrolloff: 5,
+      scroll_lines: 3,
+      mouse: true,
+      shell: if cfg!(windows) {
         vec!["cmd".to_owned(), "/C".to_owned()]
       } else {
         vec!["sh".to_owned(), "-c".to_owned()]
       },
-      line_number:                              LineNumber::Absolute,
-      cursorline:                               false,
-      cursorcolumn:                             false,
-      gutters:                                  GutterConfig::default(),
-      middle_click_paste:                       true,
-      auto_pairs:                               AutoPairConfig::default(),
-      auto_completion:                          true,
-      path_completion:                          true,
-      word_completion:                          WordCompletion::default(),
-      auto_format:                              true,
-      default_yank_register:                    '"',
-      auto_save:                                AutoSave::default(),
-      idle_timeout:                             Duration::from_millis(250),
-      completion_timeout:                       Duration::from_millis(250),
-      preview_completion_insert:                true,
-      completion_trigger_len:                   2,
-      auto_info:                                true,
-      file_picker:                              FilePickerConfig::default(),
-      statusline:                               StatusLineConfig::default(),
-      cursor_shape:                             CursorShapeConfig::default(),
-      true_color:                               true,
-      undercurl:                                false,
-      search:                                   SearchConfig::default(),
-      lsp:                                      LspConfig::default(),
-      rulers:                                   Vec::new(),
-      whitespace:                               WhitespaceConfig::default(),
-      bufferline:                               BufferLine::default(),
-      indent_guides:                            IndentGuidesConfig::default(),
-      color_modes:                              false,
-      soft_wrap:                                SoftWrap {
+      line_number: LineNumber::Absolute,
+      cursorline: false,
+      cursorcolumn: false,
+      gutters: GutterConfig::default(),
+      middle_click_paste: true,
+      auto_pairs: AutoPairConfig::default(),
+      auto_completion: true,
+      path_completion: true,
+      word_completion: WordCompletion::default(),
+      auto_format: true,
+      default_yank_register: '"',
+      auto_save: AutoSave::default(),
+      idle_timeout: Duration::from_millis(250),
+      completion_timeout: Duration::from_millis(250),
+      preview_completion_insert: true,
+      completion_trigger_len: 2,
+      auto_info: true,
+      file_picker: FilePickerConfig::default(),
+      statusline: StatusLineConfig::default(),
+      cursor_shape: CursorShapeConfig::default(),
+      true_color: true,
+      undercurl: false,
+      search: SearchConfig::default(),
+      lsp: LspConfig::default(),
+      rulers: Vec::new(),
+      whitespace: WhitespaceConfig::default(),
+      bufferline: BufferLine::default(),
+      indent_guides: IndentGuidesConfig::default(),
+      color_modes: false,
+      soft_wrap: SoftWrap {
         enable: Some(false),
         ..SoftWrap::default()
       },
-      text_width:                               80,
-      completion_replace:                       false,
-      continue_comments:                        true,
-      workspace_lsp_roots:                      Vec::new(),
-      default_line_ending:                      LineEndingConfig::default(),
-      insert_final_newline:                     true,
-      atomic_save:                              true,
-      trim_final_newlines:                      false,
-      trim_trailing_whitespace:                 false,
-      smart_tab:                                Some(SmartTabConfig::default()),
-      popup_border:                             PopupBorderConfig::None,
-      indent_heuristic:                         IndentationHeuristic::default(),
-      jump_label_alphabet:                      ('a'..='z').collect(),
-      inline_diagnostics:                       InlineDiagnosticsConfig::default(),
-      end_of_line_diagnostics:                  DiagnosticFilter::Enable(Severity::Hint),
+      text_width: 80,
+      completion_replace: false,
+      continue_comments: true,
+      workspace_lsp_roots: Vec::new(),
+      default_line_ending: LineEndingConfig::default(),
+      insert_final_newline: true,
+      atomic_save: true,
+      trim_final_newlines: false,
+      trim_trailing_whitespace: false,
+      smart_tab: Some(SmartTabConfig::default()),
+      popup_border: PopupBorderConfig::None,
+      indent_heuristic: IndentationHeuristic::default(),
+      jump_label_alphabet: ('a'..='z').collect(),
+      inline_diagnostics: InlineDiagnosticsConfig::default(),
+      end_of_line_diagnostics: DiagnosticFilter::Enable(Severity::Hint),
       end_of_line_diagnostics_cursor_line_only: false,
-      clipboard_provider:                       ClipboardProvider::default(),
-      editor_config:                            true,
-      rainbow_brackets:                         false,
+      clipboard_provider: ClipboardProvider::default(),
+      editor_config: true,
+      rainbow_brackets: false,
       // Animations defaults
-      smooth_scroll_enabled:                    true,
-      scroll_lerp_factor:                       0.25,
-      scroll_min_step_lines:                    0.75,
-      scroll_min_step_cols:                     1.0,
-      cursor_anim_enabled:                      true,
-      cursor_lerp_factor:                       0.25,
-      status_msg_anim_enabled:                  true,
-      font_size:                                22.0,
-      per_buffer_font_size:                     false,
-      window_decorations:                       true,
-      theme_transition_enabled:                 true,
-      theme_transition_speed:                   0.15,
-      file_watcher:                             file_watcher::Config::default(),
-      auto_reload:                              AutoReloadConfig::default(),
-      file_tree:                                FileTreeConfig::default(),
+      smooth_scroll_enabled: true,
+      scroll_lerp_factor: 0.25,
+      scroll_min_step_lines: 0.75,
+      scroll_min_step_cols: 1.0,
+      cursor_anim_enabled: true,
+      cursor_lerp_factor: 0.25,
+      status_msg_anim_enabled: true,
+      font_size: 22.0,
+      per_buffer_font_size: false,
+      window_decorations: true,
+      theme_transition_enabled: true,
+      theme_transition_speed: 0.15,
+      file_watcher: file_watcher::Config::default(),
+      auto_reload: AutoReloadConfig::default(),
+      file_tree: FileTreeConfig::default(),
     }
   }
 }
@@ -1894,7 +1790,7 @@ impl Default for SearchConfig {
   fn default() -> Self {
     Self {
       wrap_around: true,
-      smart_case:  true,
+      smart_case: true,
     }
   }
 }
@@ -2308,10 +2204,7 @@ impl Editor {
 
   /// Bind the current view to a quick slot (0-9).
   pub fn slot_bind(&mut self, slot: u8) -> Result<(), &'static str> {
-    use crate::core::quick_slots::{
-      QuickSlot,
-      SlotContent,
-    };
+    use crate::core::quick_slots::{QuickSlot, SlotContent};
 
     if slot > 9 {
       return Err("Slot must be 0-9");
@@ -2333,13 +2226,16 @@ impl Editor {
     // Check if this is the only view (full-screen mode)
     let was_only_view = self.tree.views().count() == 1;
 
-    self.quick_slots.set(slot, QuickSlot {
-      content,
-      position: None, // Position captured when hiding
-      visible: true,
-      was_only_view,
-      previous_content: None,
-    });
+    self.quick_slots.set(
+      slot,
+      QuickSlot {
+        content,
+        position: None, // Position captured when hiding
+        visible: true,
+        was_only_view,
+        previous_content: None,
+      },
+    );
 
     self.set_status(format!("Bound to slot {}", slot));
     Ok(())
@@ -2472,12 +2368,16 @@ impl Editor {
     // If was only view (full-screen mode), replace current content instead of split
     if quick_slot.was_only_view {
       // Capture the current view's content before replacing (for toggle-back)
-      let current_content = self.tree.try_get(self.tree.focus).and_then(|view| {
-        match view.content {
-          crate::core::view::ViewContent::Document(doc_id) => Some(SlotContent::Document(doc_id)),
-          crate::core::view::ViewContent::Terminal(term_id) => Some(SlotContent::Terminal(term_id)),
-        }
-      });
+      let current_content =
+        self
+          .tree
+          .try_get(self.tree.focus)
+          .and_then(|view| match view.content {
+            crate::core::view::ViewContent::Document(doc_id) => Some(SlotContent::Document(doc_id)),
+            crate::core::view::ViewContent::Terminal(term_id) => {
+              Some(SlotContent::Terminal(term_id))
+            },
+          });
 
       let view_id = self.show_content_replace(&quick_slot.content);
       if let Some(view_id) = view_id {
@@ -2517,20 +2417,16 @@ impl Editor {
     use crate::core::quick_slots::SlotContent;
 
     match content {
-      SlotContent::Document(doc_id) => {
-        self
-          .tree
-          .views()
-          .find(|(view, _)| view.doc() == Some(*doc_id))
-          .map(|(view, _)| view.id)
-      },
-      SlotContent::Terminal(term_id) => {
-        self
-          .tree
-          .views()
-          .find(|(view, _)| view.terminal() == Some(*term_id))
-          .map(|(view, _)| view.id)
-      },
+      SlotContent::Document(doc_id) => self
+        .tree
+        .views()
+        .find(|(view, _)| view.doc() == Some(*doc_id))
+        .map(|(view, _)| view.id),
+      SlotContent::Terminal(term_id) => self
+        .tree
+        .views()
+        .find(|(view, _)| view.terminal() == Some(*term_id))
+        .map(|(view, _)| view.id),
     }
   }
 
@@ -2647,10 +2543,7 @@ impl Editor {
     shell: Option<&str>,
     layout: tree::Layout,
   ) -> anyhow::Result<TerminalId> {
-    use the_terminal::{
-      Terminal,
-      TerminalConfig,
-    };
+    use the_terminal::{Terminal, TerminalConfig};
 
     // Get the next terminal ID
     let id = self.next_terminal_id;
@@ -2796,8 +2689,8 @@ impl Editor {
     self._refresh();
     the_editor_event::dispatch(crate::event::ConfigDidChange {
       editor: self,
-      old:    old_config,
-      new:    &config,
+      old: old_config,
+      new: &config,
     })
   }
 
@@ -2982,11 +2875,11 @@ impl Editor {
         if enable_transition {
           // Start transition animation
           self.theme_transition = Some(ThemeTransition {
-            from_theme:          self.theme.clone(),
-            to_theme:            theme,
-            progress:            0.0,
+            from_theme: self.theme.clone(),
+            to_theme: theme,
+            progress: 0.0,
             cached_interpolated: None,
-            last_cached_at:      -1.0, // Force initial cache creation
+            last_cached_at: -1.0, // Force initial cache creation
           });
         } else {
           // Instant theme change
@@ -3470,7 +3363,7 @@ impl Editor {
 
         dispatch(DocumentFocusLost {
           editor: self,
-          doc:    id,
+          doc: id,
         });
         return;
       },
@@ -3494,11 +3387,14 @@ impl Editor {
                     .filter(|v| v.doc() == Some(id)) // Same Document
                     .cloned()
                     .unwrap_or_else(|| View::new(id, self.config().gutters.clone()));
-        let view_id = self.tree.split(view, match action {
-          Action::HorizontalSplit => Layout::Horizontal,
-          Action::VerticalSplit => Layout::Vertical,
-          _ => unreachable!(),
-        });
+        let view_id = self.tree.split(
+          view,
+          match action {
+            Action::HorizontalSplit => Layout::Horizontal,
+            Action::VerticalSplit => Layout::Vertical,
+            _ => unreachable!(),
+          },
+        );
         // initialize selection for view
         let doc = doc_mut!(self, &id);
         doc.ensure_view_init(view_id);
@@ -3512,7 +3408,7 @@ impl Editor {
     if let Some(focus_lost) = focust_lost {
       dispatch(DocumentFocusLost {
         editor: self,
-        doc:    focus_lost,
+        doc: focus_lost,
       });
     }
   }
@@ -3642,7 +3538,7 @@ impl Editor {
 
       the_editor_event::dispatch(DocumentDidOpen {
         editor: self,
-        doc:    id,
+        doc: id,
       });
 
       id
@@ -3863,14 +3759,14 @@ impl Editor {
         {
           dispatch(DocumentFocusLost {
             editor: self,
-            doc:    focus_lost,
+            doc: focus_lost,
           });
         }
 
         // Dispatch focus gained event for the new document
         dispatch(DocumentFocusGained {
           editor: self,
-          doc:    doc_id,
+          doc: doc_id,
         });
       }
       // If no document view is focused, just change focus without view-specific
@@ -4135,15 +4031,9 @@ impl Editor {
   pub fn try_poll_lsp_message(
     &mut self,
   ) -> Option<(crate::lsp::LanguageServerId, crate::lsp::Call)> {
-    use std::task::{
-      Context,
-      Poll,
-    };
+    use std::task::{Context, Poll};
 
-    use futures_util::{
-      stream::Stream,
-      task::noop_waker,
-    };
+    use futures_util::{stream::Stream, task::noop_waker};
 
     let waker = noop_waker();
     let mut cx = Context::from_waker(&waker);
@@ -4161,15 +4051,9 @@ impl Editor {
   }
 
   pub fn try_poll_save(&mut self) -> Option<DocumentSavedEvent> {
-    use std::task::{
-      Context,
-      Poll,
-    };
+    use std::task::{Context, Poll};
 
-    use futures_util::{
-      stream::Stream,
-      task::noop_waker,
-    };
+    use futures_util::{stream::Stream, task::noop_waker};
 
     let waker = noop_waker();
     let mut cx = Context::from_waker(&waker);

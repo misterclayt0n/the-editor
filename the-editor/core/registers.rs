@@ -1,19 +1,11 @@
-use std::{
-  borrow::Cow,
-  collections::HashMap,
-  iter,
-};
+use std::{borrow::Cow, collections::HashMap, iter};
 
 use anyhow::Result;
 use arc_swap::access::DynAccess;
 
 use crate::{
   core::{
-    clipboard::{
-      ClipboardError,
-      ClipboardProvider,
-      ClipboardType,
-    },
+    clipboard::{ClipboardError, ClipboardProvider, ClipboardType},
     line_ending::NATIVE_LINE_ENDING,
   },
   editor::Editor,
@@ -37,8 +29,8 @@ pub struct Registers {
   /// Values are stored in reverse order when inserted with `Registers::write`.
   /// The order is reversed again in `Registers::read`. This allows us to
   /// efficiently prepend new values in `Registers::push`.
-  inner:                    HashMap<char, Vec<String>>,
-  clipboard_provider:       Box<dyn DynAccess<ClipboardProvider>>,
+  inner: HashMap<char, Vec<String>>,
+  clipboard_provider: Box<dyn DynAccess<ClipboardProvider>>,
   pub last_search_register: char,
 }
 
@@ -76,23 +68,19 @@ impl Registers {
         let path = doc.display_name();
         Some(RegisterValues::new(iter::once(path)))
       },
-      '*' | '+' => {
-        Some(read_from_clipboard(
-          &self.clipboard_provider.load(),
-          self.inner.get(&name),
-          match name {
-            '+' => ClipboardType::Clipboard,
-            '*' => ClipboardType::Selection,
-            _ => unreachable!(),
-          },
-        ))
-      },
-      _ => {
-        self
-          .inner
-          .get(&name)
-          .map(|values| RegisterValues::new(values.iter().map(Cow::from).rev()))
-      },
+      '*' | '+' => Some(read_from_clipboard(
+        &self.clipboard_provider.load(),
+        self.inner.get(&name),
+        match name {
+          '+' => ClipboardType::Clipboard,
+          '*' => ClipboardType::Selection,
+          _ => unreachable!(),
+        },
+      )),
+      _ => self
+        .inner
+        .get(&name)
+        .map(|values| RegisterValues::new(values.iter().map(Cow::from).rev())),
     }
   }
 
@@ -263,17 +251,18 @@ fn read_from_clipboard<'a>(
         RegisterValues::new(iter::once(contents.into()))
       }
     },
-    Err(ClipboardError::ReadingNotSupported) => {
-      match saved_values {
-        Some(values) => RegisterValues::new(values.iter().map(Cow::from).rev()),
-        None => RegisterValues::new(iter::empty()),
-      }
+    Err(ClipboardError::ReadingNotSupported) => match saved_values {
+      Some(values) => RegisterValues::new(values.iter().map(Cow::from).rev()),
+      None => RegisterValues::new(iter::empty()),
     },
     Err(err) => {
-      log::error!("Failed to read {} clipboard: {err}", match clipboard_type {
-        ClipboardType::Clipboard => "system",
-        ClipboardType::Selection => "primary",
-      });
+      log::error!(
+        "Failed to read {} clipboard: {err}",
+        match clipboard_type {
+          ClipboardType::Clipboard => "system",
+          ClipboardType::Selection => "primary",
+        }
+      );
 
       RegisterValues::new(iter::empty())
     },

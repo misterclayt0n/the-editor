@@ -1,29 +1,12 @@
-use std::{
-  collections::HashMap,
-  fmt,
-  str::FromStr,
-};
+use std::{collections::HashMap, fmt, str::FromStr};
 
 use serde::{
-  Deserialize,
-  Deserializer,
-  Serialize,
-  de::{
-    self,
-    MapAccess,
-    SeqAccess,
-    Visitor,
-  },
+  Deserialize, Deserializer, Serialize,
+  de::{self, MapAccess, SeqAccess, Visitor},
 };
-use the_editor_renderer::{
-  Key,
-  KeyPress,
-};
+use the_editor_renderer::{Key, KeyPress};
 
-use crate::core::{
-  commands::MappableCommand,
-  info::Info,
-};
+use crate::core::{commands::MappableCommand, info::Info};
 
 /// Mapping from command name to all key sequences that trigger it
 pub type ReverseKeymap = HashMap<String, Vec<Vec<KeyBinding>>>;
@@ -35,10 +18,10 @@ pub mod macros;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyBinding {
-  pub code:  Key,
+  pub code: Key,
   pub shift: bool,
-  pub ctrl:  bool,
-  pub alt:   bool,
+  pub ctrl: bool,
+  pub alt: bool,
 }
 
 impl<'de> Deserialize<'de> for KeyBinding {
@@ -122,10 +105,10 @@ impl KeyBinding {
 
   pub const fn from_key_press(press: &KeyPress) -> Self {
     Self {
-      code:  press.code,
+      code: press.code,
       shift: press.shift,
-      ctrl:  press.ctrl,
-      alt:   press.alt,
+      ctrl: press.ctrl,
+      alt: press.alt,
     }
   }
 }
@@ -301,9 +284,9 @@ pub enum KeyTrie {
 
 #[derive(Debug, Clone, Default)]
 pub struct KeyTrieNode {
-  pub name:      String,
-  pub map:       HashMap<KeyBinding, KeyTrie>,
-  pub order:     Vec<KeyBinding>,
+  pub name: String,
+  pub map: HashMap<KeyBinding, KeyTrie>,
+  pub order: Vec<KeyBinding>,
   pub is_sticky: bool,
 }
 
@@ -478,8 +461,8 @@ pub enum KeymapResult {
 
 #[derive(Debug, Clone)]
 pub struct Keymaps {
-  pub map:    HashMap<Mode, KeyTrie>,
-  state:      Vec<KeyBinding>,
+  pub map: HashMap<Mode, KeyTrie>,
+  state: Vec<KeyBinding>,
   pub sticky: Option<KeyTrieNode>,
 }
 
@@ -657,10 +640,10 @@ pub fn parse_macro(input: &str) -> anyhow::Result<Vec<KeyBinding>> {
     } else if c.is_ascii_uppercase() {
       // Shifted character
       keys.push(KeyBinding {
-        code:  Key::Char(c),
+        code: Key::Char(c),
         shift: true,
-        ctrl:  false,
-        alt:   false,
+        ctrl: false,
+        alt: false,
       });
     } else {
       // Regular character

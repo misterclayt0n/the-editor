@@ -1,36 +1,20 @@
-use std::{
-  ops::Range,
-  time::Instant,
-};
+use std::{ops::Range, time::Instant};
 
-use imara_diff::{
-  Algorithm,
-  Diff,
-  Hunk,
-  IndentHeuristic,
-  IndentLevel,
-  InternedInput,
-};
-use ropey::{
-  Rope,
-  RopeSlice,
-};
+use imara_diff::{Algorithm, Diff, Hunk, IndentHeuristic, IndentLevel, InternedInput};
+use ropey::{Rope, RopeSlice};
 
 use crate::core::{
   Tendril,
-  transaction::{
-    ChangeSet,
-    Transaction,
-  },
+  transaction::{ChangeSet, Transaction},
 };
 
 struct ChangeSetBuilder<'a> {
-  res:          ChangeSet,
-  after:        RopeSlice<'a>,
-  file:         &'a InternedInput<RopeSlice<'a>>,
+  res: ChangeSet,
+  after: RopeSlice<'a>,
+  file: &'a InternedInput<RopeSlice<'a>>,
   current_hunk: InternedInput<char>,
-  char_diff:    Diff,
-  pos:          u32,
+  char_diff: Diff,
+  pos: u32,
 }
 
 impl ChangeSetBuilder<'_> {

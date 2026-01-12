@@ -1,17 +1,8 @@
-use serde::{
-  Deserialize,
-  Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{
-  MarkedString,
-  MarkupContent,
-  MarkupKind,
-  Range,
-  TextDocumentPositionParams,
-  TextDocumentRegistrationOptions,
-  WorkDoneProgressOptions,
-  WorkDoneProgressParams,
+  MarkedString, MarkupContent, MarkupKind, Range, TextDocumentPositionParams,
+  TextDocumentRegistrationOptions, WorkDoneProgressOptions, WorkDoneProgressParams,
 };
 
 #[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]
@@ -82,7 +73,7 @@ pub struct Hover {
   /// An optional range is a range inside a text document
   /// that is used to visualize a hover, e.g. by changing the background color.
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub range:    Option<Range>,
+  pub range: Option<Range>,
 }
 
 /// Hover contents could be single entry or multiple entries.

@@ -1,12 +1,7 @@
 use std::{
   borrow::Cow,
   cmp::Ordering,
-  ops::{
-    Add,
-    AddAssign,
-    Sub,
-    SubAssign,
-  },
+  ops::{Add, AddAssign, Sub, SubAssign},
 };
 
 use ropey::RopeSlice;
@@ -16,10 +11,7 @@ use crate::core::{
   Tendril,
   chars::char_is_line_ending,
   doc_formatter::DocumentFormatter,
-  grapheme::{
-    ensure_grapheme_boundary_prev,
-    grapheme_width,
-  },
+  grapheme::{ensure_grapheme_boundary_prev, grapheme_width},
   line_ending::line_end_char_index,
   text_annotations::TextAnnotations,
   text_format::TextFormat,
@@ -124,7 +116,7 @@ pub fn coords_at_pos(text: RopeSlice, pos: usize) -> Position {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisualOffsets {
   pub first_col: usize,
-  pub last_col:  usize,
+  pub last_col: usize,
 }
 
 impl VisualOffsets {

@@ -3,10 +3,7 @@ use std::{
   future::Future,
   sync::{
     Arc,
-    atomic::{
-      AtomicU64,
-      Ordering::Relaxed,
-    },
+    atomic::{AtomicU64, Ordering::Relaxed},
   },
 };
 
@@ -29,7 +26,7 @@ pub async fn cancelable_future<T>(
 
 #[derive(Default, Debug)]
 struct Shared {
-  state:  AtomicU64,
+  state: AtomicU64,
   // `Notify` has some features that we don't really need here because it
   // supports waking single tasks (`notify_one`) and does its own (more
   // complicated) state tracking, we could reimplement the waiter linked list
@@ -153,7 +150,7 @@ impl TaskController {
   pub fn restart(&mut self) -> TaskHandle {
     TaskHandle {
       generation: self.shared.inc_generation(1).0,
-      shared:     self.shared.clone(),
+      shared: self.shared.clone(),
     }
   }
 }
@@ -175,7 +172,7 @@ impl Drop for TaskController {
 /// is important, ensure that the handle is not dropped until the task fully
 /// completes.
 pub struct TaskHandle {
-  shared:     Arc<Shared>,
+  shared: Arc<Shared>,
   generation: u32,
 }
 
@@ -183,7 +180,7 @@ impl Clone for TaskHandle {
   fn clone(&self) -> Self {
     self.shared.inc_running(self.generation);
     TaskHandle {
-      shared:     self.shared.clone(),
+      shared: self.shared.clone(),
       generation: self.generation,
     }
   }
@@ -218,10 +215,7 @@ mod tests {
   use futures_executor::block_on;
   use tokio::task::yield_now;
 
-  use crate::{
-    TaskController,
-    cancelable_future,
-  };
+  use crate::{TaskController, cancelable_future};
 
   #[test]
   fn immediate_cancel() {

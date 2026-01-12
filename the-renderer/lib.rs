@@ -14,35 +14,13 @@ pub mod svg_icon;
 mod text;
 mod text_cache;
 
-use std::{
-  sync::Arc,
-  time::Instant,
-};
+use std::{sync::Arc, time::Instant};
 
 pub use color::Color;
-pub use error::{
-  RendererError,
-  Result,
-};
-pub use event::{
-  InputEvent,
-  Key,
-  KeyPress,
-  MouseButton,
-  MouseEvent,
-  ScrollDelta,
-};
-pub use renderer::{
-  FontState,
-  Renderer,
-  RendererConfig,
-};
-pub use text::{
-  Font,
-  TextSection,
-  TextSegment,
-  TextStyle,
-};
+pub use error::{RendererError, Result};
+pub use event::{InputEvent, Key, KeyPress, MouseButton, MouseEvent, ScrollDelta};
+pub use renderer::{FontState, Renderer, RendererConfig};
+pub use text::{Font, TextSection, TextSegment, TextStyle};
 // Re-export winit for cursor icon access
 pub use winit;
 use winit::window::WindowId;
@@ -50,9 +28,9 @@ use winit::window::WindowId;
 /// Configuration for window creation.
 #[derive(Debug, Clone)]
 pub struct WindowConfig {
-  pub title:       String,
-  pub width:       u32,
-  pub height:      u32,
+  pub title: String,
+  pub width: u32,
+  pub height: u32,
   pub decorations: bool,
 }
 
@@ -98,24 +76,9 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
 
   use winit::{
     application::ApplicationHandler,
-    event::{
-      ElementState,
-      KeyEvent,
-      MouseScrollDelta,
-      WindowEvent,
-    },
-    event_loop::{
-      ActiveEventLoop,
-      ControlFlow,
-      EventLoop,
-    },
-    keyboard::{
-      Key as WinitKey,
-      KeyCode,
-      ModifiersState,
-      NamedKey,
-      PhysicalKey,
-    },
+    event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::{Key as WinitKey, KeyCode, ModifiersState, NamedKey, PhysicalKey},
     window::Window,
   };
 
@@ -278,11 +241,11 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
   }
 
   struct RendererApp<A: Application> {
-    renderer:             Option<Renderer>,
-    window:               Option<Arc<Window>>,
-    app:                  A,
-    window_config:        WindowConfig,
-    modifiers_state:      ModifiersState,
+    renderer: Option<Renderer>,
+    window: Option<Arc<Window>>,
+    app: A,
+    window_config: WindowConfig,
+    modifiers_state: ModifiersState,
     last_cursor_position: Option<(f32, f32)>,
   }
 
@@ -489,8 +452,8 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
             if let Some(mouse_button) = mouse_button {
               let mouse_event = MouseEvent {
                 position: self.last_cursor_position.unwrap_or((0.0, 0.0)),
-                button:   Some(mouse_button),
-                pressed:  state == ElementState::Pressed,
+                button: Some(mouse_button),
+                pressed: state == ElementState::Pressed,
               };
 
               if self
@@ -510,8 +473,8 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
 
             let mouse_event = MouseEvent {
               position: cursor_pos,
-              button:   None,
-              pressed:  false,
+              button: None,
+              pressed: false,
             };
 
             if self
@@ -534,11 +497,9 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
           if let Some(renderer) = &mut self.renderer {
             let scroll_delta = match delta {
               MouseScrollDelta::LineDelta(x, y) => ScrollDelta::Lines { x, y },
-              MouseScrollDelta::PixelDelta(pos) => {
-                ScrollDelta::Pixels {
-                  x: pos.x as f32,
-                  y: pos.y as f32,
-                }
+              MouseScrollDelta::PixelDelta(pos) => ScrollDelta::Pixels {
+                x: pos.x as f32,
+                y: pos.y as f32,
               },
             };
             if self
@@ -576,7 +537,14 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
             }
           }
         },
-        WindowEvent::ScaleFactorChanged { .. } => {},
+        WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+          if let Some(renderer) = &mut self.renderer {
+            renderer.set_scale_factor(scale_factor);
+            if let Some(win) = &self.window {
+              win.request_redraw();
+            }
+          }
+        },
         WindowEvent::RedrawRequested => {
           if let Some(renderer) = &mut self.renderer {
             match renderer.begin_frame() {

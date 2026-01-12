@@ -5,16 +5,10 @@
 use the_editor_event::AsyncHook;
 use the_editor_lsp_types::types as lsp;
 use the_editor_stdx::rope::RopeSliceExt;
-use tokio::time::{
-  Duration,
-  Instant,
-};
+use tokio::time::{Duration, Instant};
 
 use crate::core::syntax::config::LanguageServerFeature;
-pub use crate::handlers::lsp::{
-  SignatureHelpEvent,
-  SignatureHelpInvoked,
-};
+pub use crate::handlers::lsp::{SignatureHelpEvent, SignatureHelpInvoked};
 
 /// Debounce timeout in ms (from VSCode)
 const TIMEOUT_MS: u64 = 120;
@@ -29,20 +23,20 @@ enum State {
 
 /// Handler for signature help requests
 pub struct SignatureHelpHandler {
-  trigger:             Option<SignatureHelpInvoked>,
-  state:               State,
-  task:                Option<tokio::task::JoinHandle<()>>,
-  request_generation:  u64,
+  trigger: Option<SignatureHelpInvoked>,
+  state: State,
+  task: Option<tokio::task::JoinHandle<()>>,
+  request_generation: u64,
   inflight_generation: Option<u64>,
 }
 
 impl Default for SignatureHelpHandler {
   fn default() -> Self {
     Self {
-      trigger:             None,
-      state:               State::Closed,
-      task:                None,
-      request_generation:  0,
+      trigger: None,
+      state: State::Closed,
+      task: None,
+      request_generation: 0,
       inflight_generation: None,
     }
   }
@@ -184,8 +178,8 @@ async fn request_signature_help(invoked: SignatureHelpInvoked, generation: u64) 
 /// A single signature with optional active parameter range
 #[derive(Debug, Clone)]
 pub struct Signature {
-  pub signature:          String,
-  pub signature_doc:      Option<String>,
+  pub signature: String,
+  pub signature_doc: Option<String>,
   pub active_param_range: Option<(usize, usize)>,
 }
 
@@ -227,18 +221,10 @@ pub fn active_param_range(
 
 /// Register hooks for signature help events
 pub fn register_hooks(handlers: &crate::handlers::Handlers) {
-  use the_editor_event::{
-    register_hook,
-    send_blocking,
-  };
+  use the_editor_event::{register_hook, send_blocking};
 
   use crate::{
-    event::{
-      DocumentDidChange,
-      OnModeSwitch,
-      PostInsertChar,
-      SelectionDidChange,
-    },
+    event::{DocumentDidChange, OnModeSwitch, PostInsertChar, SelectionDidChange},
     keymap::Mode,
   };
 

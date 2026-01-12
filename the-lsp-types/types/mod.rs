@@ -12,18 +12,10 @@
 #![allow(non_upper_case_globals)]
 #![forbid(unsafe_code)]
 
-use std::{
-  collections::HashMap,
-  fmt::Debug,
-};
+use std::{collections::HashMap, fmt::Debug};
 
 use bitflags::bitflags;
-use serde::{
-  Deserialize,
-  Serialize,
-  de,
-  de::Error as Error_,
-};
+use serde::{Deserialize, Serialize, de, de::Error as Error_};
 use serde_json::Value;
 pub use url::Url;
 
@@ -155,8 +147,10 @@ pub use inlay_hint::*;
 mod inline_value;
 pub use inline_value::*;
 
-#[cfg(feature = "proposed")] mod inline_completion;
-#[cfg(feature = "proposed")] pub use inline_completion::*;
+#[cfg(feature = "proposed")]
+mod inline_completion;
+#[cfg(feature = "proposed")]
+pub use inline_completion::*;
 
 mod moniker;
 pub use moniker::*;
@@ -244,7 +238,7 @@ pub type LSPArray = Vec<serde_json::Value>;
 )]
 pub struct Position {
   /// Line position in a document (zero-based).
-  pub line:      u32,
+  pub line: u32,
   /// Character offset on a line in a document (zero-based). The meaning of this
   /// offset is determined by the negotiated `PositionEncodingKind`.
   ///
@@ -267,7 +261,7 @@ pub struct Range {
   /// The range's start position.
   pub start: Position,
   /// The range's end position.
-  pub end:   Position,
+  pub end: Position,
 }
 
 impl Range {
@@ -279,7 +273,7 @@ impl Range {
 /// Represents a location inside a resource, such as a line inside a text file.
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize, Hash)]
 pub struct Location {
-  pub uri:   Url,
+  pub uri: Url,
   pub range: Range,
 }
 
@@ -504,9 +498,9 @@ impl DiagnosticTag {
 #[derive(Debug, PartialEq, Clone, Default, Deserialize, Serialize)]
 pub struct Command {
   /// Title of the command, like `save`.
-  pub title:     String,
+  pub title: String,
   /// The identifier of the actual command handler.
-  pub command:   String,
+  pub command: String,
   /// Arguments that the command handler should be
   /// invoked with.
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -534,7 +528,7 @@ impl Command {
 pub struct TextEdit {
   /// The range of the text document to be manipulated. To insert
   /// text into a document create a range where start === end.
-  pub range:    Range,
+  pub range: Range,
   /// The string to be inserted. For delete operations use an
   /// empty string.
   pub new_text: String,
@@ -622,7 +616,7 @@ pub struct ChangeAnnotationWorkspaceEditClientCapabilities {
 pub struct CreateFileOptions {
   /// Overwrite existing file. Overwrite wins over `ignoreIfExists`
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub overwrite:        Option<bool>,
+  pub overwrite: Option<bool>,
   /// Ignore if exists.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub ignore_if_exists: Option<bool>,
@@ -633,7 +627,7 @@ pub struct CreateFileOptions {
 #[serde(rename_all = "camelCase")]
 pub struct CreateFile {
   /// The resource to create.
-  pub uri:     Url,
+  pub uri: Url,
   /// Additional options
   #[serde(skip_serializing_if = "Option::is_none")]
   pub options: Option<CreateFileOptions>,
@@ -651,7 +645,7 @@ pub struct CreateFile {
 pub struct RenameFileOptions {
   /// Overwrite target if existing. Overwrite wins over `ignoreIfExists`
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub overwrite:        Option<bool>,
+  pub overwrite: Option<bool>,
   /// Ignores if target exists.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub ignore_if_exists: Option<bool>,
@@ -682,7 +676,7 @@ pub struct RenameFile {
 pub struct DeleteFileOptions {
   /// Delete the content recursively if a folder is denoted.
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub recursive:            Option<bool>,
+  pub recursive: Option<bool>,
   /// Ignore the operation if the file doesn't exist.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub ignore_if_not_exists: Option<bool>,
@@ -699,7 +693,7 @@ pub struct DeleteFileOptions {
 #[serde(rename_all = "camelCase")]
 pub struct DeleteFile {
   /// The file to delete.
-  pub uri:     Url,
+  pub uri: Url,
   /// Delete options.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub options: Option<DeleteFileOptions>,
@@ -804,10 +798,7 @@ pub struct ConfigurationItem {
 }
 
 mod url_map {
-  use std::{
-    fmt,
-    marker::PhantomData,
-  };
+  use std::{fmt, marker::PhantomData};
 
   use super::*;
 
@@ -1148,7 +1139,7 @@ pub struct InitializeParams {
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 pub struct ClientInfo {
   /// The name of the client as defined by the client.
-  pub name:    String,
+  pub name: String,
   /// The client's version as defined by the client.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub version: Option<String>,
@@ -1483,7 +1474,7 @@ pub struct TextDocumentClientCapabilities {
   pub synchronization: Option<TextDocumentSyncClientCapabilities>,
   /// Capabilities specific to the `textDocument/completion`
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub completion:      Option<CompletionClientCapabilities>,
+  pub completion: Option<CompletionClientCapabilities>,
 
   /// Capabilities specific to the `textDocument/hover`
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -1506,7 +1497,7 @@ pub struct TextDocumentClientCapabilities {
   pub document_symbol: Option<DocumentSymbolClientCapabilities>,
   /// Capabilities specific to the `textDocument/formatting`
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub formatting:      Option<DocumentFormattingClientCapabilities>,
+  pub formatting: Option<DocumentFormattingClientCapabilities>,
 
   /// Capabilities specific to the `textDocument/rangeFormatting`
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -1766,7 +1757,7 @@ pub struct InitializeResult {
 #[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]
 pub struct ServerInfo {
   /// The name of the server as defined by the server.
-  pub name:    String,
+  pub name: String,
   /// The servers's version as defined by the server.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub version: Option<String>,
@@ -2285,7 +2276,7 @@ pub struct DidChangeTextDocumentParams {
   /// The document that did change. The version number points
   /// to the version after all provided content changes have
   /// been applied.
-  pub text_document:   VersionedTextDocumentIdentifier,
+  pub text_document: VersionedTextDocumentIdentifier,
   /// The actual content changes.
   pub content_changes: Vec<TextDocumentContentChangeEvent>,
 }
@@ -2608,7 +2599,7 @@ pub enum MarkedString {
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
 pub struct LanguageString {
   pub language: String,
-  pub value:    String,
+  pub value: String,
 }
 
 impl MarkedString {
@@ -2668,7 +2659,7 @@ impl From<Vec<LocationLink>> for GotoDefinitionResponse {
 #[derive(Debug, PartialEq, Clone, Default, Deserialize, Serialize)]
 pub struct ExecuteCommandParams {
   /// The identifier of the actual command handler.
-  pub command:   String,
+  pub command: String,
   /// Arguments that the command should be invoked with.
   #[serde(default)]
   pub arguments: Vec<Value>,
@@ -2762,7 +2753,7 @@ pub enum MarkupKind {
 /// could decide to remove HTML from the markdown to avoid script execution.
 #[derive(Debug, Eq, PartialEq, Deserialize, Serialize, Clone)]
 pub struct MarkupContent {
-  pub kind:  MarkupKind,
+  pub kind: MarkupKind,
   pub value: String,
 }
 
@@ -2789,10 +2780,7 @@ impl SymbolTag {
 
 #[cfg(test)]
 mod tests {
-  use serde::{
-    Deserialize,
-    Serialize,
-  };
+  use serde::{Deserialize, Serialize};
 
   use super::*;
 
@@ -2848,7 +2836,7 @@ mod tests {
     test_serialization(
       &LanguageString {
         language: "LL".into(),
-        value:    "VV".into(),
+        value: "VV".into(),
       },
       r#"{"language":"LL","value":"VV"}"#,
     );

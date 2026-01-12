@@ -1,23 +1,12 @@
-use std::{
-  mem::swap,
-  ops::Index,
-  sync::Arc,
-};
+use std::{mem::swap, ops::Index, sync::Arc};
 
-use anyhow::{
-  Result,
-  anyhow,
-};
+use anyhow::{Result, anyhow};
 use ropey::RopeSlice;
 use the_editor_stdx::{
   Range,
   rope::{
-    RegexBuilder,
-    RopeSliceExt,
-    regex_cursor::{
-      engines::meta::Regex,
-      regex_automata::util::syntax::Config as RegexConfig,
-    },
+    RegexBuilder, RopeSliceExt,
+    regex_cursor::{engines::meta::Regex, regex_automata::util::syntax::Config as RegexConfig},
   },
 };
 
@@ -25,20 +14,12 @@ use crate::{
   core::{
     Tendril,
     case_conversion::{
-      to_camel_case_with,
-      to_lower_case_with,
-      to_pascal_case_with,
-      to_upper_case_with,
+      to_camel_case_with, to_lower_case_with, to_pascal_case_with, to_upper_case_with,
     },
   },
   snippets::{
-    LAST_TABSTOP_IDX,
-    TabstopIdx,
-    parser::{
-      self,
-      CaseChange,
-      FormatItem,
-    },
+    LAST_TABSTOP_IDX, TabstopIdx,
+    parser::{self, CaseChange, FormatItem},
   },
 };
 
@@ -132,9 +113,9 @@ impl Snippet {
       return;
     }
     self.tabstops.push(Tabstop {
-      idx:    LAST_TABSTOP_IDX,
+      idx: LAST_TABSTOP_IDX,
       parent: None,
-      kind:   TabstopKind::Empty,
+      kind: TabstopKind::Empty,
     });
     self.elements.push(SnippetElement::Tabstop {
       idx: LAST_TABSTOP_IDX,
@@ -153,28 +134,20 @@ impl Snippet {
           parser::SnippetElement::Tabstop {
             tabstop,
             transform: None,
-          } => {
-            SnippetElement::Tabstop {
-              idx: self.elaborate_placeholder(tabstop, parent, Vec::new()),
-            }
+          } => SnippetElement::Tabstop {
+            idx: self.elaborate_placeholder(tabstop, parent, Vec::new()),
           },
           parser::SnippetElement::Tabstop {
             tabstop,
             transform: Some(transform),
-          } => {
-            SnippetElement::Tabstop {
-              idx: self.elaborate_transform(tabstop, parent, transform),
-            }
+          } => SnippetElement::Tabstop {
+            idx: self.elaborate_transform(tabstop, parent, transform),
           },
-          parser::SnippetElement::Placeholder { tabstop, value } => {
-            SnippetElement::Tabstop {
-              idx: self.elaborate_placeholder(tabstop, parent, value),
-            }
+          parser::SnippetElement::Placeholder { tabstop, value } => SnippetElement::Tabstop {
+            idx: self.elaborate_placeholder(tabstop, parent, value),
           },
-          parser::SnippetElement::Choice { tabstop, choices } => {
-            SnippetElement::Tabstop {
-              idx: self.elaborate_choice(tabstop, parent, choices),
-            }
+          parser::SnippetElement::Choice { tabstop, choices } => SnippetElement::Tabstop {
+            idx: self.elaborate_choice(tabstop, parent, choices),
           },
           parser::SnippetElement::Variable {
             name,
@@ -277,8 +250,8 @@ pub enum SnippetElement {
     idx: TabstopIdx,
   },
   Variable {
-    name:      Tendril,
-    default:   Option<Box<[SnippetElement]>>,
+    name: Tendril,
+    default: Option<Box<[SnippetElement]>>,
     transform: Option<Box<Transform>>,
   },
   Text(Tendril),
@@ -286,9 +259,9 @@ pub enum SnippetElement {
 
 #[derive(Debug)]
 pub struct Tabstop {
-  idx:        TabstopIdx,
+  idx: TabstopIdx,
   pub parent: Option<TabstopIdx>,
-  pub kind:   TabstopKind,
+  pub kind: TabstopKind,
 }
 
 #[derive(Debug)]
@@ -307,9 +280,9 @@ impl TabstopKind {
 
 #[derive(Debug)]
 pub struct Transform {
-  regex:       Regex,
-  regex_str:   Box<str>,
-  global:      bool,
+  regex: Regex,
+  regex_str: Box<str>,
+  global: bool,
   replacement: Box<[FormatItem]>,
 }
 

@@ -4,111 +4,60 @@ use std::{
   borrow::Cow,
   cmp::Reverse,
   collections::HashMap,
-  fmt,
-  iter,
-  ops::{
-    self,
-    RangeBounds,
-  },
+  fmt, iter,
+  ops::{self, RangeBounds},
   path::Path,
   sync::{
     Arc,
-    atomic::{
-      AtomicBool,
-      AtomicU64,
-      Ordering,
-    },
+    atomic::{AtomicBool, AtomicU64, Ordering},
   },
   time::Duration,
 };
 
-use anyhow::{
-  Context,
-  Result,
-};
-use arc_swap::{
-  ArcSwap,
-  Guard,
-};
-use config::{
-  Configuration,
-  FileType,
-  LanguageConfiguration,
-  LanguageServerConfiguration,
-};
+use anyhow::{Context, Result};
+use arc_swap::{ArcSwap, Guard};
+use config::{Configuration, FileType, LanguageConfiguration, LanguageServerConfiguration};
 use foldhash::HashSet;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
-use ropey::{
-  Rope,
-  RopeSlice,
-};
+use ropey::{Rope, RopeSlice};
 use the_editor_loader::grammar::get_language;
-use the_editor_stdx::rope::{
-  RopeSliceExt as _,
-  regex_cursor,
-};
+use the_editor_stdx::rope::{RopeSliceExt as _, regex_cursor};
 use tree_house::{
-  Error,
-  InjectionLanguageMarker,
-  Language,
-  LanguageConfig as SyntaxConfig,
-  Layer,
-  highlighter,
+  Error, InjectionLanguageMarker, Language, LanguageConfig as SyntaxConfig, Layer, highlighter,
   query_iter::QueryIter,
   tree_sitter::{
-    self,
-    Capture,
-    Grammar,
-    InactiveQueryCursor,
-    InputEdit,
-    Node,
-    Pattern,
-    Query,
-    RopeInput,
-    Tree,
-    query::{
-      InvalidPredicateError,
-      UserPredicate,
-    },
+    self, Capture, Grammar, InactiveQueryCursor, InputEdit, Node, Pattern, Query, RopeInput, Tree,
+    query::{InvalidPredicateError, UserPredicate},
   },
 };
 pub use tree_house::{
-  Error as HighlighterError,
-  LanguageLoader,
-  TREE_SITTER_MATCH_LIMIT,
-  TreeCursor,
-  highlighter::{
-    Highlight,
-    HighlightEvent,
-  },
+  Error as HighlighterError, LanguageLoader, TREE_SITTER_MATCH_LIMIT, TreeCursor,
+  highlighter::{Highlight, HighlightEvent},
   query_iter::QueryIterEvent,
 };
 
-use crate::core::{
-  indent::IndentQuery,
-  transaction::ChangeSet,
-};
+use crate::core::{indent::IndentQuery, transaction::ChangeSet};
 
 #[derive(Debug)]
 pub struct LanguageData {
-  config:           Arc<LanguageConfiguration>,
-  syntax:           OnceCell<Option<SyntaxConfig>>,
-  indent_query:     OnceCell<Option<IndentQuery>>,
+  config: Arc<LanguageConfiguration>,
+  syntax: OnceCell<Option<SyntaxConfig>>,
+  indent_query: OnceCell<Option<IndentQuery>>,
   textobject_query: OnceCell<Option<TextObjectQuery>>,
-  tag_query:        OnceCell<Option<TagQuery>>,
-  rainbow_query:    OnceCell<Option<RainbowQuery>>,
+  tag_query: OnceCell<Option<TagQuery>>,
+  rainbow_query: OnceCell<Option<RainbowQuery>>,
 }
 
 impl LanguageData {
   fn new(config: LanguageConfiguration) -> Self {
     Self {
-      config:           Arc::new(config),
-      syntax:           OnceCell::new(),
-      indent_query:     OnceCell::new(),
+      config: Arc::new(config),
+      syntax: OnceCell::new(),
+      indent_query: OnceCell::new(),
       textobject_query: OnceCell::new(),
-      tag_query:        OnceCell::new(),
-      rainbow_query:    OnceCell::new(),
+      tag_query: OnceCell::new(),
+      rainbow_query: OnceCell::new(),
     }
   }
 
@@ -238,11 +187,9 @@ impl LanguageData {
       match predicate {
         // TODO: these predicates are allowed in tags.scm queries but not yet used.
         UserPredicate::IsPropertySet { key: "local", .. } => Ok(()),
-        UserPredicate::Other(pred) => {
-          match pred.name() {
-            "strip!" | "select-adjacent!" => Ok(()),
-            _ => Err(InvalidPredicateError::unknown(predicate)),
-          }
+        UserPredicate::Other(pred) => match pred.name() {
+          "strip!" | "select-adjacent!" => Ok(()),
+          _ => Err(InvalidPredicateError::unknown(predicate)),
         },
         _ => Err(InvalidPredicateError::unknown(predicate)),
       }
@@ -340,12 +287,12 @@ pub fn read_query(lang: &str, query_filename: &str) -> String {
 
 #[derive(Debug, Default)]
 pub struct Loader {
-  languages:               Vec<LanguageData>,
-  languages_by_extension:  HashMap<String, Language>,
-  languages_by_shebang:    HashMap<String, Language>,
-  languages_glob_matcher:  FileTypeGlobMatcher,
+  languages: Vec<LanguageData>,
+  languages_by_extension: HashMap<String, Language>,
+  languages_by_shebang: HashMap<String, Language>,
+  languages_glob_matcher: FileTypeGlobMatcher,
   language_server_configs: HashMap<String, LanguageServerConfiguration>,
-  scopes:                  ArcSwap<Vec<String>>,
+  scopes: ArcSwap<Vec<String>>,
 }
 
 pub type LoaderError = globset::Error;
@@ -537,7 +484,7 @@ impl LanguageLoader for Loader {
 
 #[derive(Debug)]
 struct FileTypeGlob {
-  glob:     globset::Glob,
+  glob: globset::Glob,
   language: Language,
 }
 
@@ -549,14 +496,14 @@ impl FileTypeGlob {
 
 #[derive(Debug)]
 struct FileTypeGlobMatcher {
-  matcher:    globset::GlobSet,
+  matcher: globset::GlobSet,
   file_types: Vec<FileTypeGlob>,
 }
 
 impl Default for FileTypeGlobMatcher {
   fn default() -> Self {
     Self {
-      matcher:    globset::GlobSet::empty(),
+      matcher: globset::GlobSet::empty(),
       file_types: Default::default(),
     }
   }
@@ -666,9 +613,9 @@ impl std::fmt::Debug for SyntaxState {
 /// parsing.
 pub struct SyntaxSnapshot {
   /// Cloned syntax state for parsing.
-  pub syntax:  Syntax,
+  pub syntax: Syntax,
   /// The source text at the time of snapshot.
-  pub source:  Rope,
+  pub source: Rope,
   /// The version at which this snapshot was taken.
   pub version: u64,
 }
@@ -678,10 +625,10 @@ impl SyntaxState {
   pub fn new(syntax: Syntax) -> Self {
     Self {
       inner: Arc::new(SyntaxStateInner {
-        syntax:               Mutex::new(syntax),
+        syntax: Mutex::new(syntax),
         interpolated_version: AtomicU64::new(0),
-        parsed_version:       AtomicU64::new(0),
-        parse_pending:        AtomicBool::new(false),
+        parsed_version: AtomicU64::new(0),
+        parse_pending: AtomicBool::new(false),
       }),
     }
   }
@@ -1170,8 +1117,8 @@ impl Syntax {
     range: impl RangeBounds<u32>,
   ) -> OverlayHighlights {
     struct RainbowScope<'tree> {
-      end:       u32,
-      node:      Option<Node<'tree>>,
+      end: u32,
+      node: Option<Node<'tree>>,
       highlight: Highlight,
     }
 
@@ -1204,8 +1151,8 @@ impl Syntax {
       let capture = Some(mat.capture);
       if capture == rainbow_query.scope_capture {
         scope_stack.push(RainbowScope {
-          end:       byte_range.end,
-          node:      if rainbow_query
+          end: byte_range.end,
+          node: if rainbow_query
             .include_children_patterns
             .contains(&mat.pattern)
           {
@@ -1325,7 +1272,7 @@ pub enum OverlayHighlights {
   /// could change in the future though.
   Homogeneous {
     highlight: Highlight,
-    ranges:    Vec<ops::Range<usize>>,
+    ranges: Vec<ops::Range<usize>>,
   },
   /// A collection of different highlights for given ranges.
   ///
@@ -1353,11 +1300,11 @@ impl OverlayHighlights {
 
 #[derive(Debug)]
 struct Overlay {
-  highlights:       OverlayHighlights,
+  highlights: OverlayHighlights,
   /// The position of the highlighter into the Vec of ranges of the overlays.
   ///
   /// Used by the `OverlayHighlighter`.
-  idx:              usize,
+  idx: usize,
   /// The currently active highlight (and the ending character index) for this
   /// overlay.
   ///
@@ -1376,11 +1323,9 @@ impl Overlay {
 
   fn current(&self) -> Option<(Highlight, ops::Range<usize>)> {
     match &self.highlights {
-      OverlayHighlights::Homogeneous { highlight, ranges } => {
-        ranges
-          .get(self.idx)
-          .map(|range| (*highlight, range.clone()))
-      },
+      OverlayHighlights::Homogeneous { highlight, ranges } => ranges
+        .get(self.idx)
+        .map(|range| (*highlight, range.clone())),
       OverlayHighlights::Heterogenous { highlights } => highlights.get(self.idx).cloned(),
     }
   }
@@ -1390,11 +1335,9 @@ impl Overlay {
       OverlayHighlights::Homogeneous { ranges, .. } => {
         ranges.get(self.idx).map(|range| range.start)
       },
-      OverlayHighlights::Heterogenous { highlights } => {
-        highlights
-          .get(self.idx)
-          .map(|(_highlight, range)| range.start)
-      },
+      OverlayHighlights::Heterogenous { highlights } => highlights
+        .get(self.idx)
+        .map(|(_highlight, range)| range.start),
     }
   }
 }
@@ -1403,9 +1346,9 @@ impl Overlay {
 /// syntax highlights.
 #[derive(Debug)]
 pub struct OverlayHighlighter {
-  overlays:             Vec<Overlay>,
+  overlays: Vec<Overlay>,
   next_highlight_start: usize,
-  next_highlight_end:   usize,
+  next_highlight_end: usize,
 }
 
 impl OverlayHighlighter {
@@ -1713,30 +1656,28 @@ pub fn child_for_byte_range<'a>(node: &Node<'a>, range: ops::Range<u32>) -> Opti
 
 #[derive(Debug)]
 pub struct RainbowQuery {
-  query:                     Query,
+  query: Query,
   include_children_patterns: HashSet<Pattern>,
-  scope_capture:             Option<Capture>,
-  bracket_capture:           Option<Capture>,
+  scope_capture: Option<Capture>,
+  bracket_capture: Option<Capture>,
 }
 
 impl RainbowQuery {
   fn new(grammar: Grammar, source: &str) -> Result<Self, tree_sitter::query::ParseError> {
     let mut include_children_patterns = HashSet::default();
 
-    let query = Query::new(grammar, source, |pattern, predicate| {
-      match predicate {
-        UserPredicate::SetProperty {
-          key: "rainbow.include-children",
-          val,
-        } => {
-          if val.is_some() {
-            return Err("property 'rainbow.include-children' does not take an argument".into());
-          }
-          include_children_patterns.insert(pattern);
-          Ok(())
-        },
-        _ => Err(InvalidPredicateError::unknown(predicate)),
-      }
+    let query = Query::new(grammar, source, |pattern, predicate| match predicate {
+      UserPredicate::SetProperty {
+        key: "rainbow.include-children",
+        val,
+      } => {
+        if val.is_some() {
+          return Err("property 'rainbow.include-children' does not take an argument".into());
+        }
+        include_children_patterns.insert(pattern);
+        Ok(())
+      },
+      _ => Err(InvalidPredicateError::unknown(predicate)),
     })?;
 
     Ok(Self {
@@ -1881,10 +1822,7 @@ mod test {
 
   #[test]
   fn test_input_edits() {
-    use tree_sitter::{
-      InputEdit,
-      Point,
-    };
+    use tree_sitter::{InputEdit, Point};
 
     let doc = Rope::from("hello world!\ntest 123");
     let transaction = Transaction::change(
@@ -1894,24 +1832,27 @@ mod test {
     let edits = generate_edits(doc.slice(..), transaction.changes());
     // transaction.apply(&mut state);
 
-    assert_eq!(edits, &[
-      InputEdit {
-        start_byte:    6,
-        old_end_byte:  11,
-        new_end_byte:  10,
-        start_point:   Point::ZERO,
-        old_end_point: Point::ZERO,
-        new_end_point: Point::ZERO,
-      },
-      InputEdit {
-        start_byte:    12,
-        old_end_byte:  17,
-        new_end_byte:  12,
-        start_point:   Point::ZERO,
-        old_end_point: Point::ZERO,
-        new_end_point: Point::ZERO,
-      }
-    ]);
+    assert_eq!(
+      edits,
+      &[
+        InputEdit {
+          start_byte: 6,
+          old_end_byte: 11,
+          new_end_byte: 10,
+          start_point: Point::ZERO,
+          old_end_point: Point::ZERO,
+          new_end_point: Point::ZERO,
+        },
+        InputEdit {
+          start_byte: 12,
+          old_end_byte: 17,
+          new_end_byte: 12,
+          start_point: Point::ZERO,
+          old_end_point: Point::ZERO,
+          new_end_point: Point::ZERO,
+        }
+      ]
+    );
 
     // Testing with the official example from tree-sitter
     let mut doc = Rope::from("fn test() {}");
@@ -1920,14 +1861,17 @@ mod test {
     transaction.apply(&mut doc);
 
     assert_eq!(doc, "fn test(a: u32) {}");
-    assert_eq!(edits, &[InputEdit {
-      start_byte:    8,
-      old_end_byte:  8,
-      new_end_byte:  14,
-      start_point:   Point::ZERO,
-      old_end_point: Point::ZERO,
-      new_end_point: Point::ZERO,
-    }]);
+    assert_eq!(
+      edits,
+      &[InputEdit {
+        start_byte: 8,
+        old_end_byte: 8,
+        new_end_byte: 14,
+        start_point: Point::ZERO,
+        old_end_point: Point::ZERO,
+        new_end_point: Point::ZERO,
+      }]
+    );
   }
 
   #[track_caller]

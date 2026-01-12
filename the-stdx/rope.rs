@@ -1,29 +1,14 @@
 use core::fmt;
-use std::ops::{
-  Bound,
-  RangeBounds,
-};
+use std::ops::{Bound, RangeBounds};
 
 pub use regex_cursor::{
   self,
-  engines::meta::{
-    Builder as RegexBuilder,
-    Regex,
-  },
+  engines::meta::{Builder as RegexBuilder, Regex},
   regex_automata::util::syntax::Config,
 };
-use regex_cursor::{
-  Input as RegexInput,
-  RopeyCursor,
-};
-use ropey::{
-  RopeSlice,
-  iter::Chunks,
-};
-use unicode_segmentation::{
-  GraphemeCursor,
-  GraphemeIncomplete,
-};
+use regex_cursor::{Input as RegexInput, RopeyCursor};
+use ropey::{RopeSlice, iter::Chunks};
+use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 
 /// Additional utility functions for [RopeSlice]
 pub trait RopeSliceExt<'a>: Sized {
@@ -530,8 +515,8 @@ impl<'a> RopeSliceExt<'a> for RopeSlice<'a> {
     assert!(byte_idx <= self.len_bytes());
     RopeGraphemeIndices {
       front_offset: byte_idx,
-      iter:         self.graphemes_at(byte_idx),
-      is_reversed:  false,
+      iter: self.graphemes_at(byte_idx),
+      is_reversed: false,
     }
   }
 
@@ -614,12 +599,12 @@ impl<'a> RopeSliceExt<'a> for RopeSlice<'a> {
 /// An Iterator over graphemes of a `RopeSlice`.
 #[derive(Clone)]
 pub struct RopeGraphemes<'a> {
-  text:           RopeSlice<'a>,
-  chunks:         Chunks<'a>,
-  current_chunk:  &'a str,
+  text: RopeSlice<'a>,
+  chunks: Chunks<'a>,
+  current_chunk: &'a str,
   chunk_byte_idx: usize,
-  cursor:         GraphemeCursor,
-  is_reversed:    bool,
+  cursor: GraphemeCursor,
+  is_reversed: bool,
 }
 
 impl fmt::Debug for RopeGraphemes<'_> {
@@ -747,8 +732,8 @@ impl<'a> Iterator for RopeGraphemes<'a> {
 #[derive(Debug, Clone)]
 pub struct RopeGraphemeIndices<'a> {
   front_offset: usize,
-  iter:         RopeGraphemes<'a>,
-  is_reversed:  bool,
+  iter: RopeGraphemes<'a>,
+  is_reversed: bool,
 }
 
 impl<'a> RopeGraphemeIndices<'a> {

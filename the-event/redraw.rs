@@ -2,10 +2,7 @@
 
 use std::future::Future;
 
-use parking_lot::{
-  RwLock,
-  RwLockReadGuard,
-};
+use parking_lot::{RwLock, RwLockReadGuard};
 use tokio::sync::Notify;
 
 use crate::runtime_local;

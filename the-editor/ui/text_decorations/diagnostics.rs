@@ -2,16 +2,8 @@ use the_editor_renderer::Color;
 
 use crate::{
   core::{
-    diagnostics::{
-      Diagnostic,
-      InlineDiagnosticAccumulator,
-      InlineDiagnosticsConfig,
-      Severity,
-    },
-    doc_formatter::{
-      DocumentFormatter,
-      FormattedGrapheme,
-    },
+    diagnostics::{Diagnostic, InlineDiagnosticAccumulator, InlineDiagnosticsConfig, Severity},
+    doc_formatter::{DocumentFormatter, FormattedGrapheme},
     document::Document,
     position::Position,
     text_annotations::TextAnnotations,
@@ -19,10 +11,7 @@ use crate::{
   theme::Theme,
   ui::{
     compositor::Surface,
-    text_decorations::{
-      Decoration,
-      DecorationRenderer,
-    },
+    text_decorations::{Decoration, DecorationRenderer},
   },
 };
 
@@ -38,10 +27,10 @@ const VER_BAR: &str = "│";
 /// Styles for different diagnostic severities
 #[derive(Debug)]
 struct Styles {
-  hint:    Color,
-  info:    Color,
+  hint: Color,
+  info: Color,
   warning: Color,
-  error:   Color,
+  error: Color,
 }
 
 impl Styles {
@@ -52,11 +41,11 @@ impl Styles {
     let error_style = theme.get("error");
 
     Styles {
-      hint:    hint_style
+      hint: hint_style
         .fg
         .map(crate::ui::theme_color_to_renderer_color)
         .unwrap_or(Color::rgb(0.5, 0.5, 0.5)),
-      info:    info_style
+      info: info_style
         .fg
         .map(crate::ui::theme_color_to_renderer_color)
         .unwrap_or(Color::rgb(0.3, 0.6, 1.0)),
@@ -64,7 +53,7 @@ impl Styles {
         .fg
         .map(crate::ui::theme_color_to_renderer_color)
         .unwrap_or(Color::rgb(1.0, 0.8, 0.0)),
-      error:   error_style
+      error: error_style
         .fg
         .map(crate::ui::theme_color_to_renderer_color)
         .unwrap_or(Color::rgb(1.0, 0.3, 0.3)),
@@ -83,23 +72,23 @@ impl Styles {
 
 /// Inline diagnostics decoration for rendering diagnostic messages
 pub struct InlineDiagnostics<'a> {
-  state:                InlineDiagnosticAccumulator<'a>,
-  eol_diagnostics:      crate::core::diagnostics::DiagnosticFilter,
+  state: InlineDiagnosticAccumulator<'a>,
+  eol_diagnostics: crate::core::diagnostics::DiagnosticFilter,
   eol_cursor_line_only: bool,
-  eol_opacities:        &'a std::collections::HashMap<usize, f32>,
+  eol_opacities: &'a std::collections::HashMap<usize, f32>,
   inline_anim_states: &'a std::collections::HashMap<
     usize,
     crate::ui::inline_diagnostic_animation::InlineDiagnosticAnimState,
   >,
-  cursor_line:          usize,
-  styles:               Styles,
-  base_x:               f32,
-  base_y:               f32,
-  line_height:          f32,
-  font_width:           f32,
-  font_size:            f32,
-  viewport_width:       u16,
-  horizontal_offset:    usize,
+  cursor_line: usize,
+  styles: Styles,
+  base_x: f32,
+  base_y: f32,
+  line_height: f32,
+  font_width: f32,
+  font_size: f32,
+  viewport_width: u16,
+  horizontal_offset: usize,
 }
 
 impl<'a> InlineDiagnostics<'a> {
@@ -467,11 +456,9 @@ impl Decoration for InlineDiagnostics<'_> {
           .iter()
           .filter(|(diag, _)| eol_filter <= diag.severity());
         match filter {
-          DiagnosticFilter::Enable(inline_filter) => {
-            eol_diagnostics
-              .filter(|(diag, _)| inline_filter > diag.severity())
-              .max_by_key(|(diagnostic, _)| diagnostic.severity())
-          },
+          DiagnosticFilter::Enable(inline_filter) => eol_diagnostics
+            .filter(|(diag, _)| inline_filter > diag.severity())
+            .max_by_key(|(diagnostic, _)| diagnostic.severity()),
           DiagnosticFilter::Disable => {
             eol_diagnostics.max_by_key(|(diagnostic, _)| diagnostic.severity())
           },

@@ -1,35 +1,22 @@
 use std::{
-  collections::{
-    HashMap,
-    HashSet,
-  },
-  fmt::{
-    self,
-    Display,
-  },
+  collections::{HashMap, HashSet},
+  fmt::{self, Display},
   num::NonZeroU8,
   path::PathBuf,
   str::FromStr,
 };
 
 use globset::GlobSet;
-use serde::{
-  Deserialize,
-  Serialize,
-  ser::SerializeSeq as _,
-};
+use serde::{Deserialize, Serialize, ser::SerializeSeq as _};
 use the_editor_stdx::rope;
 use tree_house::Language;
 
-use crate::core::{
-  auto_pairs::AutoPairs,
-  diagnostics::Severity,
-};
+use crate::core::{auto_pairs::AutoPairs, diagnostics::Severity};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Configuration {
-  pub language:        Vec<LanguageConfiguration>,
+  pub language: Vec<LanguageConfiguration>,
   #[serde(default)]
   pub language_server: HashMap<String, LanguageServerConfiguration>,
 }
@@ -41,33 +28,33 @@ pub struct LanguageConfiguration {
   pub(super) language: Option<Language>,
 
   #[serde(rename = "name")]
-  pub language_id:                 String, // c-sharp, rust, tsx
+  pub language_id: String, // c-sharp, rust, tsx
   #[serde(rename = "language-id")]
   // see the table under https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocumentItem
   pub language_server_language_id: Option<String>, /* csharp, rust, typescriptreact, for the
                                                     * language-server */
-  pub scope:                       String, // source.rust
-  pub file_types:                  Vec<FileType>, /* filename extension or ends_with? <Gemfile,
-                                            * rb, etc> */
+  pub scope: String, // source.rust
+  pub file_types: Vec<FileType>, /* filename extension or ends_with? <Gemfile,
+                      * rb, etc> */
   #[serde(default)]
-  pub shebangs:                    Vec<String>, // interpreter(s) associated with language
+  pub shebangs: Vec<String>, // interpreter(s) associated with language
   #[serde(default)]
-  pub roots:                       Vec<String>, // these indicate project roots <.git, Cargo.toml>
+  pub roots: Vec<String>, // these indicate project roots <.git, Cargo.toml>
   #[serde(
     default,
     skip_serializing,
     deserialize_with = "from_comment_tokens",
     alias = "comment-token"
   )]
-  pub comment_tokens:              Option<Vec<String>>,
+  pub comment_tokens: Option<Vec<String>>,
   #[serde(
     default,
     skip_serializing,
     deserialize_with = "from_block_comment_tokens"
   )]
-  pub block_comment_tokens:        Option<Vec<BlockCommentToken>>,
-  pub text_width:                  Option<usize>,
-  pub soft_wrap:                   Option<SoftWrap>,
+  pub block_comment_tokens: Option<Vec<BlockCommentToken>>,
+  pub text_width: Option<usize>,
+  pub soft_wrap: Option<SoftWrap>,
 
   #[serde(default)]
   pub auto_format: bool,
@@ -87,7 +74,7 @@ pub struct LanguageConfiguration {
 
   // content_regex
   #[serde(default, skip_serializing, deserialize_with = "deserialize_regex")]
-  pub injection_regex:  Option<rope::Regex>,
+  pub injection_regex: Option<rope::Regex>,
   // first_line_regex
   #[serde(
     default,
@@ -97,7 +84,7 @@ pub struct LanguageConfiguration {
   )]
   pub language_servers: Vec<LanguageServerFeatures>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub indent:           Option<IndentationConfiguration>,
+  pub indent: Option<IndentationConfiguration>,
 
   #[serde(skip_serializing_if = "Option::is_none")]
   pub debugger: Option<DebugAdapterConfig>,
@@ -114,11 +101,11 @@ pub struct LanguageConfiguration {
   /// Hardcoded LSP root directories relative to the workspace root, like
   /// `examples` or `tools/fuzz`. Falling back to the current working
   /// directory if none are configured.
-  pub workspace_lsp_roots:           Option<Vec<PathBuf>>,
+  pub workspace_lsp_roots: Option<Vec<PathBuf>>,
   #[serde(default)]
   pub persistent_diagnostic_sources: Vec<String>,
   /// Overrides the `editor.rainbow-brackets` config key for the language.
-  pub rainbow_brackets:              Option<bool>,
+  pub rainbow_brackets: Option<bool>,
 }
 
 impl LanguageConfiguration {
@@ -196,17 +183,13 @@ impl<'de> Deserialize<'de> for FileType {
               .map(FileType::Glob)
               .map_err(|err| serde::de::Error::custom(format!("invalid `glob` pattern: {}", err)))
           },
-          Some((key, _value)) => {
-            Err(serde::de::Error::custom(format!(
-              "unknown key in `file-types` list: {}",
-              key
-            )))
-          },
-          None => {
-            Err(serde::de::Error::custom(
-              "expected a `suffix` key in the `file-types` entry",
-            ))
-          },
+          Some((key, _value)) => Err(serde::de::Error::custom(format!(
+            "unknown key in `file-types` list: {}",
+            key
+          ))),
+          None => Err(serde::de::Error::custom(
+            "expected a `suffix` key in the `file-types` entry",
+          )),
         }
       }
     }
@@ -226,11 +209,9 @@ where
     Single(String),
   }
   Ok(
-    Option::<CommentTokens>::deserialize(deserializer)?.map(|tokens| {
-      match tokens {
-        CommentTokens::Single(val) => vec![val],
-        CommentTokens::Multiple(vals) => vals,
-      }
+    Option::<CommentTokens>::deserialize(deserializer)?.map(|tokens| match tokens {
+      CommentTokens::Single(val) => vec![val],
+      CommentTokens::Multiple(vals) => vals,
     }),
   )
 }
@@ -238,14 +219,14 @@ where
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlockCommentToken {
   pub start: String,
-  pub end:   String,
+  pub end: String,
 }
 
 impl Default for BlockCommentToken {
   fn default() -> Self {
     BlockCommentToken {
       start: "/*".to_string(),
-      end:   "*/".to_string(),
+      end: "*/".to_string(),
     }
   }
 }
@@ -263,11 +244,9 @@ where
     Single(BlockCommentToken),
   }
   Ok(
-    Option::<BlockCommentTokens>::deserialize(deserializer)?.map(|tokens| {
-      match tokens {
-        BlockCommentTokens::Single(val) => vec![val],
-        BlockCommentTokens::Multiple(vals) => vals,
-      }
+    Option::<BlockCommentTokens>::deserialize(deserializer)?.map(|tokens| match tokens {
+      BlockCommentTokens::Single(val) => vec![val],
+      BlockCommentTokens::Multiple(vals) => vals,
     }),
   )
 }
@@ -330,18 +309,18 @@ enum LanguageServerFeatureConfiguration {
   #[serde(rename_all = "kebab-case")]
   Features {
     #[serde(default, skip_serializing_if = "HashSet::is_empty")]
-    only_features:   HashSet<LanguageServerFeature>,
+    only_features: HashSet<LanguageServerFeature>,
     #[serde(default, skip_serializing_if = "HashSet::is_empty")]
     except_features: HashSet<LanguageServerFeature>,
-    name:            String,
+    name: String,
   },
   Simple(String),
 }
 
 #[derive(Debug, Default)]
 pub struct LanguageServerFeatures {
-  pub name:     String,
-  pub only:     HashSet<LanguageServerFeature>,
+  pub name: String,
+  pub only: HashSet<LanguageServerFeature>,
   pub excluded: HashSet<LanguageServerFeature>,
 }
 
@@ -360,26 +339,20 @@ where
   let raw: Vec<LanguageServerFeatureConfiguration> = Deserialize::deserialize(deserializer)?;
   let res = raw
     .into_iter()
-    .map(|config| {
-      match config {
-        LanguageServerFeatureConfiguration::Simple(name) => {
-          LanguageServerFeatures {
-            name,
-            ..Default::default()
-          }
-        },
-        LanguageServerFeatureConfiguration::Features {
-          only_features,
-          except_features,
-          name,
-        } => {
-          LanguageServerFeatures {
-            name,
-            only: only_features,
-            excluded: except_features,
-          }
-        },
-      }
+    .map(|config| match config {
+      LanguageServerFeatureConfiguration::Simple(name) => LanguageServerFeatures {
+        name,
+        ..Default::default()
+      },
+      LanguageServerFeatureConfiguration::Features {
+        only_features,
+        except_features,
+        name,
+      } => LanguageServerFeatures {
+        name,
+        only: only_features,
+        excluded: except_features,
+      },
     })
     .collect();
   Ok(res)
@@ -397,9 +370,9 @@ where
       LanguageServerFeatureConfiguration::Simple(features.name.to_owned())
     } else {
       LanguageServerFeatureConfiguration::Features {
-        only_features:   features.only.clone(),
+        only_features: features.only.clone(),
         except_features: features.excluded.clone(),
-        name:            features.name.to_owned(),
+        name: features.name.to_owned(),
       }
     };
     serializer.serialize_element(&features)?;
@@ -426,16 +399,16 @@ where
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct LanguageServerConfiguration {
-  pub command:                String,
+  pub command: String,
   #[serde(default)]
   #[serde(skip_serializing_if = "Vec::is_empty")]
-  pub args:                   Vec<String>,
+  pub args: Vec<String>,
   #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-  pub environment:            HashMap<String, String>,
+  pub environment: HashMap<String, String>,
   #[serde(default, skip_serializing, deserialize_with = "deserialize_lsp_config")]
-  pub config:                 Option<serde_json::Value>,
+  pub config: Option<serde_json::Value>,
   #[serde(default = "default_timeout")]
-  pub timeout:                u64,
+  pub timeout: u64,
   #[serde(
     default,
     skip_serializing,
@@ -450,15 +423,15 @@ pub struct FormatterConfiguration {
   pub command: String,
   #[serde(default)]
   #[serde(skip_serializing_if = "Vec::is_empty")]
-  pub args:    Vec<String>,
+  pub args: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct AdvancedCompletion {
-  pub name:       Option<String>,
+  pub name: Option<String>,
   pub completion: Option<String>,
-  pub default:    Option<String>,
+  pub default: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
@@ -479,26 +452,26 @@ pub enum DebugArgumentValue {
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct DebugTemplate {
-  pub name:       String,
-  pub request:    String,
+  pub name: String,
+  pub request: String,
   #[serde(default)]
   pub completion: Vec<DebugConfigCompletion>,
-  pub args:       HashMap<String, DebugArgumentValue>,
+  pub args: HashMap<String, DebugArgumentValue>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct DebugAdapterConfig {
-  pub name:      String,
+  pub name: String,
   pub transport: String,
   #[serde(default)]
-  pub command:   String,
+  pub command: String,
   #[serde(default)]
-  pub args:      Vec<String>,
-  pub port_arg:  Option<String>,
+  pub args: Vec<String>,
+  pub port_arg: Option<String>,
   pub templates: Vec<DebugTemplate>,
   #[serde(default)]
-  pub quirks:    DebuggerQuirks,
+  pub quirks: DebuggerQuirks,
 }
 
 // Different workarounds for adapters' differences
@@ -513,7 +486,7 @@ pub struct DebuggerQuirks {
 pub struct IndentationConfiguration {
   #[serde(deserialize_with = "deserialize_tab_width")]
   pub tab_width: usize,
-  pub unit:      String,
+  pub unit: String,
 }
 
 /// How the indentation for a newly inserted line should be determined.
@@ -595,7 +568,7 @@ pub struct SoftWrap {
   /// correct display on small views.
   ///
   /// Default to 20
-  pub max_wrap:           Option<u16>,
+  pub max_wrap: Option<u16>,
   /// Maximum number of indentation that can be carried over from the previous
   /// line when softwrapping. If a line is indented further then this limit it
   /// is rendered at the start of the viewport instead.
@@ -604,11 +577,11 @@ pub struct SoftWrap {
   /// correct display on small views.
   ///
   /// Default to 40
-  pub max_indent_retain:  Option<u16>,
+  pub max_indent_retain: Option<u16>,
   /// Indicator placed at the beginning of softwrapped lines
   ///
   /// Defaults to ↪
-  pub wrap_indicator:     Option<String>,
+  pub wrap_indicator: Option<String>,
   /// Softwrap at `text_width` instead of viewport width if it is shorter
   pub wrap_at_text_width: Option<bool>,
 }
@@ -616,7 +589,7 @@ pub struct SoftWrap {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 pub struct WordCompletion {
-  pub enable:         Option<bool>,
+  pub enable: Option<bool>,
   pub trigger_length: Option<NonZeroU8>,
 }
 

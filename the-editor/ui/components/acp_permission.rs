@@ -3,36 +3,17 @@
 //! Displays a permission request notification at the top-right of the screen.
 //! Slides in from the right with a smooth animation.
 
-use the_editor_renderer::{
-  Color,
-  Key,
-  TextSection,
-  TextSegment,
-  TextStyle,
-};
+use the_editor_renderer::{Color, Key, TextSection, TextSegment, TextStyle};
 
 use crate::{
   core::{
-    animation::{
-      AnimationHandle,
-      presets,
-    },
-    graphics::{
-      CursorKind,
-      Rect,
-    },
+    animation::{AnimationHandle, presets},
+    graphics::{CursorKind, Rect},
     position::Position,
   },
   ui::{
     UI_FONT_SIZE,
-    compositor::{
-      Callback,
-      Component,
-      Context,
-      Event,
-      EventResult,
-      Surface,
-    },
+    compositor::{Callback, Component, Context, Event, EventResult, Surface},
     theme_color_to_renderer_color,
   },
 };
@@ -46,9 +27,9 @@ const MAX_TITLE_LINES: usize = 3;
 /// Popup component for approving/denying ACP permission requests.
 /// Appears at top-right corner with a slide-in animation.
 pub struct AcpPermissionPopup {
-  cursor:        usize, // 0 = Allow, 1 = Deny
-  animation:     AnimationHandle<f32>,
-  closing:       bool,
+  cursor: usize, // 0 = Allow, 1 = Deny
+  animation: AnimationHandle<f32>,
+  closing: bool,
   close_pending: bool,
 }
 
@@ -58,9 +39,9 @@ impl AcpPermissionPopup {
   pub fn new() -> Self {
     let (duration, easing) = presets::POPUP;
     Self {
-      cursor:        0,
-      animation:     AnimationHandle::new(0.0, 1.0, duration, easing),
-      closing:       false,
+      cursor: 0,
+      animation: AnimationHandle::new(0.0, 1.0, duration, easing),
+      closing: false,
       close_pending: false,
     }
   }
@@ -326,10 +307,10 @@ impl Component for AcpPermissionPopup {
     for line in &title_lines {
       surface.draw_text(TextSection {
         position: (content_x, y),
-        texts:    vec![TextSegment {
+        texts: vec![TextSegment {
           content: line.clone(),
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
+          style: TextStyle {
+            size: UI_FONT_SIZE,
             color: text_color,
           },
         }],
@@ -382,10 +363,10 @@ impl Component for AcpPermissionPopup {
 
       surface.draw_text(TextSection {
         position: (text_x, text_y),
-        texts:    vec![TextSegment {
+        texts: vec![TextSegment {
           content: btn_text,
-          style:   TextStyle {
-            size:  UI_FONT_SIZE,
+          style: TextStyle {
+            size: UI_FONT_SIZE,
             color: btn_text_color,
           },
         }],

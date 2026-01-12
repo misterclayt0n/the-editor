@@ -4,38 +4,18 @@
 //! Displays at top-right of screen with slide-in animation and configurable
 //! buttons.
 
-use the_editor_renderer::{
-  Color,
-  Key,
-  MouseButton,
-  TextSection,
-  TextSegment,
-  TextStyle,
-};
+use the_editor_renderer::{Color, Key, MouseButton, TextSection, TextSegment, TextStyle};
 
 use crate::{
   core::{
-    animation::{
-      AnimationHandle,
-      presets,
-    },
-    graphics::{
-      CursorKind,
-      Rect,
-    },
+    animation::{AnimationHandle, presets},
+    graphics::{CursorKind, Rect},
     position::Position,
   },
   ui::{
     UI_FONT_SIZE,
     components::button::Button,
-    compositor::{
-      Callback,
-      Component,
-      Context,
-      Event,
-      EventResult,
-      Surface,
-    },
+    compositor::{Callback, Component, Context, Event, EventResult, Surface},
     theme_color_to_renderer_color,
   },
 };
@@ -52,7 +32,7 @@ type ConfirmationCallback = Box<dyn FnOnce(&mut Context, ConfirmationResult) + S
 /// Button configuration for confirmation popup.
 #[derive(Clone)]
 pub struct ConfirmationButton {
-  pub label:    &'static str,
+  pub label: &'static str,
   pub shortcut: &'static str,
 }
 
@@ -73,8 +53,8 @@ pub enum ConfirmationResult {
 
 /// Configuration for the confirmation popup.
 pub struct ConfirmationConfig {
-  pub id:      &'static str,
-  pub title:   String,
+  pub id: &'static str,
+  pub title: String,
   pub buttons: [ConfirmationButton; 2],
 }
 
@@ -99,9 +79,9 @@ impl ConfirmationConfig {
 /// State for an individual button in the popup.
 #[derive(Default)]
 struct ButtonState {
-  hovered:   bool,
-  pressed:   bool,
-  anim_t:    f32,
+  hovered: bool,
+  pressed: bool,
+  anim_t: f32,
   /// Cursor position relative to button top-left (when hovered)
   cursor_px: Option<(f32, f32)>,
 }
@@ -134,17 +114,17 @@ impl ButtonState {
 /// Popup component for confirmation dialogs.
 /// Appears at top-right corner with a slide-in animation.
 pub struct ConfirmationPopup {
-  id:            &'static str,
-  title:         String,
-  buttons:       [ConfirmationButton; 2],
+  id: &'static str,
+  title: String,
+  buttons: [ConfirmationButton; 2],
   button_states: [ButtonState; 2],
-  cursor:        usize, // 0 = first button, 1 = second button (keyboard selection)
-  animation:     AnimationHandle<f32>,
-  closing:       bool,
+  cursor: usize, // 0 = first button, 1 = second button (keyboard selection)
+  animation: AnimationHandle<f32>,
+  closing: bool,
   close_pending: bool,
-  on_result:     Option<ConfirmationCallback>,
+  on_result: Option<ConfirmationCallback>,
   /// Cached button rects for mouse hit testing (in pixels)
-  button_rects:  [(f32, f32, f32, f32); 2],
+  button_rects: [(f32, f32, f32, f32); 2],
 }
 
 impl ConfirmationPopup {
@@ -154,16 +134,16 @@ impl ConfirmationPopup {
   {
     let (duration, easing) = presets::POPUP;
     Self {
-      id:            config.id,
-      title:         config.title,
-      buttons:       config.buttons,
+      id: config.id,
+      title: config.title,
+      buttons: config.buttons,
       button_states: Default::default(),
-      cursor:        0,
-      animation:     AnimationHandle::new(0.0, 1.0, duration, easing),
-      closing:       false,
+      cursor: 0,
+      animation: AnimationHandle::new(0.0, 1.0, duration, easing),
+      closing: false,
       close_pending: false,
-      on_result:     Some(Box::new(on_result)),
-      button_rects:  [(0.0, 0.0, 0.0, 0.0); 2],
+      on_result: Some(Box::new(on_result)),
+      button_rects: [(0.0, 0.0, 0.0, 0.0); 2],
     }
   }
 
@@ -470,10 +450,10 @@ impl Component for ConfirmationPopup {
       for line in &title_lines {
         surface.draw_text(TextSection {
           position: (content_x, y),
-          texts:    vec![TextSegment {
+          texts: vec![TextSegment {
             content: line.clone(),
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
               color: text_color,
             },
           }],
@@ -571,10 +551,10 @@ impl Component for ConfirmationPopup {
 
         surface.draw_text(TextSection {
           position: (text_x, text_y),
-          texts:    vec![TextSegment {
+          texts: vec![TextSegment {
             content: btn_text,
-            style:   TextStyle {
-              size:  UI_FONT_SIZE,
+            style: TextStyle {
+              size: UI_FONT_SIZE,
               color: btn_text_color,
             },
           }],

@@ -1,13 +1,7 @@
 use std::{
-  collections::{
-    HashMap,
-    VecDeque,
-  },
+  collections::{HashMap, VecDeque},
   fmt,
-  time::{
-    Duration,
-    Instant,
-  },
+  time::{Duration, Instant},
 };
 
 use ropey::RopeSlice;
@@ -15,24 +9,13 @@ use the_terminal::TerminalId;
 
 use crate::{
   core::{
-    DocumentId,
-    ViewId,
+    DocumentId, ViewId,
     animation::selection::SelectionPulse,
-    diagnostics::{
-      DiagnosticFilter,
-      InlineDiagnostics,
-    },
-    document::{
-      Document,
-      DocumentColorSwatches,
-      DocumentInlayHints,
-    },
+    diagnostics::{DiagnosticFilter, InlineDiagnostics},
+    document::{Document, DocumentColorSwatches, DocumentInlayHints},
     graphics::Rect,
     position::{
-      Position,
-      VisualOffsetError,
-      char_idx_at_visual_offset,
-      visual_offset_from_anchor,
+      Position, VisualOffsetError, char_idx_at_visual_offset, visual_offset_from_anchor,
       visual_offset_from_block,
     },
     selection::Selection,
@@ -41,10 +24,7 @@ use crate::{
     theme::Theme,
     transaction::Transaction,
   },
-  editor::{
-    GutterConfig,
-    GutterType,
-  },
+  editor::{GutterConfig, GutterType},
   handlers::diagnostics::DiagnosticsHandler,
 };
 
@@ -85,7 +65,7 @@ type Jump = (DocumentId, Selection);
 
 #[derive(Debug, Clone)]
 pub struct JumpList {
-  jumps:   VecDeque<Jump>,
+  jumps: VecDeque<Jump>,
   current: usize,
 }
 
@@ -176,9 +156,9 @@ impl JumpList {
 
 #[derive(Clone, Debug, PartialEq, Eq, Copy, Default)]
 pub struct ViewPosition {
-  pub anchor:            usize,
+  pub anchor: usize,
   pub horizontal_offset: usize,
-  pub vertical_offset:   usize,
+  pub vertical_offset: usize,
 }
 
 /// Smooth scroll animation state for a view.
@@ -186,11 +166,11 @@ pub struct ViewPosition {
 #[derive(Debug, Clone, Copy)]
 pub struct ScrollAnimation {
   /// Target vertical offset in lines (fractional for sub-line precision)
-  pub target_vertical:    f32,
+  pub target_vertical: f32,
   /// Current animated vertical offset in lines
-  pub current_vertical:   f32,
+  pub current_vertical: f32,
   /// Target horizontal offset in columns
-  pub target_horizontal:  f32,
+  pub target_horizontal: f32,
   /// Current animated horizontal offset in columns
   pub current_horizontal: f32,
 }
@@ -198,9 +178,9 @@ pub struct ScrollAnimation {
 impl Default for ScrollAnimation {
   fn default() -> Self {
     Self {
-      target_vertical:    0.0,
-      current_vertical:   0.0,
-      target_horizontal:  0.0,
+      target_vertical: 0.0,
+      current_vertical: 0.0,
+      target_horizontal: 0.0,
       current_horizontal: 0.0,
     }
   }
@@ -210,9 +190,9 @@ impl ScrollAnimation {
   /// Create a new scroll animation initialized to the given position.
   pub fn new(vertical: f32, horizontal: f32) -> Self {
     Self {
-      target_vertical:    vertical,
-      current_vertical:   vertical,
-      target_horizontal:  horizontal,
+      target_vertical: vertical,
+      current_vertical: vertical,
+      target_horizontal: horizontal,
       current_horizontal: horizontal,
     }
   }
@@ -299,13 +279,13 @@ pub enum NoopEffectKind {
 #[derive(Debug, Clone)]
 pub struct NoopEffect {
   /// Screen X coordinate (in pixels) where the effect should be rendered
-  pub screen_x:   f32,
+  pub screen_x: f32,
   /// Screen Y coordinate (in pixels) where the effect should be rendered
-  pub screen_y:   f32,
+  pub screen_y: f32,
   /// Type of effect (insert = laser, delete = explosion)
-  pub kind:       NoopEffectKind,
+  pub kind: NoopEffectKind,
   /// The actual character/grapheme being animated
-  pub grapheme:   String,
+  pub grapheme: String,
   /// Time when the effect was triggered
   pub started_at: Instant,
 }
@@ -336,17 +316,17 @@ impl NoopEffect {
 
 #[derive(Debug, Clone)]
 pub struct ViewData {
-  pub view_position:    ViewPosition,
+  pub view_position: ViewPosition,
   pub scroll_animation: ScrollAnimation,
-  pub selection_pulse:  Option<SelectionPulse>,
-  pub noop_effects:     Vec<NoopEffect>,
-  pub screen_shake:     Option<ScreenShake>,
+  pub selection_pulse: Option<SelectionPulse>,
+  pub noop_effects: Vec<NoopEffect>,
+  pub screen_shake: Option<ScreenShake>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ScreenShake {
   pub started_at: Instant,
-  pub intensity:  f32,
+  pub intensity: f32,
 }
 
 impl ScreenShake {
@@ -379,11 +359,11 @@ impl ScreenShake {
 impl Default for ViewData {
   fn default() -> Self {
     Self {
-      view_position:    ViewPosition::default(),
+      view_position: ViewPosition::default(),
       scroll_animation: ScrollAnimation::default(),
-      selection_pulse:  None,
-      noop_effects:     Vec::new(),
-      screen_shake:     None,
+      selection_pulse: None,
+      noop_effects: Vec::new(),
+      screen_shake: None,
     }
   }
 }
@@ -425,17 +405,17 @@ impl ViewContent {
 
 #[derive(Clone)]
 pub struct View {
-  pub id:                  ViewId,
-  pub area:                Rect,
+  pub id: ViewId,
+  pub area: Rect,
   /// The content displayed by this view - either a document or terminal.
-  pub content:             ViewContent,
-  pub jumps:               JumpList,
+  pub content: ViewContent,
+  pub jumps: JumpList,
   pub docs_access_history: Vec<DocumentId>,
 
-  pub last_modified_docs:         [Option<DocumentId>; 2],
-  pub object_selections:          Vec<Selection>,
-  pub gutters:                    GutterConfig,
-  doc_revisions:                  HashMap<DocumentId, usize>,
+  pub last_modified_docs: [Option<DocumentId>; 2],
+  pub object_selections: Vec<Selection>,
+  pub gutters: GutterConfig,
+  doc_revisions: HashMap<DocumentId, usize>,
   // HACKS: there should really only be a global diagnostics handler (the
   // non-focused views should just not have different handling for the cursor
   // line). For that we would need accces to editor everywhere (we want to use
@@ -443,25 +423,25 @@ pub struct View {
   // Document into entity component like structure. That is a huge refactor
   // left to future work. For now we treat all views as focused and give them
   // each their own handler.
-  pub diagnostics_handler:        DiagnosticsHandler,
+  pub diagnostics_handler: DiagnosticsHandler,
   /// Animation factor for document opening (0.0 = just opened, 1.0 = fully
   /// loaded)
-  pub zoom_anim:                  f32,
+  pub zoom_anim: f32,
   /// The actual rendered gutter width (accounts for enabled/disabled gutters).
   /// Set by the renderer. If None, falls back to calculating from gutters
   /// config.
-  pub rendered_gutter_width:      Option<u16>,
+  pub rendered_gutter_width: Option<u16>,
   /// Whether inline diagnostics should be rendered for this view.
   pub inline_diagnostics_enabled: bool,
   /// Per-view font size override. Falls back to editor global override, then
   /// config default.
-  pub font_size_override:         Option<f32>,
+  pub font_size_override: Option<f32>,
   /// Effective viewport dimensions in characters/lines for this view.
   /// Updated during rendering to account for per-buffer font sizes.
   /// When Some, this is used instead of calculating from `area` for
   /// scroll calculations. Width is content width (excluding gutter),
   /// height is number of visible lines.
-  pub effective_viewport:         Option<(u16, u16)>,
+  pub effective_viewport: Option<(u16, u16)>,
 }
 
 impl fmt::Debug for View {

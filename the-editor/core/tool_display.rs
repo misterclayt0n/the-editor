@@ -10,15 +10,15 @@ use serde_json::Value;
 #[derive(Debug, Clone)]
 pub struct ToolDisplayInfo {
   /// Human-readable title (e.g., "read", "write", "bash")
-  pub title:     String,
+  pub title: String,
   /// Tool kind for icon selection
-  pub kind:      ToolKind,
+  pub kind: ToolKind,
   /// Optional path associated with the tool call
-  pub path:      Option<String>,
+  pub path: Option<String>,
   /// Optional command for bash/execute tools
-  pub command:   Option<String>,
+  pub command: Option<String>,
   /// Current status of the tool call
-  pub status:    ToolStatus,
+  pub status: ToolStatus,
   /// Optional error message if failed
   pub error_msg: Option<String>,
 }

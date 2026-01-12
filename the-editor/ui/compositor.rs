@@ -4,10 +4,7 @@ use the_editor_renderer::Renderer;
 
 use crate::{
   core::{
-    graphics::{
-      CursorKind,
-      Rect,
-    },
+    graphics::{CursorKind, Rect},
     position::Position,
   },
   editor::Editor,
@@ -41,10 +38,10 @@ pub enum Event {
 pub type Surface = Renderer;
 
 pub struct Context<'a> {
-  pub editor:         &'a mut Editor,
-  pub scroll:         Option<usize>,
-  pub jobs:           &'a mut Jobs,
-  pub dt:             f32, // Delta time in seconds since last frame
+  pub editor: &'a mut Editor,
+  pub scroll: Option<usize>,
+  pub jobs: &'a mut Jobs,
+  pub dt: f32,                            // Delta time in seconds since last frame
   pub last_mouse_pos: Option<(f32, f32)>, // Last known mouse position for hover detection
 }
 
@@ -119,7 +116,7 @@ pub trait Component: Any + AnyComponent {
 
 pub struct Compositor {
   pub layers: Vec<Box<dyn Component>>,
-  area:       Rect,
+  area: Rect,
 
   pub(crate) last_picker: Option<Box<dyn Component>>,
   pub(crate) full_redraw: bool,

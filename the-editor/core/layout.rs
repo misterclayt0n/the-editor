@@ -35,30 +35,30 @@ pub enum Alignment {
 /// A layout engine for arranging UI elements
 #[derive(Debug, Clone)]
 pub struct Layout {
-  direction:   Direction,
+  direction: Direction,
   constraints: Vec<Constraint>,
-  spacing:     u16,
-  alignment:   Alignment,
+  spacing: u16,
+  alignment: Alignment,
 }
 
 impl Layout {
   /// Create a new horizontal layout
   pub fn horizontal() -> Self {
     Self {
-      direction:   Direction::Horizontal,
+      direction: Direction::Horizontal,
       constraints: Vec::new(),
-      spacing:     0,
-      alignment:   Alignment::Start,
+      spacing: 0,
+      alignment: Alignment::Start,
     }
   }
 
   /// Create a new vertical layout
   pub fn vertical() -> Self {
     Self {
-      direction:   Direction::Vertical,
+      direction: Direction::Vertical,
       constraints: Vec::new(),
-      spacing:     0,
-      alignment:   Alignment::Start,
+      spacing: 0,
+      alignment: Alignment::Start,
     }
   }
 
@@ -306,26 +306,22 @@ pub fn center(container: Rect, width: u16, height: u16) -> Rect {
 pub fn align(container: Rect, width: u16, height: u16, alignment: Alignment) -> Rect {
   let (x, y) = match alignment {
     Alignment::Start => (container.x, container.y),
-    Alignment::Center => {
-      (
-        container
-          .x
-          .saturating_add((container.width.saturating_sub(width)) / 2),
-        container
-          .y
-          .saturating_add((container.height.saturating_sub(height)) / 2),
-      )
-    },
-    Alignment::End => {
-      (
-        container
-          .x
-          .saturating_add(container.width.saturating_sub(width)),
-        container
-          .y
-          .saturating_add(container.height.saturating_sub(height)),
-      )
-    },
+    Alignment::Center => (
+      container
+        .x
+        .saturating_add((container.width.saturating_sub(width)) / 2),
+      container
+        .y
+        .saturating_add((container.height.saturating_sub(height)) / 2),
+    ),
+    Alignment::End => (
+      container
+        .x
+        .saturating_add(container.width.saturating_sub(width)),
+      container
+        .y
+        .saturating_add(container.height.saturating_sub(height)),
+    ),
   };
 
   Rect {

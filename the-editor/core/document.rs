@@ -1,138 +1,56 @@
 use core::fmt;
 use std::{
   borrow::Cow,
-  cell::{
-    Cell,
-    OnceCell,
-  },
+  cell::{Cell, OnceCell},
   collections::HashMap,
-  io,
-  mem,
-  ops,
-  path::{
-    Path,
-    PathBuf,
-  },
-  sync::{
-    Arc,
-    Weak,
-  },
+  io, mem, ops,
+  path::{Path, PathBuf},
+  sync::{Arc, Weak},
   time::SystemTime,
 };
 
-use anyhow::{
-  Error,
-  anyhow,
-  bail,
-};
-use arc_swap::{
-  ArcSwap,
-  access::DynAccess,
-};
-use encoding_rs::{
-  self as encoding,
-  Encoding,
-};
-use futures_util::{
-  FutureExt,
-  future::BoxFuture,
-};
+use anyhow::{Error, anyhow, bail};
+use arc_swap::{ArcSwap, access::DynAccess};
+use encoding_rs::{self as encoding, Encoding};
+use futures_util::{FutureExt, future::BoxFuture};
 use parking_lot::Mutex;
-use ropey::{
-  Rope,
-  RopeBuilder,
-};
+use ropey::{Rope, RopeBuilder};
 use the_editor_event::TaskController;
 use the_editor_lsp_types::types as lsp;
-use the_editor_stdx::faccess::{
-  copy_metadata,
-  readonly,
-};
-use the_editor_vcs::{
-  DiffHandle,
-  DiffProviderRegistry,
-};
+use the_editor_stdx::faccess::{copy_metadata, readonly};
+use the_editor_vcs::{DiffHandle, DiffProviderRegistry};
 use url::Url;
 
 use crate::{
   core::{
-    DocumentId,
-    ViewId,
-    animation::selection::{
-      SelectionPulse,
-      SelectionPulseKind,
-    },
+    DocumentId, ViewId,
+    animation::selection::{SelectionPulse, SelectionPulseKind},
     auto_pairs::AutoPairs,
     chars::char_is_word,
     command_line::Token,
-    diagnostics::{
-      Diagnostic,
-      DiagnosticProvider,
-    },
+    diagnostics::{Diagnostic, DiagnosticProvider},
     editor_config::EditorConfig,
     expansion,
-    history::{
-      History,
-      State,
-      UndoKind,
-    },
-    indent::{
-      IndentStyle,
-      auto_detect_indent_style,
-    },
-    line_ending::{
-      LineEnding,
-      auto_detect_line_ending,
-    },
-    selection::{
-      Range,
-      Selection,
-    },
+    history::{History, State, UndoKind},
+    indent::{IndentStyle, auto_detect_indent_style},
+    line_ending::{LineEnding, auto_detect_line_ending},
+    selection::{Range, Selection},
     special_buffer::SpecialBufferKind,
     syntax::{
-      self,
-      Syntax,
-      config::{
-        LanguageConfiguration,
-        LanguageServerFeature,
-      },
+      self, Syntax,
+      config::{LanguageConfiguration, LanguageServerFeature},
       generate_edits,
     },
-    text_annotations::{
-      InlineAnnotation,
-      Overlay,
-    },
+    text_annotations::{InlineAnnotation, Overlay},
     text_format::TextFormat,
     theme::Theme,
-    transaction::{
-      ChangeSet,
-      Transaction,
-    },
-    view::{
-      ScrollAnimation,
-      View,
-      ViewData,
-      ViewPosition,
-    },
+    transaction::{ChangeSet, Transaction},
+    view::{ScrollAnimation, View, ViewData, ViewPosition},
   },
-  editor::{
-    Editor,
-    EditorConfig as AppEditorConfig,
-  },
-  event::{
-    DocumentDidChange,
-    SelectionDidChange,
-  },
-  lsp::{
-    Client,
-    LanguageServerId,
-    LanguageServerName,
-    util::lsp_pos_to_pos,
-  },
-  snippets::{
-    active::ActiveSnippet,
-    render::SnippetRenderCtx,
-  },
+  editor::{Editor, EditorConfig as AppEditorConfig},
+  event::{DocumentDidChange, SelectionDidChange},
+  lsp::{Client, LanguageServerId, LanguageServerName, util::lsp_pos_to_pos},
+  snippets::{active::ActiveSnippet, render::SnippetRenderCtx},
   ui::job,
 };
 
@@ -145,7 +63,7 @@ const DEFAULT_TAB_WIDTH: usize = 2;
 pub struct SavePoint {
   /// The view this savepoint is associated with
   pub view: ViewId,
-  revert:   Mutex<Transaction>,
+  revert: Mutex<Transaction>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -163,7 +81,7 @@ pub type DocumentSavedEventFuture = BoxFuture<'static, DocumentSavedEventResult>
 pub enum FormatterError {
   SpawningFailed {
     command: String,
-    error:   std::io::ErrorKind,
+    error: std::io::ErrorKind,
   },
   BrokenStdin,
   WaitForOutputFailed,
@@ -173,24 +91,24 @@ pub enum FormatterError {
 
 #[derive(Debug, Clone, Default)]
 pub struct DocumentColorSwatches {
-  pub color_swatches:         Vec<InlineAnnotation>,
-  pub colors:                 Vec<syntax::Highlight>,
+  pub color_swatches: Vec<InlineAnnotation>,
+  pub colors: Vec<syntax::Highlight>,
   pub color_swatches_padding: Vec<InlineAnnotation>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DocumentSavedEvent {
-  pub revision:  usize,
+  pub revision: usize,
   pub save_time: SystemTime,
-  pub doc_id:    DocumentId,
-  pub path:      PathBuf,
-  pub text:      Rope,
+  pub doc_id: DocumentId,
+  pub path: PathBuf,
+  pub text: Rope,
 }
 
 #[derive(Debug, Clone)]
 pub struct SpecialBufferMetadata {
-  kind:           SpecialBufferKind,
-  ephemeral:      bool,
+  kind: SpecialBufferKind,
+  ephemeral: bool,
   preferred_view: Option<ViewId>,
 }
 
@@ -225,59 +143,59 @@ impl SpecialBufferMetadata {
 }
 
 pub struct Document {
-  pub id:                             DocumentId,
-  text:                               Rope,
-  selections:                         HashMap<ViewId, Selection>,
-  view_data:                          HashMap<ViewId, ViewData>,
-  pub active_snippet:                 Option<ActiveSnippet>,
-  pub inlay_hints:                    HashMap<ViewId, DocumentInlayHints>,
-  pub jump_labels:                    HashMap<ViewId, Vec<Overlay>>,
-  pub inlay_hints_oudated:            bool,
-  path:                               Option<PathBuf>,
-  pub relative_path:                  OnceCell<Option<PathBuf>>,
-  encoding:                           &'static encoding::Encoding,
-  has_bom:                            bool,
-  pub restore_cursor:                 bool,
-  pub indent_style:                   IndentStyle,
-  editor_config:                      EditorConfig,
-  pub line_ending:                    LineEnding,
-  pub syntax:                         Option<Syntax>,
-  pub language:                       Option<Arc<LanguageConfiguration>>,
-  changes:                            ChangeSet,
-  old_state:                          Option<State>,
-  pub history:                        Cell<History>,
-  pub config:                         Arc<dyn DynAccess<AppEditorConfig>>,
-  savepoints:                         Vec<Weak<SavePoint>>,
-  pub last_saved_time:                SystemTime,
-  last_saved_revision:                usize,
-  version:                            i32,
+  pub id: DocumentId,
+  text: Rope,
+  selections: HashMap<ViewId, Selection>,
+  view_data: HashMap<ViewId, ViewData>,
+  pub active_snippet: Option<ActiveSnippet>,
+  pub inlay_hints: HashMap<ViewId, DocumentInlayHints>,
+  pub jump_labels: HashMap<ViewId, Vec<Overlay>>,
+  pub inlay_hints_oudated: bool,
+  path: Option<PathBuf>,
+  pub relative_path: OnceCell<Option<PathBuf>>,
+  encoding: &'static encoding::Encoding,
+  has_bom: bool,
+  pub restore_cursor: bool,
+  pub indent_style: IndentStyle,
+  editor_config: EditorConfig,
+  pub line_ending: LineEnding,
+  pub syntax: Option<Syntax>,
+  pub language: Option<Arc<LanguageConfiguration>>,
+  changes: ChangeSet,
+  old_state: Option<State>,
+  pub history: Cell<History>,
+  pub config: Arc<dyn DynAccess<AppEditorConfig>>,
+  savepoints: Vec<Weak<SavePoint>>,
+  pub last_saved_time: SystemTime,
+  last_saved_revision: usize,
+  version: i32,
   pub(crate) modified_since_accessed: bool,
-  pub diagnostics:                    Vec<Diagnostic>,
-  pub(crate) language_servers:        HashMap<LanguageServerName, Arc<Client>>,
-  pub diff_handle:                    Option<DiffHandle>,
-  version_control_head:               Option<Arc<ArcSwap<Box<str>>>>,
-  pub focused_at:                     std::time::Instant,
-  pub readonly:                       bool,
-  pub color_swatches:                 Option<DocumentColorSwatches>,
-  pub color_swatch_controller:        TaskController,
-  syn_loader:                         Arc<ArcSwap<syntax::Loader>>,
+  pub diagnostics: Vec<Diagnostic>,
+  pub(crate) language_servers: HashMap<LanguageServerName, Arc<Client>>,
+  pub diff_handle: Option<DiffHandle>,
+  version_control_head: Option<Arc<ArcSwap<Box<str>>>>,
+  pub focused_at: std::time::Instant,
+  pub readonly: bool,
+  pub color_swatches: Option<DocumentColorSwatches>,
+  pub color_swatch_controller: TaskController,
+  syn_loader: Arc<ArcSwap<syntax::Loader>>,
   /// The document version when the syntax tree was last fully parsed.
   /// Used to detect if we need to re-parse after background parse completes.
-  syntax_parsed_version:              i32,
+  syntax_parsed_version: i32,
   /// Controller for cancelling pending background syntax parses.
-  syntax_parse_controller:            TaskController,
+  syntax_parse_controller: TaskController,
   /// Cache for syntax highlight results to avoid re-querying tree-sitter every
   /// frame
-  highlight_cache:                    Option<syntax::HighlightCache>,
+  highlight_cache: Option<syntax::HighlightCache>,
   /// Per-document soft wrap override. None = use global/language config, Some =
   /// override
-  soft_wrap_override:                 Option<bool>,
+  soft_wrap_override: Option<bool>,
   /// Per-document wrap indicator override. None = use global/language config
-  wrap_indicator_override:            Option<String>,
+  wrap_indicator_override: Option<String>,
   /// Whether this document is a special buffer (for UI rendering decisions)
-  pub special_buffer:                 Option<SpecialBufferMetadata>,
+  pub special_buffer: Option<SpecialBufferMetadata>,
   /// Per-document font size override (for per-buffer zoom)
-  pub font_size_override:             Option<f32>,
+  pub font_size_override: Option<f32>,
 }
 
 /// Inlay hints for a single `(Document, View)` combo.
@@ -298,12 +216,12 @@ pub struct Document {
 /// padding comes ... after.
 #[derive(Debug, Clone)]
 pub struct DocumentInlayHints {
-  pub id:                         DocumentInlayHintsId,
-  pub type_inlay_hints:           Vec<InlineAnnotation>,
-  pub parameter_inlay_hints:      Vec<InlineAnnotation>,
-  pub other_inlay_hints:          Vec<InlineAnnotation>,
+  pub id: DocumentInlayHintsId,
+  pub type_inlay_hints: Vec<InlineAnnotation>,
+  pub parameter_inlay_hints: Vec<InlineAnnotation>,
+  pub other_inlay_hints: Vec<InlineAnnotation>,
   pub padding_before_inlay_hints: Vec<InlineAnnotation>,
-  pub padding_after_inlay_hints:  Vec<InlineAnnotation>,
+  pub padding_after_inlay_hints: Vec<InlineAnnotation>,
 }
 
 /// Associated with a [`Document`] and [`ViewId`], uniquely identifies the state
@@ -316,7 +234,7 @@ pub struct DocumentInlayHints {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct DocumentInlayHintsId {
   pub first_line: usize,
-  pub last_line:  usize,
+  pub last_line: usize,
 }
 
 impl fmt::Debug for DocumentInlayHintsId {
@@ -882,12 +800,12 @@ impl Document {
         .stderr(Stdio::piped());
 
       let formatting_future = async move {
-        let mut process = process.spawn().map_err(|e| {
-          FormatterError::SpawningFailed {
+        let mut process = process
+          .spawn()
+          .map_err(|e| FormatterError::SpawningFailed {
             command: fmt_cmd.to_string_lossy().into(),
-            error:   e.kind(),
-          }
-        })?;
+            error: e.kind(),
+          })?;
 
         let mut stdin = process.stdin.take().ok_or(FormatterError::BrokenStdin)?;
         let input_text = text.clone();
@@ -1209,20 +1127,9 @@ impl Document {
 
   pub fn pickup_last_saved_time(&mut self) {
     self.last_saved_time = match self.path() {
-      Some(path) => {
-        match path.metadata() {
-          Ok(metadata) => {
-            match metadata.modified() {
-              Ok(mtime) => mtime,
-              Err(err) => {
-                log::debug!(
-                  "Could not fetch file system's mtime, falling back to current system time: {}",
-                  err
-                );
-                SystemTime::now()
-              },
-            }
-          },
+      Some(path) => match path.metadata() {
+        Ok(metadata) => match metadata.modified() {
+          Ok(mtime) => mtime,
           Err(err) => {
             log::debug!(
               "Could not fetch file system's mtime, falling back to current system time: {}",
@@ -1230,7 +1137,14 @@ impl Document {
             );
             SystemTime::now()
           },
-        }
+        },
+        Err(err) => {
+          log::debug!(
+            "Could not fetch file system's mtime, falling back to current system time: {}",
+            err
+          );
+          SystemTime::now()
+        },
       },
       None => SystemTime::now(),
     };
@@ -1255,11 +1169,9 @@ impl Document {
     let encoding = self.encoding;
     let path = match self.path() {
       None => return Ok(()),
-      Some(path) => {
-        match path.exists() {
-          true => path.to_owned(),
-          false => bail!("can't find file to reload from {:?}", self.display_name()),
-        }
+      Some(path) => match path.exists() {
+        true => path.to_owned(),
+        false => bail!("can't find file to reload from {:?}", self.display_name()),
       },
     };
 
@@ -1297,11 +1209,9 @@ impl Document {
     let encoding = self.encoding;
     let path = match self.path() {
       None => return Ok(()),
-      Some(path) => {
-        match path.exists() {
-          true => path.to_owned(),
-          false => bail!("can't find file to reload from {:?}", self.display_name()),
-        }
+      Some(path) => match path.exists() {
+        true => path.to_owned(),
+        false => bail!("can't find file to reload from {:?}", self.display_name()),
       },
     };
 
@@ -1513,7 +1423,7 @@ impl Document {
     // TODO: use a transaction?
     self.store_selection(view_id, selection);
     the_editor_event::dispatch(SelectionDidChange {
-      doc:  self,
+      doc: self,
       view: view_id,
     })
   }
@@ -1647,7 +1557,7 @@ impl Document {
           selection.clone().ensure_invariants(self.text.slice(..)),
         );
         the_editor_event::dispatch(SelectionDidChange {
-          doc:  self,
+          doc: self,
           view: view_id,
         });
       }
@@ -1675,16 +1585,16 @@ impl Document {
     // generate revert to savepoint
     if !self.savepoints.is_empty() {
       let revert = transaction.invert(&old_doc);
-      self.savepoints.retain_mut(|save_point| {
-        match save_point.upgrade() {
+      self
+        .savepoints
+        .retain_mut(|save_point| match save_point.upgrade() {
           Some(savepoint) => {
             let mut revert_to_savepoint = savepoint.revert.lock();
             *revert_to_savepoint = revert.clone().compose(mem::take(&mut revert_to_savepoint));
             true
           },
           None => false,
-        }
-      })
+        })
     }
 
     // Update tree-sitter syntax tree with pure async parsing.
@@ -1867,7 +1777,7 @@ impl Document {
     if let Some(selection) = transaction.selection() {
       self.store_selection(view_id, selection.clone());
       the_editor_event::dispatch(SelectionDidChange {
-        doc:  self,
+        doc: self,
         view: view_id,
       });
     }
@@ -1885,7 +1795,7 @@ impl Document {
     // the state just before a transaction was applied.
     if self.changes.is_empty() && !transaction.changes().is_empty() {
       self.old_state = Some(State {
-        doc:       self.text.clone(),
+        doc: self.text.clone(),
         selection: self.selection(view_id).clone(),
       });
     }
@@ -2029,7 +1939,7 @@ impl Document {
       }
     }
     let savepoint = Arc::new(SavePoint {
-      view:   view.id,
+      view: view.id,
       revert: Mutex::new(revert),
     });
     self.savepoints.push(Arc::downgrade(&savepoint));
@@ -2473,15 +2383,13 @@ impl Document {
 
   pub fn set_special_buffer_kind(&mut self, kind: Option<SpecialBufferKind>) {
     match kind {
-      Some(kind) => {
-        match self.special_buffer.as_mut() {
-          Some(metadata) => {
-            metadata.kind = kind;
-          },
-          None => {
-            self.special_buffer = Some(SpecialBufferMetadata::new(kind));
-          },
-        }
+      Some(kind) => match self.special_buffer.as_mut() {
+        Some(metadata) => {
+          metadata.kind = kind;
+        },
+        None => {
+          self.special_buffer = Some(SpecialBufferMetadata::new(kind));
+        },
       },
       None => {
         self.special_buffer = None;
@@ -2596,10 +2504,7 @@ impl Document {
     provider: DiagnosticProvider,
     offset_encoding: crate::lsp::OffsetEncoding,
   ) -> Option<Diagnostic> {
-    use crate::core::diagnostics::{
-      Range,
-      Severity::*,
-    };
+    use crate::core::diagnostics::{Range, Severity::*};
 
     // TODO: convert inside server
     let start = if let Some(start) = lsp_pos_to_pos(text, diagnostic.range.start, offset_encoding) {
@@ -2616,17 +2521,15 @@ impl Document {
       return None;
     };
 
-    let severity = diagnostic.severity.and_then(|severity| {
-      match severity {
-        lsp::DiagnosticSeverity::ERROR => Some(Error),
-        lsp::DiagnosticSeverity::WARNING => Some(Warning),
-        lsp::DiagnosticSeverity::INFORMATION => Some(Info),
-        lsp::DiagnosticSeverity::HINT => Some(Hint),
-        severity => {
-          log::error!("unrecognized diagnostic severity: {:?}", severity);
-          None
-        },
-      }
+    let severity = diagnostic.severity.and_then(|severity| match severity {
+      lsp::DiagnosticSeverity::ERROR => Some(Error),
+      lsp::DiagnosticSeverity::WARNING => Some(Warning),
+      lsp::DiagnosticSeverity::INFORMATION => Some(Info),
+      lsp::DiagnosticSeverity::HINT => Some(Hint),
+      severity => {
+        log::error!("unrecognized diagnostic severity: {:?}", severity);
+        None
+      },
     });
 
     if let Some(lang_conf) = language_config
@@ -2635,17 +2538,12 @@ impl Document {
     {
       return None;
     };
-    use crate::core::diagnostics::{
-      DiagnosticTag,
-      NumberOrString,
-    };
+    use crate::core::diagnostics::{DiagnosticTag, NumberOrString};
 
     let code = match diagnostic.code.clone() {
-      Some(x) => {
-        match x {
-          lsp::NumberOrString::Number(x) => Some(NumberOrString::Number(x)),
-          lsp::NumberOrString::String(x) => Some(NumberOrString::String(x)),
-        }
+      Some(x) => match x {
+        lsp::NumberOrString::Number(x) => Some(NumberOrString::Number(x)),
+        lsp::NumberOrString::String(x) => Some(NumberOrString::String(x)),
       },
       None => None,
     };
@@ -2653,12 +2551,10 @@ impl Document {
     let tags = if let Some(tags) = &diagnostic.tags {
       tags
         .iter()
-        .filter_map(|tag| {
-          match *tag {
-            lsp::DiagnosticTag::DEPRECATED => Some(DiagnosticTag::Deprecated),
-            lsp::DiagnosticTag::UNNECESSARY => Some(DiagnosticTag::Unnecessary),
-            _ => None,
-          }
+        .filter_map(|tag| match *tag {
+          lsp::DiagnosticTag::DEPRECATED => Some(DiagnosticTag::Deprecated),
+          lsp::DiagnosticTag::UNNECESSARY => Some(DiagnosticTag::Unnecessary),
+          _ => None,
         })
         .collect()
     } else {
@@ -2775,10 +2671,10 @@ impl Document {
   pub fn snippet_ctx(&self) -> SnippetRenderCtx {
     SnippetRenderCtx {
       // TODO snippet variable resolution
-      resolve_var:  Box::new(|_| None),
-      tab_width:    self.tab_width(),
+      resolve_var: Box::new(|_| None),
+      tab_width: self.tab_width(),
       indent_style: self.indent_style,
-      line_ending:  self.line_ending.as_str(),
+      line_ending: self.line_ending.as_str(),
     }
   }
 
@@ -2946,10 +2842,7 @@ mod tests {
   use crate::{
     core::{
       selection::Selection,
-      syntax::{
-        self,
-        config::Configuration as SyntaxConfig,
-      },
+      syntax::{self, config::Configuration as SyntaxConfig},
       transaction::Transaction,
       view::View,
     },
@@ -2961,7 +2854,7 @@ mod tests {
       Arc::new(ArcSwap::from_pointee(AppEditorConfig::default()));
 
     let syntax_loader = syntax::Loader::new(SyntaxConfig {
-      language:        Vec::new(),
+      language: Vec::new(),
       language_server: HashMap::new(),
     })
     .expect("syntax loader");

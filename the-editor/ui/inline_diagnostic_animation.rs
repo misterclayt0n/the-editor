@@ -20,7 +20,7 @@ const EPSILON: f32 = 0.01;
 #[derive(Debug, Clone, Copy)]
 pub struct InlineDiagnosticAnimState {
   /// Overall opacity of the diagnostic box (0 = invisible, 1 = fully visible)
-  pub opacity:      f32,
+  pub opacity: f32,
   /// Vertical slide offset in line-heights (starts > 0, animates to 0)
   /// Represents how many line-heights the box is offset upward from target
   pub slide_offset: f32,
@@ -29,7 +29,7 @@ pub struct InlineDiagnosticAnimState {
 impl Default for InlineDiagnosticAnimState {
   fn default() -> Self {
     Self {
-      opacity:      0.0,
+      opacity: 0.0,
       slide_offset: 0.5, // Start half a line up, slide down to position
     }
   }

@@ -1,9 +1,6 @@
 use std::{
   borrow::Cow,
-  collections::{
-    HashMap,
-    HashSet,
-  },
+  collections::{HashMap, HashSet},
   fmt,
 };
 
@@ -42,9 +39,9 @@ impl fmt::Display for SpecialBufferKind {
 
 #[derive(Debug, Default, Clone)]
 pub struct SpecialBuffers {
-  doc_to_kind:   HashMap<DocumentId, SpecialBufferKind>,
+  doc_to_kind: HashMap<DocumentId, SpecialBufferKind>,
   last_for_kind: HashMap<SpecialBufferKind, DocumentId>,
-  running:       HashSet<DocumentId>,
+  running: HashSet<DocumentId>,
 }
 
 impl SpecialBuffers {

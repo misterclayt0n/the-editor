@@ -1020,9 +1020,10 @@ impl Renderer {
   }
 
   fn recalculate_metrics(&mut self) {
-    // Apply scale factor to font size for proper HiDPI rendering
-    let scaled_font_size = self.font_size * self.scale_factor as f32;
-    let metrics = Metrics::new(scaled_font_size, scaled_font_size * LINE_HEIGHT_FACTOR);
+    // Calculate cell dimensions at the LOGICAL font size (unscaled).
+    // This ensures all layout calculations work in logical coordinates.
+    // Scaling to physical pixels happens at render time.
+    let metrics = Metrics::new(self.font_size, self.font_size * LINE_HEIGHT_FACTOR);
     let mut buffer = Buffer::new(&mut self.font_system, metrics);
     buffer.set_wrap(&mut self.font_system, Wrap::None);
 
@@ -1039,7 +1040,6 @@ impl Renderer {
       // Get advance width by looking at the second glyph's x position
       // or by dividing line width by character count
       let advance_width = if run.glyphs.len() >= 2 {
-        // Use the x position of the second glyph as the advance of the first
         run.glyphs[1].x
       } else {
         // Fallback: divide total width by 2
@@ -1047,11 +1047,11 @@ impl Renderer {
       };
 
       self.cell_width = advance_width.max(1.0);
-      self.cell_height = run.line_height.max(scaled_font_size);
+      self.cell_height = run.line_height.max(self.font_size);
       self.line_top_offset = run.line_top;
     } else {
-      self.cell_height = scaled_font_size * LINE_HEIGHT_FACTOR;
-      self.cell_width = (scaled_font_size * 0.6).max(1.0);
+      self.cell_height = self.font_size * LINE_HEIGHT_FACTOR;
+      self.cell_width = (self.font_size * 0.6).max(1.0);
       self.line_top_offset = 0.0;
     }
   }
@@ -1837,16 +1837,18 @@ impl Renderer {
     // Get first color for cache key
     let first_color = section.texts[0].style.color;
 
-    // Apply scale factor to font size for proper HiDPI text rendering
-    let scaled_font_size = self.font_size * self.scale_factor as f32;
+    // Apply scale factor for proper HiDPI text rendering
+    let scale = self.scale_factor as f32;
+    let scaled_font_size = self.font_size * scale;
+    let scaled_cell_height = self.cell_height * scale;
 
     // Create cache key (position-independent for better cache reuse)
-    // Use scaled font size in cache key so cache invalidates on scale factor change
+    // Use scaled values in cache key so cache invalidates on scale factor change
     let cache_key = crate::text_cache::ShapedTextKey {
       text: full_text.clone(),
       metrics: (
         (scaled_font_size * 100.0) as u32,
-        (self.cell_height * 100.0) as u32,
+        (scaled_cell_height * 100.0) as u32,
       ),
       color: [
         (first_color.r * 255.0) as u8,
@@ -1855,7 +1857,7 @@ impl Renderer {
         (first_color.a * 255.0) as u8,
       ],
     };
-    let base_metrics = Metrics::new(scaled_font_size, self.cell_height);
+    let base_metrics = Metrics::new(scaled_font_size, scaled_cell_height);
 
     // Check if we already have this text shaped in cache
     if !self.shaped_text_cache.entries.contains_key(&cache_key) {
@@ -1888,8 +1890,8 @@ impl Renderer {
 
         // Use consistent cell_height for all segments to prevent accumulated
         // positioning errors. Scale segment font size by scale_factor for HiDPI.
-        let scaled_segment_size = segment.style.size * self.scale_factor as f32;
-        let seg_metrics = Metrics::new(scaled_segment_size, self.cell_height);
+        let scaled_segment_size = segment.style.size * scale;
+        let seg_metrics = Metrics::new(scaled_segment_size, scaled_cell_height);
         let attrs = Attrs::new()
           .family(Family::Name(family.as_str()))
           .metrics(seg_metrics)
@@ -1938,6 +1940,9 @@ impl Renderer {
     }
 
     // Store the command with cache key for deferred rendering
+    // Scale position from logical to physical coordinates
+    let scaled_position = (section.position.0 * scale, section.position.1 * scale);
+
     let bounds = TextBounds {
       left: 0,
       top: 0,
@@ -1946,7 +1951,7 @@ impl Renderer {
     };
 
     let text_command = TextCommand {
-      position: section.position,
+      position: scaled_position,
       cache_key,
       bounds,
       scissor_rect: self.scissor_rect_stack.last().copied(),
@@ -1961,10 +1966,12 @@ impl Renderer {
   }
 
   /// Draw a rectangle at the specified position with the given size and color
+  /// Coordinates are in logical pixels and will be scaled by scale_factor.
   pub fn draw_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: Color) {
+    let scale = self.scale_factor as f32;
     self.rect_instances.push(RectInstance {
-      position: [x, y],
-      size: [width, height],
+      position: [x * scale, y * scale],
+      size: [width * scale, height * scale],
       color: color_to_linear(color),
       corner_radius: 0.0,
       _pad0: [0.0, 0.0],
@@ -1977,6 +1984,7 @@ impl Renderer {
   }
 
   /// Draw a filled rounded rectangle
+  /// Coordinates are in logical pixels and will be scaled by scale_factor.
   pub fn draw_rounded_rect(
     &mut self,
     x: f32,
@@ -1986,11 +1994,12 @@ impl Renderer {
     corner_radius: f32,
     color: Color,
   ) {
+    let scale = self.scale_factor as f32;
     self.rect_instances.push(RectInstance {
-      position: [x, y],
-      size: [width, height],
+      position: [x * scale, y * scale],
+      size: [width * scale, height * scale],
       color: color_to_linear(color),
-      corner_radius,
+      corner_radius: corner_radius * scale,
       _pad0: [0.0, 0.0],
       glow_center: [0.0, 0.0],
       glow_radius: 0.0,
@@ -2001,6 +2010,7 @@ impl Renderer {
   }
 
   /// Draw a horizontal gradient rectangle (fades from left to right)
+  /// Coordinates are in logical pixels and will be scaled by scale_factor.
   pub fn draw_gradient_rect_horizontal(
     &mut self,
     x: f32,
@@ -2009,9 +2019,10 @@ impl Renderer {
     height: f32,
     color: Color,
   ) {
+    let scale = self.scale_factor as f32;
     self.rect_instances.push(RectInstance {
-      position: [x, y],
-      size: [width, height],
+      position: [x * scale, y * scale],
+      size: [width * scale, height * scale],
       color: color_to_linear(color),
       corner_radius: 0.0,
       _pad0: [0.0, 0.0],
@@ -2024,6 +2035,7 @@ impl Renderer {
   }
 
   /// Draw a rounded rectangle glow overlay, clipped to the rounded rect
+  /// Coordinates are in logical pixels and will be scaled by scale_factor.
   #[allow(clippy::too_many_arguments)]
   pub fn draw_rounded_rect_glow(
     &mut self,
@@ -2037,14 +2049,15 @@ impl Renderer {
     radius: f32,
     color: Color,
   ) {
+    let scale = self.scale_factor as f32;
     self.rect_instances.push(RectInstance {
-      position: [x, y],
-      size: [width, height],
+      position: [x * scale, y * scale],
+      size: [width * scale, height * scale],
       color: color_to_linear(color),
-      corner_radius,
+      corner_radius: corner_radius * scale,
       _pad0: [0.0, 0.0],
-      glow_center: [center_x - x, center_y - y],
-      glow_radius: radius,
+      glow_center: [(center_x - x) * scale, (center_y - y) * scale],
+      glow_radius: radius * scale,
       effect_kind: 1.0,
       effect_time: 0.0,
       _pad1: [0.0, 0.0, 0.0],
@@ -2052,6 +2065,7 @@ impl Renderer {
   }
 
   /// Draw only the rounded-rect outline (stroke)
+  /// Coordinates are in logical pixels and will be scaled by scale_factor.
   #[allow(clippy::too_many_arguments)]
   pub fn draw_rounded_rect_stroke(
     &mut self,
@@ -2063,14 +2077,15 @@ impl Renderer {
     thickness: f32,
     color: Color,
   ) {
+    let scale = self.scale_factor as f32;
     self.rect_instances.push(RectInstance {
-      position: [x, y],
-      size: [width, height],
+      position: [x * scale, y * scale],
+      size: [width * scale, height * scale],
       color: color_to_linear(color),
-      corner_radius,
+      corner_radius: corner_radius * scale,
       _pad0: [0.0, 0.0],
       glow_center: [0.0, 0.0],
-      glow_radius: thickness.max(0.5),
+      glow_radius: (thickness * scale).max(0.5),
       effect_kind: 2.0,
       effect_time: 0.0,
       _pad1: [0.0, 0.0, 0.0],
@@ -2079,6 +2094,7 @@ impl Renderer {
 
   /// Draw a rounded-rect outline with directional thickness that fades from
   /// top (thickest) → sides → bottom (thinnest).
+  /// Coordinates are in logical pixels and will be scaled by scale_factor.
   #[allow(clippy::too_many_arguments)]
   pub fn draw_rounded_rect_stroke_fade(
     &mut self,
@@ -2092,14 +2108,18 @@ impl Renderer {
     bottom_thickness: f32,
     color: Color,
   ) {
+    let scale = self.scale_factor as f32;
     self.rect_instances.push(RectInstance {
-      position: [x, y],
-      size: [width, height],
+      position: [x * scale, y * scale],
+      size: [width * scale, height * scale],
       color: color_to_linear(color),
-      corner_radius,
+      corner_radius: corner_radius * scale,
       _pad0: [0.0, 0.0],
-      glow_center: [top_thickness.max(0.0), bottom_thickness.max(0.0)],
-      glow_radius: side_thickness.max(0.0),
+      glow_center: [
+        (top_thickness * scale).max(0.0),
+        (bottom_thickness * scale).max(0.0),
+      ],
+      glow_radius: (side_thickness * scale).max(0.0),
       effect_kind: 3.0,
       effect_time: 0.0,
       _pad1: [0.0, 0.0, 0.0],
@@ -2109,6 +2129,7 @@ impl Renderer {
   /// Draw a custom shader effect (explosion or laser)
   /// effect_kind: 4.0 = explosion, 5.0 = laser
   /// effect_time: animation progress from 0.0 to 1.0
+  /// Coordinates are in logical pixels and will be scaled by scale_factor.
   #[allow(clippy::too_many_arguments)]
   pub fn draw_effect(
     &mut self,
@@ -2121,14 +2142,15 @@ impl Renderer {
     radius: f32,
     color: Color,
   ) {
+    let scale = self.scale_factor as f32;
     self.rect_instances.push(RectInstance {
-      position: [x, y],
-      size: [width, height],
+      position: [x * scale, y * scale],
+      size: [width * scale, height * scale],
       color: color_to_linear(color),
       corner_radius: 0.0,
       _pad0: [0.0, 0.0],
       glow_center: [0.0, 0.0],
-      glow_radius: radius,
+      glow_radius: radius * scale,
       effect_kind,
       effect_time,
       _pad1: [0.0, 0.0, 0.0],
@@ -2137,6 +2159,7 @@ impl Renderer {
 
   /// Draw a Powerline separator glyph
   /// This renders the glyph using tiny-skia and draws it as colored rectangles
+  /// Coordinates are in logical pixels and will be scaled by scale_factor.
   pub fn draw_powerline_glyph(
     &mut self,
     ch: char,
@@ -2148,16 +2171,23 @@ impl Renderer {
   ) {
     use crate::powerline_glyphs;
 
+    let scale = self.scale_factor as f32;
+
     // Check if this is a known Powerline glyph
     if let Some(glyph) = PowerlineGlyph::from_char(ch) {
-      let w = width.ceil() as u32;
-      let h = height.ceil() as u32;
+      // Render at scaled size for proper HiDPI
+      let w = (width * scale).ceil() as u32;
+      let h = (height * scale).ceil() as u32;
 
       // Render the glyph with tiny-skia
       if let Some(pixmap) = powerline_glyphs::render_powerline_glyph(glyph, w, h) {
         // Draw the glyph by sampling pixels and rendering colored rectangles
         // We only draw pixels with alpha > threshold for efficiency
         const ALPHA_THRESHOLD: u8 = 32;
+
+        // Scale the base position
+        let base_x = x * scale;
+        let base_y = y * scale;
 
         for py in 0..h {
           for px in 0..w {
@@ -2169,14 +2199,27 @@ impl Renderer {
 
               if alpha > ALPHA_THRESHOLD {
                 // Draw a 1x1 rectangle for this pixel with the glyph's alpha
-                let pixel_x = x + px as f32;
-                let pixel_y = y + py as f32;
+                // Note: positions are already in physical pixels here
+                let pixel_x = base_x + px as f32;
+                let pixel_y = base_y + py as f32;
 
                 // Blend the color with the glyph's alpha
                 let alpha_f = alpha as f32 / 255.0;
                 let pixel_color = Color::new(color.r, color.g, color.b, color.a * alpha_f);
 
-                self.draw_rect(pixel_x, pixel_y, 1.0, 1.0, pixel_color);
+                // Use direct rect push since we're already in physical pixels
+                self.rect_instances.push(RectInstance {
+                  position: [pixel_x, pixel_y],
+                  size: [1.0, 1.0],
+                  color: color_to_linear(pixel_color),
+                  corner_radius: 0.0,
+                  _pad0: [0.0, 0.0],
+                  glow_center: [0.0, 0.0],
+                  glow_radius: 0.0,
+                  effect_kind: 0.0,
+                  effect_time: 0.0,
+                  _pad1: [0.0, 0.0, 0.0],
+                });
               }
             }
           }
@@ -2192,8 +2235,8 @@ impl Renderer {
   ///
   /// # Arguments
   /// * `svg_data` - Raw SVG file contents
-  /// * `x`, `y` - Position to draw the icon
-  /// * `width`, `height` - Size to render the icon at
+  /// * `x`, `y` - Position to draw the icon (logical pixels)
+  /// * `width`, `height` - Size to render the icon at (logical pixels)
   /// * `color` - Color to apply to the icon (the icon's alpha will be
   ///   preserved)
   pub fn draw_svg_icon(
@@ -2205,6 +2248,12 @@ impl Renderer {
     height: u32,
     color: Color,
   ) {
+    let scale = self.scale_factor as f32;
+
+    // Scale dimensions for HiDPI
+    let scaled_width = ((width as f32) * scale).ceil() as u32;
+    let scaled_height = ((height as f32) * scale).ceil() as u32;
+
     // Convert color to RGBA8
     let color_rgba = (
       (color.r * 255.0) as u8,
@@ -2213,24 +2262,29 @@ impl Renderer {
       (color.a * 255.0) as u8,
     );
 
-    // Render the SVG with color
-    if let Some(icon) = crate::svg_icon::render_svg_with_color(svg_data, width, height, color_rgba)
+    // Render the SVG with color at scaled size
+    if let Some(icon) =
+      crate::svg_icon::render_svg_with_color(svg_data, scaled_width, scaled_height, color_rgba)
     {
       // Draw the icon pixel by pixel (similar to powerline glyph rendering)
       // For efficiency, we skip fully transparent pixels
       const ALPHA_THRESHOLD: u8 = 8;
 
+      // Scale the base position
+      let base_x = x * scale;
+      let base_y = y * scale;
+
       let data = icon.pixmap.data();
-      for py in 0..height {
-        for px in 0..width {
-          let pixel_idx = ((py * width + px) * 4) as usize;
+      for py in 0..scaled_height {
+        for px in 0..scaled_width {
+          let pixel_idx = ((py * scaled_width + px) * 4) as usize;
 
           if pixel_idx + 3 < data.len() {
             let alpha = data[pixel_idx + 3];
 
             if alpha > ALPHA_THRESHOLD {
-              let pixel_x = x + px as f32;
-              let pixel_y = y + py as f32;
+              let pixel_x = base_x + px as f32;
+              let pixel_y = base_y + py as f32;
 
               // Use the pre-colored pixel
               let r = data[pixel_idx] as f32 / 255.0;
@@ -2238,7 +2292,19 @@ impl Renderer {
               let b = data[pixel_idx + 2] as f32 / 255.0;
               let a = alpha as f32 / 255.0;
 
-              self.draw_rect(pixel_x, pixel_y, 1.0, 1.0, Color::new(r, g, b, a));
+              // Use direct rect push since we're already in physical pixels
+              self.rect_instances.push(RectInstance {
+                position: [pixel_x, pixel_y],
+                size: [1.0, 1.0],
+                color: color_to_linear(Color::new(r, g, b, a)),
+                corner_radius: 0.0,
+                _pad0: [0.0, 0.0],
+                glow_center: [0.0, 0.0],
+                glow_radius: 0.0,
+                effect_kind: 0.0,
+                effect_time: 0.0,
+                _pad1: [0.0, 0.0, 0.0],
+              });
             }
           }
         }
@@ -2275,14 +2341,15 @@ impl Renderer {
       return;
     }
 
+    let scale = self.scale_factor as f32;
     self.image_draw_commands.push(ImageDrawCommand {
       pixels: pixels.to_vec(), // NOTE: Is this reasonable?
       width,
       height,
-      x,
-      y,
-      draw_width,
-      draw_height,
+      x: x * scale,
+      y: y * scale,
+      draw_width: draw_width * scale,
+      draw_height: draw_height * scale,
       alpha,
     });
   }
@@ -2347,14 +2414,16 @@ impl Renderer {
     &self.font_family
   }
 
-  /// Width in physical pixels.
+  /// Width in logical pixels.
+  /// This is the physical width divided by the scale factor.
   pub fn width(&self) -> u32 {
-    self.size.width
+    (self.size.width as f64 / self.scale_factor).round() as u32
   }
 
-  /// Height in physical pixels.
+  /// Height in logical pixels.
+  /// This is the physical height divided by the scale factor.
   pub fn height(&self) -> u32 {
-    self.size.height
+    (self.size.height as f64 / self.scale_factor).round() as u32
   }
 
   /// Current cell width used for layout heuristics.
@@ -2410,7 +2479,8 @@ impl Renderer {
     // Return buffer to the pool
     self.buffer_pool.buffers.push(buffer);
 
-    width
+    // Return logical width (divide by scale factor)
+    width / self.scale_factor as f32
   }
 
   /// Vertical offset from buffer top to actual text top.
@@ -2447,8 +2517,12 @@ impl Renderer {
   /// Push a scissor rect onto the stack. Text outside this rect will not be
   /// rendered. Call `pop_scissor_rect()` when done to restore the previous
   /// scissor state.
+  /// Coordinates are in logical pixels and will be scaled by scale_factor.
   pub fn push_scissor_rect(&mut self, x: f32, y: f32, width: f32, height: f32) {
-    self.scissor_rect_stack.push((x, y, width, height));
+    let scale = self.scale_factor as f32;
+    self
+      .scissor_rect_stack
+      .push((x * scale, y * scale, width * scale, height * scale));
   }
 
   /// Pop the most recent scissor rect from the stack.
@@ -2458,8 +2532,12 @@ impl Renderer {
 
   /// Add a stencil mask rect. Text will NOT be rendered in this region.
   /// Private: used internally by `with_overlay_region`.
+  /// Coordinates are in logical pixels and will be scaled by scale_factor.
   fn add_stencil_mask_rect(&mut self, x: f32, y: f32, width: f32, height: f32) {
-    self.stencil_mask_rects.push((x, y, width, height));
+    let scale = self.scale_factor as f32;
+    self
+      .stencil_mask_rects
+      .push((x * scale, y * scale, width * scale, height * scale));
   }
 
   /// Enable overlay text mode. Text rendered in this mode will ignore stencil

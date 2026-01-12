@@ -2234,7 +2234,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
             texts: vec![TextSegment {
               content: column.name.to_string(),
               style: TextStyle {
-                size: UI_FONT_SIZE * scale,
+                size: UI_FONT_SIZE,
                 color: header_color,
               },
             }],
@@ -2454,7 +2454,7 @@ impl<T: 'static + Send + Sync, D: 'static> Component for Picker<T, D> {
                 texts: vec![TextSegment {
                   content: truncated,
                   style: TextStyle {
-                    size: UI_FONT_SIZE * scale,
+                    size: UI_FONT_SIZE,
                     color: item_color,
                   },
                 }],

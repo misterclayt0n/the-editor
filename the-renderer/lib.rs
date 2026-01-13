@@ -529,9 +529,13 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
         WindowEvent::Resized(physical_size) => {
           if let Some(renderer) = &mut self.renderer {
             renderer.resize(physical_size);
-            self
-              .app
-              .resize(physical_size.width, physical_size.height, renderer);
+            // Convert physical to logical pixels for the application.
+            // The renderer now works in logical coordinates, so the app
+            // needs logical dimensions for layout calculations.
+            let scale = renderer.scale_factor();
+            let logical_width = (physical_size.width as f64 / scale).round() as u32;
+            let logical_height = (physical_size.height as f64 / scale).round() as u32;
+            self.app.resize(logical_width, logical_height, renderer);
             if let Some(win) = &self.window {
               win.request_redraw();
             }

@@ -468,7 +468,9 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
         },
         WindowEvent::CursorMoved { position, .. } => {
           if let Some(renderer) = &mut self.renderer {
-            let cursor_pos = (position.x as f32, position.y as f32);
+            // Convert from physical to logical pixels
+            let scale = renderer.scale_factor() as f32;
+            let cursor_pos = (position.x as f32 / scale, position.y as f32 / scale);
             self.last_cursor_position = Some(cursor_pos);
 
             let mouse_event = MouseEvent {
@@ -497,9 +499,13 @@ pub fn run<A: Application + 'static>(window_config: WindowConfig, app: A) -> Res
           if let Some(renderer) = &mut self.renderer {
             let scroll_delta = match delta {
               MouseScrollDelta::LineDelta(x, y) => ScrollDelta::Lines { x, y },
-              MouseScrollDelta::PixelDelta(pos) => ScrollDelta::Pixels {
-                x: pos.x as f32,
-                y: pos.y as f32,
+              MouseScrollDelta::PixelDelta(pos) => {
+                // Convert from physical to logical pixels
+                let scale = renderer.scale_factor() as f32;
+                ScrollDelta::Pixels {
+                  x: pos.x as f32 / scale,
+                  y: pos.y as f32 / scale,
+                }
               },
             };
             if self

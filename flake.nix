@@ -88,31 +88,16 @@
           src = src;
           cargoExtraArgs = "--workspace --locked";
         });
-        the-editor-unwrapped = craneLib.buildPackage (
+        # Build the library (no binary to wrap since the-dispatch is a library crate)
+        the-editor = craneLib.buildPackage (
           commonArgs
           // {
             inherit cargoArtifacts;
             pname = "the-editor";
             # Disable tests in build (they run separately in nextest check)
             doCheck = false;
-
           }
         );
-
-      # Wrap binary with library paths for distribution (Linux only)
-      the-editor = if pkgs.stdenv.isLinux then
-        pkgs.runCommand "the-editor" {
-          buildInputs = [ pkgs.makeWrapper ];
-        } ''
-          mkdir -p $out/bin
-          makeWrapper ${the-editor-unwrapped}/bin/the-editor $out/bin/the-editor \
-            --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath (systemLibsLinux ++ (with pkgs; [
-              vulkan-loader
-              libGL
-            ]))}
-        ''
-      else
-        the-editor-unwrapped;
       in
       {
         checks = {

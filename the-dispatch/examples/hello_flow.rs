@@ -37,7 +37,7 @@ fn main() {
   let mut ctx = Ctx::default();
   let name = "  world  ".to_string();
 
-  // let name = dispatch.pre_greet(&mut ctx, name);
+  let name = dispatch.pre_greet(&mut ctx, name);
   let greeting = dispatch.on_greet(&mut ctx, name);
   let greeting = dispatch.post_greet(&mut ctx, greeting);
 

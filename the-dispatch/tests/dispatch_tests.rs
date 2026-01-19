@@ -1,18 +1,20 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::{
+  cell::RefCell,
+  rc::Rc,
+};
 
 use the_dispatch::define;
 
 // Basic test context
 struct TestCtx {
-  log: Rc<RefCell<Vec<String>>>,
+  log:   Rc<RefCell<Vec<String>>>,
   value: i32,
 }
 
 impl TestCtx {
   fn new() -> Self {
     Self {
-      log: Rc::new(RefCell::new(Vec::new())),
+      log:   Rc::new(RefCell::new(Vec::new())),
       value: 0,
     }
   }
@@ -266,7 +268,7 @@ fn test_dispatch_with_unit_input() {
 // Define dispatch with complex types
 #[derive(Clone, Debug, PartialEq)]
 struct KeyEvent {
-  key: char,
+  key:       char,
   modifiers: u8,
 }
 
@@ -297,13 +299,10 @@ fn test_dispatch_with_complex_types() {
     });
 
   let mut ctx = TestCtx::new();
-  dispatch.on_keypress(
-    &mut ctx,
-    KeyEvent {
-      key: 'a',
-      modifiers: 0,
-    },
-  );
+  dispatch.on_keypress(&mut ctx, KeyEvent {
+    key:       'a',
+    modifiers: 0,
+  });
   dispatch.on_action(&mut ctx, Action::Insert('b'));
 
   assert_eq!(ctx.logs(), vec!["key: a mod: 0", "action: Insert('b')"]);
@@ -337,20 +336,14 @@ fn test_default_handlers_are_noops() {
   let mut ctx = TestCtx::new();
 
   // All default handlers should be no-ops
-  dispatch.pre_on_keypress(
-    &mut ctx,
-    KeyEvent {
-      key: 'x',
-      modifiers: 0,
-    },
-  );
-  dispatch.on_keypress(
-    &mut ctx,
-    KeyEvent {
-      key: 'x',
-      modifiers: 0,
-    },
-  );
+  dispatch.pre_on_keypress(&mut ctx, KeyEvent {
+    key:       'x',
+    modifiers: 0,
+  });
+  dispatch.on_keypress(&mut ctx, KeyEvent {
+    key:       'x',
+    modifiers: 0,
+  });
   dispatch.post_on_keypress(&mut ctx, Action::Delete);
   dispatch.on_action(&mut ctx, Action::Move(1, 2));
 
@@ -370,27 +363,18 @@ fn test_handlers_receive_correct_inputs() {
   );
 
   let mut ctx = ();
-  dispatch.on_keypress(
-    &mut ctx,
-    KeyEvent {
-      key: 'a',
-      modifiers: 0,
-    },
-  );
-  dispatch.on_keypress(
-    &mut ctx,
-    KeyEvent {
-      key: 'b',
-      modifiers: 1,
-    },
-  );
-  dispatch.on_keypress(
-    &mut ctx,
-    KeyEvent {
-      key: 'c',
-      modifiers: 2,
-    },
-  );
+  dispatch.on_keypress(&mut ctx, KeyEvent {
+    key:       'a',
+    modifiers: 0,
+  });
+  dispatch.on_keypress(&mut ctx, KeyEvent {
+    key:       'b',
+    modifiers: 1,
+  });
+  dispatch.on_keypress(&mut ctx, KeyEvent {
+    key:       'c',
+    modifiers: 2,
+  });
 
   assert_eq!(*received.borrow(), vec!["key:a", "key:b", "key:c"]);
 }

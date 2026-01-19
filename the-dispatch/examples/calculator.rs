@@ -1,9 +1,11 @@
-#[cfg(feature = "dynamic-registry")]
-use std::sync::Arc;
+#[cfg(feature = "dynamic-registry")] use std::sync::Arc;
 
-#[cfg(feature = "dynamic-registry")]
-use the_dispatch::{DynHandler, DynValue};
 use the_dispatch::define;
+#[cfg(feature = "dynamic-registry")]
+use the_dispatch::{
+  DynHandler,
+  DynValue,
+};
 
 #[derive(Clone, Copy, Debug)]
 enum Op {
@@ -15,8 +17,8 @@ enum Op {
 
 #[derive(Clone, Copy, Debug)]
 struct Expr {
-  left: i64,
-  op: Op,
+  left:  i64,
+  op:    Op,
   right: i64,
 }
 
@@ -123,12 +125,14 @@ fn eval_line<Ctx>(dispatch: &impl CalculatorApi<Ctx>, ctx: &mut Ctx, line: &str)
 
 #[cfg(feature = "dynamic-registry")]
 fn install_post_eval_add_one(dispatch: &mut CalcDispatch) {
-  let handler: DynHandler<CalcCtx> = Arc::new(|ctx, input| match input.downcast::<i64>() {
-    Ok(val) => {
-      ctx.note("post_eval: +1");
-      Box::new(*val + 1) as DynValue
+  let handler: DynHandler<CalcCtx> = Arc::new(|ctx, input| {
+    match input.downcast::<i64>() {
+      Ok(val) => {
+        ctx.note("post_eval: +1");
+        Box::new(*val + 1) as DynValue
+      },
+      Err(input) => input,
     }
-    Err(input) => input,
   });
   dispatch.registry_mut().set("post_eval", handler);
 }
@@ -138,12 +142,14 @@ fn install_post_eval_add_one(_dispatch: &mut CalcDispatch) {}
 
 #[cfg(feature = "dynamic-registry")]
 fn install_post_eval_times_ten(dispatch: &mut CalcDispatch) {
-  let handler: DynHandler<CalcCtx> = Arc::new(|ctx, input| match input.downcast::<i64>() {
-    Ok(val) => {
-      ctx.note("post_eval: *10");
-      Box::new(*val * 10) as DynValue
+  let handler: DynHandler<CalcCtx> = Arc::new(|ctx, input| {
+    match input.downcast::<i64>() {
+      Ok(val) => {
+        ctx.note("post_eval: *10");
+        Box::new(*val * 10) as DynValue
+      },
+      Err(input) => input,
     }
-    Err(input) => input,
   });
   dispatch.registry_mut().set("post_eval", handler);
 }

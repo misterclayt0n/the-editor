@@ -129,8 +129,12 @@ macro_rules! define {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __dispatch_output {
-  () => { () };
-  ($output:ty) => { $output };
+  () => {
+    ()
+  };
+  ($output:ty) => {
+    $output
+  };
 }
 
 #[doc(hidden)]

@@ -1,6 +1,8 @@
-use std::any::Any;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{
+  any::Any,
+  collections::HashMap,
+  sync::Arc,
+};
 
 /// Type-erased value used for dynamic handler inputs and outputs.
 pub type DynValue = Box<dyn Any + Send + Sync>;
@@ -20,6 +22,12 @@ impl<Ctx> Clone for DispatchRegistry<Ctx> {
     Self {
       handlers: self.handlers.clone(),
     }
+  }
+}
+
+impl<Ctx> Default for DispatchRegistry<Ctx> {
+  fn default() -> Self {
+    Self::new()
   }
 }
 

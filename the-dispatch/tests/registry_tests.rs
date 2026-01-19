@@ -3,11 +3,18 @@
 
 #![cfg(feature = "dynamic-registry")]
 
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::{
+  cell::RefCell,
+  rc::Rc,
+  sync::Arc,
+};
 
-use the_dispatch::{DispatchRegistry, DynHandler, DynValue, define};
+use the_dispatch::{
+  DispatchRegistry,
+  DynHandler,
+  DynValue,
+  define,
+};
 
 // Define a dispatch for testing registry
 define! {
@@ -124,10 +131,10 @@ fn test_dispatch_with_registry_integration() {
     handler(&mut ctx, Box::new(20i32) as DynValue);
   }
 
-  assert_eq!(
-    ctx.logs(),
-    vec!["static handler: 10", "dynamic handler: 20"]
-  );
+  assert_eq!(ctx.logs(), vec![
+    "static handler: 10",
+    "dynamic handler: 20"
+  ]);
 }
 
 #[test]
@@ -185,10 +192,9 @@ fn test_registry_cow_clone_isolated() {
     .set("handler", Arc::new(|_ctx, input| input));
 
   let mut cloned = dispatch.clone();
-  cloned.registry_mut().set(
-    "handler",
-    Arc::new(|_ctx, _input| Box::new(()) as DynValue),
-  );
+  cloned
+    .registry_mut()
+    .set("handler", Arc::new(|_ctx, _input| Box::new(()) as DynValue));
 
   assert!(dispatch.registry().get("handler").is_some());
   assert!(cloned.registry().get("handler").is_some());

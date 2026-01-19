@@ -1,17 +1,21 @@
 //! # the-dispatch
 //!
-//! A zero-cost, generic dispatch system for building overridable, composable behavior graphs.
+//! A zero-cost, generic dispatch system for building overridable, composable
+//! behavior graphs.
 //!
-//! This crate provides a macro-based dispatch system that generates statically-dispatched
-//! handler graphs with optional dynamic registry support.
+//! This crate provides a macro-based dispatch system that generates
+//! statically-dispatched handler graphs with optional dynamic registry support.
 //!
 //! ## Core Concepts
 //!
 //! - **Dispatch Points**: Named entry points where handlers are invoked
-//! - **Handlers**: Functions or closures that receive a context, input, and return an output
-//! - **Builder Pattern**: Replace default no-op handlers with custom implementations
+//! - **Handlers**: Functions or closures that receive a context, input, and
+//!   return an output
+//! - **Builder Pattern**: Replace default no-op handlers with custom
+//!   implementations
 //! - **Zero-Cost**: Static dispatch via generics, no virtual calls by default
-//! - **Dynamic Registry** (opt-in): String-keyed handler lookup for plugins/scripting
+//! - **Dynamic Registry** (opt-in): String-keyed handler lookup for
+//!   plugins/scripting
 //! - **COW Handlers** (opt-in): Shared handler slots for cheap cloning
 //!
 //! ## Basic Usage
@@ -29,21 +33,23 @@
 //!
 //! // Create a context type
 //! struct Ctx {
-//!     buffer: String,
+//!   buffer: String,
 //! }
 //!
 //! // Build a dispatch with custom handlers
 //! let dispatch = EditorDispatch::<Ctx, _, _>::new()
-//!     .with_on_keypress(|ctx: &mut Ctx, key: char| {
-//!         ctx.buffer.push(key);
-//!     })
-//!     .with_on_action(|ctx: &mut Ctx, action: String| {
-//!         if action == "clear" {
-//!             ctx.buffer.clear();
-//!         }
-//!     });
+//!   .with_on_keypress(|ctx: &mut Ctx, key: char| {
+//!     ctx.buffer.push(key);
+//!   })
+//!   .with_on_action(|ctx: &mut Ctx, action: String| {
+//!     if action == "clear" {
+//!       ctx.buffer.clear();
+//!     }
+//!   });
 //!
-//! let mut ctx = Ctx { buffer: String::new() };
+//! let mut ctx = Ctx {
+//!   buffer: String::new(),
+//! };
 //!
 //! dispatch.on_keypress(&mut ctx, 'h');
 //! dispatch.on_keypress(&mut ctx, 'i');
@@ -55,7 +61,8 @@
 //!
 //! ## Generated API Trait
 //!
-//! The macro also generates a trait for ergonomic bounds without exposing handler generics:
+//! The macro also generates a trait for ergonomic bounds without exposing
+//! handler generics:
 //!
 //! ```rust
 //! # use the_dispatch::define;
@@ -67,13 +74,14 @@
 //! }
 //!
 //! fn run_line<Ctx>(dispatch: &impl EditorApi<Ctx>, ctx: &mut Ctx, input: char) {
-//!     dispatch.on_keypress(ctx, input);
+//!   dispatch.on_keypress(ctx, input);
 //! }
 //! ```
 //!
 //! ## COW Handlers (Feature: `cow-handlers`)
 //!
-//! Enable `cow-handlers` to store handlers behind `Arc` so dispatch values are cheap to clone:
+//! Enable `cow-handlers` to store handlers behind `Arc` so dispatch values are
+//! cheap to clone:
 //!
 //! ```rust,ignore
 //! // In Cargo.toml: the-dispatch = { features = ["cow-handlers"] }
@@ -86,12 +94,16 @@
 //! ## Handler Chaining
 //!
 //! Handlers can call other dispatch points by having access to the dispatch
-//! through external coordination (the dispatch system doesn't impose control flow):
+//! through external coordination (the dispatch system doesn't impose control
+//! flow):
 //!
 //! ```rust
+//! use std::{
+//!   cell::RefCell,
+//!   rc::Rc,
+//! };
+//!
 //! use the_dispatch::define;
-//! use std::cell::RefCell;
-//! use std::rc::Rc;
 //!
 //! define! {
 //!     Pipeline {
@@ -104,18 +116,18 @@
 //! let log = Rc::new(RefCell::new(Vec::new()));
 //!
 //! let dispatch = PipelineDispatch::<(), _, _, _>::new()
-//!     .with_step1({
-//!         let log = log.clone();
-//!         move |_: &mut (), val: i32| log.borrow_mut().push(format!("step1: {}", val))
-//!     })
-//!     .with_step2({
-//!         let log = log.clone();
-//!         move |_: &mut (), val: i32| log.borrow_mut().push(format!("step2: {}", val))
-//!     })
-//!     .with_step3({
-//!         let log = log.clone();
-//!         move |_: &mut (), val: i32| log.borrow_mut().push(format!("step3: {}", val))
-//!     });
+//!   .with_step1({
+//!     let log = log.clone();
+//!     move |_: &mut (), val: i32| log.borrow_mut().push(format!("step1: {}", val))
+//!   })
+//!   .with_step2({
+//!     let log = log.clone();
+//!     move |_: &mut (), val: i32| log.borrow_mut().push(format!("step2: {}", val))
+//!   })
+//!   .with_step3({
+//!     let log = log.clone();
+//!     move |_: &mut (), val: i32| log.borrow_mut().push(format!("step3: {}", val))
+//!   });
 //!
 //! // Orchestrate the chain externally
 //! let mut ctx = ();
@@ -151,12 +163,16 @@ mod define;
 mod registry;
 
 pub use paste;
-pub use registry::{DispatchRegistry, DynHandler, DynValue};
+pub use registry::{
+  DispatchRegistry,
+  DynHandler,
+  DynValue,
+};
 
 /// Storage type for a handler slot.
 ///
-/// With `cow-handlers` enabled, handler slots are shared via `Arc` for cheap cloning.
-/// Without it, the slot stores the handler value directly.
+/// With `cow-handlers` enabled, handler slots are shared via `Arc` for cheap
+/// cloning. Without it, the slot stores the handler value directly.
 #[cfg(feature = "cow-handlers")]
 pub type HandlerSlot<T> = std::sync::Arc<T>;
 
@@ -168,7 +184,8 @@ pub type HandlerSlot<T> = T;
 
 /// Wrap a handler in a slot.
 ///
-/// With `cow-handlers` enabled this allocates an `Arc`; otherwise it returns the handler.
+/// With `cow-handlers` enabled this allocates an `Arc`; otherwise it returns
+/// the handler.
 #[cfg(feature = "cow-handlers")]
 pub fn handler_slot<T>(handler: T) -> HandlerSlot<T> {
   std::sync::Arc::new(handler)
@@ -184,7 +201,8 @@ pub fn handler_slot<T>(handler: T) -> HandlerSlot<T> {
 
 /// Storage type for the dynamic registry.
 ///
-/// With `cow-handlers` enabled, this is an `Arc` to allow clone-on-write updates.
+/// With `cow-handlers` enabled, this is an `Arc` to allow clone-on-write
+/// updates.
 #[cfg(all(feature = "dynamic-registry", feature = "cow-handlers"))]
 pub type RegistrySlot<Ctx> = std::sync::Arc<DispatchRegistry<Ctx>>;
 
@@ -218,9 +236,10 @@ pub type Handler<Ctx, Input, Output> = fn(&mut Ctx, Input) -> Output;
 
 /// Trait for callable handlers.
 ///
-/// This trait is automatically implemented for any `Fn(&mut Ctx, Input) -> Output`,
-/// allowing both function pointers and closures to be used as handlers.
-/// When `cow-handlers` is enabled, `Arc<T>` also implements `HandlerFn`.
+/// This trait is automatically implemented for any `Fn(&mut Ctx, Input) ->
+/// Output`, allowing both function pointers and closures to be used as
+/// handlers. When `cow-handlers` is enabled, `Arc<T>` also implements
+/// `HandlerFn`.
 pub trait HandlerFn<Ctx, Input, Output> {
   /// Call the handler with the given context and input.
   fn call(&self, ctx: &mut Ctx, input: Input) -> Output;

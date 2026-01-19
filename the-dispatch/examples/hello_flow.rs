@@ -31,7 +31,7 @@ fn main() {
     })
     .with_post_greet(|ctx: &mut Ctx, greeting: String| {
       ctx.note("post greet");
-      format!("{greeting}")
+      greeting
     });
 
   let mut ctx = Ctx::default();

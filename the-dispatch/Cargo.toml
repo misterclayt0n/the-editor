@@ -12,3 +12,4 @@ paste = "1.0"
 
 [features]
 dynamic-registry = []
+cow-handlers = []

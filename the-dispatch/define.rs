@@ -10,17 +10,17 @@ macro_rules! define {
     $crate::paste::paste! {
       pub struct [<$name Dispatch>]<Ctx, $( [<$point:camel Handler>] ),* > {
         $(
-          $point: [<$point:camel Handler>],
+          $point: $crate::HandlerSlot<[<$point:camel Handler>]>,
         )*
         #[cfg(feature = "dynamic-registry")]
-        registry: $crate::DispatchRegistry<Ctx>,
+        registry: $crate::RegistrySlot<Ctx>,
         #[cfg(not(feature = "dynamic-registry"))]
         _ctx: ::std::marker::PhantomData<Ctx>,
       }
 
       impl<Ctx, $( [<$point:camel Handler>] ),* > [<$name Dispatch>]<Ctx, $( [<$point:camel Handler>] ),* >
       where
-        $( [<$point:camel Handler>]:
+        $( $crate::HandlerSlot<[<$point:camel Handler>]>:
           $crate::HandlerFn<Ctx, $input, $crate::__dispatch_output!($($output)?)>
         ),*
       {
@@ -30,18 +30,32 @@ macro_rules! define {
             ctx: &mut Ctx,
             input: $input
           ) -> $crate::__dispatch_output!($($output)?) {
-            self.$point.call(ctx, input)
+            $crate::HandlerFn::call(&self.$point, ctx, input)
           }
         )*
 
         #[cfg(feature = "dynamic-registry")]
         pub fn registry(&self) -> &$crate::DispatchRegistry<Ctx> {
-          &self.registry
+          #[cfg(feature = "cow-handlers")]
+          {
+            &*self.registry
+          }
+          #[cfg(not(feature = "cow-handlers"))]
+          {
+            &self.registry
+          }
         }
 
         #[cfg(feature = "dynamic-registry")]
         pub fn registry_mut(&mut self) -> &mut $crate::DispatchRegistry<Ctx> {
-          &mut self.registry
+          #[cfg(feature = "cow-handlers")]
+          {
+            ::std::sync::Arc::make_mut(&mut self.registry)
+          }
+          #[cfg(not(feature = "cow-handlers"))]
+          {
+            &mut self.registry
+          }
         }
       }
 
@@ -52,10 +66,10 @@ macro_rules! define {
         pub fn new() -> Self {
           Self {
             $(
-              $point: |_, _| ::std::default::Default::default(),
+              $point: $crate::handler_slot(|_, _| ::std::default::Default::default()),
             )*
             #[cfg(feature = "dynamic-registry")]
-            registry: $crate::DispatchRegistry::new(),
+            registry: $crate::registry_slot(),
             #[cfg(not(feature = "dynamic-registry"))]
             _ctx: ::std::marker::PhantomData,
           }
@@ -75,7 +89,7 @@ macro_rules! define {
       impl<Ctx, $( [<$point:camel Handler>] ),* > [<$name Api>]<Ctx>
         for [<$name Dispatch>]<Ctx, $( [<$point:camel Handler>] ),* >
       where
-        $( [<$point:camel Handler>]:
+        $( $crate::HandlerSlot<[<$point:camel Handler>]>:
           $crate::HandlerFn<Ctx, $input, $crate::__dispatch_output!($($output)?)>
         ),*
       {
@@ -85,9 +99,26 @@ macro_rules! define {
             ctx: &mut Ctx,
             input: $input
           ) -> $crate::__dispatch_output!($($output)?) {
-            self.$point.call(ctx, input)
+            $crate::HandlerFn::call(&self.$point, ctx, input)
           }
         )*
+      }
+
+      #[cfg(feature = "cow-handlers")]
+      impl<Ctx, $( [<$point:camel Handler>] ),* > ::std::clone::Clone
+        for [<$name Dispatch>]<Ctx, $( [<$point:camel Handler>] ),* >
+      where
+        $( $crate::HandlerSlot<[<$point:camel Handler>]>: ::std::clone::Clone ),*
+      {
+        fn clone(&self) -> Self {
+          Self {
+            $( $point: self.$point.clone(), )*
+            #[cfg(feature = "dynamic-registry")]
+            registry: self.registry.clone(),
+            #[cfg(not(feature = "dynamic-registry"))]
+            _ctx: ::std::marker::PhantomData,
+          }
+        }
       }
     }
 
@@ -165,7 +196,7 @@ macro_rules! __dispatch_builder_for_point {
 
           [<$name Dispatch>] {
             $( $prefix: $prefix, )*
-            $point: handler,
+            $point: $crate::handler_slot(handler),
             $( $rest: $rest, )*
             #[cfg(feature = "dynamic-registry")]
             registry,

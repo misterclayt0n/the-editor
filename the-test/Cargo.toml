@@ -9,3 +9,4 @@ the-dispatch = { path = "../the-dispatch" }
 
 [features]
 dynamic-registry = ["the-dispatch/dynamic-registry"]
+cow-handlers = ["the-dispatch/cow-handlers"]

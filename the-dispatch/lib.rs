@@ -12,6 +12,7 @@
 //! - **Builder Pattern**: Replace default no-op handlers with custom implementations
 //! - **Zero-Cost**: Static dispatch via generics, no virtual calls by default
 //! - **Dynamic Registry** (opt-in): String-keyed handler lookup for plugins/scripting
+//! - **COW Handlers** (opt-in): Shared handler slots for cheap cloning
 //!
 //! ## Basic Usage
 //!
@@ -70,6 +71,18 @@
 //! }
 //! ```
 //!
+//! ## COW Handlers (Feature: `cow-handlers`)
+//!
+//! Enable `cow-handlers` to store handlers behind `Arc` so dispatch values are cheap to clone:
+//!
+//! ```rust,ignore
+//! // In Cargo.toml: the-dispatch = { features = ["cow-handlers"] }
+//! let base = EditorDispatch::<Ctx, _, _>::new();
+//! let custom = base.clone().with_on_keypress(|ctx, key| {
+//!     ctx.buffer.push(key);
+//! });
+//! ```
+//!
 //! ## Handler Chaining
 //!
 //! Handlers can call other dispatch points by having access to the dispatch
@@ -123,7 +136,7 @@
 //! let mut dispatch = EditorDispatch::<Ctx, _, _>::new();
 //!
 //! // Register a dynamic handler
-//! dispatch.registry_mut().set("plugin_handler", Box::new(|ctx, input| {
+//! dispatch.registry_mut().set("plugin_handler", std::sync::Arc::new(|ctx, input| {
 //!     // Dynamic handler logic
 //!     Box::new(())
 //! }));
@@ -139,6 +152,38 @@ mod registry;
 
 pub use paste;
 pub use registry::{DispatchRegistry, DynHandler, DynValue};
+
+#[cfg(feature = "cow-handlers")]
+pub type HandlerSlot<T> = std::sync::Arc<T>;
+
+#[cfg(not(feature = "cow-handlers"))]
+pub type HandlerSlot<T> = T;
+
+#[cfg(feature = "cow-handlers")]
+pub fn handler_slot<T>(handler: T) -> HandlerSlot<T> {
+  std::sync::Arc::new(handler)
+}
+
+#[cfg(not(feature = "cow-handlers"))]
+pub fn handler_slot<T>(handler: T) -> HandlerSlot<T> {
+  handler
+}
+
+#[cfg(all(feature = "dynamic-registry", feature = "cow-handlers"))]
+pub type RegistrySlot<Ctx> = std::sync::Arc<DispatchRegistry<Ctx>>;
+
+#[cfg(all(feature = "dynamic-registry", not(feature = "cow-handlers")))]
+pub type RegistrySlot<Ctx> = DispatchRegistry<Ctx>;
+
+#[cfg(all(feature = "dynamic-registry", feature = "cow-handlers"))]
+pub fn registry_slot<Ctx>() -> RegistrySlot<Ctx> {
+  std::sync::Arc::new(DispatchRegistry::new())
+}
+
+#[cfg(all(feature = "dynamic-registry", not(feature = "cow-handlers")))]
+pub fn registry_slot<Ctx>() -> RegistrySlot<Ctx> {
+  DispatchRegistry::new()
+}
 
 /// Type alias for a simple function pointer handler.
 ///
@@ -161,5 +206,15 @@ where
 {
   fn call(&self, ctx: &mut Ctx, input: Input) -> Output {
     (self)(ctx, input)
+  }
+}
+
+#[cfg(feature = "cow-handlers")]
+impl<Ctx, Input, Output, F> HandlerFn<Ctx, Input, Output> for std::sync::Arc<F>
+where
+  F: HandlerFn<Ctx, Input, Output> + ?Sized,
+{
+  fn call(&self, ctx: &mut Ctx, input: Input) -> Output {
+    (**self).call(ctx, input)
   }
 }

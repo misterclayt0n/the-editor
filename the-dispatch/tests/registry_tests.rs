@@ -5,6 +5,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use the_dispatch::{DispatchRegistry, DynHandler, DynValue, define};
 
@@ -48,7 +49,7 @@ fn test_dispatch_has_registry_when_feature_enabled() {
 fn test_registry_set_and_get_handler() {
   let mut registry = DispatchRegistry::<AppCtx>::new();
 
-  let handler: DynHandler<AppCtx> = Box::new(|_ctx: &mut AppCtx, input: DynValue| {
+  let handler: DynHandler<AppCtx> = Arc::new(|_ctx: &mut AppCtx, input: DynValue| {
     // Echo back the input
     input
   });
@@ -63,7 +64,7 @@ fn test_registry_set_and_get_handler() {
 fn test_registry_remove_handler() {
   let mut registry = DispatchRegistry::<AppCtx>::new();
 
-  let handler: DynHandler<AppCtx> = Box::new(|_ctx, input| input);
+  let handler: DynHandler<AppCtx> = Arc::new(|_ctx, input| input);
   registry.set("removable", handler);
 
   assert!(registry.get("removable").is_some());
@@ -77,7 +78,7 @@ fn test_registry_remove_handler() {
 fn test_registry_call_dynamic_handler() {
   let mut registry = DispatchRegistry::<AppCtx>::new();
 
-  let handler: DynHandler<AppCtx> = Box::new(|ctx: &mut AppCtx, input: DynValue| {
+  let handler: DynHandler<AppCtx> = Arc::new(|ctx: &mut AppCtx, input: DynValue| {
     if let Some(val) = input.downcast_ref::<i32>() {
       ctx.push(&format!("received: {}", val));
     }
@@ -104,7 +105,7 @@ fn test_dispatch_with_registry_integration() {
     });
 
   // Register a dynamic handler
-  let dyn_handler: DynHandler<AppCtx> = Box::new(|ctx: &mut AppCtx, input: DynValue| {
+  let dyn_handler: DynHandler<AppCtx> = Arc::new(|ctx: &mut AppCtx, input: DynValue| {
     if let Some(val) = input.downcast_ref::<i32>() {
       ctx.push(&format!("dynamic handler: {}", val));
     }
@@ -133,7 +134,7 @@ fn test_dispatch_with_registry_integration() {
 fn test_registry_handler_can_transform_input() {
   let mut registry = DispatchRegistry::<()>::new();
 
-  let double_handler: DynHandler<()> = Box::new(|_ctx: &mut (), input: DynValue| {
+  let double_handler: DynHandler<()> = Arc::new(|_ctx: &mut (), input: DynValue| {
     if let Some(val) = input.downcast_ref::<i32>() {
       Box::new(val * 2) as DynValue
     } else {
@@ -160,9 +161,9 @@ fn test_registry_handler_can_transform_input() {
 fn test_registry_multiple_handlers() {
   let mut registry = DispatchRegistry::<()>::new();
 
-  registry.set("handler1", Box::new(|_, input| input));
-  registry.set("handler2", Box::new(|_, input| input));
-  registry.set("handler3", Box::new(|_, input| input));
+  registry.set("handler1", Arc::new(|_, input| input));
+  registry.set("handler2", Arc::new(|_, input| input));
+  registry.set("handler3", Arc::new(|_, input| input));
 
   assert!(registry.get("handler1").is_some());
   assert!(registry.get("handler2").is_some());
@@ -173,4 +174,22 @@ fn test_registry_multiple_handlers() {
   assert!(registry.get("handler1").is_some());
   assert!(registry.get("handler2").is_none());
   assert!(registry.get("handler3").is_some());
+}
+
+#[cfg(feature = "cow-handlers")]
+#[test]
+fn test_registry_cow_clone_isolated() {
+  let mut dispatch = AppDispatch::<AppCtx, _, _>::new();
+  dispatch
+    .registry_mut()
+    .set("handler", Arc::new(|_ctx, input| input));
+
+  let mut cloned = dispatch.clone();
+  cloned.registry_mut().set(
+    "handler",
+    Arc::new(|_ctx, _input| Box::new(()) as DynValue),
+  );
+
+  assert!(dispatch.registry().get("handler").is_some());
+  assert!(cloned.registry().get("handler").is_some());
 }

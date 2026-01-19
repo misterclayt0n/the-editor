@@ -147,6 +147,27 @@ fn test_dispatch_api_trait_is_ergonomic() {
   assert_eq!(call_api(&dispatch, &mut ctx), (2, "ok"));
 }
 
+#[cfg(feature = "cow-handlers")]
+#[test]
+fn test_dispatch_clone_supports_cow_updates() {
+  let dispatch =
+    TestDispatch::<TestCtx, _, _>::new().with_on_event(|ctx: &mut TestCtx, val: i32| {
+      ctx.value = val;
+    });
+
+  let updated = dispatch
+    .clone()
+    .with_on_event(|ctx: &mut TestCtx, val: i32| ctx.value = val * 2);
+
+  let mut ctx = TestCtx::new();
+  dispatch.on_event(&mut ctx, 3);
+  assert_eq!(ctx.value, 3);
+
+  let mut ctx = TestCtx::new();
+  updated.on_event(&mut ctx, 3);
+  assert_eq!(ctx.value, 6);
+}
+
 // Define a more complex dispatch for testing inter-handler calls
 define! {
     Chain {

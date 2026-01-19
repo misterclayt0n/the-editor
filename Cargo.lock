@@ -14,10 +14,3 @@ version = "0.1.0"
 dependencies = [
  "paste",
 ]
-
-[[package]]
-name = "the-test"
-version = "0.1.0"
-dependencies = [
- "the-dispatch",
-]

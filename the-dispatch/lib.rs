@@ -153,33 +153,58 @@ mod registry;
 pub use paste;
 pub use registry::{DispatchRegistry, DynHandler, DynValue};
 
+/// Storage type for a handler slot.
+///
+/// With `cow-handlers` enabled, handler slots are shared via `Arc` for cheap cloning.
+/// Without it, the slot stores the handler value directly.
 #[cfg(feature = "cow-handlers")]
 pub type HandlerSlot<T> = std::sync::Arc<T>;
 
+/// Storage type for a handler slot.
+///
+/// With `cow-handlers` disabled, the slot stores the handler value directly.
 #[cfg(not(feature = "cow-handlers"))]
 pub type HandlerSlot<T> = T;
 
+/// Wrap a handler in a slot.
+///
+/// With `cow-handlers` enabled this allocates an `Arc`; otherwise it returns the handler.
 #[cfg(feature = "cow-handlers")]
 pub fn handler_slot<T>(handler: T) -> HandlerSlot<T> {
   std::sync::Arc::new(handler)
 }
 
+/// Wrap a handler in a slot.
+///
+/// With `cow-handlers` disabled this returns the handler unchanged.
 #[cfg(not(feature = "cow-handlers"))]
 pub fn handler_slot<T>(handler: T) -> HandlerSlot<T> {
   handler
 }
 
+/// Storage type for the dynamic registry.
+///
+/// With `cow-handlers` enabled, this is an `Arc` to allow clone-on-write updates.
 #[cfg(all(feature = "dynamic-registry", feature = "cow-handlers"))]
 pub type RegistrySlot<Ctx> = std::sync::Arc<DispatchRegistry<Ctx>>;
 
+/// Storage type for the dynamic registry.
+///
+/// With `cow-handlers` disabled, this stores the registry value directly.
 #[cfg(all(feature = "dynamic-registry", not(feature = "cow-handlers")))]
 pub type RegistrySlot<Ctx> = DispatchRegistry<Ctx>;
 
+/// Construct a new registry slot.
+///
+/// With `cow-handlers` enabled, this allocates an `Arc`.
 #[cfg(all(feature = "dynamic-registry", feature = "cow-handlers"))]
 pub fn registry_slot<Ctx>() -> RegistrySlot<Ctx> {
   std::sync::Arc::new(DispatchRegistry::new())
 }
 
+/// Construct a new registry slot.
+///
+/// With `cow-handlers` disabled, this returns the registry value directly.
 #[cfg(all(feature = "dynamic-registry", not(feature = "cow-handlers")))]
 pub fn registry_slot<Ctx>() -> RegistrySlot<Ctx> {
   DispatchRegistry::new()
@@ -195,6 +220,7 @@ pub type Handler<Ctx, Input, Output> = fn(&mut Ctx, Input) -> Output;
 ///
 /// This trait is automatically implemented for any `Fn(&mut Ctx, Input) -> Output`,
 /// allowing both function pointers and closures to be used as handlers.
+/// When `cow-handlers` is enabled, `Arc<T>` also implements `HandlerFn`.
 pub trait HandlerFn<Ctx, Input, Output> {
   /// Call the handler with the given context and input.
   fn call(&self, ctx: &mut Ctx, input: Input) -> Output;

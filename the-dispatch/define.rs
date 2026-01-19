@@ -3,7 +3,7 @@ macro_rules! define {
   (
     $name:ident {
       $(
-        $point:ident : $input:ty
+        $point:ident : $input:ty $(=> $output:ty)?
       ),* $(,)?
     }
   ) => {
@@ -20,10 +20,16 @@ macro_rules! define {
 
       impl<Ctx, $( [<$point:camel Handler>] ),* > [<$name Dispatch>]<Ctx, $( [<$point:camel Handler>] ),* >
       where
-        $( [<$point:camel Handler>]: $crate::HandlerFn<Ctx, $input> ),*
+        $( [<$point:camel Handler>]:
+          $crate::HandlerFn<Ctx, $input, $crate::__dispatch_output!($($output)?)>
+        ),*
       {
         $(
-          pub fn $point(&self, ctx: &mut Ctx, input: $input) {
+          pub fn $point(
+            &self,
+            ctx: &mut Ctx,
+            input: $input
+          ) -> $crate::__dispatch_output!($($output)?) {
             self.$point.call(ctx, input)
           }
         )*
@@ -39,11 +45,14 @@ macro_rules! define {
         }
       }
 
-      impl<Ctx> [<$name Dispatch>]<Ctx, $( fn(&mut Ctx, $input) ),* > {
+      impl<Ctx> [<$name Dispatch>]<Ctx, $( fn(&mut Ctx, $input) -> $crate::__dispatch_output!($($output)?) ),* >
+      where
+        $( $crate::__dispatch_output!($($output)?): ::std::default::Default ),*
+      {
         pub fn new() -> Self {
           Self {
             $(
-              $point: |_, _| {},
+              $point: |_, _| ::std::default::Default::default(),
             )*
             #[cfg(feature = "dynamic-registry")]
             registry: $crate::DispatchRegistry::new(),
@@ -54,36 +63,48 @@ macro_rules! define {
       }
     }
 
-    $crate::__dispatch_builders!($name, $( $point : $input ),*);
+    $crate::__dispatch_builders!($name, $( $point : $input $(=> $output)? ),*);
   };
 }
 
 #[doc(hidden)]
 #[macro_export]
+macro_rules! __dispatch_output {
+  () => { () };
+  ($output:ty) => { $output };
+}
+
+#[doc(hidden)]
+#[macro_export]
 macro_rules! __dispatch_builders {
-  ($name:ident, $( $point:ident : $input:ty ),* $(,)?) => {
-    $crate::__dispatch_builders_inner!($name, (); $( $point : $input, )* );
+  ($name:ident, $( $point:ident : $input:ty $(=> $output:ty)? ),* $(,)?) => {
+    $crate::__dispatch_builders_inner!($name, (); $( $point : $input $(=> $output)?, )* );
   };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __dispatch_builders_inner {
-  ($name:ident, ($($prefix:ident : $prefix_input:ty,)*); $point:ident : $input:ty, $( $rest:ident : $rest_input:ty, )* ) => {
+  (
+    $name:ident,
+    ($($prefix:ident : $prefix_input:ty $(=> $prefix_output:ty)?,)*);
+    $point:ident : $input:ty $(=> $output:ty)?,
+    $( $rest:ident : $rest_input:ty $(=> $rest_output:ty)?, )*
+  ) => {
     $crate::__dispatch_builder_for_point!(
       $name,
-      $point : $input,
-      ($($prefix : $prefix_input,)*),
-      ( $( $rest : $rest_input, )* )
+      $point : $input $(=> $output)?,
+      ($($prefix : $prefix_input $(=> $prefix_output)?,)*),
+      ( $( $rest : $rest_input $(=> $rest_output)?, )* )
     );
 
     $crate::__dispatch_builders_inner!(
       $name,
-      ($($prefix : $prefix_input,)* $point : $input,);
-      $( $rest : $rest_input, )*
+      ($($prefix : $prefix_input $(=> $prefix_output)?,)* $point : $input $(=> $output)?,);
+      $( $rest : $rest_input $(=> $rest_output)?, )*
     );
   };
-  ($name:ident, ($($prefix:ident : $prefix_input:ty,)*); ) => {};
+  ($name:ident, ($($prefix:ident : $prefix_input:ty $(=> $prefix_output:ty)?,)*); ) => {};
 }
 
 #[doc(hidden)]
@@ -91,9 +112,9 @@ macro_rules! __dispatch_builders_inner {
 macro_rules! __dispatch_builder_for_point {
   (
     $name:ident,
-    $point:ident : $input:ty,
-    ($($prefix:ident : $prefix_input:ty,)*),
-    ($($rest:ident : $rest_input:ty,)*)
+    $point:ident : $input:ty $(=> $output:ty)?,
+    ($($prefix:ident : $prefix_input:ty $(=> $prefix_output:ty)?,)*),
+    ($($rest:ident : $rest_input:ty $(=> $rest_output:ty)?,)*)
   ) => {
     $crate::paste::paste! {
       impl<Ctx, $( [<$prefix:camel Handler>], )* [<$point:camel Handler>] $(, [<$rest:camel Handler>] )* >
@@ -102,7 +123,7 @@ macro_rules! __dispatch_builder_for_point {
         pub fn [<with_ $point>]<NewHandler>(self, handler: NewHandler)
           -> [<$name Dispatch>]<Ctx, $( [<$prefix:camel Handler>], )* NewHandler $(, [<$rest:camel Handler>] )* >
         where
-          NewHandler: $crate::HandlerFn<Ctx, $input>,
+          NewHandler: $crate::HandlerFn<Ctx, $input, $crate::__dispatch_output!($($output)?)>,
         {
           let Self {
             $( $prefix, )*

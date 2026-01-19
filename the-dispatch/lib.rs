@@ -8,7 +8,7 @@
 //! ## Core Concepts
 //!
 //! - **Dispatch Points**: Named entry points where handlers are invoked
-//! - **Handlers**: Functions or closures that receive a context and input
+//! - **Handlers**: Functions or closures that receive a context, input, and return an output
 //! - **Builder Pattern**: Replace default no-op handlers with custom implementations
 //! - **Zero-Cost**: Static dispatch via generics, no virtual calls by default
 //! - **Dynamic Registry** (opt-in): String-keyed handler lookup for plugins/scripting
@@ -18,11 +18,11 @@
 //! ```rust
 //! use the_dispatch::define;
 //!
-//! // Define dispatch points with their input types
+//! // Define dispatch points with their input and output types
 //! define! {
 //!     Editor {
-//!         on_keypress: char,
-//!         on_action: String,
+//!         on_keypress: char => (),
+//!         on_action: String => (),
 //!     }
 //! }
 //!
@@ -125,23 +125,23 @@ pub use registry::{DispatchRegistry, DynHandler, DynValue};
 /// Type alias for a simple function pointer handler.
 ///
 /// Handlers receive a mutable reference to the context and an input value.
-/// They return nothing - control flow is managed by handlers calling other dispatch points.
-pub type Handler<Ctx, Input> = fn(&mut Ctx, Input);
+/// They return the output type defined for the dispatch point.
+pub type Handler<Ctx, Input, Output> = fn(&mut Ctx, Input) -> Output;
 
 /// Trait for callable handlers.
 ///
-/// This trait is automatically implemented for any `Fn(&mut Ctx, Input)`,
+/// This trait is automatically implemented for any `Fn(&mut Ctx, Input) -> Output`,
 /// allowing both function pointers and closures to be used as handlers.
-pub trait HandlerFn<Ctx, Input> {
+pub trait HandlerFn<Ctx, Input, Output> {
   /// Call the handler with the given context and input.
-  fn call(&self, ctx: &mut Ctx, input: Input);
+  fn call(&self, ctx: &mut Ctx, input: Input) -> Output;
 }
 
-impl<Ctx, Input, F> HandlerFn<Ctx, Input> for F
+impl<Ctx, Input, Output, F> HandlerFn<Ctx, Input, Output> for F
 where
-  F: Fn(&mut Ctx, Input),
+  F: Fn(&mut Ctx, Input) -> Output,
 {
-  fn call(&self, ctx: &mut Ctx, input: Input) {
+  fn call(&self, ctx: &mut Ctx, input: Input) -> Output {
     (self)(ctx, input)
   }
 }

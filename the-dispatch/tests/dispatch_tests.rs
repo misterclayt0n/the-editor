@@ -34,6 +34,13 @@ define! {
     }
 }
 
+define! {
+    OutputTest {
+        double: i32 => i32,
+        label: i32 => String,
+    }
+}
+
 #[test]
 fn test_dispatch_new_creates_noop_handlers() {
   let dispatch = TestDispatch::<TestCtx, _, _>::new();
@@ -94,6 +101,29 @@ fn test_dispatch_builder_can_replace_handler_multiple_times() {
 
   // Only the second handler should be called
   assert_eq!(ctx.logs(), vec!["second handler"]);
+}
+
+#[test]
+fn test_dispatch_returns_handler_outputs() {
+  let dispatch = OutputTestDispatch::<(), _, _>::new()
+    .with_double(|_ctx: &mut (), val: i32| val * 2)
+    .with_label(|_ctx: &mut (), val: i32| format!("val: {}", val));
+
+  let mut ctx = ();
+  let doubled = dispatch.double(&mut ctx, 21);
+  let label = dispatch.label(&mut ctx, 7);
+
+  assert_eq!(doubled, 42);
+  assert_eq!(label, "val: 7");
+}
+
+#[test]
+fn test_default_handlers_return_default_output() {
+  let dispatch = OutputTestDispatch::<(), _, _>::new();
+  let mut ctx = ();
+
+  assert_eq!(dispatch.double(&mut ctx, 9), 0);
+  assert_eq!(dispatch.label(&mut ctx, 9), String::new());
 }
 
 // Define a more complex dispatch for testing inter-handler calls

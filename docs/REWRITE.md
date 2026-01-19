@@ -267,7 +267,7 @@ struct EditorDispatch<
 
 Each field:
 
-* is a callable (closure or fn) implementing `HandlerFn<Ctx, Input>`
+* is a callable (closure or fn) implementing `HandlerFn<Ctx, Input, Output>`
 * receives `&mut Ctx` and the input type
 * may call **any other dispatch** (via external coordination)
 * owns control flow

@@ -8,5 +8,6 @@ version.workspace = true
 the-dispatch = { path = "../the-dispatch" }
 
 [features]
+default = ["dynamic-registry", "cow-handlers"]
 dynamic-registry = ["the-dispatch/dynamic-registry"]
 cow-handlers = ["the-dispatch/cow-handlers"]

@@ -1,11 +1,20 @@
-use the_dispatch::define;
+use std::sync::Arc;
 
-#[derive(Debug)]
-enum CalcInput {
-  Add(i64, i64),
-  Sub(i64, i64),
-  Mul(i64, i64),
-  Div(i64, i64),
+use the_dispatch::{define, DispatchRegistry, DynHandler, DynValue};
+
+#[derive(Clone, Copy, Debug)]
+enum Op {
+  Add,
+  Sub,
+  Mul,
+  Div,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Expr {
+  left: i64,
+  op: Op,
+  right: i64,
 }
 
 #[derive(Default)]
@@ -21,7 +30,7 @@ impl CalcCtx {
 
 define! {
   Calculator {
-    parse: String => Option<CalcInput>,
+    parse: String => Option<Expr>,
     add: (i64, i64) => i64,
     sub: (i64, i64) => i64,
     mul: (i64, i64) => i64,
@@ -29,7 +38,7 @@ define! {
   }
 }
 
-fn parse_input(input: &str) -> Option<CalcInput> {
+fn parse_expr(input: &str) -> Option<Expr> {
   let mut parts = input.split_whitespace();
   let left = parts.next()?.parse::<i64>().ok()?;
   let op = parts.next()?;
@@ -38,30 +47,48 @@ fn parse_input(input: &str) -> Option<CalcInput> {
     return None;
   }
 
-  match op {
-    "+" => Some(CalcInput::Add(left, right)),
-    "-" => Some(CalcInput::Sub(left, right)),
-    "*" => Some(CalcInput::Mul(left, right)),
-    "/" => Some(CalcInput::Div(left, right)),
-    _ => None,
-  }
+  let op = match op {
+    "+" => Op::Add,
+    "-" => Op::Sub,
+    "*" => Op::Mul,
+    "/" => Op::Div,
+    _ => return None,
+  };
+
+  Some(Expr { left, op, right })
 }
 
-fn run_line<Ctx>(dispatch: &impl CalculatorApi<Ctx>, ctx: &mut Ctx, line: &str) -> Option<i64> {
-  let input = dispatch.parse(ctx, line.to_string())?;
-  let result = match input {
-    CalcInput::Add(a, b) => dispatch.add(ctx, (a, b)),
-    CalcInput::Sub(a, b) => dispatch.sub(ctx, (a, b)),
-    CalcInput::Mul(a, b) => dispatch.mul(ctx, (a, b)),
-    CalcInput::Div(a, b) => dispatch.div(ctx, (a, b)),
+fn eval_line<Ctx>(dispatch: &impl CalculatorApi<Ctx>, ctx: &mut Ctx, line: &str) -> Option<i64> {
+  let expr = dispatch.parse(ctx, line.to_string())?;
+  let result = match expr.op {
+    Op::Add => dispatch.add(ctx, (expr.left, expr.right)),
+    Op::Sub => dispatch.sub(ctx, (expr.left, expr.right)),
+    Op::Mul => dispatch.mul(ctx, (expr.left, expr.right)),
+    Op::Div => dispatch.div(ctx, (expr.left, expr.right)),
   };
 
   Some(result)
 }
 
+fn apply_post_eval<Ctx>(
+  registry: &DispatchRegistry<Ctx>,
+  ctx: &mut Ctx,
+  result: i64,
+) -> i64 {
+  let Some(handler) = registry.get("post_eval") else {
+    return result;
+  };
+
+  let output = handler(ctx, Box::new(result) as DynValue);
+  match output.downcast::<i64>() {
+    Ok(val) => *val,
+    Err(_) => result,
+  }
+}
+
 fn main() {
-  let dispatch = CalculatorDispatch::<CalcCtx, _, _, _, _, _>::new()
-    .with_parse(|_ctx: &mut CalcCtx, input: String| parse_input(&input))
+  let mut base = CalculatorDispatch::<CalcCtx, _, _, _, _, _>::new()
+    .with_parse(|_ctx: &mut CalcCtx, input: String| parse_expr(&input))
     .with_add(|_ctx: &mut CalcCtx, (a, b): (i64, i64)| a + b)
     .with_sub(|_ctx: &mut CalcCtx, (a, b): (i64, i64)| a - b)
     .with_mul(|_ctx: &mut CalcCtx, (a, b): (i64, i64)| a * b)
@@ -74,29 +101,60 @@ fn main() {
       }
     });
 
-  let mut ctx = CalcCtx::default();
-  let inputs = ["1 + 2", "6 / 0", "3 * 4", "9 - 1", "bad input"];
+  let post_eval_add_one: DynHandler<CalcCtx> = Arc::new(|ctx, input| {
+    match input.downcast::<i64>() {
+      Ok(val) => {
+        ctx.note("post_eval: +1");
+        Box::new(*val + 1) as DynValue
+      }
+      Err(input) => input,
+    }
+  });
+  base.registry_mut().set("post_eval", post_eval_add_one);
 
+  let mut tuned = base.clone();
+  let post_eval_times_ten: DynHandler<CalcCtx> = Arc::new(|ctx, input| {
+    match input.downcast::<i64>() {
+      Ok(val) => {
+        ctx.note("post_eval: *10");
+        Box::new(*val * 10) as DynValue
+      }
+      Err(input) => input,
+    }
+  });
+  tuned.registry_mut().set("post_eval", post_eval_times_ten);
+  let tuned = tuned.with_add(|ctx: &mut CalcCtx, (a, b): (i64, i64)| {
+    ctx.note("tuned add -> +100");
+    a + b + 100
+  });
+
+  let inputs = ["1 + 2", "6 / 0", "3 * 4", "bad input"];
+  let mut base_ctx = CalcCtx::default();
   for line in inputs {
-    match run_line(&dispatch, &mut ctx, line) {
-      Some(result) => println!("{line} = {result}"),
-      None => println!("{line} = error"),
+    match eval_line(&base, &mut base_ctx, line) {
+      Some(result) => {
+        let result = apply_post_eval(base.registry(), &mut base_ctx, result);
+        println!("base: {line} = {result}");
+      }
+      None => println!("base: {line} = error"),
     }
   }
 
-  if !ctx.notes.is_empty() {
-    println!("notes: {:?}", ctx.notes);
+  if !base_ctx.notes.is_empty() {
+    println!("base notes: {:?}", base_ctx.notes);
   }
 
-  let dispatch =
-    dispatch.with_add(|ctx: &mut CalcCtx, (a, b): (i64, i64)| {
-      ctx.note("custom add -> adding 100");
-      a + b + 100
-    });
-
-  let mut custom_ctx = CalcCtx::default();
   let line = "2 + 2";
-  let result = run_line(&dispatch, &mut custom_ctx, line).unwrap_or(0);
-  println!("custom: {line} = {result}");
-  println!("custom notes: {:?}", custom_ctx.notes);
+  let mut tuned_ctx = CalcCtx::default();
+  match eval_line(&tuned, &mut tuned_ctx, line) {
+    Some(result) => {
+      let result = apply_post_eval(tuned.registry(), &mut tuned_ctx, result);
+      println!("tuned: {line} = {result}");
+    }
+    None => println!("tuned: {line} = error"),
+  }
+
+  if !tuned_ctx.notes.is_empty() {
+    println!("tuned notes: {:?}", tuned_ctx.notes);
+  }
 }

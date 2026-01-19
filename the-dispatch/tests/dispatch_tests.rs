@@ -41,6 +41,13 @@ define! {
     }
 }
 
+define! {
+    ApiTest {
+        inc: i32 => i32,
+        tag: () => &'static str,
+    }
+}
+
 #[test]
 fn test_dispatch_new_creates_noop_handlers() {
   let dispatch = TestDispatch::<TestCtx, _, _>::new();
@@ -124,6 +131,20 @@ fn test_default_handlers_return_default_output() {
 
   assert_eq!(dispatch.double(&mut ctx, 9), 0);
   assert_eq!(dispatch.label(&mut ctx, 9), String::new());
+}
+
+fn call_api<Ctx>(dispatch: &impl ApiTestApi<Ctx>, ctx: &mut Ctx) -> (i32, &'static str) {
+  (dispatch.inc(ctx, 1), dispatch.tag(ctx, ()))
+}
+
+#[test]
+fn test_dispatch_api_trait_is_ergonomic() {
+  let dispatch = ApiTestDispatch::<(), _, _>::new()
+    .with_inc(|_ctx: &mut (), val: i32| val + 1)
+    .with_tag(|_ctx: &mut (), _: ()| "ok");
+
+  let mut ctx = ();
+  assert_eq!(call_api(&dispatch, &mut ctx), (2, "ok"));
 }
 
 // Define a more complex dispatch for testing inter-handler calls

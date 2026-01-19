@@ -1,0 +1,11 @@
+[package]
+name = "the-test"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+the-dispatch = { path = "../the-dispatch" }
+
+[features]
+dynamic-registry = ["the-dispatch/dynamic-registry"]

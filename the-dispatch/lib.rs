@@ -52,6 +52,24 @@
 //! assert!(ctx.buffer.is_empty());
 //! ```
 //!
+//! ## Generated API Trait
+//!
+//! The macro also generates a trait for ergonomic bounds without exposing handler generics:
+//!
+//! ```rust
+//! # use the_dispatch::define;
+//! define! {
+//!     Editor {
+//!         on_keypress: char => (),
+//!         on_action: String => (),
+//!     }
+//! }
+//!
+//! fn run_line<Ctx>(dispatch: &impl EditorApi<Ctx>, ctx: &mut Ctx, input: char) {
+//!     dispatch.on_keypress(ctx, input);
+//! }
+//! ```
+//!
 //! ## Handler Chaining
 //!
 //! Handlers can call other dispatch points by having access to the dispatch

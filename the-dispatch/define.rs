@@ -61,6 +61,34 @@ macro_rules! define {
           }
         }
       }
+
+      pub trait [<$name Api>]<Ctx> {
+        $(
+          fn $point(
+            &self,
+            ctx: &mut Ctx,
+            input: $input
+          ) -> $crate::__dispatch_output!($($output)?);
+        )*
+      }
+
+      impl<Ctx, $( [<$point:camel Handler>] ),* > [<$name Api>]<Ctx>
+        for [<$name Dispatch>]<Ctx, $( [<$point:camel Handler>] ),* >
+      where
+        $( [<$point:camel Handler>]:
+          $crate::HandlerFn<Ctx, $input, $crate::__dispatch_output!($($output)?)>
+        ),*
+      {
+        $(
+          fn $point(
+            &self,
+            ctx: &mut Ctx,
+            input: $input
+          ) -> $crate::__dispatch_output!($($output)?) {
+            self.$point.call(ctx, input)
+          }
+        )*
+      }
     }
 
     $crate::__dispatch_builders!($name, $( $point : $input $(=> $output)? ),*);

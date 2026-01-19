@@ -120,7 +120,7 @@ There is:
 * no forced continuation
 * no linear flow
 
-Control flow is **entirely user-defined**.
+Control flow is **entirely user-defined**. There is no implicit `ControlFlow` return type; handlers call other dispatch points explicitly.
 
 ---
 
@@ -171,15 +171,15 @@ Each stage explicitly calls the next stage via `editor.dispatch.*`, and is free 
 
 ```rust
 Dispatch::new()
-  .pre_on_keypress(|editor, key| {
+  .with_pre_on_keypress(|editor, key| {
       // logging, remapping, filtering
       editor.dispatch.on_keypress(editor, key);
   })
-  .on_keypress(|editor, key| {
+  .with_on_keypress(|editor, key| {
       let action = key_to_action(key);
       editor.dispatch.post_on_keypress(editor, action);
   })
-  .post_on_keypress(|editor, action| {
+  .with_post_on_keypress(|editor, action| {
       editor.dispatch.pre_on_action(editor, action);
   });
 ```
@@ -188,14 +188,14 @@ Dispatch::new()
 
 ```rust
 Dispatch::new()
-  .pre_on_action(|editor, action| {
+  .with_pre_on_action(|editor, action| {
       editor.dispatch.on_action(editor, action);
   })
-  .on_action(|editor, action| {
+  .with_on_action(|editor, action| {
       editor.apply(action);
       editor.dispatch.post_on_action(editor, ());
   })
-  .post_on_action(|editor, _| {
+  .with_post_on_action(|editor, _| {
       editor.dispatch.render(editor, ());
   });
 ```
@@ -210,7 +210,9 @@ The “flow” exists only because handlers explicitly invoke each other.
 A macro defines the editor’s *behavioral surface*.
 
 ```rust
-dispatch::define! {
+use the_dispatch::define;
+
+define! {
     Editor {
         pre_on_keypress: Key,
         on_keypress: Key,
@@ -230,8 +232,8 @@ dispatch::define! {
 This generates:
 
 * a dispatch struct with **generic handlers**
-* typed accessors
-* default spine wiring
+* typed accessors and builder overrides (`with_*`)
+* no implicit control flow (handlers decide what to call)
 * optional dynamic registry
 
 ---
@@ -240,29 +242,34 @@ This generates:
 
 ```rust
 struct EditorDispatch<
-    PreKey, OnKey, PostKey,
-    PreAction, OnAction, PostAction,
-    MoveCursor, Scroll, Render
+    Ctx,
+    PreOnKeypressHandler, OnKeypressHandler, PostOnKeypressHandler,
+    PreOnActionHandler, OnActionHandler, PostOnActionHandler,
+    MoveCursorHandler, ScrollHandler, RenderHandler
 > {
-    pre_on_keypress: PreKey,
-    on_keypress: OnKey,
-    post_on_keypress: PostKey,
+    pre_on_keypress: PreOnKeypressHandler,
+    on_keypress: OnKeypressHandler,
+    post_on_keypress: PostOnKeypressHandler,
 
-    pre_on_action: PreAction,
-    on_action: OnAction,
-    post_on_action: PostAction,
+    pre_on_action: PreOnActionHandler,
+    on_action: OnActionHandler,
+    post_on_action: PostOnActionHandler,
 
-    move_cursor: MoveCursor,
-    scroll: Scroll,
-    render: Render,
+    move_cursor: MoveCursorHandler,
+    scroll: ScrollHandler,
+    render: RenderHandler,
+    
+    // Only present with feature = "dynamic-registry"
+    #[cfg(feature = "dynamic-registry")]
+    registry: DispatchRegistry<Ctx>,
 }
 ```
 
 Each field:
 
-* is a callable (closure or fn)
-* receives `&mut Editor`
-* may call **any other dispatch**
+* is a callable (closure or fn) implementing `HandlerFn<Ctx, Input>`
+* receives `&mut Ctx` and the input type
+* may call **any other dispatch** (via external coordination)
 * owns control flow
 
 ---
@@ -270,14 +277,15 @@ Each field:
 ### Builder-Style Composition
 
 ```rust
-EditorDispatch::new()
-  .on_keypress(|editor, key| {
-      let action = editor.dispatch.keymap(editor, key);
-      editor.dispatch.post_on_keypress(editor, action);
+// EditorDispatch::new() returns a dispatch with no-op default handlers
+// Each .with_* method replaces that specific handler
+let dispatch = EditorDispatch::<EditorCtx, _, _, _, _, _, _, _, _>::new()
+  .with_on_keypress(|ctx: &mut EditorCtx, key: Key| {
+      // Handler logic here
+      // Control flow is explicit - handlers call other dispatches as needed
   })
-  .on_action(|editor, action| {
-      editor.apply(action);
-      editor.dispatch.render(editor, ());
+  .with_on_action(|ctx: &mut EditorCtx, action: Action| {
+      ctx.apply(action);
   });
 ```
 
@@ -290,13 +298,13 @@ No pipeline. No stages. Just behavior.
 For plugins, scripts, configuration, experimentation:
 
 ```rust
-dispatch.set("pre_on_keypress", dyn_handler);
-dispatch.get("scroll");
+dispatch.registry_mut().set("pre_on_keypress", dyn_handler);
+dispatch.registry().get("scroll");
 ```
 
 This layer is:
 
-* opt-in
+* opt-in (feature-gated)
 * isolated
 * slower by design
 * **never** on the hot path by default
@@ -312,7 +320,7 @@ Keymaps are **not special**.
 A vim keymap is just:
 
 ```rust
-.on_keypress(|editor, key| {
+.with_on_keypress(|editor, key| {
     match key {
         Key::Char('w') => editor.dispatch.move_cursor(editor, WordForward),
         _ => editor.dispatch.fallback_key(editor, key),

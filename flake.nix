@@ -93,15 +93,15 @@
           // {
             inherit cargoArtifacts;
             pname = "the-editor";
-            cargoExtraArgs = "--features unicode-lines";
             # Disable tests in build (they run separately in nextest check)
             doCheck = false;
 
           }
         );
 
-        # Wrap binary with library paths for distribution
-        the-editor = pkgs.runCommand "the-editor" {
+      # Wrap binary with library paths for distribution (Linux only)
+      the-editor = if pkgs.stdenv.isLinux then
+        pkgs.runCommand "the-editor" {
           buildInputs = [ pkgs.makeWrapper ];
         } ''
           mkdir -p $out/bin
@@ -110,7 +110,9 @@
               vulkan-loader
               libGL
             ]))}
-        '';
+        ''
+      else
+        the-editor-unwrapped;
       in
       {
         checks = {
@@ -147,7 +149,7 @@
               inherit cargoArtifacts;
               partitions = 1;
               partitionType = "count";
-              cargoNextestPartitionsExtraArgs = "--no-tests=pass --features unicode-lines --workspace --exclude the-renderer";
+              cargoNextestPartitionsExtraArgs = "--no-tests=pass --workspace --exclude the-renderer";
             }
           );
         };
@@ -165,6 +167,7 @@
             rustToolchain
             pkgs.zig_0_15
             pkgs.tree-sitter
+            pkgs.taplo
           ] ++ lib.optionals pkgs.stdenv.isLinux systemLibsLinux
             ++ lib.optionals pkgs.stdenv.isDarwin [
               pkgs.libiconv

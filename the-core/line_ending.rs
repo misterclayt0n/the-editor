@@ -1,7 +1,5 @@
-use ropey::{
-  Rope,
-  RopeSlice,
-};
+use ropey::{Rope, RopeSlice};
+pub use unicode_linebreak::BreakOpportunity;
 
 #[cfg(target_os = "windows")]
 pub const NATIVE_LINE_ENDING: LineEnding = LineEnding::Crlf;
@@ -242,6 +240,157 @@ pub fn rope_end_without_line_ending(slice: &RopeSlice) -> usize {
   slice.len_chars() - get_line_ending(slice).map(|le| le.len_chars()).unwrap_or(0)
 }
 
+/// Returns an iterator over soft line break opportunities in the given string.
+///
+/// Each item is a `(byte_index, BreakOpportunity)` pair indicating where a line
+/// break may or must occur.
+///
+/// # Example
+/// ```ignore
+/// use the_core::line_ending::{soft_breaks, BreakOpportunity};
+///
+/// let text = "hello world";
+/// for (idx, opportunity) in soft_breaks(text) {
+///   match opportunity {
+///     BreakOpportunity::Mandatory => println!("Must break at byte {idx}"),
+///     BreakOpportunity::Allowed => println!("May break at byte {idx}"),
+///   }
+/// }
+/// ```
+#[inline]
+pub fn soft_breaks(text: &str) -> impl Iterator<Item = (usize, BreakOpportunity)> + '_ {
+  unicode_linebreak::linebreaks(text)
+}
+
+/// Check if a soft line break is allowed after the given character.
+///
+/// This is a simplified single-character check. For accurate results with full
+/// context, use `soft_breaks()` on the complete string instead.
+///
+/// # Note
+/// Without context from surrounding characters, this function uses conservative
+/// defaults based on the character's Unicode line break class. It will return
+/// `true` for characters that typically allow breaks after them (spaces,
+/// hyphens, CJK characters, etc.).
+#[inline]
+pub fn char_can_break_after(ch: char) -> bool {
+  use unicode_linebreak::BreakClass;
+
+  match unicode_linebreak::break_property(ch as u32) {
+    // Spaces and breaking whitespace
+    BreakClass::Space |
+    BreakClass::Mandatory |
+    BreakClass::CarriageReturn |
+    BreakClass::LineFeed |
+    BreakClass::NextLine |
+    BreakClass::ZeroWidthSpace
+      => true,
+
+    // Hyphens and breaking punctuation
+    BreakClass::Hyphen |
+    BreakClass::After  // Break after
+      => true,
+
+    // CJK ideographs (can break between them)
+    BreakClass::Ideographic |
+    BreakClass::ConditionalJapaneseStarter
+      => true,
+
+    // Characters that prohibit breaks
+    BreakClass::NonBreakingGlue |
+    BreakClass::WordJoiner |
+    BreakClass::Inseparable |
+    BreakClass::Before |  // Break before (not after)
+    BreakClass::NonStarter
+      => false,
+
+    // Alphabetic and numeric - generally don't break between them
+    BreakClass::Alphabetic |
+    BreakClass::Numeric |
+    BreakClass::HebrewLetter
+      => false,
+
+    // Default: don't allow break (conservative)
+    _ => false,
+  }
+}
+
+/// Check if a soft line break is allowed between two characters.
+///
+/// This provides more accurate results than `char_can_break_after()` by
+/// considering both characters in the pair.
+///
+/// # Note
+/// For the most accurate line breaking, use `soft_breaks()` on the complete
+/// string, as the full Unicode Line Breaking Algorithm considers more context.
+#[inline]
+pub fn can_break_between(before: char, after: char) -> bool {
+  use unicode_linebreak::BreakClass;
+
+  let before_class = unicode_linebreak::break_property(before as u32);
+  let after_class = unicode_linebreak::break_property(after as u32);
+
+  // Mandatory breaks
+  if matches!(
+    before_class,
+    BreakClass::Mandatory
+      | BreakClass::CarriageReturn
+      | BreakClass::LineFeed
+      | BreakClass::NextLine
+  ) {
+    return true;
+  }
+
+  // Never break before certain characters
+  if matches!(
+    after_class,
+    BreakClass::NonBreakingGlue
+      | BreakClass::WordJoiner
+      | BreakClass::ClosePunctuation
+      | BreakClass::CloseParenthesis
+      | BreakClass::Exclamation
+      | BreakClass::InfixSeparator
+      | BreakClass::Symbol
+  ) {
+    return false;
+  }
+
+  // Never break after certain characters
+  if matches!(
+    before_class,
+    BreakClass::NonBreakingGlue
+      | BreakClass::WordJoiner
+      | BreakClass::OpenPunctuation
+      | BreakClass::Quotation
+  ) {
+    return false;
+  }
+
+  // Break after spaces
+  if before_class == BreakClass::Space {
+    return true;
+  }
+
+  // Break after hyphens
+  if matches!(before_class, BreakClass::Hyphen | BreakClass::After) {
+    return true;
+  }
+
+  // CJK: can break between ideographs
+  if matches!(
+    before_class,
+    BreakClass::Ideographic | BreakClass::ConditionalJapaneseStarter
+  ) || matches!(
+    after_class,
+    BreakClass::Ideographic | BreakClass::ConditionalJapaneseStarter
+  ) {
+    return true;
+  }
+
+  // Default: don't break between alphabetic/numeric sequences
+  false
+}
+
 #[cfg(test)]
 mod line_ending_tests {
   use super::*;
@@ -353,5 +502,58 @@ mod line_ending_tests {
       assert_eq!(line_end_char_index(s, 1), 11);
       assert_eq!(line_end_char_index(s, 2), 15);
     }
+  }
+
+  #[test]
+  fn test_soft_breaks() {
+    // Space allows break after
+    assert!(char_can_break_after(' '));
+
+    // Newline is mandatory break
+    assert!(char_can_break_after('\n'));
+
+    // Letters don't allow breaks
+    assert!(!char_can_break_after('a'));
+    assert!(!char_can_break_after('Z'));
+
+    // Hyphen allows break after
+    assert!(char_can_break_after('-'));
+
+    // CJK characters allow breaks
+    assert!(char_can_break_after('漢'));
+    assert!(char_can_break_after('字'));
+
+    // Non-breaking space does NOT allow break
+    assert!(!char_can_break_after('\u{00A0}'));
+  }
+
+  #[test]
+  fn test_can_break_between() {
+    // Space before letter: can break
+    assert!(can_break_between(' ', 'a'));
+
+    // Letter to letter: no break
+    assert!(!can_break_between('a', 'b'));
+
+    // CJK to CJK: can break
+    assert!(can_break_between('漢', '字'));
+
+    // Hyphen to letter: can break
+    assert!(can_break_between('-', 'a'));
+
+    // Letter before close paren: no break
+    assert!(!can_break_between('a', ')'));
+
+    // Open paren to letter: no break
+    assert!(!can_break_between('(', 'a'));
+  }
+
+  #[test]
+  fn test_soft_breaks_iterator() {
+    let text = "hello world";
+    let breaks: Vec<_> = soft_breaks(text).collect();
+
+    // Should have break opportunity after space (at byte 6) and at end
+    assert!(breaks.iter().any(|(idx, _)| *idx == 6));
   }
 }

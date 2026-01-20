@@ -16,8 +16,8 @@ use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-  chars::{WhitespaceProperties, char_is_word},
-  line_ending::LineEnding,
+  chars::WhitespaceProperties,
+  line_ending::{LineEnding, char_can_break_after},
 };
 
 #[inline]
@@ -79,12 +79,33 @@ impl<'a> Grapheme<'a> {
     }
   }
 
-  /// TODO: Currently, word boundaries are used for softwrapping.
-  /// This works best for programming languages and well for prose.
-  /// This could however be improved in the future by considering unicode char
-  /// classes
+  /// Returns true if a soft line break (for wrapping) is allowed after this grapheme.
+  ///
+  /// This uses the Unicode Line Breaking Algorithm (UAX #14) for proper handling
+  /// of all scripts and character types, including:
+  /// - Spaces and whitespace (break allowed)
+  /// - CJK characters (break allowed between them)
+  /// - Hyphens (break allowed after)
+  /// - Non-breaking spaces (break prohibited)
+  /// - Word joiners (break prohibited)
+  ///
+  /// # Note
+  /// This method examines only this grapheme without context from surrounding
+  /// graphemes. For more accurate line breaking with full context, use
+  /// `line_ending::soft_breaks()` on the complete string.
+  ///
+  /// # Naming
+  /// The name `is_word_boundary` is kept for API compatibility (TO BE CHANGED). In the context
+  /// of softwrapping, it means "can break after this grapheme".
   pub fn is_word_boundary(&self) -> bool {
-    !matches!(&self, Grapheme::Other { g, .. } if g.chars().next().is_some_and(char_is_word))
+    match self {
+      Grapheme::Newline | Grapheme::Tab { .. } => true,
+      Grapheme::Other { g } => {
+        // Use the last character of the grapheme to determine break opportunity,
+        // since we're basically asking "can we break AFTER this grapheme?"
+        g.chars().last().map(char_can_break_after).unwrap_or(true)
+      },
+    }
   }
 }
 
@@ -413,25 +434,40 @@ mod tests {
 
   #[test]
   fn test_whitespace_and_word_boundary() {
+    // Spaces allow break after
     let space = Grapheme::new(" ".into(), 0, 4);
     assert!(space.is_whitespace());
     assert!(space.is_word_boundary());
 
+    // Letters don't allow break after (within words)
     let ch = Grapheme::new("a".into(), 0, 4);
     assert!(!ch.is_whitespace());
     assert!(!ch.is_word_boundary());
 
-    let punct = Grapheme::new(".".into(), 0, 4);
-    assert!(!punct.is_whitespace());
-    assert!(punct.is_word_boundary());
+    // Period is InfixSeparator in UAX #14, doesn't allow break (think "3.14")
+    let period = Grapheme::new(".".into(), 0, 4);
+    assert!(!period.is_whitespace());
+    assert!(!period.is_word_boundary()); // Changed: UAX #14 correct behavior
 
+    // Hyphen allows break after
+    let hyphen = Grapheme::new("-".into(), 0, 4);
+    assert!(!hyphen.is_whitespace());
+    assert!(hyphen.is_word_boundary());
+
+    // Tab allows break after
     let tab = Grapheme::new("\t".into(), 2, 4);
     assert!(tab.is_whitespace());
     assert!(tab.is_word_boundary());
 
+    // Newline allows break after
     let nl = Grapheme::new("\n".into(), 0, 4);
     assert!(nl.is_whitespace());
     assert!(nl.is_word_boundary());
+
+    // CJK characters allow break between them
+    let cjk = Grapheme::new("漢".into(), 0, 4);
+    assert!(!cjk.is_whitespace());
+    assert!(cjk.is_word_boundary());
   }
 
   #[test]

@@ -1,6 +1,11 @@
 [workspace]
-members  = [ "the-dispatch" ]
+members  = [ "the-core", "the-dispatch" ]
 resolver = "3"
+
+[workspace.lints.rust]
+# Keep unused variable warnings, but allow unused code definitions
+dead_code        = "allow"
+unused_variables = "warn"
 
 [workspace.package]
 edition = "2024"
@@ -11,3 +16,4 @@ version = "0.1.0"
 name = "the-editor"
 
 [workspace.dependencies]
+ropey = "1.6.1"

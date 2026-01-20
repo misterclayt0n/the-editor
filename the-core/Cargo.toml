@@ -1,0 +1,14 @@
+[package]
+name = "the-core"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[features]
+unicode-lines = [ "ropey/unicode_lines" ]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+ropey = { workspace = true }

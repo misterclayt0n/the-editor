@@ -21,3 +21,8 @@ unicode-linebreak.workspace        = true
 unicode-properties.workspace       = true
 unicode-segmentation.workspace     = true
 unicode-width.workspace            = true
+url.workspace                      = true
+thiserror.workspace                = true
+eyre.workspace = true
+
+the-stdx = { path = "../the-stdx" }

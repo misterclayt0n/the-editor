@@ -2,24 +2,15 @@
 
 use std::{
   borrow::Cow,
-  ffi::{
-    OsStr,
-    OsString,
-  },
+  ffi::{OsStr, OsString},
   ops::Range,
-  path::{
-    Path,
-    PathBuf,
-  },
+  path::{Path, PathBuf},
 };
 
-use eyre::{
-  Result,
-  WrapErr,
-};
+use eyre::{Result, WrapErr};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
-use regex_automata::meta::Captures;
+use regex_automata::util::captures::Captures;
 
 // We keep the CWD as a static so that we can access it in places where we don't
 // have access to the Editor
@@ -306,16 +297,9 @@ pub fn expand<S: AsRef<OsStr> + ?Sized>(src: &S) -> Cow<'_, OsStr> {
 
 #[cfg(test)]
 mod tests {
-  use std::ffi::{
-    OsStr,
-    OsString,
-  };
+  use std::ffi::{OsStr, OsString};
 
-  use super::{
-    current_working_dir,
-    expand_impl,
-    set_current_working_dir,
-  };
+  use super::{current_working_dir, expand_impl, set_current_working_dir};
 
   #[test]
   fn current_dir_is_set() {

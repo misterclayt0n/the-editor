@@ -1,5 +1,8 @@
 use std::{
-  path::{Path, PathBuf},
+  path::{
+    Path,
+    PathBuf,
+  },
   sync::Arc,
 };
 
@@ -20,8 +23,10 @@ pub enum Uri {
 impl Uri {
   pub fn to_url(&self) -> Result<url::Url, UrlConversionError> {
     match self {
-      Uri::File(path) => url::Url::from_file_path(path)
-        .map_err(|()| UrlConversionError::PathToUrlFailed(Arc::clone(path))),
+      Uri::File(path) => {
+        url::Url::from_file_path(path)
+          .map_err(|()| UrlConversionError::PathToUrlFailed(Arc::clone(path)))
+      },
     }
   }
 
@@ -67,7 +72,7 @@ fn convert_url_to_uri(url: &url::Url) -> Result<Uri, UrlConversionError> {
   } else {
     Err(UrlConversionError::UnsupportedScheme {
       scheme: url.scheme().to_string(),
-      url: url.clone(),
+      url:    url.clone(),
     })
   }
 }

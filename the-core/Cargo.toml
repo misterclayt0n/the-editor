@@ -15,14 +15,14 @@ unicode-lines = [ "ropey/unicode_lines" ]
 path = "lib.rs"
 
 [dependencies]
+eyre.workspace                     = true
 ropey                              = { workspace = true }
+thiserror.workspace                = true
 unicode-general-category.workspace = true
 unicode-linebreak.workspace        = true
 unicode-properties.workspace       = true
 unicode-segmentation.workspace     = true
 unicode-width.workspace            = true
 url.workspace                      = true
-thiserror.workspace                = true
-eyre.workspace = true
 
 the-stdx = { path = "../the-stdx" }

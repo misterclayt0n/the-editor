@@ -313,9 +313,9 @@ fn compile_path_regex(
   path_regex.push_str(sep);
   path_regex.push_str("?|");
   path_regex.push_str(sep);
-  path_regex.push_str(")");
+  path_regex.push(')');
   path_regex.push_str(&optional);
-  path_regex.push_str(")");
+  path_regex.push(')');
   path_regex.push_str(postfix);
   Regex::new(&path_regex).expect("path regex should compile")
 }
@@ -324,19 +324,19 @@ fn path_regex(match_single_file: bool, anchored: bool) -> &'static Regex {
   match (anchored, match_single_file) {
     (true, true) => {
       static REGEX: Lazy<Regex> = Lazy::new(|| compile_path_regex("", "$", true, IS_WINDOWS));
-      &*REGEX
+      &REGEX
     },
     (true, false) => {
       static REGEX: Lazy<Regex> = Lazy::new(|| compile_path_regex("", "$", false, IS_WINDOWS));
-      &*REGEX
+      &REGEX
     },
     (false, true) => {
       static REGEX: Lazy<Regex> = Lazy::new(|| compile_path_regex("", "", true, IS_WINDOWS));
-      &*REGEX
+      &REGEX
     },
     (false, false) => {
       static REGEX: Lazy<Regex> = Lazy::new(|| compile_path_regex("", "", false, IS_WINDOWS));
-      &*REGEX
+      &REGEX
     },
   }
 }

@@ -2,12 +2,21 @@
 
 use std::{
   borrow::Cow,
-  ffi::{OsStr, OsString},
+  ffi::{
+    OsStr,
+    OsString,
+  },
   ops::Range,
-  path::{Path, PathBuf},
+  path::{
+    Path,
+    PathBuf,
+  },
 };
 
-use eyre::{Result, WrapErr};
+use eyre::{
+  Result,
+  WrapErr,
+};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use regex_automata::util::captures::Captures;
@@ -191,10 +200,10 @@ fn var_expansion_regex() -> &'static regex_automata::meta::Regex {
 }
 
 struct Expansion<'a> {
-  range: Range<usize>,
+  range:     Range<usize>,
   var_range: Range<usize>,
-  default: &'a [u8],
-  pattern: VarPattern,
+  default:   &'a [u8],
+  pattern:   VarPattern,
 }
 
 enum ExpansionParse<'a> {
@@ -297,9 +306,16 @@ pub fn expand<S: AsRef<OsStr> + ?Sized>(src: &S) -> Cow<'_, OsStr> {
 
 #[cfg(test)]
 mod tests {
-  use std::ffi::{OsStr, OsString};
+  use std::ffi::{
+    OsStr,
+    OsString,
+  };
 
-  use super::{current_working_dir, expand_impl, set_current_working_dir};
+  use super::{
+    current_working_dir,
+    expand_impl,
+    set_current_working_dir,
+  };
 
   #[test]
   fn current_dir_is_set() {

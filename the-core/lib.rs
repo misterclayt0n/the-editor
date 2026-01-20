@@ -1,2 +1,2 @@
-mod line_ending;
 mod chars;
+mod line_ending;

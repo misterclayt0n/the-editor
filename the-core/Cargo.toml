@@ -20,5 +20,4 @@ unicode-general-category.workspace = true
 unicode-linebreak.workspace        = true
 unicode-properties.workspace       = true
 unicode-segmentation.workspace     = true
-unicode-width.workspace            = true       
-
+unicode-width.workspace            = true

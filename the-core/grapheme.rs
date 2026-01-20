@@ -4,20 +4,33 @@
 use core::slice;
 use std::{
   borrow::Cow,
-  fmt::{self, Debug, Display},
+  fmt::{
+    self,
+    Debug,
+    Display,
+  },
   marker::PhantomData,
   ops::Deref,
   ptr::NonNull,
 };
 
-use ropey::{RopeSlice, str_utils::byte_to_char_idx};
+use ropey::{
+  RopeSlice,
+  str_utils::byte_to_char_idx,
+};
 use unicode_properties::UnicodeEmoji;
-use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
+use unicode_segmentation::{
+  GraphemeCursor,
+  GraphemeIncomplete,
+};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
   chars::WhitespaceProperties,
-  line_ending::{LineEnding, char_can_break_after},
+  line_ending::{
+    LineEnding,
+    char_can_break_after,
+  },
 };
 
 #[inline]
@@ -40,8 +53,10 @@ impl<'a> Grapheme<'a> {
 
   pub fn new(g: GraphemeStr<'a>, visual_x: usize, tab_width: u16) -> Grapheme<'a> {
     match g {
-      g if g == "\t" => Grapheme::Tab {
-        width: tab_width_at(visual_x, tab_width),
+      g if g == "\t" => {
+        Grapheme::Tab {
+          width: tab_width_at(visual_x, tab_width),
+        }
       },
       _ if LineEnding::from_str(&g).is_some() => Grapheme::Newline,
       _ => Grapheme::Other { g },
@@ -72,17 +87,19 @@ impl<'a> Grapheme<'a> {
   pub fn is_whitespace(&self) -> bool {
     match self {
       Grapheme::Newline | Grapheme::Tab { .. } => true,
-      Grapheme::Other { g } => g
-        .chars()
-        .next()
-        .is_some_and(|ch| WhitespaceProperties::of(ch).is_some()),
+      Grapheme::Other { g } => {
+        g.chars()
+          .next()
+          .is_some_and(|ch| WhitespaceProperties::of(ch).is_some())
+      },
     }
   }
 
-  /// Returns true if a soft line break (for wrapping) is allowed after this grapheme.
+  /// Returns true if a soft line break (for wrapping) is allowed after this
+  /// grapheme.
   ///
-  /// This uses the Unicode Line Breaking Algorithm (UAX #14) for proper handling
-  /// of all scripts and character types, including:
+  /// This uses the Unicode Line Breaking Algorithm (UAX #14) for proper
+  /// handling of all scripts and character types, including:
   /// - Spaces and whitespace (break allowed)
   /// - CJK characters (break allowed between them)
   /// - Hyphens (break allowed after)
@@ -95,8 +112,9 @@ impl<'a> Grapheme<'a> {
   /// `line_ending::soft_breaks()` on the complete string.
   ///
   /// # Naming
-  /// The name `is_word_boundary` is kept for API compatibility (TO BE CHANGED). In the context
-  /// of softwrapping, it means "can break after this grapheme".
+  /// The name `is_word_boundary` is kept for API compatibility (TO BE CHANGED).
+  /// In the context of softwrapping, it means "can break after this
+  /// grapheme".
   pub fn is_word_boundary(&self) -> bool {
     match self {
       Grapheme::Newline | Grapheme::Tab { .. } => true,
@@ -127,8 +145,8 @@ impl Display for Grapheme<'_> {
 /// A highly compressed `Cow<'a, str>` that holds
 /// atmost u31::MAX bytes and is readonly.
 pub struct GraphemeStr<'a> {
-  ptr: NonNull<u8>,
-  len: u32,
+  ptr:     NonNull<u8>,
+  len:     u32,
   phantom: PhantomData<&'a str>,
 }
 
@@ -154,10 +172,10 @@ pub fn grapheme_width(g: &str) -> usize {
     };
   }
 
-  if let Some(props) = WhitespaceProperties::of(first) {
-    if props.is_zero_width() {
-      return 0;
-    }
+  if let Some(props) = WhitespaceProperties::of(first)
+    && props.is_zero_width()
+  {
+    return 0;
   }
 
   if first.is_emoji_char() {
@@ -316,8 +334,8 @@ impl Drop for GraphemeStr<'_> {
 impl<'a> From<&'a str> for GraphemeStr<'a> {
   fn from(value: &'a str) -> Self {
     GraphemeStr {
-      ptr: unsafe { NonNull::new_unchecked(value.as_bytes().as_ptr() as *mut u8) },
-      len: i32::try_from(value.len()).unwrap() as u32,
+      ptr:     unsafe { NonNull::new_unchecked(value.as_bytes().as_ptr() as *mut u8) },
+      len:     i32::try_from(value.len()).unwrap() as u32,
       phantom: PhantomData,
     }
   }
@@ -328,8 +346,8 @@ impl From<String> for GraphemeStr<'_> {
     let len = value.len();
     let ptr = Box::into_raw(value.into_bytes().into_boxed_slice()) as *mut u8;
     GraphemeStr {
-      ptr: unsafe { NonNull::new_unchecked(ptr) },
-      len: (i32::try_from(len).unwrap() as u32) | Self::MASK_OWNED,
+      ptr:     unsafe { NonNull::new_unchecked(ptr) },
+      len:     (i32::try_from(len).unwrap() as u32) | Self::MASK_OWNED,
       phantom: PhantomData,
     }
   }

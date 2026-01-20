@@ -1,4 +1,7 @@
-use ropey::{Rope, RopeSlice};
+use ropey::{
+  Rope,
+  RopeSlice,
+};
 pub use unicode_linebreak::BreakOpportunity;
 
 #[cfg(target_os = "windows")]

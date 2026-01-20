@@ -1,5 +1,5 @@
 [package]
-name = "the-core"
+name              = "the-core"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
@@ -8,12 +8,12 @@ version.workspace = true
 workspace = true
 
 [features]
-default = ["unicode-lines"]
-unicode-lines = ["ropey/unicode_lines"]
+default       = [ "unicode-lines" ]
+unicode-lines = [ "ropey/unicode_lines" ]
 
 [lib]
 path = "lib.rs"
 
 [dependencies]
-ropey = { workspace = true }
+ropey                              = { workspace = true }
 unicode-general-category.workspace = true

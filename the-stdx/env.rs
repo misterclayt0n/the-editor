@@ -1,12 +1,23 @@
 //! Functions for working with the host environment.
+
 use std::{
   borrow::Cow,
-  ffi::{OsStr, OsString},
-  path::{Path, PathBuf},
-  sync::RwLock,
+  ffi::{
+    OsStr,
+    OsString,
+  },
+  path::{
+    Path,
+    PathBuf,
+  },
 };
 
+use eyre::{
+  Result,
+  WrapErr,
+};
 use once_cell::sync::Lazy;
+use parking_lot::RwLock;
 
 // We keep the CWD as a static so that we can access it in places where we don't
 // have access to the Editor
@@ -15,14 +26,14 @@ static CWD: RwLock<Option<PathBuf>> = RwLock::new(None);
 /// Get the current working directory.
 /// This information is managed internally as the call to std::env::current_dir
 /// might fail if the cwd has been deleted.
-pub fn current_working_dir() -> PathBuf {
-  if let Some(path) = &*CWD.read().unwrap() {
-    return path.clone();
+pub fn current_working_dir() -> Result<PathBuf> {
+  if let Some(path) = &*CWD.read() {
+    return Ok(path.clone());
   }
 
   // implementation of crossplatform pwd -L
   // we want pwd -L so that symlinked directories are handled correctly
-  let mut cwd = std::env::current_dir().expect("Couldn't determine current working directory");
+  let mut cwd = std::env::current_dir().wrap_err("failed to get current working directory")?;
 
   let pwd = std::env::var_os("PWD");
   #[cfg(windows)]
@@ -33,18 +44,24 @@ pub fn current_working_dir() -> PathBuf {
   {
     cwd = pwd;
   }
-  let mut dst = CWD.write().unwrap();
+
+  let mut dst = CWD.write();
   *dst = Some(cwd.clone());
 
-  cwd
+  Ok(cwd)
 }
 
 /// Update the current working directory.
-pub fn set_current_working_dir(path: impl AsRef<Path>) -> std::io::Result<Option<PathBuf>> {
-  let path = crate::path::canonicalize(path);
-  std::env::set_current_dir(&path)?;
-  let mut cwd = CWD.write().unwrap();
+pub fn set_current_working_dir(path: impl AsRef<Path>) -> Result<Option<PathBuf>> {
+  let path = crate::path::canonicalize(path)?;
+  std::env::set_current_dir(&path).wrap_err_with(|| {
+    format!(
+      "failed to set current working directory to '{}'",
+      path.display()
+    )
+  })?;
 
+  let mut cwd = CWD.write();
   Ok(cwd.replace(path))
 }
 
@@ -59,20 +76,21 @@ pub fn binary_exists<T: AsRef<OsStr>>(binary_name: T) -> bool {
 }
 
 /// Attempts to find a binary of the given name. See [which](https://linux.die.net/man/1/which).
-pub fn which<T: AsRef<OsStr>>(
-  binary_name: T,
-) -> Result<std::path::PathBuf, ExecutableNotFoundError> {
+pub fn which<T: AsRef<OsStr>>(binary_name: T) -> Result<PathBuf> {
   let binary_name = binary_name.as_ref();
-  which::which(binary_name).map_err(|err| ExecutableNotFoundError {
-    command: binary_name.to_string_lossy().into_owned(),
-    inner: err,
-  })
+  which::which(binary_name)
+    .wrap_err_with(|| format!("command '{}' not found", binary_name.to_string_lossy()))
 }
 
 fn find_brace_end(src: &[u8]) -> Option<usize> {
   use regex_automata::meta::Regex;
 
-  static REGEX: Lazy<Regex> = Lazy::new(|| Regex::builder().build("[{}]").unwrap());
+  static REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::builder()
+      .build("[{}]")
+      .expect("brace regex should compile")
+  });
+
   let mut depth = 0;
   for mat in REGEX.find_iter(src) {
     let pos = mat.start();
@@ -99,14 +117,21 @@ fn expand_impl(src: &OsStr, mut resolve: impl FnMut(&OsStr) -> Option<OsString>)
         r"\$\{([^\}]+)",
         r"\$(\w+)",
       ])
-      .unwrap()
+      .expect("env var expansion regexes should compile")
   });
 
   let bytes = src.as_encoded_bytes();
   let mut res = Vec::with_capacity(bytes.len());
   let mut pos = 0;
   for captures in REGEX.captures_iter(bytes) {
-    let mat = captures.get_match().unwrap();
+    // Skip malformed captures (defensive - should not happen with valid regex)
+    let Some(mat) = captures.get_match() else {
+      continue;
+    };
+    let Some(group) = captures.get_group(1) else {
+      continue;
+    };
+
     let pattern_id = mat.pattern().as_usize();
     let mut range = mat.range();
     // A pattern may match multiple times on a single variable, for example
@@ -115,7 +140,7 @@ fn expand_impl(src: &OsStr, mut resolve: impl FnMut(&OsStr) -> Option<OsString>)
     if range.start < pos {
       continue;
     }
-    let var = &bytes[captures.get_group(1).unwrap().range()];
+    let var = &bytes[group.range()];
     let default = if pattern_id != 5 {
       let Some(bracket_pos) = find_brace_end(&bytes[range.end..]) else {
         break;
@@ -163,35 +188,28 @@ pub fn expand<S: AsRef<OsStr> + ?Sized>(src: &S) -> Cow<'_, OsStr> {
   expand_impl(src.as_ref(), |var| std::env::var_os(var))
 }
 
-#[derive(Debug)]
-pub struct ExecutableNotFoundError {
-  command: String,
-  inner: which::Error,
-}
-
-impl std::fmt::Display for ExecutableNotFoundError {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "command '{}' not found: {}", self.command, self.inner)
-  }
-}
-
-impl std::error::Error for ExecutableNotFoundError {}
-
 #[cfg(test)]
 mod tests {
-  use std::ffi::{OsStr, OsString};
+  use std::ffi::{
+    OsStr,
+    OsString,
+  };
 
-  use super::{current_working_dir, expand_impl, set_current_working_dir};
+  use super::{
+    current_working_dir,
+    expand_impl,
+    set_current_working_dir,
+  };
 
   #[test]
   fn current_dir_is_set() {
     let new_path = dunce::canonicalize(std::env::temp_dir()).unwrap();
-    let cwd = current_working_dir();
+    let cwd = current_working_dir().expect("should get cwd");
     assert_ne!(cwd, new_path);
 
     set_current_working_dir(&new_path).expect("Couldn't set new path");
 
-    let cwd = current_working_dir();
+    let cwd = current_working_dir().expect("should get cwd");
     assert_eq!(cwd, new_path);
   }
 

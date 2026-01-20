@@ -1,11 +1,23 @@
 //! Functions for working with [Path].
 
 use std::{
-  borrow::Cow, ffi::OsString, ops::Range, path::{Component, MAIN_SEPARATOR_STR, Path, PathBuf}
+  borrow::Cow,
+  ffi::OsString,
+  ops::Range,
+  path::{
+    Component,
+    MAIN_SEPARATOR_STR,
+    Path,
+    PathBuf,
+  },
 };
 
+use eyre::Result;
 use once_cell::sync::Lazy;
-use regex_cursor::{Input, engines::meta::Regex};
+use regex_cursor::{
+  Input,
+  engines::meta::Regex,
+};
 use ropey::RopeSlice;
 
 use crate::env::current_working_dir;
@@ -31,8 +43,7 @@ pub fn fold_home_dir<'a>(path: Cow<'a, Path>) -> Cow<'a, Path> {
 ///
 /// The tilde will only be expanded when present as the first component of the
 /// path and only slash follows it.
-pub fn expand_tilde<'a>(path: Cow<'a, Path>) -> Cow<'a, Path>
-{
+pub fn expand_tilde<'a>(path: Cow<'a, Path>) -> Cow<'a, Path> {
   let mut components = path.components();
 
   if let Some(Component::Normal(c)) = components.next()
@@ -123,33 +134,33 @@ pub fn normalize(path: impl AsRef<Path>) -> PathBuf {
 ///
 /// This function is used instead of [`std::fs::canonicalize`] because we don't
 /// want to verify here if the path exists, just normalize it's components.
-pub fn canonicalize(path: impl AsRef<Path>) -> PathBuf {
-  let path = expand_tilde(path.as_ref());
+pub fn canonicalize(path: impl AsRef<Path>) -> Result<PathBuf> {
+  let path = expand_tilde(Cow::Borrowed(path.as_ref()));
   let path = if path.is_relative() {
-    Cow::Owned(current_working_dir().join(path))
+    Cow::Owned(current_working_dir()?.join(path))
   } else {
     path
   };
 
-  normalize(path)
+  Ok(normalize(path))
 }
 
 /// Convert path into a relative path
-pub fn get_relative_path<'a, P>(path: P) -> Cow<'a, Path>
+pub fn get_relative_path<'a, P>(path: P) -> Result<Cow<'a, Path>>
 where
   P: Into<Cow<'a, Path>>,
 {
   let path = path.into();
   if path.is_absolute() {
-    let cwdir = normalize(current_working_dir());
+    let cwdir = normalize(current_working_dir()?);
     if let Ok(stripped) = normalize(&path).strip_prefix(cwdir) {
-      return Cow::Owned(PathBuf::from(stripped));
+      return Ok(Cow::Owned(PathBuf::from(stripped)));
     }
 
-    return fold_home_dir(path);
+    return Ok(fold_home_dir(path));
   }
 
-  path
+  Ok(path)
 }
 
 /// Returns a truncated filepath where the basepart of the path is reduced to
@@ -161,28 +172,30 @@ where
 /// ```
 /// use std::path::Path;
 ///
-/// use the_editor_stdx::path::get_truncated_path;
+/// use the_stdx::path::get_truncated_path;
 ///
 /// assert_eq!(
-///   get_truncated_path("/home/cnorris/documents/jokes.txt").as_path(),
+///   get_truncated_path("/home/cnorris/documents/jokes.txt")
+///     .unwrap()
+///     .as_path(),
 ///   Path::new("/h/c/d/jokes.txt")
 /// );
 /// assert_eq!(
-///   get_truncated_path("jokes.txt").as_path(),
+///   get_truncated_path("jokes.txt").unwrap().as_path(),
 ///   Path::new("jokes.txt")
 /// );
 /// assert_eq!(
-///   get_truncated_path("/jokes.txt").as_path(),
+///   get_truncated_path("/jokes.txt").unwrap().as_path(),
 ///   Path::new("/jokes.txt")
 /// );
 /// assert_eq!(
-///   get_truncated_path("/h/c/d/jokes.txt").as_path(),
+///   get_truncated_path("/h/c/d/jokes.txt").unwrap().as_path(),
 ///   Path::new("/h/c/d/jokes.txt")
 /// );
-/// assert_eq!(get_truncated_path("").as_path(), Path::new(""));
+/// assert_eq!(get_truncated_path("").unwrap().as_path(), Path::new(""));
 /// ```
-pub fn get_truncated_path(path: impl AsRef<Path>) -> PathBuf {
-  let cwd = current_working_dir();
+pub fn get_truncated_path(path: impl AsRef<Path>) -> Result<PathBuf> {
+  let cwd = current_working_dir()?;
   let path = path.as_ref();
   let path = path.strip_prefix(cwd).unwrap_or(path);
   let file = path.file_name().unwrap_or_default();
@@ -199,7 +212,7 @@ pub fn get_truncated_path(path: impl AsRef<Path>) -> PathBuf {
     first_char_buffer.clear();
   }
   ret.push(file);
-  ret
+  Ok(ret)
 }
 
 fn path_component_regex(windows: bool) -> String {
@@ -249,7 +262,7 @@ fn compile_path_regex(
   };
   let path_regex =
     format!("{prefix}(?:{path_start}?(?:(?:{sep}{component}+)+{sep}?|{sep}){optional}){postfix}");
-  Regex::new(&path_regex).unwrap()
+  Regex::new(&path_regex).expect("path regex should compile")
 }
 
 /// If `src` ends with a path then this function returns the part of the slice.
@@ -286,7 +299,7 @@ pub fn find_paths(
 /// [`env::expand`](crate::env::expand) and [`expand_tilde`]
 pub fn expand<T: AsRef<Path> + ?Sized>(path: &T) -> Cow<'_, Path> {
   let path = path.as_ref();
-  let path = expand_tilde(path);
+  let path = expand_tilde(Cow::Borrowed(path));
   match crate::env::expand(&*path) {
     Cow::Borrowed(_) => path,
     Cow::Owned(path) => PathBuf::from(path).into(),
@@ -297,18 +310,26 @@ pub fn expand<T: AsRef<Path> + ?Sized>(path: &T) -> Cow<'_, Path> {
 mod tests {
   use std::{
     ffi::OsStr,
-    path::{Component, Path},
+    path::{
+      Component,
+      Path,
+    },
   };
 
   use regex_cursor::Input;
   use ropey::RopeSlice;
 
-  use crate::path::{self, compile_path_regex};
+  use crate::path::{
+    self,
+    compile_path_regex,
+  };
 
   #[test]
   fn expand_tilde() {
+    use std::borrow::Cow;
+
     for path in ["~", "~/foo"] {
-      let expanded = path::expand_tilde(Path::new(path));
+      let expanded = path::expand_tilde(Cow::Borrowed(Path::new(path)));
 
       let tilde = Component::Normal(OsStr::new("~"));
 
@@ -429,11 +450,9 @@ mod tests {
           "/home/foo"
         ]
       );
-      assert_matches!(
-        regex,
-        r#"--> helix-stdx/src/path.rs:427:13"#,
-        ["helix-stdx/src/path.rs"]
-      );
+      assert_matches!(regex, r#"--> helix-stdx/src/path.rs:427:13"#, [
+        "helix-stdx/src/path.rs"
+      ]);
       assert_matches!(
         regex,
         r#"PATH=/foo/bar:/bar/baz:${foo:-/foo}/bar:${PATH}"#,

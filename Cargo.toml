@@ -18,3 +18,5 @@ name = "the-editor"
 [workspace.dependencies]
 ropey                    = "1.6.1"
 unicode-general-category = "1.0"
+unicode-segmentation     = "1.12.0"
+unicode-width            = "0.2.1"

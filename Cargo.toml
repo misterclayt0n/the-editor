@@ -16,4 +16,5 @@ version = "0.1.0"
 name = "the-editor"
 
 [workspace.dependencies]
+unicode-general-category = "1.0"
 ropey = "1.6.1"

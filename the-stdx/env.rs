@@ -82,7 +82,81 @@ pub fn which<T: AsRef<OsStr>>(binary_name: T) -> Result<PathBuf> {
     .wrap_err_with(|| format!("command '{}' not found", binary_name.to_string_lossy()))
 }
 
-fn find_brace_end(src: &[u8]) -> Option<usize> {
+/// Pattern types for environment variable substitution.
+///
+/// These correspond to POSIX shell parameter expansion syntax.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VarPattern {
+  /// `${VAR:-default}` - use default if VAR is unset OR empty
+  DefaultIfUnsetOrEmpty,
+  /// `${VAR:=default}` - assign default if VAR is unset OR empty
+  AssignIfUnsetOrEmpty,
+  /// `${VAR-default}` - use default only if VAR is unset
+  DefaultIfUnset,
+  /// `${VAR=default}` - assign default only if VAR is unset
+  AssignIfUnset,
+  /// `${VAR}` - simple braced variable
+  Braced,
+  /// `$VAR` - simple unbraced variable
+  Simple,
+}
+
+impl VarPattern {
+  fn from_index(index: usize) -> Option<Self> {
+    match index {
+      0 => Some(Self::DefaultIfUnsetOrEmpty),
+      1 => Some(Self::AssignIfUnsetOrEmpty),
+      2 => Some(Self::DefaultIfUnset),
+      3 => Some(Self::AssignIfUnset),
+      4 => Some(Self::Braced),
+      5 => Some(Self::Simple),
+      _ => None,
+    }
+  }
+
+  /// `Braced` (`${VAR}`) still needs to find the closing brace,
+  /// but it has no default value content.
+  fn has_default(self) -> bool {
+    matches!(
+      self,
+      Self::DefaultIfUnsetOrEmpty
+        | Self::AssignIfUnsetOrEmpty
+        | Self::DefaultIfUnset
+        | Self::AssignIfUnset
+    )
+  }
+
+  fn needs_closing_brace(self) -> bool {
+    !matches!(self, Self::Simple)
+  }
+
+  fn use_default_when_empty(self) -> bool {
+    matches!(
+      self,
+      Self::DefaultIfUnsetOrEmpty | Self::AssignIfUnsetOrEmpty
+    )
+  }
+
+  fn resolve<'a>(self, value: Option<&'a OsString>, default: &'a [u8]) -> &'a [u8] {
+    match value {
+      Some(val) if !val.is_empty() || !self.use_default_when_empty() => val.as_encoded_bytes(),
+      _ => default,
+    }
+  }
+}
+
+/// The byte slice must be a valid, codepoint-aligned substring of an OsStr.
+fn bytes_to_osstr(bytes: &[u8]) -> &OsStr {
+  unsafe { OsStr::from_encoded_bytes_unchecked(bytes) }
+}
+
+/// The bytes must be a composition of valid OsStr byte slices.
+fn bytes_to_osstring(bytes: Vec<u8>) -> OsString {
+  unsafe { OsString::from_encoded_bytes_unchecked(bytes) }
+}
+
+/// Find the position of the closing brace, accounting for nested braces.
+fn find_closing_brace(src: &[u8]) -> Option<usize> {
   use regex_automata::meta::Regex;
 
   static REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -98,87 +172,97 @@ fn find_brace_end(src: &[u8]) -> Option<usize> {
       b'{' => depth += 1,
       b'}' if depth == 0 => return Some(pos),
       b'}' => depth -= 1,
-      _ => unreachable!(),
+      _ => {},
     }
   }
   None
 }
 
-fn expand_impl(src: &OsStr, mut resolve: impl FnMut(&OsStr) -> Option<OsString>) -> Cow<'_, OsStr> {
+/// Regex patterns for matching environment variable syntax.
+fn var_expansion_regex() -> &'static regex_automata::meta::Regex {
   use regex_automata::meta::Regex;
 
   static REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::builder()
       .build_many(&[
-        r"\$\{([^\}:]+):-",
-        r"\$\{([^\}:]+):=",
-        r"\$\{([^\}-]+)-",
-        r"\$\{([^\}=]+)=",
-        r"\$\{([^\}]+)",
-        r"\$(\w+)",
+        r"\$\{([^\}:]+):-", // 0: ${VAR:-default}
+        r"\$\{([^\}:]+):=", // 1: ${VAR:=default}
+        r"\$\{([^\}-]+)-",  // 2: ${VAR-default}
+        r"\$\{([^\}=]+)=",  // 3: ${VAR=default}
+        r"\$\{([^\}]+)",    // 4: ${VAR}
+        r"\$(\w+)",         // 5: $VAR
       ])
       .expect("env var expansion regexes should compile")
   });
 
+  &REGEX
+}
+
+/// Internal implementation of environment variable expansion.
+fn expand_impl(src: &OsStr, mut resolve: impl FnMut(&OsStr) -> Option<OsString>) -> Cow<'_, OsStr> {
   let bytes = src.as_encoded_bytes();
-  let mut res = Vec::with_capacity(bytes.len());
+  let mut result = Vec::with_capacity(bytes.len());
   let mut pos = 0;
-  for captures in REGEX.captures_iter(bytes) {
-    // Skip malformed captures (defensive - should not happen with valid regex)
+
+  for captures in var_expansion_regex().captures_iter(bytes) {
     let Some(mat) = captures.get_match() else {
       continue;
     };
-    let Some(group) = captures.get_group(1) else {
+
+    let Some(var_group) = captures.get_group(1) else {
       continue;
     };
 
-    let pattern_id = mat.pattern().as_usize();
+    let Some(pattern) = VarPattern::from_index(mat.pattern().as_usize()) else {
+      continue;
+    };
+
     let mut range = mat.range();
-    // A pattern may match multiple times on a single variable, for example
-    // `${HOME:-$HOME}`: `${HOME:-` matches and also the default value
-    // (`$HOME`). Skip past any variables which have already been expanded.
+
+    // Skip if we've already processed past this position
+    // (can happen with nested variables like `${HOME:-$HOME}`)
     if range.start < pos {
       continue;
     }
-    let var = &bytes[group.range()];
-    let default = if pattern_id != 5 {
-      let Some(bracket_pos) = find_brace_end(&bytes[range.end..]) else {
+
+    // Handle closing brace for braced patterns
+    let default = if pattern.needs_closing_brace() {
+      let Some(brace_pos) = find_closing_brace(&bytes[range.end..]) else {
         break;
       };
-      let default = &bytes[range.end..range.end + bracket_pos];
-      range.end += bracket_pos + 1;
-      default
+      let default_bytes = if pattern.has_default() {
+        &bytes[range.end..range.end + brace_pos]
+      } else {
+        &[]
+      };
+      range.end += brace_pos + 1;
+      default_bytes
     } else {
       &[]
     };
-    // safety: this is a codepoint aligned substring of an osstr (always valid)
-    let var = unsafe { OsStr::from_encoded_bytes_unchecked(var) };
-    let expansion = resolve(var);
-    let expansion = match &expansion {
-      Some(val) => {
-        if val.is_empty() && pattern_id < 2 {
-          default
-        } else {
-          val.as_encoded_bytes()
-        }
-      },
-      None => default,
-    };
-    res.extend_from_slice(&bytes[pos..range.start]);
+
+    // Resolve the variable
+    let var_name = bytes_to_osstr(&bytes[var_group.range()]);
+    let var_value = resolve(var_name);
+    let expansion = pattern.resolve(var_value.as_ref(), default);
+
+    // Append literal text before this variable, then the expansion
+    result.extend_from_slice(&bytes[pos..range.start]);
+    result.extend_from_slice(expansion);
     pos = range.end;
-    res.extend_from_slice(expansion);
   }
+
+  // Return original if no expansions occurred
   if pos == 0 {
-    src.into()
-  } else {
-    res.extend_from_slice(&bytes[pos..]);
-    // safety: this is a composition of valid osstr (and codepoint aligned slices
-    // which are also valid)
-    unsafe { OsString::from_encoded_bytes_unchecked(res) }.into()
+    return src.into();
   }
+
+  // Append remaining literal text
+  result.extend_from_slice(&bytes[pos..]);
+  bytes_to_osstring(result).into()
 }
 
-/// performs substitution of enviorment variables. Supports the following
+/// Performs substitution of environment variables. Supports the following
 /// (POSIX) syntax:
 ///
 /// * `$<var>`, `${<var>}`

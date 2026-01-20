@@ -8,7 +8,8 @@ version.workspace = true
 workspace = true
 
 [features]
-unicode-lines = [ "ropey/unicode_lines" ]
+default = ["unicode-lines"]
+unicode-lines = ["ropey/unicode_lines"]
 
 [lib]
 path = "lib.rs"

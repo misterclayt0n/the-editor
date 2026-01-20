@@ -11,11 +11,12 @@ use std::{
 };
 
 use ropey::{RopeSlice, str_utils::byte_to_char_idx};
+use unicode_properties::UnicodeEmoji;
 use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-  chars::{char_is_whitespace, char_is_word},
+  chars::{WhitespaceProperties, char_is_word},
   line_ending::LineEnding,
 };
 
@@ -69,7 +70,13 @@ impl<'a> Grapheme<'a> {
   }
 
   pub fn is_whitespace(&self) -> bool {
-    !matches!(&self, Grapheme::Other { g } if !g.chars().next().is_some_and(char_is_whitespace))
+    match self {
+      Grapheme::Newline | Grapheme::Tab { .. } => true,
+      Grapheme::Other { g } => g
+        .chars()
+        .next()
+        .is_some_and(|ch| WhitespaceProperties::of(ch).is_some()),
+    }
   }
 
   /// TODO: Currently, word boundaries are used for softwrapping.
@@ -104,19 +111,39 @@ pub struct GraphemeStr<'a> {
   phantom: PhantomData<&'a str>,
 }
 
+/// Returns the visual width of a grapheme cluster.
+///
+/// # Width Rules
+/// - ASCII control characters (0x00-0x1F, 0x7F): width 2 (rendered as `^X`)
+/// - ASCII printable characters: width 1
+/// - Zero-width whitespace (ZWSP, BOM, etc.): width 0
+/// - Emoji: width 2
+/// - Other Unicode: determined by `unicode-width` crate
 #[must_use]
 pub fn grapheme_width(g: &str) -> usize {
-  if g.is_ascii() {
-    // Fast-path for pure ASCII: each byte renders with width 1.
-    // Tabs/newlines are handled as special Grapheme variants and
-    // should not reach this function via Grapheme::Other.
-    g.len()
-  } else {
-    // Ensure a minimum width of 1 for ill-formed clusters so
-    // they remain editable.
-    // TODO: properly handle unicode width for all codepoints.
-    UnicodeWidthStr::width(g).max(1)
+  let mut chars = g.chars();
+  let Some(first) = chars.next() else {
+    return 0;
+  };
+
+  if chars.next().is_none() && first.is_ascii() {
+    return match first as u8 {
+      0x00..=0x1F | 0x7F => 2,
+      _ => 1,
+    };
   }
+
+  if let Some(props) = WhitespaceProperties::of(first) {
+    if props.is_zero_width() {
+      return 0;
+    }
+  }
+
+  if first.is_emoji_char() {
+    return 2;
+  }
+
+  UnicodeWidthStr::width(g)
 }
 
 #[must_use]
@@ -468,9 +495,29 @@ mod tests {
 
   #[test]
   fn test_grapheme_width_function() {
+    // ASCII printable
     assert_eq!(grapheme_width("a"), 1);
-    assert_eq!(grapheme_width("\u{0007}"), 1); // ascii control -> width 1 by design
-    assert_eq!(grapheme_width("a\u{0301}"), 1); // combining sequence still width 1
-    assert_eq!(grapheme_width("漢"), 2); // wide CJK
+    assert_eq!(grapheme_width("Z"), 1);
+    assert_eq!(grapheme_width("!"), 1);
+
+    // ASCII control characters -> width 2 (rendered as ^X)
+    assert_eq!(grapheme_width("\u{0000}"), 2); // NUL -> ^@
+    assert_eq!(grapheme_width("\u{0007}"), 2); // BEL -> ^G
+    assert_eq!(grapheme_width("\u{001B}"), 2); // ESC -> ^[
+    assert_eq!(grapheme_width("\u{007F}"), 2); // DEL -> ^?
+
+    // Zero-width whitespace -> width 0
+    assert_eq!(grapheme_width("\u{200B}"), 0); // Zero-width space
+    assert_eq!(grapheme_width("\u{FEFF}"), 0); // BOM / ZWNBSP
+
+    // Emoji -> width 2
+    assert_eq!(grapheme_width("😀"), 2);
+    assert_eq!(grapheme_width("🇺🇸"), 2); // Flag emoji
+
+    // Wide CJK
+    assert_eq!(grapheme_width("漢"), 2);
+
+    // Combining sequences
+    assert_eq!(grapheme_width("a\u{0301}"), 1); // a + combining acute
   }
 }

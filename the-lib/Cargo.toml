@@ -1,0 +1,19 @@
+[package]
+name              = "the-lib"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+ropey.workspace       = true
+smallvec.workspace    = true
+smartstring.workspace = true
+the-core              = { path = "../the-core" }
+the-stdx              = { path = "../the-stdx" }
+tree-house.workspace  = true

@@ -1,5 +1,5 @@
 [workspace]
-members  = [ "the-core", "the-dispatch", "the-stdx" ]
+members  = [ "the-core", "the-dispatch", "the-lib", "the-stdx" ]
 resolver = "3"
 
 [workspace.lints.rust]
@@ -25,8 +25,10 @@ parking_lot              = "0.12"
 regex-automata           = "0.4.9"
 regex-cursor             = "0.1.5"
 ropey                    = "1.6.1"
+smallvec                 = "1.15"
 tempfile                 = "3.20.0"
 thiserror                = "2.0"
+tree-house               = { default-features = false, git = "https://github.com/misterclayt0n/tree-house" }
 unicode-general-category = "1.0"
 unicode-linebreak        = "0.1.5"
 unicode-properties       = { default-features = false, features = [ "emoji" ], version = "0.1.4" }
@@ -34,3 +36,4 @@ unicode-segmentation     = "1.12.0"
 unicode-width            = "0.2.2"
 url                      = "2.5.4"
 which                    = "8.0"
+smartstring              = "1.0.1"

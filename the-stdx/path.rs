@@ -22,6 +22,8 @@ use ropey::RopeSlice;
 
 use crate::env::current_working_dir;
 
+const IS_WINDOWS: bool = cfg!(windows);
+
 /// Replaces users home directory from `path` with tilde `~` if the directory
 /// is available, otherwise returns the path unchanged.
 pub fn fold_home_dir<'a>(path: Cow<'a, Path>) -> Cow<'a, Path> {
@@ -62,7 +64,12 @@ pub fn expand_tilde<'a>(path: Cow<'a, Path>) -> Cow<'a, Path> {
 // path, join component, canonicalize new path, strip prefix and join to the
 // final result.
 pub fn normalize(path: impl AsRef<Path>) -> PathBuf {
-  let mut components = path.as_ref().components().peekable();
+  normalize_impl(path.as_ref())
+}
+
+#[cfg(not(windows))]
+fn normalize_impl(path: &Path) -> PathBuf {
+  let mut components = path.components().peekable();
   let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().copied() {
     components.next();
     PathBuf::from(c.as_os_str())
@@ -77,11 +84,34 @@ pub fn normalize(path: impl AsRef<Path>) -> PathBuf {
         ret.push(component.as_os_str());
       },
       Component::CurDir => {},
-      #[cfg(not(windows))]
       Component::ParentDir => {
         ret.pop();
       },
-      #[cfg(windows)]
+      Component::Normal(c) => {
+        ret.push(c);
+      },
+    }
+  }
+  dunce::simplified(&ret).to_path_buf()
+}
+
+#[cfg(windows)]
+fn normalize_impl(path: &Path) -> PathBuf {
+  let mut components = path.components().peekable();
+  let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().copied() {
+    components.next();
+    PathBuf::from(c.as_os_str())
+  } else {
+    PathBuf::new()
+  };
+
+  for component in components {
+    match component {
+      Component::Prefix(..) => unreachable!(),
+      Component::RootDir => {
+        ret.push(component.as_os_str());
+      },
+      Component::CurDir => {},
       Component::ParentDir => {
         if let Some(head) = ret.components().next_back() {
           match head {
@@ -102,18 +132,13 @@ pub fn normalize(path: impl AsRef<Path>) -> PathBuf {
           }
         }
       },
-      #[cfg(not(windows))]
       Component::Normal(c) => {
-        ret.push(c);
-      },
-      #[cfg(windows)]
-      Component::Normal(c) => 'normal: {
         use std::fs::canonicalize;
 
         let new_path = ret.join(c);
         if new_path.is_symlink() {
           ret = new_path;
-          break 'normal;
+          continue;
         }
         let (can_new, can_old) = (canonicalize(&new_path), canonicalize(&ret));
         match (can_new, can_old) {
@@ -136,13 +161,18 @@ pub fn normalize(path: impl AsRef<Path>) -> PathBuf {
 /// want to verify here if the path exists, just normalize it's components.
 pub fn canonicalize(path: impl AsRef<Path>) -> Result<PathBuf> {
   let path = expand_tilde(Cow::Borrowed(path.as_ref()));
+  let cwd = current_working_dir()?;
+  Ok(canonicalize_with_cwd(path, &cwd))
+}
+
+fn canonicalize_with_cwd(path: Cow<'_, Path>, cwd: &Path) -> PathBuf {
   let path = if path.is_relative() {
-    Cow::Owned(current_working_dir()?.join(path))
+    Cow::Owned(cwd.join(path.as_ref()))
   } else {
     path
   };
 
-  Ok(normalize(path))
+  normalize(path)
 }
 
 /// Convert path into a relative path
@@ -151,16 +181,21 @@ where
   P: Into<Cow<'a, Path>>,
 {
   let path = path.into();
+  let cwd = current_working_dir()?;
+  Ok(get_relative_path_with_cwd(path, &cwd))
+}
+
+fn get_relative_path_with_cwd<'a>(path: Cow<'a, Path>, cwd: &Path) -> Cow<'a, Path> {
   if path.is_absolute() {
-    let cwdir = normalize(current_working_dir()?);
-    if let Ok(stripped) = normalize(&path).strip_prefix(cwdir) {
-      return Ok(Cow::Owned(PathBuf::from(stripped)));
+    let cwdir = normalize(cwd);
+    if let Ok(stripped) = normalize(path.as_ref()).strip_prefix(cwdir) {
+      return Cow::Owned(PathBuf::from(stripped));
     }
 
-    return Ok(fold_home_dir(path));
+    return fold_home_dir(path);
   }
 
-  Ok(path)
+  path
 }
 
 /// Returns a truncated filepath where the basepart of the path is reduced to
@@ -221,12 +256,17 @@ fn path_component_regex(windows: bool) -> String {
   let space_escape = if windows { r"[\^`]\s" } else { r"[\\]\s" };
   // partially baesd on what's allowed in an url but with some care to avoid
   // false positives (like any kind of brackets or quotes)
-  r"[\w@.\-+#$%?!,;~&]|".to_owned() + space_escape
+  let mut regex = String::from(r"[\w@.\-+#$%?!,;~&]|");
+  regex.push_str(space_escape);
+  regex
 }
 
 /// Regex for delimited environment captures like `${HOME}`.
 fn braced_env_regex(windows: bool) -> String {
-  r"\$\{(?:".to_owned() + &path_component_regex(windows) + r"|[/:=])+\}"
+  let mut regex = String::from(r"\$\{(?:");
+  regex.push_str(&path_component_regex(windows));
+  regex.push_str(r"|[/:=])+\}");
+  regex
 }
 
 fn compile_path_regex(
@@ -260,20 +300,50 @@ fn compile_path_regex(
   } else {
     String::new()
   };
-  let path_regex =
-    format!("{prefix}(?:{path_start}?(?:(?:{sep}{component}+)+{sep}?|{sep}){optional}){postfix}");
+  let mut path_regex = String::with_capacity(
+    prefix.len() + postfix.len() + path_start.len() + component.len() + optional.len() + 32,
+  );
+  path_regex.push_str(prefix);
+  path_regex.push_str("(?:");
+  path_regex.push_str(&path_start);
+  path_regex.push_str("?(?:(?:");
+  path_regex.push_str(sep);
+  path_regex.push_str(&component);
+  path_regex.push_str("+)+");
+  path_regex.push_str(sep);
+  path_regex.push_str("?|");
+  path_regex.push_str(sep);
+  path_regex.push_str(")");
+  path_regex.push_str(&optional);
+  path_regex.push_str(")");
+  path_regex.push_str(postfix);
   Regex::new(&path_regex).expect("path regex should compile")
+}
+
+fn path_regex(match_single_file: bool, anchored: bool) -> &'static Regex {
+  match (anchored, match_single_file) {
+    (true, true) => {
+      static REGEX: Lazy<Regex> = Lazy::new(|| compile_path_regex("", "$", true, IS_WINDOWS));
+      &*REGEX
+    },
+    (true, false) => {
+      static REGEX: Lazy<Regex> = Lazy::new(|| compile_path_regex("", "$", false, IS_WINDOWS));
+      &*REGEX
+    },
+    (false, true) => {
+      static REGEX: Lazy<Regex> = Lazy::new(|| compile_path_regex("", "", true, IS_WINDOWS));
+      &*REGEX
+    },
+    (false, false) => {
+      static REGEX: Lazy<Regex> = Lazy::new(|| compile_path_regex("", "", false, IS_WINDOWS));
+      &*REGEX
+    },
+  }
 }
 
 /// If `src` ends with a path then this function returns the part of the slice.
 pub fn get_path_suffix(src: RopeSlice<'_>, match_single_file: bool) -> Option<RopeSlice<'_>> {
-  let regex = if match_single_file {
-    static REGEX: Lazy<Regex> = Lazy::new(|| compile_path_regex("", "$", true, cfg!(windows)));
-    &*REGEX
-  } else {
-    static REGEX: Lazy<Regex> = Lazy::new(|| compile_path_regex("", "$", false, cfg!(windows)));
-    &*REGEX
-  };
+  let regex = path_regex(match_single_file, true);
 
   regex
     .find(Input::new(src))
@@ -285,13 +355,7 @@ pub fn find_paths(
   src: RopeSlice<'_>,
   match_single_file: bool,
 ) -> impl Iterator<Item = Range<usize>> + '_ {
-  let regex = if match_single_file {
-    static REGEX: Lazy<Regex> = Lazy::new(|| compile_path_regex("", "", true, cfg!(windows)));
-    &*REGEX
-  } else {
-    static REGEX: Lazy<Regex> = Lazy::new(|| compile_path_regex("", "", false, cfg!(windows)));
-    &*REGEX
-  };
+  let regex = path_regex(match_single_file, false);
   regex.find_iter(Input::new(src)).map(|mat| mat.range())
 }
 

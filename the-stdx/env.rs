@@ -6,6 +6,7 @@ use std::{
     OsStr,
     OsString,
   },
+  ops::Range,
   path::{
     Path,
     PathBuf,
@@ -18,10 +19,23 @@ use eyre::{
 };
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
+use regex_automata::meta::Captures;
 
 // We keep the CWD as a static so that we can access it in places where we don't
 // have access to the Editor
 static CWD: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+fn resolve_working_dir(cwd: PathBuf, pwd: Option<OsString>) -> PathBuf {
+  let Some(pwd) = pwd.map(PathBuf::from) else {
+    return cwd;
+  };
+
+  if pwd.canonicalize().ok().as_ref() == Some(&cwd) {
+    pwd
+  } else {
+    cwd
+  }
+}
 
 /// Get the current working directory.
 /// This information is managed internally as the call to std::env::current_dir
@@ -33,17 +47,13 @@ pub fn current_working_dir() -> Result<PathBuf> {
 
   // implementation of crossplatform pwd -L
   // we want pwd -L so that symlinked directories are handled correctly
-  let mut cwd = std::env::current_dir().wrap_err("failed to get current working directory")?;
+  let cwd = std::env::current_dir().wrap_err("failed to get current working directory")?;
 
   let pwd = std::env::var_os("PWD");
   #[cfg(windows)]
   let pwd = pwd.or_else(|| std::env::var_os("CD"));
 
-  if let Some(pwd) = pwd.map(PathBuf::from)
-    && pwd.canonicalize().ok().as_ref() == Some(&cwd)
-  {
-    cwd = pwd;
-  }
+  let cwd = resolve_working_dir(cwd, pwd);
 
   let mut dst = CWD.write();
   *dst = Some(cwd.clone());
@@ -157,20 +167,11 @@ fn bytes_to_osstring(bytes: Vec<u8>) -> OsString {
 
 /// Find the position of the closing brace, accounting for nested braces.
 fn find_closing_brace(src: &[u8]) -> Option<usize> {
-  use regex_automata::meta::Regex;
-
-  static REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::builder()
-      .build("[{}]")
-      .expect("brace regex should compile")
-  });
-
   let mut depth = 0;
-  for mat in REGEX.find_iter(src) {
-    let pos = mat.start();
-    match src[pos] {
+  for (idx, byte) in src.iter().enumerate() {
+    match byte {
       b'{' => depth += 1,
-      b'}' if depth == 0 => return Some(pos),
+      b'}' if depth == 0 => return Some(idx),
       b'}' => depth -= 1,
       _ => {},
     }
@@ -198,6 +199,60 @@ fn var_expansion_regex() -> &'static regex_automata::meta::Regex {
   &REGEX
 }
 
+struct Expansion<'a> {
+  range: Range<usize>,
+  var_range: Range<usize>,
+  default: &'a [u8],
+  pattern: VarPattern,
+}
+
+enum ExpansionParse<'a> {
+  Skip,
+  MissingBrace,
+  Expansion(Expansion<'a>),
+}
+
+fn parse_expansion<'a>(bytes: &'a [u8], captures: &Captures, pos: usize) -> ExpansionParse<'a> {
+  let Some(mat) = captures.get_match() else {
+    return ExpansionParse::Skip;
+  };
+
+  let Some(var_group) = captures.get_group(1) else {
+    return ExpansionParse::Skip;
+  };
+
+  let Some(pattern) = VarPattern::from_index(mat.pattern().as_usize()) else {
+    return ExpansionParse::Skip;
+  };
+
+  let mut range = mat.range();
+  if range.start < pos {
+    return ExpansionParse::Skip;
+  }
+
+  let default = if pattern.needs_closing_brace() {
+    let Some(brace_pos) = find_closing_brace(&bytes[range.end..]) else {
+      return ExpansionParse::MissingBrace;
+    };
+    let default_bytes = if pattern.has_default() {
+      &bytes[range.end..range.end + brace_pos]
+    } else {
+      &[]
+    };
+    range.end += brace_pos + 1;
+    default_bytes
+  } else {
+    &[]
+  };
+
+  ExpansionParse::Expansion(Expansion {
+    range,
+    var_range: var_group.range(),
+    default,
+    pattern,
+  })
+}
+
 /// Internal implementation of environment variable expansion.
 fn expand_impl(src: &OsStr, mut resolve: impl FnMut(&OsStr) -> Option<OsString>) -> Cow<'_, OsStr> {
   let bytes = src.as_encoded_bytes();
@@ -205,44 +260,21 @@ fn expand_impl(src: &OsStr, mut resolve: impl FnMut(&OsStr) -> Option<OsString>)
   let mut pos = 0;
 
   for captures in var_expansion_regex().captures_iter(bytes) {
-    let Some(mat) = captures.get_match() else {
-      continue;
+    let expansion = match parse_expansion(bytes, &captures, pos) {
+      ExpansionParse::Skip => continue,
+      ExpansionParse::MissingBrace => break,
+      ExpansionParse::Expansion(expansion) => expansion,
     };
 
-    let Some(var_group) = captures.get_group(1) else {
-      continue;
-    };
-
-    let Some(pattern) = VarPattern::from_index(mat.pattern().as_usize()) else {
-      continue;
-    };
-
-    let mut range = mat.range();
-
-    // Skip if we've already processed past this position
-    // (can happen with nested variables like `${HOME:-$HOME}`)
-    if range.start < pos {
-      continue;
-    }
-
-    // Handle closing brace for braced patterns
-    let default = if pattern.needs_closing_brace() {
-      let Some(brace_pos) = find_closing_brace(&bytes[range.end..]) else {
-        break;
-      };
-      let default_bytes = if pattern.has_default() {
-        &bytes[range.end..range.end + brace_pos]
-      } else {
-        &[]
-      };
-      range.end += brace_pos + 1;
-      default_bytes
-    } else {
-      &[]
-    };
+    let Expansion {
+      range,
+      var_range,
+      default,
+      pattern,
+    } = expansion;
 
     // Resolve the variable
-    let var_name = bytes_to_osstr(&bytes[var_group.range()]);
+    let var_name = bytes_to_osstr(&bytes[var_range.start..var_range.end]);
     let var_value = resolve(var_name);
     let expansion = pattern.resolve(var_value.as_ref(), default);
 

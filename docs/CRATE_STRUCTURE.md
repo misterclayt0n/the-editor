@@ -71,3 +71,18 @@ Notes:
 - core/text_format.rs - text layout formatting parameters.
 - core/theme.rs - theme and style definitions.
 - core/tool_display.rs - tool call display formatting.
+
+## considerations
+- core/history.rs → build undo/redo on top of your new Transaction API.
+- core/registers.rs → yank/put storage (pure data, minimal deps).
+- core/search.rs + core/fuzzy.rs + core/diff.rs → pure query/algorithms; good to lock in before doc/view state.
+- core/match_brackets.rs, core/object.rs, core/textobject.rs, core/surround.rs, core/comment.rs, core/indent.rs →
+  all can be expressed as “selection in → transaction out”.
+- Then a slim Document/Buffer core (rope + selections + history + config), explicitly excluding IO, LSP, syntax,
+  diagnostics, view data, etc. The old document.rs mixes too many services.
+
+On commands.rs + command_registry.rs:
+You’re right—those shouldn’t live in the-lib if the goal is to keep clients “dumb” and let the-dispatch own
+command wiring + UI + editor context. The old command_registry.rs depends on editor state, prompt UI,
+completions, LSP, etc. That belongs in the dispatch/app layer. In the-lib, keep only the command‑line parser
+(command_line.rs) and maybe a tiny CommandSpec/Signature type if you want shared metadata.

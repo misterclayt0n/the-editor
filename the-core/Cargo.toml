@@ -37,3 +37,7 @@ harness = false
 [[bench]]
 name    = "chars"
 harness = false
+
+[[bench]]
+name    = "line_ending"
+harness = false

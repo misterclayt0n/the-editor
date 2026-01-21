@@ -780,7 +780,7 @@ impl Transaction {
     I: IntoIterator<Item = Change>,
   {
     let len = doc.len_chars();
-    let mut changes = changes.into_iter();
+    let changes = changes.into_iter();
     let (lower, upper) = changes.size_hint();
     let size = upper.unwrap_or(lower);
     let mut changeset = ChangeSet::with_capacity(2 * size + 1); // rough estimate

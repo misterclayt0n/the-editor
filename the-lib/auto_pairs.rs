@@ -3,8 +3,14 @@ use std::collections::HashMap;
 use ropey::Rope;
 use smallvec::SmallVec;
 use the_core::grapheme;
+use thiserror::Error;
 
-use crate::{Tendril, movement::Direction, selection::{Range, Selection}, transaction::Transaction};
+use crate::{
+  Tendril,
+  movement::Direction,
+  selection::{Range, Selection, SelectionError},
+  transaction::{Change, Transaction, TransactionError},
+};
 
 // Heavily based on https://github.com/codemirror/closebrackets/
 pub const DEFAULT_PAIRS: &[(char, char)] = &[
@@ -28,6 +34,17 @@ pub struct Pair {
 #[derive(Debug, Clone)]
 pub struct AutoPairs(HashMap<char, Pair>);
 
+pub type Result<T> = std::result::Result<T, AutoPairsError>;
+
+#[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AutoPairsError {
+  #[error(transparent)]
+  Selection(#[from] SelectionError),
+  #[error(transparent)]
+  Transaction(#[from] TransactionError),
+}
+
 impl Pair {
   /// true if open == close
   pub fn same(&self) -> bool {
@@ -48,13 +65,8 @@ impl Pair {
 
   /// true if all of the pair's conditions hold for the given document and range
   pub fn should_close(&self, doc: &Rope, range: &Range) -> bool {
-    let mut should_close = Self::next_is_not_alpha(doc, range);
-
-    if self.same() {
-      should_close &= Self::prev_is_not_alpha(doc, range);
-    }
-
-    should_close
+    Self::next_is_not_alpha(doc, range)
+      && (!self.same() || Self::prev_is_not_alpha(doc, range))
   }
 }
 
@@ -75,14 +87,16 @@ impl From<(&char, &char)> for Pair {
 
 impl AutoPairs {
   /// Make a new AutoPairs set with the given pairs and default conditions.
-  pub fn new<'a, V, A>(pairs: V) -> Self
+  pub fn new<V, A>(pairs: V) -> Self
   where
-    V: IntoIterator<Item = A> + 'a,
+    V: IntoIterator<Item = A>,
     A: Into<Pair>,
   {
-    let mut auto_pairs = HashMap::new();
+    let iter = pairs.into_iter();
+    let (lower, upper) = iter.size_hint();
+    let mut auto_pairs = HashMap::with_capacity(upper.unwrap_or(lower) * 2);
 
-    for pair in pairs.into_iter() {
+    for pair in iter {
       let auto_pair = pair.into();
 
       auto_pairs.insert(auto_pair.open, auto_pair);
@@ -121,21 +135,26 @@ impl Default for AutoPairs {
 //   the middle of triple quotes, and more exotic pairs like Jinja's {% %}
 
 #[must_use]
-pub fn hook(doc: &Rope, selection: &Selection, ch: char, pairs: &AutoPairs) -> Option<Transaction> {
+pub fn hook(
+  doc: &Rope,
+  selection: &Selection,
+  ch: char,
+  pairs: &AutoPairs,
+) -> Result<Option<Transaction>> {
   tracing::trace!("autopairs hook selection: {:#?}", selection);
 
   if let Some(pair) = pairs.get(ch) {
     if pair.same() {
-      return Some(handle_same(doc, selection, pair));
+      return Ok(Some(handle_same(doc, selection, pair)?));
     } else if pair.open == ch {
-      return Some(handle_open(doc, selection, pair));
+      return Ok(Some(handle_open(doc, selection, pair)?));
     } else if pair.close == ch {
       // && char_at pos == close
-      return Some(handle_close(doc, selection, pair));
+      return Ok(Some(handle_close(doc, selection, pair)?));
     }
   }
 
-  None
+  Ok(None)
 }
 
 
@@ -236,7 +255,7 @@ fn get_next_range(doc: &Rope, start_range: &Range, offset: usize, len_inserted: 
 
     (_, Direction::Forward) => {
       if single_grapheme {
-        grapheme::prev_grapheme_boundary(doc.slice(..), start_range.head) + 1
+        grapheme::prev_grapheme_boundary(doc_slice, start_range.head) + 1
 
       // if we are appending, the anchor stays where it is; only offset
       // for multiple range insertions
@@ -250,7 +269,7 @@ fn get_next_range(doc: &Rope, start_range: &Range, offset: usize, len_inserted: 
         // if we're backward, then the head is at the first char
         // of the typed char, so we need to add the length of
         // the closing char
-        grapheme::prev_grapheme_boundary(doc.slice(..), start_range.anchor) + len_inserted + offset
+        grapheme::prev_grapheme_boundary(doc_slice, start_range.anchor) + len_inserted + offset
       } else {
         // when we are inserting in front of a selection, we need to move
         // the anchor over by however many characters were inserted overall
@@ -262,91 +281,77 @@ fn get_next_range(doc: &Rope, start_range: &Range, offset: usize, len_inserted: 
   Range::new(end_anchor, end_head)
 }
 
-fn handle_open(doc: &Rope, selection: &Selection, pair: &Pair) -> Transaction {
-  let mut end_ranges = SmallVec::with_capacity(selection.len());
-  let mut offs = 0;
+fn build_transaction(
+  doc: &Rope,
+  selection: &Selection,
+  mut make_change: impl FnMut(&Range) -> (Change, usize),
+) -> Result<Transaction> {
+  let mut end_ranges = SmallVec::with_capacity(selection.ranges().len());
+  let mut offset = 0;
 
   let transaction = Transaction::change_by_selection(doc, selection, |start_range| {
+    let (change, len_inserted) = make_change(start_range);
+    let next_range = get_next_range(doc, start_range, offset, len_inserted);
+    end_ranges.push(next_range);
+    offset += len_inserted;
+    change
+  })?;
+
+  let selection = Selection::new(end_ranges, selection.primary_index())?;
+  let transaction = transaction.with_selection(selection);
+  tracing::debug!("auto pair transaction: {:#?}", transaction);
+  Ok(transaction)
+}
+
+fn handle_open(doc: &Rope, selection: &Selection, pair: &Pair) -> Result<Transaction> {
+  build_transaction(doc, selection, |start_range| {
     let cursor = start_range.cursor(doc.slice(..));
     let next_char = doc.get_char(cursor);
-    let len_inserted;
 
     // Since auto pairs are currently limited to single chars, we're either
     // inserting exactly one or two chars. When arbitrary length pairs are
     // added, these will need to be changed.
-    let change = match next_char {
+    match next_char {
       Some(_) if !pair.should_close(doc, start_range) => {
-        len_inserted = 1;
         let mut tendril = Tendril::new();
         tendril.push(pair.open);
-        (cursor, cursor, Some(tendril))
+        ((cursor, cursor, Some(tendril)), 1)
       },
       _ => {
         // insert open & close
         let pair_str = Tendril::from_iter([pair.open, pair.close]);
-        len_inserted = 2;
-        (cursor, cursor, Some(pair_str))
+        ((cursor, cursor, Some(pair_str)), 2)
       },
-    };
-
-    let next_range = get_next_range(doc, start_range, offs, len_inserted);
-    end_ranges.push(next_range);
-    offs += len_inserted;
-
-    change
-  });
-
-  let t = transaction.with_selection(Selection::new(end_ranges, selection.primary_index()));
-  tracing::debug!("auto pair transaction: {:#?}", t);
-  t
+    }
+  })
 }
 
-fn handle_close(doc: &Rope, selection: &Selection, pair: &Pair) -> Transaction {
-  let mut end_ranges = SmallVec::with_capacity(selection.len());
-  let mut offs = 0;
-
-  let transaction = Transaction::change_by_selection(doc, selection, |start_range| {
+fn handle_close(doc: &Rope, selection: &Selection, pair: &Pair) -> Result<Transaction> {
+  build_transaction(doc, selection, |start_range| {
     let cursor = start_range.cursor(doc.slice(..));
     let next_char = doc.get_char(cursor);
-    let mut len_inserted = 0;
 
-    let change = if next_char == Some(pair.close) {
+    if next_char == Some(pair.close) {
       // return transaction that moves past close
-      (cursor, cursor, None) // no-op
+      ((cursor, cursor, None), 0) // no-op
     } else {
-      len_inserted = 1;
       let mut tendril = Tendril::new();
       tendril.push(pair.close);
-      (cursor, cursor, Some(tendril))
-    };
-
-    let next_range = get_next_range(doc, start_range, offs, len_inserted);
-    end_ranges.push(next_range);
-    offs += len_inserted;
-
-    change
-  });
-
-  let t = transaction.with_selection(Selection::new(end_ranges, selection.primary_index()));
-  tracing::debug!("auto pair transaction: {:#?}", t);
-  t
+      ((cursor, cursor, Some(tendril)), 1)
+    }
+  })
 }
 
 /// handle cases where open and close is the same, or in triples
 /// ("""docstring""")
-fn handle_same(doc: &Rope, selection: &Selection, pair: &Pair) -> Transaction {
-  let mut end_ranges = SmallVec::with_capacity(selection.len());
-
-  let mut offs = 0;
-
-  let transaction = Transaction::change_by_selection(doc, selection, |start_range| {
+fn handle_same(doc: &Rope, selection: &Selection, pair: &Pair) -> Result<Transaction> {
+  build_transaction(doc, selection, |start_range| {
     let cursor = start_range.cursor(doc.slice(..));
-    let mut len_inserted = 0;
     let next_char = doc.get_char(cursor);
 
-    let change = if next_char == Some(pair.open) {
+    if next_char == Some(pair.open) {
       //  return transaction that moves past close
-      (cursor, cursor, None) // no-op
+      ((cursor, cursor, None), 0) // no-op
     } else {
       let mut pair_str = Tendril::new();
       pair_str.push(pair.open);
@@ -357,18 +362,8 @@ fn handle_same(doc: &Rope, selection: &Selection, pair: &Pair) -> Transaction {
         pair_str.push(pair.close);
       }
 
-      len_inserted += pair_str.chars().count();
-      (cursor, cursor, Some(pair_str))
-    };
-
-    let next_range = get_next_range(doc, start_range, offs, len_inserted);
-    end_ranges.push(next_range);
-    offs += len_inserted;
-
-    change
-  });
-
-  let t = transaction.with_selection(Selection::new(end_ranges, selection.primary_index()));
-  tracing::debug!("auto pair transaction: {:#?}", t);
-  t
+      let len_inserted = pair_str.chars().count();
+      ((cursor, cursor, Some(pair_str)), len_inserted)
+    }
+  })
 }

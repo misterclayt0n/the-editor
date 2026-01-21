@@ -523,7 +523,7 @@ impl Selection {
     if self.ranges.len() == 1 {
       self
     } else {
-      Self::new(smallvec![self.ranges[self.primary_index]], 0)
+      Self::new_unchecked(smallvec![self.ranges[self.primary_index]], 0)
     }
   }
 

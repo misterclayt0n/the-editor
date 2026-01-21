@@ -14,7 +14,7 @@ workspace = true
 ropey.workspace       = true
 smallvec.workspace    = true
 smartstring.workspace = true
-eyre.workspace        = true
+thiserror.workspace   = true
 the-core              = { path = "../the-core" }
 the-stdx              = { path = "../the-stdx" }
 tree-house.workspace  = true

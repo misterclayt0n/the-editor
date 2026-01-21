@@ -637,12 +637,12 @@ dependencies = [
 name = "the-lib"
 version = "0.1.0"
 dependencies = [
- "eyre",
  "ropey",
  "smallvec",
  "smartstring",
  "the-core",
  "the-stdx",
+ "thiserror",
  "tree-house",
 ]
 

@@ -1,15 +1,27 @@
 use std::{borrow::Cow, iter::once};
 
-use eyre::{Result, eyre};
 use ropey::{Rope, RopeBuilder, RopeSlice};
 use smallvec::SmallVec;
 use the_core::chars::char_is_word;
+use thiserror::Error;
 
 use crate::{selection::{Range, Selection}, Tendril};
+
+pub type Result<T> = std::result::Result<T, TransactionError>;
 
 /// (from, to) replacement.
 pub type Change = (usize, usize, Option<Tendril>);
 pub type Deletion = (usize, usize);
+
+#[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TransactionError {
+  #[error("changeset length mismatch: expected {expected}, got {actual}")]
+  LengthMismatch {
+    expected: usize,
+    actual: usize,
+  },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Operation {
@@ -345,10 +357,10 @@ impl ChangeSet {
 
   fn ensure_len(&self, text_len: usize) -> Result<()> {
     if text_len != self.len {
-      return Err(eyre(format!(
-        "changeset length mismatch: expected {}, got {}",
-        self.len, text_len
-      )));
+      return Err(TransactionError::LengthMismatch {
+        expected: self.len,
+        actual:   text_len,
+      });
     }
     Ok(())
   }
@@ -1103,8 +1115,22 @@ mod test {
     let changes = ChangeSet::new(doc.slice(..));
     let mut other = Rope::from("nope");
 
-    assert!(changes.apply(&mut other).is_err());
-    assert!(changes.apply_to(&other).is_err());
+    let err = changes.apply(&mut other).unwrap_err();
+    assert!(matches!(
+      err,
+      TransactionError::LengthMismatch {
+        expected: 5,
+        actual: 4,
+      }
+    ));
+    let err = changes.apply_to(&other).unwrap_err();
+    assert!(matches!(
+      err,
+      TransactionError::LengthMismatch {
+        expected: 5,
+        actual: 4,
+      }
+    ));
     assert_eq!(other, Rope::from("nope"));
   }
 }

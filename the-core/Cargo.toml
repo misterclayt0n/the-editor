@@ -26,3 +26,10 @@ unicode-width.workspace            = true
 url.workspace                      = true
 
 the-stdx = { path = "../the-stdx" }
+
+[dev-dependencies]
+divan = "0.1.21"
+
+[[bench]]
+name    = "grapheme"
+harness = false

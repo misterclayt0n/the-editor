@@ -157,6 +157,53 @@ pub fn hook(
   Ok(None)
 }
 
+/// Delete hook for removing matching auto-paired characters around the cursor.
+#[must_use]
+pub fn delete_hook(
+  doc: &Rope,
+  selection: &Selection,
+  pairs: &AutoPairs,
+) -> Result<Option<Transaction>> {
+  let doc_slice = doc.slice(..);
+  let mut deletions = Vec::with_capacity(selection.ranges().len());
+
+  for range in selection.iter() {
+    if !range.is_empty() {
+      return Ok(None);
+    }
+
+    let cursor = range.cursor(doc_slice);
+    if cursor == 0 || cursor >= doc.len_chars() {
+      return Ok(None);
+    }
+
+    let prev_char = doc.get_char(cursor.saturating_sub(1));
+    let next_char = doc.get_char(cursor);
+    let (Some(prev_char), Some(next_char)) = (prev_char, next_char) else {
+      return Ok(None);
+    };
+
+    let Some(pair) = pairs.get(prev_char) else {
+      return Ok(None);
+    };
+    if pair.open != prev_char || pair.close != next_char {
+      return Ok(None);
+    }
+
+    let from = grapheme::prev_grapheme_boundary(doc_slice, cursor);
+    let to = grapheme::next_grapheme_boundary(doc_slice, cursor);
+    deletions.push((from, to));
+  }
+
+  if deletions.is_empty() {
+    return Ok(None);
+  }
+
+  let transaction = Transaction::delete(doc, deletions.into_iter())?;
+  let new_selection = selection.clone().map(transaction.changes())?;
+  Ok(Some(transaction.with_selection(new_selection)))
+}
+
 
 fn prev_char(doc: &Rope, pos: usize) -> Option<char> {
   if pos == 0 {

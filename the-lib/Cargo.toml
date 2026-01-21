@@ -18,3 +18,4 @@ thiserror.workspace   = true
 the-core              = { path = "../the-core" }
 the-stdx              = { path = "../the-stdx" }
 tree-house.workspace  = true
+tracing.workspace  = true

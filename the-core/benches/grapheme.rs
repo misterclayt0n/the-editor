@@ -155,9 +155,7 @@ mod width {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Grapheme boundary benchmarks - small documents (~100 bytes)
-// ─────────────────────────────────────────────────────────────────────────────
+// Grapheme boundary benchmarks - small documents (~100 bytes).
 
 mod boundary_small {
   use super::*;
@@ -235,9 +233,7 @@ mod boundary_small {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Grapheme boundary benchmarks - medium documents (~10KB)
-// ─────────────────────────────────────────────────────────────────────────────
+// Grapheme boundary benchmarks - medium documents (~10KB).
 
 mod boundary_medium {
   use super::*;
@@ -295,9 +291,9 @@ mod boundary_medium {
   }
 }
 
-// Grapheme boundary benchmarks - large documents (~1MB).
+// Grapheme boundary benchmarks - 1MB documents.
 
-mod boundary_large {
+mod boundary_1mb {
   use super::*;
 
   const SIZE: usize = 1024 * 1024; // 1MB
@@ -315,6 +311,198 @@ mod boundary_large {
   #[divan::bench]
   fn next_cjk(bencher: Bencher) {
     let text = make_cjk_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| next_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+
+  #[divan::bench]
+  fn next_mixed(bencher: Bencher) {
+    let text = make_mixed_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| next_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+
+  #[divan::bench]
+  fn prev_ascii(bencher: Bencher) {
+    let text = make_ascii_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| prev_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+
+  #[divan::bench]
+  fn prev_combining(bencher: Bencher) {
+    let text = make_combining_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| prev_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+}
+
+// Grapheme boundary benchmarks - very large documents (100MB).
+
+mod boundary_100mb {
+  use super::*;
+
+  const SIZE: usize = 100 * 1024 * 1024; // 100MB
+
+  #[divan::bench]
+  fn next_ascii(bencher: Bencher) {
+    let text = make_ascii_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| next_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+
+  #[divan::bench]
+  fn next_mixed(bencher: Bencher) {
+    let text = make_mixed_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| next_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+
+  #[divan::bench]
+  fn prev_ascii(bencher: Bencher) {
+    let text = make_ascii_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| prev_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+
+  #[divan::bench]
+  fn prev_combining(bencher: Bencher) {
+    let text = make_combining_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| prev_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+}
+
+// Grapheme boundary benchmarks - 500MB documents.
+
+mod boundary_500mb {
+  use super::*;
+
+  const SIZE: usize = 500 * 1024 * 1024; // 500MB
+
+  #[divan::bench]
+  fn next_ascii(bencher: Bencher) {
+    let text = make_ascii_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| next_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+
+  #[divan::bench]
+  fn next_mixed(bencher: Bencher) {
+    let text = make_mixed_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| next_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+
+  #[divan::bench]
+  fn prev_ascii(bencher: Bencher) {
+    let text = make_ascii_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| prev_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+
+  #[divan::bench]
+  fn prev_combining(bencher: Bencher) {
+    let text = make_combining_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| prev_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+}
+
+// Grapheme boundary benchmarks - 1GB documents.
+
+mod boundary_1gb {
+  use super::*;
+
+  const SIZE: usize = 1024 * 1024 * 1024; // 1GB
+
+  #[divan::bench]
+  fn next_ascii(bencher: Bencher) {
+    let text = make_ascii_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| next_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+
+  #[divan::bench]
+  fn next_mixed(bencher: Bencher) {
+    let text = make_mixed_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| next_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+
+  #[divan::bench]
+  fn prev_ascii(bencher: Bencher) {
+    let text = make_ascii_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| prev_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+
+  #[divan::bench]
+  fn prev_combining(bencher: Bencher) {
+    let text = make_combining_text(SIZE);
+    let rope = Rope::from_str(&text);
+    let slice = rope.slice(..);
+    let mid = slice.len_chars() / 2;
+
+    bencher.bench(|| prev_grapheme_boundary(black_box(slice), black_box(mid)));
+  }
+}
+
+// Grapheme boundary benchmarks - 2GB documents.
+
+mod boundary_2gb {
+  use super::*;
+
+  const SIZE: usize = 2 * 1024 * 1024 * 1024; // 2GB
+
+  #[divan::bench]
+  fn next_ascii(bencher: Bencher) {
+    let text = make_ascii_text(SIZE);
     let rope = Rope::from_str(&text);
     let slice = rope.slice(..);
     let mid = slice.len_chars() / 2;

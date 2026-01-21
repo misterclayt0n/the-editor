@@ -19,3 +19,10 @@ the-core              = { path = "../the-core" }
 the-stdx              = { path = "../the-stdx" }
 tree-house.workspace  = true
 tracing.workspace  = true
+
+[dev-dependencies]
+divan = "0.1.21"
+
+[[bench]]
+name    = "transaction"
+harness = false

@@ -1,6 +1,7 @@
 use std::{borrow::Cow, iter::once};
 
-use ropey::{Rope, RopeSlice};
+use eyre::{Result, eyre};
+use ropey::{Rope, RopeBuilder, RopeSlice};
 use smallvec::SmallVec;
 use the_core::chars::char_is_word;
 
@@ -307,6 +308,14 @@ impl ChangeSet {
   /// implementation. The document parameter expects the original document
   /// before this change was applied.
   pub fn invert(&self, original_doc: &Rope) -> Self {
+    if self.changes.is_empty() {
+      return ChangeSet {
+        changes: Vec::new(),
+        len: self.len_after,
+        len_after: self.len,
+      };
+    }
+
     assert!(original_doc.len_chars() == self.len);
 
     let mut changes = Self::with_capacity(self.changes.len());
@@ -334,12 +343,19 @@ impl ChangeSet {
     changes
   }
 
-  /// Returns true if applied successfully.
-  pub fn apply(&self, text: &mut Rope) -> bool {
-    if text.len_chars() != self.len {
-      return false;
+  fn ensure_len(&self, text_len: usize) -> Result<()> {
+    if text_len != self.len {
+      return Err(eyre(format!(
+        "changeset length mismatch: expected {}, got {}",
+        self.len, text_len
+      )));
     }
+    Ok(())
+  }
 
+  /// Apply this changeset in-place.
+  pub fn apply(&self, text: &mut Rope) -> Result<()> {
+    self.ensure_len(text.len_chars())?;
     let mut pos = 0;
 
     for change in &self.changes {
@@ -354,7 +370,40 @@ impl ChangeSet {
       }
     }
 
-    true
+    Ok(())
+  }
+
+  /// Apply this changeset to a rope and return the updated rope.
+  pub fn apply_to(&self, text: &Rope) -> Result<Rope> {
+    self.ensure_len(text.len_chars())?;
+    if self.changes.is_empty() {
+      return Ok(text.clone());
+    }
+
+    let mut builder = RopeBuilder::new();
+    let mut last = 0;
+
+    for (from, to, insert) in self.changes_iter() {
+      if last < from {
+        let slice = text.slice(last..from);
+        for chunk in slice.chunks() {
+          builder.append(chunk);
+        }
+      }
+      if let Some(text) = insert {
+        builder.append(text.as_str());
+      }
+      last = to;
+    }
+
+    if last < self.len {
+      let slice = text.slice(last..self.len);
+      for chunk in slice.chunks() {
+        builder.append(chunk);
+      }
+    }
+
+    Ok(builder.finish())
   }
 
   #[inline]
@@ -598,14 +647,14 @@ impl Transaction {
     self.selection.as_ref()
   }
 
-  /// Returns true if applied successfully.
-  pub fn apply(&self, doc: &mut Rope) -> bool {
-    if self.changes.is_empty() {
-      return true;
-    }
-
-    // apply changes to the document
+  /// Apply this transaction in-place.
+  pub fn apply(&self, doc: &mut Rope) -> Result<()> {
     self.changes.apply(doc)
+  }
+
+  /// Apply this transaction to a rope and return the updated rope.
+  pub fn apply_to(&self, doc: &Rope) -> Result<Rope> {
+    self.changes.apply_to(doc)
   }
 
   /// Generate a transaction that reverts this one.
@@ -838,7 +887,7 @@ mod test {
     // should probably return cloned text
     let composed = a.compose(b);
     assert_eq!(composed.len, 8);
-    assert!(composed.apply(&mut text));
+    composed.apply(&mut text).unwrap();
     assert_eq!(text, "世orld! abc");
   }
 
@@ -856,7 +905,7 @@ mod test {
     let revert = changes.invert(&doc);
 
     let mut doc2 = doc.clone();
-    changes.apply(&mut doc2);
+    changes.apply(&mut doc2).unwrap();
 
     // a revert is different
     assert_ne!(changes, revert);
@@ -866,7 +915,7 @@ mod test {
     assert_eq!(changes, revert.invert(&doc2));
 
     // applying a revert gives us back the original
-    revert.apply(&mut doc2);
+    revert.apply(&mut doc2).unwrap();
     assert_eq!(doc, doc2);
   }
 
@@ -978,7 +1027,7 @@ mod test {
       // (1, 1, None) is a useless 0-width delete that gets factored out
       vec![(1, 1, None), (6, 11, Some("void".into())), (12, 17, None)].into_iter(),
     );
-    transaction.apply(&mut doc);
+    transaction.apply(&mut doc).unwrap();
     assert_eq!(doc, Rope::from_str("hello void! 123"));
   }
 
@@ -1019,5 +1068,43 @@ mod test {
     use Operation::*;
     assert_eq!(changes.changes, &[Insert(TEST_CASE.into())]);
     assert_eq!(changes.len_after, TEST_CASE.chars().count());
+  }
+
+  #[test]
+  fn apply_to_matches_in_place() {
+    let doc = Rope::from("hello world!");
+    let transaction = Transaction::change(
+      &doc,
+      vec![(6, 11, Some("void".into())), (12, 12, Some("!!".into()))].into_iter(),
+    );
+
+    let mut in_place = doc.clone();
+    transaction.apply(&mut in_place).unwrap();
+    let persistent = transaction.apply_to(&doc).unwrap();
+
+    assert_eq!(in_place, persistent);
+    assert_eq!(doc, Rope::from("hello world!"));
+  }
+
+  #[test]
+  fn invert_empty_changeset_is_identity() {
+    let doc = Rope::from("hello");
+    let changes = ChangeSet::new(doc.slice(..));
+    let invert = changes.invert(&doc);
+
+    let updated = invert.apply_to(&doc).unwrap();
+    assert_eq!(updated, doc);
+    assert_eq!(invert.len(), doc.len_chars());
+  }
+
+  #[test]
+  fn apply_errors_on_length_mismatch() {
+    let doc = Rope::from("hello");
+    let changes = ChangeSet::new(doc.slice(..));
+    let mut other = Rope::from("nope");
+
+    assert!(changes.apply(&mut other).is_err());
+    assert!(changes.apply_to(&other).is_err());
+    assert_eq!(other, Rope::from("nope"));
   }
 }

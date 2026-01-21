@@ -637,6 +637,7 @@ dependencies = [
 name = "the-lib"
 version = "0.1.0"
 dependencies = [
+ "eyre",
  "ropey",
  "smallvec",
  "smartstring",

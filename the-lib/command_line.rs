@@ -28,7 +28,16 @@
 //! This module also defines structs for configuring the parsing of the command
 //! line for a command. See `Flag` and `Signature`.
 
-use std::{borrow::Cow, collections::HashMap, error::Error, fmt, ops, slice, vec};
+use std::{
+  borrow::Cow,
+  collections::HashMap,
+  fmt,
+  ops,
+  slice,
+  vec,
+};
+
+use thiserror::Error;
 
 /// Splits a command line into the command and arguments parts.
 ///
@@ -46,11 +55,23 @@ pub fn split(line: &str) -> (&str, &str, bool) {
   (command, rest, complete_command)
 }
 
+/// The value associated with a flag in parsed arguments.
+///
+/// This distinguishes between boolean flags (which are either present or not)
+/// and flags that accept a value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FlagValue<'a> {
+  /// A boolean flag that was present (e.g., `--verbose`).
+  Bool,
+  /// A flag with an associated value (e.g., `--output foo.txt`).
+  Value(Cow<'a, str>),
+}
+
 /// A Unix-like flag that a command may accept.
 ///
 /// For example the `:sort` command accepts a `--reverse` (or `-r` for
 /// shorthand) boolean flag which controls the direction of sorting. Flags may
-/// accept an argument by setting the `completions` field to `Some`.
+/// accept an argument by setting `takes_value` to `true`.
 #[derive(Debug, Clone, Copy)]
 pub struct Flag {
   /// The name of the flag.
@@ -61,18 +82,27 @@ pub struct Flag {
   /// This value should be supplied when reading a flag out of the [Args] with
   /// [Args::get_flag] and [Args::has_flag]. The `:sort` command
   /// implementation for example should ask for `args.has_flag("reverse")`.
-  pub name: &'static str,
+  pub name:        &'static str,
   /// The character that can be used as a shorthand for the flag, optionally.
   ///
   /// For example a flag like "reverse" mentioned above might take an alias
   /// `Some('r')` to allow specifying the flag as `-r`.
-  pub alias: Option<char>,
-  pub doc: &'static str,
+  pub alias:       Option<char>,
+  pub doc:         &'static str,
+  /// Whether the flag accepts a value argument.
+  ///
+  /// When `true`, the next token after the flag is consumed as the flag's
+  /// value. When `false`, the flag is treated as a boolean (present or not).
+  ///
+  /// This is independent of `completions` - a flag can take a value without
+  /// having predefined completions, or have completions for documentation
+  /// purposes without taking a value.
+  pub takes_value: bool,
   /// The completion values to use when specifying an argument for a flag.
   ///
-  /// This should be set to `None` for boolean flags and `Some(&["foo", "bar",
-  /// "baz"])` for example for flags which accept options, with the strings
-  /// corresponding to values that should be shown in completion.
+  /// This should be set to `None` for flags without completions and
+  /// `Some(&["foo", "bar", "baz"])` for flags with predefined options.
+  /// Note: This is independent of `takes_value` - completions are for UI/docs.
   pub completions: Option<&'static [&'static str]>,
 }
 
@@ -80,9 +110,10 @@ impl Flag {
   // This allows defining flags with the `..Flag::DEFAULT` shorthand. The `name`
   // and `doc` fields should always be overwritten.
   pub const DEFAULT: Self = Self {
-    name: "",
-    doc: "",
-    alias: None,
+    name:        "",
+    doc:         "",
+    alias:       None,
+    takes_value: false,
     completions: None,
   };
 }
@@ -115,7 +146,7 @@ pub struct Signature {
   /// quoting rules.
   ///
   /// Once the number has been exceeded then the tokenizer returns the rest of
-  /// the input as a `TokenKind::Expand` token (see `Tokenizer::rest`),
+  /// the input as a `TokenKind::Raw` token (see `Tokenizer::rest`),
   /// meaning that quoting rules do not apply and none of the remaining text
   /// may be treated as a flag.
   ///
@@ -141,11 +172,18 @@ pub struct Signature {
   /// * `:toggle --bar foo` has one positional "foo" and one flag "--bar".
   /// * `:toggle --bar foo --baz` has two positionals `["foo", "--baz"]` and one
   ///   flag "--bar".
-  pub raw_after: Option<u8>,
+  ///
+  /// **Note on validation**: When `raw_after` triggers, the remaining input is
+  /// returned as a single `TokenKind::Raw` token. Validation errors
+  /// (unterminated quotes, unknown expansions) that occur in the raw portion
+  /// are NOT checked, even when `validate = true`. This is intentional: the raw
+  /// portion is meant for custom parsing by the command implementation.
+  /// Validation still applies to tokens *before* the raw cutoff.
+  pub raw_after:   Option<u8>,
   /// A set of flags that a command may accept.
   ///
   /// See the `Flag` struct for more info.
-  pub flags: &'static [Flag],
+  pub flags:       &'static [Flag],
   /// Do not set this field. Use `..Signature::DEFAULT` to construct a
   /// `Signature` instead.
   // This field allows adding new fields later with minimal code changes. This works like a
@@ -159,9 +197,9 @@ impl Signature {
   // The `positionals` field should always be overwritten.
   pub const DEFAULT: Self = Self {
     positionals: (0, None),
-    raw_after: None,
-    flags: &[],
-    _dummy: (),
+    raw_after:   None,
+    flags:       &[],
+    _dummy:      (),
   };
 
   fn check_positional_count(&self, actual: usize) -> Result<(), ParseArgsError<'static>> {
@@ -174,80 +212,84 @@ impl Signature {
   }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Error)]
 pub enum ParseArgsError<'a> {
+  #[error("{}", format_positional_count_error(*.min, *.max, *.actual))]
   WrongPositionalCount {
-    min: usize,
-    max: Option<usize>,
+    min:    usize,
+    max:    Option<usize>,
     actual: usize,
   },
-  UnterminatedToken {
-    token: Token<'a>,
-  },
-  DuplicatedFlag {
-    flag: &'static str,
-  },
-  UnknownFlag {
-    text: Cow<'a, str>,
-  },
-  FlagMissingArgument {
-    flag: &'static str,
-  },
-  MissingExpansionDelimiter {
-    expansion: &'a str,
-  },
-  UnknownExpansion {
-    kind: &'a str,
-  },
+  #[error("unterminated token {}", token.content)]
+  UnterminatedToken { token: Token<'a> },
+  #[error("flag '--{flag}' specified more than once")]
+  DuplicatedFlag { flag: &'static str },
+  #[error("unknown flag '{text}'")]
+  UnknownFlag { text: Cow<'a, str> },
+  #[error("flag '--{flag}' missing an argument")]
+  FlagMissingArgument { flag: &'static str },
+  #[error("{}", format_expansion_delimiter_error(expansion))]
+  MissingExpansionDelimiter { expansion: &'a str },
+  #[error("unknown expansion '{kind}'")]
+  UnknownExpansion { kind: &'a str },
 }
 
-impl fmt::Display for ParseArgsError<'_> {
+fn format_positional_count_error(min: usize, max: Option<usize>, actual: usize) -> String {
+  let plural = |n| if n == 1 { "" } else { "s" };
+  let expected = match (min, max) {
+    (0, Some(0)) => "no arguments".to_string(),
+    (min, Some(max)) if min == max => format!("exactly {min} argument{}", plural(min)),
+    (min, _) if actual < min => format!("at least {min} argument{}", plural(min)),
+    (_, Some(max)) if actual > max => format!("at most {max} argument{}", plural(max)),
+    _ => unreachable!(),
+  };
+  format!("expected {expected}, got {actual}")
+}
+
+fn format_expansion_delimiter_error(expansion: &str) -> String {
+  if expansion.is_empty() {
+    "'%' was not properly escaped. Please use '%%'".to_string()
+  } else {
+    format!("missing a string delimiter after '%{expansion}'")
+  }
+}
+
+/// Error type for `Args::parse` that preserves structured error information.
+///
+/// This enum distinguishes between errors that occur during argument parsing
+/// (tokenization, flag handling, positional count validation) and errors that
+/// occur during token expansion (variable lookup, shell execution, etc.).
+#[derive(Debug)]
+pub enum ParseError<'a, E> {
+  /// An error during argument parsing (tokenization, flags, positionals).
+  Args(ParseArgsError<'a>),
+  /// An error during token expansion.
+  Expand(E),
+}
+
+impl<E: fmt::Display> fmt::Display for ParseError<'_, E> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      Self::WrongPositionalCount { min, max, actual } => {
-        write!(f, "expected ")?;
-        let maybe_plural = |n| if n == 1 { "" } else { "s" };
-        match (min, max) {
-          (0, Some(0)) => write!(f, "no arguments")?,
-          (min, Some(max)) if min == max => {
-            write!(f, "exactly {min} argument{}", maybe_plural(*min))?
-          },
-          (min, _) if actual < min => write!(f, "at least {min} argument{}", maybe_plural(*min))?,
-          (_, Some(max)) if actual > max => {
-            write!(f, "at most {max} argument{}", maybe_plural(*max))?
-          },
-          // `actual` must be either less than `min` or greater than `max` for this type
-          // to be constructed.
-          _ => unreachable!(),
-        }
-
-        write!(f, ", got {actual}")
-      },
-      Self::UnterminatedToken { token } => {
-        write!(f, "unterminated token {}", token.content)
-      },
-      Self::DuplicatedFlag { flag } => {
-        write!(f, "flag '--{flag}' specified more than once")
-      },
-      Self::UnknownFlag { text } => write!(f, "unknown flag '{text}'"),
-      Self::FlagMissingArgument { flag } => {
-        write!(f, "flag '--{flag}' missing an argument")
-      },
-      Self::MissingExpansionDelimiter { expansion } => {
-        if expansion.is_empty() {
-          write!(f, "'%' was not properly escaped. Please use '%%'")
-        } else {
-          write!(f, "missing a string delimiter after '%{expansion}'")
-        }
-      },
-      Self::UnknownExpansion { kind } => {
-        write!(f, "unknown expansion '{kind}'")
-      },
+      Self::Args(e) => write!(f, "{e}"),
+      Self::Expand(e) => write!(f, "{e}"),
     }
   }
 }
 
-impl Error for ParseArgsError<'_> {}
+impl<E: std::error::Error + 'static> std::error::Error for ParseError<'_, E> {
+  fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+    match self {
+      Self::Args(_) => None, // Can't return non-'static reference
+      Self::Expand(e) => Some(e),
+    }
+  }
+}
+
+impl<'a, E> From<ParseArgsError<'a>> for ParseError<'a, E> {
+  fn from(err: ParseArgsError<'a>) -> Self {
+    Self::Args(err)
+  }
+}
 
 /// The kind of expansion to use on the token's content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -352,11 +394,27 @@ pub enum TokenKind {
   /// cannot be returned: inputs that would return this token get a validation
   /// error instead.
   ExpansionKind,
+  /// An expansion with an unrecognized kind specifier.
+  ///
+  /// For example `%xyz{content}` where "xyz" is not a known expansion kind.
+  /// This is distinct from `Expand` to allow completion flows to identify
+  /// that this was an attempted expansion with an unknown kind, rather than
+  /// treating it as expandable text.
+  ///
+  /// When `Tokenizer` is passed `true` for its `validate` parameter this token
+  /// cannot be returned: inputs that would return this token get a validation
+  /// error (`UnknownExpansion`) instead.
+  UnknownExpansion,
+  /// Raw remainder of the input produced by `Tokenizer::rest`.
+  ///
+  /// This is emitted when `raw_after` triggers. The content is returned
+  /// verbatim (no quote or expansion processing) and is not validated.
+  Raw,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token<'a> {
-  pub kind: TokenKind,
+  pub kind:          TokenKind,
   /// The byte index into the input where the token's content starts.
   ///
   /// For quoted text this means the byte after the quote. For expansions this
@@ -367,7 +425,7 @@ pub struct Token<'a> {
   /// Usually this content borrows from the input but an owned value may be used
   /// in cases of escaping. On Unix systems a raw token like `a\ b` has the
   /// contents `"a b"`.
-  pub content: Cow<'a, str>,
+  pub content:       Cow<'a, str>,
   /// Whether the token's opening delimiter is closed.
   ///
   /// For example a quote `"foo"` is closed but not `"foo` or an expansion
@@ -387,23 +445,27 @@ impl<'a> Token<'a> {
 
   pub fn expand(content: impl Into<Cow<'a, str>>) -> Self {
     Self {
-      kind: TokenKind::Expand,
+      kind:          TokenKind::Expand,
       content_start: 0,
-      content: content.into(),
+      content:       content.into(),
       is_terminated: true,
     }
+  }
+
+  pub fn is_expandable(&self) -> bool {
+    matches!(self.kind, TokenKind::Expand | TokenKind::Expansion(_))
   }
 }
 
 #[derive(Debug)]
 pub struct Tokenizer<'a> {
-  input: &'a str,
+  input:    &'a str,
   /// Whether to return errors in the iterator for failed validations like
   /// unterminated strings or expansions. When this is set to `false` the
   /// iterator will never return `Err`.
   validate: bool,
   /// The current byte index of the input being considered.
-  pos: usize,
+  pos:      usize,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -420,7 +482,7 @@ impl<'a> Tokenizer<'a> {
     self.pos
   }
 
-  /// Returns the rest of the input as a single `TokenKind::Expand` token
+  /// Returns the rest of the input as a single `TokenKind::Raw` token
   /// literally.
   ///
   /// Returns `None` if the tokenizer is already at the end of the input or
@@ -436,7 +498,7 @@ impl<'a> Tokenizer<'a> {
     let content_start = self.pos;
     self.pos = self.input.len();
     Some(Token {
-      kind: TokenKind::Expand,
+      kind: TokenKind::Raw,
       content_start,
       content: Cow::Borrowed(&self.input[content_start..]),
       is_terminated: false,
@@ -465,44 +527,105 @@ impl<'a> Tokenizer<'a> {
   }
 
   fn parse_unquoted(&mut self) -> Cow<'a, str> {
-    // Note that `String::new` starts with no allocation. We only allocate if we see
-    // a backslash escape (on Unix only).
-    let mut escaped = String::new();
-    let mut start = self.pos;
+    if cfg!(unix) {
+      self.parse_unquoted_unix()
+    } else {
+      self.parse_unquoted_simple()
+    }
+  }
 
+  /// Simple unquoted parsing for non-Unix systems (no backslash escaping).
+  fn parse_unquoted_simple(&mut self) -> Cow<'a, str> {
+    let start = self.pos;
     while let Some(byte) = self.byte() {
       if matches!(byte, b' ' | b'\t') {
-        if cfg!(unix) && self.prev_byte() == Some(b'\\') {
-          // Push everything up to but not including the backslash and then this
-          // whitespace character.
-          escaped.push_str(&self.input[start..self.pos - 1]);
-          escaped.push(byte as char);
-          start = self.pos + 1;
-        } else if escaped.is_empty() {
-          return Cow::Borrowed(&self.input[start..self.pos]);
-        } else {
-          break;
-        }
+        return Cow::Borrowed(&self.input[start..self.pos]);
       }
-
       self.pos += 1;
     }
+    Cow::Borrowed(&self.input[start..self.pos])
+  }
 
-    // Special case for a trailing backslash on Unix: exclude the backslash from the
-    // content. This improves the behavior of completions like `":open a\\"`
-    // (trailing backslash).
-    let end = if cfg!(unix) && self.prev_byte() == Some(b'\\') {
-      self.pos - 1
-    } else {
-      self.pos
-    };
+  /// Unix unquoted parsing with backslash escape handling.
+  ///
+  /// Backslash semantics:
+  /// - `\ ` (backslash + space) → escaped space (space becomes part of token)
+  /// - `\\` before whitespace/end → collapsed to single literal backslash
+  /// - `\x` (backslash + other) → both chars passed through literally
+  /// - Trailing odd backslash → stripped (improves completion behavior)
+  #[cfg(unix)]
+  fn parse_unquoted_unix(&mut self) -> Cow<'a, str> {
+    let bytes = self.input.as_bytes();
+    let mut result: Option<String> = None;
+    let mut segment_start = self.pos;
 
-    if escaped.is_empty() {
-      assert_eq!(self.pos, self.input.len());
-      Cow::Borrowed(&self.input[start..end])
+    while self.pos < bytes.len() {
+      let byte = bytes[self.pos];
+
+      if matches!(byte, b' ' | b'\t') {
+        break;
+      }
+
+      if byte != b'\\' {
+        self.pos += 1;
+        continue;
+      }
+
+      // Count consecutive backslashes starting here.
+      let backslash_start = self.pos;
+      while self.pos < bytes.len() && bytes[self.pos] == b'\\' {
+        self.pos += 1;
+      }
+      let backslash_count = self.pos - backslash_start;
+
+      let at_end = self.pos >= bytes.len();
+      let next_is_whitespace = !at_end && matches!(bytes[self.pos], b' ' | b'\t');
+
+      if next_is_whitespace || at_end {
+        let collapsed_backslashes = backslash_count / 2;
+        let has_escaping_backslash = backslash_count % 2 == 1;
+
+        if result.is_none() {
+          if at_end && has_escaping_backslash && collapsed_backslashes == 0 {
+            return Cow::Borrowed(&self.input[segment_start..backslash_start]);
+          }
+          result = Some(String::with_capacity(self.pos - segment_start));
+        }
+
+        let result = result.as_mut().unwrap();
+        result.push_str(&self.input[segment_start..backslash_start]);
+        for _ in 0..collapsed_backslashes {
+          result.push('\\');
+        }
+
+        if at_end {
+          segment_start = self.pos;
+          break;
+        }
+
+        if has_escaping_backslash {
+          // Space IS escaped - consume it as part of this token.
+          result.push(bytes[self.pos] as char);
+          self.pos += 1;
+          segment_start = self.pos;
+        } else {
+          // Space is NOT escaped - token ends here.
+          segment_start = self.pos;
+          break;
+        }
+      } else if let Some(result) = result.as_mut() {
+        result.push_str(&self.input[segment_start..self.pos]);
+        segment_start = self.pos;
+      }
+    }
+
+    if let Some(mut result) = result {
+      if segment_start < self.pos {
+        result.push_str(&self.input[segment_start..self.pos]);
+      }
+      Cow::Owned(result)
     } else {
-      escaped.push_str(&self.input[start..end]);
-      Cow::Owned(escaped)
+      Cow::Borrowed(&self.input[segment_start..self.pos])
     }
   }
 
@@ -578,9 +701,9 @@ impl<'a> Tokenizer<'a> {
           Err(ParseArgsError::MissingExpansionDelimiter { expansion: kind })
         } else {
           Ok(Token {
-            kind: TokenKind::ExpansionKind,
+            kind:          TokenKind::ExpansionKind,
             content_start: kind_start,
-            content: Cow::Borrowed(kind),
+            content:       Cow::Borrowed(kind),
             is_terminated: false,
           })
         });
@@ -594,7 +717,7 @@ impl<'a> Tokenizer<'a> {
       None if self.validate => {
         return Some(Err(ParseArgsError::UnknownExpansion { kind }));
       },
-      None => TokenKind::Expand,
+      None => TokenKind::UnknownExpansion,
     };
 
     let (content, is_terminated) = if open == close {
@@ -696,14 +819,6 @@ impl<'a> Iterator for Tokenizer<'a> {
       _ => {
         let content_start = self.pos;
 
-        // Allow backslash escaping on Unix for quotes or expansions
-        if cfg!(unix)
-          && byte == b'\\'
-          && matches!(self.peek_byte(), Some(b'"' | b'\'' | b'`' | b'%'))
-        {
-          self.pos += 1;
-        }
-
         Some(Ok(Token {
           kind: TokenKind::Unquoted,
           content_start,
@@ -713,6 +828,26 @@ impl<'a> Iterator for Tokenizer<'a> {
       },
     }
   }
+}
+
+pub fn tokenize<'a>(input: &'a str, validate: bool) -> Result<Vec<Token<'a>>, ParseArgsError<'a>> {
+  Tokenizer::new(input, validate).collect()
+}
+
+pub fn expand_tokens<'a, E>(
+  tokens: impl IntoIterator<Item = Token<'a>>,
+  mut expand: impl FnMut(Token<'a>) -> Result<Cow<'a, str>, E>,
+) -> Result<Vec<Cow<'a, str>>, E> {
+  tokens
+    .into_iter()
+    .map(|token| {
+      if token.is_expandable() {
+        expand(token)
+      } else {
+        Ok(token.content)
+      }
+    })
+    .collect()
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -754,29 +889,72 @@ pub enum CompletionState {
 /// `Signature`. See the `Signature` type for more details.
 #[derive(Debug)]
 pub struct Args<'a> {
-  signature: Signature,
+  signature:        Signature,
   /// Whether to validate the arguments.
   /// See the `ParseArgsError` type for the validations.
-  validate: bool,
+  validate:         bool,
   /// Whether args pushed with `Self::push` should be treated as positionals
   /// even if they start with '-'.
   only_positionals: bool,
-  state: CompletionState,
-  positionals: Vec<Cow<'a, str>>,
-  flags: HashMap<&'static str, Cow<'a, str>>,
+  state:            CompletionState,
+  positionals:      Vec<Cow<'a, str>>,
+  flags:            HashMap<&'static str, FlagValue<'a>>,
 }
 
 impl Default for Args<'_> {
   fn default() -> Self {
     Self {
-      signature: Signature::DEFAULT,
-      validate: Default::default(),
+      signature:        Signature::DEFAULT,
+      validate:         Default::default(),
       only_positionals: Default::default(),
-      state: CompletionState::default(),
-      positionals: Default::default(),
-      flags: Default::default(),
+      state:            CompletionState::default(),
+      positionals:      Default::default(),
+      flags:            Default::default(),
     }
   }
+}
+
+#[derive(Debug)]
+pub struct ArgsBuilder<'a> {
+  args: Args<'a>,
+}
+
+impl<'a> ArgsBuilder<'a> {
+  pub fn new(signature: Signature, validate: bool) -> Self {
+    Self {
+      args: Args::new(signature, validate),
+    }
+  }
+
+  pub fn read_token<'p>(
+    &mut self,
+    parser: &mut Tokenizer<'p>,
+  ) -> Result<Option<Token<'p>>, ParseArgsError<'p>> {
+    self.args.read_token(parser)
+  }
+
+  pub fn step(mut self, arg: Cow<'a, str>) -> Result<Self, ParseArgsError<'a>> {
+    self.args.push(arg)?;
+    Ok(self)
+  }
+
+  pub fn finish(self) -> Result<Args<'a>, ParseArgsError<'a>> {
+    self.args.finish()?;
+    Ok(self.args)
+  }
+}
+
+pub fn parse_args<'a>(
+  args: impl IntoIterator<Item = Cow<'a, str>>,
+  signature: Signature,
+  validate: bool,
+) -> Result<Args<'a>, ParseArgsError<'a>> {
+  args
+    .into_iter()
+    .try_fold(ArgsBuilder::new(signature, validate), |builder, arg| {
+      builder.step(arg)
+    })
+    .and_then(ArgsBuilder::finish)
 }
 
 impl<'a> Args<'a> {
@@ -815,28 +993,48 @@ impl<'a> Args<'a> {
   ///
   /// The `try_map_fn` function can be used to try changing each token before it
   /// is considered as an argument - this is used for variable expansion.
-  pub fn parse<M>(
+  ///
+  /// The generic parameter `E` is the error type returned by the expansion
+  /// function. This allows callers to use their own error types for expansion
+  /// failures while still getting structured error information.
+  pub fn parse<E, M>(
     line: &'a str,
     signature: Signature,
     validate: bool,
     mut try_map_fn: M,
-  ) -> Result<Self, Box<dyn Error + 'a>>
+  ) -> Result<Self, ParseError<'a, E>>
   where
     // Note: this is a `FnMut` in case we decide to allow caching expansions in the future.
     // The `mut` is not currently used.
-    M: FnMut(Token<'a>) -> Result<Cow<'a, str>, Box<dyn Error>>,
+    M: FnMut(Token<'a>) -> Result<Cow<'a, str>, E>,
   {
-    let mut tokenizer = Tokenizer::new(line, validate);
-    let mut args = Self::new(signature, validate);
+    if signature.raw_after.is_none() {
+      let tokens = tokenize(line, validate)?;
+      let expanded = expand_tokens(tokens, |token| {
+        if token.is_expandable() {
+          try_map_fn(token)
+        } else {
+          Ok(token.content)
+        }
+      })
+      .map_err(ParseError::Expand)?;
+      let args = parse_args(expanded, signature, validate)?;
+      Ok(args)
+    } else {
+      let mut tokenizer = Tokenizer::new(line, validate);
+      let mut builder = ArgsBuilder::new(signature, validate);
 
-    while let Some(token) = args.read_token(&mut tokenizer)? {
-      let arg = try_map_fn(token)?;
-      args.push(arg)?;
+      while let Some(token) = builder.read_token(&mut tokenizer)? {
+        let arg = if token.is_expandable() {
+          try_map_fn(token).map_err(ParseError::Expand)?
+        } else {
+          token.content
+        };
+        builder = builder.step(arg)?;
+      }
+
+      Ok(builder.finish()?)
     }
-
-    args.finish()?;
-
-    Ok(args)
   }
 
   /// Adds the given argument token.
@@ -852,11 +1050,12 @@ impl<'a> Args<'a> {
     } else if let Some(flag) = self.flag_awaiting_argument() {
       // If the last token was a flag which accepts an argument, treat this token as a
       // flag argument.
-      self.flags.insert(flag.name, arg);
+      self.flags.insert(flag.name, FlagValue::Value(arg));
       self.state = CompletionState::FlagArgument(flag);
-    } else if !self.only_positionals && arg.starts_with('-') {
-      // If the token starts with '-' and we are not only accepting positional
-      // arguments, treat this token as a flag.
+    } else if !self.only_positionals && arg.starts_with('-') && arg != "-" {
+      // If the token starts with '-' (but is not a lone '-', which is a common stdin
+      // sentinel) and we are not only accepting positional arguments, treat this
+      // token as a flag.
       let flag = if let Some(longhand) = arg.strip_prefix("--") {
         self
           .signature
@@ -886,10 +1085,12 @@ impl<'a> Args<'a> {
         return Err(ParseArgsError::DuplicatedFlag { flag: flag.name });
       }
 
-      self.flags.insert(flag.name, Cow::Borrowed(""));
+      // Insert Bool for now; if the flag takes a value, flag_awaiting_argument will
+      // return it and the next push will upgrade this to FlagValue::Value.
+      self.flags.insert(flag.name, FlagValue::Bool);
       self.state = CompletionState::Flag(Some(*flag));
     } else {
-      // Otherwise this token is a positional argument.
+      // Otherwise this token is a positional argument (including lone "-").
       self.positionals.push(arg);
       self.state = CompletionState::Positional;
     }
@@ -916,7 +1117,7 @@ impl<'a> Args<'a> {
 
   fn flag_awaiting_argument(&self) -> Option<Flag> {
     match self.state {
-      CompletionState::Flag(flag) => flag.filter(|f| f.completions.is_some()),
+      CompletionState::Flag(flag) => flag.filter(|f| f.takes_value),
       _ => None,
     }
   }
@@ -969,7 +1170,7 @@ impl<'a> Args<'a> {
   /// provided.
   ///
   /// This function should be preferred over [Self::has_flag] when the flag
-  /// accepts an argument.
+  /// accepts an argument (i.e., `takes_value: true`).
   pub fn get_flag(&'a self, name: &'static str) -> Option<&'a str> {
     debug_assert!(
       self.signature.flags.iter().any(|flag| flag.name == name),
@@ -980,18 +1181,21 @@ impl<'a> Args<'a> {
         .signature
         .flags
         .iter()
-        .any(|flag| flag.name == name && flag.completions.is_some()),
-      "Args::get_flag was used for '--{name}' but should only be used for flags with arguments, \
-       use Args::has_flag instead"
+        .any(|flag| flag.name == name && flag.takes_value),
+      "Args::get_flag was used for '--{name}' but should only be used for flags with takes_value: \
+       true, use Args::has_flag instead"
     );
 
-    self.flags.get(name).map(AsRef::as_ref)
+    match self.flags.get(name) {
+      Some(FlagValue::Value(v)) => Some(v.as_ref()),
+      _ => None,
+    }
   }
 
   /// Checks if a flag was provided in the arguments.
   ///
   /// This function should be preferred over [Self::get_flag] for boolean flags
-  /// - flags that either are present or not.
+  /// - flags that either are present or not (i.e., `takes_value: false`).
   pub fn has_flag(&self, name: &'static str) -> bool {
     debug_assert!(
       self.signature.flags.iter().any(|flag| flag.name == name),
@@ -1002,9 +1206,9 @@ impl<'a> Args<'a> {
         .signature
         .flags
         .iter()
-        .any(|flag| flag.name == name && flag.completions.is_none()),
-      "Args::has_flag was used for '--{name}' but should only be used for flags without \
-       arguments, use Args::get_flag instead"
+        .any(|flag| flag.name == name && !flag.takes_value),
+      "Args::has_flag was used for '--{name}' but should only be used for flags with takes_value: \
+       false, use Args::get_flag instead"
     );
 
     self.flags.contains_key(name)
@@ -1093,10 +1297,11 @@ mod test {
     // The backslash at the start of the double quote makes the quote be treated as
     // raw. For the backslash before the ending quote the token is already
     // considered raw so the backslash and quote are treated literally.
-    assert_tokens(
-      r#"echo \"hello        world\""#,
-      &["echo", r#""hello"#, r#"world\""#],
-    );
+    assert_tokens(r#"echo \"hello        world\""#, &[
+      "echo",
+      r#"\"hello"#,
+      r#"world\""#,
+    ]);
   }
 
   #[test]
@@ -1134,28 +1339,27 @@ mod test {
     // the parser here.
     assert_tokens(r#"echo "%%hello world""#, &["echo", "%%hello world"]);
     // Different kinds of quotes nested:
-    assert_tokens(
-      r#"echo "%sh{echo 'hello world'}""#,
-      &["echo", r#"%sh{echo 'hello world'}"#],
-    );
+    assert_tokens(r#"echo "%sh{echo 'hello world'}""#, &[
+      "echo",
+      r#"%sh{echo 'hello world'}"#,
+    ]);
     // Nesting of the expansion delimiter:
     assert_tokens(r#"echo %{hello {x} world}"#, &["echo", "hello {x} world"]);
-    assert_tokens(
-      r#"echo %{hello {{😎}} world}"#,
-      &["echo", "hello {{😎}} world"],
-    );
+    assert_tokens(r#"echo %{hello {{😎}} world}"#, &[
+      "echo",
+      "hello {{😎}} world",
+    ]);
 
     // Balanced nesting:
-    assert_tokens(
-      r#"echo %{hello {}} world}"#,
-      &["echo", "hello {}", "world}"],
-    );
+    assert_tokens(r#"echo %{hello {}} world}"#, &[
+      "echo", "hello {}", "world}",
+    ]);
 
     // Recursive expansions:
-    assert_tokens(
-      r#"echo %sh{echo "%{cursor_line}"}"#,
-      &["echo", r#"echo "%{cursor_line}""#],
-    );
+    assert_tokens(r#"echo %sh{echo "%{cursor_line}"}"#, &[
+      "echo",
+      r#"echo "%{cursor_line}""#,
+    ]);
     // Completion should provide variable names here. (Unbalanced nesting)
     assert_incomplete_tokens(r#"echo %sh{echo "%{c"#, &["echo", r#"echo "%{c"#]);
     assert_incomplete_tokens(r#"echo %{hello {{} world}"#, &["echo", "hello {{} world}"]);
@@ -1164,7 +1368,7 @@ mod test {
   fn parse_signature<'a>(
     input: &'a str,
     signature: Signature,
-  ) -> Result<Args<'a>, Box<dyn std::error::Error + 'a>> {
+  ) -> Result<Args<'a>, ParseError<'a, std::convert::Infallible>> {
     Args::parse(input, signature, true, |token| Ok(token.content))
   }
 
@@ -1200,15 +1404,17 @@ mod test {
       positionals: (1, Some(2)),
       flags: &[
         Flag {
-          name: "foo",
-          alias: Some('f'),
-          doc: "",
+          name:        "foo",
+          alias:       Some('f'),
+          doc:         "",
+          takes_value: false,
           completions: None,
         },
         Flag {
-          name: "bar",
-          alias: Some('b'),
-          doc: "",
+          name:        "bar",
+          alias:       Some('b'),
+          doc:         "",
+          takes_value: true,
           completions: Some(&[]),
         },
       ],
@@ -1313,5 +1519,158 @@ mod test {
     assert_eq!(args.len(), 2);
     assert_eq!(&args[0], "gutters");
     assert_eq!(&args[1], r#"["diff"] ["diff", "diagnostics"]"#);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn backslash_parity() {
+    // Single backslash escapes the space
+    assert_tokens(r#"hello\ world"#, &["hello world"]);
+
+    // Double backslash: first escapes second, space is NOT escaped (two tokens)
+    assert_tokens(r#"hello\\ world"#, &["hello\\", "world"]);
+
+    // Triple backslash: first two form escaped backslash, third escapes space
+    assert_tokens(r#"hello\\\ world"#, &["hello\\ world"]);
+
+    // Four backslashes: two pairs, space is NOT escaped
+    assert_tokens(r#"hello\\\\ world"#, &["hello\\\\", "world"]);
+
+    // Mixed: backslash at end of first word, space starts new word
+    assert_tokens(r#"a\\ b"#, &["a\\", "b"]);
+
+    // Trailing backslash (odd) is stripped
+    assert_tokens(r#"hello\"#, &["hello"]);
+
+    // Trailing double backslash (even) is kept
+    assert_tokens(r#"hello\\"#, &["hello\\"]);
+  }
+
+  #[test]
+  fn lone_dash_as_positional() {
+    let signature = Signature {
+      positionals: (1, Some(2)),
+      flags: &[Flag {
+        name:        "foo",
+        alias:       Some('f'),
+        doc:         "",
+        takes_value: false,
+        completions: None,
+      }],
+      ..Signature::DEFAULT
+    };
+
+    // Lone "-" should be treated as a positional (stdin sentinel)
+    let args = parse_signature("-", signature).unwrap();
+    assert_eq!(args.len(), 1);
+    assert_eq!(&args[0], "-");
+
+    // "-" mixed with flags
+    let args = parse_signature("--foo -", signature).unwrap();
+    assert_eq!(args.len(), 1);
+    assert_eq!(&args[0], "-");
+    assert!(args.has_flag("foo"));
+
+    // Multiple lone dashes
+    let args = parse_signature("- -", signature).unwrap();
+    assert_eq!(args.len(), 2);
+    assert_eq!(&args[0], "-");
+    assert_eq!(&args[1], "-");
+  }
+
+  #[test]
+  fn unknown_expansion_token_kind() {
+    // In non-validate mode, unknown expansion kinds should return UnknownExpansion
+    let tokens: Vec<_> = Tokenizer::new("%xyz{content}", false)
+      .map(|t| t.unwrap())
+      .collect();
+
+    assert_eq!(tokens.len(), 1);
+    assert_eq!(tokens[0].kind, TokenKind::UnknownExpansion);
+    assert_eq!(tokens[0].content.as_ref(), "content");
+
+    // In validate mode, it should error
+    let result: Result<Vec<_>, _> = Tokenizer::new("%xyz{content}", true).collect();
+    assert!(result.is_err());
+    match result.unwrap_err() {
+      ParseArgsError::UnknownExpansion { kind } => assert_eq!(kind, "xyz"),
+      _ => panic!("expected UnknownExpansion error"),
+    }
+  }
+
+  #[test]
+  fn flag_value_semantics() {
+    let signature = Signature {
+      positionals: (0, Some(1)),
+      flags: &[
+        Flag {
+          name:        "bool_flag",
+          alias:       Some('b'),
+          doc:         "",
+          takes_value: false,
+          completions: None,
+        },
+        Flag {
+          name:        "value_flag",
+          alias:       Some('v'),
+          doc:         "",
+          takes_value: true,
+          // Note: takes_value is independent of completions
+          completions: None,
+        },
+      ],
+      ..Signature::DEFAULT
+    };
+
+    // Boolean flag present
+    let args = parse_signature("--bool_flag", signature).unwrap();
+    assert!(args.has_flag("bool_flag"));
+
+    // Value flag with argument
+    let args = parse_signature("--value_flag myvalue", signature).unwrap();
+    assert_eq!(args.get_flag("value_flag"), Some("myvalue"));
+
+    // Value flag without completions still takes a value
+    let args = parse_signature("-v test", signature).unwrap();
+    assert_eq!(args.get_flag("value_flag"), Some("test"));
+
+    // Missing value for value_flag is an error
+    assert!(parse_signature("--value_flag", signature).is_err());
+  }
+
+  #[test]
+  fn parse_error_variants() {
+    let signature = Signature {
+      positionals: (1, Some(1)),
+      flags: &[Flag {
+        name:        "flag",
+        alias:       None,
+        doc:         "",
+        takes_value: true,
+        completions: None,
+      }],
+      ..Signature::DEFAULT
+    };
+
+    // Test that ParseError preserves the error kind
+    let result = parse_signature("", signature);
+    assert!(matches!(
+      result,
+      Err(ParseError::Args(
+        ParseArgsError::WrongPositionalCount { .. }
+      ))
+    ));
+
+    let result = parse_signature("--flag", signature);
+    assert!(matches!(
+      result,
+      Err(ParseError::Args(ParseArgsError::FlagMissingArgument { .. }))
+    ));
+
+    let result = parse_signature("arg --unknown", signature);
+    assert!(matches!(
+      result,
+      Err(ParseError::Args(ParseArgsError::UnknownFlag { .. }))
+    ));
   }
 }

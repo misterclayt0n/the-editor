@@ -6,8 +6,16 @@ use thiserror::Error;
 use crate::{
   Tendril,
   movement::Direction,
-  selection::{Range, Selection, SelectionError},
-  transaction::{Change, Transaction, TransactionError},
+  selection::{
+    Range,
+    Selection,
+    SelectionError,
+  },
+  transaction::{
+    Change,
+    Transaction,
+    TransactionError,
+  },
 };
 
 // Heavily based on https://github.com/codemirror/closebrackets/
@@ -79,8 +87,7 @@ impl Pair {
 
   /// true if all of the pair's conditions hold for the given document and range
   pub fn should_close(&self, doc: &Rope, range: &Range) -> bool {
-    Self::next_is_not_alpha(doc, range)
-      && (!self.same() || Self::prev_is_not_alpha(doc, range))
+    Self::next_is_not_alpha(doc, range) && (!self.same() || Self::prev_is_not_alpha(doc, range))
   }
 }
 
@@ -141,9 +148,10 @@ impl AutoPairs {
   }
 
   pub fn matches_char(&self, ch: char) -> bool {
-    self.0.iter().any(|pair| {
-      pair.open_last_char() == Some(ch) || pair.close_first_char() == Some(ch)
-    })
+    self
+      .0
+      .iter()
+      .any(|pair| pair.open_last_char() == Some(ch) || pair.close_first_char() == Some(ch))
   }
 }
 
@@ -215,10 +223,10 @@ pub fn delete_hook(
 }
 
 struct ChangeOutcome {
-  change:       Change,
-  inserted_len: usize,
+  change:        Change,
+  inserted_len:  usize,
   selection_len: usize,
-  advance:      usize,
+  advance:       usize,
 }
 
 fn insert_text(cursor: usize, text: Tendril, selection_len: usize) -> ChangeOutcome {
@@ -312,7 +320,12 @@ fn matches_open_prefix(doc_slice: ropey::RopeSlice, cursor: usize, pair: &Pair) 
   let Some(start) = cursor.checked_sub(prefix_len) else {
     return false;
   };
-  matches_chars(doc_slice, start, prefix_len, pair.open.chars().take(prefix_len))
+  matches_chars(
+    doc_slice,
+    start,
+    prefix_len,
+    pair.open.chars().take(prefix_len),
+  )
 }
 
 fn matches_close_at(doc_slice: ropey::RopeSlice, cursor: usize, pair: &Pair) -> bool {
@@ -350,6 +363,273 @@ fn iter_chars_eq(
   }
 }
 
+#[cfg(test)]
+mod test {
+  use super::*;
+
+  fn make_multi_char_pairs() -> AutoPairs {
+    AutoPairs::new([
+      ("\"\"\"", "\"\"\""), // triple-quote
+      ("{%", "%}"),         // jinja block
+      ("{{", "}}"),         // jinja expression
+      ("\"", "\""),         // double-quote
+      ("(", ")"),           // parens
+    ])
+  }
+
+  fn apply_transaction(doc: &Rope, tx: &Transaction) -> String {
+    let mut doc = doc.clone();
+    tx.changes().apply(&mut doc).unwrap();
+    doc.to_string()
+  }
+
+  #[test]
+  fn test_prefix_and_close_matching_helpers() {
+    // matches_open_prefix: single-char pairs always match
+    let doc = Rope::from("hello");
+    let paren: Pair = ("(", ")").into();
+    assert!(matches_open_prefix(doc.slice(..), 0, &paren));
+    assert!(matches_open_prefix(doc.slice(..), 5, &paren));
+
+    // matches_open_prefix: multi-char requires correct prefix
+    let triple: Pair = ("\"\"\"", "\"\"\"").into();
+    let jinja: Pair = ("{%", "%}").into();
+
+    assert!(matches_open_prefix(
+      Rope::from("\"\"").slice(..),
+      2,
+      &triple
+    ));
+    assert!(!matches_open_prefix(Rope::from("\"").slice(..), 1, &triple));
+    assert!(!matches_open_prefix(Rope::from("ab").slice(..), 2, &triple));
+
+    assert!(matches_open_prefix(Rope::from("{").slice(..), 1, &jinja));
+    assert!(!matches_open_prefix(Rope::from("a").slice(..), 1, &jinja));
+    assert!(!matches_open_prefix(Rope::from("").slice(..), 0, &jinja));
+
+    // matches_close_at: single-char
+    assert!(matches_close_at(Rope::from(")").slice(..), 0, &paren));
+    assert!(!matches_close_at(Rope::from("x").slice(..), 0, &paren));
+
+    // matches_close_at: multi-char
+    assert!(matches_close_at(Rope::from("\"\"\"").slice(..), 0, &triple));
+    assert!(!matches_close_at(Rope::from("\"\"").slice(..), 0, &triple));
+    assert!(!matches_close_at(Rope::from("\"\"x").slice(..), 0, &triple));
+
+    assert!(matches_close_at(Rope::from("%}").slice(..), 0, &jinja));
+    assert!(!matches_close_at(Rope::from("%x").slice(..), 0, &jinja));
+    assert!(!matches_close_at(Rope::from("%").slice(..), 0, &jinja));
+    assert!(!matches_close_at(Rope::from("x").slice(..), 1, &jinja)); // past end
+  }
+
+  #[test]
+  fn test_triple_quote_behavior() {
+    let pairs = make_multi_char_pairs();
+
+    // Insert: `""` + type `"` -> `""""""` (triple-quote pair)
+    let doc = Rope::from("\"\"");
+    let tx = hook(&doc, &Selection::point(2), '"', &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "\"\"\"\"\"\"");
+
+    // Insert with trailing content
+    let doc = Rope::from("\"\" world");
+    let tx = hook(&doc, &Selection::point(2), '"', &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "\"\"\"\"\"\" world");
+
+    // Skip: cursor inside `""""""`, typing `"` skips over closing `"""`
+    let doc = Rope::from("\"\"\"\"\"\"");
+    let tx = hook(&doc, &Selection::point(3), '"', &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "\"\"\"\"\"\"");
+    assert_eq!(tx.selection().unwrap().primary().head, 6);
+
+    // Single quote skip (not triple): at pos 1 in `""`, skip single `"`
+    let doc = Rope::from("\"\"");
+    let tx = hook(&doc, &Selection::point(1), '"', &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "\"\"");
+    assert_eq!(tx.selection().unwrap().primary().head, 2);
+
+    // Delete: cursor at pos 3 in `""""""` removes all 6 chars
+    let doc = Rope::from("\"\"\"\"\"\"");
+    let tx = delete_hook(&doc, &Selection::point(3), &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "");
+
+    // Delete with surrounding content
+    let doc = Rope::from("a\"\"\"\"\"\"b");
+    let tx = delete_hook(&doc, &Selection::point(4), &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "ab");
+  }
+
+  #[test]
+  fn test_jinja_pair_behavior() {
+    let pairs = make_multi_char_pairs();
+
+    // Insert `{%`: `{` + type `%` -> `{%%}`
+    let doc = Rope::from("{");
+    let tx = hook(&doc, &Selection::point(1), '%', &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "{%%}");
+
+    // Insert `{{`: `{` + type `{` -> `{{}}`
+    let doc = Rope::from("{");
+    let tx = hook(&doc, &Selection::point(1), '{', &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "{{}}");
+
+    // Skip: cursor at pos 2 in `{%%}`, typing `%` skips over `%}`
+    let doc = Rope::from("{%%}");
+    let tx = hook(&doc, &Selection::point(2), '%', &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "{%%}");
+    assert_eq!(tx.selection().unwrap().primary().head, 4);
+
+    // Delete: cursor at pos 2 in `{%%}` removes all 4 chars
+    let doc = Rope::from("{%%}");
+    let tx = delete_hook(&doc, &Selection::point(2), &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "");
+
+    // Delete with surrounding content
+    let doc = Rope::from("a{%%}b");
+    let tx = delete_hook(&doc, &Selection::point(3), &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "ab");
+  }
+
+  #[test]
+  fn test_longest_pair_match_priority() {
+    let pairs = make_multi_char_pairs();
+
+    // Open match: `""` before cursor -> triple `"""` wins over single `"`
+    let doc = Rope::from("\"\"");
+    let pair = match_open_pair(doc.slice(..), 2, '"', &pairs).unwrap();
+    assert_eq!(pair.open.as_str(), "\"\"\"");
+
+    // Close match: `"""` ahead -> triple wins
+    let doc = Rope::from("\"\"\"");
+    let pair = match_close_pair(doc.slice(..), 0, '"', &pairs).unwrap();
+    assert_eq!(pair.close.as_str(), "\"\"\"");
+
+    // Fallback: only one `"` before -> single `"` pair matches
+    let doc = Rope::from("\"");
+    let pair = match_open_pair(doc.slice(..), 1, '"', &pairs).unwrap();
+    assert_eq!(pair.open.as_str(), "\"");
+  }
+
+  #[test]
+  fn test_document_boundary_edge_cases() {
+    let pairs = make_multi_char_pairs();
+
+    // Insert at doc start: empty doc, type `"` -> `""`
+    let doc = Rope::from("");
+    let tx = hook(&doc, &Selection::point(0), '"', &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "\"\"");
+
+    // Build triple-quote from scratch
+    let doc = Rope::from("\"\"");
+    let tx = hook(&doc, &Selection::point(2), '"', &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "\"\"\"\"\"\"");
+
+    // Delete at doc start: `()` with cursor at 1
+    let doc = Rope::from("()");
+    let tx = delete_hook(&doc, &Selection::point(1), &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "");
+
+    // Delete fails at pos 0 (nothing before cursor)
+    let doc = Rope::from("()");
+    assert!(
+      delete_hook(&doc, &Selection::point(0), &pairs)
+        .unwrap()
+        .is_none()
+    );
+
+    // Skip at doc end: cursor at 1 in `()`, type `)` -> skip to pos 2
+    let doc = Rope::from("()");
+    let tx = hook(&doc, &Selection::point(1), ')', &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "()");
+    assert_eq!(tx.selection().unwrap().primary().head, 2);
+  }
+
+  #[test]
+  fn test_multiple_cursors() {
+    let pairs = make_multi_char_pairs();
+
+    // Insert at multiple positions: `a b c` with cursors at 1, 3, 5
+    let doc = Rope::from("a b c");
+    let sel = Selection::new(
+      smallvec::smallvec![Range::point(1), Range::point(3), Range::point(5)],
+      0,
+    )
+    .unwrap();
+    let tx = hook(&doc, &sel, '(', &pairs).unwrap().unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "a() b() c()");
+
+    // Skip at multiple positions: `()()()` with cursors at 1, 3, 5
+    let doc = Rope::from("()()()");
+    let sel = Selection::new(
+      smallvec::smallvec![Range::point(1), Range::point(3), Range::point(5)],
+      0,
+    )
+    .unwrap();
+    let tx = hook(&doc, &sel, ')', &pairs).unwrap().unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "()()()");
+    let heads: Vec<_> = tx
+      .selection()
+      .unwrap()
+      .ranges()
+      .iter()
+      .map(|r| r.head)
+      .collect();
+    assert_eq!(heads, vec![2, 4, 6]);
+
+    // Delete at multiple positions
+    let doc = Rope::from("()()()");
+    let sel = Selection::new(
+      smallvec::smallvec![Range::point(1), Range::point(3), Range::point(5)],
+      0,
+    )
+    .unwrap();
+    let tx = delete_hook(&doc, &sel, &pairs).unwrap().unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "");
+
+    // Multi-char pairs with multiple cursors: jinja
+    let doc = Rope::from("{ {");
+    let sel = Selection::new(smallvec::smallvec![Range::point(1), Range::point(3)], 0).unwrap();
+    let tx = hook(&doc, &sel, '%', &pairs).unwrap().unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "{%%} {%%}");
+
+    // Triple-quote delete with multiple cursors
+    let doc = Rope::from("\"\"\"\"\"\" \"\"\"\"\"\"");
+    let sel = Selection::new(smallvec::smallvec![Range::point(3), Range::point(10)], 0).unwrap();
+    let tx = delete_hook(&doc, &sel, &pairs).unwrap().unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), " ");
+  }
+}
+
 fn delete_pair_range(
   doc_slice: ropey::RopeSlice,
   cursor: usize,
@@ -378,7 +658,7 @@ fn delete_pair_range(
     {
       let total_len = open_len + close_len;
       match best {
-        Some((best_len, _, _)) if best_len >= total_len => {},
+        Some((best_len, ..)) if best_len >= total_len => {},
         _ => best = Some((total_len, from, to)),
       }
     }
@@ -533,8 +813,13 @@ fn build_transaction(
 
   let transaction = Transaction::change_by_selection(doc, selection, |start_range| {
     let outcome = make_change(start_range);
-    let next_range =
-      get_next_range(doc, start_range, offset, outcome.selection_len, outcome.advance);
+    let next_range = get_next_range(
+      doc,
+      start_range,
+      offset,
+      outcome.selection_len,
+      outcome.advance,
+    );
     end_ranges.push(next_range);
     offset += outcome.inserted_len;
     outcome.change

@@ -14,15 +14,15 @@ workspace = true
 ropey.workspace       = true
 smallvec.workspace    = true
 smartstring.workspace = true
-thiserror.workspace   = true
 the-core              = { path = "../the-core" }
 the-stdx              = { path = "../the-stdx" }
+thiserror.workspace   = true
+tracing.workspace     = true
 tree-house.workspace  = true
-tracing.workspace  = true
 
 [dev-dependencies]
 divan = "0.1.21"
 
 [[bench]]
-name    = "transaction"
 harness = false
+name    = "transaction"

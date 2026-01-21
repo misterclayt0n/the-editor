@@ -464,10 +464,7 @@ impl Selection {
     Ok(Self::new_unchecked(ranges, primary_index).normalize())
   }
 
-  pub(crate) fn new_unchecked(
-    ranges: SmallVec<[Range; 1]>,
-    primary_index: usize,
-  ) -> Self {
+  pub(crate) fn new_unchecked(ranges: SmallVec<[Range; 1]>, primary_index: usize) -> Self {
     Self {
       ranges,
       primary_index,
@@ -898,9 +895,8 @@ pub fn split_on_newline(text: RopeSlice, selection: &Selection) -> Result<Select
   let primary_idx = selection.primary_index();
   let mut new_primary_idx = None;
 
-  let range_contains_inclusive = |range: &Range, pos: usize| {
-    range.from() <= pos && pos <= range.to()
-  };
+  let range_contains_inclusive =
+    |range: &Range, pos: usize| range.from() <= pos && pos <= range.to();
 
   for (idx, sel) in selection.iter().enumerate() {
     let is_primary = idx == primary_idx;
@@ -926,8 +922,8 @@ pub fn split_on_newline(text: RopeSlice, selection: &Selection) -> Result<Select
         break;
       };
       let line_end = start + line.len_chars();
-      let range = Range::new(start, line_end - line_ending.len_chars())
-        .with_direction(sel.direction());
+      let range =
+        Range::new(start, line_end - line_ending.len_chars()).with_direction(sel.direction());
       let new_idx = result.len();
       result.push(range);
       if is_primary && new_primary_idx.is_none() && range_contains_inclusive(&range, head) {
@@ -959,9 +955,8 @@ pub fn split_on_matches(
   let primary_idx = selection.primary_index();
   let mut new_primary_idx = None;
 
-  let range_contains_inclusive = |range: &Range, pos: usize| {
-    range.from() <= pos && pos <= range.to()
-  };
+  let range_contains_inclusive =
+    |range: &Range, pos: usize| range.from() <= pos && pos <= range.to();
 
   for (idx, sel) in selection.iter().enumerate() {
     let is_primary = idx == primary_idx;
@@ -1235,9 +1230,7 @@ mod test {
     let selection = Selection::single(0, r.len_chars());
     assert_eq!(
       select_on_matches(s, &selection, &rope::Regex::new(r"[A-Z][a-z]*").unwrap()).unwrap(),
-      Some(
-        Selection::new(smallvec![Range::new(0, 6), Range::new(19, 26)], 0).unwrap()
-      )
+      Some(Selection::new(smallvec![Range::new(0, 6), Range::new(19, 26)], 0).unwrap())
     );
 
     let r = Rope::from_str("This\nString\n\ncontains multiple\nlines");
@@ -1385,8 +1378,7 @@ mod test {
   fn test_split_on_matches() {
     let text = Rope::from(" abcd efg wrs   xyz 123 456");
 
-    let selection =
-      Selection::new(smallvec![Range::new(0, 9), Range::new(11, 20)], 0).unwrap();
+    let selection = Selection::new(smallvec![Range::new(0, 9), Range::new(11, 20)], 0).unwrap();
 
     let result = split_on_matches(
       text.slice(..),

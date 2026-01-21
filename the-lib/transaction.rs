@@ -1,13 +1,23 @@
-use std::{borrow::Cow, iter::once};
+use std::{
+  borrow::Cow,
+  iter::once,
+};
 
-use ropey::{Rope, RopeBuilder, RopeSlice};
+use ropey::{
+  Rope,
+  RopeBuilder,
+  RopeSlice,
+};
 use smallvec::SmallVec;
 use the_core::chars::char_is_word;
 use thiserror::Error;
 
 use crate::{
   Tendril,
-  selection::{Range, Selection},
+  selection::{
+    Range,
+    Selection,
+  },
 };
 
 pub type Result<T> = std::result::Result<T, TransactionError>;
@@ -21,7 +31,9 @@ pub type Deletion = (usize, usize);
 pub enum TransactionError {
   #[error("changeset length mismatch: expected {expected}, got {actual}")]
   LengthMismatch { expected: usize, actual: usize },
-  #[error("changeset compose length mismatch: left output {left_len_after}, right input {right_len}")]
+  #[error(
+    "changeset compose length mismatch: left output {left_len_after}, right input {right_len}"
+  )]
   ComposeLengthMismatch {
     left_len_after: usize,
     right_len:      usize,
@@ -29,7 +41,11 @@ pub enum TransactionError {
   #[error("invalid change range: start {from} is after end {to}")]
   InvalidRange { from: usize, to: usize },
   #[error("change range {from}..{to} is out of bounds for document length {len}")]
-  RangeOutOfBounds { from: usize, to: usize, len: usize },
+  RangeOutOfBounds {
+    from: usize,
+    to:   usize,
+    len:  usize,
+  },
   #[error("change range {from}..{to} overlaps previous end {prev_end}")]
   OverlappingRange {
     prev_end: usize,
@@ -37,7 +53,10 @@ pub enum TransactionError {
     to:       usize,
   },
   #[error("positions {positions:?} are out of bounds for changeset length {len}")]
-  PositionsOutOfBounds { positions: Vec<usize>, len: usize },
+  PositionsOutOfBounds {
+    positions: Vec<usize>,
+    len:       usize,
+  },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,15 +129,15 @@ pub struct ChangeSet {
   pub(crate) changes: Vec<Operation>,
   /// The required document length. Will refuse to apply changes unless it
   /// matches.
-  len: usize,
-  len_after: usize,
+  len:                usize,
+  len_after:          usize,
 }
 
 impl ChangeSet {
   pub fn with_capacity(capacity: usize) -> Self {
     Self {
-      changes: Vec::with_capacity(capacity),
-      len: 0,
+      changes:   Vec::with_capacity(capacity),
+      len:       0,
       len_after: 0,
     }
   }
@@ -250,22 +269,24 @@ impl ChangeSet {
           head_b = changes_b.next();
         },
         (None, val) | (val, None) => unreachable!("({:?})", val),
-        (Some(Retain(i)), Some(Retain(j))) => match i.cmp(&j) {
-          Ordering::Less => {
-            changes.retain(i);
-            head_a = changes_a.next();
-            head_b = Some(Retain(j - i));
-          },
-          Ordering::Equal => {
-            changes.retain(i);
-            head_a = changes_a.next();
-            head_b = changes_b.next();
-          },
-          Ordering::Greater => {
-            changes.retain(j);
-            head_a = Some(Retain(i - j));
-            head_b = changes_b.next();
-          },
+        (Some(Retain(i)), Some(Retain(j))) => {
+          match i.cmp(&j) {
+            Ordering::Less => {
+              changes.retain(i);
+              head_a = changes_a.next();
+              head_b = Some(Retain(j - i));
+            },
+            Ordering::Equal => {
+              changes.retain(i);
+              head_a = changes_a.next();
+              head_b = changes_b.next();
+            },
+            Ordering::Greater => {
+              changes.retain(j);
+              head_a = Some(Retain(i - j));
+              head_b = changes_b.next();
+            },
+          }
         },
         (Some(Insert(mut s)), Some(Delete(j))) => {
           let len = s.chars().count();
@@ -313,22 +334,24 @@ impl ChangeSet {
             },
           }
         },
-        (Some(Retain(i)), Some(Delete(j))) => match i.cmp(&j) {
-          Ordering::Less => {
-            changes.delete(i);
-            head_a = changes_a.next();
-            head_b = Some(Delete(j - i));
-          },
-          Ordering::Equal => {
-            changes.delete(j);
-            head_a = changes_a.next();
-            head_b = changes_b.next();
-          },
-          Ordering::Greater => {
-            changes.delete(j);
-            head_a = Some(Retain(i - j));
-            head_b = changes_b.next();
-          },
+        (Some(Retain(i)), Some(Delete(j))) => {
+          match i.cmp(&j) {
+            Ordering::Less => {
+              changes.delete(i);
+              head_a = changes_a.next();
+              head_b = Some(Delete(j - i));
+            },
+            Ordering::Equal => {
+              changes.delete(j);
+              head_a = changes_a.next();
+              head_b = changes_b.next();
+            },
+            Ordering::Greater => {
+              changes.delete(j);
+              head_a = Some(Retain(i - j));
+              head_b = changes_b.next();
+            },
+          }
         },
       };
     }
@@ -344,8 +367,8 @@ impl ChangeSet {
   pub fn invert(&self, original_doc: &Rope) -> Result<Self> {
     if self.changes.is_empty() {
       return Ok(ChangeSet {
-        changes: Vec::new(),
-        len: self.len_after,
+        changes:   Vec::new(),
+        len:       self.len_after,
         len_after: self.len,
       });
     }
@@ -381,7 +404,7 @@ impl ChangeSet {
     if text_len != self.len {
       return Err(TransactionError::LengthMismatch {
         expected: self.len,
-        actual: text_len,
+        actual:   text_len,
       });
     }
     Ok(())
@@ -622,7 +645,7 @@ impl ChangeSet {
 
 pub struct ChangeIterator<'a> {
   iter: std::iter::Peekable<std::slice::Iter<'a, Operation>>,
-  pos: usize,
+  pos:  usize,
 }
 
 impl<'a> ChangeIterator<'a> {
@@ -686,14 +709,14 @@ impl From<ChangeSet> for Transaction {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Transaction {
-  changes: ChangeSet,
+  changes:   ChangeSet,
   selection: Option<Selection>,
 }
 
 impl Transaction {
   pub fn new(doc: &Rope) -> Self {
     Self {
-      changes: ChangeSet::new(doc.slice(..)),
+      changes:   ChangeSet::new(doc.slice(..)),
       selection: None,
     }
   }
@@ -771,7 +794,7 @@ impl Transaction {
       last = to;
       changes.push((from, to, tendril));
     }
-    Self::change(doc, changes.into_iter())
+    Self::change(doc, changes)
   }
 
   /// Generate a transaction from a set of changes.
@@ -926,20 +949,20 @@ mod test {
     use Operation::*;
 
     let a = ChangeSet {
-      changes: vec![
+      changes:   vec![
         Retain(5),
         Insert(" test!".into()),
         Retain(1),
         Delete(2),
         Insert("abc".into()),
       ],
-      len: 8,
+      len:       8,
       len_after: 15,
     };
 
     let b = ChangeSet {
-      changes: vec![Delete(10), Insert("世orld".into()), Retain(5)],
-      len: 15,
+      changes:   vec![Delete(10), Insert("世orld".into()), Retain(5)],
+      len:       15,
       len_after: 10,
     };
 
@@ -957,8 +980,8 @@ mod test {
     use Operation::*;
 
     let changes = ChangeSet {
-      changes: vec![Retain(4), Insert("test".into()), Delete(5), Retain(3)],
-      len: 12,
+      changes:   vec![Retain(4), Insert("test".into()), Delete(5), Retain(3)],
+      len:       12,
       len_after: 11,
     };
 
@@ -986,8 +1009,8 @@ mod test {
 
     // maps inserts
     let cs = ChangeSet {
-      changes: vec![Retain(4), Insert("!!".into()), Retain(4)],
-      len: 8,
+      changes:   vec![Retain(4), Insert("!!".into()), Retain(4)],
+      len:       8,
       len_after: 10,
     };
 
@@ -998,8 +1021,8 @@ mod test {
 
     // maps deletes
     let cs = ChangeSet {
-      changes: vec![Retain(4), Delete(4), Retain(4)],
-      len: 12,
+      changes:   vec![Retain(4), Delete(4), Retain(4)],
+      len:       12,
       len_after: 8,
     };
     assert_eq!(cs.map_pos(0, Assoc::Before).unwrap(), 0); // at start
@@ -1011,48 +1034,47 @@ mod test {
 
     // stays inbetween replacements
     let cs = ChangeSet {
-      changes: vec![
+      changes:   vec![
         Insert("ab".into()),
         Delete(2),
         Insert("cd".into()),
         Delete(2),
       ],
-      len: 4,
+      len:       4,
       len_after: 4,
     };
     assert_eq!(cs.map_pos(2, Assoc::Before).unwrap(), 2);
     assert_eq!(cs.map_pos(2, Assoc::After).unwrap(), 2);
     // unsorted selection
     let cs = ChangeSet {
-      changes: vec![
+      changes:   vec![
         Insert("ab".into()),
         Delete(2),
         Insert("cd".into()),
         Delete(2),
       ],
-      len: 4,
+      len:       4,
       len_after: 4,
     };
     let mut positions = [4, 2];
-    cs
-      .update_positions(positions.iter_mut().map(|pos| (pos, Assoc::After)))
+    cs.update_positions(positions.iter_mut().map(|pos| (pos, Assoc::After)))
       .unwrap();
     assert_eq!(positions, [4, 2]);
     // stays at word boundary
     let cs = ChangeSet {
-      changes: vec![
+      changes:   vec![
         Retain(2), // <space><space>
         Insert(" ab".into()),
         Retain(2), // cd
         Insert("de ".into()),
       ],
-      len: 4,
+      len:       4,
       len_after: 10,
     };
     assert_eq!(cs.map_pos(2, Assoc::BeforeWord).unwrap(), 3);
     assert_eq!(cs.map_pos(4, Assoc::AfterWord).unwrap(), 9);
     let cs = ChangeSet {
-      changes: vec![
+      changes:   vec![
         Retain(1), // <space>
         Insert(" b".into()),
         Delete(1), // c
@@ -1060,13 +1082,13 @@ mod test {
         Insert("e ".into()),
         Delete(1), // <space>
       ],
-      len: 5,
+      len:       5,
       len_after: 7,
     };
     assert_eq!(cs.map_pos(1, Assoc::BeforeWord).unwrap(), 2);
     assert_eq!(cs.map_pos(3, Assoc::AfterWord).unwrap(), 5);
     let cs = ChangeSet {
-      changes: vec![
+      changes:   vec![
         Retain(1), // <space>
         Insert("a".into()),
         Delete(2), // <space>b
@@ -1075,7 +1097,7 @@ mod test {
         Delete(1), // f
         Retain(1), // <space>
       ],
-      len: 5,
+      len:       5,
       len_after: 7,
     };
     assert_eq!(cs.map_pos(2, Assoc::BeforeWord).unwrap(), 1);
@@ -1088,7 +1110,7 @@ mod test {
     let transaction = Transaction::change(
       &doc,
       // (1, 1, None) is a useless 0-width delete that gets factored out
-      vec![(1, 1, None), (6, 11, Some("void".into())), (12, 17, None)].into_iter(),
+      vec![(1, 1, None), (6, 11, Some("void".into())), (12, 17, None)],
     )
     .unwrap();
     transaction.apply(&mut doc).unwrap();
@@ -1099,7 +1121,7 @@ mod test {
   fn changes_iter() {
     let doc = Rope::from("hello world!\ntest 123");
     let changes = vec![(6, 11, Some("void".into())), (12, 17, None)];
-    let transaction = Transaction::change(&doc, changes.clone().into_iter()).unwrap();
+    let transaction = Transaction::change(&doc, changes.clone()).unwrap();
     assert_eq!(transaction.changes_iter().collect::<Vec<_>>(), changes);
   }
 
@@ -1137,10 +1159,10 @@ mod test {
   #[test]
   fn apply_to_matches_in_place() {
     let doc = Rope::from("hello world!");
-    let transaction = Transaction::change(
-      &doc,
-      vec![(6, 11, Some("void".into())), (12, 12, Some("!!".into()))].into_iter(),
-    )
+    let transaction = Transaction::change(&doc, vec![
+      (6, 11, Some("void".into())),
+      (12, 12, Some("!!".into())),
+    ])
     .unwrap();
 
     let mut in_place = doc.clone();
@@ -1169,21 +1191,15 @@ mod test {
     let mut other = Rope::from("nope");
 
     let err = changes.apply(&mut other).unwrap_err();
-    assert!(matches!(
-      err,
-      TransactionError::LengthMismatch {
-        expected: 5,
-        actual: 4,
-      }
-    ));
+    assert!(matches!(err, TransactionError::LengthMismatch {
+      expected: 5,
+      actual:   4,
+    }));
     let err = changes.apply_to(&other).unwrap_err();
-    assert!(matches!(
-      err,
-      TransactionError::LengthMismatch {
-        expected: 5,
-        actual: 4,
-      }
-    ));
+    assert!(matches!(err, TransactionError::LengthMismatch {
+      expected: 5,
+      actual:   4,
+    }));
     assert_eq!(other, Rope::from("nope"));
   }
 }

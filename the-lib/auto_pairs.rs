@@ -170,7 +170,6 @@ impl Default for AutoPairs {
 // to simplify, maybe return Option<Transaction> and just reimplement the
 // default
 
-#[must_use]
 pub fn hook(
   doc: &Rope,
   selection: &Selection,
@@ -192,7 +191,6 @@ pub fn hook(
 }
 
 /// Delete hook for removing matching auto-paired characters around the cursor.
-#[must_use]
 pub fn delete_hook(
   doc: &Rope,
   selection: &Selection,
@@ -361,6 +359,207 @@ fn iter_chars_eq(
       _ => return false,
     }
   }
+}
+
+fn delete_pair_range(
+  doc_slice: ropey::RopeSlice,
+  cursor: usize,
+  pairs: &AutoPairs,
+) -> Option<(usize, usize)> {
+  let mut best: Option<(usize, usize, usize)> = None;
+
+  for pair in pairs.pairs() {
+    let open_len = pair.open_len();
+    let close_len = pair.close_len();
+    if open_len == 0 || close_len == 0 {
+      continue;
+    }
+    if cursor < open_len {
+      continue;
+    }
+
+    let from = cursor - open_len;
+    let to = cursor + close_len;
+    if to > doc_slice.len_chars() {
+      continue;
+    }
+
+    if matches_chars(doc_slice, from, open_len, pair.open.chars())
+      && matches_chars(doc_slice, cursor, close_len, pair.close.chars())
+    {
+      let total_len = open_len + close_len;
+      match best {
+        Some((best_len, ..)) if best_len >= total_len => {},
+        _ => best = Some((total_len, from, to)),
+      }
+    }
+  }
+
+  best.map(|(_, from, to)| (from, to))
+}
+
+fn prev_char(doc: &Rope, pos: usize) -> Option<char> {
+  if pos == 0 {
+    return None;
+  }
+
+  doc.get_char(pos - 1)
+}
+
+fn advance_graphemes(doc_slice: ropey::RopeSlice, mut pos: usize, count: usize) -> usize {
+  for _ in 0..count {
+    pos = grapheme::next_grapheme_boundary(doc_slice, pos);
+  }
+  pos
+}
+
+/// calculate what the resulting range should be for an auto pair insertion
+fn get_next_range(
+  doc: &Rope,
+  start_range: &Range,
+  offset: usize,
+  selection_len: usize,
+  advance: usize,
+) -> Range {
+  // When the character under the cursor changes due to complete pair
+  // insertion, we must look backward a grapheme and then add the length
+  // of the insertion to put the resulting cursor in the right place, e.g.
+  //
+  // foo[\r\n] - anchor: 3, head: 5
+  // foo([)]\r\n - anchor: 4, head: 5
+  //
+  // foo[\r\n] - anchor: 3, head: 5
+  // foo'[\r\n] - anchor: 4, head: 6
+  //
+  // foo([)]\r\n - anchor: 4, head: 5
+  // foo()[\r\n] - anchor: 5, head: 7
+  //
+  // [foo]\r\n - anchor: 0, head: 3
+  // [foo(])\r\n - anchor: 0, head: 5
+
+  // inserting at the very end of the document after the last newline
+  if start_range.head == doc.len_chars() && start_range.anchor == doc.len_chars() {
+    return Range::new(
+      start_range.anchor + offset + 1,
+      start_range.head + offset + 1,
+    );
+  }
+
+  let doc_slice = doc.slice(..);
+  let single_grapheme = start_range.is_single_grapheme(doc_slice);
+
+  // just skip over graphemes
+  if selection_len == 0 {
+    let end_anchor = if single_grapheme {
+      advance_graphemes(doc_slice, start_range.anchor, advance) + offset
+
+    // even for backward inserts with multiple grapheme selections,
+    // we want the anchor to stay where it is so that the relative
+    // selection does not change, e.g.:
+    //
+    // foo([) wor]d -> insert ) -> foo()[ wor]d
+    } else {
+      start_range.anchor + offset
+    };
+
+    return Range::new(
+      end_anchor,
+      advance_graphemes(doc_slice, start_range.head, advance) + offset,
+    );
+  }
+
+  // trivial case: only inserted a single-char opener, just move the selection
+  if selection_len == 1 {
+    let end_anchor = if single_grapheme || start_range.direction() == Direction::Backward {
+      start_range.anchor + offset + 1
+    } else {
+      start_range.anchor + offset
+    };
+
+    return Range::new(end_anchor, start_range.head + offset + 1);
+  }
+
+  // If the head = 0, then we must be in insert mode with a backward
+  // cursor, which implies the head will just move
+  let end_head = if start_range.head == 0 || start_range.direction() == Direction::Backward {
+    start_range.head + offset + 1
+  } else {
+    // We must have a forward cursor, which means we must move to the
+    // other end of the grapheme to get to where the new characters
+    // are inserted, then move the head to where it should be
+    let prev_bound = grapheme::prev_grapheme_boundary(doc_slice, start_range.head);
+    tracing::trace!(
+      "prev_bound: {}, offset: {}, selection_len: {}",
+      prev_bound,
+      offset,
+      selection_len
+    );
+    prev_bound + offset + selection_len
+  };
+
+  let end_anchor = match (start_range.len(), start_range.direction()) {
+    // if we have a zero width cursor, it shifts to the same number
+    (0, _) => end_head,
+
+    // If we are inserting for a regular one-width cursor, the anchor
+    // moves with the head. This is the fast path for ASCII.
+    (1, Direction::Forward) => end_head - 1,
+    (1, Direction::Backward) => end_head + 1,
+
+    (_, Direction::Forward) => {
+      if single_grapheme {
+        grapheme::prev_grapheme_boundary(doc_slice, start_range.head) + 1
+
+      // if we are appending, the anchor stays where it is; only offset
+      // for multiple range insertions
+      } else {
+        start_range.anchor + offset
+      }
+    },
+
+    (_, Direction::Backward) => {
+      if single_grapheme {
+        // if we're backward, then the head is at the first char
+        // of the typed char, so we need to add the length of
+        // the closing char
+        grapheme::prev_grapheme_boundary(doc_slice, start_range.anchor) + selection_len + offset
+      } else {
+        // when we are inserting in front of a selection, we need to move
+        // the anchor over by however many characters were inserted overall
+        start_range.anchor + offset + selection_len
+      }
+    },
+  };
+
+  Range::new(end_anchor, end_head)
+}
+
+fn build_transaction(
+  doc: &Rope,
+  selection: &Selection,
+  mut make_change: impl FnMut(&Range) -> ChangeOutcome,
+) -> Result<Transaction> {
+  let mut end_ranges = SmallVec::with_capacity(selection.ranges().len());
+  let mut offset = 0;
+
+  let transaction = Transaction::change_by_selection(doc, selection, |start_range| {
+    let outcome = make_change(start_range);
+    let next_range = get_next_range(
+      doc,
+      start_range,
+      offset,
+      outcome.selection_len,
+      outcome.advance,
+    );
+    end_ranges.push(next_range);
+    offset += outcome.inserted_len;
+    outcome.change
+  })?;
+
+  let selection = Selection::new(end_ranges, selection.primary_index())?;
+  let transaction = transaction.with_selection(selection);
+  tracing::debug!("auto pair transaction: {:#?}", transaction);
+  Ok(transaction)
 }
 
 #[cfg(test)]
@@ -628,205 +827,4 @@ mod test {
     let tx = delete_hook(&doc, &sel, &pairs).unwrap().unwrap();
     assert_eq!(apply_transaction(&doc, &tx), " ");
   }
-}
-
-fn delete_pair_range(
-  doc_slice: ropey::RopeSlice,
-  cursor: usize,
-  pairs: &AutoPairs,
-) -> Option<(usize, usize)> {
-  let mut best: Option<(usize, usize, usize)> = None;
-
-  for pair in pairs.pairs() {
-    let open_len = pair.open_len();
-    let close_len = pair.close_len();
-    if open_len == 0 || close_len == 0 {
-      continue;
-    }
-    if cursor < open_len {
-      continue;
-    }
-
-    let from = cursor - open_len;
-    let to = cursor + close_len;
-    if to > doc_slice.len_chars() {
-      continue;
-    }
-
-    if matches_chars(doc_slice, from, open_len, pair.open.chars())
-      && matches_chars(doc_slice, cursor, close_len, pair.close.chars())
-    {
-      let total_len = open_len + close_len;
-      match best {
-        Some((best_len, ..)) if best_len >= total_len => {},
-        _ => best = Some((total_len, from, to)),
-      }
-    }
-  }
-
-  best.map(|(_, from, to)| (from, to))
-}
-
-fn prev_char(doc: &Rope, pos: usize) -> Option<char> {
-  if pos == 0 {
-    return None;
-  }
-
-  doc.get_char(pos - 1)
-}
-
-fn advance_graphemes(doc_slice: ropey::RopeSlice, mut pos: usize, count: usize) -> usize {
-  for _ in 0..count {
-    pos = grapheme::next_grapheme_boundary(doc_slice, pos);
-  }
-  pos
-}
-
-/// calculate what the resulting range should be for an auto pair insertion
-fn get_next_range(
-  doc: &Rope,
-  start_range: &Range,
-  offset: usize,
-  selection_len: usize,
-  advance: usize,
-) -> Range {
-  // When the character under the cursor changes due to complete pair
-  // insertion, we must look backward a grapheme and then add the length
-  // of the insertion to put the resulting cursor in the right place, e.g.
-  //
-  // foo[\r\n] - anchor: 3, head: 5
-  // foo([)]\r\n - anchor: 4, head: 5
-  //
-  // foo[\r\n] - anchor: 3, head: 5
-  // foo'[\r\n] - anchor: 4, head: 6
-  //
-  // foo([)]\r\n - anchor: 4, head: 5
-  // foo()[\r\n] - anchor: 5, head: 7
-  //
-  // [foo]\r\n - anchor: 0, head: 3
-  // [foo(])\r\n - anchor: 0, head: 5
-
-  // inserting at the very end of the document after the last newline
-  if start_range.head == doc.len_chars() && start_range.anchor == doc.len_chars() {
-    return Range::new(
-      start_range.anchor + offset + 1,
-      start_range.head + offset + 1,
-    );
-  }
-
-  let doc_slice = doc.slice(..);
-  let single_grapheme = start_range.is_single_grapheme(doc_slice);
-
-  // just skip over graphemes
-  if selection_len == 0 {
-    let end_anchor = if single_grapheme {
-      advance_graphemes(doc_slice, start_range.anchor, advance) + offset
-
-    // even for backward inserts with multiple grapheme selections,
-    // we want the anchor to stay where it is so that the relative
-    // selection does not change, e.g.:
-    //
-    // foo([) wor]d -> insert ) -> foo()[ wor]d
-    } else {
-      start_range.anchor + offset
-    };
-
-    return Range::new(
-      end_anchor,
-      advance_graphemes(doc_slice, start_range.head, advance) + offset,
-    );
-  }
-
-  // trivial case: only inserted a single-char opener, just move the selection
-  if selection_len == 1 {
-    let end_anchor = if single_grapheme || start_range.direction() == Direction::Backward {
-      start_range.anchor + offset + 1
-    } else {
-      start_range.anchor + offset
-    };
-
-    return Range::new(end_anchor, start_range.head + offset + 1);
-  }
-
-  // If the head = 0, then we must be in insert mode with a backward
-  // cursor, which implies the head will just move
-  let end_head = if start_range.head == 0 || start_range.direction() == Direction::Backward {
-    start_range.head + offset + 1
-  } else {
-    // We must have a forward cursor, which means we must move to the
-    // other end of the grapheme to get to where the new characters
-    // are inserted, then move the head to where it should be
-    let prev_bound = grapheme::prev_grapheme_boundary(doc_slice, start_range.head);
-    tracing::trace!(
-      "prev_bound: {}, offset: {}, selection_len: {}",
-      prev_bound,
-      offset,
-      selection_len
-    );
-    prev_bound + offset + selection_len
-  };
-
-  let end_anchor = match (start_range.len(), start_range.direction()) {
-    // if we have a zero width cursor, it shifts to the same number
-    (0, _) => end_head,
-
-    // If we are inserting for a regular one-width cursor, the anchor
-    // moves with the head. This is the fast path for ASCII.
-    (1, Direction::Forward) => end_head - 1,
-    (1, Direction::Backward) => end_head + 1,
-
-    (_, Direction::Forward) => {
-      if single_grapheme {
-        grapheme::prev_grapheme_boundary(doc_slice, start_range.head) + 1
-
-      // if we are appending, the anchor stays where it is; only offset
-      // for multiple range insertions
-      } else {
-        start_range.anchor + offset
-      }
-    },
-
-    (_, Direction::Backward) => {
-      if single_grapheme {
-        // if we're backward, then the head is at the first char
-        // of the typed char, so we need to add the length of
-        // the closing char
-        grapheme::prev_grapheme_boundary(doc_slice, start_range.anchor) + selection_len + offset
-      } else {
-        // when we are inserting in front of a selection, we need to move
-        // the anchor over by however many characters were inserted overall
-        start_range.anchor + offset + selection_len
-      }
-    },
-  };
-
-  Range::new(end_anchor, end_head)
-}
-
-fn build_transaction(
-  doc: &Rope,
-  selection: &Selection,
-  mut make_change: impl FnMut(&Range) -> ChangeOutcome,
-) -> Result<Transaction> {
-  let mut end_ranges = SmallVec::with_capacity(selection.ranges().len());
-  let mut offset = 0;
-
-  let transaction = Transaction::change_by_selection(doc, selection, |start_range| {
-    let outcome = make_change(start_range);
-    let next_range = get_next_range(
-      doc,
-      start_range,
-      offset,
-      outcome.selection_len,
-      outcome.advance,
-    );
-    end_ranges.push(next_range);
-    offset += outcome.inserted_len;
-    outcome.change
-  })?;
-
-  let selection = Selection::new(end_ranges, selection.primary_index())?;
-  let transaction = transaction.with_selection(selection);
-  tracing::debug!("auto pair transaction: {:#?}", transaction);
-  Ok(transaction)
 }

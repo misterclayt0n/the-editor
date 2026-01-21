@@ -10,8 +10,15 @@ use ropey::Rope;
 use smallvec::SmallVec;
 use the_lib::{
   Tendril,
-  selection::{Range, Selection},
-  transaction::{Assoc, Change, Transaction},
+  selection::{
+    Range,
+    Selection,
+  },
+  transaction::{
+    Assoc,
+    Change,
+    Transaction,
+  },
 };
 
 fn main() {
@@ -120,12 +127,11 @@ mod change_by_selection {
     let insert = Tendril::from("x");
 
     bencher.bench(|| {
-      let transaction = Transaction::change_by_selection(
-        black_box(&doc),
-        black_box(&selection),
-        |range| (range.from(), range.to(), Some(insert.clone())),
-      )
-      .unwrap();
+      let transaction =
+        Transaction::change_by_selection(black_box(&doc), black_box(&selection), |range| {
+          (range.from(), range.to(), Some(insert.clone()))
+        })
+        .unwrap();
       black_box(transaction);
     });
   }
@@ -219,7 +225,10 @@ mod map_pos {
     let pos = doc.len_chars() / 2;
 
     bencher.bench(|| {
-      let mapped = transaction.changes().map_pos(black_box(pos), Assoc::Before).unwrap();
+      let mapped = transaction
+        .changes()
+        .map_pos(black_box(pos), Assoc::Before)
+        .unwrap();
       black_box(mapped);
     });
   }
@@ -232,7 +241,10 @@ mod map_pos {
     let pos = doc.len_chars() / 2;
 
     bencher.bench(|| {
-      let mapped = transaction.changes().map_pos(black_box(pos), Assoc::After).unwrap();
+      let mapped = transaction
+        .changes()
+        .map_pos(black_box(pos), Assoc::After)
+        .unwrap();
       black_box(mapped);
     });
   }

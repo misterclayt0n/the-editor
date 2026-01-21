@@ -31,13 +31,13 @@ the-stdx = { path = "../the-stdx" }
 divan = "0.1.21"
 
 [[bench]]
+harness = false
 name    = "grapheme"
-harness = false
 
 [[bench]]
+harness = false
 name    = "chars"
-harness = false
 
 [[bench]]
-name    = "line_ending"
 harness = false
+name    = "line_ending"

@@ -1,3 +1,151 @@
+//! Buffer history management for undo/redo operations.
+//!
+//! This module provides a low-level, pure state machine for managing document
+//! history. It tracks revisions in a tree structure (supporting branches when
+//! undoing and making new edits) and provides navigation by steps or time.
+//!
+//! # Design Philosophy
+//!
+//! This module is intentionally minimal and focused on correctness. It is a
+//! "dumb" state machine that:
+//!
+//! - **Does not parse user input** - No regex, no string parsing, no duration
+//!   parsing. Higher layers should parse commands like `:earlier 5m` into
+//!   [`UndoKind::TimePeriod`].
+//!
+//! - **Uses explicit mutation** - Navigation methods return a [`HistoryJump`]
+//!   containing transactions to apply. The caller must apply all transactions
+//!   successfully, then call [`History::apply_jump`] to update history state.
+//!   This prevents divergence between history and document if transaction
+//!   application fails.
+//!
+//! - **Is branch-local for step navigation** - [`UndoKind::Steps`] follows the
+//!   branch lineage (parent/last_child links), not vector indices. After
+//!   branching, "undo 3" follows your current branch, not arbitrary revisions.
+//!
+//! - **Uses linear search for time navigation** - Safely handles potentially
+//!   unsorted timestamps (e.g., after clock adjustments). This is O(n) but
+//!   correct. Also likely a big point for optimizations in the future.
+//!
+//! - **Returns `Result` types** - All fallible operations return proper errors
+//!   via [`HistoryError`].
+//!
+//! # Basic Usage
+//!
+//! ```ignore
+//! use the_lib::history::{History, State, HistoryJump};
+//! use the_lib::transaction::Transaction;
+//! use the_lib::selection::Selection;
+//! use ropey::Rope;
+//!
+//! let mut history = History::default();
+//! let mut state = State {
+//!     doc: Rope::from("hello"),
+//!     selection: Selection::point(0),
+//! };
+//!
+//! // Create and commit a transaction
+//! let tx = Transaction::change(&state.doc, vec![(5, 5, Some(" world".into()))]).unwrap();
+//! history.commit_revision(&tx, &state).unwrap();
+//! tx.apply(&mut state.doc).unwrap();
+//!
+//! // Undo - get jump first, then apply
+//! if let Some(jump) = history.undo() {
+//!     for txn in &jump.transactions {
+//!         txn.apply(&mut state.doc).unwrap();
+//!     }
+//!     history.apply_jump(&jump).unwrap();
+//! }
+//! ```
+//!
+//! # Navigation Methods
+//!
+//! | Method | Description |
+//! |--------|-------------|
+//! | [`History::undo`] | Single undo step (to parent) |
+//! | [`History::redo`] | Single redo step (to last_child) |
+//! | [`History::earlier`] | Navigate backward by steps or time |
+//! | [`History::later`] | Navigate forward by steps or time |
+//! | [`History::jump_backward`] | Jump N steps toward root (branch-local) |
+//! | [`History::jump_forward`] | Jump N steps toward tip (branch-local) |
+//! | [`History::jump_duration_backward`] | Jump to revision near `now - duration` |
+//! | [`History::jump_duration_forward`] | Jump to revision near `now + duration` |
+//!
+//! # What's NOT in This Module (Implement in Higher Layers)
+//!
+//! The following functionality from the original `the-editor/core/history.rs`
+//! is intentionally omitted and should be implemented in a higher layer (e.g.,
+//! commands):
+//!
+//! ## 1. `UndoKind` Parsing (`FromStr` implementation)
+//!
+//! The old module parsed strings like `"5s"`, `"2m 30s"`, `"1h"` into
+//! `UndoKind`. Implement this in your command layer:
+//!
+//! ```ignore
+//! impl FromStr for UndoKind {
+//!     type Err = String;
+//!     fn from_str(s: &str) -> Result<Self, Self::Err> {
+//!         let s = s.trim();
+//!         if s.is_empty() {
+//!             Ok(Self::Steps(1))
+//!         } else if let Ok(n) = s.parse::<usize>() {
+//!             Ok(Self::Steps(n))
+//!         } else {
+//!             Ok(Self::TimePeriod(parse_human_duration(s)?))
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! ## 2. Human Duration Parsing
+//!
+//! Parse strings like `"5 sec"`, `"2m 30s"`, `"1 hour 30 minutes"`:
+//!
+//! ```ignore
+//! const TIME_UNITS: &[(&[&str], &str, u64)] = &[
+//!     (&["seconds", "second", "sec", "s"], "seconds", 1),
+//!     (&["minutes", "minute", "min", "m"], "minutes", 60),
+//!     (&["hours", "hour", "hr", "h"], "hours", 60 * 60),
+//!     (&["days", "day", "d"], "days", 24 * 60 * 60),
+//! ];
+//!
+//! fn parse_human_duration(s: &str) -> Result<Duration, String> {
+//!     // Use regex: r"^(?:\d+\s*[a-z]+\s*)+$" for validation
+//!     // Use regex: r"(\d+)\s*([a-z]+)" to capture number+unit pairs
+//!     // Sum up seconds, check for overflow, reject zero values
+//!     // ...
+//! }
+//! ```
+//!
+//! ## 3. Command Integration
+//!
+//! Wire up `:earlier` and `:later` commands:
+//!
+//! ```ignore
+//! fn cmd_earlier(editor: &mut Editor, args: &str) -> Result<()> {
+//!     let kind: UndoKind = args.parse()?;
+//!     let jump = editor.history.earlier(kind)?;
+//!     for txn in &jump.transactions {
+//!         txn.apply(&mut editor.doc)?;
+//!     }
+//!     editor.history.apply_jump(&jump)?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! # Differences from Original Module
+//!
+//! | Aspect | Old (`the-editor/core/history.rs`) | New (`the-lib/history.rs`) |
+//! |--------|-------------------------------------|----------------------------|
+//! | Mutation | Immediate (methods mutate `current`) | Explicit (`HistoryJump` + `apply_jump`) |
+//! | Step navigation | Global index (`current ± n`) | Branch-local (parent/child links) |
+//! | Time search | Binary search (assumes sorted) | Linear search (handles unsorted) |
+//! | Error handling | Panics / returns `Option` | Returns `Result<T, HistoryError>` |
+//! | Selection | Not preserved in `changes_since` | Preserved from target revision |
+//! | Parsing | Built-in (`FromStr`, regex) | None (implement in higher layer) |
+//! | Dependencies | `regex`, `once_cell` | None |
+
 use std::{
   num::NonZeroUsize,
   time::{
@@ -286,7 +434,7 @@ impl History {
   /// Returns `None` if already at root, otherwise returns a [`HistoryJump`]
   /// containing the transaction to apply and the target revision.
   ///
-  /// After successfully applying the transaction, call [`apply_jump`] to
+  /// After successfully applying the transaction, call [`Self::apply_jump`] to
   /// update the history state.
   pub fn undo(&self) -> Option<HistoryJump> {
     if self.at_root() {
@@ -306,7 +454,7 @@ impl History {
   /// otherwise returns a [`HistoryJump`] containing the transaction to apply
   /// and the target revision.
   ///
-  /// After successfully applying the transaction, call [`apply_jump`] to
+  /// After successfully applying the transaction, call [`Self::apply_jump`] to
   /// update the history state.
   pub fn redo(&self) -> Option<HistoryJump> {
     let current_revision = &self.revisions[self.current];

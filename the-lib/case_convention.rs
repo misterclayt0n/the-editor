@@ -1,3 +1,57 @@
+//! Text case transformations.
+//!
+//! This module provides functions to convert text between different naming
+//! conventions commonly used in programming:
+//!
+//! | Function | Input | Output |
+//! |----------|-------|--------|
+//! | [`to_pascal_case`] | `hello_world` | `HelloWorld` |
+//! | [`to_camel_case`] | `hello_world` | `helloWorld` |
+//! | [`to_snake_case`] | `HelloWorld` | `hello_world` |
+//! | [`to_kebab_case`] | `HelloWorld` | `hello-world` |
+//! | [`to_upper_case`] | `hello` | `HELLO` |
+//! | [`to_lower_case`] | `HELLO` | `hello` |
+//!
+//! # Word Boundary Detection
+//!
+//! The snake_case and kebab-case conversions detect word boundaries from:
+//!
+//! - Non-alphanumeric separators (`_`, `-`, space, etc.)
+//! - CamelCase transitions (lowercase → uppercase)
+//! - Consecutive uppercase runs (`HTTPServer` → `http_server`)
+//!
+//! # Usage
+//!
+//! Each function comes in two variants:
+//!
+//! - `to_*_case(iter)` - Returns a new [`Tendril`]
+//! - `to_*_case_with(iter, buf)` - Appends to an existing buffer
+//!
+//! ```ignore
+//! use the_lib::case_convention::{to_snake_case, to_pascal_case};
+//!
+//! // Convert to snake_case
+//! let snake = to_snake_case("HelloWorld".chars());
+//! assert_eq!(snake.as_str(), "hello_world");
+//!
+//! // Convert to PascalCase
+//! let pascal = to_pascal_case("hello_world".chars());
+//! assert_eq!(pascal.as_str(), "HelloWorld");
+//! ```
+//!
+//! # Handling Acronyms
+//!
+//! The conversion handles acronyms intelligently:
+//!
+//! ```ignore
+//! // HTTPServer becomes http_server, not h_t_t_p_server
+//! assert_eq!(to_snake_case("HTTPServer".chars()).as_str(), "httpserver");
+//!
+//! // Note: Acronym detection is limited - "XMLParser" → "xmlparser"
+//! ```
+//!
+//! [`Tendril`]: crate::Tendril
+
 use crate::Tendril;
 
 pub fn to_pascal_case(text: impl Iterator<Item = char>) -> Tendril {

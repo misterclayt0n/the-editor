@@ -1,3 +1,89 @@
+//! Cursor positions and multi-cursor selections.
+//!
+//! This module provides [`Range`] for representing a single cursor/selection
+//! and [`Selection`] for managing multiple cursors (multi-cursor editing).
+//!
+//! # Range Model
+//!
+//! A [`Range`] has two positions: `anchor` and `head`. The `head` is where the
+//! cursor visually appears, while the `anchor` is the other end of the
+//! selection. When `anchor == head`, the range is a point (no selection).
+//!
+//! ```text
+//! anchor=2, head=7: "he[llo w]orld"  (forward selection)
+//! anchor=7, head=2: "he]llo w[orld"  (backward selection)
+//! anchor=5, head=5: "hello|world"    (point/cursor)
+//! ```
+//!
+//! The `from()` and `to()` methods return the range bounds regardless of
+//! direction, while `direction()` tells you which way the selection extends.
+//!
+//! # 1-Width Cursor Model
+//!
+//! This module uses a "1-width" cursor model where even a point cursor occupies
+//! the space of one grapheme. The `cursor()` method returns the left edge of
+//! the block cursor:
+//!
+//! ```ignore
+//! let range = Range::new(5, 7);
+//! let cursor_pos = range.cursor(text); // Returns 6 (prev grapheme from head)
+//! ```
+//!
+//! # Multi-Cursor Selection
+//!
+//! A [`Selection`] contains one or more [`Range`]s, with one designated as the
+//! "primary" selection. Ranges are kept normalized:
+//!
+//! - Sorted by position
+//! - No overlapping ranges (overlaps are merged)
+//! - Always at least one range
+//!
+//! ```ignore
+//! use the_lib::selection::Selection;
+//!
+//! // Create a multi-cursor selection
+//! let selection = Selection::new(vec![
+//!     Range::point(5),
+//!     Range::point(15),
+//!     Range::point(25),
+//! ], 0)?;
+//!
+//! // Iterate over all cursors
+//! for range in selection.iter() {
+//!     println!("Cursor at {}", range.head);
+//! }
+//!
+//! // Get the primary cursor
+//! let primary = selection.primary();
+//! ```
+//!
+//! # Mapping Through Changes
+//!
+//! When document changes are applied, selections need to be updated:
+//!
+//! ```ignore
+//! let new_selection = selection.map(transaction.changes())?;
+//! ```
+//!
+//! For single ranges, use [`Range::map`]. For multiple ranges (multi-cursor),
+//! use [`Selection::map`] which is more efficient.
+//!
+//! # Grapheme Alignment
+//!
+//! Selections should be aligned to grapheme boundaries. Use
+//! `ensure_grapheme_boundary_*` functions from `the_core::grapheme` to ensure
+//! positions don't split graphemes.
+//!
+//! # Error Handling
+//!
+//! Operations return [`Result<T, SelectionError>`]:
+//!
+//! - **EmptySelection** - Selection must have at least one range
+//! - **PrimaryIndexOutOfBounds** - Primary index is invalid
+//! - **RangeIndexOutOfBounds** - Accessed range index doesn't exist
+//! - **RemoveLastRange** - Cannot remove the only range
+//! - **NoRanges** - A transform operation produced no ranges
+
 use std::{
   borrow::Cow,
   iter,

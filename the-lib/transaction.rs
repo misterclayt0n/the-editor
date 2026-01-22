@@ -1,3 +1,97 @@
+//! Operational transformation primitives for document editing.
+//!
+//! This module provides the core types for representing and applying changes
+//! to text documents: [`ChangeSet`] for low-level operations and
+//! [`Transaction`] for higher-level edits that may include selection updates.
+//!
+//! # Architecture
+//!
+//! Changes are represented as a sequence of [`Operation`]s:
+//!
+//! - **Retain(n)** - Keep `n` characters unchanged
+//! - **Delete(n)** - Remove `n` characters
+//! - **Insert(s)** - Insert string `s`
+//!
+//! These operations are applied sequentially from the start of the document.
+//! A [`ChangeSet`] is a list of operations that transforms a document of a
+//! specific length into a new document.
+//!
+//! # Basic Usage
+//!
+//! ```ignore
+//! use the_lib::transaction::Transaction;
+//! use ropey::Rope;
+//!
+//! let mut doc = Rope::from("hello world");
+//!
+//! // Replace "world" with "rust"
+//! let tx = Transaction::change(&doc, vec![
+//!     (6, 11, Some("rust".into()))
+//! ]).unwrap();
+//!
+//! tx.apply(&mut doc).unwrap();
+//! assert_eq!(doc.to_string(), "hello rust");
+//! ```
+//!
+//! # Position Mapping
+//!
+//! After applying changes, cursor positions need to be updated. The [`Assoc`]
+//! enum controls how positions are mapped through insertions/deletions:
+//!
+//! - **Before** - Stay before insertions at this position
+//! - **After** - Move after insertions at this position
+//! - **BeforeWord/AfterWord** - Move based on word character boundaries
+//! - **BeforeSticky/AfterSticky** - Maintain relative offset in same-size
+//!   replacements
+//!
+//! ```ignore
+//! use the_lib::transaction::{ChangeSet, Assoc};
+//!
+//! // Insert "!!" at position 4
+//! let cs = ChangeSet { /* ... */ };
+//!
+//! // Position 4 with Before stays at 4
+//! assert_eq!(cs.map_pos(4, Assoc::Before).unwrap(), 4);
+//!
+//! // Position 4 with After moves to 6 (after the insertion)
+//! assert_eq!(cs.map_pos(4, Assoc::After).unwrap(), 6);
+//! ```
+//!
+//! # Composition
+//!
+//! Two [`ChangeSet`]s can be composed together when the output length of the
+//! first matches the input length of the second:
+//!
+//! ```ignore
+//! let composed = changeset_a.compose(changeset_b)?;
+//! // Applying `composed` is equivalent to applying `a` then `b`
+//! ```
+//!
+//! # Inversion
+//!
+//! A [`ChangeSet`] can be inverted to create an "undo" changeset:
+//!
+//! ```ignore
+//! let original_doc = doc.clone();
+//! let inverted = changes.invert(&original_doc)?;
+//!
+//! changes.apply(&mut doc)?;
+//! inverted.apply(&mut doc)?;
+//! assert_eq!(doc, original_doc);
+//! ```
+//!
+//! # Error Handling
+//!
+//! All fallible operations return [`Result<T, TransactionError>`]:
+//!
+//! - **LengthMismatch** - Document length doesn't match changeset expectation
+//! - **ComposeLengthMismatch** - Changesets can't be composed (length mismatch)
+//! - **InvalidRange** - Change range has start > end
+//! - **RangeOutOfBounds** - Change range extends past document end
+//! - **OverlappingRange** - Changes overlap (use `change_ignore_overlapping`
+//!   instead)
+//! - **PositionsOutOfBounds** - Positions to map are outside changeset range
+
 use std::{
   borrow::Cow,
   iter::once,

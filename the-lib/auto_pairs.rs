@@ -1,3 +1,95 @@
+//! Automatic bracket and quote pairing.
+//!
+//! This module provides functionality for automatically inserting matching
+//! pairs (brackets, quotes, etc.) when the user types an opening character,
+//! and for deleting pairs together.
+//!
+//! # How It Works
+//!
+//! When the user types an opening character like `(`, the module can:
+//!
+//! 1. **Insert pair** - Insert both `(` and `)`, placing cursor between them
+//! 2. **Skip close** - If already at `)`, just move past it instead of
+//!    inserting
+//! 3. **Insert single** - Insert only the typed character (no pairing)
+//!
+//! The decision depends on context (what characters surround the cursor).
+//!
+//! # Default Pairs
+//!
+//! The [`DEFAULT_PAIRS`] constant provides common bracket/quote pairs:
+//!
+//! ```ignore
+//! pub const DEFAULT_PAIRS: &[(&str, &str)] = &[
+//!     ("(", ")"),
+//!     ("{", "}"),
+//!     ("[", "]"),
+//!     ("'", "'"),
+//!     ("\"", "\""),
+//!     ("`", "`"),
+//! ];
+//! ```
+//!
+//! # Multi-Character Pairs
+//!
+//! Pairs can be multi-character, useful for languages with special syntax:
+//!
+//! ```ignore
+//! let pairs = AutoPairs::new(vec![
+//!     ("{{", "}}"),  // Jinja/Handlebars templates
+//!     ("{%", "%}"),
+//!     ("/*", "*/"),  // Block comments
+//! ]);
+//! ```
+//!
+//! # Usage
+//!
+//! ## Insert Hook
+//!
+//! Call [`hook`] when a character is typed to potentially transform it into
+//! a paired insertion:
+//!
+//! ```ignore
+//! use the_lib::auto_pairs::{AutoPairs, hook};
+//!
+//! let pairs = AutoPairs::default();
+//!
+//! // User typed '('
+//! if let Some(transaction) = hook(&doc, &selection, '(', &pairs)? {
+//!     // Apply the transaction - inserts "()" with cursor between
+//!     transaction.apply(&mut doc)?;
+//! }
+//! ```
+//!
+//! ## Delete Hook
+//!
+//! Call [`delete_hook`] on backspace to potentially delete both characters
+//! of a pair:
+//!
+//! ```ignore
+//! // Cursor is between "()"
+//! if let Some(transaction) = delete_hook(&doc, &selection, &pairs)? {
+//!     // Deletes both '(' and ')'
+//!     transaction.apply(&mut doc)?;
+//! }
+//! ```
+//!
+//! # Pairing Conditions
+//!
+//! A pair is only closed automatically when:
+//!
+//! - The character after the cursor is not alphanumeric
+//! - For "same" pairs (like quotes), the character before is also not
+//!   alphanumeric
+//!
+//! This prevents unwanted pairing in contexts like `don't` (no pair after `n`).
+//!
+//! # Skipping Closing Characters
+//!
+//! When typing a closing character that already exists at the cursor position,
+//! the cursor skips over it instead of inserting a duplicate. This allows
+//! natural typing flow: `(|)` → type `)` → `()|`
+
 use ropey::Rope;
 use smallvec::SmallVec;
 use the_core::grapheme;

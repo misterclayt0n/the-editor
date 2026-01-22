@@ -10,6 +10,7 @@ pub mod history;
 pub mod movement;
 pub mod selection;
 pub mod transaction;
+pub mod search;
 
 /// A small-string-optimized string type.
 ///

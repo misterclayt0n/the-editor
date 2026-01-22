@@ -21,9 +21,12 @@ tracing.workspace     = true
 tree-house.workspace  = true
 parking_lot.workspace  = true
 nucleo.workspace = true
+imara-diff.workspace = true
 
 [dev-dependencies]
 divan = "0.1.21"
+quickcheck = { default-features = false, version = "1" }
+
 
 [[bench]]
 harness = false

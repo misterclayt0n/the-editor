@@ -73,6 +73,7 @@ use smartstring::{
 pub mod auto_pairs;
 pub mod case_convention;
 pub mod command_line;
+pub mod diff;
 pub mod fuzzy;
 pub mod history;
 pub mod movement;

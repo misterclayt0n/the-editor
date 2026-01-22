@@ -1,32 +1,110 @@
 //! Types and parsing code for command mode (`:`) input.
 //!
-//! Command line parsing is done in steps:
+//! This module implements command-line parsing for the editor's command mode,
+//! supporting Unix-style flags, quoting, variable expansion, and shell
+//! integration.
 //!
-//! * The `Tokenizer` iterator returns `Token`s from the command line input
-//!   naively - without accounting for a command's signature.
-//! * When executing a command (pressing `<ret>` in command mode), tokens are
-//!   expanded with information from the editor like the current cursor line or
-//!   column. Otherwise the tokens are unwrapped to their inner content.
-//! * `Args` interprets the contents (potentially expanded) as flags or
-//!   positional arguments. When executing a command, `Args` performs
-//!   validations like checking the number of positional arguments supplied and
-//!   whether duplicate or unknown flags were supplied.
+//! # Parsing Pipeline
 //!
-//! `Args` is the interface used by typable command implementations. `Args` may
-//! be treated as a slice of `Cow<str>` or `&str` to access positional
-//! arguments, for example `for arg in args` iterates over positional args
-//! (never flags) and `&args[0]` always corresponds to the first positional. Use
-//! `Args::has_flag` and `Args::get_flag` to read any specified flags.
+//! Command line parsing proceeds in stages:
 //!
-//! `Args` and `Tokenizer` are intertwined. `Args` may ask the `Tokenizer` for
-//! the rest of the command line as a single token after the configured number
-//! of positionals has been reached (according to `raw_after`). This is used for
-//! the custom parsing in `:set-option` and `:toggle-option` for example.
-//! Outside of executing commands, the `Tokenizer` can be used directly to
-//! interpret a string according to the regular tokenization rules.
+//! 1. **Tokenization** ([`Tokenizer`]): Splits input into [`Token`]s based on
+//!    whitespace, quotes, and expansion syntax. This stage is syntax-aware but
+//!    command-agnostic.
 //!
-//! This module also defines structs for configuring the parsing of the command
-//! line for a command. See `Flag` and `Signature`.
+//! 2. **Expansion**: Tokens marked as expandable (double-quoted strings,
+//!    `%{...}` expressions) are processed by the caller to substitute
+//!    variables, evaluate shell commands, etc.
+//!
+//! 3. **Argument parsing** ([`Args`]): Expanded tokens are classified as
+//!    positional arguments or flags according to a command's [`Signature`].
+//!    Validation is performed (argument count, unknown flags, etc.).
+//!
+//! # Quoting Rules
+//!
+//! | Syntax | Behavior |
+//! |--------|----------|
+//! | `foo` | Unquoted, split on whitespace |
+//! | `'foo bar'` | Single-quoted, literal (no expansion) |
+//! | `` `foo bar` `` | Backtick-quoted, literal (no expansion) |
+//! | `"foo bar"` | Double-quoted, supports `%{...}` expansion |
+//! | `%{expr}` | Variable expansion |
+//! | `%sh{cmd}` | Shell expansion |
+//! | `%u{XXXX}` | Unicode codepoint (hex) |
+//!
+//! Quotes are escaped by doubling: `'it''s'` becomes `it's`.
+//!
+//! On Unix, backslash escapes space in unquoted context: `foo\ bar` is one
+//! token.
+//!
+//! # Flags
+//!
+//! Commands declare accepted flags in their [`Signature`]. Flags support:
+//! - Long form: `--reverse`, `--output file.txt`
+//! - Short form: `-r`, `-o file.txt`
+//! - Boolean flags (present/absent) or value-accepting flags
+//! - `--` to mark end of flags (everything after is positional)
+//!
+//! # Examples
+//!
+//! ```ignore
+//! use the_lib::command_line::{Args, Signature, Flag};
+//!
+//! let signature = Signature {
+//!     positionals: (1, Some(2)),  // 1-2 positional args
+//!     flags: &[Flag {
+//!         name: "reverse",
+//!         alias: Some('r'),
+//!         doc: "Reverse the order",
+//!         takes_value: false,
+//!         completions: None,
+//!     }],
+//!     ..Signature::DEFAULT
+//! };
+//!
+//! // Parse without expansion (pass tokens through unchanged)
+//! let args = Args::parse("hello --reverse world", signature, true, |t| Ok(t.content))?;
+//!
+//! assert_eq!(args.len(), 2);           // 2 positionals
+//! assert_eq!(&args[0], "hello");
+//! assert_eq!(&args[1], "world");
+//! assert!(args.has_flag("reverse"));
+//! ```
+//!
+//! # Raw Mode
+//!
+//! Some commands need custom parsing for part of their input (e.g., JSON values
+//! for `:set-option`). The [`Signature::raw_after`] field specifies how many
+//! positionals to parse normally before returning the rest as a single raw
+//! token.
+//!
+//! ```ignore
+//! let signature = Signature {
+//!     positionals: (1, Some(2)),
+//!     raw_after: Some(1),  // After first positional, return rest raw
+//!     ..Signature::DEFAULT
+//! };
+//!
+//! let args = Args::parse("option-name [1, 2, 3]", signature, true, |t| Ok(t.content))?;
+//! assert_eq!(&args[0], "option-name");
+//! assert_eq!(&args[1], "[1, 2, 3]");  // Raw, not split
+//! ```
+//!
+//! # Validation
+//!
+//! When `validate: true`:
+//! - Unterminated quotes/expansions are errors
+//! - Unknown flags are rejected
+//! - Duplicate flags are rejected
+//! - Positional count is checked against signature
+//!
+//! When `validate: false` (e.g., during completion), parsing is lenient and
+//! always produces a result.
+//!
+//! # Error Handling
+//!
+//! Errors are categorized in [`ParseArgsError`] for argument-level issues and
+//! [`ParseError`] which additionally wraps expansion errors from the caller.
 
 use std::{
   borrow::Cow,

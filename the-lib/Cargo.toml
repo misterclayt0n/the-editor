@@ -19,6 +19,8 @@ the-stdx              = { path = "../the-stdx" }
 thiserror.workspace   = true
 tracing.workspace     = true
 tree-house.workspace  = true
+parking_lot.workspace  = true
+nucleo.workspace = true
 
 [dev-dependencies]
 divan = "0.1.21"

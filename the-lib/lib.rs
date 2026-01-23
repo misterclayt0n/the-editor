@@ -19,6 +19,8 @@ pub mod object;
 pub mod text_object;
 pub mod surround;
 pub mod comment;
+pub mod position;
+pub mod render;
 
 /// A small-string-optimized string type.
 ///

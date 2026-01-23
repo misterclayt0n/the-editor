@@ -98,7 +98,6 @@ impl<'a> GraphemeWithSource<'a> {
 pub struct DocumentFormatter<'a, 't> {
   text_fmt: &'a TextFormat,
   annotations: TextAnnotationsCursor<'a, 't>,
-  wrap_indicator_graphemes: Vec<GraphemeStr<'a>>,
 
   /// The visual position at the end of the last yielded word boundary.
   visual_pos: Position,
@@ -150,15 +149,9 @@ impl<'a, 't> DocumentFormatter<'a, 't> {
       line_start
     };
     let annotations = annotations.cursor(block_char_idx);
-    let wrap_indicator_graphemes =
-      UnicodeSegmentation::graphemes(&*text_fmt.wrap_indicator, true)
-        .map(GraphemeStr::from)
-        .collect();
-
     DocumentFormatter {
       text_fmt,
       annotations,
-      wrap_indicator_graphemes,
       visual_pos: Position { row: 0, col: 0 },
       graphemes: text.slice(block_char_idx..).graphemes(),
       char_pos: block_char_idx,
@@ -283,8 +276,8 @@ impl<'a, 't> DocumentFormatter<'a, 't> {
     self.visual_pos.col = indent_carry_over as usize;
     self.visual_pos.row += 1 + virtual_lines;
     let mut word_width = 0;
-    let indicator_len = self.wrap_indicator_graphemes.len();
-    let wrap_indicator = self.wrap_indicator_graphemes.iter().map(|g| {
+    let indicator_len = self.text_fmt.wrap_indicator_graphemes.len();
+    let wrap_indicator = self.text_fmt.wrap_indicator_graphemes.iter().map(|g| {
       let grapheme = GraphemeWithSource::new(
         g.clone(),
         self.visual_pos.col + word_width,
@@ -539,16 +532,15 @@ mod doc_formatter_tests {
   }
 
   fn create_test_text_format() -> TextFormat {
-    TextFormat {
-      soft_wrap: false,
-      tab_width: 4,
-      max_wrap: 3,
-      max_indent_retain: 4,
-      wrap_indicator: "↪".into(),
-      wrap_indicator_highlight: None,
-      viewport_width: 80,
-      soft_wrap_at_text_width: false,
-    }
+    let mut fmt = TextFormat::default();
+    fmt.soft_wrap = false;
+    fmt.tab_width = 4;
+    fmt.max_wrap = 3;
+    fmt.max_indent_retain = 4;
+    fmt.viewport_width = 80;
+    fmt.soft_wrap_at_text_width = false;
+    fmt.set_wrap_indicator("↪");
+    fmt
   }
 
   #[test]
@@ -614,6 +606,7 @@ mod doc_formatter_tests {
     let mut text_fmt = create_test_text_format();
     text_fmt.soft_wrap = true;
     text_fmt.viewport_width = 10;
+    text_fmt.rebuild_wrap_indicator();
     let mut annotations = TextAnnotations::default();
 
     let formatter =
@@ -641,6 +634,7 @@ mod doc_formatter_tests {
     let rope = Rope::from_str("A\tB");
     let mut text_fmt = create_test_text_format();
     text_fmt.tab_width = 8;
+    text_fmt.rebuild_wrap_indicator();
     let mut annotations = TextAnnotations::default();
 
     let mut formatter =
@@ -750,7 +744,7 @@ mod doc_formatter_tests {
     let mut text_fmt = create_test_text_format();
     text_fmt.soft_wrap = true;
     text_fmt.viewport_width = 4;
-    text_fmt.wrap_indicator = "↪".into();
+    text_fmt.set_wrap_indicator("↪");
     let mut annotations = TextAnnotations::default();
 
     let formatter =

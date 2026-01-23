@@ -18,6 +18,7 @@ pub mod match_brackets;
 pub mod object;
 pub mod text_object;
 pub mod surround;
+pub mod comment;
 
 /// A small-string-optimized string type.
 ///

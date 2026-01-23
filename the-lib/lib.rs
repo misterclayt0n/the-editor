@@ -21,6 +21,7 @@ pub mod surround;
 pub mod comment;
 pub mod position;
 pub mod render;
+pub mod indent;
 
 /// A small-string-optimized string type.
 ///

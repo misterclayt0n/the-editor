@@ -95,9 +95,11 @@ fn find_line_comment(
         commented = false;
       }
 
-      // determine margin of 0 or 1 for uncommenting; if any comment token is not
-      // followed by a space, a margin of 0 is used for all lines.
-      if !matches!(line_slice.get_char(pos + token_len), Some(c) if c == ' ') {
+      // determine margin of 0 or 1 for uncommenting; if any existing comment
+      // token is not followed by a space, a margin of 0 is used for all lines.
+      if line_slice.slice(pos..).starts_with(token)
+        && !matches!(line_slice.get_char(pos + token_len), Some(c) if c == ' ')
+      {
         margin = 0;
       }
 
@@ -428,8 +430,8 @@ mod test {
       let text = doc.slice(..);
 
       let res = find_line_comment("//", text, 0..3);
-      // (commented = false, to_change = [line 0, line 2], min = col 2, margin = 0)
-      assert_eq!(res, (false, vec![0, 2], 2, 0));
+      // (commented = false, to_change = [line 0, line 2], min = col 2, margin = 1)
+      assert_eq!(res, (false, vec![0, 2], 2, 1));
     }
 
     #[test]

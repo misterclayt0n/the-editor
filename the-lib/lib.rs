@@ -14,6 +14,7 @@ pub mod search;
 pub mod selection;
 pub mod syntax;
 pub mod transaction;
+pub mod match_brackets;
 
 /// A small-string-optimized string type.
 ///

@@ -1,3 +1,62 @@
+//! Tree-sitter powered syntax state and query helpers.
+//!
+//! This module is intentionally split into three layers:
+//!
+//! - **Configuration** (`syntax::config`): data-only language and service
+//!   settings, parsed from config files.
+//! - **Resources** (`syntax::resources`): a small interface for providing
+//!   grammars and query text (runtime loader, embedded files, etc).
+//! - **State** (this file): lazy compilation of queries, language detection,
+//!   and syntax state with incremental updates.
+//!
+//! The core stays pure and does not assume any runtime filesystem layout. The
+//! caller injects a `SyntaxResources` implementation for grammars and query
+//! sources, which lets different clients choose how to provide assets.
+//!
+//! # Example: build a loader and detect a language
+//!
+//! ```no_run
+//! use std::collections::HashMap;
+//! use std::path::Path;
+//!
+//! use the_lib::syntax::config::{
+//!   Configuration, FileType, LanguageConfiguration, LanguageServicesConfig, SyntaxLanguageConfig,
+//! };
+//! use the_lib::syntax::resources::NullResources;
+//! use the_lib::syntax::Loader;
+//!
+//! let rust = LanguageConfiguration {
+//!   syntax: SyntaxLanguageConfig {
+//!     language_id: "rust".into(),
+//!     scope: "source.rust".into(),
+//!     file_types: vec![FileType::Extension("rs".into())],
+//!     shebangs: Vec::new(),
+//!     comment_tokens: None,
+//!     block_comment_tokens: None,
+//!     text_width: None,
+//!     soft_wrap: None,
+//!     auto_format: false,
+//!     path_completion: None,
+//!     word_completion: None,
+//!     grammar: None,
+//!     injection_regex: None,
+//!     indent: None,
+//!     auto_pairs: None,
+//!     rulers: None,
+//!     rainbow_brackets: None,
+//!   },
+//!   services: LanguageServicesConfig::default(),
+//! };
+//!
+//! let config = Configuration {
+//!   language: vec![rust],
+//!   language_server: HashMap::new(),
+//! };
+//!
+//! let loader = Loader::new(config, NullResources).expect("loader");
+//! let lang = loader.language_for_filename(Path::new("src/main.rs"));
+//! assert!(lang.is_some());
+//! ```
 pub mod config;
 pub mod highlight_cache;
 pub mod indent_query;

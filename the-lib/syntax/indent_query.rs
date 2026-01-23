@@ -1,3 +1,22 @@
+//! Indentation query parsing for tree-sitter.
+//!
+//! This is a small, query-only parser that extracts indent-related captures
+//! and predicates. It does not compute indentation by itself; it only parses
+//! and stores the query metadata so other modules can evaluate it.
+//!
+//! # Example
+//!
+//! ```ignore
+//! use the_lib::syntax::IndentQuery;
+//! # use tree_house::tree_sitter::Grammar;
+//!
+//! # let grammar: Grammar = /* tree-sitter grammar */ unimplemented!();
+//! let query = r#"
+//!   (block) @indent
+//!   (block) @outdent
+//! "#;
+//! let indent_query = IndentQuery::new(grammar, query).unwrap();
+//! ```
 use std::collections::HashMap;
 
 use tree_house::tree_sitter::{

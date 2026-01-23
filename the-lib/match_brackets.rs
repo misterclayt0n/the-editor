@@ -1,3 +1,23 @@
+//! Bracket matching utilities for syntax-aware and plaintext contexts.
+//!
+//! - Syntax-aware matching uses tree-sitter nodes to find pairs within a
+//!   parsed scope.
+//! - Plaintext matching provides a bounded linear scan fallback.
+//!
+//! Quotes are treated as pairs elsewhere (auto-pairs), but for matching we
+//! restrict to the bracket set in `BRACKETS` to avoid string/char ambiguity.
+//!
+//! # Example (plaintext matching)
+//!
+//! ```
+//! use ropey::Rope;
+//! use the_lib::match_brackets::find_matching_bracket_plaintext;
+//!
+//! let doc = Rope::from("(hello) world");
+//! let pos = 0;
+//! let match_pos = find_matching_bracket_plaintext(doc.slice(..), pos);
+//! assert_eq!(match_pos, Some(6));
+//! ```
 use std::iter;
 
 use ropey::RopeSlice;

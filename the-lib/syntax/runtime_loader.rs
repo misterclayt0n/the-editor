@@ -1,16 +1,61 @@
-#[cfg(feature = "runtime-loader")] use std::borrow::Cow;
+//! Runtime-backed implementation of `SyntaxResources`.
+//!
+//! This adapter loads grammars and query files from the runtime asset layout
+//! used by `the-editor`. It is feature-gated (`runtime-loader`) so the core
+//! syntax crate can stay pure and embeddable.
+//!
+//! # Example
+//!
+//! ```no_run
+//! # #[cfg(feature = "runtime-loader")] {
+//! use std::collections::HashMap;
+//!
+//! use the_lib::syntax::config::{
+//!   Configuration, FileType, LanguageConfiguration, LanguageServicesConfig, SyntaxLanguageConfig,
+//! };
+//! use the_lib::syntax::runtime_loader::RuntimeLoader;
+//! use the_lib::syntax::Loader;
+//!
+//! let language = LanguageConfiguration {
+//!   syntax: SyntaxLanguageConfig {
+//!     language_id: "rust".into(),
+//!     scope: "source.rust".into(),
+//!     file_types: vec![FileType::Extension("rs".into())],
+//!     shebangs: Vec::new(),
+//!     comment_tokens: None,
+//!     block_comment_tokens: None,
+//!     text_width: None,
+//!     soft_wrap: None,
+//!     auto_format: false,
+//!     path_completion: None,
+//!     word_completion: None,
+//!     grammar: None,
+//!     injection_regex: None,
+//!     indent: None,
+//!     auto_pairs: None,
+//!     rulers: None,
+//!     rainbow_brackets: None,
+//!   },
+//!   services: LanguageServicesConfig::default(),
+//! };
+//!
+//! let config = Configuration {
+//!   language: vec![language],
+//!   language_server: HashMap::new(),
+//! };
+//!
+//! let _loader = Loader::new(config, RuntimeLoader::new()).expect("loader");
+//! # }
+//! ```
 
 #[cfg(feature = "runtime-loader")]
-use the_editor_loader::grammar::{
-  get_language,
-  load_runtime_file,
-};
+use std::borrow::Cow;
 
 #[cfg(feature = "runtime-loader")]
-use crate::syntax::resources::{
-  QueryKind,
-  SyntaxResources,
-};
+use crate::syntax::resources::{QueryKind, SyntaxResources};
+
+#[cfg(feature = "runtime-loader")]
+use the_editor_loader::grammar::{get_language, load_runtime_file};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RuntimeLoader;

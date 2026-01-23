@@ -1,3 +1,20 @@
+//! Cached syntax highlight spans for render backends.
+//!
+//! This cache keeps highlight ranges indexed by line to avoid re-running
+//! tree-sitter queries on every frame. It is intentionally optional and
+//! separate from the parsing state so clients can opt into or ignore it.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use ropey::Rope;
+//! use the_lib::syntax::{Highlight, HighlightCache};
+//!
+//! let mut cache = HighlightCache::default();
+//! let text = Rope::from("let x = 1;\n");
+//! cache.update_range(0..text.len_bytes(), vec![(Highlight::new(0), 0..5)], text.slice(..), 1);
+//! assert!(cache.is_range_cached(0..text.len_bytes()));
+//! ```
 use std::{
   cmp::Reverse,
   collections::HashMap,

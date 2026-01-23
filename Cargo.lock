@@ -973,6 +973,7 @@ dependencies = [
 name = "the-lib"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "divan",
  "globset",
  "imara-diff",
@@ -991,6 +992,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "tree-house",
+ "unicode-segmentation",
 ]
 
 [[package]]

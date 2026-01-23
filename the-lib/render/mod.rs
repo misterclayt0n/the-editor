@@ -6,3 +6,7 @@
 //! pulling a separate crate.
 
 pub mod visual_position;
+pub mod graphics;
+pub mod text_format;
+pub mod text_annotations;
+pub mod doc_formatter;

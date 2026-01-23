@@ -11,12 +11,14 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+bitflags.workspace       = true
 ropey.workspace       = true
 smallvec.workspace    = true
 smartstring.workspace = true
 the-core              = { path = "../the-core" }
 the-stdx              = { path = "../the-stdx" }
 thiserror.workspace   = true
+unicode-segmentation.workspace = true
 tracing.workspace     = true
 tree-house.workspace  = true
 parking_lot.workspace  = true

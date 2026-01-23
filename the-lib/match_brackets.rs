@@ -39,6 +39,21 @@ pub const PAIRS: [(char, char); BRACKETS.len() + 3] = {
   pairs
 };
 
+fn bracket_pair(ch: char) -> Option<(char, char)> {
+  match ch {
+    '(' | ')' => Some(('(', ')')),
+    '{' | '}' => Some(('{', '}')),
+    '[' | ']' => Some(('[', ']')),
+    '<' | '>' => Some(('<', '>')),
+    '‘' | '’' => Some(('‘', '’')),
+    '“' | '”' => Some(('“', '”')),
+    '«' | '»' => Some(('«', '»')),
+    '「' | '」' => Some(('「', '」')),
+    '（' | '）' => Some(('（', '）')),
+    _ => None,
+  }
+}
+
 /// Returns the position of the matching bracket under cursor.
 ///
 /// If the cursor is on the opening bracket, the position of
@@ -50,7 +65,7 @@ pub const PAIRS: [(char, char); BRACKETS.len() + 3] = {
 /// If no matching bracket is found, `None` is returned.
 #[must_use]
 pub fn find_matching_bracket(syntax: &Syntax, doc: RopeSlice, pos: usize) -> Option<usize> {
-  if pos >= doc.len_chars() || !is_valid_pair(doc.char(pos)) {
+  if pos >= doc.len_chars() || !is_valid_bracket(doc.char(pos)) {
     return None;
   }
   find_pair(syntax, doc, pos, false)
@@ -68,6 +83,9 @@ pub fn find_matching_bracket(syntax: &Syntax, doc: RopeSlice, pos: usize) -> Opt
 // If no surrounding scope is found, the function returns `None`.
 #[must_use]
 pub fn find_matching_bracket_fuzzy(syntax: &Syntax, doc: RopeSlice, pos: usize) -> Option<usize> {
+  if pos >= doc.len_chars() {
+    return None;
+  }
   find_pair(syntax, doc, pos, true)
 }
 
@@ -89,7 +107,7 @@ fn find_pair(
 
       if let (Some((start_pos, open)), Some((end_pos, close))) =
         (as_char(doc, &open), as_char(doc, &close))
-        && PAIRS.contains(&(open, close))
+        && bracket_pair(open) == Some((open, close))
       {
         if end_pos == pos_ {
           return Some(start_pos);
@@ -136,13 +154,21 @@ fn find_pair(
     };
     node = parent;
   }
-  let node = root.named_descendant_for_byte_range(pos, pos + 1)?;
-  if node.child_count() != 0 {
-    return None;
+  if let Some(node) = root.named_descendant_for_byte_range(pos, pos + 1)
+    && node.child_count() == 0
+  {
+    let node_start = doc.byte_to_char(node.start_byte() as usize);
+    let node_text = doc.byte_slice(node.start_byte() as usize..node.end_byte() as usize);
+    if let Some(found) = find_matching_bracket_plaintext(node_text, pos_ - node_start) {
+      return Some(found + node_start);
+    }
   }
-  let node_start = doc.byte_to_char(node.start_byte() as usize);
-  let node_text = doc.byte_slice(node.start_byte() as usize..node.end_byte() as usize);
-  find_matching_bracket_plaintext(node_text, pos_ - node_start).map(|pos| pos + node_start)
+
+  let len = doc.len_chars();
+  let start = pos_.saturating_sub(MAX_PLAINTEXT_SCAN);
+  let end = (pos_ + MAX_PLAINTEXT_SCAN).min(len);
+  let window = doc.slice(start..end);
+  find_matching_bracket_plaintext(window, pos_ - start).map(|pos| pos + start)
 }
 
 /// Returns the position of the matching bracket under cursor.
@@ -158,15 +184,16 @@ fn find_pair(
 /// If no matching bracket is found, `None` is returned.
 #[must_use]
 pub fn find_matching_bracket_plaintext(doc: RopeSlice, cursor_pos: usize) -> Option<usize> {
+  if cursor_pos >= doc.len_chars() {
+    return None;
+  }
   let bracket = doc.get_char(cursor_pos)?;
-  let matching_bracket = {
-    let pair = get_pair(bracket);
-    if pair.0 == bracket { pair.1 } else { pair.0 }
-  };
   // Don't do anything when the cursor is not on top of a bracket.
   if !is_valid_bracket(bracket) {
     return None;
   }
+  let (open, close) = bracket_pair(bracket)?;
+  let matching_bracket = if open == bracket { close } else { open };
 
   // Determine the direction of the matching.
   let is_fwd = is_open_bracket(bracket);
@@ -201,51 +228,68 @@ pub fn find_matching_bracket_plaintext(doc: RopeSlice, cursor_pos: usize) -> Opt
 /// [`BRACKETS`] returns (ch, ch).
 ///
 /// ```
-/// use helix_core::match_brackets::get_pair;
+/// use the_lib::match_brackets::get_pair;
 ///
 /// assert_eq!(get_pair('['), ('[', ']'));
 /// assert_eq!(get_pair('}'), ('{', '}'));
 /// assert_eq!(get_pair('"'), ('"', '"'));
 /// ```
 pub fn get_pair(ch: char) -> (char, char) {
-  PAIRS
-    .iter()
-    .find(|(open, close)| *open == ch || *close == ch)
-    .copied()
-    .unwrap_or((ch, ch))
+  match ch {
+    '(' | ')' => ('(', ')'),
+    '{' | '}' => ('{', '}'),
+    '[' | ']' => ('[', ']'),
+    '<' | '>' => ('<', '>'),
+    '‘' | '’' => ('‘', '’'),
+    '“' | '”' => ('“', '”'),
+    '«' | '»' => ('«', '»'),
+    '「' | '」' => ('「', '」'),
+    '（' | '）' => ('（', '）'),
+    '"' => ('"', '"'),
+    '\'' => ('\'', '\''),
+    '`' => ('`', '`'),
+    _ => (ch, ch),
+  }
 }
 
 pub fn is_open_bracket(ch: char) -> bool {
-  BRACKETS.iter().any(|(l, _)| *l == ch)
+  matches!(ch, '(' | '{' | '[' | '<' | '‘' | '“' | '«' | '「' | '（')
 }
 
 pub fn is_close_bracket(ch: char) -> bool {
-  BRACKETS.iter().any(|(_, r)| *r == ch)
+  matches!(ch, ')' | '}' | ']' | '>' | '’' | '”' | '»' | '」' | '）')
 }
 
 pub fn is_valid_bracket(ch: char) -> bool {
-  BRACKETS.iter().any(|(l, r)| *l == ch || *r == ch)
+  is_open_bracket(ch) || is_close_bracket(ch)
 }
 
 pub fn is_open_pair(ch: char) -> bool {
-  PAIRS.iter().any(|(l, _)| *l == ch)
+  matches!(
+    ch,
+    '(' | '{' | '[' | '<' | '‘' | '“' | '«' | '「' | '（' | '"' | '\'' | '`'
+  )
 }
 
 pub fn is_close_pair(ch: char) -> bool {
-  PAIRS.iter().any(|(_, r)| *r == ch)
+  matches!(
+    ch,
+    ')' | '}' | ']' | '>' | '’' | '”' | '»' | '」' | '）' | '"' | '\'' | '`'
+  )
 }
 
 pub fn is_valid_pair(ch: char) -> bool {
-  PAIRS.iter().any(|(l, r)| *l == ch || *r == ch)
+  is_open_pair(ch) || is_close_pair(ch)
 }
 
 /// Tests if this node is a pair close char and returns the expected open char
 /// and close char contained in this node
 fn as_close_pair(doc: RopeSlice, node: &Node) -> Option<(char, char)> {
   let close = as_char(doc, node)?.1;
-  PAIRS
-    .iter()
-    .find_map(|&(open, close_)| (close_ == close).then_some((close, open)))
+  if !is_close_bracket(close) {
+    return None;
+  }
+  bracket_pair(close).map(|(open, _)| (close, open))
 }
 
 /// Checks if `node` or its siblings (at most MATCH_LIMIT nodes) is the
@@ -286,19 +330,20 @@ fn find_pair_end(
 /// and open char contained in this node
 fn as_open_pair(doc: RopeSlice, node: &Node) -> Option<(char, char)> {
   let open = as_char(doc, node)?.1;
-  PAIRS
-    .iter()
-    .find_map(|&(open_, close)| (open_ == open).then_some((open, close)))
+  if !is_open_bracket(open) {
+    return None;
+  }
+  bracket_pair(open).map(|(_, close)| (open, close))
 }
 
 /// If node is a single char return it (and its char position)
 fn as_char(doc: RopeSlice, node: &Node) -> Option<(usize, char)> {
-  // TODO: multi char/non ASCII pairs
-  if node.byte_range().len() != 1 {
+  let start = doc.try_byte_to_char(node.start_byte() as usize).ok()?;
+  let end = doc.try_byte_to_char(node.end_byte() as usize).ok()?;
+  if end != start + 1 {
     return None;
   }
-  let pos = doc.try_byte_to_char(node.start_byte() as usize).ok()?;
-  Some((pos, doc.char(pos)))
+  Some((start, doc.char(start)))
 }
 
 #[cfg(test)]

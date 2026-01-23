@@ -1,4 +1,29 @@
-use std::{borrow::Cow, cmp::Ordering, collections::VecDeque, mem::replace};
+//! Document formatting and visual layout traversal.
+//!
+//! This module turns a document `RopeSlice` plus `TextFormat` and
+//! `TextAnnotations` into a stream of [`FormattedGrapheme`] values with
+//! visual positions. The formatter is deterministic, allocation-light,
+//! and keeps all rendering logic in one place so clients can remain dumb.
+//!
+//! # Usage
+//!
+//! ```no_run
+//! use ropey::Rope;
+//! use the_lib::render::{doc_formatter::DocumentFormatter, text_format::TextFormat};
+//! use the_lib::render::text_annotations::TextAnnotations;
+//!
+//! let rope = Rope::from("hello\nworld");
+//! let text_fmt = TextFormat::default();
+//! let mut annotations = TextAnnotations::default();
+//!
+//! let formatter =
+//!   DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &mut annotations, 0);
+//! for g in formatter {
+//!   if g.source.is_eof() { break; }
+//!   // render g.raw at g.visual_pos...
+//! }
+//! ```
+use std::{borrow::Cow, cmp::Ordering, mem::replace};
 
 use ropey::RopeSlice;
 use the_core::grapheme::{Grapheme, GraphemeStr};
@@ -15,6 +40,9 @@ use crate::{
   },
   syntax::Highlight,
 };
+
+// Limit block size for very long lines to avoid pathological traversal costs.
+const MAX_BLOCK_CHARS: usize = 4096;
 
 #[derive(Debug, Clone)]
 struct GraphemeWithSource<'a> {
@@ -67,9 +95,10 @@ impl<'a> GraphemeWithSource<'a> {
 }
 
 #[derive(Debug)]
-pub struct DocumentFormatter<'a> {
+pub struct DocumentFormatter<'a, 't> {
   text_fmt: &'a TextFormat,
-  annotations: TextAnnotationsCursor<'a>,
+  annotations: TextAnnotationsCursor<'a, 't>,
+  wrap_indicator_graphemes: Vec<GraphemeStr<'a>>,
 
   /// The visual position at the end of the last yielded word boundary.
   visual_pos: Position,
@@ -80,7 +109,8 @@ pub struct DocumentFormatter<'a> {
   line_pos: usize,
   exhausted: bool,
 
-  inline_annotation_buf: VecDeque<GraphemeStr<'a>>,
+  inline_annotation_buf: Vec<GraphemeStr<'a>>,
+  inline_annotation_idx: usize,
   inline_annotation_highlight: Option<Highlight>,
 
   // Softwrap specific.
@@ -97,7 +127,7 @@ pub struct DocumentFormatter<'a> {
   word_i: usize,
 }
 
-impl<'a> DocumentFormatter<'a> {
+impl<'a, 't> DocumentFormatter<'a, 't> {
   /// Creates a new formatter at the last block before `char_idx`.
   /// A block is a chunk which always ends with a linebreak.
   /// This is usually just a normal line break.
@@ -106,17 +136,29 @@ impl<'a> DocumentFormatter<'a> {
   pub fn new_at_prev_checkpoint(
     text: RopeSlice<'a>,
     text_fmt: &'a TextFormat,
-    annotations: &'a mut TextAnnotations<'a>,
+    annotations: &'t mut TextAnnotations<'a>,
     char_idx: usize,
   ) -> Self {
-    // TODO: divide long lines into blocks to avoid bad performance for long lines.
     let block_line_idx = text.char_to_line(char_idx.min(text.len_chars()));
-    let block_char_idx = text.line_to_char(block_line_idx);
+    let line_start = text.line_to_char(block_line_idx);
+    let line_len = text.line(block_line_idx).len_chars();
+    let block_char_idx = if line_len > MAX_BLOCK_CHARS {
+      let in_line = char_idx.saturating_sub(line_start);
+      let block_offset = (in_line / MAX_BLOCK_CHARS) * MAX_BLOCK_CHARS;
+      line_start + block_offset
+    } else {
+      line_start
+    };
     let annotations = annotations.cursor(block_char_idx);
+    let wrap_indicator_graphemes =
+      UnicodeSegmentation::graphemes(&*text_fmt.wrap_indicator, true)
+        .map(GraphemeStr::from)
+        .collect();
 
     DocumentFormatter {
       text_fmt,
       annotations,
+      wrap_indicator_graphemes,
       visual_pos: Position { row: 0, col: 0 },
       graphemes: text.slice(block_char_idx..).graphemes(),
       char_pos: block_char_idx,
@@ -126,7 +168,8 @@ impl<'a> DocumentFormatter<'a> {
       word_buf: Vec::with_capacity(64),
       word_i: 0,
       line_pos: block_line_idx,
-      inline_annotation_buf: VecDeque::new(),
+      inline_annotation_buf: Vec::new(),
+      inline_annotation_idx: 0,
       inline_annotation_highlight: None,
     }
   }
@@ -141,22 +184,28 @@ impl<'a> DocumentFormatter<'a> {
     char_pos: usize,
   ) -> Option<(GraphemeStr<'a>, Option<Highlight>)> {
     loop {
-      if let Some(grapheme) = self.inline_annotation_buf.pop_front() {
+      if self.inline_annotation_idx < self.inline_annotation_buf.len() {
+        let idx = self.inline_annotation_idx;
+        self.inline_annotation_idx += 1;
+        let grapheme =
+          replace(&mut self.inline_annotation_buf[idx], GraphemeStr::from(""));
         return Some((grapheme, self.inline_annotation_highlight));
       }
 
       self.inline_annotation_highlight = None;
+      self.inline_annotation_buf.clear();
+      self.inline_annotation_idx = 0;
       if let Some((annotation, highlight)) = self.annotations.next_inline_annotation_at(char_pos) {
         self.inline_annotation_highlight = highlight;
-        self.inline_annotation_buf = UnicodeSegmentation::graphemes(&*annotation.text, true)
-          .map(|grapheme| GraphemeStr::from(grapheme.to_string()))
-          .collect();
+        self.inline_annotation_buf =
+          UnicodeSegmentation::graphemes(&*annotation.text, true)
+            .map(GraphemeStr::from)
+            .collect();
       } else {
         return None;
       }
     }
   }
-
   fn advance_grapheme(&mut self, col: usize, char_pos: usize) -> Option<GraphemeWithSource<'a>> {
     let (grapheme, source) =
       if let Some((grapheme, highlight)) = self.next_inline_annotation_grapheme(char_pos) {
@@ -166,7 +215,7 @@ impl<'a> DocumentFormatter<'a> {
 
         let overlay = self.annotations.overlay_at(char_pos);
         let grapheme = match overlay {
-          Some((overlay, _)) => GraphemeStr::from(overlay.grapheme.to_string()),
+          Some((overlay, _)) => GraphemeStr::from(overlay.grapheme.as_str()),
           None => Cow::from(grapheme).into(),
         };
 
@@ -201,6 +250,17 @@ impl<'a> DocumentFormatter<'a> {
     self.peeked_grapheme.take()
   }
 
+  fn allow_exact_fit(&mut self, col: usize, char_pos: usize) -> bool {
+    self.text_fmt.soft_wrap_at_text_width
+      && self
+        .peek_grapheme(col, char_pos)
+        .is_some_and(|grapheme| grapheme.is_newline() || grapheme.is_eof())
+  }
+
+  fn hard_wrap_limit_exceeded(&self, word_width: usize) -> bool {
+    word_width > self.text_fmt.max_wrap as usize
+  }
+
   /// Move a word to the next visual line.
   fn wrap_word(&mut self) -> usize {
     // Softwrap this word to the next line.
@@ -222,25 +282,23 @@ impl<'a> DocumentFormatter<'a> {
         .virtual_lines_at(self.char_pos, self.visual_pos, self.line_pos);
     self.visual_pos.col = indent_carry_over as usize;
     self.visual_pos.row += 1 + virtual_lines;
-    let mut i = 0;
     let mut word_width = 0;
-    let wrap_indicator =
-      UnicodeSegmentation::graphemes(&*self.text_fmt.wrap_indicator, true).map(|g| {
-        i += 1;
-        let grapheme = GraphemeWithSource::new(
-          g.into(),
-          self.visual_pos.col + word_width,
-          self.text_fmt.tab_width,
-          GraphemeSource::VirtualText {
-            highlight: self.text_fmt.wrap_indicator_highlight,
-          },
-        );
-        word_width += grapheme.width();
-        grapheme
-      });
+    let indicator_len = self.wrap_indicator_graphemes.len();
+    let wrap_indicator = self.wrap_indicator_graphemes.iter().map(|g| {
+      let grapheme = GraphemeWithSource::new(
+        g.clone(),
+        self.visual_pos.col + word_width,
+        self.text_fmt.tab_width,
+        GraphemeSource::VirtualText {
+          highlight: self.text_fmt.wrap_indicator_highlight,
+        },
+      );
+      word_width += grapheme.width();
+      grapheme
+    });
     self.word_buf.splice(0..0, wrap_indicator);
 
-    for grapheme in &mut self.word_buf[i..] {
+    for grapheme in &mut self.word_buf[indicator_len..] {
       let visual_x = self.visual_pos.col + word_width;
       grapheme
         .grapheme
@@ -279,13 +337,9 @@ impl<'a> DocumentFormatter<'a> {
         //
         // So we special case a word that ends exactly at line bounds and is followed
         // by a newline/eof character here.
-        Ordering::Equal
-          if self.text_fmt.soft_wrap_at_text_width
-            && self
-              .peek_grapheme(col, char_pos)
-              .is_some_and(|grapheme| grapheme.is_newline() || grapheme.is_eof()) => {},
-        Ordering::Equal if word_width > self.text_fmt.max_wrap as usize => return,
-        Ordering::Greater if word_width > self.text_fmt.max_wrap as usize => {
+        Ordering::Equal if self.allow_exact_fit(col, char_pos) => {},
+        Ordering::Equal if self.hard_wrap_limit_exceeded(word_width) => return,
+        Ordering::Greater if self.hard_wrap_limit_exceeded(word_width) => {
           self.peeked_grapheme = self.word_buf.pop();
           return;
         },
@@ -319,7 +373,7 @@ impl<'a> DocumentFormatter<'a> {
   }
 }
 
-impl<'a> Iterator for DocumentFormatter<'a> {
+impl<'a, 't> Iterator for DocumentFormatter<'a, 't> {
   type Item = FormattedGrapheme<'a>;
 
   fn next(&mut self) -> Option<Self::Item> {
@@ -688,5 +742,47 @@ mod doc_formatter_tests {
 
     // Should detect word boundaries (spaces in this case).
     assert!(!word_boundaries.is_empty(), "Should find word boundaries");
+  }
+
+  #[test]
+  fn document_formatter_wrap_indicator_emitted() {
+    let rope = Rope::from_str("hello world");
+    let mut text_fmt = create_test_text_format();
+    text_fmt.soft_wrap = true;
+    text_fmt.viewport_width = 4;
+    text_fmt.wrap_indicator = "↪".into();
+    let mut annotations = TextAnnotations::default();
+
+    let formatter =
+      DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &mut annotations, 0);
+
+    let mut saw_indicator = false;
+    for g in formatter {
+      if g.source.is_eof() {
+        break;
+      }
+      if g.source.is_virtual() && matches!(g.raw, Grapheme::Other { ref g } if g == "↪") {
+        saw_indicator = true;
+        break;
+      }
+    }
+
+    assert!(saw_indicator, "Expected wrap indicator grapheme to be emitted");
+  }
+
+  #[test]
+  fn document_formatter_inline_annotation_inserts_virtual_text() {
+    let rope = Rope::from_str("hello");
+    let text_fmt = create_test_text_format();
+    let inline = [crate::render::text_annotations::InlineAnnotation::new(0, ">")];
+    let mut annotations = TextAnnotations::default();
+    let _ = annotations.add_inline_annotations(&inline, None);
+
+    let mut formatter =
+      DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &mut annotations, 0);
+
+    let first = formatter.next().unwrap();
+    assert!(first.source.is_virtual());
+    assert!(matches!(first.raw, Grapheme::Other { ref g } if g == ">"));
   }
 }

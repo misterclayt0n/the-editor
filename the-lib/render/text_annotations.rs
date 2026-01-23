@@ -22,10 +22,12 @@ pub struct InlineAnnotation {
 
 impl InlineAnnotation {
   pub fn new(char_idx: usize, text: impl Into<Tendril>) -> Self {
-    Self {
-      char_idx,
-      text: text.into(),
-    }
+    let text = text.into();
+    debug_assert!(
+      !text.contains('\n') && !text.contains('\r'),
+      "inline annotations must not contain line breaks"
+    );
+    Self { char_idx, text }
   }
 }
 
@@ -78,6 +80,10 @@ impl Overlay {
   pub fn new(char_idx: usize, grapheme: impl Into<Tendril>) -> Self {
     let grapheme = grapheme.into();
     debug_assert!(is_single_grapheme(&grapheme));
+    debug_assert!(
+      !grapheme.contains('\n') && !grapheme.contains('\r'),
+      "overlay graphemes must not contain line breaks"
+    );
     Self { char_idx, grapheme }
   }
 }
@@ -258,7 +264,7 @@ impl Debug for TextAnnotations<'_> {
 
 impl<'a> TextAnnotations<'a> {
   /// Create a traversal cursor starting at `char_idx`.
-  pub fn cursor(&'a mut self, char_idx: usize) -> TextAnnotationsCursor<'a> {
+  pub fn cursor<'t>(&'t mut self, char_idx: usize) -> TextAnnotationsCursor<'a, 't> {
     let mut inline = Vec::with_capacity(self.inline_annotations.len());
     for layer in &self.inline_annotations {
       let mut cursor = LayerCursor::from(layer);
@@ -382,14 +388,14 @@ impl<'a> TextAnnotations<'a> {
 }
 
 /// Cursor state for traversing a set of text annotations.
-pub struct TextAnnotationsCursor<'a> {
+pub struct TextAnnotationsCursor<'a, 't> {
   inline: Vec<LayerCursor<'a, InlineAnnotation, Option<Highlight>>>,
   overlays: Vec<LayerCursor<'a, Overlay, Option<Highlight>>>,
-  line_annotations: &'a mut [Box<dyn LineAnnotation + 'a>],
+  line_annotations: &'t mut [Box<dyn LineAnnotation + 'a>],
   next_anchors: Vec<usize>,
 }
 
-impl Debug for TextAnnotationsCursor<'_> {
+impl Debug for TextAnnotationsCursor<'_, '_> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_struct("TextAnnotationsCursor")
       .field("inline_layers", &self.inline.len())
@@ -399,7 +405,7 @@ impl Debug for TextAnnotationsCursor<'_> {
   }
 }
 
-impl<'a> TextAnnotationsCursor<'a> {
+impl<'a, 't> TextAnnotationsCursor<'a, 't> {
   /// Reset the cursor to a new starting char index.
   pub fn reset_pos(&mut self, char_idx: usize) {
     for layer in &mut self.inline {
@@ -416,14 +422,17 @@ impl<'a> TextAnnotationsCursor<'a> {
   pub(crate) fn next_inline_annotation_at(
     &mut self,
     char_idx: usize,
-  ) -> Option<(&InlineAnnotation, Option<Highlight>)> {
+  ) -> Option<(&'a InlineAnnotation, Option<Highlight>)> {
     self.inline.iter_mut().find_map(|layer| {
       let annotation = layer.consume(char_idx, |annot| annot.char_idx)?;
       Some((annotation, layer.metadata.clone()))
     })
   }
 
-  pub(crate) fn overlay_at(&mut self, char_idx: usize) -> Option<(&Overlay, Option<Highlight>)> {
+  pub(crate) fn overlay_at(
+    &mut self,
+    char_idx: usize,
+  ) -> Option<(&'a Overlay, Option<Highlight>)> {
     let mut overlay = None;
     for layer in &mut self.overlays {
       while let Some(new_overlay) = layer.consume(char_idx, |annot| annot.char_idx) {

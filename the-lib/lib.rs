@@ -16,6 +16,7 @@ pub mod syntax;
 pub mod transaction;
 pub mod match_brackets;
 pub mod object;
+pub mod text_object;
 pub mod surround;
 
 /// A small-string-optimized string type.

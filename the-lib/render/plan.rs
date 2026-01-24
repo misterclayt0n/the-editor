@@ -19,32 +19,9 @@ use crate::{
     visual_position,
   },
   syntax::Highlight,
+  view::ViewState,
 };
 use the_core::grapheme::Grapheme;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ViewState {
-  pub viewport: Rect,
-  /// Visual scroll offset (row/col) in rendered space.
-  pub scroll: Position,
-  /// Active cursor selected by the client, if any.
-  pub active_cursor: Option<crate::selection::CursorId>,
-}
-
-impl ViewState {
-  pub fn new(viewport: Rect, scroll: Position) -> Self {
-    Self {
-      viewport,
-      scroll,
-      active_cursor: None,
-    }
-  }
-
-  pub fn with_active_cursor(mut self, cursor_id: crate::selection::CursorId) -> Self {
-    self.active_cursor = Some(cursor_id);
-    self
-  }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderSpan {
@@ -98,6 +75,7 @@ impl RenderLine {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderCursor {
+  pub id: crate::selection::CursorId,
   pub pos: Position,
   pub kind: CursorKind,
   pub style: Style,
@@ -107,6 +85,23 @@ pub struct RenderCursor {
 pub struct RenderSelection {
   pub rect: Rect,
   pub style: Style,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderStyles {
+  pub selection: Style,
+  pub cursor: Style,
+  pub active_cursor: Style,
+}
+
+impl Default for RenderStyles {
+  fn default() -> Self {
+    Self {
+      selection: Style::default(),
+      cursor: Style::default(),
+      active_cursor: Style::default(),
+    }
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -200,6 +195,7 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
   annotations: &'t mut TextAnnotations<'a>,
   highlights: &mut H,
   cache: &mut RenderCache,
+  styles: RenderStyles,
 ) -> RenderPlan {
   let mut plan = RenderPlan::empty(view.viewport, view.scroll);
   let text = doc.text().slice(..);
@@ -310,7 +306,7 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
     }
   }
 
-  add_selections_and_cursor(&mut plan, doc, text_fmt, annotations);
+  add_selections_and_cursor(&mut plan, doc, text_fmt, annotations, view, styles);
 
   plan
 }
@@ -335,13 +331,13 @@ fn add_selections_and_cursor<'a>(
   doc: &'a Document,
   text_fmt: &'a TextFormat,
   annotations: &mut TextAnnotations<'a>,
+  view: ViewState,
+  styles: RenderStyles,
 ) {
   let selection = doc.selection();
-  let style = Style::default();
-  let cursor_style = Style::default();
   let cursor_kind = CursorKind::Block;
 
-  for range in selection.ranges() {
+  for (cursor_id, range) in selection.iter_with_ids() {
     let from = range.from();
     let to = range.to();
     if from == to {
@@ -353,7 +349,7 @@ fn add_selections_and_cursor<'a>(
         visual_position::visual_pos_at_char(doc.text().slice(..), text_fmt, annotations, to);
       let (Some(start), Some(end)) = (start, end) else { continue };
 
-      push_selection_rects(plan, start, end, style);
+      push_selection_rects(plan, start, end, styles.selection);
     }
 
     let cursor_pos = range.cursor(doc.text().slice(..));
@@ -361,7 +357,13 @@ fn add_selections_and_cursor<'a>(
       visual_position::visual_pos_at_char(doc.text().slice(..), text_fmt, annotations, cursor_pos)
     {
       if let Some(pos) = clamp_position(plan, pos) {
+        let cursor_style = if view.active_cursor == Some(cursor_id) {
+          styles.active_cursor
+        } else {
+          styles.cursor
+        };
         plan.cursors.push(RenderCursor {
+          id: cursor_id,
           pos,
           kind: cursor_kind,
           style: cursor_style,
@@ -457,7 +459,9 @@ mod tests {
   use ropey::Rope;
 
   use crate::document::{Document, DocumentId};
+  use crate::render::SyntaxHighlightAdapter;
   use crate::selection::{Range, Selection};
+  use crate::syntax::HighlightCache;
   use smallvec::smallvec;
 
   #[test]
@@ -470,7 +474,9 @@ mod tests {
     let mut highlights = NoHighlights;
 
     let mut cache = RenderCache::default();
-    let plan = build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache);
+    let styles = RenderStyles::default();
+    let plan =
+      build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache, styles);
 
     assert_eq!(plan.lines.len(), 1);
     assert_eq!(plan.lines[0].text(), "abc");
@@ -486,7 +492,9 @@ mod tests {
     let mut highlights = NoHighlights;
 
     let mut cache = RenderCache::default();
-    let plan = build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache);
+    let styles = RenderStyles::default();
+    let plan =
+      build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache, styles);
 
     assert_eq!(plan.lines.len(), 1);
     assert_eq!(plan.lines[0].text(), "b");
@@ -504,8 +512,10 @@ mod tests {
     let mut annotations = TextAnnotations::default();
     let mut highlights = NoHighlights;
     let mut cache = RenderCache::default();
+    let styles = RenderStyles::default();
 
-    let plan = build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache);
+    let plan =
+      build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache, styles);
 
     assert_eq!(plan.selections.len(), 2);
     assert_eq!(plan.selections[0].rect, Rect::new(2, 0, 6, 1));
@@ -515,5 +525,35 @@ mod tests {
     let cursor_positions: Vec<_> = plan.cursors.iter().map(|c| c.pos).collect();
     assert!(cursor_positions.contains(&Position::new(0, 1)));
     assert!(cursor_positions.contains(&Position::new(1, 1)));
+  }
+
+  #[test]
+  fn build_plan_applies_highlight_spans() {
+    let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(id, Rope::from("abc"));
+    let view = ViewState::new(Rect::new(0, 0, 10, 1), Position::new(0, 0));
+    let text_fmt = TextFormat::default();
+    let mut annotations = TextAnnotations::default();
+
+    let mut highlight_cache = HighlightCache::default();
+    highlight_cache.update_range(
+      0..doc.text().len_bytes(),
+      vec![(crate::syntax::Highlight::new(1), 1..2)],
+      doc.text().slice(..),
+      doc.version(),
+      1,
+    );
+    let mut highlights =
+      SyntaxHighlightAdapter::from_cache(doc.text().slice(..), &highlight_cache, 0..1);
+
+    let mut cache = RenderCache::default();
+    let styles = RenderStyles::default();
+
+    let plan =
+      build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache, styles);
+
+    let span_highlights: Vec<_> =
+      plan.lines[0].spans.iter().filter_map(|span| span.highlight).collect();
+    assert!(span_highlights.contains(&crate::syntax::Highlight::new(1)));
   }
 }

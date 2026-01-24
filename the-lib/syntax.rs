@@ -1117,7 +1117,8 @@ impl Syntax {
     source: RopeSlice,
     loader: &Loader,
     line_range: ops::Range<usize>,
-    doc_version: usize,
+    doc_version: u64,
+    syntax_version: u64,
   ) -> usize {
     if line_range.start >= source.len_lines() {
       return 0;
@@ -1138,7 +1139,7 @@ impl Syntax {
     let highlights = self.collect_highlights(source, loader, start_byte..end_byte);
 
     // Update the cache
-    cache.update_range(start_byte..end_byte, highlights, source, doc_version);
+    cache.update_range(start_byte..end_byte, highlights, source, doc_version, syntax_version);
 
     cache.len()
   }

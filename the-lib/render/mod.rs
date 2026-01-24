@@ -8,6 +8,7 @@
 pub mod visual_position;
 pub mod graphics;
 pub mod plan;
+pub mod highlight_adapter;
 pub mod text_format;
 pub mod grapheme;
 pub mod text_annotations;
@@ -24,6 +25,8 @@ pub use plan::{
   RenderPlan,
   RenderSelection,
   RenderSpan,
-  ViewState,
+  RenderStyles,
 };
+pub use highlight_adapter::SyntaxHighlightAdapter;
+pub use crate::view::ViewState;
 pub use visual_position::{char_at_visual_pos, visual_pos_at_char};

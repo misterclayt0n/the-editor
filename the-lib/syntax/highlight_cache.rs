@@ -12,7 +12,13 @@
 //!
 //! let mut cache = HighlightCache::default();
 //! let text = Rope::from("let x = 1;\n");
-//! cache.update_range(0..text.len_bytes(), vec![(Highlight::new(0), 0..5)], text.slice(..), 1);
+//! cache.update_range(
+//!   0..text.len_bytes(),
+//!   vec![(Highlight::new(0), 0..5)],
+//!   text.slice(..),
+//!   1,
+//!   1,
+//! );
 //! assert!(cache.is_range_cached(0..text.len_bytes()));
 //! ```
 use std::{
@@ -47,7 +53,8 @@ pub struct HighlightCache {
   by_line: HashMap<usize, Vec<(Highlight, ops::Range<usize>)>>,
 
   /// Document version when cache was last updated
-  doc_version: usize,
+  doc_version: u64,
+  syntax_version: u64,
 
   /// Byte range that has been queried and cached
   cached_range: ops::Range<usize>,
@@ -81,7 +88,8 @@ impl HighlightCache {
     byte_range: ops::Range<usize>,
     highlights: Vec<(Highlight, ops::Range<usize>)>,
     text: RopeSlice,
-    doc_version: usize,
+    doc_version: u64,
+    syntax_version: u64,
   ) {
     // Clear old highlights in this range
     let start_line = text.byte_to_line(byte_range.start);
@@ -110,6 +118,7 @@ impl HighlightCache {
 
     // Update metadata
     self.doc_version = doc_version;
+    self.syntax_version = syntax_version;
     self.cached_range = byte_range;
   }
 
@@ -127,13 +136,23 @@ impl HighlightCache {
 
   /// Get the cached document version
   pub fn version(&self) -> usize {
+    self.doc_version as usize
+  }
+
+  pub fn doc_version(&self) -> u64 {
     self.doc_version
+  }
+
+  pub fn syntax_version(&self) -> u64 {
+    self.syntax_version
   }
 
   /// Clear all cached highlights
   pub fn clear(&mut self) {
     self.by_line.clear();
     self.cached_range = 0..0;
+    self.doc_version = 0;
+    self.syntax_version = 0;
   }
 
   /// Get total number of cached highlight entries
@@ -177,7 +196,7 @@ mod tests {
     ];
 
     // Update cache with highlights
-    cache.update_range(0..text.len_bytes(), highlights.clone(), text.slice(..), 1);
+    cache.update_range(0..text.len_bytes(), highlights.clone(), text.slice(..), 1, 1);
 
     // Verify cache state
     assert!(!cache.is_empty());
@@ -201,7 +220,7 @@ mod tests {
       (Highlight::new(2), 15..19), // On line 2
     ];
 
-    cache.update_range(0..text.len_bytes(), highlights, text.slice(..), 1);
+    cache.update_range(0..text.len_bytes(), highlights, text.slice(..), 1, 1);
 
     // Get highlights for line 1
     let line1_highlights = cache.get_line_range(1, 1);
@@ -226,7 +245,7 @@ mod tests {
       (Highlight::new(3), 22..26),
     ];
 
-    cache.update_range(0..text.len_bytes(), highlights, text.slice(..), 1);
+    cache.update_range(0..text.len_bytes(), highlights, text.slice(..), 1, 1);
     assert_eq!(cache.len(), 4);
 
     // Invalidate line 1
@@ -250,7 +269,7 @@ mod tests {
 
     let highlights = vec![(Highlight::new(0), 0..5), (Highlight::new(1), 8..12)];
 
-    cache.update_range(0..text.len_bytes(), highlights, text.slice(..), 1);
+    cache.update_range(0..text.len_bytes(), highlights, text.slice(..), 1, 1);
     assert!(!cache.is_empty());
 
     cache.clear();
@@ -266,10 +285,10 @@ mod tests {
 
     assert_eq!(cache.version(), 0);
 
-    cache.update_range(0..5, vec![(Highlight::new(0), 0..4)], text.slice(..), 5);
+    cache.update_range(0..5, vec![(Highlight::new(0), 0..4)], text.slice(..), 5, 1);
     assert_eq!(cache.version(), 5);
 
-    cache.update_range(0..5, vec![(Highlight::new(1), 0..4)], text.slice(..), 10);
+    cache.update_range(0..5, vec![(Highlight::new(1), 0..4)], text.slice(..), 10, 1);
     assert_eq!(cache.version(), 10);
   }
 
@@ -279,7 +298,7 @@ mod tests {
     let text = Rope::from("line 1\nline 2\nline 3\n");
 
     // Cache bytes 0-14 (first two lines)
-    cache.update_range(0..14, vec![(Highlight::new(0), 0..5)], text.slice(..), 1);
+    cache.update_range(0..14, vec![(Highlight::new(0), 0..5)], text.slice(..), 1, 1);
 
     // Check various ranges
     assert!(cache.is_range_cached(0..14)); // Exact match

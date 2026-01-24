@@ -24,6 +24,7 @@ pub mod surround;
 pub mod syntax;
 pub mod text_object;
 pub mod transaction;
+pub mod view;
 
 /// A small-string-optimized string type.
 ///

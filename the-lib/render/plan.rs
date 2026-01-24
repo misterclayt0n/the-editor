@@ -27,11 +27,22 @@ pub struct ViewState {
   pub viewport: Rect,
   /// Visual scroll offset (row/col) in rendered space.
   pub scroll: Position,
+  /// Active cursor selected by the client, if any.
+  pub active_cursor: Option<crate::selection::CursorId>,
 }
 
 impl ViewState {
   pub fn new(viewport: Rect, scroll: Position) -> Self {
-    Self { viewport, scroll }
+    Self {
+      viewport,
+      scroll,
+      active_cursor: None,
+    }
+  }
+
+  pub fn with_active_cursor(mut self, cursor_id: crate::selection::CursorId) -> Self {
+    self.active_cursor = Some(cursor_id);
+    self
   }
 }
 
@@ -327,35 +338,35 @@ fn add_selections_and_cursor<'a>(
 ) {
   let selection = doc.selection();
   let style = Style::default();
+  let cursor_style = Style::default();
+  let cursor_kind = CursorKind::Block;
 
   for range in selection.ranges() {
     let from = range.from();
     let to = range.to();
     if from == to {
-      continue;
+      // Even when empty, still render a cursor below.
+    } else {
+      let start =
+        visual_position::visual_pos_at_char(doc.text().slice(..), text_fmt, annotations, from);
+      let end =
+        visual_position::visual_pos_at_char(doc.text().slice(..), text_fmt, annotations, to);
+      let (Some(start), Some(end)) = (start, end) else { continue };
+
+      push_selection_rects(plan, start, end, style);
     }
-    let start =
-      visual_position::visual_pos_at_char(doc.text().slice(..), text_fmt, annotations, from);
-    let end =
-      visual_position::visual_pos_at_char(doc.text().slice(..), text_fmt, annotations, to);
-    let (Some(start), Some(end)) = (start, end) else { continue };
 
-    push_selection_rects(plan, start, end, style);
-  }
-
-  let cursor_style = Style::default();
-  let cursor_kind = CursorKind::Block;
-  let primary = selection.primary();
-  let cursor_pos = primary.cursor(doc.text().slice(..));
-  if let Some(pos) =
-    visual_position::visual_pos_at_char(doc.text().slice(..), text_fmt, annotations, cursor_pos)
-  {
-    if let Some(pos) = clamp_position(plan, pos) {
-      plan.cursors.push(RenderCursor {
-        pos,
-        kind: cursor_kind,
-        style: cursor_style,
-      });
+    let cursor_pos = range.cursor(doc.text().slice(..));
+    if let Some(pos) =
+      visual_position::visual_pos_at_char(doc.text().slice(..), text_fmt, annotations, cursor_pos)
+    {
+      if let Some(pos) = clamp_position(plan, pos) {
+        plan.cursors.push(RenderCursor {
+          pos,
+          kind: cursor_kind,
+          style: cursor_style,
+        });
+      }
     }
   }
 }
@@ -485,8 +496,7 @@ mod tests {
   fn build_plan_selection_and_cursor_rects() {
     let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
     let mut doc = Document::new(id, Rope::from("abcd\nefgh\nijkl\n"));
-    let selection =
-      Selection::new(smallvec![Range::new(2, 12), Range::point(6)], 1).unwrap();
+    let selection = Selection::new(smallvec![Range::new(7, 12), Range::point(6)]).unwrap();
     doc.set_selection(selection).unwrap();
 
     let view = ViewState::new(Rect::new(0, 0, 8, 2), Position::new(1, 0));
@@ -498,10 +508,12 @@ mod tests {
     let plan = build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache);
 
     assert_eq!(plan.selections.len(), 2);
-    assert_eq!(plan.selections[0].rect, Rect::new(0, 0, 8, 1));
+    assert_eq!(plan.selections[0].rect, Rect::new(2, 0, 6, 1));
     assert_eq!(plan.selections[1].rect, Rect::new(0, 1, 2, 1));
 
-    assert_eq!(plan.cursors.len(), 1);
-    assert_eq!(plan.cursors[0].pos, Position::new(1, 1));
+    assert_eq!(plan.cursors.len(), 2);
+    let cursor_positions: Vec<_> = plan.cursors.iter().map(|c| c.pos).collect();
+    assert!(cursor_positions.contains(&Position::new(0, 1)));
+    assert!(cursor_positions.contains(&Position::new(1, 1)));
   }
 }

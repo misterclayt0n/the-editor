@@ -396,7 +396,14 @@ pub fn toggle_block_comments(
   let (mut transaction, ranges) =
     create_block_comment_transaction(doc, selection, commented, comment_changes)?;
   if !commented {
-    transaction = transaction.with_selection(Selection::new(ranges, selection.primary_index())?);
+    let cursor_ids: SmallVec<[crate::selection::CursorId; 1]> =
+      selection.cursor_ids().iter().copied().collect();
+    let selection = if cursor_ids.len() == ranges.len() {
+      Selection::new_with_ids(ranges, cursor_ids)?
+    } else {
+      Selection::new(ranges)?
+    };
+    transaction = transaction.with_selection(selection);
   }
   Ok(transaction)
 }
@@ -412,7 +419,7 @@ pub fn split_lines_of_selection(text: RopeSlice, selection: &Selection) -> Selec
       ranges.push(Range::new(start, pos));
     }
   }
-  Selection::new(ranges, 0).unwrap_or_else(|_| selection.clone())
+  Selection::new(ranges).unwrap_or_else(|_| selection.clone())
 }
 
 #[cfg(test)]

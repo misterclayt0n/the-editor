@@ -337,7 +337,7 @@ mod tests {
     let tx = Transaction::change(doc.text(), vec![(0, 0, Some("x".into()))]).unwrap();
     doc.apply_transaction(&tx).unwrap();
 
-    assert_eq!(doc.selection().primary().head, 2);
+    assert_eq!(doc.selection().ranges()[0].head, 2);
   }
 
   #[test]

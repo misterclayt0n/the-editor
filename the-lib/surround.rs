@@ -14,7 +14,7 @@
 //! use smallvec::smallvec;
 //!
 //! let text = Rope::from("(hello) world");
-//! let selection = Selection::new(smallvec![Range::point(2)], 0).unwrap();
+//! let selection = Selection::new(smallvec![Range::point(2)]).unwrap();
 //! let positions = get_surround_pos(None, text.slice(..), &selection, Some('('), 1).unwrap();
 //! assert_eq!(positions.as_slice(), &[(0, 6)]);
 //! ```
@@ -413,7 +413,8 @@ mod test {
 
     assert_eq!(1, expectations.len());
     assert_eq!(
-      find_nth_pairs_pos(doc.slice(..), '\'', selection.primary(), 1).expect("find should succeed"),
+      find_nth_pairs_pos(doc.slice(..), '\'', selection.ranges()[0], 1)
+        .expect("find should succeed"),
       expectations[0]
     )
   }
@@ -429,7 +430,8 @@ mod test {
 
     assert_eq!(1, expectations.len());
     assert_eq!(
-      find_nth_pairs_pos(doc.slice(..), '\'', selection.primary(), 2).expect("find should succeed"),
+      find_nth_pairs_pos(doc.slice(..), '\'', selection.ranges()[0], 2)
+        .expect("find should succeed"),
       expectations[0]
     )
   }
@@ -445,7 +447,7 @@ mod test {
 
     assert_eq!(
       matches!(
-        find_nth_pairs_pos(doc.slice(..), '\'', selection.primary(), 1),
+        find_nth_pairs_pos(doc.slice(..), '\'', selection.ranges()[0], 1),
         Err(Error::CursorOnAmbiguousPair { .. })
       ),
       true
@@ -462,7 +464,7 @@ mod test {
             );
 
     assert_eq!(
-      find_nth_closest_pairs_pos(None, doc.slice(..), selection.primary(), 1),
+      find_nth_closest_pairs_pos(None, doc.slice(..), selection.ranges()[0], 1),
       Err(Error::PairNotFound)
     )
   }
@@ -497,6 +499,6 @@ mod test {
       .map(|pair| (pair[0], pair[1]))
       .collect();
 
-    (rope, Selection::new(selections, 0).unwrap(), expectations)
+    (rope, Selection::new(selections).unwrap(), expectations)
   }
 }

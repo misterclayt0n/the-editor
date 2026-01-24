@@ -648,7 +648,13 @@ fn build_transaction(
     outcome.change
   })?;
 
-  let selection = Selection::new(end_ranges, selection.primary_index())?;
+  let cursor_ids: SmallVec<[crate::selection::CursorId; 1]> =
+    selection.cursor_ids().iter().copied().collect();
+  let selection = if cursor_ids.len() == end_ranges.len() {
+    Selection::new_with_ids(end_ranges, cursor_ids)?
+  } else {
+    Selection::new(end_ranges)?
+  };
   let transaction = transaction.with_selection(selection);
   tracing::debug!("auto pair transaction: {:#?}", transaction);
   Ok(transaction)
@@ -737,7 +743,7 @@ mod test {
       .unwrap()
       .unwrap();
     assert_eq!(apply_transaction(&doc, &tx), "\"\"\"\"\"\"");
-    assert_eq!(tx.selection().unwrap().primary().head, 6);
+    assert_eq!(tx.selection().unwrap().ranges()[0].head, 6);
 
     // Single quote skip (not triple): at pos 1 in `""`, skip single `"`
     let doc = Rope::from("\"\"");
@@ -745,7 +751,7 @@ mod test {
       .unwrap()
       .unwrap();
     assert_eq!(apply_transaction(&doc, &tx), "\"\"");
-    assert_eq!(tx.selection().unwrap().primary().head, 2);
+    assert_eq!(tx.selection().unwrap().ranges()[0].head, 2);
 
     // Delete: cursor at pos 3 in `""""""` removes all 6 chars
     let doc = Rope::from("\"\"\"\"\"\"");
@@ -786,7 +792,7 @@ mod test {
       .unwrap()
       .unwrap();
     assert_eq!(apply_transaction(&doc, &tx), "{%%}");
-    assert_eq!(tx.selection().unwrap().primary().head, 4);
+    assert_eq!(tx.selection().unwrap().ranges()[0].head, 4);
 
     // Delete: cursor at pos 2 in `{%%}` removes all 4 chars
     let doc = Rope::from("{%%}");
@@ -862,7 +868,7 @@ mod test {
       .unwrap()
       .unwrap();
     assert_eq!(apply_transaction(&doc, &tx), "()");
-    assert_eq!(tx.selection().unwrap().primary().head, 2);
+    assert_eq!(tx.selection().unwrap().ranges()[0].head, 2);
   }
 
   #[test]
@@ -871,20 +877,22 @@ mod test {
 
     // Insert at multiple positions: `a b c` with cursors at 1, 3, 5
     let doc = Rope::from("a b c");
-    let sel = Selection::new(
-      smallvec::smallvec![Range::point(1), Range::point(3), Range::point(5)],
-      0,
-    )
+    let sel = Selection::new(smallvec::smallvec![
+      Range::point(1),
+      Range::point(3),
+      Range::point(5)
+    ])
     .unwrap();
     let tx = hook(&doc, &sel, '(', &pairs).unwrap().unwrap();
     assert_eq!(apply_transaction(&doc, &tx), "a() b() c()");
 
     // Skip at multiple positions: `()()()` with cursors at 1, 3, 5
     let doc = Rope::from("()()()");
-    let sel = Selection::new(
-      smallvec::smallvec![Range::point(1), Range::point(3), Range::point(5)],
-      0,
-    )
+    let sel = Selection::new(smallvec::smallvec![
+      Range::point(1),
+      Range::point(3),
+      Range::point(5)
+    ])
     .unwrap();
     let tx = hook(&doc, &sel, ')', &pairs).unwrap().unwrap();
     assert_eq!(apply_transaction(&doc, &tx), "()()()");
@@ -899,23 +907,26 @@ mod test {
 
     // Delete at multiple positions
     let doc = Rope::from("()()()");
-    let sel = Selection::new(
-      smallvec::smallvec![Range::point(1), Range::point(3), Range::point(5)],
-      0,
-    )
+    let sel = Selection::new(smallvec::smallvec![
+      Range::point(1),
+      Range::point(3),
+      Range::point(5)
+    ])
     .unwrap();
     let tx = delete_hook(&doc, &sel, &pairs).unwrap().unwrap();
     assert_eq!(apply_transaction(&doc, &tx), "");
 
     // Multi-char pairs with multiple cursors: jinja
     let doc = Rope::from("{ {");
-    let sel = Selection::new(smallvec::smallvec![Range::point(1), Range::point(3)], 0).unwrap();
+    let sel =
+      Selection::new(smallvec::smallvec![Range::point(1), Range::point(3)]).unwrap();
     let tx = hook(&doc, &sel, '%', &pairs).unwrap().unwrap();
     assert_eq!(apply_transaction(&doc, &tx), "{%%} {%%}");
 
     // Triple-quote delete with multiple cursors
     let doc = Rope::from("\"\"\"\"\"\" \"\"\"\"\"\"");
-    let sel = Selection::new(smallvec::smallvec![Range::point(3), Range::point(10)], 0).unwrap();
+    let sel =
+      Selection::new(smallvec::smallvec![Range::point(3), Range::point(10)]).unwrap();
     let tx = delete_hook(&doc, &sel, &pairs).unwrap().unwrap();
     assert_eq!(apply_transaction(&doc, &tx), " ");
   }

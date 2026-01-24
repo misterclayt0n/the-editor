@@ -975,30 +975,21 @@ impl Transaction {
     mut change_range: impl FnMut(&Range) -> (usize, usize),
     mut create_tendril: impl FnMut(usize, usize) -> Option<Tendril>,
   ) -> Result<(Transaction, Selection)> {
-    let mut last_selection_idx = None;
-    let mut new_primary_idx = None;
-    // NOTE: We should use `SmallVec` here.
     let mut ranges: SmallVec<[Range; 1]> = SmallVec::new();
+    let mut cursor_ids: SmallVec<[crate::selection::CursorId; 1]> = SmallVec::new();
 
-    let process_change = |change_start, change_end, (idx, range): (usize, &Range)| {
-      // update the primary idx
-      if idx == selection.primary_index() {
-        new_primary_idx = Some(idx);
-      } else if new_primary_idx.is_none() {
-        if idx > selection.primary_index() {
-          new_primary_idx = last_selection_idx;
-        } else {
-          last_selection_idx = Some(idx);
-        }
-      }
-      ranges.push(*range);
+    let process_change = |change_start,
+                          change_end,
+                          (range, cursor_id): (Range, crate::selection::CursorId)| {
+      ranges.push(range);
+      cursor_ids.push(cursor_id);
       create_tendril(change_start, change_end)
     };
     let transaction = Self::change_ignore_overlapping(
       doc,
-      selection.iter().enumerate().map(|range| {
-        let (change_start, change_end) = change_range(range.1);
-        (change_start, change_end, range)
+      selection.iter_with_ids().map(|(cursor_id, range)| {
+        let (change_start, change_end) = change_range(range);
+        (change_start, change_end, (*range, cursor_id))
       }),
       process_change,
     )?;
@@ -1006,7 +997,7 @@ impl Transaction {
     let new_selection = if ranges.is_empty() {
       selection.clone()
     } else {
-      Selection::new_unchecked(ranges, new_primary_idx.unwrap_or(0))
+      Selection::new_with_ids_unchecked(ranges, cursor_ids)
     };
 
     Ok((transaction, new_selection))

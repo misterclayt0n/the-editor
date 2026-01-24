@@ -491,14 +491,14 @@ impl History {
 
     let current_revision = &self.revisions[self.current];
 
-    // Get the primary selection from the inversion, if available
-    let primary_selection = current_revision.inversion.selection()?.primary();
+    // Get a selection range from the inversion, if available
+    let selection_range = *current_revision.inversion.selection()?.ranges().first()?;
 
-    // Try to find a change that matches the primary selection
+    // Try to find a change that matches the selection range
     let change = current_revision
       .transaction
       .changes_iter()
-      .find(|(from, to, _)| Range::new(*from, *to).overlaps(&primary_selection))
+      .find(|(from, to, _)| Range::new(*from, *to).overlaps(&selection_range))
       .or_else(|| current_revision.transaction.changes_iter().next())?;
 
     let (_from, to, _fragment) = change;

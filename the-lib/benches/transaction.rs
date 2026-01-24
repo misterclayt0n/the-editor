@@ -73,7 +73,7 @@ fn make_point_selection(doc: &Rope, count: usize) -> Selection {
     ranges.push(Range::point(pos));
   }
 
-  Selection::new(ranges, 0).unwrap()
+  Selection::new(ranges).unwrap()
 }
 
 fn make_range_selection(doc: &Rope, count: usize, span: usize) -> Selection {
@@ -88,7 +88,7 @@ fn make_range_selection(doc: &Rope, count: usize, span: usize) -> Selection {
     ranges.push(Range::new(start, end));
   }
 
-  Selection::new(ranges, 0).unwrap()
+  Selection::new(ranges).unwrap()
 }
 
 // `Transaction::change benchmarks`.

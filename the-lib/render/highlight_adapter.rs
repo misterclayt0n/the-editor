@@ -2,6 +2,30 @@
 //!
 //! This adapter converts cached tree-sitter highlights into a simple
 //! per-grapheme lookup for `render::plan`.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use ropey::Rope;
+//! use the_lib::render::{SyntaxHighlightAdapter, HighlightProvider};
+//! use the_lib::syntax::{HighlightCache, Loader, Syntax};
+//!
+//! # fn demo(syntax: &Syntax, loader: &Loader) {
+//! let text = Rope::from("let x = 1;");
+//! let mut cache = HighlightCache::default();
+//! let line_range = 0..1;
+//! let mut adapter = SyntaxHighlightAdapter::new(
+//!   text.slice(..),
+//!   syntax,
+//!   loader,
+//!   &mut cache,
+//!   line_range,
+//!   1,
+//!   1,
+//! );
+//! let _ = adapter.highlight_at(0);
+//! # }
+//! ```
 
 use std::ops::Range;
 

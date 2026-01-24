@@ -2,6 +2,36 @@
 //!
 //! A render plan is a backend-agnostic description of what to draw for a given
 //! document and viewport. Clients consume the plan and handle actual drawing.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use ropey::Rope;
+//! use the_lib::document::{Document, DocumentId};
+//! use the_lib::render::{
+//!   build_plan,
+//!   NoHighlights,
+//!   RenderCache,
+//!   RenderStyles,
+//!   text_annotations::TextAnnotations,
+//!   text_format::TextFormat,
+//! };
+//! use the_lib::render::graphics::Rect;
+//! use the_lib::position::Position;
+//! use the_lib::view::ViewState;
+//!
+//! let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+//! let doc = Document::new(id, Rope::from("hello"));
+//! let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+//! let text_fmt = TextFormat::default();
+//! let mut annotations = TextAnnotations::default();
+//! let mut highlights = NoHighlights;
+//! let mut cache = RenderCache::default();
+//! let styles = RenderStyles::default();
+//!
+//! let plan = build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache, styles);
+//! assert_eq!(plan.lines.len(), 1);
+//! ```
 
 use std::collections::BTreeMap;
 

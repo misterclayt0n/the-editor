@@ -1,3 +1,21 @@
+//! View state owned by clients.
+//!
+//! This module models per-view UI state (scroll/viewport and an optional active
+//! cursor) without baking any view behavior into core selection logic.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use the_lib::view::ViewState;
+//! use the_lib::render::graphics::Rect;
+//! use the_lib::position::Position;
+//!
+//! let viewport = Rect::new(0, 0, 80, 24);
+//! let scroll = Position::new(0, 0);
+//! let view = ViewState::new(viewport, scroll);
+//! # let _ = view;
+//! ```
+
 use crate::{
   position::Position,
   render::graphics::Rect,

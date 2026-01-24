@@ -8,8 +8,10 @@
 //!
 //! ```no_run
 //! use ropey::Rope;
-//! use the_lib::comment::toggle_line_comments;
-//! use the_lib::selection::Selection;
+//! use the_lib::{
+//!   comment::toggle_line_comments,
+//!   selection::Selection,
+//! };
 //!
 //! let mut doc = Rope::from("line\nline");
 //! let selection = Selection::single(0, doc.len_chars());
@@ -18,17 +20,27 @@
 //! assert_eq!(doc, "// line\n// line");
 //! ```
 
-use ropey::{Rope, RopeSlice};
+use ropey::{
+  Rope,
+  RopeSlice,
+};
 use smallvec::SmallVec;
 use the_stdx::rope::RopeSliceExt;
 use thiserror::Error;
 
 use crate::{
   Tendril,
-  selection::{Range, Selection},
+  selection::{
+    Range,
+    Selection,
+    SelectionError,
+  },
   syntax::config::BlockCommentToken,
-  selection::SelectionError,
-  transaction::{Change, Transaction, TransactionError},
+  transaction::{
+    Change,
+    Transaction,
+    TransactionError,
+  },
 };
 
 pub const DEFAULT_COMMENT_TOKEN: &str = "#";
@@ -64,10 +76,11 @@ pub fn get_comment_token<'a, S: AsRef<str>>(
 /// - Whether the given lines should be considered commented
 ///     - If any of the lines are uncommented, all lines are considered as such.
 /// - The lines to change for toggling comments
-///     - This is all provided lines excluding blanks lines.
+///     - This is all provided lines excluding blanks lines. Each entry is
+///       `(line_num, comment_col)` where `comment_col` is the column of the
+///       comment token (or first non-whitespace char if not commented).
 /// - The column of the comment tokens
-///     - Column of existing tokens, if the lines are commented; column to place
-///       tokens at otherwise.
+///     - Minimum column to place tokens at when commenting.
 /// - The margin to the right of the comment tokens
 ///     - Defaults to `1`. If any existing comment token is not followed by a
 ///       space, changes to `0`.
@@ -75,7 +88,7 @@ fn find_line_comment(
   token: &str,
   text: RopeSlice,
   lines: impl IntoIterator<Item = usize>,
-) -> (bool, Vec<usize>, usize, usize) {
+) -> (bool, Vec<(usize, usize)>, usize, usize) {
   let mut commented = true;
   let mut saw_non_blank = false;
   let mut to_change = Vec::new();
@@ -103,8 +116,8 @@ fn find_line_comment(
         margin = 0;
       }
 
-      // blank lines don't get pushed.
-      to_change.push(line);
+      // blank lines don't get pushed. Store line number and its comment column.
+      to_change.push((line, pos));
     }
   }
 
@@ -149,14 +162,16 @@ pub fn toggle_line_comments(
 
   let mut changes: Vec<Change> = Vec::with_capacity(to_change.len());
 
-  for line in to_change {
-    let pos = text.line_to_char(line) + min;
+  for (line, comment_col) in to_change {
+    let line_start = text.line_to_char(line);
 
     if !commented {
-      // comment line
+      // comment line: use the global minimum column for alignment
+      let pos = line_start + min;
       changes.push((pos, pos, Some(comment.clone())));
     } else {
-      // uncomment line
+      // uncomment line: use this line's actual comment position
+      let pos = line_start + comment_col;
       changes.push((pos, pos + token_len + margin, None));
     }
   }
@@ -167,20 +182,20 @@ pub fn toggle_line_comments(
 #[derive(Debug, PartialEq, Eq)]
 pub enum CommentChange {
   Commented {
-    range: Range,
-    start_pos: usize,
-    end_pos: usize,
+    range:        Range,
+    start_pos:    usize,
+    end_pos:      usize,
     start_margin: bool,
-    end_margin: bool,
-    start_token: String,
-    end_token: String,
+    end_margin:   bool,
+    start_token:  String,
+    end_token:    String,
   },
   Uncommented {
-    range: Range,
-    start_pos: usize,
-    end_pos: usize,
+    range:       Range,
+    start_pos:   usize,
+    end_pos:     usize,
     start_token: String,
-    end_token: String,
+    end_token:   String,
   },
   Whitespace {
     range: Range,
@@ -208,11 +223,13 @@ fn prepare_block_tokens(tokens: &[BlockCommentToken]) -> Vec<BlockToken> {
   let mut prepared: Vec<BlockToken> = tokens
     .iter()
     .cloned()
-    .map(|token| BlockToken {
-      start_len: token.start.chars().count(),
-      end_len: token.end.chars().count(),
-      start: token.start,
-      end: token.end,
+    .map(|token| {
+      BlockToken {
+        start_len: token.start.chars().count(),
+        end_len:   token.end.chars().count(),
+        start:     token.start,
+        end:       token.end,
+      }
     })
     .collect();
 
@@ -437,8 +454,9 @@ mod test {
       let text = doc.slice(..);
 
       let res = find_line_comment("//", text, 0..3);
-      // (commented = false, to_change = [line 0, line 2], min = col 2, margin = 1)
-      assert_eq!(res, (false, vec![0, 2], 2, 1));
+      // (commented = false, to_change = [(line 0, col 2), (line 2, col 2)], min = col
+      // 2, margin = 1)
+      assert_eq!(res, (false, vec![(0, 2), (2, 2)], 2, 1));
     }
 
     #[test]
@@ -448,12 +466,12 @@ mod test {
 
       let res = find_line_comment("//", doc.slice(..), 0..3);
 
-      // (commented = true, to_change = [line 0, line 2], min = col 0, margin = 1)
-      assert_eq!(res, (true, vec![0, 2], 0, 1));
+      // (commented = true, to_change = [(line 0, col 0), (line 2, col 0)], min = col
+      // 0, margin = 1)
+      assert_eq!(res, (true, vec![(0, 0), (2, 0)], 0, 1));
     }
   }
 
-  // TODO: account for uncommenting with uneven comment indentation
   mod toggle_line_comment {
     use super::*;
 
@@ -507,6 +525,102 @@ mod test {
       assert_eq!(doc, "");
       let _ = selection; // to ignore the selection unused warning
     }
+
+    #[test]
+    fn uncomment_uneven_indentation() {
+      // Lines with comments at different indentation levels
+      let mut doc = Rope::from("// line1\n  // line2\n    // line3");
+      let mut selection = Selection::single(0, doc.len_chars() - 1);
+
+      let transaction = toggle_line_comments(&doc, &selection, Some("//")).unwrap();
+      transaction.apply(&mut doc).unwrap();
+      selection = selection.map(transaction.changes()).unwrap();
+
+      // Each line should have its comment removed at its own position
+      assert_eq!(doc, "line1\n  line2\n    line3");
+      let _ = selection;
+    }
+
+    #[test]
+    fn uncomment_uneven_indentation_no_margin() {
+      // Lines with comments at different indentation levels, no space after token
+      let mut doc = Rope::from("//line1\n  //line2\n    //line3");
+      let mut selection = Selection::single(0, doc.len_chars() - 1);
+
+      let transaction = toggle_line_comments(&doc, &selection, Some("//")).unwrap();
+      transaction.apply(&mut doc).unwrap();
+      selection = selection.map(transaction.changes()).unwrap();
+
+      assert_eq!(doc, "line1\n  line2\n    line3");
+      let _ = selection;
+    }
+
+    #[test]
+    fn comment_uneven_indentation_aligns_to_min() {
+      // When commenting lines with uneven indentation, comment tokens are inserted
+      // at the minimum column, preserving original relative indentation
+      let mut doc = Rope::from("line1\n  line2\n    line3");
+      let mut selection = Selection::single(0, doc.len_chars() - 1);
+
+      let transaction = toggle_line_comments(&doc, &selection, Some("//")).unwrap();
+      transaction.apply(&mut doc).unwrap();
+      selection = selection.map(transaction.changes()).unwrap();
+
+      // Comments inserted at column 0, original indentation preserved after token
+      assert_eq!(doc, "// line1\n//   line2\n//     line3");
+      let _ = selection;
+    }
+
+    #[test]
+    fn roundtrip_uneven_indentation() {
+      // Comment and then uncomment should preserve original structure
+      let original = "line1\n  line2\n    line3";
+      let mut doc = Rope::from(original);
+      let mut selection = Selection::single(0, doc.len_chars() - 1);
+
+      // Comment
+      let transaction = toggle_line_comments(&doc, &selection, Some("//")).unwrap();
+      transaction.apply(&mut doc).unwrap();
+      selection = selection.map(transaction.changes()).unwrap();
+
+      assert_eq!(doc, "// line1\n//   line2\n//     line3");
+
+      // Uncomment - each line's comment is removed at its position (col 0 for all)
+      let transaction = toggle_line_comments(&doc, &selection, Some("//")).unwrap();
+      transaction.apply(&mut doc).unwrap();
+
+      // Should be back to original
+      assert_eq!(doc, original);
+    }
+
+    #[test]
+    fn uncomment_uneven_indentation_mixed_margin() {
+      // Some lines have space after comment, some don't - should use margin 0
+      let mut doc = Rope::from("// line1\n  //line2\n    // line3");
+      let mut selection = Selection::single(0, doc.len_chars() - 1);
+
+      let transaction = toggle_line_comments(&doc, &selection, Some("//")).unwrap();
+      transaction.apply(&mut doc).unwrap();
+      selection = selection.map(transaction.changes()).unwrap();
+
+      // margin becomes 0 because line2 has no space, so only "//" is removed
+      assert_eq!(doc, " line1\n  line2\n     line3");
+      let _ = selection;
+    }
+
+    #[test]
+    fn uncomment_uneven_indentation_with_blank_lines() {
+      // Uneven indentation with blank lines interspersed
+      let mut doc = Rope::from("// first\n\n    // second\n\n  // third");
+      let mut selection = Selection::single(0, doc.len_chars() - 1);
+
+      let transaction = toggle_line_comments(&doc, &selection, Some("//")).unwrap();
+      transaction.apply(&mut doc).unwrap();
+      selection = selection.map(transaction.changes()).unwrap();
+
+      assert_eq!(doc, "first\n\n    second\n\n  third");
+      let _ = selection;
+    }
   }
 
   #[test]
@@ -522,34 +636,34 @@ mod test {
 
     assert_eq!(
       res,
-      (
-        false,
-        vec![CommentChange::Uncommented {
-          range: Range::new(0, 5),
-          start_pos: 0,
-          end_pos: 4,
-          start_token: "/*".to_string(),
-          end_token: "*/".to_string(),
-        }]
-      )
+      (false, vec![CommentChange::Uncommented {
+        range:       Range::new(0, 5),
+        start_pos:   0,
+        end_pos:     4,
+        start_token: "/*".to_string(),
+        end_token:   "*/".to_string(),
+      }])
     );
 
     // comment
-    let transaction = toggle_block_comments(&doc, &selection, &[BlockCommentToken::default()]).unwrap();
+    let transaction =
+      toggle_block_comments(&doc, &selection, &[BlockCommentToken::default()]).unwrap();
     transaction.apply(&mut doc).unwrap();
 
     assert_eq!(doc, "/* 1\n2\n3 */");
 
     // uncomment
     let selection = Selection::single(0, doc.len_chars());
-    let transaction = toggle_block_comments(&doc, &selection, &[BlockCommentToken::default()]).unwrap();
+    let transaction =
+      toggle_block_comments(&doc, &selection, &[BlockCommentToken::default()]).unwrap();
     transaction.apply(&mut doc).unwrap();
     assert_eq!(doc, "1\n2\n3");
 
     // don't panic when there is just a space in comment
     doc = Rope::from("/* */");
     let selection = Selection::single(0, doc.len_chars());
-    let transaction = toggle_block_comments(&doc, &selection, &[BlockCommentToken::default()]).unwrap();
+    let transaction =
+      toggle_block_comments(&doc, &selection, &[BlockCommentToken::default()]).unwrap();
     transaction.apply(&mut doc).unwrap();
     assert_eq!(doc, "");
   }

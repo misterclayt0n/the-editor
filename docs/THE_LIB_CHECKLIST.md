@@ -50,7 +50,7 @@ Keep this intentionally small for now; no gutters or diagnostics yet.
 ## 4) Correctness TODOs (must clear before client)
 
 From `rg -n "TODO" the-lib`:
-- [ ] `comment.rs`: uncommenting with uneven indent.
+- [x] `comment.rs`: uncommenting with uneven indent.
 - [ ] `selection.rs`: TODOs in range creation / search helpers.
 - [ ] `diff.rs`: heuristics + tokenizer perf TODOs.
 - [ ] `transaction.rs`: delete tracking + missing test coverage.
@@ -64,4 +64,3 @@ From `rg -n "TODO" the-lib`:
 2) Syntax highlight adapter wired into render::plan
 3) Clear correctness TODOs that touch transactions/selection/search
 4) Minimal client proof-of-life (single buffer render loop)
-

@@ -44,6 +44,20 @@ use crate::{
 // Limit block size for very long lines to avoid pathological traversal costs.
 const MAX_BLOCK_CHARS: usize = 4096;
 
+pub(crate) fn prev_checkpoint(text: RopeSlice<'_>, char_idx: usize) -> (usize, usize) {
+  let block_line_idx = text.char_to_line(char_idx.min(text.len_chars()));
+  let line_start = text.line_to_char(block_line_idx);
+  let line_len = text.line(block_line_idx).len_chars();
+  let block_char_idx = if line_len > MAX_BLOCK_CHARS {
+    let in_line = char_idx.saturating_sub(line_start);
+    let block_offset = (in_line / MAX_BLOCK_CHARS) * MAX_BLOCK_CHARS;
+    line_start + block_offset
+  } else {
+    line_start
+  };
+  (block_char_idx, block_line_idx)
+}
+
 #[derive(Debug, Clone)]
 struct GraphemeWithSource<'a> {
   grapheme: Grapheme<'a>,
@@ -138,16 +152,7 @@ impl<'a, 't> DocumentFormatter<'a, 't> {
     annotations: &'t mut TextAnnotations<'a>,
     char_idx: usize,
   ) -> Self {
-    let block_line_idx = text.char_to_line(char_idx.min(text.len_chars()));
-    let line_start = text.line_to_char(block_line_idx);
-    let line_len = text.line(block_line_idx).len_chars();
-    let block_char_idx = if line_len > MAX_BLOCK_CHARS {
-      let in_line = char_idx.saturating_sub(line_start);
-      let block_offset = (in_line / MAX_BLOCK_CHARS) * MAX_BLOCK_CHARS;
-      line_start + block_offset
-    } else {
-      line_start
-    };
+    let (block_char_idx, block_line_idx) = prev_checkpoint(text, char_idx);
     let annotations = annotations.cursor(block_char_idx);
     DocumentFormatter {
       text_fmt,

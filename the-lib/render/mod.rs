@@ -7,9 +7,23 @@
 
 pub mod visual_position;
 pub mod graphics;
+pub mod plan;
 pub mod text_format;
 pub mod grapheme;
 pub mod text_annotations;
 pub mod doc_formatter;
 
 pub use grapheme::{FormattedGrapheme, GraphemeSource};
+pub use plan::{
+  build_plan,
+  HighlightProvider,
+  NoHighlights,
+  RenderCache,
+  RenderCursor,
+  RenderLine,
+  RenderPlan,
+  RenderSelection,
+  RenderSpan,
+  ViewState,
+};
+pub use visual_position::{char_at_visual_pos, visual_pos_at_char};

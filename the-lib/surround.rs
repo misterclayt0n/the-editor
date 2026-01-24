@@ -16,7 +16,7 @@
 //! let text = Rope::from("(hello) world");
 //! let selection = Selection::new(smallvec![Range::point(2)], 0).unwrap();
 //! let positions = get_surround_pos(None, text.slice(..), &selection, Some('('), 1).unwrap();
-//! assert_eq!(positions, smallvec![(0, 6)]);
+//! assert_eq!(positions.as_slice(), &[(0, 6)]);
 //! ```
 use std::collections::HashSet;
 

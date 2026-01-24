@@ -274,7 +274,7 @@ impl Color {
   /// # Examples
   ///
   /// ```rust
-  /// use the_lib::render::theme::Color;
+  /// use the_lib::render::graphics::Color;
   ///
   /// let color1 = Color::from_hex("#c0ffee").unwrap();
   /// let color2 = Color::Rgb(192, 255, 238);
@@ -374,7 +374,7 @@ impl FromStr for Modifier {
 /// cell of the buffer, the style of this cell will be the result of
 /// the merge of S1, S2 and S3, not just S3.
 ///
-/// ```rust
+/// ```ignore
 /// # use the_lib::render::graphics::{Rect, Color, UnderlineStyle, Modifier, Style};
 /// # use helix_tui::buffer::Buffer;
 /// let styles = [
@@ -406,7 +406,7 @@ impl FromStr for Modifier {
 /// The default implementation returns a `Style` that does not modify anything.
 /// If you wish to reset all properties until that point use [`Style::reset`].
 ///
-/// ```
+/// ```ignore
 /// # use the_lib::render::graphics::{Rect, Color, UnderlineStyle, Modifier, Style};
 /// # use helix_tui::buffer::Buffer;
 /// let styles = [

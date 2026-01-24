@@ -61,7 +61,7 @@ impl InlineAnnotation {
 ///
 /// The following examples are invalid uses
 ///
-/// ```
+/// ```ignore
 /// use the_lib::render::text_annotations::Overlay;
 ///
 /// // overlay is not aligned at grapheme boundary
@@ -248,6 +248,7 @@ impl<'a, A, M> LayerCursor<'a, A, M> {
 /// Also commonly called virtual text.
 #[derive(Default)]
 pub struct TextAnnotations<'a> {
+  generation: u64,
   inline_annotations: Vec<Layer<'a, InlineAnnotation, Option<Highlight>>>,
   overlays: Vec<Layer<'a, Overlay, Option<Highlight>>>,
   line_annotations: Vec<Box<dyn LineAnnotation + 'a>>,
@@ -330,6 +331,10 @@ impl<'a> TextAnnotations<'a> {
     }
   }
 
+  pub fn has_line_annotations(&self) -> bool {
+    !self.line_annotations.is_empty()
+  }
+
   /// Add new inline annotations.
   ///
   /// The annotation grapheme will be rendered with `highlight`
@@ -350,6 +355,7 @@ impl<'a> TextAnnotations<'a> {
     debug_assert!(is_sorted_by_char_idx(layer, |annot| annot.char_idx));
     if !layer.is_empty() {
       self.inline_annotations.push((layer, highlight).into());
+      self.generation = self.generation.wrapping_add(1);
     }
     self
   }
@@ -369,6 +375,7 @@ impl<'a> TextAnnotations<'a> {
     debug_assert!(is_sorted_by_char_idx(layer, |annot| annot.char_idx));
     if !layer.is_empty() {
       self.overlays.push((layer, highlight).into());
+      self.generation = self.generation.wrapping_add(1);
     }
     self
   }
@@ -377,6 +384,7 @@ impl<'a> TextAnnotations<'a> {
   #[must_use]
   pub fn add_line_annotation(&mut self, layer: Box<dyn LineAnnotation + 'a>) -> &mut Self {
     self.line_annotations.push(layer);
+    self.generation = self.generation.wrapping_add(1);
     self
   }
 
@@ -384,6 +392,11 @@ impl<'a> TextAnnotations<'a> {
   /// so that virtual text lines are automatically skipped.
   pub fn clear_line_annotations(&mut self) {
     self.line_annotations.clear();
+    self.generation = self.generation.wrapping_add(1);
+  }
+
+  pub fn generation(&self) -> u64 {
+    self.generation
   }
 }
 

@@ -11,7 +11,6 @@ path = "lib.rs"
 cc = "1"
 etcetera.workspace = true
 eyre.workspace = true
-once_cell.workspace = true
 serde.workspace = true
 tempfile.workspace = true
 threadpool = "1.0"

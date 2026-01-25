@@ -72,6 +72,14 @@ pub enum GrammarSource {
 const BUILD_TARGET: &str = env!("BUILD_TARGET");
 const REMOTE_NAME: &str = "origin";
 
+/// Returns the primary runtime directory (highest priority) for writing
+/// grammars.
+fn primary_runtime_dir() -> Result<&'static PathBuf> {
+  crate::runtime_dirs()
+    .first()
+    .ok_or_else(|| eyre!("no runtime directories configured"))
+}
+
 #[cfg(target_arch = "wasm32")]
 pub fn get_language(name: &str) -> Result<Option<Grammar>> {
   unimplemented!()
@@ -287,12 +295,10 @@ fn fetch_grammar(grammar: GrammarConfiguration) -> Result<FetchStatus> {
     remote, revision, ..
   } = grammar.source
   {
-    let grammar_dir = crate::runtime_dirs()
-            .first()
-            .expect("No runtime directories provided") // guaranteed by post-condition
-            .join("grammars")
-            .join("sources")
-            .join(&grammar.grammar_id);
+    let grammar_dir = primary_runtime_dir()?
+      .join("grammars")
+      .join("sources")
+      .join(&grammar.grammar_id);
 
     fs::create_dir_all(&grammar_dir).context(format!(
       "Could not create grammar directory {:?}",
@@ -389,12 +395,10 @@ fn build_grammar(grammar: GrammarConfiguration, target: Option<&str>) -> Result<
   let grammar_dir = if let GrammarSource::Local { path } = &grammar.source {
     PathBuf::from(&path)
   } else {
-    crate::runtime_dirs()
-            .first()
-            .expect("No runtime directories provided") // guaranteed by post-condition
-            .join("grammars")
-            .join("sources")
-            .join(&grammar.grammar_id)
+    primary_runtime_dir()?
+      .join("grammars")
+      .join("sources")
+      .join(&grammar.grammar_id)
   };
 
   let grammar_dir_entries = grammar_dir.read_dir().with_context(|| {
@@ -442,10 +446,7 @@ fn build_tree_sitter_library(
       None
     }
   };
-  let parser_lib_path = crate::runtime_dirs()
-        .first()
-        .expect("No runtime directories provided") // guaranteed by post-condition
-        .join("grammars");
+  let parser_lib_path = primary_runtime_dir()?.join("grammars");
   let mut library_path = parser_lib_path.join(&grammar.grammar_id);
   library_path.set_extension(DYLIB_EXTENSION);
 
@@ -532,7 +533,7 @@ fn build_tree_sitter_library(
     command
       .arg(parser_path)
       .arg("/link")
-      .arg(format!("/out:{}", library_path.to_str().unwrap()));
+      .arg(format!("/out:{}", library_path.display()));
   } else {
     #[cfg(not(windows))]
     command.arg("-fPIC");

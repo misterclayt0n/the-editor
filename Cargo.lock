@@ -1089,7 +1089,6 @@ dependencies = [
  "cc",
  "etcetera",
  "eyre",
- "once_cell",
  "serde",
  "tempfile",
  "the-stdx",

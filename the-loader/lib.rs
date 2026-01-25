@@ -7,6 +7,10 @@ use std::{
     Path,
     PathBuf,
   },
+  sync::{
+    LazyLock,
+    OnceLock,
+  },
 };
 
 use etcetera::base_strategy::{
@@ -20,12 +24,11 @@ use the_stdx::{
 
 pub const VERSION_AND_GIT_HASH: &str = env!("VERSION_AND_GIT_HASH");
 
-static RUNTIME_DIRS: once_cell::sync::Lazy<Vec<PathBuf>> =
-  once_cell::sync::Lazy::new(prioritize_runtime_dirs);
+static RUNTIME_DIRS: LazyLock<Vec<PathBuf>> = LazyLock::new(prioritize_runtime_dirs);
 
-static CONFIG_FILE: once_cell::sync::OnceCell<PathBuf> = once_cell::sync::OnceCell::new();
+static CONFIG_FILE: OnceLock<PathBuf> = OnceLock::new();
 
-static LOG_FILE: once_cell::sync::OnceCell<PathBuf> = once_cell::sync::OnceCell::new();
+static LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn initialize_config_file(specified_file: Option<PathBuf>) {
   let config_file = specified_file.unwrap_or_else(default_config_file);
@@ -49,16 +52,14 @@ pub fn initialize_log_file(specified_file: Option<PathBuf>) {
 /// 3. `THE_EDITOR_RUNTIME` (if environment variable is set)
 /// 4. `THE_EDITOR_DEFAULT_RUNTIME` (if environment variable is set *at build
 ///    time*)
-/// 5. subdirectory of path to the-editor executable (always included)
+/// 5. subdirectory of path to the-editor executable (if determinable)
 ///
-/// Postcondition: returns at least two paths (they might not exist).
+/// Postcondition: returns at least one path (it might not exist).
 fn prioritize_runtime_dirs() -> Vec<PathBuf> {
   const RT_DIR: &str = "runtime";
   // Adding higher priority first
   let mut rt_dirs = Vec::new();
   if let Ok(dir) = std::env::var("CARGO_MANIFEST_DIR") {
-    // this is the directory of the crate being run by cargo, we need the workspace
-    // path so we take the parent
     // This is the directory of the crate being run by cargo, we need the
     // workspace path so we take the parent. If parent is None (extremely
     // unlikely for a valid CARGO_MANIFEST_DIR), we skip this entry.
@@ -134,7 +135,9 @@ pub fn runtime_file(rel_path: impl AsRef<Path>) -> PathBuf {
 }
 
 pub fn config_dir() -> PathBuf {
-  // TODO: allow env var override
+  if let Ok(dir) = std::env::var("THE_EDITOR_CONFIG_DIR") {
+    return path::expand_tilde(Cow::Borrowed(Path::new(&dir))).into_owned();
+  }
   let strategy = choose_base_strategy().expect("Unable to find the config directory!");
   let mut path = strategy.config_dir();
   path.push("the-editor");
@@ -142,7 +145,9 @@ pub fn config_dir() -> PathBuf {
 }
 
 pub fn cache_dir() -> PathBuf {
-  // TODO: allow env var override
+  if let Ok(dir) = std::env::var("THE_EDITOR_CACHE_DIR") {
+    return path::expand_tilde(Cow::Borrowed(Path::new(&dir))).into_owned();
+  }
   let strategy = choose_base_strategy().expect("Unable to find the cache directory!");
   let mut path = strategy.cache_dir();
   path.push("the-editor");

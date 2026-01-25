@@ -96,7 +96,10 @@ use std::{
   collections::HashSet,
   iter,
   num::NonZeroU64,
-  sync::atomic::{AtomicU64, Ordering},
+  sync::atomic::{
+    AtomicU64,
+    Ordering,
+  },
 };
 
 use ropey::RopeSlice;
@@ -128,6 +131,7 @@ use crate::{
   transaction::{
     Assoc,
     ChangeSet,
+    MappedPos,
     TransactionError,
   },
 };
@@ -194,6 +198,95 @@ pub struct Range {
   pub anchor:         usize,
   pub head:           usize,
   pub old_visual_pos: Option<(u32, u32)>,
+}
+
+/// Result of mapping a [`Range`] through changes with delete tracking.
+///
+/// Provides information about whether the range's anchor and/or head
+/// positions fell within deleted text during the mapping operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MappedRange {
+  /// The mapped range.
+  pub range: Range,
+
+  /// Information about the anchor position mapping.
+  /// `Some` if the anchor was in deleted text, `None` otherwise.
+  pub anchor_deleted: Option<DeleteInfo>,
+
+  /// Information about the head position mapping.
+  /// `Some` if the head was in deleted text, `None` otherwise.
+  pub head_deleted: Option<DeleteInfo>,
+}
+
+/// Information about a position that was inside deleted text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeleteInfo {
+  /// The offset within the deleted range where the position was.
+  pub offset: usize,
+  /// The total length of the deletion.
+  pub len:    usize,
+}
+
+impl MappedRange {
+  /// Returns `true` if either the anchor or head was in deleted text.
+  #[inline]
+  pub fn was_deleted(&self) -> bool {
+    self.anchor_deleted.is_some() || self.head_deleted.is_some()
+  }
+
+  /// Returns `true` if the entire range was deleted (both anchor and head).
+  #[inline]
+  pub fn fully_deleted(&self) -> bool {
+    self.anchor_deleted.is_some() && self.head_deleted.is_some()
+  }
+
+  /// Unwraps the inner range, discarding deletion information.
+  #[inline]
+  pub fn into_range(self) -> Range {
+    self.range
+  }
+}
+
+impl From<Range> for MappedRange {
+  fn from(range: Range) -> Self {
+    MappedRange {
+      range,
+      anchor_deleted: None,
+      head_deleted: None,
+    }
+  }
+}
+
+/// Result of mapping a [`Selection`] through changes with delete tracking.
+///
+/// Contains both the updated selection and information about which ranges
+/// had positions that fell within deleted text.
+#[derive(Debug, Clone)]
+pub struct MappedSelection {
+  /// The updated selection after mapping through changes.
+  pub selection: Selection,
+
+  /// Mapping information for each original range, in the same order.
+  /// Note: After normalization, the selection may have fewer ranges
+  /// than `mapped_ranges` due to merging.
+  pub mapped_ranges: SmallVec<[MappedRange; 1]>,
+}
+
+impl MappedSelection {
+  /// Returns `true` if any range had a position in deleted text.
+  pub fn any_deleted(&self) -> bool {
+    self.mapped_ranges.iter().any(|mr| mr.was_deleted())
+  }
+
+  /// Returns `true` if all ranges were fully deleted.
+  pub fn all_fully_deleted(&self) -> bool {
+    self.mapped_ranges.iter().all(|mr| mr.fully_deleted())
+  }
+
+  /// Unwraps the selection, discarding deletion information.
+  pub fn into_selection(self) -> Selection {
+    self.selection
+  }
 }
 
 impl Range {
@@ -421,6 +514,65 @@ impl Range {
     Ok(self)
   }
 
+  /// Map a range through changes with delete tracking.
+  ///
+  /// Unlike [`map`], this method returns a [`MappedRange`] that includes
+  /// information about whether the anchor and/or head positions fell within
+  /// deleted text.
+  ///
+  /// This is useful for:
+  /// - Detecting when a cursor position was "destroyed" by a deletion
+  /// - Preserving information for undo/redo operations
+  /// - Tracking selection changes through edits
+  ///
+  /// # Example
+  ///
+  /// ```ignore
+  /// let mapped = range.map_tracked(&changes)?;
+  /// if mapped.fully_deleted() {
+  ///     // The entire range was inside deleted text
+  /// }
+  /// ```
+  pub fn map_tracked(self, changes: &ChangeSet) -> Result<MappedRange> {
+    use std::cmp::Ordering;
+
+    if changes.is_empty() {
+      return Ok(MappedRange::from(self));
+    }
+
+    // Determine which Assoc to use based on direction
+    let (anchor_assoc, head_assoc) = match self.anchor.cmp(&self.head) {
+      Ordering::Equal => (Assoc::TrackDelSticky, Assoc::TrackDelSticky),
+      Ordering::Less => (Assoc::TrackDelSticky, Assoc::TrackDelSticky),
+      Ordering::Greater => (Assoc::TrackDelSticky, Assoc::TrackDelSticky),
+    };
+
+    let anchor_result = changes.map_pos_tracked(self.anchor, anchor_assoc)?;
+    let head_result = changes.map_pos_tracked(self.head, head_assoc)?;
+
+    let anchor_deleted = match anchor_result {
+      MappedPos::Deleted { offset, len, .. } => Some(DeleteInfo { offset, len }),
+      MappedPos::Pos(_) => None,
+    };
+
+    let head_deleted = match head_result {
+      MappedPos::Deleted { offset, len, .. } => Some(DeleteInfo { offset, len }),
+      MappedPos::Pos(_) => None,
+    };
+
+    let range = Range {
+      anchor:         anchor_result.position(),
+      head:           head_result.position(),
+      old_visual_pos: None,
+    };
+
+    Ok(MappedRange {
+      range,
+      anchor_deleted,
+      head_deleted,
+    })
+  }
+
   /// Extend the range to cover at least `from` `to`.
   #[must_use]
   pub fn extend(&self, from: usize, to: usize) -> Self {
@@ -576,8 +728,8 @@ impl From<Range> for the_stdx::range::Range {
 /// range).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
-  ranges:        SmallVec<[Range; 1]>,
-  cursor_ids:    SmallVec<[CursorId; 1]>,
+  ranges:     SmallVec<[Range; 1]>,
+  cursor_ids: SmallVec<[CursorId; 1]>,
 }
 
 impl Selection {
@@ -611,10 +763,7 @@ impl Selection {
     ranges: SmallVec<[Range; 1]>,
     cursor_ids: SmallVec<[CursorId; 1]>,
   ) -> Self {
-    Self {
-      ranges,
-      cursor_ids,
-    }
+    Self { ranges, cursor_ids }
   }
 
   pub fn point(pos: usize) -> Self {
@@ -630,14 +779,14 @@ impl Selection {
   }
 
   pub fn iter_with_ids(&self) -> impl Iterator<Item = (CursorId, &Range)> {
-    self.cursor_ids
-      .iter()
-      .copied()
-      .zip(self.ranges.iter())
+    self.cursor_ids.iter().copied().zip(self.ranges.iter())
   }
 
   pub fn index_of(&self, id: CursorId) -> Option<usize> {
-    self.cursor_ids.iter().position(|cursor_id| *cursor_id == id)
+    self
+      .cursor_ids
+      .iter()
+      .position(|cursor_id| *cursor_id == id)
   }
 
   pub fn range_by_id(&self, id: CursorId) -> Option<&Range> {
@@ -655,12 +804,10 @@ impl Selection {
 
   pub fn range_mut(&mut self, idx: usize) -> Result<&mut Range> {
     let len = self.ranges.len();
-    self.ranges.get_mut(idx).ok_or_else(|| {
-      SelectionError::RangeIndexOutOfBounds {
-        index: idx,
-        len,
-      }
-    })
+    self
+      .ranges
+      .get_mut(idx)
+      .ok_or_else(|| SelectionError::RangeIndexOutOfBounds { index: idx, len })
   }
 
   pub fn cursor_id_at(&self, idx: usize) -> Result<CursorId> {
@@ -679,11 +826,17 @@ impl Selection {
         let idx = self.ranges.len() - 1;
         Ok((self.cursor_ids[idx], self.ranges[idx]))
       },
-      CursorPick::Index(idx) => self.range_at(idx).map(|range| (self.cursor_ids[idx], range)),
-      CursorPick::Id(id) => self
-        .index_of(id)
-        .map(|idx| (self.cursor_ids[idx], self.ranges[idx]))
-        .ok_or(SelectionError::CursorIdNotFound { id: id.get() }),
+      CursorPick::Index(idx) => {
+        self
+          .range_at(idx)
+          .map(|range| (self.cursor_ids[idx], range))
+      },
+      CursorPick::Id(id) => {
+        self
+          .index_of(id)
+          .map(|idx| (self.cursor_ids[idx], self.ranges[idx]))
+          .ok_or(SelectionError::CursorIdNotFound { id: id.get() })
+      },
       CursorPick::Nearest(pos) => {
         let (idx, _) = self
           .ranges
@@ -730,7 +883,11 @@ impl Selection {
   }
 
   pub fn push_with_id(mut self, range: Range, cursor_id: CursorId) -> Result<Self> {
-    if self.cursor_ids.iter().any(|existing| *existing == cursor_id) {
+    if self
+      .cursor_ids
+      .iter()
+      .any(|existing| *existing == cursor_id)
+    {
       return Err(SelectionError::DuplicateCursorId {
         id: cursor_id.get(),
       });
@@ -818,6 +975,41 @@ impl Selection {
     Ok(self)
   }
 
+  /// Map selections over changes with delete tracking.
+  ///
+  /// Returns a [`MappedSelection`] containing both the updated selection and
+  /// information about which ranges had their anchor/head positions deleted.
+  ///
+  /// This is useful for detecting when cursors were "destroyed" by deletions
+  /// and may need special handling (e.g., repositioning or removal).
+  pub fn map_tracked(self, changes: &ChangeSet) -> Result<MappedSelection> {
+    if changes.is_empty() {
+      let mapped_ranges: SmallVec<[MappedRange; 1]> =
+        self.ranges.iter().copied().map(MappedRange::from).collect();
+      return Ok(MappedSelection {
+        selection: self,
+        mapped_ranges,
+      });
+    }
+
+    let mut mapped_ranges: SmallVec<[MappedRange; 1]> = SmallVec::with_capacity(self.ranges.len());
+    let mut new_ranges: SmallVec<[Range; 1]> = SmallVec::with_capacity(self.ranges.len());
+
+    for range in &self.ranges {
+      let mapped = range.map_tracked(changes)?;
+      new_ranges.push(mapped.range);
+      mapped_ranges.push(mapped);
+    }
+
+    let selection =
+      Selection::new_with_ids_unchecked(new_ranges, self.cursor_ids.clone()).normalize();
+
+    Ok(MappedSelection {
+      selection,
+      mapped_ranges,
+    })
+  }
+
   /// Returns an iterator over the line ranges of each range in the selection.
   ///
   /// Adjacent and overlapping line ranges of the [Range]s in the selection are
@@ -834,10 +1026,9 @@ impl Selection {
   #[must_use]
   /// Constructs a selection holding a single range.
   pub fn single(anchor: usize, head: usize) -> Self {
-    Self::new_with_ids_unchecked(
-      smallvec![Range::new(anchor, head)],
-      smallvec![CursorId::fresh()],
-    )
+    Self::new_with_ids_unchecked(smallvec![Range::new(anchor, head)], smallvec![
+      CursorId::fresh()
+    ])
   }
 
   /// Normalizes a [Selection]
@@ -862,7 +1053,8 @@ impl Selection {
         if prev_range.overlaps(&range) {
           let prev = *prev_range;
           let merged = prev.merge(range);
-          let keep_id = merge_cursor_id(prev, *cursor_ids.last().unwrap(), range, cursor_id, merged);
+          let keep_id =
+            merge_cursor_id(prev, *cursor_ids.last().unwrap(), range, cursor_id, merged);
           *prev_range = merged;
           *cursor_ids.last_mut().unwrap() = keep_id;
           continue;
@@ -915,7 +1107,8 @@ impl Selection {
         if prev_range.to() == range.from() {
           let prev = *prev_range;
           let merged = prev.merge(range);
-          let keep_id = merge_cursor_id(prev, *cursor_ids.last().unwrap(), range, cursor_id, merged);
+          let keep_id =
+            merge_cursor_id(prev, *cursor_ids.last().unwrap(), range, cursor_id, merged);
           *prev_range = merged;
           *cursor_ids.last_mut().unwrap() = keep_id;
           continue;
@@ -1379,45 +1572,33 @@ mod test {
 
   #[test]
   fn test_new_with_ids_mismatch() {
-    let err = Selection::new_with_ids(
-      smallvec![Range::point(1), Range::point(2)],
-      smallvec![CursorId::new(NonZeroU64::new(1).unwrap())],
-    )
+    let err = Selection::new_with_ids(smallvec![Range::point(1), Range::point(2)], smallvec![
+      CursorId::new(NonZeroU64::new(1).unwrap())
+    ])
     .unwrap_err();
-    assert_eq!(
-      err,
-      SelectionError::CursorIdCountMismatch {
-        ids: 1,
-        ranges: 2
-      }
-    );
+    assert_eq!(err, SelectionError::CursorIdCountMismatch {
+      ids:    1,
+      ranges: 2,
+    });
   }
 
   #[test]
   fn test_new_with_duplicate_cursor_ids() {
-    let err = Selection::new_with_ids(
-      smallvec![Range::point(1), Range::point(2)],
-      smallvec![
-        CursorId::new(NonZeroU64::new(1).unwrap()),
-        CursorId::new(NonZeroU64::new(1).unwrap()),
-      ],
-    )
+    let err = Selection::new_with_ids(smallvec![Range::point(1), Range::point(2)], smallvec![
+      CursorId::new(NonZeroU64::new(1).unwrap()),
+      CursorId::new(NonZeroU64::new(1).unwrap()),
+    ])
     .unwrap_err();
-    assert_eq!(
-      err,
-      SelectionError::DuplicateCursorId {
-        id: 1
-      }
-    );
+    assert_eq!(err, SelectionError::DuplicateCursorId { id: 1 });
   }
 
   #[test]
   fn test_pick_by_id() {
     let id = CursorId::new(NonZeroU64::new(7).unwrap());
-    let sel = Selection::new_with_ids(
-      smallvec![Range::point(1), Range::point(4)],
-      smallvec![CursorId::new(NonZeroU64::new(1).unwrap()), id],
-    )
+    let sel = Selection::new_with_ids(smallvec![Range::point(1), Range::point(4)], smallvec![
+      CursorId::new(NonZeroU64::new(1).unwrap()),
+      id
+    ])
     .unwrap();
 
     let (picked_id, range) = sel.pick(CursorPick::Id(id)).unwrap();
@@ -1427,18 +1608,16 @@ mod test {
 
   #[test]
   fn test_create_normalizes_and_merges() {
-    let sel = Selection::new(
-      smallvec![
-        Range::new(10, 12),
-        Range::new(6, 7),
-        Range::new(4, 5),
-        Range::new(3, 4),
-        Range::new(0, 6),
-        Range::new(7, 8),
-        Range::new(9, 13),
-        Range::new(13, 14),
-      ],
-    )
+    let sel = Selection::new(smallvec![
+      Range::new(10, 12),
+      Range::new(6, 7),
+      Range::new(4, 5),
+      Range::new(3, 4),
+      Range::new(0, 6),
+      Range::new(7, 8),
+      Range::new(9, 13),
+      Range::new(13, 14),
+    ])
     .unwrap();
 
     let res = sel
@@ -1453,15 +1632,13 @@ mod test {
 
   #[test]
   fn test_create_merges_adjacent_points() {
-    let sel = Selection::new(
-      smallvec![
-        Range::new(10, 12),
-        Range::new(12, 12),
-        Range::new(12, 12),
-        Range::new(10, 10),
-        Range::new(8, 10),
-      ],
-    )
+    let sel = Selection::new(smallvec![
+      Range::new(10, 12),
+      Range::new(12, 12),
+      Range::new(12, 12),
+      Range::new(10, 10),
+      Range::new(8, 10),
+    ])
     .unwrap();
 
     let res = sel
@@ -1640,9 +1817,11 @@ mod test {
     // line without ending
     let result = select_on_matches(s, &Selection::single(0, 4), &start_of_line).unwrap();
     assert_selection_ranges(result, &[Range::point(0)]);
-    assert!(select_on_matches(s, &Selection::single(0, 4), &end_of_line)
-      .unwrap()
-      .is_none());
+    assert!(
+      select_on_matches(s, &Selection::single(0, 4), &end_of_line)
+        .unwrap()
+        .is_none()
+    );
     // line with ending
     let result = select_on_matches(s, &Selection::single(0, 5), &start_of_line).unwrap();
     assert_selection_ranges(result, &[Range::point(0)]);
@@ -1664,10 +1843,11 @@ mod test {
         .unwrap(),
     )
     .unwrap();
-    assert_selection_ranges(
-      result,
-      &[Range::point(12), Range::new(13, 30), Range::new(31, 36)],
-    );
+    assert_selection_ranges(result, &[
+      Range::point(12),
+      Range::new(13, 30),
+      Range::new(31, 36),
+    ]);
   }
 
   #[test]
@@ -1677,8 +1857,7 @@ mod test {
 
     let regex = rope::Regex::new(r"foo([0-9]+)").unwrap();
     let selection = Selection::single(0, s.len_chars());
-    let result =
-      select_on_matches_with(s, &selection, &regex, MatchCapture::Group(1)).unwrap();
+    let result = select_on_matches_with(s, &selection, &regex, MatchCapture::Group(1)).unwrap();
     assert_selection_ranges(result, &[Range::new(3, 4), Range::new(8, 10)]);
   }
 
@@ -1789,15 +1968,13 @@ mod test {
 
   #[test]
   fn test_merge_consecutive_ranges() {
-    let selection = Selection::new(
-      smallvec![
-        Range::new(0, 1),
-        Range::new(1, 10),
-        Range::new(15, 20),
-        Range::new(25, 26),
-        Range::new(26, 30)
-      ],
-    )
+    let selection = Selection::new(smallvec![
+      Range::new(0, 1),
+      Range::new(1, 10),
+      Range::new(15, 20),
+      Range::new(25, 26),
+      Range::new(26, 30)
+    ])
     .unwrap();
 
     let result = selection.merge_consecutive_ranges();
@@ -1813,16 +1990,14 @@ mod test {
 
     assert_eq!(result.ranges(), &[Range::new(0, 1)]);
 
-    let selection = Selection::new(
-      smallvec![
-        Range::new(0, 1),
-        Range::new(1, 5),
-        Range::new(5, 8),
-        Range::new(8, 10),
-        Range::new(10, 15),
-        Range::new(18, 25)
-      ],
-    )
+    let selection = Selection::new(smallvec![
+      Range::new(0, 1),
+      Range::new(1, 5),
+      Range::new(5, 8),
+      Range::new(8, 10),
+      Range::new(10, 15),
+      Range::new(18, 25)
+    ])
     .unwrap();
 
     let result = selection.merge_consecutive_ranges();

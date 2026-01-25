@@ -55,8 +55,8 @@ From `rg -n "TODO" the-lib`:
 - [x] `diff.rs`: heuristics + tokenizer perf TODOs.
 - [x] `transaction.rs`: delete tracking + missing test coverage.
 - [x] `search.rs`: pattern API TODO.
-- [ ] `syntax.rs`: predicate handling + query conflict TODOs.
-- [ ] `text_format.rs`: TODO on type or defaults.
+- [ ] `syntax.rs`: predicate handling + query conflict TODOs - ignored for now
+- [ ] `text_format.rs`: TODO on type or defaults - same thing
 
 ## Suggested order (practical)
 

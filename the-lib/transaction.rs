@@ -120,6 +120,74 @@ pub type Result<T> = std::result::Result<T, TransactionError>;
 pub type Change = (usize, usize, Option<Tendril>);
 pub type Deletion = (usize, usize);
 
+/// Result of mapping a position through changes with delete tracking enabled.
+///
+/// When using delete-tracking `Assoc` variants (`TrackDel`, `TrackDelSticky`,
+/// `TrackDelBefore`, `TrackDelAfter`), this type provides information about
+/// whether the position fell within deleted text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MappedPos {
+  /// Position mapped successfully to a new location (not in deleted text).
+  Pos(usize),
+
+  /// Position was inside deleted text.
+  Deleted {
+    /// The position where the deletion occurred in the new document.
+    pos:    usize,
+    /// Original offset within the deleted range (0 = at start of deletion).
+    offset: usize,
+    /// Total length of the deletion in characters.
+    len:    usize,
+  },
+}
+
+impl MappedPos {
+  /// Returns the mapped position, regardless of whether it was deleted.
+  ///
+  /// For `Pos(n)`, returns `n`.
+  /// For `Deleted { pos, .. }`, returns `pos`.
+  #[inline]
+  pub fn position(&self) -> usize {
+    match self {
+      MappedPos::Pos(pos) => *pos,
+      MappedPos::Deleted { pos, .. } => *pos,
+    }
+  }
+
+  /// Returns `true` if the position was inside deleted text.
+  #[inline]
+  pub fn is_deleted(&self) -> bool {
+    matches!(self, MappedPos::Deleted { .. })
+  }
+
+  /// Unwraps the position, panicking if it was deleted.
+  ///
+  /// # Panics
+  /// Panics if the position was inside deleted text.
+  #[inline]
+  pub fn unwrap(self) -> usize {
+    match self {
+      MappedPos::Pos(pos) => pos,
+      MappedPos::Deleted { .. } => panic!("called `MappedPos::unwrap()` on a `Deleted` value"),
+    }
+  }
+
+  /// Returns the position if not deleted, or `None` if deleted.
+  #[inline]
+  pub fn ok(self) -> Option<usize> {
+    match self {
+      MappedPos::Pos(pos) => Some(pos),
+      MappedPos::Deleted { .. } => None,
+    }
+  }
+}
+
+impl From<usize> for MappedPos {
+  fn from(pos: usize) -> Self {
+    MappedPos::Pos(pos)
+  }
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TransactionError {
@@ -194,6 +262,34 @@ pub enum Assoc {
   /// Acts like `After` but if the position is within an exact replacement
   /// (exact size) the offset to the start of the replacement is kept
   AfterSticky,
+
+  // Delete tracking variants
+  /// Track deletions - when a position falls inside deleted text, returns
+  /// `MappedPos::Deleted` with information about the deletion rather than
+  /// just collapsing to the deletion start.
+  ///
+  /// Maps to the start of the deletion but signals that the position was
+  /// inside deleted content.
+  TrackDel,
+
+  /// Like `TrackDel` but preserves the relative offset within the deletion.
+  /// Useful for undo/redo where you want to restore cursor position after
+  /// re-inserting the deleted text.
+  TrackDelSticky,
+
+  /// Return deletion info if the character BEFORE this position was deleted.
+  /// Useful for tracking whether adjacent content was removed.
+  ///
+  /// Example: Position 5 in "hello" - if 'o' (at index 4) is deleted,
+  /// this signals that deletion affected the position.
+  TrackDelBefore,
+
+  /// Return deletion info if the character AFTER this position was deleted.
+  /// Useful for tracking whether content immediately following was removed.
+  ///
+  /// Example: Position 4 in "hello" - if 'o' (at index 4) is deleted,
+  /// this signals that deletion affected the position.
+  TrackDelAfter,
 }
 
 impl Assoc {
@@ -210,11 +306,27 @@ impl Assoc {
       Assoc::AfterWord => s.chars().take_while(|&c| char_is_word(c)).count(),
       Assoc::Before | Assoc::BeforeSticky => 0,
       Assoc::BeforeWord => chars - s.chars().rev().take_while(|&c| char_is_word(c)).count(),
+      // Delete tracking variants behave like Before for insertions
+      Assoc::TrackDel | Assoc::TrackDelSticky | Assoc::TrackDelBefore | Assoc::TrackDelAfter => 0,
     }
   }
 
   pub fn sticky(self) -> bool {
-    matches!(self, Assoc::BeforeSticky | Assoc::AfterSticky)
+    matches!(
+      self,
+      Assoc::BeforeSticky | Assoc::AfterSticky | Assoc::TrackDelSticky
+    )
+  }
+
+  /// Returns `true` if this association mode tracks deletions.
+  ///
+  /// When tracking deletions, `map_pos_tracked` returns `MappedPos::Deleted`
+  /// instead of just collapsing positions to the deletion boundary.
+  pub fn tracks_deletion(self) -> bool {
+    matches!(
+      self,
+      Assoc::TrackDel | Assoc::TrackDelSticky | Assoc::TrackDelBefore | Assoc::TrackDelAfter
+    )
   }
 }
 
@@ -978,13 +1090,12 @@ impl Transaction {
     let mut ranges: SmallVec<[Range; 1]> = SmallVec::new();
     let mut cursor_ids: SmallVec<[crate::selection::CursorId; 1]> = SmallVec::new();
 
-    let process_change = |change_start,
-                          change_end,
-                          (range, cursor_id): (Range, crate::selection::CursorId)| {
-      ranges.push(range);
-      cursor_ids.push(cursor_id);
-      create_tendril(change_start, change_end)
-    };
+    let process_change =
+      |change_start, change_end, (range, cursor_id): (Range, crate::selection::CursorId)| {
+        ranges.push(range);
+        cursor_ids.push(cursor_id);
+        create_tendril(change_start, change_end)
+      };
     let transaction = Self::change_ignore_overlapping(
       doc,
       selection.iter_with_ids().map(|(cursor_id, range)| {

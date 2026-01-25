@@ -53,7 +53,7 @@ From `rg -n "TODO" the-lib`:
 - [x] `comment.rs`: uncommenting with uneven indent.
 - [x] `selection.rs`: TODOs in range creation / search helpers.
 - [x] `diff.rs`: heuristics + tokenizer perf TODOs.
-- [ ] `transaction.rs`: delete tracking + missing test coverage.
+- [x] `transaction.rs`: delete tracking + missing test coverage.
 - [ ] `search.rs`: pattern API TODO.
 - [ ] `syntax.rs`: predicate handling + query conflict TODOs.
 - [ ] `text_format.rs`: TODO on type or defaults.

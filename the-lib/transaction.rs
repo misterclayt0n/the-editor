@@ -844,6 +844,201 @@ impl ChangeSet {
     Ok(pos)
   }
 
+  /// Map a position through the changes with delete tracking support.
+  ///
+  /// Unlike [`map_pos`], this method returns a [`MappedPos`] that can indicate
+  /// whether the position fell within deleted text. This is useful for:
+  ///
+  /// - Detecting when a cursor position was "destroyed" by a deletion
+  /// - Preserving relative offsets for undo/redo operations
+  /// - Tracking whether adjacent content was deleted
+  ///
+  /// # Delete Tracking Modes
+  ///
+  /// - [`Assoc::TrackDel`]: Returns `MappedPos::Deleted` if position is inside
+  ///   deleted text
+  /// - [`Assoc::TrackDelSticky`]: Same as `TrackDel` but preserves offset
+  ///   within deletion
+  /// - [`Assoc::TrackDelBefore`]: Returns `MappedPos::Deleted` if char before
+  ///   position was deleted
+  /// - [`Assoc::TrackDelAfter`]: Returns `MappedPos::Deleted` if char after
+  ///   position was deleted
+  ///
+  /// Non-tracking `Assoc` variants work identically to [`map_pos`].
+  ///
+  /// # Example
+  ///
+  /// ```ignore
+  /// use the_lib::transaction::{ChangeSet, Assoc, MappedPos, Operation};
+  ///
+  /// let cs = ChangeSet {
+  ///     changes: vec![Operation::Retain(4), Operation::Delete(4), Operation::Retain(4)],
+  ///     len: 12,
+  ///     len_after: 8,
+  /// };
+  ///
+  /// // Position inside deletion with TrackDel
+  /// let result = cs.map_pos_tracked(5, Assoc::TrackDel).unwrap();
+  /// assert!(result.is_deleted());
+  /// ```
+  pub fn map_pos_tracked(&self, pos: usize, assoc: Assoc) -> Result<MappedPos> {
+    use Operation::*;
+
+    if pos > self.len {
+      return Err(TransactionError::PositionsOutOfBounds {
+        positions: vec![pos],
+        len:       self.len,
+      });
+    }
+
+    let mut old_pos = 0;
+    let mut new_pos = 0;
+    let mut iter = self.changes.iter().peekable();
+
+    while let Some(change) = iter.next() {
+      let len = match change {
+        Delete(n) | Retain(n) => *n,
+        Insert(_) => 0,
+      };
+      let old_end = old_pos + len;
+
+      match change {
+        Retain(_) => {
+          if pos < old_end {
+            return Ok(MappedPos::Pos(new_pos + (pos - old_pos)));
+          }
+          new_pos += len;
+        },
+        Delete(del_len) => {
+          if pos < old_end {
+            // Position is inside the deletion
+            let offset = pos - old_pos;
+
+            if assoc.tracks_deletion() {
+              // Check the specific tracking mode
+              match assoc {
+                Assoc::TrackDel | Assoc::TrackDelSticky => {
+                  return Ok(MappedPos::Deleted {
+                    pos: new_pos,
+                    offset,
+                    len: *del_len,
+                  });
+                },
+                Assoc::TrackDelBefore => {
+                  // Only signal deletion if there's a character before that was deleted
+                  if offset > 0 {
+                    return Ok(MappedPos::Deleted {
+                      pos: new_pos,
+                      offset,
+                      len: *del_len,
+                    });
+                  }
+                  return Ok(MappedPos::Pos(new_pos));
+                },
+                Assoc::TrackDelAfter => {
+                  // Only signal deletion if there's a character after that was deleted
+                  if offset < *del_len {
+                    return Ok(MappedPos::Deleted {
+                      pos: new_pos,
+                      offset,
+                      len: *del_len,
+                    });
+                  }
+                  return Ok(MappedPos::Pos(new_pos));
+                },
+                _ => unreachable!(),
+              }
+            } else {
+              // Non-tracking: collapse to deletion start
+              return Ok(MappedPos::Pos(new_pos));
+            }
+          }
+          // Position is at or after deletion end
+          if pos == old_end && assoc.tracks_deletion() {
+            // Position is right at the deletion boundary
+            match assoc {
+              Assoc::TrackDelBefore => {
+                // The character before (last char of deletion) was deleted
+                return Ok(MappedPos::Deleted {
+                  pos:    new_pos,
+                  offset: *del_len,
+                  len:    *del_len,
+                });
+              },
+              _ => {},
+            }
+          }
+        },
+        Insert(s) => {
+          let ins_len = s.chars().count();
+
+          // Check if this is a replacement (Insert followed by Delete)
+          if let Some(Delete(del_len)) = iter.peek() {
+            iter.next();
+            let del_len = *del_len;
+            let old_end = old_pos + del_len;
+
+            if pos < old_end {
+              // Position is inside the replaced text
+              let offset = pos - old_pos;
+
+              if assoc.tracks_deletion() {
+                return Ok(MappedPos::Deleted {
+                  pos: new_pos,
+                  offset,
+                  len: del_len,
+                });
+              }
+
+              // Non-tracking replacement handling
+              if pos == old_pos && assoc.stays_at_gaps() {
+                return Ok(MappedPos::Pos(new_pos));
+              }
+
+              let ins_offset = assoc.insert_offset(s);
+              if del_len == ins_len && assoc.sticky() {
+                return Ok(MappedPos::Pos(new_pos + offset));
+              }
+              return Ok(MappedPos::Pos(new_pos + ins_offset));
+            }
+
+            // Position at replacement boundary with TrackDelBefore
+            if pos == old_end && assoc == Assoc::TrackDelBefore {
+              return Ok(MappedPos::Deleted {
+                pos:    new_pos + ins_len,
+                offset: del_len,
+                len:    del_len,
+              });
+            }
+
+            old_pos = old_end;
+            new_pos += ins_len;
+            continue;
+          }
+
+          // Pure insertion (no delete following)
+          if pos == old_pos {
+            let ins_offset = assoc.insert_offset(s);
+            return Ok(MappedPos::Pos(new_pos + ins_offset));
+          }
+
+          new_pos += ins_len;
+        },
+      }
+      old_pos = old_end;
+    }
+
+    // Position at the end
+    if pos == old_pos {
+      return Ok(MappedPos::Pos(new_pos));
+    }
+
+    Err(TransactionError::PositionsOutOfBounds {
+      positions: vec![pos],
+      len:       self.len,
+    })
+  }
+
   pub fn changes_iter(&self) -> ChangeIterator<'_> {
     ChangeIterator::new(self)
   }

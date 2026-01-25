@@ -1083,6 +1083,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "the-loader"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "etcetera",
+ "eyre",
+ "once_cell",
+ "serde",
+ "tempfile",
+ "the-stdx",
+ "threadpool",
+ "toml 0.8.23",
+ "tracing",
+ "tree-house",
+]
+
+[[package]]
 name = "the-stdx"
 version = "0.1.0"
 dependencies = [

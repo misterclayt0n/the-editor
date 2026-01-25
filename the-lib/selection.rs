@@ -2042,4 +2042,118 @@ mod test {
     let selection = selection.expect("expected selection");
     assert_eq!(selection.ranges(), expected);
   }
+
+  // Delete tracking tests for Range and Selection
+
+  #[test]
+  fn range_map_tracked_no_deletion() {
+    use ropey::Rope;
+
+    // Insert text at position 4 - no deletion
+    let doc = Rope::from("abcdefgh");
+    let tx = crate::transaction::Transaction::change(&doc, vec![(4, 4, Some("!!".into()))])
+      .unwrap();
+    let cs = tx.changes();
+
+    let range = Range::new(2, 6);
+    let mapped = range.map_tracked(cs).unwrap();
+
+    assert!(!mapped.was_deleted());
+    assert!(!mapped.fully_deleted());
+    assert_eq!(mapped.range.anchor, 2);
+    assert_eq!(mapped.range.head, 8); // 6 + 2 inserted
+  }
+
+  #[test]
+  fn range_map_tracked_partial_deletion() {
+    use ropey::Rope;
+
+    // Delete chars 4-8 (4 chars)
+    let doc = Rope::from("abcdefghijkl"); // 12 chars
+    let tx = crate::transaction::Transaction::change(&doc, vec![(4, 8, None)]).unwrap();
+    let cs = tx.changes();
+
+    // Range from 2 to 6 - head (6) is inside deletion [4, 8)
+    let range = Range::new(2, 6);
+    let mapped = range.map_tracked(cs).unwrap();
+
+    assert!(mapped.was_deleted());
+    assert!(!mapped.fully_deleted());
+    assert!(mapped.anchor_deleted.is_none());
+    assert!(mapped.head_deleted.is_some());
+
+    if let Some(info) = mapped.head_deleted {
+      assert_eq!(info.offset, 2); // 6 - 4 = 2 into deletion
+      assert_eq!(info.len, 4);
+    }
+  }
+
+  #[test]
+  fn range_map_tracked_full_deletion() {
+    use ropey::Rope;
+
+    // Delete chars 2-10 (8 chars)
+    let doc = Rope::from("abcdefghijkl"); // 12 chars
+    let tx = crate::transaction::Transaction::change(&doc, vec![(2, 10, None)]).unwrap();
+    let cs = tx.changes();
+
+    // Range from 4 to 6 - both inside deletion [2, 10)
+    let range = Range::new(4, 6);
+    let mapped = range.map_tracked(cs).unwrap();
+
+    assert!(mapped.was_deleted());
+    assert!(mapped.fully_deleted());
+    assert!(mapped.anchor_deleted.is_some());
+    assert!(mapped.head_deleted.is_some());
+  }
+
+  #[test]
+  fn selection_map_tracked() {
+    use ropey::Rope;
+
+    // Delete chars 4-8 (4 chars)
+    let doc = Rope::from("abcdefghijkl"); // 12 chars
+    let tx = crate::transaction::Transaction::change(&doc, vec![(4, 8, None)]).unwrap();
+    let cs = tx.changes();
+
+    // Two cursors: one outside deletion (2), one inside (6)
+    let selection = Selection::new(smallvec![Range::point(2), Range::point(6)]).unwrap();
+
+    let mapped = selection.map_tracked(cs).unwrap();
+
+    assert!(mapped.any_deleted());
+    assert!(!mapped.all_fully_deleted());
+
+    // First range not deleted
+    assert!(!mapped.mapped_ranges[0].was_deleted());
+
+    // Second range deleted (point cursor inside deletion)
+    assert!(mapped.mapped_ranges[1].was_deleted());
+  }
+
+  #[test]
+  fn mapped_range_helpers() {
+    let range = Range::new(5, 10);
+    let mapped = MappedRange::from(range);
+
+    assert!(!mapped.was_deleted());
+    assert!(!mapped.fully_deleted());
+    assert_eq!(mapped.into_range(), range);
+
+    let mapped_with_deletion = MappedRange {
+      range,
+      anchor_deleted: Some(DeleteInfo { offset: 1, len: 3 }),
+      head_deleted:   None,
+    };
+    assert!(mapped_with_deletion.was_deleted());
+    assert!(!mapped_with_deletion.fully_deleted());
+
+    let fully_deleted = MappedRange {
+      range,
+      anchor_deleted: Some(DeleteInfo { offset: 1, len: 3 }),
+      head_deleted:   Some(DeleteInfo { offset: 2, len: 3 }),
+    };
+    assert!(fully_deleted.was_deleted());
+    assert!(fully_deleted.fully_deleted());
+  }
 }

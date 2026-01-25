@@ -891,6 +891,11 @@ impl ChangeSet {
       });
     }
 
+    // Handle empty changesets - position passes through unchanged
+    if self.changes.is_empty() {
+      return Ok(MappedPos::Pos(pos));
+    }
+
     let mut old_pos = 0;
     let mut new_pos = 0;
     let mut iter = self.changes.iter().peekable();
@@ -911,18 +916,23 @@ impl ChangeSet {
         },
         Delete(del_len) => {
           if pos < old_end {
-            // Position is inside the deletion
+            // Position is in the deletion range
             let offset = pos - old_pos;
 
             if assoc.tracks_deletion() {
               // Check the specific tracking mode
               match assoc {
                 Assoc::TrackDel | Assoc::TrackDelSticky => {
-                  return Ok(MappedPos::Deleted {
-                    pos: new_pos,
-                    offset,
-                    len: *del_len,
-                  });
+                  // Only signal deletion if strictly INSIDE (not at boundary)
+                  if offset > 0 {
+                    return Ok(MappedPos::Deleted {
+                      pos: new_pos,
+                      offset,
+                      len: *del_len,
+                    });
+                  }
+                  // At deletion start boundary - not considered deleted
+                  return Ok(MappedPos::Pos(new_pos));
                 },
                 Assoc::TrackDelBefore => {
                   // Only signal deletion if there's a character before that was deleted
@@ -936,7 +946,8 @@ impl ChangeSet {
                   return Ok(MappedPos::Pos(new_pos));
                 },
                 Assoc::TrackDelAfter => {
-                  // Only signal deletion if there's a character after that was deleted
+                  // Signal deletion if the character AT this position was deleted
+                  // (i.e., position is inside the deleted range, not at start)
                   if offset < *del_len {
                     return Ok(MappedPos::Deleted {
                       pos: new_pos,
@@ -1592,5 +1603,289 @@ mod test {
       actual:   4,
     }));
     assert_eq!(other, Rope::from("nope"));
+  }
+
+  // Delete tracking tests
+
+  #[test]
+  fn map_pos_tracked_basic_delete() {
+    use Operation::*;
+
+    // Delete characters 4-7 (indices) from a 12-char document
+    // Original: positions 0-11, delete range [4, 8) means chars at 4,5,6,7
+    let cs = ChangeSet {
+      changes:   vec![Retain(4), Delete(4), Retain(4)],
+      len:       12,
+      len_after: 8,
+    };
+
+    // Position before deletion - should map normally
+    let result = cs.map_pos_tracked(2, Assoc::TrackDel).unwrap();
+    assert_eq!(result, MappedPos::Pos(2));
+    assert!(!result.is_deleted());
+
+    // Position at deletion start boundary - NOT considered "inside" deletion
+    // (cursor is between char 3 and char 4, at the left edge)
+    let result = cs.map_pos_tracked(4, Assoc::TrackDel).unwrap();
+    assert_eq!(result, MappedPos::Pos(4));
+    assert!(!result.is_deleted());
+
+    // Position inside deletion - should signal deletion
+    let result = cs.map_pos_tracked(5, Assoc::TrackDel).unwrap();
+    assert!(result.is_deleted());
+    assert_eq!(result.position(), 4);
+    if let MappedPos::Deleted { pos, offset, len } = result {
+      assert_eq!(pos, 4);
+      assert_eq!(offset, 1); // 5 - 4 = 1 char into deletion
+      assert_eq!(len, 4);
+    } else {
+      panic!("Expected Deleted variant");
+    }
+
+    // Position at deletion end boundary - NOT inside deletion
+    // (cursor is between char 7 and char 8, at the right edge)
+    let result = cs.map_pos_tracked(8, Assoc::TrackDel).unwrap();
+    assert_eq!(result, MappedPos::Pos(4));
+    assert!(!result.is_deleted());
+
+    // Position after deletion - should map with offset adjustment
+    let result = cs.map_pos_tracked(10, Assoc::TrackDel).unwrap();
+    assert_eq!(result, MappedPos::Pos(6)); // 10 - 4 deleted = 6
+    assert!(!result.is_deleted());
+  }
+
+  #[test]
+  fn map_pos_tracked_sticky_preserves_offset() {
+    use Operation::*;
+
+    let cs = ChangeSet {
+      changes:   vec![Retain(2), Delete(4), Retain(2)],
+      len:       8,
+      len_after: 4,
+    };
+
+    // Position at deletion start boundary - NOT deleted
+    let result = cs.map_pos_tracked(2, Assoc::TrackDelSticky).unwrap();
+    assert!(!result.is_deleted());
+    assert_eq!(result.position(), 2);
+
+    // Offset 1 into deletion (position 3)
+    let result = cs.map_pos_tracked(3, Assoc::TrackDelSticky).unwrap();
+    assert!(result.is_deleted());
+    if let MappedPos::Deleted { offset, len, .. } = result {
+      assert_eq!(offset, 1);
+      assert_eq!(len, 4);
+    }
+
+    // Offset 3 into deletion (position 5)
+    let result = cs.map_pos_tracked(5, Assoc::TrackDelSticky).unwrap();
+    assert!(result.is_deleted());
+    if let MappedPos::Deleted { offset, .. } = result {
+      assert_eq!(offset, 3);
+    }
+  }
+
+  #[test]
+  fn map_pos_tracked_del_before() {
+    use Operation::*;
+
+    let cs = ChangeSet {
+      changes:   vec![Retain(4), Delete(4), Retain(4)],
+      len:       12,
+      len_after: 8,
+    };
+
+    // Position 4 (at deletion start) - no char before was deleted
+    let result = cs.map_pos_tracked(4, Assoc::TrackDelBefore).unwrap();
+    assert!(!result.is_deleted());
+
+    // Position 5 (inside deletion) - char before (pos 4) was deleted
+    let result = cs.map_pos_tracked(5, Assoc::TrackDelBefore).unwrap();
+    assert!(result.is_deleted());
+
+    // Position 8 (at deletion end) - char before (pos 7) was deleted
+    let result = cs.map_pos_tracked(8, Assoc::TrackDelBefore).unwrap();
+    assert!(result.is_deleted());
+  }
+
+  #[test]
+  fn map_pos_tracked_del_after() {
+    use Operation::*;
+
+    let cs = ChangeSet {
+      changes:   vec![Retain(4), Delete(4), Retain(4)],
+      len:       12,
+      len_after: 8,
+    };
+
+    // Position 4 (at deletion start) - char after (at index 4) WAS deleted
+    // TrackDelAfter signals if the char at this position was deleted
+    let result = cs.map_pos_tracked(4, Assoc::TrackDelAfter).unwrap();
+    assert!(result.is_deleted());
+    assert_eq!(result.position(), 4);
+
+    // Position 7 (inside deletion, offset=3) - char at this position was deleted
+    let result = cs.map_pos_tracked(7, Assoc::TrackDelAfter).unwrap();
+    assert!(result.is_deleted());
+
+    // Position 8 (at deletion end) - not inside deletion range
+    let result = cs.map_pos_tracked(8, Assoc::TrackDelAfter).unwrap();
+    assert!(!result.is_deleted());
+    assert_eq!(result.position(), 4);
+  }
+
+  #[test]
+  fn map_pos_tracked_replacement() {
+    use Operation::*;
+
+    // Replace 4 chars with 4 chars (same size replacement)
+    let cs = ChangeSet {
+      changes:   vec![Retain(2), Insert("XXXX".into()), Delete(4), Retain(2)],
+      len:       8,
+      len_after: 8,
+    };
+
+    // Position inside replaced text should signal deletion
+    let result = cs.map_pos_tracked(3, Assoc::TrackDel).unwrap();
+    assert!(result.is_deleted());
+    if let MappedPos::Deleted { pos, offset, len } = result {
+      assert_eq!(pos, 2);
+      assert_eq!(offset, 1); // 1 char into the replaced region
+      assert_eq!(len, 4);
+    }
+  }
+
+  #[test]
+  fn map_pos_tracked_pure_insert() {
+    use Operation::*;
+
+    // Pure insertion at position 4
+    let cs = ChangeSet {
+      changes:   vec![Retain(4), Insert("!!".into()), Retain(4)],
+      len:       8,
+      len_after: 10,
+    };
+
+    // Position at insert point - should not be deleted
+    let result = cs.map_pos_tracked(4, Assoc::TrackDel).unwrap();
+    assert!(!result.is_deleted());
+    assert_eq!(result.position(), 4); // TrackDel behaves like Before for inserts
+
+    // Position after insert - should map with offset
+    let result = cs.map_pos_tracked(5, Assoc::TrackDel).unwrap();
+    assert!(!result.is_deleted());
+    assert_eq!(result.position(), 7); // 5 + 2 inserted = 7
+  }
+
+  #[test]
+  fn map_pos_tracked_non_tracking_variants() {
+    use Operation::*;
+
+    let cs = ChangeSet {
+      changes:   vec![Retain(4), Delete(4), Retain(4)],
+      len:       12,
+      len_after: 8,
+    };
+
+    // Non-tracking variants should return Pos even for deleted positions
+    let result = cs.map_pos_tracked(5, Assoc::Before).unwrap();
+    assert_eq!(result, MappedPos::Pos(4));
+    assert!(!result.is_deleted());
+
+    let result = cs.map_pos_tracked(5, Assoc::After).unwrap();
+    assert_eq!(result, MappedPos::Pos(4));
+    assert!(!result.is_deleted());
+  }
+
+  #[test]
+  fn map_pos_tracked_out_of_bounds() {
+    use Operation::*;
+
+    let cs = ChangeSet {
+      changes:   vec![Retain(4), Delete(4)],
+      len:       8,
+      len_after: 4,
+    };
+
+    let err = cs.map_pos_tracked(10, Assoc::TrackDel).unwrap_err();
+    assert!(matches!(err, TransactionError::PositionsOutOfBounds { .. }));
+  }
+
+  #[test]
+  fn mapped_pos_helpers() {
+    let pos = MappedPos::Pos(42);
+    assert_eq!(pos.position(), 42);
+    assert!(!pos.is_deleted());
+    assert_eq!(pos.ok(), Some(42));
+    assert_eq!(pos.unwrap(), 42);
+
+    let deleted = MappedPos::Deleted {
+      pos:    10,
+      offset: 2,
+      len:    5,
+    };
+    assert_eq!(deleted.position(), 10);
+    assert!(deleted.is_deleted());
+    assert_eq!(deleted.ok(), None);
+  }
+
+  #[test]
+  fn assoc_tracks_deletion() {
+    assert!(!Assoc::Before.tracks_deletion());
+    assert!(!Assoc::After.tracks_deletion());
+    assert!(!Assoc::BeforeSticky.tracks_deletion());
+    assert!(!Assoc::AfterSticky.tracks_deletion());
+    assert!(!Assoc::BeforeWord.tracks_deletion());
+    assert!(!Assoc::AfterWord.tracks_deletion());
+
+    assert!(Assoc::TrackDel.tracks_deletion());
+    assert!(Assoc::TrackDelSticky.tracks_deletion());
+    assert!(Assoc::TrackDelBefore.tracks_deletion());
+    assert!(Assoc::TrackDelAfter.tracks_deletion());
+  }
+
+  #[test]
+  fn assoc_sticky_includes_trackdelsticky() {
+    assert!(Assoc::TrackDelSticky.sticky());
+    assert!(!Assoc::TrackDel.sticky());
+    assert!(!Assoc::TrackDelBefore.sticky());
+    assert!(!Assoc::TrackDelAfter.sticky());
+  }
+
+  #[test]
+  fn map_pos_tracked_empty_changeset() {
+    let doc = Rope::from("hello");
+    let cs = ChangeSet::new(doc.slice(..));
+
+    let result = cs.map_pos_tracked(3, Assoc::TrackDel).unwrap();
+    assert_eq!(result, MappedPos::Pos(3));
+  }
+
+  #[test]
+  fn delete_tracking_undo_roundtrip() {
+    use Operation::*;
+
+    // Simulate: delete "world" from "hello world"
+    let _doc = Rope::from("hello world");
+    let cs = ChangeSet {
+      changes:   vec![Retain(6), Delete(5)],
+      len:       11,
+      len_after: 6,
+    };
+
+    // Cursor was at position 8 (inside "world")
+    let result = cs.map_pos_tracked(8, Assoc::TrackDelSticky).unwrap();
+    assert!(result.is_deleted());
+
+    // The offset should be preserved
+    if let MappedPos::Deleted { pos, offset, len } = result {
+      assert_eq!(pos, 6); // Position after "hello "
+      assert_eq!(offset, 2); // 2 chars into "world"
+      assert_eq!(len, 5); // "world" is 5 chars
+
+      // After undo, we could restore position as: deletion_start + offset
+      let restored = 6 + offset; // = 8, the original position
+      assert_eq!(restored, 8);
+    }
   }
 }

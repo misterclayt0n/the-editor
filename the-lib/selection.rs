@@ -540,11 +540,15 @@ impl Range {
       return Ok(MappedRange::from(self));
     }
 
-    // Determine which Assoc to use based on direction
+    // Determine which Assoc to use based on direction, mirroring Range::map
+    // behavior. For forward selection (anchor < head): anchor expands
+    // (AfterSticky), head contracts (BeforeSticky) For backward selection
+    // (anchor > head): anchor contracts, head expands For point (anchor ==
+    // head): both expand (AfterSticky behavior)
     let (anchor_assoc, head_assoc) = match self.anchor.cmp(&self.head) {
-      Ordering::Equal => (Assoc::TrackDelSticky, Assoc::TrackDelSticky),
-      Ordering::Less => (Assoc::TrackDelSticky, Assoc::TrackDelSticky),
-      Ordering::Greater => (Assoc::TrackDelSticky, Assoc::TrackDelSticky),
+      Ordering::Equal => (Assoc::TrackDelAfterSticky, Assoc::TrackDelAfterSticky),
+      Ordering::Less => (Assoc::TrackDelAfterSticky, Assoc::TrackDelBeforeSticky),
+      Ordering::Greater => (Assoc::TrackDelBeforeSticky, Assoc::TrackDelAfterSticky),
     };
 
     let anchor_result = changes.map_pos_tracked(self.anchor, anchor_assoc)?;
@@ -2051,8 +2055,8 @@ mod test {
 
     // Insert text at position 4 - no deletion
     let doc = Rope::from("abcdefgh");
-    let tx = crate::transaction::Transaction::change(&doc, vec![(4, 4, Some("!!".into()))])
-      .unwrap();
+    let tx =
+      crate::transaction::Transaction::change(&doc, vec![(4, 4, Some("!!".into()))]).unwrap();
     let cs = tx.changes();
 
     let range = Range::new(2, 6);
@@ -2142,16 +2146,25 @@ mod test {
 
     let mapped_with_deletion = MappedRange {
       range,
-      anchor_deleted: Some(DeleteInfo { offset: 1, len: 3 }),
-      head_deleted:   None,
+      anchor_deleted: Some(DeleteInfo {
+        offset: 1,
+        len:    3,
+      }),
+      head_deleted: None,
     };
     assert!(mapped_with_deletion.was_deleted());
     assert!(!mapped_with_deletion.fully_deleted());
 
     let fully_deleted = MappedRange {
       range,
-      anchor_deleted: Some(DeleteInfo { offset: 1, len: 3 }),
-      head_deleted:   Some(DeleteInfo { offset: 2, len: 3 }),
+      anchor_deleted: Some(DeleteInfo {
+        offset: 1,
+        len:    3,
+      }),
+      head_deleted: Some(DeleteInfo {
+        offset: 2,
+        len:    3,
+      }),
     };
     assert!(fully_deleted.was_deleted());
     assert!(fully_deleted.fully_deleted());

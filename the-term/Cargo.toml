@@ -1,0 +1,25 @@
+[package]
+name              = "the-term"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "the-editor"
+path = "main.rs"
+
+[features]
+# These are declared to suppress cfg warnings from the-dispatch macro.
+# They forward to the-dispatch's features.
+cow-handlers     = ["the-dispatch/cow-handlers"]
+dynamic-registry = ["the-dispatch/dynamic-registry"]
+
+[dependencies]
+the-lib      = { path = "../the-lib" }
+the-dispatch = { path = "../the-dispatch" }
+crossterm.workspace = true
+eyre.workspace      = true
+ropey.workspace     = true
+
+[lints]
+workspace = true

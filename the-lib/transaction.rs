@@ -295,6 +295,18 @@ pub enum Assoc {
   /// Example: Position 4 in "hello" - if 'o' (at index 4) is deleted,
   /// this signals that deletion affected the position.
   TrackDelAfter,
+
+  /// Like `TrackDelSticky` but moves after insertions (like `AfterSticky`).
+  /// Use for the "expanding" edge of a forward selection (the anchor).
+  ///
+  /// Combines deletion tracking with `AfterSticky` insert behavior.
+  TrackDelAfterSticky,
+
+  /// Like `TrackDelSticky` but stays before insertions (like `BeforeSticky`).
+  /// Use for the "contracting" edge of a forward selection (the head).
+  ///
+  /// Combines deletion tracking with `BeforeSticky` insert behavior.
+  TrackDelBeforeSticky,
 }
 
 impl Assoc {
@@ -307,11 +319,11 @@ impl Assoc {
     let chars = s.chars().count();
 
     match self {
-      Assoc::After | Assoc::AfterSticky => chars,
+      Assoc::After | Assoc::AfterSticky | Assoc::TrackDelAfterSticky => chars,
       Assoc::AfterWord => s.chars().take_while(|&c| char_is_word(c)).count(),
-      Assoc::Before | Assoc::BeforeSticky => 0,
+      Assoc::Before | Assoc::BeforeSticky | Assoc::TrackDelBeforeSticky => 0,
       Assoc::BeforeWord => chars - s.chars().rev().take_while(|&c| char_is_word(c)).count(),
-      // Delete tracking variants behave like Before for insertions
+      // Other delete tracking variants behave like Before for insertions
       Assoc::TrackDel | Assoc::TrackDelSticky | Assoc::TrackDelBefore | Assoc::TrackDelAfter => 0,
     }
   }
@@ -319,7 +331,11 @@ impl Assoc {
   pub fn sticky(self) -> bool {
     matches!(
       self,
-      Assoc::BeforeSticky | Assoc::AfterSticky | Assoc::TrackDelSticky
+      Assoc::BeforeSticky
+        | Assoc::AfterSticky
+        | Assoc::TrackDelSticky
+        | Assoc::TrackDelAfterSticky
+        | Assoc::TrackDelBeforeSticky
     )
   }
 
@@ -330,7 +346,12 @@ impl Assoc {
   pub fn tracks_deletion(self) -> bool {
     matches!(
       self,
-      Assoc::TrackDel | Assoc::TrackDelSticky | Assoc::TrackDelBefore | Assoc::TrackDelAfter
+      Assoc::TrackDel
+        | Assoc::TrackDelSticky
+        | Assoc::TrackDelBefore
+        | Assoc::TrackDelAfter
+        | Assoc::TrackDelAfterSticky
+        | Assoc::TrackDelBeforeSticky
     )
   }
 }
@@ -932,7 +953,10 @@ impl ChangeSet {
             if assoc.tracks_deletion() {
               // Check the specific tracking mode
               match assoc {
-                Assoc::TrackDel | Assoc::TrackDelSticky => {
+                Assoc::TrackDel
+                | Assoc::TrackDelSticky
+                | Assoc::TrackDelAfterSticky
+                | Assoc::TrackDelBeforeSticky => {
                   // Only signal deletion if strictly INSIDE (not at boundary)
                   if offset > 0 {
                     return Ok(MappedPos::Deleted {
@@ -1006,7 +1030,10 @@ impl ChangeSet {
               if assoc.tracks_deletion() {
                 // Apply same boundary logic as pure deletions
                 match assoc {
-                  Assoc::TrackDel | Assoc::TrackDelSticky => {
+                  Assoc::TrackDel
+                  | Assoc::TrackDelSticky
+                  | Assoc::TrackDelAfterSticky
+                  | Assoc::TrackDelBeforeSticky => {
                     // Only signal deletion if strictly INSIDE (not at boundary)
                     if offset > 0 {
                       return Ok(MappedPos::Deleted {
@@ -1920,14 +1947,45 @@ mod test {
     assert!(Assoc::TrackDelSticky.tracks_deletion());
     assert!(Assoc::TrackDelBefore.tracks_deletion());
     assert!(Assoc::TrackDelAfter.tracks_deletion());
+    assert!(Assoc::TrackDelAfterSticky.tracks_deletion());
+    assert!(Assoc::TrackDelBeforeSticky.tracks_deletion());
   }
 
   #[test]
   fn assoc_sticky_includes_trackdelsticky() {
     assert!(Assoc::TrackDelSticky.sticky());
+    assert!(Assoc::TrackDelAfterSticky.sticky());
+    assert!(Assoc::TrackDelBeforeSticky.sticky());
     assert!(!Assoc::TrackDel.sticky());
     assert!(!Assoc::TrackDelBefore.sticky());
     assert!(!Assoc::TrackDelAfter.sticky());
+  }
+
+  #[test]
+  fn track_del_after_before_sticky_insert_behavior() {
+    use Operation::*;
+
+    // Pure insertion at position 4 (insert "!!" between chars)
+    let cs = ChangeSet {
+      changes:   vec![Retain(4), Insert("!!".into()), Retain(4)],
+      len:       8,
+      len_after: 10,
+    };
+
+    // TrackDelAfterSticky should move AFTER the insertion (like AfterSticky)
+    let result = cs.map_pos_tracked(4, Assoc::TrackDelAfterSticky).unwrap();
+    assert!(!result.is_deleted());
+    assert_eq!(result.position(), 6); // 4 + 2 inserted chars
+
+    // TrackDelBeforeSticky should stay BEFORE the insertion (like BeforeSticky)
+    let result = cs.map_pos_tracked(4, Assoc::TrackDelBeforeSticky).unwrap();
+    assert!(!result.is_deleted());
+    assert_eq!(result.position(), 4); // stays at 4
+
+    // Regular TrackDel stays before (like Before)
+    let result = cs.map_pos_tracked(4, Assoc::TrackDel).unwrap();
+    assert!(!result.is_deleted());
+    assert_eq!(result.position(), 4);
   }
 
   #[test]

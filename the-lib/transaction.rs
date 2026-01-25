@@ -532,7 +532,6 @@ impl ChangeSet {
               head_b = changes_b.next();
             },
             Ordering::Greater => {
-              // TODO: cover this with a test
               // figure out the byte index of the truncated string end
               let (pos, _) = s.char_indices().nth(j).unwrap();
               s.replace_range(0..pos, "");
@@ -1502,8 +1501,6 @@ mod test {
     assert_eq!(cs.map_pos(5, Assoc::Before).unwrap(), 4); // inside a delete
     assert_eq!(cs.map_pos(5, Assoc::After).unwrap(), 4); // inside a delete
 
-    // TODO: delete tracking
-
     // stays inbetween replacements
     let cs = ChangeSet {
       changes:   vec![
@@ -1626,6 +1623,65 @@ mod test {
     use Operation::*;
     assert_eq!(changes.changes, &[Insert(TEST_CASE.into())]);
     assert_eq!(changes.len_after, TEST_CASE.chars().count());
+  }
+
+  #[test]
+  fn compose_insert_longer_than_delete() {
+    // Test the branch at line ~509-514 where Insert.len() > Delete.len()
+    // This is the TODO that was marked as needing test coverage.
+    use Operation::*;
+
+    // First changeset: insert "hello" (5 chars) into empty document
+    let a = ChangeSet {
+      changes:   vec![Insert("hello".into())],
+      len:       0,
+      len_after: 5,
+    };
+
+    // Second changeset: delete first 3 chars of the 5-char document
+    let b = ChangeSet {
+      changes:   vec![Delete(3), Retain(2)],
+      len:       5,
+      len_after: 2,
+    };
+
+    let composed = a.compose(b).unwrap();
+
+    // Composing these should result in just inserting "lo" (chars 3-4 of "hello")
+    assert_eq!(composed.len, 0);
+    assert_eq!(composed.len_after, 2);
+    assert_eq!(composed.changes, &[Insert("lo".into())]);
+
+    // Verify by applying to empty document
+    let mut doc = Rope::from("");
+    composed.apply(&mut doc).unwrap();
+    assert_eq!(doc.to_string(), "lo");
+  }
+
+  #[test]
+  fn compose_insert_longer_than_delete_multibyte() {
+    // Same test but with multibyte UTF-8 characters
+    use Operation::*;
+
+    // Insert "世界hello" (7 chars: 2 CJK + 5 ASCII)
+    let a = ChangeSet {
+      changes:   vec![Insert("世界hello".into())],
+      len:       0,
+      len_after: 7,
+    };
+
+    // Delete first 4 chars ("世界he"), keep last 3 ("llo")
+    let b = ChangeSet {
+      changes:   vec![Delete(4), Retain(3)],
+      len:       7,
+      len_after: 3,
+    };
+
+    let composed = a.compose(b).unwrap();
+
+    assert_eq!(composed.len, 0);
+    assert_eq!(composed.len_after, 3);
+    assert_eq!(composed.changes, &[Insert("llo".into())]);
   }
 
   #[test]

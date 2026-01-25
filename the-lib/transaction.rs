@@ -219,6 +219,11 @@ pub enum TransactionError {
     positions: Vec<usize>,
     len:       usize,
   },
+  #[error(
+    "delete-tracking Assoc variants cannot be used with update_positions; use map_pos_tracked \
+     instead"
+  )]
+  TrackingAssocInBatchUpdate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -715,6 +720,11 @@ impl ChangeSet {
             let Some((pos, assoc)) = positions.peek_mut() else {
               return Ok(());
             };
+            // Reject delete-tracking Assoc variants - they require MappedPos return.
+            // Users should use map_pos_tracked() for positions that need deletion info.
+            if assoc.tracks_deletion() {
+              return Err(TransactionError::TrackingAssocInBatchUpdate);
+            }
             if **pos < old_pos {
               // Positions are not sorted, revert to the last Operation that
               // contains this position and continue iterating from there.
@@ -1853,6 +1863,30 @@ mod test {
 
     let err = cs.map_pos_tracked(10, Assoc::TrackDel).unwrap_err();
     assert!(matches!(err, TransactionError::PositionsOutOfBounds { .. }));
+  }
+
+  #[test]
+  fn update_positions_rejects_tracking_variants() {
+    use Operation::*;
+
+    let cs = ChangeSet {
+      changes:   vec![Retain(4), Delete(4), Retain(4)],
+      len:       12,
+      len_after: 8,
+    };
+
+    // Non-tracking variants should work
+    let mut pos = 5usize;
+    cs.update_positions(std::iter::once((&mut pos, Assoc::Before)))
+      .unwrap();
+    assert_eq!(pos, 4);
+
+    // Tracking variants should error
+    let mut pos = 5usize;
+    let err = cs
+      .update_positions(std::iter::once((&mut pos, Assoc::TrackDel)))
+      .unwrap_err();
+    assert!(matches!(err, TransactionError::TrackingAssocInBatchUpdate));
   }
 
   #[test]

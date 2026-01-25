@@ -50,7 +50,12 @@
 
 use ropey::RopeSlice;
 
-// TODO: switch to std::str::Pattern when it is stable.
+/// Trait for matching characters during search operations.
+///
+/// Note: `std::str::Pattern` (rust-lang/rust#27721) is designed for `&str`, not
+/// `RopeSlice`, so even when stabilized it won't directly apply here. This
+/// trait serves the same purpose for rope-based text and could be extended with
+/// additional matchers (e.g., `CharSet`, `CaseInsensitive`) if needed.
 pub trait CharMatcher {
   fn char_match(&mut self, ch: char) -> bool;
 }

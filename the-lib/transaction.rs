@@ -990,15 +990,48 @@ impl ChangeSet {
             let old_end = old_pos + del_len;
 
             if pos < old_end {
-              // Position is inside the replaced text
+              // Position is in the replacement range
               let offset = pos - old_pos;
 
               if assoc.tracks_deletion() {
-                return Ok(MappedPos::Deleted {
-                  pos: new_pos,
-                  offset,
-                  len: del_len,
-                });
+                // Apply same boundary logic as pure deletions
+                match assoc {
+                  Assoc::TrackDel | Assoc::TrackDelSticky => {
+                    // Only signal deletion if strictly INSIDE (not at boundary)
+                    if offset > 0 {
+                      return Ok(MappedPos::Deleted {
+                        pos: new_pos,
+                        offset,
+                        len: del_len,
+                      });
+                    }
+                    // At start boundary - not considered deleted
+                    return Ok(MappedPos::Pos(new_pos));
+                  },
+                  Assoc::TrackDelBefore => {
+                    // Only signal deletion if there's a character before that was deleted
+                    if offset > 0 {
+                      return Ok(MappedPos::Deleted {
+                        pos: new_pos,
+                        offset,
+                        len: del_len,
+                      });
+                    }
+                    return Ok(MappedPos::Pos(new_pos));
+                  },
+                  Assoc::TrackDelAfter => {
+                    // Signal deletion if the character AT this position was deleted
+                    if offset < del_len {
+                      return Ok(MappedPos::Deleted {
+                        pos: new_pos,
+                        offset,
+                        len: del_len,
+                      });
+                    }
+                    return Ok(MappedPos::Pos(new_pos));
+                  },
+                  _ => unreachable!(),
+                }
               }
 
               // Non-tracking replacement handling
@@ -1753,6 +1786,17 @@ mod test {
       assert_eq!(offset, 1); // 1 char into the replaced region
       assert_eq!(len, 4);
     }
+
+    // Position at replacement start boundary - NOT deleted (consistent with pure
+    // deletions)
+    let result = cs.map_pos_tracked(2, Assoc::TrackDel).unwrap();
+    assert!(!result.is_deleted());
+    assert_eq!(result.position(), 2);
+
+    // TrackDelAfter at replacement start - IS deleted (char at position was
+    // replaced)
+    let result = cs.map_pos_tracked(2, Assoc::TrackDelAfter).unwrap();
+    assert!(result.is_deleted());
   }
 
   #[test]

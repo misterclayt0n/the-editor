@@ -93,6 +93,7 @@
 
 use std::{
   borrow::Cow,
+  collections::HashSet,
   iter,
   num::NonZeroU64,
   sync::atomic::{AtomicU64, Ordering},
@@ -142,6 +143,8 @@ pub enum SelectionError {
   RangeIndexOutOfBounds { index: usize, len: usize },
   #[error("cursor id count {ids} does not match range count {ranges}")]
   CursorIdCountMismatch { ids: usize, ranges: usize },
+  #[error("cursor id {id} appears more than once in selection")]
+  DuplicateCursorId { id: u64 },
   #[error("cursor id {id} not found in selection")]
   CursorIdNotFound { id: u64 },
   #[error("cannot remove the last range from a selection")]
@@ -181,6 +184,12 @@ pub enum CursorPick {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchCapture {
+  Whole,
+  Group(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Range {
   pub anchor:         usize,
   pub head:           usize,
@@ -209,9 +218,6 @@ impl Range {
   pub fn point(head: usize) -> Self {
     Self::new(head, head)
   }
-
-  // TODO
-  // pub fn from_node(node: Node, text: RopeSlice, direction: Direction) -> Self
 
   /// Start of the range
   #[inline]
@@ -596,6 +602,7 @@ impl Selection {
         ranges: ranges.len(),
       });
     }
+    ensure_unique_ids(&cursor_ids)?;
 
     Ok(Self::new_with_ids_unchecked(ranges, cursor_ids).normalize())
   }
@@ -722,10 +729,15 @@ impl Selection {
     self.normalize()
   }
 
-  pub fn push_with_id(mut self, range: Range, cursor_id: CursorId) -> Self {
+  pub fn push_with_id(mut self, range: Range, cursor_id: CursorId) -> Result<Self> {
+    if self.cursor_ids.iter().any(|existing| *existing == cursor_id) {
+      return Err(SelectionError::DuplicateCursorId {
+        id: cursor_id.get(),
+      });
+    }
     self.ranges.push(range);
     self.cursor_ids.push(cursor_id);
-    self.normalize()
+    Ok(self.normalize())
   }
 
   pub fn collapse(self, pick: CursorPick) -> Result<Self> {
@@ -840,7 +852,7 @@ impl Selection {
       .into_iter()
       .zip(self.cursor_ids.into_iter())
       .collect();
-    pairs.sort_by_key(|(range, _)| range.from());
+    pairs.sort_by_key(|(range, _)| (range.from(), range.to()));
 
     let mut ranges: SmallVec<[Range; 1]> = SmallVec::with_capacity(pairs.len());
     let mut cursor_ids: SmallVec<[CursorId; 1]> = SmallVec::with_capacity(pairs.len());
@@ -848,7 +860,11 @@ impl Selection {
     for (range, cursor_id) in pairs {
       if let Some(prev_range) = ranges.last_mut() {
         if prev_range.overlaps(&range) {
-          *prev_range = prev_range.merge(range);
+          let prev = *prev_range;
+          let merged = prev.merge(range);
+          let keep_id = merge_cursor_id(prev, *cursor_ids.last().unwrap(), range, cursor_id, merged);
+          *prev_range = merged;
+          *cursor_ids.last_mut().unwrap() = keep_id;
           continue;
         }
       }
@@ -862,10 +878,24 @@ impl Selection {
   }
 
   pub fn merge_ranges(self) -> Self {
-    let first = self.ranges.first().unwrap();
-    let last = self.ranges.last().unwrap();
-    let id = self.cursor_ids.first().copied().unwrap();
-    Selection::new_with_ids_unchecked(smallvec![first.merge(*last)], smallvec![id])
+    let merged = self
+      .ranges
+      .iter()
+      .copied()
+      .reduce(|acc, range| acc.merge(range))
+      .expect("selection is non-empty");
+    let (id, _) = self
+      .ranges
+      .iter()
+      .copied()
+      .zip(self.cursor_ids.iter().copied())
+      .map(|(range, cursor_id)| {
+        let dist = merged.head.abs_diff(range.head);
+        (cursor_id, dist)
+      })
+      .min_by_key(|(_, dist)| *dist)
+      .expect("selection is non-empty");
+    Selection::new_with_ids_unchecked(smallvec![merged], smallvec![id])
   }
 
   /// Merges all ranges that are consecutive.
@@ -883,7 +913,11 @@ impl Selection {
     for (range, cursor_id) in pairs.drain(..) {
       if let Some(prev_range) = ranges.last_mut() {
         if prev_range.to() == range.from() {
-          *prev_range = prev_range.merge(range);
+          let prev = *prev_range;
+          let merged = prev.merge(range);
+          let keep_id = merge_cursor_id(prev, *cursor_ids.last().unwrap(), range, cursor_id, merged);
+          *prev_range = merged;
+          *cursor_ids.last_mut().unwrap() = keep_id;
           continue;
         }
       }
@@ -1071,11 +1105,19 @@ pub fn keep_or_remove_matches(
   Ok(Some(Selection::new_with_ids(ranges, cursor_ids)?))
 }
 
-// TODO: support to split on capture #N instead of whole match
 pub fn select_on_matches(
   text: RopeSlice,
   selection: &Selection,
   regex: &rope::Regex,
+) -> Result<Option<Selection>> {
+  select_on_matches_with(text, selection, regex, MatchCapture::Whole)
+}
+
+pub fn select_on_matches_with(
+  text: RopeSlice,
+  selection: &Selection,
+  regex: &rope::Regex,
+  capture: MatchCapture,
 ) -> Result<Option<Selection>> {
   let mut ranges = SmallVec::with_capacity(selection.ranges.len());
   let mut cursor_ids = SmallVec::with_capacity(selection.ranges.len());
@@ -1086,26 +1128,52 @@ pub fn select_on_matches(
     let mut assigned = false;
     let start_idx = ranges.len();
 
-    for mat in regex.find_iter(text.regex_input_at(sel.from()..sel.to())) {
-      let start = text.byte_to_char(mat.start());
-      let end = text.byte_to_char(mat.end());
+    match capture {
+      MatchCapture::Whole => {
+        for mat in regex.find_iter(text.regex_input_at(sel.from()..sel.to())) {
+          let start = text.byte_to_char(mat.start());
+          let end = text.byte_to_char(mat.end());
 
-      let range = Range::new(start, end).with_direction(sel.direction());
-      // Make sure the match is not right outside of the selection.
-      // These invalid matches can come from using RegEx anchors like `^`, `$`
-      if range == Range::point(sel.to()) {
-        continue;
-      }
+          let range = Range::new(start, end).with_direction(sel.direction());
+          // Make sure the match is not right outside of the selection.
+          // These invalid matches can come from using RegEx anchors like `^`, `$`
+          if range == Range::point(sel.to()) {
+            continue;
+          }
 
-      let use_id = if !assigned && range_contains_inclusive(&range, head) {
-        assigned = true;
-        cursor_id
-      } else {
-        CursorId::fresh()
-      };
-      ranges.push(range);
-      cursor_ids.push(use_id);
-      produced += 1;
+          let use_id = if !assigned && range_contains_inclusive(&range, head) {
+            assigned = true;
+            cursor_id
+          } else {
+            CursorId::fresh()
+          };
+          ranges.push(range);
+          cursor_ids.push(use_id);
+          produced += 1;
+        }
+      },
+      MatchCapture::Group(index) => {
+        for caps in regex.captures_iter(text.regex_input_at(sel.from()..sel.to())) {
+          let Some(span) = caps.get_group(index) else {
+            continue;
+          };
+          let start = text.byte_to_char(span.start);
+          let end = text.byte_to_char(span.end);
+          let range = Range::new(start, end).with_direction(sel.direction());
+          if range == Range::point(sel.to()) {
+            continue;
+          }
+          let use_id = if !assigned && range_contains_inclusive(&range, head) {
+            assigned = true;
+            cursor_id
+          } else {
+            CursorId::fresh()
+          };
+          ranges.push(range);
+          cursor_ids.push(use_id);
+          produced += 1;
+        }
+      },
     }
 
     if produced > 0 && !assigned {
@@ -1208,16 +1276,18 @@ pub fn split_on_matches(
 
     for mat in regex.find_iter(text.regex_input_at(sel_start..sel_end)) {
       let end = text.byte_to_char(mat.start());
-      let range = Range::new(start, end).with_direction(sel.direction());
-      let use_id = if !assigned && range_contains_inclusive(&range, head) {
-        assigned = true;
-        cursor_id
-      } else {
-        CursorId::fresh()
-      };
-      ranges.push(range);
-      cursor_ids.push(use_id);
-      produced += 1;
+      if start != end {
+        let range = Range::new(start, end).with_direction(sel.direction());
+        let use_id = if !assigned && range_contains_inclusive(&range, head) {
+          assigned = true;
+          cursor_id
+        } else {
+          CursorId::fresh()
+        };
+        ranges.push(range);
+        cursor_ids.push(use_id);
+        produced += 1;
+      }
       start = text.byte_to_char(mat.end());
     }
 
@@ -1234,7 +1304,10 @@ pub fn split_on_matches(
       produced += 1;
     }
 
-    if produced > 0 && !assigned {
+    if produced == 0 {
+      ranges.push(Range::point(sel.head));
+      cursor_ids.push(cursor_id);
+    } else if !assigned {
       cursor_ids[start_idx] = cursor_id;
     }
   }
@@ -1244,6 +1317,50 @@ pub fn split_on_matches(
 
 fn range_contains_inclusive(range: &Range, pos: usize) -> bool {
   range.from() <= pos && pos <= range.to()
+}
+
+fn ensure_unique_ids(ids: &[CursorId]) -> Result<()> {
+  if ids.len() < 2 {
+    return Ok(());
+  }
+
+  if ids.len() <= 8 {
+    for (idx, id) in ids.iter().enumerate() {
+      if ids[..idx].iter().any(|other| other == id) {
+        return Err(SelectionError::DuplicateCursorId { id: id.get() });
+      }
+    }
+    return Ok(());
+  }
+
+  let mut seen = HashSet::with_capacity(ids.len());
+  for id in ids {
+    if !seen.insert(*id) {
+      return Err(SelectionError::DuplicateCursorId { id: id.get() });
+    }
+  }
+
+  Ok(())
+}
+
+fn merge_cursor_id(
+  prev: Range,
+  prev_id: CursorId,
+  next: Range,
+  next_id: CursorId,
+  merged: Range,
+) -> CursorId {
+  if prev_id == next_id {
+    return prev_id;
+  }
+
+  let prev_dist = merged.head.abs_diff(prev.head);
+  let next_dist = merged.head.abs_diff(next.head);
+  if prev_dist <= next_dist {
+    prev_id
+  } else {
+    next_id
+  }
 }
 
 #[cfg(test)]
@@ -1272,6 +1389,24 @@ mod test {
       SelectionError::CursorIdCountMismatch {
         ids: 1,
         ranges: 2
+      }
+    );
+  }
+
+  #[test]
+  fn test_new_with_duplicate_cursor_ids() {
+    let err = Selection::new_with_ids(
+      smallvec![Range::point(1), Range::point(2)],
+      smallvec![
+        CursorId::new(NonZeroU64::new(1).unwrap()),
+        CursorId::new(NonZeroU64::new(1).unwrap()),
+      ],
+    )
+    .unwrap_err();
+    assert_eq!(
+      err,
+      SelectionError::DuplicateCursorId {
+        id: 1
       }
     );
   }
@@ -1536,6 +1671,18 @@ mod test {
   }
 
   #[test]
+  fn test_select_on_matches_capture_group() {
+    let r = Rope::from_str("foo1 foo22 bar333");
+    let s = r.slice(..);
+
+    let regex = rope::Regex::new(r"foo([0-9]+)").unwrap();
+    let selection = Selection::single(0, s.len_chars());
+    let result =
+      select_on_matches_with(s, &selection, &regex, MatchCapture::Group(1)).unwrap();
+    assert_selection_ranges(result, &[Range::new(3, 4), Range::new(8, 10)]);
+  }
+
+  #[test]
   fn test_line_range() {
     let r = Rope::from_str("\r\nHi\r\nthere!");
     let s = r.slice(..);
@@ -1629,26 +1776,14 @@ mod test {
     .unwrap();
 
     assert_eq!(result.ranges(), &[
-      // TODO: rather than this behavior, maybe we want it
-      // to be based on which side is the anchor?
-      //
-      // We get a leading zero-width range when there's
-      // a leading match because ranges are inclusive on
-      // the left.  Imagine, for example, if the entire
-      // selection range were matched: you'd still want
-      // at least one range to remain after the split.
-      Range::new(0, 0),
       Range::new(1, 5),
       Range::new(6, 9),
       Range::new(11, 13),
       Range::new(16, 19),
-      // In contrast to the comment above, there is no
-      // _trailing_ zero-width range despite the trailing
-      // match, because ranges are exclusive on the right.
     ]);
 
     assert_eq!(result.fragments(text.slice(..)).collect::<Vec<_>>(), &[
-      "", "abcd", "efg", "rs", "xyz"
+      "abcd", "efg", "rs", "xyz"
     ]);
   }
 

@@ -64,10 +64,17 @@ pub fn build_dispatch() -> AppDispatch {
 
 mod handlers {
   use the_lib::{
-    selection::{
-      Range,
-      Selection,
+    movement::{
+      Direction as MoveDir,
+      Movement,
+      move_horizontally,
+      move_vertically,
     },
+    render::{
+      text_annotations::TextAnnotations,
+      text_format::TextFormat,
+    },
+    selection::Selection,
     transaction::Transaction,
   };
 
@@ -119,94 +126,115 @@ mod handlers {
     }
   }
 
-  /// Move all cursors in the given direction.
+  /// Move all cursors in the given direction using the_lib movement functions.
   pub fn move_cursor(ctx: &mut Ctx, dir: Direction) {
     let doc = ctx.editor.document_mut(ctx.active_doc).unwrap();
-    let text = doc.text();
-    let len = text.len_chars();
+    let slice = doc.text().slice(..);
+    let text_fmt = TextFormat::default();
+    let mut annotations = TextAnnotations::default();
 
-    let new_ranges: Vec<_> = doc
-      .selection()
-      .iter()
-      .map(|range| {
-        let pos = range.cursor(text.slice(..));
-        let new_pos = match dir {
-          Direction::Left => pos.saturating_sub(1),
-          Direction::Right => (pos + 1).min(len),
-          Direction::Up => {
-            // Move to same column on previous line
-            let line = text.char_to_line(pos);
-            if line == 0 {
-              pos
-            } else {
-              let col = pos - text.line_to_char(line);
-              let prev_line_start = text.line_to_char(line - 1);
-              let prev_line_len = text.line(line - 1).len_chars().saturating_sub(1);
-              prev_line_start + col.min(prev_line_len)
-            }
-          },
-          Direction::Down => {
-            // Move to same column on next line
-            let line = text.char_to_line(pos);
-            let line_count = text.len_lines();
-            if line >= line_count.saturating_sub(1) {
-              pos
-            } else {
-              let col = pos - text.line_to_char(line);
-              let next_line_start = text.line_to_char(line + 1);
-              let next_line_len = text.line(line + 1).len_chars().saturating_sub(1);
-              next_line_start + col.min(next_line_len)
-            }
-          },
-        };
-        Range::point(new_pos)
-      })
-      .collect();
+    // Use Selection::transform to apply movement to each range
+    let selection = doc.selection().clone().transform(|range| {
+      match dir {
+        Direction::Left => {
+          move_horizontally(
+            slice,
+            range,
+            MoveDir::Backward,
+            1,
+            Movement::Move,
+            &text_fmt,
+            &mut annotations,
+          )
+        },
+        Direction::Right => {
+          move_horizontally(
+            slice,
+            range,
+            MoveDir::Forward,
+            1,
+            Movement::Move,
+            &text_fmt,
+            &mut annotations,
+          )
+        },
+        Direction::Up => {
+          move_vertically(
+            slice,
+            range,
+            MoveDir::Backward,
+            1,
+            Movement::Move,
+            &text_fmt,
+            &mut annotations,
+          )
+        },
+        Direction::Down => {
+          move_vertically(
+            slice,
+            range,
+            MoveDir::Forward,
+            1,
+            Movement::Move,
+            &text_fmt,
+            &mut annotations,
+          )
+        },
+      }
+    });
 
-    if let Ok(selection) = Selection::new(new_ranges.into()) {
-      let _ = doc.set_selection(selection);
-    }
+    // Drop annotations before mutably borrowing doc for set_selection
+    drop(annotations);
+    let _ = doc.set_selection(selection);
   }
 
   /// Add a cursor in the given direction (for multiple cursors).
+  ///
+  /// This creates a new cursor on the line above/below, preserving the column.
   pub fn add_cursor(ctx: &mut Ctx, dir: Direction) {
     let doc = ctx.editor.document_mut(ctx.active_doc).unwrap();
-    let text = doc.text();
+    let slice = doc.text().slice(..);
+    let text_fmt = TextFormat::default();
+    let mut annotations = TextAnnotations::default();
 
     // Get current ranges
     let mut ranges: Vec<_> = doc.selection().iter().cloned().collect();
 
-    // Find the primary cursor position
-    let primary = &doc.selection().ranges()[0];
-    let pos = primary.cursor(text.slice(..));
-    let line = text.char_to_line(pos);
-    let col = pos - text.line_to_char(line);
-
-    let new_pos = match dir {
+    // Compute new cursor position from primary cursor
+    let primary = ranges[0];
+    let new_range = match dir {
       Direction::Up => {
-        if line > 0 {
-          let prev_line_start = text.line_to_char(line - 1);
-          let prev_line_len = text.line(line - 1).len_chars().saturating_sub(1);
-          Some(prev_line_start + col.min(prev_line_len))
-        } else {
-          None
-        }
+        move_vertically(
+          slice,
+          primary,
+          MoveDir::Backward,
+          1,
+          Movement::Move,
+          &text_fmt,
+          &mut annotations,
+        )
       },
       Direction::Down => {
-        let line_count = text.len_lines();
-        if line < line_count.saturating_sub(1) {
-          let next_line_start = text.line_to_char(line + 1);
-          let next_line_len = text.line(line + 1).len_chars().saturating_sub(1);
-          Some(next_line_start + col.min(next_line_len))
-        } else {
-          None
-        }
+        move_vertically(
+          slice,
+          primary,
+          MoveDir::Forward,
+          1,
+          Movement::Move,
+          &text_fmt,
+          &mut annotations,
+        )
       },
-      _ => None,
+      // Left/Right don't add cursors
+      _ => return,
     };
 
-    if let Some(new_pos) = new_pos {
-      ranges.push(Range::point(new_pos));
+    // Drop annotations before mutably borrowing doc for set_selection
+    drop(annotations);
+
+    // Only add if the new position is different from primary
+    if new_range.cursor(slice) != primary.cursor(slice) {
+      ranges.push(new_range);
       if let Ok(selection) = Selection::new(ranges.into()) {
         let _ = doc.set_selection(selection);
       }

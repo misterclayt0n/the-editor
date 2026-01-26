@@ -5,7 +5,9 @@ use eyre::Result;
 use the_lib::render::{
   NoHighlights,
   RenderCache,
+  RenderPlan,
   RenderStyles,
+  SyntaxHighlightAdapter,
   build_plan,
   graphics::Style,
   text_annotations::TextAnnotations,
@@ -15,6 +17,7 @@ use the_lib::render::{
 use crate::{
   Ctx,
   terminal::Terminal,
+  theme::highlight_to_color,
 };
 
 /// Render the current document state to the terminal.
@@ -28,11 +31,8 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
   // Set up annotations (none for now)
   let mut annotations = TextAnnotations::default();
 
-  // Set up highlights (none for now - will add syntax later)
-  let mut highlights = NoHighlights;
-
   // Render cache
-  let mut cache = RenderCache::default();
+  let mut render_cache = RenderCache::default();
 
   // Styles for cursor and selection
   let styles = RenderStyles {
@@ -41,28 +41,52 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
     active_cursor: Style::default(),
   };
 
-  // Build the render plan
-  let plan = build_plan(
-    doc,
-    ctx.view,
-    &text_fmt,
-    &mut annotations,
-    &mut highlights,
-    &mut cache,
-    styles,
-  );
+  // Build the render plan (with or without syntax highlighting)
+  let plan: RenderPlan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
+    // Calculate line range for highlighting
+    let line_range = ctx.view.scroll.row..(ctx.view.scroll.row + ctx.view.viewport.height as usize);
+
+    // Create syntax highlight adapter
+    let mut adapter = SyntaxHighlightAdapter::new(
+      doc.text().slice(..),
+      syntax,
+      loader.as_ref(),
+      &mut ctx.highlight_cache,
+      line_range,
+      doc.version(),
+      1, // syntax version (simplified)
+    );
+
+    build_plan(
+      doc,
+      ctx.view,
+      &text_fmt,
+      &mut annotations,
+      &mut adapter,
+      &mut render_cache,
+      styles,
+    )
+  } else {
+    // No syntax highlighting available
+    let mut highlights = NoHighlights;
+    build_plan(
+      doc,
+      ctx.view,
+      &text_fmt,
+      &mut annotations,
+      &mut highlights,
+      &mut render_cache,
+      styles,
+    )
+  };
 
   // Clear and draw
   terminal.clear()?;
 
-  // Draw text lines
+  // Draw text lines with syntax colors
   for line in &plan.lines {
     for span in &line.spans {
-      let fg = span.highlight.map(|_h| {
-        // For now, just use default color
-        // Will add proper highlight mapping when we add syntax
-        Color::Reset
-      });
+      let fg = span.highlight.map(highlight_to_color);
       terminal.draw_str(line.row, span.col, &span.text, fg, None)?;
     }
   }
@@ -75,10 +99,8 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
   }
 
   // Draw secondary cursors (for multiple cursor support)
-  // In a real implementation, we'd draw these differently (e.g., different color)
   for cursor in plan.cursors.iter().skip(1) {
     // Draw a marker at secondary cursor positions
-    // For now, just draw a pipe character
     terminal.draw_str(
       cursor.pos.row as u16,
       cursor.pos.col as u16,

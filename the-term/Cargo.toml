@@ -15,7 +15,8 @@ cow-handlers     = ["the-dispatch/cow-handlers"]
 dynamic-registry = ["the-dispatch/dynamic-registry"]
 
 [dependencies]
-the-lib      = { path = "../the-lib" }
+the-lib      = { path = "../the-lib", features = ["runtime-loader"] }
+the-loader   = { path = "../the-loader" }
 the-dispatch = { path = "../the-dispatch" }
 crossterm.workspace = true
 eyre.workspace      = true

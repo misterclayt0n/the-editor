@@ -10,37 +10,43 @@
 //! # #[cfg(feature = "runtime-loader")] {
 //! use std::collections::HashMap;
 //!
-//! use the_lib::syntax::config::{
-//!   Configuration, FileType, LanguageConfiguration, LanguageServicesConfig, SyntaxLanguageConfig,
+//! use the_lib::syntax::{
+//!   Loader,
+//!   config::{
+//!     Configuration,
+//!     FileType,
+//!     LanguageConfiguration,
+//!     LanguageServicesConfig,
+//!     SyntaxLanguageConfig,
+//!   },
+//!   runtime_loader::RuntimeLoader,
 //! };
-//! use the_lib::syntax::runtime_loader::RuntimeLoader;
-//! use the_lib::syntax::Loader;
 //!
 //! let language = LanguageConfiguration {
-//!   syntax: SyntaxLanguageConfig {
-//!     language_id: "rust".into(),
-//!     scope: "source.rust".into(),
-//!     file_types: vec![FileType::Extension("rs".into())],
-//!     shebangs: Vec::new(),
-//!     comment_tokens: None,
+//!   syntax:   SyntaxLanguageConfig {
+//!     language_id:          "rust".into(),
+//!     scope:                "source.rust".into(),
+//!     file_types:           vec![FileType::Extension("rs".into())],
+//!     shebangs:             Vec::new(),
+//!     comment_tokens:       None,
 //!     block_comment_tokens: None,
-//!     text_width: None,
-//!     soft_wrap: None,
-//!     auto_format: false,
-//!     path_completion: None,
-//!     word_completion: None,
-//!     grammar: None,
-//!     injection_regex: None,
-//!     indent: None,
-//!     auto_pairs: None,
-//!     rulers: None,
-//!     rainbow_brackets: None,
+//!     text_width:           None,
+//!     soft_wrap:            None,
+//!     auto_format:          false,
+//!     path_completion:      None,
+//!     word_completion:      None,
+//!     grammar:              None,
+//!     injection_regex:      None,
+//!     indent:               None,
+//!     auto_pairs:           None,
+//!     rulers:               None,
+//!     rainbow_brackets:     None,
 //!   },
 //!   services: LanguageServicesConfig::default(),
 //! };
 //!
 //! let config = Configuration {
-//!   language: vec![language],
+//!   language:        vec![language],
 //!   language_server: HashMap::new(),
 //! };
 //!
@@ -48,14 +54,19 @@
 //! # }
 //! ```
 
-#[cfg(feature = "runtime-loader")]
-use std::borrow::Cow;
+#[cfg(feature = "runtime-loader")] use std::borrow::Cow;
 
 #[cfg(feature = "runtime-loader")]
-use crate::syntax::resources::{QueryKind, SyntaxResources};
+use the_loader::grammar::{
+  get_language,
+  load_runtime_file,
+};
 
 #[cfg(feature = "runtime-loader")]
-use the_editor_loader::grammar::{get_language, load_runtime_file};
+use crate::syntax::resources::{
+  QueryKind,
+  SyntaxResources,
+};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RuntimeLoader;

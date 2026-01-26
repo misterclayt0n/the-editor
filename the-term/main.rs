@@ -11,6 +11,7 @@ mod dispatch;
 mod input;
 mod render;
 mod terminal;
+mod theme;
 
 use std::time::Duration;
 

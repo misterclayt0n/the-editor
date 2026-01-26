@@ -1,25 +1,43 @@
 //! Application context (state).
 
-use std::path::PathBuf;
+use std::{
+  path::{
+    Path,
+    PathBuf,
+  },
+  sync::Arc,
+};
 
 use eyre::Result;
 use ropey::Rope;
 use the_lib::{
-  document::DocumentId,
+  document::{
+    Document,
+    DocumentId,
+  },
   editor::Editor,
   position::Position,
   render::graphics::Rect,
+  syntax::{
+    HighlightCache,
+    Loader,
+    Syntax,
+  },
   view::ViewState,
 };
 
 /// Application state passed to all handlers.
 pub struct Ctx {
-  pub editor:       Editor,
-  pub view:         ViewState,
-  pub active_doc:   DocumentId,
-  pub file_path:    Option<PathBuf>,
-  pub should_quit:  bool,
-  pub needs_render: bool,
+  pub editor:          Editor,
+  pub view:            ViewState,
+  pub active_doc:      DocumentId,
+  pub file_path:       Option<PathBuf>,
+  pub should_quit:     bool,
+  pub needs_render:    bool,
+  /// Syntax loader for language detection and highlighting.
+  pub loader:          Option<Arc<Loader>>,
+  /// Cache for syntax highlights (reused across renders).
+  pub highlight_cache: HighlightCache,
 }
 
 impl Ctx {
@@ -35,6 +53,24 @@ impl Ctx {
     let mut editor = Editor::new();
     let doc_id = editor.create_document(text);
 
+    // Initialize syntax loader
+    let loader = match init_loader() {
+      Ok(loader) => Some(Arc::new(loader)),
+      Err(e) => {
+        eprintln!("Warning: syntax highlighting unavailable: {e}");
+        None
+      },
+    };
+
+    // Set up syntax on document if we have a loader and file path
+    if let (Some(loader), Some(path)) = (&loader, file_path) {
+      if let Some(doc) = editor.document_mut(doc_id) {
+        if let Err(e) = setup_syntax(doc, Path::new(path), loader) {
+          eprintln!("Warning: could not enable syntax for file: {e}");
+        }
+      }
+    }
+
     // Get terminal size for viewport
     let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
     let viewport = Rect::new(0, 0, width, height);
@@ -48,6 +84,8 @@ impl Ctx {
       file_path: file_path.map(PathBuf::from),
       should_quit: false,
       needs_render: true,
+      loader,
+      highlight_cache: HighlightCache::default(),
     })
   }
 
@@ -55,4 +93,39 @@ impl Ctx {
   pub fn resize(&mut self, width: u16, height: u16) {
     self.view.viewport = Rect::new(0, 0, width, height);
   }
+}
+
+/// Initialize the syntax loader with languages.toml config.
+fn init_loader() -> Result<Loader> {
+  use the_lib::syntax::{
+    config::Configuration,
+    runtime_loader::RuntimeLoader,
+  };
+  use the_loader::config::user_lang_config;
+
+  // Parse languages.toml (built-in + user overrides)
+  let config_value = user_lang_config()?;
+  let config: Configuration = config_value.try_into()?;
+
+  // Create loader with runtime resources (grammars from runtime/grammars/)
+  let loader = Loader::new(config, RuntimeLoader::new())?;
+
+  // Set up highlight scopes so Highlight indices map to our theme
+  loader.set_scopes(crate::theme::SCOPES.iter().map(|s| s.to_string()).collect());
+
+  Ok(loader)
+}
+
+/// Set up syntax highlighting for a document based on filename.
+fn setup_syntax(doc: &mut Document, path: &Path, loader: &Loader) -> Result<()> {
+  // Detect language from filename
+  let lang = loader
+    .language_for_filename(path)
+    .ok_or_else(|| eyre::eyre!("unknown language for {}", path.display()))?;
+
+  // Create syntax tree
+  let syntax = Syntax::new(doc.text().slice(..), lang, loader).map_err(|e| eyre::eyre!("{e}"))?;
+  doc.set_syntax(syntax);
+
+  Ok(())
 }

@@ -28,7 +28,7 @@ globset.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
-the-editor-loader = { path = "../../../the-editor/the-loader", optional = true }
+the-loader = { path = "../the-loader", optional = true }
 
 [dev-dependencies]
 divan = "0.1.21"
@@ -36,7 +36,7 @@ quickcheck = { default-features = false, version = "1" }
 
 [features]
 default = []
-runtime-loader = ["dep:the-editor-loader"]
+runtime-loader = ["dep:the-loader"]
 render = []
 
 

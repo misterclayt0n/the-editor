@@ -263,6 +263,7 @@ fn reached_target(target: WordMotionTarget, prev_ch: char, next_ch: char) -> boo
   }
 }
 
+#[must_use]
 pub fn move_horizontally(
   slice: RopeSlice,
   range: Range,
@@ -284,6 +285,7 @@ pub fn move_horizontally(
   new_range
 }
 
+#[must_use]
 pub fn move_vertically_visual<'a>(
   slice: RopeSlice<'a>,
   range: Range,
@@ -335,6 +337,7 @@ pub fn move_vertically_visual<'a>(
   new_range
 }
 
+#[must_use]
 pub fn move_vertically<'a>(
   slice: RopeSlice<'a>,
   range: Range,
@@ -442,54 +445,67 @@ fn word_move(slice: RopeSlice, range: Range, count: usize, target: WordMotionTar
   range
 }
 
+#[must_use]
 pub fn move_next_word_start(slice: RopeSlice, range: Range, count: usize) -> Range {
   word_move(slice, range, count, WordMotionTarget::NextWordStart)
 }
 
+#[must_use]
 pub fn move_next_word_end(slice: RopeSlice, range: Range, count: usize) -> Range {
   word_move(slice, range, count, WordMotionTarget::NextWordEnd)
 }
 
+#[must_use]
 pub fn move_prev_word_start(slice: RopeSlice, range: Range, count: usize) -> Range {
   word_move(slice, range, count, WordMotionTarget::PrevWordStart)
 }
 
+#[must_use]
 pub fn move_prev_word_end(slice: RopeSlice, range: Range, count: usize) -> Range {
   word_move(slice, range, count, WordMotionTarget::PrevWordEnd)
 }
 
+#[must_use]
 pub fn move_next_long_word_start(slice: RopeSlice, range: Range, count: usize) -> Range {
   word_move(slice, range, count, WordMotionTarget::NextLongWordStart)
 }
 
+#[must_use]
 pub fn move_next_long_word_end(slice: RopeSlice, range: Range, count: usize) -> Range {
   word_move(slice, range, count, WordMotionTarget::NextLongWordEnd)
 }
 
+#[must_use]
 pub fn move_prev_long_word_start(slice: RopeSlice, range: Range, count: usize) -> Range {
   word_move(slice, range, count, WordMotionTarget::PrevLongWordStart)
 }
 
+#[must_use]
 pub fn move_prev_long_word_end(slice: RopeSlice, range: Range, count: usize) -> Range {
   word_move(slice, range, count, WordMotionTarget::PrevLongWordEnd)
 }
 
+#[must_use]
 pub fn move_next_sub_word_start(slice: RopeSlice, range: Range, count: usize) -> Range {
   word_move(slice, range, count, WordMotionTarget::NextSubWordStart)
 }
 
+#[must_use]
 pub fn move_next_sub_word_end(slice: RopeSlice, range: Range, count: usize) -> Range {
   word_move(slice, range, count, WordMotionTarget::NextSubWordEnd)
 }
 
+#[must_use]
 pub fn move_prev_sub_word_start(slice: RopeSlice, range: Range, count: usize) -> Range {
   word_move(slice, range, count, WordMotionTarget::PrevSubWordStart)
 }
 
+#[must_use]
 pub fn move_prev_sub_word_end(slice: RopeSlice, range: Range, count: usize) -> Range {
   word_move(slice, range, count, WordMotionTarget::PrevSubWordEnd)
 }
 
+#[must_use]
 pub fn move_parent_node_end(
   syntax: &Syntax,
   text: RopeSlice,
@@ -565,6 +581,7 @@ fn find_parent_start<'tree>(node: &Node<'tree>) -> Option<Node<'tree>> {
   Some(node.into_owned())
 }
 
+#[must_use]
 pub fn goto_treesitter_object(
   slice: RopeSlice,
   range: Range,
@@ -628,6 +645,7 @@ pub fn goto_treesitter_object(
   last_range
 }
 
+#[must_use]
 pub fn move_prev_paragraph(
   slice: RopeSlice,
   range: Range,
@@ -675,6 +693,7 @@ pub fn move_prev_paragraph(
   Range::new(anchor, head)
 }
 
+#[must_use]
 pub fn move_next_paragraph(
   slice: RopeSlice,
   range: Range,

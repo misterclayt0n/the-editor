@@ -104,6 +104,23 @@ pub enum WordMotionTarget {
   PrevSubWordEnd,
 }
 
+impl WordMotionTarget {
+  /// Returns `true` if this motion moves backward (toward the start of the
+  /// document).
+  #[inline]
+  pub fn is_backward(self) -> bool {
+    matches!(
+      self,
+      Self::PrevWordStart
+        | Self::PrevWordEnd
+        | Self::PrevLongWordStart
+        | Self::PrevLongWordEnd
+        | Self::PrevSubWordStart
+        | Self::PrevSubWordEnd
+    )
+  }
+}
+
 pub trait CharHelpers {
   fn range_to_target(&mut self, target: WordMotionTarget, origin: Range) -> Range;
 }
@@ -114,15 +131,7 @@ impl CharHelpers for Chars<'_> {
   /// characters). Any other changes to the anchor should be handled by the
   /// calling code.
   fn range_to_target(&mut self, target: WordMotionTarget, origin: Range) -> Range {
-    let is_prev = matches!(
-      target,
-      WordMotionTarget::PrevWordStart
-        | WordMotionTarget::PrevLongWordStart
-        | WordMotionTarget::PrevSubWordStart
-        | WordMotionTarget::PrevWordEnd
-        | WordMotionTarget::PrevLongWordEnd
-        | WordMotionTarget::PrevSubWordEnd
-    );
+    let is_prev = target.is_backward();
 
     // Reverse the iterator if needed for the motion direction.
     if is_prev {
@@ -393,15 +402,7 @@ pub fn move_vertically<'a>(
 }
 
 fn word_move(slice: RopeSlice, range: Range, count: usize, target: WordMotionTarget) -> Range {
-  let is_prev = matches!(
-    target,
-    WordMotionTarget::PrevWordStart
-      | WordMotionTarget::PrevLongWordStart
-      | WordMotionTarget::PrevSubWordStart
-      | WordMotionTarget::PrevWordEnd
-      | WordMotionTarget::PrevLongWordEnd
-      | WordMotionTarget::PrevSubWordEnd
-  );
+  let is_prev = target.is_backward();
 
   // Special case early-out.
   if (is_prev && range.head == 0) || (!is_prev && range.head == slice.len_chars()) {

@@ -1,5 +1,9 @@
-use crate::{position::Position, syntax::Highlight};
 use the_core::grapheme::Grapheme;
+
+use crate::{
+  position::Position,
+  syntax::Highlight,
+};
 
 /// Source information for a formatted grapheme.
 #[derive(Debug, Clone, Copy)]
@@ -37,13 +41,13 @@ impl GraphemeSource {
 /// A grapheme that has been formatted and placed on a visual grid.
 #[derive(Debug, Clone)]
 pub struct FormattedGrapheme<'a> {
-  pub raw: Grapheme<'a>,
-  pub source: GraphemeSource,
+  pub raw:        Grapheme<'a>,
+  pub source:     GraphemeSource,
   pub visual_pos: Position,
   /// Document line at the start of the grapheme.
-  pub line_idx: usize,
+  pub line_idx:   usize,
   /// Document char position at the start of the grapheme.
-  pub char_idx: usize,
+  pub char_idx:   usize,
 }
 
 impl FormattedGrapheme<'_> {

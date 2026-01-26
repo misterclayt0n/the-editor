@@ -1,10 +1,16 @@
 use std::{
-  cmp::{max, min},
+  cmp::{
+    max,
+    min,
+  },
   str::FromStr,
 };
 
 use bitflags::bitflags;
-use serde::{Deserialize, Serialize};
+use serde::{
+  Deserialize,
+  Serialize,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -32,14 +38,14 @@ impl Default for CursorKind {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Margin {
   pub horizontal: u16,
-  pub vertical: u16,
+  pub vertical:   u16,
 }
 
 impl Margin {
   pub fn none() -> Self {
     Self {
       horizontal: 0,
-      vertical: 0,
+      vertical:   0,
     }
   }
 
@@ -47,7 +53,7 @@ impl Margin {
   pub const fn all(value: u16) -> Self {
     Self {
       horizontal: value,
-      vertical: value,
+      vertical:   value,
     }
   }
 
@@ -55,7 +61,7 @@ impl Margin {
   pub const fn horizontal(value: u16) -> Self {
     Self {
       horizontal: value,
-      vertical: 0,
+      vertical:   0,
     }
   }
 
@@ -63,7 +69,7 @@ impl Margin {
   pub const fn vertical(value: u16) -> Self {
     Self {
       horizontal: 0,
-      vertical: value,
+      vertical:   value,
     }
   }
 
@@ -83,9 +89,9 @@ impl Margin {
 /// the top left corner of the screen.
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Rect {
-  pub x: u16,
-  pub y: u16,
-  pub width: u16,
+  pub x:      u16,
+  pub y:      u16,
+  pub width:  u16,
   pub height: u16,
 }
 
@@ -181,9 +187,9 @@ impl Rect {
       Rect::default()
     } else {
       Rect {
-        x: self.x + margin.horizontal,
-        y: self.y + margin.vertical,
-        width: self.width - margin.width(),
+        x:      self.x + margin.horizontal,
+        y:      self.y + margin.vertical,
+        width:  self.width - margin.width(),
         height: self.height - margin.height(),
       }
     }
@@ -206,9 +212,9 @@ impl Rect {
     let x2 = max(self.x + self.width, other.x + other.width);
     let y2 = max(self.y + self.height, other.y + other.height);
     Rect {
-      x: x1,
-      y: y1,
-      width: x2 - x1,
+      x:      x1,
+      y:      y1,
+      width:  x2 - x1,
       height: y2 - y1,
     }
   }
@@ -230,9 +236,9 @@ impl Rect {
     let x2 = min(self.x + self.width, other.x + other.width);
     let y2 = min(self.y + self.height, other.y + other.height);
     Rect {
-      x: x1,
-      y: y1,
-      width: x2.saturating_sub(x1),
+      x:      x1,
+      y:      y1,
+      width:  x2.saturating_sub(x1),
       height: y2.saturating_sub(y1),
     }
   }
@@ -433,12 +439,12 @@ impl FromStr for Modifier {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Style {
-  pub fg: Option<Color>,
-  pub bg: Option<Color>,
+  pub fg:              Option<Color>,
+  pub bg:              Option<Color>,
   pub underline_color: Option<Color>,
   pub underline_style: Option<UnderlineStyle>,
-  pub add_modifier: Modifier,
-  pub sub_modifier: Modifier,
+  pub add_modifier:    Modifier,
+  pub sub_modifier:    Modifier,
 }
 
 impl Default for Style {
@@ -450,24 +456,24 @@ impl Default for Style {
 impl Style {
   pub const fn new() -> Self {
     Style {
-      fg: None,
-      bg: None,
+      fg:              None,
+      bg:              None,
       underline_color: None,
       underline_style: None,
-      add_modifier: Modifier::empty(),
-      sub_modifier: Modifier::empty(),
+      add_modifier:    Modifier::empty(),
+      sub_modifier:    Modifier::empty(),
     }
   }
 
   /// Returns a `Style` resetting all properties.
   pub const fn reset() -> Self {
     Self {
-      fg: Some(Color::Reset),
-      bg: Some(Color::Reset),
+      fg:              Some(Color::Reset),
+      bg:              Some(Color::Reset),
       underline_color: None,
       underline_style: None,
-      add_modifier: Modifier::empty(),
-      sub_modifier: Modifier::all(),
+      add_modifier:    Modifier::empty(),
+      sub_modifier:    Modifier::all(),
     }
   }
 

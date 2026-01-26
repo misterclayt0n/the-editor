@@ -1,37 +1,36 @@
-use unicode_segmentation::UnicodeSegmentation;
-
 use the_core::grapheme::GraphemeStr;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::syntax::Highlight;
 
 // TODO
 #[derive(Debug, Clone)]
 pub struct TextFormat {
-  pub soft_wrap: bool,
-  pub tab_width: u16,
-  pub max_wrap: u16,
-  pub max_indent_retain: u16,
+  pub soft_wrap:                bool,
+  pub tab_width:                u16,
+  pub max_wrap:                 u16,
+  pub max_indent_retain:        u16,
   /// Visual marker inserted at wrap boundaries.
   ///
   /// If you mutate this field directly, call `rebuild_wrap_indicator`.
-  pub wrap_indicator: Box<str>,
+  pub wrap_indicator:           Box<str>,
   /// Pre-tokenized graphemes for `wrap_indicator`.
   ///
   /// This is derived from `wrap_indicator` and should be kept in sync.
   pub wrap_indicator_graphemes: Vec<GraphemeStr<'static>>,
   pub wrap_indicator_highlight: Option<Highlight>,
-  pub viewport_width: u16,
-  pub soft_wrap_at_text_width: bool,
+  pub viewport_width:           u16,
+  pub soft_wrap_at_text_width:  bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TextFormatSignature {
-  soft_wrap: bool,
-  tab_width: u16,
-  max_wrap: u16,
-  max_indent_retain: u16,
-  wrap_indicator: Box<str>,
-  viewport_width: u16,
+  soft_wrap:               bool,
+  tab_width:               u16,
+  max_wrap:                u16,
+  max_indent_retain:       u16,
+  wrap_indicator:          Box<str>,
+  viewport_width:          u16,
   soft_wrap_at_text_width: bool,
 }
 
@@ -47,12 +46,12 @@ impl TextFormat {
 
   pub(crate) fn signature(&self) -> TextFormatSignature {
     TextFormatSignature {
-      soft_wrap: self.soft_wrap,
-      tab_width: self.tab_width,
-      max_wrap: self.max_wrap,
-      max_indent_retain: self.max_indent_retain,
-      wrap_indicator: self.wrap_indicator.clone(),
-      viewport_width: self.viewport_width,
+      soft_wrap:               self.soft_wrap,
+      tab_width:               self.tab_width,
+      max_wrap:                self.max_wrap,
+      max_indent_retain:       self.max_indent_retain,
+      wrap_indicator:          self.wrap_indicator.clone(),
+      viewport_width:          self.viewport_width,
       soft_wrap_at_text_width: self.soft_wrap_at_text_width,
     }
   }

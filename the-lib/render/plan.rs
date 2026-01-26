@@ -7,18 +7,23 @@
 //!
 //! ```no_run
 //! use ropey::Rope;
-//! use the_lib::document::{Document, DocumentId};
-//! use the_lib::render::{
-//!   build_plan,
-//!   NoHighlights,
-//!   RenderCache,
-//!   RenderStyles,
-//!   text_annotations::TextAnnotations,
-//!   text_format::TextFormat,
+//! use the_lib::{
+//!   document::{
+//!     Document,
+//!     DocumentId,
+//!   },
+//!   position::Position,
+//!   render::{
+//!     NoHighlights,
+//!     RenderCache,
+//!     RenderStyles,
+//!     build_plan,
+//!     graphics::Rect,
+//!     text_annotations::TextAnnotations,
+//!     text_format::TextFormat,
+//!   },
+//!   view::ViewState,
 //! };
-//! use the_lib::render::graphics::Rect;
-//! use the_lib::position::Position;
-//! use the_lib::view::ViewState;
 //!
 //! let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
 //! let doc = Document::new(id, Rope::from("hello"));
@@ -29,11 +34,21 @@
 //! let mut cache = RenderCache::default();
 //! let styles = RenderStyles::default();
 //!
-//! let plan = build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache, styles);
+//! let plan = build_plan(
+//!   &doc,
+//!   view,
+//!   &text_fmt,
+//!   &mut annotations,
+//!   &mut highlights,
+//!   &mut cache,
+//!   styles,
+//! );
 //! assert_eq!(plan.lines.len(), 1);
 //! ```
 
 use std::collections::BTreeMap;
+
+use the_core::grapheme::Grapheme;
 
 use crate::{
   Tendril,
@@ -42,8 +57,15 @@ use crate::{
   render::{
     FormattedGrapheme,
     GraphemeSource,
-    doc_formatter::{DocumentFormatter, prev_checkpoint},
-    graphics::{CursorKind, Rect, Style},
+    doc_formatter::{
+      DocumentFormatter,
+      prev_checkpoint,
+    },
+    graphics::{
+      CursorKind,
+      Rect,
+      Style,
+    },
     text_annotations::TextAnnotations,
     text_format::TextFormat,
     visual_position,
@@ -51,14 +73,13 @@ use crate::{
   syntax::Highlight,
   view::ViewState,
 };
-use the_core::grapheme::Grapheme;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderSpan {
-  pub col: u16,
-  pub cols: u16,
-  pub text: Tendril,
-  pub highlight: Option<Highlight>,
+  pub col:        u16,
+  pub cols:       u16,
+  pub text:       Tendril,
+  pub highlight:  Option<Highlight>,
   pub is_virtual: bool,
 }
 
@@ -70,13 +91,16 @@ impl RenderSpan {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderLine {
-  pub row: u16,
+  pub row:   u16,
   pub spans: Vec<RenderSpan>,
 }
 
 impl RenderLine {
   fn new(row: u16) -> Self {
-    Self { row, spans: Vec::new() }
+    Self {
+      row,
+      spans: Vec::new(),
+    }
   }
 
   fn push_span(&mut self, span: RenderSpan) {
@@ -105,30 +129,30 @@ impl RenderLine {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderCursor {
-  pub id: crate::selection::CursorId,
-  pub pos: Position,
-  pub kind: CursorKind,
+  pub id:    crate::selection::CursorId,
+  pub pos:   Position,
+  pub kind:  CursorKind,
   pub style: Style,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderSelection {
-  pub rect: Rect,
+  pub rect:  Rect,
   pub style: Style,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RenderStyles {
-  pub selection: Style,
-  pub cursor: Style,
+  pub selection:     Style,
+  pub cursor:        Style,
   pub active_cursor: Style,
 }
 
 impl Default for RenderStyles {
   fn default() -> Self {
     Self {
-      selection: Style::default(),
-      cursor: Style::default(),
+      selection:     Style::default(),
+      cursor:        Style::default(),
       active_cursor: Style::default(),
     }
   }
@@ -136,10 +160,10 @@ impl Default for RenderStyles {
 
 #[derive(Debug, Clone)]
 pub struct RenderPlan {
-  pub viewport: Rect,
-  pub scroll: Position,
-  pub lines: Vec<RenderLine>,
-  pub cursors: Vec<RenderCursor>,
+  pub viewport:   Rect,
+  pub scroll:     Position,
+  pub lines:      Vec<RenderLine>,
+  pub cursors:    Vec<RenderCursor>,
   pub selections: Vec<RenderSelection>,
 }
 
@@ -157,11 +181,11 @@ impl RenderPlan {
 
 #[derive(Debug, Default)]
 pub struct RenderCache {
-  text_version: Option<u64>,
+  text_version:           Option<u64>,
   annotations_generation: Option<u64>,
-  format_signature: Option<crate::render::text_format::TextFormatSignature>,
-  by_char: BTreeMap<usize, Position>,
-  by_pos: BTreeMap<Position, usize>,
+  format_signature:       Option<crate::render::text_format::TextFormatSignature>,
+  by_char:                BTreeMap<usize, Position>,
+  by_pos:                 BTreeMap<Position, usize>,
 }
 
 impl RenderCache {
@@ -230,7 +254,11 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
   let mut plan = RenderPlan::empty(view.viewport, view.scroll);
   let text = doc.text().slice(..);
 
-  cache.reset_if_stale(doc.version(), annotations.generation(), text_fmt.signature());
+  cache.reset_if_stale(
+    doc.version(),
+    annotations.generation(),
+    text_fmt.signature(),
+  );
 
   let row_start = view.scroll.row;
   let row_end = row_start + view.viewport.height as usize;
@@ -377,7 +405,9 @@ fn add_selections_and_cursor<'a>(
         visual_position::visual_pos_at_char(doc.text().slice(..), text_fmt, annotations, from);
       let end =
         visual_position::visual_pos_at_char(doc.text().slice(..), text_fmt, annotations, to);
-      let (Some(start), Some(end)) = (start, end) else { continue };
+      let (Some(start), Some(end)) = (start, end) else {
+        continue;
+      };
 
       push_selection_rects(plan, start, end, styles.selection);
     }
@@ -485,14 +515,22 @@ fn push_selection_rects(plan: &mut RenderPlan, start: Position, end: Position, s
 
 #[cfg(test)]
 mod tests {
-  use super::*;
   use ropey::Rope;
-
-  use crate::document::{Document, DocumentId};
-  use crate::render::SyntaxHighlightAdapter;
-  use crate::selection::{Range, Selection};
-  use crate::syntax::HighlightCache;
   use smallvec::smallvec;
+
+  use super::*;
+  use crate::{
+    document::{
+      Document,
+      DocumentId,
+    },
+    render::SyntaxHighlightAdapter,
+    selection::{
+      Range,
+      Selection,
+    },
+    syntax::HighlightCache,
+  };
 
   #[test]
   fn build_plan_simple_text() {
@@ -505,8 +543,15 @@ mod tests {
 
     let mut cache = RenderCache::default();
     let styles = RenderStyles::default();
-    let plan =
-      build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache, styles);
+    let plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
 
     assert_eq!(plan.lines.len(), 1);
     assert_eq!(plan.lines[0].text(), "abc");
@@ -523,8 +568,15 @@ mod tests {
 
     let mut cache = RenderCache::default();
     let styles = RenderStyles::default();
-    let plan =
-      build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache, styles);
+    let plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
 
     assert_eq!(plan.lines.len(), 1);
     assert_eq!(plan.lines[0].text(), "b");
@@ -544,8 +596,15 @@ mod tests {
     let mut cache = RenderCache::default();
     let styles = RenderStyles::default();
 
-    let plan =
-      build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache, styles);
+    let plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
 
     assert_eq!(plan.selections.len(), 2);
     assert_eq!(plan.selections[0].rect, Rect::new(2, 0, 6, 1));
@@ -579,11 +638,21 @@ mod tests {
     let mut cache = RenderCache::default();
     let styles = RenderStyles::default();
 
-    let plan =
-      build_plan(&doc, view, &text_fmt, &mut annotations, &mut highlights, &mut cache, styles);
+    let plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
 
-    let span_highlights: Vec<_> =
-      plan.lines[0].spans.iter().filter_map(|span| span.highlight).collect();
+    let span_highlights: Vec<_> = plan.lines[0]
+      .spans
+      .iter()
+      .filter_map(|span| span.highlight)
+      .collect();
     assert!(span_highlights.contains(&crate::syntax::Highlight::new(1)));
   }
 }

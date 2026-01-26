@@ -7,22 +7,24 @@
 //!
 //! ```no_run
 //! use ropey::Rope;
-//! use the_lib::render::{SyntaxHighlightAdapter, HighlightProvider};
-//! use the_lib::syntax::{HighlightCache, Loader, Syntax};
+//! use the_lib::{
+//!   render::{
+//!     HighlightProvider,
+//!     SyntaxHighlightAdapter,
+//!   },
+//!   syntax::{
+//!     HighlightCache,
+//!     Loader,
+//!     Syntax,
+//!   },
+//! };
 //!
 //! # fn demo(syntax: &Syntax, loader: &Loader) {
 //! let text = Rope::from("let x = 1;");
 //! let mut cache = HighlightCache::default();
 //! let line_range = 0..1;
-//! let mut adapter = SyntaxHighlightAdapter::new(
-//!   text.slice(..),
-//!   syntax,
-//!   loader,
-//!   &mut cache,
-//!   line_range,
-//!   1,
-//!   1,
-//! );
+//! let mut adapter =
+//!   SyntaxHighlightAdapter::new(text.slice(..), syntax, loader, &mut cache, line_range, 1, 1);
 //! let _ = adapter.highlight_at(0);
 //! # }
 //! ```
@@ -31,18 +33,22 @@ use std::ops::Range;
 
 use ropey::RopeSlice;
 
-use crate::syntax::{Highlight, HighlightCache, Loader, Syntax};
-
 use super::HighlightProvider;
+use crate::syntax::{
+  Highlight,
+  HighlightCache,
+  Loader,
+  Syntax,
+};
 
 /// A highlight adapter backed by `Syntax` and `HighlightCache`.
 ///
 /// The adapter expects `highlight_at` calls to be in non-decreasing order of
 /// character index for best performance.
 pub struct SyntaxHighlightAdapter<'a> {
-  text: RopeSlice<'a>,
+  text:       RopeSlice<'a>,
   highlights: Vec<(Highlight, Range<usize>)>,
-  idx: usize,
+  idx:        usize,
 }
 
 impl<'a> SyntaxHighlightAdapter<'a> {
@@ -74,11 +80,7 @@ impl<'a> SyntaxHighlightAdapter<'a> {
     Self::from_cache(text, cache, line_range)
   }
 
-  pub fn from_cache(
-    text: RopeSlice<'a>,
-    cache: &HighlightCache,
-    line_range: Range<usize>,
-  ) -> Self {
+  pub fn from_cache(text: RopeSlice<'a>, cache: &HighlightCache, line_range: Range<usize>) -> Self {
     let highlights = if line_range.start < line_range.end {
       cache.get_line_range(line_range.start, line_range.end - 1)
     } else {

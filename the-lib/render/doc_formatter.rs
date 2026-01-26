@@ -9,8 +9,11 @@
 //!
 //! ```no_run
 //! use ropey::Rope;
-//! use the_lib::render::{doc_formatter::DocumentFormatter, text_format::TextFormat};
-//! use the_lib::render::text_annotations::TextAnnotations;
+//! use the_lib::render::{
+//!   doc_formatter::DocumentFormatter,
+//!   text_annotations::TextAnnotations,
+//!   text_format::TextFormat,
+//! };
 //!
 //! let rope = Rope::from("hello\nworld");
 //! let text_fmt = TextFormat::default();
@@ -19,15 +22,27 @@
 //! let formatter =
 //!   DocumentFormatter::new_at_prev_checkpoint(rope.slice(..), &text_fmt, &mut annotations, 0);
 //! for g in formatter {
-//!   if g.source.is_eof() { break; }
+//!   if g.source.is_eof() {
+//!     break;
+//!   }
 //!   // render g.raw at g.visual_pos...
 //! }
 //! ```
-use std::{borrow::Cow, cmp::Ordering, mem::replace};
+use std::{
+  borrow::Cow,
+  cmp::Ordering,
+  mem::replace,
+};
 
 use ropey::RopeSlice;
-use the_core::grapheme::{Grapheme, GraphemeStr};
-use the_stdx::rope::{RopeGraphemes, RopeSliceExt};
+use the_core::grapheme::{
+  Grapheme,
+  GraphemeStr,
+};
+use the_stdx::rope::{
+  RopeGraphemes,
+  RopeSliceExt,
+};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
@@ -35,7 +50,10 @@ use crate::{
   render::{
     FormattedGrapheme,
     GraphemeSource,
-    text_annotations::{TextAnnotations, TextAnnotationsCursor},
+    text_annotations::{
+      TextAnnotations,
+      TextAnnotationsCursor,
+    },
     text_format::TextFormat,
   },
   syntax::Highlight,
@@ -61,7 +79,7 @@ pub(crate) fn prev_checkpoint(text: RopeSlice<'_>, char_idx: usize) -> (usize, u
 #[derive(Debug, Clone)]
 struct GraphemeWithSource<'a> {
   grapheme: Grapheme<'a>,
-  source: GraphemeSource,
+  source:   GraphemeSource,
 }
 
 impl<'a> GraphemeWithSource<'a> {
@@ -79,7 +97,7 @@ impl<'a> GraphemeWithSource<'a> {
   fn placeholder() -> Self {
     GraphemeWithSource {
       grapheme: Grapheme::Other { g: " ".into() },
-      source: GraphemeSource::Document { codepoints: 0 },
+      source:   GraphemeSource::Document { codepoints: 0 },
     }
   }
 
@@ -110,34 +128,34 @@ impl<'a> GraphemeWithSource<'a> {
 
 #[derive(Debug)]
 pub struct DocumentFormatter<'a, 't> {
-  text_fmt: &'a TextFormat,
+  text_fmt:    &'a TextFormat,
   annotations: TextAnnotationsCursor<'a, 't>,
 
   /// The visual position at the end of the last yielded word boundary.
   visual_pos: Position,
-  graphemes: RopeGraphemes<'a>,
+  graphemes:  RopeGraphemes<'a>,
   /// The character pos of the `graphemes` iter used for inserting annotations.
-  char_pos: usize,
+  char_pos:   usize,
   /// The line pos of the `graphemes` iter used for inserting annotations.
-  line_pos: usize,
-  exhausted: bool,
+  line_pos:   usize,
+  exhausted:  bool,
 
-  inline_annotation_buf: Vec<GraphemeStr<'a>>,
-  inline_annotation_idx: usize,
+  inline_annotation_buf:       Vec<GraphemeStr<'a>>,
+  inline_annotation_idx:       usize,
   inline_annotation_highlight: Option<Highlight>,
 
   // Softwrap specific.
   /// The indentation of the current line.
   /// Is set to `None` if the indentation level is not yet known
   /// because no non-whitespace graphemes have been encountered yet.
-  indent_level: Option<usize>,
+  indent_level:    Option<usize>,
   /// In case a long word needs to be split a single grapheme might need to be
   /// wrapped while the rest of the word stays on the same line.
   peeked_grapheme: Option<GraphemeWithSource<'a>>,
   /// A first-in first-out (fifo) buffer for the Graphemes of any given word.
-  word_buf: Vec<GraphemeWithSource<'a>>,
+  word_buf:        Vec<GraphemeWithSource<'a>>,
   /// The index of the next grapheme that will be yielded from the `word_buf`.
-  word_i: usize,
+  word_i:          usize,
 }
 
 impl<'a, 't> DocumentFormatter<'a, 't> {
@@ -185,8 +203,7 @@ impl<'a, 't> DocumentFormatter<'a, 't> {
       if self.inline_annotation_idx < self.inline_annotation_buf.len() {
         let idx = self.inline_annotation_idx;
         self.inline_annotation_idx += 1;
-        let grapheme =
-          replace(&mut self.inline_annotation_buf[idx], GraphemeStr::from(""));
+        let grapheme = replace(&mut self.inline_annotation_buf[idx], GraphemeStr::from(""));
         return Some((grapheme, self.inline_annotation_highlight));
       }
 
@@ -195,10 +212,9 @@ impl<'a, 't> DocumentFormatter<'a, 't> {
       self.inline_annotation_idx = 0;
       if let Some((annotation, highlight)) = self.annotations.next_inline_annotation_at(char_pos) {
         self.inline_annotation_highlight = highlight;
-        self.inline_annotation_buf =
-          UnicodeSegmentation::graphemes(&*annotation.text, true)
-            .map(GraphemeStr::from)
-            .collect();
+        self.inline_annotation_buf = UnicodeSegmentation::graphemes(&*annotation.text, true)
+          .map(GraphemeStr::from)
+          .collect();
       } else {
         return None;
       }
@@ -227,7 +243,7 @@ impl<'a, 't> DocumentFormatter<'a, 't> {
         // and correct position computations.
         return Some(GraphemeWithSource {
           grapheme: Grapheme::Other { g: " ".into() },
-          source: GraphemeSource::Document { codepoints: 0 },
+          source:   GraphemeSource::Document { codepoints: 0 },
         });
       };
 
@@ -391,11 +407,11 @@ impl<'a, 't> Iterator for DocumentFormatter<'a, 't> {
     };
 
     let grapheme = FormattedGrapheme {
-      raw: grapheme.grapheme,
-      source: grapheme.source,
+      raw:        grapheme.grapheme,
+      source:     grapheme.source,
       visual_pos: self.visual_pos,
-      line_idx: self.line_pos,
-      char_idx: self.char_pos,
+      line_idx:   self.line_pos,
+      char_idx:   self.char_pos,
     };
 
     self.char_pos += grapheme.doc_chars();
@@ -426,7 +442,7 @@ mod doc_formatter_tests {
   use ropey::Rope;
 
   use super::*;
-  use crate::{position::Position};
+  use crate::position::Position;
 
   #[test]
   fn grapheme_source_is_virtual() {
@@ -482,12 +498,9 @@ mod doc_formatter_tests {
   fn grapheme_with_source_whitespace() {
     let space =
       GraphemeWithSource::new(" ".into(), 0, 4, GraphemeSource::Document { codepoints: 1 });
-    let tab = GraphemeWithSource::new(
-      "\t".into(),
-      0,
-      4,
-      GraphemeSource::Document { codepoints: 1 },
-    );
+    let tab = GraphemeWithSource::new("\t".into(), 0, 4, GraphemeSource::Document {
+      codepoints: 1,
+    });
 
     assert!(space.is_whitespace());
     assert!(tab.is_whitespace());
@@ -495,12 +508,9 @@ mod doc_formatter_tests {
 
   #[test]
   fn grapheme_with_source_newline() {
-    let newline = GraphemeWithSource::new(
-      "\n".into(),
-      0,
-      4,
-      GraphemeSource::Document { codepoints: 1 },
-    );
+    let newline = GraphemeWithSource::new("\n".into(), 0, 4, GraphemeSource::Document {
+      codepoints: 1,
+    });
 
     assert!(newline.is_newline());
     assert!(!newline.is_eof());
@@ -509,11 +519,11 @@ mod doc_formatter_tests {
   #[test]
   fn formatted_grapheme_methods() {
     let formatted = FormattedGrapheme {
-      raw: Grapheme::Other { g: "test".into() },
-      source: GraphemeSource::Document { codepoints: 4 },
+      raw:        Grapheme::Other { g: "test".into() },
+      source:     GraphemeSource::Document { codepoints: 4 },
       visual_pos: Position { row: 1, col: 5 },
-      line_idx: 0,
-      char_idx: 0,
+      line_idx:   0,
+      char_idx:   0,
     };
 
     assert!(!formatted.is_virtual());
@@ -525,11 +535,11 @@ mod doc_formatter_tests {
   #[test]
   fn formatted_grapheme_virtual() {
     let virtual_formatted = FormattedGrapheme {
-      raw: Grapheme::Other { g: "virt".into() },
-      source: GraphemeSource::VirtualText { highlight: None },
+      raw:        Grapheme::Other { g: "virt".into() },
+      source:     GraphemeSource::VirtualText { highlight: None },
       visual_pos: Position { row: 0, col: 0 },
-      line_idx: 0,
-      char_idx: 0,
+      line_idx:   0,
+      char_idx:   0,
     };
 
     assert!(virtual_formatted.is_virtual());
@@ -766,14 +776,19 @@ mod doc_formatter_tests {
       }
     }
 
-    assert!(saw_indicator, "Expected wrap indicator grapheme to be emitted");
+    assert!(
+      saw_indicator,
+      "Expected wrap indicator grapheme to be emitted"
+    );
   }
 
   #[test]
   fn document_formatter_inline_annotation_inserts_virtual_text() {
     let rope = Rope::from_str("hello");
     let text_fmt = create_test_text_format();
-    let inline = [crate::render::text_annotations::InlineAnnotation::new(0, ">")];
+    let inline = [crate::render::text_annotations::InlineAnnotation::new(
+      0, ">",
+    )];
     let mut annotations = TextAnnotations::default();
     let _ = annotations.add_inline_annotations(&inline, None);
 

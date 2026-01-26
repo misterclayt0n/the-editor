@@ -1,4 +1,9 @@
-use std::{cmp::Ordering, collections::BTreeMap, fmt::Debug, ops::Range};
+use std::{
+  cmp::Ordering,
+  collections::BTreeMap,
+  fmt::Debug,
+  ops::Range,
+};
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -6,7 +11,10 @@ use crate::{
   Tendril,
   position::Position,
   render::FormattedGrapheme,
-  syntax::{Highlight, OverlayHighlights},
+  syntax::{
+    Highlight,
+    OverlayHighlights,
+  },
 };
 
 const NO_ANCHOR: usize = usize::MAX;
@@ -16,7 +24,7 @@ const NO_ANCHOR: usize = usize::MAX;
 /// `char_idx`.
 #[derive(Debug, Clone)]
 pub struct InlineAnnotation {
-  pub text: Tendril,
+  pub text:     Tendril,
   pub char_idx: usize,
 }
 
@@ -101,8 +109,8 @@ impl Overlay {
 ///
 /// The core of this trait is the `insert_virtual_lines` function. It is called
 /// at the end of every visual line and allows the `LineAnnotation` to insert
-/// empty virtual lines. Apart from that, the `LineAnnotation` trait has multiple
-/// methods that allow it to track anchors in the document.
+/// empty virtual lines. Apart from that, the `LineAnnotation` trait has
+/// multiple methods that allow it to track anchors in the document.
 ///
 /// When a new traversal of a document starts `reset_pos` is called. Afterwards
 /// the other functions are called with indices that are larger than the one
@@ -161,7 +169,8 @@ pub trait LineAnnotation {
     NO_ANCHOR
   }
 
-  /// This function is called at the end of a visual line to insert virtual text.
+  /// This function is called at the end of a visual line to insert virtual
+  /// text.
   ///
   /// # Returns
   ///
@@ -174,8 +183,8 @@ pub trait LineAnnotation {
   /// offset from other `LineAnnotation`s. This allows inline annotations to
   /// consider the height of the text and "align" two different documents (like
   /// for side by side diffs). These annotations that want to "align" two
-  /// documents should therefore be added last so that other virtual text is also
-  /// considered while aligning.
+  /// documents should therefore be added last so that other virtual text is
+  /// also considered while aligning.
   fn insert_virtual_lines(
     &mut self,
     line_end_char_idx: usize,
@@ -187,14 +196,14 @@ pub trait LineAnnotation {
 #[derive(Debug)]
 struct Layer<'a, A, M> {
   annotations: &'a [A],
-  metadata: M,
+  metadata:    M,
 }
 
 impl<A, M: Clone> Clone for Layer<'_, A, M> {
   fn clone(&self) -> Self {
     Layer {
       annotations: self.annotations,
-      metadata: self.metadata.clone(),
+      metadata:    self.metadata.clone(),
     }
   }
 }
@@ -211,16 +220,16 @@ impl<'a, A, M> From<(&'a [A], M)> for Layer<'a, A, M> {
 #[derive(Debug)]
 struct LayerCursor<'a, A, M> {
   annotations: &'a [A],
-  index: usize,
-  metadata: M,
+  index:       usize,
+  metadata:    M,
 }
 
 impl<'a, A, M: Clone> From<&Layer<'a, A, M>> for LayerCursor<'a, A, M> {
   fn from(layer: &Layer<'a, A, M>) -> Self {
     LayerCursor {
       annotations: layer.annotations,
-      index: 0,
-      metadata: layer.metadata.clone(),
+      index:       0,
+      metadata:    layer.metadata.clone(),
     }
   }
 }
@@ -248,10 +257,10 @@ impl<'a, A, M> LayerCursor<'a, A, M> {
 /// Also commonly called virtual text.
 #[derive(Default)]
 pub struct TextAnnotations<'a> {
-  generation: u64,
+  generation:         u64,
   inline_annotations: Vec<Layer<'a, InlineAnnotation, Option<Highlight>>>,
-  overlays: Vec<Layer<'a, Overlay, Option<Highlight>>>,
-  line_annotations: Vec<Box<dyn LineAnnotation + 'a>>,
+  overlays:           Vec<Layer<'a, Overlay, Option<Highlight>>>,
+  line_annotations:   Vec<Box<dyn LineAnnotation + 'a>>,
 }
 
 impl Debug for TextAnnotations<'_> {
@@ -298,7 +307,9 @@ impl<'a> TextAnnotations<'a> {
     let mut highlights_by_char = BTreeMap::new();
 
     for layer in &self.overlays {
-      let Some(highlight) = layer.metadata.clone() else { continue };
+      let Some(highlight) = layer.metadata.clone() else {
+        continue;
+      };
       for overlay in layer.annotations.iter() {
         if overlay.char_idx < char_range.start {
           continue;
@@ -402,10 +413,10 @@ impl<'a> TextAnnotations<'a> {
 
 /// Cursor state for traversing a set of text annotations.
 pub struct TextAnnotationsCursor<'a, 't> {
-  inline: Vec<LayerCursor<'a, InlineAnnotation, Option<Highlight>>>,
-  overlays: Vec<LayerCursor<'a, Overlay, Option<Highlight>>>,
+  inline:           Vec<LayerCursor<'a, InlineAnnotation, Option<Highlight>>>,
+  overlays:         Vec<LayerCursor<'a, Overlay, Option<Highlight>>>,
   line_annotations: &'t mut [Box<dyn LineAnnotation + 'a>],
-  next_anchors: Vec<usize>,
+  next_anchors:     Vec<usize>,
 }
 
 impl Debug for TextAnnotationsCursor<'_, '_> {
@@ -442,10 +453,7 @@ impl<'a, 't> TextAnnotationsCursor<'a, 't> {
     })
   }
 
-  pub(crate) fn overlay_at(
-    &mut self,
-    char_idx: usize,
-  ) -> Option<(&'a Overlay, Option<Highlight>)> {
+  pub(crate) fn overlay_at(&mut self, char_idx: usize) -> Option<(&'a Overlay, Option<Highlight>)> {
     let mut overlay = None;
     for layer in &mut self.overlays {
       while let Some(new_overlay) = layer.consume(char_idx, |annot| annot.char_idx) {

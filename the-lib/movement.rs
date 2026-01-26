@@ -350,11 +350,6 @@ pub fn move_vertically<'a>(
     .old_visual_pos
     .map_or((visual_pos.row as u32, visual_pos.col as u32), |pos| pos);
   new_row = new_row.max(visual_pos.row as u32);
-  let line_idx = if pos < slice.len_chars() {
-    slice.char_to_line(pos)
-  } else {
-    slice.len_lines().saturating_sub(1)
-  };
 
   // Compute the new position.
   let mut new_line_idx = match dir {

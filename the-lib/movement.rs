@@ -299,6 +299,13 @@ fn reached_target(target: WordMotionTarget, prev_ch: char, next_ch: char) -> boo
   }
 }
 
+/// Move the cursor horizontally by `count` graphemes.
+///
+/// # Note
+///
+/// The `TextFormat` and `TextAnnotations` parameters are unused but kept
+/// for API consistency with [`move_vertically`] and [`move_vertically_visual`].
+/// This allows callers to use a uniform signature for all movement functions.
 #[must_use]
 pub fn move_horizontally(
   slice: RopeSlice,
@@ -306,8 +313,8 @@ pub fn move_horizontally(
   dir: Direction,
   count: usize,
   behavior: Movement,
-  _: &TextFormat,
-  _: &mut TextAnnotations,
+  _text_fmt: &TextFormat,
+  _annotations: &mut TextAnnotations,
 ) -> Range {
   let pos = range.cursor(slice);
 

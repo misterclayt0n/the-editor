@@ -1,23 +1,59 @@
-//! Movement direction for cursor and selection operations.
+//! Cursor and selection movement primitives.
 //!
-//! This module provides the [`Direction`] enum used throughout the library
-//! to indicate the direction of movement or selection extension.
+//! This module provides pure functions for computing new cursor positions
+//! and selection ranges. All functions are stateless and operate on
+//! [`RopeSlice`] text with [`Range`] or [`Selection`] inputs.
 //!
-//! # Usage
+//! # Core Types
+//!
+//! - [`Direction`] - Forward (toward EOF) or backward (toward start)
+//! - [`Movement`] - Whether to move or extend the selection
+//! - [`WordMotionTarget`] - Target for word-based motions (word, WORD, subword)
+//!
+//! # Movement Functions
+//!
+//! ## Character/Line Movement
+//! - [`move_horizontally`] - Move left/right by graphemes
+//! - [`move_vertically`] - Move up/down by lines
+//! - [`move_vertically_visual`] - Move up/down by visual lines (soft-wrap
+//!   aware)
+//!
+//! ## Word Movement
+//! - [`move_next_word_start`], [`move_next_word_end`] - Move to next word
+//! - [`move_prev_word_start`], [`move_prev_word_end`] - Move to previous word
+//! - Long word variants (`move_*_long_word_*`) - WORD motion
+//!   (whitespace-delimited)
+//! - Sub word variants (`move_*_sub_word_*`) - camelCase/snake_case aware
+//!
+//! ## Structural Movement
+//! - [`move_parent_node_end`] - Move to syntax tree node boundaries
+//! - [`goto_treesitter_object`] - Jump to tree-sitter text objects
+//! - [`move_prev_paragraph`], [`move_next_paragraph`] - Paragraph navigation
+//!
+//! # Example
 //!
 //! ```ignore
-//! use the_lib::movement::Direction;
+//! use the_lib::movement::{Direction, Movement, move_horizontally};
 //! use the_lib::selection::Range;
+//! use the_lib::render::text_format::TextFormat;
+//! use the_lib::render::text_annotations::TextAnnotations;
 //!
-//! let range = Range::new(5, 10);
+//! let text = ropey::Rope::from("hello world");
+//! let range = Range::point(0);
+//! let fmt = TextFormat::default();
+//! let mut ann = TextAnnotations::default();
 //!
-//! // Check selection direction
-//! assert_eq!(range.direction(), Direction::Forward);
-//!
-//! // Create a range with specific direction
-//! let backward = range.with_direction(Direction::Backward);
-//! assert_eq!(backward.anchor, 10);
-//! assert_eq!(backward.head, 5);
+//! // Move cursor 5 characters forward
+//! let new_range = move_horizontally(
+//!     text.slice(..),
+//!     range,
+//!     Direction::Forward,
+//!     5,
+//!     Movement::Move,
+//!     &fmt,
+//!     &mut ann,
+//! );
+//! assert_eq!(new_range.cursor(text.slice(..)), 5);
 //! ```
 use std::{
   borrow::Cow,

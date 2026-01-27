@@ -4,6 +4,7 @@ use smartstring::{
 };
 
 pub mod auto_pairs;
+pub mod app;
 pub mod case_convention;
 pub mod command_line;
 pub mod comment;

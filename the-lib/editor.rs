@@ -1,69 +1,103 @@
-//! Minimal editor/session state for the-lib.
+//! Minimal editor/surface state for the-lib.
 //!
-//! This is intentionally small: it owns documents and ids and provides
-//! helpers to create and access documents. IO, UI, and dispatch logic live
-//! outside of the-lib.
+//! This is intentionally small: it owns a single document plus view/render
+//! state. IO, UI, and dispatch logic live outside of the-lib.
 
-use std::{collections::BTreeMap, num::NonZeroUsize};
+use std::num::NonZeroUsize;
 
-use ropey::Rope;
+use crate::{
+  document::Document,
+  render::plan::RenderCache,
+  view::ViewState,
+};
 
-use crate::document::{Document, DocumentId};
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct EditorId(NonZeroUsize);
+
+impl EditorId {
+  pub const fn new(id: NonZeroUsize) -> Self {
+    Self(id)
+  }
+
+  pub const fn get(self) -> NonZeroUsize {
+    self.0
+  }
+}
+
+impl From<NonZeroUsize> for EditorId {
+  fn from(value: NonZeroUsize) -> Self {
+    Self::new(value)
+  }
+}
 
 #[derive(Debug)]
 pub struct Editor {
-  next_document_id: NonZeroUsize,
-  documents: BTreeMap<DocumentId, Document>,
+  id:           EditorId,
+  document:     Document,
+  view:         ViewState,
+  render_cache: RenderCache,
 }
 
 impl Editor {
-  pub fn new() -> Self {
+  pub fn new(id: EditorId, document: Document, view: ViewState) -> Self {
     Self {
-      next_document_id: NonZeroUsize::new(1).unwrap(),
-      documents: BTreeMap::new(),
+      id,
+      document,
+      view,
+      render_cache: RenderCache::default(),
     }
   }
 
-  pub fn document(&self, id: DocumentId) -> Option<&Document> {
-    self.documents.get(&id)
+  pub fn id(&self) -> EditorId {
+    self.id
   }
 
-  pub fn document_mut(&mut self, id: DocumentId) -> Option<&mut Document> {
-    self.documents.get_mut(&id)
+  pub fn document(&self) -> &Document {
+    &self.document
   }
 
-  pub fn documents(&self) -> impl Iterator<Item = &Document> {
-    self.documents.values()
+  pub fn document_mut(&mut self) -> &mut Document {
+    &mut self.document
   }
 
-  pub fn documents_mut(&mut self) -> impl Iterator<Item = &mut Document> {
-    self.documents.values_mut()
+  pub fn view(&self) -> ViewState {
+    self.view
   }
 
-  pub fn create_document(&mut self, text: Rope) -> DocumentId {
-    let id = DocumentId::new(self.next_document_id);
-    let next = self.next_document_id.get().saturating_add(1);
-    self.next_document_id = NonZeroUsize::new(next).unwrap_or(self.next_document_id);
-    self.documents.insert(id, Document::new(id, text));
-    id
+  pub fn view_mut(&mut self) -> &mut ViewState {
+    &mut self.view
   }
 
-  pub fn remove_document(&mut self, id: DocumentId) -> Option<Document> {
-    self.documents.remove(&id)
+  pub fn render_cache(&self) -> &RenderCache {
+    &self.render_cache
+  }
+
+  pub fn render_cache_mut(&mut self) -> &mut RenderCache {
+    &mut self.render_cache
   }
 }
 
 #[cfg(test)]
 mod tests {
+  use std::num::NonZeroUsize;
+
+  use ropey::Rope;
+
   use super::*;
+  use crate::document::DocumentId;
+  use crate::position::Position;
+  use crate::render::graphics::Rect;
 
   #[test]
-  fn create_and_remove_document() {
-    let mut editor = Editor::new();
-    let id = editor.create_document(Rope::from("hello"));
-    assert!(editor.document(id).is_some());
-    let removed = editor.remove_document(id);
-    assert!(removed.is_some());
-    assert!(editor.document(id).is_none());
+  fn editor_owns_document_and_view() {
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, Rope::from("hello"));
+    let view = ViewState::new(Rect::new(0, 0, 80, 24), Position::new(0, 0));
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+
+    let editor = Editor::new(editor_id, doc, view);
+    assert_eq!(editor.id(), editor_id);
+    assert_eq!(editor.document().id(), doc_id);
+    assert_eq!(editor.view().viewport, Rect::new(0, 0, 80, 24));
   }
 }

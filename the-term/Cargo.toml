@@ -12,6 +12,9 @@ path = "main.rs"
 the-lib      = { path = "../the-lib", features = ["runtime-loader"] }
 the-loader   = { path = "../the-loader" }
 the-default = { path = "../the-default" }
+the-config = { path = "../the-config" }
+the-dispatch = { path = "../the-dispatch", features = ["editor-hooks"] }
+clap.workspace = true
 crossterm.workspace = true
 eyre.workspace      = true
 ropey.workspace     = true

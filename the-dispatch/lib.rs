@@ -160,6 +160,8 @@
 //! ```
 
 mod define;
+#[cfg(feature = "editor-hooks")]
+pub mod editor;
 mod plugin;
 mod registry;
 

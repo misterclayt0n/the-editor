@@ -21,5 +21,6 @@ pub use keymap::{
 pub use plugin::{
   DefaultContext,
   DefaultPlugin,
+  handle_command,
   handle_key,
 };

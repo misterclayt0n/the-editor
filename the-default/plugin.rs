@@ -88,6 +88,14 @@ where
   }
 }
 
+/// Dispatch a command directly through the plugin.
+pub fn handle_command<P, Ctx>(plugin: &mut P, ctx: &mut Ctx, command: Command)
+where
+  P: DispatchPlugin<Ctx, Command>,
+{
+  let _ = plugin.dispatch(ctx, command);
+}
+
 fn insert_char<Ctx: DefaultContext>(ctx: &mut Ctx, c: char) {
   let doc = ctx.editor().document_mut();
   let text = doc.text();

@@ -9,12 +9,14 @@
 mod ctx;
 mod dispatch;
 mod input;
+mod config_cli;
 mod render;
 mod terminal;
 mod theme;
 
 use std::time::Duration;
 
+use clap::Parser;
 use crossterm::event::{
   self,
   Event,
@@ -26,14 +28,40 @@ use crate::{
   dispatch::build_dispatch,
 };
 
+#[derive(Debug, Parser)]
+#[command(name = "the-editor")]
+#[command(about = "Proof-of-life terminal client for the-editor")]
+struct Cli {
+  /// Install a default config crate in ~/.config/the-editor
+  #[arg(long)]
+  install_config: bool,
+
+  /// Build the editor using ~/.config/the-editor if present
+  #[arg(long)]
+  build_config: bool,
+
+  /// Path to file to open
+  file: Option<String>,
+}
+
 fn main() -> Result<()> {
-  // Parse command line arguments
-  let args: Vec<String> = std::env::args().collect();
-  let file_path = args.get(1).map(|s| s.as_str());
+  let cli = Cli::parse();
+  if cli.install_config {
+    config_cli::install_config_template()?;
+    return Ok(());
+  }
+
+  if cli.build_config {
+    config_cli::build_config_binary()?;
+    return Ok(());
+  }
+
+  let file_path = cli.file.as_deref();
 
   // Initialize application state
   let mut ctx = Ctx::new(file_path)?;
-  let mut dispatch = build_dispatch();
+  let mut dispatch = build_dispatch::<Ctx>();
+  let mut key_pipeline = the_config::build_key_pipeline::<Ctx>();
   let mut terminal = terminal::Terminal::new()?;
 
   terminal.enter_raw_mode()?;
@@ -50,7 +78,7 @@ fn main() -> Result<()> {
     if event::poll(Duration::from_millis(100))? {
       match event::read()? {
         Event::Key(key) => {
-          input::handle_key(&mut dispatch, &mut ctx, key);
+          input::handle_key(&mut dispatch, &mut key_pipeline, &mut ctx, key);
         },
         Event::Resize(w, h) => {
           ctx.resize(w, h);

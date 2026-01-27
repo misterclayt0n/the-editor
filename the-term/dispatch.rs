@@ -1,5 +1,11 @@
 //! Dispatch wiring for the terminal client.
 
+use the_default::{
+  Command,
+  DefaultContext,
+};
+use the_dispatch::DispatchPlugin;
+
 pub use the_default::{
   Key,
   KeyEvent,
@@ -7,12 +13,9 @@ pub use the_default::{
   handle_key,
 };
 
-use the_default::DefaultPlugin;
-
-/// Concrete dispatch type for the application.
-pub type AppDispatch = DefaultPlugin;
-
-/// Build the default dispatch plugin.
-pub fn build_dispatch() -> AppDispatch {
-  DefaultPlugin::new()
+pub fn build_dispatch<Ctx>() -> impl DispatchPlugin<Ctx, Command>
+where
+  Ctx: DefaultContext,
+{
+  the_config::build_dispatch::<Ctx>()
 }

@@ -1,0 +1,16 @@
+[package]
+name = "the-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+the-default = { path = "../the-default" }
+the-dispatch = { path = "../the-dispatch", features = ["editor-hooks"] }
+the-lib = { path = "../the-lib" }
+
+[lints]
+workspace = true

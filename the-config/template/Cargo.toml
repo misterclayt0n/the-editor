@@ -1,0 +1,12 @@
+[package]
+name = "the-config"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+the-default = { path = "{{THE_EDITOR_REPO}}/the-default" }
+the-dispatch = { path = "{{THE_EDITOR_REPO}}/the-dispatch", features = ["editor-hooks"] }
+the-lib = { path = "{{THE_EDITOR_REPO}}/the-lib" }

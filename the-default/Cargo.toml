@@ -9,5 +9,4 @@ path = "lib.rs"
 
 [dependencies]
 the-lib = { path = "../the-lib" }
-the-dispatch = { path = "../the-dispatch" }
-bitflags = { workspace = true }
+the-dispatch = { path = "../the-dispatch", features = ["editor-hooks"] }

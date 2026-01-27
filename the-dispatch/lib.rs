@@ -160,9 +160,14 @@
 //! ```
 
 mod define;
+mod plugin;
 mod registry;
 
 pub use paste;
+pub use plugin::{
+  DispatchPlugin,
+  DispatchResult,
+};
 pub use registry::{
   DispatchRegistry,
   DynHandler,

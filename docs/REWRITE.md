@@ -200,6 +200,193 @@ Dispatch::new()
   });
 ```
 
+---
+
+# Client Architecture (macOS) + Renderer Plan
+
+This section ties the current architecture to a Ghostty-style runtime and
+documents the path from **the-term (proof of life)** to the **native macOS client**.
+
+## Goals
+
+- **Native-first macOS** (SwiftUI + Metal).
+- **Core owns rendering** (clients are dumb).
+- **Single shared data model** across clients (the-lib state machine).
+- **FFI boundary is narrow and stable**.
+
+## Ghostty Lessons (Applied)
+
+Ghostty has:
+- a **core runtime** that owns rendering and its render loop,
+- **backend-specific renderers** (Metal/OpenGL/WebGL),
+- a **platform host** that owns UI chrome (tabs, palette, etc),
+- a **shared render state** guarded by a mutex,
+- a **renderer thread** awakened by mailbox messages.
+
+We adopt the same shape:
+
+1) the-lib = **core state machine + render plan**
+2) the-ffi = **surface/app API for SwiftUI**
+3) the-client (SwiftUI) = **host UI + input events**
+4) renderer = **Metal backend living inside core**
+
+## Current Architecture (as of now)
+
+### Core crates
+
+- **the-core**: text, unicode, grapheme, rope utilities
+- **the-lib**:
+  - document/selection/transaction/history
+  - syntax + highlighting
+  - render::plan + render::doc_formatter
+  - ViewState + RenderCache
+- **the-ffi**: Rust -> Swift bridge (existing)
+- **the-term**: minimal client proving the model works
+
+### Current crates
+
+- **the-dispatch**: dynamic overridable dispatch (behavior layer)
+
+### Future crates
+
+- **the-client-macos**: SwiftUI host + Metal view
+
+## Responsibility Split (Core vs Client)
+
+### Core (the-lib)
+- Document/Editor state
+- Transactions + undo/redo
+- Selection + cursor mapping
+- Syntax + highlight cache
+- Render plan (display list)
+- ViewState + RenderCache
+- Renderer backend + render loop (Metal)
+
+### Client (SwiftUI)
+- Windowing, tabs, palette UI
+- Input events + IME handling
+- Passing surface/view handles to core
+- Presenting overlays (search, palette, tabs)
+- Setting theme + config values
+
+## Recommended Approach (Ghostty-style)
+
+### Option A (Recommended)
+**Core owns render loop + Metal backend.**
+
+This keeps clients dumb and aligns with the design goals. The SwiftUI app
+hosts a view and forwards events. Core draws into a Metal layer.
+
+### Option B (Not preferred)
+**Client renders a display list in Swift.**
+
+This moves renderer complexity into each client and conflicts with the
+"render logic lives in the-lib" rule.
+
+## Proposed Data Flow (macOS)
+
+1) SwiftUI creates a SurfaceView (NSView or MTKView).
+2) The view pointer is passed via the-ffi to the core.
+3) Core owns:
+   - App
+   - Surface (Editor + Document + ViewState + RenderCache)
+4) Client sends input + resize + scale updates to core.
+5) Core updates state → render plan → render backend draws.
+6) Render loop is internal (thread or CVDisplayLink-style tick).
+
+```
+SwiftUI (SurfaceView)
+   ↓ input/resize/scale
+the-ffi (C ABI)
+   ↓
+the-lib (App/Surface/Editor)
+   → transactions/history
+   → render::plan (display list)
+   → renderer::metal (draw)
+```
+
+## UI Components (Tabs / Palette / Splits)
+
+Follow Ghostty:
+
+- Tabs and palette UI are **client-owned**.
+- Core only exposes **commands** and **actions**.
+- The client renders command palette UI and sends action events to core.
+
+This keeps core deterministic and avoids platform-specific UI logic in Rust.
+
+## What We Need to Add (Increment the-lib)
+
+### 1) App + Surface Core Types
+
+Introduce a stable "Surface" API:
+- owns Editor + Document + ViewState + RenderCache
+- can be created/destroyed via FFI
+- has methods for input, resize, set scale, set theme
+
+### 2) Renderer Thread (Ghostty model)
+
+Add a render loop inside core:
+- use mailbox/wakeup system
+- coalesce redraws
+- drive cursor blink and animations
+- optionally sync to vsync
+
+### 3) Metal Backend (Rust)
+
+Implement a simple renderer that consumes render::plan:
+- rects (backgrounds, selections)
+- glyph runs (text)
+- cursor (block/line/underline)
+
+### 4) FFI Surface API
+
+Expose minimal surface functions (mirroring Ghostty):
+- create_app / destroy_app
+- create_surface / destroy_surface
+- set_platform_view (nsview)
+- set_content_scale / set_size
+- key/mouse events
+- notify render needed
+
+## Roadmap
+
+### Phase 1 — Core Surface + Render Loop
+- Define `App` + `Surface` in the-lib
+- Add render loop thread + mailbox
+- Add FFI entry points
+
+### Phase 2 — Metal Backend MVP
+- Implement rect + glyph rendering
+- Connect render::plan output to Metal draw
+- Verify with the-term
+
+### Phase 3 — SwiftUI Host
+- SwiftUI SurfaceView (like Ghostty)
+- Pass NSView/scale/size to core
+- Forward input events
+
+### Phase 4 — UI Chrome
+- Tabs, palette, split UI (SwiftUI)
+- Connect to core action system (the-dispatch)
+
+## Why This Fits Your Current Architecture
+
+- the-lib already provides **pure, deterministic layout** (`render::plan`)
+- the selection/cursor model is stable
+- syntax highlighting cache can feed render::plan
+- the-term proves end-to-end pipeline can work
+- Ghostty proves Metal-in-core + SwiftUI host is production-viable
+
+---
+
+### Summary
+
+The path forward is **Ghostty-style**:
+Core owns rendering + render loop, client hosts the surface and handles UI.
+This keeps the-lib authoritative and keeps clients dumb, while still allowing
+native SwiftUI UI for tabs, palettes, and window management.
+
 There is **no executor**.
 The “flow” exists only because handlers explicitly invoke each other.
 

@@ -74,7 +74,6 @@ mod handlers {
       text_annotations::TextAnnotations,
       text_format::TextFormat,
     },
-    selection::Selection,
     transaction::Transaction,
   };
 
@@ -82,7 +81,7 @@ mod handlers {
 
   /// Insert a character at all cursor positions.
   pub fn insert_char(ctx: &mut Ctx, c: char) {
-    let doc = ctx.editor.document_mut(ctx.active_doc).unwrap();
+    let doc = ctx.editor.document_mut();
     let text = doc.text();
 
     // Build changes for all cursors
@@ -102,7 +101,7 @@ mod handlers {
 
   /// Delete character before each cursor (backspace).
   pub fn delete_char(ctx: &mut Ctx, _: ()) {
-    let doc = ctx.editor.document_mut(ctx.active_doc).unwrap();
+    let doc = ctx.editor.document_mut();
     let text = doc.text();
 
     // Build changes for all cursors
@@ -128,16 +127,15 @@ mod handlers {
 
   /// Move all cursors in the given direction using the_lib movement functions.
   pub fn move_cursor(ctx: &mut Ctx, dir: Direction) {
-    let doc = ctx.editor.document_mut(ctx.active_doc).unwrap();
-    let slice = doc.text().slice(..);
+    let doc = ctx.editor.document_mut();
     let text_fmt = TextFormat::default();
-    let mut annotations = TextAnnotations::default();
 
-    // Use Selection::transform to apply movement to each range
-    let selection = doc.selection().clone().transform(|range| {
-      match dir {
-        Direction::Left => {
-          move_horizontally(
+    let selection = {
+      let slice = doc.text().slice(..);
+      let mut annotations = TextAnnotations::default();
+      doc.selection().clone().transform(|range| {
+        match dir {
+          Direction::Left => move_horizontally(
             slice,
             range,
             MoveDir::Backward,
@@ -145,10 +143,8 @@ mod handlers {
             Movement::Move,
             &text_fmt,
             &mut annotations,
-          )
-        },
-        Direction::Right => {
-          move_horizontally(
+          ),
+          Direction::Right => move_horizontally(
             slice,
             range,
             MoveDir::Forward,
@@ -156,10 +152,8 @@ mod handlers {
             Movement::Move,
             &text_fmt,
             &mut annotations,
-          )
-        },
-        Direction::Up => {
-          move_vertically(
+          ),
+          Direction::Up => move_vertically(
             slice,
             range,
             MoveDir::Backward,
@@ -167,10 +161,8 @@ mod handlers {
             Movement::Move,
             &text_fmt,
             &mut annotations,
-          )
-        },
-        Direction::Down => {
-          move_vertically(
+          ),
+          Direction::Down => move_vertically(
             slice,
             range,
             MoveDir::Forward,
@@ -178,13 +170,11 @@ mod handlers {
             Movement::Move,
             &text_fmt,
             &mut annotations,
-          )
-        },
-      }
-    });
+          ),
+        }
+      })
+    };
 
-    // Drop annotations before mutably borrowing doc for set_selection
-    drop(annotations);
     let _ = doc.set_selection(selection);
   }
 
@@ -192,19 +182,16 @@ mod handlers {
   ///
   /// This creates a new cursor on the line above/below, preserving the column.
   pub fn add_cursor(ctx: &mut Ctx, dir: Direction) {
-    let doc = ctx.editor.document_mut(ctx.active_doc).unwrap();
-    let slice = doc.text().slice(..);
+    let doc = ctx.editor.document_mut();
     let text_fmt = TextFormat::default();
-    let mut annotations = TextAnnotations::default();
 
-    // Get current ranges
-    let mut ranges: Vec<_> = doc.selection().iter().cloned().collect();
+    let (primary_cursor, new_cursor, new_range) = {
+      let slice = doc.text().slice(..);
+      let mut annotations = TextAnnotations::default();
+      let primary = doc.selection().ranges()[0];
 
-    // Compute new cursor position from primary cursor
-    let primary = ranges[0];
-    let new_range = match dir {
-      Direction::Up => {
-        move_vertically(
+      let new_range = match dir {
+        Direction::Up => move_vertically(
           slice,
           primary,
           MoveDir::Backward,
@@ -212,10 +199,8 @@ mod handlers {
           Movement::Move,
           &text_fmt,
           &mut annotations,
-        )
-      },
-      Direction::Down => {
-        move_vertically(
+        ),
+        Direction::Down => move_vertically(
           slice,
           primary,
           MoveDir::Forward,
@@ -223,32 +208,29 @@ mod handlers {
           Movement::Move,
           &text_fmt,
           &mut annotations,
-        )
-      },
-      // Left/Right don't add cursors
-      _ => return,
+        ),
+        _ => return,
+      };
+
+      (
+        primary.cursor(slice),
+        new_range.cursor(slice),
+        new_range,
+      )
     };
 
-    // Drop annotations before mutably borrowing doc for set_selection
-    drop(annotations);
-
-    // Only add if the new position is different from primary
-    if new_range.cursor(slice) != primary.cursor(slice) {
-      ranges.push(new_range);
-      if let Ok(selection) = Selection::new(ranges.into()) {
-        let _ = doc.set_selection(selection);
-      }
+    if new_cursor != primary_cursor {
+      let selection = doc.selection().clone().push(new_range);
+      let _ = doc.set_selection(selection);
     }
   }
 
   /// Save the document to file.
   pub fn save(ctx: &mut Ctx, _: ()) {
     if let Some(path) = &ctx.file_path {
-      if let Some(doc) = ctx.editor.document(ctx.active_doc) {
-        let text = doc.text().to_string();
-        if let Err(e) = std::fs::write(path, text) {
-          eprintln!("Failed to save: {e}");
-        }
+      let text = ctx.editor.document().text().to_string();
+      if let Err(e) = std::fs::write(path, text) {
+        eprintln!("Failed to save: {e}");
       }
     }
   }

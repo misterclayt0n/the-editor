@@ -1,0 +1,106 @@
+import SwiftUI
+import TheEditorFFIBridge
+
+struct EditorView: View {
+    @StateObject private var model = EditorModel()
+
+    private let cellSize = CGSize(width: 8, height: 16)
+    private let font = Font.system(size: 14, weight: .regular, design: .monospaced)
+
+    var body: some View {
+        GeometryReader { proxy in
+            Canvas { context, size in
+                drawPlan(in: context, size: size, plan: model.plan)
+            }
+            .onAppear {
+                model.updateViewport(pixelSize: proxy.size, cellSize: cellSize)
+            }
+            .onChange(of: proxy.size) { newSize in
+                model.updateViewport(pixelSize: newSize, cellSize: cellSize)
+            }
+            .background(SwiftUI.Color.black)
+        }
+    }
+
+    private func drawPlan(in context: GraphicsContext, size: CGSize, plan: RenderPlan) {
+        drawSelections(in: context, plan: plan)
+        drawText(in: context, plan: plan)
+        drawCursors(in: context, plan: plan)
+    }
+
+    private func drawSelections(in context: GraphicsContext, plan: RenderPlan) {
+        let count = Int(plan.selection_count())
+        guard count > 0 else { return }
+
+        for index in 0..<count {
+            let selection = plan.selection_at(UInt(index))
+            let rect = selection.rect()
+            let x = CGFloat(rect.x) * cellSize.width
+            let y = CGFloat(rect.y) * cellSize.height
+            let width = CGFloat(rect.width) * cellSize.width
+            let height = CGFloat(rect.height) * cellSize.height
+            let path = Path(CGRect(x: x, y: y, width: width, height: height))
+            context.fill(path, with: .color(SwiftUI.Color.accentColor.opacity(0.25)))
+        }
+    }
+
+    private func drawText(in context: GraphicsContext, plan: RenderPlan) {
+        let lineCount = Int(plan.line_count())
+        guard lineCount > 0 else { return }
+
+        for lineIndex in 0..<lineCount {
+            let line = plan.line_at(UInt(lineIndex))
+            let y = CGFloat(line.row()) * cellSize.height
+            let spanCount = Int(line.span_count())
+
+            for spanIndex in 0..<spanCount {
+                let span = line.span_at(UInt(spanIndex))
+                let x = CGFloat(span.col()) * cellSize.width
+                let color = colorForSpan(span)
+                let text = Text(span.text().toString()).font(font).foregroundColor(color)
+                context.draw(text, at: CGPoint(x: x, y: y), anchor: .topLeading)
+            }
+        }
+    }
+
+    private func drawCursors(in context: GraphicsContext, plan: RenderPlan) {
+        let count = Int(plan.cursor_count())
+        guard count > 0 else { return }
+
+        for index in 0..<count {
+            let cursor = plan.cursor_at(UInt(index))
+            let pos = cursor.pos()
+            let x = CGFloat(pos.col) * cellSize.width
+            let y = CGFloat(pos.row) * cellSize.height
+            let cursorColor = SwiftUI.Color.accentColor.opacity(0.8)
+
+            switch cursor.kind() {
+            case 1: // bar
+                let rect = CGRect(x: x, y: y, width: 2, height: cellSize.height)
+                context.fill(Path(rect), with: .color(cursorColor))
+            case 2: // underline
+                let rect = CGRect(x: x, y: y + cellSize.height - 2, width: cellSize.width, height: 2)
+                context.fill(Path(rect), with: .color(cursorColor))
+            case 3: // hollow
+                let rect = CGRect(x: x, y: y, width: cellSize.width, height: cellSize.height)
+                context.stroke(Path(rect), with: .color(cursorColor), lineWidth: 1)
+            case 4: // hidden
+                continue
+            default: // block
+                let rect = CGRect(x: x, y: y, width: cellSize.width, height: cellSize.height)
+                context.fill(Path(rect), with: .color(cursorColor.opacity(0.5)))
+            }
+        }
+    }
+
+    private func colorForSpan(_ span: RenderSpan) -> SwiftUI.Color {
+        if span.has_highlight() {
+            let hue = Double(span.highlight() % 16) / 16.0
+            return SwiftUI.Color(hue: hue, saturation: 0.55, brightness: 0.95)
+        }
+        if span.is_virtual() {
+            return SwiftUI.Color.white.opacity(0.4)
+        }
+        return SwiftUI.Color.white
+    }
+}

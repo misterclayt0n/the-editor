@@ -4,7 +4,6 @@ use crossterm::style::Color;
 use eyre::Result;
 use the_lib::render::{
   NoHighlights,
-  RenderCache,
   RenderPlan,
   RenderStyles,
   SyntaxHighlightAdapter,
@@ -22,17 +21,16 @@ use crate::{
 
 /// Render the current document state to the terminal.
 pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
-  let doc = ctx.editor.document(ctx.active_doc).unwrap();
+  let view = ctx.editor.view();
 
   // Set up text formatting
   let mut text_fmt = TextFormat::default();
-  text_fmt.viewport_width = ctx.view.viewport.width;
+  text_fmt.viewport_width = view.viewport.width;
 
   // Set up annotations (none for now)
   let mut annotations = TextAnnotations::default();
 
-  // Render cache
-  let mut render_cache = RenderCache::default();
+  let (doc, render_cache) = ctx.editor.document_and_cache();
 
   // Styles for cursor and selection
   let styles = RenderStyles {
@@ -44,7 +42,7 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
   // Build the render plan (with or without syntax highlighting)
   let plan: RenderPlan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
     // Calculate line range for highlighting
-    let line_range = ctx.view.scroll.row..(ctx.view.scroll.row + ctx.view.viewport.height as usize);
+    let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
 
     // Create syntax highlight adapter
     let mut adapter = SyntaxHighlightAdapter::new(
@@ -59,11 +57,11 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
 
     build_plan(
       doc,
-      ctx.view,
+      view,
       &text_fmt,
       &mut annotations,
       &mut adapter,
-      &mut render_cache,
+      render_cache,
       styles,
     )
   } else {
@@ -71,11 +69,11 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
     let mut highlights = NoHighlights;
     build_plan(
       doc,
-      ctx.view,
+      view,
       &text_fmt,
       &mut annotations,
       &mut highlights,
-      &mut render_cache,
+      render_cache,
       styles,
     )
   };
@@ -116,7 +114,7 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
 
 /// Ensure cursor is visible by adjusting scroll if needed.
 pub fn ensure_cursor_visible(ctx: &mut Ctx) {
-  let doc = ctx.editor.document(ctx.active_doc).unwrap();
+  let doc = ctx.editor.document();
   let text = doc.text();
 
   // Get primary cursor position
@@ -124,20 +122,21 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
   let cursor_line = text.char_to_line(cursor_pos);
   let cursor_col = cursor_pos - text.line_to_char(cursor_line);
 
-  let viewport_height = ctx.view.viewport.height as usize;
-  let viewport_width = ctx.view.viewport.width as usize;
+  let view = ctx.editor.view();
+  let viewport_height = view.viewport.height as usize;
+  let viewport_width = view.viewport.width as usize;
 
   // Vertical scrolling
-  if cursor_line < ctx.view.scroll.row {
-    ctx.view.scroll.row = cursor_line;
-  } else if cursor_line >= ctx.view.scroll.row + viewport_height {
-    ctx.view.scroll.row = cursor_line - viewport_height + 1;
+  if cursor_line < view.scroll.row {
+    ctx.editor.view_mut().scroll.row = cursor_line;
+  } else if cursor_line >= view.scroll.row + viewport_height {
+    ctx.editor.view_mut().scroll.row = cursor_line - viewport_height + 1;
   }
 
   // Horizontal scrolling
-  if cursor_col < ctx.view.scroll.col {
-    ctx.view.scroll.col = cursor_col;
-  } else if cursor_col >= ctx.view.scroll.col + viewport_width {
-    ctx.view.scroll.col = cursor_col - viewport_width + 1;
+  if cursor_col < view.scroll.col {
+    ctx.editor.view_mut().scroll.col = cursor_col;
+  } else if cursor_col >= view.scroll.col + viewport_width {
+    ctx.editor.view_mut().scroll.col = cursor_col - viewport_width + 1;
   }
 }

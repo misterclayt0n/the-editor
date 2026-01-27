@@ -75,6 +75,10 @@ impl Editor {
   pub fn render_cache_mut(&mut self) -> &mut RenderCache {
     &mut self.render_cache
   }
+
+  pub fn document_and_cache(&mut self) -> (&Document, &mut RenderCache) {
+    (&self.document, &mut self.render_cache)
+  }
 }
 
 #[cfg(test)]

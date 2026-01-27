@@ -5,6 +5,7 @@ use std::{
     Path,
     PathBuf,
   },
+  num::NonZeroUsize,
   sync::Arc,
 };
 
@@ -15,7 +16,10 @@ use the_lib::{
     Document,
     DocumentId,
   },
-  editor::Editor,
+  editor::{
+    Editor,
+    EditorId,
+  },
   position::Position,
   render::graphics::Rect,
   syntax::{
@@ -29,8 +33,6 @@ use the_lib::{
 /// Application state passed to all handlers.
 pub struct Ctx {
   pub editor:          Editor,
-  pub view:            ViewState,
-  pub active_doc:      DocumentId,
   pub file_path:       Option<PathBuf>,
   pub should_quit:     bool,
   pub needs_render:    bool,
@@ -49,9 +51,17 @@ impl Ctx {
       Rope::new()
     };
 
-    // Create editor and document
-    let mut editor = Editor::new();
-    let doc_id = editor.create_document(text);
+    let doc_id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(doc_id, text);
+
+    // Get terminal size for viewport
+    let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
+    let viewport = Rect::new(0, 0, width, height);
+    let scroll = Position::new(0, 0);
+    let view = ViewState::new(viewport, scroll);
+
+    let editor_id = EditorId::new(NonZeroUsize::new(1).unwrap());
+    let mut editor = Editor::new(editor_id, doc, view);
 
     // Initialize syntax loader
     let loader = match init_loader() {
@@ -64,23 +74,14 @@ impl Ctx {
 
     // Set up syntax on document if we have a loader and file path
     if let (Some(loader), Some(path)) = (&loader, file_path) {
-      if let Some(doc) = editor.document_mut(doc_id) {
-        if let Err(e) = setup_syntax(doc, Path::new(path), loader) {
-          eprintln!("Warning: could not enable syntax for file: {e}");
-        }
+      let doc = editor.document_mut();
+      if let Err(e) = setup_syntax(doc, Path::new(path), loader) {
+        eprintln!("Warning: could not enable syntax for file: {e}");
       }
     }
 
-    // Get terminal size for viewport
-    let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
-    let viewport = Rect::new(0, 0, width, height);
-    let scroll = Position::new(0, 0);
-    let view = ViewState::new(viewport, scroll);
-
     Ok(Self {
       editor,
-      view,
-      active_doc: doc_id,
       file_path: file_path.map(PathBuf::from),
       should_quit: false,
       needs_render: true,
@@ -91,7 +92,7 @@ impl Ctx {
 
   /// Handle terminal resize.
   pub fn resize(&mut self, width: u16, height: u16) {
-    self.view.viewport = Rect::new(0, 0, width, height);
+    self.editor.view_mut().viewport = Rect::new(0, 0, width, height);
   }
 }
 

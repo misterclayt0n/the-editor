@@ -11,3 +11,5 @@ runtime/grammars
 # swift-bridge generated FFI code
 the-ffi/generated/
 
+the-swift/.build
+

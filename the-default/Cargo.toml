@@ -1,0 +1,13 @@
+[package]
+name = "the-default"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+the-lib = { path = "../the-lib" }
+the-dispatch = { path = "../the-dispatch" }
+bitflags = { workspace = true }

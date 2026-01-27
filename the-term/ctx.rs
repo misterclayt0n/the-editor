@@ -96,6 +96,24 @@ impl Ctx {
   }
 }
 
+impl the_default::DefaultContext for Ctx {
+  fn editor(&mut self) -> &mut Editor {
+    &mut self.editor
+  }
+
+  fn file_path(&self) -> Option<&Path> {
+    self.file_path.as_deref()
+  }
+
+  fn request_render(&mut self) {
+    self.needs_render = true;
+  }
+
+  fn request_quit(&mut self) {
+    self.should_quit = true;
+  }
+}
+
 /// Initialize the syntax loader with languages.toml config.
 fn init_loader() -> Result<Loader> {
   use the_lib::syntax::{

@@ -33,7 +33,7 @@ fn main() -> Result<()> {
 
   // Initialize application state
   let mut ctx = Ctx::new(file_path)?;
-  let dispatch = build_dispatch();
+  let mut dispatch = build_dispatch();
   let mut terminal = terminal::Terminal::new()?;
 
   terminal.enter_raw_mode()?;
@@ -50,7 +50,7 @@ fn main() -> Result<()> {
     if event::poll(Duration::from_millis(100))? {
       match event::read()? {
         Event::Key(key) => {
-          input::handle_key(&dispatch, &mut ctx, key);
+          input::handle_key(&mut dispatch, &mut ctx, key);
         },
         Event::Resize(w, h) => {
           ctx.resize(w, h);

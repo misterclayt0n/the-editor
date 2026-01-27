@@ -2,80 +2,51 @@
 
 use crossterm::event::{
   KeyCode,
-  KeyEvent,
+  KeyEvent as CrosstermKeyEvent,
   KeyModifiers,
 };
 
 use crate::{
   Ctx,
   dispatch::{
-    Direction,
-    TermApi,
+    AppDispatch,
+    Key,
+    KeyEvent,
+    Modifiers,
+    handle_key as dispatch_handle_key,
   },
 };
 
 /// Orchestration function - maps keyboard input to dispatch calls.
-pub fn handle_key<D: TermApi<Ctx>>(dispatch: &D, ctx: &mut Ctx, key: KeyEvent) {
-  let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-  let alt = key.modifiers.contains(KeyModifiers::ALT);
+pub fn handle_key(dispatch: &mut AppDispatch, ctx: &mut Ctx, event: CrosstermKeyEvent) {
+  let modifiers = to_modifiers(event.modifiers);
+  let Some(key) = to_key(event.code) else {
+    return;
+  };
 
-  match key.code {
-    // Text input (only when no modifiers)
-    KeyCode::Char(c) if !ctrl && !alt => {
-      dispatch.insert_char(ctx, c);
-      ctx.needs_render = true;
-    },
+  dispatch_handle_key(dispatch, ctx, KeyEvent { key, modifiers });
+}
 
-    // Enter key - insert newline
-    KeyCode::Enter if !ctrl && !alt => {
-      dispatch.insert_char(ctx, '\n');
-      ctx.needs_render = true;
-    },
-
-    // Backspace - delete character
-    KeyCode::Backspace => {
-      dispatch.delete_char(ctx, ());
-      ctx.needs_render = true;
-    },
-
-    // Arrow keys - movement
-    KeyCode::Left if !alt => {
-      dispatch.move_cursor(ctx, Direction::Left);
-      ctx.needs_render = true;
-    },
-    KeyCode::Right if !alt => {
-      dispatch.move_cursor(ctx, Direction::Right);
-      ctx.needs_render = true;
-    },
-    KeyCode::Up if !alt => {
-      dispatch.move_cursor(ctx, Direction::Up);
-      ctx.needs_render = true;
-    },
-    KeyCode::Down if !alt => {
-      dispatch.move_cursor(ctx, Direction::Down);
-      ctx.needs_render = true;
-    },
-
-    // Alt+Arrow - add cursor (multiple cursors)
-    KeyCode::Up if alt => {
-      dispatch.add_cursor(ctx, Direction::Up);
-      ctx.needs_render = true;
-    },
-    KeyCode::Down if alt => {
-      dispatch.add_cursor(ctx, Direction::Down);
-      ctx.needs_render = true;
-    },
-
-    // Ctrl+S - save
-    KeyCode::Char('s') if ctrl => {
-      dispatch.save(ctx, ());
-    },
-
-    // Ctrl+Q - quit
-    KeyCode::Char('q') if ctrl => {
-      dispatch.quit(ctx, ());
-    },
-
-    _ => {},
+fn to_key(code: KeyCode) -> Option<Key> {
+  match code {
+    KeyCode::Char(c) => Some(Key::Char(c)),
+    KeyCode::Enter => Some(Key::Enter),
+    KeyCode::Backspace => Some(Key::Backspace),
+    KeyCode::Left => Some(Key::Left),
+    KeyCode::Right => Some(Key::Right),
+    KeyCode::Up => Some(Key::Up),
+    KeyCode::Down => Some(Key::Down),
+    _ => None,
   }
+}
+
+fn to_modifiers(modifiers: KeyModifiers) -> Modifiers {
+  let mut out = Modifiers::empty();
+  if modifiers.contains(KeyModifiers::CONTROL) {
+    out |= Modifiers::CTRL;
+  }
+  if modifiers.contains(KeyModifiers::ALT) {
+    out |= Modifiers::ALT;
+  }
+  out
 }

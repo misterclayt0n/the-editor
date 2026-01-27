@@ -1057,6 +1057,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "the-default"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "the-dispatch",
+ "the-lib",
+]
+
+[[package]]
 name = "the-dispatch"
 version = "0.1.0"
 dependencies = [
@@ -1142,7 +1151,7 @@ dependencies = [
  "crossterm",
  "eyre",
  "ropey",
- "the-dispatch",
+ "the-default",
  "the-lib",
  "the-loader",
 ]

@@ -12,27 +12,25 @@ use crate::{
     Key,
     KeyEvent,
     Modifiers,
-    handle_key as dispatch_handle_key,
   },
 };
-use the_default::Command;
-use the_dispatch::{
-  DispatchPlugin,
-  editor::{
-    KeyOutcome,
-    KeyPipelineApi,
-  },
+use the_default::{
+  DefaultApi,
+  KeyOutcome,
+  KeyPipelineApi,
+  handle_command,
+  handle_key as dispatch_handle_key,
 };
 
 /// Orchestration function - maps keyboard input to dispatch calls.
 pub fn handle_key<D, P>(
-  dispatch: &mut D,
+  dispatch: &D,
   pipeline: &mut P,
   ctx: &mut Ctx,
   event: CrosstermKeyEvent,
 )
 where
-  D: DispatchPlugin<Ctx, Command>,
+  D: DefaultApi<Ctx>,
   P: KeyPipelineApi<Ctx>,
 {
   let modifiers = to_modifiers(event.modifiers);
@@ -44,7 +42,7 @@ where
 
   match pipeline.pre(ctx, key_event) {
     KeyOutcome::Command(command) => {
-      let _ = dispatch.dispatch(ctx, command);
+      handle_command(dispatch, ctx, command);
       return;
     },
     KeyOutcome::Handled => return,
@@ -53,7 +51,7 @@ where
 
   match pipeline.on(ctx, key_event) {
     KeyOutcome::Command(command) => {
-      let _ = dispatch.dispatch(ctx, command);
+      handle_command(dispatch, ctx, command);
       return;
     },
     KeyOutcome::Handled => return,
@@ -64,7 +62,7 @@ where
 
   match pipeline.post(ctx, key_event) {
     KeyOutcome::Command(command) => {
-      let _ = dispatch.dispatch(ctx, command);
+      handle_command(dispatch, ctx, command);
     },
     KeyOutcome::Handled | KeyOutcome::Continue => {},
   }

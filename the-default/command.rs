@@ -1,7 +1,11 @@
-pub use the_dispatch::editor::{
+pub use the_lib::command::{
   Command,
   Direction,
+};
+
+pub use the_lib::input::{
   Key,
   KeyEvent,
+  KeyOutcome,
   Modifiers,
 };

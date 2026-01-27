@@ -1133,7 +1133,6 @@ name = "the-config"
 version = "0.1.0"
 dependencies = [
  "the-default",
- "the-dispatch",
  "the-lib",
 ]
 
@@ -1158,6 +1157,8 @@ dependencies = [
 name = "the-default"
 version = "0.1.0"
 dependencies = [
+ "smallvec",
+ "the-core",
  "the-dispatch",
  "the-lib",
 ]
@@ -1251,7 +1252,6 @@ dependencies = [
  "ropey",
  "the-config",
  "the-default",
- "the-dispatch",
  "the-lib",
  "the-loader",
 ]

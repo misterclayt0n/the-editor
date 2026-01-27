@@ -1,19 +1,17 @@
 //! Dispatch wiring for the terminal client.
 
 use the_default::{
-  Command,
+  DefaultApi,
   DefaultContext,
 };
-use the_dispatch::DispatchPlugin;
 
 pub use the_default::{
   Key,
   KeyEvent,
   Modifiers,
-  handle_key,
 };
 
-pub fn build_dispatch<Ctx>() -> impl DispatchPlugin<Ctx, Command>
+pub fn build_dispatch<Ctx>() -> impl DefaultApi<Ctx>
 where
   Ctx: DefaultContext,
 {

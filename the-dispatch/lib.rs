@@ -14,8 +14,7 @@
 //! - **Builder Pattern**: Replace default no-op handlers with custom
 //!   implementations
 //! - **Zero-Cost**: Static dispatch via generics, no virtual calls by default
-//! - **Dynamic Registry** (opt-in): String-keyed handler lookup for
-//!   plugins/scripting
+//! - **Dynamic Registry** (opt-in): String-keyed handler lookup for scripting
 //! - **COW Handlers** (opt-in): Shared handler slots for cheap cloning
 //!
 //! ## Basic Usage
@@ -148,28 +147,21 @@
 //! let mut dispatch = EditorDispatch::<Ctx, _, _>::new();
 //!
 //! // Register a dynamic handler
-//! dispatch.registry_mut().set("plugin_handler", std::sync::Arc::new(|ctx, input| {
+//! dispatch.registry_mut().set("custom_handler", std::sync::Arc::new(|ctx, input| {
 //!     // Dynamic handler logic
 //!     Box::new(())
 //! }));
 //!
 //! // Look up and call dynamic handlers
-//! if let Some(handler) = dispatch.registry().get("plugin_handler") {
+//! if let Some(handler) = dispatch.registry().get("custom_handler") {
 //!     handler(&mut ctx, Box::new(input_value));
 //! }
 //! ```
 
 mod define;
-#[cfg(feature = "editor-hooks")]
-pub mod editor;
-mod plugin;
 mod registry;
 
 pub use paste;
-pub use plugin::{
-  DispatchPlugin,
-  DispatchResult,
-};
 pub use registry::{
   DispatchRegistry,
   DynHandler,

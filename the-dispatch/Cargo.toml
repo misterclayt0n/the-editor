@@ -13,4 +13,3 @@ paste = "1.0"
 [features]
 cow-handlers     = [  ]
 dynamic-registry = [  ]
-editor-hooks     = [  ]

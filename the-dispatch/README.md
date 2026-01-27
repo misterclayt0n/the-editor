@@ -183,7 +183,7 @@ Without `cow-handlers`, the dispatch is not `Clone`.
 
 ### `dynamic-registry`
 
-Add a string-keyed registry for runtime handler lookup. Useful for plugins or scripting:
+Add a string-keyed registry for runtime handler lookup. Useful for scripting:
 
 ```toml
 [dependencies]

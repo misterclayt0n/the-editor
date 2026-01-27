@@ -4,23 +4,32 @@
 //! `the-lib` without hard-coding UI event types into `the-dispatch`.
 
 mod command;
+mod dispatch;
+mod key_pipeline;
 mod keymap;
-mod plugin;
 
 pub use command::{
   Command,
   Direction,
   Key,
   KeyEvent,
+  KeyOutcome,
   Modifiers,
+};
+pub use key_pipeline::{
+  KeyPipelineApi,
+  KeyPipelineDispatch,
+  default_key_pipeline,
 };
 pub use keymap::{
   DefaultKeyMap,
   command_for_key,
 };
-pub use plugin::{
+pub use dispatch::{
   DefaultContext,
-  DefaultPlugin,
+  DefaultApi,
+  DefaultDispatch,
+  build_dispatch,
   handle_command,
   handle_key,
 };

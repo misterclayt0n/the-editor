@@ -8,5 +8,12 @@ license = "MIT"
 path = "lib.rs"
 
 [dependencies]
+smallvec = "1.13.2"
+the-core = { path = "../the-core" }
 the-lib = { path = "../the-lib" }
-the-dispatch = { path = "../the-dispatch", features = ["editor-hooks"] }
+the-dispatch = { path = "../the-dispatch" }
+
+[features]
+default = []
+cow-handlers = ["the-dispatch/cow-handlers"]
+dynamic-registry = ["the-dispatch/dynamic-registry"]

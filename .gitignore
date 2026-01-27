@@ -8,3 +8,6 @@ result*
 # Editor runtime files
 runtime/grammars
 
+# swift-bridge generated FFI code
+the-ffi/generated/
+

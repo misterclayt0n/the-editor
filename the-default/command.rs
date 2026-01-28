@@ -45,13 +45,20 @@ pub use the_lib::{
   },
 };
 
-pub use crate::command_for_key;
+use crate::keymap::{
+  Keymaps,
+  Mode,
+  handle_key as keymap_handle_key,
+};
 
 pub trait DefaultContext {
   fn editor(&mut self) -> &mut Editor;
   fn file_path(&self) -> Option<&Path>;
   fn request_render(&mut self);
   fn request_quit(&mut self);
+  fn mode(&self) -> Mode;
+  fn set_mode(&mut self, mode: Mode);
+  fn keymaps(&mut self) -> &mut Keymaps;
 }
 
 define! {
@@ -110,8 +117,14 @@ where
   Ctx: DefaultContext,
   D: DefaultApi<Ctx>,
 {
-  if let Some(command) = command_for_key(key) {
-    handle_command(dispatch, ctx, command);
+  match keymap_handle_key(ctx, key) {
+    KeyOutcome::Command(command) => handle_command(dispatch, ctx, command),
+    KeyOutcome::Commands(commands) => {
+      for command in commands {
+        handle_command(dispatch, ctx, command);
+      }
+    },
+    KeyOutcome::Handled | KeyOutcome::Continue => {},
   }
 }
 
@@ -476,4 +489,57 @@ fn save<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
 
 fn quit<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   ctx.request_quit();
+}
+
+pub fn command_from_name(name: &str) -> Option<Command> {
+  match name {
+    "move_char_left" => Some(Command::move_char_left(1)),
+    "move_char_right" => Some(Command::move_char_right(1)),
+    "move_char_up" => Some(Command::move_char_up(1)),
+    "move_char_down" => Some(Command::move_char_down(1)),
+    "move_visual_line_up" => Some(Command::move_visual_line_up(1)),
+    "move_visual_line_down" => Some(Command::move_visual_line_down(1)),
+
+    "extend_char_left" => Some(Command::extend_char_left(1)),
+    "extend_char_right" => Some(Command::extend_char_right(1)),
+    "extend_char_up" => Some(Command::extend_char_up(1)),
+    "extend_char_down" => Some(Command::extend_char_down(1)),
+    "extend_visual_line_up" => Some(Command::extend_visual_line_up(1)),
+    "extend_visual_line_down" => Some(Command::extend_visual_line_down(1)),
+    "extend_line_up" => Some(Command::extend_line_up(1)),
+    "extend_line_down" => Some(Command::extend_line_down(1)),
+
+    "move_next_word_start" => Some(Command::move_next_word_start(1)),
+    "move_prev_word_start" => Some(Command::move_prev_word_start(1)),
+    "move_next_word_end" => Some(Command::move_next_word_end(1)),
+    "move_prev_word_end" => Some(Command::move_prev_word_end(1)),
+    "move_next_long_word_start" => Some(Command::move_next_long_word_start(1)),
+    "move_prev_long_word_start" => Some(Command::move_prev_long_word_start(1)),
+    "move_next_long_word_end" => Some(Command::move_next_long_word_end(1)),
+    "move_prev_long_word_end" => Some(Command::move_prev_long_word_end(1)),
+    "move_next_sub_word_start" => Some(Command::move_next_sub_word_start(1)),
+    "move_prev_sub_word_start" => Some(Command::move_prev_sub_word_start(1)),
+    "move_next_sub_word_end" => Some(Command::move_next_sub_word_end(1)),
+    "move_prev_sub_word_end" => Some(Command::move_prev_sub_word_end(1)),
+
+    "extend_next_word_start" => Some(Command::extend_next_word_start(1)),
+    "extend_prev_word_start" => Some(Command::extend_prev_word_start(1)),
+    "extend_next_word_end" => Some(Command::extend_next_word_end(1)),
+    "extend_prev_word_end" => Some(Command::extend_prev_word_end(1)),
+    "extend_next_long_word_start" => Some(Command::extend_next_long_word_start(1)),
+    "extend_prev_long_word_start" => Some(Command::extend_prev_long_word_start(1)),
+    "extend_next_long_word_end" => Some(Command::extend_next_long_word_end(1)),
+    "extend_prev_long_word_end" => Some(Command::extend_prev_long_word_end(1)),
+    "extend_next_sub_word_start" => Some(Command::extend_next_sub_word_start(1)),
+    "extend_prev_sub_word_start" => Some(Command::extend_prev_sub_word_start(1)),
+    "extend_next_sub_word_end" => Some(Command::extend_next_sub_word_end(1)),
+    "extend_prev_sub_word_end" => Some(Command::extend_prev_sub_word_end(1)),
+
+    "extend_to_file_start" => Some(Command::extend_to_file_start()),
+    "extend_to_file_end" => Some(Command::extend_to_file_end()),
+    "extend_to_last_line" => Some(Command::extend_to_last_line()),
+    "extend_to_column" => Some(Command::extend_to_column(1)),
+
+    _ => None,
+  }
 }

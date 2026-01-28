@@ -6,13 +6,13 @@ use the_default::{
   KeyOutcome,
   KeyPipelineApi,
   KeyPipelineDispatch,
+  Keymaps,
   key_hook,
   build_dispatch as default_dispatch,
 };
 use the_lib::command::{
   Command,
   Direction,
-};
 };
 
 /// Build the dispatch pipeline for the editor.
@@ -36,4 +36,11 @@ pub fn build_key_pipeline<Ctx>() -> impl KeyPipelineApi<Ctx> {
     }))
     .with_on(key_hook!(|_, _| KeyOutcome::Continue))
     .with_post(key_hook!(|_, _| KeyOutcome::Continue))
+}
+
+/// Build the default keymaps.
+///
+/// Replace this to provide your own layout.
+pub fn build_keymaps() -> Keymaps {
+  Keymaps::default()
 }

@@ -5,6 +5,7 @@ use the_default::{
   KeyEvent,
   KeyOutcome,
   KeyPipelineApi,
+  Keymaps,
   build_dispatch as default_dispatch,
   default_key_pipeline,
 };
@@ -28,6 +29,13 @@ where
 /// Return `KeyOutcome::Command(...)` to override the default keymap.
 pub fn build_key_pipeline<Ctx>() -> impl KeyPipelineApi<Ctx> {
   default_key_pipeline::<Ctx>()
+}
+
+/// Build the default keymaps.
+///
+/// Replace this to provide your own keymap layout.
+pub fn build_keymaps() -> Keymaps {
+  Keymaps::default()
 }
 
 // Example: override the `j` key to move down.

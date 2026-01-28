@@ -18,6 +18,7 @@ pub use command::{
   KeyOutcome,
   Modifiers,
   build_dispatch,
+  command_from_name,
   handle_command,
   handle_key,
 };
@@ -27,6 +28,13 @@ pub use key_pipeline::{
   default_key_pipeline,
 };
 pub use keymap::{
-  DefaultKeyMap,
-  command_for_key,
+  KeyAction,
+  KeyBinding,
+  KeyTrie,
+  KeyTrieNode,
+  KeymapResult,
+  Keymaps,
+  Mode,
+  action_from_name,
+  default,
 };

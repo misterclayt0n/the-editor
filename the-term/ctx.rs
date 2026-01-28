@@ -11,6 +11,10 @@ use std::{
 
 use eyre::Result;
 use ropey::Rope;
+use the_default::{
+  Keymaps,
+  Mode,
+};
 use the_lib::{
   document::{
     Document,
@@ -36,6 +40,8 @@ pub struct Ctx {
   pub file_path:       Option<PathBuf>,
   pub should_quit:     bool,
   pub needs_render:    bool,
+  pub mode:            Mode,
+  pub keymaps:         Keymaps,
   /// Syntax loader for language detection and highlighting.
   pub loader:          Option<Arc<Loader>>,
   /// Cache for syntax highlights (reused across renders).
@@ -85,6 +91,8 @@ impl Ctx {
       file_path: file_path.map(PathBuf::from),
       should_quit: false,
       needs_render: true,
+      mode: Mode::Normal,
+      keymaps: Keymaps::default(),
       loader,
       highlight_cache: HighlightCache::default(),
     })
@@ -111,6 +119,18 @@ impl the_default::DefaultContext for Ctx {
 
   fn request_quit(&mut self) {
     self.should_quit = true;
+  }
+
+  fn mode(&self) -> Mode {
+    self.mode
+  }
+
+  fn set_mode(&mut self, mode: Mode) {
+    self.mode = mode;
+  }
+
+  fn keymaps(&mut self) -> &mut Keymaps {
+    &mut self.keymaps
   }
 }
 

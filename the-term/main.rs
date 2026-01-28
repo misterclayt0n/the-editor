@@ -60,6 +60,7 @@ fn main() -> Result<()> {
 
   // Initialize application state
   let mut ctx = Ctx::new(file_path)?;
+  ctx.keymaps = the_config::build_keymaps();
   let mut dispatch = build_dispatch::<Ctx>();
   let mut key_pipeline = the_config::build_key_pipeline::<Ctx>();
   let mut terminal = terminal::Terminal::new()?;

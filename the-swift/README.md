@@ -7,17 +7,15 @@ Minimal SwiftUI demo that calls into `the-ffi` and draws a render plan.
 - Rust toolchain
 
 ## Build steps
-1. Build the Rust static library and generate bridge files:
+1. Build the xcframework, sync bridge files, and run the demo:
    ```bash
-   cargo build -p the-ffi --release
-   ./the-swift/scripts/sync_bridge.sh
+   ./scripts/macos.nu
    ```
 
-2. Run the SwiftUI demo:
-   ```bash
-   cd the-swift
-   swift run the-swift
-   ```
+If you prefer to call NuShell explicitly:
+```bash
+nu ./scripts/macos.nu
+```
 
 If SwiftPM fails with `SwiftShims` or module cache errors:
 - If `xcode-select` points to CommandLineTools and you don't have Xcode installed,

@@ -9,16 +9,9 @@ let package = Package(
     .executable(name: "the-swift", targets: ["TheSwift"]),
   ],
   targets: [
-    .target(
+    .binaryTarget(
       name: "TheEditorFFI",
-      path: "Bridge",
-      publicHeadersPath: "include",
-      cSettings: [
-        .headerSearchPath("include"),
-      ],
-      linkerSettings: [
-        .unsafeFlags(["-L", "../target/release", "-lthe_ffi"]),
-      ]
+      path: "Frameworks/TheEditorFFI.xcframework"
     ),
     .target(
       name: "TheEditorFFIBridge",

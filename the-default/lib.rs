@@ -4,6 +4,7 @@
 //! `the-lib` without hard-coding UI event types into `the-dispatch`.
 
 mod command;
+mod command_registry;
 mod keymap;
 
 pub use command::{
@@ -22,6 +23,18 @@ pub use command::{
   command_from_name,
   handle_command,
   handle_key,
+};
+pub use command_registry::{
+  CommandCompleter,
+  CommandError,
+  CommandEvent,
+  CommandPromptState,
+  CommandRegistry,
+  CommandResult,
+  Completion,
+  TypableCommand,
+  completers,
+  handle_command_prompt_key,
 };
 pub use keymap::{
   KeyAction,

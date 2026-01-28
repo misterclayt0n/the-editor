@@ -13,6 +13,8 @@ use std::{
 use eyre::Result;
 use ropey::Rope;
 use the_default::{
+  CommandPromptState,
+  CommandRegistry,
   DefaultDispatchStatic,
   DispatchRef,
   Keymaps,
@@ -45,6 +47,8 @@ pub struct Ctx {
   pub needs_render:    bool,
   pub mode:            Mode,
   pub keymaps:         Keymaps,
+  pub command_prompt:  CommandPromptState,
+  pub command_registry: CommandRegistry<Ctx>,
   pub dispatch:        Option<NonNull<DefaultDispatchStatic<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
   pub loader:          Option<Arc<Loader>>,
@@ -97,6 +101,8 @@ impl Ctx {
       needs_render: true,
       mode: Mode::Normal,
       keymaps: Keymaps::default(),
+      command_prompt: CommandPromptState::new(),
+      command_registry: CommandRegistry::new(),
       dispatch: None,
       loader,
       highlight_cache: HighlightCache::default(),
@@ -140,6 +146,22 @@ impl the_default::DefaultContext for Ctx {
 
   fn keymaps(&mut self) -> &mut Keymaps {
     &mut self.keymaps
+  }
+
+  fn command_prompt_mut(&mut self) -> &mut CommandPromptState {
+    &mut self.command_prompt
+  }
+
+  fn command_prompt_ref(&self) -> &CommandPromptState {
+    &self.command_prompt
+  }
+
+  fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self> {
+    &mut self.command_registry
+  }
+
+  fn command_registry_ref(&self) -> &CommandRegistry<Self> {
+    &self.command_registry
   }
 
   fn dispatch(&self) -> DispatchRef<Self> {

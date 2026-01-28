@@ -502,6 +502,10 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
     let _ = doc.set_selection(selection);
   }
 
+  if mode == Mode::Command {
+    ctx.command_prompt_mut().clear();
+  }
+
   ctx.set_mode(mode);
   ctx.request_render();
 }

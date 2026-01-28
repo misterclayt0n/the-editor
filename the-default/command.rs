@@ -45,6 +45,11 @@ pub use the_lib::{
   },
 };
 
+use crate::command_registry::{
+  CommandPromptState,
+  CommandRegistry,
+  handle_command_prompt_key,
+};
 use crate::keymap::{
   Keymaps,
   Mode,
@@ -109,7 +114,7 @@ impl<Ctx> std::ops::Deref for DispatchRef<Ctx> {
   }
 }
 
-pub trait DefaultContext: Sized {
+pub trait DefaultContext: Sized + 'static {
   fn editor(&mut self) -> &mut Editor;
   fn file_path(&self) -> Option<&Path>;
   fn request_render(&mut self);
@@ -117,6 +122,10 @@ pub trait DefaultContext: Sized {
   fn mode(&self) -> Mode;
   fn set_mode(&mut self, mode: Mode);
   fn keymaps(&mut self) -> &mut Keymaps;
+  fn command_prompt_mut(&mut self) -> &mut CommandPromptState;
+  fn command_prompt_ref(&self) -> &CommandPromptState;
+  fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self>;
+  fn command_registry_ref(&self) -> &CommandRegistry<Self>;
   fn dispatch(&self) -> DispatchRef<Self>;
 }
 
@@ -162,6 +171,12 @@ fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
 }
 
 fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+  if ctx.mode() == Mode::Command {
+    if handle_command_prompt_key(ctx, key) {
+      return;
+    }
+  }
+
   match keymap_handle_key(ctx, key) {
     KeyOutcome::Command(command) => ctx.dispatch().post_on_keypress(ctx, command),
     KeyOutcome::Commands(commands) => {

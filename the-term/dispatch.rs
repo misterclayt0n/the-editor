@@ -4,7 +4,6 @@ use the_default::{
   DefaultApi,
   DefaultContext,
 };
-
 pub use the_default::{
   Key,
   KeyEvent,

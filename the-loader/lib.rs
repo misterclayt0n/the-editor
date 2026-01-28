@@ -161,7 +161,6 @@ pub fn repo_config_dir() -> PathBuf {
   repo_root_dir().join("the-config")
 }
 
-
 pub fn cache_dir() -> PathBuf {
   if let Ok(dir) = std::env::var("THE_EDITOR_CACHE_DIR") {
     return path::expand_tilde(Cow::Borrowed(Path::new(&dir))).into_owned();

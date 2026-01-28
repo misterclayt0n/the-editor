@@ -88,9 +88,11 @@ mod tests {
   use ropey::Rope;
 
   use super::*;
-  use crate::document::DocumentId;
-  use crate::position::Position;
-  use crate::render::graphics::Rect;
+  use crate::{
+    document::DocumentId,
+    position::Position,
+    render::graphics::Rect,
+  };
 
   #[test]
   fn editor_owns_document_and_view() {

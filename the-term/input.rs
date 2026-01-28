@@ -5,6 +5,13 @@ use crossterm::event::{
   KeyEvent as CrosstermKeyEvent,
   KeyModifiers,
 };
+use the_default::{
+  DefaultApi,
+  KeyOutcome,
+  KeyPipelineApi,
+  handle_command,
+  handle_key as dispatch_handle_key,
+};
 
 use crate::{
   Ctx,
@@ -14,21 +21,9 @@ use crate::{
     Modifiers,
   },
 };
-use the_default::{
-  DefaultApi,
-  KeyOutcome,
-  KeyPipelineApi,
-  handle_command,
-  handle_key as dispatch_handle_key,
-};
 
 /// Orchestration function - maps keyboard input to dispatch calls.
-pub fn handle_key<D, P>(
-  dispatch: &D,
-  pipeline: &mut P,
-  ctx: &mut Ctx,
-  event: CrosstermKeyEvent,
-)
+pub fn handle_key<D, P>(dispatch: &D, pipeline: &mut P, ctx: &mut Ctx, event: CrosstermKeyEvent)
 where
   D: DefaultApi<Ctx>,
   P: KeyPipelineApi<Ctx>,

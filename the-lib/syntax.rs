@@ -16,40 +16,48 @@
 //! # Example: build a loader and detect a language
 //!
 //! ```no_run
-//! use std::collections::HashMap;
-//! use std::path::Path;
-//!
-//! use the_lib::syntax::config::{
-//!   Configuration, FileType, LanguageConfiguration, LanguageServicesConfig, SyntaxLanguageConfig,
+//! use std::{
+//!   collections::HashMap,
+//!   path::Path,
 //! };
-//! use the_lib::syntax::resources::NullResources;
-//! use the_lib::syntax::Loader;
+//!
+//! use the_lib::syntax::{
+//!   Loader,
+//!   config::{
+//!     Configuration,
+//!     FileType,
+//!     LanguageConfiguration,
+//!     LanguageServicesConfig,
+//!     SyntaxLanguageConfig,
+//!   },
+//!   resources::NullResources,
+//! };
 //!
 //! let rust = LanguageConfiguration {
-//!   syntax: SyntaxLanguageConfig {
-//!     language_id: "rust".into(),
-//!     scope: "source.rust".into(),
-//!     file_types: vec![FileType::Extension("rs".into())],
-//!     shebangs: Vec::new(),
-//!     comment_tokens: None,
+//!   syntax:   SyntaxLanguageConfig {
+//!     language_id:          "rust".into(),
+//!     scope:                "source.rust".into(),
+//!     file_types:           vec![FileType::Extension("rs".into())],
+//!     shebangs:             Vec::new(),
+//!     comment_tokens:       None,
 //!     block_comment_tokens: None,
-//!     text_width: None,
-//!     soft_wrap: None,
-//!     auto_format: false,
-//!     path_completion: None,
-//!     word_completion: None,
-//!     grammar: None,
-//!     injection_regex: None,
-//!     indent: None,
-//!     auto_pairs: None,
-//!     rulers: None,
-//!     rainbow_brackets: None,
+//!     text_width:           None,
+//!     soft_wrap:            None,
+//!     auto_format:          false,
+//!     path_completion:      None,
+//!     word_completion:      None,
+//!     grammar:              None,
+//!     injection_regex:      None,
+//!     indent:               None,
+//!     auto_pairs:           None,
+//!     rulers:               None,
+//!     rainbow_brackets:     None,
 //!   },
 //!   services: LanguageServicesConfig::default(),
 //! };
 //!
 //! let config = Configuration {
-//!   language: vec![rust],
+//!   language:        vec![rust],
 //!   language_server: HashMap::new(),
 //! };
 //!
@@ -1139,7 +1147,13 @@ impl Syntax {
     let highlights = self.collect_highlights(source, loader, start_byte..end_byte);
 
     // Update the cache
-    cache.update_range(start_byte..end_byte, highlights, source, doc_version, syntax_version);
+    cache.update_range(
+      start_byte..end_byte,
+      highlights,
+      source,
+      doc_version,
+      syntax_version,
+    );
 
     cache.len()
   }

@@ -2,7 +2,10 @@
 
 use std::path::Path;
 
-use eyre::{Result, WrapErr};
+use eyre::{
+  Result,
+  WrapErr,
+};
 
 pub fn install_config_template() -> Result<()> {
   let config_dir = the_loader::config_dir();

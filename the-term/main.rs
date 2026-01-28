@@ -6,10 +6,10 @@
 //! - Syntax highlighting via tree-sitter
 //! - Multiple cursor support
 
+mod config_cli;
 mod ctx;
 mod dispatch;
 mod input;
-mod config_cli;
 mod render;
 mod terminal;
 mod theme;

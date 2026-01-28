@@ -5,8 +5,8 @@ use the_default::{
   KeyEvent,
   KeyOutcome,
   KeyPipelineApi,
-  default_key_pipeline,
   build_dispatch as default_dispatch,
+  default_key_pipeline,
 };
 use the_lib::command::{
   Command,

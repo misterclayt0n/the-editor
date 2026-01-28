@@ -9,11 +9,17 @@ mod keymap;
 
 pub use command::{
   Command,
+  DefaultApi,
+  DefaultContext,
+  DefaultDispatch,
   Direction,
   Key,
   KeyEvent,
   KeyOutcome,
   Modifiers,
+  build_dispatch,
+  handle_command,
+  handle_key,
 };
 pub use key_pipeline::{
   KeyPipelineApi,
@@ -23,12 +29,4 @@ pub use key_pipeline::{
 pub use keymap::{
   DefaultKeyMap,
   command_for_key,
-};
-pub use command::{
-  DefaultContext,
-  DefaultApi,
-  DefaultDispatch,
-  build_dispatch,
-  handle_command,
-  handle_key,
 };

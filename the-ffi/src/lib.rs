@@ -17,6 +17,7 @@ use std::{
 
 use ropey::Rope;
 use the_lib::{
+  Tendril,
   app::App as LibApp,
   document::{
     Document as LibDocument,
@@ -49,7 +50,6 @@ use the_lib::{
   },
   transaction::Transaction,
   view::ViewState,
-  Tendril,
 };
 
 /// Global document ID counter for FFI layer.
@@ -441,10 +441,7 @@ pub struct RenderPlan {
 impl RenderPlan {
   fn empty() -> Self {
     Self {
-      inner: the_lib::render::RenderPlan::empty(
-        LibRect::new(0, 0, 0, 0),
-        LibPosition::new(0, 0),
-      ),
+      inner: the_lib::render::RenderPlan::empty(LibRect::new(0, 0, 0, 0), LibPosition::new(0, 0)),
     }
   }
 
@@ -523,7 +520,12 @@ impl App {
     }
   }
 
-  pub fn create_editor(&mut self, text: &str, viewport: ffi::Rect, scroll: ffi::Position) -> ffi::EditorId {
+  pub fn create_editor(
+    &mut self,
+    text: &str,
+    viewport: ffi::Rect,
+    scroll: ffi::Position,
+  ) -> ffi::EditorId {
     let view = ViewState::new(viewport.to_lib(), scroll.to_lib());
     let id = self.inner.create_editor(Rope::from_str(text), view);
     ffi::EditorId::from(id)
@@ -597,7 +599,11 @@ impl App {
     self.render_plan_with_styles(id, ffi::RenderStyles::default())
   }
 
-  pub fn render_plan_with_styles(&mut self, id: ffi::EditorId, styles: ffi::RenderStyles) -> RenderPlan {
+  pub fn render_plan_with_styles(
+    &mut self,
+    id: ffi::EditorId,
+    styles: ffi::RenderStyles,
+  ) -> RenderPlan {
     let Some(editor) = self.editor_mut(id) else {
       return RenderPlan::empty();
     };
@@ -779,7 +785,11 @@ fn delete_backward(doc: &mut LibDocument) -> bool {
     .iter()
     .filter_map(|range| {
       let pos = range.cursor(rope.slice(..));
-      if pos > 0 { Some((pos - 1, pos, None)) } else { None }
+      if pos > 0 {
+        Some((pos - 1, pos, None))
+      } else {
+        None
+      }
     })
     .collect();
 
@@ -802,7 +812,11 @@ fn delete_forward(doc: &mut LibDocument) -> bool {
     .iter()
     .filter_map(|range| {
       let pos = range.cursor(rope.slice(..));
-      if pos < len { Some((pos, pos + 1, None)) } else { None }
+      if pos < len {
+        Some((pos, pos + 1, None))
+      } else {
+        None
+      }
     })
     .collect();
 
@@ -822,7 +836,15 @@ fn move_horizontal(doc: &mut LibDocument, dir: Direction, text_fmt: &TextFormat)
     let slice = doc.text().slice(..);
     let mut annotations = TextAnnotations::default();
     doc.selection().clone().transform(|range| {
-      movement::move_horizontally(slice, range, dir, 1, Movement::Move, text_fmt, &mut annotations)
+      movement::move_horizontally(
+        slice,
+        range,
+        dir,
+        1,
+        Movement::Move,
+        text_fmt,
+        &mut annotations,
+      )
     })
   };
 
@@ -834,7 +856,15 @@ fn move_vertical(doc: &mut LibDocument, dir: Direction, text_fmt: &TextFormat) {
     let slice = doc.text().slice(..);
     let mut annotations = TextAnnotations::default();
     doc.selection().clone().transform(|range| {
-      movement::move_vertically(slice, range, dir, 1, Movement::Move, text_fmt, &mut annotations)
+      movement::move_vertically(
+        slice,
+        range,
+        dir,
+        1,
+        Movement::Move,
+        text_fmt,
+        &mut annotations,
+      )
     })
   };
 
@@ -1200,19 +1230,53 @@ impl From<LibColor> for ffi::Color {
       LibColor::Gray => Self { kind: 1, value: 7 },
       LibColor::LightRed => Self { kind: 1, value: 8 },
       LibColor::LightGreen => Self { kind: 1, value: 9 },
-      LibColor::LightYellow => Self { kind: 1, value: 10 },
-      LibColor::LightBlue => Self { kind: 1, value: 11 },
-      LibColor::LightMagenta => Self { kind: 1, value: 12 },
-      LibColor::LightCyan => Self { kind: 1, value: 13 },
-      LibColor::LightGray => Self { kind: 1, value: 14 },
-      LibColor::White => Self { kind: 1, value: 15 },
-      LibColor::Rgb(r, g, b) => Self {
-        kind: 2,
-        value: ((r as u32) << 16) | ((g as u32) << 8) | b as u32,
+      LibColor::LightYellow => {
+        Self {
+          kind:  1,
+          value: 10,
+        }
       },
-      LibColor::Indexed(idx) => Self {
-        kind: 3,
-        value: idx as u32,
+      LibColor::LightBlue => {
+        Self {
+          kind:  1,
+          value: 11,
+        }
+      },
+      LibColor::LightMagenta => {
+        Self {
+          kind:  1,
+          value: 12,
+        }
+      },
+      LibColor::LightCyan => {
+        Self {
+          kind:  1,
+          value: 13,
+        }
+      },
+      LibColor::LightGray => {
+        Self {
+          kind:  1,
+          value: 14,
+        }
+      },
+      LibColor::White => {
+        Self {
+          kind:  1,
+          value: 15,
+        }
+      },
+      LibColor::Rgb(r, g, b) => {
+        Self {
+          kind:  2,
+          value: ((r as u32) << 16) | ((g as u32) << 8) | b as u32,
+        }
+      },
+      LibColor::Indexed(idx) => {
+        Self {
+          kind:  3,
+          value: idx as u32,
+        }
       },
     }
   }
@@ -1224,9 +1288,9 @@ impl ffi::Color {
       0 => LibColor::Reset,
       1 => named_color_from_index(self.value),
       2 => {
-        let r = ((self.value >> 16) & 0xff) as u8;
-        let g = ((self.value >> 8) & 0xff) as u8;
-        let b = (self.value & 0xff) as u8;
+        let r = ((self.value >> 16) & 0xFF) as u8;
+        let g = ((self.value >> 8) & 0xFF) as u8;
+        let b = (self.value & 0xFF) as u8;
         LibColor::Rgb(r, g, b)
       },
       3 => LibColor::Indexed(self.value as u8),
@@ -1311,9 +1375,9 @@ mod tests {
   fn app_render_plan_basic() {
     let mut app = App::new();
     let viewport = ffi::Rect {
-      x: 0,
-      y: 0,
-      width: 80,
+      x:      0,
+      y:      0,
+      width:  80,
       height: 24,
     };
     let scroll = ffi::Position { row: 0, col: 0 };
@@ -1330,9 +1394,9 @@ mod tests {
   fn app_insert_updates_text_and_plan() {
     let mut app = App::new();
     let viewport = ffi::Rect {
-      x: 0,
-      y: 0,
-      width: 80,
+      x:      0,
+      y:      0,
+      width:  80,
       height: 24,
     };
     let scroll = ffi::Position { row: 0, col: 0 };

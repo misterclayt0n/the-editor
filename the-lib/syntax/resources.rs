@@ -7,15 +7,20 @@
 //! # Example: custom in-memory resources
 //!
 //! ```no_run
-//! use std::borrow::Cow;
-//! use std::collections::HashMap;
+//! use std::{
+//!   borrow::Cow,
+//!   collections::HashMap,
+//! };
 //!
-//! use the_lib::syntax::resources::{QueryKind, SyntaxResources};
+//! use the_lib::syntax::resources::{
+//!   QueryKind,
+//!   SyntaxResources,
+//! };
 //! use tree_house::tree_sitter::Grammar;
 //!
 //! struct InMemoryResources {
 //!   grammars: HashMap<String, Grammar>,
-//!   queries: HashMap<(String, QueryKind), String>,
+//!   queries:  HashMap<(String, QueryKind), String>,
 //! }
 //!
 //! impl SyntaxResources for InMemoryResources {

@@ -3,19 +3,19 @@ use smartstring::{
   SmartString,
 };
 
-pub mod auto_pairs;
 pub mod app;
+pub mod auto_pairs;
 pub mod case_convention;
 pub mod command;
 pub mod command_line;
 pub mod comment;
 pub mod diff;
+pub mod document;
+pub mod editor;
 pub mod fuzzy;
 pub mod history;
 pub mod indent;
 pub mod input;
-pub mod document;
-pub mod editor;
 pub mod match_brackets;
 pub mod movement;
 pub mod object;

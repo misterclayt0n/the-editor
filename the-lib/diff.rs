@@ -71,7 +71,7 @@ impl WordToken {
 impl Default for WordToken {
   fn default() -> Self {
     Self {
-      text: Arc::from(""),
+      text:      Arc::from(""),
       len_chars: 0,
     }
   }
@@ -151,14 +151,14 @@ fn tokenize_words<I: Iterator<Item = char>>(iter: I) -> TokenizedSeq {
 }
 
 struct ChangeSetBuilder<'a> {
-  res:          ChangeSet,
-  after:        RopeSlice<'a>,
-  file:         &'a InternedInput<RopeSlice<'a>>,
-  options:      &'a DiffOptions,
-  char_hunk:    InternedInput<char>,
-  word_hunk:    InternedInput<WordToken>,
-  token_diff:   Diff,
-  pos:          u32,
+  res:        ChangeSet,
+  after:      RopeSlice<'a>,
+  file:       &'a InternedInput<RopeSlice<'a>>,
+  options:    &'a DiffOptions,
+  char_hunk:  InternedInput<char>,
+  word_hunk:  InternedInput<WordToken>,
+  token_diff: Diff,
+  pos:        u32,
 }
 
 impl ChangeSetBuilder<'_> {
@@ -270,9 +270,7 @@ impl ChangeSetBuilder<'_> {
 
       self.res.insert(res);
     }
-    self
-      .res
-      .retain(self.char_hunk.before.len() - pos as usize);
+    self.res.retain(self.char_hunk.before.len() - pos as usize);
     self.char_hunk.clear();
   }
 
@@ -287,12 +285,8 @@ impl ChangeSetBuilder<'_> {
     let mut before_tokens = tokenize_words(hunk_before);
     let before_token_list = std::mem::take(&mut before_tokens.tokens);
     let after_tokens = tokenize_words(hunk_after);
-    self
-      .word_hunk
-      .update_before(before_token_list.into_iter());
-    self
-      .word_hunk
-      .update_after(after_tokens.tokens.into_iter());
+    self.word_hunk.update_before(before_token_list.into_iter());
+    self.word_hunk.update_after(after_tokens.tokens.into_iter());
 
     self.token_diff.compute_with(
       Algorithm::Myers,
@@ -335,7 +329,12 @@ impl ChangeSetBuilder<'_> {
     // Pure insertions/removals do not require a character diff.
     // Very large changes are ignored because their character diff is expensive to
     // compute.
-    if !self.should_char_diff(len_before_lines, len_after_lines, len_before_chars, len_after_chars) {
+    if !self.should_char_diff(
+      len_before_lines,
+      len_after_lines,
+      len_before_chars,
+      len_after_chars,
+    ) {
       let remove = len_before_chars;
       self.res.delete(remove);
       self.res.insert(self.build_fragment(after));

@@ -64,192 +64,344 @@ pub enum Motion {
 impl Motion {
   #[must_use]
   pub const fn move_char_left(count: usize) -> Self {
-    Self::Char { dir: Direction::Left, extend: false, count }
+    Self::Char {
+      dir: Direction::Left,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_char_right(count: usize) -> Self {
-    Self::Char { dir: Direction::Right, extend: false, count }
+    Self::Char {
+      dir: Direction::Right,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_char_up(count: usize) -> Self {
-    Self::Line { dir: Direction::Up, extend: false, count }
+    Self::Line {
+      dir: Direction::Up,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_char_down(count: usize) -> Self {
-    Self::Line { dir: Direction::Down, extend: false, count }
+    Self::Line {
+      dir: Direction::Down,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_visual_line_up(count: usize) -> Self {
-    Self::VisualLine { dir: Direction::Up, extend: false, count }
+    Self::VisualLine {
+      dir: Direction::Up,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_visual_line_down(count: usize) -> Self {
-    Self::VisualLine { dir: Direction::Down, extend: false, count }
+    Self::VisualLine {
+      dir: Direction::Down,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_char_left(count: usize) -> Self {
-    Self::Char { dir: Direction::Left, extend: true, count }
+    Self::Char {
+      dir: Direction::Left,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_char_right(count: usize) -> Self {
-    Self::Char { dir: Direction::Right, extend: true, count }
+    Self::Char {
+      dir: Direction::Right,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_char_up(count: usize) -> Self {
-    Self::Line { dir: Direction::Up, extend: true, count }
+    Self::Line {
+      dir: Direction::Up,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_char_down(count: usize) -> Self {
-    Self::Line { dir: Direction::Down, extend: true, count }
+    Self::Line {
+      dir: Direction::Down,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_visual_line_up(count: usize) -> Self {
-    Self::VisualLine { dir: Direction::Up, extend: true, count }
+    Self::VisualLine {
+      dir: Direction::Up,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_visual_line_down(count: usize) -> Self {
-    Self::VisualLine { dir: Direction::Down, extend: true, count }
+    Self::VisualLine {
+      dir: Direction::Down,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_line_up(count: usize) -> Self {
-    Self::Line { dir: Direction::Up, extend: true, count }
+    Self::Line {
+      dir: Direction::Up,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_line_down(count: usize) -> Self {
-    Self::Line { dir: Direction::Down, extend: true, count }
+    Self::Line {
+      dir: Direction::Down,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_next_word_start(count: usize) -> Self {
-    Self::Word { kind: WordMotion::NextWordStart, extend: false, count }
+    Self::Word {
+      kind: WordMotion::NextWordStart,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_prev_word_start(count: usize) -> Self {
-    Self::Word { kind: WordMotion::PrevWordStart, extend: false, count }
+    Self::Word {
+      kind: WordMotion::PrevWordStart,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_next_word_end(count: usize) -> Self {
-    Self::Word { kind: WordMotion::NextWordEnd, extend: false, count }
+    Self::Word {
+      kind: WordMotion::NextWordEnd,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_prev_word_end(count: usize) -> Self {
-    Self::Word { kind: WordMotion::PrevWordEnd, extend: false, count }
+    Self::Word {
+      kind: WordMotion::PrevWordEnd,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_next_long_word_start(count: usize) -> Self {
-    Self::Word { kind: WordMotion::NextLongWordStart, extend: false, count }
+    Self::Word {
+      kind: WordMotion::NextLongWordStart,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_prev_long_word_start(count: usize) -> Self {
-    Self::Word { kind: WordMotion::PrevLongWordStart, extend: false, count }
+    Self::Word {
+      kind: WordMotion::PrevLongWordStart,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_next_long_word_end(count: usize) -> Self {
-    Self::Word { kind: WordMotion::NextLongWordEnd, extend: false, count }
+    Self::Word {
+      kind: WordMotion::NextLongWordEnd,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_prev_long_word_end(count: usize) -> Self {
-    Self::Word { kind: WordMotion::PrevLongWordEnd, extend: false, count }
+    Self::Word {
+      kind: WordMotion::PrevLongWordEnd,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_next_sub_word_start(count: usize) -> Self {
-    Self::Word { kind: WordMotion::NextSubWordStart, extend: false, count }
+    Self::Word {
+      kind: WordMotion::NextSubWordStart,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_prev_sub_word_start(count: usize) -> Self {
-    Self::Word { kind: WordMotion::PrevSubWordStart, extend: false, count }
+    Self::Word {
+      kind: WordMotion::PrevSubWordStart,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_next_sub_word_end(count: usize) -> Self {
-    Self::Word { kind: WordMotion::NextSubWordEnd, extend: false, count }
+    Self::Word {
+      kind: WordMotion::NextSubWordEnd,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn move_prev_sub_word_end(count: usize) -> Self {
-    Self::Word { kind: WordMotion::PrevSubWordEnd, extend: false, count }
+    Self::Word {
+      kind: WordMotion::PrevSubWordEnd,
+      extend: false,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_next_word_start(count: usize) -> Self {
-    Self::Word { kind: WordMotion::NextWordStart, extend: true, count }
+    Self::Word {
+      kind: WordMotion::NextWordStart,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_prev_word_start(count: usize) -> Self {
-    Self::Word { kind: WordMotion::PrevWordStart, extend: true, count }
+    Self::Word {
+      kind: WordMotion::PrevWordStart,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_next_word_end(count: usize) -> Self {
-    Self::Word { kind: WordMotion::NextWordEnd, extend: true, count }
+    Self::Word {
+      kind: WordMotion::NextWordEnd,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_prev_word_end(count: usize) -> Self {
-    Self::Word { kind: WordMotion::PrevWordEnd, extend: true, count }
+    Self::Word {
+      kind: WordMotion::PrevWordEnd,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_next_long_word_start(count: usize) -> Self {
-    Self::Word { kind: WordMotion::NextLongWordStart, extend: true, count }
+    Self::Word {
+      kind: WordMotion::NextLongWordStart,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_prev_long_word_start(count: usize) -> Self {
-    Self::Word { kind: WordMotion::PrevLongWordStart, extend: true, count }
+    Self::Word {
+      kind: WordMotion::PrevLongWordStart,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_next_long_word_end(count: usize) -> Self {
-    Self::Word { kind: WordMotion::NextLongWordEnd, extend: true, count }
+    Self::Word {
+      kind: WordMotion::NextLongWordEnd,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_prev_long_word_end(count: usize) -> Self {
-    Self::Word { kind: WordMotion::PrevLongWordEnd, extend: true, count }
+    Self::Word {
+      kind: WordMotion::PrevLongWordEnd,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_next_sub_word_start(count: usize) -> Self {
-    Self::Word { kind: WordMotion::NextSubWordStart, extend: true, count }
+    Self::Word {
+      kind: WordMotion::NextSubWordStart,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_prev_sub_word_start(count: usize) -> Self {
-    Self::Word { kind: WordMotion::PrevSubWordStart, extend: true, count }
+    Self::Word {
+      kind: WordMotion::PrevSubWordStart,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_next_sub_word_end(count: usize) -> Self {
-    Self::Word { kind: WordMotion::NextSubWordEnd, extend: true, count }
+    Self::Word {
+      kind: WordMotion::NextSubWordEnd,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]
   pub const fn extend_prev_sub_word_end(count: usize) -> Self {
-    Self::Word { kind: WordMotion::PrevSubWordEnd, extend: true, count }
+    Self::Word {
+      kind: WordMotion::PrevSubWordEnd,
+      extend: true,
+      count,
+    }
   }
 
   #[must_use]

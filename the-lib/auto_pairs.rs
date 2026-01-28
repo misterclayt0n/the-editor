@@ -918,15 +918,13 @@ mod test {
 
     // Multi-char pairs with multiple cursors: jinja
     let doc = Rope::from("{ {");
-    let sel =
-      Selection::new(smallvec::smallvec![Range::point(1), Range::point(3)]).unwrap();
+    let sel = Selection::new(smallvec::smallvec![Range::point(1), Range::point(3)]).unwrap();
     let tx = hook(&doc, &sel, '%', &pairs).unwrap().unwrap();
     assert_eq!(apply_transaction(&doc, &tx), "{%%} {%%}");
 
     // Triple-quote delete with multiple cursors
     let doc = Rope::from("\"\"\"\"\"\" \"\"\"\"\"\"");
-    let sel =
-      Selection::new(smallvec::smallvec![Range::point(3), Range::point(10)]).unwrap();
+    let sel = Selection::new(smallvec::smallvec![Range::point(3), Range::point(10)]).unwrap();
     let tx = delete_hook(&doc, &sel, &pairs).unwrap().unwrap();
     assert_eq!(apply_transaction(&doc, &tx), " ");
   }

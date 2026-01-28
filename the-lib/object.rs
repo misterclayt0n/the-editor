@@ -171,15 +171,9 @@ fn node_for_range<'a>(syntax: &'a Syntax, text: RopeSlice<'a>, range: Range) -> 
     .or_else(|| root.descendant_for_byte_range(from, to))
 }
 
-fn named_child_containing<'a>(
-  node: Node<'a>,
-  from: u32,
-  to: u32,
-) -> Option<Node<'a>> {
+fn named_child_containing<'a>(node: Node<'a>, from: u32, to: u32) -> Option<Node<'a>> {
   node.children().find(|child| {
-    child.is_named()
-      && child.byte_range().start <= from
-      && child.byte_range().end >= to
+    child.is_named() && child.byte_range().start <= from && child.byte_range().end >= to
   })
 }
 
@@ -206,8 +200,7 @@ fn select_sibling(
   text: RopeSlice,
   selection: Selection,
   direction: Direction,
-) -> Selection
-{
+) -> Selection {
   selection.transform(|range| {
     let Some(mut node) = node_for_range(syntax, text, range) else {
       return range;

@@ -8,7 +8,10 @@
 //!
 //! ```no_run
 //! use ropey::Rope;
-//! use the_lib::syntax::{Highlight, HighlightCache};
+//! use the_lib::syntax::{
+//!   Highlight,
+//!   HighlightCache,
+//! };
 //!
 //! let mut cache = HighlightCache::default();
 //! let text = Rope::from("let x = 1;\n");
@@ -53,7 +56,7 @@ pub struct HighlightCache {
   by_line: HashMap<usize, Vec<(Highlight, ops::Range<usize>)>>,
 
   /// Document version when cache was last updated
-  doc_version: u64,
+  doc_version:    u64,
   syntax_version: u64,
 
   /// Byte range that has been queried and cached
@@ -196,7 +199,13 @@ mod tests {
     ];
 
     // Update cache with highlights
-    cache.update_range(0..text.len_bytes(), highlights.clone(), text.slice(..), 1, 1);
+    cache.update_range(
+      0..text.len_bytes(),
+      highlights.clone(),
+      text.slice(..),
+      1,
+      1,
+    );
 
     // Verify cache state
     assert!(!cache.is_empty());

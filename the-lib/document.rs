@@ -13,10 +13,16 @@
 //! # Example
 //!
 //! ```no_run
-//! use ropey::Rope;
 //! use std::num::NonZeroUsize;
-//! use the_lib::document::{Document, DocumentId};
-//! use the_lib::transaction::Transaction;
+//!
+//! use ropey::Rope;
+//! use the_lib::{
+//!   document::{
+//!     Document,
+//!     DocumentId,
+//!   },
+//!   transaction::Transaction,
+//! };
 //!
 //! let id = DocumentId::new(NonZeroUsize::new(1).unwrap());
 //! let mut doc = Document::new(id, Rope::from("hello"));
@@ -29,17 +35,32 @@
 use std::num::NonZeroUsize;
 
 use ropey::Rope;
+use the_core::line_ending::{
+  LineEnding,
+  NATIVE_LINE_ENDING,
+};
 use thiserror::Error;
 
-use the_core::line_ending::{LineEnding, NATIVE_LINE_ENDING};
-
 use crate::{
-  history::{History, HistoryError, HistoryJump, State},
-  indent::IndentStyle,
-  selection::{Range, Selection, SelectionError},
-  syntax::Syntax,
-  transaction::{ChangeSet, Transaction, TransactionError},
   Tendril,
+  history::{
+    History,
+    HistoryError,
+    HistoryJump,
+    State,
+  },
+  indent::IndentStyle,
+  selection::{
+    Range,
+    Selection,
+    SelectionError,
+  },
+  syntax::Syntax,
+  transaction::{
+    ChangeSet,
+    Transaction,
+    TransactionError,
+  },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -102,17 +123,17 @@ pub type Result<T> = std::result::Result<T, DocumentError>;
 
 #[derive(Debug)]
 pub struct Document {
-  id: DocumentId,
-  text: Rope,
-  selection: Selection,
-  history: History,
-  changes: ChangeSet,
-  old_state: Option<State>,
+  id:           DocumentId,
+  text:         Rope,
+  selection:    Selection,
+  history:      History,
+  changes:      ChangeSet,
+  old_state:    Option<State>,
   indent_style: IndentStyle,
-  line_ending: LineEnding,
-  version: u64,
-  flags: DocumentFlags,
-  syntax: Option<Syntax>,
+  line_ending:  LineEnding,
+  version:      u64,
+  flags:        DocumentFlags,
+  syntax:       Option<Syntax>,
 }
 
 impl Document {
@@ -206,7 +227,7 @@ impl Document {
 
     if !transaction.changes().is_empty() && self.old_state.is_none() {
       self.old_state = Some(State {
-        doc: self.text.clone(),
+        doc:       self.text.clone(),
         selection: self.selection.clone(),
       });
     }
@@ -230,10 +251,11 @@ impl Document {
   }
 
   pub fn replace_range(&mut self, range: Range, text: impl Into<Tendril>) -> Result<()> {
-    let tx = Transaction::change(
-      &self.text,
-      vec![(range.from(), range.to(), Some(text.into()))],
-    )?;
+    let tx = Transaction::change(&self.text, vec![(
+      range.from(),
+      range.to(),
+      Some(text.into()),
+    )])?;
     self.apply_transaction(&tx)
   }
 
@@ -293,8 +315,9 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
   use std::num::NonZeroUsize;
+
+  use super::*;
 
   #[test]
   fn apply_and_commit_transaction() {

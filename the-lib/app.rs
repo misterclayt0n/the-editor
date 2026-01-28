@@ -12,19 +12,25 @@ use std::{
 use ropey::Rope;
 
 use crate::{
-  document::{Document, DocumentId},
-  editor::{Editor, EditorId},
+  document::{
+    Document,
+    DocumentId,
+  },
+  editor::{
+    Editor,
+    EditorId,
+  },
   view::ViewState,
 };
 
 #[derive(Debug)]
 pub struct App<Config = (), Commands = (), Global = ()> {
-  config:            Config,
-  commands:          Commands,
-  global:            Global,
-  next_editor_id:    NonZeroUsize,
-  next_document_id:  NonZeroUsize,
-  editors:           BTreeMap<EditorId, Editor>,
+  config:           Config,
+  commands:         Commands,
+  global:           Global,
+  next_editor_id:   NonZeroUsize,
+  next_document_id: NonZeroUsize,
+  editors:          BTreeMap<EditorId, Editor>,
 }
 
 impl<Config, Commands, Global> App<Config, Commands, Global> {
@@ -110,8 +116,10 @@ mod tests {
   use ropey::Rope;
 
   use super::*;
-  use crate::position::Position;
-  use crate::render::graphics::Rect;
+  use crate::{
+    position::Position,
+    render::graphics::Rect,
+  };
 
   #[test]
   fn create_and_remove_editor() {

@@ -1,9 +1,16 @@
-use std::ops::{Add, AddAssign, Sub, SubAssign};
+use std::ops::{
+  Add,
+  AddAssign,
+  Sub,
+  SubAssign,
+};
 
 use ropey::RopeSlice;
-use the_core::{chars::char_is_line_ending, grapheme::ensure_grapheme_boundary_prev};
+use the_core::{
+  chars::char_is_line_ending,
+  grapheme::ensure_grapheme_boundary_prev,
+};
 use the_stdx::rope::RopeSliceExt;
-
 
 /// This is a single point in a text buffer.
 /// 0-indexed as all things should be.

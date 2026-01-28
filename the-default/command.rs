@@ -1,24 +1,9 @@
 #![allow(unused_imports)]
 
-pub use the_lib::command::{
-  Command,
-  Direction,
-  Motion,
-  WordMotion,
-};
-
-pub use crate::command_for_key;
-
-pub use the_lib::input::{
-  Key,
-  KeyEvent,
-  KeyOutcome,
-  Modifiers,
-};
-
 use std::path::Path;
 
 use smallvec::SmallVec;
+use the_core::grapheme::prev_grapheme_boundary;
 use the_dispatch::define;
 use the_lib::{
   Tendril,
@@ -45,7 +30,22 @@ use the_lib::{
   },
   transaction::Transaction,
 };
-use the_core::grapheme::prev_grapheme_boundary;
+pub use the_lib::{
+  command::{
+    Command,
+    Direction,
+    Motion,
+    WordMotion,
+  },
+  input::{
+    Key,
+    KeyEvent,
+    KeyOutcome,
+    Modifiers,
+  },
+};
+
+pub use crate::command_for_key;
 
 pub trait DefaultContext {
   fn editor(&mut self) -> &mut Editor;
@@ -66,7 +66,8 @@ define! {
   }
 }
 
-pub fn build_dispatch<Ctx>() -> DefaultDispatch<Ctx,
+pub fn build_dispatch<Ctx>() -> DefaultDispatch<
+  Ctx,
   fn(&mut Ctx, char),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, Direction),
@@ -197,9 +198,25 @@ fn move_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
 
       for (cursor_id, range) in selection.iter_with_ids() {
         let new_range = if vertical {
-          move_vertically(slice, *range, dir, 1, Movement::Move, &text_fmt, &mut annotations)
+          move_vertically(
+            slice,
+            *range,
+            dir,
+            1,
+            Movement::Move,
+            &text_fmt,
+            &mut annotations,
+          )
         } else {
-          move_horizontally(slice, *range, dir, 1, Movement::Move, &text_fmt, &mut annotations)
+          move_horizontally(
+            slice,
+            *range,
+            dir,
+            1,
+            Movement::Move,
+            &text_fmt,
+            &mut annotations,
+          )
         };
         ranges.push(new_range);
         ids.push(cursor_id);
@@ -240,7 +257,15 @@ fn add_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
       let mut ids: SmallVec<_> = selection.cursor_ids().iter().copied().collect();
 
       for range in selection.ranges() {
-        let moved = move_vertically(slice, *range, dir, 1, Movement::Move, &text_fmt, &mut annotations);
+        let moved = move_vertically(
+          slice,
+          *range,
+          dir,
+          1,
+          Movement::Move,
+          &text_fmt,
+          &mut annotations,
+        );
         ranges.push(moved);
         ids.push(CursorId::fresh());
       }
@@ -278,10 +303,22 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
           Direction::Right => MoveDir::Forward,
           _ => return,
         };
-        let behavior = if extend { Movement::Extend } else { Movement::Move };
+        let behavior = if extend {
+          Movement::Extend
+        } else {
+          Movement::Move
+        };
         let count = count.max(1);
         selection.clone().transform(|range| {
-          move_horizontally(slice, range, dir, count, behavior, &text_fmt, &mut annotations)
+          move_horizontally(
+            slice,
+            range,
+            dir,
+            count,
+            behavior,
+            &text_fmt,
+            &mut annotations,
+          )
         })
       },
       Motion::Line { dir, extend, count } => {
@@ -290,10 +327,22 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
           Direction::Down => MoveDir::Forward,
           _ => return,
         };
-        let behavior = if extend { Movement::Extend } else { Movement::Move };
+        let behavior = if extend {
+          Movement::Extend
+        } else {
+          Movement::Move
+        };
         let count = count.max(1);
         selection.clone().transform(|range| {
-          move_vertically(slice, range, dir, count, behavior, &text_fmt, &mut annotations)
+          move_vertically(
+            slice,
+            range,
+            dir,
+            count,
+            behavior,
+            &text_fmt,
+            &mut annotations,
+          )
         })
       },
       Motion::VisualLine { dir, extend, count } => {
@@ -302,13 +351,29 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
           Direction::Down => MoveDir::Forward,
           _ => return,
         };
-        let behavior = if extend { Movement::Extend } else { Movement::Move };
+        let behavior = if extend {
+          Movement::Extend
+        } else {
+          Movement::Move
+        };
         let count = count.max(1);
         selection.clone().transform(|range| {
-          move_vertically_visual(slice, range, dir, count, behavior, &text_fmt, &mut annotations)
+          move_vertically_visual(
+            slice,
+            range,
+            dir,
+            count,
+            behavior,
+            &text_fmt,
+            &mut annotations,
+          )
         })
       },
-      Motion::Word { kind, extend, count } => {
+      Motion::Word {
+        kind,
+        extend,
+        count,
+      } => {
         let count = count.max(1);
         if extend {
           selection.clone().transform(|range| {
@@ -317,12 +382,20 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
               WordMotion::PrevWordStart => movement::move_prev_word_start(slice, range, count),
               WordMotion::NextWordEnd => movement::move_next_word_end(slice, range, count),
               WordMotion::PrevWordEnd => movement::move_prev_word_end(slice, range, count),
-              WordMotion::NextLongWordStart => movement::move_next_long_word_start(slice, range, count),
-              WordMotion::PrevLongWordStart => movement::move_prev_long_word_start(slice, range, count),
+              WordMotion::NextLongWordStart => {
+                movement::move_next_long_word_start(slice, range, count)
+              },
+              WordMotion::PrevLongWordStart => {
+                movement::move_prev_long_word_start(slice, range, count)
+              },
               WordMotion::NextLongWordEnd => movement::move_next_long_word_end(slice, range, count),
               WordMotion::PrevLongWordEnd => movement::move_prev_long_word_end(slice, range, count),
-              WordMotion::NextSubWordStart => movement::move_next_sub_word_start(slice, range, count),
-              WordMotion::PrevSubWordStart => movement::move_prev_sub_word_start(slice, range, count),
+              WordMotion::NextSubWordStart => {
+                movement::move_next_sub_word_start(slice, range, count)
+              },
+              WordMotion::PrevSubWordStart => {
+                movement::move_prev_sub_word_start(slice, range, count)
+              },
               WordMotion::NextSubWordEnd => movement::move_next_sub_word_end(slice, range, count),
               WordMotion::PrevSubWordEnd => movement::move_prev_sub_word_end(slice, range, count),
             };
@@ -330,33 +403,49 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
             range.put_cursor(slice, pos, true)
           })
         } else {
-          selection.clone().transform(|range| match kind {
-            WordMotion::NextWordStart => movement::move_next_word_start(slice, range, count),
-            WordMotion::PrevWordStart => movement::move_prev_word_start(slice, range, count),
-            WordMotion::NextWordEnd => movement::move_next_word_end(slice, range, count),
-            WordMotion::PrevWordEnd => movement::move_prev_word_end(slice, range, count),
-            WordMotion::NextLongWordStart => movement::move_next_long_word_start(slice, range, count),
-            WordMotion::PrevLongWordStart => movement::move_prev_long_word_start(slice, range, count),
-            WordMotion::NextLongWordEnd => movement::move_next_long_word_end(slice, range, count),
-            WordMotion::PrevLongWordEnd => movement::move_prev_long_word_end(slice, range, count),
-            WordMotion::NextSubWordStart => movement::move_next_sub_word_start(slice, range, count),
-            WordMotion::PrevSubWordStart => movement::move_prev_sub_word_start(slice, range, count),
-            WordMotion::NextSubWordEnd => movement::move_next_sub_word_end(slice, range, count),
-            WordMotion::PrevSubWordEnd => movement::move_prev_sub_word_end(slice, range, count),
+          selection.clone().transform(|range| {
+            match kind {
+              WordMotion::NextWordStart => movement::move_next_word_start(slice, range, count),
+              WordMotion::PrevWordStart => movement::move_prev_word_start(slice, range, count),
+              WordMotion::NextWordEnd => movement::move_next_word_end(slice, range, count),
+              WordMotion::PrevWordEnd => movement::move_prev_word_end(slice, range, count),
+              WordMotion::NextLongWordStart => {
+                movement::move_next_long_word_start(slice, range, count)
+              },
+              WordMotion::PrevLongWordStart => {
+                movement::move_prev_long_word_start(slice, range, count)
+              },
+              WordMotion::NextLongWordEnd => movement::move_next_long_word_end(slice, range, count),
+              WordMotion::PrevLongWordEnd => movement::move_prev_long_word_end(slice, range, count),
+              WordMotion::NextSubWordStart => {
+                movement::move_next_sub_word_start(slice, range, count)
+              },
+              WordMotion::PrevSubWordStart => {
+                movement::move_prev_sub_word_start(slice, range, count)
+              },
+              WordMotion::NextSubWordEnd => movement::move_next_sub_word_end(slice, range, count),
+              WordMotion::PrevSubWordEnd => movement::move_prev_sub_word_end(slice, range, count),
+            }
           })
         }
       },
       Motion::FileStart { extend } => {
-        selection.clone().transform(|range| range.put_cursor(slice, 0, extend))
+        selection
+          .clone()
+          .transform(|range| range.put_cursor(slice, 0, extend))
       },
       Motion::FileEnd { extend } => {
         let pos = slice.len_chars();
-        selection.clone().transform(|range| range.put_cursor(slice, pos, extend))
+        selection
+          .clone()
+          .transform(|range| range.put_cursor(slice, pos, extend))
       },
       Motion::LastLine { extend } => {
         let line = slice.len_lines().saturating_sub(1);
         let pos = slice.line_to_char(line);
-        selection.clone().transform(|range| range.put_cursor(slice, pos, extend))
+        selection
+          .clone()
+          .transform(|range| range.put_cursor(slice, pos, extend))
       },
       Motion::Column { col, extend } => {
         let col = col.saturating_sub(1);

@@ -1,7 +1,7 @@
 //! Bracket matching utilities for syntax-aware and plaintext contexts.
 //!
-//! - Syntax-aware matching uses tree-sitter nodes to find pairs within a
-//!   parsed scope.
+//! - Syntax-aware matching uses tree-sitter nodes to find pairs within a parsed
+//!   scope.
 //! - Plaintext matching provides a bounded linear scan fallback.
 //!
 //! Quotes are treated as pairs elsewhere (auto-pairs), but for matching we
@@ -24,7 +24,11 @@ use ropey::RopeSlice;
 use tree_house::tree_sitter::Node;
 
 use crate::{
-  movement::Direction::{self, Backward, Forward},
+  movement::Direction::{
+    self,
+    Backward,
+    Forward,
+  },
   syntax::Syntax,
 };
 

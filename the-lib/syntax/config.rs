@@ -3,8 +3,8 @@
 //! This module is intentionally data-only. It defines two config layers that
 //! get deserialized together:
 //!
-//! - `SyntaxLanguageConfig`: editor-facing syntax settings (file types,
-//!   grammar name, injections, indentation, etc).
+//! - `SyntaxLanguageConfig`: editor-facing syntax settings (file types, grammar
+//!   name, injections, indentation, etc).
 //! - `LanguageServicesConfig`: LSP/formatter/debugger settings used by higher
 //!   layers (not by the syntax core).
 //!
@@ -15,28 +15,31 @@
 //!
 //! ```no_run
 //! use the_lib::syntax::config::{
-//!   FileType, LanguageConfiguration, LanguageServicesConfig, SyntaxLanguageConfig,
+//!   FileType,
+//!   LanguageConfiguration,
+//!   LanguageServicesConfig,
+//!   SyntaxLanguageConfig,
 //! };
 //!
 //! let language = LanguageConfiguration {
-//!   syntax: SyntaxLanguageConfig {
-//!     language_id: "rust".into(),
-//!     scope: "source.rust".into(),
-//!     file_types: vec![FileType::Extension("rs".into())],
-//!     shebangs: Vec::new(),
-//!     comment_tokens: None,
+//!   syntax:   SyntaxLanguageConfig {
+//!     language_id:          "rust".into(),
+//!     scope:                "source.rust".into(),
+//!     file_types:           vec![FileType::Extension("rs".into())],
+//!     shebangs:             Vec::new(),
+//!     comment_tokens:       None,
 //!     block_comment_tokens: None,
-//!     text_width: None,
-//!     soft_wrap: None,
-//!     auto_format: false,
-//!     path_completion: None,
-//!     word_completion: None,
-//!     grammar: None,
-//!     injection_regex: None,
-//!     indent: None,
-//!     auto_pairs: None,
-//!     rulers: None,
-//!     rainbow_brackets: None,
+//!     text_width:           None,
+//!     soft_wrap:            None,
+//!     auto_format:          false,
+//!     path_completion:      None,
+//!     word_completion:      None,
+//!     grammar:              None,
+//!     injection_regex:      None,
+//!     indent:               None,
+//!     auto_pairs:           None,
+//!     rulers:               None,
+//!     rainbow_brackets:     None,
 //!   },
 //!   services: LanguageServicesConfig::default(),
 //! };

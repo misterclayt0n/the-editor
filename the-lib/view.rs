@@ -6,9 +6,11 @@
 //! # Example
 //!
 //! ```no_run
-//! use the_lib::view::ViewState;
-//! use the_lib::render::graphics::Rect;
-//! use the_lib::position::Position;
+//! use the_lib::{
+//!   position::Position,
+//!   render::graphics::Rect,
+//!   view::ViewState,
+//! };
 //!
 //! let viewport = Rect::new(0, 0, 80, 24);
 //! let scroll = Position::new(0, 0);
@@ -28,9 +30,9 @@ use crate::{
 /// (if any) is "active" for viewport following or collapse actions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ViewState {
-  pub viewport: Rect,
+  pub viewport:      Rect,
   /// Visual scroll offset (row/col) in rendered space.
-  pub scroll: Position,
+  pub scroll:        Position,
   /// Optional active cursor selected by the client.
   pub active_cursor: Option<CursorId>,
 }

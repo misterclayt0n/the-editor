@@ -7,8 +7,13 @@
 //!
 //! ```
 //! use ropey::Rope;
-//! use the_lib::selection::Range;
-//! use the_lib::text_object::{textobject_word, TextObject};
+//! use the_lib::{
+//!   selection::Range,
+//!   text_object::{
+//!     TextObject,
+//!     textobject_word,
+//!   },
+//! };
 //!
 //! let text = Rope::from("hello world");
 //! let range = Range::point(1);
@@ -21,8 +26,8 @@ use ropey::RopeSlice;
 use the_core::{
   chars::{
     CharCategory,
-    categorize_char,
     WhitespaceProperties,
+    categorize_char,
   },
   grapheme::next_grapheme_boundary,
   line_ending::rope_is_line_ending,
@@ -105,7 +110,11 @@ fn prev_non_empty_line(slice: RopeSlice, mut line: usize) -> Option<usize> {
   while line > 0 && is_empty_line(slice, line) {
     line -= 1;
   }
-  if !is_empty_line(slice, line) { Some(line) } else { None }
+  if !is_empty_line(slice, line) {
+    Some(line)
+  } else {
+    None
+  }
 }
 
 fn paragraph_start(slice: RopeSlice, mut line: usize) -> usize {
@@ -279,12 +288,8 @@ fn textobject_pair_surround_impl(
     .map(|(anchor, head)| {
       let (open, close) = (anchor.min(head), anchor.max(head));
       match textobject {
-        TextObject::Inside => {
-          Range::new(next_grapheme_boundary(slice, open), close)
-        },
-        TextObject::Around => {
-        Range::new(open, next_grapheme_boundary(slice, close))
-      },
+        TextObject::Inside => Range::new(next_grapheme_boundary(slice, open), close),
+        TextObject::Around => Range::new(open, next_grapheme_boundary(slice, close)),
         TextObject::Movement => unreachable!(),
       }
       .with_direction(range.direction())

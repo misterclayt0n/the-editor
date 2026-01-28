@@ -1,11 +1,11 @@
 //! Application context (state).
 
 use std::{
+  num::NonZeroUsize,
   path::{
     Path,
     PathBuf,
   },
-  num::NonZeroUsize,
   sync::Arc,
 };
 

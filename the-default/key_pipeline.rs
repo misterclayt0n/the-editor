@@ -1,5 +1,8 @@
 use the_dispatch::define;
-use the_lib::input::{KeyEvent, KeyOutcome};
+use the_lib::input::{
+  KeyEvent,
+  KeyOutcome,
+};
 
 fn default_key_hook<Ctx>(_ctx: &mut Ctx, _key: KeyEvent) -> KeyOutcome {
   KeyOutcome::Continue
@@ -13,7 +16,8 @@ define! {
   }
 }
 
-pub fn default_key_pipeline<Ctx>() -> KeyPipelineDispatch<Ctx,
+pub fn default_key_pipeline<Ctx>() -> KeyPipelineDispatch<
+  Ctx,
   fn(&mut Ctx, KeyEvent) -> KeyOutcome,
   fn(&mut Ctx, KeyEvent) -> KeyOutcome,
   fn(&mut Ctx, KeyEvent) -> KeyOutcome,
@@ -28,17 +32,18 @@ pub fn default_key_pipeline<Ctx>() -> KeyPipelineDispatch<Ctx,
 ///
 /// Example:
 /// ```
-/// use the_default::{KeyEvent, KeyOutcome, key_hook};
+/// use the_default::{
+///   KeyEvent,
+///   KeyOutcome,
+///   key_hook,
+/// };
 ///
 /// let hook = key_hook!(|_ctx, _key: KeyEvent| KeyOutcome::Continue);
 /// ```
 #[macro_export]
 macro_rules! key_hook {
   ($body:expr) => {{
-    fn __key_hook<Ctx>(
-      ctx: &mut Ctx,
-      key: $crate::KeyEvent,
-    ) -> $crate::KeyOutcome {
+    fn __key_hook<Ctx>(ctx: &mut Ctx, key: $crate::KeyEvent) -> $crate::KeyOutcome {
       let f = $body;
       f(ctx, key)
     }

@@ -9,9 +9,14 @@
 //!
 //! ```
 //! use ropey::Rope;
-//! use the_lib::selection::{Range, Selection};
-//! use the_lib::surround::get_surround_pos;
 //! use smallvec::smallvec;
+//! use the_lib::{
+//!   selection::{
+//!     Range,
+//!     Selection,
+//!   },
+//!   surround::get_surround_pos,
+//! };
 //!
 //! let text = Rope::from("(hello) world");
 //! let selection = Selection::new(smallvec![Range::point(2)]).unwrap();
@@ -27,11 +32,18 @@ use thiserror::Error;
 
 use crate::{
   match_brackets::{
-    find_matching_bracket, find_matching_bracket_fuzzy, get_pair, is_close_bracket, is_open_bracket,
+    find_matching_bracket,
+    find_matching_bracket_fuzzy,
+    get_pair,
+    is_close_bracket,
+    is_open_bracket,
   },
   movement::Direction,
   search,
-  selection::{Range, Selection},
+  selection::{
+    Range,
+    Selection,
+  },
   syntax::Syntax,
 };
 
@@ -303,8 +315,8 @@ fn find_nth_close_pair(
 }
 
 /// Find position of surround characters around every cursor. Returns an
-/// ordered pair `(open, close)` for each selection, normalized so `open <= close`.
-/// Returns an error if any positions overlap across selections.
+/// ordered pair `(open, close)` for each selection, normalized so `open <=
+/// close`. Returns an error if any positions overlap across selections.
 /// positions. `ch` can be either closing or opening pair. If `ch` is None,
 /// surround pairs are automatically detected around each cursor (note that this
 /// may result in them selecting different surround characters for each

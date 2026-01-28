@@ -1,5 +1,16 @@
 [workspace]
-members  = [ "the-config", "the-core", "the-default", "the-dispatch", "the-ffi", "the-lib", "the-loader", "the-runtime", "the-stdx", "the-term" ]
+members = [
+  "the-config",
+  "the-core",
+  "the-default",
+  "the-dispatch",
+  "the-ffi",
+  "the-lib",
+  "the-loader",
+  "the-runtime",
+  "the-stdx",
+  "the-term",
+]
 resolver = "3"
 
 [workspace.lints.rust]
@@ -17,28 +28,28 @@ name = "the-editor"
 
 [workspace.dependencies]
 bitflags                 = "2.9"
-clap                     = { version = "4.5", features = [ "derive" ] }
+clap                     = { features = [ "derive" ], version = "4.5" }
 crossterm                = "0.28"
 dunce                    = "1.0"
 etcetera                 = "0.10"
 eyre                     = "0.6"
 globset                  = "0.4"
+imara-diff               = "0.2.0"
+nucleo                   = "0.5.0"
 once_cell                = "1.21"
 parking_lot              = "0.12"
 regex                    = "1"
 regex-automata           = "0.4.9"
 regex-cursor             = "0.1.5"
 ropey                    = "1.6.1"
-serde                    = { version = "1.0", features = [ "derive" ] }
+serde                    = { features = [ "derive" ], version = "1.0" }
 serde_json               = "1.0"
 smallvec                 = "1.15"
 smartstring              = "1.0.1"
 tempfile                 = "3.20.0"
 thiserror                = "2.0"
 toml                     = "0.8"
-nucleo                   = "0.5.0"
 tracing                  = "0.1"
-imara-diff               = "0.2.0"
 tree-house               = { default-features = false, git = "https://github.com/misterclayt0n/tree-house" }
 unicode-general-category = "1.0"
 unicode-linebreak        = "0.1.5"

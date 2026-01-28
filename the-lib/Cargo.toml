@@ -11,33 +11,33 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bitflags.workspace       = true
-ropey.workspace       = true
-smallvec.workspace    = true
-smartstring.workspace = true
-the-core              = { path = "../the-core" }
-the-stdx              = { path = "../the-stdx" }
-thiserror.workspace   = true
+bitflags.workspace             = true
+globset.workspace              = true
+imara-diff.workspace           = true
+nucleo.workspace               = true
+parking_lot.workspace          = true
+ropey.workspace                = true
+serde.workspace                = true
+serde_json.workspace           = true
+smallvec.workspace             = true
+smartstring.workspace          = true
+the-core                       = { path = "../the-core" }
+the-loader                     = { optional = true, path = "../the-loader" }
+the-stdx                       = { path = "../the-stdx" }
+thiserror.workspace            = true
+toml.workspace                 = true
+tracing.workspace              = true
+tree-house.workspace           = true
 unicode-segmentation.workspace = true
-tracing.workspace     = true
-tree-house.workspace  = true
-parking_lot.workspace  = true
-nucleo.workspace = true
-imara-diff.workspace = true
-globset.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-toml.workspace = true
-the-loader = { path = "../the-loader", optional = true }
 
 [dev-dependencies]
-divan = "0.1.21"
+divan      = "0.1.21"
 quickcheck = { default-features = false, version = "1" }
 
 [features]
-default = []
-runtime-loader = ["dep:the-loader"]
-render = []
+default        = [  ]
+render         = [  ]
+runtime-loader = [ "dep:the-loader" ]
 
 
 [[bench]]

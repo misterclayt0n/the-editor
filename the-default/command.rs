@@ -45,15 +45,17 @@ pub use the_lib::{
   },
 };
 
-use crate::command_registry::{
-  CommandPromptState,
-  CommandRegistry,
-  handle_command_prompt_key,
-};
-use crate::keymap::{
-  Keymaps,
-  Mode,
-  handle_key as keymap_handle_key,
+use crate::{
+  command_registry::{
+    CommandPromptState,
+    CommandRegistry,
+    handle_command_prompt_key,
+  },
+  keymap::{
+    Keymaps,
+    Mode,
+    handle_key as keymap_handle_key,
+  },
 };
 
 define! {
@@ -328,7 +330,6 @@ fn move_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
       let _ = doc.set_selection(selection);
     }
   }
-
 }
 
 fn add_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
@@ -370,7 +371,6 @@ fn add_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
       let _ = doc.set_selection(selection);
     }
   }
-
 }
 
 fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
@@ -551,7 +551,6 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
     let doc = ctx.editor().document_mut();
     let _ = doc.set_selection(next);
   }
-
 }
 
 fn save<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {

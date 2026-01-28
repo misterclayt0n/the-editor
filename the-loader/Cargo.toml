@@ -1,5 +1,5 @@
 [package]
-name = "the-loader"
+name              = "the-loader"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
@@ -8,16 +8,16 @@ version.workspace = true
 path = "lib.rs"
 
 [dependencies]
-cc = "1"
-etcetera.workspace = true
-eyre.workspace = true
-serde.workspace = true
-tempfile.workspace = true
-threadpool = "1.0"
-toml.workspace = true
-tracing.workspace = true
+cc                   = "1"
+etcetera.workspace   = true
+eyre.workspace       = true
+serde.workspace      = true
+tempfile.workspace   = true
+the-stdx             = { path = "../the-stdx" }
+threadpool           = "1.0"
+toml.workspace       = true
+tracing.workspace    = true
 tree-house.workspace = true
-the-stdx = { path = "../the-stdx" }
 
 [lints]
 workspace = true

@@ -1,5 +1,5 @@
 [package]
-name = "the-config"
+name    = "the-config"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,4 +8,4 @@ path = "src/lib.rs"
 
 [dependencies]
 the-default = { path = "{{THE_EDITOR_REPO}}/the-default" }
-the-lib = { path = "{{THE_EDITOR_REPO}}/the-lib" }
+the-lib     = { path = "{{THE_EDITOR_REPO}}/the-lib" }

@@ -1,16 +1,16 @@
 [package]
-name    = "the-ffi"
+name              = "the-ffi"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-crate-type = ["staticlib"]
+crate-type = [ "staticlib" ]
 
 [dependencies]
 ropey.workspace = true
-the-lib = { path = "../the-lib" }
-swift-bridge = "0.1"
+swift-bridge    = "0.1"
+the-lib         = { path = "../the-lib" }
 
 [build-dependencies]
 swift-bridge-build = "0.1"

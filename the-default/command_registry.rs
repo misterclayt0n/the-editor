@@ -293,10 +293,12 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
         .command_names()
         .into_iter()
         .filter(|name| name.to_lowercase().contains(&input_lower))
-        .map(|name| Completion {
-          range: 0..,
-          text: name.to_string(),
-          doc: self.get(name).map(|cmd| cmd.doc.to_string()),
+        .map(|name| {
+          Completion {
+            range: 0..,
+            text:  name.to_string(),
+            doc:   self.get(name).map(|cmd| cmd.doc.to_string()),
+          }
         })
         .collect();
     }
@@ -320,10 +322,12 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
         let completer = cmd.completer.get(arg_index);
 
         let (arg_input, arg_start_offset) = match &last_token {
-          Some(token) if !token.is_terminated => (
-            token.content.as_ref(),
-            command.len() + 1 + token.content_start,
-          ),
+          Some(token) if !token.is_terminated => {
+            (
+              token.content.as_ref(),
+              command.len() + 1 + token.content_start,
+            )
+          },
           _ => ("", input.len()),
         };
 
@@ -353,30 +357,36 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
           .flags
           .iter()
           .filter(|flag| flag.name.contains(flag_input))
-          .map(|flag| Completion {
-            range: flag_start_offset..,
-            text: format!("--{}", flag.name),
-            doc: Some(flag.doc.to_string()),
+          .map(|flag| {
+            Completion {
+              range: flag_start_offset..,
+              text:  format!("--{}", flag.name),
+              doc:   Some(flag.doc.to_string()),
+            }
           })
           .collect()
       },
       CompletionState::FlagArgument(flag) => {
         if let Some(completions) = flag.completions {
           let (arg_input, arg_start_offset) = match &last_token {
-            Some(token) if !token.is_terminated => (
-              token.content.as_ref(),
-              command.len() + 1 + token.content_start,
-            ),
+            Some(token) if !token.is_terminated => {
+              (
+                token.content.as_ref(),
+                command.len() + 1 + token.content_start,
+              )
+            },
             _ => ("", input.len()),
           };
 
           completions
             .iter()
             .filter(|val| val.contains(arg_input))
-            .map(|val| Completion {
-              range: arg_start_offset..,
-              text: val.to_string(),
-              doc: None,
+            .map(|val| {
+              Completion {
+                range: arg_start_offset..,
+                text:  val.to_string(),
+                doc:   None,
+              }
             })
             .collect()
         } else {
@@ -455,7 +465,11 @@ fn cmd_quit<Ctx: DefaultContext>(ctx: &mut Ctx, _args: Args, event: CommandEvent
   Ok(())
 }
 
-fn cmd_write<Ctx: DefaultContext>(ctx: &mut Ctx, _args: Args, event: CommandEvent) -> CommandResult {
+fn cmd_write<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
   if event != CommandEvent::Validate {
     return Ok(());
   }
@@ -514,11 +528,11 @@ pub struct CommandPromptState {
 impl CommandPromptState {
   pub fn new() -> Self {
     Self {
-      input: String::new(),
-      cursor: 0,
+      input:       String::new(),
+      cursor:      0,
       completions: Vec::new(),
-      help: None,
-      error: None,
+      help:        None,
+      error:       None,
     }
   }
 
@@ -655,7 +669,9 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
       let prompt = ctx.command_prompt_ref();
       prompt.input.clone()
     };
-    let completions = ctx.command_registry_ref().complete_command_line(ctx, &input);
+    let completions = ctx
+      .command_registry_ref()
+      .complete_command_line(ctx, &input);
     let prompt = ctx.command_prompt_mut();
     prompt.completions = completions;
     prompt.error = None;
@@ -712,13 +728,15 @@ pub mod completers {
       .command_names()
       .into_iter()
       .filter(|name| name.to_lowercase().contains(&input_lower))
-      .map(|name| Completion {
-        range: 0..,
-        text: name.to_string(),
-        doc: ctx
-          .command_registry_ref()
-          .get(name)
-          .map(|cmd| cmd.doc.to_string()),
+      .map(|name| {
+        Completion {
+          range: 0..,
+          text:  name.to_string(),
+          doc:   ctx
+            .command_registry_ref()
+            .get(name)
+            .map(|cmd| cmd.doc.to_string()),
+        }
       })
       .collect()
   }

@@ -1,5 +1,5 @@
 [package]
-name = "the-config"
+name    = "the-config"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,4 +8,4 @@ path = "src/lib.rs"
 
 [dependencies]
 the-default = { path = "/Users/misterclayt0n/code/the-editor/the-loader/../the-default" }
-the-lib = { path = "/Users/misterclayt0n/code/the-editor/the-loader/../the-lib" }
+the-lib     = { path = "/Users/misterclayt0n/code/the-editor/the-loader/../the-lib" }

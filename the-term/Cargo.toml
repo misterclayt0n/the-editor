@@ -9,14 +9,14 @@ name = "the-editor"
 path = "main.rs"
 
 [dependencies]
-the-lib      = { path = "../the-lib", features = ["runtime-loader"] }
-the-loader   = { path = "../the-loader" }
-the-default = { path = "../the-default" }
-the-config = { path = "../the-config" }
-clap.workspace = true
+clap.workspace      = true
 crossterm.workspace = true
 eyre.workspace      = true
 ropey.workspace     = true
+the-config          = { path = "../the-config" }
+the-default         = { path = "../the-default" }
+the-lib             = { features = [ "runtime-loader" ], path = "../the-lib" }
+the-loader          = { path = "../the-loader" }
 
 [lints]
 workspace = true

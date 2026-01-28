@@ -1,5 +1,5 @@
 [package]
-name = "the-default"
+name    = "the-default"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
@@ -8,12 +8,12 @@ license = "MIT"
 path = "lib.rs"
 
 [dependencies]
-smallvec = "1.13.2"
-the-core = { path = "../the-core" }
-the-lib = { path = "../the-lib" }
+smallvec     = "1.13.2"
+the-core     = { path = "../the-core" }
 the-dispatch = { path = "../the-dispatch" }
+the-lib      = { path = "../the-lib" }
 
 [features]
-default = []
-cow-handlers = ["the-dispatch/cow-handlers"]
-dynamic-registry = ["the-dispatch/dynamic-registry"]
+cow-handlers     = [ "the-dispatch/cow-handlers" ]
+default          = [  ]
+dynamic-registry = [ "the-dispatch/dynamic-registry" ]

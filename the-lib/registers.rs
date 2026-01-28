@@ -47,8 +47,8 @@ pub type Result<T> = std::result::Result<T, RegisterError>;
 /// - `*`: primary clipboard
 /// - `+`: system clipboard
 pub struct Registers {
-  inner:                  HashMap<char, Vec<String>>,
-  clipboard_provider:     Arc<dyn ClipboardProvider>,
+  inner:                    HashMap<char, Vec<String>>,
+  clipboard_provider:       Arc<dyn ClipboardProvider>,
   pub last_search_register: char,
 }
 
@@ -87,19 +87,23 @@ impl Registers {
         Some(RegisterValues::new(doc.selection().fragments(text)))
       },
       '%' => Some(RegisterValues::new(iter::once(doc.display_name()))),
-      '*' | '+' => Some(read_from_clipboard(
-        &*self.clipboard_provider,
-        self.inner.get(&name),
-        match name {
-          '+' => ClipboardType::Clipboard,
-          '*' => ClipboardType::Selection,
-          _ => unreachable!(),
-        },
-      )),
-      _ => self
-        .inner
-        .get(&name)
-        .map(|values| RegisterValues::new(values.iter().map(Cow::from).rev())),
+      '*' | '+' => {
+        Some(read_from_clipboard(
+          &*self.clipboard_provider,
+          self.inner.get(&name),
+          match name {
+            '+' => ClipboardType::Clipboard,
+            '*' => ClipboardType::Selection,
+            _ => unreachable!(),
+          },
+        ))
+      },
+      _ => {
+        self
+          .inner
+          .get(&name)
+          .map(|values| RegisterValues::new(values.iter().map(Cow::from).rev()))
+      },
     }
   }
 
@@ -150,7 +154,9 @@ impl Registers {
           value.push_str(NATIVE_LINE_ENDING.as_str());
         }
         value.push_str(&contents);
-        self.clipboard_provider.set_contents(&value, clipboard_type)?;
+        self
+          .clipboard_provider
+          .set_contents(&value, clipboard_type)?;
 
         Ok(())
       },
@@ -166,7 +172,9 @@ impl Registers {
   }
 
   pub fn last<'a>(&'a self, name: char, doc: &'a Document) -> Option<Cow<'a, str>> {
-    self.read(name, doc).and_then(|mut values| values.next_back())
+    self
+      .read(name, doc)
+      .and_then(|mut values| values.next_back())
   }
 
   pub fn iter_preview(&self) -> impl Iterator<Item = (char, &str)> {
@@ -249,18 +257,17 @@ fn read_from_clipboard<'a>(
         RegisterValues::new(iter::once(contents.into()))
       }
     },
-    Err(ClipboardError::ReadingNotSupported) => match saved_values {
-      Some(values) => RegisterValues::new(values.iter().map(Cow::from).rev()),
-      None => RegisterValues::new(iter::empty()),
+    Err(ClipboardError::ReadingNotSupported) => {
+      match saved_values {
+        Some(values) => RegisterValues::new(values.iter().map(Cow::from).rev()),
+        None => RegisterValues::new(iter::empty()),
+      }
     },
     Err(err) => {
-      tracing::warn!(
-        "failed to read {} clipboard: {err}",
-        match clipboard_type {
-          ClipboardType::Clipboard => "system",
-          ClipboardType::Selection => "primary",
-        }
-      );
+      tracing::warn!("failed to read {} clipboard: {err}", match clipboard_type {
+        ClipboardType::Clipboard => "system",
+        ClipboardType::Selection => "primary",
+      });
       RegisterValues::new(iter::empty())
     },
   }
@@ -368,8 +375,13 @@ mod tests {
     let doc = Document::new(doc_id, Rope::from("hello"));
     let mut registers = Registers::new();
 
-    registers.write('a', vec!["first".into(), "second".into()]).unwrap();
+    registers
+      .write('a', vec!["first".into(), "second".into()])
+      .unwrap();
     let values = registers.read('a', &doc).unwrap().collect::<Vec<_>>();
-    assert_eq!(values, vec![Cow::Borrowed("first"), Cow::Borrowed("second")]);
+    assert_eq!(values, vec![
+      Cow::Borrowed("first"),
+      Cow::Borrowed("second")
+    ]);
   }
 }

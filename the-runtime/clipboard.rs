@@ -27,9 +27,9 @@ pub struct Command {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub struct CommandProvider {
-  yank:         Command,
-  paste:        Command,
-  yank_primary: Option<Command>,
+  yank:          Command,
+  paste:         Command,
+  yank_primary:  Option<Command>,
   paste_primary: Option<Command>,
 }
 
@@ -100,14 +100,13 @@ impl Default for ClipboardProvider {
         .is_some()
     }
 
-    if env_var_is_set("WAYLAND_DISPLAY") && binary_exists("wl-copy") && binary_exists("wl-paste")
-    {
+    if env_var_is_set("WAYLAND_DISPLAY") && binary_exists("wl-copy") && binary_exists("wl-paste") {
       Self::Wayland
     } else if env_var_is_set("DISPLAY") && binary_exists("xclip") {
       Self::XClip
     } else if env_var_is_set("DISPLAY")
-              && binary_exists("xsel")
-              && is_exit_success("xsel", &["-o", "-b"])
+      && binary_exists("xsel")
+      && is_exit_success("xsel", &["-o", "-b"])
     {
       Self::XSel
     } else if binary_exists("termux-clipboard-set") && binary_exists("termux-clipboard-get") {
@@ -145,16 +144,21 @@ impl ClipboardBackend for ClipboardProvider {
       Self::Termux => builtin_name("termux", &TERMUX),
       #[cfg(windows)]
       Self::Windows => "windows".into(),
-      Self::Custom(command_provider) => Cow::Owned(format!(
-        "custom ({}+{})",
-        command_provider.yank.command, command_provider.paste.command
-      )),
+      Self::Custom(command_provider) => {
+        Cow::Owned(format!(
+          "custom ({}+{})",
+          command_provider.yank.command, command_provider.paste.command
+        ))
+      },
       Self::None => "none".into(),
     }
   }
 
   fn get_contents(&self, clipboard_type: ClipboardType) -> Result<String> {
-    fn yank_from_builtin(provider: CommandProvider, clipboard_type: ClipboardType) -> Result<String> {
+    fn yank_from_builtin(
+      provider: CommandProvider,
+      clipboard_type: ClipboardType,
+    ) -> Result<String> {
       match clipboard_type {
         ClipboardType::Clipboard => {
           execute_command(&provider.yank, None, true)?.ok_or(ClipboardError::MissingStdout)
@@ -178,13 +182,15 @@ impl ClipboardBackend for ClipboardProvider {
       Self::Tmux => yank_from_builtin(TMUX, clipboard_type),
       Self::Termux => yank_from_builtin(TERMUX, clipboard_type),
       #[cfg(target_os = "windows")]
-      Self::Windows => match clipboard_type {
-        ClipboardType::Clipboard => {
-          let contents = clipboard_win::get_clipboard(clipboard_win::formats::Unicode)
-            .map_err(|err| ClipboardError::Platform(err.to_string()))?;
-          Ok(contents)
-        },
-        ClipboardType::Selection => Ok(String::new()),
+      Self::Windows => {
+        match clipboard_type {
+          ClipboardType::Clipboard => {
+            let contents = clipboard_win::get_clipboard(clipboard_win::formats::Unicode)
+              .map_err(|err| ClipboardError::Platform(err.to_string()))?;
+            Ok(contents)
+          },
+          ClipboardType::Selection => Ok(String::new()),
+        }
       },
       Self::Custom(command_provider) => {
         execute_command(&command_provider.yank, None, true)?.ok_or(ClipboardError::MissingStdout)
@@ -222,24 +228,29 @@ impl ClipboardBackend for ClipboardProvider {
       Self::Tmux => paste_to_builtin(TMUX, content, clipboard_type),
       Self::Termux => paste_to_builtin(TERMUX, content, clipboard_type),
       #[cfg(target_os = "windows")]
-      Self::Windows => match clipboard_type {
-        ClipboardType::Clipboard => {
-          clipboard_win::set_clipboard(clipboard_win::formats::Unicode, content)
-            .map_err(|err| ClipboardError::Platform(err.to_string()))?;
-          Ok(())
-        },
-        ClipboardType::Selection => Ok(()),
-      },
-      Self::Custom(command_provider) => match clipboard_type {
-        ClipboardType::Clipboard => execute_command(&command_provider.paste, Some(content), false)
-          .map(|_| ()),
-        ClipboardType::Selection => {
-          if let Some(cmd) = &command_provider.paste_primary {
-            execute_command(cmd, Some(content), false).map(|_| ())
-          } else {
+      Self::Windows => {
+        match clipboard_type {
+          ClipboardType::Clipboard => {
+            clipboard_win::set_clipboard(clipboard_win::formats::Unicode, content)
+              .map_err(|err| ClipboardError::Platform(err.to_string()))?;
             Ok(())
-          }
-        },
+          },
+          ClipboardType::Selection => Ok(()),
+        }
+      },
+      Self::Custom(command_provider) => {
+        match clipboard_type {
+          ClipboardType::Clipboard => {
+            execute_command(&command_provider.paste, Some(content), false).map(|_| ())
+          },
+          ClipboardType::Selection => {
+            if let Some(cmd) = &command_provider.paste_primary {
+              execute_command(cmd, Some(content), false).map(|_| ())
+            } else {
+              Ok(())
+            }
+          },
+        }
       },
       Self::None => Ok(()),
     }
@@ -331,7 +342,11 @@ command_provider! {
   paste => "termux-clipboard-set";
 }
 
-fn execute_command(cmd: &Command, input: Option<&str>, pipe_output: bool) -> Result<Option<String>> {
+fn execute_command(
+  cmd: &Command,
+  input: Option<&str>,
+  pipe_output: bool,
+) -> Result<Option<String>> {
   use std::{
     io::Write,
     process::{
@@ -355,9 +370,11 @@ fn execute_command(cmd: &Command, input: Option<&str>, pipe_output: bool) -> Res
     use std::os::unix::process::CommandExt;
 
     unsafe {
-      command = command.pre_exec(|| match libc::setsid() {
-        -1 => Err(std::io::Error::last_os_error()),
-        _ => Ok(()),
+      command = command.pre_exec(|| {
+        match libc::setsid() {
+          -1 => Err(std::io::Error::last_os_error()),
+          _ => Ok(()),
+        }
       });
     }
   }

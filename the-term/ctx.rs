@@ -41,19 +41,19 @@ use the_lib::{
 
 /// Application state passed to all handlers.
 pub struct Ctx {
-  pub editor:          Editor,
-  pub file_path:       Option<PathBuf>,
-  pub should_quit:     bool,
-  pub needs_render:    bool,
-  pub mode:            Mode,
-  pub keymaps:         Keymaps,
-  pub command_prompt:  CommandPromptState,
+  pub editor:           Editor,
+  pub file_path:        Option<PathBuf>,
+  pub should_quit:      bool,
+  pub needs_render:     bool,
+  pub mode:             Mode,
+  pub keymaps:          Keymaps,
+  pub command_prompt:   CommandPromptState,
   pub command_registry: CommandRegistry<Ctx>,
-  pub dispatch:        Option<NonNull<DefaultDispatchStatic<Ctx>>>,
+  pub dispatch:         Option<NonNull<DefaultDispatchStatic<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
-  pub loader:          Option<Arc<Loader>>,
+  pub loader:           Option<Arc<Loader>>,
   /// Cache for syntax highlights (reused across renders).
-  pub highlight_cache: HighlightCache,
+  pub highlight_cache:  HighlightCache,
 }
 
 impl Ctx {

@@ -1,13 +1,9 @@
 use the_default::{
-  DefaultApi,
   DefaultContext,
+  DefaultDispatchStatic,
   Key,
   KeyEvent,
-  KeyOutcome,
-  KeyPipelineApi,
-  KeyPipelineDispatch,
   Keymaps,
-  key_hook,
   build_dispatch as default_dispatch,
 };
 use the_lib::command::{
@@ -18,24 +14,21 @@ use the_lib::command::{
 /// Build the dispatch pipeline for the editor.
 ///
 /// Replace this with your own bindings/logic as needed.
-pub fn build_dispatch<Ctx>() -> impl DefaultApi<Ctx>
+pub fn build_dispatch<Ctx>() -> DefaultDispatchStatic<Ctx>
 where
   Ctx: DefaultContext,
 {
   default_dispatch::<Ctx>()
+    .with_pre_on_keypress(pre_on_keypress::<Ctx>)
 }
 
-/// Build the key pipeline (pre/on/post hooks).
-///
-/// Return `KeyOutcome::Command(...)` to override the default keymap.
-pub fn build_key_pipeline<Ctx>() -> impl KeyPipelineApi<Ctx> {
-  KeyPipelineDispatch::new()
-    .with_pre(key_hook!(|_ctx: &mut Ctx, key: KeyEvent| match key.key {
-      Key::Char('j') => KeyOutcome::Command(Command::Move(Direction::Down)),
-      _ => KeyOutcome::Continue,
-    }))
-    .with_on(key_hook!(|_, _| KeyOutcome::Continue))
-    .with_post(key_hook!(|_, _| KeyOutcome::Continue))
+fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+  if key.modifiers.ctrl() && matches!(key.key, Key::Char('j')) {
+    ctx.dispatch().post_on_keypress(ctx, Command::Move(Direction::Down));
+    return;
+  }
+
+  ctx.dispatch().on_keypress(ctx, key);
 }
 
 /// Build the default keymaps.

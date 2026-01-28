@@ -4,7 +4,6 @@
 //! `the-lib` without hard-coding UI event types into `the-dispatch`.
 
 mod command;
-mod key_pipeline;
 mod keymap;
 
 pub use command::{
@@ -12,6 +11,8 @@ pub use command::{
   DefaultApi,
   DefaultContext,
   DefaultDispatch,
+  DefaultDispatchStatic,
+  DispatchRef,
   Direction,
   Key,
   KeyEvent,
@@ -21,11 +22,6 @@ pub use command::{
   command_from_name,
   handle_command,
   handle_key,
-};
-pub use key_pipeline::{
-  KeyPipelineApi,
-  KeyPipelineDispatch,
-  default_key_pipeline,
 };
 pub use keymap::{
   KeyAction,

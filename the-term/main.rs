@@ -61,8 +61,8 @@ fn main() -> Result<()> {
   // Initialize application state
   let mut ctx = Ctx::new(file_path)?;
   ctx.keymaps = the_config::build_keymaps();
-  let mut dispatch = build_dispatch::<Ctx>();
-  let mut key_pipeline = the_config::build_key_pipeline::<Ctx>();
+  let dispatch = build_dispatch::<Ctx>();
+  ctx.set_dispatch(&dispatch);
   let mut terminal = terminal::Terminal::new()?;
 
   terminal.enter_raw_mode()?;
@@ -79,7 +79,7 @@ fn main() -> Result<()> {
     if event::poll(Duration::from_millis(100))? {
       match event::read()? {
         Event::Key(key) => {
-          input::handle_key(&mut dispatch, &mut key_pipeline, &mut ctx, key);
+          input::handle_key(&mut ctx, key);
         },
         Event::Resize(w, h) => {
           ctx.resize(w, h);

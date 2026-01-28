@@ -1,8 +1,8 @@
 //! Dispatch wiring for the terminal client.
 
 use the_default::{
-  DefaultApi,
   DefaultContext,
+  DefaultDispatchStatic,
 };
 pub use the_default::{
   Key,
@@ -10,7 +10,7 @@ pub use the_default::{
   Modifiers,
 };
 
-pub fn build_dispatch<Ctx>() -> impl DefaultApi<Ctx>
+pub fn build_dispatch<Ctx>() -> DefaultDispatchStatic<Ctx>
 where
   Ctx: DefaultContext,
 {

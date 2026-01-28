@@ -1,15 +1,11 @@
 [package]
 name = "the-config"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.1.0"
+edition = "2024"
 
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
-the-default = { path = "../the-default" }
-the-lib = { path = "../the-lib" }
-
-[lints]
-workspace = true
+the-default = { path = "/Users/misterclayt0n/code/the-editor/the-loader/../the-default" }
+the-lib = { path = "/Users/misterclayt0n/code/the-editor/the-loader/../the-lib" }

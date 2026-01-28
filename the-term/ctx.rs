@@ -6,12 +6,15 @@ use std::{
     Path,
     PathBuf,
   },
+  ptr::NonNull,
   sync::Arc,
 };
 
 use eyre::Result;
 use ropey::Rope;
 use the_default::{
+  DefaultDispatchStatic,
+  DispatchRef,
   Keymaps,
   Mode,
 };
@@ -42,6 +45,7 @@ pub struct Ctx {
   pub needs_render:    bool,
   pub mode:            Mode,
   pub keymaps:         Keymaps,
+  pub dispatch:        Option<NonNull<DefaultDispatchStatic<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
   pub loader:          Option<Arc<Loader>>,
   /// Cache for syntax highlights (reused across renders).
@@ -93,9 +97,14 @@ impl Ctx {
       needs_render: true,
       mode: Mode::Normal,
       keymaps: Keymaps::default(),
+      dispatch: None,
       loader,
       highlight_cache: HighlightCache::default(),
     })
+  }
+
+  pub fn set_dispatch(&mut self, dispatch: &DefaultDispatchStatic<Ctx>) {
+    self.dispatch = Some(NonNull::from(dispatch));
   }
 
   /// Handle terminal resize.
@@ -131,6 +140,13 @@ impl the_default::DefaultContext for Ctx {
 
   fn keymaps(&mut self) -> &mut Keymaps {
     &mut self.keymaps
+  }
+
+  fn dispatch(&self) -> DispatchRef<Self> {
+    let Some(ptr) = self.dispatch else {
+      panic!("dispatch is not set");
+    };
+    DispatchRef::from_ptr(ptr.as_ptr())
   }
 }
 

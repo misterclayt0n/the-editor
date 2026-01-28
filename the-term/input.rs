@@ -5,13 +5,7 @@ use crossterm::event::{
   KeyEvent as CrosstermKeyEvent,
   KeyModifiers,
 };
-use the_default::{
-  DefaultApi,
-  KeyOutcome,
-  KeyPipelineApi,
-  handle_command,
-  handle_key as dispatch_handle_key,
-};
+use the_default::DefaultContext;
 
 use crate::{
   Ctx,
@@ -23,11 +17,7 @@ use crate::{
 };
 
 /// Orchestration function - maps keyboard input to dispatch calls.
-pub fn handle_key<D, P>(dispatch: &D, pipeline: &mut P, ctx: &mut Ctx, event: CrosstermKeyEvent)
-where
-  D: DefaultApi<Ctx>,
-  P: KeyPipelineApi<Ctx>,
-{
+pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
   let modifiers = to_modifiers(event.modifiers);
   let Some(key) = to_key(event.code) else {
     return;
@@ -35,49 +25,7 @@ where
 
   let key_event = KeyEvent { key, modifiers };
 
-  match pipeline.pre(ctx, key_event) {
-    KeyOutcome::Command(command) => {
-      handle_command(dispatch, ctx, command);
-      return;
-    },
-    KeyOutcome::Commands(commands) => {
-      for command in commands {
-        handle_command(dispatch, ctx, command);
-      }
-      return;
-    },
-    KeyOutcome::Handled => return,
-    KeyOutcome::Continue => {},
-  }
-
-  match pipeline.on(ctx, key_event) {
-    KeyOutcome::Command(command) => {
-      handle_command(dispatch, ctx, command);
-      return;
-    },
-    KeyOutcome::Commands(commands) => {
-      for command in commands {
-        handle_command(dispatch, ctx, command);
-      }
-      return;
-    },
-    KeyOutcome::Handled => return,
-    KeyOutcome::Continue => {},
-  }
-
-  dispatch_handle_key(dispatch, ctx, key_event);
-
-  match pipeline.post(ctx, key_event) {
-    KeyOutcome::Command(command) => {
-      handle_command(dispatch, ctx, command);
-    },
-    KeyOutcome::Commands(commands) => {
-      for command in commands {
-        handle_command(dispatch, ctx, command);
-      }
-    },
-    KeyOutcome::Handled | KeyOutcome::Continue => {},
-  }
+  ctx.dispatch().pre_on_keypress(ctx, key_event);
 }
 
 fn to_key(code: KeyCode) -> Option<Key> {

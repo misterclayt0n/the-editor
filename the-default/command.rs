@@ -51,18 +51,16 @@ use crate::keymap::{
   handle_key as keymap_handle_key,
 };
 
-pub trait DefaultContext {
-  fn editor(&mut self) -> &mut Editor;
-  fn file_path(&self) -> Option<&Path>;
-  fn request_render(&mut self);
-  fn request_quit(&mut self);
-  fn mode(&self) -> Mode;
-  fn set_mode(&mut self, mode: Mode);
-  fn keymaps(&mut self) -> &mut Keymaps;
-}
-
 define! {
   Default {
+    pre_on_keypress: KeyEvent => (),
+    on_keypress: KeyEvent => (),
+    post_on_keypress: Command => (),
+    pre_on_action: Command => (),
+    on_action: Command => (),
+    post_on_action: () => (),
+    render_request: () => (),
+
     insert_char: char,
     delete_char: (),
     move_cursor: Direction,
@@ -73,8 +71,15 @@ define! {
   }
 }
 
-pub fn build_dispatch<Ctx>() -> DefaultDispatch<
+pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   Ctx,
+  fn(&mut Ctx, KeyEvent),
+  fn(&mut Ctx, KeyEvent),
+  fn(&mut Ctx, Command),
+  fn(&mut Ctx, Command),
+  fn(&mut Ctx, Command),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
   fn(&mut Ctx, char),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, Direction),
@@ -82,11 +87,51 @@ pub fn build_dispatch<Ctx>() -> DefaultDispatch<
   fn(&mut Ctx, Motion),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
->
+>;
+
+#[derive(Clone, Copy)]
+pub struct DispatchRef<Ctx> {
+  ptr: *const DefaultDispatchStatic<Ctx>,
+}
+
+impl<Ctx> DispatchRef<Ctx> {
+  pub fn from_ptr(ptr: *const DefaultDispatchStatic<Ctx>) -> Self {
+    Self { ptr }
+  }
+}
+
+impl<Ctx> std::ops::Deref for DispatchRef<Ctx> {
+  type Target = DefaultDispatchStatic<Ctx>;
+
+  fn deref(&self) -> &Self::Target {
+    // Safety: DispatchRef is constructed from a valid dispatch pointer.
+    unsafe { &*self.ptr }
+  }
+}
+
+pub trait DefaultContext: Sized {
+  fn editor(&mut self) -> &mut Editor;
+  fn file_path(&self) -> Option<&Path>;
+  fn request_render(&mut self);
+  fn request_quit(&mut self);
+  fn mode(&self) -> Mode;
+  fn set_mode(&mut self, mode: Mode);
+  fn keymaps(&mut self) -> &mut Keymaps;
+  fn dispatch(&self) -> DispatchRef<Self>;
+}
+
+pub fn build_dispatch<Ctx>() -> DefaultDispatchStatic<Ctx>
 where
   Ctx: DefaultContext,
 {
   DefaultDispatch::new()
+    .with_pre_on_keypress(pre_on_keypress::<Ctx> as fn(&mut Ctx, KeyEvent))
+    .with_on_keypress(on_keypress::<Ctx> as fn(&mut Ctx, KeyEvent))
+    .with_post_on_keypress(post_on_keypress::<Ctx> as fn(&mut Ctx, Command))
+    .with_pre_on_action(pre_on_action::<Ctx> as fn(&mut Ctx, Command))
+    .with_on_action(on_action::<Ctx> as fn(&mut Ctx, Command))
+    .with_post_on_action(post_on_action::<Ctx> as fn(&mut Ctx, ()))
+    .with_render_request(render_request::<Ctx> as fn(&mut Ctx, ()))
     .with_insert_char(insert_char::<Ctx> as fn(&mut Ctx, char))
     .with_delete_char(delete_char::<Ctx> as fn(&mut Ctx, ()))
     .with_move_cursor(move_cursor::<Ctx> as fn(&mut Ctx, Direction))
@@ -101,15 +146,7 @@ where
   Ctx: DefaultContext,
   D: DefaultApi<Ctx>,
 {
-  match command {
-    Command::InsertChar(ch) => dispatch.insert_char(ctx, ch),
-    Command::DeleteChar => dispatch.delete_char(ctx, ()),
-    Command::Move(dir) => dispatch.move_cursor(ctx, dir),
-    Command::AddCursor(dir) => dispatch.add_cursor(ctx, dir),
-    Command::Motion(motion) => dispatch.motion(ctx, motion),
-    Command::Save => dispatch.save(ctx, ()),
-    Command::Quit => dispatch.quit(ctx, ()),
-  }
+  dispatch.pre_on_action(ctx, command);
 }
 
 pub fn handle_key<Ctx, D>(dispatch: &D, ctx: &mut Ctx, key: KeyEvent)
@@ -117,15 +154,53 @@ where
   Ctx: DefaultContext,
   D: DefaultApi<Ctx>,
 {
+  dispatch.pre_on_keypress(ctx, key);
+}
+
+fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+  ctx.dispatch().on_keypress(ctx, key);
+}
+
+fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
   match keymap_handle_key(ctx, key) {
-    KeyOutcome::Command(command) => handle_command(dispatch, ctx, command),
+    KeyOutcome::Command(command) => ctx.dispatch().post_on_keypress(ctx, command),
     KeyOutcome::Commands(commands) => {
       for command in commands {
-        handle_command(dispatch, ctx, command);
+        ctx.dispatch().post_on_keypress(ctx, command);
       }
     },
     KeyOutcome::Handled | KeyOutcome::Continue => {},
   }
+}
+
+fn post_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
+  ctx.dispatch().pre_on_action(ctx, command);
+}
+
+fn pre_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
+  ctx.dispatch().on_action(ctx, command);
+}
+
+fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
+  match command {
+    Command::InsertChar(ch) => ctx.dispatch().insert_char(ctx, ch),
+    Command::DeleteChar => ctx.dispatch().delete_char(ctx, ()),
+    Command::Move(dir) => ctx.dispatch().move_cursor(ctx, dir),
+    Command::AddCursor(dir) => ctx.dispatch().add_cursor(ctx, dir),
+    Command::Motion(motion) => ctx.dispatch().motion(ctx, motion),
+    Command::Save => ctx.dispatch().save(ctx, ()),
+    Command::Quit => ctx.dispatch().quit(ctx, ()),
+  }
+
+  ctx.dispatch().post_on_action(ctx, ());
+}
+
+fn post_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  ctx.dispatch().render_request(ctx, ());
+}
+
+fn render_request<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  ctx.request_render();
 }
 
 fn insert_char<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {
@@ -149,7 +224,6 @@ fn insert_char<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {
 
   if doc.apply_transaction(&tx).is_ok() {
     let _ = doc.commit();
-    ctx.request_render();
   }
 }
 
@@ -183,13 +257,10 @@ fn delete_char<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
 
   if doc.apply_transaction(&tx).is_ok() {
     let _ = doc.commit();
-    ctx.request_render();
   }
 }
 
 fn move_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
-  let mut changed = false;
-
   {
     let editor = ctx.editor();
     let doc = editor.document_mut();
@@ -240,13 +311,9 @@ fn move_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
 
     if let Some(selection) = new_selection {
       let _ = doc.set_selection(selection);
-      changed = true;
     }
   }
 
-  if changed {
-    ctx.request_render();
-  }
 }
 
 fn add_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
@@ -255,8 +322,6 @@ fn add_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
     Direction::Down => MoveDir::Forward,
     _ => return,
   };
-  let mut changed = false;
-
   {
     let editor = ctx.editor();
     let doc = editor.document_mut();
@@ -288,13 +353,9 @@ fn add_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
 
     if let Some(selection) = new_selection {
       let _ = doc.set_selection(selection);
-      changed = true;
     }
   }
 
-  if changed {
-    ctx.request_render();
-  }
 }
 
 fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
@@ -476,7 +537,6 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
     let _ = doc.set_selection(next);
   }
 
-  ctx.request_render();
 }
 
 fn save<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {

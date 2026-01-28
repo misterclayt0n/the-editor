@@ -32,7 +32,10 @@
 //! doc.commit().unwrap();
 //! ```
 
-use std::num::NonZeroUsize;
+use std::{
+  borrow::Cow,
+  num::NonZeroUsize,
+};
 
 use ropey::Rope;
 use the_core::line_ending::{
@@ -124,6 +127,7 @@ pub type Result<T> = std::result::Result<T, DocumentError>;
 #[derive(Debug)]
 pub struct Document {
   id:           DocumentId,
+  display_name: Tendril,
   text:         Rope,
   selection:    Selection,
   history:      History,
@@ -142,6 +146,7 @@ impl Document {
     let changes = ChangeSet::new(text.slice(..));
     Self {
       id,
+      display_name: Tendril::new(),
       text,
       selection,
       history: History::default(),
@@ -157,6 +162,18 @@ impl Document {
 
   pub fn id(&self) -> DocumentId {
     self.id
+  }
+
+  pub fn display_name(&self) -> Cow<'_, str> {
+    if self.display_name.is_empty() {
+      Cow::Borrowed("<untitled>")
+    } else {
+      Cow::Borrowed(self.display_name.as_str())
+    }
+  }
+
+  pub fn set_display_name(&mut self, name: impl Into<Tendril>) {
+    self.display_name = name.into();
   }
 
   pub fn text(&self) -> &Rope {

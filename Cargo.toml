@@ -1,5 +1,5 @@
 [workspace]
-members  = [ "the-config", "the-core", "the-default", "the-dispatch", "the-ffi", "the-lib", "the-loader", "the-stdx", "the-term" ]
+members  = [ "the-config", "the-core", "the-default", "the-dispatch", "the-ffi", "the-lib", "the-loader", "the-runtime", "the-stdx", "the-term" ]
 resolver = "3"
 
 [workspace.lints.rust]

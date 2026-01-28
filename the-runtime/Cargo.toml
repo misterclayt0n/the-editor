@@ -1,0 +1,22 @@
+[package]
+name              = "the-runtime"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+the-lib = { path = "../the-lib" }
+the-stdx = { path = "../the-stdx" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+clipboard-win = "5.4"

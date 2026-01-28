@@ -6,6 +6,7 @@ use smartstring::{
 pub mod app;
 pub mod auto_pairs;
 pub mod case_convention;
+pub mod clipboard;
 pub mod command;
 pub mod command_line;
 pub mod comment;
@@ -20,6 +21,7 @@ pub mod match_brackets;
 pub mod movement;
 pub mod object;
 pub mod position;
+pub mod registers;
 pub mod render;
 pub mod search;
 pub mod selection;

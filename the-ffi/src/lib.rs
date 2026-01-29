@@ -698,6 +698,17 @@ impl App {
       .unwrap_or_default()
   }
 
+  pub fn handle_key(&mut self, id: ffi::EditorId, event: ffi::KeyEvent) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+
+    let key_event = key_event_from_ffi(event);
+    let dispatch = self.dispatch();
+    dispatch.pre_on_keypress(self, key_event);
+    true
+  }
+
   pub fn insert(&mut self, id: ffi::EditorId, text: &str) -> bool {
     if self.activate(id).is_none() {
       return false;
@@ -920,6 +931,59 @@ fn text_format_for_view(view: ViewState) -> TextFormat {
   text_fmt
 }
 
+fn key_event_from_ffi(event: ffi::KeyEvent) -> the_lib::input::KeyEvent {
+  use the_lib::input::{
+    Key as LibKey,
+    KeyEvent as LibKeyEvent,
+    Modifiers as LibModifiers,
+  };
+
+  let key = match event.kind {
+    0 => char::from_u32(event.codepoint).map(LibKey::Char).unwrap_or(LibKey::Other),
+    1 => LibKey::Enter,
+    2 => LibKey::NumpadEnter,
+    3 => LibKey::Escape,
+    4 => LibKey::Backspace,
+    5 => LibKey::Tab,
+    6 => LibKey::Delete,
+    7 => LibKey::Insert,
+    8 => LibKey::Home,
+    9 => LibKey::End,
+    10 => LibKey::PageUp,
+    11 => LibKey::PageDown,
+    12 => LibKey::Left,
+    13 => LibKey::Right,
+    14 => LibKey::Up,
+    15 => LibKey::Down,
+    16 => LibKey::F1,
+    17 => LibKey::F2,
+    18 => LibKey::F3,
+    19 => LibKey::F4,
+    20 => LibKey::F5,
+    21 => LibKey::F6,
+    22 => LibKey::F7,
+    23 => LibKey::F8,
+    24 => LibKey::F9,
+    25 => LibKey::F10,
+    26 => LibKey::F11,
+    27 => LibKey::F12,
+    _ => LibKey::Other,
+  };
+
+  let mut modifiers = LibModifiers::empty();
+  if (event.modifiers & LibModifiers::CTRL) != 0 {
+    modifiers.insert(LibModifiers::CTRL);
+  }
+  if (event.modifiers & LibModifiers::ALT) != 0 {
+    modifiers.insert(LibModifiers::ALT);
+  }
+  if (event.modifiers & LibModifiers::SHIFT) != 0 {
+    modifiers.insert(LibModifiers::SHIFT);
+  }
+
+  LibKeyEvent { key, modifiers }
+}
+
 fn insert_text(doc: &mut LibDocument, text: &str) -> bool {
   let rope = doc.text();
   let changes: Vec<_> = doc
@@ -1095,6 +1159,7 @@ mod ffi {
     fn render_plan(self: &mut App, id: EditorId) -> RenderPlan;
     fn render_plan_with_styles(self: &mut App, id: EditorId, styles: RenderStyles) -> RenderPlan;
     fn text(self: &App, id: EditorId) -> String;
+    fn handle_key(self: &mut App, id: EditorId, event: KeyEvent) -> bool;
 
     // Editor editing
     fn insert(self: &mut App, id: EditorId, text: &str) -> bool;
@@ -1153,6 +1218,13 @@ mod ffi {
     // Line access
     fn char_to_line(self: &Document, char_idx: usize) -> usize;
     fn line_to_char(self: &Document, line_idx: usize) -> usize;
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
+  struct KeyEvent {
+    kind: u8,
+    codepoint: u32,
+    modifiers: u8,
   }
 
   #[swift_bridge(swift_repr = "struct")]

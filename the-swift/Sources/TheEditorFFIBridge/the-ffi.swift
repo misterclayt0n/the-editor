@@ -60,6 +60,10 @@ extension AppRefMut {
         RenderPlan(ptr: __swift_bridge__$App$render_plan_with_styles(ptr, id.intoFfiRepr(), styles.intoFfiRepr()))
     }
 
+    public func handle_key(_ id: EditorId, _ event: KeyEvent) -> Bool {
+        __swift_bridge__$App$handle_key(ptr, id.intoFfiRepr(), event.intoFfiRepr())
+    }
+
     public func insert<GenericToRustStr: ToRustStr>(_ id: EditorId, _ text: GenericToRustStr) -> Bool {
         return text.toRustStr({ textAsRustStr in
             __swift_bridge__$App$insert(ptr, id.intoFfiRepr(), textAsRustStr)
@@ -358,6 +362,47 @@ extension Document: Vectorizable {
     }
 }
 
+public struct KeyEvent {
+    public var kind: UInt8
+    public var codepoint: UInt32
+    public var modifiers: UInt8
+
+    public init(kind: UInt8,codepoint: UInt32,modifiers: UInt8) {
+        self.kind = kind
+        self.codepoint = codepoint
+        self.modifiers = modifiers
+    }
+
+    @inline(__always)
+    func intoFfiRepr() -> __swift_bridge__$KeyEvent {
+        { let val = self; return __swift_bridge__$KeyEvent(kind: val.kind, codepoint: val.codepoint, modifiers: val.modifiers); }()
+    }
+}
+extension __swift_bridge__$KeyEvent {
+    @inline(__always)
+    func intoSwiftRepr() -> KeyEvent {
+        { let val = self; return KeyEvent(kind: val.kind, codepoint: val.codepoint, modifiers: val.modifiers); }()
+    }
+}
+extension __swift_bridge__$Option$KeyEvent {
+    @inline(__always)
+    func intoSwiftRepr() -> Optional<KeyEvent> {
+        if self.is_some {
+            return self.val.intoSwiftRepr()
+        } else {
+            return nil
+        }
+    }
+
+    @inline(__always)
+    static func fromSwiftRepr(_ val: Optional<KeyEvent>) -> __swift_bridge__$Option$KeyEvent {
+        if let v = val {
+            return __swift_bridge__$Option$KeyEvent(is_some: true, val: v.intoFfiRepr())
+        } else {
+            return __swift_bridge__$Option$KeyEvent(is_some: false, val: __swift_bridge__$KeyEvent())
+        }
+    }
+}
 public struct EditorId {
     public var value: UInt64
 

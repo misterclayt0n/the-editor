@@ -1,14 +1,21 @@
+import AppKit
 import Foundation
+import SwiftUI
 import TheEditorFFIBridge
 
 final class EditorModel: ObservableObject {
-    private let app: App
+    private let app: TheEditorFFIBridge.App
     let editorId: EditorId
     @Published var plan: RenderPlan
     private var viewport: Rect
+    let cellSize: CGSize
+    let font: Font
 
     init() {
-        self.app = App()
+        self.app = TheEditorFFIBridge.App()
+        let fontInfo = FontLoader.loadIosevka(size: 14)
+        self.cellSize = fontInfo.cellSize
+        self.font = fontInfo.font
         self.viewport = Rect(x: 0, y: 0, width: 80, height: 24)
         let scroll = Position(row: 0, col: 0)
 
@@ -35,6 +42,14 @@ final class EditorModel: ObservableObject {
 
     func insert(_ text: String) {
         _ = app.insert(editorId, text)
+        refresh()
+    }
+
+    func handleKey(event: NSEvent) {
+        guard let keyEvent = KeyEventMapper.map(event: event) else {
+            return
+        }
+        _ = app.handle_key(editorId, keyEvent)
         refresh()
     }
 }

@@ -4,14 +4,19 @@ import TheEditorFFIBridge
 struct EditorView: View {
     @StateObject private var model = EditorModel()
 
-    private let cellSize = CGSize(width: 8, height: 16)
-    private let font = Font.system(size: 14, weight: .regular, design: .monospaced)
-
     var body: some View {
+        let model = model
+        let cellSize = model.cellSize
+        let font = model.font
         GeometryReader { proxy in
             Canvas { context, size in
-                drawPlan(in: context, size: size, plan: model.plan)
+                drawPlan(in: context, size: size, plan: model.plan, cellSize: cellSize, font: font)
             }
+            .overlay(
+                KeyCaptureView(onKey: { event in
+                    model.handleKey(event: event)
+                })
+            )
             .onAppear {
                 model.updateViewport(pixelSize: proxy.size, cellSize: cellSize)
             }
@@ -22,13 +27,13 @@ struct EditorView: View {
         }
     }
 
-    private func drawPlan(in context: GraphicsContext, size: CGSize, plan: RenderPlan) {
-        drawSelections(in: context, plan: plan)
-        drawText(in: context, plan: plan)
-        drawCursors(in: context, plan: plan)
+    private func drawPlan(in context: GraphicsContext, size: CGSize, plan: RenderPlan, cellSize: CGSize, font: Font) {
+        drawSelections(in: context, plan: plan, cellSize: cellSize)
+        drawText(in: context, plan: plan, cellSize: cellSize, font: font)
+        drawCursors(in: context, plan: plan, cellSize: cellSize)
     }
 
-    private func drawSelections(in context: GraphicsContext, plan: RenderPlan) {
+    private func drawSelections(in context: GraphicsContext, plan: RenderPlan, cellSize: CGSize) {
         let count = Int(plan.selection_count())
         guard count > 0 else { return }
 
@@ -44,7 +49,7 @@ struct EditorView: View {
         }
     }
 
-    private func drawText(in context: GraphicsContext, plan: RenderPlan) {
+    private func drawText(in context: GraphicsContext, plan: RenderPlan, cellSize: CGSize, font: Font) {
         let lineCount = Int(plan.line_count())
         guard lineCount > 0 else { return }
 
@@ -63,7 +68,7 @@ struct EditorView: View {
         }
     }
 
-    private func drawCursors(in context: GraphicsContext, plan: RenderPlan) {
+    private func drawCursors(in context: GraphicsContext, plan: RenderPlan, cellSize: CGSize) {
         let count = Int(plan.cursor_count())
         guard count > 0 else { return }
 

@@ -22,6 +22,9 @@ let package = Package(
       name: "TheSwift",
       dependencies: ["TheEditorFFIBridge"],
       path: "Sources/TheSwift",
+      resources: [
+        .process("Resources")
+      ],
       linkerSettings: [
         .linkedFramework("SwiftUI"),
         .linkedFramework("AppKit"),

@@ -1,10 +1,8 @@
 //! Input event types for editor dispatch.
-//!
-//! I don't like this but it kind of works
 
 use smallvec::SmallVec;
 
-use crate::command::Command;
+use crate::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Modifiers {

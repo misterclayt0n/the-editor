@@ -4,25 +4,33 @@
 //! `the-lib` without hard-coding UI event types into `the-dispatch`.
 
 mod command;
+mod command_types;
 mod command_registry;
+mod input;
 mod keymap;
 
-pub use command::{
+pub use command_types::{
   Command,
+  Direction,
+  Motion,
+  WordMotion,
+};
+pub use command::{
   DefaultApi,
   DefaultContext,
   DefaultDispatch,
   DefaultDispatchStatic,
-  Direction,
   DispatchRef,
-  Key,
-  KeyEvent,
-  KeyOutcome,
-  Modifiers,
   build_dispatch,
   command_from_name,
   handle_command,
   handle_key,
+};
+pub use input::{
+  Key,
+  KeyEvent,
+  KeyOutcome,
+  Modifiers,
 };
 pub use command_registry::{
   CommandCompleter,

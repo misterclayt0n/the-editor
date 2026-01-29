@@ -998,8 +998,8 @@ fn text_format_for_view(view: ViewState) -> TextFormat {
   text_fmt
 }
 
-fn key_event_from_ffi(event: ffi::KeyEvent) -> the_lib::input::KeyEvent {
-  use the_lib::input::{
+fn key_event_from_ffi(event: ffi::KeyEvent) -> the_default::KeyEvent {
+  use the_default::{
     Key as LibKey,
     KeyEvent as LibKeyEvent,
     Modifiers as LibModifiers,

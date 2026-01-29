@@ -1,10 +1,11 @@
 #![allow(unused_imports)]
 
-use std::path::Path;
+use std::{
+  borrow::Cow,
+  path::Path,
+};
 
 use smallvec::SmallVec;
-use std::borrow::Cow;
-
 use the_core::grapheme::{
   nth_prev_grapheme_boundary,
   prev_grapheme_boundary,
@@ -39,22 +40,16 @@ use the_lib::{
   },
   transaction::Transaction,
 };
-pub use the_lib::{
-  command::{
-    Command,
-    Direction,
-    Motion,
-    WordMotion,
-  },
-  input::{
-    Key,
-    KeyEvent,
-    KeyOutcome,
-    Modifiers,
-  },
-};
 
 use crate::{
+  Command,
+  Direction,
+  Key,
+  KeyEvent,
+  KeyOutcome,
+  Modifiers,
+  Motion,
+  WordMotion,
   command_registry::{
     CommandPromptState,
     CommandRegistry,
@@ -273,9 +268,7 @@ fn delete_char<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
     let line_start_pos = slice.line_to_char(range.cursor_line(slice));
     let fragment: Cow<'_, str> = Cow::from(slice.slice(line_start_pos..pos));
 
-    if !fragment.is_empty()
-      && fragment.chars().all(|ch| ch == ' ' || ch == '\t')
-    {
+    if !fragment.is_empty() && fragment.chars().all(|ch| ch == ' ' || ch == '\t') {
       if slice.get_char(pos.saturating_sub(1)) == Some('\t') {
         return (nth_prev_grapheme_boundary(slice, pos, 1), pos);
       }

@@ -6,7 +6,7 @@ use the_default::{
   Keymaps,
   build_dispatch as default_dispatch,
 };
-use the_lib::command::{
+use the_default::{
   Command,
   Direction,
 };

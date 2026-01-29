@@ -11,6 +11,7 @@ crate-type = [ "staticlib" ]
 ropey.workspace = true
 swift-bridge    = "0.1"
 the-lib         = { path = "../the-lib" }
+the-default     = { path = "../the-default" }
 
 [build-dependencies]
 swift-bridge-build = "0.1"

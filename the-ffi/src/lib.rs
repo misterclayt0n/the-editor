@@ -5,9 +5,14 @@
 //! SwiftUI client to interact with the Rust editor core.
 
 use std::{
+  collections::HashMap,
   num::{
     NonZeroU64,
     NonZeroUsize,
+  },
+  path::{
+    Path,
+    PathBuf,
   },
   sync::atomic::{
     AtomicUsize,
@@ -16,6 +21,18 @@ use std::{
 };
 
 use ropey::Rope;
+use the_default::{
+  Command,
+  CommandPromptState,
+  CommandRegistry,
+  DefaultContext,
+  DefaultDispatchStatic,
+  DispatchRef,
+  Direction as CommandDirection,
+  Keymaps,
+  Mode,
+  build_dispatch,
+};
 use the_lib::{
   Tendril,
   app::App as LibApp,
@@ -508,15 +525,46 @@ impl Default for Document {
   }
 }
 
+struct EditorState {
+  mode:           Mode,
+  command_prompt: CommandPromptState,
+  needs_render:   bool,
+}
+
+impl EditorState {
+  fn new() -> Self {
+    Self {
+      mode: Mode::Normal,
+      command_prompt: CommandPromptState::new(),
+      needs_render: true,
+    }
+  }
+}
+
 /// FFI-safe app wrapper with editor management.
 pub struct App {
   inner: LibApp,
+  dispatch: DefaultDispatchStatic<App>,
+  keymaps: Keymaps,
+  command_registry: CommandRegistry<App>,
+  states: HashMap<LibEditorId, EditorState>,
+  file_paths: HashMap<LibEditorId, PathBuf>,
+  active_editor: Option<LibEditorId>,
+  should_quit: bool,
 }
 
 impl App {
   pub fn new() -> Self {
+    let dispatch = build_dispatch::<App>();
     Self {
       inner: LibApp::default(),
+      dispatch,
+      keymaps: Keymaps::default(),
+      command_registry: CommandRegistry::new(),
+      states: HashMap::new(),
+      file_paths: HashMap::new(),
+      active_editor: None,
+      should_quit: false,
     }
   }
 
@@ -528,6 +576,8 @@ impl App {
   ) -> ffi::EditorId {
     let view = ViewState::new(viewport.to_lib(), scroll.to_lib());
     let id = self.inner.create_editor(Rope::from_str(text), view);
+    self.states.insert(id, EditorState::new());
+    self.active_editor.get_or_insert(id);
     ffi::EditorId::from(id)
   }
 
@@ -535,10 +585,19 @@ impl App {
     let Some(id) = id.to_lib() else {
       return false;
     };
-    self.inner.remove_editor(id).is_some()
+    let removed = self.inner.remove_editor(id).is_some();
+    if removed {
+      self.states.remove(&id);
+      self.file_paths.remove(&id);
+      if self.active_editor == Some(id) {
+        self.active_editor = None;
+      }
+    }
+    removed
   }
 
   pub fn set_viewport(&mut self, id: ffi::EditorId, viewport: ffi::Rect) -> bool {
+    let _ = self.activate(id);
     let Some(editor) = self.editor_mut(id) else {
       return false;
     };
@@ -547,6 +606,7 @@ impl App {
   }
 
   pub fn set_scroll(&mut self, id: ffi::EditorId, scroll: ffi::Position) -> bool {
+    let _ = self.activate(id);
     let Some(editor) = self.editor_mut(id) else {
       return false;
     };
@@ -555,6 +615,7 @@ impl App {
   }
 
   pub fn set_active_cursor(&mut self, id: ffi::EditorId, cursor_id: u64) -> bool {
+    let _ = self.activate(id);
     let Some(editor) = self.editor_mut(id) else {
       return false;
     };
@@ -575,6 +636,7 @@ impl App {
   }
 
   pub fn clear_active_cursor(&mut self, id: ffi::EditorId) -> bool {
+    let _ = self.activate(id);
     let Some(editor) = self.editor_mut(id) else {
       return false;
     };
@@ -604,6 +666,7 @@ impl App {
     id: ffi::EditorId,
     styles: ffi::RenderStyles,
   ) -> RenderPlan {
+    let _ = self.activate(id);
     let Some(editor) = self.editor_mut(id) else {
       return RenderPlan::empty();
     };
@@ -636,20 +699,27 @@ impl App {
   }
 
   pub fn insert(&mut self, id: ffi::EditorId, text: &str) -> bool {
-    self
-      .editor_mut(id)
-      .map(|editor| insert_text(editor.document_mut(), text))
-      .unwrap_or(false)
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let dispatch = self.dispatch();
+    for ch in text.chars() {
+      dispatch.pre_on_action(self, Command::InsertChar(ch));
+    }
+    true
   }
 
   pub fn delete_backward(&mut self, id: ffi::EditorId) -> bool {
-    self
-      .editor_mut(id)
-      .map(|editor| delete_backward(editor.document_mut()))
-      .unwrap_or(false)
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let dispatch = self.dispatch();
+    dispatch.pre_on_action(self, Command::DeleteChar);
+    true
   }
 
   pub fn delete_forward(&mut self, id: ffi::EditorId) -> bool {
+    let _ = self.activate(id);
     self
       .editor_mut(id)
       .map(|editor| delete_forward(editor.document_mut()))
@@ -657,42 +727,57 @@ impl App {
   }
 
   pub fn move_left(&mut self, id: ffi::EditorId) {
-    if let Some(editor) = self.editor_mut(id) {
-      let text_fmt = text_format_for_view(editor.view());
-      move_horizontal(editor.document_mut(), Direction::Backward, &text_fmt);
+    if self.activate(id).is_none() {
+      return;
     }
+    let dispatch = self.dispatch();
+    dispatch.pre_on_action(self, Command::Move(CommandDirection::Left));
   }
 
   pub fn move_right(&mut self, id: ffi::EditorId) {
-    if let Some(editor) = self.editor_mut(id) {
-      let text_fmt = text_format_for_view(editor.view());
-      move_horizontal(editor.document_mut(), Direction::Forward, &text_fmt);
+    if self.activate(id).is_none() {
+      return;
     }
+    let dispatch = self.dispatch();
+    dispatch.pre_on_action(self, Command::Move(CommandDirection::Right));
   }
 
   pub fn move_up(&mut self, id: ffi::EditorId) {
-    if let Some(editor) = self.editor_mut(id) {
-      let text_fmt = text_format_for_view(editor.view());
-      move_vertical(editor.document_mut(), Direction::Backward, &text_fmt);
+    if self.activate(id).is_none() {
+      return;
     }
+    let dispatch = self.dispatch();
+    dispatch.pre_on_action(self, Command::Move(CommandDirection::Up));
   }
 
   pub fn move_down(&mut self, id: ffi::EditorId) {
-    if let Some(editor) = self.editor_mut(id) {
-      let text_fmt = text_format_for_view(editor.view());
-      move_vertical(editor.document_mut(), Direction::Forward, &text_fmt);
+    if self.activate(id).is_none() {
+      return;
     }
+    let dispatch = self.dispatch();
+    dispatch.pre_on_action(self, Command::Move(CommandDirection::Down));
   }
 
   pub fn add_cursor_above(&mut self, id: ffi::EditorId) -> bool {
-    self.add_cursor_vertical(id, Direction::Backward)
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let dispatch = self.dispatch();
+    dispatch.pre_on_action(self, Command::AddCursor(CommandDirection::Up));
+    true
   }
 
   pub fn add_cursor_below(&mut self, id: ffi::EditorId) -> bool {
-    self.add_cursor_vertical(id, Direction::Forward)
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let dispatch = self.dispatch();
+    dispatch.pre_on_action(self, Command::AddCursor(CommandDirection::Down));
+    true
   }
 
   pub fn collapse_to_cursor(&mut self, id: ffi::EditorId, cursor_id: u64) -> bool {
+    let _ = self.activate(id);
     let Some(editor) = self.editor_mut(id) else {
       return false;
     };
@@ -708,6 +793,7 @@ impl App {
   }
 
   pub fn collapse_to_first(&mut self, id: ffi::EditorId) -> bool {
+    let _ = self.activate(id);
     let Some(editor) = self.editor_mut(id) else {
       return false;
     };
@@ -722,19 +808,42 @@ impl App {
     }
   }
 
-  fn add_cursor_vertical(&mut self, id: ffi::EditorId, dir: Direction) -> bool {
-    let Some(editor) = self.editor_mut(id) else {
+  fn set_active_editor(&mut self, id: LibEditorId) -> bool {
+    if self.inner.editor(id).is_none() {
       return false;
-    };
-    let selection = editor.document().selection();
-    let pick = editor
-      .view()
-      .active_cursor
-      .map(CursorPick::Id)
-      .filter(|pick| selection.pick(*pick).is_ok())
-      .unwrap_or(CursorPick::First);
-    let text_fmt = text_format_for_view(editor.view());
-    add_cursor_vertical(editor.document_mut(), dir, pick, &text_fmt)
+    }
+    self.active_editor = Some(id);
+    self.states.entry(id).or_insert_with(EditorState::new);
+    true
+  }
+
+  fn activate(&mut self, id: ffi::EditorId) -> Option<LibEditorId> {
+    let id = id.to_lib()?;
+    self.set_active_editor(id).then_some(id)
+  }
+
+  fn active_state_mut(&mut self) -> &mut EditorState {
+    let id = self.active_editor.expect("active editor not set");
+    self
+      .states
+      .get_mut(&id)
+      .expect("missing editor state for active editor")
+  }
+
+  fn active_state_ref(&self) -> &EditorState {
+    let id = self.active_editor.expect("active editor not set");
+    self
+      .states
+      .get(&id)
+      .expect("missing editor state for active editor")
+  }
+
+  fn active_editor_mut(&mut self) -> &mut the_lib::editor::Editor {
+    let id = self.active_editor.expect("active editor not set");
+    self
+      .inner
+      .editor_mut(id)
+      .expect("missing editor for active editor id")
   }
 
   fn editor(&self, id: ffi::EditorId) -> Option<&the_lib::editor::Editor> {
@@ -751,6 +860,57 @@ impl App {
 impl Default for App {
   fn default() -> Self {
     Self::new()
+  }
+}
+
+impl DefaultContext for App {
+  fn editor(&mut self) -> &mut the_lib::editor::Editor {
+    self.active_editor_mut()
+  }
+
+  fn file_path(&self) -> Option<&Path> {
+    let id = self.active_editor?;
+    self.file_paths.get(&id).map(|path| path.as_path())
+  }
+
+  fn request_render(&mut self) {
+    self.active_state_mut().needs_render = true;
+  }
+
+  fn request_quit(&mut self) {
+    self.should_quit = true;
+  }
+
+  fn mode(&self) -> Mode {
+    self.active_state_ref().mode
+  }
+
+  fn set_mode(&mut self, mode: Mode) {
+    self.active_state_mut().mode = mode;
+  }
+
+  fn keymaps(&mut self) -> &mut Keymaps {
+    &mut self.keymaps
+  }
+
+  fn command_prompt_mut(&mut self) -> &mut CommandPromptState {
+    &mut self.active_state_mut().command_prompt
+  }
+
+  fn command_prompt_ref(&self) -> &CommandPromptState {
+    &self.active_state_ref().command_prompt
+  }
+
+  fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self> {
+    &mut self.command_registry
+  }
+
+  fn command_registry_ref(&self) -> &CommandRegistry<Self> {
+    &self.command_registry
+  }
+
+  fn dispatch(&self) -> DispatchRef<Self> {
+    DispatchRef::from_ptr(&self.dispatch as *const _)
   }
 }
 

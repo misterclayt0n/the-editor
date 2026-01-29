@@ -3,6 +3,7 @@
 use crossterm::event::{
   KeyCode,
   KeyEvent as CrosstermKeyEvent,
+  KeyEventKind,
   KeyModifiers,
 };
 use the_default::DefaultContext;
@@ -18,6 +19,11 @@ use crate::{
 
 /// Orchestration function - maps keyboard input to dispatch calls.
 pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
+  // Only handle key press events, not release or repeat
+  if event.kind != KeyEventKind::Press {
+    return;
+  }
+
   let modifiers = to_modifiers(event.modifiers);
   let Some(key) = to_key(event.code) else {
     return;

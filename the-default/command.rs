@@ -8,6 +8,7 @@ use std::{
 use smallvec::SmallVec;
 use the_core::{
   grapheme::{
+    nth_next_grapheme_boundary,
     nth_prev_grapheme_boundary,
     prev_grapheme_boundary,
   },
@@ -78,6 +79,7 @@ define! {
 
     insert_char: char,
     delete_char: (),
+    delete_char_forward: usize,
     delete_word_backward: usize,
     delete_word_forward: usize,
     kill_to_line_start: (),
@@ -101,6 +103,7 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, ()),
   fn(&mut Ctx, char),
   fn(&mut Ctx, ()),
+  fn(&mut Ctx, usize),
   fn(&mut Ctx, usize),
   fn(&mut Ctx, usize),
   fn(&mut Ctx, ()),
@@ -161,6 +164,7 @@ where
     .with_render_request(render_request::<Ctx> as fn(&mut Ctx, ()))
     .with_insert_char(insert_char::<Ctx> as fn(&mut Ctx, char))
     .with_delete_char(delete_char::<Ctx> as fn(&mut Ctx, ()))
+    .with_delete_char_forward(delete_char_forward::<Ctx> as fn(&mut Ctx, usize))
     .with_delete_word_backward(delete_word_backward::<Ctx> as fn(&mut Ctx, usize))
     .with_delete_word_forward(delete_word_forward::<Ctx> as fn(&mut Ctx, usize))
     .with_kill_to_line_start(kill_to_line_start::<Ctx> as fn(&mut Ctx, ()))
@@ -222,6 +226,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
   match command {
     Command::InsertChar(ch) => ctx.dispatch().insert_char(ctx, ch),
     Command::DeleteChar => ctx.dispatch().delete_char(ctx, ()),
+    Command::DeleteCharForward { count } => ctx.dispatch().delete_char_forward(ctx, count),
     Command::DeleteWordBackward { count } => ctx.dispatch().delete_word_backward(ctx, count),
     Command::DeleteWordForward { count } => ctx.dispatch().delete_word_forward(ctx, count),
     Command::KillToLineStart => ctx.dispatch().kill_to_line_start(ctx, ()),
@@ -315,6 +320,24 @@ fn delete_char<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
       let count = 1;
       (nth_prev_grapheme_boundary(slice, pos, count), pos)
     }
+  });
+
+  let Ok(tx) = tx else {
+    return;
+  };
+
+  let _ = doc.apply_transaction(&tx);
+}
+
+fn delete_char_forward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+  let count = count.max(1);
+
+  let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
+    let pos = range.cursor(slice);
+    (pos, nth_next_grapheme_boundary(slice, pos, count))
   });
 
   let Ok(tx) = tx else {
@@ -779,6 +802,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "kill_to_line_end" => Some(Command::kill_to_line_end()),
 
     "delete_char_backward" => Some(Command::DeleteChar),
+    "delete_char_forward" => Some(Command::delete_char_forward(1)),
 
     _ => None,
   }

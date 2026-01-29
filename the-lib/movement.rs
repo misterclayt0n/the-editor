@@ -557,6 +557,7 @@ pub fn move_parent_node_end(
   movement: Movement,
 ) -> Selection {
   selection.transform(|range| {
+    let doc_len = text.len_chars();
     let start_from = text.char_to_byte(range.from()) as u32;
     let start_to = text.char_to_byte(range.to()) as u32;
 
@@ -595,11 +596,16 @@ pub fn move_parent_node_end(
     };
 
     if movement == Movement::Move {
+      if end_head >= doc_len {
+        return Range::new(doc_len, doc_len);
+      }
+      let end_head = end_head.min(doc_len);
+      let end_other = (end_head + 1).min(doc_len);
       // preserve direction of original range
       if range.direction() == Direction::Forward {
-        Range::new(end_head, end_head + 1)
+        Range::new(end_head, end_other)
       } else {
-        Range::new(end_head + 1, end_head)
+        Range::new(end_other, end_head)
       }
     } else {
       // if we end up with a forward range, then adjust it to be one past
@@ -607,8 +613,9 @@ pub fn move_parent_node_end(
       if end_head >= range.anchor {
         end_head += 1;
       }
-
-      Range::new(range.anchor, end_head)
+      let anchor = range.anchor.min(doc_len);
+      let end_head = end_head.min(doc_len);
+      Range::new(anchor, end_head)
     }
   })
 }
@@ -734,6 +741,72 @@ pub fn move_prev_paragraph(
     range.put_cursor(slice, head, true).anchor
   };
   Range::new(anchor, head)
+}
+
+#[cfg(all(test, feature = "runtime-loader"))]
+mod tests {
+  use std::path::Path;
+
+  use ropey::Rope;
+
+  use super::{
+    Direction,
+    Movement,
+    move_parent_node_end,
+  };
+  use crate::{
+    selection::Selection,
+    syntax::{
+      Loader,
+      Syntax,
+      config::Configuration,
+      runtime_loader::RuntimeLoader,
+    },
+  };
+
+  #[test]
+  fn move_parent_node_end_clamps_to_doc_len() {
+    let config_value = match the_loader::config::default_lang_config() {
+      Ok(value) => value,
+      Err(_) => return,
+    };
+    let config: Configuration = match config_value.try_into() {
+      Ok(config) => config,
+      Err(_) => return,
+    };
+    let loader = match Loader::new(config, RuntimeLoader::new()) {
+      Ok(loader) => loader,
+      Err(_) => return,
+    };
+    let language = match loader.language_for_filename(Path::new("test.rs")) {
+      Some(language) => language,
+      None => return,
+    };
+
+    let text = Rope::from("fn main() {}");
+    let syntax = match Syntax::new(text.slice(..), language, &loader) {
+      Ok(syntax) => syntax,
+      Err(_) => return,
+    };
+
+    let selection = Selection::point(text.len_chars());
+    let moved = move_parent_node_end(
+      &syntax,
+      text.slice(..),
+      selection,
+      Direction::Forward,
+      Movement::Extend,
+    );
+
+    for range in moved.ranges() {
+      assert!(
+        range.from() <= text.len_chars() && range.to() <= text.len_chars(),
+        "range out of bounds: {:?} (len={})",
+        range,
+        text.len_chars()
+      );
+    }
+  }
 }
 
 #[must_use]

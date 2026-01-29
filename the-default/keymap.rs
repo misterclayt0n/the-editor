@@ -576,6 +576,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "right"     => move_char_right,
     "home"      => move_char_left,
     "end"       => move_char_right,
+    "C-w"       => delete_word_backward,
+    "A-bs"      => delete_word_backward,
+    "C-bs"      => delete_word_backward,
   });
 
   let mut select = normal.clone();

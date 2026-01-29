@@ -429,6 +429,7 @@ impl Motion {
 pub enum Command {
   InsertChar(char),
   DeleteChar,
+  DeleteWordBackward { count: usize },
   Move(Direction),
   AddCursor(Direction),
   Motion(Motion),
@@ -645,5 +646,10 @@ impl Command {
   #[must_use]
   pub const fn extend_to_column(col: usize) -> Self {
     Self::Motion(Motion::extend_to_column(col))
+  }
+
+  #[must_use]
+  pub const fn delete_word_backward(count: usize) -> Self {
+    Self::DeleteWordBackward { count }
   }
 }

@@ -442,6 +442,8 @@ pub enum Command {
   PageUp { extend: bool },
   PageDown { extend: bool },
   FindChar { direction: Direction, inclusive: bool, extend: bool },
+  ParentNodeEnd { extend: bool },
+  ParentNodeStart { extend: bool },
   Move(Direction),
   AddCursor(Direction),
   Motion(Motion),
@@ -768,5 +770,25 @@ impl Command {
   #[must_use]
   pub const fn extend_till_prev_char() -> Self {
     Self::FindChar { direction: Direction::Backward, inclusive: false, extend: true }
+  }
+
+  #[must_use]
+  pub const fn move_parent_node_end() -> Self {
+    Self::ParentNodeEnd { extend: false }
+  }
+
+  #[must_use]
+  pub const fn extend_parent_node_end() -> Self {
+    Self::ParentNodeEnd { extend: true }
+  }
+
+  #[must_use]
+  pub const fn move_parent_node_start() -> Self {
+    Self::ParentNodeStart { extend: false }
+  }
+
+  #[must_use]
+  pub const fn extend_parent_node_start() -> Self {
+    Self::ParentNodeStart { extend: true }
   }
 }

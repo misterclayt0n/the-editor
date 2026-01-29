@@ -282,6 +282,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::FindChar { direction, inclusive, extend } => {
       ctx.set_pending_input(Some(PendingInput::FindChar { direction, inclusive, extend, count: 1 }));
     },
+    Command::ParentNodeEnd { extend } => parent_node_end(ctx, extend),
+    Command::ParentNodeStart { extend } => parent_node_start(ctx, extend),
     Command::Move(dir) => ctx.dispatch().move_cursor(ctx, dir),
     Command::AddCursor(dir) => ctx.dispatch().add_cursor(ctx, dir),
     Command::Motion(motion) => ctx.dispatch().motion(ctx, motion),
@@ -651,6 +653,38 @@ fn find_char_impl<Ctx: DefaultContext>(
   let _ = doc.set_selection(new_selection);
 }
 
+fn parent_node_end<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
+  use the_lib::movement::{Direction as MoveDirection, move_parent_node_end};
+
+  let doc = ctx.editor().document_mut();
+  let Some(syntax) = doc.syntax() else {
+    return; // No syntax tree available
+  };
+
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+  let movement = if extend { Movement::Extend } else { Movement::Move };
+
+  let new_selection = move_parent_node_end(syntax, slice, selection, MoveDirection::Forward, movement);
+  let _ = doc.set_selection(new_selection);
+}
+
+fn parent_node_start<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
+  use the_lib::movement::{Direction as MoveDirection, move_parent_node_end};
+
+  let doc = ctx.editor().document_mut();
+  let Some(syntax) = doc.syntax() else {
+    return; // No syntax tree available
+  };
+
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+  let movement = if extend { Movement::Extend } else { Movement::Move };
+
+  let new_selection = move_parent_node_end(syntax, slice, selection, MoveDirection::Backward, movement);
+  let _ = doc.set_selection(new_selection);
+}
+
 fn move_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
   {
     let editor = ctx.editor();
@@ -1014,6 +1048,11 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "extend_till_char" => Some(Command::extend_till_char()),
     "extend_prev_char" => Some(Command::extend_prev_char()),
     "extend_till_prev_char" => Some(Command::extend_till_prev_char()),
+
+    "move_parent_node_end" => Some(Command::move_parent_node_end()),
+    "extend_parent_node_end" => Some(Command::extend_parent_node_end()),
+    "move_parent_node_start" => Some(Command::move_parent_node_start()),
+    "extend_parent_node_start" => Some(Command::extend_parent_node_start()),
 
     _ => None,
   }

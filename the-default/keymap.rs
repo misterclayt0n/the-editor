@@ -619,6 +619,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
     "A-e"       => extend_parent_node_end,
     "A-b"       => extend_parent_node_start,
+
+    "home"      => extend_to_line_start,
+    "end"       => extend_to_line_end,
   }));
 
   let mut command = normal.clone();

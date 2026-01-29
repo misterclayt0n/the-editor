@@ -11,6 +11,7 @@ use the_core::grapheme::{
   prev_grapheme_boundary,
 };
 use the_dispatch::define;
+use the_stdx::rope::RopeSliceExt;
 use the_lib::{
   Tendril,
   auto_pairs::{
@@ -76,6 +77,7 @@ define! {
     delete_char: (),
     delete_word_backward: usize,
     delete_word_forward: usize,
+    kill_to_line_start: (),
     move_cursor: Direction,
     add_cursor: Direction,
     motion: Motion,
@@ -97,6 +99,7 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, ()),
   fn(&mut Ctx, usize),
   fn(&mut Ctx, usize),
+  fn(&mut Ctx, ()),
   fn(&mut Ctx, Direction),
   fn(&mut Ctx, Direction),
   fn(&mut Ctx, Motion),
@@ -155,6 +158,7 @@ where
     .with_delete_char(delete_char::<Ctx> as fn(&mut Ctx, ()))
     .with_delete_word_backward(delete_word_backward::<Ctx> as fn(&mut Ctx, usize))
     .with_delete_word_forward(delete_word_forward::<Ctx> as fn(&mut Ctx, usize))
+    .with_kill_to_line_start(kill_to_line_start::<Ctx> as fn(&mut Ctx, ()))
     .with_move_cursor(move_cursor::<Ctx> as fn(&mut Ctx, Direction))
     .with_add_cursor(add_cursor::<Ctx> as fn(&mut Ctx, Direction))
     .with_motion(motion::<Ctx> as fn(&mut Ctx, Motion))
@@ -214,6 +218,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::DeleteChar => ctx.dispatch().delete_char(ctx, ()),
     Command::DeleteWordBackward { count } => ctx.dispatch().delete_word_backward(ctx, count),
     Command::DeleteWordForward { count } => ctx.dispatch().delete_word_forward(ctx, count),
+    Command::KillToLineStart => ctx.dispatch().kill_to_line_start(ctx, ()),
     Command::Move(dir) => ctx.dispatch().move_cursor(ctx, dir),
     Command::AddCursor(dir) => ctx.dispatch().add_cursor(ctx, dir),
     Command::Motion(motion) => ctx.dispatch().motion(ctx, motion),
@@ -348,6 +353,46 @@ fn delete_word_forward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
     }
     let target = movement::move_next_word_end(slice, *range, count);
     (cursor_pos, target.to())
+  });
+
+  let Ok(tx) = tx else {
+    return;
+  };
+
+  let _ = doc.apply_transaction(&tx);
+}
+
+fn kill_to_line_start<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
+    let cursor_pos = range.cursor(slice);
+    let line = range.cursor_line(slice);
+    let line_start = slice.line_to_char(line);
+
+    let head = if cursor_pos == line_start && line != 0 {
+      // At line start, delete back to end of previous line (join lines)
+      let prev_line = slice.line(line - 1);
+      let prev_line_start = slice.line_to_char(line - 1);
+      // Line end is before the newline character
+      prev_line_start + prev_line.len_chars().saturating_sub(1)
+    } else if let Some(first_non_ws) = slice.line(line).first_non_whitespace_char() {
+      let first_non_ws_pos = line_start + first_non_ws;
+      if first_non_ws_pos < cursor_pos {
+        // Cursor is after first non-whitespace, delete to first non-whitespace
+        first_non_ws_pos
+      } else {
+        // Delete to line start
+        line_start
+      }
+    } else {
+      // Blank line, delete to line start
+      line_start
+    };
+
+    (head, cursor_pos)
   });
 
   let Ok(tx) = tx else {
@@ -696,6 +741,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
 
     "delete_word_backward" => Some(Command::delete_word_backward(1)),
     "delete_word_forward" => Some(Command::delete_word_forward(1)),
+    "kill_to_line_start" => Some(Command::kill_to_line_start()),
 
     _ => None,
   }

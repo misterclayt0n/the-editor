@@ -603,25 +603,21 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "j" | Down  => extend_visual_line_down,
     "k" | Up    => extend_visual_line_up,
     "l" | Right => extend_char_right,
-
     "w"         => extend_next_word_start,
     "b"         => extend_prev_word_start,
     "e"         => extend_next_word_end,
-
     "W"         => extend_next_long_word_start,
     "B"         => extend_prev_long_word_start,
     "E"         => extend_next_long_word_end,
-
     "f"         => extend_next_char,
     "t"         => extend_till_char,
     "F"         => extend_prev_char,
     "T"         => extend_till_prev_char,
-
     "A-e"       => extend_parent_node_end,
     "A-b"       => extend_parent_node_start,
-
     "home"      => extend_to_line_start,
     "end"       => extend_to_line_end,
+    "v"         => normal_mode,
   }));
 
   let mut command = normal.clone();

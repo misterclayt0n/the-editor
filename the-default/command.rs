@@ -221,13 +221,20 @@ fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
 }
 
 fn handle_pending_input<Ctx: DefaultContext>(
-  _ctx: &mut Ctx,
-  _pending: PendingInput,
-  _key: KeyEvent,
+  ctx: &mut Ctx,
+  pending: PendingInput,
+  key: KeyEvent,
 ) -> bool {
-  // Placeholder: consume the pending input and ignore this key.
-  // TODO: wire concrete pending behaviors (find-char, insert-register, etc.).
-  true
+  match pending {
+    PendingInput::FindChar { direction, inclusive, extend, count } => {
+      if let Key::Char(ch) = key.key {
+        find_char_impl(ctx, ch, direction, inclusive, extend, count);
+      }
+      true
+    },
+    PendingInput::InsertRegister => true, // TODO
+    PendingInput::Placeholder => true,
+  }
 }
 
 fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
@@ -270,6 +277,9 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::GotoLineEnd { extend } => ctx.dispatch().goto_line_end(ctx, extend),
     Command::PageUp { extend } => ctx.dispatch().page_up(ctx, extend),
     Command::PageDown { extend } => ctx.dispatch().page_down(ctx, extend),
+    Command::FindChar { direction, inclusive, extend } => {
+      ctx.set_pending_input(Some(PendingInput::FindChar { direction, inclusive, extend, count: 1 }));
+    },
     Command::Move(dir) => ctx.dispatch().move_cursor(ctx, dir),
     Command::AddCursor(dir) => ctx.dispatch().add_cursor(ctx, dir),
     Command::Motion(motion) => ctx.dispatch().motion(ctx, motion),
@@ -590,6 +600,55 @@ fn page_down<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
   let _ = ctx.editor().document_mut().set_selection(new_selection);
 }
 
+fn find_char_impl<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  ch: char,
+  direction: Direction,
+  inclusive: bool,
+  extend: bool,
+  count: usize,
+) {
+  use the_lib::search::{find_nth, SearchDirection, SearchStart};
+
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  let search_dir = match direction {
+    Direction::Forward => SearchDirection::Next,
+    Direction::Backward => SearchDirection::Prev,
+    _ => return, // Only Forward/Backward make sense for find_char
+  };
+
+  let new_selection = selection.transform(|range| {
+    let cursor = range.cursor(slice);
+    // Start search from position after/before cursor (exclusive of current position)
+    let search_pos = match direction {
+      Direction::Forward => cursor + 1,
+      Direction::Backward => cursor,
+      _ => return range, // Should not happen
+    };
+
+    if let Some(found) = find_nth(slice, ch, search_pos, count, search_dir, SearchStart::Inclusive) {
+      let target = if inclusive {
+        found
+      } else {
+        // "till" - stop one char before the match
+        match direction {
+          Direction::Forward => found.saturating_sub(1),
+          Direction::Backward => found + 1,
+          _ => return range, // Should not happen
+        }
+      };
+      range.put_cursor(slice, target, extend)
+    } else {
+      range // No match found, keep original
+    }
+  });
+
+  let _ = doc.set_selection(new_selection);
+}
+
 fn move_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
   {
     let editor = ctx.editor();
@@ -597,8 +656,8 @@ fn move_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
     let selection = doc.selection().clone();
 
     let (dir, vertical) = match direction {
-      Direction::Left => (MoveDir::Backward, false),
-      Direction::Right => (MoveDir::Forward, false),
+      Direction::Left | Direction::Backward => (MoveDir::Backward, false),
+      Direction::Right | Direction::Forward => (MoveDir::Forward, false),
       Direction::Up => (MoveDir::Backward, true),
       Direction::Down => (MoveDir::Forward, true),
     };
@@ -944,6 +1003,15 @@ pub fn command_from_name(name: &str) -> Option<Command> {
 
     "page_up" => Some(Command::page_up()),
     "page_down" => Some(Command::page_down()),
+
+    "find_next_char" => Some(Command::find_next_char()),
+    "find_till_char" => Some(Command::find_till_char()),
+    "find_prev_char" => Some(Command::find_prev_char()),
+    "till_prev_char" => Some(Command::till_prev_char()),
+    "extend_next_char" => Some(Command::extend_next_char()),
+    "extend_till_char" => Some(Command::extend_till_char()),
+    "extend_prev_char" => Some(Command::extend_prev_char()),
+    "extend_till_prev_char" => Some(Command::extend_till_prev_char()),
 
     _ => None,
   }

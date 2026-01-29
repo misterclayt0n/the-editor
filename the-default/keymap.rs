@@ -563,6 +563,11 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "B"         => move_prev_long_word_start,
     "E"         => move_next_long_word_end,
 
+    "f"         => find_next_char,
+    "t"         => find_till_char,
+    "F"         => find_prev_char,
+    "T"         => till_prev_char,
+
     "v"         => select_mode,
     "i"         => insert_mode,
     ":"         => command_mode,
@@ -606,6 +611,11 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "W"         => extend_next_long_word_start,
     "B"         => extend_prev_long_word_start,
     "E"         => extend_next_long_word_end,
+
+    "f"         => extend_next_char,
+    "t"         => extend_till_char,
+    "F"         => extend_prev_char,
+    "T"         => extend_till_prev_char,
   }));
 
   let mut command = normal.clone();

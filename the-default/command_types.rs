@@ -6,6 +6,8 @@ pub enum Direction {
   Down,
   Left,
   Right,
+  Forward,
+  Backward,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -439,6 +441,7 @@ pub enum Command {
   GotoLineEnd { extend: bool },
   PageUp { extend: bool },
   PageDown { extend: bool },
+  FindChar { direction: Direction, inclusive: bool, extend: bool },
   Move(Direction),
   AddCursor(Direction),
   Motion(Motion),
@@ -725,5 +728,45 @@ impl Command {
   #[must_use]
   pub const fn extend_page_down() -> Self {
     Self::PageDown { extend: true }
+  }
+
+  #[must_use]
+  pub const fn find_next_char() -> Self {
+    Self::FindChar { direction: Direction::Forward, inclusive: true, extend: false }
+  }
+
+  #[must_use]
+  pub const fn find_till_char() -> Self {
+    Self::FindChar { direction: Direction::Forward, inclusive: false, extend: false }
+  }
+
+  #[must_use]
+  pub const fn find_prev_char() -> Self {
+    Self::FindChar { direction: Direction::Backward, inclusive: true, extend: false }
+  }
+
+  #[must_use]
+  pub const fn till_prev_char() -> Self {
+    Self::FindChar { direction: Direction::Backward, inclusive: false, extend: false }
+  }
+
+  #[must_use]
+  pub const fn extend_next_char() -> Self {
+    Self::FindChar { direction: Direction::Forward, inclusive: true, extend: true }
+  }
+
+  #[must_use]
+  pub const fn extend_till_char() -> Self {
+    Self::FindChar { direction: Direction::Forward, inclusive: false, extend: true }
+  }
+
+  #[must_use]
+  pub const fn extend_prev_char() -> Self {
+    Self::FindChar { direction: Direction::Backward, inclusive: true, extend: true }
+  }
+
+  #[must_use]
+  pub const fn extend_till_prev_char() -> Self {
+    Self::FindChar { direction: Direction::Backward, inclusive: false, extend: true }
   }
 }

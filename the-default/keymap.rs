@@ -591,6 +591,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "S-tab"     => insert_tab,
     "home"      => goto_line_start,
     "end"       => goto_line_end,
+    "pageup"    => page_up,
+    "pagedown"  => page_down,
   });
 
   let mut select = normal.clone();

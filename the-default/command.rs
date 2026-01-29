@@ -87,6 +87,8 @@ define! {
     insert_tab: (),
     goto_line_start: bool,
     goto_line_end: bool,
+    page_up: bool,
+    page_down: bool,
     move_cursor: Direction,
     add_cursor: Direction,
     motion: Motion,
@@ -112,6 +114,8 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
+  fn(&mut Ctx, bool),
+  fn(&mut Ctx, bool),
   fn(&mut Ctx, bool),
   fn(&mut Ctx, bool),
   fn(&mut Ctx, Direction),
@@ -178,6 +182,8 @@ where
     .with_insert_tab(insert_tab::<Ctx> as fn(&mut Ctx, ()))
     .with_goto_line_start(goto_line_start::<Ctx> as fn(&mut Ctx, bool))
     .with_goto_line_end(goto_line_end::<Ctx> as fn(&mut Ctx, bool))
+    .with_page_up(page_up::<Ctx> as fn(&mut Ctx, bool))
+    .with_page_down(page_down::<Ctx> as fn(&mut Ctx, bool))
     .with_move_cursor(move_cursor::<Ctx> as fn(&mut Ctx, Direction))
     .with_add_cursor(add_cursor::<Ctx> as fn(&mut Ctx, Direction))
     .with_motion(motion::<Ctx> as fn(&mut Ctx, Motion))
@@ -243,6 +249,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::InsertTab => ctx.dispatch().insert_tab(ctx, ()),
     Command::GotoLineStart { extend } => ctx.dispatch().goto_line_start(ctx, extend),
     Command::GotoLineEnd { extend } => ctx.dispatch().goto_line_end(ctx, extend),
+    Command::PageUp { extend } => ctx.dispatch().page_up(ctx, extend),
+    Command::PageDown { extend } => ctx.dispatch().page_down(ctx, extend),
     Command::Move(dir) => ctx.dispatch().move_cursor(ctx, dir),
     Command::AddCursor(dir) => ctx.dispatch().add_cursor(ctx, dir),
     Command::Motion(motion) => ctx.dispatch().motion(ctx, motion),
@@ -511,6 +519,56 @@ fn goto_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
   });
 
   let _ = doc.set_selection(new_selection);
+}
+
+fn page_up<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
+  let height = ctx.editor().view().viewport.height as usize;
+  let count = height.saturating_sub(2).max(1); // Leave some overlap
+
+  let new_selection = {
+    let doc = ctx.editor().document_mut();
+    let selection = doc.selection().clone();
+    let slice = doc.text().slice(..);
+
+    let text_fmt = TextFormat::default();
+    let mut annotations = TextAnnotations::default();
+    let behavior = if extend {
+      Movement::Extend
+    } else {
+      Movement::Move
+    };
+
+    selection.transform(|range| {
+      move_vertically(slice, range, MoveDir::Backward, count, behavior, &text_fmt, &mut annotations)
+    })
+  };
+
+  let _ = ctx.editor().document_mut().set_selection(new_selection);
+}
+
+fn page_down<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
+  let height = ctx.editor().view().viewport.height as usize;
+  let count = height.saturating_sub(2).max(1); // Leave some overlap
+
+  let new_selection = {
+    let doc = ctx.editor().document_mut();
+    let selection = doc.selection().clone();
+    let slice = doc.text().slice(..);
+
+    let text_fmt = TextFormat::default();
+    let mut annotations = TextAnnotations::default();
+    let behavior = if extend {
+      Movement::Extend
+    } else {
+      Movement::Move
+    };
+
+    selection.transform(|range| {
+      move_vertically(slice, range, MoveDir::Forward, count, behavior, &text_fmt, &mut annotations)
+    })
+  };
+
+  let _ = ctx.editor().document_mut().set_selection(new_selection);
 }
 
 fn move_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
@@ -864,6 +922,9 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "extend_to_line_start" => Some(Command::extend_to_line_start()),
     "goto_line_end" => Some(Command::goto_line_end()),
     "extend_to_line_end" => Some(Command::extend_to_line_end()),
+
+    "page_up" => Some(Command::page_up()),
+    "page_down" => Some(Command::page_down()),
 
     _ => None,
   }

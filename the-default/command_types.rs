@@ -437,6 +437,8 @@ pub enum Command {
   InsertTab,
   GotoLineStart { extend: bool },
   GotoLineEnd { extend: bool },
+  PageUp { extend: bool },
+  PageDown { extend: bool },
   Move(Direction),
   AddCursor(Direction),
   Motion(Motion),
@@ -703,5 +705,25 @@ impl Command {
   #[must_use]
   pub const fn extend_to_line_end() -> Self {
     Self::GotoLineEnd { extend: true }
+  }
+
+  #[must_use]
+  pub const fn page_up() -> Self {
+    Self::PageUp { extend: false }
+  }
+
+  #[must_use]
+  pub const fn page_down() -> Self {
+    Self::PageDown { extend: false }
+  }
+
+  #[must_use]
+  pub const fn extend_page_up() -> Self {
+    Self::PageUp { extend: true }
+  }
+
+  #[must_use]
+  pub const fn extend_page_down() -> Self {
+    Self::PageDown { extend: true }
   }
 }

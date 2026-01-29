@@ -49,6 +49,7 @@ pub struct Ctx {
   pub keymaps:          Keymaps,
   pub command_prompt:   CommandPromptState,
   pub command_registry: CommandRegistry<Ctx>,
+  pub pending_input:    Option<the_default::PendingInput>,
   pub dispatch:         Option<NonNull<DefaultDispatchStatic<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
   pub loader:           Option<Arc<Loader>>,
@@ -103,6 +104,7 @@ impl Ctx {
       keymaps: Keymaps::default(),
       command_prompt: CommandPromptState::new(),
       command_registry: CommandRegistry::new(),
+      pending_input: None,
       dispatch: None,
       loader,
       highlight_cache: HighlightCache::default(),
@@ -169,6 +171,14 @@ impl the_default::DefaultContext for Ctx {
       panic!("dispatch is not set");
     };
     DispatchRef::from_ptr(ptr.as_ptr())
+  }
+
+  fn pending_input(&self) -> Option<&the_default::PendingInput> {
+    self.pending_input.as_ref()
+  }
+
+  fn set_pending_input(&mut self, pending: Option<the_default::PendingInput>) {
+    self.pending_input = pending;
   }
 }
 

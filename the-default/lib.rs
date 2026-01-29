@@ -8,6 +8,7 @@ mod command_types;
 mod command_registry;
 mod input;
 mod keymap;
+mod pending;
 
 pub use command_types::{
   Command,
@@ -32,6 +33,7 @@ pub use input::{
   KeyOutcome,
   Modifiers,
 };
+pub use pending::PendingInput;
 pub use command_registry::{
   CommandCompleter,
   CommandError,

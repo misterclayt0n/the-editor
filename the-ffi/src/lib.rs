@@ -538,6 +538,7 @@ struct EditorState {
   mode:           Mode,
   command_prompt: CommandPromptState,
   needs_render:   bool,
+  pending_input:  Option<the_default::PendingInput>,
 }
 
 impl EditorState {
@@ -546,6 +547,7 @@ impl EditorState {
       mode: Mode::Normal,
       command_prompt: CommandPromptState::new(),
       needs_render: true,
+      pending_input: None,
     }
   }
 }
@@ -989,6 +991,14 @@ impl DefaultContext for App {
 
   fn dispatch(&self) -> DispatchRef<Self> {
     DispatchRef::from_ptr(&self.dispatch as *const _)
+  }
+
+  fn pending_input(&self) -> Option<&the_default::PendingInput> {
+    self.active_state_ref().pending_input.as_ref()
+  }
+
+  fn set_pending_input(&mut self, pending: Option<the_default::PendingInput>) {
+    self.active_state_mut().pending_input = pending;
   }
 }
 

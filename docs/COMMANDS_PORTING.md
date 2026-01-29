@@ -189,6 +189,57 @@ No new handler needed—`motion()` already implements `WordMotion::NextLongWordS
 | `cx.on_next_key` | use dispatch hook in the-default or client key pipeline |
 | `cx.register` | use `Registers` in the-default layer |
 
+## Pending input (new in default layer)
+
+The new architecture does **not** have `cx.on_next_key()` in core. Instead, use a
+**pending-input state** stored in the default layer and consumed at the top of
+`pre_on_keypress`.
+
+### Where it lives
+- `the-default/pending.rs` → `enum PendingInput`
+- `DefaultContext` now exposes:
+  - `fn pending_input(&self) -> Option<&PendingInput>`
+  - `fn set_pending_input(&mut self, pending: Option<PendingInput>)`
+
+### Dispatch behavior
+`pre_on_keypress` now checks `pending_input` and consumes the next key before
+normal keymap handling:
+
+```rust
+fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+  if let Some(pending) = ctx.pending_input().cloned() {
+    ctx.set_pending_input(None);
+    if handle_pending_input(ctx, pending, key) {
+      return;
+    }
+  }
+
+  ctx.dispatch().on_keypress(ctx, key);
+}
+```
+
+### How to use (pattern)
+For any command that needs a follow‑up character (f/t/F/T, insert‑register,
+replace, etc.), set pending state and return:
+
+```rust
+fn find_char_forward<Ctx: DefaultContext>(ctx: &mut Ctx, inclusive: bool, extend: bool) {
+  ctx.set_pending_input(Some(PendingInput::FindChar {
+    direction: Direction::Forward,
+    inclusive,
+    extend,
+    count: 1,
+  }));
+}
+```
+
+Then implement actual behavior in `handle_pending_input`.
+
+### Current status
+`handle_pending_input` is currently a placeholder that consumes the key and
+returns `true` (handled). This unblocks the architecture so other agents can
+wire real behaviors without changing core/dispatch again.
+
 ## Suggested port order (minimize regressions)
 
 1) **Movement + selection** (already mostly in `Motion`) → fill gaps.

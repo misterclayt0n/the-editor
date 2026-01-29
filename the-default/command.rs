@@ -54,6 +54,7 @@ use crate::{
   KeyOutcome,
   Modifiers,
   Motion,
+  PendingInput,
   WordMotion,
   command_registry::{
     CommandPromptState,
@@ -158,6 +159,8 @@ pub trait DefaultContext: Sized + 'static {
   fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self>;
   fn command_registry_ref(&self) -> &CommandRegistry<Self>;
   fn dispatch(&self) -> DispatchRef<Self>;
+  fn pending_input(&self) -> Option<&PendingInput>;
+  fn set_pending_input(&mut self, pending: Option<PendingInput>);
 }
 
 pub fn build_dispatch<Ctx>() -> DefaultDispatchStatic<Ctx>
@@ -208,7 +211,23 @@ where
 }
 
 fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+  if let Some(pending) = ctx.pending_input().cloned() {
+    ctx.set_pending_input(None);
+    if handle_pending_input(ctx, pending, key) {
+      return;
+    }
+  }
   ctx.dispatch().on_keypress(ctx, key);
+}
+
+fn handle_pending_input<Ctx: DefaultContext>(
+  _ctx: &mut Ctx,
+  _pending: PendingInput,
+  _key: KeyEvent,
+) -> bool {
+  // Placeholder: consume the pending input and ignore this key.
+  // TODO: wire concrete pending behaviors (find-char, insert-register, etc.).
+  true
 }
 
 fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {

@@ -778,6 +778,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "kill_to_line_start" => Some(Command::kill_to_line_start()),
     "kill_to_line_end" => Some(Command::kill_to_line_end()),
 
+    "delete_char_backward" => Some(Command::DeleteChar),
+
     _ => None,
   }
 }

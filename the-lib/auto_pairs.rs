@@ -540,24 +540,10 @@ fn get_next_range(
   let doc_slice = doc.slice(..);
   let single_grapheme = start_range.is_single_grapheme(doc_slice);
 
-  // just skip over graphemes
+  // just skip over graphemes; always collapse to a point
   if selection_len == 0 {
-    let end_anchor = if single_grapheme {
-      advance_graphemes(doc_slice, start_range.anchor, advance) + offset
-
-    // even for backward inserts with multiple grapheme selections,
-    // we want the anchor to stay where it is so that the relative
-    // selection does not change, e.g.:
-    //
-    // foo([) wor]d -> insert ) -> foo()[ wor]d
-    } else {
-      start_range.anchor + offset
-    };
-
-    return Range::new(
-      end_anchor,
-      advance_graphemes(doc_slice, start_range.head, advance) + offset,
-    );
+    let end = advance_graphemes(doc_slice, start_range.head, advance) + offset;
+    return Range::new(end, end);
   }
 
   // trivial case: only inserted a single-char opener, just move the selection

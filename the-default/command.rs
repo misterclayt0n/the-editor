@@ -75,6 +75,7 @@ define! {
     insert_char: char,
     delete_char: (),
     delete_word_backward: usize,
+    delete_word_forward: usize,
     move_cursor: Direction,
     add_cursor: Direction,
     motion: Motion,
@@ -94,6 +95,7 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, ()),
   fn(&mut Ctx, char),
   fn(&mut Ctx, ()),
+  fn(&mut Ctx, usize),
   fn(&mut Ctx, usize),
   fn(&mut Ctx, Direction),
   fn(&mut Ctx, Direction),
@@ -152,6 +154,7 @@ where
     .with_insert_char(insert_char::<Ctx> as fn(&mut Ctx, char))
     .with_delete_char(delete_char::<Ctx> as fn(&mut Ctx, ()))
     .with_delete_word_backward(delete_word_backward::<Ctx> as fn(&mut Ctx, usize))
+    .with_delete_word_forward(delete_word_forward::<Ctx> as fn(&mut Ctx, usize))
     .with_move_cursor(move_cursor::<Ctx> as fn(&mut Ctx, Direction))
     .with_add_cursor(add_cursor::<Ctx> as fn(&mut Ctx, Direction))
     .with_motion(motion::<Ctx> as fn(&mut Ctx, Motion))
@@ -210,6 +213,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::InsertChar(ch) => ctx.dispatch().insert_char(ctx, ch),
     Command::DeleteChar => ctx.dispatch().delete_char(ctx, ()),
     Command::DeleteWordBackward { count } => ctx.dispatch().delete_word_backward(ctx, count),
+    Command::DeleteWordForward { count } => ctx.dispatch().delete_word_forward(ctx, count),
     Command::Move(dir) => ctx.dispatch().move_cursor(ctx, dir),
     Command::AddCursor(dir) => ctx.dispatch().add_cursor(ctx, dir),
     Command::Motion(motion) => ctx.dispatch().motion(ctx, motion),
@@ -321,6 +325,29 @@ fn delete_word_backward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
     }
     let target = movement::move_prev_word_start(slice, *range, count);
     (target.from(), cursor_pos)
+  });
+
+  let Ok(tx) = tx else {
+    return;
+  };
+
+  let _ = doc.apply_transaction(&tx);
+}
+
+fn delete_word_forward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+  let count = count.max(1);
+  let text_len = slice.len_chars();
+
+  let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
+    let cursor_pos = range.cursor(slice);
+    if cursor_pos >= text_len {
+      return (cursor_pos, cursor_pos);
+    }
+    let target = movement::move_next_word_end(slice, *range, count);
+    (cursor_pos, target.to())
   });
 
   let Ok(tx) = tx else {
@@ -668,6 +695,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "extend_to_column" => Some(Command::extend_to_column(1)),
 
     "delete_word_backward" => Some(Command::delete_word_backward(1)),
+    "delete_word_forward" => Some(Command::delete_word_forward(1)),
 
     _ => None,
   }

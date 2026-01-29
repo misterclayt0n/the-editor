@@ -430,6 +430,7 @@ pub enum Command {
   InsertChar(char),
   DeleteChar,
   DeleteWordBackward { count: usize },
+  DeleteWordForward { count: usize },
   Move(Direction),
   AddCursor(Direction),
   Motion(Motion),
@@ -651,5 +652,10 @@ impl Command {
   #[must_use]
   pub const fn delete_word_backward(count: usize) -> Self {
     Self::DeleteWordBackward { count }
+  }
+
+  #[must_use]
+  pub const fn delete_word_forward(count: usize) -> Self {
+    Self::DeleteWordForward { count }
   }
 }

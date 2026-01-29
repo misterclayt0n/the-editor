@@ -34,39 +34,66 @@ enum KeyKind: UInt8 {
 }
 
 struct KeyEventMapper {
-    static func map(event: NSEvent) -> KeyEvent? {
+    static func mapSpecial(event: NSEvent) -> KeyEvent? {
         if event.modifierFlags.contains(.command) {
             return nil
         }
+        guard let special = specialKey(for: event.keyCode) else {
+            return nil
+        }
+        let modifiers = modifiersBits(from: event.modifierFlags)
+        return KeyEvent(kind: special.rawValue, codepoint: 0, modifiers: modifiers)
+    }
 
-        let modifiers = modifiersBits(from: event)
+    static func mapModified(event: NSEvent) -> KeyEvent? {
+        if event.modifierFlags.contains(.command) {
+            return nil
+        }
+        let hasCtrl = event.modifierFlags.contains(.control)
+        let hasAlt = event.modifierFlags.contains(.option)
+        guard hasCtrl || hasAlt else {
+            return nil
+        }
+
         if let special = specialKey(for: event.keyCode) {
+            let modifiers = modifiersBits(from: event.modifierFlags)
             return KeyEvent(kind: special.rawValue, codepoint: 0, modifiers: modifiers)
         }
 
         if let chars = event.charactersIgnoringModifiers,
            let scalar = chars.unicodeScalars.first {
+            let modifiers = modifiersBits(from: event.modifierFlags)
             return KeyEvent(kind: KeyKind.char.rawValue, codepoint: scalar.value, modifiers: modifiers)
         }
 
         return nil
     }
 
-    private static func modifiersBits(from event: NSEvent) -> UInt8 {
+    static func mapText(_ text: String, modifiers: NSEvent.ModifierFlags, includeModifiers: Bool) -> [KeyEvent] {
+        let bits = includeModifiers ? modifiersBits(from: modifiers) : 0
+        var events: [KeyEvent] = []
+        events.reserveCapacity(text.unicodeScalars.count)
+        for scalar in text.unicodeScalars {
+            events.append(KeyEvent(kind: KeyKind.char.rawValue, codepoint: scalar.value, modifiers: bits))
+        }
+        return events
+    }
+
+    private static func modifiersBits(from flags: NSEvent.ModifierFlags) -> UInt8 {
         var bits: UInt8 = 0
-        if event.modifierFlags.contains(.control) {
+        if flags.contains(.control) {
             bits |= 0b0000_0001
         }
-        if event.modifierFlags.contains(.option) {
+        if flags.contains(.option) {
             bits |= 0b0000_0010
         }
-        if event.modifierFlags.contains(.shift) {
+        if flags.contains(.shift) {
             bits |= 0b0000_0100
         }
         return bits
     }
 
-    private static func specialKey(for keyCode: UInt16) -> KeyKind? {
+    static func specialKey(for keyCode: UInt16) -> KeyKind? {
         switch keyCode {
         case 36: return .enter
         case 76: return .numpadEnter

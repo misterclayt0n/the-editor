@@ -3,10 +3,19 @@
 use std::path::Path;
 
 use smallvec::SmallVec;
-use the_core::grapheme::prev_grapheme_boundary;
+use std::borrow::Cow;
+
+use the_core::grapheme::{
+  nth_prev_grapheme_boundary,
+  prev_grapheme_boundary,
+};
 use the_dispatch::define;
 use the_lib::{
   Tendril,
+  auto_pairs::{
+    self,
+    AutoPairs,
+  },
   editor::Editor,
   movement::{
     self,
@@ -224,24 +233,21 @@ fn insert_char<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
 
+  let pairs = AutoPairs::default();
+  if let Ok(Some(tx)) = auto_pairs::hook(doc.text(), &selection, ch, &pairs) {
+    let _ = doc.apply_transaction(&tx);
+    return;
+  }
+
   let mut text = Tendril::new();
   text.push(ch);
 
-  let tx = Transaction::change_by_selection(doc.text(), &selection, |range| {
-    if range.is_empty() {
-      (range.head, range.head, Some(text.clone()))
-    } else {
-      (range.from(), range.to(), Some(text.clone()))
-    }
-  });
-
-  let Ok(tx) = tx else {
+  let cursors = selection.clone().cursors(doc.text().slice(..));
+  let Ok(tx) = Transaction::insert(doc.text(), &cursors, text) else {
     return;
   };
 
-  if doc.apply_transaction(&tx).is_ok() {
-    let _ = doc.commit();
-  }
+  let _ = doc.apply_transaction(&tx);
 }
 
 fn delete_char<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
@@ -249,32 +255,64 @@ fn delete_char<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
 
-  let mut deletions = Vec::new();
-  for range in selection.ranges() {
-    if !range.is_empty() {
-      deletions.push((range.from(), range.to()));
-      continue;
-    }
-
-    let cursor = range.cursor(slice);
-    if cursor == 0 {
-      continue;
-    }
-    let from = prev_grapheme_boundary(slice, cursor);
-    deletions.push((from, cursor));
-  }
-
-  if deletions.is_empty() {
+  let pairs = AutoPairs::default();
+  if let Ok(Some(tx)) = auto_pairs::delete_hook(doc.text(), &selection, &pairs) {
+    let _ = doc.apply_transaction(&tx);
     return;
   }
 
-  let Ok(tx) = Transaction::delete(doc.text(), deletions) else {
+  let tab_width: usize = 4;
+  let indent_width = doc.indent_style().indent_width(tab_width);
+
+  let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
+    if !range.is_empty() {
+      return (range.from(), range.to());
+    }
+
+    let pos = range.cursor(slice);
+    if pos == 0 {
+      return (pos, pos);
+    }
+
+    let line_start_pos = slice.line_to_char(range.cursor_line(slice));
+    let fragment: Cow<'_, str> = Cow::from(slice.slice(line_start_pos..pos));
+
+    if !fragment.is_empty()
+      && fragment.chars().all(|ch| ch == ' ' || ch == '\t')
+    {
+      if slice.get_char(pos.saturating_sub(1)) == Some('\t') {
+        return (nth_prev_grapheme_boundary(slice, pos, 1), pos);
+      }
+
+      let width: usize = fragment
+        .chars()
+        .map(|ch| if ch == '\t' { tab_width } else { 1 })
+        .sum();
+      let mut drop = width % indent_width;
+      if drop == 0 {
+        drop = indent_width;
+      }
+
+      let mut chars = fragment.chars().rev();
+      let mut start = pos;
+      for _ in 0..drop {
+        match chars.next() {
+          Some(' ') => start = start.saturating_sub(1),
+          _ => break,
+        }
+      }
+      (start, pos)
+    } else {
+      let count = 1;
+      (nth_prev_grapheme_boundary(slice, pos, count), pos)
+    }
+  });
+
+  let Ok(tx) = tx else {
     return;
   };
 
-  if doc.apply_transaction(&tx).is_ok() {
-    let _ = doc.commit();
-  }
+  let _ = doc.apply_transaction(&tx);
 }
 
 fn move_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {

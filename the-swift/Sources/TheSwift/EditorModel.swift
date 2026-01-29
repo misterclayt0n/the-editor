@@ -10,6 +10,7 @@ final class EditorModel: ObservableObject {
     private var viewport: Rect
     let cellSize: CGSize
     let font: Font
+    private(set) var mode: EditorMode = .normal
 
     init() {
         self.app = TheEditorFFIBridge.App()
@@ -21,6 +22,7 @@ final class EditorModel: ObservableObject {
 
         self.editorId = app.create_editor("hello from the-lib\nswift demo", viewport, scroll)
         self.plan = app.render_plan(editorId)
+        self.mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
     }
 
     func updateViewport(pixelSize: CGSize, cellSize: CGSize) {
@@ -38,6 +40,7 @@ final class EditorModel: ObservableObject {
 
     func refresh() {
         plan = app.render_plan(editorId)
+        mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
     }
 
     func insert(_ text: String) {
@@ -45,11 +48,17 @@ final class EditorModel: ObservableObject {
         refresh()
     }
 
-    func handleKey(event: NSEvent) {
-        guard let keyEvent = KeyEventMapper.map(event: event) else {
-            return
-        }
+    func handleKeyEvent(_ keyEvent: KeyEvent) {
         _ = app.handle_key(editorId, keyEvent)
+        refresh()
+    }
+
+    func handleText(_ text: String, modifiers: NSEvent.ModifierFlags) {
+        let includeModifiers = !mode.isTextInput && (modifiers.contains(.control) || modifiers.contains(.option))
+        let events = KeyEventMapper.mapText(text, modifiers: modifiers, includeModifiers: includeModifiers)
+        for event in events {
+            _ = app.handle_key(editorId, event)
+        }
         refresh()
     }
 }

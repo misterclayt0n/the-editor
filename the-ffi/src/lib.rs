@@ -77,6 +77,15 @@ fn next_doc_id() -> DocumentId {
   DocumentId::new(NonZeroUsize::new(id).expect("document id overflow"))
 }
 
+fn mode_to_u8(mode: Mode) -> u8 {
+  match mode {
+    Mode::Normal => 0,
+    Mode::Insert => 1,
+    Mode::Select => 2,
+    Mode::Command => 3,
+  }
+}
+
 /// FFI-safe document wrapper.
 ///
 /// This wraps the core `Document` type and provides simplified methods
@@ -698,6 +707,17 @@ impl App {
       .unwrap_or_default()
   }
 
+  pub fn mode(&self, id: ffi::EditorId) -> u8 {
+    let Some(id) = id.to_lib() else {
+      return mode_to_u8(Mode::Normal);
+    };
+    self
+      .states
+      .get(&id)
+      .map(|state| mode_to_u8(state.mode))
+      .unwrap_or(mode_to_u8(Mode::Normal))
+  }
+
   pub fn handle_key(&mut self, id: ffi::EditorId, event: ffi::KeyEvent) -> bool {
     if self.activate(id).is_none() {
       return false;
@@ -1159,6 +1179,7 @@ mod ffi {
     fn render_plan(self: &mut App, id: EditorId) -> RenderPlan;
     fn render_plan_with_styles(self: &mut App, id: EditorId, styles: RenderStyles) -> RenderPlan;
     fn text(self: &App, id: EditorId) -> String;
+    fn mode(self: &App, id: EditorId) -> u8;
     fn handle_key(self: &mut App, id: EditorId, event: KeyEvent) -> bool;
 
     // Editor editing

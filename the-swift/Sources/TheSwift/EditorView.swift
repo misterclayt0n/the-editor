@@ -13,9 +13,17 @@ struct EditorView: View {
                 drawPlan(in: context, size: size, plan: model.plan, cellSize: cellSize, font: font)
             }
             .overlay(
-                KeyCaptureView(onKey: { event in
-                    model.handleKey(event: event)
-                })
+                KeyCaptureView(
+                    onKey: { event in
+                        model.handleKeyEvent(event)
+                    },
+                    onText: { text, modifiers in
+                        model.handleText(text, modifiers: modifiers)
+                    },
+                    modeProvider: {
+                        model.mode
+                    }
+                )
             )
             .onAppear {
                 model.updateViewport(pixelSize: proxy.size, cellSize: cellSize)

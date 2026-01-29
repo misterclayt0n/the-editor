@@ -125,6 +125,10 @@ extension AppRef {
     public func text(_ id: EditorId) -> RustString {
         RustString(ptr: __swift_bridge__$App$text(ptr, id.intoFfiRepr()))
     }
+
+    public func mode(_ id: EditorId) -> UInt8 {
+        __swift_bridge__$App$mode(ptr, id.intoFfiRepr())
+    }
 }
 extension App: Vectorizable {
     public static func vecOfSelfNew() -> UnsafeMutableRawPointer {

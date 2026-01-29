@@ -85,6 +85,8 @@ define! {
     kill_to_line_start: (),
     kill_to_line_end: (),
     insert_tab: (),
+    goto_line_start: bool,
+    goto_line_end: bool,
     move_cursor: Direction,
     add_cursor: Direction,
     motion: Motion,
@@ -110,6 +112,8 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
+  fn(&mut Ctx, bool),
+  fn(&mut Ctx, bool),
   fn(&mut Ctx, Direction),
   fn(&mut Ctx, Direction),
   fn(&mut Ctx, Motion),
@@ -172,6 +176,8 @@ where
     .with_kill_to_line_start(kill_to_line_start::<Ctx> as fn(&mut Ctx, ()))
     .with_kill_to_line_end(kill_to_line_end::<Ctx> as fn(&mut Ctx, ()))
     .with_insert_tab(insert_tab::<Ctx> as fn(&mut Ctx, ()))
+    .with_goto_line_start(goto_line_start::<Ctx> as fn(&mut Ctx, bool))
+    .with_goto_line_end(goto_line_end::<Ctx> as fn(&mut Ctx, bool))
     .with_move_cursor(move_cursor::<Ctx> as fn(&mut Ctx, Direction))
     .with_add_cursor(add_cursor::<Ctx> as fn(&mut Ctx, Direction))
     .with_motion(motion::<Ctx> as fn(&mut Ctx, Motion))
@@ -235,6 +241,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::KillToLineStart => ctx.dispatch().kill_to_line_start(ctx, ()),
     Command::KillToLineEnd => ctx.dispatch().kill_to_line_end(ctx, ()),
     Command::InsertTab => ctx.dispatch().insert_tab(ctx, ()),
+    Command::GotoLineStart { extend } => ctx.dispatch().goto_line_start(ctx, extend),
+    Command::GotoLineEnd { extend } => ctx.dispatch().goto_line_end(ctx, extend),
     Command::Move(dir) => ctx.dispatch().move_cursor(ctx, dir),
     Command::AddCursor(dir) => ctx.dispatch().add_cursor(ctx, dir),
     Command::Motion(motion) => ctx.dispatch().motion(ctx, motion),
@@ -475,6 +483,34 @@ fn insert_tab<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   };
 
   let _ = doc.apply_transaction(&tx);
+}
+
+fn goto_line_start<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  let new_selection = selection.transform(|range| {
+    let line = range.cursor_line(slice);
+    let pos = slice.line_to_char(line);
+    range.put_cursor(slice, pos, extend)
+  });
+
+  let _ = doc.set_selection(new_selection);
+}
+
+fn goto_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  let new_selection = selection.transform(|range| {
+    let line = range.cursor_line(slice);
+    let pos = line_end_char_index(&slice, line);
+    range.put_cursor(slice, pos, extend)
+  });
+
+  let _ = doc.set_selection(new_selection);
 }
 
 fn move_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
@@ -823,6 +859,11 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "delete_char_forward" => Some(Command::delete_char_forward(1)),
 
     "insert_tab" | "smart_tab" => Some(Command::insert_tab()),
+
+    "goto_line_start" => Some(Command::goto_line_start()),
+    "extend_to_line_start" => Some(Command::extend_to_line_start()),
+    "goto_line_end" => Some(Command::goto_line_end()),
+    "extend_to_line_end" => Some(Command::extend_to_line_end()),
 
     _ => None,
   }

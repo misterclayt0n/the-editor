@@ -589,6 +589,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "del"       => delete_char_forward,
     "tab"       => smart_tab,
     "S-tab"     => insert_tab,
+    "home"      => goto_line_start,
+    "end"       => goto_line_end,
   });
 
   let mut select = normal.clone();

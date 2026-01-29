@@ -84,6 +84,7 @@ define! {
     delete_word_forward: usize,
     kill_to_line_start: (),
     kill_to_line_end: (),
+    insert_tab: (),
     move_cursor: Direction,
     add_cursor: Direction,
     motion: Motion,
@@ -106,6 +107,7 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, usize),
   fn(&mut Ctx, usize),
   fn(&mut Ctx, usize),
+  fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, Direction),
@@ -169,6 +171,7 @@ where
     .with_delete_word_forward(delete_word_forward::<Ctx> as fn(&mut Ctx, usize))
     .with_kill_to_line_start(kill_to_line_start::<Ctx> as fn(&mut Ctx, ()))
     .with_kill_to_line_end(kill_to_line_end::<Ctx> as fn(&mut Ctx, ()))
+    .with_insert_tab(insert_tab::<Ctx> as fn(&mut Ctx, ()))
     .with_move_cursor(move_cursor::<Ctx> as fn(&mut Ctx, Direction))
     .with_add_cursor(add_cursor::<Ctx> as fn(&mut Ctx, Direction))
     .with_motion(motion::<Ctx> as fn(&mut Ctx, Motion))
@@ -231,6 +234,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::DeleteWordForward { count } => ctx.dispatch().delete_word_forward(ctx, count),
     Command::KillToLineStart => ctx.dispatch().kill_to_line_start(ctx, ()),
     Command::KillToLineEnd => ctx.dispatch().kill_to_line_end(ctx, ()),
+    Command::InsertTab => ctx.dispatch().insert_tab(ctx, ()),
     Command::Move(dir) => ctx.dispatch().move_cursor(ctx, dir),
     Command::AddCursor(dir) => ctx.dispatch().add_cursor(ctx, dir),
     Command::Motion(motion) => ctx.dispatch().motion(ctx, motion),
@@ -453,6 +457,20 @@ fn kill_to_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   });
 
   let Ok(tx) = tx else {
+    return;
+  };
+
+  let _ = doc.apply_transaction(&tx);
+}
+
+fn insert_tab<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+
+  let indent = Tendril::from(doc.indent_style().as_str());
+  let cursors = selection.cursors(doc.text().slice(..));
+
+  let Ok(tx) = Transaction::insert(doc.text(), &cursors, indent) else {
     return;
   };
 
@@ -803,6 +821,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
 
     "delete_char_backward" => Some(Command::DeleteChar),
     "delete_char_forward" => Some(Command::delete_char_forward(1)),
+
+    "insert_tab" | "smart_tab" => Some(Command::insert_tab()),
 
     _ => None,
   }

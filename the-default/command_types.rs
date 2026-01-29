@@ -434,6 +434,7 @@ pub enum Command {
   DeleteWordForward { count: usize },
   KillToLineStart,
   KillToLineEnd,
+  InsertTab,
   Move(Direction),
   AddCursor(Direction),
   Motion(Motion),
@@ -675,5 +676,10 @@ impl Command {
   #[must_use]
   pub const fn kill_to_line_end() -> Self {
     Self::KillToLineEnd
+  }
+
+  #[must_use]
+  pub const fn insert_tab() -> Self {
+    Self::InsertTab
   }
 }

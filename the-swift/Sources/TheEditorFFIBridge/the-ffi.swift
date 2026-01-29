@@ -64,6 +64,10 @@ extension AppRefMut {
         __swift_bridge__$App$handle_key(ptr, id.intoFfiRepr(), event.intoFfiRepr())
     }
 
+    public func ensure_cursor_visible(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$ensure_cursor_visible(ptr, id.intoFfiRepr())
+    }
+
     public func insert<GenericToRustStr: ToRustStr>(_ id: EditorId, _ text: GenericToRustStr) -> Bool {
         return text.toRustStr({ textAsRustStr in
             __swift_bridge__$App$insert(ptr, id.intoFfiRepr(), textAsRustStr)

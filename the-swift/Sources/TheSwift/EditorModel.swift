@@ -11,6 +11,8 @@ final class EditorModel: ObservableObject {
     let cellSize: CGSize
     let font: Font
     private(set) var mode: EditorMode = .normal
+    private var scrollRemainderX: CGFloat = 0
+    private var scrollRemainderY: CGFloat = 0
 
     init() {
         self.app = TheEditorFFIBridge.App()
@@ -60,5 +62,41 @@ final class EditorModel: ObservableObject {
             _ = app.handle_key(editorId, event)
         }
         refresh()
+    }
+
+    func handleScroll(deltaX: CGFloat, deltaY: CGFloat, precise: Bool) {
+        let (rowDelta, colDelta) = scrollDelta(deltaX: deltaX, deltaY: deltaY, precise: precise)
+        if rowDelta == 0 && colDelta == 0 {
+            return
+        }
+
+        let current = plan.scroll()
+        let newRow = max(0, Int(current.row) + rowDelta)
+        let newCol = max(0, Int(current.col) + colDelta)
+        let scroll = Position(row: UInt64(newRow), col: UInt64(newCol))
+        _ = app.set_scroll(editorId, scroll)
+        refresh()
+    }
+
+    private func scrollDelta(deltaX: CGFloat, deltaY: CGFloat, precise: Bool) -> (Int, Int) {
+        let lineDeltaY: CGFloat
+        let lineDeltaX: CGFloat
+
+        if precise {
+            lineDeltaY = scrollRemainderY + (deltaY / cellSize.height)
+            lineDeltaX = scrollRemainderX + (deltaX / cellSize.width)
+        } else {
+            lineDeltaY = scrollRemainderY + deltaY
+            lineDeltaX = scrollRemainderX + deltaX
+        }
+
+        let rows = Int(lineDeltaY.rounded(.towardZero))
+        let cols = Int(lineDeltaX.rounded(.towardZero))
+
+        scrollRemainderY = lineDeltaY - CGFloat(rows)
+        scrollRemainderX = lineDeltaX - CGFloat(cols)
+
+        // Positive deltaY means scroll up; reduce row index.
+        return (-rows, -cols)
     }
 }

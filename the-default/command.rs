@@ -265,10 +265,6 @@ fn delete_char<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let indent_width = doc.indent_style().indent_width(tab_width);
 
   let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
-    if !range.is_empty() {
-      return (range.from(), range.to());
-    }
-
     let pos = range.cursor(slice);
     if pos == 0 {
       return (pos, pos);

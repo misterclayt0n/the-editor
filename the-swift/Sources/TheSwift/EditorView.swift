@@ -20,6 +20,9 @@ struct EditorView: View {
                     onText: { text, modifiers in
                         model.handleText(text, modifiers: modifiers)
                     },
+                    onScroll: { deltaX, deltaY, precise in
+                        model.handleScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
+                    },
                     modeProvider: {
                         model.mode
                     }

@@ -7,6 +7,7 @@ struct KeyCaptureView: NSViewRepresentable {
         var onKey: ((KeyEvent) -> Void)?
         var onText: ((String, NSEvent.ModifierFlags) -> Void)?
         var modeProvider: (() -> EditorMode)?
+        var onScroll: ((CGFloat, CGFloat, Bool) -> Void)?
 
         private var lastModifiers: NSEvent.ModifierFlags = []
         private var keyTextAccumulator: [String]? = nil
@@ -150,16 +151,22 @@ struct KeyCaptureView: NSViewRepresentable {
         override func doCommand(by selector: Selector) {
             // Intentionally no-op to avoid system beep.
         }
+
+        override func scrollWheel(with event: NSEvent) {
+            onScroll?(event.scrollingDeltaX, event.scrollingDeltaY, event.hasPreciseScrollingDeltas)
+        }
     }
 
     let onKey: (KeyEvent) -> Void
     let onText: (String, NSEvent.ModifierFlags) -> Void
+    let onScroll: (CGFloat, CGFloat, Bool) -> Void
     let modeProvider: () -> EditorMode
 
     func makeNSView(context: Context) -> KeyCaptureNSView {
         let view = KeyCaptureNSView(frame: .zero)
         view.onKey = onKey
         view.onText = onText
+        view.onScroll = onScroll
         view.modeProvider = modeProvider
         DispatchQueue.main.async {
             view.window?.makeFirstResponder(view)
@@ -170,6 +177,7 @@ struct KeyCaptureView: NSViewRepresentable {
     func updateNSView(_ nsView: KeyCaptureNSView, context: Context) {
         nsView.onKey = onKey
         nsView.onText = onText
+        nsView.onScroll = onScroll
         nsView.modeProvider = modeProvider
     }
 }

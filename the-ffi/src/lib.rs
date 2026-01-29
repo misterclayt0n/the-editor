@@ -726,7 +726,54 @@ impl App {
     let key_event = key_event_from_ffi(event);
     let dispatch = self.dispatch();
     dispatch.pre_on_keypress(self, key_event);
+    self.ensure_cursor_visible(id);
     true
+  }
+
+  pub fn ensure_cursor_visible(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+
+    let Some(editor) = self.editor_mut(id) else {
+      return false;
+    };
+
+    let doc = editor.document();
+    let text = doc.text();
+    let selection = doc.selection();
+    let Some(range) = selection.ranges().first() else {
+      return false;
+    };
+
+    let cursor_pos = range.cursor(text.slice(..));
+    let cursor_line = text.char_to_line(cursor_pos);
+    let cursor_col = cursor_pos - text.line_to_char(cursor_line);
+
+    let view = editor.view();
+    let viewport_height = view.viewport.height as usize;
+    let viewport_width = view.viewport.width as usize;
+
+    let mut new_scroll = view.scroll;
+
+    if cursor_line < view.scroll.row {
+      new_scroll.row = cursor_line;
+    } else if cursor_line >= view.scroll.row + viewport_height {
+      new_scroll.row = cursor_line - viewport_height + 1;
+    }
+
+    if cursor_col < view.scroll.col {
+      new_scroll.col = cursor_col;
+    } else if cursor_col >= view.scroll.col + viewport_width {
+      new_scroll.col = cursor_col - viewport_width + 1;
+    }
+
+    if new_scroll != view.scroll {
+      editor.view_mut().scroll = new_scroll;
+      return true;
+    }
+
+    false
   }
 
   pub fn insert(&mut self, id: ffi::EditorId, text: &str) -> bool {
@@ -1181,6 +1228,7 @@ mod ffi {
     fn text(self: &App, id: EditorId) -> String;
     fn mode(self: &App, id: EditorId) -> u8;
     fn handle_key(self: &mut App, id: EditorId, event: KeyEvent) -> bool;
+    fn ensure_cursor_visible(self: &mut App, id: EditorId) -> bool;
 
     // Editor editing
     fn insert(self: &mut App, id: EditorId, text: &str) -> bool;

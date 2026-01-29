@@ -432,6 +432,7 @@ pub enum Command {
   DeleteWordBackward { count: usize },
   DeleteWordForward { count: usize },
   KillToLineStart,
+  KillToLineEnd,
   Move(Direction),
   AddCursor(Direction),
   Motion(Motion),
@@ -663,5 +664,10 @@ impl Command {
   #[must_use]
   pub const fn kill_to_line_start() -> Self {
     Self::KillToLineStart
+  }
+
+  #[must_use]
+  pub const fn kill_to_line_end() -> Self {
+    Self::KillToLineEnd
   }
 }

@@ -211,12 +211,6 @@ where
 }
 
 fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
-  if let Some(pending) = ctx.pending_input().cloned() {
-    ctx.set_pending_input(None);
-    if handle_pending_input(ctx, pending, key) {
-      return;
-    }
-  }
   ctx.dispatch().on_keypress(ctx, key);
 }
 
@@ -238,6 +232,14 @@ fn handle_pending_input<Ctx: DefaultContext>(
 }
 
 fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+  if let Some(pending) = ctx.pending_input().cloned() {
+    ctx.set_pending_input(None);
+    if handle_pending_input(ctx, pending, key) {
+      ctx.dispatch().render_request(ctx, ());
+      return;
+    }
+  }
+
   if ctx.mode() == Mode::Command {
     if handle_command_prompt_key(ctx, key) {
       return;

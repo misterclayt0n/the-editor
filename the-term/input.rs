@@ -24,7 +24,7 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
     return;
   }
 
-  let modifiers = to_modifiers(event.modifiers);
+  let modifiers = to_modifiers(event.modifiers, event.code);
   let Some(key) = to_key(event.code) else {
     return;
   };
@@ -68,7 +68,7 @@ fn to_key(code: KeyCode) -> Option<Key> {
   }
 }
 
-fn to_modifiers(modifiers: KeyModifiers) -> Modifiers {
+fn to_modifiers(modifiers: KeyModifiers, code: KeyCode) -> Modifiers {
   let mut out = Modifiers::empty();
   if modifiers.contains(KeyModifiers::CONTROL) {
     out.insert(Modifiers::CTRL);
@@ -77,7 +77,13 @@ fn to_modifiers(modifiers: KeyModifiers) -> Modifiers {
     out.insert(Modifiers::ALT);
   }
   if modifiers.contains(KeyModifiers::SHIFT) {
-    out.insert(Modifiers::SHIFT);
+    // Don't include SHIFT for characters that are inherently shifted
+    // (uppercase letters, symbols produced by shift+number, etc.)
+    // The shift is already represented in the character itself.
+    let dominated_by_char = matches!(code, KeyCode::Char(c) if c.is_uppercase() || "~!@#$%^&*()_+{}|:\"<>?".contains(c));
+    if !dominated_by_char {
+      out.insert(Modifiers::SHIFT);
+    }
   }
   out
 }

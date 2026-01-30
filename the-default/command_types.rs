@@ -449,6 +449,8 @@ pub enum Command {
   Motion(Motion),
   DeleteSelection { yank: bool },
   ChangeSelection { yank: bool },
+  Replace,
+  ReplaceWithYanked,
   Save,
   Quit,
 }
@@ -812,5 +814,15 @@ impl Command {
   #[must_use]
   pub const fn change_selection_noyank() -> Self {
     Self::ChangeSelection { yank: false }
+  }
+
+  #[must_use]
+  pub const fn replace() -> Self {
+    Self::Replace
+  }
+
+  #[must_use]
+  pub const fn replace_with_yanked() -> Self {
+    Self::ReplaceWithYanked
   }
 }

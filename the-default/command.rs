@@ -96,6 +96,8 @@ define! {
     motion: Motion,
     delete_selection: bool,
     change_selection: bool,
+    replace_selection: char,
+    replace_with_yanked: (),
     save: (),
     quit: (),
   }
@@ -127,6 +129,8 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, Motion),
   fn(&mut Ctx, bool),
   fn(&mut Ctx, bool),
+  fn(&mut Ctx, char),
+  fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
 >;
@@ -153,6 +157,7 @@ impl<Ctx> std::ops::Deref for DispatchRef<Ctx> {
 
 pub trait DefaultContext: Sized + 'static {
   fn editor(&mut self) -> &mut Editor;
+  fn editor_ref(&self) -> &Editor;
   fn file_path(&self) -> Option<&Path>;
   fn request_render(&mut self);
   fn request_quit(&mut self);
@@ -166,6 +171,7 @@ pub trait DefaultContext: Sized + 'static {
   fn dispatch(&self) -> DispatchRef<Self>;
   fn pending_input(&self) -> Option<&PendingInput>;
   fn set_pending_input(&mut self, pending: Option<PendingInput>);
+  fn registers(&self) -> &Registers;
   fn registers_mut(&mut self) -> &mut Registers;
 }
 
@@ -198,6 +204,8 @@ where
     .with_motion(motion::<Ctx> as fn(&mut Ctx, Motion))
     .with_delete_selection(delete_selection::<Ctx> as fn(&mut Ctx, bool))
     .with_change_selection(change_selection::<Ctx> as fn(&mut Ctx, bool))
+    .with_replace_selection(replace_selection::<Ctx> as fn(&mut Ctx, char))
+    .with_replace_with_yanked(replace_with_yanked::<Ctx> as fn(&mut Ctx, ()))
     .with_save(save::<Ctx> as fn(&mut Ctx, ()))
     .with_quit(quit::<Ctx> as fn(&mut Ctx, ()))
 }
@@ -236,6 +244,12 @@ fn handle_pending_input<Ctx: DefaultContext>(
     },
     PendingInput::InsertRegister => true, // TODO
     PendingInput::Placeholder => true,
+    PendingInput::ReplaceSelection => {
+      if let Key::Char(ch) = key.key {
+        ctx.dispatch().replace_selection(ctx, ch);
+      }
+      true
+    },
   }
 }
 
@@ -297,6 +311,10 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::Motion(motion) => ctx.dispatch().motion(ctx, motion),
     Command::DeleteSelection { yank } => ctx.dispatch().delete_selection(ctx, yank),
     Command::ChangeSelection { yank } => ctx.dispatch().change_selection(ctx, yank),
+    Command::Replace => {
+      ctx.set_pending_input(Some(PendingInput::ReplaceSelection));
+    },
+    Command::ReplaceWithYanked => ctx.dispatch().replace_with_yanked(ctx, ()),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -988,13 +1006,27 @@ fn delete_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
 
+  // Collect fragments, treating empty selections as 1-char selections
   let fragments: Vec<String> = selection
-    .fragments(slice)
-    .map(|f| f.into_owned())
+    .ranges()
+    .iter()
+    .map(|range| {
+      let (from, to) = if range.is_empty() {
+        (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+      } else {
+        (range.from(), range.to())
+      };
+      slice.slice(from..to).to_string()
+    })
     .collect();
 
   let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
-    (range.from(), range.to())
+    // For empty selections (cursor only), delete the grapheme at cursor
+    if range.is_empty() {
+      (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+    } else {
+      (range.from(), range.to())
+    }
   });
 
   if let Ok(tx) = tx {
@@ -1014,13 +1046,27 @@ fn change_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
 
+  // Collect fragments, treating empty selections as 1-char selections
   let fragments: Vec<String> = selection
-    .fragments(slice)
-    .map(|f| f.into_owned())
+    .ranges()
+    .iter()
+    .map(|range| {
+      let (from, to) = if range.is_empty() {
+        (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+      } else {
+        (range.from(), range.to())
+      };
+      slice.slice(from..to).to_string()
+    })
     .collect();
 
   let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
-    (range.from(), range.to())
+    // For empty selections (cursor only), delete the grapheme at cursor
+    if range.is_empty() {
+      (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+    } else {
+      (range.from(), range.to())
+    }
   });
 
   if let Ok(tx) = tx {
@@ -1032,6 +1078,70 @@ fn change_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
   }
 
   ctx.set_mode(Mode::Insert);
+  ctx.request_render();
+}
+
+fn replace_selection<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  // Create transaction that replaces each range with the character repeated
+  let tx = Transaction::change_by_selection(doc.text(), &selection, |range| {
+    // For empty selections (cursor only), replace the grapheme at cursor
+    let (from, to) = if range.is_empty() {
+      (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+    } else {
+      (range.from(), range.to())
+    };
+    let len = to - from;
+    let replacement = Tendril::from(ch.to_string().repeat(len));
+    (from, to, Some(replacement))
+  });
+
+  if let Ok(tx) = tx {
+    let _ = doc.apply_transaction(&tx);
+  }
+
+  ctx.set_mode(Mode::Normal);
+  ctx.request_render();
+}
+
+fn replace_with_yanked<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  // Read the register values using shared references
+  let replacement: Option<String> = {
+    let doc = ctx.editor_ref().document();
+    ctx.registers().read('"', doc).and_then(|mut values| {
+      values.next().map(|v| v.into_owned())
+    })
+  };
+
+  let Some(replacement) = replacement else {
+    ctx.set_mode(Mode::Normal);
+    ctx.request_render();
+    return;
+  };
+
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  // Replace each selection range with the yanked content
+  let tx = Transaction::change_by_selection(doc.text(), &selection, |range| {
+    // For empty selections (cursor only), replace the grapheme at cursor
+    let (from, to) = if range.is_empty() {
+      (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+    } else {
+      (range.from(), range.to())
+    };
+    (from, to, Some(Tendril::from(replacement.as_str())))
+  });
+
+  if let Ok(tx) = tx {
+    let _ = doc.apply_transaction(&tx);
+  }
+
+  ctx.set_mode(Mode::Normal);
   ctx.request_render();
 }
 
@@ -1120,6 +1230,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "delete_selection_noyank" => Some(Command::delete_selection_noyank()),
     "change_selection" => Some(Command::change_selection()),
     "change_selection_noyank" => Some(Command::change_selection_noyank()),
+    "replace" => Some(Command::replace()),
+    "replace_with_yanked" => Some(Command::replace_with_yanked()),
 
     _ => None,
   }

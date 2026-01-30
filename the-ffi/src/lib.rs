@@ -921,6 +921,14 @@ impl App {
       .expect("missing editor state for active editor")
   }
 
+  fn active_editor_ref(&self) -> &the_lib::editor::Editor {
+    let id = self.active_editor.expect("active editor not set");
+    self
+      .inner
+      .editor(id)
+      .expect("missing editor for active editor id")
+  }
+
   fn active_editor_mut(&mut self) -> &mut the_lib::editor::Editor {
     let id = self.active_editor.expect("active editor not set");
     self
@@ -949,6 +957,10 @@ impl Default for App {
 impl DefaultContext for App {
   fn editor(&mut self) -> &mut the_lib::editor::Editor {
     self.active_editor_mut()
+  }
+
+  fn editor_ref(&self) -> &the_lib::editor::Editor {
+    self.active_editor_ref()
   }
 
   fn file_path(&self) -> Option<&Path> {
@@ -1002,6 +1014,10 @@ impl DefaultContext for App {
 
   fn set_pending_input(&mut self, pending: Option<the_default::PendingInput>) {
     self.active_state_mut().pending_input = pending;
+  }
+
+  fn registers(&self) -> &Registers {
+    &self.registers
   }
 
   fn registers_mut(&mut self) -> &mut Registers {

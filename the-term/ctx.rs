@@ -135,6 +135,10 @@ impl the_default::DefaultContext for Ctx {
     &mut self.editor
   }
 
+  fn editor_ref(&self) -> &Editor {
+    &self.editor
+  }
+
   fn file_path(&self) -> Option<&Path> {
     self.file_path.as_deref()
   }
@@ -188,6 +192,10 @@ impl the_default::DefaultContext for Ctx {
 
   fn set_pending_input(&mut self, pending: Option<the_default::PendingInput>) {
     self.pending_input = pending;
+  }
+
+  fn registers(&self) -> &Registers {
+    &self.registers
   }
 
   fn registers_mut(&mut self) -> &mut Registers {

@@ -15,4 +15,6 @@ pub enum PendingInput {
   },
   /// Await a register name (e.g. insert-register).
   InsertRegister,
+  /// Await a character to replace the selection with.
+  ReplaceSelection,
 }

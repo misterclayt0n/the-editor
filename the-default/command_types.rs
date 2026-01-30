@@ -480,6 +480,7 @@ pub enum Command {
   Indent { count: usize },
   Unindent { count: usize },
   MatchBrackets,
+  SurroundAdd,
   Save,
   Quit,
 }
@@ -1003,5 +1004,10 @@ impl Command {
   #[must_use]
   pub const fn match_brackets() -> Self {
     Self::MatchBrackets
+  }
+
+  #[must_use]
+  pub const fn surround_add() -> Self {
+    Self::SurroundAdd
   }
 }

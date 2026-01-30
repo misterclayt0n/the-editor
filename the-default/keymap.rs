@@ -622,6 +622,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
     "m" => { "Match"
       "m" => match_brackets,
+      "s" => surround_add,
     },
 
     // REIMAGINE THOSE

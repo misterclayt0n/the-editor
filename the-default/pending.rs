@@ -17,4 +17,6 @@ pub enum PendingInput {
   InsertRegister,
   /// Await a character to replace the selection with.
   ReplaceSelection,
+  /// Await a character to surround the selection with.
+  SurroundAdd,
 }

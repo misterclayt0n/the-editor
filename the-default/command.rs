@@ -322,6 +322,10 @@ fn handle_pending_input<Ctx: DefaultContext>(
       }
       true
     },
+    PendingInput::SurroundAdd => {
+      surround_add_impl(ctx, key);
+      true
+    },
   }
 }
 
@@ -423,6 +427,9 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::Indent { count } => indent(ctx, count),
     Command::Unindent { count } => unindent(ctx, count),
     Command::MatchBrackets => match_brackets(ctx),
+    Command::SurroundAdd => {
+      ctx.set_pending_input(Some(PendingInput::SurroundAdd));
+    },
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -1979,6 +1986,59 @@ fn match_brackets<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let _ = doc.set_selection(new_selection);
 }
 
+fn surround_add_impl<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+  let (open, close, surround_len) = match key.key {
+    Key::Char(ch) => {
+      let (o, c) = mb::get_pair(ch);
+      let mut open = Tendril::new();
+      open.push(o);
+      let mut close = Tendril::new();
+      close.push(c);
+      (open, close, 2usize)
+    },
+    Key::Enter | Key::NumpadEnter => {
+      let line_ending = ctx.editor_ref().document().line_ending().as_str();
+      (
+        Tendril::from(line_ending),
+        Tendril::from(line_ending),
+        2 * line_ending.chars().count(),
+      )
+    },
+    _ => return,
+  };
+
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let mut changes = Vec::with_capacity(selection.ranges().len() * 2);
+  let mut ranges: SmallVec<[Range; 1]> = SmallVec::with_capacity(selection.ranges().len());
+  let mut offs = 0usize;
+
+  for range in selection.ranges() {
+    changes.push((range.from(), range.from(), Some(open.clone())));
+    changes.push((range.to(), range.to(), Some(close.clone())));
+
+    ranges.push(
+      Range::new(offs + range.from(), offs + range.to() + surround_len)
+        .with_direction(range.direction()),
+    );
+
+    offs += surround_len;
+  }
+
+  let cursor_ids: SmallVec<[CursorId; 1]> = selection.cursor_ids().iter().copied().collect();
+  let Ok(tx) = Transaction::change(doc.text(), changes.into_iter()) else {
+    return;
+  };
+  let new_selection =
+    Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| selection.clone());
+  let tx = tx.with_selection(new_selection);
+  let _ = doc.apply_transaction(&tx);
+
+  if ctx.mode() == Mode::Select {
+    ctx.set_mode(Mode::Normal);
+  }
+}
+
 fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
   let count = 1usize;
   let selection = {
@@ -2352,6 +2412,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "indent" => Some(Command::indent(1)),
     "unindent" => Some(Command::unindent(1)),
     "match_brackets" => Some(Command::match_brackets()),
+    "surround_add" => Some(Command::surround_add()),
 
     _ => None,
   }

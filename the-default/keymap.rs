@@ -569,6 +569,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "I"         => insert_at_line_start,
     "a"         => append_mode,
     "A"         => insert_at_line_end,
+    "o"         => open_below,
+    "O"         => open_above,
     ":"         => command_mode,
     "d"         => delete_selection,
     "A-d"       => delete_selection_noyank,
@@ -580,6 +582,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "~"         => switch_case,
     "`"         => switch_to_lowercase,
     "A-`"       => switch_to_uppercase,
+    "y"         => yank,
+    "p"         => paste_after,
+    "P"         => paste_before,
     "home"      => goto_line_start,
     "end"       => goto_line_end,
   });

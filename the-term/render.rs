@@ -12,6 +12,7 @@ use the_lib::render::{
   text_annotations::TextAnnotations,
   text_format::TextFormat,
 };
+use the_lib::selection::Range;
 
 use crate::{
   Ctx,
@@ -116,9 +117,14 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
 pub fn ensure_cursor_visible(ctx: &mut Ctx) {
   let doc = ctx.editor.document();
   let text = doc.text();
+  let max = text.len_chars();
 
   // Get primary cursor position
-  let cursor_pos = doc.selection().ranges()[0].cursor(text.slice(..));
+  let Some(range) = doc.selection().ranges().get(0).copied() else {
+    return;
+  };
+  let clamped = Range::new(range.anchor.min(max), range.head.min(max));
+  let cursor_pos = clamped.cursor(text.slice(..));
   let cursor_line = text.char_to_line(cursor_pos);
   let cursor_col = cursor_pos - text.line_to_char(cursor_line);
 

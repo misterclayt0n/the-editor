@@ -2,7 +2,9 @@
 
 use std::{
   borrow::Cow,
+  collections::HashMap,
   path::Path,
+  sync::OnceLock,
 };
 
 use smallvec::SmallVec;
@@ -12,7 +14,10 @@ use the_core::{
     nth_prev_grapheme_boundary,
     prev_grapheme_boundary,
   },
-  line_ending::line_end_char_index,
+  line_ending::{
+    get_line_ending_of_str,
+    line_end_char_index,
+  },
 };
 use the_dispatch::define;
 use the_stdx::rope::RopeSliceExt;
@@ -23,6 +28,7 @@ use the_lib::{
     AutoPairs,
   },
   editor::Editor,
+  indent,
   movement::{
     self,
     Direction as MoveDir,
@@ -44,6 +50,14 @@ use the_lib::{
     CursorId,
     Range,
     Selection,
+  },
+  syntax::{
+    Loader,
+    config::{
+      Configuration,
+      IndentationHeuristic,
+    },
+    resources::NullResources,
   },
   transaction::Transaction,
 };
@@ -100,6 +114,8 @@ define! {
     change_selection: bool,
     replace_selection: char,
     replace_with_yanked: (),
+    yank: (),
+    paste: bool,
     switch_case: (),
     save: (),
     quit: (),
@@ -135,6 +151,8 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, bool),
   fn(&mut Ctx, char),
   fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, bool),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
@@ -214,6 +232,8 @@ where
     .with_change_selection(change_selection::<Ctx> as fn(&mut Ctx, bool))
     .with_replace_selection(replace_selection::<Ctx> as fn(&mut Ctx, char))
     .with_replace_with_yanked(replace_with_yanked::<Ctx> as fn(&mut Ctx, ()))
+    .with_yank(yank::<Ctx> as fn(&mut Ctx, ()))
+    .with_paste(paste::<Ctx> as fn(&mut Ctx, bool))
     .with_switch_case(switch_case::<Ctx> as fn(&mut Ctx, ()))
     .with_save(save::<Ctx> as fn(&mut Ctx, ()))
     .with_quit(quit::<Ctx> as fn(&mut Ctx, ()))
@@ -254,8 +274,13 @@ fn handle_pending_input<Ctx: DefaultContext>(
     PendingInput::InsertRegister => true, // TODO
     PendingInput::Placeholder => true,
     PendingInput::ReplaceSelection => {
-      if let Key::Char(ch) = key.key {
-        ctx.dispatch().replace_selection(ctx, ch);
+      match key.key {
+        Key::Char(ch) => ctx.dispatch().replace_selection(ctx, ch),
+        Key::Enter | Key::NumpadEnter => {
+          let line_ending = ctx.editor_ref().document().line_ending().as_str();
+          replace_selection_with_str(ctx, line_ending);
+        },
+        _ => {},
       }
       true
     },
@@ -328,6 +353,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
       ctx.set_pending_input(Some(PendingInput::ReplaceSelection));
     },
     Command::ReplaceWithYanked => ctx.dispatch().replace_with_yanked(ctx, ()),
+    Command::Yank => ctx.dispatch().yank(ctx, ()),
+    Command::Paste { after } => ctx.dispatch().paste(ctx, after),
     Command::RepeatLastMotion => {
       if let Some(motion) = ctx.last_motion() {
         ctx.dispatch().motion(ctx, motion);
@@ -339,6 +366,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::InsertAtLineStart => insert_at_line_start(ctx),
     Command::InsertAtLineEnd => insert_at_line_end(ctx),
     Command::AppendMode => append_mode(ctx),
+    Command::OpenBelow => open_below(ctx),
+    Command::OpenAbove => open_above(ctx),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -1205,28 +1234,40 @@ fn change_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
 }
 
 fn replace_selection<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {
+  let mut buf = [0u8; 4];
+  let replacement = ch.encode_utf8(&mut buf);
+  replace_selection_with_str(ctx, replacement);
+}
+
+fn replace_selection_with_str<Ctx: DefaultContext>(ctx: &mut Ctx, replacement: &str) {
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
 
   // Create transaction that replaces each range with the character repeated
   let tx = Transaction::change_by_selection(doc.text(), &selection, |range| {
-    // For empty selections (cursor only), replace the grapheme at cursor
-    let (from, to) = if range.is_empty() {
-      (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+    if range.is_empty() {
+      (range.from(), range.to(), None)
     } else {
-      (range.from(), range.to())
-    };
-    let len = to - from;
-    let replacement = Tendril::from(ch.to_string().repeat(len));
-    (from, to, Some(replacement))
+      let graphemes = slice.slice(range.from()..range.to()).graphemes().count();
+      if graphemes == 0 {
+        return (range.from(), range.to(), None);
+      }
+      let mut out = Tendril::new();
+      for _ in 0..graphemes {
+        out.push_str(replacement);
+      }
+      (range.from(), range.to(), Some(out))
+    }
   });
 
   if let Ok(tx) = tx {
     let _ = doc.apply_transaction(&tx);
   }
 
-  ctx.set_mode(Mode::Normal);
+  if ctx.mode() == Mode::Select {
+    ctx.set_mode(Mode::Normal);
+  }
   ctx.request_render();
 }
 
@@ -1263,6 +1304,127 @@ fn replace_with_yanked<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   if let Ok(tx) = tx {
     let _ = doc.apply_transaction(&tx);
   }
+
+  ctx.set_mode(Mode::Normal);
+  ctx.request_render();
+}
+
+fn yank<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  let fragments: Vec<String> = selection
+    .fragments(slice)
+    .map(Cow::into_owned)
+    .collect();
+
+  let _ = ctx.registers_mut().write('"', fragments);
+
+  ctx.set_mode(Mode::Normal);
+  ctx.request_render();
+}
+
+fn paste<Ctx: DefaultContext>(ctx: &mut Ctx, after: bool) {
+  let values: Option<Vec<String>> = {
+    let doc = ctx.editor_ref().document();
+    ctx
+      .registers()
+      .read('"', doc)
+      .map(|iter| iter.map(|v| v.into_owned()).collect())
+  };
+
+  let Some(values) = values else {
+    ctx.request_render();
+    return;
+  };
+
+  if values.is_empty() {
+    ctx.request_render();
+    return;
+  }
+
+  let mode = ctx.mode();
+  let doc = ctx.editor().document_mut();
+  let text = doc.text();
+  let selection = doc.selection().clone();
+  let line_ending = doc.line_ending().as_str();
+
+  let linewise = values
+    .iter()
+    .any(|value| get_line_ending_of_str(value).is_some());
+
+  let normalize_line_endings = |value: &str| {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+      match ch {
+        '\r' => {
+          if chars.peek() == Some(&'\n') {
+            chars.next();
+          }
+          out.push_str(line_ending);
+        },
+        '\n' => out.push_str(line_ending),
+        _ => out.push(ch),
+      }
+    }
+    out
+  };
+
+  let map_value = |value: &str| {
+    let normalized = normalize_line_endings(value);
+    Tendril::from(normalized.as_str())
+  };
+
+  let last = map_value(values.last().unwrap());
+  let mut values = values
+    .iter()
+    .map(|value| map_value(value))
+    .chain(std::iter::repeat(last));
+
+  let mut offset = 0usize;
+  let mut ranges = SmallVec::with_capacity(selection.len());
+
+  let Ok(mut tx) = Transaction::change_by_selection(text, &selection, |range| {
+    let pos = if linewise {
+      if after {
+        let line = range.line_range(text.slice(..)).1;
+        text.line_to_char((line + 1).min(text.len_lines()))
+      } else {
+        text.line_to_char(text.char_to_line(range.from()))
+      }
+    } else if after {
+      range.to()
+    } else {
+      range.from()
+    };
+
+    let value = values.next();
+    let value_len = value
+      .as_ref()
+      .map(|content| content.chars().count())
+      .unwrap_or_default();
+    let anchor = offset + pos;
+
+    let new_range = Range::new(anchor, anchor + value_len).with_direction(range.direction());
+    ranges.push(new_range);
+    offset += value_len;
+
+    (pos, pos, value)
+  }) else {
+    return;
+  };
+
+  if mode == Mode::Normal {
+    let cursor_ids: SmallVec<[CursorId; 1]> =
+      selection.cursor_ids().iter().copied().collect();
+    let new_selection =
+      Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| selection.clone());
+    tx = tx.with_selection(new_selection);
+  }
+
+  let _ = doc.apply_transaction(&tx);
 
   ctx.set_mode(Mode::Normal);
   ctx.request_render();
@@ -1389,6 +1551,180 @@ fn append_mode<Ctx: DefaultContext>(ctx: &mut Ctx) {
   ctx.request_render();
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpenDirection {
+  Above,
+  Below,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CommentContinuation {
+  Enabled,
+  Disabled,
+}
+
+fn syntax_loader() -> &'static Loader {
+  static LOADER: OnceLock<Loader> = OnceLock::new();
+  LOADER.get_or_init(|| {
+    let config = Configuration {
+      language: Vec::new(),
+      language_server: HashMap::new(),
+    };
+    Loader::new(config, NullResources).expect("syntax loader")
+  })
+}
+
+fn open_below<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  open(ctx, OpenDirection::Below, CommentContinuation::Enabled);
+}
+
+fn open_above<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  open(ctx, OpenDirection::Above, CommentContinuation::Enabled);
+}
+
+fn open<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  open: OpenDirection,
+  comment_continuation: CommentContinuation,
+) {
+  // NOTE: count support isn't wired yet in the new context.
+  let count = 1usize;
+  ctx.set_mode(Mode::Insert);
+
+  let doc = ctx.editor().document_mut();
+  let contents = doc.text();
+  let text = contents.slice(..);
+  let selection = doc.selection().clone();
+  let line_ending = doc.line_ending();
+
+  let mut offs: usize = 0;
+  let mut ranges = SmallVec::with_capacity(selection.len());
+
+  // We don't have language config access yet, so comment continuation is disabled.
+  let continue_comment_tokens: Option<&[String]> = match comment_continuation {
+    CommentContinuation::Enabled => None,
+    CommentContinuation::Disabled => None,
+  };
+
+  let tab_width = 4usize;
+  let indent_heuristic = IndentationHeuristic::Simple;
+
+  let tx = Transaction::change_by_selection(contents, &selection, |range| {
+    let curr_line_num = text.char_to_line(match open {
+      OpenDirection::Below => {
+        if range.is_empty() {
+          range.cursor(text)
+        } else {
+          prev_grapheme_boundary(text, range.to())
+        }
+      },
+      OpenDirection::Above => range.from(),
+    });
+
+    let next_new_line_num = match open {
+      OpenDirection::Below => curr_line_num + 1,
+      OpenDirection::Above => curr_line_num,
+    };
+
+    let above_next_new_line_num = next_new_line_num.saturating_sub(1);
+
+    let continue_comment_token = continue_comment_tokens
+      .and_then(|tokens| the_lib::comment::get_comment_token(text, tokens, curr_line_num));
+
+    let (above_next_line_end_index, above_next_line_end_width) = if next_new_line_num == 0 {
+      (0, 0)
+    } else {
+      (
+        line_end_char_index(&text, above_next_new_line_num),
+        line_ending.len_chars(),
+      )
+    };
+
+    let line = text.line(curr_line_num);
+    let indent = match line.first_non_whitespace_char() {
+      Some(pos) if continue_comment_token.is_some() => line.slice(..pos).to_string(),
+      _ => indent::indent_for_newline(
+        syntax_loader(),
+        doc.syntax(),
+        &indent_heuristic,
+        &doc.indent_style(),
+        tab_width,
+        text,
+        above_next_new_line_num,
+        above_next_line_end_index,
+        curr_line_num,
+      ),
+    };
+
+    let indent_len = indent.chars().count();
+    let mut insert = String::with_capacity(1 + indent_len);
+
+    if open == OpenDirection::Above && next_new_line_num == 0 {
+      insert.push_str(&indent);
+      if let Some(token) = continue_comment_token {
+        insert.push_str(token);
+        insert.push(' ');
+      }
+      insert.push_str(line_ending.as_str());
+    } else {
+      insert.push_str(line_ending.as_str());
+      insert.push_str(&indent);
+      if let Some(token) = continue_comment_token {
+        insert.push_str(token);
+        insert.push(' ');
+      }
+    }
+
+    let insert = insert.repeat(count);
+
+    let pos = offs + above_next_line_end_index + above_next_line_end_width;
+    let comment_len = continue_comment_token
+      .map(|token| token.len() + 1)
+      .unwrap_or_default();
+    for i in 0..count {
+      ranges.push(Range::point(
+        pos
+          + (i * (line_ending.len_chars() + indent_len + comment_len))
+          + indent_len
+          + comment_len,
+      ));
+    }
+
+    offs += insert.chars().count();
+
+    (
+      above_next_line_end_index,
+      above_next_line_end_index,
+      Some(insert.into()),
+    )
+  });
+
+  let Ok(tx) = tx else {
+    return;
+  };
+
+  let cursor_ids: SmallVec<[CursorId; 1]> =
+    selection.cursor_ids().iter().copied().collect();
+  let new_selection = if cursor_ids.len() == ranges.len() {
+    Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| selection)
+  } else {
+    Selection::new(ranges).unwrap_or_else(|_| selection)
+  };
+
+  let tx = tx.with_selection(new_selection);
+  let _ = doc.apply_transaction(&tx);
+
+  // Clamp selection to document bounds to avoid out-of-range cursor panics.
+  let max = doc.text().len_chars();
+  let clamped = doc
+    .selection()
+    .clone()
+    .transform(|range| Range::new(range.anchor.min(max), range.head.min(max)));
+  let _ = doc.set_selection(clamped);
+
+  ctx.request_render();
+}
+
 pub fn command_from_name(name: &str) -> Option<Command> {
   match name {
     "move_char_left" => Some(Command::move_char_left(1)),
@@ -1484,6 +1820,11 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "insert_at_line_start" => Some(Command::insert_at_line_start()),
     "insert_at_line_end" => Some(Command::insert_at_line_end()),
     "append_mode" => Some(Command::append_mode()),
+    "open_below" => Some(Command::open_below()),
+    "open_above" => Some(Command::open_above()),
+    "yank" => Some(Command::yank()),
+    "paste_after" => Some(Command::paste_after()),
+    "paste_before" => Some(Command::paste_before()),
 
     _ => None,
   }

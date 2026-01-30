@@ -452,6 +452,8 @@ pub enum Command {
   ChangeSelection { yank: bool },
   Replace,
   ReplaceWithYanked,
+  Yank,
+  Paste { after: bool },
   RepeatLastMotion,
   SwitchCase,
   SwitchToUppercase,
@@ -459,6 +461,8 @@ pub enum Command {
   InsertAtLineStart,
   InsertAtLineEnd,
   AppendMode,
+  OpenBelow,
+  OpenAbove,
   Save,
   Quit,
 }
@@ -840,6 +844,21 @@ impl Command {
   }
 
   #[must_use]
+  pub const fn yank() -> Self {
+    Self::Yank
+  }
+
+  #[must_use]
+  pub const fn paste_after() -> Self {
+    Self::Paste { after: true }
+  }
+
+  #[must_use]
+  pub const fn paste_before() -> Self {
+    Self::Paste { after: false }
+  }
+
+  #[must_use]
   pub const fn repeat_last_motion() -> Self {
     Self::RepeatLastMotion
   }
@@ -872,5 +891,15 @@ impl Command {
   #[must_use]
   pub const fn append_mode() -> Self {
     Self::AppendMode
+  }
+
+  #[must_use]
+  pub const fn open_below() -> Self {
+    Self::OpenBelow
+  }
+
+  #[must_use]
+  pub const fn open_above() -> Self {
+    Self::OpenAbove
   }
 }

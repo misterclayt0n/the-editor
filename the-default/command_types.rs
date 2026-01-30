@@ -481,6 +481,7 @@ pub enum Command {
   Unindent { count: usize },
   MatchBrackets,
   SurroundAdd,
+  SurroundReplace { count: usize },
   Save,
   Quit,
 }
@@ -1009,5 +1010,10 @@ impl Command {
   #[must_use]
   pub const fn surround_add() -> Self {
     Self::SurroundAdd
+  }
+
+  #[must_use]
+  pub const fn surround_replace(count: usize) -> Self {
+    Self::SurroundReplace { count }
   }
 }

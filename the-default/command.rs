@@ -34,6 +34,7 @@ use the_lib::{
   history::UndoKind,
   indent,
   match_brackets as mb,
+  surround,
   movement::{
     self,
     Direction as MoveDir,
@@ -326,6 +327,18 @@ fn handle_pending_input<Ctx: DefaultContext>(
       surround_add_impl(ctx, key);
       true
     },
+    PendingInput::SurroundReplace { count } => {
+      if let Key::Char(ch) = key.key {
+        surround_replace_find(ctx, ch, count);
+      }
+      true
+    },
+    PendingInput::SurroundReplaceWith { positions, original_selection } => {
+      if let Key::Char(ch) = key.key {
+        surround_replace_with(ctx, ch, &positions, &original_selection);
+      }
+      true
+    },
   }
 }
 
@@ -429,6 +442,9 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::MatchBrackets => match_brackets(ctx),
     Command::SurroundAdd => {
       ctx.set_pending_input(Some(PendingInput::SurroundAdd));
+    },
+    Command::SurroundReplace { count } => {
+      ctx.set_pending_input(Some(PendingInput::SurroundReplace { count }));
     },
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
@@ -2039,6 +2055,71 @@ fn surround_add_impl<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
   }
 }
 
+fn surround_replace_find<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char, count: usize) {
+  let doc = ctx.editor_ref().document();
+  let selection = doc.selection().clone();
+  let text = doc.text().slice(..);
+
+  let Ok(positions) = surround::get_surround_pos(doc.syntax(), text, &selection, Some(ch), count)
+  else {
+    return;
+  };
+
+  let original_selection: Vec<(usize, usize)> = selection
+    .ranges()
+    .iter()
+    .map(|r| (r.anchor, r.head))
+    .collect();
+
+  ctx.set_pending_input(Some(PendingInput::SurroundReplaceWith {
+    positions: positions.into_vec(),
+    original_selection,
+  }));
+}
+
+fn surround_replace_with<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  ch: char,
+  positions: &[(usize, usize)],
+  original_selection: &[(usize, usize)],
+) {
+  let (open, close) = mb::get_pair(ch);
+
+  let doc = ctx.editor().document_mut();
+  let text = doc.text();
+
+  let mut changes: Vec<(usize, usize, Option<Tendril>)> = Vec::with_capacity(positions.len() * 2);
+  for &(open_pos, close_pos) in positions {
+    let open_end = the_core::grapheme::next_grapheme_boundary(text.slice(..), open_pos);
+    let close_end = the_core::grapheme::next_grapheme_boundary(text.slice(..), close_pos);
+
+    let mut open_str = Tendril::new();
+    open_str.push(open);
+    let mut close_str = Tendril::new();
+    close_str.push(close);
+
+    changes.push((open_pos, open_end, Some(open_str)));
+    changes.push((close_pos, close_end, Some(close_str)));
+  }
+
+  changes.sort_by_key(|(from, _, _)| *from);
+
+  let Ok(tx) = Transaction::change(text, changes.into_iter()) else {
+    return;
+  };
+
+  let ranges: SmallVec<[Range; 1]> = original_selection
+    .iter()
+    .map(|&(anchor, head)| Range::new(anchor, head))
+    .collect();
+  let cursor_ids: SmallVec<[CursorId; 1]> = (0..ranges.len()).map(|_| CursorId::fresh()).collect();
+  let new_selection =
+    Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| doc.selection().clone());
+
+  let tx = tx.with_selection(new_selection);
+  let _ = doc.apply_transaction(&tx);
+}
+
 fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
   let count = 1usize;
   let selection = {
@@ -2413,6 +2494,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "unindent" => Some(Command::unindent(1)),
     "match_brackets" => Some(Command::match_brackets()),
     "surround_add" => Some(Command::surround_add()),
+    "surround_replace" => Some(Command::surround_replace(1)),
 
     _ => None,
   }

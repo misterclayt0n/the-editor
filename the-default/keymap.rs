@@ -593,6 +593,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "C-k"                     => kill_to_line_end,
     "C-h" | "S-bs"            => delete_char_backward,
     "C-d" | "del"             => delete_char_forward,
+    "C-j" | "ret" | "S-ret"   => insert_newline,
     "tab"                     => smart_tab,
     "S-tab"                   => insert_tab,
     "home"                    => goto_line_start,

@@ -430,6 +430,7 @@ impl Motion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
   InsertChar(char),
+  InsertNewline,
   DeleteChar,
   DeleteCharForward { count: usize },
   DeleteWordBackward { count: usize },
@@ -698,6 +699,11 @@ impl Command {
   #[must_use]
   pub const fn insert_tab() -> Self {
     Self::InsertTab
+  }
+
+  #[must_use]
+  pub const fn insert_newline() -> Self {
+    Self::InsertNewline
   }
 
   #[must_use]

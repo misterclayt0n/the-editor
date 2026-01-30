@@ -42,6 +42,7 @@ use the_lib::{
   },
   selection::{
     CursorId,
+    Range,
     Selection,
   },
   transaction::Transaction,
@@ -80,6 +81,7 @@ define! {
     render_request: () => (),
 
     insert_char: char,
+    insert_newline: (),
     delete_char: (),
     delete_char_forward: usize,
     delete_word_backward: usize,
@@ -114,6 +116,7 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, char),
+  fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, usize),
   fn(&mut Ctx, usize),
@@ -192,6 +195,7 @@ where
     .with_post_on_action(post_on_action::<Ctx> as fn(&mut Ctx, ()))
     .with_render_request(render_request::<Ctx> as fn(&mut Ctx, ()))
     .with_insert_char(insert_char::<Ctx> as fn(&mut Ctx, char))
+    .with_insert_newline(insert_newline::<Ctx> as fn(&mut Ctx, ()))
     .with_delete_char(delete_char::<Ctx> as fn(&mut Ctx, ()))
     .with_delete_char_forward(delete_char_forward::<Ctx> as fn(&mut Ctx, usize))
     .with_delete_word_backward(delete_word_backward::<Ctx> as fn(&mut Ctx, usize))
@@ -295,6 +299,7 @@ fn pre_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
 fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
   match command {
     Command::InsertChar(ch) => ctx.dispatch().insert_char(ctx, ch),
+    Command::InsertNewline => ctx.dispatch().insert_newline(ctx, ()),
     Command::DeleteChar => ctx.dispatch().delete_char(ctx, ()),
     Command::DeleteCharForward { count } => ctx.dispatch().delete_char_forward(ctx, count),
     Command::DeleteWordBackward { count } => ctx.dispatch().delete_word_backward(ctx, count),
@@ -567,6 +572,105 @@ fn insert_tab<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
     return;
   };
 
+  let _ = doc.apply_transaction(&tx);
+}
+
+fn insert_newline<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  let doc = ctx.editor().document_mut();
+  let contents = doc.text();
+  let text = contents.slice(..);
+  let selection = doc.selection().clone();
+  let line_ending = doc.line_ending().as_str();
+  let indent_unit = doc.indent_style().as_str();
+
+  let mut ranges = SmallVec::with_capacity(selection.len());
+  let mut global_offs: isize = 0;
+  let mut new_text = String::new();
+  let mut last_pos = 0;
+  let pairs = AutoPairs::default();
+
+  let tx = Transaction::change_by_selection(contents, &selection, |range| {
+    let pos = range.cursor(text);
+    let current_line = text.char_to_line(pos);
+    let line_start = text.line_to_char(current_line);
+    let mut chars_deleted = 0usize;
+
+    let (from, to, local_offs) =
+      if let Some(idx) = text.slice(line_start..pos).last_non_whitespace_char() {
+        let first_trailing_whitespace_char = (line_start + idx + 1).clamp(last_pos, pos);
+        last_pos = pos;
+        chars_deleted = pos - first_trailing_whitespace_char;
+
+        let line = text.line(current_line);
+        let indent = match line.first_non_whitespace_char() {
+          Some(pos) => line.slice(..pos).to_string(),
+          None => String::new(),
+        };
+
+        let prev = if pos == 0 { ' ' } else { contents.char(pos - 1) };
+        let curr = contents.get_char(pos).unwrap_or(' ');
+
+        let on_auto_pair = pairs.pairs().iter().any(|pair| {
+          pair.open_last_char() == Some(prev) && pair.close_first_char() == Some(curr)
+        });
+
+        if on_auto_pair {
+          let inner_indent = indent.clone() + indent_unit;
+          new_text.reserve_exact(line_ending.len() * 2 + indent.len() + inner_indent.len());
+          new_text.push_str(line_ending);
+          new_text.push_str(&inner_indent);
+          let local_offs = new_text.chars().count();
+          new_text.push_str(line_ending);
+          new_text.push_str(&indent);
+          (
+            first_trailing_whitespace_char,
+            pos,
+            local_offs as isize - chars_deleted as isize,
+          )
+        } else {
+          new_text.reserve_exact(line_ending.len() + indent.len());
+          new_text.push_str(line_ending);
+          new_text.push_str(&indent);
+          (
+            first_trailing_whitespace_char,
+            pos,
+            new_text.chars().count() as isize - chars_deleted as isize,
+          )
+        }
+      } else {
+        new_text.push_str(line_ending);
+        (line_start, line_start, new_text.chars().count() as isize)
+      };
+
+    let new_range = if range.cursor(text) > range.anchor {
+      Range::new(
+        (range.anchor as isize + global_offs) as usize,
+        (range.head as isize + local_offs + global_offs) as usize,
+      )
+    } else {
+      Range::new(
+        (range.anchor as isize + local_offs + global_offs) as usize,
+        (range.head as isize + local_offs + global_offs) as usize,
+      )
+    };
+
+    ranges.push(new_range);
+    global_offs += new_text.chars().count() as isize - chars_deleted as isize;
+
+    let tendril = Tendril::from(new_text.as_str());
+    new_text.clear();
+
+    (from, to, Some(tendril))
+  });
+
+  let Ok(tx) = tx else {
+    return;
+  };
+
+  let cursor_ids: SmallVec<[CursorId; 1]> =
+    selection.cursor_ids().iter().copied().collect();
+  let new_selection = Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| selection);
+  let tx = tx.with_selection(new_selection);
   let _ = doc.apply_transaction(&tx);
 }
 
@@ -1287,6 +1391,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "delete_char_backward" => Some(Command::DeleteChar),
     "delete_char_forward" => Some(Command::delete_char_forward(1)),
 
+    "insert_newline" => Some(Command::insert_newline()),
     "insert_tab" | "smart_tab" => Some(Command::insert_tab()),
 
     "goto_line_start" => Some(Command::goto_line_start()),

@@ -6,6 +6,7 @@ license.workspace = true
 
 [lib]
 crate-type = [ "staticlib" ]
+path = "lib.rs"
 
 [dependencies]
 ropey.workspace = true

@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
-path = "src/lib.rs"
+path = "lib.rs"
 
 [dependencies]
-the-default = { path = "/Users/misterclayt0n/code/the-editor/the-loader/../the-default" }
-the-lib     = { path = "/Users/misterclayt0n/code/the-editor/the-loader/../the-lib" }
+the-default = { path = "../the-default" }
+the-lib     = { path = "../the-lib" }

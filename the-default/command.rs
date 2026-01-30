@@ -98,6 +98,7 @@ define! {
     change_selection: bool,
     replace_selection: char,
     replace_with_yanked: (),
+    switch_case: (),
     save: (),
     quit: (),
   }
@@ -130,6 +131,7 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, bool),
   fn(&mut Ctx, bool),
   fn(&mut Ctx, char),
+  fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
@@ -208,6 +210,7 @@ where
     .with_change_selection(change_selection::<Ctx> as fn(&mut Ctx, bool))
     .with_replace_selection(replace_selection::<Ctx> as fn(&mut Ctx, char))
     .with_replace_with_yanked(replace_with_yanked::<Ctx> as fn(&mut Ctx, ()))
+    .with_switch_case(switch_case::<Ctx> as fn(&mut Ctx, ()))
     .with_save(save::<Ctx> as fn(&mut Ctx, ()))
     .with_quit(quit::<Ctx> as fn(&mut Ctx, ()))
 }
@@ -325,6 +328,9 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
         ctx.dispatch().motion(ctx, motion);
       }
     },
+    Command::SwitchCase => ctx.dispatch().switch_case(ctx, ()),
+    Command::SwitchToUppercase => switch_to_uppercase(ctx),
+    Command::SwitchToLowercase => switch_to_lowercase(ctx),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -1155,6 +1161,75 @@ fn replace_with_yanked<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   ctx.request_render();
 }
 
+fn switch_case<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  switch_case_impl(ctx, |s| {
+    s.chars()
+      .flat_map(|ch| {
+        if ch.is_lowercase() {
+          CaseSwitcher::Upper(ch.to_uppercase())
+        } else if ch.is_uppercase() {
+          CaseSwitcher::Lower(ch.to_lowercase())
+        } else {
+          CaseSwitcher::Keep(Some(ch))
+        }
+      })
+      .collect()
+  });
+}
+
+fn switch_to_uppercase<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  switch_case_impl(ctx, |s| s.to_uppercase().into());
+}
+
+fn switch_to_lowercase<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  switch_case_impl(ctx, |s| s.to_lowercase().into());
+}
+
+fn switch_case_impl<Ctx, F>(ctx: &mut Ctx, change_fn: F)
+where
+  Ctx: DefaultContext,
+  F: Fn(&str) -> Tendril,
+{
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  let tx = Transaction::change_by_selection(doc.text(), &selection, |range| {
+    let (from, to) = if range.is_empty() {
+      (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+    } else {
+      (range.from(), range.to())
+    };
+    let text: Tendril = change_fn(&slice.slice(from..to).to_string());
+    (from, to, Some(text))
+  });
+
+  if let Ok(tx) = tx {
+    let _ = doc.apply_transaction(&tx);
+  }
+
+  ctx.set_mode(Mode::Normal);
+  ctx.request_render();
+}
+
+enum CaseSwitcher {
+  Upper(std::char::ToUppercase),
+  Lower(std::char::ToLowercase),
+  Keep(Option<char>),
+}
+
+impl Iterator for CaseSwitcher {
+  type Item = char;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    match self {
+      CaseSwitcher::Upper(u) => u.next(),
+      CaseSwitcher::Lower(l) => l.next(),
+      CaseSwitcher::Keep(ch) => ch.take(),
+    }
+  }
+}
+
 pub fn command_from_name(name: &str) -> Option<Command> {
   match name {
     "move_char_left" => Some(Command::move_char_left(1)),
@@ -1243,6 +1318,9 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "replace" => Some(Command::replace()),
     "replace_with_yanked" => Some(Command::replace_with_yanked()),
     "repeat_last_motion" => Some(Command::repeat_last_motion()),
+    "switch_case" => Some(Command::switch_case()),
+    "switch_to_uppercase" => Some(Command::switch_to_uppercase()),
+    "switch_to_lowercase" => Some(Command::switch_to_lowercase()),
 
     _ => None,
   }

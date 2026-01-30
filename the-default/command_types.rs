@@ -452,6 +452,9 @@ pub enum Command {
   Replace,
   ReplaceWithYanked,
   RepeatLastMotion,
+  SwitchCase,
+  SwitchToUppercase,
+  SwitchToLowercase,
   Save,
   Quit,
 }
@@ -830,5 +833,20 @@ impl Command {
   #[must_use]
   pub const fn repeat_last_motion() -> Self {
     Self::RepeatLastMotion
+  }
+
+  #[must_use]
+  pub const fn switch_case() -> Self {
+    Self::SwitchCase
+  }
+
+  #[must_use]
+  pub const fn switch_to_uppercase() -> Self {
+    Self::SwitchToUppercase
+  }
+
+  #[must_use]
+  pub const fn switch_to_lowercase() -> Self {
+    Self::SwitchToLowercase
   }
 }

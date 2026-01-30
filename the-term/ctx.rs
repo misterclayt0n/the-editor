@@ -33,6 +33,12 @@ use the_lib::{
   position::Position,
   registers::Registers,
   render::graphics::Rect,
+  render::text_annotations::{
+    InlineAnnotation,
+    Overlay,
+    TextAnnotations,
+  },
+  render::text_format::TextFormat,
   syntax::{
     HighlightCache,
     Loader,
@@ -62,6 +68,12 @@ pub struct Ctx {
   pub registers:        Registers,
   /// Last executed motion for repeat.
   pub last_motion:      Option<Motion>,
+  /// Render formatting used for visual position mapping.
+  pub text_format:      TextFormat,
+  /// Inline annotations (virtual text) for rendering.
+  pub inline_annotations: Vec<InlineAnnotation>,
+  /// Overlay annotations (virtual text) for rendering.
+  pub overlay_annotations: Vec<Overlay>,
 }
 
 impl Ctx {
@@ -106,6 +118,9 @@ impl Ctx {
     let clipboard = Arc::new(ClipboardProvider::detect());
     let registers = Registers::with_clipboard(clipboard);
 
+    let mut text_format = TextFormat::default();
+    text_format.viewport_width = viewport.width;
+
     Ok(Self {
       editor,
       file_path: file_path.map(PathBuf::from),
@@ -121,6 +136,9 @@ impl Ctx {
       highlight_cache: HighlightCache::default(),
       registers,
       last_motion: None,
+      text_format,
+      inline_annotations: Vec::new(),
+      overlay_annotations: Vec::new(),
     })
   }
 
@@ -212,6 +230,21 @@ impl the_default::DefaultContext for Ctx {
 
   fn set_last_motion(&mut self, motion: Option<Motion>) {
     self.last_motion = motion;
+  }
+
+  fn text_format(&self) -> TextFormat {
+    self.text_format.clone()
+  }
+
+  fn text_annotations(&self) -> TextAnnotations<'_> {
+    let mut annotations = TextAnnotations::default();
+    if !self.inline_annotations.is_empty() {
+      let _ = annotations.add_inline_annotations(&self.inline_annotations, None);
+    }
+    if !self.overlay_annotations.is_empty() {
+      let _ = annotations.add_overlay(&self.overlay_annotations, None);
+    }
+    annotations
   }
 }
 

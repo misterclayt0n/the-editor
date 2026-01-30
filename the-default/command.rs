@@ -200,6 +200,8 @@ pub trait DefaultContext: Sized + 'static {
   fn registers_mut(&mut self) -> &mut Registers;
   fn last_motion(&self) -> Option<Motion>;
   fn set_last_motion(&mut self, motion: Option<Motion>);
+  fn text_format(&self) -> TextFormat;
+  fn text_annotations(&self) -> TextAnnotations<'_>;
 }
 
 pub fn build_dispatch<Ctx>() -> DefaultDispatchStatic<Ctx>
@@ -1597,7 +1599,7 @@ fn copy_selection_on_prev_line<Ctx: DefaultContext>(ctx: &mut Ctx) {
 fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
   let count = 1usize;
   let selection = {
-    let doc = ctx.editor().document();
+    let doc = ctx.editor_ref().document();
     let text = doc.text().slice(..);
     let selection = doc.selection().clone();
 
@@ -1609,9 +1611,8 @@ fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Directi
     ranges.extend_from_slice(selection.ranges());
     cursor_ids.extend_from_slice(selection.cursor_ids());
 
-    let mut text_fmt = TextFormat::default();
-    text_fmt.tab_width = 4;
-    let mut annotations = TextAnnotations::default();
+    let text_fmt = ctx.text_format();
+    let mut annotations = ctx.text_annotations();
 
     for (_cursor_id, range) in selection.iter_with_ids() {
       let (head, anchor) = if range.anchor < range.head {

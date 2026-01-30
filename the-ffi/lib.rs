@@ -60,7 +60,11 @@ use the_lib::{
       Style as LibStyle,
       UnderlineStyle as LibUnderlineStyle,
     },
-    text_annotations::TextAnnotations,
+    text_annotations::{
+      InlineAnnotation,
+      Overlay,
+      TextAnnotations,
+    },
     text_format::TextFormat,
   },
   selection::{
@@ -541,6 +545,9 @@ struct EditorState {
   command_prompt: CommandPromptState,
   needs_render:   bool,
   pending_input:  Option<the_default::PendingInput>,
+  text_format:    TextFormat,
+  inline_annotations: Vec<InlineAnnotation>,
+  overlay_annotations: Vec<Overlay>,
 }
 
 impl EditorState {
@@ -550,6 +557,9 @@ impl EditorState {
       command_prompt: CommandPromptState::new(),
       needs_render: true,
       pending_input: None,
+      text_format: TextFormat::default(),
+      inline_annotations: Vec::new(),
+      overlay_annotations: Vec::new(),
     }
   }
 }
@@ -684,13 +694,24 @@ impl App {
     styles: ffi::RenderStyles,
   ) -> RenderPlan {
     let _ = self.activate(id);
+    let (mut text_fmt, inline_annotations, overlay_annotations) = {
+      let state = self.active_state_ref();
+      (state.text_format.clone(), state.inline_annotations.clone(), state.overlay_annotations.clone())
+    };
+
     let Some(editor) = self.editor_mut(id) else {
       return RenderPlan::empty();
     };
 
     let view = editor.view();
-    let text_fmt = text_format_for_view(view);
+    text_fmt.viewport_width = view.viewport.width;
     let mut annotations = TextAnnotations::default();
+    if !inline_annotations.is_empty() {
+      let _ = annotations.add_inline_annotations(&inline_annotations, None);
+    }
+    if !overlay_annotations.is_empty() {
+      let _ = annotations.add_overlay(&overlay_annotations, None);
+    }
     let mut highlights = NoHighlights;
     let styles = styles.to_lib();
 
@@ -1034,12 +1055,24 @@ impl DefaultContext for App {
   fn set_last_motion(&mut self, motion: Option<Motion>) {
     self.last_motion = motion;
   }
-}
 
-fn text_format_for_view(view: ViewState) -> TextFormat {
-  let mut text_fmt = TextFormat::default();
-  text_fmt.viewport_width = view.viewport.width;
-  text_fmt
+  fn text_format(&self) -> TextFormat {
+    let mut text_fmt = self.active_state_ref().text_format.clone();
+    text_fmt.viewport_width = self.active_editor_ref().view().viewport.width;
+    text_fmt
+  }
+
+  fn text_annotations(&self) -> TextAnnotations<'_> {
+    let state = self.active_state_ref();
+    let mut annotations = TextAnnotations::default();
+    if !state.inline_annotations.is_empty() {
+      let _ = annotations.add_inline_annotations(&state.inline_annotations, None);
+    }
+    if !state.overlay_annotations.is_empty() {
+      let _ = annotations.add_overlay(&state.overlay_annotations, None);
+    }
+    annotations
+  }
 }
 
 fn key_event_from_ffi(event: ffi::KeyEvent) -> the_default::KeyEvent {

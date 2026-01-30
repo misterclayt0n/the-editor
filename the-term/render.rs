@@ -10,7 +10,6 @@ use the_lib::render::{
   build_plan,
   graphics::Style,
   text_annotations::TextAnnotations,
-  text_format::TextFormat,
 };
 use the_lib::selection::Range;
 
@@ -25,11 +24,17 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
   let view = ctx.editor.view();
 
   // Set up text formatting
-  let mut text_fmt = TextFormat::default();
-  text_fmt.viewport_width = view.viewport.width;
+  ctx.text_format.viewport_width = view.viewport.width;
+  let text_fmt = &ctx.text_format;
 
-  // Set up annotations (none for now)
+  // Set up annotations
   let mut annotations = TextAnnotations::default();
+  if !ctx.inline_annotations.is_empty() {
+    let _ = annotations.add_inline_annotations(&ctx.inline_annotations, None);
+  }
+  if !ctx.overlay_annotations.is_empty() {
+    let _ = annotations.add_overlay(&ctx.overlay_annotations, None);
+  }
 
   let (doc, render_cache) = ctx.editor.document_and_cache();
 
@@ -59,7 +64,7 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
     build_plan(
       doc,
       view,
-      &text_fmt,
+      text_fmt,
       &mut annotations,
       &mut adapter,
       render_cache,
@@ -71,7 +76,7 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
     build_plan(
       doc,
       view,
-      &text_fmt,
+      text_fmt,
       &mut annotations,
       &mut highlights,
       render_cache,

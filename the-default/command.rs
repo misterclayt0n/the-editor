@@ -1608,6 +1608,8 @@ fn open<Ctx: DefaultContext>(
 
   let tab_width = 4usize;
   let indent_heuristic = IndentationHeuristic::Simple;
+  let loader = syntax_loader();
+  let loader_language_count = loader.languages().len();
 
   let tx = Transaction::change_by_selection(contents, &selection, |range| {
     let curr_line_num = text.char_to_line(match open {
@@ -1641,11 +1643,19 @@ fn open<Ctx: DefaultContext>(
     };
 
     let line = text.line(curr_line_num);
+    let syntax = if loader_language_count == 0 {
+      None
+    } else {
+      match doc.syntax() {
+        Some(syntax) if syntax.root_language().idx() < loader_language_count => Some(syntax),
+        _ => None,
+      }
+    };
     let indent = match line.first_non_whitespace_char() {
       Some(pos) if continue_comment_token.is_some() => line.slice(..pos).to_string(),
       _ => indent::indent_for_newline(
-        syntax_loader(),
-        doc.syntax(),
+        loader,
+        syntax,
         &indent_heuristic,
         &doc.indent_style(),
         tab_width,

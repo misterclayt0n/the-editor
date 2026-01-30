@@ -548,6 +548,11 @@ fn get_next_range(
 
   // trivial case: only inserted a single-char opener, just move the selection
   if selection_len == 1 {
+    if start_range.len() == 0 {
+      let end = start_range.head + offset + 1;
+      return Range::new(end, end);
+    }
+
     let end_anchor = if single_grapheme || start_range.direction() == Direction::Backward {
       start_range.anchor + offset + 1
     } else {
@@ -855,6 +860,16 @@ mod test {
       .unwrap();
     assert_eq!(apply_transaction(&doc, &tx), "()");
     assert_eq!(tx.selection().unwrap().ranges()[0].head, 2);
+
+    // Insert at doc end: cursor at 2 in `()`, type `)` -> insert and move to pos 3
+    let doc = Rope::from("()");
+    let tx = hook(&doc, &Selection::point(2), ')', &pairs)
+      .unwrap()
+      .unwrap();
+    assert_eq!(apply_transaction(&doc, &tx), "())");
+    let range = &tx.selection().unwrap().ranges()[0];
+    assert_eq!(range.head, 3);
+    assert_eq!(range.anchor, 3);
   }
 
   #[test]

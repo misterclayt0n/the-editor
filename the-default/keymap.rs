@@ -591,6 +591,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "x"         => extend_line_below,
     "X"         => extend_to_line_bounds,
     "A-x"       => shrink_to_line_bounds,
+    "u"         => undo,
+    "U"         => redo,
     "home"      => goto_line_start,
     "end"       => goto_line_end,
   });
@@ -612,6 +614,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "C-j" | "ret" | "S-ret"   => insert_newline,
     "tab"                     => smart_tab,
     "S-tab"                   => insert_tab,
+    "C-s"                     => commit_undo_checkpoint,
     "home"                    => goto_line_start,
     "end"                     => goto_line_end,
     "pageup"                  => page_up,

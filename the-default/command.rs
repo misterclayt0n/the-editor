@@ -372,6 +372,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::AppendMode => append_mode(ctx),
     Command::OpenBelow => open_below(ctx),
     Command::OpenAbove => open_above(ctx),
+    Command::CommitUndoCheckpoint => commit_undo_checkpoint(ctx),
     Command::CopySelectionOnNextLine => copy_selection_on_next_line(ctx),
     Command::CopySelectionOnPrevLine => copy_selection_on_prev_line(ctx),
     Command::SelectAll => select_all(ctx),
@@ -379,6 +380,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::ExtendLineAbove { count } => extend_line_above(ctx, count),
     Command::ExtendToLineBounds => extend_to_line_bounds(ctx),
     Command::ShrinkToLineBounds => shrink_to_line_bounds(ctx),
+    Command::Undo { count } => undo(ctx, count),
+    Command::Redo { count } => redo(ctx, count),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -387,6 +390,9 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
 }
 
 fn post_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  if ctx.mode() != Mode::Insert {
+    let _ = ctx.editor().document_mut().commit();
+  }
   ctx.dispatch().render_request(ctx, ());
 }
 
@@ -1593,6 +1599,10 @@ fn open_above<Ctx: DefaultContext>(ctx: &mut Ctx) {
   open(ctx, OpenDirection::Above, CommentContinuation::Enabled);
 }
 
+fn commit_undo_checkpoint<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let _ = ctx.editor().document_mut().commit();
+}
+
 fn copy_selection_on_next_line<Ctx: DefaultContext>(ctx: &mut Ctx) {
   copy_selection_on_line(ctx, Direction::Forward);
 }
@@ -1702,6 +1712,26 @@ fn extend_line_impl<Ctx: DefaultContext>(ctx: &mut Ctx, extend: ExtendDirection,
   });
 
   let _ = doc.set_selection(new_selection);
+}
+
+fn undo<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  let doc = ctx.editor().document_mut();
+  let count = count.max(1);
+  for _ in 0..count {
+    if doc.undo().ok() != Some(true) {
+      break;
+    }
+  }
+}
+
+fn redo<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  let doc = ctx.editor().document_mut();
+  let count = count.max(1);
+  for _ in 0..count {
+    if doc.redo().ok() != Some(true) {
+      break;
+    }
+  }
 }
 
 fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
@@ -2057,6 +2087,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "append_mode" => Some(Command::append_mode()),
     "open_below" => Some(Command::open_below()),
     "open_above" => Some(Command::open_above()),
+    "commit_undo_checkpoint" => Some(Command::commit_undo_checkpoint()),
     "yank" => Some(Command::yank()),
     "paste_after" => Some(Command::paste_after()),
     "paste_before" => Some(Command::paste_before()),
@@ -2067,6 +2098,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "extend_line_above" => Some(Command::extend_line_above(1)),
     "extend_to_line_bounds" => Some(Command::extend_to_line_bounds()),
     "shrink_to_line_bounds" => Some(Command::shrink_to_line_bounds()),
+    "undo" => Some(Command::undo(1)),
+    "redo" => Some(Command::redo(1)),
 
     _ => None,
   }

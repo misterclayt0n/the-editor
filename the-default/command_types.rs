@@ -463,6 +463,7 @@ pub enum Command {
   AppendMode,
   OpenBelow,
   OpenAbove,
+  CommitUndoCheckpoint,
   CopySelectionOnNextLine,
   CopySelectionOnPrevLine,
   SelectAll,
@@ -470,6 +471,8 @@ pub enum Command {
   ExtendLineAbove { count: usize },
   ExtendToLineBounds,
   ShrinkToLineBounds,
+  Undo { count: usize },
+  Redo { count: usize },
   Save,
   Quit,
 }
@@ -911,6 +914,11 @@ impl Command {
   }
 
   #[must_use]
+  pub const fn commit_undo_checkpoint() -> Self {
+    Self::CommitUndoCheckpoint
+  }
+
+  #[must_use]
   pub const fn copy_selection_on_next_line() -> Self {
     Self::CopySelectionOnNextLine
   }
@@ -943,5 +951,15 @@ impl Command {
   #[must_use]
   pub const fn shrink_to_line_bounds() -> Self {
     Self::ShrinkToLineBounds
+  }
+
+  #[must_use]
+  pub const fn undo(count: usize) -> Self {
+    Self::Undo { count }
+  }
+
+  #[must_use]
+  pub const fn redo(count: usize) -> Self {
+    Self::Redo { count }
   }
 }

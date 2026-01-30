@@ -14,6 +14,7 @@ use crate::{
   Key,
   KeyEvent,
   KeyOutcome,
+  Modifiers,
   command_from_name,
 };
 
@@ -48,6 +49,25 @@ impl KeyBinding {
       shift: event.modifiers.shift(),
       ctrl:  event.modifiers.ctrl(),
       alt:   event.modifiers.alt(),
+    }
+  }
+
+  #[must_use]
+  pub fn to_key_event(&self) -> KeyEvent {
+    let mut modifiers = Modifiers::empty();
+    if self.ctrl {
+      modifiers.insert(Modifiers::CTRL);
+    }
+    if self.alt {
+      modifiers.insert(Modifiers::ALT);
+    }
+    if self.shift {
+      modifiers.insert(Modifiers::SHIFT);
+    }
+
+    KeyEvent {
+      key: self.code,
+      modifiers,
     }
   }
 }
@@ -579,6 +599,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "r"         => replace,
     "R"         => replace_with_yanked,
     "A-."       => repeat_last_motion,
+    "Q"         => record_macro,
+    "q"         => replay_macro,
     "~"         => switch_case,
     "`"         => switch_to_lowercase,
     "A-`"       => switch_to_uppercase,

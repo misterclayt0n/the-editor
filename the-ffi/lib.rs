@@ -5,7 +5,10 @@
 //! SwiftUI client to interact with the Rust editor core.
 
 use std::{
-  collections::HashMap,
+  collections::{
+    HashMap,
+    VecDeque,
+  },
   num::{
     NonZeroU64,
     NonZeroUsize,
@@ -29,6 +32,8 @@ use the_default::{
   DefaultDispatchStatic,
   DispatchRef,
   Direction as CommandDirection,
+  KeyBinding,
+  KeyEvent,
   Keymaps,
   Mode,
   Motion,
@@ -545,6 +550,10 @@ struct EditorState {
   command_prompt: CommandPromptState,
   needs_render:   bool,
   pending_input:  Option<the_default::PendingInput>,
+  register:       Option<char>,
+  macro_recording: Option<(char, Vec<KeyBinding>)>,
+  macro_replaying: Vec<char>,
+  macro_queue:    VecDeque<KeyEvent>,
   text_format:    TextFormat,
   inline_annotations: Vec<InlineAnnotation>,
   overlay_annotations: Vec<Overlay>,
@@ -557,6 +566,10 @@ impl EditorState {
       command_prompt: CommandPromptState::new(),
       needs_render: true,
       pending_input: None,
+      register: None,
+      macro_recording: None,
+      macro_replaying: Vec::new(),
+      macro_queue: VecDeque::new(),
       text_format: TextFormat::default(),
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
@@ -1046,6 +1059,38 @@ impl DefaultContext for App {
 
   fn registers_mut(&mut self) -> &mut Registers {
     &mut self.registers
+  }
+
+  fn register(&self) -> Option<char> {
+    self.active_state_ref().register
+  }
+
+  fn set_register(&mut self, register: Option<char>) {
+    self.active_state_mut().register = register;
+  }
+
+  fn macro_recording(&self) -> &Option<(char, Vec<KeyBinding>)> {
+    &self.active_state_ref().macro_recording
+  }
+
+  fn set_macro_recording(&mut self, recording: Option<(char, Vec<KeyBinding>)>) {
+    self.active_state_mut().macro_recording = recording;
+  }
+
+  fn macro_replaying(&self) -> &Vec<char> {
+    &self.active_state_ref().macro_replaying
+  }
+
+  fn macro_replaying_mut(&mut self) -> &mut Vec<char> {
+    &mut self.active_state_mut().macro_replaying
+  }
+
+  fn macro_queue(&self) -> &VecDeque<KeyEvent> {
+    &self.active_state_ref().macro_queue
+  }
+
+  fn macro_queue_mut(&mut self) -> &mut VecDeque<KeyEvent> {
+    &mut self.active_state_mut().macro_queue
   }
 
   fn last_motion(&self) -> Option<Motion> {

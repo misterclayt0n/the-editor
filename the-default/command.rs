@@ -2,7 +2,10 @@
 
 use std::{
   borrow::Cow,
-  collections::HashMap,
+  collections::{
+    HashMap,
+    VecDeque,
+  },
   path::Path,
   sync::OnceLock,
 };
@@ -69,6 +72,7 @@ use crate::{
   Command,
   Direction,
   Key,
+  KeyBinding,
   KeyEvent,
   KeyOutcome,
   Modifiers,
@@ -83,6 +87,7 @@ use crate::{
   keymap::{
     Keymaps,
     Mode,
+    ParseKeyBindingError,
     handle_key as keymap_handle_key,
   },
 };
@@ -199,6 +204,14 @@ pub trait DefaultContext: Sized + 'static {
   fn set_pending_input(&mut self, pending: Option<PendingInput>);
   fn registers(&self) -> &Registers;
   fn registers_mut(&mut self) -> &mut Registers;
+  fn register(&self) -> Option<char>;
+  fn set_register(&mut self, register: Option<char>);
+  fn macro_recording(&self) -> &Option<(char, Vec<KeyBinding>)>;
+  fn set_macro_recording(&mut self, recording: Option<(char, Vec<KeyBinding>)>);
+  fn macro_replaying(&self) -> &Vec<char>;
+  fn macro_replaying_mut(&mut self) -> &mut Vec<char>;
+  fn macro_queue(&self) -> &VecDeque<KeyEvent>;
+  fn macro_queue_mut(&mut self) -> &mut VecDeque<KeyEvent>;
   fn last_motion(&self) -> Option<Motion>;
   fn set_last_motion(&mut self, motion: Option<Motion>);
   fn text_format(&self) -> TextFormat;
@@ -260,8 +273,27 @@ where
   dispatch.pre_on_keypress(ctx, key);
 }
 
-fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+pub fn default_pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+  if let Some(next) = ctx.macro_queue_mut().pop_front() {
+    ctx.dispatch().on_keypress(ctx, next);
+    if ctx.macro_queue().is_empty() {
+      ctx.macro_replaying_mut().pop();
+    }
+    return;
+  }
+
+  if ctx.macro_replaying().is_empty() {
+    if let Some((reg, mut keys)) = ctx.macro_recording().clone() {
+      keys.push(KeyBinding::from_key_event(&key));
+      ctx.set_macro_recording(Some((reg, keys)));
+    }
+  }
+
   ctx.dispatch().on_keypress(ctx, key);
+}
+
+fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+  default_pre_on_keypress(ctx, key);
 }
 
 fn handle_pending_input<Ctx: DefaultContext>(
@@ -360,6 +392,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::ReplaceWithYanked => ctx.dispatch().replace_with_yanked(ctx, ()),
     Command::Yank => ctx.dispatch().yank(ctx, ()),
     Command::Paste { after } => ctx.dispatch().paste(ctx, after),
+    Command::RecordMacro => record_macro(ctx),
+    Command::ReplayMacro => replay_macro(ctx),
     Command::RepeatLastMotion => {
       if let Some(motion) = ctx.last_motion() {
         ctx.dispatch().motion(ctx, motion);
@@ -1452,6 +1486,86 @@ fn paste<Ctx: DefaultContext>(ctx: &mut Ctx, after: bool) {
   ctx.request_render();
 }
 
+fn record_macro<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  if let Some((reg, mut keys)) = ctx.macro_recording().clone() {
+    // Remove the keypress which ends the recording (Q)
+    keys.pop();
+    let s = keys
+      .into_iter()
+      .map(|key| {
+        let s = key.to_string();
+        if s.chars().count() == 1 {
+          s
+        } else {
+          format!("<{}>", s)
+        }
+      })
+      .collect::<String>();
+    ctx.set_macro_recording(None);
+    let _ = ctx.registers_mut().write(reg, vec![s]);
+  } else {
+    let reg = ctx.register().unwrap_or('@');
+    ctx.set_macro_recording(Some((reg, Vec::new())));
+  }
+  ctx.request_render();
+}
+
+fn replay_macro<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let reg = ctx.register().unwrap_or('@');
+  if ctx.macro_replaying().contains(&reg) {
+    return;
+  }
+
+  let keys: Vec<KeyBinding> = if let Some(keys) = ctx
+    .registers()
+    .read(reg, ctx.editor_ref().document())
+    .filter(|values| values.len() == 1)
+    .map(|mut values| values.next().unwrap())
+  {
+    match parse_macro(keys.as_ref()) {
+      Ok(keys) => keys,
+      Err(_) => return,
+    }
+  } else {
+    return;
+  };
+
+  ctx.macro_replaying_mut().push(reg);
+  ctx.macro_queue_mut().extend(keys.iter().map(|key| key.to_key_event()));
+  while let Some(next) = ctx.macro_queue_mut().pop_front() {
+    ctx.dispatch().on_keypress(ctx, next);
+  }
+  ctx.macro_replaying_mut().pop();
+}
+
+fn parse_macro(keys: &str) -> Result<Vec<KeyBinding>, ParseKeyBindingError> {
+  let mut out = Vec::new();
+  let mut chars = keys.chars().peekable();
+
+  while let Some(ch) = chars.next() {
+    if ch == '<' {
+      let mut token = String::new();
+      while let Some(next) = chars.next() {
+        if next == '>' {
+          break;
+        }
+        token.push(next);
+      }
+
+      if token.is_empty() {
+        return Err(ParseKeyBindingError("empty macro token".into()));
+      }
+
+      out.push(token.parse()?);
+      continue;
+    }
+
+    out.push(KeyBinding::new(Key::Char(ch)));
+  }
+
+  Ok(out)
+}
+
 fn switch_case<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   switch_case_impl(ctx, |s| {
     s.chars()
@@ -2194,6 +2308,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "yank" => Some(Command::yank()),
     "paste_after" => Some(Command::paste_after()),
     "paste_before" => Some(Command::paste_before()),
+    "record_macro" => Some(Command::record_macro()),
+    "replay_macro" => Some(Command::replay_macro()),
     "copy_selection_on_next_line" => Some(Command::copy_selection_on_next_line()),
     "copy_selection_on_prev_line" => Some(Command::copy_selection_on_prev_line()),
     "select_all" => Some(Command::select_all()),

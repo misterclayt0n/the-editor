@@ -5,6 +5,7 @@ use the_default::{
   KeyEvent,
   Keymaps,
   build_dispatch as default_dispatch,
+  default_pre_on_keypress,
 };
 use the_default::{
   Command,
@@ -33,7 +34,7 @@ fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
     return;
   }
 
-  ctx.dispatch().on_keypress(ctx, key);
+  default_pre_on_keypress(ctx, key);
 }
 
 /// Build the default keymaps.

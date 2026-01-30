@@ -23,6 +23,7 @@ pub use command::{
   DefaultDispatchStatic,
   DispatchRef,
   build_dispatch,
+  default_pre_on_keypress,
   command_from_name,
   handle_command,
   handle_key,

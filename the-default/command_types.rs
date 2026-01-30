@@ -454,6 +454,8 @@ pub enum Command {
   ReplaceWithYanked,
   Yank,
   Paste { after: bool },
+  RecordMacro,
+  ReplayMacro,
   RepeatLastMotion,
   SwitchCase,
   SwitchToUppercase,
@@ -870,6 +872,16 @@ impl Command {
   #[must_use]
   pub const fn paste_before() -> Self {
     Self::Paste { after: false }
+  }
+
+  #[must_use]
+  pub const fn record_macro() -> Self {
+    Self::RecordMacro
+  }
+
+  #[must_use]
+  pub const fn replay_macro() -> Self {
+    Self::ReplayMacro
   }
 
   #[must_use]

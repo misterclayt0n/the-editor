@@ -1,6 +1,7 @@
 //! Application context (state).
 
 use std::{
+  collections::VecDeque,
   num::NonZeroUsize,
   path::{
     Path,
@@ -17,6 +18,8 @@ use the_default::{
   CommandRegistry,
   DefaultDispatchStatic,
   DispatchRef,
+  KeyBinding,
+  KeyEvent,
   Keymaps,
   Mode,
   Motion,
@@ -66,6 +69,14 @@ pub struct Ctx {
   pub highlight_cache:  HighlightCache,
   /// Registers for yanking/pasting.
   pub registers:        Registers,
+  /// Active register target (for macros/register operations).
+  pub register:         Option<char>,
+  /// Macro recording state.
+  pub macro_recording:  Option<(char, Vec<KeyBinding>)>,
+  /// Macro replay stack for recursion guard.
+  pub macro_replaying:  Vec<char>,
+  /// Pending macro key events to replay.
+  pub macro_queue:      VecDeque<KeyEvent>,
   /// Last executed motion for repeat.
   pub last_motion:      Option<Motion>,
   /// Render formatting used for visual position mapping.
@@ -135,6 +146,10 @@ impl Ctx {
       loader,
       highlight_cache: HighlightCache::default(),
       registers,
+      register: None,
+      macro_recording: None,
+      macro_replaying: Vec::new(),
+      macro_queue: VecDeque::new(),
       last_motion: None,
       text_format,
       inline_annotations: Vec::new(),
@@ -222,6 +237,38 @@ impl the_default::DefaultContext for Ctx {
 
   fn registers_mut(&mut self) -> &mut Registers {
     &mut self.registers
+  }
+
+  fn register(&self) -> Option<char> {
+    self.register
+  }
+
+  fn set_register(&mut self, register: Option<char>) {
+    self.register = register;
+  }
+
+  fn macro_recording(&self) -> &Option<(char, Vec<KeyBinding>)> {
+    &self.macro_recording
+  }
+
+  fn set_macro_recording(&mut self, recording: Option<(char, Vec<KeyBinding>)>) {
+    self.macro_recording = recording;
+  }
+
+  fn macro_replaying(&self) -> &Vec<char> {
+    &self.macro_replaying
+  }
+
+  fn macro_replaying_mut(&mut self) -> &mut Vec<char> {
+    &mut self.macro_replaying
+  }
+
+  fn macro_queue(&self) -> &VecDeque<KeyEvent> {
+    &self.macro_queue
+  }
+
+  fn macro_queue_mut(&mut self) -> &mut VecDeque<KeyEvent> {
+    &mut self.macro_queue
   }
 
   fn last_motion(&self) -> Option<Motion> {

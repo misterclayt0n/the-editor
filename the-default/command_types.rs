@@ -475,6 +475,8 @@ pub enum Command {
   Redo { count: usize },
   Earlier { count: usize },
   Later { count: usize },
+  Indent { count: usize },
+  Unindent { count: usize },
   Save,
   Quit,
 }
@@ -973,5 +975,15 @@ impl Command {
   #[must_use]
   pub const fn later(count: usize) -> Self {
     Self::Later { count }
+  }
+
+  #[must_use]
+  pub const fn indent(count: usize) -> Self {
+    Self::Indent { count }
+  }
+
+  #[must_use]
+  pub const fn unindent(count: usize) -> Self {
+    Self::Unindent { count }
   }
 }

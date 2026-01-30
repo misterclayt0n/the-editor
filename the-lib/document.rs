@@ -53,7 +53,10 @@ use crate::{
     State,
     UndoKind,
   },
-  indent::IndentStyle,
+  indent::{
+    IndentStyle,
+    auto_detect_indent_style,
+  },
   selection::{
     Range,
     Selection,
@@ -145,6 +148,7 @@ impl Document {
   pub fn new(id: DocumentId, text: Rope) -> Self {
     let selection = Selection::point(0);
     let changes = ChangeSet::new(text.slice(..));
+    let indent_style = auto_detect_indent_style(&text).unwrap_or(IndentStyle::Tabs);
     Self {
       id,
       display_name: Tendril::new(),
@@ -153,7 +157,7 @@ impl Document {
       history: History::default(),
       changes,
       old_state: None,
-      indent_style: IndentStyle::Tabs,
+      indent_style,
       line_ending: NATIVE_LINE_ENDING,
       version: 0,
       flags: DocumentFlags::default(),

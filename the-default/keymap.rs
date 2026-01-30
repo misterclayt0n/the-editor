@@ -595,6 +595,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "U"         => redo,
     "A-u"       => earlier,
     "A-U"       => later,
+    ">"         => indent,
+    "<"         => unindent,
     // REIMAGINE THOSE
     // ","         => keep_primary_selection,
     // "A-,"       => remove_primary_selection,

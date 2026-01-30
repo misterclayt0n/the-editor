@@ -385,6 +385,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::Redo { count } => redo(ctx, count),
     Command::Earlier { count } => earlier(ctx, count),
     Command::Later { count } => later(ctx, count),
+    Command::Indent { count } => indent(ctx, count),
+    Command::Unindent { count } => unindent(ctx, count),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -1757,6 +1759,84 @@ fn later<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
   }
 }
 
+fn indent<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  let count = count.max(1);
+  let doc = ctx.editor().document_mut();
+  let text = doc.text();
+  let selection = doc.selection().clone();
+  let indent_str = doc.indent_style().as_str().repeat(count);
+  let indent = Tendril::from(indent_str.as_str());
+
+  let changes: Vec<_> = selection
+    .line_ranges(text.slice(..))
+    .flat_map(|(start_line, end_line)| start_line..=end_line)
+    .filter_map(|line| {
+      let is_blank = text.line(line).chars().all(|ch| ch.is_whitespace());
+      if is_blank {
+        return None;
+      }
+      let pos = text.line_to_char(line);
+      Some((pos, pos, Some(indent.clone())))
+    })
+    .collect();
+
+  let Ok(tx) = Transaction::change(doc.text(), changes.into_iter()) else {
+    return;
+  };
+  let _ = doc.apply_transaction(&tx);
+
+  if ctx.mode() == Mode::Select {
+    ctx.set_mode(Mode::Normal);
+  }
+}
+
+fn unindent<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  let count = count.max(1);
+  let tab_width = 4usize;
+  let doc = ctx.editor().document_mut();
+  let text = doc.text();
+  let selection = doc.selection().clone();
+  let indent_width = count * doc.indent_style().indent_width(tab_width);
+
+  let changes: Vec<_> = selection
+    .line_ranges(text.slice(..))
+    .flat_map(|(start_line, end_line)| start_line..=end_line)
+    .filter_map(|line_idx| {
+      let line = text.line(line_idx);
+      let mut width = 0usize;
+      let mut pos = 0usize;
+
+      for ch in line.chars() {
+        match ch {
+          ' ' => width += 1,
+          '\t' => width = (width / tab_width + 1) * tab_width,
+          _ => break,
+        }
+        pos += 1;
+        if width >= indent_width {
+          break;
+        }
+      }
+
+      if pos > 0 {
+        let start = text.line_to_char(line_idx);
+        Some((start, start + pos, None))
+      } else {
+        None
+      }
+    })
+    .collect();
+
+  let Ok(tx) = Transaction::change(doc.text(), changes.into_iter()) else {
+    return;
+  };
+  let _ = doc.apply_transaction(&tx);
+
+  if ctx.mode() == Mode::Select {
+    ctx.set_mode(Mode::Normal);
+  }
+}
+
 fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
   let count = 1usize;
   let selection = {
@@ -2125,6 +2205,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "redo" => Some(Command::redo(1)),
     "earlier" => Some(Command::earlier(1)),
     "later" => Some(Command::later(1)),
+    "indent" => Some(Command::indent(1)),
+    "unindent" => Some(Command::unindent(1)),
 
     _ => None,
   }

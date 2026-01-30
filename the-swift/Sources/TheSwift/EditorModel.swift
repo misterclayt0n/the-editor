@@ -14,17 +14,33 @@ final class EditorModel: ObservableObject {
     private var scrollRemainderX: CGFloat = 0
     private var scrollRemainderY: CGFloat = 0
 
-    init() {
+    init(filePath: String? = nil) {
         self.app = TheEditorFFIBridge.App()
         let fontInfo = FontLoader.loadIosevka(size: 14)
         self.cellSize = fontInfo.cellSize
         self.font = fontInfo.font
         self.viewport = Rect(x: 0, y: 0, width: 80, height: 24)
         let scroll = Position(row: 0, col: 0)
-
-        self.editorId = app.create_editor("hello from the-lib\nswift demo", viewport, scroll)
+        let initialText = EditorModel.loadText(filePath: filePath)
+        self.editorId = app.create_editor(initialText, viewport, scroll)
         self.plan = app.render_plan(editorId)
         self.mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
+    }
+
+    private static func loadText(filePath: String?) -> String {
+        guard let filePath else {
+            return "hello from the-lib\nswift demo"
+        }
+
+        do {
+            return try String(contentsOfFile: filePath, encoding: .utf8)
+        } catch {
+            let message = "the-swift: failed to read file: \(filePath)\n"
+            if let data = message.data(using: .utf8) {
+                FileHandle.standardError.write(data)
+            }
+            return ""
+        }
     }
 
     func updateViewport(pixelSize: CGSize, cellSize: CGSize) {

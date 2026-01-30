@@ -2,7 +2,11 @@ import SwiftUI
 import TheEditorFFIBridge
 
 struct EditorView: View {
-    @StateObject private var model = EditorModel()
+    @StateObject private var model: EditorModel
+
+    init(filePath: String? = nil) {
+        _model = StateObject(wrappedValue: EditorModel(filePath: filePath))
+    }
 
     var body: some View {
         let model = model

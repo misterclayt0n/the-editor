@@ -451,6 +451,7 @@ pub enum Command {
   ChangeSelection { yank: bool },
   Replace,
   ReplaceWithYanked,
+  RepeatLastMotion,
   Save,
   Quit,
 }
@@ -824,5 +825,10 @@ impl Command {
   #[must_use]
   pub const fn replace_with_yanked() -> Self {
     Self::ReplaceWithYanked
+  }
+
+  #[must_use]
+  pub const fn repeat_last_motion() -> Self {
+    Self::RepeatLastMotion
   }
 }

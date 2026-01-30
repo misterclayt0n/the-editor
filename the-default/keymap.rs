@@ -573,6 +573,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "A-c"       => change_selection_noyank,
     "r"         => replace,
     "R"         => replace_with_yanked,
+    "A-."       => repeat_last_motion,
   });
 
   let insert = crate::keymap!({ "Insert"

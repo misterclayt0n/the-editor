@@ -19,6 +19,7 @@ use the_default::{
   DispatchRef,
   Keymaps,
   Mode,
+  Motion,
 };
 use the_lib::{
   document::{
@@ -59,6 +60,8 @@ pub struct Ctx {
   pub highlight_cache:  HighlightCache,
   /// Registers for yanking/pasting.
   pub registers:        Registers,
+  /// Last executed motion for repeat.
+  pub last_motion:      Option<Motion>,
 }
 
 impl Ctx {
@@ -117,6 +120,7 @@ impl Ctx {
       loader,
       highlight_cache: HighlightCache::default(),
       registers,
+      last_motion: None,
     })
   }
 
@@ -200,6 +204,14 @@ impl the_default::DefaultContext for Ctx {
 
   fn registers_mut(&mut self) -> &mut Registers {
     &mut self.registers
+  }
+
+  fn last_motion(&self) -> Option<Motion> {
+    self.last_motion
+  }
+
+  fn set_last_motion(&mut self, motion: Option<Motion>) {
+    self.last_motion = motion;
   }
 }
 

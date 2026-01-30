@@ -173,6 +173,8 @@ pub trait DefaultContext: Sized + 'static {
   fn set_pending_input(&mut self, pending: Option<PendingInput>);
   fn registers(&self) -> &Registers;
   fn registers_mut(&mut self) -> &mut Registers;
+  fn last_motion(&self) -> Option<Motion>;
+  fn set_last_motion(&mut self, motion: Option<Motion>);
 }
 
 pub fn build_dispatch<Ctx>() -> DefaultDispatchStatic<Ctx>
@@ -308,13 +310,21 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::ParentNodeStart { extend } => parent_node_start(ctx, extend),
     Command::Move(dir) => ctx.dispatch().move_cursor(ctx, dir),
     Command::AddCursor(dir) => ctx.dispatch().add_cursor(ctx, dir),
-    Command::Motion(motion) => ctx.dispatch().motion(ctx, motion),
+    Command::Motion(motion) => {
+      ctx.set_last_motion(Some(motion));
+      ctx.dispatch().motion(ctx, motion);
+    },
     Command::DeleteSelection { yank } => ctx.dispatch().delete_selection(ctx, yank),
     Command::ChangeSelection { yank } => ctx.dispatch().change_selection(ctx, yank),
     Command::Replace => {
       ctx.set_pending_input(Some(PendingInput::ReplaceSelection));
     },
     Command::ReplaceWithYanked => ctx.dispatch().replace_with_yanked(ctx, ()),
+    Command::RepeatLastMotion => {
+      if let Some(motion) = ctx.last_motion() {
+        ctx.dispatch().motion(ctx, motion);
+      }
+    },
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -1232,6 +1242,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "change_selection_noyank" => Some(Command::change_selection_noyank()),
     "replace" => Some(Command::replace()),
     "replace_with_yanked" => Some(Command::replace_with_yanked()),
+    "repeat_last_motion" => Some(Command::repeat_last_motion()),
 
     _ => None,
   }

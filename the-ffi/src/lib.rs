@@ -31,6 +31,7 @@ use the_default::{
   Direction as CommandDirection,
   Keymaps,
   Mode,
+  Motion,
   build_dispatch,
 };
 use the_lib::{
@@ -564,6 +565,7 @@ pub struct App {
   active_editor: Option<LibEditorId>,
   should_quit: bool,
   registers: Registers,
+  last_motion: Option<Motion>,
 }
 
 impl App {
@@ -579,6 +581,7 @@ impl App {
       active_editor: None,
       should_quit: false,
       registers: Registers::new(),
+      last_motion: None,
     }
   }
 
@@ -1022,6 +1025,14 @@ impl DefaultContext for App {
 
   fn registers_mut(&mut self) -> &mut Registers {
     &mut self.registers
+  }
+
+  fn last_motion(&self) -> Option<Motion> {
+    self.last_motion
+  }
+
+  fn set_last_motion(&mut self, motion: Option<Motion>) {
+    self.last_motion = motion;
   }
 }
 

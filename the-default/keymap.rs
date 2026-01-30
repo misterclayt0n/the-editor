@@ -585,6 +585,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "y"         => yank,
     "p"         => paste_after,
     "P"         => paste_before,
+    "C"         => copy_selection_on_next_line,
+    "A-C"       => copy_selection_on_prev_line,
     "home"      => goto_line_start,
     "end"       => goto_line_end,
   });

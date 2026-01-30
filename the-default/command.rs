@@ -45,6 +45,8 @@ use the_lib::{
   render::{
     text_annotations::TextAnnotations,
     text_format::TextFormat,
+    char_at_visual_pos,
+    visual_pos_at_char,
   },
   selection::{
     CursorId,
@@ -368,6 +370,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::AppendMode => append_mode(ctx),
     Command::OpenBelow => open_below(ctx),
     Command::OpenAbove => open_above(ctx),
+    Command::CopySelectionOnNextLine => copy_selection_on_next_line(ctx),
+    Command::CopySelectionOnPrevLine => copy_selection_on_prev_line(ctx),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -1582,6 +1586,118 @@ fn open_above<Ctx: DefaultContext>(ctx: &mut Ctx) {
   open(ctx, OpenDirection::Above, CommentContinuation::Enabled);
 }
 
+fn copy_selection_on_next_line<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  copy_selection_on_line(ctx, Direction::Forward);
+}
+
+fn copy_selection_on_prev_line<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  copy_selection_on_line(ctx, Direction::Backward);
+}
+
+fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
+  let count = 1usize;
+  let selection = {
+    let doc = ctx.editor().document();
+    let text = doc.text().slice(..);
+    let selection = doc.selection().clone();
+
+    let mut ranges: SmallVec<[Range; 1]> =
+      SmallVec::with_capacity(selection.ranges().len() * (count + 1));
+    let mut cursor_ids: SmallVec<[CursorId; 1]> =
+      SmallVec::with_capacity(selection.ranges().len() * (count + 1));
+
+    ranges.extend_from_slice(selection.ranges());
+    cursor_ids.extend_from_slice(selection.cursor_ids());
+
+    let mut text_fmt = TextFormat::default();
+    text_fmt.tab_width = 4;
+    let mut annotations = TextAnnotations::default();
+
+    for (_cursor_id, range) in selection.iter_with_ids() {
+      let (head, anchor) = if range.anchor < range.head {
+        (range.head.saturating_sub(1), range.anchor)
+      } else {
+        (range.head, range.anchor.saturating_sub(1))
+      };
+
+      let Some(head_pos) = visual_pos_at_char(text, &text_fmt, &mut annotations, head) else {
+        continue;
+      };
+      let Some(anchor_pos) = visual_pos_at_char(text, &text_fmt, &mut annotations, anchor) else {
+        continue;
+      };
+
+      let height =
+        head_pos.row.max(anchor_pos.row).saturating_sub(head_pos.row.min(anchor_pos.row)) + 1;
+
+      let mut sels = 0;
+      let mut i = 0usize;
+      while sels < count {
+        let offset = (i + 1) * height;
+        let anchor_row = match direction {
+          Direction::Forward => anchor_pos.row + offset,
+          Direction::Backward => anchor_pos.row.saturating_sub(offset),
+          _ => anchor_pos.row,
+        };
+        let head_row = match direction {
+          Direction::Forward => head_pos.row + offset,
+          Direction::Backward => head_pos.row.saturating_sub(offset),
+          _ => head_pos.row,
+        };
+
+        if anchor_row >= text.len_lines() || head_row >= text.len_lines() {
+          break;
+        }
+
+        let Some(anchor_idx) = char_at_visual_pos(
+          text,
+          &text_fmt,
+          &mut annotations,
+          Position::new(anchor_row, anchor_pos.col),
+        ) else {
+          break;
+        };
+        let Some(head_idx) = char_at_visual_pos(
+          text,
+          &text_fmt,
+          &mut annotations,
+          Position::new(head_row, head_pos.col),
+        ) else {
+          break;
+        };
+
+        let anchor_ok =
+          visual_pos_at_char(text, &text_fmt, &mut annotations, anchor_idx)
+            .is_some_and(|pos| pos.col == anchor_pos.col);
+        let head_ok =
+          visual_pos_at_char(text, &text_fmt, &mut annotations, head_idx)
+            .is_some_and(|pos| pos.col == head_pos.col);
+
+        if anchor_ok && head_ok {
+          ranges.push(Range::point(anchor_idx).put_cursor(text, head_idx, true));
+          cursor_ids.push(CursorId::fresh());
+          sels += 1;
+        }
+
+        if anchor_row == 0 && head_row == 0 {
+          break;
+        }
+
+        i += 1;
+      }
+    }
+
+    Selection::new_with_ids(ranges, cursor_ids).ok()
+  };
+
+  let Some(selection) = selection else {
+    return;
+  };
+
+  let doc = ctx.editor().document_mut();
+  let _ = doc.set_selection(selection);
+}
+
 fn open<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   open: OpenDirection,
@@ -1835,6 +1951,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "yank" => Some(Command::yank()),
     "paste_after" => Some(Command::paste_after()),
     "paste_before" => Some(Command::paste_before()),
+    "copy_selection_on_next_line" => Some(Command::copy_selection_on_next_line()),
+    "copy_selection_on_prev_line" => Some(Command::copy_selection_on_prev_line()),
 
     _ => None,
   }

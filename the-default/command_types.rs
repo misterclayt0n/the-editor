@@ -463,6 +463,8 @@ pub enum Command {
   AppendMode,
   OpenBelow,
   OpenAbove,
+  CopySelectionOnNextLine,
+  CopySelectionOnPrevLine,
   Save,
   Quit,
 }
@@ -901,5 +903,15 @@ impl Command {
   #[must_use]
   pub const fn open_above() -> Self {
     Self::OpenAbove
+  }
+
+  #[must_use]
+  pub const fn copy_selection_on_next_line() -> Self {
+    Self::CopySelectionOnNextLine
+  }
+
+  #[must_use]
+  pub const fn copy_selection_on_prev_line() -> Self {
+    Self::CopySelectionOnPrevLine
   }
 }

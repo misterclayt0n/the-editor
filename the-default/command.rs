@@ -374,6 +374,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::OpenAbove => open_above(ctx),
     Command::CopySelectionOnNextLine => copy_selection_on_next_line(ctx),
     Command::CopySelectionOnPrevLine => copy_selection_on_prev_line(ctx),
+    Command::SelectAll => select_all(ctx),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -1596,6 +1597,12 @@ fn copy_selection_on_prev_line<Ctx: DefaultContext>(ctx: &mut Ctx) {
   copy_selection_on_line(ctx, Direction::Backward);
 }
 
+fn select_all<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let doc = ctx.editor().document_mut();
+  let end = doc.text().len_chars();
+  let _ = doc.set_selection(Selection::single(0, end));
+}
+
 fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
   let count = 1usize;
   let selection = {
@@ -1954,6 +1961,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "paste_before" => Some(Command::paste_before()),
     "copy_selection_on_next_line" => Some(Command::copy_selection_on_next_line()),
     "copy_selection_on_prev_line" => Some(Command::copy_selection_on_prev_line()),
+    "select_all" => Some(Command::select_all()),
 
     _ => None,
   }

@@ -465,6 +465,7 @@ pub enum Command {
   OpenAbove,
   CopySelectionOnNextLine,
   CopySelectionOnPrevLine,
+  SelectAll,
   Save,
   Quit,
 }
@@ -913,5 +914,10 @@ impl Command {
   #[must_use]
   pub const fn copy_selection_on_prev_line() -> Self {
     Self::CopySelectionOnPrevLine
+  }
+
+  #[must_use]
+  pub const fn select_all() -> Self {
+    Self::SelectAll
   }
 }

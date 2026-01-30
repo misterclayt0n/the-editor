@@ -479,6 +479,7 @@ pub enum Command {
   Later { count: usize },
   Indent { count: usize },
   Unindent { count: usize },
+  MatchBrackets,
   Save,
   Quit,
 }
@@ -997,5 +998,10 @@ impl Command {
   #[must_use]
   pub const fn unindent(count: usize) -> Self {
     Self::Unindent { count }
+  }
+
+  #[must_use]
+  pub const fn match_brackets() -> Self {
+    Self::MatchBrackets
   }
 }

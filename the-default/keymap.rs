@@ -619,6 +619,11 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "A-U"       => later,
     ">"         => indent,
     "<"         => unindent,
+
+    "m" => { "Match"
+      "m" => match_brackets,
+    },
+
     // REIMAGINE THOSE
     // ","         => keep_primary_selection,
     // "A-,"       => remove_primary_selection,

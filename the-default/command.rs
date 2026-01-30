@@ -33,6 +33,7 @@ use the_lib::{
   editor::Editor,
   history::UndoKind,
   indent,
+  match_brackets as mb,
   movement::{
     self,
     Direction as MoveDir,
@@ -421,6 +422,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::Later { count } => later(ctx, count),
     Command::Indent { count } => indent(ctx, count),
     Command::Unindent { count } => unindent(ctx, count),
+    Command::MatchBrackets => match_brackets(ctx),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -1951,6 +1953,32 @@ fn unindent<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
   }
 }
 
+fn match_brackets<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let is_select = ctx.mode() == Mode::Select;
+  let doc = ctx.editor().document_mut();
+  let text = doc.text();
+  let text_slice = text.slice(..);
+  let selection = doc.selection().clone();
+  let syntax = doc.syntax();
+
+  let new_selection = selection.transform(|range| {
+    let pos = range.cursor(text_slice);
+    let matched_pos = if let Some(syn) = syntax {
+      mb::find_matching_bracket_fuzzy(syn, text_slice, pos)
+    } else {
+      mb::find_matching_bracket_plaintext(text_slice, pos)
+    };
+
+    if let Some(matched) = matched_pos {
+      range.put_cursor(text_slice, matched, is_select)
+    } else {
+      range
+    }
+  });
+
+  let _ = doc.set_selection(new_selection);
+}
+
 fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
   let count = 1usize;
   let selection = {
@@ -2323,6 +2351,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "later" => Some(Command::later(1)),
     "indent" => Some(Command::indent(1)),
     "unindent" => Some(Command::unindent(1)),
+    "match_brackets" => Some(Command::match_brackets()),
 
     _ => None,
   }

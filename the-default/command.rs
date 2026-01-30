@@ -28,6 +28,7 @@ use the_lib::{
     AutoPairs,
   },
   editor::Editor,
+  history::UndoKind,
   indent,
   movement::{
     self,
@@ -382,6 +383,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::ShrinkToLineBounds => shrink_to_line_bounds(ctx),
     Command::Undo { count } => undo(ctx, count),
     Command::Redo { count } => redo(ctx, count),
+    Command::Earlier { count } => earlier(ctx, count),
+    Command::Later { count } => later(ctx, count),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -1734,6 +1737,26 @@ fn redo<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
   }
 }
 
+fn earlier<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  let doc = ctx.editor().document_mut();
+  let count = count.max(1);
+  for _ in 0..count {
+    if doc.earlier(UndoKind::Steps(1)).ok() != Some(true) {
+      break;
+    }
+  }
+}
+
+fn later<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  let doc = ctx.editor().document_mut();
+  let count = count.max(1);
+  for _ in 0..count {
+    if doc.later(UndoKind::Steps(1)).ok() != Some(true) {
+      break;
+    }
+  }
+}
+
 fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
   let count = 1usize;
   let selection = {
@@ -2100,6 +2123,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "shrink_to_line_bounds" => Some(Command::shrink_to_line_bounds()),
     "undo" => Some(Command::undo(1)),
     "redo" => Some(Command::redo(1)),
+    "earlier" => Some(Command::earlier(1)),
+    "later" => Some(Command::later(1)),
 
     _ => None,
   }

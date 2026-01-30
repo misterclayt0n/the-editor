@@ -473,6 +473,8 @@ pub enum Command {
   ShrinkToLineBounds,
   Undo { count: usize },
   Redo { count: usize },
+  Earlier { count: usize },
+  Later { count: usize },
   Save,
   Quit,
 }
@@ -961,5 +963,15 @@ impl Command {
   #[must_use]
   pub const fn redo(count: usize) -> Self {
     Self::Redo { count }
+  }
+
+  #[must_use]
+  pub const fn earlier(count: usize) -> Self {
+    Self::Earlier { count }
+  }
+
+  #[must_use]
+  pub const fn later(count: usize) -> Self {
+    Self::Later { count }
   }
 }

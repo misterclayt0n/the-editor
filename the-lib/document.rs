@@ -51,6 +51,7 @@ use crate::{
     HistoryError,
     HistoryJump,
     State,
+    UndoKind,
   },
   indent::IndentStyle,
   selection::{
@@ -306,6 +307,26 @@ impl Document {
   pub fn redo(&mut self) -> Result<bool> {
     let Some(jump) = self.history.redo() else {
       return Ok(false);
+    };
+    self.apply_history_jump(&jump)?;
+    self.history.apply_jump(&jump)?;
+    Ok(true)
+  }
+
+  pub fn earlier(&mut self, uk: UndoKind) -> Result<bool> {
+    let jump = match self.history.earlier(uk) {
+      Ok(j) => j,
+      Err(_) => return Ok(false),
+    };
+    self.apply_history_jump(&jump)?;
+    self.history.apply_jump(&jump)?;
+    Ok(true)
+  }
+
+  pub fn later(&mut self, uk: UndoKind) -> Result<bool> {
+    let jump = match self.history.later(uk) {
+      Ok(j) => j,
+      Err(_) => return Ok(false),
     };
     self.apply_history_jump(&jump)?;
     self.history.apply_jump(&jump)?;

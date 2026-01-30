@@ -593,6 +593,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "A-x"       => shrink_to_line_bounds,
     "u"         => undo,
     "U"         => redo,
+    "A-u"       => earlier,
+    "A-U"       => later,
     "home"      => goto_line_start,
     "end"       => goto_line_end,
   });

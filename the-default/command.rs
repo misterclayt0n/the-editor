@@ -336,6 +336,9 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::SwitchCase => ctx.dispatch().switch_case(ctx, ()),
     Command::SwitchToUppercase => switch_to_uppercase(ctx),
     Command::SwitchToLowercase => switch_to_lowercase(ctx),
+    Command::InsertAtLineStart => insert_at_line_start(ctx),
+    Command::InsertAtLineEnd => insert_at_line_end(ctx),
+    Command::AppendMode => append_mode(ctx),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -1334,6 +1337,58 @@ impl Iterator for CaseSwitcher {
   }
 }
 
+fn insert_at_line_start<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  let new_selection = selection.transform(|range| {
+    let line = range.cursor_line(slice);
+    let line_start = slice.line_to_char(line);
+    let pos = slice
+      .line(line)
+      .first_non_whitespace_char()
+      .map(|offset| line_start + offset)
+      .unwrap_or(line_start);
+    range.put_cursor(slice, pos, false)
+  });
+
+  let _ = doc.set_selection(new_selection);
+  ctx.set_mode(Mode::Insert);
+  ctx.request_render();
+}
+
+fn insert_at_line_end<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  let new_selection = selection.transform(|range| {
+    let line = range.cursor_line(slice);
+    let pos = line_end_char_index(&slice, line);
+    range.put_cursor(slice, pos, false)
+  });
+
+  let _ = doc.set_selection(new_selection);
+  ctx.set_mode(Mode::Insert);
+  ctx.request_render();
+}
+
+fn append_mode<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  let new_selection = selection.transform(|range| {
+    let pos = nth_next_grapheme_boundary(slice, range.cursor(slice), 1);
+    range.put_cursor(slice, pos, false)
+  });
+
+  let _ = doc.set_selection(new_selection);
+  ctx.set_mode(Mode::Insert);
+  ctx.request_render();
+}
+
 pub fn command_from_name(name: &str) -> Option<Command> {
   match name {
     "move_char_left" => Some(Command::move_char_left(1)),
@@ -1426,6 +1481,9 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "switch_case" => Some(Command::switch_case()),
     "switch_to_uppercase" => Some(Command::switch_to_uppercase()),
     "switch_to_lowercase" => Some(Command::switch_to_lowercase()),
+    "insert_at_line_start" => Some(Command::insert_at_line_start()),
+    "insert_at_line_end" => Some(Command::insert_at_line_end()),
+    "append_mode" => Some(Command::append_mode()),
 
     _ => None,
   }

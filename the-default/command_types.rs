@@ -456,6 +456,9 @@ pub enum Command {
   SwitchCase,
   SwitchToUppercase,
   SwitchToLowercase,
+  InsertAtLineStart,
+  InsertAtLineEnd,
+  AppendMode,
   Save,
   Quit,
 }
@@ -854,5 +857,20 @@ impl Command {
   #[must_use]
   pub const fn switch_to_lowercase() -> Self {
     Self::SwitchToLowercase
+  }
+
+  #[must_use]
+  pub const fn insert_at_line_start() -> Self {
+    Self::InsertAtLineStart
+  }
+
+  #[must_use]
+  pub const fn insert_at_line_end() -> Self {
+    Self::InsertAtLineEnd
+  }
+
+  #[must_use]
+  pub const fn append_mode() -> Self {
+    Self::AppendMode
   }
 }

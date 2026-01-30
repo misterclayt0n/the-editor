@@ -566,6 +566,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "T"         => till_prev_char,
     "v"         => select_mode,
     "i"         => insert_mode,
+    "I"         => insert_at_line_start,
+    "a"         => append_mode,
+    "A"         => insert_at_line_end,
     ":"         => command_mode,
     "d"         => delete_selection,
     "A-d"       => delete_selection_noyank,
@@ -577,6 +580,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "~"         => switch_case,
     "`"         => switch_to_lowercase,
     "A-`"       => switch_to_uppercase,
+    "home"      => goto_line_start,
+    "end"       => goto_line_end,
   });
 
   let insert = crate::keymap!({ "Insert"

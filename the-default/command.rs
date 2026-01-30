@@ -375,6 +375,10 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::CopySelectionOnNextLine => copy_selection_on_next_line(ctx),
     Command::CopySelectionOnPrevLine => copy_selection_on_prev_line(ctx),
     Command::SelectAll => select_all(ctx),
+    Command::ExtendLineBelow { count } => extend_line_below(ctx, count),
+    Command::ExtendLineAbove { count } => extend_line_above(ctx, count),
+    Command::ExtendToLineBounds => extend_to_line_bounds(ctx),
+    Command::ShrinkToLineBounds => shrink_to_line_bounds(ctx),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -1603,6 +1607,103 @@ fn select_all<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let _ = doc.set_selection(Selection::single(0, end));
 }
 
+#[derive(Clone, Copy)]
+enum ExtendDirection {
+  Above,
+  Below,
+}
+
+fn extend_line_below<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  extend_line_impl(ctx, ExtendDirection::Below, count.max(1));
+}
+
+fn extend_line_above<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  extend_line_impl(ctx, ExtendDirection::Above, count.max(1));
+}
+
+fn extend_to_line_bounds<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let doc = ctx.editor().document_mut();
+  let text = doc.text();
+  let selection = doc.selection().clone();
+
+  let new_selection = selection.transform(|range| {
+    let slice = text.slice(..);
+    let (start_line, end_line) = range.line_range(slice);
+    let start = text.line_to_char(start_line);
+    let end = text.line_to_char((end_line + 1).min(text.len_lines()));
+
+    Range::new(start, end).with_direction(range.direction())
+  });
+
+  let _ = doc.set_selection(new_selection);
+}
+
+fn shrink_to_line_bounds<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let doc = ctx.editor().document_mut();
+  let text = doc.text();
+  let selection = doc.selection().clone();
+
+  let new_selection = selection.transform(|range| {
+    let slice = text.slice(..);
+    let (start_line, end_line) = range.line_range(slice);
+
+    if start_line == end_line {
+      return range;
+    }
+
+    let mut start = text.line_to_char(start_line);
+    let mut end = text.line_to_char((end_line + 1).min(text.len_lines()));
+
+    if start != range.from() {
+      start = text.line_to_char((start_line + 1).min(text.len_lines()));
+    }
+
+    if end != range.to() {
+      end = text.line_to_char(end_line);
+    }
+
+    Range::new(start, end).with_direction(range.direction())
+  });
+
+  let _ = doc.set_selection(new_selection);
+}
+
+fn extend_line_impl<Ctx: DefaultContext>(ctx: &mut Ctx, extend: ExtendDirection, count: usize) {
+  let doc = ctx.editor().document_mut();
+  let text = doc.text();
+  let selection = doc.selection().clone();
+
+  let new_selection = selection.transform(|range| {
+    let slice = text.slice(..);
+    let (start_line, end_line) = range.line_range(slice);
+
+    let start = text.line_to_char(start_line);
+    let end = text.line_to_char((end_line + 1).min(text.len_lines()));
+
+    let (anchor, head) = if range.from() == start && range.to() == end {
+      match extend {
+        ExtendDirection::Above => (end, text.line_to_char(start_line.saturating_sub(count))),
+        ExtendDirection::Below => {
+          (start, text.line_to_char((end_line + count + 1).min(text.len_lines())))
+        },
+      }
+    } else {
+      match extend {
+        ExtendDirection::Above => {
+          (end, text.line_to_char(start_line.saturating_sub(count - 1)))
+        },
+        ExtendDirection::Below => {
+          (start, text.line_to_char((end_line + count).min(text.len_lines())))
+        },
+      }
+    };
+
+    Range::new(anchor, head)
+  });
+
+  let _ = doc.set_selection(new_selection);
+}
+
 fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
   let count = 1usize;
   let selection = {
@@ -1962,6 +2063,10 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "copy_selection_on_next_line" => Some(Command::copy_selection_on_next_line()),
     "copy_selection_on_prev_line" => Some(Command::copy_selection_on_prev_line()),
     "select_all" => Some(Command::select_all()),
+    "extend_line_below" => Some(Command::extend_line_below(1)),
+    "extend_line_above" => Some(Command::extend_line_above(1)),
+    "extend_to_line_bounds" => Some(Command::extend_to_line_bounds()),
+    "shrink_to_line_bounds" => Some(Command::shrink_to_line_bounds()),
 
     _ => None,
   }

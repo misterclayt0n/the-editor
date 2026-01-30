@@ -466,6 +466,10 @@ pub enum Command {
   CopySelectionOnNextLine,
   CopySelectionOnPrevLine,
   SelectAll,
+  ExtendLineBelow { count: usize },
+  ExtendLineAbove { count: usize },
+  ExtendToLineBounds,
+  ShrinkToLineBounds,
   Save,
   Quit,
 }
@@ -919,5 +923,25 @@ impl Command {
   #[must_use]
   pub const fn select_all() -> Self {
     Self::SelectAll
+  }
+
+  #[must_use]
+  pub const fn extend_line_below(count: usize) -> Self {
+    Self::ExtendLineBelow { count }
+  }
+
+  #[must_use]
+  pub const fn extend_line_above(count: usize) -> Self {
+    Self::ExtendLineAbove { count }
+  }
+
+  #[must_use]
+  pub const fn extend_to_line_bounds() -> Self {
+    Self::ExtendToLineBounds
+  }
+
+  #[must_use]
+  pub const fn shrink_to_line_bounds() -> Self {
+    Self::ShrinkToLineBounds
   }
 }

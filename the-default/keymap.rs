@@ -588,6 +588,9 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "C"         => copy_selection_on_next_line,
     "A-C"       => copy_selection_on_prev_line,
     "%"         => select_all,
+    "x"         => extend_line_below,
+    "X"         => extend_to_line_bounds,
+    "A-x"       => shrink_to_line_bounds,
     "home"      => goto_line_start,
     "end"       => goto_line_end,
   });

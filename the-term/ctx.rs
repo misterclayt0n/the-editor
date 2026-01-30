@@ -30,6 +30,7 @@ use the_lib::{
     EditorId,
   },
   position::Position,
+  registers::Registers,
   render::graphics::Rect,
   syntax::{
     HighlightCache,
@@ -38,6 +39,7 @@ use the_lib::{
   },
   view::ViewState,
 };
+use the_runtime::clipboard::ClipboardProvider;
 
 /// Application state passed to all handlers.
 pub struct Ctx {
@@ -55,6 +57,8 @@ pub struct Ctx {
   pub loader:           Option<Arc<Loader>>,
   /// Cache for syntax highlights (reused across renders).
   pub highlight_cache:  HighlightCache,
+  /// Registers for yanking/pasting.
+  pub registers:        Registers,
 }
 
 impl Ctx {
@@ -95,6 +99,10 @@ impl Ctx {
       }
     }
 
+    // Initialize clipboard provider and registers
+    let clipboard = Arc::new(ClipboardProvider::detect());
+    let registers = Registers::with_clipboard(clipboard);
+
     Ok(Self {
       editor,
       file_path: file_path.map(PathBuf::from),
@@ -108,6 +116,7 @@ impl Ctx {
       dispatch: None,
       loader,
       highlight_cache: HighlightCache::default(),
+      registers,
     })
   }
 
@@ -179,6 +188,10 @@ impl the_default::DefaultContext for Ctx {
 
   fn set_pending_input(&mut self, pending: Option<the_default::PendingInput>) {
     self.pending_input = pending;
+  }
+
+  fn registers_mut(&mut self) -> &mut Registers {
+    &mut self.registers
   }
 }
 

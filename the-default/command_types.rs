@@ -447,6 +447,8 @@ pub enum Command {
   Move(Direction),
   AddCursor(Direction),
   Motion(Motion),
+  DeleteSelection { yank: bool },
+  ChangeSelection { yank: bool },
   Save,
   Quit,
 }
@@ -790,5 +792,25 @@ impl Command {
   #[must_use]
   pub const fn extend_parent_node_start() -> Self {
     Self::ParentNodeStart { extend: true }
+  }
+
+  #[must_use]
+  pub const fn delete_selection() -> Self {
+    Self::DeleteSelection { yank: true }
+  }
+
+  #[must_use]
+  pub const fn delete_selection_noyank() -> Self {
+    Self::DeleteSelection { yank: false }
+  }
+
+  #[must_use]
+  pub const fn change_selection() -> Self {
+    Self::ChangeSelection { yank: true }
+  }
+
+  #[must_use]
+  pub const fn change_selection_noyank() -> Self {
+    Self::ChangeSelection { yank: false }
   }
 }

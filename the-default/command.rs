@@ -35,6 +35,7 @@ use the_lib::{
     Position,
     char_idx_at_coords,
   },
+  registers::Registers,
   render::{
     text_annotations::TextAnnotations,
     text_format::TextFormat,
@@ -93,6 +94,8 @@ define! {
     move_cursor: Direction,
     add_cursor: Direction,
     motion: Motion,
+    delete_selection: bool,
+    change_selection: bool,
     save: (),
     quit: (),
   }
@@ -122,6 +125,8 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, Direction),
   fn(&mut Ctx, Direction),
   fn(&mut Ctx, Motion),
+  fn(&mut Ctx, bool),
+  fn(&mut Ctx, bool),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
 >;
@@ -161,6 +166,7 @@ pub trait DefaultContext: Sized + 'static {
   fn dispatch(&self) -> DispatchRef<Self>;
   fn pending_input(&self) -> Option<&PendingInput>;
   fn set_pending_input(&mut self, pending: Option<PendingInput>);
+  fn registers_mut(&mut self) -> &mut Registers;
 }
 
 pub fn build_dispatch<Ctx>() -> DefaultDispatchStatic<Ctx>
@@ -190,6 +196,8 @@ where
     .with_move_cursor(move_cursor::<Ctx> as fn(&mut Ctx, Direction))
     .with_add_cursor(add_cursor::<Ctx> as fn(&mut Ctx, Direction))
     .with_motion(motion::<Ctx> as fn(&mut Ctx, Motion))
+    .with_delete_selection(delete_selection::<Ctx> as fn(&mut Ctx, bool))
+    .with_change_selection(change_selection::<Ctx> as fn(&mut Ctx, bool))
     .with_save(save::<Ctx> as fn(&mut Ctx, ()))
     .with_quit(quit::<Ctx> as fn(&mut Ctx, ()))
 }
@@ -287,6 +295,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::Move(dir) => ctx.dispatch().move_cursor(ctx, dir),
     Command::AddCursor(dir) => ctx.dispatch().add_cursor(ctx, dir),
     Command::Motion(motion) => ctx.dispatch().motion(ctx, motion),
+    Command::DeleteSelection { yank } => ctx.dispatch().delete_selection(ctx, yank),
+    Command::ChangeSelection { yank } => ctx.dispatch().change_selection(ctx, yank),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -973,6 +983,58 @@ fn quit<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   ctx.request_quit();
 }
 
+fn delete_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  let fragments: Vec<String> = selection
+    .fragments(slice)
+    .map(|f| f.into_owned())
+    .collect();
+
+  let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
+    (range.from(), range.to())
+  });
+
+  if let Ok(tx) = tx {
+    let _ = doc.apply_transaction(&tx);
+  }
+
+  if yank {
+    let _ = ctx.registers_mut().write('"', fragments);
+  }
+
+  ctx.set_mode(Mode::Normal);
+  ctx.request_render();
+}
+
+fn change_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let slice = doc.text().slice(..);
+
+  let fragments: Vec<String> = selection
+    .fragments(slice)
+    .map(|f| f.into_owned())
+    .collect();
+
+  let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
+    (range.from(), range.to())
+  });
+
+  if let Ok(tx) = tx {
+    let _ = doc.apply_transaction(&tx);
+  }
+
+  if yank {
+    let _ = ctx.registers_mut().write('"', fragments);
+  }
+
+  ctx.set_mode(Mode::Insert);
+  ctx.request_render();
+}
+
 pub fn command_from_name(name: &str) -> Option<Command> {
   match name {
     "move_char_left" => Some(Command::move_char_left(1)),
@@ -1053,6 +1115,11 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "extend_parent_node_end" => Some(Command::extend_parent_node_end()),
     "move_parent_node_start" => Some(Command::move_parent_node_start()),
     "extend_parent_node_start" => Some(Command::extend_parent_node_start()),
+
+    "delete_selection" => Some(Command::delete_selection()),
+    "delete_selection_noyank" => Some(Command::delete_selection_noyank()),
+    "change_selection" => Some(Command::change_selection()),
+    "change_selection_noyank" => Some(Command::change_selection_noyank()),
 
     _ => None,
   }

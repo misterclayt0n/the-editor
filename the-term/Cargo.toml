@@ -17,6 +17,7 @@ the-config          = { path = "../the-config" }
 the-default         = { path = "../the-default" }
 the-lib             = { features = [ "runtime-loader" ], path = "../the-lib" }
 the-loader          = { path = "../the-loader" }
+the-runtime         = { path = "../the-runtime" }
 
 [lints]
 workspace = true

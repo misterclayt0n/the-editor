@@ -47,6 +47,7 @@ use the_lib::{
     Movement,
   },
   position::Position as LibPosition,
+  registers::Registers,
   render::{
     NoHighlights,
     RenderStyles,
@@ -562,6 +563,7 @@ pub struct App {
   file_paths: HashMap<LibEditorId, PathBuf>,
   active_editor: Option<LibEditorId>,
   should_quit: bool,
+  registers: Registers,
 }
 
 impl App {
@@ -576,6 +578,7 @@ impl App {
       file_paths: HashMap::new(),
       active_editor: None,
       should_quit: false,
+      registers: Registers::new(),
     }
   }
 
@@ -999,6 +1002,10 @@ impl DefaultContext for App {
 
   fn set_pending_input(&mut self, pending: Option<the_default::PendingInput>) {
     self.active_state_mut().pending_input = pending;
+  }
+
+  fn registers_mut(&mut self) -> &mut Registers {
+    &mut self.registers
   }
 }
 

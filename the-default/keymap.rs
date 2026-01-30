@@ -554,23 +554,23 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "j" | Down  => move_visual_line_down,
     "k" | Up    => move_visual_line_up,
     "l" | Right => move_char_right,
-
     "w"         => move_next_word_start,
     "b"         => move_prev_word_start,
     "e"         => move_next_word_end,
-
     "W"         => move_next_long_word_start,
     "B"         => move_prev_long_word_start,
     "E"         => move_next_long_word_end,
-
     "f"         => find_next_char,
     "t"         => find_till_char,
     "F"         => find_prev_char,
     "T"         => till_prev_char,
-
     "v"         => select_mode,
     "i"         => insert_mode,
     ":"         => command_mode,
+    "d"         => delete_selection,
+    "A-d"       => delete_selection_noyank,
+    "c"         => change_selection,
+    "A-c"       => change_selection_noyank,
   });
 
   let insert = crate::keymap!({ "Insert"
@@ -618,7 +618,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "home"      => extend_to_line_start,
     "end"       => extend_to_line_end,
     "v"         => normal_mode,
-    "g" => { "Goto"
+
+    "g"   => { "Goto"
       "g" => extend_to_file_start,
       "|" => extend_to_column,
       "e" => extend_to_last_line,

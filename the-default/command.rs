@@ -129,6 +129,38 @@ define! {
     switch_case: (),
     save: (),
     quit: (),
+    find_char: (Direction, bool, bool),
+    parent_node_end: bool,
+    parent_node_start: bool,
+    repeat_last_motion: (),
+    switch_to_uppercase: (),
+    switch_to_lowercase: (),
+    insert_at_line_start: (),
+    insert_at_line_end: (),
+    append_mode: (),
+    open_below: (),
+    open_above: (),
+    commit_undo_checkpoint: (),
+    copy_selection_on_next_line: (),
+    copy_selection_on_prev_line: (),
+    select_all: (),
+    extend_line_below: usize,
+    extend_line_above: usize,
+    extend_to_line_bounds: (),
+    shrink_to_line_bounds: (),
+    undo: usize,
+    redo: usize,
+    earlier: usize,
+    later: usize,
+    indent: usize,
+    unindent: usize,
+    replace: (),
+    record_macro: (),
+    replay_macro: (),
+    match_brackets: (),
+    surround_add: (),
+    surround_delete: usize,
+    surround_replace: usize,
   }
 }
 
@@ -166,6 +198,38 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
+  fn(&mut Ctx, (Direction, bool, bool)),
+  fn(&mut Ctx, bool),
+  fn(&mut Ctx, bool),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, usize),
+  fn(&mut Ctx, usize),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, usize),
+  fn(&mut Ctx, usize),
+  fn(&mut Ctx, usize),
+  fn(&mut Ctx, usize),
+  fn(&mut Ctx, usize),
+  fn(&mut Ctx, usize),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, usize),
+  fn(&mut Ctx, usize),
 >;
 
 #[derive(Clone, Copy)]
@@ -257,6 +321,38 @@ where
     .with_switch_case(switch_case::<Ctx> as fn(&mut Ctx, ()))
     .with_save(save::<Ctx> as fn(&mut Ctx, ()))
     .with_quit(quit::<Ctx> as fn(&mut Ctx, ()))
+    .with_find_char(find_char::<Ctx> as fn(&mut Ctx, (Direction, bool, bool)))
+    .with_parent_node_end(parent_node_end::<Ctx> as fn(&mut Ctx, bool))
+    .with_parent_node_start(parent_node_start::<Ctx> as fn(&mut Ctx, bool))
+    .with_repeat_last_motion(repeat_last_motion::<Ctx> as fn(&mut Ctx, ()))
+    .with_switch_to_uppercase(switch_to_uppercase::<Ctx> as fn(&mut Ctx, ()))
+    .with_switch_to_lowercase(switch_to_lowercase::<Ctx> as fn(&mut Ctx, ()))
+    .with_insert_at_line_start(insert_at_line_start::<Ctx> as fn(&mut Ctx, ()))
+    .with_insert_at_line_end(insert_at_line_end::<Ctx> as fn(&mut Ctx, ()))
+    .with_append_mode(append_mode::<Ctx> as fn(&mut Ctx, ()))
+    .with_open_below(open_below::<Ctx> as fn(&mut Ctx, ()))
+    .with_open_above(open_above::<Ctx> as fn(&mut Ctx, ()))
+    .with_commit_undo_checkpoint(commit_undo_checkpoint::<Ctx> as fn(&mut Ctx, ()))
+    .with_copy_selection_on_next_line(copy_selection_on_next_line::<Ctx> as fn(&mut Ctx, ()))
+    .with_copy_selection_on_prev_line(copy_selection_on_prev_line::<Ctx> as fn(&mut Ctx, ()))
+    .with_select_all(select_all::<Ctx> as fn(&mut Ctx, ()))
+    .with_extend_line_below(extend_line_below::<Ctx> as fn(&mut Ctx, usize))
+    .with_extend_line_above(extend_line_above::<Ctx> as fn(&mut Ctx, usize))
+    .with_extend_to_line_bounds(extend_to_line_bounds::<Ctx> as fn(&mut Ctx, ()))
+    .with_shrink_to_line_bounds(shrink_to_line_bounds::<Ctx> as fn(&mut Ctx, ()))
+    .with_undo(undo::<Ctx> as fn(&mut Ctx, usize))
+    .with_redo(redo::<Ctx> as fn(&mut Ctx, usize))
+    .with_earlier(earlier::<Ctx> as fn(&mut Ctx, usize))
+    .with_later(later::<Ctx> as fn(&mut Ctx, usize))
+    .with_indent(indent::<Ctx> as fn(&mut Ctx, usize))
+    .with_unindent(unindent::<Ctx> as fn(&mut Ctx, usize))
+    .with_replace(replace::<Ctx> as fn(&mut Ctx, ()))
+    .with_record_macro(record_macro::<Ctx> as fn(&mut Ctx, ()))
+    .with_replay_macro(replay_macro::<Ctx> as fn(&mut Ctx, ()))
+    .with_match_brackets(match_brackets::<Ctx> as fn(&mut Ctx, ()))
+    .with_surround_add(surround_add::<Ctx> as fn(&mut Ctx, ()))
+    .with_surround_delete(surround_delete::<Ctx> as fn(&mut Ctx, usize))
+    .with_surround_replace(surround_replace::<Ctx> as fn(&mut Ctx, usize))
 }
 
 pub fn handle_command<Ctx, D>(dispatch: &D, ctx: &mut Ctx, command: Command)
@@ -401,10 +497,10 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::PageUp { extend } => ctx.dispatch().page_up(ctx, extend),
     Command::PageDown { extend } => ctx.dispatch().page_down(ctx, extend),
     Command::FindChar { direction, inclusive, extend } => {
-      ctx.set_pending_input(Some(PendingInput::FindChar { direction, inclusive, extend, count: 1 }));
+      ctx.dispatch().find_char(ctx, (direction, inclusive, extend));
     },
-    Command::ParentNodeEnd { extend } => parent_node_end(ctx, extend),
-    Command::ParentNodeStart { extend } => parent_node_start(ctx, extend),
+    Command::ParentNodeEnd { extend } => ctx.dispatch().parent_node_end(ctx, extend),
+    Command::ParentNodeStart { extend } => ctx.dispatch().parent_node_start(ctx, extend),
     Command::Move(dir) => ctx.dispatch().move_cursor(ctx, dir),
     Command::AddCursor(dir) => ctx.dispatch().add_cursor(ctx, dir),
     Command::Motion(motion) => {
@@ -413,56 +509,66 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     },
     Command::DeleteSelection { yank } => ctx.dispatch().delete_selection(ctx, yank),
     Command::ChangeSelection { yank } => ctx.dispatch().change_selection(ctx, yank),
-    Command::Replace => {
-      ctx.set_pending_input(Some(PendingInput::ReplaceSelection));
-    },
+    Command::Replace => ctx.dispatch().replace(ctx, ()),
     Command::ReplaceWithYanked => ctx.dispatch().replace_with_yanked(ctx, ()),
     Command::Yank => ctx.dispatch().yank(ctx, ()),
     Command::Paste { after } => ctx.dispatch().paste(ctx, after),
-    Command::RecordMacro => record_macro(ctx),
-    Command::ReplayMacro => replay_macro(ctx),
-    Command::RepeatLastMotion => {
-      if let Some(motion) = ctx.last_motion() {
-        ctx.dispatch().motion(ctx, motion);
-      }
-    },
+    Command::RecordMacro => ctx.dispatch().record_macro(ctx, ()),
+    Command::ReplayMacro => ctx.dispatch().replay_macro(ctx, ()),
+    Command::RepeatLastMotion => ctx.dispatch().repeat_last_motion(ctx, ()),
     Command::SwitchCase => ctx.dispatch().switch_case(ctx, ()),
-    Command::SwitchToUppercase => switch_to_uppercase(ctx),
-    Command::SwitchToLowercase => switch_to_lowercase(ctx),
-    Command::InsertAtLineStart => insert_at_line_start(ctx),
-    Command::InsertAtLineEnd => insert_at_line_end(ctx),
-    Command::AppendMode => append_mode(ctx),
-    Command::OpenBelow => open_below(ctx),
-    Command::OpenAbove => open_above(ctx),
-    Command::CommitUndoCheckpoint => commit_undo_checkpoint(ctx),
-    Command::CopySelectionOnNextLine => copy_selection_on_next_line(ctx),
-    Command::CopySelectionOnPrevLine => copy_selection_on_prev_line(ctx),
-    Command::SelectAll => select_all(ctx),
-    Command::ExtendLineBelow { count } => extend_line_below(ctx, count),
-    Command::ExtendLineAbove { count } => extend_line_above(ctx, count),
-    Command::ExtendToLineBounds => extend_to_line_bounds(ctx),
-    Command::ShrinkToLineBounds => shrink_to_line_bounds(ctx),
-    Command::Undo { count } => undo(ctx, count),
-    Command::Redo { count } => redo(ctx, count),
-    Command::Earlier { count } => earlier(ctx, count),
-    Command::Later { count } => later(ctx, count),
-    Command::Indent { count } => indent(ctx, count),
-    Command::Unindent { count } => unindent(ctx, count),
-    Command::MatchBrackets => match_brackets(ctx),
-    Command::SurroundAdd => {
-      ctx.set_pending_input(Some(PendingInput::SurroundAdd));
-    },
-    Command::SurroundDelete { count } => {
-      ctx.set_pending_input(Some(PendingInput::SurroundDelete { count }));
-    },
-    Command::SurroundReplace { count } => {
-      ctx.set_pending_input(Some(PendingInput::SurroundReplace { count }));
-    },
+    Command::SwitchToUppercase => ctx.dispatch().switch_to_uppercase(ctx, ()),
+    Command::SwitchToLowercase => ctx.dispatch().switch_to_lowercase(ctx, ()),
+    Command::InsertAtLineStart => ctx.dispatch().insert_at_line_start(ctx, ()),
+    Command::InsertAtLineEnd => ctx.dispatch().insert_at_line_end(ctx, ()),
+    Command::AppendMode => ctx.dispatch().append_mode(ctx, ()),
+    Command::OpenBelow => ctx.dispatch().open_below(ctx, ()),
+    Command::OpenAbove => ctx.dispatch().open_above(ctx, ()),
+    Command::CommitUndoCheckpoint => ctx.dispatch().commit_undo_checkpoint(ctx, ()),
+    Command::CopySelectionOnNextLine => ctx.dispatch().copy_selection_on_next_line(ctx, ()),
+    Command::CopySelectionOnPrevLine => ctx.dispatch().copy_selection_on_prev_line(ctx, ()),
+    Command::SelectAll => ctx.dispatch().select_all(ctx, ()),
+    Command::ExtendLineBelow { count } => ctx.dispatch().extend_line_below(ctx, count),
+    Command::ExtendLineAbove { count } => ctx.dispatch().extend_line_above(ctx, count),
+    Command::ExtendToLineBounds => ctx.dispatch().extend_to_line_bounds(ctx, ()),
+    Command::ShrinkToLineBounds => ctx.dispatch().shrink_to_line_bounds(ctx, ()),
+    Command::Undo { count } => ctx.dispatch().undo(ctx, count),
+    Command::Redo { count } => ctx.dispatch().redo(ctx, count),
+    Command::Earlier { count } => ctx.dispatch().earlier(ctx, count),
+    Command::Later { count } => ctx.dispatch().later(ctx, count),
+    Command::Indent { count } => ctx.dispatch().indent(ctx, count),
+    Command::Unindent { count } => ctx.dispatch().unindent(ctx, count),
+    Command::MatchBrackets => ctx.dispatch().match_brackets(ctx, ()),
+    Command::SurroundAdd => ctx.dispatch().surround_add(ctx, ()),
+    Command::SurroundDelete { count } => ctx.dispatch().surround_delete(ctx, count),
+    Command::SurroundReplace { count } => ctx.dispatch().surround_replace(ctx, count),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
 
   ctx.dispatch().post_on_action(ctx, ());
+}
+
+fn repeat_last_motion<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  if let Some(motion) = ctx.last_motion() {
+    ctx.dispatch().motion(ctx, motion);
+  }
+}
+
+fn replace<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  ctx.set_pending_input(Some(PendingInput::ReplaceSelection));
+}
+
+fn surround_add<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  ctx.set_pending_input(Some(PendingInput::SurroundAdd));
+}
+
+fn surround_delete<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  ctx.set_pending_input(Some(PendingInput::SurroundDelete { count }));
+}
+
+fn surround_replace<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
+  ctx.set_pending_input(Some(PendingInput::SurroundReplace { count }));
 }
 
 fn post_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
@@ -924,6 +1030,11 @@ fn find_char_impl<Ctx: DefaultContext>(
   });
 
   let _ = doc.set_selection(new_selection);
+}
+
+fn find_char<Ctx: DefaultContext>(ctx: &mut Ctx, params: (Direction, bool, bool)) {
+  let (direction, inclusive, extend) = params;
+  ctx.set_pending_input(Some(PendingInput::FindChar { direction, inclusive, extend, count: 1 }));
 }
 
 fn parent_node_end<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
@@ -1523,7 +1634,7 @@ fn paste<Ctx: DefaultContext>(ctx: &mut Ctx, after: bool) {
   ctx.request_render();
 }
 
-fn record_macro<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn record_macro<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   if let Some((reg, mut keys)) = ctx.macro_recording().clone() {
     // Remove the keypress which ends the recording (Q)
     keys.pop();
@@ -1547,7 +1658,7 @@ fn record_macro<Ctx: DefaultContext>(ctx: &mut Ctx) {
   ctx.request_render();
 }
 
-fn replay_macro<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn replay_macro<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let reg = ctx.register().unwrap_or('@');
   if ctx.macro_replaying().contains(&reg) {
     return;
@@ -1619,11 +1730,11 @@ fn switch_case<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   });
 }
 
-fn switch_to_uppercase<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn switch_to_uppercase<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   switch_case_impl(ctx, |s| s.to_uppercase().into());
 }
 
-fn switch_to_lowercase<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn switch_to_lowercase<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   switch_case_impl(ctx, |s| s.to_lowercase().into());
 }
 
@@ -1672,7 +1783,7 @@ impl Iterator for CaseSwitcher {
   }
 }
 
-fn insert_at_line_start<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn insert_at_line_start<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
@@ -1693,7 +1804,7 @@ fn insert_at_line_start<Ctx: DefaultContext>(ctx: &mut Ctx) {
   ctx.request_render();
 }
 
-fn insert_at_line_end<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn insert_at_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
@@ -1709,7 +1820,7 @@ fn insert_at_line_end<Ctx: DefaultContext>(ctx: &mut Ctx) {
   ctx.request_render();
 }
 
-fn append_mode<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn append_mode<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
@@ -1747,27 +1858,27 @@ fn syntax_loader() -> &'static Loader {
   })
 }
 
-fn open_below<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn open_below<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   open(ctx, OpenDirection::Below, CommentContinuation::Enabled);
 }
 
-fn open_above<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn open_above<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   open(ctx, OpenDirection::Above, CommentContinuation::Enabled);
 }
 
-fn commit_undo_checkpoint<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn commit_undo_checkpoint<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let _ = ctx.editor().document_mut().commit();
 }
 
-fn copy_selection_on_next_line<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn copy_selection_on_next_line<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   copy_selection_on_line(ctx, Direction::Forward);
 }
 
-fn copy_selection_on_prev_line<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn copy_selection_on_prev_line<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   copy_selection_on_line(ctx, Direction::Backward);
 }
 
-fn select_all<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn select_all<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let doc = ctx.editor().document_mut();
   let end = doc.text().len_chars();
   let _ = doc.set_selection(Selection::single(0, end));
@@ -1787,7 +1898,7 @@ fn extend_line_above<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
   extend_line_impl(ctx, ExtendDirection::Above, count.max(1));
 }
 
-fn extend_to_line_bounds<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn extend_to_line_bounds<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let doc = ctx.editor().document_mut();
   let text = doc.text();
   let selection = doc.selection().clone();
@@ -1804,7 +1915,7 @@ fn extend_to_line_bounds<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let _ = doc.set_selection(new_selection);
 }
 
-fn shrink_to_line_bounds<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn shrink_to_line_bounds<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let doc = ctx.editor().document_mut();
   let text = doc.text();
   let selection = doc.selection().clone();
@@ -1988,7 +2099,7 @@ fn unindent<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
   }
 }
 
-fn match_brackets<Ctx: DefaultContext>(ctx: &mut Ctx) {
+fn match_brackets<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let is_select = ctx.mode() == Mode::Select;
   let doc = ctx.editor().document_mut();
   let text = doc.text();

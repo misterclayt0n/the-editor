@@ -19,6 +19,8 @@ pub enum PendingInput {
   ReplaceSelection,
   /// Await a character to surround the selection with.
   SurroundAdd,
+  /// Await a character to select which surround to delete.
+  SurroundDelete { count: usize },
   /// Await a character to select which surround to replace.
   SurroundReplace { count: usize },
   /// Await a character to replace the surround with, after selecting positions.

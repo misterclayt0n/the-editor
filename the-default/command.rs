@@ -327,6 +327,15 @@ fn handle_pending_input<Ctx: DefaultContext>(
       surround_add_impl(ctx, key);
       true
     },
+    PendingInput::SurroundDelete { count } => {
+      let surround_ch = match key.key {
+        Key::Char('m') => None, // m selects the closest surround pair
+        Key::Char(ch) => Some(ch),
+        _ => return true,
+      };
+      surround_delete_impl(ctx, surround_ch, count);
+      true
+    },
     PendingInput::SurroundReplace { count } => {
       if let Key::Char(ch) = key.key {
         surround_replace_find(ctx, ch, count);
@@ -442,6 +451,9 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::MatchBrackets => match_brackets(ctx),
     Command::SurroundAdd => {
       ctx.set_pending_input(Some(PendingInput::SurroundAdd));
+    },
+    Command::SurroundDelete { count } => {
+      ctx.set_pending_input(Some(PendingInput::SurroundDelete { count }));
     },
     Command::SurroundReplace { count } => {
       ctx.set_pending_input(Some(PendingInput::SurroundReplace { count }));
@@ -2055,6 +2067,42 @@ fn surround_add_impl<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
   }
 }
 
+fn surround_delete_impl<Ctx: DefaultContext>(ctx: &mut Ctx, surround_ch: Option<char>, count: usize) {
+  let doc = ctx.editor().document_mut();
+  let selection = doc.selection().clone();
+  let text = doc.text().slice(..);
+
+  let mut change_pos =
+    match surround::get_surround_pos(doc.syntax(), text, &selection, surround_ch, count) {
+      Ok(c) => c,
+      Err(_) => return,
+    };
+
+  change_pos.sort_unstable();
+
+  let changes: Vec<_> = change_pos
+    .into_iter()
+    .flat_map(|(open, close)| {
+      let open_end = the_core::grapheme::next_grapheme_boundary(text, open);
+      let close_end = the_core::grapheme::next_grapheme_boundary(text, close);
+      vec![
+        (open, open_end, None::<Tendril>),
+        (close, close_end, None::<Tendril>),
+      ]
+    })
+    .collect();
+
+  let Ok(tx) = Transaction::change(doc.text(), changes.into_iter()) else {
+    return;
+  };
+
+  let _ = doc.apply_transaction(&tx);
+
+  if ctx.mode() == Mode::Select {
+    ctx.set_mode(Mode::Normal);
+  }
+}
+
 fn surround_replace_find<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char, count: usize) {
   let doc = ctx.editor_ref().document();
   let selection = doc.selection().clone();
@@ -2494,6 +2542,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "unindent" => Some(Command::unindent(1)),
     "match_brackets" => Some(Command::match_brackets()),
     "surround_add" => Some(Command::surround_add()),
+    "surround_delete" => Some(Command::surround_delete(1)),
     "surround_replace" => Some(Command::surround_replace(1)),
 
     _ => None,

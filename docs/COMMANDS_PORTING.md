@@ -32,8 +32,12 @@ This doc summarizes the current structure differences and gives a concrete playb
      - `enum Motion { ... }` and helpers (counts already present).
 
 2) **Dispatch plumbing**
-   - Add to `define! { Default { ... } }` in `the-default/command.rs` if a command needs its own dispatch hook.
-   - Update `on_action` match to route the new `Command` variants.
+   - **Always add a dispatch hook for every `Command` variant** in
+     `define! { Default { ... } }` inside `the-default/command.rs`.
+   - Update `build_dispatch()` to wire all hooks.
+   - Update `on_action` to call the dispatch hook for every command.
+   - **Rule:** if a command exists in `Command`, it must have a hook. If it does
+     not need a hook, it should not be a `Command`.
 
 3) **Implementation functions**
    - Add actual behavior in `the-default/command.rs` (e.g. `fn delete_word_forward<Ctx: DefaultContext>(ctx: &mut Ctx, ... )`).

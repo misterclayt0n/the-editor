@@ -9,6 +9,7 @@ pub mod doc_formatter;
 pub mod grapheme;
 pub mod graphics;
 pub mod highlight_adapter;
+pub mod overlay;
 pub mod plan;
 pub mod text_annotations;
 pub mod text_format;
@@ -19,6 +20,12 @@ pub use grapheme::{
   GraphemeSource,
 };
 pub use highlight_adapter::SyntaxHighlightAdapter;
+pub use overlay::{
+  OverlayNode,
+  OverlayRect,
+  OverlayRectKind,
+  OverlayText,
+};
 pub use plan::{
   HighlightProvider,
   NoHighlights,

@@ -74,6 +74,13 @@ use the_lib::{
 };
 
 use crate::{
+  command_palette::{
+    CommandPaletteState,
+  },
+  render_pass::{
+    RenderPass,
+    run_render_passes,
+  },
   Command,
   Direction,
   Key,
@@ -287,6 +294,10 @@ pub trait DefaultContext: Sized + 'static {
   fn command_prompt_ref(&self) -> &CommandPromptState;
   fn command_registry_mut(&mut self) -> &mut CommandRegistry<Self>;
   fn command_registry_ref(&self) -> &CommandRegistry<Self>;
+  fn command_palette(&self) -> &CommandPaletteState;
+  fn command_palette_mut(&mut self) -> &mut CommandPaletteState;
+  fn render_passes(&self) -> &Vec<RenderPass<Self>>;
+  fn render_passes_mut(&mut self) -> &mut Vec<RenderPass<Self>>;
   fn dispatch(&self) -> DispatchRef<Self>;
   fn pending_input(&self) -> Option<&PendingInput>;
   fn set_pending_input(&mut self, pending: Option<PendingInput>);
@@ -654,7 +665,8 @@ fn on_render<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> RenderPlan {
   ctx.build_render_plan()
 }
 
-fn post_render<Ctx: DefaultContext>(_ctx: &mut Ctx, plan: RenderPlan) -> RenderPlan {
+fn post_render<Ctx: DefaultContext>(ctx: &mut Ctx, mut plan: RenderPlan) -> RenderPlan {
+  run_render_passes(ctx, &mut plan);
   plan
 }
 

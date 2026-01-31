@@ -562,6 +562,12 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
     Key::Escape => {
       ctx.set_mode(Mode::Normal);
       ctx.command_prompt_mut().clear();
+      {
+        let palette = ctx.command_palette_mut();
+        palette.is_open = false;
+        palette.query.clear();
+        palette.selected = None;
+      }
       ctx.request_render();
       return true;
     },
@@ -574,6 +580,12 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
       if line.is_empty() {
         ctx.set_mode(Mode::Normal);
         ctx.command_prompt_mut().clear();
+        {
+          let palette = ctx.command_palette_mut();
+          palette.is_open = false;
+          palette.query.clear();
+          palette.selected = None;
+        }
         ctx.request_render();
         return true;
       }
@@ -592,6 +604,12 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
         Ok(()) => {
           ctx.set_mode(Mode::Normal);
           ctx.command_prompt_mut().clear();
+          {
+            let palette = ctx.command_palette_mut();
+            palette.is_open = false;
+            palette.query.clear();
+            palette.selected = None;
+          }
         },
         Err(err) => {
           let prompt = ctx.command_prompt_mut();
@@ -672,9 +690,18 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
     let completions = ctx
       .command_registry_ref()
       .complete_command_line(ctx, &input);
+    let input = {
+      let prompt = ctx.command_prompt_ref();
+      prompt.input.clone()
+    };
     let prompt = ctx.command_prompt_mut();
     prompt.completions = completions;
     prompt.error = None;
+    {
+      let palette = ctx.command_palette_mut();
+      palette.query = input;
+      palette.selected = if palette.query.is_empty() { None } else { Some(0) };
+    }
     ctx.request_render();
   }
 

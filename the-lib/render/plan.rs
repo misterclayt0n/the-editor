@@ -66,6 +66,7 @@ use crate::{
       Rect,
       Style,
     },
+    overlay::OverlayNode,
     text_annotations::TextAnnotations,
     text_format::TextFormat,
     visual_position,
@@ -165,6 +166,7 @@ pub struct RenderPlan {
   pub lines:      Vec<RenderLine>,
   pub cursors:    Vec<RenderCursor>,
   pub selections: Vec<RenderSelection>,
+  pub overlays:   Vec<OverlayNode>,
 }
 
 impl RenderPlan {
@@ -175,6 +177,7 @@ impl RenderPlan {
       lines: Vec::new(),
       cursors: Vec::new(),
       selections: Vec::new(),
+      overlays: Vec::new(),
     }
   }
 }

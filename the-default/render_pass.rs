@@ -1,0 +1,29 @@
+use the_lib::render::RenderPlan;
+
+use crate::{
+  DefaultContext,
+  command_palette::build_command_palette_overlay,
+};
+
+pub type RenderPass<Ctx> = Box<dyn Fn(&mut Ctx, &mut RenderPlan) + 'static>;
+
+/// Render passes are run with a temporary take of the pass list.
+/// Avoid mutating the render-pass registry from inside a pass.
+pub fn run_render_passes<Ctx: DefaultContext>(ctx: &mut Ctx, plan: &mut RenderPlan) {
+  let passes = std::mem::take(ctx.render_passes_mut());
+  for pass in &passes {
+    pass(ctx, plan);
+  }
+  *ctx.render_passes_mut() = passes;
+}
+
+fn command_palette_pass<Ctx: DefaultContext>(ctx: &mut Ctx, plan: &mut RenderPlan) {
+  let overlays = build_command_palette_overlay(ctx.command_palette(), plan.viewport);
+  if !overlays.is_empty() {
+    plan.overlays.extend(overlays);
+  }
+}
+
+pub fn default_render_passes<Ctx: DefaultContext>() -> Vec<RenderPass<Ctx>> {
+  vec![Box::new(command_palette_pass::<Ctx>)]
+}

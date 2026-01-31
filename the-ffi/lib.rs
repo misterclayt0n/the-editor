@@ -26,6 +26,7 @@ use std::{
 use ropey::Rope;
 use the_default::{
   Command,
+  CommandPaletteState,
   CommandPromptState,
   CommandRegistry,
   DefaultContext,
@@ -549,6 +550,8 @@ impl Default for Document {
 struct EditorState {
   mode:           Mode,
   command_prompt: CommandPromptState,
+  command_palette: CommandPaletteState,
+  render_passes:  Vec<the_default::RenderPass<App>>,
   needs_render:   bool,
   pending_input:  Option<the_default::PendingInput>,
   register:       Option<char>,
@@ -565,6 +568,8 @@ impl EditorState {
     Self {
       mode: Mode::Normal,
       command_prompt: CommandPromptState::new(),
+      command_palette: CommandPaletteState::default(),
+      render_passes: the_default::default_render_passes(),
       needs_render: true,
       pending_input: None,
       register: None,
@@ -1063,6 +1068,22 @@ impl DefaultContext for App {
 
   fn command_registry_ref(&self) -> &CommandRegistry<Self> {
     &self.command_registry
+  }
+
+  fn command_palette(&self) -> &CommandPaletteState {
+    &self.active_state_ref().command_palette
+  }
+
+  fn command_palette_mut(&mut self) -> &mut CommandPaletteState {
+    &mut self.active_state_mut().command_palette
+  }
+
+  fn render_passes(&self) -> &Vec<the_default::RenderPass<Self>> {
+    &self.active_state_ref().render_passes
+  }
+
+  fn render_passes_mut(&mut self) -> &mut Vec<the_default::RenderPass<Self>> {
+    &mut self.active_state_mut().render_passes
   }
 
   fn dispatch(&self) -> DispatchRef<Self> {

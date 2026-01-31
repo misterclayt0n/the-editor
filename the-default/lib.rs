@@ -7,8 +7,10 @@ mod command;
 mod command_types;
 mod command_registry;
 mod input;
+mod command_palette;
 mod keymap;
 mod pending;
+mod render_pass;
 
 pub use command_types::{
   Command,
@@ -48,6 +50,19 @@ pub use command_registry::{
   TypableCommand,
   completers,
   handle_command_prompt_key,
+};
+pub use command_palette::{
+  CommandPaletteItem,
+  CommandPaletteState,
+  CommandPaletteTheme,
+  build_command_palette_overlay,
+  build_command_palette_overlay_with_theme,
+  build_command_palette_overlay_bottom,
+};
+pub use render_pass::{
+  RenderPass,
+  default_render_passes,
+  run_render_passes,
 };
 pub use keymap::{
   KeyAction,

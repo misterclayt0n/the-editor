@@ -5,6 +5,8 @@ use eyre::Result;
 use the_default::render_plan;
 use the_lib::render::{
   NoHighlights,
+  OverlayNode,
+  OverlayRectKind,
   RenderPlan,
   RenderStyles,
   SyntaxHighlightAdapter,
@@ -18,6 +20,73 @@ use crate::{
   terminal::Terminal,
   theme::highlight_to_color,
 };
+
+fn color_to_term(color: the_lib::render::graphics::Color) -> Color {
+  use the_lib::render::graphics::Color as LibColor;
+  match color {
+    LibColor::Reset => Color::Reset,
+    LibColor::Black => Color::Black,
+    LibColor::Red => Color::Red,
+    LibColor::Green => Color::Green,
+    LibColor::Yellow => Color::Yellow,
+    LibColor::Blue => Color::Blue,
+    LibColor::Magenta => Color::Magenta,
+    LibColor::Cyan => Color::Cyan,
+    LibColor::Gray => Color::DarkGrey,
+    LibColor::LightRed => Color::Red,
+    LibColor::LightGreen => Color::Green,
+    LibColor::LightYellow => Color::Yellow,
+    LibColor::LightBlue => Color::Blue,
+    LibColor::LightMagenta => Color::Magenta,
+    LibColor::LightCyan => Color::Cyan,
+    LibColor::LightGray => Color::Grey,
+    LibColor::White => Color::White,
+    LibColor::Rgb(r, g, b) => Color::Rgb { r, g, b },
+    LibColor::Indexed(idx) => Color::AnsiValue(idx),
+  }
+}
+
+fn draw_overlay_nodes(terminal: &mut Terminal, plan: &RenderPlan) -> Result<()> {
+  for node in &plan.overlays {
+    match node {
+      OverlayNode::Rect(rect) => {
+        let fg = rect.style.fg.map(color_to_term);
+        let bg = rect.style.bg.map(color_to_term);
+        let width = rect.rect.width;
+        let height = rect.rect.height;
+
+        if width == 0 || height == 0 {
+          continue;
+        }
+
+        match rect.kind {
+          OverlayRectKind::Divider => {
+            let line = "─".repeat(width as usize);
+            terminal.draw_str(rect.rect.y, rect.rect.x, &line, fg, None)?;
+          },
+          _ => {
+            let line = " ".repeat(width as usize);
+            for row in rect.rect.y..rect.rect.y + height {
+              terminal.draw_str(row, rect.rect.x, &line, None, bg)?;
+            }
+          },
+        }
+      },
+      OverlayNode::Text(text) => {
+        let fg = text.style.fg.map(color_to_term);
+        let bg = text.style.bg.map(color_to_term);
+        terminal.draw_str(
+          text.pos.row as u16,
+          text.pos.col as u16,
+          &text.text,
+          fg,
+          bg,
+        )?;
+      },
+    }
+  }
+  Ok(())
+}
 
 pub fn build_render_plan(ctx: &mut Ctx) -> RenderPlan {
   build_render_plan_with_styles(ctx, RenderStyles::default())
@@ -95,6 +164,8 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
       terminal.draw_str(line.row, span.col, &span.text, fg, None)?;
     }
   }
+
+  draw_overlay_nodes(terminal, &plan)?;
 
   // Draw cursors
   if let Some(cursor) = plan.cursors.first() {

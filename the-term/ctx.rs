@@ -16,6 +16,8 @@ use ropey::Rope;
 use the_default::{
   CommandPromptState,
   CommandRegistry,
+  CommandPaletteState,
+  CommandPaletteTheme,
   DefaultDispatchStatic,
   DispatchRef,
   KeyBinding,
@@ -23,6 +25,9 @@ use the_default::{
   Keymaps,
   Mode,
   Motion,
+  RenderPass,
+  build_command_palette_overlay_bottom,
+  default_render_passes,
 };
 use the_lib::{
   document::{
@@ -63,6 +68,8 @@ pub struct Ctx {
   pub keymaps:          Keymaps,
   pub command_prompt:   CommandPromptState,
   pub command_registry: CommandRegistry<Ctx>,
+  pub command_palette:  CommandPaletteState,
+  pub render_passes:    Vec<RenderPass<Ctx>>,
   pub pending_input:    Option<the_default::PendingInput>,
   pub dispatch:         Option<NonNull<DefaultDispatchStatic<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
@@ -134,6 +141,10 @@ impl Ctx {
     let mut text_format = TextFormat::default();
     text_format.viewport_width = viewport.width;
 
+    let mut render_passes = default_render_passes();
+    render_passes.clear();
+    render_passes.push(Box::new(command_palette_helix_pass));
+
     Ok(Self {
       editor,
       file_path: file_path.map(PathBuf::from),
@@ -143,6 +154,8 @@ impl Ctx {
       keymaps: Keymaps::default(),
       command_prompt: CommandPromptState::new(),
       command_registry: CommandRegistry::new(),
+      command_palette: CommandPaletteState::default(),
+      render_passes,
       pending_input: None,
       dispatch: None,
       loader,
@@ -166,6 +179,14 @@ impl Ctx {
   /// Handle terminal resize.
   pub fn resize(&mut self, width: u16, height: u16) {
     self.editor.view_mut().viewport = Rect::new(0, 0, width, height);
+  }
+}
+
+fn command_palette_helix_pass(ctx: &mut Ctx, plan: &mut RenderPlan) {
+  let overlays =
+    build_command_palette_overlay_bottom(&ctx.command_palette, plan.viewport, CommandPaletteTheme::helix());
+  if !overlays.is_empty() {
+    plan.overlays.extend(overlays);
   }
 }
 
@@ -224,6 +245,22 @@ impl the_default::DefaultContext for Ctx {
 
   fn command_registry_ref(&self) -> &CommandRegistry<Self> {
     &self.command_registry
+  }
+
+  fn command_palette(&self) -> &CommandPaletteState {
+    &self.command_palette
+  }
+
+  fn command_palette_mut(&mut self) -> &mut CommandPaletteState {
+    &mut self.command_palette
+  }
+
+  fn render_passes(&self) -> &Vec<RenderPass<Self>> {
+    &self.render_passes
+  }
+
+  fn render_passes_mut(&mut self) -> &mut Vec<RenderPass<Self>> {
+    &mut self.render_passes
   }
 
   fn dispatch(&self) -> DispatchRef<Self> {

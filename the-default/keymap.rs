@@ -16,6 +16,7 @@ use crate::{
   KeyOutcome,
   Modifiers,
   command_from_name,
+  CommandPaletteItem,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -524,6 +525,40 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
 
   if mode == Mode::Command {
     ctx.command_prompt_mut().clear();
+  }
+
+  let palette_open = mode == Mode::Command;
+  let palette_query = if palette_open {
+    ctx.command_prompt_ref().input.clone()
+  } else {
+    String::new()
+  };
+  let palette_items = if palette_open {
+    ctx
+      .command_registry_ref()
+      .all_commands()
+      .into_iter()
+      .map(|cmd| {
+        let mut item = CommandPaletteItem::new(cmd.name);
+        item.description = Some(cmd.doc.to_string());
+        item
+      })
+      .collect()
+  } else {
+    Vec::new()
+  };
+
+  {
+    let palette = ctx.command_palette_mut();
+    palette.is_open = palette_open;
+    if palette.is_open {
+      palette.query = palette_query;
+      palette.selected = if palette.query.is_empty() { None } else { Some(0) };
+      palette.items = palette_items;
+    } else {
+      palette.query.clear();
+      palette.selected = None;
+    }
   }
 
   ctx.set_mode(mode);

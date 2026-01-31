@@ -699,7 +699,12 @@ impl App {
   }
 
   pub fn render_plan(&mut self, id: ffi::EditorId) -> RenderPlan {
-    self.render_plan_with_styles(id, ffi::RenderStyles::default())
+    if self.activate(id).is_none() {
+      return RenderPlan::empty();
+    }
+
+    let plan = the_default::render_plan(self);
+    plan.into()
   }
 
   pub fn render_plan_with_styles(
@@ -707,18 +712,31 @@ impl App {
     id: ffi::EditorId,
     styles: ffi::RenderStyles,
   ) -> RenderPlan {
-    let _ = self.activate(id);
+    if self.activate(id).is_none() {
+      return RenderPlan::empty();
+    }
+
+    let plan = the_default::render_plan_with_styles(self, styles.to_lib());
+    plan.into()
+  }
+
+  fn build_render_plan_with_styles_impl(
+    &mut self,
+    styles: RenderStyles,
+  ) -> the_lib::render::RenderPlan {
     let (mut text_fmt, inline_annotations, overlay_annotations) = {
       let state = self.active_state_ref();
-      (state.text_format.clone(), state.inline_annotations.clone(), state.overlay_annotations.clone())
+      (
+        state.text_format.clone(),
+        state.inline_annotations.clone(),
+        state.overlay_annotations.clone(),
+      )
     };
 
-    let Some(editor) = self.editor_mut(id) else {
-      return RenderPlan::empty();
-    };
-
+    let editor = self.active_editor_mut();
     let view = editor.view();
     text_fmt.viewport_width = view.viewport.width;
+
     let mut annotations = TextAnnotations::default();
     if !inline_annotations.is_empty() {
       let _ = annotations.add_inline_annotations(&inline_annotations, None);
@@ -726,11 +744,10 @@ impl App {
     if !overlay_annotations.is_empty() {
       let _ = annotations.add_overlay(&overlay_annotations, None);
     }
-    let mut highlights = NoHighlights;
-    let styles = styles.to_lib();
 
+    let mut highlights = NoHighlights;
     let (doc, cache) = editor.document_and_cache();
-    let plan = build_plan(
+    build_plan(
       doc,
       view,
       &text_fmt,
@@ -738,9 +755,7 @@ impl App {
       &mut highlights,
       cache,
       styles,
-    );
-
-    plan.into()
+    )
   }
 
   pub fn text(&self, id: ffi::EditorId) -> String {
@@ -1008,6 +1023,14 @@ impl DefaultContext for App {
 
   fn request_render(&mut self) {
     self.active_state_mut().needs_render = true;
+  }
+
+  fn build_render_plan(&mut self) -> the_lib::render::RenderPlan {
+    self.build_render_plan_with_styles_impl(RenderStyles::default())
+  }
+
+  fn build_render_plan_with_styles(&mut self, styles: RenderStyles) -> the_lib::render::RenderPlan {
+    self.build_render_plan_with_styles_impl(styles)
   }
 
   fn request_quit(&mut self) {

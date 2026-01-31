@@ -179,6 +179,12 @@ impl RenderPlan {
   }
 }
 
+impl Default for RenderPlan {
+  fn default() -> Self {
+    Self::empty(Rect::default(), Position::default())
+  }
+}
+
 #[derive(Debug, Default)]
 pub struct RenderCache {
   text_version:           Option<u64>,

@@ -50,6 +50,8 @@ use the_lib::{
   },
   registers::Registers,
   render::{
+    RenderPlan,
+    RenderStyles,
     text_annotations::TextAnnotations,
     text_format::TextFormat,
     char_at_visual_pos,
@@ -104,6 +106,11 @@ define! {
     on_action: Command => (),
     post_on_action: () => (),
     render_request: () => (),
+    pre_render: () => (),
+    on_render: () => RenderPlan,
+    post_render: RenderPlan => RenderPlan,
+    pre_render_with_styles: RenderStyles => RenderStyles,
+    on_render_with_styles: RenderStyles => RenderPlan,
 
     insert_char: char,
     insert_newline: (),
@@ -176,6 +183,11 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, Command),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()) -> RenderPlan,
+  fn(&mut Ctx, RenderPlan) -> RenderPlan,
+  fn(&mut Ctx, RenderStyles) -> RenderStyles,
+  fn(&mut Ctx, RenderStyles) -> RenderPlan,
   fn(&mut Ctx, char),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
@@ -262,6 +274,11 @@ pub trait DefaultContext: Sized + 'static {
   fn editor_ref(&self) -> &Editor;
   fn file_path(&self) -> Option<&Path>;
   fn request_render(&mut self);
+  fn build_render_plan(&mut self) -> RenderPlan;
+  fn build_render_plan_with_styles(&mut self, styles: RenderStyles) -> RenderPlan {
+    let _ = styles;
+    self.build_render_plan()
+  }
   fn request_quit(&mut self);
   fn mode(&self) -> Mode;
   fn set_mode(&mut self, mode: Mode);
@@ -302,6 +319,11 @@ where
     .with_on_action(on_action::<Ctx> as fn(&mut Ctx, Command))
     .with_post_on_action(post_on_action::<Ctx> as fn(&mut Ctx, ()))
     .with_render_request(render_request::<Ctx> as fn(&mut Ctx, ()))
+    .with_pre_render(pre_render::<Ctx> as fn(&mut Ctx, ()))
+    .with_on_render(on_render::<Ctx> as fn(&mut Ctx, ()) -> RenderPlan)
+    .with_post_render(post_render::<Ctx> as fn(&mut Ctx, RenderPlan) -> RenderPlan)
+    .with_pre_render_with_styles(pre_render_with_styles::<Ctx> as fn(&mut Ctx, RenderStyles) -> RenderStyles)
+    .with_on_render_with_styles(on_render_with_styles::<Ctx> as fn(&mut Ctx, RenderStyles) -> RenderPlan)
     .with_insert_char(insert_char::<Ctx> as fn(&mut Ctx, char))
     .with_insert_newline(insert_newline::<Ctx> as fn(&mut Ctx, ()))
     .with_delete_char(delete_char::<Ctx> as fn(&mut Ctx, ()))
@@ -377,6 +399,22 @@ where
   D: DefaultApi<Ctx>,
 {
   dispatch.pre_on_keypress(ctx, key);
+}
+
+pub fn render_plan<Ctx: DefaultContext>(ctx: &mut Ctx) -> RenderPlan {
+  ctx.dispatch().pre_render(ctx, ());
+  let plan = ctx.dispatch().on_render(ctx, ());
+  ctx.dispatch().post_render(ctx, plan)
+}
+
+pub fn render_plan_with_styles<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  styles: RenderStyles,
+) -> RenderPlan {
+  ctx.dispatch().pre_render(ctx, ());
+  let styles = ctx.dispatch().pre_render_with_styles(ctx, styles);
+  let plan = ctx.dispatch().on_render_with_styles(ctx, styles);
+  ctx.dispatch().post_render(ctx, plan)
 }
 
 pub fn default_pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
@@ -608,6 +646,30 @@ fn post_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
 
 fn render_request<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   ctx.request_render();
+}
+
+fn pre_render<Ctx: DefaultContext>(_ctx: &mut Ctx, _unit: ()) {}
+
+fn on_render<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> RenderPlan {
+  ctx.build_render_plan()
+}
+
+fn post_render<Ctx: DefaultContext>(_ctx: &mut Ctx, plan: RenderPlan) -> RenderPlan {
+  plan
+}
+
+fn pre_render_with_styles<Ctx: DefaultContext>(
+  _ctx: &mut Ctx,
+  styles: RenderStyles,
+) -> RenderStyles {
+  styles
+}
+
+fn on_render_with_styles<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  styles: RenderStyles,
+) -> RenderPlan {
+  ctx.build_render_plan_with_styles(styles)
 }
 
 fn insert_char<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {

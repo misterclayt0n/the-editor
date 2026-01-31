@@ -2,13 +2,13 @@
 
 use crossterm::style::Color;
 use eyre::Result;
+use the_default::render_plan;
 use the_lib::render::{
   NoHighlights,
   RenderPlan,
   RenderStyles,
   SyntaxHighlightAdapter,
   build_plan,
-  graphics::Style,
   text_annotations::TextAnnotations,
 };
 use the_lib::selection::Range;
@@ -19,8 +19,11 @@ use crate::{
   theme::highlight_to_color,
 };
 
-/// Render the current document state to the terminal.
-pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
+pub fn build_render_plan(ctx: &mut Ctx) -> RenderPlan {
+  build_render_plan_with_styles(ctx, RenderStyles::default())
+}
+
+pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> RenderPlan {
   let view = ctx.editor.view();
 
   // Set up text formatting
@@ -38,15 +41,8 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
 
   let (doc, render_cache) = ctx.editor.document_and_cache();
 
-  // Styles for cursor and selection
-  let styles = RenderStyles {
-    selection:     Style::default(),
-    cursor:        Style::default(),
-    active_cursor: Style::default(),
-  };
-
   // Build the render plan (with or without syntax highlighting)
-  let plan: RenderPlan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
+  if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
     // Calculate line range for highlighting
     let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
 
@@ -82,7 +78,12 @@ pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
       render_cache,
       styles,
     )
-  };
+  }
+}
+
+/// Render the current document state to the terminal.
+pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
+  let plan = render_plan(ctx);
 
   // Clear and draw
   terminal.clear()?;

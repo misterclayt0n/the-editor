@@ -24,6 +24,8 @@ pub use command::{
   DispatchRef,
   build_dispatch,
   default_pre_on_keypress,
+  render_plan,
+  render_plan_with_styles,
   command_from_name,
   handle_command,
   handle_key,

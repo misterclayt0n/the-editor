@@ -36,11 +36,13 @@ use the_lib::{
   position::Position,
   registers::Registers,
   render::graphics::Rect,
+  render::RenderStyles,
   render::text_annotations::{
     InlineAnnotation,
     Overlay,
     TextAnnotations,
   },
+  render::RenderPlan,
   render::text_format::TextFormat,
   syntax::{
     HighlightCache,
@@ -182,6 +184,14 @@ impl the_default::DefaultContext for Ctx {
 
   fn request_render(&mut self) {
     self.needs_render = true;
+  }
+
+  fn build_render_plan(&mut self) -> RenderPlan {
+    crate::render::build_render_plan(self)
+  }
+
+  fn build_render_plan_with_styles(&mut self, styles: RenderStyles) -> RenderPlan {
+    crate::render::build_render_plan_with_styles(self, styles)
   }
 
   fn request_quit(&mut self) {

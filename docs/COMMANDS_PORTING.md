@@ -199,6 +199,23 @@ The new architecture does **not** have `cx.on_next_key()` in core. Instead, use 
 **pending-input state** stored in the default layer and consumed at the top of
 `pre_on_keypress`.
 
+## Render pipeline (dispatch-backed)
+
+Rendering is now driven through dispatch as well. Clients should **not** build
+render plans directly; instead they call the default helpers:
+
+- `the_default::render_plan(ctx)` → runs:
+  `pre_render → on_render → post_render`
+- `the_default::render_plan_with_styles(ctx, styles)` → runs:
+  `pre_render → pre_render_with_styles → on_render_with_styles → post_render`
+
+`DefaultContext` provides:
+- `build_render_plan(&mut self) -> RenderPlan`
+- `build_render_plan_with_styles(&mut self, RenderStyles) -> RenderPlan`
+
+The term and Swift/FFI clients call these helpers so render layout/config can be
+customized through dispatch hooks.
+
 ### Where it lives
 - `the-default/pending.rs` → `enum PendingInput`
 - `DefaultContext` now exposes:

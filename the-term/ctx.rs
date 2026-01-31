@@ -293,6 +293,10 @@ impl the_default::DefaultContext for Ctx {
     }
     annotations
   }
+
+  fn syntax_loader(&self) -> Option<&Loader> {
+    self.loader.as_deref()
+  }
 }
 
 /// Initialize the syntax loader with languages.toml config.

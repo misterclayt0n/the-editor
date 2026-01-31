@@ -76,6 +76,7 @@ use the_lib::{
     CursorId,
     CursorPick,
   },
+  syntax::Loader,
   transaction::Transaction,
   view::ViewState,
 };
@@ -1117,6 +1118,10 @@ impl DefaultContext for App {
       let _ = annotations.add_overlay(&state.overlay_annotations, None);
     }
     annotations
+  }
+
+  fn syntax_loader(&self) -> Option<&Loader> {
+    None
   }
 }
 

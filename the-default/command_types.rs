@@ -483,6 +483,8 @@ pub enum Command {
   SurroundAdd,
   SurroundDelete { count: usize },
   SurroundReplace { count: usize },
+  SelectTextobjectAround,
+  SelectTextobjectInner,
   Save,
   Quit,
 }
@@ -1021,5 +1023,15 @@ impl Command {
   #[must_use]
   pub const fn surround_replace(count: usize) -> Self {
     Self::SurroundReplace { count }
+  }
+
+  #[must_use]
+  pub const fn select_textobject_around() -> Self {
+    Self::SelectTextobjectAround
+  }
+
+  #[must_use]
+  pub const fn select_textobject_inner() -> Self {
+    Self::SelectTextobjectInner
   }
 }

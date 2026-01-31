@@ -625,6 +625,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "s" => surround_add,
       "d" => surround_delete,
       "r" => surround_replace,
+      "a" => select_textobject_around,
+      "i" => select_textobject_inner,
     },
 
     // REIMAGINE THOSE

@@ -35,6 +35,7 @@ use the_lib::{
   indent,
   match_brackets as mb,
   surround,
+  text_object,
   movement::{
     self,
     Direction as MoveDir,
@@ -161,6 +162,8 @@ define! {
     surround_add: (),
     surround_delete: usize,
     surround_replace: usize,
+    select_textobject_around: (),
+    select_textobject_inner: (),
   }
 }
 
@@ -230,6 +233,8 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, ()),
   fn(&mut Ctx, usize),
   fn(&mut Ctx, usize),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
 >;
 
 #[derive(Clone, Copy)]
@@ -282,6 +287,7 @@ pub trait DefaultContext: Sized + 'static {
   fn set_last_motion(&mut self, motion: Option<Motion>);
   fn text_format(&self) -> TextFormat;
   fn text_annotations(&self) -> TextAnnotations<'_>;
+  fn syntax_loader(&self) -> Option<&Loader>;
 }
 
 pub fn build_dispatch<Ctx>() -> DefaultDispatchStatic<Ctx>
@@ -353,6 +359,8 @@ where
     .with_surround_add(surround_add::<Ctx> as fn(&mut Ctx, ()))
     .with_surround_delete(surround_delete::<Ctx> as fn(&mut Ctx, usize))
     .with_surround_replace(surround_replace::<Ctx> as fn(&mut Ctx, usize))
+    .with_select_textobject_around(select_textobject_around::<Ctx> as fn(&mut Ctx, ()))
+    .with_select_textobject_inner(select_textobject_inner::<Ctx> as fn(&mut Ctx, ()))
 }
 
 pub fn handle_command<Ctx, D>(dispatch: &D, ctx: &mut Ctx, command: Command)
@@ -441,6 +449,12 @@ fn handle_pending_input<Ctx: DefaultContext>(
     PendingInput::SurroundReplaceWith { positions, original_selection } => {
       if let Key::Char(ch) = key.key {
         surround_replace_with(ctx, ch, &positions, &original_selection);
+      }
+      true
+    },
+    PendingInput::SelectTextObject { kind } => {
+      if let Key::Char(ch) = key.key {
+        select_textobject_impl(ctx, kind, ch);
       }
       true
     },
@@ -542,6 +556,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::SurroundAdd => ctx.dispatch().surround_add(ctx, ()),
     Command::SurroundDelete { count } => ctx.dispatch().surround_delete(ctx, count),
     Command::SurroundReplace { count } => ctx.dispatch().surround_replace(ctx, count),
+    Command::SelectTextobjectAround => ctx.dispatch().select_textobject_around(ctx, ()),
+    Command::SelectTextobjectInner => ctx.dispatch().select_textobject_inner(ctx, ()),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -569,6 +585,18 @@ fn surround_delete<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
 
 fn surround_replace<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
   ctx.set_pending_input(Some(PendingInput::SurroundReplace { count }));
+}
+
+fn select_textobject_around<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  ctx.set_pending_input(Some(PendingInput::SelectTextObject {
+    kind: text_object::TextObject::Around,
+  }));
+}
+
+fn select_textobject_inner<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  ctx.set_pending_input(Some(PendingInput::SelectTextObject {
+    kind: text_object::TextObject::Inside,
+  }));
 }
 
 fn post_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
@@ -2125,6 +2153,53 @@ fn match_brackets<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let _ = doc.set_selection(new_selection);
 }
 
+fn select_textobject_impl<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  kind: text_object::TextObject,
+  ch: char,
+) {
+  let count = 1usize;
+  let new_selection = {
+    let editor = ctx.editor_ref();
+    let doc = editor.document();
+    let text = doc.text().slice(..);
+    let selection = doc.selection().clone();
+    let syntax = doc.syntax();
+    let loader = match ctx.syntax_loader() {
+      Some(loader) => loader,
+      None => syntax_loader(),
+    };
+
+    let textobject_treesitter = |obj_name: &str, range: Range| -> Range {
+      let Some(syntax) = syntax else {
+        return range;
+      };
+      text_object::textobject_treesitter(text, range, kind, obj_name, syntax, loader, count)
+    };
+
+    selection.transform(|range| match ch {
+      'w' => text_object::textobject_word(text, range, kind, count, false),
+      'W' => text_object::textobject_word(text, range, kind, count, true),
+      't' => textobject_treesitter("class", range),
+      'f' => textobject_treesitter("function", range),
+      'a' => textobject_treesitter("parameter", range),
+      'c' => textobject_treesitter("comment", range),
+      'T' => textobject_treesitter("test", range),
+      'e' => textobject_treesitter("entry", range),
+      'x' => textobject_treesitter("xml-element", range),
+      'p' => text_object::textobject_paragraph(text, range, kind, count),
+      'm' => text_object::textobject_pair_surround_closest(syntax, text, range, kind, count),
+      ch if !ch.is_ascii_alphanumeric() => {
+        text_object::textobject_pair_surround(syntax, text, range, kind, ch, count)
+      },
+      _ => range,
+    })
+  };
+
+  let doc = ctx.editor().document_mut();
+  let _ = doc.set_selection(new_selection);
+}
+
 fn surround_add_impl<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
   let (open, close, surround_len) = match key.key {
     Key::Char(ch) => {
@@ -2655,6 +2730,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "surround_add" => Some(Command::surround_add()),
     "surround_delete" => Some(Command::surround_delete(1)),
     "surround_replace" => Some(Command::surround_replace(1)),
+    "select_textobject_around" => Some(Command::select_textobject_around()),
+    "select_textobject_inner" => Some(Command::select_textobject_inner()),
 
     _ => None,
   }

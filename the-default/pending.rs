@@ -1,6 +1,7 @@
 //! Pending input state for commands that wait on the next keypress.
 
 use crate::Direction;
+use the_lib::text_object::TextObject;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingInput {
@@ -28,4 +29,6 @@ pub enum PendingInput {
     positions:          Vec<(usize, usize)>,
     original_selection: Vec<(usize, usize)>,
   },
+  /// Await a text-object key (w, W, p, etc.).
+  SelectTextObject { kind: TextObject },
 }

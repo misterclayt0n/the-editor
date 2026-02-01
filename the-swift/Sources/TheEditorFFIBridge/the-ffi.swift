@@ -60,6 +60,80 @@ extension AppRefMut {
         RenderPlan(ptr: __swift_bridge__$App$render_plan_with_styles(ptr, id.intoFfiRepr(), styles.intoFfiRepr()))
     }
 
+    public func command_palette_is_open(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$command_palette_is_open(ptr, id.intoFfiRepr())
+    }
+
+    public func command_palette_query(_ id: EditorId) -> RustString {
+        RustString(ptr: __swift_bridge__$App$command_palette_query(ptr, id.intoFfiRepr()))
+    }
+
+    public func command_palette_filtered_count(_ id: EditorId) -> UInt {
+        __swift_bridge__$App$command_palette_filtered_count(ptr, id.intoFfiRepr())
+    }
+
+    public func command_palette_filtered_selected_index(_ id: EditorId) -> Int64 {
+        __swift_bridge__$App$command_palette_filtered_selected_index(ptr, id.intoFfiRepr())
+    }
+
+    public func command_palette_filtered_title(_ id: EditorId, _ index: UInt) -> RustString {
+        RustString(ptr: __swift_bridge__$App$command_palette_filtered_title(ptr, id.intoFfiRepr(), index))
+    }
+
+    public func command_palette_filtered_subtitle(_ id: EditorId, _ index: UInt) -> RustString {
+        RustString(ptr: __swift_bridge__$App$command_palette_filtered_subtitle(ptr, id.intoFfiRepr(), index))
+    }
+
+    public func command_palette_filtered_description(_ id: EditorId, _ index: UInt) -> RustString {
+        RustString(ptr: __swift_bridge__$App$command_palette_filtered_description(ptr, id.intoFfiRepr(), index))
+    }
+
+    public func command_palette_filtered_shortcut(_ id: EditorId, _ index: UInt) -> RustString {
+        RustString(ptr: __swift_bridge__$App$command_palette_filtered_shortcut(ptr, id.intoFfiRepr(), index))
+    }
+
+    public func command_palette_filtered_badge(_ id: EditorId, _ index: UInt) -> RustString {
+        RustString(ptr: __swift_bridge__$App$command_palette_filtered_badge(ptr, id.intoFfiRepr(), index))
+    }
+
+    public func command_palette_filtered_leading_icon(_ id: EditorId, _ index: UInt) -> RustString {
+        RustString(ptr: __swift_bridge__$App$command_palette_filtered_leading_icon(ptr, id.intoFfiRepr(), index))
+    }
+
+    public func command_palette_filtered_leading_color(_ id: EditorId, _ index: UInt) -> Color {
+        __swift_bridge__$App$command_palette_filtered_leading_color(ptr, id.intoFfiRepr(), index).intoSwiftRepr()
+    }
+
+    public func command_palette_filtered_symbol_count(_ id: EditorId, _ index: UInt) -> UInt {
+        __swift_bridge__$App$command_palette_filtered_symbol_count(ptr, id.intoFfiRepr(), index)
+    }
+
+    public func command_palette_filtered_symbol(_ id: EditorId, _ index: UInt, _ symbol_index: UInt) -> RustString {
+        RustString(ptr: __swift_bridge__$App$command_palette_filtered_symbol(ptr, id.intoFfiRepr(), index, symbol_index))
+    }
+
+    public func command_palette_select_filtered(_ id: EditorId, _ index: UInt) -> Bool {
+        __swift_bridge__$App$command_palette_select_filtered(ptr, id.intoFfiRepr(), index)
+    }
+
+    public func command_palette_submit_filtered(_ id: EditorId, _ index: UInt) -> Bool {
+        __swift_bridge__$App$command_palette_submit_filtered(ptr, id.intoFfiRepr(), index)
+    }
+
+    public func command_palette_close(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$command_palette_close(ptr, id.intoFfiRepr())
+    }
+
+    public func command_palette_set_query<GenericToRustStr: ToRustStr>(_ id: EditorId, _ query: GenericToRustStr) -> Bool {
+        return query.toRustStr({ queryAsRustStr in
+            __swift_bridge__$App$command_palette_set_query(ptr, id.intoFfiRepr(), queryAsRustStr)
+        })
+    }
+
+    public func take_should_quit() -> Bool {
+        __swift_bridge__$App$take_should_quit(ptr)
+    }
+
     public func handle_key(_ id: EditorId, _ event: KeyEvent) -> Bool {
         __swift_bridge__$App$handle_key(ptr, id.intoFfiRepr(), event.intoFfiRepr())
     }
@@ -1028,6 +1102,110 @@ extension RenderSelection: Vectorizable {
 }
 
 
+public class RenderOverlayNode: RenderOverlayNodeRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$RenderOverlayNode$_free(ptr)
+        }
+    }
+}
+public class RenderOverlayNodeRefMut: RenderOverlayNodeRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class RenderOverlayNodeRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension RenderOverlayNodeRef {
+    public func kind() -> UInt8 {
+        __swift_bridge__$RenderOverlayNode$kind(ptr)
+    }
+
+    public func rect_kind() -> UInt8 {
+        __swift_bridge__$RenderOverlayNode$rect_kind(ptr)
+    }
+
+    public func rect() -> Rect {
+        __swift_bridge__$RenderOverlayNode$rect(ptr).intoSwiftRepr()
+    }
+
+    public func radius() -> UInt16 {
+        __swift_bridge__$RenderOverlayNode$radius(ptr)
+    }
+
+    public func pos() -> Position {
+        __swift_bridge__$RenderOverlayNode$pos(ptr).intoSwiftRepr()
+    }
+
+    public func text() -> RustString {
+        RustString(ptr: __swift_bridge__$RenderOverlayNode$text(ptr))
+    }
+
+    public func style() -> Style {
+        __swift_bridge__$RenderOverlayNode$style(ptr).intoSwiftRepr()
+    }
+}
+extension RenderOverlayNode: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_RenderOverlayNode$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_RenderOverlayNode$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: RenderOverlayNode) {
+        __swift_bridge__$Vec_RenderOverlayNode$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_RenderOverlayNode$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (RenderOverlayNode(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderOverlayNodeRef> {
+        let pointer = __swift_bridge__$Vec_RenderOverlayNode$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderOverlayNodeRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderOverlayNodeRefMut> {
+        let pointer = __swift_bridge__$Vec_RenderOverlayNode$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderOverlayNodeRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<RenderOverlayNodeRef> {
+        UnsafePointer<RenderOverlayNodeRef>(OpaquePointer(__swift_bridge__$Vec_RenderOverlayNode$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_RenderOverlayNode$len(vecPtr)
+    }
+}
+
+
 public class RenderPlan: RenderPlanRefMut {
     var isOwned: Bool = true
 
@@ -1084,6 +1262,14 @@ extension RenderPlanRef {
 
     public func selection_at(_ index: UInt) -> RenderSelection {
         RenderSelection(ptr: __swift_bridge__$RenderPlan$selection_at(ptr, index))
+    }
+
+    public func overlay_count() -> UInt {
+        __swift_bridge__$RenderPlan$overlay_count(ptr)
+    }
+
+    public func overlay_at(_ index: UInt) -> RenderOverlayNode {
+        RenderOverlayNode(ptr: __swift_bridge__$RenderPlan$overlay_at(ptr, index))
     }
 }
 extension RenderPlan: Vectorizable {

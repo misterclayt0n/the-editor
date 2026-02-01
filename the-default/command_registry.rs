@@ -23,6 +23,8 @@ use crate::{
   Key,
   KeyEvent,
   Mode,
+  command_palette_default_selected,
+  command_palette_filtered_indices,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -629,6 +631,42 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
         should_update = true;
       }
     },
+    Key::Up => {
+      let filtered = command_palette_filtered_indices(ctx.command_palette());
+      if !filtered.is_empty() {
+        let palette = ctx.command_palette_mut();
+        let current = palette
+          .selected
+          .and_then(|sel| filtered.iter().position(|&idx| idx == sel))
+          .unwrap_or(0);
+        let next = if current == 0 {
+          filtered.len() - 1
+        } else {
+          current - 1
+        };
+        palette.selected = Some(filtered[next]);
+        ctx.request_render();
+      }
+      return true;
+    },
+    Key::Down => {
+      let filtered = command_palette_filtered_indices(ctx.command_palette());
+      if !filtered.is_empty() {
+        let palette = ctx.command_palette_mut();
+        let current = palette
+          .selected
+          .and_then(|sel| filtered.iter().position(|&idx| idx == sel))
+          .unwrap_or(usize::MAX);
+        let next = if current >= filtered.len() - 1 {
+          0
+        } else {
+          current + 1
+        };
+        palette.selected = Some(filtered[next]);
+        ctx.request_render();
+      }
+      return true;
+    },
     Key::Delete => {
       let prompt = ctx.command_prompt_mut();
       if prompt.cursor < prompt.input.len() {
@@ -694,14 +732,14 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
       let prompt = ctx.command_prompt_ref();
       prompt.input.clone()
     };
-    let prompt = ctx.command_prompt_mut();
-    prompt.completions = completions;
-    prompt.error = None;
-    {
-      let palette = ctx.command_palette_mut();
-      palette.query = input;
-      palette.selected = if palette.query.is_empty() { None } else { Some(0) };
-    }
+      let prompt = ctx.command_prompt_mut();
+      prompt.completions = completions;
+      prompt.error = None;
+      {
+        let palette = ctx.command_palette_mut();
+        palette.query = input;
+        palette.selected = command_palette_default_selected(palette);
+      }
     ctx.request_render();
   }
 

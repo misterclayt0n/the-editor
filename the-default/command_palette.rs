@@ -27,6 +27,10 @@ pub struct CommandPaletteItem {
   pub description: Option<String>,
   pub shortcut:    Option<String>,
   pub badge:       Option<String>,
+  pub leading_icon: Option<String>,
+  pub leading_color: Option<Color>,
+  pub symbols:     Option<Vec<String>>,
+  pub emphasis:    bool,
 }
 
 impl CommandPaletteItem {
@@ -37,6 +41,10 @@ impl CommandPaletteItem {
       description: None,
       shortcut:    None,
       badge:       None,
+      leading_icon: None,
+      leading_color: None,
+      symbols:     None,
+      emphasis:    false,
     }
   }
 }
@@ -59,6 +67,58 @@ impl Default for CommandPaletteState {
       items:       Vec::new(),
       max_results: 10,
     }
+  }
+}
+
+pub fn command_palette_filtered_indices(state: &CommandPaletteState) -> Vec<usize> {
+  let mut filtered: Vec<usize> = if state.query.is_empty() {
+    (0..state.items.len()).collect()
+  } else {
+    struct PaletteKey {
+      index: usize,
+      text:  String,
+    }
+
+    impl AsRef<str> for PaletteKey {
+      fn as_ref(&self) -> &str {
+        &self.text
+      }
+    }
+
+    let keys: Vec<PaletteKey> = state
+      .items
+      .iter()
+      .enumerate()
+      .map(|(idx, item)| PaletteKey {
+        index: idx,
+        text:  item.title.clone(),
+      })
+      .collect();
+
+    fuzzy_match(&state.query, keys.iter(), MatchMode::Plain)
+      .into_iter()
+      .map(|(key, _)| key.index)
+      .collect()
+  };
+
+  if filtered.len() > state.max_results {
+    filtered.truncate(state.max_results);
+  }
+
+  filtered
+}
+
+pub fn command_palette_selected_filtered_index(state: &CommandPaletteState) -> Option<usize> {
+  let selected = state.selected?;
+  let filtered = command_palette_filtered_indices(state);
+  filtered.iter().position(|&idx| idx == selected)
+}
+
+pub fn command_palette_default_selected(state: &CommandPaletteState) -> Option<usize> {
+  if state.query.is_empty() {
+    None
+  } else {
+    command_palette_filtered_indices(state).first().copied()
   }
 }
 
@@ -154,6 +214,19 @@ impl CommandPaletteTheme {
       selected_bg:     Color::Rgb(55, 70, 110),
       selected_text:   Color::Rgb(235, 235, 235),
       selected_border: Color::Rgb(70, 90, 140),
+    }
+  }
+
+  pub fn ghostty() -> Self {
+    Self {
+      panel_bg:        Color::Rgb(24, 24, 24),
+      panel_border:    Color::Rgb(56, 56, 56),
+      divider:         Color::Rgb(44, 44, 44),
+      text:            Color::Rgb(228, 228, 228),
+      placeholder:     Color::Rgb(150, 150, 150),
+      selected_bg:     Color::Rgb(40, 58, 92),
+      selected_text:   Color::Rgb(240, 240, 240),
+      selected_border: Color::Rgb(82, 110, 168),
     }
   }
 }
@@ -278,7 +351,7 @@ pub fn build_command_palette_overlay_floating(
     radius: 2,
     style:  Style {
       bg: Some(theme.panel_bg),
-      fg: None,
+      fg: Some(theme.panel_border),
       underline_color: None,
       underline_style: None,
       add_modifier: the_lib::render::graphics::Modifier::empty(),
@@ -375,39 +448,7 @@ pub fn build_command_palette_overlay_bottom(
     return Vec::new();
   }
 
-  let mut filtered: Vec<usize> = if state.query.is_empty() {
-    (0..state.items.len()).collect()
-  } else {
-    struct PaletteKey {
-      index: usize,
-      text:  String,
-    }
-
-    impl AsRef<str> for PaletteKey {
-      fn as_ref(&self) -> &str {
-        &self.text
-      }
-    }
-
-    let keys: Vec<PaletteKey> = state
-      .items
-      .iter()
-      .enumerate()
-      .map(|(idx, item)| PaletteKey {
-        index: idx,
-        text:  item.title.clone(),
-      })
-      .collect();
-
-    fuzzy_match(&state.query, keys.iter(), MatchMode::Plain)
-      .into_iter()
-      .map(|(key, _)| key.index)
-      .collect()
-  };
-
-  if filtered.len() > state.max_results {
-    filtered.truncate(state.max_results);
-  }
+  let filtered = command_palette_filtered_indices(state);
 
   let row_height: u16 = 1;
   let divider_height: u16 = 1;
@@ -438,7 +479,7 @@ pub fn build_command_palette_overlay_bottom(
     radius: 0,
     style:  Style {
       bg: Some(theme.panel_bg),
-      fg: None,
+      fg: Some(theme.panel_border),
       underline_color: None,
       underline_style: None,
       add_modifier: the_lib::render::graphics::Modifier::empty(),
@@ -537,39 +578,7 @@ pub fn build_command_palette_overlay_top(
     return Vec::new();
   }
 
-  let mut filtered: Vec<usize> = if state.query.is_empty() {
-    (0..state.items.len()).collect()
-  } else {
-    struct PaletteKey {
-      index: usize,
-      text:  String,
-    }
-
-    impl AsRef<str> for PaletteKey {
-      fn as_ref(&self) -> &str {
-        &self.text
-      }
-    }
-
-    let keys: Vec<PaletteKey> = state
-      .items
-      .iter()
-      .enumerate()
-      .map(|(idx, item)| PaletteKey {
-        index: idx,
-        text:  item.title.clone(),
-      })
-      .collect();
-
-    fuzzy_match(&state.query, keys.iter(), MatchMode::Plain)
-      .into_iter()
-      .map(|(key, _)| key.index)
-      .collect()
-  };
-
-  if filtered.len() > state.max_results {
-    filtered.truncate(state.max_results);
-  }
+  let filtered = command_palette_filtered_indices(state);
 
   let row_height: u16 = 1;
   let divider_height: u16 = 1;
@@ -600,7 +609,7 @@ pub fn build_command_palette_overlay_top(
     radius: 0,
     style:  Style {
       bg: Some(theme.panel_bg),
-      fg: None,
+      fg: Some(theme.panel_border),
       underline_color: None,
       underline_style: None,
       add_modifier: the_lib::render::graphics::Modifier::empty(),

@@ -26,8 +26,11 @@ use std::{
 use ropey::Rope;
 use the_default::{
   Command,
+  CommandEvent,
   CommandPaletteState,
   CommandPaletteStyle,
+  CommandPaletteTheme,
+  CommandPaletteLayout,
   CommandPromptState,
   CommandRegistry,
   DefaultContext,
@@ -40,6 +43,9 @@ use the_default::{
   Mode,
   Motion,
   build_dispatch,
+  command_palette_filtered_indices,
+  command_palette_default_selected,
+  command_palette_selected_filtered_index,
 };
 use the_lib::{
   Tendril,
@@ -58,6 +64,9 @@ use the_lib::{
   registers::Registers,
   render::{
     NoHighlights,
+    OverlayNode,
+    OverlayRectKind,
+    OverlayText,
     RenderStyles,
     build_plan,
     graphics::{
@@ -474,6 +483,78 @@ impl From<the_lib::render::RenderSelection> for RenderSelection {
 }
 
 #[derive(Debug, Clone)]
+pub struct RenderOverlayNode {
+  inner: OverlayNode,
+}
+
+impl RenderOverlayNode {
+  fn empty() -> Self {
+    Self {
+      inner: OverlayNode::Text(OverlayText {
+        pos:   LibPosition::new(0, 0),
+        text:  String::new(),
+        style: LibStyle::default(),
+      }),
+    }
+  }
+
+  fn kind(&self) -> u8 {
+    match self.inner {
+      OverlayNode::Rect(_) => 1,
+      OverlayNode::Text(_) => 2,
+    }
+  }
+
+  fn rect_kind(&self) -> u8 {
+    match self.inner {
+      OverlayNode::Rect(ref rect) => overlay_rect_kind_to_u8(rect.kind),
+      OverlayNode::Text(_) => 0,
+    }
+  }
+
+  fn rect(&self) -> ffi::Rect {
+    match self.inner {
+      OverlayNode::Rect(ref rect) => rect.rect.into(),
+      OverlayNode::Text(_) => LibRect::new(0, 0, 0, 0).into(),
+    }
+  }
+
+  fn radius(&self) -> u16 {
+    match self.inner {
+      OverlayNode::Rect(ref rect) => rect.radius,
+      OverlayNode::Text(_) => 0,
+    }
+  }
+
+  fn pos(&self) -> ffi::Position {
+    match self.inner {
+      OverlayNode::Text(ref text) => text.pos.into(),
+      OverlayNode::Rect(_) => LibPosition::new(0, 0).into(),
+    }
+  }
+
+  fn text(&self) -> String {
+    match self.inner {
+      OverlayNode::Text(ref text) => text.text.clone(),
+      OverlayNode::Rect(_) => String::new(),
+    }
+  }
+
+  fn style(&self) -> ffi::Style {
+    match self.inner {
+      OverlayNode::Rect(ref rect) => rect.style.into(),
+      OverlayNode::Text(ref text) => text.style.into(),
+    }
+  }
+}
+
+impl From<OverlayNode> for RenderOverlayNode {
+  fn from(node: OverlayNode) -> Self {
+    Self { inner: node }
+  }
+}
+
+#[derive(Debug, Clone)]
 pub struct RenderPlan {
   inner: the_lib::render::RenderPlan,
 }
@@ -534,6 +615,20 @@ impl RenderPlan {
       .map(RenderSelection::from)
       .unwrap_or_default()
   }
+
+  fn overlay_count(&self) -> usize {
+    self.inner.overlays.len()
+  }
+
+  fn overlay_at(&self, index: usize) -> RenderOverlayNode {
+    self
+      .inner
+      .overlays
+      .get(index)
+      .cloned()
+      .map(RenderOverlayNode::from)
+      .unwrap_or_else(RenderOverlayNode::empty)
+  }
 }
 
 impl From<the_lib::render::RenderPlan> for RenderPlan {
@@ -567,11 +662,14 @@ struct EditorState {
 
 impl EditorState {
   fn new() -> Self {
+    let mut command_palette_style = CommandPaletteStyle::floating(CommandPaletteTheme::ghostty());
+    command_palette_style.layout = CommandPaletteLayout::Custom;
+
     Self {
       mode: Mode::Normal,
       command_prompt: CommandPromptState::new(),
       command_palette: CommandPaletteState::default(),
-      command_palette_style: CommandPaletteStyle::default(),
+      command_palette_style,
       render_passes: the_default::default_render_passes(),
       needs_render: true,
       pending_input: None,
@@ -782,6 +880,261 @@ impl App {
       .get(&id)
       .map(|state| mode_to_u8(state.mode))
       .unwrap_or(mode_to_u8(Mode::Normal))
+  }
+
+  pub fn command_palette_is_open(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    self.active_state_ref().command_palette.is_open
+  }
+
+  pub fn command_palette_query(&mut self, id: ffi::EditorId) -> String {
+    if self.activate(id).is_none() {
+      return String::new();
+    }
+    self.active_state_ref().command_palette.query.clone()
+  }
+
+  pub fn command_palette_filtered_count(&mut self, id: ffi::EditorId) -> usize {
+    if self.activate(id).is_none() {
+      return 0;
+    }
+    command_palette_filtered_indices(&self.active_state_ref().command_palette).len()
+  }
+
+  pub fn command_palette_filtered_selected_index(&mut self, id: ffi::EditorId) -> i64 {
+    if self.activate(id).is_none() {
+      return -1;
+    }
+    command_palette_selected_filtered_index(&self.active_state_ref().command_palette)
+      .map(|idx| idx as i64)
+      .unwrap_or(-1)
+  }
+
+  pub fn command_palette_filtered_title(&mut self, id: ffi::EditorId, index: usize) -> String {
+    if self.activate(id).is_none() {
+      return String::new();
+    }
+    let state = self.active_state_ref();
+    let filtered = command_palette_filtered_indices(&state.command_palette);
+    filtered
+      .get(index)
+      .and_then(|idx| state.command_palette.items.get(*idx))
+      .map(|item| item.title.clone())
+      .unwrap_or_default()
+  }
+
+  pub fn command_palette_filtered_subtitle(&mut self, id: ffi::EditorId, index: usize) -> String {
+    if self.activate(id).is_none() {
+      return String::new();
+    }
+    let state = self.active_state_ref();
+    let filtered = command_palette_filtered_indices(&state.command_palette);
+    filtered
+      .get(index)
+      .and_then(|idx| state.command_palette.items.get(*idx))
+      .and_then(|item| item.subtitle.clone())
+      .unwrap_or_default()
+  }
+
+  pub fn command_palette_filtered_description(&mut self, id: ffi::EditorId, index: usize) -> String {
+    if self.activate(id).is_none() {
+      return String::new();
+    }
+    let state = self.active_state_ref();
+    let filtered = command_palette_filtered_indices(&state.command_palette);
+    filtered
+      .get(index)
+      .and_then(|idx| state.command_palette.items.get(*idx))
+      .and_then(|item| item.description.clone())
+      .unwrap_or_default()
+  }
+
+  pub fn command_palette_filtered_shortcut(&mut self, id: ffi::EditorId, index: usize) -> String {
+    if self.activate(id).is_none() {
+      return String::new();
+    }
+    let state = self.active_state_ref();
+    let filtered = command_palette_filtered_indices(&state.command_palette);
+    filtered
+      .get(index)
+      .and_then(|idx| state.command_palette.items.get(*idx))
+      .and_then(|item| item.shortcut.clone())
+      .unwrap_or_default()
+  }
+
+  pub fn command_palette_filtered_badge(&mut self, id: ffi::EditorId, index: usize) -> String {
+    if self.activate(id).is_none() {
+      return String::new();
+    }
+    let state = self.active_state_ref();
+    let filtered = command_palette_filtered_indices(&state.command_palette);
+    filtered
+      .get(index)
+      .and_then(|idx| state.command_palette.items.get(*idx))
+      .and_then(|item| item.badge.clone())
+      .unwrap_or_default()
+  }
+
+  pub fn command_palette_filtered_leading_icon(&mut self, id: ffi::EditorId, index: usize) -> String {
+    if self.activate(id).is_none() {
+      return String::new();
+    }
+    let state = self.active_state_ref();
+    let filtered = command_palette_filtered_indices(&state.command_palette);
+    filtered
+      .get(index)
+      .and_then(|idx| state.command_palette.items.get(*idx))
+      .and_then(|item| item.leading_icon.clone())
+      .unwrap_or_default()
+  }
+
+  pub fn command_palette_filtered_leading_color(&mut self, id: ffi::EditorId, index: usize) -> ffi::Color {
+    if self.activate(id).is_none() {
+      return ffi::Color { kind: 0, value: 0 };
+    }
+    let state = self.active_state_ref();
+    let filtered = command_palette_filtered_indices(&state.command_palette);
+    filtered
+      .get(index)
+      .and_then(|idx| state.command_palette.items.get(*idx))
+      .and_then(|item| item.leading_color)
+      .map(ffi::Color::from)
+      .unwrap_or(ffi::Color { kind: 0, value: 0 })
+  }
+
+  pub fn command_palette_filtered_symbol_count(&mut self, id: ffi::EditorId, index: usize) -> usize {
+    if self.activate(id).is_none() {
+      return 0;
+    }
+    let state = self.active_state_ref();
+    let filtered = command_palette_filtered_indices(&state.command_palette);
+    filtered
+      .get(index)
+      .and_then(|idx| state.command_palette.items.get(*idx))
+      .and_then(|item| item.symbols.as_ref())
+      .map(|symbols| symbols.len())
+      .unwrap_or(0)
+  }
+
+  pub fn command_palette_filtered_symbol(
+    &mut self,
+    id: ffi::EditorId,
+    index: usize,
+    symbol_index: usize,
+  ) -> String {
+    if self.activate(id).is_none() {
+      return String::new();
+    }
+    let state = self.active_state_ref();
+    let filtered = command_palette_filtered_indices(&state.command_palette);
+    filtered
+      .get(index)
+      .and_then(|idx| state.command_palette.items.get(*idx))
+      .and_then(|item| item.symbols.as_ref())
+      .and_then(|symbols| symbols.get(symbol_index))
+      .cloned()
+      .unwrap_or_default()
+  }
+
+  pub fn command_palette_select_filtered(&mut self, id: ffi::EditorId, index: usize) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let filtered = command_palette_filtered_indices(&self.active_state_ref().command_palette);
+    let Some(item_idx) = filtered.get(index).copied() else {
+      return false;
+    };
+    let palette = &mut self.active_state_mut().command_palette;
+    palette.selected = Some(item_idx);
+    self.request_render();
+    true
+  }
+
+  pub fn command_palette_submit_filtered(&mut self, id: ffi::EditorId, index: usize) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let filtered = command_palette_filtered_indices(&self.active_state_ref().command_palette);
+    let Some(item_idx) = filtered.get(index).copied() else {
+      return false;
+    };
+    let command_name = {
+      let palette = &self.active_state_ref().command_palette;
+      palette
+        .items
+        .get(item_idx)
+        .map(|item| item.title.clone())
+        .unwrap_or_default()
+    };
+
+    if command_name.is_empty() {
+      return false;
+    }
+
+    let registry = self.command_registry_ref() as *const CommandRegistry<App>;
+    let result = unsafe { (&*registry).execute(self, &command_name, "", CommandEvent::Validate) };
+
+    match result {
+      Ok(()) => {
+        self.set_mode(Mode::Normal);
+        self.command_prompt_mut().clear();
+        let palette = self.command_palette_mut();
+        palette.is_open = false;
+        palette.query.clear();
+        palette.selected = None;
+        self.request_render();
+        true
+      },
+      Err(err) => {
+        self.command_prompt_mut().error = Some(err.to_string());
+        self.request_render();
+        false
+      },
+    }
+  }
+
+  pub fn command_palette_close(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    self.set_mode(Mode::Normal);
+    self.command_prompt_mut().clear();
+    let palette = self.command_palette_mut();
+    palette.is_open = false;
+    palette.query.clear();
+    palette.selected = None;
+    self.request_render();
+    true
+  }
+
+  pub fn command_palette_set_query(&mut self, id: ffi::EditorId, query: &str) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let input = query.to_string();
+    let completions = self
+      .command_registry_ref()
+      .complete_command_line(self, &input);
+
+    let prompt = self.command_prompt_mut();
+    prompt.input = input.clone();
+    prompt.cursor = prompt.input.len();
+    prompt.completions = completions;
+    prompt.error = None;
+
+    let palette = self.command_palette_mut();
+    palette.query = input;
+    palette.selected = command_palette_default_selected(palette);
+    self.request_render();
+    true
+  }
+
+  pub fn take_should_quit(&mut self) -> bool {
+    let should_quit = self.should_quit;
+    self.should_quit = false;
+    should_quit
   }
 
   pub fn handle_key(&mut self, id: ffi::EditorId, event: ffi::KeyEvent) -> bool {
@@ -1409,6 +1762,24 @@ mod ffi {
     fn render_plan_with_styles(self: &mut App, id: EditorId, styles: RenderStyles) -> RenderPlan;
     fn text(self: &App, id: EditorId) -> String;
     fn mode(self: &App, id: EditorId) -> u8;
+    fn command_palette_is_open(self: &mut App, id: EditorId) -> bool;
+    fn command_palette_query(self: &mut App, id: EditorId) -> String;
+    fn command_palette_filtered_count(self: &mut App, id: EditorId) -> usize;
+    fn command_palette_filtered_selected_index(self: &mut App, id: EditorId) -> i64;
+    fn command_palette_filtered_title(self: &mut App, id: EditorId, index: usize) -> String;
+    fn command_palette_filtered_subtitle(self: &mut App, id: EditorId, index: usize) -> String;
+    fn command_palette_filtered_description(self: &mut App, id: EditorId, index: usize) -> String;
+    fn command_palette_filtered_shortcut(self: &mut App, id: EditorId, index: usize) -> String;
+    fn command_palette_filtered_badge(self: &mut App, id: EditorId, index: usize) -> String;
+    fn command_palette_filtered_leading_icon(self: &mut App, id: EditorId, index: usize) -> String;
+    fn command_palette_filtered_leading_color(self: &mut App, id: EditorId, index: usize) -> Color;
+    fn command_palette_filtered_symbol_count(self: &mut App, id: EditorId, index: usize) -> usize;
+    fn command_palette_filtered_symbol(self: &mut App, id: EditorId, index: usize, symbol_index: usize) -> String;
+    fn command_palette_select_filtered(self: &mut App, id: EditorId, index: usize) -> bool;
+    fn command_palette_submit_filtered(self: &mut App, id: EditorId, index: usize) -> bool;
+    fn command_palette_close(self: &mut App, id: EditorId) -> bool;
+    fn command_palette_set_query(self: &mut App, id: EditorId, query: &str) -> bool;
+    fn take_should_quit(self: &mut App) -> bool;
     fn handle_key(self: &mut App, id: EditorId, event: KeyEvent) -> bool;
     fn ensure_cursor_visible(self: &mut App, id: EditorId) -> bool;
 
@@ -1555,6 +1926,17 @@ mod ffi {
   }
 
   extern "Rust" {
+    type RenderOverlayNode;
+    fn kind(self: &RenderOverlayNode) -> u8;
+    fn rect_kind(self: &RenderOverlayNode) -> u8;
+    fn rect(self: &RenderOverlayNode) -> Rect;
+    fn radius(self: &RenderOverlayNode) -> u16;
+    fn pos(self: &RenderOverlayNode) -> Position;
+    fn text(self: &RenderOverlayNode) -> String;
+    fn style(self: &RenderOverlayNode) -> Style;
+  }
+
+  extern "Rust" {
     type RenderPlan;
     fn viewport(self: &RenderPlan) -> Rect;
     fn scroll(self: &RenderPlan) -> Position;
@@ -1564,6 +1946,8 @@ mod ffi {
     fn cursor_at(self: &RenderPlan, index: usize) -> RenderCursor;
     fn selection_count(self: &RenderPlan) -> usize;
     fn selection_at(self: &RenderPlan, index: usize) -> RenderSelection;
+    fn overlay_count(self: &RenderPlan) -> usize;
+    fn overlay_at(self: &RenderPlan, index: usize) -> RenderOverlayNode;
   }
 }
 
@@ -1844,6 +2228,15 @@ fn cursor_kind_to_u8(kind: LibCursorKind) -> u8 {
     LibCursorKind::Underline => 2,
     LibCursorKind::Hollow => 3,
     LibCursorKind::Hidden => 4,
+  }
+}
+
+fn overlay_rect_kind_to_u8(kind: OverlayRectKind) -> u8 {
+  match kind {
+    OverlayRectKind::Panel => 1,
+    OverlayRectKind::Divider => 2,
+    OverlayRectKind::Highlight => 3,
+    OverlayRectKind::Backdrop => 4,
   }
 }
 

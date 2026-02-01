@@ -13,24 +13,60 @@ struct EditorView: View {
         let cellSize = model.cellSize
         let font = model.font
         GeometryReader { proxy in
-            Canvas { context, size in
-                drawPlan(in: context, size: size, plan: model.plan, cellSize: cellSize, font: font)
+            ZStack {
+                Canvas { context, size in
+                    drawPlan(in: context, size: size, plan: model.plan, cellSize: cellSize, font: font)
+                }
+                .background(SwiftUI.Color.black)
+
+                if model.commandPalette.isOpen {
+                    CommandPaletteView(
+                        snapshot: model.commandPalette,
+                        onSelect: { index in
+                            model.selectCommandPalette(index: index)
+                        },
+                        onSubmit: { index in
+                            model.submitCommandPalette(index: index)
+                        },
+                        onClose: {
+                            model.closeCommandPalette()
+                        },
+                        onQueryChange: { query in
+                            model.setCommandPaletteQuery(query)
+                        }
+                    )
+                }
             }
-            .overlay(
-                KeyCaptureView(
-                    onKey: { event in
-                        model.handleKeyEvent(event)
-                    },
-                    onText: { text, modifiers in
-                        model.handleText(text, modifiers: modifiers)
-                    },
-                    onScroll: { deltaX, deltaY, precise in
-                        model.handleScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
-                    },
-                    modeProvider: {
-                        model.mode
+            .background(
+                Group {
+                    if !model.commandPalette.isOpen {
+                        KeyCaptureView(
+                            onKey: { event in
+                                model.handleKeyEvent(event)
+                            },
+                            onText: { text, modifiers in
+                                model.handleText(text, modifiers: modifiers)
+                            },
+                            onScroll: { _, _, _ in },
+                            modeProvider: {
+                                model.mode
+                            }
+                        )
+                        .allowsHitTesting(false)
                     }
-                )
+                }
+            )
+            .overlay(
+                Group {
+                    if !model.commandPalette.isOpen {
+                        ScrollCaptureView(
+                            onScroll: { deltaX, deltaY, precise in
+                                model.handleScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)
+                            }
+                        )
+                        .allowsHitTesting(true)
+                    }
+                }
             )
             .onAppear {
                 model.updateViewport(pixelSize: proxy.size, cellSize: cellSize)
@@ -38,7 +74,6 @@ struct EditorView: View {
             .onChange(of: proxy.size) { newSize in
                 model.updateViewport(pixelSize: newSize, cellSize: cellSize)
             }
-            .background(SwiftUI.Color.black)
         }
     }
 
@@ -46,6 +81,7 @@ struct EditorView: View {
         drawSelections(in: context, plan: plan, cellSize: cellSize)
         drawText(in: context, plan: plan, cellSize: cellSize, font: font)
         drawCursors(in: context, plan: plan, cellSize: cellSize)
+        drawOverlays(in: context, plan: plan, cellSize: cellSize, font: font)
     }
 
     private func drawSelections(in context: GraphicsContext, plan: RenderPlan, cellSize: CGSize) {
@@ -113,6 +149,52 @@ struct EditorView: View {
         }
     }
 
+    private func drawOverlays(in context: GraphicsContext, plan: RenderPlan, cellSize: CGSize, font: Font) {
+        let count = Int(plan.overlay_count())
+        guard count > 0 else { return }
+
+        for index in 0..<count {
+            let node = plan.overlay_at(UInt(index))
+            switch node.kind() {
+            case 1: // rect
+                let rect = node.rect()
+                let x = CGFloat(rect.x) * cellSize.width
+                let y = CGFloat(rect.y) * cellSize.height
+                let width = CGFloat(rect.width) * cellSize.width
+                let height = CGFloat(rect.height) * cellSize.height
+                let radius = CGFloat(node.radius()) * min(cellSize.width, cellSize.height)
+                let path: Path = radius > 0
+                    ? Path(roundedRect: CGRect(x: x, y: y, width: width, height: height), cornerRadius: radius)
+                    : Path(CGRect(x: x, y: y, width: width, height: height))
+
+                let style = node.style()
+                let fillColor = style.has_bg ? ColorMapper.color(from: style.bg) : (style.has_fg ? ColorMapper.color(from: style.fg) : nil)
+                let strokeColor = style.has_fg ? ColorMapper.color(from: style.fg) : nil
+
+                if let fillColor {
+                    context.fill(path, with: .color(fillColor))
+                } else if let strokeColor {
+                    context.fill(path, with: .color(strokeColor))
+                }
+
+                if let strokeColor, style.has_bg {
+                    context.stroke(path, with: .color(strokeColor), lineWidth: 1)
+                }
+
+            case 2: // text
+                let pos = node.pos()
+                let x = CGFloat(pos.col) * cellSize.width
+                let y = CGFloat(pos.row) * cellSize.height
+                let style = node.style()
+                let color = style.has_fg ? (ColorMapper.color(from: style.fg) ?? SwiftUI.Color.white) : SwiftUI.Color.white
+                let text = Text(node.text().toString()).font(font).foregroundColor(color)
+                context.draw(text, at: CGPoint(x: x, y: y), anchor: .topLeading)
+            default:
+                continue
+            }
+        }
+    }
+
     private func colorForSpan(_ span: RenderSpan) -> SwiftUI.Color {
         if span.has_highlight() {
             let hue = Double(span.highlight() % 16) / 16.0
@@ -122,5 +204,9 @@ struct EditorView: View {
             return SwiftUI.Color.white.opacity(0.4)
         }
         return SwiftUI.Color.white
+    }
+
+    private func colorFrom(_ color: TheEditorFFIBridge.Color) -> SwiftUI.Color? {
+        ColorMapper.color(from: color)
     }
 }

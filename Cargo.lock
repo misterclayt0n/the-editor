@@ -1147,11 +1147,11 @@ dependencies = [
 name = "the-config"
 version = "0.1.0"
 dependencies = [
- "the-config-user",
+ "the-config-fallback",
 ]
 
 [[package]]
-name = "the-config-user"
+name = "the-config-fallback"
 version = "0.1.0"
 dependencies = [
  "the-default",

@@ -15,6 +15,7 @@ use crate::{
   KeyEvent,
   KeyOutcome,
   Modifiers,
+  command_palette_default_selected,
   command_from_name,
   CommandPaletteItem,
 };
@@ -553,8 +554,8 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
     palette.is_open = palette_open;
     if palette.is_open {
       palette.query = palette_query;
-      palette.selected = if palette.query.is_empty() { None } else { Some(0) };
       palette.items = palette_items;
+      palette.selected = command_palette_default_selected(palette);
     } else {
       palette.query.clear();
       palette.selected = None;

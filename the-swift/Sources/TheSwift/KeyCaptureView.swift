@@ -181,3 +181,25 @@ struct KeyCaptureView: NSViewRepresentable {
         nsView.modeProvider = modeProvider
     }
 }
+
+struct ScrollCaptureView: NSViewRepresentable {
+    final class ScrollCaptureNSView: NSView {
+        var onScroll: ((CGFloat, CGFloat, Bool) -> Void)?
+
+        override func scrollWheel(with event: NSEvent) {
+            onScroll?(event.scrollingDeltaX, event.scrollingDeltaY, event.hasPreciseScrollingDeltas)
+        }
+    }
+
+    let onScroll: (CGFloat, CGFloat, Bool) -> Void
+
+    func makeNSView(context: Context) -> ScrollCaptureNSView {
+        let view = ScrollCaptureNSView(frame: .zero)
+        view.onScroll = onScroll
+        return view
+    }
+
+    func updateNSView(_ nsView: ScrollCaptureNSView, context: Context) {
+        nsView.onScroll = onScroll
+    }
+}

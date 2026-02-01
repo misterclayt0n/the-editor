@@ -1,5 +1,5 @@
 [package]
-name    = "the-config"
+name    = "the-config-user"
 version = "0.1.0"
 edition = "2024"
 

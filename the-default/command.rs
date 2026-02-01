@@ -75,6 +75,7 @@ use the_lib::{
 
 use crate::{
   command_palette::{
+    CommandPaletteStyle,
     CommandPaletteState,
   },
   render_pass::{
@@ -296,6 +297,8 @@ pub trait DefaultContext: Sized + 'static {
   fn command_registry_ref(&self) -> &CommandRegistry<Self>;
   fn command_palette(&self) -> &CommandPaletteState;
   fn command_palette_mut(&mut self) -> &mut CommandPaletteState;
+  fn command_palette_style(&self) -> &CommandPaletteStyle;
+  fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle;
   fn render_passes(&self) -> &Vec<RenderPass<Self>>;
   fn render_passes_mut(&mut self) -> &mut Vec<RenderPass<Self>>;
   fn dispatch(&self) -> DispatchRef<Self>;

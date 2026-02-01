@@ -17,6 +17,9 @@ use the_lib::{
   },
 };
 
+pub type CommandPaletteLayoutFn =
+  Box<dyn Fn(&CommandPaletteState, Rect, &CommandPaletteStyle) -> Vec<OverlayNode> + 'static>;
+
 #[derive(Debug, Clone)]
 pub struct CommandPaletteItem {
   pub title:       String,
@@ -60,6 +63,14 @@ impl Default for CommandPaletteState {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub enum CommandPaletteLayout {
+  Floating,
+  Bottom,
+  Top,
+  Custom,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct CommandPaletteTheme {
   pub panel_bg:        Color,
   pub panel_border:    Color,
@@ -69,6 +80,52 @@ pub struct CommandPaletteTheme {
   pub selected_bg:     Color,
   pub selected_text:   Color,
   pub selected_border: Color,
+}
+
+pub struct CommandPaletteStyle {
+  pub layout:         CommandPaletteLayout,
+  pub theme:          CommandPaletteTheme,
+  pub layout_builder: Option<CommandPaletteLayoutFn>,
+}
+
+impl Default for CommandPaletteStyle {
+  fn default() -> Self {
+    Self {
+      layout:         CommandPaletteLayout::Floating,
+      theme:          CommandPaletteTheme::default(),
+      layout_builder: None,
+    }
+  }
+}
+
+impl CommandPaletteStyle {
+  pub fn floating(theme: CommandPaletteTheme) -> Self {
+    Self {
+      layout:         CommandPaletteLayout::Floating,
+      theme,
+      layout_builder: None,
+    }
+  }
+
+  pub fn bottom(theme: CommandPaletteTheme) -> Self {
+    Self {
+      layout:         CommandPaletteLayout::Bottom,
+      theme,
+      layout_builder: None,
+    }
+  }
+
+  pub fn top(theme: CommandPaletteTheme) -> Self {
+    Self {
+      layout:         CommandPaletteLayout::Top,
+      theme,
+      layout_builder: None,
+    }
+  }
+
+  pub fn helix_bottom() -> Self {
+    Self::bottom(CommandPaletteTheme::helix())
+  }
 }
 
 impl Default for CommandPaletteTheme {
@@ -105,10 +162,37 @@ pub fn build_command_palette_overlay(
   state: &CommandPaletteState,
   viewport: Rect,
 ) -> Vec<OverlayNode> {
-  build_command_palette_overlay_with_theme(state, viewport, CommandPaletteTheme::default())
+  build_command_palette_overlay_with_style(state, viewport, &CommandPaletteStyle::default())
 }
 
 pub fn build_command_palette_overlay_with_theme(
+  state: &CommandPaletteState,
+  viewport: Rect,
+  theme: CommandPaletteTheme,
+) -> Vec<OverlayNode> {
+  build_command_palette_overlay_floating(state, viewport, theme)
+}
+
+pub fn build_command_palette_overlay_with_style(
+  state: &CommandPaletteState,
+  viewport: Rect,
+  style: &CommandPaletteStyle,
+) -> Vec<OverlayNode> {
+  if let Some(builder) = style.layout_builder.as_ref() {
+    return builder(state, viewport, style);
+  }
+
+  match style.layout {
+    CommandPaletteLayout::Floating => {
+      build_command_palette_overlay_floating(state, viewport, style.theme)
+    },
+    CommandPaletteLayout::Bottom => build_command_palette_overlay_bottom(state, viewport, style.theme),
+    CommandPaletteLayout::Top => build_command_palette_overlay_top(state, viewport, style.theme),
+    CommandPaletteLayout::Custom => Vec::new(),
+  }
+}
+
+pub fn build_command_palette_overlay_floating(
   state: &CommandPaletteState,
   viewport: Rect,
   theme: CommandPaletteTheme,
@@ -406,6 +490,168 @@ pub fn build_command_palette_overlay_bottom(
   for (row_idx, item_idx) in filtered.iter().enumerate() {
     let row_y = list_start + row_idx as u16;
     if row_y >= divider_row {
+      break;
+    }
+
+    if selected_index == Some(row_idx) {
+      nodes.push(OverlayNode::Rect(OverlayRect {
+        rect:   Rect::new(panel_x, row_y, panel_width, row_height),
+        kind:   OverlayRectKind::Highlight,
+        radius: 0,
+        style:  Style {
+          bg: Some(theme.selected_bg),
+          fg: Some(theme.selected_border),
+          ..Style::default()
+        },
+      }));
+    }
+
+    let style = if selected_index == Some(row_idx) {
+      Style {
+        fg: Some(theme.selected_text),
+        ..Style::default()
+      }
+    } else {
+      Style {
+        fg: Some(theme.text),
+        ..Style::default()
+      }
+    };
+
+    nodes.push(OverlayNode::Text(OverlayText {
+      pos:   Position::new(row_y as usize, (panel_x + 1) as usize),
+      text:  state.items[*item_idx].title.clone(),
+      style,
+    }));
+  }
+
+  nodes
+}
+
+pub fn build_command_palette_overlay_top(
+  state: &CommandPaletteState,
+  viewport: Rect,
+  theme: CommandPaletteTheme,
+) -> Vec<OverlayNode> {
+  if !state.is_open {
+    return Vec::new();
+  }
+
+  let mut filtered: Vec<usize> = if state.query.is_empty() {
+    (0..state.items.len()).collect()
+  } else {
+    struct PaletteKey {
+      index: usize,
+      text:  String,
+    }
+
+    impl AsRef<str> for PaletteKey {
+      fn as_ref(&self) -> &str {
+        &self.text
+      }
+    }
+
+    let keys: Vec<PaletteKey> = state
+      .items
+      .iter()
+      .enumerate()
+      .map(|(idx, item)| PaletteKey {
+        index: idx,
+        text:  item.title.clone(),
+      })
+      .collect();
+
+    fuzzy_match(&state.query, keys.iter(), MatchMode::Plain)
+      .into_iter()
+      .map(|(key, _)| key.index)
+      .collect()
+  };
+
+  if filtered.len() > state.max_results {
+    filtered.truncate(state.max_results);
+  }
+
+  let row_height: u16 = 1;
+  let divider_height: u16 = 1;
+  let input_height: u16 = 1;
+  let list_rows = filtered.len() as u16;
+  let panel_height = list_rows
+    .saturating_add(divider_height)
+    .saturating_add(input_height)
+    .min(viewport.height);
+
+  if panel_height == 0 {
+    return Vec::new();
+  }
+
+  let panel_width = viewport.width;
+  let panel_x = viewport.x;
+  let panel_y = viewport.y;
+
+  let input_row = panel_y;
+  let divider_row = input_row.saturating_add(1);
+  let list_start = divider_row.saturating_add(divider_height);
+
+  let mut nodes = Vec::new();
+
+  nodes.push(OverlayNode::Rect(OverlayRect {
+    rect:   Rect::new(panel_x, panel_y, panel_width, panel_height),
+    kind:   OverlayRectKind::Panel,
+    radius: 0,
+    style:  Style {
+      bg: Some(theme.panel_bg),
+      fg: None,
+      underline_color: None,
+      underline_style: None,
+      add_modifier: the_lib::render::graphics::Modifier::empty(),
+      sub_modifier: the_lib::render::graphics::Modifier::empty(),
+    },
+  }));
+
+  let placeholder = "Execute a command...";
+  let (input_text, input_style) = if state.query.is_empty() {
+    (
+      format!(":{placeholder}"),
+      Style {
+        fg: Some(theme.placeholder),
+        ..Style::default()
+      },
+    )
+  } else {
+    (
+      format!(":{}", state.query),
+      Style {
+        fg: Some(theme.text),
+        ..Style::default()
+      },
+    )
+  };
+
+  nodes.push(OverlayNode::Text(OverlayText {
+    pos:   Position::new(input_row as usize, (panel_x + 1) as usize),
+    text:  input_text,
+    style: input_style,
+  }));
+
+  if divider_row < panel_y.saturating_add(panel_height) {
+    nodes.push(OverlayNode::Rect(OverlayRect {
+      rect:   Rect::new(panel_x, divider_row, panel_width, divider_height),
+      kind:   OverlayRectKind::Divider,
+      radius: 0,
+      style:  Style {
+        fg: Some(theme.divider),
+        ..Style::default()
+      },
+    }));
+  }
+
+  let selected_index = state
+    .selected
+    .and_then(|sel| filtered.iter().position(|&idx| idx == sel));
+
+  for (row_idx, item_idx) in filtered.iter().enumerate() {
+    let row_y = list_start + row_idx as u16;
+    if row_y >= panel_y.saturating_add(panel_height) {
       break;
     }
 

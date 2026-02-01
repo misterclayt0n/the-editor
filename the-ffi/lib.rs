@@ -27,6 +27,7 @@ use ropey::Rope;
 use the_default::{
   Command,
   CommandPaletteState,
+  CommandPaletteStyle,
   CommandPromptState,
   CommandRegistry,
   DefaultContext,
@@ -551,6 +552,7 @@ struct EditorState {
   mode:           Mode,
   command_prompt: CommandPromptState,
   command_palette: CommandPaletteState,
+  command_palette_style: CommandPaletteStyle,
   render_passes:  Vec<the_default::RenderPass<App>>,
   needs_render:   bool,
   pending_input:  Option<the_default::PendingInput>,
@@ -569,6 +571,7 @@ impl EditorState {
       mode: Mode::Normal,
       command_prompt: CommandPromptState::new(),
       command_palette: CommandPaletteState::default(),
+      command_palette_style: CommandPaletteStyle::default(),
       render_passes: the_default::default_render_passes(),
       needs_render: true,
       pending_input: None,
@@ -1076,6 +1079,14 @@ impl DefaultContext for App {
 
   fn command_palette_mut(&mut self) -> &mut CommandPaletteState {
     &mut self.active_state_mut().command_palette
+  }
+
+  fn command_palette_style(&self) -> &CommandPaletteStyle {
+    &self.active_state_ref().command_palette_style
+  }
+
+  fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle {
+    &mut self.active_state_mut().command_palette_style
   }
 
   fn render_passes(&self) -> &Vec<the_default::RenderPass<Self>> {

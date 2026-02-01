@@ -2,7 +2,7 @@ use the_lib::render::RenderPlan;
 
 use crate::{
   DefaultContext,
-  command_palette::build_command_palette_overlay,
+  command_palette::build_command_palette_overlay_with_style,
 };
 
 pub type RenderPass<Ctx> = Box<dyn Fn(&mut Ctx, &mut RenderPlan) + 'static>;
@@ -18,7 +18,8 @@ pub fn run_render_passes<Ctx: DefaultContext>(ctx: &mut Ctx, plan: &mut RenderPl
 }
 
 fn command_palette_pass<Ctx: DefaultContext>(ctx: &mut Ctx, plan: &mut RenderPlan) {
-  let overlays = build_command_palette_overlay(ctx.command_palette(), plan.viewport);
+  let overlays =
+    build_command_palette_overlay_with_style(ctx.command_palette(), plan.viewport, ctx.command_palette_style());
   if !overlays.is_empty() {
     plan.overlays.extend(overlays);
   }

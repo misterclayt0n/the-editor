@@ -17,7 +17,7 @@ use the_default::{
   CommandPromptState,
   CommandRegistry,
   CommandPaletteState,
-  CommandPaletteTheme,
+  CommandPaletteStyle,
   DefaultDispatchStatic,
   DispatchRef,
   KeyBinding,
@@ -26,7 +26,6 @@ use the_default::{
   Mode,
   Motion,
   RenderPass,
-  build_command_palette_overlay_bottom,
   default_render_passes,
 };
 use the_lib::{
@@ -69,6 +68,7 @@ pub struct Ctx {
   pub command_prompt:   CommandPromptState,
   pub command_registry: CommandRegistry<Ctx>,
   pub command_palette:  CommandPaletteState,
+  pub command_palette_style: CommandPaletteStyle,
   pub render_passes:    Vec<RenderPass<Ctx>>,
   pub pending_input:    Option<the_default::PendingInput>,
   pub dispatch:         Option<NonNull<DefaultDispatchStatic<Ctx>>>,
@@ -141,9 +141,7 @@ impl Ctx {
     let mut text_format = TextFormat::default();
     text_format.viewport_width = viewport.width;
 
-    let mut render_passes = default_render_passes();
-    render_passes.clear();
-    render_passes.push(Box::new(command_palette_helix_pass));
+    let render_passes = default_render_passes();
 
     Ok(Self {
       editor,
@@ -155,6 +153,7 @@ impl Ctx {
       command_prompt: CommandPromptState::new(),
       command_registry: CommandRegistry::new(),
       command_palette: CommandPaletteState::default(),
+      command_palette_style: CommandPaletteStyle::helix_bottom(),
       render_passes,
       pending_input: None,
       dispatch: None,
@@ -179,14 +178,6 @@ impl Ctx {
   /// Handle terminal resize.
   pub fn resize(&mut self, width: u16, height: u16) {
     self.editor.view_mut().viewport = Rect::new(0, 0, width, height);
-  }
-}
-
-fn command_palette_helix_pass(ctx: &mut Ctx, plan: &mut RenderPlan) {
-  let overlays =
-    build_command_palette_overlay_bottom(&ctx.command_palette, plan.viewport, CommandPaletteTheme::helix());
-  if !overlays.is_empty() {
-    plan.overlays.extend(overlays);
   }
 }
 
@@ -253,6 +244,14 @@ impl the_default::DefaultContext for Ctx {
 
   fn command_palette_mut(&mut self) -> &mut CommandPaletteState {
     &mut self.command_palette
+  }
+
+  fn command_palette_style(&self) -> &CommandPaletteStyle {
+    &self.command_palette_style
+  }
+
+  fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle {
+    &mut self.command_palette_style
   }
 
   fn render_passes(&self) -> &Vec<RenderPass<Self>> {

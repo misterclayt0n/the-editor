@@ -27,64 +27,28 @@ pub fn install_config_template() -> Result<()> {
 
 pub fn build_config_binary() -> Result<()> {
   let config_dir = the_loader::config_dir();
-  let repo_config_dir = the_loader::repo_config_dir();
-
-  if config_dir.join("Cargo.toml").exists() {
-    sync_config_crate(&config_dir, &repo_config_dir)?;
+  if !config_dir.join("Cargo.toml").exists() {
+    return Err(eyre::eyre!(
+      "config crate is missing Cargo.toml: {}",
+      config_dir.display()
+    ));
   }
 
-  let status = std::process::Command::new("cargo")
-    .arg("build")
-    .arg("-p")
-    .arg("the-term")
-    .current_dir(the_loader::repo_root_dir())
-    .status()
-    .wrap_err("failed to build the-term")?;
+  let package_name = read_package_name(&config_dir)?;
+
+  let status = with_patched_repo_config_manifest(&config_dir, &package_name, || {
+    std::process::Command::new("cargo")
+      .arg("build")
+      .arg("-p")
+      .arg("the-term")
+      .current_dir(the_loader::repo_root_dir())
+      .status()
+      .wrap_err("failed to build the-term")
+  })?;
 
   if !status.success() {
     return Err(eyre::eyre!("build failed"));
   }
-
-  Ok(())
-}
-
-fn sync_config_crate(src: &Path, dst: &Path) -> Result<()> {
-  let src_manifest = src.join("Cargo.toml");
-  let src_src = src.join("src");
-
-  if !src_manifest.exists() || !src_src.exists() {
-    return Err(eyre::eyre!(
-      "config crate is missing Cargo.toml or src/: {}",
-      src.display()
-    ));
-  }
-
-  std::fs::create_dir_all(dst)?;
-  let manifest_content = std::fs::read_to_string(&src_manifest)?;
-  let manifest_content = patch_package_name(&manifest_content, "the-config");
-  std::fs::write(dst.join("Cargo.toml"), manifest_content)?;
-
-  let dst_src = dst.join("src");
-  if dst_src.exists() {
-    std::fs::remove_dir_all(&dst_src)?;
-  }
-  copy_dir_all(&src_src, &dst_src)?;
-
-  let src_build = src.join("build.rs");
-  if src_build.exists() {
-    std::fs::copy(&src_build, dst.join("build.rs"))?;
-  } else {
-    let dst_build = dst.join("build.rs");
-    if dst_build.exists() {
-      std::fs::remove_file(dst_build)?;
-    }
-  }
-
-  sync_optional_dir(src, dst, "assets")?;
-  sync_optional_dir(src, dst, "resources")?;
-  sync_optional_dir(src, dst, "data")?;
-  sync_optional_dir(src, dst, "templates")?;
-  sync_optional_dir(src, dst, "queries")?;
 
   Ok(())
 }
@@ -114,50 +78,36 @@ fn patch_template_manifest(dir: &Path) -> Result<()> {
   Ok(())
 }
 
-fn sync_optional_dir(src_root: &Path, dst_root: &Path, name: &str) -> Result<()> {
-  let src_dir = src_root.join(name);
-  let dst_dir = dst_root.join(name);
-  if !src_dir.exists() {
-    if dst_dir.exists() {
-      std::fs::remove_dir_all(dst_dir)?;
-    }
-    return Ok(());
-  }
-
-  if dst_dir.exists() {
-    std::fs::remove_dir_all(&dst_dir)?;
-  }
-  copy_dir_all(&src_dir, &dst_dir)?;
-  Ok(())
-}
-
-fn patch_package_name(content: &str, name: &str) -> String {
-  let mut out = String::with_capacity(content.len() + 16);
-  let mut in_package = false;
+fn patch_repo_config_manifest(config_dir: &Path, package_name: &str) -> Result<String> {
+  let manifest = the_loader::repo_config_dir().join("Cargo.toml");
+  let content = std::fs::read_to_string(&manifest)?;
+  let mut out = String::with_capacity(content.len() + 64);
+  let mut in_deps = false;
   let mut replaced = false;
 
   for line in content.lines() {
     let trimmed = line.trim_start();
     if trimmed.starts_with('[') {
-      if in_package && !replaced {
-        out.push_str("name = \"");
-        out.push_str(name);
-        out.push_str("\"\n");
+      if in_deps && !replaced {
+        out.push_str("the-config-user = { path = \"");
+        out.push_str(config_dir.to_string_lossy().as_ref());
+        out.push_str("\", package = \"");
+        out.push_str(package_name);
+        out.push_str("\" }\n");
         replaced = true;
       }
-      in_package = trimmed == "[package]";
+      in_deps = trimmed == "[dependencies]";
       out.push_str(line);
       out.push('\n');
       continue;
     }
 
-    if in_package && trimmed.starts_with("name") {
-      let prefix_len = line.len().saturating_sub(trimmed.len());
-      let prefix = &line[..prefix_len];
-      out.push_str(prefix);
-      out.push_str("name = \"");
-      out.push_str(name);
-      out.push_str("\"\n");
+    if in_deps && trimmed.starts_with("the-config-user") {
+      out.push_str("the-config-user = { path = \"");
+      out.push_str(config_dir.to_string_lossy().as_ref());
+      out.push_str("\", package = \"");
+      out.push_str(package_name);
+      out.push_str("\" }\n");
       replaced = true;
       continue;
     }
@@ -166,11 +116,65 @@ fn patch_package_name(content: &str, name: &str) -> String {
     out.push('\n');
   }
 
-  if in_package && !replaced {
-    out.push_str("name = \"");
-    out.push_str(name);
-    out.push_str("\"\n");
+  if in_deps && !replaced {
+    out.push_str("the-config-user = { path = \"");
+    out.push_str(config_dir.to_string_lossy().as_ref());
+    out.push_str("\", package = \"");
+    out.push_str(package_name);
+    out.push_str("\" }\n");
   }
 
-  out
+  std::fs::write(&manifest, &out)?;
+  Ok(content)
+}
+
+fn read_package_name(config_dir: &Path) -> Result<String> {
+  let manifest = config_dir.join("Cargo.toml");
+  let content = std::fs::read_to_string(&manifest)?;
+  let mut in_package = false;
+
+  for line in content.lines() {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with('[') {
+      in_package = trimmed == "[package]";
+      continue;
+    }
+
+    if in_package && trimmed.starts_with("name") {
+      let parts: Vec<&str> = trimmed.splitn(2, '=').collect();
+      if parts.len() != 2 {
+        break;
+      }
+      let value = parts[1].trim().trim_matches('"').to_string();
+      if !value.is_empty() {
+        if value == "the-config" {
+          return Err(eyre::eyre!(
+            "config crate package name must not be \"the-config\"; please rename it (e.g. to \"the-config-user\") in {}",
+            manifest.display()
+          ));
+        }
+        return Ok(value);
+      }
+    }
+  }
+
+  Err(eyre::eyre!(
+    "failed to read package name from {}",
+    manifest.display()
+  ))
+}
+
+fn with_patched_repo_config_manifest<F>(
+  config_dir: &Path,
+  package_name: &str,
+  action: F,
+) -> Result<std::process::ExitStatus>
+where
+  F: FnOnce() -> Result<std::process::ExitStatus>,
+{
+  let manifest = the_loader::repo_config_dir().join("Cargo.toml");
+  let original = patch_repo_config_manifest(config_dir, package_name)?;
+  let result = action();
+  let _ = std::fs::write(&manifest, original);
+  result
 }

@@ -1,11 +1,10 @@
 [package]
-name    = "the-config"
+name = "the-config"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-path = "lib.rs"
+path = "src/lib.rs"
 
 [dependencies]
-the-default = { path = "../the-default" }
-the-lib     = { path = "../the-lib" }
+the-config-user = { path = "fallback", package = "the-config-fallback" }

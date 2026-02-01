@@ -52,12 +52,16 @@ pub use command_registry::{
   handle_command_prompt_key,
 };
 pub use command_palette::{
+  CommandPaletteLayout,
   CommandPaletteItem,
   CommandPaletteState,
+  CommandPaletteStyle,
   CommandPaletteTheme,
   build_command_palette_overlay,
   build_command_palette_overlay_with_theme,
+  build_command_palette_overlay_with_style,
   build_command_palette_overlay_bottom,
+  build_command_palette_overlay_top,
 };
 pub use render_pass::{
   RenderPass,

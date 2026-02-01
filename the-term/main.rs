@@ -16,7 +16,10 @@ mod theme;
 
 use std::time::Duration;
 
-use clap::Parser;
+use clap::{
+  Parser,
+  Subcommand,
+};
 use crossterm::event::{
   self,
   Event,
@@ -32,28 +35,45 @@ use crate::{
 #[command(name = "the-editor")]
 #[command(about = "Proof-of-life terminal client for the-editor")]
 struct Cli {
-  /// Install a default config crate in ~/.config/the-editor
-  #[arg(long)]
-  install_config: bool,
-
-  /// Build the editor using ~/.config/the-editor if present
-  #[arg(long)]
-  build_config: bool,
+  #[command(subcommand)]
+  command: Option<Command>,
 
   /// Path to file to open
   file: Option<String>,
 }
 
+#[derive(Debug, Subcommand)]
+enum Command {
+  /// Manage editor configuration
+  Config {
+    #[command(subcommand)]
+    command: ConfigCommand,
+  },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommand {
+  /// Install a default config crate in ~/.config/the-editor
+  Install,
+  /// Build the editor using ~/.config/the-editor if present
+  Build,
+}
+
 fn main() -> Result<()> {
   let cli = Cli::parse();
-  if cli.install_config {
-    config_cli::install_config_template()?;
-    return Ok(());
-  }
-
-  if cli.build_config {
-    config_cli::build_config_binary()?;
-    return Ok(());
+  if let Some(command) = cli.command {
+    match command {
+      Command::Config { command } => match command {
+        ConfigCommand::Install => {
+          config_cli::install_config_template()?;
+          return Ok(());
+        },
+        ConfigCommand::Build => {
+          config_cli::build_config_binary()?;
+          return Ok(());
+        },
+      },
+    }
   }
 
   let file_path = cli.file.as_deref();

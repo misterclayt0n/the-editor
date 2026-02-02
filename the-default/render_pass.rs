@@ -26,5 +26,11 @@ fn command_palette_pass<Ctx: DefaultContext>(ctx: &mut Ctx, plan: &mut RenderPla
 }
 
 pub fn default_render_passes<Ctx: DefaultContext>() -> Vec<RenderPass<Ctx>> {
-  vec![Box::new(command_palette_pass::<Ctx>)]
+  Vec::new()
+}
+
+/// Optional helper render pass for clients that want command palette overlays
+/// built from the default layout helpers (e.g. the-term).
+pub fn command_palette_overlay_pass<Ctx: DefaultContext>() -> RenderPass<Ctx> {
+  Box::new(command_palette_pass::<Ctx>)
 }

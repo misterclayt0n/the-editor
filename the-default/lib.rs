@@ -68,6 +68,7 @@ pub use command_palette::{
 };
 pub use render_pass::{
   RenderPass,
+  command_palette_overlay_pass,
   default_render_passes,
   run_render_passes,
 };

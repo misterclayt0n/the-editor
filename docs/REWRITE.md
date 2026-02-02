@@ -202,6 +202,38 @@ Dispatch::new()
 
 ---
 
+## Rendering & Components (Data + Intent)
+
+The editor core should provide **state + intent**, not pixel/row layout, for UI components.
+
+**Why:**
+- Clients are fundamentally different (terminal vs Swift vs other).
+- Units vary (cells vs pixels), so a single layout computation in the core is brittle.
+- Users should be able to override layout intent in config without binding to a specific renderer.
+
+**Model:**
+- **the-lib / the-default**: owns component *data* (query, items, selection) and *intent* (layout enum).
+- **Clients**: decide layout + visuals.
+- **Config**: overrides intent (e.g. `Floating`, `Bottom`, `Top`) without specifying coordinates.
+
+Example intent override:
+
+```rust
+fn pre_render<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  ctx.command_palette_style_mut().layout = CommandPaletteLayout::Floating;
+}
+```
+
+### Optional Layout Helpers (Terminal)
+
+We can keep **optional** layout helpers that build overlay nodes for terminal clients that want them,
+but these are **not** the source of truth. Clients may ignore them entirely.
+
+This keeps the system **composable** and **client-creative**, while preserving a usable default for
+the-term.
+
+---
+
 # Client Architecture (macOS) + Renderer Plan
 
 This section ties the current architecture to a Ghostty-style runtime and

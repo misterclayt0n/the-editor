@@ -26,6 +26,7 @@ use the_default::{
   Mode,
   Motion,
   RenderPass,
+  command_palette_overlay_pass,
   default_render_passes,
 };
 use the_lib::{
@@ -141,7 +142,8 @@ impl Ctx {
     let mut text_format = TextFormat::default();
     text_format.viewport_width = viewport.width;
 
-    let render_passes = default_render_passes();
+    let mut render_passes = default_render_passes();
+    render_passes.push(command_palette_overlay_pass());
 
     Ok(Self {
       editor,

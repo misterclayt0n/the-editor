@@ -60,15 +60,9 @@ pub use command_palette::{
   command_palette_default_selected,
   command_palette_filtered_indices,
   command_palette_selected_filtered_index,
-  build_command_palette_overlay,
-  build_command_palette_overlay_with_theme,
-  build_command_palette_overlay_with_style,
-  build_command_palette_overlay_bottom,
-  build_command_palette_overlay_top,
 };
 pub use render_pass::{
   RenderPass,
-  command_palette_overlay_pass,
   default_render_passes,
   run_render_passes,
 };

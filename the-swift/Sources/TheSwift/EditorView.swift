@@ -81,7 +81,6 @@ struct EditorView: View {
         drawSelections(in: context, plan: plan, cellSize: cellSize)
         drawText(in: context, plan: plan, cellSize: cellSize, font: font)
         drawCursors(in: context, plan: plan, cellSize: cellSize)
-        drawOverlays(in: context, plan: plan, cellSize: cellSize, font: font)
     }
 
     private func drawSelections(in context: GraphicsContext, plan: RenderPlan, cellSize: CGSize) {
@@ -145,52 +144,6 @@ struct EditorView: View {
             default: // block
                 let rect = CGRect(x: x, y: y, width: cellSize.width, height: cellSize.height)
                 context.fill(Path(rect), with: .color(cursorColor.opacity(0.5)))
-            }
-        }
-    }
-
-    private func drawOverlays(in context: GraphicsContext, plan: RenderPlan, cellSize: CGSize, font: Font) {
-        let count = Int(plan.overlay_count())
-        guard count > 0 else { return }
-
-        for index in 0..<count {
-            let node = plan.overlay_at(UInt(index))
-            switch node.kind() {
-            case 1: // rect
-                let rect = node.rect()
-                let x = CGFloat(rect.x) * cellSize.width
-                let y = CGFloat(rect.y) * cellSize.height
-                let width = CGFloat(rect.width) * cellSize.width
-                let height = CGFloat(rect.height) * cellSize.height
-                let radius = CGFloat(node.radius()) * min(cellSize.width, cellSize.height)
-                let path: Path = radius > 0
-                    ? Path(roundedRect: CGRect(x: x, y: y, width: width, height: height), cornerRadius: radius)
-                    : Path(CGRect(x: x, y: y, width: width, height: height))
-
-                let style = node.style()
-                let fillColor = style.has_bg ? ColorMapper.color(from: style.bg) : (style.has_fg ? ColorMapper.color(from: style.fg) : nil)
-                let strokeColor = style.has_fg ? ColorMapper.color(from: style.fg) : nil
-
-                if let fillColor {
-                    context.fill(path, with: .color(fillColor))
-                } else if let strokeColor {
-                    context.fill(path, with: .color(strokeColor))
-                }
-
-                if let strokeColor, style.has_bg {
-                    context.stroke(path, with: .color(strokeColor), lineWidth: 1)
-                }
-
-            case 2: // text
-                let pos = node.pos()
-                let x = CGFloat(pos.col) * cellSize.width
-                let y = CGFloat(pos.row) * cellSize.height
-                let style = node.style()
-                let color = style.has_fg ? (ColorMapper.color(from: style.fg) ?? SwiftUI.Color.white) : SwiftUI.Color.white
-                let text = Text(node.text().toString()).font(font).foregroundColor(color)
-                context.draw(text, at: CGPoint(x: x, y: y), anchor: .topLeading)
-            default:
-                continue
             }
         }
     }

@@ -12,8 +12,6 @@ use the_default::{
 };
 use the_lib::render::{
   NoHighlights,
-  OverlayNode,
-  OverlayRectKind,
   RenderPlan,
   RenderStyles,
   SyntaxHighlightAdapter,
@@ -52,17 +50,6 @@ fn lib_color_to_ratatui(color: the_lib::render::graphics::Color) -> Color {
   }
 }
 
-fn overlay_style_to_ratatui(style: &the_lib::render::graphics::Style) -> Style {
-  let mut out = Style::default();
-  if let Some(fg) = style.fg {
-    out = out.fg(lib_color_to_ratatui(fg));
-  }
-  if let Some(bg) = style.bg {
-    out = out.bg(lib_color_to_ratatui(bg));
-  }
-  out
-}
-
 fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style) {
   if rect.width == 0 || rect.height == 0 {
     return;
@@ -70,39 +57,6 @@ fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style) {
   let line = " ".repeat(rect.width as usize);
   for y in rect.y..rect.y + rect.height {
     buf.set_string(rect.x, y, &line, style);
-  }
-}
-
-fn draw_overlay_nodes(buf: &mut Buffer, area: Rect, plan: &RenderPlan) {
-  for node in &plan.overlays {
-    match node {
-      OverlayNode::Rect(rect) => {
-        let rect_area = Rect::new(
-          area.x + rect.rect.x,
-          area.y + rect.rect.y,
-          rect.rect.width,
-          rect.rect.height,
-        );
-        let style = overlay_style_to_ratatui(&rect.style);
-        if rect_area.width == 0 || rect_area.height == 0 {
-          continue;
-        }
-        match rect.kind {
-          OverlayRectKind::Divider => {
-            let line = "─".repeat(rect_area.width as usize);
-            buf.set_string(rect_area.x, rect_area.y, &line, style);
-          },
-          _ => fill_rect(buf, rect_area, style),
-        }
-      },
-      OverlayNode::Text(text) => {
-        let x = area.x + text.pos.col as u16;
-        let y = area.y + text.pos.row as u16;
-        let style = overlay_style_to_ratatui(&text.style);
-        buf.set_string(x, y, &text.text, style);
-      },
-    }
-  }
 }
 
 fn draw_command_palette(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
@@ -515,8 +469,6 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
         buf.set_string(x, y, span.text.as_str(), style);
       }
     }
-
-    draw_overlay_nodes(buf, area, &plan);
 
     // Draw secondary cursors
     for cursor in plan.cursors.iter().skip(1) {

@@ -30,6 +30,7 @@ name = "the-editor"
 bitflags                 = "2.9"
 clap                     = { features = [ "derive" ], version = "4.5" }
 crossterm                = "0.28"
+ratatui                  = { version = "0.27", default-features = false, features = [ "crossterm" ] }
 dunce                    = "1.0"
 etcetera                 = "0.10"
 eyre                     = "0.6"

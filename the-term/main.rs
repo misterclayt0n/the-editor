@@ -88,7 +88,7 @@ fn main() -> Result<()> {
   terminal.enter_raw_mode()?;
 
   // Initial render
-  render::render(&mut ctx, &mut terminal)?;
+  terminal.draw(|f| render::render(f, &mut ctx))?;
 
   // Event loop
   loop {
@@ -103,6 +103,7 @@ fn main() -> Result<()> {
         },
         Event::Resize(w, h) => {
           ctx.resize(w, h);
+          terminal.resize(w, h)?;
           ctx.needs_render = true;
         },
         _ => {},
@@ -112,7 +113,7 @@ fn main() -> Result<()> {
     // Render if needed
     if ctx.needs_render {
       render::ensure_cursor_visible(&mut ctx);
-      render::render(&mut ctx, &mut terminal)?;
+      terminal.draw(|f| render::render(f, &mut ctx))?;
       ctx.needs_render = false;
     }
   }

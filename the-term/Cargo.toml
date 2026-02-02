@@ -12,6 +12,7 @@ path = "main.rs"
 clap.workspace      = true
 crossterm.workspace = true
 eyre.workspace      = true
+ratatui.workspace   = true
 ropey.workspace     = true
 the-config          = { path = "../the-config" }
 the-default         = { path = "../the-default" }

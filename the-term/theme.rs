@@ -1,6 +1,6 @@
 //! Hardcoded syntax theme using terminal colors.
 
-use crossterm::style::Color;
+use ratatui::style::Color;
 use the_lib::syntax::Highlight;
 
 /// Standard highlight scopes (indices into this array = Highlight values).
@@ -83,7 +83,7 @@ pub fn highlight_to_color(highlight: Highlight) -> Color {
   }
   // Comments - Dark Grey
   if scope.starts_with("comment") {
-    return Color::DarkGrey;
+    return Color::DarkGray;
   }
   // Constants - Magenta
   if scope.starts_with("constant") {
@@ -95,7 +95,7 @@ pub fn highlight_to_color(highlight: Highlight) -> Color {
   }
   // Punctuation - Dark Grey
   if scope.starts_with("punctuation") {
-    return Color::DarkGrey;
+    return Color::DarkGray;
   }
   // Attributes - Yellow
   if scope.starts_with("attribute") {
@@ -112,7 +112,7 @@ pub fn highlight_to_color(highlight: Highlight) -> Color {
     return Color::Cyan;
   }
   if scope.starts_with("markup.quote") {
-    return Color::DarkGrey;
+    return Color::DarkGray;
   }
   if scope.starts_with("markup.raw") {
     return Color::Green;

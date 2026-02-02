@@ -1,8 +1,15 @@
-//! Rendering - converts RenderPlan to terminal draw calls.
+//! Rendering - converts RenderPlan to ratatui draw calls.
 
-use crossterm::style::Color;
-use eyre::Result;
-use the_default::render_plan;
+use ratatui::{
+  prelude::*,
+  widgets::Clear,
+};
+use the_default::{
+  CommandPaletteLayout,
+  command_palette_default_selected,
+  command_palette_filtered_indices,
+  render_plan,
+};
 use the_lib::render::{
   NoHighlights,
   OverlayNode,
@@ -17,11 +24,10 @@ use the_lib::selection::Range;
 
 use crate::{
   Ctx,
-  terminal::Terminal,
   theme::highlight_to_color,
 };
 
-fn color_to_term(color: the_lib::render::graphics::Color) -> Color {
+fn lib_color_to_ratatui(color: the_lib::render::graphics::Color) -> Color {
   use the_lib::render::graphics::Color as LibColor;
   match color {
     LibColor::Reset => Color::Reset,
@@ -32,60 +38,389 @@ fn color_to_term(color: the_lib::render::graphics::Color) -> Color {
     LibColor::Blue => Color::Blue,
     LibColor::Magenta => Color::Magenta,
     LibColor::Cyan => Color::Cyan,
-    LibColor::Gray => Color::DarkGrey,
-    LibColor::LightRed => Color::Red,
-    LibColor::LightGreen => Color::Green,
-    LibColor::LightYellow => Color::Yellow,
-    LibColor::LightBlue => Color::Blue,
-    LibColor::LightMagenta => Color::Magenta,
-    LibColor::LightCyan => Color::Cyan,
-    LibColor::LightGray => Color::Grey,
+    LibColor::Gray => Color::DarkGray,
+    LibColor::LightRed => Color::LightRed,
+    LibColor::LightGreen => Color::LightGreen,
+    LibColor::LightYellow => Color::LightYellow,
+    LibColor::LightBlue => Color::LightBlue,
+    LibColor::LightMagenta => Color::LightMagenta,
+    LibColor::LightCyan => Color::LightCyan,
+    LibColor::LightGray => Color::Gray,
     LibColor::White => Color::White,
-    LibColor::Rgb(r, g, b) => Color::Rgb { r, g, b },
-    LibColor::Indexed(idx) => Color::AnsiValue(idx),
+    LibColor::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    LibColor::Indexed(idx) => Color::Indexed(idx),
   }
 }
 
-fn draw_overlay_nodes(terminal: &mut Terminal, plan: &RenderPlan) -> Result<()> {
+fn overlay_style_to_ratatui(style: &the_lib::render::graphics::Style) -> Style {
+  let mut out = Style::default();
+  if let Some(fg) = style.fg {
+    out = out.fg(lib_color_to_ratatui(fg));
+  }
+  if let Some(bg) = style.bg {
+    out = out.bg(lib_color_to_ratatui(bg));
+  }
+  out
+}
+
+fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style) {
+  if rect.width == 0 || rect.height == 0 {
+    return;
+  }
+  let line = " ".repeat(rect.width as usize);
+  for y in rect.y..rect.y + rect.height {
+    buf.set_string(rect.x, y, &line, style);
+  }
+}
+
+fn draw_overlay_nodes(buf: &mut Buffer, area: Rect, plan: &RenderPlan) {
   for node in &plan.overlays {
     match node {
       OverlayNode::Rect(rect) => {
-        let fg = rect.style.fg.map(color_to_term);
-        let bg = rect.style.bg.map(color_to_term);
-        let width = rect.rect.width;
-        let height = rect.rect.height;
-
-        if width == 0 || height == 0 {
+        let rect_area = Rect::new(
+          area.x + rect.rect.x,
+          area.y + rect.rect.y,
+          rect.rect.width,
+          rect.rect.height,
+        );
+        let style = overlay_style_to_ratatui(&rect.style);
+        if rect_area.width == 0 || rect_area.height == 0 {
           continue;
         }
-
         match rect.kind {
           OverlayRectKind::Divider => {
-            let line = "─".repeat(width as usize);
-            terminal.draw_str(rect.rect.y, rect.rect.x, &line, fg, None)?;
+            let line = "─".repeat(rect_area.width as usize);
+            buf.set_string(rect_area.x, rect_area.y, &line, style);
           },
-          _ => {
-            let line = " ".repeat(width as usize);
-            for row in rect.rect.y..rect.rect.y + height {
-              terminal.draw_str(row, rect.rect.x, &line, None, bg)?;
-            }
-          },
+          _ => fill_rect(buf, rect_area, style),
         }
       },
       OverlayNode::Text(text) => {
-        let fg = text.style.fg.map(color_to_term);
-        let bg = text.style.bg.map(color_to_term);
-        terminal.draw_str(
-          text.pos.row as u16,
-          text.pos.col as u16,
-          &text.text,
-          fg,
-          bg,
-        )?;
+        let x = area.x + text.pos.col as u16;
+        let y = area.y + text.pos.row as u16;
+        let style = overlay_style_to_ratatui(&text.style);
+        buf.set_string(x, y, &text.text, style);
       },
     }
   }
-  Ok(())
+}
+
+fn draw_command_palette(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
+  let state = &ctx.command_palette;
+  if !state.is_open {
+    return;
+  }
+
+  let style = &ctx.command_palette_style;
+  match style.layout {
+    CommandPaletteLayout::Bottom => draw_command_palette_bottom(f, area, ctx),
+    CommandPaletteLayout::Top => draw_command_palette_top(f, area, ctx),
+    CommandPaletteLayout::Floating => draw_command_palette_floating(f, area, ctx),
+    CommandPaletteLayout::Custom => {},
+  }
+}
+
+fn draw_command_palette_bottom(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
+  let state = &ctx.command_palette;
+  let theme = ctx.command_palette_style.theme;
+  let filtered = command_palette_filtered_indices(state);
+
+  let row_height: u16 = 1;
+  let divider_height: u16 = 1;
+  let input_height: u16 = 1;
+  let list_rows = filtered.len() as u16;
+  let panel_height = list_rows
+    .saturating_add(divider_height)
+    .saturating_add(input_height)
+    .min(area.height);
+
+  if panel_height == 0 {
+    return;
+  }
+
+  let panel_y = area.y + area.height.saturating_sub(panel_height);
+  let panel = Rect::new(area.x, panel_y, area.width, panel_height);
+
+  let buf = f.buffer_mut();
+  fill_rect(
+    buf,
+    panel,
+    Style::default().bg(lib_color_to_ratatui(theme.panel_bg)),
+  );
+
+  let input_row = panel_y + panel_height - 1;
+  let divider_row = input_row.saturating_sub(1);
+  let list_start = panel_y;
+
+  let placeholder = "Execute a command...";
+  let (input_text, input_style) = if state.query.is_empty() {
+    (
+      format!(":{placeholder}"),
+      Style::default().fg(lib_color_to_ratatui(theme.placeholder)),
+    )
+  } else {
+    (
+      format!(":{}", state.query),
+      Style::default().fg(lib_color_to_ratatui(theme.text)),
+    )
+  };
+
+  buf.set_string(panel.x + 1, input_row, input_text, input_style);
+
+  if divider_row >= panel_y {
+    let divider_style = Style::default().fg(lib_color_to_ratatui(theme.divider));
+    let line = "─".repeat(panel.width as usize);
+    buf.set_string(panel.x, divider_row, &line, divider_style);
+  }
+
+  let selected_item = state
+    .selected
+    .or_else(|| command_palette_default_selected(state));
+  let selected_row = selected_item.and_then(|sel| {
+    filtered.iter().position(|&idx| idx == sel)
+  });
+
+  for (row_idx, item_idx) in filtered.iter().enumerate() {
+    let row_y = list_start + row_idx as u16;
+    if row_y >= divider_row {
+      break;
+    }
+
+    if selected_row == Some(row_idx) {
+      fill_rect(
+        buf,
+        Rect::new(panel.x, row_y, panel.width, row_height),
+        Style::default().bg(lib_color_to_ratatui(theme.selected_bg)),
+      );
+    }
+
+    let row_style = if selected_row == Some(row_idx) {
+      Style::default().fg(lib_color_to_ratatui(theme.selected_text))
+    } else {
+      Style::default().fg(lib_color_to_ratatui(theme.text))
+    };
+    buf.set_string(
+      panel.x + 1,
+      row_y,
+      &state.items[*item_idx].title,
+      row_style,
+    );
+  }
+
+  // Place cursor after ':' + query.
+  let cursor_col = panel
+    .x
+    .saturating_add(1)
+    .saturating_add(1 + state.query.chars().count() as u16);
+  if cursor_col < panel.x + panel.width {
+    f.set_cursor(cursor_col, input_row);
+  }
+}
+
+fn draw_command_palette_top(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
+  let state = &ctx.command_palette;
+  let theme = ctx.command_palette_style.theme;
+  let filtered = command_palette_filtered_indices(state);
+
+  let row_height: u16 = 1;
+  let divider_height: u16 = 1;
+  let input_height: u16 = 1;
+  let list_rows = filtered.len() as u16;
+  let panel_height = list_rows
+    .saturating_add(divider_height)
+    .saturating_add(input_height)
+    .min(area.height);
+
+  if panel_height == 0 {
+    return;
+  }
+
+  let panel = Rect::new(area.x, area.y, area.width, panel_height);
+  let input_row = panel.y;
+  let divider_row = input_row.saturating_add(1);
+  let list_start = divider_row.saturating_add(divider_height);
+
+  let buf = f.buffer_mut();
+  fill_rect(
+    buf,
+    panel,
+    Style::default().bg(lib_color_to_ratatui(theme.panel_bg)),
+  );
+
+  let placeholder = "Execute a command...";
+  let (input_text, input_style) = if state.query.is_empty() {
+    (
+      format!(":{placeholder}"),
+      Style::default().fg(lib_color_to_ratatui(theme.placeholder)),
+    )
+  } else {
+    (
+      format!(":{}", state.query),
+      Style::default().fg(lib_color_to_ratatui(theme.text)),
+    )
+  };
+
+  buf.set_string(panel.x + 1, input_row, input_text, input_style);
+
+  if divider_row < panel.y + panel.height {
+    let divider_style = Style::default().fg(lib_color_to_ratatui(theme.divider));
+    let line = "─".repeat(panel.width as usize);
+    buf.set_string(panel.x, divider_row, &line, divider_style);
+  }
+
+  let selected_item = state
+    .selected
+    .or_else(|| command_palette_default_selected(state));
+  let selected_row = selected_item.and_then(|sel| {
+    filtered.iter().position(|&idx| idx == sel)
+  });
+
+  for (row_idx, item_idx) in filtered.iter().enumerate() {
+    let row_y = list_start + row_idx as u16;
+    if row_y >= panel.y + panel.height {
+      break;
+    }
+
+    if selected_row == Some(row_idx) {
+      fill_rect(
+        buf,
+        Rect::new(panel.x, row_y, panel.width, row_height),
+        Style::default().bg(lib_color_to_ratatui(theme.selected_bg)),
+      );
+    }
+
+    let row_style = if selected_row == Some(row_idx) {
+      Style::default().fg(lib_color_to_ratatui(theme.selected_text))
+    } else {
+      Style::default().fg(lib_color_to_ratatui(theme.text))
+    };
+    buf.set_string(
+      panel.x + 1,
+      row_y,
+      &state.items[*item_idx].title,
+      row_style,
+    );
+  }
+
+  let cursor_col = panel
+    .x
+    .saturating_add(1)
+    .saturating_add(1 + state.query.chars().count() as u16);
+  if cursor_col < panel.x + panel.width {
+    f.set_cursor(cursor_col, input_row);
+  }
+}
+
+fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
+  let state = &ctx.command_palette;
+  let theme = ctx.command_palette_style.theme;
+  let mut filtered = command_palette_filtered_indices(state);
+
+  let padding_x: u16 = 2;
+  let padding_y: u16 = 1;
+  let header_height: u16 = 1;
+  let divider_height: u16 = 1;
+  let row_height: u16 = 1;
+  let min_width: u16 = 24;
+
+  let max_rows = {
+    let available = area
+      .height
+      .saturating_sub(padding_y * 2 + header_height + divider_height);
+    (available / row_height) as usize
+  };
+
+  if max_rows == 0 {
+    return;
+  }
+
+  if filtered.len() > max_rows {
+    filtered.truncate(max_rows);
+  }
+
+  let max_title = filtered
+    .iter()
+    .map(|&idx| state.items[idx].title.len() as u16)
+    .max()
+    .unwrap_or(0);
+
+  let max_width = area.width.saturating_sub(4).max(min_width);
+  let panel_width = (max_title + padding_x * 2).max(min_width).min(max_width);
+  let panel_height =
+    padding_y * 2 + header_height + divider_height + row_height * filtered.len() as u16;
+
+  let panel_x = area.x + (area.width.saturating_sub(panel_width)) / 2;
+  let panel_y = area.y + 1;
+  let panel = Rect::new(panel_x, panel_y, panel_width, panel_height);
+
+  let buf = f.buffer_mut();
+  fill_rect(
+    buf,
+    panel,
+    Style::default().bg(lib_color_to_ratatui(theme.panel_bg)),
+  );
+
+  let placeholder = "Execute a command...";
+  let (input_text, input_style) = if state.query.is_empty() {
+    (
+      placeholder.to_string(),
+      Style::default().fg(lib_color_to_ratatui(theme.placeholder)),
+    )
+  } else {
+    (
+      state.query.clone(),
+      Style::default().fg(lib_color_to_ratatui(theme.text)),
+    )
+  };
+
+  let input_row = panel_y + padding_y;
+  let input_col = panel_x + padding_x;
+  buf.set_string(input_col, input_row, input_text, input_style);
+
+  let divider_row = panel_y + padding_y + header_height;
+  let divider_style = Style::default().fg(lib_color_to_ratatui(theme.divider));
+  let line = "─".repeat(panel_width as usize);
+  buf.set_string(panel_x, divider_row, &line, divider_style);
+
+  let list_start = divider_row + divider_height;
+  let selected_item = state
+    .selected
+    .or_else(|| command_palette_default_selected(state));
+  let selected_row = selected_item.and_then(|sel| {
+    filtered.iter().position(|&idx| idx == sel)
+  });
+
+  for (row_idx, item_idx) in filtered.iter().enumerate() {
+    let row_y = list_start + row_idx as u16;
+
+    if selected_row == Some(row_idx) {
+      fill_rect(
+        buf,
+        Rect::new(panel_x + 1, row_y, panel_width.saturating_sub(2), row_height),
+        Style::default().bg(lib_color_to_ratatui(theme.selected_bg)),
+      );
+    }
+
+    let row_style = if selected_row == Some(row_idx) {
+      Style::default().fg(lib_color_to_ratatui(theme.selected_text))
+    } else {
+      Style::default().fg(lib_color_to_ratatui(theme.text))
+    };
+
+    buf.set_string(
+      panel_x + padding_x,
+      row_y,
+      &state.items[*item_idx].title,
+      row_style,
+    );
+  }
+
+  let cursor_col = panel_x
+    .saturating_add(padding_x)
+    .saturating_add(state.query.chars().count() as u16);
+  if cursor_col < panel_x + panel_width {
+    f.set_cursor(cursor_col, input_row);
+  }
 }
 
 pub fn build_render_plan(ctx: &mut Ctx) -> RenderPlan {
@@ -151,43 +486,62 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
 }
 
 /// Render the current document state to the terminal.
-pub fn render(ctx: &mut Ctx, terminal: &mut Terminal) -> Result<()> {
+pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   let plan = render_plan(ctx);
 
-  // Clear and draw
-  terminal.clear()?;
+  let area = f.size();
+  f.render_widget(Clear, area);
 
-  // Draw text lines with syntax colors
-  for line in &plan.lines {
-    for span in &line.spans {
-      let fg = span.highlight.map(highlight_to_color);
-      terminal.draw_str(line.row, span.col, &span.text, fg, None)?;
+  {
+    let buf = f.buffer_mut();
+
+    // Draw text lines with syntax colors
+    for line in &plan.lines {
+      let y = area.y + line.row;
+      if y >= area.y + area.height {
+        continue;
+      }
+      for span in &line.spans {
+        let x = area.x + span.col;
+        if x >= area.x + area.width {
+          continue;
+        }
+        let fg = span.highlight.map(highlight_to_color);
+        let style = if let Some(fg) = fg {
+          Style::default().fg(fg)
+        } else {
+          Style::default()
+        };
+        buf.set_string(x, y, span.text.as_str(), style);
+      }
+    }
+
+    draw_overlay_nodes(buf, area, &plan);
+
+    // Draw secondary cursors
+    for cursor in plan.cursors.iter().skip(1) {
+      let x = area.x + cursor.pos.col as u16;
+      let y = area.y + cursor.pos.row as u16;
+      if x < area.x + area.width && y < area.y + area.height {
+        buf.set_string(x, y, "|", Style::default().fg(Color::DarkGray));
+      }
     }
   }
 
-  draw_overlay_nodes(terminal, &plan)?;
+  // Draw command palette (client-rendered, data+intent)
+  let palette_open = ctx.command_palette.is_open;
+  draw_command_palette(f, area, ctx);
 
-  // Draw cursors
-  if let Some(cursor) = plan.cursors.first() {
-    terminal.set_cursor(cursor.pos.row as u16, cursor.pos.col as u16)?;
-  } else {
-    terminal.hide_cursor()?;
+  // Draw cursor last so it sits above any text, unless palette owns it.
+  if !palette_open {
+    if let Some(cursor) = plan.cursors.first() {
+      let x = area.x + cursor.pos.col as u16;
+      let y = area.y + cursor.pos.row as u16;
+      if x < area.x + area.width && y < area.y + area.height {
+        f.set_cursor(x, y);
+      }
+    }
   }
-
-  // Draw secondary cursors (for multiple cursor support)
-  for cursor in plan.cursors.iter().skip(1) {
-    // Draw a marker at secondary cursor positions
-    terminal.draw_str(
-      cursor.pos.row as u16,
-      cursor.pos.col as u16,
-      "|",
-      Some(Color::DarkGrey),
-      None,
-    )?;
-  }
-
-  terminal.flush()?;
-  Ok(())
 }
 
 /// Ensure cursor is visible by adjusting scroll if needed.

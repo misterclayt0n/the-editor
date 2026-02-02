@@ -1,121 +1,66 @@
-//! Terminal abstraction over crossterm.
+//! Terminal abstraction using ratatui + crossterm backend.
 
 use std::io::{
   self,
   Stdout,
-  Write,
 };
 
+use crossterm::terminal::{
+  EnterAlternateScreen,
+  LeaveAlternateScreen,
+};
 use crossterm::{
-  cursor::{
-    self,
-    MoveTo,
-    SetCursorStyle,
-  },
   execute,
-  queue,
-  style::{
-    Color,
-    Print,
-    ResetColor,
-    SetBackgroundColor,
-    SetForegroundColor,
-  },
   terminal::{
-    self,
-    Clear,
-    ClearType,
-    EnterAlternateScreen,
-    LeaveAlternateScreen,
+    disable_raw_mode,
+    enable_raw_mode,
   },
 };
 use eyre::Result;
+use ratatui::{
+  backend::CrosstermBackend,
+  prelude::Rect,
+  Terminal as RatatuiTerminal,
+};
 
 pub struct Terminal {
-  stdout: Stdout,
-  size:   (u16, u16),
+  terminal: RatatuiTerminal<CrosstermBackend<Stdout>>,
 }
 
 impl Terminal {
   pub fn new() -> Result<Self> {
     let stdout = io::stdout();
-    let size = terminal::size()?;
-    Ok(Self { stdout, size })
+    let backend = CrosstermBackend::new(stdout);
+    let terminal = RatatuiTerminal::new(backend)?;
+    Ok(Self { terminal })
   }
 
   pub fn enter_raw_mode(&mut self) -> Result<()> {
-    terminal::enable_raw_mode()?;
-    execute!(
-      self.stdout,
-      EnterAlternateScreen,
-      Clear(ClearType::All),
-      cursor::Hide
-    )?;
+    enable_raw_mode()?;
+    execute!(self.terminal.backend_mut(), EnterAlternateScreen)?;
     Ok(())
   }
 
   pub fn leave_raw_mode(&mut self) -> Result<()> {
-    execute!(self.stdout, cursor::Show, LeaveAlternateScreen, ResetColor)?;
-    terminal::disable_raw_mode()?;
+    execute!(self.terminal.backend_mut(), LeaveAlternateScreen)?;
+    disable_raw_mode()?;
     Ok(())
   }
 
-  pub fn size(&self) -> (u16, u16) {
-    self.size
-  }
-
-  pub fn set_size(&mut self, width: u16, height: u16) {
-    self.size = (width, height);
-  }
-
-  pub fn clear(&mut self) -> Result<()> {
-    queue!(self.stdout, Clear(ClearType::All))?;
+  pub fn draw<F>(&mut self, f: F) -> Result<()>
+  where
+    F: for<'a> FnOnce(&mut ratatui::Frame<'a>),
+  {
+    self.terminal.draw(f)?;
     Ok(())
   }
 
-  pub fn draw_str(
-    &mut self,
-    row: u16,
-    col: u16,
-    s: &str,
-    fg: Option<Color>,
-    bg: Option<Color>,
-  ) -> Result<()> {
-    queue!(self.stdout, MoveTo(col, row))?;
-
-    if let Some(fg) = fg {
-      queue!(self.stdout, SetForegroundColor(fg))?;
-    }
-    if let Some(bg) = bg {
-      queue!(self.stdout, SetBackgroundColor(bg))?;
-    }
-
-    queue!(self.stdout, Print(s))?;
-
-    if fg.is_some() || bg.is_some() {
-      queue!(self.stdout, ResetColor)?;
-    }
-
+  pub fn resize(&mut self, width: u16, height: u16) -> Result<()> {
+    self.terminal.resize(Rect::new(0, 0, width, height))?;
     Ok(())
   }
 
-  pub fn set_cursor(&mut self, row: u16, col: u16) -> Result<()> {
-    queue!(
-      self.stdout,
-      cursor::Show,
-      MoveTo(col, row),
-      SetCursorStyle::SteadyBlock
-    )?;
-    Ok(())
-  }
-
-  pub fn hide_cursor(&mut self) -> Result<()> {
-    queue!(self.stdout, cursor::Hide)?;
-    Ok(())
-  }
-
-  pub fn flush(&mut self) -> Result<()> {
-    self.stdout.flush()?;
-    Ok(())
+  pub fn size(&self) -> Result<Rect> {
+    Ok(self.terminal.size()?)
   }
 }

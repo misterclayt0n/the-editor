@@ -6,10 +6,25 @@ use ratatui::{
   widgets::Clear,
 };
 use the_default::{
-  CommandPaletteLayout,
-  command_palette_default_selected,
-  command_palette_filtered_indices,
   render_plan,
+  ui_tree,
+};
+use the_lib::render::{
+  LayoutIntent,
+  UiAxis,
+  UiContainer,
+  UiEmphasis,
+  UiInput,
+  UiLayer,
+  UiList,
+  UiLayout,
+  UiNode,
+  UiPanel,
+  UiStatusBar,
+  UiText,
+  UiTooltip,
+  UiStyle,
+  UiTree,
 };
 use the_lib::render::{
   NoHighlights,
@@ -61,6 +76,25 @@ fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style) {
   }
 }
 
+fn truncate_in_place(text: &mut String, max_chars: usize) {
+  if max_chars == 0 {
+    text.clear();
+    return;
+  }
+  let mut count = 0usize;
+  let mut cut = None;
+  for (idx, _) in text.char_indices() {
+    if count == max_chars {
+      cut = Some(idx);
+      break;
+    }
+    count += 1;
+  }
+  if let Some(cut) = cut {
+    text.truncate(cut);
+  }
+}
+
 fn draw_box(buf: &mut Buffer, rect: Rect, border: Style, fill: Style) {
   if rect.width < 2 || rect.height < 2 {
     return;
@@ -90,435 +124,441 @@ fn inner_rect(rect: Rect) -> Rect {
   Rect::new(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2)
 }
 
-fn wrap_text(text: &str, max_width: usize, max_lines: usize) -> Vec<String> {
-  if max_width == 0 || max_lines == 0 {
-    return Vec::new();
-  }
-
-  let mut lines = Vec::new();
-  let mut current = String::new();
-  for word in text.split_whitespace() {
-    let pending_len = if current.is_empty() {
-      word.chars().count()
-    } else {
-      current.chars().count() + 1 + word.chars().count()
-    };
-
-    if pending_len > max_width && !current.is_empty() {
-      lines.push(current);
-      current = String::new();
-      if lines.len() >= max_lines {
-        break;
-      }
-    }
-
-    if !current.is_empty() {
-      current.push(' ');
-    }
-    current.push_str(word);
-  }
-
-  if lines.len() < max_lines && !current.is_empty() {
-    lines.push(current);
-  }
-
-  if lines.len() > max_lines {
-    lines.truncate(max_lines);
-  }
-
-  lines
+fn inset_rect(rect: Rect, insets: the_lib::render::UiInsets) -> Rect {
+  let x = rect.x.saturating_add(insets.left);
+  let y = rect.y.saturating_add(insets.top);
+  let width = rect
+    .width
+    .saturating_sub(insets.left.saturating_add(insets.right));
+  let height = rect
+    .height
+    .saturating_sub(insets.top.saturating_add(insets.bottom));
+  Rect::new(x, y, width, height)
 }
 
-fn draw_command_palette(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
-  let state = &ctx.command_palette;
-  if !state.is_open {
-    return;
-  }
-
-  let style = &ctx.command_palette_style;
-  match style.layout {
-    CommandPaletteLayout::Bottom => draw_command_palette_bottom(f, area, ctx),
-    CommandPaletteLayout::Top => draw_command_palette_top(f, area, ctx),
-    CommandPaletteLayout::Floating => draw_command_palette_floating(f, area, ctx),
-    CommandPaletteLayout::Custom => {},
-  }
+fn align_horizontal(rect: Rect, child_width: u16, align: the_lib::render::UiAlign) -> (u16, u16) {
+  let width = match align {
+    the_lib::render::UiAlign::Stretch => rect.width,
+    _ => child_width.min(rect.width).max(1),
+  };
+  let x = match align {
+    the_lib::render::UiAlign::Center => {
+      rect.x + (rect.width.saturating_sub(width)) / 2
+    },
+    the_lib::render::UiAlign::End => rect.x + rect.width.saturating_sub(width),
+    _ => rect.x,
+  };
+  (x, width)
 }
 
-fn draw_command_palette_bottom(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
-  let state = &ctx.command_palette;
+fn align_vertical(rect: Rect, child_height: u16, align: the_lib::render::UiAlign) -> (u16, u16) {
+  let height = match align {
+    the_lib::render::UiAlign::Stretch => rect.height,
+    _ => child_height.min(rect.height).max(1),
+  };
+  let y = match align {
+    the_lib::render::UiAlign::Center => {
+      rect.y + (rect.height.saturating_sub(height)) / 2
+    },
+    the_lib::render::UiAlign::End => rect.y + rect.height.saturating_sub(height),
+    _ => rect.y,
+  };
+  (y, height)
+}
+
+fn resolve_ui_color(ctx: &Ctx, color: &the_lib::render::UiColor) -> Color {
   let theme = ctx.command_palette_style.theme;
-  let filtered = command_palette_filtered_indices(state);
-
-  let row_height: u16 = 1;
-  let divider_height: u16 = 1;
-  let input_height: u16 = 1;
-  let list_rows = filtered.len() as u16;
-  let panel_height = list_rows
-    .saturating_add(divider_height)
-    .saturating_add(input_height)
-    .min(area.height);
-
-  if panel_height == 0 {
-    return;
+  use the_lib::render::UiColorToken as Token;
+  match color {
+    the_lib::render::UiColor::Value(value) => lib_color_to_ratatui(*value),
+    the_lib::render::UiColor::Token(token) => match token {
+      Token::Text => lib_color_to_ratatui(theme.text),
+      Token::MutedText => lib_color_to_ratatui(theme.placeholder),
+      Token::PanelBg => lib_color_to_ratatui(theme.panel_bg),
+      Token::PanelBorder => lib_color_to_ratatui(theme.panel_border),
+      Token::Accent => lib_color_to_ratatui(theme.selected_border),
+      Token::SelectedBg => lib_color_to_ratatui(theme.selected_bg),
+      Token::SelectedText => lib_color_to_ratatui(theme.selected_text),
+      Token::Divider => lib_color_to_ratatui(theme.divider),
+      Token::Placeholder => lib_color_to_ratatui(theme.placeholder),
+    },
   }
+}
 
-  let panel_y = area.y + area.height.saturating_sub(panel_height);
-  let panel = Rect::new(area.x, panel_y, area.width, panel_height);
+fn ui_style_colors(ctx: &Ctx, style: &UiStyle) -> (Style, Style, Style) {
+  let theme = ctx.command_palette_style.theme;
+  let text_color = style
+    .fg
+    .as_ref()
+    .map(|c| resolve_ui_color(ctx, c))
+    .unwrap_or_else(|| lib_color_to_ratatui(theme.text));
+  let bg_color = style
+    .bg
+    .as_ref()
+    .map(|c| resolve_ui_color(ctx, c))
+    .unwrap_or_else(|| lib_color_to_ratatui(theme.panel_bg));
+  let border_color = style
+    .border
+    .as_ref()
+    .map(|c| resolve_ui_color(ctx, c))
+    .unwrap_or_else(|| lib_color_to_ratatui(theme.panel_border));
 
-  let buf = f.buffer_mut();
-  fill_rect(
-    buf,
-    panel,
-    Style::default().bg(lib_color_to_ratatui(theme.panel_bg)),
-  );
+  (
+    Style::default().fg(text_color),
+    Style::default().bg(bg_color),
+    Style::default().fg(border_color),
+  )
+}
 
-  if let Some(selected_item) = state
-    .selected
-    .or_else(|| command_palette_default_selected(state))
-    .and_then(|sel| filtered.iter().position(|&idx| idx == sel).map(|row| filtered[row]))
-    .and_then(|idx| state.items.get(idx))
-  {
-    if let Some(description) = selected_item.description.as_ref().filter(|s| !s.is_empty()) {
-      let available_height = panel.y.saturating_sub(area.y);
-      let max_width = panel.width.saturating_sub(2) as usize;
-      let text = format!("{} — {}", selected_item.title, description);
-      let lines = wrap_text(&text, max_width, 3);
-      let help_height = (lines.len() as u16).saturating_add(2);
-      if help_height > 0 && help_height + 1 <= available_height {
-        let help_y = panel.y - help_height - 1;
-        let help_rect = Rect::new(panel.x, help_y, panel.width, help_height);
-        let border_style = Style::default().fg(lib_color_to_ratatui(theme.panel_border));
-        let fill_style = Style::default().bg(lib_color_to_ratatui(theme.panel_bg));
-        draw_box(buf, help_rect, border_style, fill_style);
+fn ui_emphasis_color(ctx: &Ctx, emphasis: UiEmphasis, base: Color) -> Color {
+  let theme = ctx.command_palette_style.theme;
+  match emphasis {
+    UiEmphasis::Muted => lib_color_to_ratatui(theme.placeholder),
+    UiEmphasis::Strong => lib_color_to_ratatui(theme.selected_text),
+    UiEmphasis::Normal => base,
+  }
+}
 
-        let text_style = Style::default().fg(lib_color_to_ratatui(theme.text));
-        for (idx, line) in lines.iter().enumerate() {
-          buf.set_string(help_rect.x + 1, help_rect.y + 1 + idx as u16, line, text_style);
+fn apply_constraints(
+  mut width: u16,
+  mut height: u16,
+  constraints: &the_lib::render::UiConstraints,
+  max_width: u16,
+  max_height: u16,
+) -> (u16, u16) {
+  if let Some(min_w) = constraints.min_width {
+    width = width.max(min_w);
+  }
+  if let Some(max_w) = constraints.max_width {
+    width = width.min(max_w);
+  }
+  width = width.min(max_width).max(1);
+
+  if let Some(min_h) = constraints.min_height {
+    height = height.max(min_h);
+  }
+  if let Some(max_h) = constraints.max_height {
+    height = height.min(max_h);
+  }
+  height = height.min(max_height).max(1);
+
+  (width, height)
+}
+
+fn measure_node(node: &UiNode, max_width: u16) -> (u16, u16) {
+
+  match node {
+    UiNode::Text(text) => {
+      let mut width = 0u16;
+      let mut height = 0u16;
+      for line in text.content.lines() {
+        width = width.max(line.chars().count() as u16);
+        height = height.saturating_add(1);
+      }
+      (width.min(max_width), height.max(1))
+    },
+    UiNode::Input(input) => {
+      let mut width = input.value.chars().count();
+      if let Some(placeholder) = input.placeholder.as_ref() {
+        width = width.max(placeholder.chars().count());
+      }
+      (width.min(max_width as usize) as u16, 1)
+    },
+    UiNode::Divider(_) => (max_width, 1),
+    UiNode::Spacer(spacer) => (max_width, spacer.size.max(1)),
+    UiNode::List(list) => {
+      let mut width: usize = 0;
+      for item in &list.items {
+        let mut w = item.title.chars().count();
+        if let Some(shortcut) = item.shortcut.as_ref() {
+          w = w.saturating_add(shortcut.chars().count() + 3);
         }
+        width = width.max(w);
       }
-    }
-  }
-
-  let input_row = panel_y + panel_height - 1;
-  let divider_row = input_row.saturating_sub(1);
-  let list_start = panel_y;
-
-  let placeholder = "Execute a command...";
-  let (input_text, input_style) = if state.query.is_empty() {
-    (
-      format!(":{placeholder}"),
-      Style::default().fg(lib_color_to_ratatui(theme.placeholder)),
-    )
-  } else {
-    (
-      format!(":{}", state.query),
-      Style::default().fg(lib_color_to_ratatui(theme.text)),
-    )
-  };
-
-  buf.set_string(panel.x + 1, input_row, input_text, input_style);
-
-  if divider_row >= panel_y {
-    let divider_style = Style::default().fg(lib_color_to_ratatui(theme.divider));
-    let line = "─".repeat(panel.width as usize);
-    buf.set_string(panel.x, divider_row, &line, divider_style);
-  }
-
-  let selected_item = state
-    .selected
-    .or_else(|| command_palette_default_selected(state));
-  let selected_row = selected_item.and_then(|sel| {
-    filtered.iter().position(|&idx| idx == sel)
-  });
-
-  for (row_idx, item_idx) in filtered.iter().enumerate() {
-    let row_y = list_start + row_idx as u16;
-    if row_y >= divider_row {
-      break;
-    }
-
-    if selected_row == Some(row_idx) {
-      fill_rect(
-        buf,
-        Rect::new(panel.x, row_y, panel.width, row_height),
-        Style::default().bg(lib_color_to_ratatui(theme.selected_bg)),
-      );
-    }
-
-    let row_style = if selected_row == Some(row_idx) {
-      Style::default().fg(lib_color_to_ratatui(theme.selected_text))
-    } else {
-      Style::default().fg(lib_color_to_ratatui(theme.text))
-    };
-    buf.set_string(
-      panel.x + 1,
-      row_y,
-      &state.items[*item_idx].title,
-      row_style,
-    );
-  }
-
-  // Place cursor after ':' + query.
-  let cursor_col = panel
-    .x
-    .saturating_add(1)
-    .saturating_add(1 + state.query.chars().count() as u16);
-  if cursor_col < panel.x + panel.width {
-    f.set_cursor(cursor_col, input_row);
+      let width = if list.fill_width {
+        max_width
+      } else {
+        width.min(max_width as usize).max(1) as u16
+      };
+      (width, list.items.len().max(1) as u16)
+    },
+    UiNode::Container(container) => match &container.layout {
+      UiLayout::Stack { axis, gap } => match axis {
+        UiAxis::Vertical => {
+          let mut height = 0u16;
+          let mut width = 0u16;
+          for (idx, child) in container.children.iter().enumerate() {
+            let (cw, ch) = measure_node(child, max_width);
+            width = width.max(cw);
+            height = height.saturating_add(ch);
+            if idx + 1 < container.children.len() {
+              height = height.saturating_add(*gap);
+            }
+          }
+          let width = width.saturating_add(container.constraints.padding.horizontal());
+          let height = height.saturating_add(container.constraints.padding.vertical());
+          apply_constraints(width, height.max(1), &container.constraints, max_width, u16::MAX)
+        },
+        UiAxis::Horizontal => {
+          let mut width = 0u16;
+          let mut height = 0u16;
+          for (idx, child) in container.children.iter().enumerate() {
+            let (cw, ch) = measure_node(child, max_width);
+            width = width.saturating_add(cw);
+            height = height.max(ch);
+            if idx + 1 < container.children.len() {
+              width = width.saturating_add(*gap);
+            }
+          }
+          let width = width.saturating_add(container.constraints.padding.horizontal());
+          let height = height.saturating_add(container.constraints.padding.vertical());
+          apply_constraints(width.max(1), height.max(1), &container.constraints, max_width, u16::MAX)
+        },
+      },
+      UiLayout::Split { axis, .. } => match axis {
+        UiAxis::Vertical => {
+          let width = max_width.saturating_add(container.constraints.padding.horizontal());
+          let height = container.children.len().max(1) as u16
+            + container.constraints.padding.vertical();
+          apply_constraints(width.max(1), height.max(1), &container.constraints, max_width, u16::MAX)
+        },
+        UiAxis::Horizontal => {
+          let width = max_width.saturating_add(container.constraints.padding.horizontal());
+          let height = 1 + container.constraints.padding.vertical();
+          apply_constraints(width.max(1), height.max(1), &container.constraints, max_width, u16::MAX)
+        },
+      },
+    },
+    UiNode::Panel(panel) => {
+      let max_width = max_content_width_for_intent(panel.intent.clone(), Rect::new(0, 0, max_width, 1), 0, 0);
+      let (child_w, child_h) = measure_node(&panel.child, max_width);
+      let width = child_w.saturating_add(panel.constraints.padding.horizontal());
+      let height = child_h.saturating_add(panel.constraints.padding.vertical());
+      apply_constraints(width.max(1), height.max(1), &panel.constraints, max_width, u16::MAX)
+    },
+    UiNode::Tooltip(tooltip) => {
+      let width = tooltip.content.chars().count().saturating_add(2).min(max_width as usize) as u16;
+      (width.max(2), 3)
+    },
+    UiNode::StatusBar(_) => (max_width, 1),
   }
 }
 
-fn draw_command_palette_top(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
-  let state = &ctx.command_palette;
-  let theme = ctx.command_palette_style.theme;
-  let filtered = command_palette_filtered_indices(state);
+fn layout_children<'a>(
+  container: &'a UiContainer,
+  rect: Rect,
+) -> Vec<(Rect, &'a UiNode)> {
+  let mut placements = Vec::new();
+  let rect = inset_rect(rect, container.constraints.padding);
 
-  let row_height: u16 = 1;
-  let divider_height: u16 = 1;
-  let input_height: u16 = 1;
-  let list_rows = filtered.len() as u16;
-  let panel_height = list_rows
-    .saturating_add(divider_height)
-    .saturating_add(input_height)
-    .min(area.height);
+  match &container.layout {
+    UiLayout::Stack { axis, gap } => match axis {
+      UiAxis::Vertical => {
+        let mut y = rect.y;
+        for child in &container.children {
+          let (child_w, h) = measure_node(child, rect.width);
+          let height = h.min(rect.height.saturating_sub(y.saturating_sub(rect.y))).max(1);
+          if height == 0 {
+            break;
+          }
+          let (x, width) = align_horizontal(rect, child_w, container.constraints.align.horizontal);
+          let child_rect = Rect::new(x, y, width, height);
+          placements.push((child_rect, child));
+          y = y.saturating_add(height).saturating_add(*gap);
+          if y >= rect.y + rect.height {
+            break;
+          }
+        }
+      },
+      UiAxis::Horizontal => {
+        let mut x = rect.x;
+        for child in &container.children {
+          let (w, child_h) = measure_node(child, rect.width);
+          let width = w.min(rect.width.saturating_sub(x.saturating_sub(rect.x))).max(1);
+          if width == 0 {
+            break;
+          }
+          let (y, height) = align_vertical(rect, child_h, container.constraints.align.vertical);
+          let child_rect = Rect::new(x, y, width, height);
+          placements.push((child_rect, child));
+          x = x.saturating_add(width).saturating_add(*gap);
+          if x >= rect.x + rect.width {
+            break;
+          }
+        }
+      },
+    },
+    UiLayout::Split { axis, ratios } => {
+      let count = container.children.len().max(1);
+      let mut ratios = ratios.clone();
+      if ratios.len() < count {
+        ratios.resize(count, 1);
+      }
+      let total: u16 = ratios.iter().sum();
+      let total = if total == 0 { count as u16 } else { total };
 
-  if panel_height == 0 {
+      match axis {
+        UiAxis::Vertical => {
+          let mut y = rect.y;
+          for (child, ratio) in container.children.iter().zip(ratios.iter()) {
+            let height = rect
+              .height
+              .saturating_mul(*ratio)
+              .saturating_div(total)
+              .max(1);
+            let (x, width) = align_horizontal(rect, rect.width, container.constraints.align.horizontal);
+            let child_rect = Rect::new(x, y, width, height);
+            placements.push((child_rect, child));
+            y = y.saturating_add(height);
+          }
+        },
+        UiAxis::Horizontal => {
+          let mut x = rect.x;
+          for (child, ratio) in container.children.iter().zip(ratios.iter()) {
+            let width = rect
+              .width
+              .saturating_mul(*ratio)
+              .saturating_div(total)
+              .max(1);
+            let (y, height) = align_vertical(rect, rect.height, container.constraints.align.vertical);
+            let child_rect = Rect::new(x, y, width, height);
+            placements.push((child_rect, child));
+            x = x.saturating_add(width);
+          }
+        },
+      }
+    },
+  }
+
+  placements
+}
+
+fn draw_ui_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiText) {
+  if rect.width == 0 || rect.height == 0 {
     return;
   }
+  let (text_style, _, _) = ui_style_colors(ctx, &text.style);
+  let text_color = ui_emphasis_color(ctx, text.style.emphasis, text_style.fg.unwrap_or(Color::White));
+  let style = text_style.fg(text_color);
 
-  let panel = Rect::new(area.x, area.y, area.width, panel_height);
-  let input_row = panel.y;
-  let divider_row = input_row.saturating_add(1);
-  let list_start = divider_row.saturating_add(divider_height);
-
-  let buf = f.buffer_mut();
-  fill_rect(
-    buf,
-    panel,
-    Style::default().bg(lib_color_to_ratatui(theme.panel_bg)),
-  );
-
-  let placeholder = "Execute a command...";
-  let (input_text, input_style) = if state.query.is_empty() {
-    (
-      format!(":{placeholder}"),
-      Style::default().fg(lib_color_to_ratatui(theme.placeholder)),
-    )
-  } else {
-    (
-      format!(":{}", state.query),
-      Style::default().fg(lib_color_to_ratatui(theme.text)),
-    )
-  };
-
-  buf.set_string(panel.x + 1, input_row, input_text, input_style);
-
-  if divider_row < panel.y + panel.height {
-    let divider_style = Style::default().fg(lib_color_to_ratatui(theme.divider));
-    let line = "─".repeat(panel.width as usize);
-    buf.set_string(panel.x, divider_row, &line, divider_style);
-  }
-
-  let selected_item = state
-    .selected
-    .or_else(|| command_palette_default_selected(state));
-  let selected_row = selected_item.and_then(|sel| {
-    filtered.iter().position(|&idx| idx == sel)
-  });
-
-  for (row_idx, item_idx) in filtered.iter().enumerate() {
-    let row_y = list_start + row_idx as u16;
-    if row_y >= panel.y + panel.height {
+  for (idx, line) in text.content.lines().enumerate() {
+    let y = rect.y + idx as u16;
+    if y >= rect.y + rect.height {
       break;
     }
-
-    if selected_row == Some(row_idx) {
-      fill_rect(
-        buf,
-        Rect::new(panel.x, row_y, panel.width, row_height),
-        Style::default().bg(lib_color_to_ratatui(theme.selected_bg)),
-      );
-    }
-
-    let row_style = if selected_row == Some(row_idx) {
-      Style::default().fg(lib_color_to_ratatui(theme.selected_text))
-    } else {
-      Style::default().fg(lib_color_to_ratatui(theme.text))
-    };
-    buf.set_string(
-      panel.x + 1,
-      row_y,
-      &state.items[*item_idx].title,
-      row_style,
-    );
-  }
-
-  let cursor_col = panel
-    .x
-    .saturating_add(1)
-    .saturating_add(1 + state.query.chars().count() as u16);
-  if cursor_col < panel.x + panel.width {
-    f.set_cursor(cursor_col, input_row);
+    let mut truncated = line.to_string();
+    truncate_in_place(&mut truncated, rect.width as usize);
+    buf.set_string(rect.x, y, truncated, style);
   }
 }
 
-fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
-  let state = &ctx.command_palette;
-  let theme = ctx.command_palette_style.theme;
-  let filtered = command_palette_filtered_indices(state);
-
-  let border: u16 = 1;
-  let padding_x: u16 = 2;
-  let padding_y: u16 = 1;
-  let header_height: u16 = 1;
-  let divider_height: u16 = 1;
-  let row_height: u16 = 1;
-  let min_width: u16 = 48;
-
-  let available_height = area.height.saturating_sub(2);
-  let panel_height = (available_height * 2 / 3).max(8).min(available_height);
-  let max_rows = panel_height
-    .saturating_sub(border * 2 + padding_y * 2 + header_height + divider_height)
-    .max(1) as usize;
-
-  if max_rows == 0 {
+fn draw_ui_input(
+  buf: &mut Buffer,
+  rect: Rect,
+  ctx: &Ctx,
+  input: &UiInput,
+  focus: Option<&the_lib::render::UiFocus>,
+  cursor_out: &mut Option<(u16, u16)>,
+) {
+  if rect.width == 0 || rect.height == 0 {
     return;
   }
-
-  let max_title = filtered
-    .iter()
-    .map(|&idx| state.items[idx].title.len() as u16)
-    .max()
-    .unwrap_or(0);
-  let max_shortcut = filtered
-    .iter()
-    .filter_map(|&idx| state.items[idx].shortcut.as_ref())
-    .map(|s| s.len() as u16)
-    .max()
-    .unwrap_or(0);
-
-  let max_width = area.width.saturating_sub(4).max(min_width);
-  let content_width = max_title
-    .saturating_add(if max_shortcut > 0 { max_shortcut + 4 } else { 0 });
-  let panel_width = (content_width + padding_x * 2 + 1 + border * 2)
-    .max(min_width)
-    .min(max_width);
-
-  let panel_x = area.x + (area.width.saturating_sub(panel_width)) / 2;
-  let panel_y = area.y + (area.height.saturating_sub(panel_height)) / 2 + 1;
-  let panel = Rect::new(panel_x, panel_y, panel_width, panel_height);
-
-  let buf = f.buffer_mut();
-  let border_style = Style::default().fg(lib_color_to_ratatui(theme.text));
-  draw_box(
-    buf,
-    panel,
-    border_style,
-    Style::default().bg(lib_color_to_ratatui(theme.panel_bg)),
-  );
-  let content = inner_rect(panel);
-
-  let placeholder = "Execute a command...";
-  let (input_text, input_style) = if state.query.is_empty() {
+  let (text_style, _, _) = ui_style_colors(ctx, &input.style);
+  let theme = ctx.command_palette_style.theme;
+  let (value, style) = if input.value.is_empty() {
+    let placeholder = input
+      .placeholder
+      .as_deref()
+      .unwrap_or("...");
     (
       placeholder.to_string(),
       Style::default().fg(lib_color_to_ratatui(theme.placeholder)),
     )
   } else {
-    (
-      state.query.clone(),
-      Style::default().fg(lib_color_to_ratatui(theme.text)),
-    )
+    (input.value.clone(), text_style)
   };
+  let mut truncated = value;
+  truncate_in_place(&mut truncated, rect.width as usize);
+  buf.set_string(rect.x, rect.y, truncated, style);
 
-  let inner_x = content.x;
-  let inner_y = content.y;
-  let inner_width = content.width;
+  let is_focused = focus
+    .map(|f| f.id == input.id)
+    .unwrap_or(focus.is_none());
+  if is_focused && cursor_out.is_none() {
+    let cursor_pos = focus.and_then(|f| f.cursor).unwrap_or(input.cursor);
+    let cursor_x = rect.x.saturating_add(cursor_pos as u16).min(rect.x + rect.width - 1);
+    *cursor_out = Some((cursor_x, rect.y));
+  }
+}
 
-  let input_row = inner_y + padding_y;
-  let input_col = inner_x + padding_x;
-  buf.set_string(input_col, input_row, input_text, input_style);
-
-  let divider_row = inner_y + padding_y + header_height;
-  let divider_style = Style::default().fg(lib_color_to_ratatui(theme.divider));
-  let line = "─".repeat(inner_width as usize);
-  buf.set_string(inner_x, divider_row, &line, divider_style);
-
-  let list_start = divider_row + divider_height;
-  let visible_rows = max_rows.min(filtered.len());
-  let selected_item = state
-    .selected
-    .or_else(|| command_palette_default_selected(state));
-  let selected_row = selected_item.and_then(|sel| {
-    filtered.iter().position(|&idx| idx == sel)
-  });
-
-  let scroll_offset = if let Some(sel) = selected_row {
-    if sel >= visible_rows {
-      sel + 1 - visible_rows
-    } else {
-      0
+fn draw_ui_list(
+  buf: &mut Buffer,
+  rect: Rect,
+  ctx: &Ctx,
+  list: &UiList,
+  _cursor_out: &mut Option<(u16, u16)>,
+) {
+  if rect.width == 0 || rect.height == 0 {
+    return;
+  }
+  let theme = ctx.command_palette_style.theme;
+  let visible_rows = rect.height as usize;
+  if visible_rows == 0 {
+    return;
+  }
+  let mut scroll_offset = list.scroll.min(list.items.len().saturating_sub(visible_rows));
+  let selected = list.selected;
+  if let Some(sel) = selected {
+    if sel < scroll_offset {
+      scroll_offset = sel;
+    } else if sel >= scroll_offset + visible_rows {
+      scroll_offset = sel + 1 - visible_rows;
     }
-  } else {
-    0
-  };
+  }
+  let visible = list.items.iter().skip(scroll_offset).take(visible_rows);
 
-  let visible = filtered
-    .iter()
-    .skip(scroll_offset)
-    .take(visible_rows);
-
-  for (row_idx, item_idx) in visible.enumerate() {
-    let row_y = list_start + row_idx as u16;
-    let is_selected = selected_row == Some(row_idx + scroll_offset);
+  for (row_idx, item) in visible.enumerate() {
+    let y = rect.y + row_idx as u16;
+    let is_selected = selected == Some(row_idx + scroll_offset);
 
     if is_selected {
-      // Subtle highlight: left gutter indicator + brighter text
-      buf.set_string(
-        inner_x,
-        row_y,
-        "▏",
-        Style::default().fg(lib_color_to_ratatui(theme.selected_text)),
+      fill_rect(
+        buf,
+        Rect::new(rect.x, y, rect.width, 1),
+        Style::default().bg(lib_color_to_ratatui(theme.selected_bg)),
       );
     }
 
-    let row_style = if is_selected {
-      Style::default()
-        .fg(lib_color_to_ratatui(theme.selected_text))
-        .add_modifier(Modifier::BOLD)
+    let mut row_style = if is_selected {
+      Style::default().fg(lib_color_to_ratatui(theme.selected_text))
     } else {
       Style::default().fg(lib_color_to_ratatui(theme.text))
     };
-
-    buf.set_string(
-      inner_x + padding_x,
-      row_y,
-      &state.items[*item_idx].title,
-      row_style,
-    );
-
-    if let Some(shortcut) = state.items[*item_idx].shortcut.as_ref() {
-      let shortcut_style = if is_selected {
-        Style::default().fg(lib_color_to_ratatui(theme.selected_text))
-      } else {
-        Style::default().fg(lib_color_to_ratatui(theme.placeholder))
-      };
-      let shortcut_x = inner_x
-        .saturating_add(inner_width)
-        .saturating_sub(padding_x + 1 + shortcut.len() as u16);
-      if shortcut_x > inner_x + padding_x {
-        buf.set_string(shortcut_x, row_y, shortcut, shortcut_style);
-      }
+    if item.emphasis {
+      row_style = row_style.add_modifier(Modifier::BOLD);
     }
+
+    let mut title = item.title.clone();
+    let shortcut = item.shortcut.clone().unwrap_or_default();
+    let available_width = rect.width.saturating_sub(2) as usize;
+    if !shortcut.is_empty() && shortcut.len() + 2 < available_width {
+      let shortcut_width = shortcut.len() + 1;
+      truncate_in_place(&mut title, available_width.saturating_sub(shortcut_width));
+      let shortcut_x = rect.x + rect.width.saturating_sub(shortcut.len() as u16 + 1);
+      buf.set_string(shortcut_x, y, shortcut, row_style);
+    } else {
+      truncate_in_place(&mut title, available_width);
+    }
+    buf.set_string(rect.x + 1, y, title, row_style);
   }
 
-  if filtered.len() > visible_rows {
-    let track_x = inner_x + inner_width - 1;
-    let track_height = visible_rows as u16;
-    let thumb_height = ((visible_rows as f32 / filtered.len() as f32) * track_height as f32)
+  if list.items.len() > visible_rows {
+    let track_x = rect.x + rect.width - 1;
+    let track_height = rect.height;
+    let thumb_height = ((visible_rows as f32 / list.items.len() as f32) * track_height as f32)
       .ceil()
       .max(1.0) as u16;
-    let max_scroll = filtered.len().saturating_sub(visible_rows);
+    let max_scroll = list.items.len().saturating_sub(visible_rows);
     let thumb_offset = if max_scroll == 0 {
       0
     } else {
@@ -526,19 +566,378 @@ fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
         .round() as u16
     };
     for i in 0..track_height {
-      let y = list_start + i;
+      let y = rect.y + i;
       let is_thumb = i >= thumb_offset && i < thumb_offset + thumb_height;
       let symbol = if is_thumb { "█" } else { "│" };
       let style = Style::default().fg(lib_color_to_ratatui(theme.divider));
       buf.set_string(track_x, y, symbol, style);
     }
   }
+}
 
-  let cursor_col = panel_x
-    .saturating_add(border + padding_x)
-    .saturating_add(state.query.chars().count() as u16);
-  if cursor_col < panel_x + panel_width {
-    f.set_cursor(cursor_col, input_row);
+fn draw_ui_node(
+  buf: &mut Buffer,
+  rect: Rect,
+  ctx: &Ctx,
+  node: &UiNode,
+  focus: Option<&the_lib::render::UiFocus>,
+  cursor_out: &mut Option<(u16, u16)>,
+) {
+  if rect.width == 0 || rect.height == 0 {
+    return;
+  }
+  match node {
+    UiNode::Text(text) => draw_ui_text(buf, rect, ctx, text),
+    UiNode::Input(input) => draw_ui_input(buf, rect, ctx, input, focus, cursor_out),
+    UiNode::List(list) => draw_ui_list(buf, rect, ctx, list, cursor_out),
+    UiNode::Divider(_) => {
+      let theme = ctx.command_palette_style.theme;
+      let line = "─".repeat(rect.width as usize);
+      let style = Style::default().fg(lib_color_to_ratatui(theme.divider));
+      buf.set_string(rect.x, rect.y, line, style);
+    },
+    UiNode::Spacer(_) => {},
+    UiNode::Container(container) => {
+      let placements = layout_children(container, rect);
+      for (child_rect, child) in placements {
+        draw_ui_node(buf, child_rect, ctx, child, focus, cursor_out);
+      }
+    },
+    UiNode::Panel(panel) => {
+      draw_ui_panel(buf, rect, ctx, panel, focus, cursor_out);
+    },
+    UiNode::Tooltip(tooltip) => {
+      draw_ui_tooltip(buf, rect, ctx, tooltip);
+    },
+    UiNode::StatusBar(status) => {
+      draw_ui_status_bar(buf, rect, ctx, status);
+    },
+  }
+}
+
+fn max_content_width_for_intent(intent: LayoutIntent, area: Rect, border: u16, padding_h: u16) -> u16 {
+  let full = area
+    .width
+    .saturating_sub(border * 2 + padding_h)
+    .max(1);
+  match intent {
+    LayoutIntent::Floating | LayoutIntent::Custom(_) => {
+      let cap = area.width.saturating_mul(2) / 3;
+      full.min(cap.max(20))
+    },
+    _ => full,
+  }
+}
+
+fn draw_ui_panel(
+  buf: &mut Buffer,
+  area: Rect,
+  ctx: &Ctx,
+  panel: &UiPanel,
+  focus: Option<&the_lib::render::UiFocus>,
+  cursor_out: &mut Option<(u16, u16)>,
+) {
+  let boxed = panel.style.border.is_some();
+  let border: u16 = if boxed { 1 } else { 0 };
+  let padding = panel.constraints.padding;
+  let padding_h = padding.horizontal();
+  let padding_v = padding.vertical();
+  let title_height = panel.title.is_some() as u16;
+
+  let max_content_width = max_content_width_for_intent(panel.intent.clone(), area, border, padding_h);
+  let (child_w, child_h) = measure_node(&panel.child, max_content_width);
+  let mut panel_width = child_w
+    .saturating_add(border * 2 + padding_h)
+    .min(area.width)
+    .max(10);
+  let mut panel_height = child_h
+    .saturating_add(border * 2 + padding_v + title_height)
+    .min(area.height)
+    .max(4);
+
+  let (mut panel_width, panel_height) =
+    apply_constraints(panel_width, panel_height, &panel.constraints, area.width, area.height);
+
+  match panel.intent.clone() {
+    LayoutIntent::Bottom => {
+      let mut height = if boxed {
+        panel_height.min(area.height).max(4)
+      } else {
+        child_h
+          .saturating_add(padding_v)
+          .min(area.height)
+          .max(3)
+      };
+      height = height.min(area.height).max(2);
+      let rect = Rect::new(area.x, area.y + area.height - height, area.width, height);
+      if boxed {
+        draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
+      } else {
+        let content = draw_flat_panel(buf, rect, ctx, panel, BorderEdge::Top);
+        draw_ui_node(buf, content, ctx, &panel.child, focus, cursor_out);
+      }
+    },
+    LayoutIntent::Top => {
+      let mut height = if boxed {
+        panel_height.min(area.height).max(4)
+      } else {
+        child_h
+          .saturating_add(padding_v)
+          .min(area.height)
+          .max(3)
+      };
+      height = height.min(area.height).max(2);
+      let rect = Rect::new(area.x, area.y, area.width, height);
+      if boxed {
+        draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
+      } else {
+        let content = draw_flat_panel(buf, rect, ctx, panel, BorderEdge::Bottom);
+        draw_ui_node(buf, content, ctx, &panel.child, focus, cursor_out);
+      }
+    },
+    LayoutIntent::SidebarLeft => {
+      panel_width = (area.width / 3).max(panel_width.min(area.width));
+      let rect = Rect::new(area.x, area.y, panel_width, area.height);
+      draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
+    },
+    LayoutIntent::SidebarRight => {
+      panel_width = (area.width / 3).max(panel_width.min(area.width));
+      let rect = Rect::new(area.x + area.width - panel_width, area.y, panel_width, area.height);
+      draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
+    },
+    LayoutIntent::Fullscreen => {
+      let rect = area;
+      draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
+    },
+    LayoutIntent::Custom(_) | LayoutIntent::Floating => {
+      let (x, width) = align_horizontal(area, panel_width, panel.constraints.align.horizontal);
+      let (y, height) = align_vertical(area, panel_height, panel.constraints.align.vertical);
+      let rect = Rect::new(x, y, width, height);
+      draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
+    },
+  }
+}
+
+fn draw_box_with_title(
+  buf: &mut Buffer,
+  rect: Rect,
+  ctx: &Ctx,
+  panel: &UiPanel,
+  focus: Option<&the_lib::render::UiFocus>,
+  cursor_out: &mut Option<(u16, u16)>,
+) {
+  let (text_style, fill_style, border_style) = ui_style_colors(ctx, &panel.style);
+  draw_box(buf, rect, border_style, fill_style);
+
+  let mut content = inner_rect(rect);
+  if let Some(title) = panel.title.as_ref() {
+    let mut truncated = title.clone();
+    truncate_in_place(&mut truncated, content.width as usize);
+    buf.set_string(content.x, content.y, truncated, text_style);
+    content = Rect::new(content.x, content.y + 1, content.width, content.height.saturating_sub(1));
+  }
+
+  let content = inset_rect(content, panel.constraints.padding);
+  draw_ui_node(buf, content, ctx, &panel.child, focus, cursor_out);
+}
+
+#[derive(Clone, Copy)]
+enum BorderEdge {
+  Top,
+  Bottom,
+}
+
+fn draw_flat_panel(
+  buf: &mut Buffer,
+  rect: Rect,
+  ctx: &Ctx,
+  panel: &UiPanel,
+  edge: BorderEdge,
+) -> Rect {
+  let (_, fill_style, border_style) = ui_style_colors(ctx, &panel.style);
+  fill_rect(buf, rect, fill_style);
+
+  let line = "─".repeat(rect.width as usize);
+  let border_y = match edge {
+    BorderEdge::Top => rect.y,
+    BorderEdge::Bottom => rect.y + rect.height.saturating_sub(1),
+  };
+  buf.set_string(rect.x, border_y, &line, border_style);
+
+  let content = match edge {
+    BorderEdge::Top => Rect::new(rect.x, rect.y + 1, rect.width, rect.height.saturating_sub(1)),
+    BorderEdge::Bottom => Rect::new(rect.x, rect.y, rect.width, rect.height.saturating_sub(1)),
+  };
+  inset_rect(content, panel.constraints.padding)
+}
+
+fn node_layer(node: &UiNode) -> UiLayer {
+  match node {
+    UiNode::Panel(panel) => panel.layer,
+    UiNode::Tooltip(_) => UiLayer::Tooltip,
+    _ => UiLayer::Overlay,
+  }
+}
+
+fn draw_ui_tooltip(buf: &mut Buffer, area: Rect, ctx: &Ctx, tooltip: &UiTooltip) {
+  if area.width == 0 || area.height == 0 {
+    return;
+  }
+  let (text_style, fill_style, border_style) = ui_style_colors(ctx, &tooltip.style);
+  let mut text = tooltip.content.clone();
+  let max_width = area.width.saturating_sub(2).max(1) as usize;
+  truncate_in_place(&mut text, max_width);
+  let width = (text.chars().count() as u16).saturating_add(2).min(area.width).max(2);
+  let height = 3u16.min(area.height).max(1);
+
+  let rect = match tooltip.placement.clone() {
+    LayoutIntent::Bottom => Rect::new(area.x, area.y + area.height - height, width, height),
+    LayoutIntent::Top => Rect::new(area.x, area.y, width, height),
+    LayoutIntent::SidebarLeft => Rect::new(area.x, area.y, width, height),
+    LayoutIntent::SidebarRight => Rect::new(area.x + area.width - width, area.y, width, height),
+    LayoutIntent::Fullscreen => Rect::new(area.x, area.y, width, height),
+    LayoutIntent::Custom(_) | LayoutIntent::Floating => Rect::new(
+      area.x + (area.width.saturating_sub(width)) / 2,
+      area.y + (area.height.saturating_sub(height)) / 2,
+      width,
+      height,
+    ),
+  };
+
+  draw_box(buf, rect, border_style, fill_style);
+  let inner = inner_rect(rect);
+  buf.set_string(inner.x, inner.y, text, text_style);
+}
+
+fn draw_ui_status_bar(buf: &mut Buffer, rect: Rect, ctx: &Ctx, status: &UiStatusBar) {
+  if rect.width == 0 || rect.height == 0 {
+    return;
+  }
+  let (text_style, fill_style, _) = ui_style_colors(ctx, &status.style);
+  fill_rect(buf, Rect::new(rect.x, rect.y, rect.width, 1), fill_style);
+
+  let mut left = status.left.clone();
+  let mut center = status.center.clone();
+  let mut right = status.right.clone();
+  truncate_in_place(&mut left, rect.width as usize);
+  truncate_in_place(&mut right, rect.width as usize);
+  truncate_in_place(&mut center, rect.width as usize);
+
+  buf.set_string(rect.x, rect.y, left, text_style);
+  if !center.is_empty() {
+    let cx = rect.x + rect.width.saturating_sub(center.len() as u16) / 2;
+    buf.set_string(cx, rect.y, center, text_style);
+  }
+  if !right.is_empty() {
+    let rx = rect.x + rect.width.saturating_sub(right.len() as u16);
+    buf.set_string(rx, rect.y, right, text_style);
+  }
+}
+
+fn panel_height_for_area(panel: &UiPanel, area: Rect) -> u16 {
+  let boxed = panel.style.border.is_some();
+  if boxed {
+    let border: u16 = 1;
+    let padding = panel.constraints.padding;
+    let padding_h = padding.horizontal();
+    let padding_v = padding.vertical();
+    let title_height = panel.title.is_some() as u16;
+    let max_content_width = max_content_width_for_intent(panel.intent.clone(), area, border, padding_h);
+    let (_, child_h) = measure_node(&panel.child, max_content_width);
+    child_h
+      .saturating_add(border * 2 + padding_v + title_height)
+      .min(area.height)
+      .max(4)
+  } else {
+    let padding_v = panel.constraints.padding.vertical();
+    let max_content_width = max_content_width_for_intent(panel.intent.clone(), area, 0, 0);
+    let (_, child_h) = measure_node(&panel.child, max_content_width);
+    child_h
+      .saturating_add(1 + padding_v) // account for the divider + padding
+      .min(area.height)
+      .max(2)
+  }
+}
+
+fn draw_panel_in_rect(
+  buf: &mut Buffer,
+  rect: Rect,
+  ctx: &Ctx,
+  panel: &UiPanel,
+  edge: BorderEdge,
+  focus: Option<&the_lib::render::UiFocus>,
+  cursor_out: &mut Option<(u16, u16)>,
+) {
+  if rect.width == 0 || rect.height == 0 {
+    return;
+  }
+  if panel.style.border.is_some() {
+    draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
+  } else {
+    let content = draw_flat_panel(buf, rect, ctx, panel, edge);
+    draw_ui_node(buf, content, ctx, &panel.child, focus, cursor_out);
+  }
+}
+
+fn draw_ui_overlays(
+  buf: &mut Buffer,
+  area: Rect,
+  ctx: &Ctx,
+  ui: &UiTree,
+  cursor_out: &mut Option<(u16, u16)>,
+) {
+  let mut top_offset: u16 = 0;
+  let mut bottom_offset: u16 = 0;
+  let focus = ui.focus.as_ref();
+  let layers = [
+    the_lib::render::UiLayer::Background,
+    the_lib::render::UiLayer::Overlay,
+    the_lib::render::UiLayer::Tooltip,
+  ];
+  for layer in layers {
+    for node in ui.overlays.iter().filter(|node| node_layer(node) == layer) {
+      match node {
+      UiNode::Panel(panel) => match panel.intent.clone() {
+          LayoutIntent::Bottom => {
+            if matches!(layer, the_lib::render::UiLayer::Tooltip) {
+              draw_ui_panel(buf, area, ctx, panel, focus, cursor_out);
+              continue;
+            }
+            let available_height = area.height.saturating_sub(top_offset + bottom_offset);
+            if available_height == 0 {
+              continue;
+            }
+            let rect_area = Rect::new(area.x, area.y + top_offset, area.width, available_height);
+            let panel_height = panel_height_for_area(panel, rect_area);
+            let rect = Rect::new(
+              area.x,
+              area.y + area.height - bottom_offset - panel_height,
+              area.width,
+              panel_height,
+            );
+            bottom_offset = bottom_offset.saturating_add(panel_height);
+            draw_panel_in_rect(buf, rect, ctx, panel, BorderEdge::Top, focus, cursor_out);
+          },
+          LayoutIntent::Top => {
+            if matches!(layer, the_lib::render::UiLayer::Tooltip) {
+              draw_ui_panel(buf, area, ctx, panel, focus, cursor_out);
+              continue;
+            }
+            let available_height = area.height.saturating_sub(top_offset + bottom_offset);
+            if available_height == 0 {
+              continue;
+            }
+            let rect_area = Rect::new(area.x, area.y + top_offset, area.width, available_height);
+            let panel_height = panel_height_for_area(panel, rect_area);
+            let rect = Rect::new(area.x, area.y + top_offset, area.width, panel_height);
+            top_offset = top_offset.saturating_add(panel_height);
+            draw_panel_in_rect(buf, rect, ctx, panel, BorderEdge::Bottom, focus, cursor_out);
+          },
+          _ => draw_ui_panel(buf, area, ctx, panel, focus, cursor_out),
+        },
+        _ => draw_ui_node(buf, area, ctx, node, focus, cursor_out),
+      }
+    }
   }
 }
 
@@ -607,12 +1006,14 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
 /// Render the current document state to the terminal.
 pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   let plan = render_plan(ctx);
+  let ui = ui_tree(ctx);
 
   let area = f.size();
   f.render_widget(Clear, area);
 
-  {
+  let ui_cursor = {
     let buf = f.buffer_mut();
+    let mut cursor_out = None;
 
     // Draw text lines with syntax colors
     for line in &plan.lines {
@@ -643,14 +1044,16 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
         buf.set_string(x, y, "|", Style::default().fg(Color::DarkGray));
       }
     }
-  }
 
-  // Draw command palette (client-rendered, data+intent)
-  let palette_open = ctx.command_palette.is_open;
-  draw_command_palette(f, area, ctx);
+    // Draw UI root and overlays.
+    draw_ui_node(buf, area, ctx, &ui.root, ui.focus.as_ref(), &mut cursor_out);
+    draw_ui_overlays(buf, area, ctx, &ui, &mut cursor_out);
+    cursor_out
+  };
 
-  // Draw cursor last so it sits above any text, unless palette owns it.
-  if !palette_open {
+  if let Some((x, y)) = ui_cursor {
+    f.set_cursor(x, y);
+  } else {
     if let Some(cursor) = plan.cursors.first() {
       let x = area.x + cursor.pos.col as u16;
       let y = area.y + cursor.pos.row as u16;

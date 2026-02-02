@@ -13,6 +13,7 @@ pub mod overlay;
 pub mod plan;
 pub mod text_annotations;
 pub mod text_format;
+pub mod ui;
 pub mod visual_position;
 
 pub use grapheme::{
@@ -38,6 +39,7 @@ pub use plan::{
   RenderStyles,
   build_plan,
 };
+pub use ui::*;
 pub use visual_position::{
   char_at_visual_pos,
   char_idx_at_visual_block_offset,

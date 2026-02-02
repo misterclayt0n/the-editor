@@ -3,8 +3,30 @@ use the_lib::{
     MatchMode,
     fuzzy_match,
   },
-  render::graphics::Color,
+  render::{
+    LayoutIntent,
+    UiAlign,
+    UiAlignPair,
+    UiAxis,
+    UiContainer,
+    UiDivider,
+    UiInput,
+    UiLayout,
+    UiList,
+    UiListItem,
+    UiLayer,
+    UiNode,
+    UiPanel,
+    UiColor,
+    UiConstraints,
+    UiInsets,
+    UiStyle,
+    UiText,
+    graphics::Color,
+  },
 };
+
+use crate::DefaultContext;
 
 #[derive(Debug, Clone)]
 pub struct CommandPaletteItem {
@@ -42,6 +64,164 @@ pub struct CommandPaletteState {
   pub selected:    Option<usize>,
   pub items:       Vec<CommandPaletteItem>,
   pub max_results: usize,
+}
+
+impl From<CommandPaletteLayout> for LayoutIntent {
+  fn from(layout: CommandPaletteLayout) -> Self {
+    match layout {
+      CommandPaletteLayout::Floating => LayoutIntent::Floating,
+      CommandPaletteLayout::Bottom => LayoutIntent::Bottom,
+      CommandPaletteLayout::Top => LayoutIntent::Top,
+      CommandPaletteLayout::Custom => LayoutIntent::Custom("command_palette".to_string()),
+    }
+  }
+}
+
+pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
+  let state = ctx.command_palette();
+  if !state.is_open {
+    return Vec::new();
+  }
+
+  let layout = ctx.command_palette_style().layout;
+
+  let filtered = command_palette_filtered_indices(state);
+  let selected = command_palette_selected_filtered_index(state).or_else(|| {
+    command_palette_default_selected(state).and_then(|sel| {
+      filtered.iter().position(|&idx| idx == sel)
+    })
+  });
+
+  let mut items = Vec::with_capacity(filtered.len());
+  for &idx in &filtered {
+    let item = &state.items[idx];
+    items.push(UiListItem {
+      title: item.title.clone(),
+      subtitle: item.subtitle.clone(),
+      description: item.description.clone(),
+      shortcut: item.shortcut.clone(),
+      badge: item.badge.clone(),
+      emphasis: item.emphasis,
+    });
+  }
+
+  let input = UiNode::Input(UiInput {
+    id: "command_palette_input".to_string(),
+    value: if state.query.is_empty() {
+      String::new()
+    } else {
+      format!(":{}", state.query)
+    },
+    placeholder: Some(":Execute a command…".to_string()),
+    cursor: if state.query.is_empty() {
+      1
+    } else {
+      state.query.len() + 1
+    },
+    style: UiStyle::default(),
+  });
+
+  let list = UiNode::List(UiList {
+    id: "command_palette_list".to_string(),
+    items,
+    selected,
+    scroll: 0,
+    fill_width: true,
+    style: UiStyle::default(),
+  });
+
+  let children = if matches!(layout, CommandPaletteLayout::Bottom) {
+    vec![
+      list,
+      UiNode::Divider(UiDivider { id: None }),
+      input,
+    ]
+  } else {
+    vec![
+      input,
+      UiNode::Divider(UiDivider { id: None }),
+      list,
+    ]
+  };
+
+  let container = UiNode::Container(UiContainer {
+    id: Some("command_palette_container".to_string()),
+    layout: UiLayout::Stack {
+      axis: UiAxis::Vertical,
+      gap: 0,
+    },
+    children,
+    style: UiStyle::default(),
+    constraints: UiConstraints::default(),
+  });
+
+  let intent: LayoutIntent = layout.into();
+
+  let mut overlays = Vec::new();
+  let mut constraints = UiConstraints {
+    padding: UiInsets {
+      left: 1,
+      right: 1,
+      top: 1,
+      bottom: 1,
+    },
+    ..UiConstraints::default()
+  };
+
+  if matches!(layout, CommandPaletteLayout::Floating) {
+    constraints.align = UiAlignPair {
+      horizontal: UiAlign::Center,
+      vertical: UiAlign::Center,
+    };
+  }
+
+  overlays.push(UiNode::Panel(UiPanel {
+    id: "command_palette".to_string(),
+    title: None,
+    intent: intent.clone(),
+    style: UiStyle::default(),
+    constraints,
+    layer: UiLayer::Overlay,
+    child: Box::new(container),
+  }));
+
+  if !matches!(layout, CommandPaletteLayout::Floating) {
+    if let Some(sel) = selected {
+      if let Some(&item_idx) = filtered.get(sel) {
+        if let Some(item) = state.items.get(item_idx) {
+          if let Some(description) = item.description.as_ref().filter(|s| !s.is_empty()) {
+            let text = format!("{} — {}", item.title, description);
+            overlays.push(UiNode::Panel(UiPanel {
+              id: "command_palette_help".to_string(),
+              title: None,
+              intent,
+              style: UiStyle {
+                border: Some(UiColor::Value(Color::Gray)),
+                ..UiStyle::default()
+              },
+              constraints: UiConstraints {
+                padding: UiInsets {
+                  left: 1,
+                  right: 1,
+                  top: 0,
+                  bottom: 0,
+                },
+                ..UiConstraints::default()
+              },
+              layer: UiLayer::Overlay,
+              child: Box::new(UiNode::Text(UiText {
+                id: Some("command_palette_help_text".to_string()),
+                content: text,
+                style: UiStyle::default(),
+              })),
+            }));
+          }
+        }
+      }
+    }
+  }
+
+  overlays
 }
 
 impl Default for CommandPaletteState {

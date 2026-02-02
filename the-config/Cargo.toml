@@ -7,4 +7,4 @@ edition = "2024"
 path = "src/lib.rs"
 
 [dependencies]
-the-config-user = { path = "fallback", package = "the-config-fallback" }
+the-config-user = { path = "/Users/misterclayt0n/.config/the-editor", package = "the-config-user" }

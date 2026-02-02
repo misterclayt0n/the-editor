@@ -52,6 +52,10 @@ use the_lib::{
   render::{
     RenderPlan,
     RenderStyles,
+    UiTree,
+    UiFocus,
+    UiEvent,
+    UiEventOutcome,
     text_annotations::TextAnnotations,
     text_format::TextFormat,
     char_at_visual_pos,
@@ -115,6 +119,12 @@ define! {
     post_render: RenderPlan => RenderPlan,
     pre_render_with_styles: RenderStyles => RenderStyles,
     on_render_with_styles: RenderStyles => RenderPlan,
+    pre_ui: () => (),
+    on_ui: () => UiTree,
+    post_ui: UiTree => UiTree,
+    pre_ui_event: UiEvent => UiEventOutcome,
+    on_ui_event: UiEvent => UiEventOutcome,
+    post_ui_event: UiEventOutcome => UiEventOutcome,
 
     insert_char: char,
     insert_newline: (),
@@ -192,6 +202,12 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, RenderPlan) -> RenderPlan,
   fn(&mut Ctx, RenderStyles) -> RenderStyles,
   fn(&mut Ctx, RenderStyles) -> RenderPlan,
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()) -> UiTree,
+  fn(&mut Ctx, UiTree) -> UiTree,
+  fn(&mut Ctx, UiEvent) -> UiEventOutcome,
+  fn(&mut Ctx, UiEvent) -> UiEventOutcome,
+  fn(&mut Ctx, UiEventOutcome) -> UiEventOutcome,
   fn(&mut Ctx, char),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
@@ -332,6 +348,12 @@ where
     .with_post_render(post_render::<Ctx> as fn(&mut Ctx, RenderPlan) -> RenderPlan)
     .with_pre_render_with_styles(pre_render_with_styles::<Ctx> as fn(&mut Ctx, RenderStyles) -> RenderStyles)
     .with_on_render_with_styles(on_render_with_styles::<Ctx> as fn(&mut Ctx, RenderStyles) -> RenderPlan)
+    .with_pre_ui(pre_ui::<Ctx> as fn(&mut Ctx, ()))
+    .with_on_ui(on_ui::<Ctx> as fn(&mut Ctx, ()) -> UiTree)
+    .with_post_ui(post_ui::<Ctx> as fn(&mut Ctx, UiTree) -> UiTree)
+    .with_pre_ui_event(pre_ui_event::<Ctx> as fn(&mut Ctx, UiEvent) -> UiEventOutcome)
+    .with_on_ui_event(on_ui_event::<Ctx> as fn(&mut Ctx, UiEvent) -> UiEventOutcome)
+    .with_post_ui_event(post_ui_event::<Ctx> as fn(&mut Ctx, UiEventOutcome) -> UiEventOutcome)
     .with_insert_char(insert_char::<Ctx> as fn(&mut Ctx, char))
     .with_insert_newline(insert_newline::<Ctx> as fn(&mut Ctx, ()))
     .with_delete_char(delete_char::<Ctx> as fn(&mut Ctx, ()))
@@ -423,6 +445,22 @@ pub fn render_plan_with_styles<Ctx: DefaultContext>(
   let styles = ctx.dispatch().pre_render_with_styles(ctx, styles);
   let plan = ctx.dispatch().on_render_with_styles(ctx, styles);
   ctx.dispatch().post_render(ctx, plan)
+}
+
+pub fn ui_tree<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiTree {
+  ctx.dispatch().pre_ui(ctx, ());
+  let tree = ctx.dispatch().on_ui(ctx, ());
+  ctx.dispatch().post_ui(ctx, tree)
+}
+
+pub fn ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOutcome {
+  let outcome = ctx.dispatch().pre_ui_event(ctx, event.clone());
+  let outcome = if outcome.handled {
+    outcome
+  } else {
+    ctx.dispatch().on_ui_event(ctx, event)
+  };
+  ctx.dispatch().post_ui_event(ctx, outcome)
 }
 
 pub fn default_pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
@@ -672,6 +710,42 @@ fn pre_render_with_styles<Ctx: DefaultContext>(
   styles: RenderStyles,
 ) -> RenderStyles {
   styles
+}
+
+fn pre_ui<Ctx: DefaultContext>(_ctx: &mut Ctx, _unit: ()) {}
+
+fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
+  let mut tree = UiTree::new();
+  let overlays = crate::command_palette::build_command_palette_ui(ctx);
+  tree.overlays.extend(overlays);
+  if ctx.command_palette().is_open {
+    let cursor = if ctx.command_palette().query.is_empty() {
+      1
+    } else {
+      ctx.command_palette().query.len() + 1
+    };
+    tree.focus = Some(UiFocus {
+      id: "command_palette_input".to_string(),
+      cursor: Some(cursor),
+    });
+  }
+  tree
+}
+
+fn post_ui<Ctx: DefaultContext>(_ctx: &mut Ctx, tree: UiTree) -> UiTree {
+  tree
+}
+
+fn pre_ui_event<Ctx: DefaultContext>(_ctx: &mut Ctx, _event: UiEvent) -> UiEventOutcome {
+  UiEventOutcome::r#continue()
+}
+
+fn on_ui_event<Ctx: DefaultContext>(_ctx: &mut Ctx, _event: UiEvent) -> UiEventOutcome {
+  UiEventOutcome::r#continue()
+}
+
+fn post_ui_event<Ctx: DefaultContext>(_ctx: &mut Ctx, outcome: UiEventOutcome) -> UiEventOutcome {
+  outcome
 }
 
 fn on_render_with_styles<Ctx: DefaultContext>(

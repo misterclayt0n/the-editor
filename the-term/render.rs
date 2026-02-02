@@ -60,6 +60,67 @@ fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style) {
   }
 }
 
+fn draw_box(buf: &mut Buffer, rect: Rect, border: Style, fill: Style) {
+  if rect.width < 2 || rect.height < 2 {
+    return;
+  }
+
+  fill_rect(buf, rect, fill);
+
+  let top = "─".repeat((rect.width - 2) as usize);
+  let bottom = top.clone();
+  buf.set_string(rect.x + 1, rect.y, &top, border);
+  buf.set_string(rect.x + 1, rect.y + rect.height - 1, &bottom, border);
+  buf.set_string(rect.x, rect.y, "┌", border);
+  buf.set_string(rect.x + rect.width - 1, rect.y, "┐", border);
+  buf.set_string(rect.x, rect.y + rect.height - 1, "└", border);
+  buf.set_string(rect.x + rect.width - 1, rect.y + rect.height - 1, "┘", border);
+
+  for y in rect.y + 1..rect.y + rect.height - 1 {
+    buf.set_string(rect.x, y, "│", border);
+    buf.set_string(rect.x + rect.width - 1, y, "│", border);
+  }
+}
+
+fn wrap_text(text: &str, max_width: usize, max_lines: usize) -> Vec<String> {
+  if max_width == 0 || max_lines == 0 {
+    return Vec::new();
+  }
+
+  let mut lines = Vec::new();
+  let mut current = String::new();
+  for word in text.split_whitespace() {
+    let pending_len = if current.is_empty() {
+      word.chars().count()
+    } else {
+      current.chars().count() + 1 + word.chars().count()
+    };
+
+    if pending_len > max_width && !current.is_empty() {
+      lines.push(current);
+      current = String::new();
+      if lines.len() >= max_lines {
+        break;
+      }
+    }
+
+    if !current.is_empty() {
+      current.push(' ');
+    }
+    current.push_str(word);
+  }
+
+  if lines.len() < max_lines && !current.is_empty() {
+    lines.push(current);
+  }
+
+  if lines.len() > max_lines {
+    lines.truncate(max_lines);
+  }
+
+  lines
+}
+
 fn draw_command_palette(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
   let state = &ctx.command_palette;
   if !state.is_open {
@@ -102,6 +163,33 @@ fn draw_command_palette_bottom(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
     panel,
     Style::default().bg(lib_color_to_ratatui(theme.panel_bg)),
   );
+
+  if let Some(selected_item) = state
+    .selected
+    .or_else(|| command_palette_default_selected(state))
+    .and_then(|sel| filtered.iter().position(|&idx| idx == sel).map(|row| filtered[row]))
+    .and_then(|idx| state.items.get(idx))
+  {
+    if let Some(description) = selected_item.description.as_ref().filter(|s| !s.is_empty()) {
+      let available_height = panel.y.saturating_sub(area.y);
+      let max_width = panel.width.saturating_sub(2) as usize;
+      let text = format!("{} — {}", selected_item.title, description);
+      let lines = wrap_text(&text, max_width, 3);
+      let help_height = (lines.len() as u16).saturating_add(2);
+      if help_height > 0 && help_height + 1 <= available_height {
+        let help_y = panel.y - help_height - 1;
+        let help_rect = Rect::new(panel.x, help_y, panel.width, help_height);
+        let border_style = Style::default().fg(lib_color_to_ratatui(theme.panel_border));
+        let fill_style = Style::default().bg(lib_color_to_ratatui(theme.panel_bg));
+        draw_box(buf, help_rect, border_style, fill_style);
+
+        let text_style = Style::default().fg(lib_color_to_ratatui(theme.text));
+        for (idx, line) in lines.iter().enumerate() {
+          buf.set_string(help_rect.x + 1, help_rect.y + 1 + idx as u16, line, text_style);
+        }
+      }
+    }
+  }
 
   let input_row = panel_y + panel_height - 1;
   let divider_row = input_row.saturating_sub(1);

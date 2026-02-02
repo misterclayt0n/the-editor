@@ -11,6 +11,7 @@ path = "lib.rs"
 [dependencies]
 ropey.workspace = true
 swift-bridge    = "0.1"
+the-config      = { path = "../the-config" }
 the-lib         = { path = "../the-lib" }
 the-default     = { path = "../the-default" }
 

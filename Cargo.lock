@@ -1334,6 +1334,7 @@ dependencies = [
  "ropey",
  "swift-bridge",
  "swift-bridge-build",
+ "the-config",
  "the-default",
  "the-lib",
 ]

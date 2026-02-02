@@ -42,10 +42,13 @@ use the_default::{
   Keymaps,
   Mode,
   Motion,
-  build_dispatch,
   command_palette_filtered_indices,
   command_palette_default_selected,
   command_palette_selected_filtered_index,
+};
+use the_config::{
+  build_dispatch as config_build_dispatch,
+  build_keymaps as config_build_keymaps,
 };
 use the_lib::{
   Tendril,
@@ -698,11 +701,11 @@ pub struct App {
 
 impl App {
   pub fn new() -> Self {
-    let dispatch = build_dispatch::<App>();
+    let dispatch = config_build_dispatch::<App>();
     Self {
       inner: LibApp::default(),
       dispatch,
-      keymaps: Keymaps::default(),
+      keymaps: config_build_keymaps(),
       command_registry: CommandRegistry::new(),
       states: HashMap::new(),
       file_paths: HashMap::new(),
@@ -892,6 +895,18 @@ impl App {
       return String::new();
     }
     self.active_state_ref().command_palette.query.clone()
+  }
+
+  pub fn command_palette_layout(&mut self, id: ffi::EditorId) -> u8 {
+    if self.activate(id).is_none() {
+      return 0;
+    }
+    match self.active_state_ref().command_palette_style.layout {
+      CommandPaletteLayout::Floating => 0,
+      CommandPaletteLayout::Bottom => 1,
+      CommandPaletteLayout::Top => 2,
+      CommandPaletteLayout::Custom => 3,
+    }
   }
 
   pub fn command_palette_filtered_count(&mut self, id: ffi::EditorId) -> usize {
@@ -1754,6 +1769,7 @@ mod ffi {
     fn mode(self: &App, id: EditorId) -> u8;
     fn command_palette_is_open(self: &mut App, id: EditorId) -> bool;
     fn command_palette_query(self: &mut App, id: EditorId) -> String;
+    fn command_palette_layout(self: &mut App, id: EditorId) -> u8;
     fn command_palette_filtered_count(self: &mut App, id: EditorId) -> usize;
     fn command_palette_filtered_selected_index(self: &mut App, id: EditorId) -> i64;
     fn command_palette_filtered_title(self: &mut App, id: EditorId, index: usize) -> String;

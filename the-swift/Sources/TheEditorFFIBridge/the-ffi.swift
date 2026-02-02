@@ -68,6 +68,10 @@ extension AppRefMut {
         RustString(ptr: __swift_bridge__$App$command_palette_query(ptr, id.intoFfiRepr()))
     }
 
+    public func command_palette_layout(_ id: EditorId) -> UInt8 {
+        __swift_bridge__$App$command_palette_layout(ptr, id.intoFfiRepr())
+    }
+
     public func command_palette_filtered_count(_ id: EditorId) -> UInt {
         __swift_bridge__$App$command_palette_filtered_count(ptr, id.intoFfiRepr())
     }

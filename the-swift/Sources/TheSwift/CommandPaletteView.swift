@@ -13,13 +13,31 @@ struct CommandPaletteItemSnapshot: Identifiable {
     let emphasis: Bool
 }
 
+enum CommandPaletteLayout: Int {
+    case floating = 0
+    case bottom = 1
+    case top = 2
+    case custom = 3
+
+    static func from(rawValue: UInt8) -> CommandPaletteLayout {
+        CommandPaletteLayout(rawValue: Int(rawValue)) ?? .floating
+    }
+}
+
 struct CommandPaletteSnapshot {
     let isOpen: Bool
     let query: String
     let selectedIndex: Int?
     let items: [CommandPaletteItemSnapshot]
+    let layout: CommandPaletteLayout
 
-    static let closed = CommandPaletteSnapshot(isOpen: false, query: "", selectedIndex: nil, items: [])
+    static let closed = CommandPaletteSnapshot(
+        isOpen: false,
+        query: "",
+        selectedIndex: nil,
+        items: [],
+        layout: .floating
+    )
 }
 
 struct CommandPaletteView: View {
@@ -42,53 +60,93 @@ struct CommandPaletteView: View {
         if !snapshot.isOpen {
             EmptyView()
         } else {
-            VStack(alignment: .leading, spacing: 0) {
-                paletteHeader
-                Divider()
-                paletteList
-            }
-            .frame(maxWidth: paletteWidth)
-            .background(
-                ZStack {
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                    Rectangle()
-                        .fill(backgroundColor)
-                        .blendMode(.color)
-                }
-                .compositingGroup()
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color(nsColor: .tertiaryLabelColor).opacity(0.75))
-            )
-            .shadow(radius: 28, x: 0, y: 12)
-            .padding()
-            .onAppear {
-                query = snapshot.query
-                selectedIndex = snapshot.selectedIndex ?? (snapshot.items.isEmpty ? nil : 0)
-                DispatchQueue.main.async {
-                    isTextFieldFocused = true
-                }
-            }
-            .onChange(of: snapshot.query) { newValue in
-                if newValue != query {
-                    query = newValue
-                }
-                syncSelectionIfNeeded()
-            }
-            .onChange(of: snapshot.items.count) { _ in
-                syncSelectionIfNeeded()
-            }
-            .onChange(of: snapshot.isOpen) { isOpen in
-                if isOpen {
+            paletteContainer
+                .onAppear {
+                    query = snapshot.query
+                    selectedIndex = snapshot.selectedIndex ?? (snapshot.items.isEmpty ? nil : 0)
                     DispatchQueue.main.async {
                         isTextFieldFocused = true
                     }
-                } else {
-                    isTextFieldFocused = false
                 }
+                .onChange(of: snapshot.query) { newValue in
+                    if newValue != query {
+                        query = newValue
+                    }
+                    syncSelectionIfNeeded()
+                }
+                .onChange(of: snapshot.items.count) { _ in
+                    syncSelectionIfNeeded()
+                }
+                .onChange(of: snapshot.isOpen) { isOpen in
+                    if isOpen {
+                        DispatchQueue.main.async {
+                            isTextFieldFocused = true
+                        }
+                    } else {
+                        isTextFieldFocused = false
+                    }
+                }
+        }
+    }
+
+    private var paletteCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            paletteHeader
+            Divider()
+            paletteList
+        }
+        .frame(maxWidth: paletteWidth)
+        .background(
+            ZStack {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                Rectangle()
+                    .fill(backgroundColor)
+                    .blendMode(.color)
             }
+            .compositingGroup()
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color(nsColor: .tertiaryLabelColor).opacity(0.75))
+        )
+        .shadow(radius: 28, x: 0, y: 12)
+    }
+
+    private var paletteContainer: some View {
+        let layout = snapshot.layout == .custom ? .floating : snapshot.layout
+        return Group {
+            switch layout {
+            case .bottom:
+                VStack {
+                    Spacer()
+                    paletteCard
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+            case .top:
+                VStack {
+                    paletteCard
+                    Spacer()
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 24)
+            case .floating, .custom:
+                paletteCard
+                    .padding()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment(for: layout))
+    }
+
+    private func alignment(for layout: CommandPaletteLayout) -> Alignment {
+        switch layout {
+        case .bottom:
+            return .bottom
+        case .top:
+            return .top
+        case .floating, .custom:
+            return .center
         }
     }
 

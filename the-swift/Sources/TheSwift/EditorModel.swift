@@ -147,6 +147,8 @@ final class EditorModel: ObservableObject {
         }
 
         let query = app.command_palette_query(editorId).toString()
+        let layoutRaw = app.command_palette_layout(editorId)
+        let layout = CommandPaletteLayout.from(rawValue: layoutRaw)
         let count = Int(app.command_palette_filtered_count(editorId))
         let selectedValue = app.command_palette_filtered_selected_index(editorId)
         let selectedIndex = selectedValue >= 0 ? Int(selectedValue) : nil
@@ -193,7 +195,8 @@ final class EditorModel: ObservableObject {
             isOpen: true,
             query: query,
             selectedIndex: selectedIndex,
-            items: items
+            items: items,
+            layout: layout
         )
     }
 }

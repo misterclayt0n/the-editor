@@ -2,6 +2,7 @@
 
 use ratatui::{
   prelude::*,
+  style::Modifier,
   widgets::Clear,
 };
 use the_default::{
@@ -80,6 +81,13 @@ fn draw_box(buf: &mut Buffer, rect: Rect, border: Style, fill: Style) {
     buf.set_string(rect.x, y, "│", border);
     buf.set_string(rect.x + rect.width - 1, y, "│", border);
   }
+}
+
+fn inner_rect(rect: Rect) -> Rect {
+  if rect.width < 2 || rect.height < 2 {
+    return rect;
+  }
+  Rect::new(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2)
 }
 
 fn wrap_text(text: &str, max_width: usize, max_lines: usize) -> Vec<String> {
@@ -359,6 +367,7 @@ fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
   let theme = ctx.command_palette_style.theme;
   let filtered = command_palette_filtered_indices(state);
 
+  let border: u16 = 1;
   let padding_x: u16 = 2;
   let padding_y: u16 = 1;
   let header_height: u16 = 1;
@@ -369,7 +378,7 @@ fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
   let available_height = area.height.saturating_sub(2);
   let panel_height = (available_height * 2 / 3).max(8).min(available_height);
   let max_rows = panel_height
-    .saturating_sub(padding_y * 2 + header_height + divider_height)
+    .saturating_sub(border * 2 + padding_y * 2 + header_height + divider_height)
     .max(1) as usize;
 
   if max_rows == 0 {
@@ -391,20 +400,23 @@ fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
   let max_width = area.width.saturating_sub(4).max(min_width);
   let content_width = max_title
     .saturating_add(if max_shortcut > 0 { max_shortcut + 4 } else { 0 });
-  let panel_width = (content_width + padding_x * 2 + 1)
+  let panel_width = (content_width + padding_x * 2 + 1 + border * 2)
     .max(min_width)
     .min(max_width);
 
   let panel_x = area.x + (area.width.saturating_sub(panel_width)) / 2;
-  let panel_y = area.y + (area.height.saturating_sub(panel_height)) / 2;
+  let panel_y = area.y + (area.height.saturating_sub(panel_height)) / 2 + 1;
   let panel = Rect::new(panel_x, panel_y, panel_width, panel_height);
 
   let buf = f.buffer_mut();
-  fill_rect(
+  let border_style = Style::default().fg(lib_color_to_ratatui(theme.text));
+  draw_box(
     buf,
     panel,
+    border_style,
     Style::default().bg(lib_color_to_ratatui(theme.panel_bg)),
   );
+  let content = inner_rect(panel);
 
   let placeholder = "Execute a command...";
   let (input_text, input_style) = if state.query.is_empty() {
@@ -419,14 +431,18 @@ fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
     )
   };
 
-  let input_row = panel_y + padding_y;
-  let input_col = panel_x + padding_x;
+  let inner_x = content.x;
+  let inner_y = content.y;
+  let inner_width = content.width;
+
+  let input_row = inner_y + padding_y;
+  let input_col = inner_x + padding_x;
   buf.set_string(input_col, input_row, input_text, input_style);
 
-  let divider_row = panel_y + padding_y + header_height;
+  let divider_row = inner_y + padding_y + header_height;
   let divider_style = Style::default().fg(lib_color_to_ratatui(theme.divider));
-  let line = "─".repeat(panel_width as usize);
-  buf.set_string(panel_x, divider_row, &line, divider_style);
+  let line = "─".repeat(inner_width as usize);
+  buf.set_string(inner_x, divider_row, &line, divider_style);
 
   let list_start = divider_row + divider_height;
   let visible_rows = max_rows.min(filtered.len());
@@ -457,21 +473,25 @@ fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
     let is_selected = selected_row == Some(row_idx + scroll_offset);
 
     if is_selected {
-      fill_rect(
-        buf,
-        Rect::new(panel_x + 1, row_y, panel_width.saturating_sub(2), row_height),
-        Style::default().bg(lib_color_to_ratatui(theme.selected_bg)),
+      // Subtle highlight: left gutter indicator + brighter text
+      buf.set_string(
+        inner_x,
+        row_y,
+        "▏",
+        Style::default().fg(lib_color_to_ratatui(theme.selected_text)),
       );
     }
 
     let row_style = if is_selected {
-      Style::default().fg(lib_color_to_ratatui(theme.selected_text))
+      Style::default()
+        .fg(lib_color_to_ratatui(theme.selected_text))
+        .add_modifier(Modifier::BOLD)
     } else {
       Style::default().fg(lib_color_to_ratatui(theme.text))
     };
 
     buf.set_string(
-      panel_x + padding_x,
+      inner_x + padding_x,
       row_y,
       &state.items[*item_idx].title,
       row_style,
@@ -483,17 +503,17 @@ fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
       } else {
         Style::default().fg(lib_color_to_ratatui(theme.placeholder))
       };
-      let shortcut_x = panel_x
-        .saturating_add(panel_width)
+      let shortcut_x = inner_x
+        .saturating_add(inner_width)
         .saturating_sub(padding_x + 1 + shortcut.len() as u16);
-      if shortcut_x > panel_x + padding_x {
+      if shortcut_x > inner_x + padding_x {
         buf.set_string(shortcut_x, row_y, shortcut, shortcut_style);
       }
     }
   }
 
   if filtered.len() > visible_rows {
-    let track_x = panel_x + panel_width - 1;
+    let track_x = inner_x + inner_width - 1;
     let track_height = visible_rows as u16;
     let thumb_height = ((visible_rows as f32 / filtered.len() as f32) * track_height as f32)
       .ceil()
@@ -515,7 +535,7 @@ fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
   }
 
   let cursor_col = panel_x
-    .saturating_add(padding_x)
+    .saturating_add(border + padding_x)
     .saturating_add(state.query.chars().count() as u16);
   if cursor_col < panel_x + panel_width {
     f.set_cursor(cursor_col, input_row);

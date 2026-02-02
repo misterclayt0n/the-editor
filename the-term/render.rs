@@ -357,28 +357,23 @@ fn draw_command_palette_top(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
 fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
   let state = &ctx.command_palette;
   let theme = ctx.command_palette_style.theme;
-  let mut filtered = command_palette_filtered_indices(state);
+  let filtered = command_palette_filtered_indices(state);
 
   let padding_x: u16 = 2;
   let padding_y: u16 = 1;
   let header_height: u16 = 1;
   let divider_height: u16 = 1;
   let row_height: u16 = 1;
-  let min_width: u16 = 24;
+  let min_width: u16 = 48;
 
-  let max_rows = {
-    let available = area
-      .height
-      .saturating_sub(padding_y * 2 + header_height + divider_height);
-    (available / row_height) as usize
-  };
+  let available_height = area.height.saturating_sub(2);
+  let panel_height = (available_height * 2 / 3).max(8).min(available_height);
+  let max_rows = panel_height
+    .saturating_sub(padding_y * 2 + header_height + divider_height)
+    .max(1) as usize;
 
   if max_rows == 0 {
     return;
-  }
-
-  if filtered.len() > max_rows {
-    filtered.truncate(max_rows);
   }
 
   let max_title = filtered
@@ -386,14 +381,22 @@ fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
     .map(|&idx| state.items[idx].title.len() as u16)
     .max()
     .unwrap_or(0);
+  let max_shortcut = filtered
+    .iter()
+    .filter_map(|&idx| state.items[idx].shortcut.as_ref())
+    .map(|s| s.len() as u16)
+    .max()
+    .unwrap_or(0);
 
   let max_width = area.width.saturating_sub(4).max(min_width);
-  let panel_width = (max_title + padding_x * 2).max(min_width).min(max_width);
-  let panel_height =
-    padding_y * 2 + header_height + divider_height + row_height * filtered.len() as u16;
+  let content_width = max_title
+    .saturating_add(if max_shortcut > 0 { max_shortcut + 4 } else { 0 });
+  let panel_width = (content_width + padding_x * 2 + 1)
+    .max(min_width)
+    .min(max_width);
 
   let panel_x = area.x + (area.width.saturating_sub(panel_width)) / 2;
-  let panel_y = area.y + 1;
+  let panel_y = area.y + (area.height.saturating_sub(panel_height)) / 2;
   let panel = Rect::new(panel_x, panel_y, panel_width, panel_height);
 
   let buf = f.buffer_mut();
@@ -426,6 +429,7 @@ fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
   buf.set_string(panel_x, divider_row, &line, divider_style);
 
   let list_start = divider_row + divider_height;
+  let visible_rows = max_rows.min(filtered.len());
   let selected_item = state
     .selected
     .or_else(|| command_palette_default_selected(state));
@@ -433,10 +437,26 @@ fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
     filtered.iter().position(|&idx| idx == sel)
   });
 
-  for (row_idx, item_idx) in filtered.iter().enumerate() {
-    let row_y = list_start + row_idx as u16;
+  let scroll_offset = if let Some(sel) = selected_row {
+    if sel >= visible_rows {
+      sel + 1 - visible_rows
+    } else {
+      0
+    }
+  } else {
+    0
+  };
 
-    if selected_row == Some(row_idx) {
+  let visible = filtered
+    .iter()
+    .skip(scroll_offset)
+    .take(visible_rows);
+
+  for (row_idx, item_idx) in visible.enumerate() {
+    let row_y = list_start + row_idx as u16;
+    let is_selected = selected_row == Some(row_idx + scroll_offset);
+
+    if is_selected {
       fill_rect(
         buf,
         Rect::new(panel_x + 1, row_y, panel_width.saturating_sub(2), row_height),
@@ -444,7 +464,7 @@ fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
       );
     }
 
-    let row_style = if selected_row == Some(row_idx) {
+    let row_style = if is_selected {
       Style::default().fg(lib_color_to_ratatui(theme.selected_text))
     } else {
       Style::default().fg(lib_color_to_ratatui(theme.text))
@@ -456,6 +476,42 @@ fn draw_command_palette_floating(f: &mut Frame, area: Rect, ctx: &mut Ctx) {
       &state.items[*item_idx].title,
       row_style,
     );
+
+    if let Some(shortcut) = state.items[*item_idx].shortcut.as_ref() {
+      let shortcut_style = if is_selected {
+        Style::default().fg(lib_color_to_ratatui(theme.selected_text))
+      } else {
+        Style::default().fg(lib_color_to_ratatui(theme.placeholder))
+      };
+      let shortcut_x = panel_x
+        .saturating_add(panel_width)
+        .saturating_sub(padding_x + 1 + shortcut.len() as u16);
+      if shortcut_x > panel_x + padding_x {
+        buf.set_string(shortcut_x, row_y, shortcut, shortcut_style);
+      }
+    }
+  }
+
+  if filtered.len() > visible_rows {
+    let track_x = panel_x + panel_width - 1;
+    let track_height = visible_rows as u16;
+    let thumb_height = ((visible_rows as f32 / filtered.len() as f32) * track_height as f32)
+      .ceil()
+      .max(1.0) as u16;
+    let max_scroll = filtered.len().saturating_sub(visible_rows);
+    let thumb_offset = if max_scroll == 0 {
+      0
+    } else {
+      ((scroll_offset as f32 / max_scroll as f32) * (track_height - thumb_height) as f32)
+        .round() as u16
+    };
+    for i in 0..track_height {
+      let y = list_start + i;
+      let is_thumb = i >= thumb_offset && i < thumb_offset + thumb_height;
+      let symbol = if is_thumb { "█" } else { "│" };
+      let style = Style::default().fg(lib_color_to_ratatui(theme.divider));
+      buf.set_string(track_x, y, symbol, style);
+    }
   }
 
   let cursor_col = panel_x

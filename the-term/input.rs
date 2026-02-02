@@ -6,7 +6,10 @@ use crossterm::event::{
   KeyEventKind,
   KeyModifiers,
 };
-use the_default::DefaultContext;
+use the_default::{
+  DefaultContext,
+  Mode,
+};
 
 use crate::{
   Ctx,
@@ -22,6 +25,33 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
   // Only handle key press events, not release or repeat
   if event.kind != KeyEventKind::Press {
     return;
+  }
+
+  if ctx.mode() == Mode::Command {
+    match event.code {
+      KeyCode::Tab => {
+        let key = if event.modifiers.contains(KeyModifiers::SHIFT) {
+          Key::Up
+        } else {
+          Key::Down
+        };
+        let key_event = KeyEvent {
+          key,
+          modifiers: Modifiers::empty(),
+        };
+        ctx.dispatch().pre_on_keypress(ctx, key_event);
+        return;
+      },
+      KeyCode::BackTab => {
+        let key_event = KeyEvent {
+          key: Key::Up,
+          modifiers: Modifiers::empty(),
+        };
+        ctx.dispatch().pre_on_keypress(ctx, key_event);
+        return;
+      },
+      _ => {},
+    }
   }
 
   let modifiers = to_modifiers(event.modifiers, event.code);

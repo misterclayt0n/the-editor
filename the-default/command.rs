@@ -78,10 +78,6 @@ use crate::{
     CommandPaletteStyle,
     CommandPaletteState,
   },
-  render_pass::{
-    RenderPass,
-    run_render_passes,
-  },
   Command,
   Direction,
   Key,
@@ -299,8 +295,6 @@ pub trait DefaultContext: Sized + 'static {
   fn command_palette_mut(&mut self) -> &mut CommandPaletteState;
   fn command_palette_style(&self) -> &CommandPaletteStyle;
   fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle;
-  fn render_passes(&self) -> &Vec<RenderPass<Self>>;
-  fn render_passes_mut(&mut self) -> &mut Vec<RenderPass<Self>>;
   fn dispatch(&self) -> DispatchRef<Self>;
   fn pending_input(&self) -> Option<&PendingInput>;
   fn set_pending_input(&mut self, pending: Option<PendingInput>);
@@ -669,7 +663,7 @@ fn on_render<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> RenderPlan {
 }
 
 fn post_render<Ctx: DefaultContext>(ctx: &mut Ctx, mut plan: RenderPlan) -> RenderPlan {
-  run_render_passes(ctx, &mut plan);
+  let _ = ctx;
   plan
 }
 

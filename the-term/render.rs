@@ -57,6 +57,7 @@ fn fill_rect(buf: &mut Buffer, rect: Rect, style: Style) {
   let line = " ".repeat(rect.width as usize);
   for y in rect.y..rect.y + rect.height {
     buf.set_string(rect.x, y, &line, style);
+  }
 }
 
 fn draw_command_palette(f: &mut Frame, area: Rect, ctx: &mut Ctx) {

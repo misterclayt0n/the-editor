@@ -25,8 +25,6 @@ use the_default::{
   Keymaps,
   Mode,
   Motion,
-  RenderPass,
-  default_render_passes,
 };
 use the_lib::{
   document::{
@@ -69,7 +67,6 @@ pub struct Ctx {
   pub command_registry: CommandRegistry<Ctx>,
   pub command_palette:  CommandPaletteState,
   pub command_palette_style: CommandPaletteStyle,
-  pub render_passes:    Vec<RenderPass<Ctx>>,
   pub pending_input:    Option<the_default::PendingInput>,
   pub dispatch:         Option<NonNull<DefaultDispatchStatic<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
@@ -141,8 +138,6 @@ impl Ctx {
     let mut text_format = TextFormat::default();
     text_format.viewport_width = viewport.width;
 
-    let render_passes = default_render_passes();
-
     Ok(Self {
       editor,
       file_path: file_path.map(PathBuf::from),
@@ -154,7 +149,6 @@ impl Ctx {
       command_registry: CommandRegistry::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
-      render_passes,
       pending_input: None,
       dispatch: None,
       loader,
@@ -252,14 +246,6 @@ impl the_default::DefaultContext for Ctx {
 
   fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle {
     &mut self.command_palette_style
-  }
-
-  fn render_passes(&self) -> &Vec<RenderPass<Self>> {
-    &self.render_passes
-  }
-
-  fn render_passes_mut(&mut self) -> &mut Vec<RenderPass<Self>> {
-    &mut self.render_passes
   }
 
   fn dispatch(&self) -> DispatchRef<Self> {

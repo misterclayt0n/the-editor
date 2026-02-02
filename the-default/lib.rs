@@ -10,7 +10,6 @@ mod input;
 mod command_palette;
 mod keymap;
 mod pending;
-mod render_pass;
 
 pub use command_types::{
   Command,
@@ -60,11 +59,6 @@ pub use command_palette::{
   command_palette_default_selected,
   command_palette_filtered_indices,
   command_palette_selected_filtered_index,
-};
-pub use render_pass::{
-  RenderPass,
-  default_render_passes,
-  run_render_passes,
 };
 pub use keymap::{
   KeyAction,

@@ -574,10 +574,19 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
       return true;
     },
     Key::Enter | Key::NumpadEnter => {
-      let line = {
+      let mut line = {
         let prompt = ctx.command_prompt_ref();
         prompt.input.trim().trim_start_matches(':').to_string()
       };
+
+      if line.is_empty() {
+        let palette = ctx.command_palette();
+        if let Some(sel) = palette.selected {
+          if let Some(item) = palette.items.get(sel) {
+            line = item.title.clone();
+          }
+        }
+      }
 
       if line.is_empty() {
         ctx.set_mode(Mode::Normal);

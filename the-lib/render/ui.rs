@@ -52,6 +52,22 @@ impl UiNode {
     UiNode::Text(UiText::new(id, content))
   }
 
+  pub fn input(id: impl Into<String>, value: impl Into<String>) -> Self {
+    UiNode::Input(UiInput::new(id, value))
+  }
+
+  pub fn list(id: impl Into<String>, items: Vec<UiListItem>) -> Self {
+    UiNode::List(UiList::new(id, items))
+  }
+
+  pub fn divider() -> Self {
+    UiNode::Divider(UiDivider { id: None })
+  }
+
+  pub fn spacer(size: u16) -> Self {
+    UiNode::Spacer(UiSpacer { id: None, size })
+  }
+
   pub fn container(
     id: impl Into<String>,
     layout: UiLayout,
@@ -62,6 +78,18 @@ impl UiNode {
 
   pub fn panel(id: impl Into<String>, intent: LayoutIntent, child: UiNode) -> Self {
     UiNode::Panel(UiPanel::new(id, intent, child))
+  }
+
+  pub fn panel_floating(id: impl Into<String>, child: UiNode) -> Self {
+    UiNode::Panel(UiPanel::floating(id, child))
+  }
+
+  pub fn panel_bottom(id: impl Into<String>, child: UiNode) -> Self {
+    UiNode::Panel(UiPanel::bottom(id, child))
+  }
+
+  pub fn panel_top(id: impl Into<String>, child: UiNode) -> Self {
+    UiNode::Panel(UiPanel::top(id, child))
   }
 }
 
@@ -177,6 +205,24 @@ impl UiContainer {
       constraints: UiConstraints::default(),
     }
   }
+
+  pub fn stack(id: impl Into<String>, axis: UiAxis, gap: u16, children: Vec<UiNode>) -> Self {
+    Self {
+      id: Some(id.into()),
+      layout: UiLayout::Stack { axis, gap },
+      children,
+      style: UiStyle::default(),
+      constraints: UiConstraints::default(),
+    }
+  }
+
+  pub fn column(id: impl Into<String>, gap: u16, children: Vec<UiNode>) -> Self {
+    Self::stack(id, UiAxis::Vertical, gap, children)
+  }
+
+  pub fn row(id: impl Into<String>, gap: u16, children: Vec<UiNode>) -> Self {
+    Self::stack(id, UiAxis::Horizontal, gap, children)
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,6 +242,42 @@ impl UiPanel {
       id: id.into(),
       title: None,
       intent,
+      style: UiStyle::panel(),
+      constraints: UiConstraints::panel(),
+      layer: UiLayer::Overlay,
+      child: Box::new(child),
+    }
+  }
+
+  pub fn floating(id: impl Into<String>, child: UiNode) -> Self {
+    Self {
+      id: id.into(),
+      title: None,
+      intent: LayoutIntent::Floating,
+      style: UiStyle::panel(),
+      constraints: UiConstraints::floating_default(),
+      layer: UiLayer::Overlay,
+      child: Box::new(child),
+    }
+  }
+
+  pub fn bottom(id: impl Into<String>, child: UiNode) -> Self {
+    Self {
+      id: id.into(),
+      title: None,
+      intent: LayoutIntent::Bottom,
+      style: UiStyle::panel(),
+      constraints: UiConstraints::panel(),
+      layer: UiLayer::Overlay,
+      child: Box::new(child),
+    }
+  }
+
+  pub fn top(id: impl Into<String>, child: UiNode) -> Self {
+    Self {
+      id: id.into(),
+      title: None,
+      intent: LayoutIntent::Top,
       style: UiStyle::panel(),
       constraints: UiConstraints::panel(),
       layer: UiLayer::Overlay,
@@ -241,6 +323,21 @@ pub struct UiList {
   pub clip: bool,
 }
 
+impl UiList {
+  pub fn new(id: impl Into<String>, items: Vec<UiListItem>) -> Self {
+    Self {
+      id: id.into(),
+      items,
+      selected: None,
+      scroll: 0,
+      fill_width: true,
+      style: UiStyle::default(),
+      max_visible: None,
+      clip: true,
+    }
+  }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiListItem {
   pub title: String,
@@ -258,6 +355,18 @@ pub struct UiInput {
   pub placeholder: Option<String>,
   pub cursor: usize,
   pub style: UiStyle,
+}
+
+impl UiInput {
+  pub fn new(id: impl Into<String>, value: impl Into<String>) -> Self {
+    Self {
+      id: id.into(),
+      value: value.into(),
+      placeholder: None,
+      cursor: 0,
+      style: UiStyle::default(),
+    }
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

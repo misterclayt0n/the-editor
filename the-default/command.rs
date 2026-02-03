@@ -793,7 +793,22 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
         close_command_palette(ctx);
         return UiEventOutcome::handled();
       },
-      UiEventKind::Command(_) => {},
+      UiEventKind::Command(command_line) => {
+        let line = command_line.trim().trim_start_matches(':');
+        if !line.is_empty() {
+          let (command, args) = line
+            .split_once(char::is_whitespace)
+            .map(|(cmd, rest)| (cmd, rest.trim()))
+            .unwrap_or((line, ""));
+          let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
+          let result = unsafe { (&*registry).execute(ctx, command, args, CommandEvent::Validate) };
+          if let Err(err) = result {
+            ctx.command_prompt_mut().error = Some(err.to_string());
+          }
+          ctx.request_render();
+        }
+        return UiEventOutcome::handled();
+      },
     }
   }
 

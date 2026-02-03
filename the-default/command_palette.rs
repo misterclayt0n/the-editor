@@ -106,6 +106,7 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
       shortcut: item.shortcut.clone(),
       badge: item.badge.clone(),
       emphasis: item.emphasis,
+      action: Some(item.title.clone()),
     });
   }
 

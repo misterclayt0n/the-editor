@@ -114,6 +114,18 @@ impl UiState {
     self.panels.get(id).map(|state| state.visible).unwrap_or(false)
   }
 
+  pub fn show_panel(&mut self, id: impl Into<String>) {
+    self.panel_mut(id).show();
+  }
+
+  pub fn hide_panel(&mut self, id: impl Into<String>) {
+    self.panel_mut(id).hide();
+  }
+
+  pub fn toggle_panel(&mut self, id: impl Into<String>) {
+    self.panel_mut(id).toggle();
+  }
+
   pub fn node_mut(&mut self, id: impl Into<String>) -> &mut UiNodeState {
     let id = id.into();
     self.nodes.entry(id).or_default()
@@ -346,6 +358,27 @@ pub struct UiListItem {
   pub shortcut: Option<String>,
   pub badge: Option<String>,
   pub emphasis: bool,
+  #[serde(default)]
+  pub action: Option<String>,
+}
+
+impl UiListItem {
+  pub fn new(title: impl Into<String>) -> Self {
+    Self {
+      title: title.into(),
+      subtitle: None,
+      description: None,
+      shortcut: None,
+      badge: None,
+      emphasis: false,
+      action: None,
+    }
+  }
+
+  pub fn with_action(mut self, action: impl Into<String>) -> Self {
+    self.action = Some(action.into());
+    self
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

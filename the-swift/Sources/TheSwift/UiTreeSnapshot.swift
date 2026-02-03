@@ -150,6 +150,28 @@ struct UiListItemSnapshot: Decodable {
     let shortcut: String?
     let badge: String?
     let emphasis: Bool
+    let action: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case title
+        case subtitle
+        case description
+        case shortcut
+        case badge
+        case emphasis
+        case action
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        title = try container.decode(String.self, forKey: .title)
+        subtitle = try? container.decode(String.self, forKey: .subtitle)
+        description = try? container.decode(String.self, forKey: .description)
+        shortcut = try? container.decode(String.self, forKey: .shortcut)
+        badge = try? container.decode(String.self, forKey: .badge)
+        emphasis = (try? container.decode(Bool.self, forKey: .emphasis)) ?? false
+        action = try? container.decode(String.self, forKey: .action)
+    }
 }
 
 struct UiInputSnapshot: Decodable {

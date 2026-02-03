@@ -72,6 +72,7 @@ use the_lib::{
     OverlayText,
     RenderStyles,
     build_plan,
+    UiState,
     graphics::{
       Color as LibColor,
       CursorKind as LibCursorKind,
@@ -651,6 +652,7 @@ struct EditorState {
   command_prompt: CommandPromptState,
   command_palette: CommandPaletteState,
   command_palette_style: CommandPaletteStyle,
+  ui_state:       UiState,
   needs_render:   bool,
   pending_input:  Option<the_default::PendingInput>,
   register:       Option<char>,
@@ -672,6 +674,7 @@ impl EditorState {
       command_prompt: CommandPromptState::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style,
+      ui_state: UiState::default(),
       needs_render: true,
       pending_input: None,
       register: None,
@@ -1462,6 +1465,14 @@ impl DefaultContext for App {
 
   fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle {
     &mut self.active_state_mut().command_palette_style
+  }
+
+  fn ui_state(&self) -> &UiState {
+    &self.active_state_ref().ui_state
+  }
+
+  fn ui_state_mut(&mut self) -> &mut UiState {
+    &mut self.active_state_mut().ui_state
   }
 
   fn dispatch(&self) -> DispatchRef<Self> {

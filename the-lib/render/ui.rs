@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::render::graphics::Color;
 use serde::{
   Deserialize,
@@ -39,6 +41,80 @@ pub enum UiNode {
   Spacer(UiSpacer),
   Tooltip(UiTooltip),
   StatusBar(UiStatusBar),
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UiState {
+  panels: HashMap<String, UiPanelState>,
+  nodes:  HashMap<String, UiNodeState>,
+  pub focus: Option<UiFocus>,
+}
+
+impl UiState {
+  pub fn panel_mut(&mut self, id: impl Into<String>) -> &mut UiPanelState {
+    let id = id.into();
+    self.panels.entry(id).or_default()
+  }
+
+  pub fn panel(&self, id: &str) -> Option<&UiPanelState> {
+    self.panels.get(id)
+  }
+
+  pub fn panel_visible(&self, id: &str) -> bool {
+    self.panels.get(id).map(|state| state.visible).unwrap_or(false)
+  }
+
+  pub fn node_mut(&mut self, id: impl Into<String>) -> &mut UiNodeState {
+    let id = id.into();
+    self.nodes.entry(id).or_default()
+  }
+
+  pub fn node(&self, id: &str) -> Option<&UiNodeState> {
+    self.nodes.get(id)
+  }
+
+  pub fn set_focus(&mut self, focus: Option<UiFocus>) {
+    self.focus = focus;
+  }
+
+  pub fn focus(&self) -> Option<&UiFocus> {
+    self.focus.as_ref()
+  }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct UiPanelState {
+  pub visible: bool,
+}
+
+impl Default for UiPanelState {
+  fn default() -> Self {
+    Self { visible: false }
+  }
+}
+
+impl UiPanelState {
+  pub fn show(&mut self) {
+    self.visible = true;
+  }
+
+  pub fn hide(&mut self) {
+    self.visible = false;
+  }
+
+  pub fn toggle(&mut self) {
+    self.visible = !self.visible;
+  }
+
+  pub fn is_visible(&self) -> bool {
+    self.visible
+  }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UiNodeState {
+  pub scroll:   usize,
+  pub selected: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

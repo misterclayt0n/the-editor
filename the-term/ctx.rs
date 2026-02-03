@@ -38,6 +38,7 @@ use the_lib::{
   position::Position,
   registers::Registers,
   render::graphics::Rect,
+  render::UiState,
   render::RenderStyles,
   render::text_annotations::{
     InlineAnnotation,
@@ -67,6 +68,7 @@ pub struct Ctx {
   pub command_registry: CommandRegistry<Ctx>,
   pub command_palette:  CommandPaletteState,
   pub command_palette_style: CommandPaletteStyle,
+  pub ui_state:         UiState,
   pub pending_input:    Option<the_default::PendingInput>,
   pub dispatch:         Option<NonNull<DefaultDispatchStatic<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
@@ -149,6 +151,7 @@ impl Ctx {
       command_registry: CommandRegistry::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
+      ui_state: UiState::default(),
       pending_input: None,
       dispatch: None,
       loader,
@@ -246,6 +249,14 @@ impl the_default::DefaultContext for Ctx {
 
   fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle {
     &mut self.command_palette_style
+  }
+
+  fn ui_state(&self) -> &UiState {
+    &self.ui_state
+  }
+
+  fn ui_state_mut(&mut self) -> &mut UiState {
+    &mut self.ui_state
   }
 
   fn dispatch(&self) -> DispatchRef<Self> {

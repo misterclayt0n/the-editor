@@ -52,6 +52,7 @@ use the_lib::{
   render::{
     RenderPlan,
     RenderStyles,
+    UiState,
     UiTree,
     UiFocus,
     UiEvent,
@@ -311,6 +312,8 @@ pub trait DefaultContext: Sized + 'static {
   fn command_palette_mut(&mut self) -> &mut CommandPaletteState;
   fn command_palette_style(&self) -> &CommandPaletteStyle;
   fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle;
+  fn ui_state(&self) -> &UiState;
+  fn ui_state_mut(&mut self) -> &mut UiState;
   fn dispatch(&self) -> DispatchRef<Self>;
   fn pending_input(&self) -> Option<&PendingInput>;
   fn set_pending_input(&mut self, pending: Option<PendingInput>);

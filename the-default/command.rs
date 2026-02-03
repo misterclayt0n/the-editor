@@ -768,12 +768,12 @@ fn pre_ui_event<Ctx: DefaultContext>(_ctx: &mut Ctx, _event: UiEvent) -> UiEvent
 fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOutcome {
   let focus = ctx.ui_state().focus().cloned();
   let target = event.target.as_deref();
-  let focus_kind = focus.as_ref().map(|f| f.kind.clone());
+  let focus_id = focus.as_ref().map(|f| f.id.as_str());
+  let target_id = target.or(focus_id);
 
-  let is_command_palette = matches!(
-    target,
-    Some("command_palette") | Some("command_palette_input") | Some("command_palette_list")
-  ) || matches!(focus_kind, Some(UiFocusKind::Input | UiFocusKind::List));
+  let is_command_palette = target_id
+    .map(|id| id.starts_with("command_palette"))
+    .unwrap_or(false);
 
   if is_command_palette {
     match event.kind {

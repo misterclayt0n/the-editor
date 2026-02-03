@@ -251,9 +251,25 @@ fn measure_node(node: &UiNode, max_width: u16) -> (u16, u16) {
     UiNode::Text(text) => {
       let mut width = 0u16;
       let mut height = 0u16;
+      let max_lines = text.max_lines.unwrap_or(u16::MAX) as usize;
       for line in text.content.lines() {
-        width = width.max(line.chars().count() as u16);
-        height = height.saturating_add(1);
+        let line_len = line.chars().count() as u16;
+        if text.clip {
+          width = width.max(line_len);
+          height = height.saturating_add(1);
+        } else if max_width > 0 {
+          width = width.max(max_width);
+          let wrapped = ((line_len as usize + max_width as usize - 1) / max_width as usize)
+            .max(1);
+          height = height.saturating_add(wrapped as u16);
+        } else {
+          width = width.max(line_len);
+          height = height.saturating_add(1);
+        }
+        if height as usize >= max_lines {
+          height = max_lines as u16;
+          break;
+        }
       }
       (width.min(max_width), height.max(1))
     },
@@ -292,7 +308,11 @@ fn measure_node(node: &UiNode, max_width: u16) -> (u16, u16) {
       };
       let base_height = if has_detail { 2 } else { 1 };
       let row_height = base_height;
-      let count = list.items.len().max(1) as u16;
+      let mut count = list.items.len().max(1);
+      if let Some(max_visible) = list.max_visible {
+        count = count.min(max_visible.max(1));
+      }
+      let count = count as u16;
       let total_height = count.saturating_mul(row_height as u16);
       (width, total_height)
     },
@@ -454,15 +474,49 @@ fn draw_ui_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiText) {
   let (text_style, _, _) = ui_style_colors(ctx, &text.style);
   let text_color = ui_emphasis_color(ctx, text.style.emphasis, text_style.fg.unwrap_or(Color::White));
   let style = text_style.fg(text_color);
+  let max_lines = text.max_lines.unwrap_or(u16::MAX) as usize;
+  let mut drawn = 0usize;
 
-  for (idx, line) in text.content.lines().enumerate() {
-    let y = rect.y + idx as u16;
-    if y >= rect.y + rect.height {
+  for line in text.content.lines() {
+    if drawn >= max_lines {
       break;
     }
-    let mut truncated = line.to_string();
-    truncate_in_place(&mut truncated, rect.width as usize);
-    buf.set_string(rect.x, y, truncated, style);
+
+    if text.clip || rect.width == 0 {
+      let y = rect.y + drawn as u16;
+      if y >= rect.y + rect.height {
+        break;
+      }
+      let mut truncated = line.to_string();
+      truncate_in_place(&mut truncated, rect.width as usize);
+      buf.set_string(rect.x, y, truncated, style);
+      drawn += 1;
+    } else {
+      let mut chunk = String::new();
+      for ch in line.chars() {
+        if chunk.chars().count() >= rect.width as usize {
+          let y = rect.y + drawn as u16;
+          if y >= rect.y + rect.height {
+            break;
+          }
+          buf.set_string(rect.x, y, chunk.clone(), style);
+          drawn += 1;
+          chunk.clear();
+          if drawn >= max_lines {
+            break;
+          }
+        }
+        chunk.push(ch);
+      }
+      if !chunk.is_empty() && drawn < max_lines {
+        let y = rect.y + drawn as u16;
+        if y >= rect.y + rect.height {
+          break;
+        }
+        buf.set_string(rect.x, y, chunk, style);
+        drawn += 1;
+      }
+    }
   }
 }
 
@@ -530,7 +584,10 @@ fn draw_ui_list(
   let row_gap: usize = 0;
   let row_height: usize = base_height + row_gap;
   let visible_rows = rect.height as usize;
-  let visible_items = visible_rows / row_height;
+  let mut visible_items = visible_rows / row_height;
+  if let Some(max_visible) = list.max_visible {
+    visible_items = visible_items.min(max_visible.max(1));
+  }
   if visible_items == 0 {
     return;
   }

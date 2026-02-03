@@ -88,6 +88,25 @@ struct UiTextSnapshot: Decodable {
     let id: String?
     let content: String
     let style: UiStyleSnapshot
+    let maxLines: UInt16?
+    let clip: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case content
+        case style
+        case maxLines
+        case clip
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try? container.decode(String.self, forKey: .id)
+        content = try container.decode(String.self, forKey: .content)
+        style = (try? container.decode(UiStyleSnapshot.self, forKey: .style)) ?? .fallback
+        maxLines = try? container.decode(UInt16.self, forKey: .maxLines)
+        clip = (try? container.decode(Bool.self, forKey: .clip)) ?? true
+    }
 }
 
 struct UiListSnapshot: Decodable {
@@ -97,6 +116,31 @@ struct UiListSnapshot: Decodable {
     let scroll: Int
     let fillWidth: Bool
     let style: UiStyleSnapshot
+    let maxVisible: Int?
+    let clip: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case items
+        case selected
+        case scroll
+        case fillWidth
+        case style
+        case maxVisible
+        case clip
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        items = (try? container.decode([UiListItemSnapshot].self, forKey: .items)) ?? []
+        selected = try? container.decode(Int.self, forKey: .selected)
+        scroll = (try? container.decode(Int.self, forKey: .scroll)) ?? 0
+        fillWidth = (try? container.decode(Bool.self, forKey: .fillWidth)) ?? false
+        style = (try? container.decode(UiStyleSnapshot.self, forKey: .style)) ?? .fallback
+        maxVisible = try? container.decode(Int.self, forKey: .maxVisible)
+        clip = (try? container.decode(Bool.self, forKey: .clip)) ?? true
+    }
 }
 
 struct UiListItemSnapshot: Decodable {

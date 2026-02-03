@@ -6,6 +6,10 @@ use serde::{
   Serialize,
 };
 
+fn default_clip() -> bool {
+  true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiTree {
   pub root: UiNode,
@@ -205,6 +209,10 @@ pub struct UiText {
   pub id: Option<String>,
   pub content: String,
   pub style: UiStyle,
+  #[serde(default)]
+  pub max_lines: Option<u16>,
+  #[serde(default = "default_clip")]
+  pub clip: bool,
 }
 
 impl UiText {
@@ -213,6 +221,8 @@ impl UiText {
       id: Some(id.into()),
       content: content.into(),
       style: UiStyle::default(),
+      max_lines: None,
+      clip: true,
     }
   }
 }
@@ -225,6 +235,10 @@ pub struct UiList {
   pub scroll: usize,
   pub fill_width: bool,
   pub style: UiStyle,
+  #[serde(default)]
+  pub max_visible: Option<usize>,
+  #[serde(default = "default_clip")]
+  pub clip: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

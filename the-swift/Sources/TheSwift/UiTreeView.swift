@@ -131,13 +131,16 @@ struct UiNodeView: View {
         Text(text.content)
             .foregroundColor(resolveColor(text.style.fg, fallback: Color.white))
             .font(font(for: text.style))
+            .lineLimit(text.maxLines.map { Int($0) })
+            .truncationMode(.tail)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
     private func listView(_ list: UiListSnapshot) -> some View {
+        let items = list.maxVisible.map { max(1, $0) }.map { Array(list.items.prefix($0)) } ?? list.items
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(list.items.enumerated()), id: \.offset) { index, item in
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                 let isSelected = list.selected == index
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)

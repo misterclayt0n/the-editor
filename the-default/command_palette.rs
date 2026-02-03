@@ -138,6 +138,8 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     scroll: 0,
     fill_width: true,
     style: UiStyle::default(),
+    max_visible: None,
+    clip: true,
   });
 
   let children = if matches!(layout, CommandPaletteLayout::Bottom) {
@@ -237,6 +239,8 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
                 id: Some("command_palette_help_text".to_string()),
                 content: text,
                 style: UiStyle::default(),
+                max_lines: None,
+                clip: true,
               })),
             }));
           }

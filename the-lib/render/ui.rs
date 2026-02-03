@@ -43,6 +43,24 @@ pub enum UiNode {
   StatusBar(UiStatusBar),
 }
 
+impl UiNode {
+  pub fn text(id: impl Into<String>, content: impl Into<String>) -> Self {
+    UiNode::Text(UiText::new(id, content))
+  }
+
+  pub fn container(
+    id: impl Into<String>,
+    layout: UiLayout,
+    children: Vec<UiNode>,
+  ) -> Self {
+    UiNode::Container(UiContainer::new(id, layout, children))
+  }
+
+  pub fn panel(id: impl Into<String>, intent: LayoutIntent, child: UiNode) -> Self {
+    UiNode::Panel(UiPanel::new(id, intent, child))
+  }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UiState {
   panels: HashMap<String, UiPanelState>,
@@ -141,6 +159,22 @@ impl Default for UiContainer {
   }
 }
 
+impl UiContainer {
+  pub fn new(
+    id: impl Into<String>,
+    layout: UiLayout,
+    children: Vec<UiNode>,
+  ) -> Self {
+    Self {
+      id: Some(id.into()),
+      layout,
+      children,
+      style: UiStyle::default(),
+      constraints: UiConstraints::default(),
+    }
+  }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiPanel {
   pub id: String,
@@ -152,11 +186,35 @@ pub struct UiPanel {
   pub child: Box<UiNode>,
 }
 
+impl UiPanel {
+  pub fn new(id: impl Into<String>, intent: LayoutIntent, child: UiNode) -> Self {
+    Self {
+      id: id.into(),
+      title: None,
+      intent,
+      style: UiStyle::panel(),
+      constraints: UiConstraints::panel(),
+      layer: UiLayer::Overlay,
+      child: Box::new(child),
+    }
+  }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiText {
   pub id: Option<String>,
   pub content: String,
   pub style: UiStyle,
+}
+
+impl UiText {
+  pub fn new(id: impl Into<String>, content: impl Into<String>) -> Self {
+    Self {
+      id: Some(id.into()),
+      content: content.into(),
+      style: UiStyle::default(),
+    }
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -309,6 +367,39 @@ pub struct UiConstraints {
   pub align: UiAlignPair,
 }
 
+impl UiConstraints {
+  pub fn panel() -> Self {
+    Self {
+      padding: UiInsets {
+        left: 1,
+        right: 1,
+        top: 1,
+        bottom: 1,
+      },
+      ..Self::default()
+    }
+  }
+
+  pub fn floating_default() -> Self {
+    Self {
+      min_width: Some(40),
+      max_width: Some(70),
+      min_height: Some(8),
+      max_height: Some(22),
+      padding: UiInsets {
+        left: 1,
+        right: 1,
+        top: 1,
+        bottom: 1,
+      },
+      align: UiAlignPair {
+        horizontal: UiAlign::Center,
+        vertical: UiAlign::Center,
+      },
+    }
+  }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UiLayer {
@@ -363,6 +454,19 @@ impl Default for UiStyle {
       accent: None,
       emphasis: UiEmphasis::Normal,
       radius: UiRadius::None,
+    }
+  }
+}
+
+impl UiStyle {
+  pub fn panel() -> Self {
+    Self {
+      fg: Some(UiColor::Token(UiColorToken::Text)),
+      bg: Some(UiColor::Token(UiColorToken::PanelBg)),
+      border: Some(UiColor::Token(UiColorToken::PanelBorder)),
+      accent: None,
+      emphasis: UiEmphasis::Normal,
+      radius: UiRadius::Small,
     }
   }
 }

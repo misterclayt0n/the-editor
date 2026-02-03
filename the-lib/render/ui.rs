@@ -370,7 +370,35 @@ impl Default for UiStyle {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiFocus {
   pub id: String,
+  pub kind: UiFocusKind,
   pub cursor: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum UiFocusKind {
+  Input,
+  List,
+  Panel,
+  Custom(String),
+}
+
+impl UiFocus {
+  pub fn input(id: impl Into<String>, cursor: Option<usize>) -> Self {
+    Self {
+      id: id.into(),
+      kind: UiFocusKind::Input,
+      cursor,
+    }
+  }
+
+  pub fn list(id: impl Into<String>) -> Self {
+    Self {
+      id: id.into(),
+      kind: UiFocusKind::List,
+      cursor: None,
+    }
+  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

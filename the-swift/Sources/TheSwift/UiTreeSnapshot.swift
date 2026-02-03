@@ -338,7 +338,52 @@ struct UiStyleSnapshot: Decodable {
 
 struct UiFocusSnapshot: Decodable {
     let id: String
+    let kind: UiFocusKindSnapshot
     let cursor: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case cursor
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        kind = (try? container.decode(UiFocusKindSnapshot.self, forKey: .kind)) ?? .input
+        cursor = try? container.decode(Int.self, forKey: .cursor)
+    }
+}
+
+enum UiFocusKindSnapshot: Decodable {
+    case input
+    case list
+    case panel
+    case custom(String)
+    case unknown
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case data
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = (try? container.decode(String.self, forKey: .type)) ?? ""
+        switch type {
+        case "input":
+            self = .input
+        case "list":
+            self = .list
+        case "panel":
+            self = .panel
+        case "custom":
+            let data = (try? container.decode(String.self, forKey: .data)) ?? ""
+            self = .custom(data)
+        default:
+            self = .unknown
+        }
+    }
 }
 
 enum ColorSnapshot: Decodable {

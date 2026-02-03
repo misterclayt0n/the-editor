@@ -55,6 +55,7 @@ use the_lib::{
     UiState,
     UiTree,
     UiFocus,
+    UiFocusKind,
     UiEvent,
     UiEventOutcome,
     text_annotations::TextAnnotations,
@@ -457,13 +458,24 @@ pub fn ui_tree<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiTree {
 }
 
 pub fn ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOutcome {
+  let mut event = event;
+  if event.target.is_none() {
+    if let Some(focus) = ctx.ui_state().focus() {
+      event.target = Some(focus.id.clone());
+    }
+  }
+
   let outcome = ctx.dispatch().pre_ui_event(ctx, event.clone());
   let outcome = if outcome.handled {
     outcome
   } else {
     ctx.dispatch().on_ui_event(ctx, event)
   };
-  ctx.dispatch().post_ui_event(ctx, outcome)
+  let outcome = ctx.dispatch().post_ui_event(ctx, outcome);
+  if let Some(focus) = outcome.focus.clone() {
+    ctx.ui_state_mut().set_focus(Some(focus));
+  }
+  outcome
 }
 
 pub fn default_pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
@@ -727,10 +739,15 @@ fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
     } else {
       ctx.command_palette().query.len() + 1
     };
-    tree.focus = Some(UiFocus {
+    let focus = UiFocus {
       id: "command_palette_input".to_string(),
+      kind: UiFocusKind::Input,
       cursor: Some(cursor),
-    });
+    };
+    tree.focus = Some(focus.clone());
+    ctx.ui_state_mut().set_focus(Some(focus));
+  } else {
+    tree.focus = ctx.ui_state().focus().cloned();
   }
   tree
 }

@@ -579,7 +579,7 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
         prompt.input.trim().trim_start_matches(':').to_string()
       };
 
-      if line.is_empty() {
+      if line.is_empty() || !line.chars().any(char::is_whitespace) {
         let palette = ctx.command_palette();
         if let Some(sel) = palette.selected {
           if let Some(item) = palette.items.get(sel) {

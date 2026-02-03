@@ -290,8 +290,14 @@ fn measure_node(node: &UiNode, max_width: u16) -> (u16, u16) {
       } else {
         width.min(max_width as usize).max(1) as u16
       };
-      let row_height = if has_detail { 2 } else { 1 };
-      (width, list.items.len().max(1) as u16 * row_height)
+      let base_height = if has_detail { 2 } else { 1 };
+      let row_gap = 1;
+      let row_height = base_height + row_gap;
+      let count = list.items.len().max(1) as u16;
+      let total_height = count
+        .saturating_mul(row_height as u16)
+        .saturating_sub(row_gap as u16);
+      (width, total_height)
     },
     UiNode::Container(container) => match &container.layout {
       UiLayout::Stack { axis, gap } => match axis {
@@ -513,12 +519,19 @@ fn draw_ui_list(
     return;
   }
   let theme = ctx.command_palette_style.theme;
-  let has_detail = list
-    .items
-    .iter()
-    .any(|item| item.subtitle.as_ref().map_or(false, |s| !s.is_empty())
-      || item.description.as_ref().map_or(false, |s| !s.is_empty()));
-  let row_height: usize = if has_detail { 2 } else { 1 };
+  let has_detail = list.items.iter().any(|item| {
+    item
+      .subtitle
+      .as_ref()
+      .map_or(false, |s| !s.is_empty())
+      || item
+        .description
+        .as_ref()
+        .map_or(false, |s| !s.is_empty())
+  });
+  let base_height: usize = if has_detail { 2 } else { 1 };
+  let row_gap: usize = 1;
+  let row_height: usize = base_height + row_gap;
   let visible_rows = rect.height as usize;
   let visible_items = visible_rows / row_height;
   if visible_items == 0 {
@@ -542,7 +555,7 @@ fn draw_ui_list(
     if is_selected {
       fill_rect(
         buf,
-        Rect::new(rect.x, y, rect.width, row_height as u16),
+        Rect::new(rect.x, y, rect.width, base_height as u16),
         Style::default().bg(lib_color_to_ratatui(theme.selected_bg)),
       );
     }
@@ -569,7 +582,7 @@ fn draw_ui_list(
     }
     buf.set_string(rect.x + 1, y, title, row_style);
 
-    if row_height > 1 {
+    if base_height > 1 {
       let detail = item
         .subtitle
         .as_deref()

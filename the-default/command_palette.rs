@@ -97,10 +97,18 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   let mut items = Vec::with_capacity(filtered.len());
   for &idx in &filtered {
     let item = &state.items[idx];
+    let mut description = item.description.clone();
+    if !item.aliases.is_empty() {
+      let aliases = format!("aliases: {}", item.aliases.join(", "));
+      description = match description {
+        Some(desc) if !desc.is_empty() => Some(format!("{desc} ({aliases})")),
+        _ => Some(format!("({aliases})")),
+      };
+    }
     items.push(UiListItem {
       title: item.title.clone(),
       subtitle: item.subtitle.clone(),
-      description: item.description.clone(),
+      description,
       shortcut: item.shortcut.clone(),
       badge: item.badge.clone(),
       emphasis: item.emphasis,

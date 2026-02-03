@@ -12,6 +12,13 @@ struct UiOverlayHost: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack {
+                let hasCommandPalettePanel = tree.overlays.contains { node in
+                    if case .panel(let panel) = node {
+                        return panel.id == "command_palette"
+                    }
+                    return false
+                }
+
                 ForEach(Array(tree.overlays.enumerated()), id: \.offset) { _, node in
                     if case .panel(let panel) = node, panel.id == "command_palette" {
                         if commandPalette.isOpen {
@@ -26,6 +33,16 @@ struct UiOverlayHost: View {
                     } else {
                         UiNodeView(node: node, cellSize: cellSize, containerSize: proxy.size)
                     }
+                }
+
+                if commandPalette.isOpen && !hasCommandPalettePanel {
+                    CommandPaletteView(
+                        snapshot: commandPalette,
+                        onSelect: onSelectCommand,
+                        onSubmit: onSubmitCommand,
+                        onClose: onCloseCommandPalette,
+                        onQueryChange: onQueryChange
+                    )
                 }
             }
         }

@@ -162,22 +162,8 @@ struct CommandPaletteView: View {
                     .font(.system(size: 18, weight: .light))
                     .textFieldStyle(.plain)
                     .focused($isTextFieldFocused)
-                    .onSubmit {
-                        if let selected = selectedIndex ?? snapshot.selectedIndex {
-                            onSubmit(selected)
-                        }
-                    }
-                    .onExitCommand {
-                        onClose()
-                    }
-                    .onMoveCommand { direction in
-                        moveSelection(direction)
-                    }
-                    .onChange(of: query) { newValue in
-                        if newValue != snapshot.query {
-                            onQueryChange(newValue)
-                        }
-                    }
+                    .disabled(true)
+                    .allowsHitTesting(false)
                 Spacer()
             }
         }

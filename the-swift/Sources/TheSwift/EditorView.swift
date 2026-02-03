@@ -38,23 +38,19 @@ struct EditorView: View {
                 )
             }
             .background(
-                Group {
-                    if !model.commandPalette.isOpen {
-                        KeyCaptureView(
-                            onKey: { event in
-                                model.handleKeyEvent(event)
-                            },
-                            onText: { text, modifiers in
-                                model.handleText(text, modifiers: modifiers)
-                            },
-                            onScroll: { _, _, _ in },
-                            modeProvider: {
-                                model.mode
-                            }
-                        )
-                        .allowsHitTesting(false)
+                KeyCaptureView(
+                    onKey: { event in
+                        model.handleKeyEvent(event)
+                    },
+                    onText: { text, modifiers in
+                        model.handleText(text, modifiers: modifiers)
+                    },
+                    onScroll: { _, _, _ in },
+                    modeProvider: {
+                        model.mode
                     }
-                }
+                )
+                .allowsHitTesting(false)
             )
             .overlay(
                 Group {

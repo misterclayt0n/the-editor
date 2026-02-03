@@ -13,7 +13,7 @@ struct UiTreeSnapshot: Decodable {
     )
 }
 
-enum UiNodeSnapshot: Decodable {
+indirect enum UiNodeSnapshot: Decodable {
     case panel(UiPanelSnapshot)
     case container(UiContainerSnapshot)
     case text(UiTextSnapshot)

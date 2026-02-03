@@ -244,13 +244,13 @@ struct UiNodeView: View {
         }
     }
 
-    private func resolveColor(_ color: UiColorSnapshot?, fallback: Color) -> Color {
-        guard let color else { return fallback }
-        switch color {
+    private func resolveColor(_ uiColor: UiColorSnapshot?, fallback: Color) -> Color {
+        guard let uiColor else { return fallback }
+        switch uiColor {
         case .token(let token):
-            return color(for: token)
+            return self.color(for: token)
         case .value(let value):
-            return color(for: value)
+            return self.color(for: value)
         case .unknown:
             return fallback
         }
@@ -348,4 +348,3 @@ struct UiNodeView: View {
         }
     }
 }
-

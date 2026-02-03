@@ -1,6 +1,10 @@
 use crate::render::graphics::Color;
+use serde::{
+  Deserialize,
+  Serialize,
+};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiTree {
   pub root: UiNode,
   pub overlays: Vec<UiNode>,
@@ -23,7 +27,8 @@ impl Default for UiTree {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum UiNode {
   Container(UiContainer),
   Panel(UiPanel),
@@ -36,7 +41,7 @@ pub enum UiNode {
   StatusBar(UiStatusBar),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiContainer {
   pub id: Option<String>,
   pub layout: UiLayout,
@@ -60,7 +65,7 @@ impl Default for UiContainer {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiPanel {
   pub id: String,
   pub title: Option<String>,
@@ -71,14 +76,14 @@ pub struct UiPanel {
   pub child: Box<UiNode>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiText {
   pub id: Option<String>,
   pub content: String,
   pub style: UiStyle,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiList {
   pub id: String,
   pub items: Vec<UiListItem>,
@@ -88,7 +93,7 @@ pub struct UiList {
   pub style: UiStyle,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiListItem {
   pub title: String,
   pub subtitle: Option<String>,
@@ -98,7 +103,7 @@ pub struct UiListItem {
   pub emphasis: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiInput {
   pub id: String,
   pub value: String,
@@ -107,18 +112,18 @@ pub struct UiInput {
   pub style: UiStyle,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiDivider {
   pub id: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiSpacer {
   pub id: Option<String>,
   pub size: u16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiTooltip {
   pub id: Option<String>,
   pub target: Option<String>,
@@ -127,7 +132,7 @@ pub struct UiTooltip {
   pub style: UiStyle,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiStatusBar {
   pub id: Option<String>,
   pub left: String,
@@ -136,19 +141,22 @@ pub struct UiStatusBar {
   pub style: UiStyle,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UiAxis {
   Horizontal,
   Vertical,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum UiLayout {
   Stack { axis: UiAxis, gap: u16 },
   Split { axis: UiAxis, ratios: Vec<u16> },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum LayoutIntent {
   Floating,
   Bottom,
@@ -159,14 +167,16 @@ pub enum LayoutIntent {
   Custom(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UiEmphasis {
   Normal,
   Muted,
   Strong,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UiRadius {
   None,
   Small,
@@ -174,7 +184,8 @@ pub enum UiRadius {
   Large,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UiAlign {
   Start,
   Center,
@@ -188,13 +199,13 @@ impl Default for UiAlign {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct UiAlignPair {
   pub horizontal: UiAlign,
   pub vertical: UiAlign,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct UiInsets {
   pub left: u16,
   pub right: u16,
@@ -212,7 +223,7 @@ impl UiInsets {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct UiConstraints {
   pub min_width: Option<u16>,
   pub max_width: Option<u16>,
@@ -222,7 +233,8 @@ pub struct UiConstraints {
   pub align: UiAlignPair,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UiLayer {
   Background,
   Overlay,
@@ -235,7 +247,8 @@ impl Default for UiLayer {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UiColorToken {
   Text,
   MutedText,
@@ -248,13 +261,14 @@ pub enum UiColorToken {
   Placeholder,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum UiColor {
   Token(UiColorToken),
   Value(Color),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiStyle {
   pub fg: Option<UiColor>,
   pub bg: Option<UiColor>,
@@ -277,13 +291,13 @@ impl Default for UiStyle {
   }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiFocus {
   pub id: String,
   pub cursor: Option<usize>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct UiModifiers {
   pub ctrl: bool,
   pub alt: bool,
@@ -291,7 +305,8 @@ pub struct UiModifiers {
   pub meta: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum UiKey {
   Char(char),
   Enter,
@@ -310,13 +325,14 @@ pub enum UiKey {
   Unknown(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiKeyEvent {
   pub key: UiKey,
   pub modifiers: UiModifiers,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum UiEventKind {
   Key(UiKeyEvent),
   Command(String),
@@ -324,13 +340,13 @@ pub enum UiEventKind {
   Dismiss,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiEvent {
   pub target: Option<String>,
   pub kind: UiEventKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiEventOutcome {
   pub handled: bool,
   pub focus: Option<UiFocus>,

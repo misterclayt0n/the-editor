@@ -60,6 +60,10 @@ extension AppRefMut {
         RenderPlan(ptr: __swift_bridge__$App$render_plan_with_styles(ptr, id.intoFfiRepr(), styles.intoFfiRepr()))
     }
 
+    public func ui_tree_json(_ id: EditorId) -> RustString {
+        RustString(ptr: __swift_bridge__$App$ui_tree_json(ptr, id.intoFfiRepr()))
+    }
+
     public func command_palette_is_open(_ id: EditorId) -> Bool {
         __swift_bridge__$App$command_palette_is_open(ptr, id.intoFfiRepr())
     }
@@ -1324,6 +1328,5 @@ extension RenderPlan: Vectorizable {
         __swift_bridge__$Vec_RenderPlan$len(vecPtr)
     }
 }
-
 
 

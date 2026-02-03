@@ -8,6 +8,7 @@ final class EditorModel: ObservableObject {
     let editorId: EditorId
     @Published var plan: RenderPlan
     @Published var commandPalette: CommandPaletteSnapshot = .closed
+    @Published var uiTree: UiTreeSnapshot = .empty
     private var viewport: Rect
     let cellSize: CGSize
     let font: Font
@@ -61,6 +62,7 @@ final class EditorModel: ObservableObject {
         plan = app.render_plan(editorId)
         mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
         commandPalette = fetchCommandPalette()
+        uiTree = fetchUiTree()
         if app.take_should_quit() {
             NSApp.terminate(nil)
         }
@@ -198,5 +200,20 @@ final class EditorModel: ObservableObject {
             items: items,
             layout: layout
         )
+    }
+
+    private func fetchUiTree() -> UiTreeSnapshot {
+        let json = app.ui_tree_json(editorId).toString()
+        guard let data = json.data(using: .utf8) else {
+            return .empty
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        do {
+            return try decoder.decode(UiTreeSnapshot.self, from: data)
+        } catch {
+            return .empty
+        }
     }
 }

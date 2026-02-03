@@ -827,6 +827,15 @@ impl App {
     plan.into()
   }
 
+  pub fn ui_tree_json(&mut self, id: ffi::EditorId) -> String {
+    if self.activate(id).is_none() {
+      return "{}".to_string();
+    }
+
+    let tree = the_default::ui_tree(self);
+    serde_json::to_string(&tree).unwrap_or_else(|_| "{}".to_string())
+  }
+
   fn build_render_plan_with_styles_impl(
     &mut self,
     styles: RenderStyles,
@@ -1765,6 +1774,7 @@ mod ffi {
     fn cursor_ids(self: &App, id: EditorId) -> Vec<u64>;
     fn render_plan(self: &mut App, id: EditorId) -> RenderPlan;
     fn render_plan_with_styles(self: &mut App, id: EditorId, styles: RenderStyles) -> RenderPlan;
+    fn ui_tree_json(self: &mut App, id: EditorId) -> String;
     fn text(self: &App, id: EditorId) -> String;
     fn mode(self: &App, id: EditorId) -> u8;
     fn command_palette_is_open(self: &mut App, id: EditorId) -> bool;

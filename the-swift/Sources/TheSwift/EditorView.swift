@@ -19,23 +19,23 @@ struct EditorView: View {
                 }
                 .background(SwiftUI.Color.black)
 
-                if model.commandPalette.isOpen {
-                    CommandPaletteView(
-                        snapshot: model.commandPalette,
-                        onSelect: { index in
-                            model.selectCommandPalette(index: index)
-                        },
-                        onSubmit: { index in
-                            model.submitCommandPalette(index: index)
-                        },
-                        onClose: {
-                            model.closeCommandPalette()
-                        },
-                        onQueryChange: { query in
-                            model.setCommandPaletteQuery(query)
-                        }
-                    )
-                }
+                UiOverlayHost(
+                    tree: model.uiTree,
+                    commandPalette: model.commandPalette,
+                    cellSize: cellSize,
+                    onSelectCommand: { index in
+                        model.selectCommandPalette(index: index)
+                    },
+                    onSubmitCommand: { index in
+                        model.submitCommandPalette(index: index)
+                    },
+                    onCloseCommandPalette: {
+                        model.closeCommandPalette()
+                    },
+                    onQueryChange: { query in
+                        model.setCommandPaletteQuery(query)
+                    }
+                )
             }
             .background(
                 Group {

@@ -1332,6 +1332,7 @@ name = "the-ffi"
 version = "0.1.0"
 dependencies = [
  "ropey",
+ "serde_json",
  "swift-bridge",
  "swift-bridge-build",
  "the-config",

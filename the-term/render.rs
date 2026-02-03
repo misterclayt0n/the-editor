@@ -268,10 +268,20 @@ fn measure_node(node: &UiNode, max_width: u16) -> (u16, u16) {
     UiNode::Spacer(spacer) => (max_width, spacer.size.max(1)),
     UiNode::List(list) => {
       let mut width: usize = 0;
+      let mut has_detail = false;
       for item in &list.items {
         let mut w = item.title.chars().count();
         if let Some(shortcut) = item.shortcut.as_ref() {
           w = w.saturating_add(shortcut.chars().count() + 3);
+        }
+        if let Some(detail) = item
+          .subtitle
+          .as_deref()
+          .filter(|s| !s.is_empty())
+          .or_else(|| item.description.as_deref().filter(|s| !s.is_empty()))
+        {
+          has_detail = true;
+          w = w.max(detail.chars().count());
         }
         width = width.max(w);
       }
@@ -280,7 +290,8 @@ fn measure_node(node: &UiNode, max_width: u16) -> (u16, u16) {
       } else {
         width.min(max_width as usize).max(1) as u16
       };
-      (width, list.items.len().max(1) as u16)
+      let row_height = if has_detail { 2 } else { 1 };
+      (width, list.items.len().max(1) as u16 * row_height)
     },
     UiNode::Container(container) => match &container.layout {
       UiLayout::Stack { axis, gap } => match axis {
@@ -502,29 +513,36 @@ fn draw_ui_list(
     return;
   }
   let theme = ctx.command_palette_style.theme;
+  let has_detail = list
+    .items
+    .iter()
+    .any(|item| item.subtitle.as_ref().map_or(false, |s| !s.is_empty())
+      || item.description.as_ref().map_or(false, |s| !s.is_empty()));
+  let row_height: usize = if has_detail { 2 } else { 1 };
   let visible_rows = rect.height as usize;
-  if visible_rows == 0 {
+  let visible_items = visible_rows / row_height;
+  if visible_items == 0 {
     return;
   }
-  let mut scroll_offset = list.scroll.min(list.items.len().saturating_sub(visible_rows));
+  let mut scroll_offset = list.scroll.min(list.items.len().saturating_sub(visible_items));
   let selected = list.selected;
   if let Some(sel) = selected {
     if sel < scroll_offset {
       scroll_offset = sel;
-    } else if sel >= scroll_offset + visible_rows {
-      scroll_offset = sel + 1 - visible_rows;
+    } else if sel >= scroll_offset + visible_items {
+      scroll_offset = sel + 1 - visible_items;
     }
   }
-  let visible = list.items.iter().skip(scroll_offset).take(visible_rows);
+  let visible = list.items.iter().skip(scroll_offset).take(visible_items);
 
   for (row_idx, item) in visible.enumerate() {
-    let y = rect.y + row_idx as u16;
+    let y = rect.y + (row_idx * row_height) as u16;
     let is_selected = selected == Some(row_idx + scroll_offset);
 
     if is_selected {
       fill_rect(
         buf,
-        Rect::new(rect.x, y, rect.width, 1),
+        Rect::new(rect.x, y, rect.width, row_height as u16),
         Style::default().bg(lib_color_to_ratatui(theme.selected_bg)),
       );
     }
@@ -550,15 +568,30 @@ fn draw_ui_list(
       truncate_in_place(&mut title, available_width);
     }
     buf.set_string(rect.x + 1, y, title, row_style);
+
+    if row_height > 1 {
+      let detail = item
+        .subtitle
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .or_else(|| item.description.as_deref().filter(|s| !s.is_empty()));
+      if let Some(detail) = detail {
+        let mut detail_text = detail.to_string();
+        truncate_in_place(&mut detail_text, available_width);
+        let detail_style = Style::default()
+          .fg(lib_color_to_ratatui(theme.placeholder));
+        buf.set_string(rect.x + 1, y + 1, detail_text, detail_style);
+      }
+    }
   }
 
-  if list.items.len() > visible_rows {
+  if list.items.len() > visible_items {
     let track_x = rect.x + rect.width - 1;
     let track_height = rect.height;
-    let thumb_height = ((visible_rows as f32 / list.items.len() as f32) * track_height as f32)
+    let thumb_height = ((visible_items as f32 / list.items.len() as f32) * track_height as f32)
       .ceil()
       .max(1.0) as u16;
-    let max_scroll = list.items.len().saturating_sub(visible_rows);
+    let max_scroll = list.items.len().saturating_sub(visible_items);
     let thumb_offset = if max_scroll == 0 {
       0
     } else {

@@ -580,9 +580,21 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
       };
 
       if line.is_empty() || !line.chars().any(char::is_whitespace) {
-        let palette = ctx.command_palette();
-        if let Some(sel) = palette.selected {
-          if let Some(item) = palette.items.get(sel) {
+        let selected = {
+          let palette = ctx.command_palette_mut();
+          if let Some(sel) = palette.selected {
+            let filtered = command_palette_filtered_indices(palette);
+            if !filtered.contains(&sel) {
+              palette.selected = filtered.first().copied();
+            }
+          } else {
+            palette.selected = command_palette_default_selected(palette);
+          }
+          palette.selected
+        };
+
+        if let Some(sel) = selected {
+          if let Some(item) = ctx.command_palette().items.get(sel) {
             line = item.title.clone();
           }
         }

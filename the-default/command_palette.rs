@@ -33,6 +33,7 @@ pub struct CommandPaletteItem {
   pub title:       String,
   pub subtitle:    Option<String>,
   pub description: Option<String>,
+  pub aliases:     Vec<String>,
   pub shortcut:    Option<String>,
   pub badge:       Option<String>,
   pub leading_icon: Option<String>,
@@ -47,6 +48,7 @@ impl CommandPaletteItem {
       title:       title.into(),
       subtitle:    None,
       description: None,
+      aliases:     Vec::new(),
       shortcut:    None,
       badge:       None,
       leading_icon: None,
@@ -193,8 +195,18 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     if let Some(sel) = selected {
       if let Some(&item_idx) = filtered.get(sel) {
         if let Some(item) = state.items.get(item_idx) {
-          if let Some(description) = item.description.as_ref().filter(|s| !s.is_empty()) {
-            let text = format!("{} — {}", item.title, description);
+          let description = item.description.as_ref().filter(|s| !s.is_empty());
+          if description.is_some() || !item.aliases.is_empty() {
+            let mut lines = Vec::new();
+            if let Some(desc) = description {
+              lines.push(format!("{} — {}", item.title, desc));
+            } else {
+              lines.push(item.title.clone());
+            }
+            if !item.aliases.is_empty() {
+              lines.push(format!("Aliases: {}", item.aliases.join(", ")));
+            }
+            let text = lines.join("\n");
             overlays.push(UiNode::Panel(UiPanel {
               id: "command_palette_help".to_string(),
               title: None,

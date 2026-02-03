@@ -542,6 +542,9 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
       .map(|cmd| {
         let mut item = CommandPaletteItem::new(cmd.name);
         item.description = Some(cmd.doc.to_string());
+        if !cmd.aliases.is_empty() {
+          item.aliases = cmd.aliases.iter().map(|alias| alias.to_string()).collect();
+        }
         item
       })
       .collect()

@@ -839,6 +839,19 @@ impl App {
     serde_json::to_string(&tree).unwrap_or_else(|_| "{}".to_string())
   }
 
+  pub fn ui_event_json(&mut self, id: ffi::EditorId, event_json: &str) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+
+    let Ok(event) = serde_json::from_str::<the_lib::render::UiEvent>(event_json) else {
+      return false;
+    };
+
+    let outcome = the_default::ui_event(self, event);
+    outcome.handled
+  }
+
   fn build_render_plan_with_styles_impl(
     &mut self,
     styles: RenderStyles,
@@ -1786,6 +1799,7 @@ mod ffi {
     fn render_plan(self: &mut App, id: EditorId) -> RenderPlan;
     fn render_plan_with_styles(self: &mut App, id: EditorId, styles: RenderStyles) -> RenderPlan;
     fn ui_tree_json(self: &mut App, id: EditorId) -> String;
+    fn ui_event_json(self: &mut App, id: EditorId, event_json: &str) -> bool;
     fn text(self: &App, id: EditorId) -> String;
     fn mode(self: &App, id: EditorId) -> u8;
     fn command_palette_is_open(self: &mut App, id: EditorId) -> bool;

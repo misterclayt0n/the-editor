@@ -74,6 +74,13 @@ final class EditorModel: ObservableObject {
     }
 
     func handleKeyEvent(_ keyEvent: KeyEvent) {
+        if mode == .command {
+            if sendUiKeyEvent(keyEvent) {
+                refresh()
+                return
+            }
+        }
+
         _ = app.handle_key(editorId, keyEvent)
         refresh()
     }
@@ -82,9 +89,24 @@ final class EditorModel: ObservableObject {
         let includeModifiers = !mode.isTextInput && (modifiers.contains(.control) || modifiers.contains(.option))
         let events = KeyEventMapper.mapText(text, modifiers: modifiers, includeModifiers: includeModifiers)
         for event in events {
+            if mode == .command {
+                if sendUiKeyEvent(event) {
+                    continue
+                }
+            }
             _ = app.handle_key(editorId, event)
         }
         refresh()
+    }
+
+    private func sendUiKeyEvent(_ keyEvent: KeyEvent) -> Bool {
+        guard let envelope = UiEventEncoder.keyEventEnvelope(from: keyEvent) else {
+            return false
+        }
+        guard let json = UiEventEncoder.encode(envelope) else {
+            return false
+        }
+        return app.ui_event_json(editorId, json)
     }
 
     func handleScroll(deltaX: CGFloat, deltaY: CGFloat, precise: Bool) {

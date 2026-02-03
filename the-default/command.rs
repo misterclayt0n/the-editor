@@ -56,6 +56,10 @@ use the_lib::{
     UiTree,
     UiFocus,
     UiFocusKind,
+    UiEventKind,
+    UiKey,
+    UiKeyEvent,
+    UiModifiers,
     UiEvent,
     UiEventOutcome,
     text_annotations::TextAnnotations,
@@ -97,6 +101,7 @@ use crate::{
   command_registry::{
     CommandPromptState,
     CommandRegistry,
+    CommandEvent,
     handle_command_prompt_key,
   },
   keymap::{
@@ -760,12 +765,129 @@ fn pre_ui_event<Ctx: DefaultContext>(_ctx: &mut Ctx, _event: UiEvent) -> UiEvent
   UiEventOutcome::r#continue()
 }
 
-fn on_ui_event<Ctx: DefaultContext>(_ctx: &mut Ctx, _event: UiEvent) -> UiEventOutcome {
+fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOutcome {
+  let focus = ctx.ui_state().focus().cloned();
+  let target = event.target.as_deref();
+  let focus_kind = focus.as_ref().map(|f| f.kind.clone());
+
+  let is_command_palette = matches!(
+    target,
+    Some("command_palette") | Some("command_palette_input") | Some("command_palette_list")
+  ) || matches!(focus_kind, Some(UiFocusKind::Input | UiFocusKind::List));
+
+  if is_command_palette {
+    match event.kind {
+      UiEventKind::Key(key_event) => {
+        if let Some(key_event) = ui_key_event_to_key_event(key_event) {
+          if handle_command_prompt_key(ctx, key_event) {
+            return UiEventOutcome::handled();
+          }
+        }
+      },
+      UiEventKind::Activate => {
+        if submit_command_palette_selected(ctx) {
+          return UiEventOutcome::handled();
+        }
+      },
+      UiEventKind::Dismiss => {
+        close_command_palette(ctx);
+        return UiEventOutcome::handled();
+      },
+      UiEventKind::Command(_) => {},
+    }
+  }
+
   UiEventOutcome::r#continue()
 }
 
 fn post_ui_event<Ctx: DefaultContext>(_ctx: &mut Ctx, outcome: UiEventOutcome) -> UiEventOutcome {
   outcome
+}
+
+fn ui_key_event_to_key_event(event: UiKeyEvent) -> Option<KeyEvent> {
+  let key = match event.key {
+    UiKey::Char(ch) => Key::Char(ch),
+    UiKey::Enter => Key::Enter,
+    UiKey::Escape => Key::Escape,
+    UiKey::Tab => Key::Tab,
+    UiKey::Backspace => Key::Backspace,
+    UiKey::Delete => Key::Delete,
+    UiKey::Up => Key::Up,
+    UiKey::Down => Key::Down,
+    UiKey::Left => Key::Left,
+    UiKey::Right => Key::Right,
+    UiKey::Home => Key::Home,
+    UiKey::End => Key::End,
+    UiKey::PageUp => Key::PageUp,
+    UiKey::PageDown => Key::PageDown,
+    UiKey::Unknown(_) => return None,
+  };
+
+  let mut modifiers = Modifiers::empty();
+  let UiModifiers { ctrl, alt, shift, meta } = event.modifiers;
+  if ctrl {
+    modifiers.insert(Modifiers::CTRL);
+  }
+  if alt {
+    modifiers.insert(Modifiers::ALT);
+  }
+  if shift {
+    modifiers.insert(Modifiers::SHIFT);
+  }
+  let _ = meta;
+
+  Some(KeyEvent { key, modifiers })
+}
+
+fn submit_command_palette_selected<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  let palette = ctx.command_palette();
+  if !palette.is_open {
+    return false;
+  }
+
+  let filtered = crate::command_palette::command_palette_filtered_indices(palette);
+  let selected = palette.selected.filter(|sel| filtered.contains(sel)).or_else(|| {
+    filtered.first().copied()
+  });
+
+  let Some(item_idx) = selected else {
+    return false;
+  };
+
+  let command_name = palette
+    .items
+    .get(item_idx)
+    .map(|item| item.title.clone())
+    .unwrap_or_default();
+
+  if command_name.is_empty() {
+    return false;
+  }
+
+  let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
+  let result = unsafe { (&*registry).execute(ctx, &command_name, "", CommandEvent::Validate) };
+
+  match result {
+    Ok(()) => {
+      close_command_palette(ctx);
+      true
+    },
+    Err(err) => {
+      ctx.command_prompt_mut().error = Some(err.to_string());
+      ctx.request_render();
+      false
+    },
+  }
+}
+
+fn close_command_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  ctx.set_mode(Mode::Normal);
+  ctx.command_prompt_mut().clear();
+  let palette = ctx.command_palette_mut();
+  palette.is_open = false;
+  palette.query.clear();
+  palette.selected = None;
+  ctx.request_render();
 }
 
 fn on_render_with_styles<Ctx: DefaultContext>(

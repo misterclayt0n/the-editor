@@ -9,6 +9,14 @@ use crossterm::event::{
 use the_default::{
   DefaultContext,
   Mode,
+  ui_event as dispatch_ui_event,
+};
+use the_lib::render::{
+  UiEvent,
+  UiEventKind,
+  UiKey,
+  UiKeyEvent,
+  UiModifiers,
 };
 
 use crate::{
@@ -28,29 +36,24 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
   }
 
   if ctx.mode() == Mode::Command {
-    match event.code {
-      KeyCode::Tab => {
-        let key = if event.modifiers.contains(KeyModifiers::SHIFT) {
-          Key::Up
+    if let Some(mut key) = to_ui_key(event.code) {
+      if matches!(event.code, KeyCode::Tab | KeyCode::BackTab) {
+        key = if event.modifiers.contains(KeyModifiers::SHIFT) || event.code == KeyCode::BackTab {
+          UiKey::Up
         } else {
-          Key::Down
+          UiKey::Down
         };
-        let key_event = KeyEvent {
+      }
+
+      let ui_event = UiEvent {
+        target: None,
+        kind: UiEventKind::Key(UiKeyEvent {
           key,
-          modifiers: Modifiers::empty(),
-        };
-        ctx.dispatch().pre_on_keypress(ctx, key_event);
-        return;
-      },
-      KeyCode::BackTab => {
-        let key_event = KeyEvent {
-          key: Key::Up,
-          modifiers: Modifiers::empty(),
-        };
-        ctx.dispatch().pre_on_keypress(ctx, key_event);
-        return;
-      },
-      _ => {},
+          modifiers: to_ui_modifiers(event.modifiers),
+        }),
+      };
+      let _ = dispatch_ui_event(ctx, ui_event);
+      return;
     }
   }
 
@@ -98,6 +101,27 @@ fn to_key(code: KeyCode) -> Option<Key> {
   }
 }
 
+fn to_ui_key(code: KeyCode) -> Option<UiKey> {
+  match code {
+    KeyCode::Char(c) => Some(UiKey::Char(c)),
+    KeyCode::Enter => Some(UiKey::Enter),
+    KeyCode::Tab => Some(UiKey::Tab),
+    KeyCode::BackTab => Some(UiKey::Tab),
+    KeyCode::Esc => Some(UiKey::Escape),
+    KeyCode::Backspace => Some(UiKey::Backspace),
+    KeyCode::Delete => Some(UiKey::Delete),
+    KeyCode::Home => Some(UiKey::Home),
+    KeyCode::End => Some(UiKey::End),
+    KeyCode::PageUp => Some(UiKey::PageUp),
+    KeyCode::PageDown => Some(UiKey::PageDown),
+    KeyCode::Left => Some(UiKey::Left),
+    KeyCode::Right => Some(UiKey::Right),
+    KeyCode::Up => Some(UiKey::Up),
+    KeyCode::Down => Some(UiKey::Down),
+    _ => None,
+  }
+}
+
 fn to_modifiers(modifiers: KeyModifiers, code: KeyCode) -> Modifiers {
   let mut out = Modifiers::empty();
   if modifiers.contains(KeyModifiers::CONTROL) {
@@ -116,4 +140,13 @@ fn to_modifiers(modifiers: KeyModifiers, code: KeyCode) -> Modifiers {
     }
   }
   out
+}
+
+fn to_ui_modifiers(modifiers: KeyModifiers) -> UiModifiers {
+  UiModifiers {
+    ctrl: modifiers.contains(KeyModifiers::CONTROL),
+    alt: modifiers.contains(KeyModifiers::ALT),
+    shift: modifiers.contains(KeyModifiers::SHIFT),
+    meta: modifiers.contains(KeyModifiers::SUPER),
+  }
 }

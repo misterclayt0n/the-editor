@@ -27,6 +27,7 @@ pub use command::{
   default_pre_on_keypress,
   render_plan,
   render_plan_with_styles,
+  ui_event,
   ui_tree,
   command_from_name,
   handle_command,

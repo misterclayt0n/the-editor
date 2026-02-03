@@ -291,12 +291,9 @@ fn measure_node(node: &UiNode, max_width: u16) -> (u16, u16) {
         width.min(max_width as usize).max(1) as u16
       };
       let base_height = if has_detail { 2 } else { 1 };
-      let row_gap = 1;
-      let row_height = base_height + row_gap;
+      let row_height = base_height;
       let count = list.items.len().max(1) as u16;
-      let total_height = count
-        .saturating_mul(row_height as u16)
-        .saturating_sub(row_gap as u16);
+      let total_height = count.saturating_mul(row_height as u16);
       (width, total_height)
     },
     UiNode::Container(container) => match &container.layout {
@@ -530,7 +527,7 @@ fn draw_ui_list(
         .map_or(false, |s| !s.is_empty())
   });
   let base_height: usize = if has_detail { 2 } else { 1 };
-  let row_gap: usize = 1;
+  let row_gap: usize = 0;
   let row_height: usize = base_height + row_gap;
   let visible_rows = rect.height as usize;
   let visible_items = visible_rows / row_height;

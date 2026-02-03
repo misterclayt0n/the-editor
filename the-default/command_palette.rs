@@ -173,6 +173,10 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
       horizontal: UiAlign::Center,
       vertical: UiAlign::Center,
     };
+    constraints.min_width = Some(40);
+    constraints.max_width = Some(70);
+    constraints.min_height = Some(8);
+    constraints.max_height = Some(16);
   }
 
   overlays.push(UiNode::Panel(UiPanel {

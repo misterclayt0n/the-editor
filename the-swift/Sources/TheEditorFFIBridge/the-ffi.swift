@@ -63,11 +63,11 @@ extension AppRefMut {
     public func ui_tree_json(_ id: EditorId) -> RustString {
         RustString(ptr: __swift_bridge__$App$ui_tree_json(ptr, id.intoFfiRepr()))
     }
-    public func ui_event_json<GenericToRustStr: ToRustStr>(_ id: EditorId, _ event_json: GenericToRustStr) -> Bool {
-        let eventJsonAsRustStr = event_json.toRustStr()
-        defer { eventJsonAsRustStr.isOwned ? eventJsonAsRustStr.ptr.deallocate() : () }
 
-        return __swift_bridge__$App$ui_event_json(ptr, id.intoFfiRepr(), eventJsonAsRustStr)
+    public func ui_event_json<GenericToRustStr: ToRustStr>(_ id: EditorId, _ event_json: GenericToRustStr) -> Bool {
+        return event_json.toRustStr({ event_jsonAsRustStr in
+            __swift_bridge__$App$ui_event_json(ptr, id.intoFfiRepr(), event_jsonAsRustStr)
+        })
     }
 
     public func command_palette_is_open(_ id: EditorId) -> Bool {
@@ -1334,5 +1334,6 @@ extension RenderPlan: Vectorizable {
         __swift_bridge__$Vec_RenderPlan$len(vecPtr)
     }
 }
+
 
 

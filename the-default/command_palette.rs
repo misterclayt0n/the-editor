@@ -175,8 +175,8 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     };
     constraints.min_width = Some(40);
     constraints.max_width = Some(70);
-    constraints.min_height = Some(8);
-    constraints.max_height = Some(16);
+    constraints.min_height = Some(12);
+    constraints.max_height = Some(22);
   }
 
   overlays.push(UiNode::Panel(UiPanel {

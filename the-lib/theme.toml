@@ -1,0 +1,7 @@
+# Minimal default theme (placeholder)
+"ui.text" = { fg = "white" }
+"ui.background" = { bg = "black" }
+
+[palette]
+white = "#ffffff"
+black = "#000000"

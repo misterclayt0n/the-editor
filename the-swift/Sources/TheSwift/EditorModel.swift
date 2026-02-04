@@ -166,15 +166,32 @@ final class EditorModel: ObservableObject {
     private func fetchUiTree() -> UiTreeSnapshot {
         let json = app.ui_tree_json(editorId).toString()
         guard let data = json.data(using: .utf8) else {
+            debugUiLog("ui_tree_json is not valid utf8")
             return .empty
         }
 
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         do {
-            return try decoder.decode(UiTreeSnapshot.self, from: data)
+            let tree = try decoder.decode(UiTreeSnapshot.self, from: data)
+            debugUiLog("ui_tree decoded overlays=\(tree.overlays.count)")
+            return tree
         } catch {
+            let hasPalette = json.contains("command_palette")
+            debugUiLog("ui_tree decode failed: \(error)")
+            debugUiLog("ui_tree json prefix: \(String(json.prefix(400)))")
+            debugUiLog("ui_tree json contains command_palette=\(hasPalette)")
             return .empty
+        }
+    }
+
+    private func debugUiLog(_ message: String) {
+        guard ProcessInfo.processInfo.environment["THE_SWIFT_DEBUG_UI"] == "1" else {
+            return
+        }
+        let line = "[the-swift ui] \(message)\n"
+        if let data = line.data(using: .utf8) {
+            FileHandle.standardError.write(data)
         }
     }
 }

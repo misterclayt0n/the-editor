@@ -428,6 +428,7 @@ struct UiStyleSnapshot: Decodable {
     let accent: UiColorSnapshot?
     let emphasis: UiEmphasisSnapshot
     let radius: UiRadiusSnapshot
+    let role: String?
 
     static let fallback = UiStyleSnapshot(
         fg: nil,
@@ -435,7 +436,8 @@ struct UiStyleSnapshot: Decodable {
         border: nil,
         accent: nil,
         emphasis: .normal,
-        radius: .none
+        radius: .none,
+        role: nil
     )
 }
 

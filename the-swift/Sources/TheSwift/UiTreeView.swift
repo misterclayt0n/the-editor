@@ -69,6 +69,8 @@ struct UiNodeView: View {
 
     @ViewBuilder
     private func panelView(_ panel: UiPanelSnapshot) -> some View {
+        let role = panel.style.role ?? ""
+        let isStatusline = panel.id == "statusline" || role == "statusline"
         let alignment = alignment(for: panel.intent, align: panel.constraints.align)
         let minWidth = length(panel.constraints.minWidth, unit: cellSize.width)
         let maxWidth = length(panel.constraints.maxWidth, unit: cellSize.width)
@@ -76,7 +78,7 @@ struct UiNodeView: View {
         let maxHeight = length(panel.constraints.maxHeight, unit: cellSize.height)
         let padding = panel.constraints.padding
 
-        UiNodeView(node: panel.child, cellSize: cellSize, containerSize: containerSize)
+        let content = UiNodeView(node: panel.child, cellSize: cellSize, containerSize: containerSize)
             .padding(EdgeInsets(
                 top: CGFloat(padding.top) * cellSize.height,
                 leading: CGFloat(padding.left) * cellSize.width,
@@ -86,13 +88,24 @@ struct UiNodeView: View {
             .frame(minWidth: minWidth, idealWidth: nil, maxWidth: maxWidth,
                    minHeight: minHeight, idealHeight: nil, maxHeight: maxHeight,
                    alignment: .topLeading)
-            .background(resolveColor(panel.style.bg, fallback: Color.clear))
-            .overlay(
-                RoundedRectangle(cornerRadius: radius(panel.style.radius))
-                    .stroke(resolveColor(panel.style.border, fallback: Color.clear), lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: radius(panel.style.radius)))
-            .frame(maxWidth: containerSize.width, maxHeight: containerSize.height, alignment: alignment)
+
+        if isStatusline {
+            content
+                .background(statuslineBackground(panel))
+                .overlay(statuslineDivider, alignment: .top)
+                .frame(maxWidth: containerSize.width, maxHeight: containerSize.height, alignment: alignment)
+        } else {
+            let cornerRadius = panelCornerRadius(panel)
+            content
+                .background(panelBackground(panel, radius: cornerRadius))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(panelBorderColor(panel), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+                .shadow(color: Color.black.opacity(0.25), radius: 20, x: 0, y: 8)
+                .frame(maxWidth: containerSize.width, maxHeight: containerSize.height, alignment: alignment)
+        }
     }
 
     @ViewBuilder
@@ -134,7 +147,7 @@ struct UiNodeView: View {
     @ViewBuilder
     private func textView(_ text: UiTextSnapshot) -> some View {
         Text(text.content)
-            .foregroundColor(resolveColor(text.style.fg, fallback: Color.primary))
+            .foregroundColor(resolveColor(text.style.fg, fallback: nativePrimary))
             .font(font(for: text.style))
             .lineLimit(text.maxLines.map { Int($0) })
             .truncationMode(.tail)
@@ -144,31 +157,20 @@ struct UiNodeView: View {
     @ViewBuilder
     private func listView(_ list: UiListSnapshot) -> some View {
         let items = list.maxVisible.map { max(1, $0) }.map { Array(list.items.prefix($0)) } ?? list.items
-        let baseText = resolveColor(list.style.fg, fallback: Color.primary)
+        let baseText = resolveColor(list.style.fg, fallback: nativePrimary)
         let selectedText = resolveColor(list.style.border, fallback: baseText)
-        let selectedBg = resolveColor(list.style.accent, fallback: Color.clear)
+        let selectedBg = resolveColor(list.style.accent, fallback: Color.accentColor).opacity(0.2)
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                 let isSelected = list.selected == index
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.title)
-                        .foregroundColor(isSelected ? selectedText : baseText)
-                        .font(.system(size: 14, weight: .semibold))
-                    if let subtitle = item.subtitle, !subtitle.isEmpty {
-                        Text(subtitle)
-                            .foregroundColor(resolveColor(list.style.fg, fallback: Color.secondary))
-                            .font(.system(size: 12))
-                    } else if let description = item.description, !description.isEmpty {
-                        Text(description)
-                            .foregroundColor(resolveColor(list.style.fg, fallback: Color.secondary))
-                            .font(.system(size: 12))
-                    }
-                }
-                .padding(.vertical, 4)
-                .padding(.horizontal, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(isSelected ? selectedBg : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                listRow(
+                    item,
+                    isSelected: isSelected,
+                    baseText: baseText,
+                    secondaryText: baseText.opacity(0.7),
+                    selectedText: selectedText,
+                    selectedBg: selectedBg
+                )
             }
         }
     }
@@ -176,21 +178,40 @@ struct UiNodeView: View {
     @ViewBuilder
     private func inputView(_ input: UiInputSnapshot) -> some View {
         let display = input.value.isEmpty ? (input.placeholder ?? "") : input.value
-        let baseText = resolveColor(input.style.fg, fallback: Color.primary)
-        let placeholderText = resolveColor(input.style.accent, fallback: baseText)
+        let baseText = resolveColor(input.style.fg, fallback: nativePrimary)
+        let placeholderText = resolveColor(input.style.accent, fallback: nativeSecondary)
         Text(display)
             .foregroundColor(input.value.isEmpty ? placeholderText : baseText)
-            .font(.system(size: 14, weight: .light))
+            .font(.system(size: 14, weight: .regular, design: .rounded))
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.45))
+            )
     }
 
     @ViewBuilder
     private func tooltipView(_ tooltip: UiTooltipSnapshot) -> some View {
         Text(tooltip.content)
-            .padding(8)
-            .background(resolveColor(tooltip.style.bg, fallback: Color.clear))
-            .foregroundColor(resolveColor(tooltip.style.fg, fallback: Color.primary))
-            .clipShape(RoundedRectangle(cornerRadius: radius(tooltip.style.radius)))
+            .padding(10)
+            .foregroundColor(resolveColor(tooltip.style.fg, fallback: nativePrimary))
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(tooltipTint(tooltip))
+                            .blendMode(.color)
+                    )
+                    .compositingGroup()
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.2), radius: 16, x: 0, y: 6)
     }
 
     @ViewBuilder
@@ -210,10 +231,9 @@ struct UiNodeView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
-        .font(.system(size: 12, weight: .medium))
-        .foregroundColor(resolveColor(status.style.fg, fallback: Color.primary))
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .foregroundColor(resolveColor(status.style.fg, fallback: nativePrimary))
         .frame(maxWidth: .infinity, minHeight: cellSize.height, maxHeight: cellSize.height)
-        .background(resolveColor(status.style.bg, fallback: Color.clear))
     }
 
     private func length(_ value: UInt16?, unit: CGFloat) -> CGFloat? {
@@ -268,11 +288,11 @@ struct UiNodeView: View {
     private func font(for style: UiStyleSnapshot) -> Font {
         switch style.emphasis {
         case .strong:
-            return .system(size: 14, weight: .bold)
+            return .system(size: 14, weight: .bold, design: .rounded)
         case .muted:
-            return .system(size: 13, weight: .light)
+            return .system(size: 13, weight: .regular, design: .rounded)
         case .normal:
-            return .system(size: 14)
+            return .system(size: 14, weight: .regular, design: .rounded)
         }
     }
 
@@ -287,6 +307,144 @@ struct UiNodeView: View {
         case .large:
             return 12
         }
+    }
+
+    private var nativePrimary: Color {
+        Color(nsColor: .labelColor)
+    }
+
+    private var nativeSecondary: Color {
+        Color(nsColor: .secondaryLabelColor)
+    }
+
+    private func panelCornerRadius(_ panel: UiPanelSnapshot) -> CGFloat {
+        let base = radius(panel.style.radius)
+        return base == 0 ? 10 : base
+    }
+
+    private func panelTint(_ panel: UiPanelSnapshot) -> Color {
+        uiColorToColor(panel.style.bg) ?? Color(nsColor: .windowBackgroundColor)
+    }
+
+    private func panelBorderColor(_ panel: UiPanelSnapshot) -> Color {
+        uiColorToColor(panel.style.border) ?? Color(nsColor: .separatorColor).opacity(0.65)
+    }
+
+    @ViewBuilder
+    private func panelBackground(_ panel: UiPanelSnapshot, radius: CGFloat) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: radius)
+                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: radius)
+                .fill(panelTint(panel))
+                .blendMode(.color)
+        }
+        .compositingGroup()
+    }
+
+    @ViewBuilder
+    private func statuslineBackground(_ panel: UiPanelSnapshot) -> some View {
+        ZStack {
+            Rectangle()
+                .fill(.regularMaterial)
+            Rectangle()
+                .fill(panelTint(panel))
+                .blendMode(.color)
+        }
+        .compositingGroup()
+    }
+
+    private var statuslineDivider: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor).opacity(0.6))
+            .frame(height: 1)
+    }
+
+    private func tooltipTint(_ tooltip: UiTooltipSnapshot) -> Color {
+        uiColorToColor(tooltip.style.bg) ?? Color(nsColor: .windowBackgroundColor)
+    }
+
+    @ViewBuilder
+    private func listRow(
+        _ item: UiListItemSnapshot,
+        isSelected: Bool,
+        baseText: Color,
+        secondaryText: Color,
+        selectedText: Color,
+        selectedBg: Color
+    ) -> some View {
+        let titleColor = isSelected ? selectedText : baseText
+        let detailColor = isSelected ? selectedText.opacity(0.75) : secondaryText
+        HStack(spacing: 8) {
+            if let color = uiColorToColor(item.leadingColor) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 8, height: 8)
+            }
+
+            if let icon = item.leadingIcon, !icon.isEmpty {
+                Image(systemName: icon)
+                    .foregroundStyle(item.emphasis ? Color.accentColor : detailColor)
+                    .font(.system(size: 14, weight: .medium))
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .foregroundColor(titleColor)
+                    .font(.system(size: 14, weight: item.emphasis ? .semibold : .medium, design: .rounded))
+                if let subtitle = item.subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .foregroundColor(detailColor)
+                        .font(.system(size: 12, design: .rounded))
+                } else if let description = item.description, !description.isEmpty {
+                    Text(description)
+                        .foregroundColor(detailColor)
+                        .font(.system(size: 12, design: .rounded))
+                }
+            }
+
+            Spacer()
+
+            if let badge = item.badge, !badge.isEmpty {
+                Text(badge)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(Color.accentColor.opacity(0.15))
+                    )
+                    .foregroundStyle(Color.accentColor)
+            }
+
+            if !item.symbols.isEmpty {
+                UiShortcutSymbolsView(symbols: item.symbols)
+                    .foregroundStyle(detailColor)
+            } else if let shortcut = item.shortcut, !shortcut.isEmpty {
+                UiShortcutSymbolsView(symbols: [shortcut])
+                    .foregroundStyle(detailColor)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? selectedBg : Color.clear)
+        )
+    }
+}
+
+fileprivate struct UiShortcutSymbolsView: View {
+    let symbols: [String]
+
+    var body: some View {
+        HStack(spacing: 1) {
+            ForEach(symbols, id: \.self) { symbol in
+                Text(symbol)
+                    .frame(minWidth: 13)
+            }
+        }
+        .font(.system(size: 11, weight: .medium, design: .rounded))
     }
 }
 

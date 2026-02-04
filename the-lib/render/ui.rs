@@ -608,6 +608,8 @@ pub struct UiStyle {
   pub accent: Option<UiColor>,
   pub emphasis: UiEmphasis,
   pub radius: UiRadius,
+  #[serde(default)]
+  pub role: Option<String>,
 }
 
 impl Default for UiStyle {
@@ -619,6 +621,7 @@ impl Default for UiStyle {
       accent: None,
       emphasis: UiEmphasis::Normal,
       radius: UiRadius::None,
+      role: None,
     }
   }
 }
@@ -632,7 +635,13 @@ impl UiStyle {
       accent: None,
       emphasis: UiEmphasis::Normal,
       radius: UiRadius::Small,
+      role: None,
     }
+  }
+
+  pub fn with_role(mut self, role: impl Into<String>) -> Self {
+    self.role = Some(role.into());
+    self
   }
 }
 

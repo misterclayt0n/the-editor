@@ -7,4 +7,4 @@
 5. [x] Wire the resolver into the default UI pipeline before clients render.
 6. [x] Add theme selection/config plumbing for clients.
 7. [x] Assign semantic roles for core UI components and document them.
-8. [ ] Update clients to consume resolved colors and drop hardcoded defaults.
+8. [x] Update clients to consume resolved colors and drop hardcoded defaults.

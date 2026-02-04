@@ -55,7 +55,7 @@ struct UiNodeView: View {
         case .input(let input):
             inputView(input)
         case .divider:
-            Divider().background(Color.white.opacity(0.15))
+            Divider()
         case .spacer(let spacer):
             Spacer().frame(height: CGFloat(spacer.size) * cellSize.height)
         case .tooltip(let tooltip):
@@ -86,10 +86,10 @@ struct UiNodeView: View {
             .frame(minWidth: minWidth, idealWidth: nil, maxWidth: maxWidth,
                    minHeight: minHeight, idealHeight: nil, maxHeight: maxHeight,
                    alignment: .topLeading)
-            .background(resolveColor(panel.style.bg, fallback: Color.black.opacity(0.7)))
+            .background(resolveColor(panel.style.bg, fallback: Color.clear))
             .overlay(
                 RoundedRectangle(cornerRadius: radius(panel.style.radius))
-                    .stroke(resolveColor(panel.style.border, fallback: Color.white.opacity(0.1)), lineWidth: 1)
+                    .stroke(resolveColor(panel.style.border, fallback: Color.clear), lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: radius(panel.style.radius)))
             .frame(maxWidth: containerSize.width, maxHeight: containerSize.height, alignment: alignment)
@@ -134,7 +134,7 @@ struct UiNodeView: View {
     @ViewBuilder
     private func textView(_ text: UiTextSnapshot) -> some View {
         Text(text.content)
-            .foregroundColor(resolveColor(text.style.fg, fallback: Color.white))
+            .foregroundColor(resolveColor(text.style.fg, fallback: Color.primary))
             .font(font(for: text.style))
             .lineLimit(text.maxLines.map { Int($0) })
             .truncationMode(.tail)
@@ -144,27 +144,30 @@ struct UiNodeView: View {
     @ViewBuilder
     private func listView(_ list: UiListSnapshot) -> some View {
         let items = list.maxVisible.map { max(1, $0) }.map { Array(list.items.prefix($0)) } ?? list.items
+        let baseText = resolveColor(list.style.fg, fallback: Color.primary)
+        let selectedText = resolveColor(list.style.border, fallback: baseText)
+        let selectedBg = resolveColor(list.style.accent, fallback: Color.clear)
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                 let isSelected = list.selected == index
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
-                        .foregroundColor(isSelected ? resolveColor(list.style.fg, fallback: Color.white) : Color.white)
+                        .foregroundColor(isSelected ? selectedText : baseText)
                         .font(.system(size: 14, weight: .semibold))
                     if let subtitle = item.subtitle, !subtitle.isEmpty {
                         Text(subtitle)
-                            .foregroundColor(Color.gray)
+                            .foregroundColor(resolveColor(list.style.fg, fallback: Color.secondary))
                             .font(.system(size: 12))
                     } else if let description = item.description, !description.isEmpty {
                         Text(description)
-                            .foregroundColor(Color.gray)
+                            .foregroundColor(resolveColor(list.style.fg, fallback: Color.secondary))
                             .font(.system(size: 12))
                     }
                 }
                 .padding(.vertical, 4)
                 .padding(.horizontal, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(isSelected ? resolveColor(list.style.bg, fallback: Color.blue.opacity(0.35)) : Color.clear)
+                .background(isSelected ? selectedBg : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             }
         }
@@ -173,8 +176,10 @@ struct UiNodeView: View {
     @ViewBuilder
     private func inputView(_ input: UiInputSnapshot) -> some View {
         let display = input.value.isEmpty ? (input.placeholder ?? "") : input.value
+        let baseText = resolveColor(input.style.fg, fallback: Color.primary)
+        let placeholderText = resolveColor(input.style.accent, fallback: baseText)
         Text(display)
-            .foregroundColor(resolveColor(input.style.fg, fallback: Color.white.opacity(input.value.isEmpty ? 0.6 : 1.0)))
+            .foregroundColor(input.value.isEmpty ? placeholderText : baseText)
             .font(.system(size: 14, weight: .light))
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -183,8 +188,8 @@ struct UiNodeView: View {
     private func tooltipView(_ tooltip: UiTooltipSnapshot) -> some View {
         Text(tooltip.content)
             .padding(8)
-            .background(resolveColor(tooltip.style.bg, fallback: Color.black.opacity(0.85)))
-            .foregroundColor(resolveColor(tooltip.style.fg, fallback: Color.white))
+            .background(resolveColor(tooltip.style.bg, fallback: Color.clear))
+            .foregroundColor(resolveColor(tooltip.style.fg, fallback: Color.primary))
             .clipShape(RoundedRectangle(cornerRadius: radius(tooltip.style.radius)))
     }
 
@@ -198,9 +203,9 @@ struct UiNodeView: View {
             Text(status.right)
         }
         .font(.system(size: 12))
-        .foregroundColor(resolveColor(status.style.fg, fallback: Color.white.opacity(0.8)))
+        .foregroundColor(resolveColor(status.style.fg, fallback: Color.primary))
         .padding(4)
-        .background(resolveColor(status.style.bg, fallback: Color.black.opacity(0.7)))
+        .background(resolveColor(status.style.bg, fallback: Color.clear))
     }
 
     private func length(_ value: UInt16?, unit: CGFloat) -> CGFloat? {
@@ -408,10 +413,10 @@ extension CommandPaletteLayout {
 fileprivate func uiColorToColor(_ uiColor: UiColorSnapshot?) -> Color? {
     guard let uiColor else { return nil }
     switch uiColor {
-    case .token(let token):
-        return color(for: token)
     case .value(let value):
         return color(for: value)
+    case .token:
+        return nil
     case .unknown:
         return nil
     }
@@ -420,40 +425,12 @@ fileprivate func uiColorToColor(_ uiColor: UiColorSnapshot?) -> Color? {
 fileprivate func resolveColor(_ uiColor: UiColorSnapshot?, fallback: Color) -> Color {
     guard let uiColor else { return fallback }
     switch uiColor {
-    case .token(let token):
-        if case .unknown = token {
-            return fallback
-        }
-        return color(for: token)
     case .value(let value):
         return color(for: value)
+    case .token:
+        return fallback
     case .unknown:
         return fallback
-    }
-}
-
-fileprivate func color(for token: UiColorTokenSnapshot) -> Color {
-    switch token {
-    case .text:
-        return Color.white
-    case .mutedText:
-        return Color.gray
-    case .panelBg:
-        return Color.black.opacity(0.75)
-    case .panelBorder:
-        return Color.white.opacity(0.2)
-    case .accent:
-        return Color.blue
-    case .selectedBg:
-        return Color.blue.opacity(0.4)
-    case .selectedText:
-        return Color.white
-    case .divider:
-        return Color.white.opacity(0.2)
-    case .placeholder:
-        return Color.gray.opacity(0.8)
-    case .unknown:
-        return Color.clear
     }
 }
 

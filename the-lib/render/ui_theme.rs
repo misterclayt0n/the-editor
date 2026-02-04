@@ -155,10 +155,7 @@ fn resolve_node(
       resolve_style(&mut text.style, theme, role, UiComponent::Text, &states);
     }
     UiNode::List(list) => {
-      let mut states = states_for(focus, Some(list.id.as_str()));
-      if list.selected.is_some() {
-        states.push(UiState::Selected);
-      }
+      let states = states_for(focus, Some(list.id.as_str()));
       let role_value = list.style.role.clone();
       let role = role_value.as_deref().or(inherited_role);
       resolve_style(&mut list.style, theme, role, UiComponent::List, &states);

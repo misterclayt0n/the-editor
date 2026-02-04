@@ -14,6 +14,7 @@ use the_lib::{
     UiPanel,
     UiText,
     UiColor,
+    UiColorToken,
     UiConstraints,
     UiInsets,
     UiStyle,
@@ -123,6 +124,7 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     },
   );
   input.style = input.style.with_role("command_palette");
+  input.style.accent = Some(UiColor::Token(UiColorToken::Placeholder));
   input.placeholder = Some(":Execute a command…".to_string());
   input.cursor = if state.query.is_empty() {
     1
@@ -134,6 +136,8 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   let mut list = UiList::new("command_palette_list", items);
   list.selected = selected;
   list.style = list.style.with_role("command_palette");
+  list.style.accent = Some(UiColor::Token(UiColorToken::SelectedBg));
+  list.style.border = Some(UiColor::Token(UiColorToken::SelectedText));
   let list = UiNode::List(list);
 
   let children = if matches!(layout, CommandPaletteLayout::Bottom) {
@@ -194,7 +198,6 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
               UiNode::Text(help_text),
             );
             help_panel.style = UiStyle::default().with_role("command_palette.help");
-            help_panel.style.border = Some(UiColor::Value(Color::Gray));
             help_panel.constraints = UiConstraints {
               padding: UiInsets {
                 left: 1,

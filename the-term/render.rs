@@ -166,56 +166,41 @@ fn align_vertical(rect: Rect, child_height: u16, align: the_lib::render::UiAlign
   (y, height)
 }
 
-fn resolve_ui_color(ctx: &Ctx, color: &the_lib::render::UiColor) -> Color {
-  let theme = ctx.command_palette_style.theme;
-  use the_lib::render::UiColorToken as Token;
+fn resolve_ui_color(color: &the_lib::render::UiColor) -> Option<Color> {
   match color {
-    the_lib::render::UiColor::Value(value) => lib_color_to_ratatui(*value),
-    the_lib::render::UiColor::Token(token) => match token {
-      Token::Text => lib_color_to_ratatui(theme.text),
-      Token::MutedText => lib_color_to_ratatui(theme.placeholder),
-      Token::PanelBg => lib_color_to_ratatui(theme.panel_bg),
-      Token::PanelBorder => lib_color_to_ratatui(theme.panel_border),
-      Token::Accent => lib_color_to_ratatui(theme.selected_border),
-      Token::SelectedBg => lib_color_to_ratatui(theme.selected_bg),
-      Token::SelectedText => lib_color_to_ratatui(theme.selected_text),
-      Token::Divider => lib_color_to_ratatui(theme.divider),
-      Token::Placeholder => lib_color_to_ratatui(theme.placeholder),
-    },
+    the_lib::render::UiColor::Value(value) => Some(lib_color_to_ratatui(*value)),
+    the_lib::render::UiColor::Token(_) => None,
   }
 }
 
-fn ui_style_colors(ctx: &Ctx, style: &UiStyle) -> (Style, Style, Style) {
-  let theme = ctx.command_palette_style.theme;
-  let text_color = style
-    .fg
-    .as_ref()
-    .map(|c| resolve_ui_color(ctx, c))
-    .unwrap_or_else(|| lib_color_to_ratatui(theme.text));
-  let bg_color = style
-    .bg
-    .as_ref()
-    .map(|c| resolve_ui_color(ctx, c))
-    .unwrap_or_else(|| lib_color_to_ratatui(theme.panel_bg));
-  let border_color = style
-    .border
-    .as_ref()
-    .map(|c| resolve_ui_color(ctx, c))
-    .unwrap_or_else(|| lib_color_to_ratatui(theme.panel_border));
+fn ui_style_colors(style: &UiStyle) -> (Style, Style, Style) {
+  let text_color = style.fg.as_ref().and_then(resolve_ui_color);
+  let bg_color = style.bg.as_ref().and_then(resolve_ui_color);
+  let border_color = style.border.as_ref().and_then(resolve_ui_color);
 
-  (
-    Style::default().fg(text_color),
-    Style::default().bg(bg_color),
-    Style::default().fg(border_color),
-  )
+  let mut text_style = Style::default();
+  if let Some(color) = text_color {
+    text_style = text_style.fg(color);
+  }
+
+  let mut fill_style = Style::default();
+  if let Some(color) = bg_color {
+    fill_style = fill_style.bg(color);
+  }
+
+  let mut border_style = Style::default();
+  if let Some(color) = border_color {
+    border_style = border_style.fg(color);
+  }
+
+  (text_style, fill_style, border_style)
 }
 
-fn ui_emphasis_color(ctx: &Ctx, emphasis: UiEmphasis, base: Color) -> Color {
-  let theme = ctx.command_palette_style.theme;
+fn apply_ui_emphasis(style: Style, emphasis: UiEmphasis) -> Style {
   match emphasis {
-    UiEmphasis::Muted => lib_color_to_ratatui(theme.placeholder),
-    UiEmphasis::Strong => lib_color_to_ratatui(theme.selected_text),
-    UiEmphasis::Normal => base,
+    UiEmphasis::Muted => style.add_modifier(Modifier::DIM),
+    UiEmphasis::Strong => style.add_modifier(Modifier::BOLD),
+    UiEmphasis::Normal => style,
   }
 }
 
@@ -467,13 +452,12 @@ fn layout_children<'a>(
   placements
 }
 
-fn draw_ui_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiText) {
+fn draw_ui_text(buf: &mut Buffer, rect: Rect, _ctx: &Ctx, text: &UiText) {
   if rect.width == 0 || rect.height == 0 {
     return;
   }
-  let (text_style, _, _) = ui_style_colors(ctx, &text.style);
-  let text_color = ui_emphasis_color(ctx, text.style.emphasis, text_style.fg.unwrap_or(Color::White));
-  let style = text_style.fg(text_color);
+  let (text_style, _, _) = ui_style_colors(&text.style);
+  let style = apply_ui_emphasis(text_style, text.style.emphasis);
   let max_lines = text.max_lines.unwrap_or(u16::MAX) as usize;
   let mut drawn = 0usize;
 
@@ -523,7 +507,7 @@ fn draw_ui_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiText) {
 fn draw_ui_input(
   buf: &mut Buffer,
   rect: Rect,
-  ctx: &Ctx,
+  _ctx: &Ctx,
   input: &UiInput,
   focus: Option<&the_lib::render::UiFocus>,
   cursor_out: &mut Option<(u16, u16)>,
@@ -531,17 +515,23 @@ fn draw_ui_input(
   if rect.width == 0 || rect.height == 0 {
     return;
   }
-  let (text_style, _, _) = ui_style_colors(ctx, &input.style);
-  let theme = ctx.command_palette_style.theme;
+  let (text_style, _, _) = ui_style_colors(&input.style);
+  let placeholder_color = input
+    .style
+    .accent
+    .as_ref()
+    .and_then(resolve_ui_color)
+    .or(text_style.fg);
   let (value, style) = if input.value.is_empty() {
     let placeholder = input
       .placeholder
       .as_deref()
       .unwrap_or("...");
-    (
-      placeholder.to_string(),
-      Style::default().fg(lib_color_to_ratatui(theme.placeholder)),
-    )
+    let mut style = Style::default();
+    if let Some(color) = placeholder_color {
+      style = style.fg(color);
+    }
+    (placeholder.to_string(), style)
   } else {
     (input.value.clone(), text_style)
   };
@@ -562,14 +552,32 @@ fn draw_ui_input(
 fn draw_ui_list(
   buf: &mut Buffer,
   rect: Rect,
-  ctx: &Ctx,
+  _ctx: &Ctx,
   list: &UiList,
   _cursor_out: &mut Option<(u16, u16)>,
 ) {
   if rect.width == 0 || rect.height == 0 {
     return;
   }
-  let theme = ctx.command_palette_style.theme;
+  let (text_style, _, _) = ui_style_colors(&list.style);
+  let base_text_color = text_style.fg;
+  let selected_text_color = list
+    .style
+    .border
+    .as_ref()
+    .and_then(resolve_ui_color)
+    .or(base_text_color);
+  let selected_bg_color = list
+    .style
+    .accent
+    .as_ref()
+    .and_then(resolve_ui_color);
+  let scroll_color = list
+    .style
+    .border
+    .as_ref()
+    .and_then(resolve_ui_color)
+    .or(base_text_color);
   let has_detail = list.items.iter().any(|item| {
     item
       .subtitle
@@ -607,18 +615,24 @@ fn draw_ui_list(
     let is_selected = selected == Some(row_idx + scroll_offset);
 
     if is_selected {
-      fill_rect(
-        buf,
-        Rect::new(rect.x, y, rect.width, base_height as u16),
-        Style::default().bg(lib_color_to_ratatui(theme.selected_bg)),
-      );
+      if let Some(bg_color) = selected_bg_color {
+        fill_rect(
+          buf,
+          Rect::new(rect.x, y, rect.width, base_height as u16),
+          Style::default().bg(bg_color),
+        );
+      }
     }
 
-    let mut row_style = if is_selected {
-      Style::default().fg(lib_color_to_ratatui(theme.selected_text))
+    let mut row_style = Style::default();
+    let row_color = if is_selected {
+      selected_text_color
     } else {
-      Style::default().fg(lib_color_to_ratatui(theme.text))
+      base_text_color
     };
+    if let Some(color) = row_color {
+      row_style = row_style.fg(color);
+    }
     if item.emphasis {
       row_style = row_style.add_modifier(Modifier::BOLD);
     }
@@ -645,8 +659,11 @@ fn draw_ui_list(
       if let Some(detail) = detail {
         let mut detail_text = detail.to_string();
         truncate_in_place(&mut detail_text, available_width);
-        let detail_style = Style::default()
-          .fg(lib_color_to_ratatui(theme.placeholder));
+        let mut detail_style = Style::default();
+        if let Some(color) = base_text_color {
+          detail_style = detail_style.fg(color);
+        }
+        detail_style = detail_style.add_modifier(Modifier::DIM);
         buf.set_string(rect.x + 1, y + 1, detail_text, detail_style);
       }
     }
@@ -669,7 +686,10 @@ fn draw_ui_list(
       let y = rect.y + i;
       let is_thumb = i >= thumb_offset && i < thumb_offset + thumb_height;
       let symbol = if is_thumb { "█" } else { "│" };
-      let style = Style::default().fg(lib_color_to_ratatui(theme.divider));
+      let mut style = Style::default();
+      if let Some(color) = scroll_color {
+        style = style.fg(color);
+      }
       buf.set_string(track_x, y, symbol, style);
     }
   }
@@ -691,9 +711,8 @@ fn draw_ui_node(
     UiNode::Input(input) => draw_ui_input(buf, rect, ctx, input, focus, cursor_out),
     UiNode::List(list) => draw_ui_list(buf, rect, ctx, list, cursor_out),
     UiNode::Divider(_) => {
-      let theme = ctx.command_palette_style.theme;
       let line = "─".repeat(rect.width as usize);
-      let style = Style::default().fg(lib_color_to_ratatui(theme.divider));
+      let style = Style::default().add_modifier(Modifier::DIM);
       buf.set_string(rect.x, rect.y, line, style);
     },
     UiNode::Spacer(_) => {},
@@ -826,7 +845,7 @@ fn draw_box_with_title(
   focus: Option<&the_lib::render::UiFocus>,
   cursor_out: &mut Option<(u16, u16)>,
 ) {
-  let (text_style, fill_style, border_style) = ui_style_colors(ctx, &panel.style);
+  let (text_style, fill_style, border_style) = ui_style_colors(&panel.style);
   draw_box(buf, rect, border_style, fill_style);
 
   let mut content = inner_rect(rect);
@@ -850,11 +869,11 @@ enum BorderEdge {
 fn draw_flat_panel(
   buf: &mut Buffer,
   rect: Rect,
-  ctx: &Ctx,
+  _ctx: &Ctx,
   panel: &UiPanel,
   edge: BorderEdge,
 ) -> Rect {
-  let (_, fill_style, border_style) = ui_style_colors(ctx, &panel.style);
+  let (_, fill_style, border_style) = ui_style_colors(&panel.style);
   fill_rect(buf, rect, fill_style);
 
   let line = "─".repeat(rect.width as usize);
@@ -879,11 +898,11 @@ fn node_layer(node: &UiNode) -> UiLayer {
   }
 }
 
-fn draw_ui_tooltip(buf: &mut Buffer, area: Rect, ctx: &Ctx, tooltip: &UiTooltip) {
+fn draw_ui_tooltip(buf: &mut Buffer, area: Rect, _ctx: &Ctx, tooltip: &UiTooltip) {
   if area.width == 0 || area.height == 0 {
     return;
   }
-  let (text_style, fill_style, border_style) = ui_style_colors(ctx, &tooltip.style);
+  let (text_style, fill_style, border_style) = ui_style_colors(&tooltip.style);
   let mut text = tooltip.content.clone();
   let max_width = area.width.saturating_sub(2).max(1) as usize;
   truncate_in_place(&mut text, max_width);
@@ -909,11 +928,11 @@ fn draw_ui_tooltip(buf: &mut Buffer, area: Rect, ctx: &Ctx, tooltip: &UiTooltip)
   buf.set_string(inner.x, inner.y, text, text_style);
 }
 
-fn draw_ui_status_bar(buf: &mut Buffer, rect: Rect, ctx: &Ctx, status: &UiStatusBar) {
+fn draw_ui_status_bar(buf: &mut Buffer, rect: Rect, _ctx: &Ctx, status: &UiStatusBar) {
   if rect.width == 0 || rect.height == 0 {
     return;
   }
-  let (text_style, fill_style, _) = ui_style_colors(ctx, &status.style);
+  let (text_style, fill_style, _) = ui_style_colors(&status.style);
   fill_rect(buf, Rect::new(rect.x, rect.y, rect.width, 1), fill_style);
 
   let mut left = status.left.clone();

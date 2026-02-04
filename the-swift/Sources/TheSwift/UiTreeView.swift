@@ -12,11 +12,14 @@ struct UiOverlayHost: View {
         GeometryReader { proxy in
             ZStack {
                 let paletteSnapshot = tree.commandPaletteSnapshot()
+                let statuslineSnapshot = tree.statuslineSnapshot()
 
                 ForEach(Array(tree.overlays.enumerated()), id: \.offset) { _, node in
                     if case .panel(let panel) = node, panel.id == "command_palette" {
                         EmptyView()
                     } else if case .panel(let panel) = node, panel.id == "command_palette_help" {
+                        EmptyView()
+                    } else if case .panel(let panel) = node, panel.id == "statusline" {
                         EmptyView()
                     } else {
                         UiNodeView(node: node, cellSize: cellSize, containerSize: proxy.size)
@@ -31,6 +34,11 @@ struct UiOverlayHost: View {
                         onClose: onCloseCommandPalette,
                         onQueryChange: onQueryChange
                     )
+                }
+
+                if let statuslineSnapshot {
+                    StatuslineView(snapshot: statuslineSnapshot, cellSize: cellSize)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 }
             }
         }
@@ -448,6 +456,62 @@ fileprivate struct UiShortcutSymbolsView: View {
     }
 }
 
+struct StatuslineSnapshot {
+    let left: String
+    let center: String
+    let right: String
+    let style: UiStyleSnapshot
+    let panelStyle: UiStyleSnapshot
+}
+
+struct StatuslineView: View {
+    let snapshot: StatuslineSnapshot
+    let cellSize: CGSize
+
+    var body: some View {
+        HStack {
+            Text(snapshot.left)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer()
+            if !snapshot.center.isEmpty {
+                Text(snapshot.center)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer()
+            }
+            Text(snapshot.right)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .foregroundColor(resolveColor(snapshot.style.fg, fallback: Color(nsColor: .labelColor)))
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, minHeight: cellSize.height, maxHeight: cellSize.height)
+        .background(statuslineBackground)
+        .overlay(statuslineDivider, alignment: .top)
+    }
+
+    private var statuslineDivider: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor).opacity(0.6))
+            .frame(height: 1)
+    }
+
+    private var statuslineBackground: some View {
+        let tint = uiColorToColor(snapshot.panelStyle.bg) ?? Color(nsColor: .windowBackgroundColor)
+        return ZStack {
+            Rectangle()
+                .fill(.regularMaterial)
+            Rectangle()
+                .fill(tint)
+                .opacity(0.35)
+                .blendMode(.color)
+        }
+        .compositingGroup()
+    }
+}
+
 extension UiTreeSnapshot {
     func commandPaletteSnapshot() -> CommandPaletteSnapshot? {
         guard let panel = commandPalettePanel() else {
@@ -484,6 +548,29 @@ extension UiTreeSnapshot {
             selectedIndex: list?.selected,
             items: paletteItems,
             layout: CommandPaletteLayout.from(intent: panel.intent)
+        )
+    }
+
+    func statuslineSnapshot() -> StatuslineSnapshot? {
+        let panel = findPanel(in: root, id: "statusline") ?? overlays.compactMap { node in
+            if case .panel(let panel) = node, panel.id == "statusline" { return panel }
+            return nil
+        }.first
+
+        guard let panel else {
+            return nil
+        }
+
+        guard let status = findStatusBar(in: panel.child) else {
+            return nil
+        }
+
+        return StatuslineSnapshot(
+            left: status.left,
+            center: status.center,
+            right: status.right,
+            style: status.style,
+            panelStyle: panel.style
         )
     }
 
@@ -550,6 +637,24 @@ extension UiTreeSnapshot {
             for child in container.children {
                 if let found = findPanel(in: child, id: id) {
                     return found
+                }
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    private func findStatusBar(in node: UiNodeSnapshot) -> UiStatusBarSnapshot? {
+        switch node {
+        case .statusBar(let status):
+            return status
+        case .panel(let panel):
+            return findStatusBar(in: panel.child)
+        case .container(let container):
+            for child in container.children {
+                if let status = findStatusBar(in: child) {
+                    return status
                 }
             }
             return nil

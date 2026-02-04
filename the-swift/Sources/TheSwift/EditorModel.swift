@@ -72,10 +72,14 @@ final class EditorModel: ObservableObject {
         let reserved = statuslineReservedRows(in: uiTree)
         let height = max(1, Int(viewport.height) - reserved)
         let next = Rect(x: 0, y: 0, width: viewport.width, height: UInt16(height))
-        if next != effectiveViewport {
+        if !rectsEqual(next, effectiveViewport) {
             effectiveViewport = next
             _ = app.set_viewport(editorId, next)
         }
+    }
+
+    private func rectsEqual(_ lhs: Rect, _ rhs: Rect) -> Bool {
+        lhs.x == rhs.x && lhs.y == rhs.y && lhs.width == rhs.width && lhs.height == rhs.height
     }
 
     private func statuslineReservedRows(in tree: UiTreeSnapshot) -> Int {

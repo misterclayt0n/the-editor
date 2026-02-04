@@ -12,15 +12,23 @@ struct UiOverlayHost: View {
         GeometryReader { proxy in
             ZStack {
                 let paletteSnapshot = tree.commandPaletteSnapshot()
+                let statuslineSnapshot = tree.statuslineSnapshot()
 
                 ForEach(Array(tree.overlays.enumerated()), id: \.offset) { _, node in
                     if case .panel(let panel) = node, panel.id == "command_palette" {
                         EmptyView()
                     } else if case .panel(let panel) = node, panel.id == "command_palette_help" {
                         EmptyView()
+                    } else if case .panel(let panel) = node, panel.id == "statusline" {
+                        EmptyView()
                     } else {
                         UiNodeView(node: node, cellSize: cellSize, containerSize: proxy.size)
                     }
+                }
+
+                if let statuslineSnapshot {
+                    StatuslineView(snapshot: statuslineSnapshot, cellSize: cellSize)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                 }
 
                 if let paletteSnapshot {
@@ -32,7 +40,6 @@ struct UiOverlayHost: View {
                         onQueryChange: onQueryChange
                     )
                 }
-
             }
         }
     }
@@ -70,8 +77,6 @@ struct UiNodeView: View {
 
     @ViewBuilder
     private func panelView(_ panel: UiPanelSnapshot) -> some View {
-        let role = panel.style.role ?? ""
-        let isStatusline = panel.id == "statusline" || role == "statusline"
         let alignment = alignment(for: panel.intent, align: panel.constraints.align)
         let minWidth = length(panel.constraints.minWidth, unit: cellSize.width)
         let maxWidth = length(panel.constraints.maxWidth, unit: cellSize.width)
@@ -90,23 +95,16 @@ struct UiNodeView: View {
                    minHeight: minHeight, idealHeight: nil, maxHeight: maxHeight,
                    alignment: .topLeading)
 
-        if isStatusline {
-            content
-                .background(ghosttyStatuslineBackground(panel))
-                .overlay(statuslineDivider, alignment: .top)
-                .frame(maxWidth: containerSize.width, maxHeight: containerSize.height, alignment: alignment)
-        } else {
-            let cornerRadius = panelCornerRadius(panel)
-            content
-                .background(panelBackground(panel, radius: cornerRadius))
-                .overlay(
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .stroke(panelBorderColor(panel), lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-                .shadow(color: Color.black.opacity(0.25), radius: 20, x: 0, y: 8)
-                .frame(maxWidth: containerSize.width, maxHeight: containerSize.height, alignment: alignment)
-        }
+        let cornerRadius = panelCornerRadius(panel)
+        content
+            .background(panelBackground(panel, radius: cornerRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(panelBorderColor(panel), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .shadow(color: Color.black.opacity(0.25), radius: 20, x: 0, y: 8)
+            .frame(maxWidth: containerSize.width, maxHeight: containerSize.height, alignment: alignment)
     }
 
     @ViewBuilder
@@ -344,26 +342,6 @@ struct UiNodeView: View {
         .compositingGroup()
     }
 
-    @ViewBuilder
-    private func ghosttyStatuslineBackground(_ panel: UiPanelSnapshot) -> some View {
-        let tint = panelTint(panel)
-        ZStack {
-            Rectangle()
-                .fill(.regularMaterial)
-            Rectangle()
-                .fill(tint)
-                .opacity(0.08)
-                .blendMode(.color)
-        }
-        .compositingGroup()
-    }
-
-    private var statuslineDivider: some View {
-        Rectangle()
-            .fill(Color(nsColor: .separatorColor).opacity(0.6))
-            .frame(height: 1)
-    }
-
     private func tooltipTint(_ tooltip: UiTooltipSnapshot) -> Color {
         uiColorToColor(tooltip.style.bg) ?? Color(nsColor: .windowBackgroundColor)
     }
@@ -452,6 +430,71 @@ fileprivate struct UiShortcutSymbolsView: View {
     }
 }
 
+struct StatuslineSnapshot {
+    let left: String
+    let center: String
+    let right: String
+    let style: UiStyleSnapshot
+    let panelStyle: UiStyleSnapshot
+}
+
+struct StatuslineView: View {
+    let snapshot: StatuslineSnapshot
+    let cellSize: CGSize
+
+    var body: some View {
+        let separatorColor = Color(nsColor: .secondaryLabelColor)
+        let textColor = resolveColor(snapshot.style.fg, fallback: Color(nsColor: .labelColor))
+        let tint = uiColorToColor(snapshot.panelStyle.bg) ?? Color.clear
+
+        HStack(spacing: 6) {
+            Text(snapshot.left)
+                .foregroundColor(textColor)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            if !snapshot.center.isEmpty {
+                Text("•")
+                    .foregroundStyle(separatorColor)
+                Text(snapshot.center)
+                    .foregroundColor(textColor)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+
+            Text("•")
+                .foregroundStyle(separatorColor)
+            Text(snapshot.right)
+                .foregroundColor(textColor)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .font(.system(size: 12, weight: .medium, design: .rounded))
+        .tracking(-0.2)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 2)
+        .frame(height: cellSize.height)
+        .background(
+            Capsule()
+                .fill(.regularMaterial)
+                .overlay(
+                    Capsule()
+                        .fill(tint)
+                        .opacity(0.08)
+                        .blendMode(.color)
+                )
+                .compositingGroup()
+        )
+        .overlay(
+            Capsule()
+                .stroke(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 2)
+        .padding(.leading, 12)
+        .padding(.bottom, 10)
+    }
+}
+
 
 extension UiTreeSnapshot {
     func commandPaletteSnapshot() -> CommandPaletteSnapshot? {
@@ -489,6 +532,29 @@ extension UiTreeSnapshot {
             selectedIndex: list?.selected,
             items: paletteItems,
             layout: CommandPaletteLayout.from(intent: panel.intent)
+        )
+    }
+
+    func statuslineSnapshot() -> StatuslineSnapshot? {
+        let panel = findPanel(in: root, id: "statusline") ?? overlays.compactMap { node in
+            if case .panel(let panel) = node, panel.id == "statusline" { return panel }
+            return nil
+        }.first
+
+        guard let panel else {
+            return nil
+        }
+
+        guard let status = findStatusBar(in: panel.child) else {
+            return nil
+        }
+
+        return StatuslineSnapshot(
+            left: status.left,
+            center: status.center,
+            right: status.right,
+            style: status.style,
+            panelStyle: panel.style
         )
     }
 
@@ -555,6 +621,24 @@ extension UiTreeSnapshot {
             for child in container.children {
                 if let found = findPanel(in: child, id: id) {
                     return found
+                }
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    private func findStatusBar(in node: UiNodeSnapshot) -> UiStatusBarSnapshot? {
+        switch node {
+        case .statusBar(let status):
+            return status
+        case .panel(let panel):
+            return findStatusBar(in: panel.child)
+        case .container(let container):
+            for child in container.children {
+                if let status = findStatusBar(in: child) {
+                    return status
                 }
             }
             return nil

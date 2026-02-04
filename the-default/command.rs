@@ -66,6 +66,8 @@ use the_lib::{
     text_format::TextFormat,
     char_at_visual_pos,
     visual_pos_at_char,
+    theme::default_theme,
+    ui_theme::resolve_ui_tree,
   },
   selection::{
     CursorId,
@@ -459,7 +461,9 @@ pub fn render_plan_with_styles<Ctx: DefaultContext>(
 pub fn ui_tree<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiTree {
   ctx.dispatch().pre_ui(ctx, ());
   let tree = ctx.dispatch().on_ui(ctx, ());
-  ctx.dispatch().post_ui(ctx, tree)
+  let mut tree = ctx.dispatch().post_ui(ctx, tree);
+  resolve_ui_tree(&mut tree, default_theme());
+  tree
 }
 
 pub fn ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOutcome {

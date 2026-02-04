@@ -16,6 +16,8 @@ struct UiOverlayHost: View {
                 ForEach(Array(tree.overlays.enumerated()), id: \.offset) { _, node in
                     if case .panel(let panel) = node, panel.id == "command_palette" {
                         EmptyView()
+                    } else if case .panel(let panel) = node, panel.id == "command_palette_help" {
+                        EmptyView()
                     } else {
                         UiNodeView(node: node, cellSize: cellSize, containerSize: proxy.size)
                     }

@@ -355,7 +355,7 @@ enum UiLayerSnapshot: String, Decodable {
     case tooltip
 }
 
-enum UiColorTokenSnapshot: String, Decodable {
+enum UiColorTokenSnapshot: Decodable {
     case text
     case mutedText
     case panelBg
@@ -365,6 +365,34 @@ enum UiColorTokenSnapshot: String, Decodable {
     case selectedText
     case divider
     case placeholder
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = (try? container.decode(String.self)) ?? ""
+        switch value {
+        case "text":
+            self = .text
+        case "muted_text":
+            self = .mutedText
+        case "panel_bg":
+            self = .panelBg
+        case "panel_border":
+            self = .panelBorder
+        case "accent":
+            self = .accent
+        case "selected_bg":
+            self = .selectedBg
+        case "selected_text":
+            self = .selectedText
+        case "divider":
+            self = .divider
+        case "placeholder":
+            self = .placeholder
+        default:
+            self = .unknown
+        }
+    }
 }
 
 enum UiColorSnapshot: Decodable {

@@ -419,6 +419,9 @@ fileprivate func resolveColor(_ uiColor: UiColorSnapshot?, fallback: Color) -> C
     guard let uiColor else { return fallback }
     switch uiColor {
     case .token(let token):
+        if case .unknown = token {
+            return fallback
+        }
         return color(for: token)
     case .value(let value):
         return color(for: value)
@@ -447,6 +450,8 @@ fileprivate func color(for token: UiColorTokenSnapshot) -> Color {
         return Color.white.opacity(0.2)
     case .placeholder:
         return Color.gray.opacity(0.8)
+    case .unknown:
+        return Color.clear
     }
 }
 

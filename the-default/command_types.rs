@@ -706,6 +706,11 @@ impl Command {
   }
 
   #[must_use]
+  pub const fn goto_column(col: usize) -> Self {
+    Self::Motion(Motion::Column { col, extend: false })
+  }
+
+  #[must_use]
   pub const fn delete_char_forward(count: usize) -> Self {
     Self::DeleteCharForward { count }
   }

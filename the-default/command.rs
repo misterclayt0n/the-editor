@@ -2965,6 +2965,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "extend_to_file_end" => Some(Command::extend_to_file_end()),
     "extend_to_last_line" => Some(Command::extend_to_last_line()),
     "extend_to_column" => Some(Command::extend_to_column(1)),
+    "goto_column" => Some(Command::goto_column(1)),
 
     "delete_word_backward" => Some(Command::delete_word_backward(1)),
     "delete_word_forward" => Some(Command::delete_word_forward(1)),

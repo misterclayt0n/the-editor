@@ -2998,6 +2998,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "extend_parent_node_end" => Some(Command::extend_parent_node_end()),
     "move_parent_node_start" => Some(Command::move_parent_node_start()),
     "extend_parent_node_start" => Some(Command::extend_parent_node_start()),
+    "goto_file_start" => Some(Command::goto_file_start()),
 
     "delete_selection" => Some(Command::delete_selection()),
     "delete_selection_noyank" => Some(Command::delete_selection_noyank()),

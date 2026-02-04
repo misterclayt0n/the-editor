@@ -23,6 +23,7 @@ This doc summarizes the current structure differences and gives a concrete playb
   - `Editor` → one `Document`, one `ViewState`.
   - No view IDs or multiple documents/views in the core.
 - **No UI side effects** (animations, compositor jobs, etc). Ignore old “noop effects” and UI flush logic.
+- **UiTree is now the shared UI source of truth** for overlays (command palette, etc.).
 
 ## Where to add new commands
 
@@ -91,6 +92,8 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) { /* ... */ }
 - Save/Quit
 - Default dispatch chain (`pre_on_keypress`, `on_keypress`, `post_on_keypress`, `pre_on_action`, `on_action`, `post_on_action`)
 - Keymap entry point (`handle_key` + keymap logic)
+- UI tree pipeline: `pre_ui → on_ui → post_ui` with UiTree overlays
+- UiEvent routing for overlays (command palette uses UiEvents)
 
 ## What is still missing (categories to port)
 
@@ -182,6 +185,7 @@ No new handler needed—`motion()` already implements `WordMotion::NextLongWordS
 - **No view IDs** in the-lib. Use the single document / selection API.
 - **Counts** are part of `Motion`; if a command needs a count, encode it there.
 - **Primary cursor** is gone. Use `CursorId` + view’s `active_cursor` for styling/selection, but core selection operations should be cursor‑agnostic.
+- **UiTree is the only UI contract**: the-default builds UiTree overlays; clients render UiTree and send UiEvents.
 
 ## Quick map: old `Context` → new `DefaultContext`
 
@@ -238,6 +242,36 @@ fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
   ctx.dispatch().on_keypress(ctx, key);
 }
 ```
+
+## UI: UiTree + Themes (current model)
+
+### UiTree pipeline (clients render this)
+- the-default builds a `UiTree` in `on_ui`, then `post_ui` can mutate it.
+- `the_default::ui_tree(ctx)` runs `pre_ui → on_ui → post_ui` and returns the tree.
+- Clients **must render UiTree** (Swift + term do this now).
+- Overlays are regular UiNodes under `tree.overlays`; no client-specific palette UI.
+
+### UiEvents
+- UiEvents are routed in `ui_event` via `pre_ui_event → on_ui_event → post_ui_event`.
+- Command palette is driven by UiEvents:
+  - `UiEventKind::Key` for key handling
+  - `UiEventKind::Activate` to submit
+  - `UiEventKind::Dismiss` to close
+
+### Theme resolution (shared, in the-lib)
+- UiTree styles are resolved **in the-default** before clients render:
+  - `the_default::ui_tree(ctx)` calls `resolve_ui_tree(&mut tree, ctx.ui_theme())`.
+- Clients now **only consume resolved UiColor values**; no token-to-color logic in clients.
+- Theme selection is owned by the client (`DefaultContext::ui_theme()`), so CLI/FFI can pick a theme.
+
+### UI roles (semantic styling)
+- `UiStyle.role` is used for semantic scopes like `command_palette` and `command_palette.help`.
+- Role → scope mapping lives in `the-lib/render/ui_theme.rs` and follows:
+  `ui.{role}.{component}.{state}.{prop}` → fallbacks → `ui.{prop}`.
+
+### Command palette status
+- The command palette UI is built from UiTree (`the-default/command_palette.rs`).
+- The help panel overlay has been removed (description is rendered inline).
 
 ### How to use (pattern)
 For any command that needs a follow‑up character (f/t/F/T, insert‑register,

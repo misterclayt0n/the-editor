@@ -686,6 +686,11 @@ impl Command {
   }
 
   #[must_use]
+  pub const fn goto_file_start() -> Self {
+    Self::Motion(Motion::FileStart { extend: false })
+  }
+
+  #[must_use]
   pub const fn extend_to_file_end() -> Self {
     Self::Motion(Motion::extend_to_file_end())
   }

@@ -323,6 +323,7 @@ struct CommandPaletteView: View {
         }
 
         selectedIndex = next
+        onSelect(next)
     }
 
     private func syncSelectionIfNeeded() {

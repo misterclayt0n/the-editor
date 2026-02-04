@@ -149,6 +149,9 @@ struct UiListItemSnapshot: Decodable {
     let description: String?
     let shortcut: String?
     let badge: String?
+    let leadingIcon: String?
+    let leadingColor: UiColorSnapshot?
+    let symbols: [String]
     let emphasis: Bool
     let action: String?
 
@@ -158,6 +161,9 @@ struct UiListItemSnapshot: Decodable {
         case description
         case shortcut
         case badge
+        case leadingIcon
+        case leadingColor
+        case symbols
         case emphasis
         case action
     }
@@ -169,6 +175,9 @@ struct UiListItemSnapshot: Decodable {
         description = try? container.decode(String.self, forKey: .description)
         shortcut = try? container.decode(String.self, forKey: .shortcut)
         badge = try? container.decode(String.self, forKey: .badge)
+        leadingIcon = try? container.decode(String.self, forKey: .leadingIcon)
+        leadingColor = try? container.decode(UiColorSnapshot.self, forKey: .leadingColor)
+        symbols = (try? container.decode([String].self, forKey: .symbols)) ?? []
         emphasis = (try? container.decode(Bool.self, forKey: .emphasis)) ?? false
         action = try? container.decode(String.self, forKey: .action)
     }

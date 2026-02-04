@@ -12,6 +12,7 @@ struct EditorView: View {
         let model = model
         let cellSize = model.cellSize
         let font = model.font
+        let isPaletteOpen = model.uiTree.hasCommandPalettePanel
         GeometryReader { proxy in
             ZStack {
                 Canvas { context, size in
@@ -21,7 +22,6 @@ struct EditorView: View {
 
                 UiOverlayHost(
                     tree: model.uiTree,
-                    commandPalette: model.commandPalette,
                     cellSize: cellSize,
                     onSelectCommand: { index in
                         model.selectCommandPalette(index: index)
@@ -39,7 +39,7 @@ struct EditorView: View {
             }
             .background(
                 Group {
-                    if !model.commandPalette.isOpen {
+                    if !isPaletteOpen {
                         KeyCaptureView(
                             onKey: { event in
                                 model.handleKeyEvent(event)
@@ -58,7 +58,7 @@ struct EditorView: View {
             )
             .overlay(
                 Group {
-                    if !model.commandPalette.isOpen {
+                    if !isPaletteOpen {
                         ScrollCaptureView(
                             onScroll: { deltaX, deltaY, precise in
                                 model.handleScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)

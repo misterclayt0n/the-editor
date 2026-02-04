@@ -357,6 +357,12 @@ pub struct UiListItem {
   pub description: Option<String>,
   pub shortcut: Option<String>,
   pub badge: Option<String>,
+  #[serde(default)]
+  pub leading_icon: Option<String>,
+  #[serde(default)]
+  pub leading_color: Option<UiColor>,
+  #[serde(default)]
+  pub symbols: Option<Vec<String>>,
   pub emphasis: bool,
   #[serde(default)]
   pub action: Option<String>,
@@ -370,6 +376,9 @@ impl UiListItem {
       description: None,
       shortcut: None,
       badge: None,
+      leading_icon: None,
+      leading_color: None,
+      symbols: None,
       emphasis: false,
       action: None,
     }

@@ -2,7 +2,6 @@ import SwiftUI
 
 struct UiOverlayHost: View {
     let tree: UiTreeSnapshot
-    let commandPalette: CommandPaletteSnapshot
     let cellSize: CGSize
     let onSelectCommand: (Int) -> Void
     let onSubmitCommand: (Int) -> Void
@@ -12,18 +11,13 @@ struct UiOverlayHost: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack {
-                let hasCommandPalettePanel = tree.overlays.contains { node in
-                    if case .panel(let panel) = node {
-                        return panel.id == "command_palette"
-                    }
-                    return false
-                }
+                let paletteSnapshot = tree.commandPaletteSnapshot()
 
                 ForEach(Array(tree.overlays.enumerated()), id: \.offset) { _, node in
                     if case .panel(let panel) = node, panel.id == "command_palette" {
-                        if commandPalette.isOpen {
+                        if let paletteSnapshot {
                             CommandPaletteView(
-                                snapshot: commandPalette,
+                                snapshot: paletteSnapshot,
                                 onSelect: onSelectCommand,
                                 onSubmit: onSubmitCommand,
                                 onClose: onCloseCommandPalette,
@@ -33,16 +27,6 @@ struct UiOverlayHost: View {
                     } else {
                         UiNodeView(node: node, cellSize: cellSize, containerSize: proxy.size)
                     }
-                }
-
-                if commandPalette.isOpen && !hasCommandPalettePanel {
-                    CommandPaletteView(
-                        snapshot: commandPalette,
-                        onSelect: onSelectCommand,
-                        onSubmit: onSubmitCommand,
-                        onClose: onCloseCommandPalette,
-                        onQueryChange: onQueryChange
-                    )
                 }
             }
         }
@@ -264,86 +248,6 @@ struct UiNodeView: View {
         }
     }
 
-    private func resolveColor(_ uiColor: UiColorSnapshot?, fallback: Color) -> Color {
-        guard let uiColor else { return fallback }
-        switch uiColor {
-        case .token(let token):
-            return self.color(for: token)
-        case .value(let value):
-            return self.color(for: value)
-        case .unknown:
-            return fallback
-        }
-    }
-
-    private func color(for token: UiColorTokenSnapshot) -> Color {
-        switch token {
-        case .text:
-            return Color.white
-        case .mutedText:
-            return Color.gray
-        case .panelBg:
-            return Color.black.opacity(0.75)
-        case .panelBorder:
-            return Color.white.opacity(0.2)
-        case .accent:
-            return Color.blue
-        case .selectedBg:
-            return Color.blue.opacity(0.4)
-        case .selectedText:
-            return Color.white
-        case .divider:
-            return Color.white.opacity(0.2)
-        case .placeholder:
-            return Color.gray.opacity(0.8)
-        }
-    }
-
-    private func color(for value: ColorSnapshot) -> Color {
-        switch value {
-        case .reset:
-            return Color.clear
-        case .black:
-            return Color.black
-        case .red:
-            return Color.red
-        case .green:
-            return Color.green
-        case .yellow:
-            return Color.yellow
-        case .blue:
-            return Color.blue
-        case .magenta:
-            return Color.purple
-        case .cyan:
-            return Color.cyan
-        case .gray:
-            return Color.gray
-        case .lightRed:
-            return Color.red.opacity(0.8)
-        case .lightGreen:
-            return Color.green.opacity(0.8)
-        case .lightYellow:
-            return Color.yellow.opacity(0.8)
-        case .lightBlue:
-            return Color.blue.opacity(0.8)
-        case .lightMagenta:
-            return Color.purple.opacity(0.8)
-        case .lightCyan:
-            return Color.cyan.opacity(0.8)
-        case .lightGray:
-            return Color.gray.opacity(0.8)
-        case .white:
-            return Color.white
-        case .rgb(let r, let g, let b):
-            return Color(red: Double(r) / 255.0, green: Double(g) / 255.0, blue: Double(b) / 255.0)
-        case .indexed:
-            return Color.gray
-        case .unknown:
-            return Color.clear
-        }
-    }
-
     private func font(for style: UiStyleSnapshot) -> Font {
         switch style.emphasis {
         case .strong:
@@ -367,4 +271,234 @@ struct UiNodeView: View {
             return 12
         }
     }
+}
+
+extension UiTreeSnapshot {
+    func commandPaletteSnapshot() -> CommandPaletteSnapshot? {
+        guard let panel = commandPalettePanel() else {
+            return nil
+        }
+
+        let input = findInput(in: panel.child, id: "command_palette_input")
+        let list = findList(in: panel.child, id: "command_palette_list")
+
+        var query = input?.value ?? ""
+        if query.hasPrefix(":") {
+            query.removeFirst()
+        }
+
+        let items = list?.items ?? []
+        let paletteItems = items.enumerated().map { index, item in
+            CommandPaletteItemSnapshot(
+                id: index,
+                title: item.title,
+                subtitle: item.subtitle,
+                description: item.description,
+                shortcut: item.shortcut,
+                badge: item.badge,
+                leadingIcon: item.leadingIcon,
+                leadingColor: uiColorToColor(item.leadingColor),
+                symbols: item.symbols,
+                emphasis: item.emphasis
+            )
+        }
+
+        return CommandPaletteSnapshot(
+            isOpen: true,
+            query: query,
+            selectedIndex: list?.selected,
+            items: paletteItems,
+            layout: CommandPaletteLayout.from(intent: panel.intent)
+        )
+    }
+
+    var hasCommandPalettePanel: Bool {
+        return commandPalettePanel() != nil
+    }
+
+    private func commandPalettePanel() -> UiPanelSnapshot? {
+        for node in overlays {
+            if case .panel(let panel) = node, panel.id == "command_palette" {
+                return panel
+            }
+        }
+        return nil
+    }
+
+    private func findInput(in node: UiNodeSnapshot, id: String) -> UiInputSnapshot? {
+        switch node {
+        case .input(let input):
+            return input.id == id ? input : nil
+        case .container(let container):
+            for child in container.children {
+                if let found = findInput(in: child, id: id) {
+                    return found
+                }
+            }
+            return nil
+        case .panel(let panel):
+            return findInput(in: panel.child, id: id)
+        default:
+            return nil
+        }
+    }
+
+    private func findList(in node: UiNodeSnapshot, id: String) -> UiListSnapshot? {
+        switch node {
+        case .list(let list):
+            return list.id == id ? list : nil
+        case .container(let container):
+            for child in container.children {
+                if let found = findList(in: child, id: id) {
+                    return found
+                }
+            }
+            return nil
+        case .panel(let panel):
+            return findList(in: panel.child, id: id)
+        default:
+            return nil
+        }
+    }
+}
+
+extension CommandPaletteLayout {
+    static func from(intent: LayoutIntentSnapshot) -> CommandPaletteLayout {
+        switch intent {
+        case .bottom:
+            return .bottom
+        case .top:
+            return .top
+        case .floating:
+            return .floating
+        case .custom:
+            return .custom
+        case .sidebarLeft, .sidebarRight, .fullscreen, .unknown:
+            return .floating
+        }
+    }
+}
+
+fileprivate func uiColorToColor(_ uiColor: UiColorSnapshot?) -> Color? {
+    guard let uiColor else { return nil }
+    switch uiColor {
+    case .token(let token):
+        return color(for: token)
+    case .value(let value):
+        return color(for: value)
+    case .unknown:
+        return nil
+    }
+}
+
+fileprivate func resolveColor(_ uiColor: UiColorSnapshot?, fallback: Color) -> Color {
+    guard let uiColor else { return fallback }
+    switch uiColor {
+    case .token(let token):
+        return color(for: token)
+    case .value(let value):
+        return color(for: value)
+    case .unknown:
+        return fallback
+    }
+}
+
+fileprivate func color(for token: UiColorTokenSnapshot) -> Color {
+    switch token {
+    case .text:
+        return Color.white
+    case .mutedText:
+        return Color.gray
+    case .panelBg:
+        return Color.black.opacity(0.75)
+    case .panelBorder:
+        return Color.white.opacity(0.2)
+    case .accent:
+        return Color.blue
+    case .selectedBg:
+        return Color.blue.opacity(0.4)
+    case .selectedText:
+        return Color.white
+    case .divider:
+        return Color.white.opacity(0.2)
+    case .placeholder:
+        return Color.gray.opacity(0.8)
+    }
+}
+
+fileprivate func color(for value: ColorSnapshot) -> Color {
+    switch value {
+    case .reset:
+        return Color.clear
+    case .black:
+        return Color.black
+    case .red:
+        return Color.red
+    case .green:
+        return Color.green
+    case .yellow:
+        return Color.yellow
+    case .blue:
+        return Color.blue
+    case .magenta:
+        return Color.purple
+    case .cyan:
+        return Color.cyan
+    case .gray:
+        return Color.gray
+    case .lightRed:
+        return Color.red.opacity(0.8)
+    case .lightGreen:
+        return Color.green.opacity(0.8)
+    case .lightYellow:
+        return Color.yellow.opacity(0.8)
+    case .lightBlue:
+        return Color.blue.opacity(0.8)
+    case .lightMagenta:
+        return Color.purple.opacity(0.8)
+    case .lightCyan:
+        return Color.cyan.opacity(0.8)
+    case .lightGray:
+        return Color.gray.opacity(0.8)
+    case .white:
+        return Color.white
+    case .rgb(let r, let g, let b):
+        return Color(red: Double(r) / 255.0, green: Double(g) / 255.0, blue: Double(b) / 255.0)
+    case .indexed(let index):
+        return xterm256Color(index: Int(index)) ?? Color.gray
+    case .unknown:
+        return Color.clear
+    }
+}
+
+fileprivate func xterm256Color(index: Int) -> Color? {
+    if index < 0 {
+        return nil
+    }
+
+    if index < 16 {
+        let palette: [Color] = [
+            .black, .red, .green, .yellow, .blue, .purple, .cyan, .gray,
+            .red.opacity(0.8), .green.opacity(0.8), .yellow.opacity(0.8),
+            .blue.opacity(0.8), .purple.opacity(0.8), .cyan.opacity(0.8),
+            .gray.opacity(0.9), .white
+        ]
+        return palette[index]
+    }
+
+    if index >= 232 {
+        let level = Double(index - 232) / 23.0
+        return Color(white: level)
+    }
+
+    let idx = index - 16
+    let r = idx / 36
+    let g = (idx % 36) / 6
+    let b = idx % 6
+    func component(_ value: Int) -> Double {
+        let levels: [Double] = [0.0, 0.37, 0.58, 0.74, 0.87, 1.0]
+        return levels[min(max(value, 0), levels.count - 1)]
+    }
+
+    return Color(red: component(r), green: component(g), blue: component(b))
 }

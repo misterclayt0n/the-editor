@@ -14,6 +14,7 @@ pub mod plan;
 pub mod text_annotations;
 pub mod text_format;
 pub mod ui;
+pub mod ui_theme;
 pub mod theme;
 pub mod visual_position;
 

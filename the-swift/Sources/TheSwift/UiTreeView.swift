@@ -92,7 +92,7 @@ struct UiNodeView: View {
 
         if isStatusline {
             content
-                .background(statuslineBackground(panel))
+                .background(ghosttyStatuslineBackground(panel))
                 .overlay(statuslineDivider, alignment: .top)
                 .frame(maxWidth: containerSize.width, maxHeight: containerSize.height, alignment: alignment)
         } else {
@@ -232,7 +232,8 @@ struct UiNodeView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
-        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .font(.system(size: 12, weight: .medium, design: .rounded))
+        .tracking(-0.2)
         .foregroundColor(resolveColor(status.style.fg, fallback: nativePrimary))
         .frame(maxWidth: .infinity, minHeight: cellSize.height, maxHeight: cellSize.height)
     }
@@ -344,12 +345,14 @@ struct UiNodeView: View {
     }
 
     @ViewBuilder
-    private func statuslineBackground(_ panel: UiPanelSnapshot) -> some View {
+    private func ghosttyStatuslineBackground(_ panel: UiPanelSnapshot) -> some View {
+        let tint = panelTint(panel)
         ZStack {
             Rectangle()
                 .fill(.regularMaterial)
             Rectangle()
-                .fill(panelTint(panel))
+                .fill(tint)
+                .opacity(0.08)
                 .blendMode(.color)
         }
         .compositingGroup()

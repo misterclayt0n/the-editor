@@ -442,42 +442,72 @@ struct StatuslineView: View {
     let snapshot: StatuslineSnapshot
     let cellSize: CGSize
 
+    private var statuslineHeight: CGFloat { 22 }
+
+    private var modeName: String {
+        snapshot.left.components(separatedBy: " ").first ?? ""
+    }
+
+    private var filename: String {
+        let parts = snapshot.left.components(separatedBy: " ")
+        return parts.dropFirst().joined(separator: " ")
+    }
+
+    private var modeColor: Color {
+        switch modeName.uppercased() {
+        case "NORMAL", "N":
+            return Color(nsColor: .tertiaryLabelColor)
+        case "INSERT", "I":
+            return Color(nsColor: .secondaryLabelColor)
+        case "VISUAL", "V", "VISUAL LINE", "VISUAL BLOCK":
+            return Color(nsColor: .labelColor)
+        case "COMMAND", "C", ":":
+            return Color(nsColor: .secondaryLabelColor)
+        default:
+            return Color(nsColor: .tertiaryLabelColor)
+        }
+    }
+
     var body: some View {
-        let textColor = Color(nsColor: .labelColor)
-        let secondary = Color(nsColor: .secondaryLabelColor)
-
         VStack(spacing: 0) {
-            Divider()
-                .opacity(0.7)
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(height: 0.5)
+                .opacity(0.25)
 
-            HStack(spacing: 10) {
-                Text(snapshot.left)
-                    .foregroundColor(textColor)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+            HStack(spacing: 0) {
+                Text(modeName)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(modeColor)
+                    .frame(minWidth: 48, alignment: .leading)
+
+                if !filename.isEmpty {
+                    Text(filename)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
 
                 Spacer(minLength: 8)
 
                 if !snapshot.center.isEmpty {
                     Text(snapshot.center)
-                        .foregroundColor(secondary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
                         .lineLimit(1)
-                        .truncationMode(.tail)
+
+                    Spacer(minLength: 8)
                 }
 
-                Spacer(minLength: 8)
-
                 Text(snapshot.right)
-                    .foregroundColor(secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
-            .font(.system(size: 12, weight: .medium, design: .rounded))
-            .tracking(-0.15)
-            .padding(.horizontal, 10)
-            .frame(height: cellSize.height, alignment: .center)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .padding(.horizontal, 12)
+            .frame(height: statuslineHeight - 0.5)
         }
+        .frame(height: statuslineHeight)
     }
 }
 

@@ -85,7 +85,8 @@ final class EditorModel: ObservableObject {
     private func statuslineReservedRows(in tree: UiTreeSnapshot) -> Int {
         for node in tree.overlays {
             if case .panel(let panel) = node, panel.id == "statusline" {
-                return 1
+                // Fixed 22pt statusline height
+                return Int(ceil(22.0 / cellSize.height))
             }
         }
         return 0

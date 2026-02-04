@@ -66,7 +66,7 @@ use the_lib::{
     text_format::TextFormat,
     char_at_visual_pos,
     visual_pos_at_char,
-    theme::default_theme,
+    theme::Theme,
     ui_theme::resolve_ui_tree,
   },
   selection::{
@@ -340,6 +340,7 @@ pub trait DefaultContext: Sized + 'static {
   fn text_format(&self) -> TextFormat;
   fn text_annotations(&self) -> TextAnnotations<'_>;
   fn syntax_loader(&self) -> Option<&Loader>;
+  fn ui_theme(&self) -> &Theme;
 }
 
 pub fn build_dispatch<Ctx>() -> DefaultDispatchStatic<Ctx>
@@ -462,7 +463,7 @@ pub fn ui_tree<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiTree {
   ctx.dispatch().pre_ui(ctx, ());
   let tree = ctx.dispatch().on_ui(ctx, ());
   let mut tree = ctx.dispatch().post_ui(ctx, tree);
-  resolve_ui_tree(&mut tree, default_theme());
+  resolve_ui_tree(&mut tree, ctx.ui_theme());
   tree
 }
 

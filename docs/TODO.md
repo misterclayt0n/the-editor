@@ -5,6 +5,6 @@
 3. [x] Add UI scope generation for UiTree components/states (role-aware).
 4. [x] Resolve UiTree styles against Theme in the-lib.
 5. [x] Wire the resolver into the default UI pipeline before clients render.
-6. [ ] Add theme selection/config plumbing for clients.
+6. [x] Add theme selection/config plumbing for clients.
 7. [ ] Assign semantic roles for core UI components and document them.
 8. [ ] Update clients to consume resolved colors and drop hardcoded defaults.

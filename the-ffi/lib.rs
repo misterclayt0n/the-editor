@@ -9,6 +9,7 @@ use std::{
     HashMap,
     VecDeque,
   },
+  env,
   num::{
     NonZeroU64,
     NonZeroUsize,
@@ -73,6 +74,11 @@ use the_lib::{
     RenderStyles,
     build_plan,
     UiState,
+    theme::{
+      base16_default_theme,
+      default_theme,
+      Theme,
+    },
     graphics::{
       Color as LibColor,
       CursorKind as LibCursorKind,
@@ -688,6 +694,17 @@ impl EditorState {
   }
 }
 
+fn select_ui_theme() -> Theme {
+  match env::var("THE_EDITOR_THEME").ok().as_deref() {
+    Some("base16") | Some("base16_default") => base16_default_theme().clone(),
+    Some("default") | None => default_theme().clone(),
+    Some(other) => {
+      eprintln!("Unknown theme '{other}', falling back to default theme.");
+      default_theme().clone()
+    },
+  }
+}
+
 /// FFI-safe app wrapper with editor management.
 pub struct App {
   inner: LibApp,
@@ -700,6 +717,7 @@ pub struct App {
   should_quit: bool,
   registers: Registers,
   last_motion: Option<Motion>,
+  ui_theme: Theme,
 }
 
 impl App {
@@ -716,6 +734,7 @@ impl App {
       should_quit: false,
       registers: Registers::new(),
       last_motion: None,
+      ui_theme: select_ui_theme(),
     }
   }
 
@@ -1568,6 +1587,10 @@ impl DefaultContext for App {
 
   fn syntax_loader(&self) -> Option<&Loader> {
     None
+  }
+
+  fn ui_theme(&self) -> &Theme {
+    &self.ui_theme
   }
 }
 

@@ -2,6 +2,7 @@
 
 use std::{
   collections::VecDeque,
+  env,
   num::NonZeroUsize,
   path::{
     Path,
@@ -38,6 +39,11 @@ use the_lib::{
   position::Position,
   registers::Registers,
   render::graphics::Rect,
+  render::theme::{
+    base16_default_theme,
+    default_theme,
+    Theme,
+  },
   render::UiState,
   render::RenderStyles,
   render::text_annotations::{
@@ -68,6 +74,7 @@ pub struct Ctx {
   pub command_registry: CommandRegistry<Ctx>,
   pub command_palette:  CommandPaletteState,
   pub command_palette_style: CommandPaletteStyle,
+  pub ui_theme:         Theme,
   pub ui_state:         UiState,
   pub pending_input:    Option<the_default::PendingInput>,
   pub dispatch:         Option<NonNull<DefaultDispatchStatic<Ctx>>>,
@@ -93,6 +100,17 @@ pub struct Ctx {
   pub inline_annotations: Vec<InlineAnnotation>,
   /// Overlay annotations (virtual text) for rendering.
   pub overlay_annotations: Vec<Overlay>,
+}
+
+fn select_ui_theme() -> Theme {
+  match env::var("THE_EDITOR_THEME").ok().as_deref() {
+    Some("base16") | Some("base16_default") => base16_default_theme().clone(),
+    Some("default") | None => default_theme().clone(),
+    Some(other) => {
+      eprintln!("Unknown theme '{other}', falling back to default theme.");
+      default_theme().clone()
+    },
+  }
 }
 
 impl Ctx {
@@ -151,6 +169,7 @@ impl Ctx {
       command_registry: CommandRegistry::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
+      ui_theme: select_ui_theme(),
       ui_state: UiState::default(),
       pending_input: None,
       dispatch: None,
@@ -339,6 +358,10 @@ impl the_default::DefaultContext for Ctx {
 
   fn syntax_loader(&self) -> Option<&Loader> {
     self.loader.as_deref()
+  }
+
+  fn ui_theme(&self) -> &Theme {
+    &self.ui_theme
   }
 }
 

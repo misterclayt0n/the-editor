@@ -25,6 +25,11 @@ use the_lib::render::{
   UiTooltip,
   UiStyle,
   UiTree,
+  graphics::{
+    Modifier as LibModifier,
+    Style as LibStyle,
+    UnderlineStyle as LibUnderlineStyle,
+  },
 };
 use the_lib::render::{
   NoHighlights,
@@ -36,10 +41,7 @@ use the_lib::render::{
 };
 use the_lib::selection::Range;
 
-use crate::{
-  Ctx,
-  theme::highlight_to_color,
-};
+use crate::Ctx;
 
 fn lib_color_to_ratatui(color: the_lib::render::graphics::Color) -> Color {
   use the_lib::render::graphics::Color as LibColor;
@@ -63,6 +65,69 @@ fn lib_color_to_ratatui(color: the_lib::render::graphics::Color) -> Color {
     LibColor::White => Color::White,
     LibColor::Rgb(r, g, b) => Color::Rgb(r, g, b),
     LibColor::Indexed(idx) => Color::Indexed(idx),
+  }
+}
+
+fn lib_modifier_to_ratatui(mods: LibModifier) -> Modifier {
+  let mut out = Modifier::empty();
+  if mods.contains(LibModifier::BOLD) {
+    out.insert(Modifier::BOLD);
+  }
+  if mods.contains(LibModifier::DIM) {
+    out.insert(Modifier::DIM);
+  }
+  if mods.contains(LibModifier::ITALIC) {
+    out.insert(Modifier::ITALIC);
+  }
+  if mods.contains(LibModifier::SLOW_BLINK) {
+    out.insert(Modifier::SLOW_BLINK);
+  }
+  if mods.contains(LibModifier::RAPID_BLINK) {
+    out.insert(Modifier::RAPID_BLINK);
+  }
+  if mods.contains(LibModifier::REVERSED) {
+    out.insert(Modifier::REVERSED);
+  }
+  if mods.contains(LibModifier::HIDDEN) {
+    out.insert(Modifier::HIDDEN);
+  }
+  if mods.contains(LibModifier::CROSSED_OUT) {
+    out.insert(Modifier::CROSSED_OUT);
+  }
+  out
+}
+
+fn lib_style_to_ratatui(style: LibStyle) -> Style {
+  let mut out = Style::default();
+  if let Some(fg) = style.fg {
+    out = out.fg(lib_color_to_ratatui(fg));
+  }
+  if let Some(bg) = style.bg {
+    out = out.bg(lib_color_to_ratatui(bg));
+  }
+  if let Some(underline) = style.underline_style {
+    if !matches!(underline, LibUnderlineStyle::Reset) {
+      out = out.add_modifier(Modifier::UNDERLINED);
+    }
+  }
+  let add = lib_modifier_to_ratatui(style.add_modifier);
+  let sub = lib_modifier_to_ratatui(style.sub_modifier);
+  out = out.add_modifier(add);
+  out = out.remove_modifier(sub);
+  out
+}
+
+fn render_styles_from_theme(theme: &the_lib::render::theme::Theme) -> RenderStyles {
+  let selection = theme.try_get("ui.selection").unwrap_or_default();
+  let cursor = theme.try_get("ui.cursor").unwrap_or_default();
+  let active_cursor = theme
+    .try_get("ui.cursor.primary")
+    .or_else(|| theme.try_get("ui.cursor"))
+    .unwrap_or_default();
+  RenderStyles {
+    selection,
+    cursor,
+    active_cursor,
   }
 }
 
@@ -659,11 +724,10 @@ fn draw_ui_list(
       if let Some(detail) = detail {
         let mut detail_text = detail.to_string();
         truncate_in_place(&mut detail_text, available_width);
-        let mut detail_style = Style::default();
-        if let Some(color) = base_text_color {
-          detail_style = detail_style.fg(color);
+        let mut detail_style = row_style;
+        if !is_selected {
+          detail_style = detail_style.add_modifier(Modifier::DIM);
         }
-        detail_style = detail_style.add_modifier(Modifier::DIM);
         buf.set_string(rect.x + 1, y + 1, detail_text, detail_style);
       }
     }
@@ -1061,7 +1125,8 @@ fn draw_ui_overlays(
 }
 
 pub fn build_render_plan(ctx: &mut Ctx) -> RenderPlan {
-  build_render_plan_with_styles(ctx, RenderStyles::default())
+  let styles = render_styles_from_theme(&ctx.ui_theme);
+  build_render_plan_with_styles(ctx, styles)
 }
 
 pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> RenderPlan {
@@ -1133,6 +1198,20 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   let ui_cursor = {
     let buf = f.buffer_mut();
     let mut cursor_out = None;
+    let base_text_style = lib_style_to_ratatui(ctx.ui_theme.try_get("ui.text").unwrap_or_default());
+    if let Some(bg) = ctx.ui_theme.try_get("ui.background").and_then(|style| style.bg) {
+      fill_rect(buf, area, Style::default().bg(lib_color_to_ratatui(bg)));
+    }
+
+    for selection in &plan.selections {
+      let rect = Rect::new(
+        area.x + selection.rect.x,
+        area.y + selection.rect.y,
+        selection.rect.width,
+        selection.rect.height,
+      );
+      fill_rect(buf, rect, lib_style_to_ratatui(selection.style));
+    }
 
     // Draw text lines with syntax colors
     for line in &plan.lines {
@@ -1145,22 +1224,23 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
         if x >= area.x + area.width {
           continue;
         }
-        let fg = span.highlight.map(highlight_to_color);
-        let style = if let Some(fg) = fg {
-          Style::default().fg(fg)
-        } else {
-          Style::default()
-        };
+        let style = span
+          .highlight
+          .map(|highlight| base_text_style.patch(lib_style_to_ratatui(ctx.ui_theme.highlight(highlight))))
+          .unwrap_or(base_text_style);
         buf.set_string(x, y, span.text.as_str(), style);
       }
     }
 
-    // Draw secondary cursors
-    for cursor in plan.cursors.iter().skip(1) {
+    // Draw cursors
+    for cursor in &plan.cursors {
       let x = area.x + cursor.pos.col as u16;
       let y = area.y + cursor.pos.row as u16;
       if x < area.x + area.width && y < area.y + area.height {
-        buf.set_string(x, y, "|", Style::default().fg(Color::DarkGray));
+        let style = lib_style_to_ratatui(cursor.style);
+        let cell = buf.get_mut(x, y);
+        let merged = cell.style().patch(style);
+        cell.set_style(merged);
       }
     }
 

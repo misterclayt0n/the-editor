@@ -135,7 +135,9 @@ impl Ctx {
     let mut editor = Editor::new(editor_id, doc, view);
 
     // Initialize syntax loader
-    let loader = match init_loader() {
+    let ui_theme = select_ui_theme();
+
+    let loader = match init_loader(&ui_theme) {
       Ok(loader) => Some(Arc::new(loader)),
       Err(e) => {
         eprintln!("Warning: syntax highlighting unavailable: {e}");
@@ -169,7 +171,7 @@ impl Ctx {
       command_registry: CommandRegistry::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
-      ui_theme: select_ui_theme(),
+      ui_theme,
       ui_state: UiState::default(),
       pending_input: None,
       dispatch: None,
@@ -366,7 +368,7 @@ impl the_default::DefaultContext for Ctx {
 }
 
 /// Initialize the syntax loader with languages.toml config.
-fn init_loader() -> Result<Loader> {
+fn init_loader(theme: &Theme) -> Result<Loader> {
   use the_lib::syntax::{
     config::Configuration,
     runtime_loader::RuntimeLoader,
@@ -381,7 +383,7 @@ fn init_loader() -> Result<Loader> {
   let loader = Loader::new(config, RuntimeLoader::new())?;
 
   // Set up highlight scopes so Highlight indices map to our theme
-  loader.set_scopes(crate::theme::SCOPES.iter().map(|s| s.to_string()).collect());
+  loader.set_scopes(theme.scopes().iter().cloned().collect());
 
   Ok(loader)
 }

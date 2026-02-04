@@ -12,12 +12,9 @@ use the_lib::{
     UiListItem,
     UiNode,
     UiPanel,
-    UiText,
     UiColor,
     UiColorToken,
     UiConstraints,
-    UiInsets,
-    UiStyle,
     graphics::Color,
   },
 };
@@ -173,46 +170,6 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     panel.constraints.min_height = Some(12);
   }
   overlays.push(UiNode::Panel(panel));
-
-  if !matches!(layout, CommandPaletteLayout::Floating) {
-    if let Some(sel) = selected {
-      if let Some(&item_idx) = filtered.get(sel) {
-        if let Some(item) = state.items.get(item_idx) {
-          let description = item.description.as_ref().filter(|s| !s.is_empty());
-          if description.is_some() || !item.aliases.is_empty() {
-            let mut lines = Vec::new();
-            if let Some(desc) = description {
-              lines.push(format!("{} — {}", item.title, desc));
-            } else {
-              lines.push(item.title.clone());
-            }
-            if !item.aliases.is_empty() {
-              lines.push(format!("Aliases: {}", item.aliases.join(", ")));
-            }
-            let text = lines.join("\n");
-            let mut help_text = UiText::new("command_palette_help_text", text);
-            help_text.style = help_text.style.with_role("command_palette.help");
-            let mut help_panel = UiPanel::new(
-              "command_palette_help",
-              intent,
-              UiNode::Text(help_text),
-            );
-            help_panel.style = UiStyle::default().with_role("command_palette.help");
-            help_panel.constraints = UiConstraints {
-              padding: UiInsets {
-                left: 1,
-                right: 1,
-                top: 0,
-                bottom: 0,
-              },
-              ..UiConstraints::default()
-            };
-            overlays.push(UiNode::Panel(help_panel));
-          }
-        }
-      }
-    }
-  }
 
   overlays
 }

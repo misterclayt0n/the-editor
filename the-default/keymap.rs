@@ -642,7 +642,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "g" => { "Goto"
       "g" => goto_file_start,
       "|" => goto_column,
-      // "e" => goto_last_line,
+      "e" => goto_last_line,
       // "f" => goto_file,
       "h" => goto_line_start,
       "l" => goto_line_end,

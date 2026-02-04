@@ -691,6 +691,11 @@ impl Command {
   }
 
   #[must_use]
+  pub const fn goto_last_line() -> Self {
+    Self::Motion(Motion::LastLine { extend: false })
+  }
+
+  #[must_use]
   pub const fn extend_to_file_end() -> Self {
     Self::Motion(Motion::extend_to_file_end())
   }

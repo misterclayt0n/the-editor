@@ -3000,6 +3000,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "move_parent_node_start" => Some(Command::move_parent_node_start()),
     "extend_parent_node_start" => Some(Command::extend_parent_node_start()),
     "goto_file_start" => Some(Command::goto_file_start()),
+    "goto_last_line" => Some(Command::goto_last_line()),
 
     "delete_selection" => Some(Command::delete_selection()),
     "delete_selection_noyank" => Some(Command::delete_selection_noyank()),

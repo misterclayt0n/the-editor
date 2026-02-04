@@ -15,18 +15,20 @@ struct UiOverlayHost: View {
 
                 ForEach(Array(tree.overlays.enumerated()), id: \.offset) { _, node in
                     if case .panel(let panel) = node, panel.id == "command_palette" {
-                        if let paletteSnapshot {
-                            CommandPaletteView(
-                                snapshot: paletteSnapshot,
-                                onSelect: onSelectCommand,
-                                onSubmit: onSubmitCommand,
-                                onClose: onCloseCommandPalette,
-                                onQueryChange: onQueryChange
-                            )
-                        }
+                        EmptyView()
                     } else {
                         UiNodeView(node: node, cellSize: cellSize, containerSize: proxy.size)
                     }
+                }
+
+                if let paletteSnapshot {
+                    CommandPaletteView(
+                        snapshot: paletteSnapshot,
+                        onSelect: onSelectCommand,
+                        onSubmit: onSubmitCommand,
+                        onClose: onCloseCommandPalette,
+                        onQueryChange: onQueryChange
+                    )
                 }
             }
         }
@@ -317,8 +319,11 @@ extension UiTreeSnapshot {
     }
 
     private func commandPalettePanel() -> UiPanelSnapshot? {
+        if let panel = findPanel(in: root, id: "command_palette") {
+            return panel
+        }
         for node in overlays {
-            if case .panel(let panel) = node, panel.id == "command_palette" {
+            if let panel = findPanel(in: node, id: "command_palette") {
                 return panel
             }
         }
@@ -356,6 +361,25 @@ extension UiTreeSnapshot {
             return nil
         case .panel(let panel):
             return findList(in: panel.child, id: id)
+        default:
+            return nil
+        }
+    }
+
+    private func findPanel(in node: UiNodeSnapshot, id: String) -> UiPanelSnapshot? {
+        switch node {
+        case .panel(let panel):
+            if panel.id == id {
+                return panel
+            }
+            return findPanel(in: panel.child, id: id)
+        case .container(let container):
+            for child in container.children {
+                if let found = findPanel(in: child, id: id) {
+                    return found
+                }
+            }
+            return nil
         default:
             return nil
         }

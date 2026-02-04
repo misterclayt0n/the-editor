@@ -112,7 +112,6 @@ fn main() -> Result<()> {
 
     // Render if needed
     if ctx.needs_render {
-      render::ensure_cursor_visible(&mut ctx);
       terminal.draw(|f| render::render(f, &mut ctx))?;
       ctx.needs_render = false;
     }

@@ -61,7 +61,7 @@ struct UiNodeView: View {
         case .tooltip(let tooltip):
             tooltipView(tooltip)
         case .statusBar(let status):
-            statusBarView(status)
+            statusBarView(status, cellSize: cellSize)
         case .unknown:
             EmptyView()
         }
@@ -194,17 +194,25 @@ struct UiNodeView: View {
     }
 
     @ViewBuilder
-    private func statusBarView(_ status: UiStatusBarSnapshot) -> some View {
+    private func statusBarView(_ status: UiStatusBarSnapshot, cellSize: CGSize) -> some View {
         HStack {
             Text(status.left)
+                .lineLimit(1)
+                .truncationMode(.tail)
             Spacer()
-            Text(status.center)
-            Spacer()
+            if !status.center.isEmpty {
+                Text(status.center)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer()
+            }
             Text(status.right)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
-        .font(.system(size: 12))
+        .font(.system(size: 12, weight: .medium))
         .foregroundColor(resolveColor(status.style.fg, fallback: Color.primary))
-        .padding(4)
+        .frame(maxWidth: .infinity, minHeight: cellSize.height, maxHeight: cellSize.height)
         .background(resolveColor(status.style.bg, fallback: Color.clear))
     }
 

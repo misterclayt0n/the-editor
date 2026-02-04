@@ -9,6 +9,7 @@ final class EditorModel: ObservableObject {
     @Published var plan: RenderPlan
     @Published var uiTree: UiTreeSnapshot = .empty
     private var viewport: Rect
+    private var effectiveViewport: Rect
     let cellSize: CGSize
     let font: Font
     private(set) var mode: EditorMode = .normal
@@ -21,6 +22,7 @@ final class EditorModel: ObservableObject {
         self.cellSize = fontInfo.cellSize
         self.font = fontInfo.font
         self.viewport = Rect(x: 0, y: 0, width: 80, height: 24)
+        self.effectiveViewport = self.viewport
         let scroll = Position(row: 0, col: 0)
         let initialText = EditorModel.loadText(filePath: filePath)
         self.editorId = app.create_editor(initialText, viewport, scroll)
@@ -53,17 +55,36 @@ final class EditorModel: ObservableObject {
         }
 
         viewport = Rect(x: 0, y: 0, width: cols, height: rows)
-        _ = app.set_viewport(editorId, viewport)
         refresh()
     }
 
     func refresh() {
+        uiTree = fetchUiTree()
+        updateEffectiveViewport()
         plan = app.render_plan(editorId)
         mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
-        uiTree = fetchUiTree()
         if app.take_should_quit() {
             NSApp.terminate(nil)
         }
+    }
+
+    private func updateEffectiveViewport() {
+        let reserved = statuslineReservedRows(in: uiTree)
+        let height = max(1, Int(viewport.height) - reserved)
+        let next = Rect(x: 0, y: 0, width: viewport.width, height: UInt16(height))
+        if next != effectiveViewport {
+            effectiveViewport = next
+            _ = app.set_viewport(editorId, next)
+        }
+    }
+
+    private func statuslineReservedRows(in tree: UiTreeSnapshot) -> Int {
+        for node in tree.overlays {
+            if case .panel(let panel) = node, panel.id == "statusline" {
+                return 1
+            }
+        }
+        return 0
     }
 
     func insert(_ text: String) {

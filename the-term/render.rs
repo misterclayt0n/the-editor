@@ -998,6 +998,32 @@ fn node_layer(node: &UiNode) -> UiLayer {
   }
 }
 
+fn apply_ui_viewport(ctx: &mut Ctx, ui: &UiTree, area: Rect) {
+  let mut reserved_bottom: u16 = 0;
+  for node in &ui.overlays {
+    let UiNode::Panel(panel) = node else {
+      continue;
+    };
+    if panel.intent != LayoutIntent::Bottom || panel.layer == UiLayer::Tooltip {
+      continue;
+    }
+    let available = area.height.saturating_sub(reserved_bottom);
+    if available == 0 {
+      break;
+    }
+    let rect_area = Rect::new(area.x, area.y, area.width, available);
+    let height = panel_height_for_area(panel, rect_area);
+    reserved_bottom = reserved_bottom.saturating_add(height);
+  }
+
+  let height = area.height.saturating_sub(reserved_bottom).max(1);
+  let width = area.width.max(1);
+  let view = ctx.editor.view_mut();
+  if view.viewport.width != width || view.viewport.height != height {
+    view.viewport = the_lib::render::graphics::Rect::new(0, 0, width, height);
+  }
+}
+
 fn draw_ui_tooltip(buf: &mut Buffer, area: Rect, _ctx: &Ctx, tooltip: &UiTooltip) {
   if area.width == 0 || area.height == 0 {
     return;
@@ -1230,8 +1256,10 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
 
 /// Render the current document state to the terminal.
 pub fn render(f: &mut Frame, ctx: &mut Ctx) {
-  let plan = render_plan(ctx);
   let ui = ui_tree(ctx);
+  apply_ui_viewport(ctx, &ui, f.size());
+  ensure_cursor_visible(ctx);
+  let plan = render_plan(ctx);
 
   let area = f.size();
   f.render_widget(Clear, area);

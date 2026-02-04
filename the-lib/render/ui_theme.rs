@@ -206,7 +206,12 @@ fn resolve_style(
 ) {
   resolve_color_slot(&mut style.fg, theme, role, component, states, UiStyleProp::Fg);
   resolve_color_slot(&mut style.bg, theme, role, component, states, UiStyleProp::Bg);
-  resolve_color_slot(&mut style.border, theme, role, component, states, UiStyleProp::Border);
+  let skip_border = matches!(component, UiComponent::Panel)
+    && role == Some("statusline")
+    && style.border.is_none();
+  if !skip_border {
+    resolve_color_slot(&mut style.border, theme, role, component, states, UiStyleProp::Border);
+  }
   resolve_color_slot(&mut style.accent, theme, role, component, states, UiStyleProp::Accent);
 }
 

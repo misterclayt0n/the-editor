@@ -54,10 +54,11 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
     left.push_str(" [RO]");
   }
 
-  let mut right = format!("{line}:{col}");
-  if selection.ranges().len() > 1 {
-    right.push_str(&format!(" {} sel", selection.ranges().len()));
-  }
+  let right = if selection.ranges().len() > 1 {
+    format!("{} sel  {line}:{col}", selection.ranges().len())
+  } else {
+    format!("{line}:{col}")
+  };
 
   let status = UiStatusBar {
     id: Some(STATUSLINE_ID.to_string()),
@@ -88,9 +89,9 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
 
 fn mode_label(mode: Mode) -> &'static str {
   match mode {
-    Mode::Normal => "NORMAL",
-    Mode::Insert => "INSERT",
-    Mode::Select => "SELECT",
-    Mode::Command => "COMMAND",
+    Mode::Normal => "NOR",
+    Mode::Insert => "INS",
+    Mode::Select => "SEL",
+    Mode::Command => "CMD",
   }
 }

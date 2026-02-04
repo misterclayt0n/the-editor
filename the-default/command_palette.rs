@@ -12,6 +12,7 @@ use the_lib::{
     UiListItem,
     UiNode,
     UiPanel,
+    UiText,
     UiColor,
     UiConstraints,
     UiInsets,
@@ -121,6 +122,7 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
       format!(":{}", state.query)
     },
   );
+  input.style = input.style.with_role("command_palette");
   input.placeholder = Some(":Execute a command…".to_string());
   input.cursor = if state.query.is_empty() {
     1
@@ -131,6 +133,7 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
 
   let mut list = UiList::new("command_palette_list", items);
   list.selected = selected;
+  list.style = list.style.with_role("command_palette");
   let list = UiNode::List(list);
 
   let children = if matches!(layout, CommandPaletteLayout::Bottom) {
@@ -147,11 +150,9 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     ]
   };
 
-  let container = UiNode::Container(UiContainer::column(
-    "command_palette_container",
-    0,
-    children,
-  ));
+  let mut container = UiContainer::column("command_palette_container", 0, children);
+  container.style = container.style.with_role("command_palette");
+  let container = UiNode::Container(container);
 
   let intent: LayoutIntent = layout.into();
 
@@ -162,6 +163,7 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     CommandPaletteLayout::Top => UiPanel::top("command_palette", container),
     CommandPaletteLayout::Custom => UiPanel::new("command_palette", intent.clone(), container),
   };
+  panel.style = panel.style.with_role("command_palette");
   if matches!(layout, CommandPaletteLayout::Floating) {
     panel.constraints = UiConstraints::floating_default();
     panel.constraints.min_height = Some(12);
@@ -184,14 +186,15 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
               lines.push(format!("Aliases: {}", item.aliases.join(", ")));
             }
             let text = lines.join("\n");
-            let mut help_panel = UiPanel::new("command_palette_help", intent, UiNode::text(
-              "command_palette_help_text",
-              text,
-            ));
-            help_panel.style = UiStyle {
-              border: Some(UiColor::Value(Color::Gray)),
-              ..UiStyle::default()
-            };
+            let mut help_text = UiText::new("command_palette_help_text", text);
+            help_text.style = help_text.style.with_role("command_palette.help");
+            let mut help_panel = UiPanel::new(
+              "command_palette_help",
+              intent,
+              UiNode::Text(help_text),
+            );
+            help_panel.style = UiStyle::default().with_role("command_palette.help");
+            help_panel.style.border = Some(UiColor::Value(Color::Gray));
             help_panel.constraints = UiConstraints {
               padding: UiInsets {
                 left: 1,

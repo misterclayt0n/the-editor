@@ -846,17 +846,27 @@ fn draw_ui_panel(
       let mut height = if boxed {
         panel_height.min(area.height).max(4)
       } else {
-        child_h
-          .saturating_add(padding_v)
-          .min(area.height)
-          .max(3)
+        let divider = flat_panel_divider(panel);
+        let mut height = child_h
+          .saturating_add(padding_v + divider)
+          .min(area.height);
+        if panel_is_statusline(panel) {
+          height = height.max(1);
+        } else {
+          height = height.max(3);
+        }
+        height
       };
-      height = height.min(area.height).max(2);
+      if panel_is_statusline(panel) {
+        height = height.min(area.height).max(1);
+      } else {
+        height = height.min(area.height).max(2);
+      }
       let rect = Rect::new(area.x, area.y + area.height - height, area.width, height);
       if boxed {
         draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
       } else {
-        let content = draw_flat_panel(buf, rect, ctx, panel, BorderEdge::Top);
+        let content = draw_flat_panel(buf, rect, ctx, panel, BorderEdge::Top, !panel_is_statusline(panel));
         draw_ui_node(buf, content, ctx, &panel.child, focus, cursor_out);
       }
     },
@@ -864,17 +874,27 @@ fn draw_ui_panel(
       let mut height = if boxed {
         panel_height.min(area.height).max(4)
       } else {
-        child_h
-          .saturating_add(padding_v)
-          .min(area.height)
-          .max(3)
+        let divider = flat_panel_divider(panel);
+        let mut height = child_h
+          .saturating_add(padding_v + divider)
+          .min(area.height);
+        if panel_is_statusline(panel) {
+          height = height.max(1);
+        } else {
+          height = height.max(3);
+        }
+        height
       };
-      height = height.min(area.height).max(2);
+      if panel_is_statusline(panel) {
+        height = height.min(area.height).max(1);
+      } else {
+        height = height.min(area.height).max(2);
+      }
       let rect = Rect::new(area.x, area.y, area.width, height);
       if boxed {
         draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
       } else {
-        let content = draw_flat_panel(buf, rect, ctx, panel, BorderEdge::Bottom);
+        let content = draw_flat_panel(buf, rect, ctx, panel, BorderEdge::Bottom, !panel_is_statusline(panel));
         draw_ui_node(buf, content, ctx, &panel.child, focus, cursor_out);
       }
     },
@@ -930,26 +950,42 @@ enum BorderEdge {
   Bottom,
 }
 
+fn panel_is_statusline(panel: &UiPanel) -> bool {
+  panel.id == "statusline" || panel.style.role.as_deref() == Some("statusline")
+}
+
+fn flat_panel_divider(panel: &UiPanel) -> u16 {
+  if panel_is_statusline(panel) {
+    0
+  } else {
+    1
+  }
+}
+
 fn draw_flat_panel(
   buf: &mut Buffer,
   rect: Rect,
   _ctx: &Ctx,
   panel: &UiPanel,
   edge: BorderEdge,
+  draw_divider: bool,
 ) -> Rect {
   let (_, fill_style, border_style) = ui_style_colors(&panel.style);
   fill_rect(buf, rect, fill_style);
 
-  let line = "─".repeat(rect.width as usize);
-  let border_y = match edge {
-    BorderEdge::Top => rect.y,
-    BorderEdge::Bottom => rect.y + rect.height.saturating_sub(1),
-  };
-  buf.set_string(rect.x, border_y, &line, border_style);
-
-  let content = match edge {
-    BorderEdge::Top => Rect::new(rect.x, rect.y + 1, rect.width, rect.height.saturating_sub(1)),
-    BorderEdge::Bottom => Rect::new(rect.x, rect.y, rect.width, rect.height.saturating_sub(1)),
+  let content = if draw_divider {
+    let line = "─".repeat(rect.width as usize);
+    let border_y = match edge {
+      BorderEdge::Top => rect.y,
+      BorderEdge::Bottom => rect.y + rect.height.saturating_sub(1),
+    };
+    buf.set_string(rect.x, border_y, &line, border_style);
+    match edge {
+      BorderEdge::Top => Rect::new(rect.x, rect.y + 1, rect.width, rect.height.saturating_sub(1)),
+      BorderEdge::Bottom => Rect::new(rect.x, rect.y, rect.width, rect.height.saturating_sub(1)),
+    }
+  } else {
+    rect
   };
   inset_rect(content, panel.constraints.padding)
 }
@@ -1035,10 +1071,15 @@ fn panel_height_for_area(panel: &UiPanel, area: Rect) -> u16 {
     let padding_v = panel.constraints.padding.vertical();
     let max_content_width = max_content_width_for_intent(panel.intent.clone(), area, 0, 0);
     let (_, child_h) = measure_node(&panel.child, max_content_width);
-    child_h
-      .saturating_add(1 + padding_v) // account for the divider + padding
-      .min(area.height)
-      .max(2)
+    let divider = flat_panel_divider(panel);
+    let height = child_h
+      .saturating_add(divider + padding_v)
+      .min(area.height);
+    if panel_is_statusline(panel) {
+      height.max(1)
+    } else {
+      height.max(2)
+    }
   }
 }
 
@@ -1057,7 +1098,7 @@ fn draw_panel_in_rect(
   if panel.style.border.is_some() {
     draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
   } else {
-    let content = draw_flat_panel(buf, rect, ctx, panel, edge);
+    let content = draw_flat_panel(buf, rect, ctx, panel, edge, !panel_is_statusline(panel));
     draw_ui_node(buf, content, ctx, &panel.child, focus, cursor_out);
   }
 }

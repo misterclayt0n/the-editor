@@ -463,6 +463,10 @@ pub fn ui_tree<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiTree {
   ctx.dispatch().pre_ui(ctx, ());
   let tree = ctx.dispatch().on_ui(ctx, ());
   let mut tree = ctx.dispatch().post_ui(ctx, tree);
+  if !crate::statusline::statusline_present(&tree) {
+    let statusline = crate::statusline::build_statusline_ui(ctx);
+    tree.overlays.insert(0, statusline);
+  }
   resolve_ui_tree(&mut tree, ctx.ui_theme());
   tree
 }

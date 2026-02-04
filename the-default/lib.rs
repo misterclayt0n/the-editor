@@ -8,6 +8,7 @@ mod command_types;
 mod command_registry;
 mod input;
 mod command_palette;
+mod statusline;
 mod keymap;
 mod pending;
 

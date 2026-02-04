@@ -443,55 +443,41 @@ struct StatuslineView: View {
     let cellSize: CGSize
 
     var body: some View {
-        let separatorColor = Color(nsColor: .secondaryLabelColor)
-        let textColor = resolveColor(snapshot.style.fg, fallback: Color(nsColor: .labelColor))
-        let tint = uiColorToColor(snapshot.panelStyle.bg) ?? Color.clear
+        let textColor = Color(nsColor: .labelColor)
+        let secondary = Color(nsColor: .secondaryLabelColor)
 
-        HStack(spacing: 6) {
-            Text(snapshot.left)
-                .foregroundColor(textColor)
-                .lineLimit(1)
-                .truncationMode(.tail)
+        VStack(spacing: 0) {
+            Divider()
+                .opacity(0.7)
 
-            if !snapshot.center.isEmpty {
-                Text("•")
-                    .foregroundStyle(separatorColor)
-                Text(snapshot.center)
+            HStack(spacing: 10) {
+                Text(snapshot.left)
                     .foregroundColor(textColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
-            }
 
-            Text("•")
-                .foregroundStyle(separatorColor)
-            Text(snapshot.right)
-                .foregroundColor(textColor)
-                .lineLimit(1)
-                .truncationMode(.tail)
+                Spacer(minLength: 8)
+
+                if !snapshot.center.isEmpty {
+                    Text(snapshot.center)
+                        .foregroundColor(secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                Spacer(minLength: 8)
+
+                Text(snapshot.right)
+                    .foregroundColor(secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .font(.system(size: 12, weight: .medium, design: .rounded))
+            .tracking(-0.15)
+            .padding(.horizontal, 10)
+            .frame(height: cellSize.height, alignment: .center)
+            .background(Color(nsColor: .windowBackgroundColor))
         }
-        .font(.system(size: 12, weight: .medium, design: .rounded))
-        .tracking(-0.2)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 2)
-        .frame(height: cellSize.height)
-        .background(
-            Capsule()
-                .fill(.regularMaterial)
-                .overlay(
-                    Capsule()
-                        .fill(tint)
-                        .opacity(0.08)
-                        .blendMode(.color)
-                )
-                .compositingGroup()
-        )
-        .overlay(
-            Capsule()
-                .stroke(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 2)
-        .padding(.leading, 12)
-        .padding(.bottom, 10)
     }
 }
 

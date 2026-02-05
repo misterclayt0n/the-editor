@@ -448,9 +448,19 @@ struct StatuslineView: View {
         snapshot.left.components(separatedBy: " ").first ?? ""
     }
 
-    private var filename: String {
+    private var rawFilename: String {
         let parts = snapshot.left.components(separatedBy: " ")
         return parts.dropFirst().joined(separator: " ")
+    }
+
+    private var isModified: Bool {
+        rawFilename.contains("[+]")
+    }
+
+    private var filename: String {
+        rawFilename
+            .replacingOccurrences(of: " [+]", with: "")
+            .replacingOccurrences(of: "[+]", with: "")
     }
 
     private var modeColor: Color {
@@ -487,6 +497,13 @@ struct StatuslineView: View {
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                }
+
+                if isModified {
+                    Circle()
+                        .fill(Color(nsColor: .tertiaryLabelColor))
+                        .frame(width: 6, height: 6)
+                        .padding(.leading, 6)
                 }
 
                 Spacer(minLength: 8)

@@ -762,7 +762,22 @@ fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
   let mut tree = UiTree::new();
   let overlays = crate::command_palette::build_command_palette_ui(ctx);
   tree.overlays.extend(overlays);
-  if ctx.command_palette().is_open {
+  let overlays = crate::search_prompt::build_search_prompt_ui(ctx);
+  tree.overlays.extend(overlays);
+  if ctx.search_prompt_ref().active {
+    let cursor = if ctx.search_prompt_ref().query.is_empty() {
+      1
+    } else {
+      1 + ctx.search_prompt_ref().cursor
+    };
+    let focus = UiFocus {
+      id: "search_prompt_input".to_string(),
+      kind: UiFocusKind::Input,
+      cursor: Some(cursor),
+    };
+    tree.focus = Some(focus.clone());
+    ctx.ui_state_mut().set_focus(Some(focus));
+  } else if ctx.command_palette().is_open {
     let cursor = if ctx.command_palette().query.is_empty() {
       1
     } else {

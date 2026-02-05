@@ -5,6 +5,19 @@ use the_core::grapheme::{
 use the_lib::{
   movement::Movement,
   selection::Range,
+  render::{
+    UiColor,
+    UiColorToken,
+    UiContainer,
+    UiDivider,
+    UiInput,
+    UiList,
+    UiListItem,
+    UiNode,
+    UiPanel,
+    UiStyle,
+    UiEmphasis,
+  },
 };
 use the_stdx::rope::{
   Config,
@@ -327,4 +340,79 @@ fn next_char_boundary(s: &str, idx: usize) -> usize {
     }
   }
   s.len()
+}
+
+pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
+  let prompt = ctx.search_prompt_ref();
+  if !prompt.active {
+    return Vec::new();
+  }
+
+  let prefix = match prompt.direction {
+    Direction::Forward => "/",
+    Direction::Backward => "?",
+    _ => "/",
+  };
+
+  let value = if prompt.query.is_empty() {
+    String::new()
+  } else {
+    format!("{prefix}{}", prompt.query)
+  };
+
+  let mut input = UiInput::new("search_prompt_input", value);
+  input.placeholder = Some(format!("{prefix}search"));
+  input.cursor = if prompt.query.is_empty() {
+    1
+  } else {
+    prefix.len() + prompt.cursor
+  };
+  input.style = input.style.with_role("search_prompt");
+  input.style.accent = Some(UiColor::Token(UiColorToken::Placeholder));
+
+  let query = prompt.query.as_str();
+  let mut filtered: Vec<&String> = if query.is_empty() {
+    prompt.completions.iter().collect()
+  } else {
+    prompt
+      .completions
+      .iter()
+      .filter(|item| item.starts_with(query))
+      .collect()
+  };
+  filtered.truncate(6);
+
+  let mut children = vec![UiNode::Input(input)];
+
+  if !filtered.is_empty() {
+    let items = filtered
+      .into_iter()
+      .map(|item| UiListItem::new(item.clone()))
+      .collect();
+    let mut list = UiList::new("search_prompt_list", items);
+    list.style = list.style.with_role("search_prompt");
+    list.style.accent = Some(UiColor::Token(UiColorToken::SelectedBg));
+    list.style.border = Some(UiColor::Token(UiColorToken::SelectedText));
+    children.push(UiNode::Divider(UiDivider { id: None }));
+    children.push(UiNode::List(list));
+  }
+
+  if let Some(error) = prompt.error.as_ref().filter(|e| !e.is_empty()) {
+    let mut error_text = UiNode::text("search_prompt_error", error.clone());
+    if let UiNode::Text(text) = &mut error_text {
+      text.style = UiStyle::default().with_role("search_prompt");
+      text.style.emphasis = UiEmphasis::Strong;
+    }
+    children.push(UiNode::Divider(UiDivider { id: None }));
+    children.push(error_text);
+  }
+
+  let mut container = UiContainer::column("search_prompt_container", 0, children);
+  container.style = container.style.with_role("search_prompt");
+  let container = UiNode::Container(container);
+
+  let mut panel = UiPanel::bottom("search_prompt", container);
+  panel.style = panel.style.with_role("search_prompt");
+
+  vec![UiNode::Panel(panel)]
 }

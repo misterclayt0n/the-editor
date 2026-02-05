@@ -1697,6 +1697,7 @@ fn save<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   };
   let text = ctx.editor().document().text().to_string();
   let _ = std::fs::write(path, text);
+  let _ = ctx.editor().document_mut().mark_saved();
 }
 
 fn quit<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {

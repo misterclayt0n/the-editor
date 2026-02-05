@@ -295,6 +295,11 @@ impl Document {
     self.history.commit_revision(&tx, &original)?;
 
     self.changes = ChangeSet::new(self.text.slice(..));
+    Ok(())
+  }
+
+  pub fn mark_saved(&mut self) -> Result<()> {
+    self.commit()?;
     self.flags.modified = false;
     Ok(())
   }
@@ -349,7 +354,6 @@ impl Document {
 
     self.changes = ChangeSet::new(self.text.slice(..));
     self.old_state = None;
-    self.flags.modified = false;
     self.version = self.version.saturating_add(1);
     Ok(())
   }
@@ -369,6 +373,7 @@ mod tests {
     let tx = Transaction::change(doc.text(), vec![(5, 5, Some(" world".into()))]).unwrap();
     doc.apply_transaction(&tx).unwrap();
     doc.commit().unwrap();
+    doc.mark_saved().unwrap();
 
     assert_eq!(doc.text().to_string(), "hello world");
     assert_eq!(doc.history().len(), 2);

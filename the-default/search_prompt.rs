@@ -16,6 +16,7 @@ use the_stdx::rope::{
 use crate::{
   DefaultContext,
   Direction,
+  Mode,
 };
 
 #[derive(Debug, Clone)]
@@ -59,6 +60,33 @@ impl Default for SearchPromptState {
   fn default() -> Self {
     Self::new()
   }
+}
+
+pub fn search_completions<Ctx: DefaultContext>(ctx: &Ctx, reg: Option<char>) -> Vec<String> {
+  let mut items = reg
+    .and_then(|reg| ctx.registers().read(reg, ctx.editor_ref().document()))
+    .map_or(Vec::new(), |reg| reg.take(200).collect());
+  items.sort_unstable();
+  items.dedup();
+  items.into_iter().map(|value| value.to_string()).collect()
+}
+
+pub fn open_search_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
+  let register = ctx.register().unwrap_or('/');
+  let extend = ctx.mode() == Mode::Select;
+  let completions = search_completions(ctx, Some(register));
+
+  let prompt = ctx.search_prompt_mut();
+  prompt.active = true;
+  prompt.direction = direction;
+  prompt.query.clear();
+  prompt.cursor = 0;
+  prompt.completions = completions;
+  prompt.error = None;
+  prompt.register = register;
+  prompt.extend = extend;
+
+  ctx.request_render();
 }
 
 pub fn build_search_regex(query: &str) -> Result<Regex, String> {

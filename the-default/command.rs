@@ -161,6 +161,8 @@ define! {
     save: (),
     quit: (),
     find_char: (Direction, bool, bool),
+    search: (),
+    rsearch: (),
     parent_node_end: bool,
     parent_node_start: bool,
     repeat_last_motion: (),
@@ -243,6 +245,8 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, (Direction, bool, bool)),
+  fn(&mut Ctx, ()),
+  fn(&mut Ctx, ()),
   fn(&mut Ctx, bool),
   fn(&mut Ctx, bool),
   fn(&mut Ctx, ()),
@@ -394,6 +398,8 @@ where
     .with_save(save::<Ctx> as fn(&mut Ctx, ()))
     .with_quit(quit::<Ctx> as fn(&mut Ctx, ()))
     .with_find_char(find_char::<Ctx> as fn(&mut Ctx, (Direction, bool, bool)))
+    .with_search(search::<Ctx> as fn(&mut Ctx, ()))
+    .with_rsearch(rsearch::<Ctx> as fn(&mut Ctx, ()))
     .with_parent_node_end(parent_node_end::<Ctx> as fn(&mut Ctx, bool))
     .with_parent_node_start(parent_node_start::<Ctx> as fn(&mut Ctx, bool))
     .with_repeat_last_motion(repeat_last_motion::<Ctx> as fn(&mut Ctx, ()))
@@ -673,6 +679,8 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::SurroundReplace { count } => ctx.dispatch().surround_replace(ctx, count),
     Command::SelectTextobjectAround => ctx.dispatch().select_textobject_around(ctx, ()),
     Command::SelectTextobjectInner => ctx.dispatch().select_textobject_inner(ctx, ()),
+    Command::Search => ctx.dispatch().search(ctx, ()),
+    Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -1378,6 +1386,14 @@ fn find_char_impl<Ctx: DefaultContext>(
 fn find_char<Ctx: DefaultContext>(ctx: &mut Ctx, params: (Direction, bool, bool)) {
   let (direction, inclusive, extend) = params;
   ctx.set_pending_input(Some(PendingInput::FindChar { direction, inclusive, extend, count: 1 }));
+}
+
+fn search<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  crate::search_prompt::open_search_prompt(ctx, Direction::Forward);
+}
+
+fn rsearch<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  crate::search_prompt::open_search_prompt(ctx, Direction::Backward);
 }
 
 fn parent_node_end<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
@@ -3015,6 +3031,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "extend_parent_node_start" => Some(Command::extend_parent_node_start()),
     "goto_file_start" => Some(Command::goto_file_start()),
     "goto_last_line" => Some(Command::goto_last_line()),
+    "search" => Some(Command::search()),
+    "rsearch" => Some(Command::rsearch()),
 
     "delete_selection" => Some(Command::delete_selection()),
     "delete_selection_noyank" => Some(Command::delete_selection_noyank()),

@@ -485,6 +485,8 @@ pub enum Command {
   SurroundReplace { count: usize },
   SelectTextobjectAround,
   SelectTextobjectInner,
+  Search,
+  RSearch,
   Save,
   Quit,
 }
@@ -1048,5 +1050,15 @@ impl Command {
   #[must_use]
   pub const fn select_textobject_inner() -> Self {
     Self::SelectTextobjectInner
+  }
+
+  #[must_use]
+  pub const fn search() -> Self {
+    Self::Search
+  }
+
+  #[must_use]
+  pub const fn rsearch() -> Self {
+    Self::RSearch
   }
 }

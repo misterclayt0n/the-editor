@@ -19,6 +19,57 @@ pub fn categorize_char(ch: char) -> CharCategory {
   }
 }
 
+/// Return the previous UTF-8 character boundary at or before `idx`.
+///
+/// If `idx` is already at a boundary, this returns the start of the
+/// previous character (or 0 if at the start).
+pub fn prev_char_boundary(s: &str, idx: usize) -> usize {
+  if s.is_empty() || idx == 0 {
+    return 0;
+  }
+  let idx = idx.min(s.len());
+  let mut prev = 0;
+  for (i, _) in s.char_indices() {
+    if i >= idx {
+      break;
+    }
+    prev = i;
+  }
+  prev
+}
+
+/// Return the next UTF-8 character boundary after `idx`.
+///
+/// If `idx` is not on a boundary, this moves to the next valid boundary.
+pub fn next_char_boundary(s: &str, idx: usize) -> usize {
+  if s.is_empty() {
+    return 0;
+  }
+  let idx = idx.min(s.len());
+  let mut iter = s.char_indices();
+  while let Some((i, _)) = iter.next() {
+    if i == idx {
+      return iter.next().map(|(n, _)| n).unwrap_or(s.len());
+    }
+    if i > idx {
+      return i;
+    }
+  }
+  s.len()
+}
+
+/// Convert a UTF-8 byte index to a character index (count of chars before it).
+pub fn byte_to_char_idx(s: &str, byte_idx: usize) -> usize {
+  if s.is_empty() {
+    return 0;
+  }
+  let mut idx = byte_idx.min(s.len());
+  while idx > 0 && !s.is_char_boundary(idx) {
+    idx -= 1;
+  }
+  s[..idx].chars().count()
+}
+
 #[inline]
 pub fn char_is_line_ending(ch: char) -> bool {
   LineEnding::from_char(ch).is_some()
@@ -205,6 +256,39 @@ pub fn char_is_punctuation(ch: char) -> bool {
       | GeneralCategory::CurrencySymbol
       | GeneralCategory::ModifierSymbol
   )
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{
+    byte_to_char_idx,
+    next_char_boundary,
+    prev_char_boundary,
+  };
+
+  #[test]
+  fn char_boundaries_utf8() {
+    let s = "aé😊";
+    assert_eq!(next_char_boundary(s, 0), 1);
+    assert_eq!(next_char_boundary(s, 1), 3);
+    assert_eq!(next_char_boundary(s, 3), 7);
+    assert_eq!(next_char_boundary(s, 7), 7);
+
+    assert_eq!(prev_char_boundary(s, 7), 3);
+    assert_eq!(prev_char_boundary(s, 3), 1);
+    assert_eq!(prev_char_boundary(s, 1), 0);
+    assert_eq!(prev_char_boundary(s, 0), 0);
+  }
+
+  #[test]
+  fn byte_to_char_index() {
+    let s = "aé😊";
+    assert_eq!(byte_to_char_idx(s, 0), 0);
+    assert_eq!(byte_to_char_idx(s, 1), 1);
+    assert_eq!(byte_to_char_idx(s, 3), 2);
+    assert_eq!(byte_to_char_idx(s, 7), 3);
+    assert_eq!(byte_to_char_idx(s, 8), 3);
+  }
 }
 
 #[inline]

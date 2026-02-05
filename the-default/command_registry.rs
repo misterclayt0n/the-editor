@@ -26,6 +26,10 @@ use crate::{
   command_palette_default_selected,
   command_palette_filtered_indices,
 };
+use the_core::chars::{
+  next_char_boundary,
+  prev_char_boundary,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandEvent {
@@ -765,36 +769,6 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
   }
 
   true
-}
-
-fn prev_char_boundary(s: &str, idx: usize) -> usize {
-  if idx == 0 {
-    return 0;
-  }
-  let mut prev = 0;
-  for (i, _) in s.char_indices() {
-    if i >= idx {
-      break;
-    }
-    prev = i;
-  }
-  prev
-}
-
-fn next_char_boundary(s: &str, idx: usize) -> usize {
-  if idx >= s.len() {
-    return s.len();
-  }
-  let mut iter = s.char_indices();
-  while let Some((i, _)) = iter.next() {
-    if i == idx {
-      return iter.next().map(|(n, _)| n).unwrap_or(s.len());
-    }
-    if i > idx {
-      return i;
-    }
-  }
-  s.len()
 }
 
 pub mod completers {

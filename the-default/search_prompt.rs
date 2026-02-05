@@ -2,6 +2,10 @@ use the_core::grapheme::{
   ensure_grapheme_boundary_next,
   ensure_grapheme_boundary_prev,
 };
+use the_core::chars::{
+  next_char_boundary,
+  prev_char_boundary,
+};
 use the_lib::{
   movement::Movement,
   selection::Range,
@@ -310,36 +314,6 @@ fn finalize_search<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
 
   ctx.registers_mut().last_search_register = register;
   true
-}
-
-fn prev_char_boundary(s: &str, idx: usize) -> usize {
-  if idx == 0 {
-    return 0;
-  }
-  let mut prev = 0;
-  for (i, _) in s.char_indices() {
-    if i >= idx {
-      break;
-    }
-    prev = i;
-  }
-  prev
-}
-
-fn next_char_boundary(s: &str, idx: usize) -> usize {
-  if idx >= s.len() {
-    return s.len();
-  }
-  let mut iter = s.char_indices();
-  while let Some((i, _)) = iter.next() {
-    if i == idx {
-      return iter.next().map(|(n, _)| n).unwrap_or(s.len());
-    }
-    if i > idx {
-      return i;
-    }
-  }
-  s.len()
 }
 
 pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {

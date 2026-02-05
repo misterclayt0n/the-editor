@@ -1,4 +1,22 @@
-use crate::Direction;
+use the_core::grapheme::{
+  ensure_grapheme_boundary_next,
+  ensure_grapheme_boundary_prev,
+};
+use the_lib::{
+  movement::Movement,
+  selection::Range,
+};
+use the_stdx::rope::{
+  Config,
+  Regex,
+  RegexBuilder,
+  RopeSliceExt,
+};
+
+use crate::{
+  DefaultContext,
+  Direction,
+};
 
 #[derive(Debug, Clone)]
 pub struct SearchPromptState {
@@ -40,5 +58,80 @@ impl SearchPromptState {
 impl Default for SearchPromptState {
   fn default() -> Self {
     Self::new()
+  }
+}
+
+pub fn build_search_regex(query: &str) -> Result<Regex, String> {
+  let case_insensitive = !query.chars().any(char::is_uppercase);
+  RegexBuilder::new()
+    .syntax(Config::new().case_insensitive(case_insensitive).multi_line(true))
+    .build(query)
+    .map_err(|err| err.to_string())
+}
+
+pub fn search_impl<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  regex: &Regex,
+  movement: Movement,
+  direction: Direction,
+  wrap_around: bool,
+  _show_warnings: bool,
+) {
+  let doc = ctx.editor_ref().document();
+  let text = doc.text().slice(..);
+  let selection = doc.selection();
+  let Some(primary) = selection.ranges().first().copied() else {
+    return;
+  };
+
+  let start = match direction {
+    Direction::Forward => text.char_to_byte(ensure_grapheme_boundary_next(text, primary.to())),
+    Direction::Backward => {
+      text.char_to_byte(ensure_grapheme_boundary_prev(text, primary.from()))
+    },
+    _ => return,
+  };
+
+  let doc = doc.text().slice(..);
+
+  let mut mat = match direction {
+    Direction::Forward => regex.find(doc.regex_input_at_bytes(start..)),
+    Direction::Backward => regex.find_iter(doc.regex_input_at_bytes(..start)).last(),
+    _ => None,
+  };
+
+  if mat.is_none() && wrap_around {
+    mat = match direction {
+      Direction::Forward => regex.find(doc.regex_input()),
+      Direction::Backward => regex.find_iter(doc.regex_input_at_bytes(start..)).last(),
+      _ => None,
+    };
+  }
+
+  if let Some(mat) = mat {
+    let doc = ctx.editor_ref().document();
+    let text = doc.text().slice(..);
+    let selection = doc.selection();
+    let Some(primary) = selection.ranges().first().copied() else {
+      return;
+    };
+
+    let start = text.byte_to_char(mat.start());
+    let end = text.byte_to_char(mat.end());
+
+    if end == 0 {
+      return;
+    }
+
+    let range = Range::new(start, end).with_direction(primary.direction());
+    let next = match movement {
+      Movement::Extend => selection.clone().push(range),
+      Movement::Move => selection
+        .clone()
+        .replace(0, range)
+        .unwrap_or_else(|_| selection.clone()),
+    };
+
+    let _ = ctx.editor().document_mut().set_selection(next);
   }
 }

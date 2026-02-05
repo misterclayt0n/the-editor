@@ -7,12 +7,16 @@ struct UiOverlayHost: View {
     let onSubmitCommand: (Int) -> Void
     let onCloseCommandPalette: () -> Void
     let onQueryChange: (String) -> Void
+    let onSearchQueryChange: (String) -> Void
+    let onSearchClose: () -> Void
+    let onSearchSubmit: () -> Void
 
     var body: some View {
         GeometryReader { proxy in
             ZStack {
                 let paletteSnapshot = tree.commandPaletteSnapshot()
                 let statuslineSnapshot = tree.statuslineSnapshot()
+                let searchSnapshot = tree.searchPromptSnapshot()
 
                 ForEach(Array(tree.overlays.enumerated()), id: \.offset) { _, node in
                     if case .panel(let panel) = node, panel.id == "command_palette" {
@@ -20,6 +24,8 @@ struct UiOverlayHost: View {
                     } else if case .panel(let panel) = node, panel.id == "command_palette_help" {
                         EmptyView()
                     } else if case .panel(let panel) = node, panel.id == "statusline" {
+                        EmptyView()
+                    } else if case .panel(let panel) = node, panel.id == "search_prompt" {
                         EmptyView()
                     } else {
                         UiNodeView(node: node, cellSize: cellSize, containerSize: proxy.size)
@@ -29,6 +35,15 @@ struct UiOverlayHost: View {
                 if let statuslineSnapshot {
                     StatuslineView(snapshot: statuslineSnapshot, cellSize: cellSize)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                }
+
+                if let searchSnapshot {
+                    SearchPromptView(
+                        snapshot: searchSnapshot,
+                        onQueryChange: onSearchQueryChange,
+                        onClose: onSearchClose,
+                        onSubmit: onSearchSubmit
+                    )
                 }
 
                 if let paletteSnapshot {
@@ -591,6 +606,28 @@ extension UiTreeSnapshot {
         )
     }
 
+    func searchPromptSnapshot() -> SearchPromptSnapshot? {
+        guard let panel = searchPromptPanel() else { return nil }
+
+        let input = findInput(in: panel.child, id: "search_prompt_input")
+        let errorText = findText(in: panel.child, id: "search_prompt_error")
+
+        var query = input?.value ?? ""
+        if query.hasPrefix("/") || query.hasPrefix("?") {
+            query.removeFirst()
+        }
+
+        return SearchPromptSnapshot(
+            isOpen: true,
+            query: query,
+            error: errorText?.content
+        )
+    }
+
+    var hasSearchPromptPanel: Bool {
+        return searchPromptPanel() != nil
+    }
+
     var hasCommandPalettePanel: Bool {
         return commandPalettePanel() != nil
     }
@@ -601,6 +638,18 @@ extension UiTreeSnapshot {
         }
         for node in overlays {
             if let panel = findPanel(in: node, id: "command_palette") {
+                return panel
+            }
+        }
+        return nil
+    }
+
+    private func searchPromptPanel() -> UiPanelSnapshot? {
+        if let panel = findPanel(in: root, id: "search_prompt") {
+            return panel
+        }
+        for node in overlays {
+            if let panel = findPanel(in: node, id: "search_prompt") {
                 return panel
             }
         }
@@ -638,6 +687,24 @@ extension UiTreeSnapshot {
             return nil
         case .panel(let panel):
             return findList(in: panel.child, id: id)
+        default:
+            return nil
+        }
+    }
+
+    private func findText(in node: UiNodeSnapshot, id: String) -> UiTextSnapshot? {
+        switch node {
+        case .text(let text):
+            return text.id == id ? text : nil
+        case .container(let container):
+            for child in container.children {
+                if let found = findText(in: child, id: id) {
+                    return found
+                }
+            }
+            return nil
+        case .panel(let panel):
+            return findText(in: panel.child, id: id)
         default:
             return nil
         }

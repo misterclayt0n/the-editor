@@ -64,7 +64,11 @@ pub use command_palette::{
   command_palette_filtered_indices,
   command_palette_selected_filtered_index,
 };
-pub use search_prompt::SearchPromptState;
+pub use search_prompt::{
+  SearchPromptState,
+  update_search_preview,
+  finalize_search,
+};
 pub use keymap::{
   KeyAction,
   KeyBinding,

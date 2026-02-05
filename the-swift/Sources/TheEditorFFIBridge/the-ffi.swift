@@ -150,6 +150,20 @@ extension AppRefMut {
         })
     }
 
+    public func search_prompt_set_query<GenericToRustStr: ToRustStr>(_ id: EditorId, _ query: GenericToRustStr) -> Bool {
+        return query.toRustStr({ queryAsRustStr in
+            __swift_bridge__$App$search_prompt_set_query(ptr, id.intoFfiRepr(), queryAsRustStr)
+        })
+    }
+
+    public func search_prompt_close(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$search_prompt_close(ptr, id.intoFfiRepr())
+    }
+
+    public func search_prompt_submit(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$search_prompt_submit(ptr, id.intoFfiRepr())
+    }
+
     public func take_should_quit() -> Bool {
         __swift_bridge__$App$take_should_quit(ptr)
     }

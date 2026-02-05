@@ -47,6 +47,8 @@ use the_default::{
   command_palette_default_selected,
   command_palette_selected_filtered_index,
   SearchPromptState,
+  update_search_preview,
+  finalize_search,
 };
 use the_config::{
   build_dispatch as config_build_dispatch,
@@ -1204,6 +1206,43 @@ impl App {
     true
   }
 
+  pub fn search_prompt_set_query(&mut self, id: ffi::EditorId, query: &str) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let prompt = self.search_prompt_mut();
+    prompt.query = query.to_string();
+    prompt.cursor = query.len();
+    prompt.selected = None;
+    prompt.error = None;
+    update_search_preview(self);
+    self.request_render();
+    true
+  }
+
+  pub fn search_prompt_close(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    if let Some(selection) = self.search_prompt_mut().original_selection.take() {
+      let _ = self.editor().document_mut().set_selection(selection);
+    }
+    self.search_prompt_mut().clear();
+    self.request_render();
+    true
+  }
+
+  pub fn search_prompt_submit(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    if finalize_search(self) {
+      self.search_prompt_mut().clear();
+    }
+    self.request_render();
+    true
+  }
+
   pub fn take_should_quit(&mut self) -> bool {
     let should_quit = self.should_quit;
     self.should_quit = false;
@@ -1868,6 +1907,9 @@ mod ffi {
     fn command_palette_submit_filtered(self: &mut App, id: EditorId, index: usize) -> bool;
     fn command_palette_close(self: &mut App, id: EditorId) -> bool;
     fn command_palette_set_query(self: &mut App, id: EditorId, query: &str) -> bool;
+    fn search_prompt_set_query(self: &mut App, id: EditorId, query: &str) -> bool;
+    fn search_prompt_close(self: &mut App, id: EditorId) -> bool;
+    fn search_prompt_submit(self: &mut App, id: EditorId) -> bool;
     fn take_should_quit(self: &mut App) -> bool;
     fn handle_key(self: &mut App, id: EditorId, event: KeyEvent) -> bool;
     fn ensure_cursor_visible(self: &mut App, id: EditorId) -> bool;

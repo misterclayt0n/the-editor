@@ -243,7 +243,7 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
   true
 }
 
-fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
+pub fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let (query, direction, extend) = {
     let prompt = ctx.search_prompt_ref();
     (prompt.query.clone(), prompt.direction, prompt.extend)
@@ -281,7 +281,7 @@ fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
   }
 }
 
-fn finalize_search<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+pub fn finalize_search<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   let (query, register) = {
     let prompt = ctx.search_prompt_ref();
     (prompt.query.clone(), prompt.register)

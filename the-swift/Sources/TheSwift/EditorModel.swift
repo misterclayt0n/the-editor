@@ -187,6 +187,22 @@ final class EditorModel: ObservableObject {
         refresh()
     }
 
+    func setSearchQuery(_ query: String) {
+        _ = app.search_prompt_set_query(editorId, query)
+        _ = app.ensure_cursor_visible(editorId)
+        refresh()
+    }
+
+    func closeSearch() {
+        _ = app.search_prompt_close(editorId)
+        refresh()
+    }
+
+    func submitSearch() {
+        _ = app.search_prompt_submit(editorId)
+        refresh()
+    }
+
     func setCommandPaletteQuery(_ query: String) {
         _ = app.command_palette_set_query(editorId, query)
         uiTree = fetchUiTree()

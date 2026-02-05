@@ -13,6 +13,8 @@ struct EditorView: View {
         let cellSize = model.cellSize
         let font = model.font
         let isPaletteOpen = model.uiTree.hasCommandPalettePanel
+        let isSearchOpen = model.uiTree.hasSearchPromptPanel
+        let isOverlayOpen = isPaletteOpen || isSearchOpen
         GeometryReader { proxy in
             ZStack {
                 Canvas { context, size in
@@ -34,12 +36,21 @@ struct EditorView: View {
                     },
                     onQueryChange: { query in
                         model.setCommandPaletteQuery(query)
+                    },
+                    onSearchQueryChange: { query in
+                        model.setSearchQuery(query)
+                    },
+                    onSearchClose: {
+                        model.closeSearch()
+                    },
+                    onSearchSubmit: {
+                        model.submitSearch()
                     }
                 )
             }
             .background(
                 Group {
-                    if !isPaletteOpen {
+                    if !isOverlayOpen {
                         KeyCaptureView(
                             onKey: { event in
                                 model.handleKeyEvent(event)
@@ -58,7 +69,7 @@ struct EditorView: View {
             )
             .overlay(
                 Group {
-                    if !isPaletteOpen {
+                    if !isOverlayOpen {
                         ScrollCaptureView(
                             onScroll: { deltaX, deltaY, precise in
                                 model.handleScroll(deltaX: deltaX, deltaY: deltaY, precise: precise)

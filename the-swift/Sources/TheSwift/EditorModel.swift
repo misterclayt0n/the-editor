@@ -89,7 +89,7 @@ final class EditorModel: ObservableObject {
         for node in tree.overlays {
             if case .panel(let panel) = node, panel.id == "statusline" {
                 // Fixed 22pt statusline height
-                return Int(ceil(22.0 / cellSize.height))
+                return max(1, Int((22.0 / cellSize.height).rounded()))
             }
         }
         return 0

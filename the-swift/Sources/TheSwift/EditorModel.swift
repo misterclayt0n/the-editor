@@ -26,6 +26,9 @@ final class EditorModel: ObservableObject {
         let scroll = Position(row: 0, col: 0)
         let initialText = EditorModel.loadText(filePath: filePath)
         self.editorId = app.create_editor(initialText, viewport, scroll)
+        if let filePath {
+            _ = app.set_file_path(editorId, filePath)
+        }
         self.plan = app.render_plan(editorId)
         self.mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
     }

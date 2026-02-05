@@ -784,6 +784,19 @@ impl App {
     true
   }
 
+  pub fn set_file_path(&mut self, id: ffi::EditorId, path: &str) -> bool {
+    let _ = self.activate(id);
+    let Some(id) = id.to_lib() else {
+      return false;
+    };
+    if path.is_empty() {
+      self.file_paths.remove(&id);
+    } else {
+      self.file_paths.insert(id, PathBuf::from(path));
+    }
+    true
+  }
+
   pub fn set_active_cursor(&mut self, id: ffi::EditorId, cursor_id: u64) -> bool {
     let _ = self.activate(id);
     let Some(editor) = self.editor_mut(id) else {
@@ -1816,6 +1829,7 @@ mod ffi {
     fn remove_editor(self: &mut App, id: EditorId) -> bool;
     fn set_viewport(self: &mut App, id: EditorId, viewport: Rect) -> bool;
     fn set_scroll(self: &mut App, id: EditorId, scroll: Position) -> bool;
+    fn set_file_path(self: &mut App, id: EditorId, path: &str) -> bool;
     fn set_active_cursor(self: &mut App, id: EditorId, cursor_id: u64) -> bool;
     fn clear_active_cursor(self: &mut App, id: EditorId) -> bool;
     fn cursor_ids(self: &App, id: EditorId) -> Vec<u64>;

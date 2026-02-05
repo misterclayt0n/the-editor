@@ -44,6 +44,12 @@ extension AppRefMut {
         __swift_bridge__$App$set_scroll(ptr, id.intoFfiRepr(), scroll.intoFfiRepr())
     }
 
+    public func set_file_path<GenericToRustStr: ToRustStr>(_ id: EditorId, _ path: GenericToRustStr) -> Bool {
+        return path.toRustStr({ pathAsRustStr in
+            __swift_bridge__$App$set_file_path(ptr, id.intoFfiRepr(), pathAsRustStr)
+        })
+    }
+
     public func set_active_cursor(_ id: EditorId, _ cursor_id: UInt64) -> Bool {
         __swift_bridge__$App$set_active_cursor(ptr, id.intoFfiRepr(), cursor_id)
     }
@@ -1334,6 +1340,5 @@ extension RenderPlan: Vectorizable {
         __swift_bridge__$Vec_RenderPlan$len(vecPtr)
     }
 }
-
 
 

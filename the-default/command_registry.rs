@@ -8,6 +8,10 @@ use std::{
   sync::Arc,
 };
 
+use the_core::chars::{
+  next_char_boundary,
+  prev_char_boundary,
+};
 use the_lib::command_line::{
   Args,
   CompletionState,
@@ -25,10 +29,6 @@ use crate::{
   Mode,
   command_palette_default_selected,
   command_palette_filtered_indices,
-};
-use the_core::chars::{
-  next_char_boundary,
-  prev_char_boundary,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -757,14 +757,14 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
       let prompt = ctx.command_prompt_ref();
       prompt.input.clone()
     };
-      let prompt = ctx.command_prompt_mut();
-      prompt.completions = completions;
-      prompt.error = None;
-      {
-        let palette = ctx.command_palette_mut();
-        palette.query = input;
-        palette.selected = command_palette_default_selected(palette);
-      }
+    let prompt = ctx.command_prompt_mut();
+    prompt.completions = completions;
+    prompt.error = None;
+    {
+      let palette = ctx.command_palette_mut();
+      palette.query = input;
+      palette.selected = command_palette_default_selected(palette);
+    }
     ctx.request_render();
   }
 

@@ -24,7 +24,6 @@ use the_core::{
   },
 };
 use the_dispatch::define;
-use the_stdx::rope::RopeSliceExt;
 use the_lib::{
   Tendril,
   auto_pairs::{
@@ -35,8 +34,6 @@ use the_lib::{
   history::UndoKind,
   indent,
   match_brackets as mb,
-  surround,
-  text_object,
   movement::{
     self,
     Direction as MoveDir,
@@ -53,28 +50,34 @@ use the_lib::{
   render::{
     RenderPlan,
     RenderStyles,
-    UiState,
-    UiTree,
+    UiEvent,
+    UiEventKind,
+    UiEventOutcome,
     UiFocus,
     UiFocusKind,
-    UiEventKind,
     UiKey,
     UiKeyEvent,
     UiModifiers,
-    UiEvent,
-    UiEventOutcome,
+    UiState,
+    UiTree,
+    char_at_visual_pos,
     text_annotations::TextAnnotations,
     text_format::TextFormat,
-    char_at_visual_pos,
-    visual_pos_at_char,
     theme::Theme,
     ui_theme::resolve_ui_tree,
+    visual_pos_at_char,
+  },
+  search::{
+    build_regex,
+    search_regex,
   },
   selection::{
     CursorId,
+    CursorPick,
     Range,
     Selection,
   },
+  surround,
   syntax::{
     Loader,
     config::{
@@ -83,14 +86,12 @@ use the_lib::{
     },
     resources::NullResources,
   },
+  text_object,
   transaction::Transaction,
 };
+use the_stdx::rope::RopeSliceExt;
 
 use crate::{
-  command_palette::{
-    CommandPaletteStyle,
-    CommandPaletteState,
-  },
   Command,
   Direction,
   Key,
@@ -101,10 +102,14 @@ use crate::{
   Motion,
   PendingInput,
   WordMotion,
+  command_palette::{
+    CommandPaletteState,
+    CommandPaletteStyle,
+  },
   command_registry::{
+    CommandEvent,
     CommandPromptState,
     CommandRegistry,
-    CommandEvent,
     handle_command_prompt_key,
   },
   keymap::{
@@ -164,6 +169,7 @@ define! {
     find_char: (Direction, bool, bool),
     search: (),
     rsearch: (),
+    search_next_or_prev: (Direction, bool, usize),
     parent_node_end: bool,
     parent_node_start: bool,
     repeat_last_motion: (),
@@ -248,6 +254,7 @@ pub type DefaultDispatchStatic<Ctx> = DefaultDispatch<
   fn(&mut Ctx, (Direction, bool, bool)),
   fn(&mut Ctx, ()),
   fn(&mut Ctx, ()),
+  fn(&mut Ctx, (Direction, bool, usize)),
   fn(&mut Ctx, bool),
   fn(&mut Ctx, bool),
   fn(&mut Ctx, ()),
@@ -368,8 +375,12 @@ where
     .with_pre_render(pre_render::<Ctx> as fn(&mut Ctx, ()))
     .with_on_render(on_render::<Ctx> as fn(&mut Ctx, ()) -> RenderPlan)
     .with_post_render(post_render::<Ctx> as fn(&mut Ctx, RenderPlan) -> RenderPlan)
-    .with_pre_render_with_styles(pre_render_with_styles::<Ctx> as fn(&mut Ctx, RenderStyles) -> RenderStyles)
-    .with_on_render_with_styles(on_render_with_styles::<Ctx> as fn(&mut Ctx, RenderStyles) -> RenderPlan)
+    .with_pre_render_with_styles(
+      pre_render_with_styles::<Ctx> as fn(&mut Ctx, RenderStyles) -> RenderStyles,
+    )
+    .with_on_render_with_styles(
+      on_render_with_styles::<Ctx> as fn(&mut Ctx, RenderStyles) -> RenderPlan,
+    )
     .with_pre_ui(pre_ui::<Ctx> as fn(&mut Ctx, ()))
     .with_on_ui(on_ui::<Ctx> as fn(&mut Ctx, ()) -> UiTree)
     .with_post_ui(post_ui::<Ctx> as fn(&mut Ctx, UiTree) -> UiTree)
@@ -404,6 +415,7 @@ where
     .with_find_char(find_char::<Ctx> as fn(&mut Ctx, (Direction, bool, bool)))
     .with_search(search::<Ctx> as fn(&mut Ctx, ()))
     .with_rsearch(rsearch::<Ctx> as fn(&mut Ctx, ()))
+    .with_search_next_or_prev(search_next_or_prev::<Ctx> as fn(&mut Ctx, (Direction, bool, usize)))
     .with_parent_node_end(parent_node_end::<Ctx> as fn(&mut Ctx, bool))
     .with_parent_node_start(parent_node_start::<Ctx> as fn(&mut Ctx, bool))
     .with_repeat_last_motion(repeat_last_motion::<Ctx> as fn(&mut Ctx, ()))
@@ -533,7 +545,12 @@ fn handle_pending_input<Ctx: DefaultContext>(
   key: KeyEvent,
 ) -> bool {
   match pending {
-    PendingInput::FindChar { direction, inclusive, extend, count } => {
+    PendingInput::FindChar {
+      direction,
+      inclusive,
+      extend,
+      count,
+    } => {
       if let Key::Char(ch) = key.key {
         find_char_impl(ctx, ch, direction, inclusive, extend, count);
       }
@@ -571,7 +588,10 @@ fn handle_pending_input<Ctx: DefaultContext>(
       }
       true
     },
-    PendingInput::SurroundReplaceWith { positions, original_selection } => {
+    PendingInput::SurroundReplaceWith {
+      positions,
+      original_selection,
+    } => {
       if let Key::Char(ch) = key.key {
         surround_replace_with(ctx, ch, &positions, &original_selection);
       }
@@ -640,8 +660,14 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::GotoLineEnd { extend } => ctx.dispatch().goto_line_end(ctx, extend),
     Command::PageUp { extend } => ctx.dispatch().page_up(ctx, extend),
     Command::PageDown { extend } => ctx.dispatch().page_down(ctx, extend),
-    Command::FindChar { direction, inclusive, extend } => {
-      ctx.dispatch().find_char(ctx, (direction, inclusive, extend));
+    Command::FindChar {
+      direction,
+      inclusive,
+      extend,
+    } => {
+      ctx
+        .dispatch()
+        .find_char(ctx, (direction, inclusive, extend));
     },
     Command::ParentNodeEnd { extend } => ctx.dispatch().parent_node_end(ctx, extend),
     Command::ParentNodeStart { extend } => ctx.dispatch().parent_node_start(ctx, extend),
@@ -690,6 +716,15 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::SelectTextobjectInner => ctx.dispatch().select_textobject_inner(ctx, ()),
     Command::Search => ctx.dispatch().search(ctx, ()),
     Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
+    Command::SearchNextOrPrev {
+      direction,
+      extend,
+      count,
+    } => {
+      ctx
+        .dispatch()
+        .search_next_or_prev(ctx, (direction, extend, count));
+    },
     Command::Save => ctx.dispatch().save(ctx, ()),
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
@@ -772,11 +807,14 @@ fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
     let cursor = if ctx.search_prompt_ref().query.is_empty() {
       1
     } else {
-      1 + byte_to_char_idx(&ctx.search_prompt_ref().query, ctx.search_prompt_ref().cursor)
+      1 + byte_to_char_idx(
+        &ctx.search_prompt_ref().query,
+        ctx.search_prompt_ref().cursor,
+      )
     };
     let focus = UiFocus {
-      id: "search_prompt_input".to_string(),
-      kind: UiFocusKind::Input,
+      id:     "search_prompt_input".to_string(),
+      kind:   UiFocusKind::Input,
       cursor: Some(cursor),
     };
     tree.focus = Some(focus.clone());
@@ -785,11 +823,14 @@ fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
     let cursor = if ctx.command_palette().query.is_empty() {
       1
     } else {
-      byte_to_char_idx(&ctx.command_palette().query, ctx.command_palette().query.len()) + 1
+      byte_to_char_idx(
+        &ctx.command_palette().query,
+        ctx.command_palette().query.len(),
+      ) + 1
     };
     let focus = UiFocus {
-      id: "command_palette_input".to_string(),
-      kind: UiFocusKind::Input,
+      id:     "command_palette_input".to_string(),
+      kind:   UiFocusKind::Input,
       cursor: Some(cursor),
     };
     tree.focus = Some(focus.clone());
@@ -832,10 +873,10 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
         }
       },
       UiEventKind::Activate => {
-        if crate::search_prompt::handle_search_prompt_key(
-          ctx,
-          KeyEvent { key: Key::Enter, modifiers: Modifiers::empty() },
-        ) {
+        if crate::search_prompt::handle_search_prompt_key(ctx, KeyEvent {
+          key:       Key::Enter,
+          modifiers: Modifiers::empty(),
+        }) {
           return UiEventOutcome::handled();
         }
       },
@@ -912,7 +953,12 @@ fn ui_key_event_to_key_event(event: UiKeyEvent) -> Option<KeyEvent> {
   };
 
   let mut modifiers = Modifiers::empty();
-  let UiModifiers { ctrl, alt, shift, meta } = event.modifiers;
+  let UiModifiers {
+    ctrl,
+    alt,
+    shift,
+    meta,
+  } = event.modifiers;
   if ctrl {
     modifiers.insert(Modifiers::CTRL);
   }
@@ -934,9 +980,10 @@ fn submit_command_palette_selected<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   }
 
   let filtered = crate::command_palette::command_palette_filtered_indices(palette);
-  let selected = palette.selected.filter(|sel| filtered.contains(sel)).or_else(|| {
-    filtered.first().copied()
-  });
+  let selected = palette
+    .selected
+    .filter(|sel| filtered.contains(sel))
+    .or_else(|| filtered.first().copied());
 
   let Some(item_idx) = selected else {
     return false;
@@ -978,10 +1025,7 @@ fn close_command_palette<Ctx: DefaultContext>(ctx: &mut Ctx) {
   ctx.request_render();
 }
 
-fn on_render_with_styles<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  styles: RenderStyles,
-) -> RenderPlan {
+fn on_render_with_styles<Ctx: DefaultContext>(ctx: &mut Ctx, styles: RenderStyles) -> RenderPlan {
   ctx.build_render_plan_with_styles(styles)
 }
 
@@ -1241,12 +1285,17 @@ fn insert_newline<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
           None => String::new(),
         };
 
-        let prev = if pos == 0 { ' ' } else { contents.char(pos - 1) };
+        let prev = if pos == 0 {
+          ' '
+        } else {
+          contents.char(pos - 1)
+        };
         let curr = contents.get_char(pos).unwrap_or(' ');
 
-        let on_auto_pair = pairs.pairs().iter().any(|pair| {
-          pair.open_last_char() == Some(prev) && pair.close_first_char() == Some(curr)
-        });
+        let on_auto_pair = pairs
+          .pairs()
+          .iter()
+          .any(|pair| pair.open_last_char() == Some(prev) && pair.close_first_char() == Some(curr));
 
         if on_auto_pair {
           let inner_indent = indent.clone() + indent_unit;
@@ -1301,8 +1350,7 @@ fn insert_newline<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
     return;
   };
 
-  let cursor_ids: SmallVec<[CursorId; 1]> =
-    selection.cursor_ids().iter().copied().collect();
+  let cursor_ids: SmallVec<[CursorId; 1]> = selection.cursor_ids().iter().copied().collect();
   let new_selection = Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| selection);
   let tx = tx.with_selection(new_selection);
   let _ = doc.apply_transaction(&tx);
@@ -1356,7 +1404,15 @@ fn page_up<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
     };
 
     selection.transform(|range| {
-      move_vertically(slice, range, MoveDir::Backward, count, behavior, &text_fmt, &mut annotations)
+      move_vertically(
+        slice,
+        range,
+        MoveDir::Backward,
+        count,
+        behavior,
+        &text_fmt,
+        &mut annotations,
+      )
     })
   };
 
@@ -1381,7 +1437,15 @@ fn page_down<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
     };
 
     selection.transform(|range| {
-      move_vertically(slice, range, MoveDir::Forward, count, behavior, &text_fmt, &mut annotations)
+      move_vertically(
+        slice,
+        range,
+        MoveDir::Forward,
+        count,
+        behavior,
+        &text_fmt,
+        &mut annotations,
+      )
     })
   };
 
@@ -1396,7 +1460,11 @@ fn find_char_impl<Ctx: DefaultContext>(
   extend: bool,
   count: usize,
 ) {
-  use the_lib::search::{find_nth, SearchDirection, SearchStart};
+  use the_lib::search::{
+    SearchDirection,
+    SearchStart,
+    find_nth,
+  };
 
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
@@ -1410,14 +1478,22 @@ fn find_char_impl<Ctx: DefaultContext>(
 
   let new_selection = selection.transform(|range| {
     let cursor = range.cursor(slice);
-    // Start search from position after/before cursor (exclusive of current position)
+    // Start search from position after/before cursor (exclusive of current
+    // position)
     let search_pos = match direction {
       Direction::Forward => cursor + 1,
       Direction::Backward => cursor,
       _ => return range, // Should not happen
     };
 
-    if let Some(found) = find_nth(slice, ch, search_pos, count, search_dir, SearchStart::Inclusive) {
+    if let Some(found) = find_nth(
+      slice,
+      ch,
+      search_pos,
+      count,
+      search_dir,
+      SearchStart::Inclusive,
+    ) {
       let target = if inclusive {
         found
       } else {
@@ -1439,7 +1515,12 @@ fn find_char_impl<Ctx: DefaultContext>(
 
 fn find_char<Ctx: DefaultContext>(ctx: &mut Ctx, params: (Direction, bool, bool)) {
   let (direction, inclusive, extend) = params;
-  ctx.set_pending_input(Some(PendingInput::FindChar { direction, inclusive, extend, count: 1 }));
+  ctx.set_pending_input(Some(PendingInput::FindChar {
+    direction,
+    inclusive,
+    extend,
+    count: 1,
+  }));
 }
 
 fn search<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
@@ -1450,8 +1531,70 @@ fn rsearch<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   crate::search_prompt::open_search_prompt(ctx, Direction::Backward);
 }
 
+fn search_next_or_prev<Ctx: DefaultContext>(ctx: &mut Ctx, params: (Direction, bool, usize)) {
+  let (direction, extend, count) = params;
+  let direction = match direction {
+    Direction::Forward => MoveDir::Forward,
+    Direction::Backward => MoveDir::Backward,
+    _ => return,
+  };
+  let pick = if extend {
+    match direction {
+      MoveDir::Forward => CursorPick::Last,
+      MoveDir::Backward => CursorPick::First,
+    }
+  } else {
+    CursorPick::First
+  };
+
+  let register = ctx
+    .register()
+    .unwrap_or(ctx.registers().last_search_register);
+  let query = {
+    let doc = ctx.editor_ref().document();
+    ctx
+      .registers()
+      .first(register, doc)
+      .map(|query| query.into_owned())
+  };
+  let Some(query) = query else {
+    return;
+  };
+  if query.is_empty() {
+    return;
+  }
+
+  let Ok(regex) = build_regex(&query, true) else {
+    return;
+  };
+
+  let movement = if extend {
+    Movement::Extend
+  } else {
+    Movement::Move
+  };
+
+  for _ in 0..count.max(1) {
+    let next = {
+      let doc = ctx.editor_ref().document();
+      let text = doc.text().slice(..);
+      let selection = doc.selection().clone();
+      search_regex(text, &selection, pick, &regex, movement, direction, true)
+    };
+
+    let Some(next) = next else {
+      break;
+    };
+
+    let _ = ctx.editor().document_mut().set_selection(next);
+  }
+}
+
 fn parent_node_end<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
-  use the_lib::movement::{Direction as MoveDirection, move_parent_node_end};
+  use the_lib::movement::{
+    Direction as MoveDirection,
+    move_parent_node_end,
+  };
 
   let doc = ctx.editor().document_mut();
   let Some(syntax) = doc.syntax() else {
@@ -1460,14 +1603,22 @@ fn parent_node_end<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
 
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
-  let movement = if extend { Movement::Extend } else { Movement::Move };
+  let movement = if extend {
+    Movement::Extend
+  } else {
+    Movement::Move
+  };
 
-  let new_selection = move_parent_node_end(syntax, slice, selection, MoveDirection::Forward, movement);
+  let new_selection =
+    move_parent_node_end(syntax, slice, selection, MoveDirection::Forward, movement);
   let _ = doc.set_selection(new_selection);
 }
 
 fn parent_node_start<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
-  use the_lib::movement::{Direction as MoveDirection, move_parent_node_end};
+  use the_lib::movement::{
+    Direction as MoveDirection,
+    move_parent_node_end,
+  };
 
   let doc = ctx.editor().document_mut();
   let Some(syntax) = doc.syntax() else {
@@ -1476,9 +1627,14 @@ fn parent_node_start<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
 
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
-  let movement = if extend { Movement::Extend } else { Movement::Move };
+  let movement = if extend {
+    Movement::Extend
+  } else {
+    Movement::Move
+  };
 
-  let new_selection = move_parent_node_end(syntax, slice, selection, MoveDirection::Backward, movement);
+  let new_selection =
+    move_parent_node_end(syntax, slice, selection, MoveDirection::Backward, movement);
   let _ = doc.set_selection(new_selection);
 }
 
@@ -1787,7 +1943,10 @@ fn delete_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
     .iter()
     .map(|range| {
       let (from, to) = if range.is_empty() {
-        (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+        (
+          range.from(),
+          nth_next_grapheme_boundary(slice, range.from(), 1),
+        )
       } else {
         (range.from(), range.to())
       };
@@ -1798,7 +1957,10 @@ fn delete_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
   let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
     // For empty selections (cursor only), delete the grapheme at cursor
     if range.is_empty() {
-      (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+      (
+        range.from(),
+        nth_next_grapheme_boundary(slice, range.from(), 1),
+      )
     } else {
       (range.from(), range.to())
     }
@@ -1827,7 +1989,10 @@ fn change_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
     .iter()
     .map(|range| {
       let (from, to) = if range.is_empty() {
-        (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+        (
+          range.from(),
+          nth_next_grapheme_boundary(slice, range.from(), 1),
+        )
       } else {
         (range.from(), range.to())
       };
@@ -1838,7 +2003,10 @@ fn change_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
   let tx = Transaction::delete_by_selection(doc.text(), &selection, |range| {
     // For empty selections (cursor only), delete the grapheme at cursor
     if range.is_empty() {
-      (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+      (
+        range.from(),
+        nth_next_grapheme_boundary(slice, range.from(), 1),
+      )
     } else {
       (range.from(), range.to())
     }
@@ -1898,9 +2066,10 @@ fn replace_with_yanked<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   // Read the register values using shared references
   let replacement: Option<String> = {
     let doc = ctx.editor_ref().document();
-    ctx.registers().read('"', doc).and_then(|mut values| {
-      values.next().map(|v| v.into_owned())
-    })
+    ctx
+      .registers()
+      .read('"', doc)
+      .and_then(|mut values| values.next().map(|v| v.into_owned()))
   };
 
   let Some(replacement) = replacement else {
@@ -1917,7 +2086,10 @@ fn replace_with_yanked<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let tx = Transaction::change_by_selection(doc.text(), &selection, |range| {
     // For empty selections (cursor only), replace the grapheme at cursor
     let (from, to) = if range.is_empty() {
-      (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+      (
+        range.from(),
+        nth_next_grapheme_boundary(slice, range.from(), 1),
+      )
     } else {
       (range.from(), range.to())
     };
@@ -1937,10 +2109,7 @@ fn yank<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
 
-  let fragments: Vec<String> = selection
-    .fragments(slice)
-    .map(Cow::into_owned)
-    .collect();
+  let fragments: Vec<String> = selection.fragments(slice).map(Cow::into_owned).collect();
 
   let _ = ctx.registers_mut().write('"', fragments);
 
@@ -2040,8 +2209,7 @@ fn paste<Ctx: DefaultContext>(ctx: &mut Ctx, after: bool) {
   };
 
   if mode == Mode::Normal {
-    let cursor_ids: SmallVec<[CursorId; 1]> =
-      selection.cursor_ids().iter().copied().collect();
+    let cursor_ids: SmallVec<[CursorId; 1]> = selection.cursor_ids().iter().copied().collect();
     let new_selection =
       Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| selection.clone());
     tx = tx.with_selection(new_selection);
@@ -2098,7 +2266,9 @@ fn replay_macro<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   };
 
   ctx.macro_replaying_mut().push(reg);
-  ctx.macro_queue_mut().extend(keys.iter().map(|key| key.to_key_event()));
+  ctx
+    .macro_queue_mut()
+    .extend(keys.iter().map(|key| key.to_key_event()));
   while let Some(next) = ctx.macro_queue_mut().pop_front() {
     ctx.dispatch().on_keypress(ctx, next);
   }
@@ -2168,7 +2338,10 @@ where
 
   let tx = Transaction::change_by_selection(doc.text(), &selection, |range| {
     let (from, to) = if range.is_empty() {
-      (range.from(), nth_next_grapheme_boundary(slice, range.from(), 1))
+      (
+        range.from(),
+        nth_next_grapheme_boundary(slice, range.from(), 1),
+      )
     } else {
       (range.from(), range.to())
     };
@@ -2270,7 +2443,7 @@ fn syntax_loader() -> &'static Loader {
   static LOADER: OnceLock<Loader> = OnceLock::new();
   LOADER.get_or_init(|| {
     let config = Configuration {
-      language: Vec::new(),
+      language:        Vec::new(),
       language_server: HashMap::new(),
     };
     Loader::new(config, NullResources).expect("syntax loader")
@@ -2380,16 +2553,20 @@ fn extend_line_impl<Ctx: DefaultContext>(ctx: &mut Ctx, extend: ExtendDirection,
       match extend {
         ExtendDirection::Above => (end, text.line_to_char(start_line.saturating_sub(count))),
         ExtendDirection::Below => {
-          (start, text.line_to_char((end_line + count + 1).min(text.len_lines())))
+          (
+            start,
+            text.line_to_char((end_line + count + 1).min(text.len_lines())),
+          )
         },
       }
     } else {
       match extend {
-        ExtendDirection::Above => {
-          (end, text.line_to_char(start_line.saturating_sub(count - 1)))
-        },
+        ExtendDirection::Above => (end, text.line_to_char(start_line.saturating_sub(count - 1))),
         ExtendDirection::Below => {
-          (start, text.line_to_char((end_line + count).min(text.len_lines())))
+          (
+            start,
+            text.line_to_char((end_line + count).min(text.len_lines())),
+          )
         },
       }
     };
@@ -2568,22 +2745,24 @@ fn select_textobject_impl<Ctx: DefaultContext>(
       text_object::textobject_treesitter(text, range, kind, obj_name, syntax, loader, count)
     };
 
-    selection.transform(|range| match ch {
-      'w' => text_object::textobject_word(text, range, kind, count, false),
-      'W' => text_object::textobject_word(text, range, kind, count, true),
-      't' => textobject_treesitter("class", range),
-      'f' => textobject_treesitter("function", range),
-      'a' => textobject_treesitter("parameter", range),
-      'c' => textobject_treesitter("comment", range),
-      'T' => textobject_treesitter("test", range),
-      'e' => textobject_treesitter("entry", range),
-      'x' => textobject_treesitter("xml-element", range),
-      'p' => text_object::textobject_paragraph(text, range, kind, count),
-      'm' => text_object::textobject_pair_surround_closest(syntax, text, range, kind, count),
-      ch if !ch.is_ascii_alphanumeric() => {
-        text_object::textobject_pair_surround(syntax, text, range, kind, ch, count)
-      },
-      _ => range,
+    selection.transform(|range| {
+      match ch {
+        'w' => text_object::textobject_word(text, range, kind, count, false),
+        'W' => text_object::textobject_word(text, range, kind, count, true),
+        't' => textobject_treesitter("class", range),
+        'f' => textobject_treesitter("function", range),
+        'a' => textobject_treesitter("parameter", range),
+        'c' => textobject_treesitter("comment", range),
+        'T' => textobject_treesitter("test", range),
+        'e' => textobject_treesitter("entry", range),
+        'x' => textobject_treesitter("xml-element", range),
+        'p' => text_object::textobject_paragraph(text, range, kind, count),
+        'm' => text_object::textobject_pair_surround_closest(syntax, text, range, kind, count),
+        ch if !ch.is_ascii_alphanumeric() => {
+          text_object::textobject_pair_surround(syntax, text, range, kind, ch, count)
+        },
+        _ => range,
+      }
     })
   };
 
@@ -2644,7 +2823,11 @@ fn surround_add_impl<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
   }
 }
 
-fn surround_delete_impl<Ctx: DefaultContext>(ctx: &mut Ctx, surround_ch: Option<char>, count: usize) {
+fn surround_delete_impl<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  surround_ch: Option<char>,
+  count: usize,
+) {
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let text = doc.text().slice(..);
@@ -2727,7 +2910,7 @@ fn surround_replace_with<Ctx: DefaultContext>(
     changes.push((close_pos, close_end, Some(close_str)));
   }
 
-  changes.sort_by_key(|(from, _, _)| *from);
+  changes.sort_by_key(|(from, ..)| *from);
 
   let Ok(tx) = Transaction::change(text, changes.into_iter()) else {
     return;
@@ -2777,8 +2960,11 @@ fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Directi
         continue;
       };
 
-      let height =
-        head_pos.row.max(anchor_pos.row).saturating_sub(head_pos.row.min(anchor_pos.row)) + 1;
+      let height = head_pos
+        .row
+        .max(anchor_pos.row)
+        .saturating_sub(head_pos.row.min(anchor_pos.row))
+        + 1;
 
       let mut sels = 0;
       let mut i = 0usize;
@@ -2816,12 +3002,10 @@ fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Directi
           break;
         };
 
-        let anchor_ok =
-          visual_pos_at_char(text, &text_fmt, &mut annotations, anchor_idx)
-            .is_some_and(|pos| pos.col == anchor_pos.col);
-        let head_ok =
-          visual_pos_at_char(text, &text_fmt, &mut annotations, head_idx)
-            .is_some_and(|pos| pos.col == head_pos.col);
+        let anchor_ok = visual_pos_at_char(text, &text_fmt, &mut annotations, anchor_idx)
+          .is_some_and(|pos| pos.col == anchor_pos.col);
+        let head_ok = visual_pos_at_char(text, &text_fmt, &mut annotations, head_idx)
+          .is_some_and(|pos| pos.col == head_pos.col);
 
         if anchor_ok && head_ok {
           ranges.push(Range::point(anchor_idx).put_cursor(text, head_idx, true));
@@ -2866,7 +3050,8 @@ fn open<Ctx: DefaultContext>(
   let mut offs: usize = 0;
   let mut ranges = SmallVec::with_capacity(selection.len());
 
-  // We don't have language config access yet, so comment continuation is disabled.
+  // We don't have language config access yet, so comment continuation is
+  // disabled.
   let continue_comment_tokens: Option<&[String]> = match comment_continuation {
     CommentContinuation::Enabled => None,
     CommentContinuation::Disabled => None,
@@ -2919,17 +3104,19 @@ fn open<Ctx: DefaultContext>(
     };
     let indent = match line.first_non_whitespace_char() {
       Some(pos) if continue_comment_token.is_some() => line.slice(..pos).to_string(),
-      _ => indent::indent_for_newline(
-        loader,
-        syntax,
-        &indent_heuristic,
-        &doc.indent_style(),
-        tab_width,
-        text,
-        above_next_new_line_num,
-        above_next_line_end_index,
-        curr_line_num,
-      ),
+      _ => {
+        indent::indent_for_newline(
+          loader,
+          syntax,
+          &indent_heuristic,
+          &doc.indent_style(),
+          tab_width,
+          text,
+          above_next_new_line_num,
+          above_next_line_end_index,
+          curr_line_num,
+        )
+      },
     };
 
     let indent_len = indent.chars().count();
@@ -2959,10 +3146,7 @@ fn open<Ctx: DefaultContext>(
       .unwrap_or_default();
     for i in 0..count {
       ranges.push(Range::point(
-        pos
-          + (i * (line_ending.len_chars() + indent_len + comment_len))
-          + indent_len
-          + comment_len,
+        pos + (i * (line_ending.len_chars() + indent_len + comment_len)) + indent_len + comment_len,
       ));
     }
 
@@ -2979,8 +3163,7 @@ fn open<Ctx: DefaultContext>(
     return;
   };
 
-  let cursor_ids: SmallVec<[CursorId; 1]> =
-    selection.cursor_ids().iter().copied().collect();
+  let cursor_ids: SmallVec<[CursorId; 1]> = selection.cursor_ids().iter().copied().collect();
   let new_selection = if cursor_ids.len() == ranges.len() {
     Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| selection)
   } else {
@@ -3087,6 +3270,10 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_last_line" => Some(Command::goto_last_line()),
     "search" => Some(Command::search()),
     "rsearch" => Some(Command::rsearch()),
+    "search_next" => Some(Command::search_next()),
+    "search_prev" => Some(Command::search_prev()),
+    "extend_search_next" => Some(Command::extend_search_next()),
+    "extend_search_prev" => Some(Command::extend_search_prev()),
 
     "delete_selection" => Some(Command::delete_selection()),
     "delete_selection_noyank" => Some(Command::delete_selection_noyank()),

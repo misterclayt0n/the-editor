@@ -432,28 +432,56 @@ pub enum Command {
   InsertChar(char),
   InsertNewline,
   DeleteChar,
-  DeleteCharForward { count: usize },
-  DeleteWordBackward { count: usize },
-  DeleteWordForward { count: usize },
+  DeleteCharForward {
+    count: usize,
+  },
+  DeleteWordBackward {
+    count: usize,
+  },
+  DeleteWordForward {
+    count: usize,
+  },
   KillToLineStart,
   KillToLineEnd,
   InsertTab,
-  GotoLineStart { extend: bool },
-  GotoLineEnd { extend: bool },
-  PageUp { extend: bool },
-  PageDown { extend: bool },
-  FindChar { direction: Direction, inclusive: bool, extend: bool },
-  ParentNodeEnd { extend: bool },
-  ParentNodeStart { extend: bool },
+  GotoLineStart {
+    extend: bool,
+  },
+  GotoLineEnd {
+    extend: bool,
+  },
+  PageUp {
+    extend: bool,
+  },
+  PageDown {
+    extend: bool,
+  },
+  FindChar {
+    direction: Direction,
+    inclusive: bool,
+    extend:    bool,
+  },
+  ParentNodeEnd {
+    extend: bool,
+  },
+  ParentNodeStart {
+    extend: bool,
+  },
   Move(Direction),
   AddCursor(Direction),
   Motion(Motion),
-  DeleteSelection { yank: bool },
-  ChangeSelection { yank: bool },
+  DeleteSelection {
+    yank: bool,
+  },
+  ChangeSelection {
+    yank: bool,
+  },
   Replace,
   ReplaceWithYanked,
   Yank,
-  Paste { after: bool },
+  Paste {
+    after: bool,
+  },
   RecordMacro,
   ReplayMacro,
   RepeatLastMotion,
@@ -469,22 +497,47 @@ pub enum Command {
   CopySelectionOnNextLine,
   CopySelectionOnPrevLine,
   SelectAll,
-  ExtendLineBelow { count: usize },
-  ExtendLineAbove { count: usize },
+  ExtendLineBelow {
+    count: usize,
+  },
+  ExtendLineAbove {
+    count: usize,
+  },
   ExtendToLineBounds,
   ShrinkToLineBounds,
-  Undo { count: usize },
-  Redo { count: usize },
-  Earlier { count: usize },
-  Later { count: usize },
-  Indent { count: usize },
-  Unindent { count: usize },
+  Undo {
+    count: usize,
+  },
+  Redo {
+    count: usize,
+  },
+  Earlier {
+    count: usize,
+  },
+  Later {
+    count: usize,
+  },
+  Indent {
+    count: usize,
+  },
+  Unindent {
+    count: usize,
+  },
   MatchBrackets,
   SurroundAdd,
-  SurroundDelete { count: usize },
-  SurroundReplace { count: usize },
+  SurroundDelete {
+    count: usize,
+  },
+  SurroundReplace {
+    count: usize,
+  },
   SelectTextobjectAround,
   SelectTextobjectInner,
+  SearchNextOrPrev {
+    direction: Direction,
+    extend:    bool,
+    count:     usize,
+  },
   Search,
   RSearch,
   Save,
@@ -794,42 +847,74 @@ impl Command {
 
   #[must_use]
   pub const fn find_next_char() -> Self {
-    Self::FindChar { direction: Direction::Forward, inclusive: true, extend: false }
+    Self::FindChar {
+      direction: Direction::Forward,
+      inclusive: true,
+      extend:    false,
+    }
   }
 
   #[must_use]
   pub const fn find_till_char() -> Self {
-    Self::FindChar { direction: Direction::Forward, inclusive: false, extend: false }
+    Self::FindChar {
+      direction: Direction::Forward,
+      inclusive: false,
+      extend:    false,
+    }
   }
 
   #[must_use]
   pub const fn find_prev_char() -> Self {
-    Self::FindChar { direction: Direction::Backward, inclusive: true, extend: false }
+    Self::FindChar {
+      direction: Direction::Backward,
+      inclusive: true,
+      extend:    false,
+    }
   }
 
   #[must_use]
   pub const fn till_prev_char() -> Self {
-    Self::FindChar { direction: Direction::Backward, inclusive: false, extend: false }
+    Self::FindChar {
+      direction: Direction::Backward,
+      inclusive: false,
+      extend:    false,
+    }
   }
 
   #[must_use]
   pub const fn extend_next_char() -> Self {
-    Self::FindChar { direction: Direction::Forward, inclusive: true, extend: true }
+    Self::FindChar {
+      direction: Direction::Forward,
+      inclusive: true,
+      extend:    true,
+    }
   }
 
   #[must_use]
   pub const fn extend_till_char() -> Self {
-    Self::FindChar { direction: Direction::Forward, inclusive: false, extend: true }
+    Self::FindChar {
+      direction: Direction::Forward,
+      inclusive: false,
+      extend:    true,
+    }
   }
 
   #[must_use]
   pub const fn extend_prev_char() -> Self {
-    Self::FindChar { direction: Direction::Backward, inclusive: true, extend: true }
+    Self::FindChar {
+      direction: Direction::Backward,
+      inclusive: true,
+      extend:    true,
+    }
   }
 
   #[must_use]
   pub const fn extend_till_prev_char() -> Self {
-    Self::FindChar { direction: Direction::Backward, inclusive: false, extend: true }
+    Self::FindChar {
+      direction: Direction::Backward,
+      inclusive: false,
+      extend:    true,
+    }
   }
 
   #[must_use]
@@ -1050,6 +1135,42 @@ impl Command {
   #[must_use]
   pub const fn select_textobject_inner() -> Self {
     Self::SelectTextobjectInner
+  }
+
+  #[must_use]
+  pub const fn search_next() -> Self {
+    Self::SearchNextOrPrev {
+      direction: Direction::Forward,
+      extend:    false,
+      count:     1,
+    }
+  }
+
+  #[must_use]
+  pub const fn search_prev() -> Self {
+    Self::SearchNextOrPrev {
+      direction: Direction::Backward,
+      extend:    false,
+      count:     1,
+    }
+  }
+
+  #[must_use]
+  pub const fn extend_search_next() -> Self {
+    Self::SearchNextOrPrev {
+      direction: Direction::Forward,
+      extend:    true,
+      count:     1,
+    }
+  }
+
+  #[must_use]
+  pub const fn extend_search_prev() -> Self {
+    Self::SearchNextOrPrev {
+      direction: Direction::Backward,
+      extend:    true,
+      count:     1,
+    }
   }
 
   #[must_use]

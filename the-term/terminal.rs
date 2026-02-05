@@ -5,22 +5,20 @@ use std::io::{
   Stdout,
 };
 
-use crossterm::terminal::{
-  EnterAlternateScreen,
-  LeaveAlternateScreen,
-};
 use crossterm::{
   execute,
   terminal::{
+    EnterAlternateScreen,
+    LeaveAlternateScreen,
     disable_raw_mode,
     enable_raw_mode,
   },
 };
 use eyre::Result;
 use ratatui::{
+  Terminal as RatatuiTerminal,
   backend::CrosstermBackend,
   prelude::Rect,
-  Terminal as RatatuiTerminal,
 };
 
 pub struct Terminal {

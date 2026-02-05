@@ -47,7 +47,7 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
 
       let ui_event = UiEvent {
         target: None,
-        kind: UiEventKind::Key(UiKeyEvent {
+        kind:   UiEventKind::Key(UiKeyEvent {
           key,
           modifiers: to_ui_modifiers(event.modifiers),
         }),
@@ -134,7 +134,8 @@ fn to_modifiers(modifiers: KeyModifiers, code: KeyCode) -> Modifiers {
     // Don't include SHIFT for characters that are inherently shifted
     // (uppercase letters, symbols produced by shift+number, etc.)
     // The shift is already represented in the character itself.
-    let dominated_by_char = matches!(code, KeyCode::Char(c) if c.is_uppercase() || "~!@#$%^&*()_+{}|:\"<>?".contains(c));
+    let dominated_by_char =
+      matches!(code, KeyCode::Char(c) if c.is_uppercase() || "~!@#$%^&*()_+{}|:\"<>?".contains(c));
     if !dominated_by_char {
       out.insert(Modifiers::SHIFT);
     }
@@ -144,9 +145,9 @@ fn to_modifiers(modifiers: KeyModifiers, code: KeyCode) -> Modifiers {
 
 fn to_ui_modifiers(modifiers: KeyModifiers) -> UiModifiers {
   UiModifiers {
-    ctrl: modifiers.contains(KeyModifiers::CONTROL),
-    alt: modifiers.contains(KeyModifiers::ALT),
+    ctrl:  modifiers.contains(KeyModifiers::CONTROL),
+    alt:   modifiers.contains(KeyModifiers::ALT),
     shift: modifiers.contains(KeyModifiers::SHIFT),
-    meta: modifiers.contains(KeyModifiers::SUPER),
+    meta:  modifiers.contains(KeyModifiers::SUPER),
   }
 }

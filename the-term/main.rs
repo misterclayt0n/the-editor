@@ -63,15 +63,17 @@ fn main() -> Result<()> {
   let cli = Cli::parse();
   if let Some(command) = cli.command {
     match command {
-      Command::Config { command } => match command {
-        ConfigCommand::Install => {
-          config_cli::install_config_template()?;
-          return Ok(());
-        },
-        ConfigCommand::Build => {
-          config_cli::build_config_binary()?;
-          return Ok(());
-        },
+      Command::Config { command } => {
+        match command {
+          ConfigCommand::Install => {
+            config_cli::install_config_template()?;
+            return Ok(());
+          },
+          ConfigCommand::Build => {
+            config_cli::build_config_binary()?;
+            return Ok(());
+          },
+        }
       },
     }
   }

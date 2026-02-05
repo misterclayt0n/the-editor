@@ -25,34 +25,34 @@ use std::{
 };
 
 use ropey::Rope;
+use the_config::{
+  build_dispatch as config_build_dispatch,
+  build_keymaps as config_build_keymaps,
+};
 use the_default::{
   Command,
   CommandEvent,
+  CommandPaletteLayout,
   CommandPaletteState,
   CommandPaletteStyle,
   CommandPaletteTheme,
-  CommandPaletteLayout,
   CommandPromptState,
   CommandRegistry,
   DefaultContext,
   DefaultDispatchStatic,
-  DispatchRef,
   Direction as CommandDirection,
+  DispatchRef,
   KeyBinding,
   KeyEvent,
   Keymaps,
   Mode,
   Motion,
-  command_palette_filtered_indices,
-  command_palette_default_selected,
-  command_palette_selected_filtered_index,
   SearchPromptState,
-  update_search_preview,
+  command_palette_default_selected,
+  command_palette_filtered_indices,
+  command_palette_selected_filtered_index,
   finalize_search,
-};
-use the_config::{
-  build_dispatch as config_build_dispatch,
-  build_keymaps as config_build_keymaps,
+  update_search_preview,
 };
 use the_lib::{
   Tendril,
@@ -75,13 +75,8 @@ use the_lib::{
     OverlayRectKind,
     OverlayText,
     RenderStyles,
-    build_plan,
     UiState,
-    theme::{
-      base16_default_theme,
-      default_theme,
-      Theme,
-    },
+    build_plan,
     graphics::{
       Color as LibColor,
       CursorKind as LibCursorKind,
@@ -95,6 +90,11 @@ use the_lib::{
       TextAnnotations,
     },
     text_format::TextFormat,
+    theme::{
+      Theme,
+      base16_default_theme,
+      default_theme,
+    },
   },
   selection::{
     CursorId,
@@ -657,22 +657,22 @@ impl Default for Document {
 }
 
 struct EditorState {
-  mode:           Mode,
-  command_prompt: CommandPromptState,
-  command_palette: CommandPaletteState,
+  mode:                  Mode,
+  command_prompt:        CommandPromptState,
+  command_palette:       CommandPaletteState,
   command_palette_style: CommandPaletteStyle,
-  search_prompt:  SearchPromptState,
-  ui_state:       UiState,
-  needs_render:   bool,
-  pending_input:  Option<the_default::PendingInput>,
-  register:       Option<char>,
-  macro_recording: Option<(char, Vec<KeyBinding>)>,
-  macro_replaying: Vec<char>,
-  macro_queue:    VecDeque<KeyEvent>,
-  text_format:    TextFormat,
-  inline_annotations: Vec<InlineAnnotation>,
-  overlay_annotations: Vec<Overlay>,
-  scrolloff:      usize,
+  search_prompt:         SearchPromptState,
+  ui_state:              UiState,
+  needs_render:          bool,
+  pending_input:         Option<the_default::PendingInput>,
+  register:              Option<char>,
+  macro_recording:       Option<(char, Vec<KeyBinding>)>,
+  macro_replaying:       Vec<char>,
+  macro_queue:           VecDeque<KeyEvent>,
+  text_format:           TextFormat,
+  inline_annotations:    Vec<InlineAnnotation>,
+  overlay_annotations:   Vec<Overlay>,
+  scrolloff:             usize,
 }
 
 impl EditorState {
@@ -714,17 +714,17 @@ fn select_ui_theme() -> Theme {
 
 /// FFI-safe app wrapper with editor management.
 pub struct App {
-  inner: LibApp,
-  dispatch: DefaultDispatchStatic<App>,
-  keymaps: Keymaps,
+  inner:            LibApp,
+  dispatch:         DefaultDispatchStatic<App>,
+  keymaps:          Keymaps,
   command_registry: CommandRegistry<App>,
-  states: HashMap<LibEditorId, EditorState>,
-  file_paths: HashMap<LibEditorId, PathBuf>,
-  active_editor: Option<LibEditorId>,
-  should_quit: bool,
-  registers: Registers,
-  last_motion: Option<Motion>,
-  ui_theme: Theme,
+  states:           HashMap<LibEditorId, EditorState>,
+  file_paths:       HashMap<LibEditorId, PathBuf>,
+  active_editor:    Option<LibEditorId>,
+  should_quit:      bool,
+  registers:        Registers,
+  last_motion:      Option<Motion>,
+  ui_theme:         Theme,
 }
 
 impl App {
@@ -1015,7 +1015,11 @@ impl App {
       .unwrap_or_default()
   }
 
-  pub fn command_palette_filtered_description(&mut self, id: ffi::EditorId, index: usize) -> String {
+  pub fn command_palette_filtered_description(
+    &mut self,
+    id: ffi::EditorId,
+    index: usize,
+  ) -> String {
     if self.activate(id).is_none() {
       return String::new();
     }
@@ -1054,7 +1058,11 @@ impl App {
       .unwrap_or_default()
   }
 
-  pub fn command_palette_filtered_leading_icon(&mut self, id: ffi::EditorId, index: usize) -> String {
+  pub fn command_palette_filtered_leading_icon(
+    &mut self,
+    id: ffi::EditorId,
+    index: usize,
+  ) -> String {
     if self.activate(id).is_none() {
       return String::new();
     }
@@ -1067,7 +1075,11 @@ impl App {
       .unwrap_or_default()
   }
 
-  pub fn command_palette_filtered_leading_color(&mut self, id: ffi::EditorId, index: usize) -> ffi::Color {
+  pub fn command_palette_filtered_leading_color(
+    &mut self,
+    id: ffi::EditorId,
+    index: usize,
+  ) -> ffi::Color {
     if self.activate(id).is_none() {
       return ffi::Color { kind: 0, value: 0 };
     }
@@ -1081,7 +1093,11 @@ impl App {
       .unwrap_or(ffi::Color { kind: 0, value: 0 })
   }
 
-  pub fn command_palette_filtered_symbol_count(&mut self, id: ffi::EditorId, index: usize) -> usize {
+  pub fn command_palette_filtered_symbol_count(
+    &mut self,
+    id: ffi::EditorId,
+    index: usize,
+  ) -> usize {
     if self.activate(id).is_none() {
       return 0;
     }
@@ -1666,7 +1682,11 @@ fn key_event_from_ffi(event: ffi::KeyEvent) -> the_default::KeyEvent {
   };
 
   let key = match event.kind {
-    0 => char::from_u32(event.codepoint).map(LibKey::Char).unwrap_or(LibKey::Other),
+    0 => {
+      char::from_u32(event.codepoint)
+        .map(LibKey::Char)
+        .unwrap_or(LibKey::Other)
+    },
     1 => LibKey::Enter,
     2 => LibKey::NumpadEnter,
     3 => LibKey::Escape,
@@ -1903,7 +1923,12 @@ mod ffi {
     fn command_palette_filtered_leading_icon(self: &mut App, id: EditorId, index: usize) -> String;
     fn command_palette_filtered_leading_color(self: &mut App, id: EditorId, index: usize) -> Color;
     fn command_palette_filtered_symbol_count(self: &mut App, id: EditorId, index: usize) -> usize;
-    fn command_palette_filtered_symbol(self: &mut App, id: EditorId, index: usize, symbol_index: usize) -> String;
+    fn command_palette_filtered_symbol(
+      self: &mut App,
+      id: EditorId,
+      index: usize,
+      symbol_index: usize,
+    ) -> String;
     fn command_palette_select_filtered(self: &mut App, id: EditorId, index: usize) -> bool;
     fn command_palette_submit_filtered(self: &mut App, id: EditorId, index: usize) -> bool;
     fn command_palette_close(self: &mut App, id: EditorId) -> bool;
@@ -1976,7 +2001,7 @@ mod ffi {
 
   #[swift_bridge(swift_repr = "struct")]
   struct KeyEvent {
-    kind: u8,
+    kind:      u8,
     codepoint: u32,
     modifiers: u8,
   }

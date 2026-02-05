@@ -134,12 +134,18 @@ fn resolve_node(
       let states = states_for(focus, container.id.as_deref());
       let role_value = container.style.role.clone();
       let role = role_value.as_deref().or(inherited_role);
-      resolve_style(&mut container.style, theme, role, UiComponent::Container, &states);
+      resolve_style(
+        &mut container.style,
+        theme,
+        role,
+        UiComponent::Container,
+        &states,
+      );
       let child_role = container.style.role.as_deref().or(inherited_role);
       for child in &mut container.children {
         resolve_node(child, theme, focus, child_role);
       }
-    }
+    },
     UiNode::Panel(panel) => {
       let states = states_for(focus, Some(panel.id.as_str()));
       let role_value = panel.style.role.clone();
@@ -147,38 +153,50 @@ fn resolve_node(
       resolve_style(&mut panel.style, theme, role, UiComponent::Panel, &states);
       let child_role = panel.style.role.as_deref().or(inherited_role);
       resolve_node(&mut panel.child, theme, focus, child_role);
-    }
+    },
     UiNode::Text(text) => {
       let states = states_for(focus, text.id.as_deref());
       let role_value = text.style.role.clone();
       let role = role_value.as_deref().or(inherited_role);
       resolve_style(&mut text.style, theme, role, UiComponent::Text, &states);
-    }
+    },
     UiNode::List(list) => {
       let states = states_for(focus, Some(list.id.as_str()));
       let role_value = list.style.role.clone();
       let role = role_value.as_deref().or(inherited_role);
       resolve_style(&mut list.style, theme, role, UiComponent::List, &states);
-    }
+    },
     UiNode::Input(input) => {
       let states = states_for(focus, Some(input.id.as_str()));
       let role_value = input.style.role.clone();
       let role = role_value.as_deref().or(inherited_role);
       resolve_style(&mut input.style, theme, role, UiComponent::Input, &states);
-    }
+    },
     UiNode::Tooltip(tooltip) => {
       let states = states_for(focus, tooltip.id.as_deref());
       let role_value = tooltip.style.role.clone();
       let role = role_value.as_deref().or(inherited_role);
-      resolve_style(&mut tooltip.style, theme, role, UiComponent::Tooltip, &states);
-    }
+      resolve_style(
+        &mut tooltip.style,
+        theme,
+        role,
+        UiComponent::Tooltip,
+        &states,
+      );
+    },
     UiNode::StatusBar(status_bar) => {
       let states = states_for(focus, status_bar.id.as_deref());
       let role_value = status_bar.style.role.clone();
       let role = role_value.as_deref().or(inherited_role);
-      resolve_style(&mut status_bar.style, theme, role, UiComponent::StatusBar, &states);
-    }
-    UiNode::Divider(_) | UiNode::Spacer(_) => {}
+      resolve_style(
+        &mut status_bar.style,
+        theme,
+        role,
+        UiComponent::StatusBar,
+        &states,
+      );
+    },
+    UiNode::Divider(_) | UiNode::Spacer(_) => {},
   }
 }
 
@@ -204,15 +222,42 @@ fn resolve_style(
   component: UiComponent,
   states: &[UiState],
 ) {
-  resolve_color_slot(&mut style.fg, theme, role, component, states, UiStyleProp::Fg);
-  resolve_color_slot(&mut style.bg, theme, role, component, states, UiStyleProp::Bg);
-  let skip_border = matches!(component, UiComponent::Panel)
-    && role == Some("statusline")
-    && style.border.is_none();
+  resolve_color_slot(
+    &mut style.fg,
+    theme,
+    role,
+    component,
+    states,
+    UiStyleProp::Fg,
+  );
+  resolve_color_slot(
+    &mut style.bg,
+    theme,
+    role,
+    component,
+    states,
+    UiStyleProp::Bg,
+  );
+  let skip_border =
+    matches!(component, UiComponent::Panel) && role == Some("statusline") && style.border.is_none();
   if !skip_border {
-    resolve_color_slot(&mut style.border, theme, role, component, states, UiStyleProp::Border);
+    resolve_color_slot(
+      &mut style.border,
+      theme,
+      role,
+      component,
+      states,
+      UiStyleProp::Border,
+    );
   }
-  resolve_color_slot(&mut style.accent, theme, role, component, states, UiStyleProp::Accent);
+  resolve_color_slot(
+    &mut style.accent,
+    theme,
+    role,
+    component,
+    states,
+    UiStyleProp::Accent,
+  );
 }
 
 fn resolve_color_slot(
@@ -334,10 +379,10 @@ fn legacy_scopes_for_component(
       if prop == "fg" {
         scopes.push("ui.text".to_string());
       }
-    }
+    },
     "text" => {
       scopes.push("ui.text".to_string());
-    }
+    },
     "input" => {
       if prop == "bg" {
         scopes.push("ui.popup".to_string());
@@ -352,7 +397,7 @@ fn legacy_scopes_for_component(
           "ui.text".to_string()
         });
       }
-    }
+    },
     "list" => {
       if is_selected {
         scopes.push("ui.menu.selected".to_string());
@@ -364,17 +409,17 @@ fn legacy_scopes_for_component(
       if prop == "fg" {
         scopes.push("ui.text".to_string());
       }
-    }
+    },
     "tooltip" => {
       scopes.push("ui.help".to_string());
-    }
+    },
     "status_bar" => {
       scopes.push("ui.statusline".to_string());
-    }
+    },
     "divider" => {
       scopes.push("ui.background.separator".to_string());
-    }
-    _ => {}
+    },
+    _ => {},
   }
 
   if prop == "accent" {

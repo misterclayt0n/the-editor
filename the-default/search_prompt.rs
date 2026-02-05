@@ -8,24 +8,24 @@ use the_lib::{
     Direction as LibDirection,
     Movement,
   },
-  search::{
-    build_regex,
-    search_regex,
-  },
-  selection::CursorPick,
   render::{
     UiColor,
     UiColorToken,
     UiContainer,
     UiDivider,
+    UiEmphasis,
     UiInput,
     UiList,
     UiListItem,
     UiNode,
     UiPanel,
     UiStyle,
-    UiEmphasis,
   },
+  search::{
+    build_regex,
+    search_regex,
+  },
+  selection::CursorPick,
 };
 
 use crate::{
@@ -38,31 +38,31 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct SearchPromptState {
-  pub active:      bool,
-  pub direction:   Direction,
-  pub query:       String,
-  pub cursor:      usize,
-  pub completions: Vec<String>,
-  pub error:       Option<String>,
-  pub register:    char,
-  pub extend:      bool,
+  pub active:             bool,
+  pub direction:          Direction,
+  pub query:              String,
+  pub cursor:             usize,
+  pub completions:        Vec<String>,
+  pub error:              Option<String>,
+  pub register:           char,
+  pub extend:             bool,
   pub original_selection: Option<the_lib::selection::Selection>,
-  pub selected:    Option<usize>,
+  pub selected:           Option<usize>,
 }
 
 impl SearchPromptState {
   pub fn new() -> Self {
     Self {
-      active: false,
-      direction: Direction::Forward,
-      query: String::new(),
-      cursor: 0,
-      completions: Vec::new(),
-      error: None,
-      register: '/',
-      extend: false,
+      active:             false,
+      direction:          Direction::Forward,
+      query:              String::new(),
+      cursor:             0,
+      completions:        Vec::new(),
+      error:              None,
+      register:           '/',
+      extend:             false,
       original_selection: None,
-      selected: None,
+      selected:           None,
     }
   }
 
@@ -205,7 +205,11 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
       }
       let prompt = ctx.search_prompt_mut();
       let current = prompt.selected.unwrap_or(filtered.len().saturating_sub(1));
-      let next = if current + 1 >= filtered.len() { 0 } else { current + 1 };
+      let next = if current + 1 >= filtered.len() {
+        0
+      } else {
+        current + 1
+      };
       prompt.selected = Some(next);
       apply_completion(prompt, &filtered[next]);
       should_update = true;
@@ -262,7 +266,11 @@ pub fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
   match build_regex(&query, true) {
     Ok(regex) => {
       ctx.search_prompt_mut().error = None;
-      let movement = if extend { Movement::Extend } else { Movement::Move };
+      let movement = if extend {
+        Movement::Extend
+      } else {
+        Movement::Move
+      };
       let doc = ctx.editor_ref().document();
       let text = doc.text().slice(..);
       let selection = ctx

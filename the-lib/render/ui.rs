@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
-use crate::render::graphics::Color;
 use serde::{
   Deserialize,
   Serialize,
 };
+
+use crate::render::graphics::Color;
 
 fn default_clip() -> bool {
   true
@@ -12,17 +13,17 @@ fn default_clip() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiTree {
-  pub root: UiNode,
+  pub root:     UiNode,
   pub overlays: Vec<UiNode>,
-  pub focus: Option<UiFocus>,
+  pub focus:    Option<UiFocus>,
 }
 
 impl UiTree {
   pub fn new() -> Self {
     Self {
-      root: UiNode::Container(UiContainer::default()),
+      root:     UiNode::Container(UiContainer::default()),
       overlays: Vec::new(),
-      focus: None,
+      focus:    None,
     }
   }
 }
@@ -68,11 +69,7 @@ impl UiNode {
     UiNode::Spacer(UiSpacer { id: None, size })
   }
 
-  pub fn container(
-    id: impl Into<String>,
-    layout: UiLayout,
-    children: Vec<UiNode>,
-  ) -> Self {
+  pub fn container(id: impl Into<String>, layout: UiLayout, children: Vec<UiNode>) -> Self {
     UiNode::Container(UiContainer::new(id, layout, children))
   }
 
@@ -95,8 +92,8 @@ impl UiNode {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UiState {
-  panels: HashMap<String, UiPanelState>,
-  nodes:  HashMap<String, UiNodeState>,
+  panels:    HashMap<String, UiPanelState>,
+  nodes:     HashMap<String, UiNodeState>,
   pub focus: Option<UiFocus>,
 }
 
@@ -111,7 +108,11 @@ impl UiState {
   }
 
   pub fn panel_visible(&self, id: &str) -> bool {
-    self.panels.get(id).map(|state| state.visible).unwrap_or(false)
+    self
+      .panels
+      .get(id)
+      .map(|state| state.visible)
+      .unwrap_or(false)
   }
 
   pub fn show_panel(&mut self, id: impl Into<String>) {
@@ -181,34 +182,30 @@ pub struct UiNodeState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiContainer {
-  pub id: Option<String>,
-  pub layout: UiLayout,
-  pub children: Vec<UiNode>,
-  pub style: UiStyle,
+  pub id:          Option<String>,
+  pub layout:      UiLayout,
+  pub children:    Vec<UiNode>,
+  pub style:       UiStyle,
   pub constraints: UiConstraints,
 }
 
 impl Default for UiContainer {
   fn default() -> Self {
     Self {
-      id: None,
-      layout: UiLayout::Stack {
+      id:          None,
+      layout:      UiLayout::Stack {
         axis: UiAxis::Vertical,
-        gap: 0,
+        gap:  0,
       },
-      children: Vec::new(),
-      style: UiStyle::default(),
+      children:    Vec::new(),
+      style:       UiStyle::default(),
       constraints: UiConstraints::default(),
     }
   }
 }
 
 impl UiContainer {
-  pub fn new(
-    id: impl Into<String>,
-    layout: UiLayout,
-    children: Vec<UiNode>,
-  ) -> Self {
+  pub fn new(id: impl Into<String>, layout: UiLayout, children: Vec<UiNode>) -> Self {
     Self {
       id: Some(id.into()),
       layout,
@@ -239,13 +236,13 @@ impl UiContainer {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiPanel {
-  pub id: String,
-  pub title: Option<String>,
-  pub intent: LayoutIntent,
-  pub style: UiStyle,
+  pub id:          String,
+  pub title:       Option<String>,
+  pub intent:      LayoutIntent,
+  pub style:       UiStyle,
   pub constraints: UiConstraints,
-  pub layer: UiLayer,
-  pub child: Box<UiNode>,
+  pub layer:       UiLayer,
+  pub child:       Box<UiNode>,
 }
 
 impl UiPanel {
@@ -263,76 +260,76 @@ impl UiPanel {
 
   pub fn floating(id: impl Into<String>, child: UiNode) -> Self {
     Self {
-      id: id.into(),
-      title: None,
-      intent: LayoutIntent::Floating,
-      style: UiStyle::panel(),
+      id:          id.into(),
+      title:       None,
+      intent:      LayoutIntent::Floating,
+      style:       UiStyle::panel(),
       constraints: UiConstraints::floating_default(),
-      layer: UiLayer::Overlay,
-      child: Box::new(child),
+      layer:       UiLayer::Overlay,
+      child:       Box::new(child),
     }
   }
 
   pub fn bottom(id: impl Into<String>, child: UiNode) -> Self {
     Self {
-      id: id.into(),
-      title: None,
-      intent: LayoutIntent::Bottom,
-      style: UiStyle::panel(),
+      id:          id.into(),
+      title:       None,
+      intent:      LayoutIntent::Bottom,
+      style:       UiStyle::panel(),
       constraints: UiConstraints::panel(),
-      layer: UiLayer::Overlay,
-      child: Box::new(child),
+      layer:       UiLayer::Overlay,
+      child:       Box::new(child),
     }
   }
 
   pub fn top(id: impl Into<String>, child: UiNode) -> Self {
     Self {
-      id: id.into(),
-      title: None,
-      intent: LayoutIntent::Top,
-      style: UiStyle::panel(),
+      id:          id.into(),
+      title:       None,
+      intent:      LayoutIntent::Top,
+      style:       UiStyle::panel(),
       constraints: UiConstraints::panel(),
-      layer: UiLayer::Overlay,
-      child: Box::new(child),
+      layer:       UiLayer::Overlay,
+      child:       Box::new(child),
     }
   }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiText {
-  pub id: Option<String>,
-  pub content: String,
-  pub style: UiStyle,
+  pub id:        Option<String>,
+  pub content:   String,
+  pub style:     UiStyle,
   #[serde(default)]
   pub max_lines: Option<u16>,
   #[serde(default = "default_clip")]
-  pub clip: bool,
+  pub clip:      bool,
 }
 
 impl UiText {
   pub fn new(id: impl Into<String>, content: impl Into<String>) -> Self {
     Self {
-      id: Some(id.into()),
-      content: content.into(),
-      style: UiStyle::default(),
+      id:        Some(id.into()),
+      content:   content.into(),
+      style:     UiStyle::default(),
       max_lines: None,
-      clip: true,
+      clip:      true,
     }
   }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiList {
-  pub id: String,
-  pub items: Vec<UiListItem>,
-  pub selected: Option<usize>,
-  pub scroll: usize,
-  pub fill_width: bool,
-  pub style: UiStyle,
+  pub id:          String,
+  pub items:       Vec<UiListItem>,
+  pub selected:    Option<usize>,
+  pub scroll:      usize,
+  pub fill_width:  bool,
+  pub style:       UiStyle,
   #[serde(default)]
   pub max_visible: Option<usize>,
   #[serde(default = "default_clip")]
-  pub clip: bool,
+  pub clip:        bool,
 }
 
 impl UiList {
@@ -352,35 +349,35 @@ impl UiList {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiListItem {
-  pub title: String,
-  pub subtitle: Option<String>,
-  pub description: Option<String>,
-  pub shortcut: Option<String>,
-  pub badge: Option<String>,
+  pub title:         String,
+  pub subtitle:      Option<String>,
+  pub description:   Option<String>,
+  pub shortcut:      Option<String>,
+  pub badge:         Option<String>,
   #[serde(default)]
-  pub leading_icon: Option<String>,
+  pub leading_icon:  Option<String>,
   #[serde(default)]
   pub leading_color: Option<UiColor>,
   #[serde(default)]
-  pub symbols: Option<Vec<String>>,
-  pub emphasis: bool,
+  pub symbols:       Option<Vec<String>>,
+  pub emphasis:      bool,
   #[serde(default)]
-  pub action: Option<String>,
+  pub action:        Option<String>,
 }
 
 impl UiListItem {
   pub fn new(title: impl Into<String>) -> Self {
     Self {
-      title: title.into(),
-      subtitle: None,
-      description: None,
-      shortcut: None,
-      badge: None,
-      leading_icon: None,
+      title:         title.into(),
+      subtitle:      None,
+      description:   None,
+      shortcut:      None,
+      badge:         None,
+      leading_icon:  None,
       leading_color: None,
-      symbols: None,
-      emphasis: false,
-      action: None,
+      symbols:       None,
+      emphasis:      false,
+      action:        None,
     }
   }
 
@@ -392,21 +389,21 @@ impl UiListItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiInput {
-  pub id: String,
-  pub value: String,
+  pub id:          String,
+  pub value:       String,
   pub placeholder: Option<String>,
-  pub cursor: usize,
-  pub style: UiStyle,
+  pub cursor:      usize,
+  pub style:       UiStyle,
 }
 
 impl UiInput {
   pub fn new(id: impl Into<String>, value: impl Into<String>) -> Self {
     Self {
-      id: id.into(),
-      value: value.into(),
+      id:          id.into(),
+      value:       value.into(),
       placeholder: None,
-      cursor: 0,
-      style: UiStyle::default(),
+      cursor:      0,
+      style:       UiStyle::default(),
     }
   }
 }
@@ -418,26 +415,26 @@ pub struct UiDivider {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiSpacer {
-  pub id: Option<String>,
+  pub id:   Option<String>,
   pub size: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiTooltip {
-  pub id: Option<String>,
-  pub target: Option<String>,
+  pub id:        Option<String>,
+  pub target:    Option<String>,
   pub placement: LayoutIntent,
-  pub content: String,
-  pub style: UiStyle,
+  pub content:   String,
+  pub style:     UiStyle,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiStatusBar {
-  pub id: Option<String>,
-  pub left: String,
+  pub id:     Option<String>,
+  pub left:   String,
   pub center: String,
-  pub right: String,
-  pub style: UiStyle,
+  pub right:  String,
+  pub style:  UiStyle,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -501,14 +498,14 @@ impl Default for UiAlign {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct UiAlignPair {
   pub horizontal: UiAlign,
-  pub vertical: UiAlign,
+  pub vertical:   UiAlign,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct UiInsets {
-  pub left: u16,
-  pub right: u16,
-  pub top: u16,
+  pub left:   u16,
+  pub right:  u16,
+  pub top:    u16,
   pub bottom: u16,
 }
 
@@ -524,21 +521,21 @@ impl UiInsets {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct UiConstraints {
-  pub min_width: Option<u16>,
-  pub max_width: Option<u16>,
+  pub min_width:  Option<u16>,
+  pub max_width:  Option<u16>,
   pub min_height: Option<u16>,
   pub max_height: Option<u16>,
-  pub padding: UiInsets,
-  pub align: UiAlignPair,
+  pub padding:    UiInsets,
+  pub align:      UiAlignPair,
 }
 
 impl UiConstraints {
   pub fn panel() -> Self {
     Self {
       padding: UiInsets {
-        left: 1,
-        right: 1,
-        top: 1,
+        left:   1,
+        right:  1,
+        top:    1,
         bottom: 1,
       },
       ..Self::default()
@@ -547,19 +544,19 @@ impl UiConstraints {
 
   pub fn floating_default() -> Self {
     Self {
-      min_width: Some(40),
-      max_width: Some(70),
+      min_width:  Some(40),
+      max_width:  Some(70),
       min_height: Some(8),
       max_height: Some(22),
-      padding: UiInsets {
-        left: 1,
-        right: 1,
-        top: 1,
+      padding:    UiInsets {
+        left:   1,
+        right:  1,
+        top:    1,
         bottom: 1,
       },
-      align: UiAlignPair {
+      align:      UiAlignPair {
         horizontal: UiAlign::Center,
-        vertical: UiAlign::Center,
+        vertical:   UiAlign::Center,
       },
     }
   }
@@ -602,26 +599,26 @@ pub enum UiColor {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiStyle {
-  pub fg: Option<UiColor>,
-  pub bg: Option<UiColor>,
-  pub border: Option<UiColor>,
-  pub accent: Option<UiColor>,
+  pub fg:       Option<UiColor>,
+  pub bg:       Option<UiColor>,
+  pub border:   Option<UiColor>,
+  pub accent:   Option<UiColor>,
   pub emphasis: UiEmphasis,
-  pub radius: UiRadius,
+  pub radius:   UiRadius,
   #[serde(default)]
-  pub role: Option<String>,
+  pub role:     Option<String>,
 }
 
 impl Default for UiStyle {
   fn default() -> Self {
     Self {
-      fg: None,
-      bg: None,
-      border: None,
-      accent: None,
+      fg:       None,
+      bg:       None,
+      border:   None,
+      accent:   None,
       emphasis: UiEmphasis::Normal,
-      radius: UiRadius::None,
-      role: None,
+      radius:   UiRadius::None,
+      role:     None,
     }
   }
 }
@@ -629,13 +626,13 @@ impl Default for UiStyle {
 impl UiStyle {
   pub fn panel() -> Self {
     Self {
-      fg: Some(UiColor::Token(UiColorToken::Text)),
-      bg: Some(UiColor::Token(UiColorToken::PanelBg)),
-      border: Some(UiColor::Token(UiColorToken::PanelBorder)),
-      accent: None,
+      fg:       Some(UiColor::Token(UiColorToken::Text)),
+      bg:       Some(UiColor::Token(UiColorToken::PanelBg)),
+      border:   Some(UiColor::Token(UiColorToken::PanelBorder)),
+      accent:   None,
       emphasis: UiEmphasis::Normal,
-      radius: UiRadius::Small,
-      role: None,
+      radius:   UiRadius::Small,
+      role:     None,
     }
   }
 
@@ -647,8 +644,8 @@ impl UiStyle {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiFocus {
-  pub id: String,
-  pub kind: UiFocusKind,
+  pub id:     String,
+  pub kind:   UiFocusKind,
   pub cursor: Option<usize>,
 }
 
@@ -672,8 +669,8 @@ impl UiFocus {
 
   pub fn list(id: impl Into<String>) -> Self {
     Self {
-      id: id.into(),
-      kind: UiFocusKind::List,
+      id:     id.into(),
+      kind:   UiFocusKind::List,
       cursor: None,
     }
   }
@@ -681,10 +678,10 @@ impl UiFocus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct UiModifiers {
-  pub ctrl: bool,
-  pub alt: bool,
+  pub ctrl:  bool,
+  pub alt:   bool,
   pub shift: bool,
-  pub meta: bool,
+  pub meta:  bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -709,7 +706,7 @@ pub enum UiKey {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiKeyEvent {
-  pub key: UiKey,
+  pub key:       UiKey,
   pub modifiers: UiModifiers,
 }
 
@@ -725,34 +722,34 @@ pub enum UiEventKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiEvent {
   pub target: Option<String>,
-  pub kind: UiEventKind,
+  pub kind:   UiEventKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiEventOutcome {
   pub handled: bool,
-  pub focus: Option<UiFocus>,
+  pub focus:   Option<UiFocus>,
 }
 
 impl UiEventOutcome {
   pub fn handled() -> Self {
     Self {
       handled: true,
-      focus: None,
+      focus:   None,
     }
   }
 
   pub fn r#continue() -> Self {
     Self {
       handled: false,
-      focus: None,
+      focus:   None,
     }
   }
 
   pub fn focus(focus: UiFocus) -> Self {
     Self {
       handled: true,
-      focus: Some(focus),
+      focus:   Some(focus),
     }
   }
 }

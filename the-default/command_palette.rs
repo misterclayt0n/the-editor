@@ -1,3 +1,4 @@
+use the_core::chars::byte_to_char_idx;
 use the_lib::{
   fuzzy::{
     MatchMode,
@@ -5,6 +6,9 @@ use the_lib::{
   },
   render::{
     LayoutIntent,
+    UiColor,
+    UiColorToken,
+    UiConstraints,
     UiContainer,
     UiDivider,
     UiInput,
@@ -12,43 +16,39 @@ use the_lib::{
     UiListItem,
     UiNode,
     UiPanel,
-    UiColor,
-    UiColorToken,
-    UiConstraints,
     graphics::Color,
   },
 };
-use the_core::chars::byte_to_char_idx;
 
 use crate::DefaultContext;
 
 #[derive(Debug, Clone)]
 pub struct CommandPaletteItem {
-  pub title:       String,
-  pub subtitle:    Option<String>,
-  pub description: Option<String>,
-  pub aliases:     Vec<String>,
-  pub shortcut:    Option<String>,
-  pub badge:       Option<String>,
-  pub leading_icon: Option<String>,
+  pub title:         String,
+  pub subtitle:      Option<String>,
+  pub description:   Option<String>,
+  pub aliases:       Vec<String>,
+  pub shortcut:      Option<String>,
+  pub badge:         Option<String>,
+  pub leading_icon:  Option<String>,
   pub leading_color: Option<Color>,
-  pub symbols:     Option<Vec<String>>,
-  pub emphasis:    bool,
+  pub symbols:       Option<Vec<String>>,
+  pub emphasis:      bool,
 }
 
 impl CommandPaletteItem {
   pub fn new(title: impl Into<String>) -> Self {
     Self {
-      title:       title.into(),
-      subtitle:    None,
-      description: None,
-      aliases:     Vec::new(),
-      shortcut:    None,
-      badge:       None,
-      leading_icon: None,
+      title:         title.into(),
+      subtitle:      None,
+      description:   None,
+      aliases:       Vec::new(),
+      shortcut:      None,
+      badge:         None,
+      leading_icon:  None,
       leading_color: None,
-      symbols:     None,
-      emphasis:    false,
+      symbols:       None,
+      emphasis:      false,
     }
   }
 }
@@ -83,9 +83,8 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
 
   let filtered = command_palette_filtered_indices(state);
   let selected = command_palette_selected_filtered_index(state).or_else(|| {
-    command_palette_default_selected(state).and_then(|sel| {
-      filtered.iter().position(|&idx| idx == sel)
-    })
+    command_palette_default_selected(state)
+      .and_then(|sel| filtered.iter().position(|&idx| idx == sel))
   });
 
   let mut items = Vec::with_capacity(filtered.len());
@@ -139,17 +138,9 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   let list = UiNode::List(list);
 
   let children = if matches!(layout, CommandPaletteLayout::Bottom) {
-    vec![
-      list,
-      UiNode::Divider(UiDivider { id: None }),
-      input,
-    ]
+    vec![list, UiNode::Divider(UiDivider { id: None }), input]
   } else {
-    vec![
-      input,
-      UiNode::Divider(UiDivider { id: None }),
-      list,
-    ]
+    vec![input, UiNode::Divider(UiDivider { id: None }), list]
   };
 
   let mut container = UiContainer::column("command_palette_container", 0, children);
@@ -206,9 +197,11 @@ pub fn command_palette_filtered_indices(state: &CommandPaletteState) -> Vec<usiz
       .items
       .iter()
       .enumerate()
-      .map(|(idx, item)| PaletteKey {
-        index: idx,
-        text:  item.title.clone(),
+      .map(|(idx, item)| {
+        PaletteKey {
+          index: idx,
+          text:  item.title.clone(),
+        }
       })
       .collect();
 
@@ -260,15 +253,15 @@ pub struct CommandPaletteTheme {
 }
 
 pub struct CommandPaletteStyle {
-  pub layout:         CommandPaletteLayout,
-  pub theme:          CommandPaletteTheme,
+  pub layout: CommandPaletteLayout,
+  pub theme:  CommandPaletteTheme,
 }
 
 impl Default for CommandPaletteStyle {
   fn default() -> Self {
     Self {
-      layout:         CommandPaletteLayout::Floating,
-      theme:          CommandPaletteTheme::default(),
+      layout: CommandPaletteLayout::Floating,
+      theme:  CommandPaletteTheme::default(),
     }
   }
 }
@@ -276,21 +269,21 @@ impl Default for CommandPaletteStyle {
 impl CommandPaletteStyle {
   pub fn floating(theme: CommandPaletteTheme) -> Self {
     Self {
-      layout:         CommandPaletteLayout::Floating,
+      layout: CommandPaletteLayout::Floating,
       theme,
     }
   }
 
   pub fn bottom(theme: CommandPaletteTheme) -> Self {
     Self {
-      layout:         CommandPaletteLayout::Bottom,
+      layout: CommandPaletteLayout::Bottom,
       theme,
     }
   }
 
   pub fn top(theme: CommandPaletteTheme) -> Self {
     Self {
-      layout:         CommandPaletteLayout::Top,
+      layout: CommandPaletteLayout::Top,
       theme,
     }
   }

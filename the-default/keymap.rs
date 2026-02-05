@@ -10,14 +10,14 @@ use the_lib::selection::Range;
 
 use crate::{
   Command,
+  CommandPaletteItem,
   DefaultContext,
   Key,
   KeyEvent,
   KeyOutcome,
   Modifiers,
-  command_palette_default_selected,
   command_from_name,
-  CommandPaletteItem,
+  command_palette_default_selected,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -743,8 +743,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
     "/" => search,
     "?" => rsearch,
-    // "n" => search_next,
-    // "N" => search_prev,
+    "n" => search_next,
+    "N" => search_prev,
     // "*" => search_selection_detect_word_boundaries,
     // "A-*" => search_selection,
 
@@ -951,8 +951,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "A-e" => extend_parent_node_end,
     "A-b" => extend_parent_node_start,
 
-    // "n" => extend_search_next,
-    // "N" => extend_search_prev,
+    "n" => extend_search_next,
+    "N" => extend_search_prev,
 
     "t" => extend_till_char,
     "f" => extend_next_char,

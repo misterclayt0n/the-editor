@@ -149,7 +149,8 @@ fn read_package_name(config_dir: &Path) -> Result<String> {
       if !value.is_empty() {
         if value == "the-config" {
           return Err(eyre::eyre!(
-            "config crate package name must not be \"the-config\"; please rename it (e.g. to \"the-config-user\") in {}",
+            "config crate package name must not be \"the-config\"; please rename it (e.g. to \
+             \"the-config-user\") in {}",
             manifest.display()
           ));
         }

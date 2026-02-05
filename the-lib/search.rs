@@ -219,7 +219,11 @@ pub fn find_nth_prev<M: CharMatcher>(
 pub fn build_regex(query: &str, smart_case: bool) -> Result<Regex, String> {
   let case_insensitive = smart_case && !query.chars().any(char::is_uppercase);
   RegexBuilder::new()
-    .syntax(Config::new().case_insensitive(case_insensitive).multi_line(true))
+    .syntax(
+      Config::new()
+        .case_insensitive(case_insensitive)
+        .multi_line(true),
+    )
     .build(query)
     .map_err(|err| err.to_string())
 }
@@ -242,9 +246,7 @@ pub fn search_regex(
 
   let start = match direction {
     Direction::Forward => text.char_to_byte(ensure_grapheme_boundary_next(text, primary.to())),
-    Direction::Backward => {
-      text.char_to_byte(ensure_grapheme_boundary_prev(text, primary.from()))
-    },
+    Direction::Backward => text.char_to_byte(ensure_grapheme_boundary_prev(text, primary.from())),
   };
 
   let mut mat = match direction {
@@ -277,13 +279,13 @@ pub fn search_regex(
 #[cfg(test)]
 mod test {
   use ropey::Rope;
+  use smallvec::smallvec;
 
   use super::*;
   use crate::selection::{
     Range,
     Selection,
   };
-  use smallvec::smallvec;
 
   #[test]
   fn find_next_char() {

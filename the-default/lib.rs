@@ -4,21 +4,15 @@
 //! `the-lib` without hard-coding UI event types into `the-dispatch`.
 
 mod command;
-mod command_types;
-mod command_registry;
-mod input;
 mod command_palette;
-mod statusline;
+mod command_registry;
+mod command_types;
+mod input;
 mod keymap;
 mod pending;
 mod search_prompt;
+mod statusline;
 
-pub use command_types::{
-  Command,
-  Direction,
-  Motion,
-  WordMotion,
-};
 pub use command::{
   DefaultApi,
   DefaultContext,
@@ -26,22 +20,25 @@ pub use command::{
   DefaultDispatchStatic,
   DispatchRef,
   build_dispatch,
+  command_from_name,
   default_pre_on_keypress,
+  handle_command,
+  handle_key,
   render_plan,
   render_plan_with_styles,
   ui_event,
   ui_tree,
-  command_from_name,
-  handle_command,
-  handle_key,
 };
-pub use input::{
-  Key,
-  KeyEvent,
-  KeyOutcome,
-  Modifiers,
+pub use command_palette::{
+  CommandPaletteItem,
+  CommandPaletteLayout,
+  CommandPaletteState,
+  CommandPaletteStyle,
+  CommandPaletteTheme,
+  command_palette_default_selected,
+  command_palette_filtered_indices,
+  command_palette_selected_filtered_index,
 };
-pub use pending::PendingInput;
 pub use command_registry::{
   CommandCompleter,
   CommandError,
@@ -54,20 +51,17 @@ pub use command_registry::{
   completers,
   handle_command_prompt_key,
 };
-pub use command_palette::{
-  CommandPaletteLayout,
-  CommandPaletteItem,
-  CommandPaletteState,
-  CommandPaletteStyle,
-  CommandPaletteTheme,
-  command_palette_default_selected,
-  command_palette_filtered_indices,
-  command_palette_selected_filtered_index,
+pub use command_types::{
+  Command,
+  Direction,
+  Motion,
+  WordMotion,
 };
-pub use search_prompt::{
-  SearchPromptState,
-  update_search_preview,
-  finalize_search,
+pub use input::{
+  Key,
+  KeyEvent,
+  KeyOutcome,
+  Modifiers,
 };
 pub use keymap::{
   KeyAction,
@@ -79,4 +73,10 @@ pub use keymap::{
   Mode,
   action_from_name,
   default,
+};
+pub use pending::PendingInput;
+pub use search_prompt::{
+  SearchPromptState,
+  finalize_search,
+  update_search_preview,
 };

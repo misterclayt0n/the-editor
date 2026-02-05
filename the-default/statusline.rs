@@ -17,10 +17,12 @@ use crate::{
 pub const STATUSLINE_ID: &str = "statusline";
 
 pub fn statusline_present(tree: &the_lib::render::UiTree) -> bool {
-  tree.overlays.iter().any(|node| match node {
-    UiNode::Panel(panel) => panel.id == STATUSLINE_ID,
-    UiNode::StatusBar(status) => status.id.as_deref() == Some(STATUSLINE_ID),
-    _ => false,
+  tree.overlays.iter().any(|node| {
+    match node {
+      UiNode::Panel(panel) => panel.id == STATUSLINE_ID,
+      UiNode::StatusBar(status) => status.id.as_deref() == Some(STATUSLINE_ID),
+      _ => false,
+    }
   })
 }
 
@@ -68,7 +70,11 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
     style: UiStyle::default().with_role("statusline"),
   };
 
-  let mut panel = UiPanel::new(STATUSLINE_ID, LayoutIntent::Bottom, UiNode::StatusBar(status));
+  let mut panel = UiPanel::new(
+    STATUSLINE_ID,
+    LayoutIntent::Bottom,
+    UiNode::StatusBar(status),
+  );
   panel.style = UiStyle::default().with_role("statusline");
   panel.style.border = None;
   panel.layer = UiLayer::Background;
@@ -76,9 +82,9 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
     min_height: Some(1),
     max_height: Some(1),
     padding: UiInsets {
-      left: 1,
-      right: 1,
-      top: 0,
+      left:   1,
+      right:  1,
+      top:    0,
       bottom: 0,
     },
     ..UiConstraints::default()

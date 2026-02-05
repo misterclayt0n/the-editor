@@ -1,7 +1,8 @@
 //! Pending input state for commands that wait on the next keypress.
 
-use crate::Direction;
 use the_lib::text_object::TextObject;
+
+use crate::Direction;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingInput {

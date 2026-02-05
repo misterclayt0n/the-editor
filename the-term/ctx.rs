@@ -15,10 +15,10 @@ use std::{
 use eyre::Result;
 use ropey::Rope;
 use the_default::{
-  CommandPromptState,
-  CommandRegistry,
   CommandPaletteState,
   CommandPaletteStyle,
+  CommandPromptState,
+  CommandRegistry,
   DefaultDispatchStatic,
   DispatchRef,
   KeyBinding,
@@ -38,21 +38,23 @@ use the_lib::{
   },
   position::Position,
   registers::Registers,
-  render::graphics::Rect,
-  render::theme::{
-    base16_default_theme,
-    default_theme,
-    Theme,
+  render::{
+    RenderPlan,
+    RenderStyles,
+    UiState,
+    graphics::Rect,
+    text_annotations::{
+      InlineAnnotation,
+      Overlay,
+      TextAnnotations,
+    },
+    text_format::TextFormat,
+    theme::{
+      Theme,
+      base16_default_theme,
+      default_theme,
+    },
   },
-  render::UiState,
-  render::RenderStyles,
-  render::text_annotations::{
-    InlineAnnotation,
-    Overlay,
-    TextAnnotations,
-  },
-  render::RenderPlan,
-  render::text_format::TextFormat,
   syntax::{
     HighlightCache,
     Loader,
@@ -64,45 +66,45 @@ use the_runtime::clipboard::ClipboardProvider;
 
 /// Application state passed to all handlers.
 pub struct Ctx {
-  pub editor:           Editor,
-  pub file_path:        Option<PathBuf>,
-  pub should_quit:      bool,
-  pub needs_render:     bool,
-  pub mode:             Mode,
-  pub keymaps:          Keymaps,
-  pub command_prompt:   CommandPromptState,
-  pub command_registry: CommandRegistry<Ctx>,
-  pub command_palette:  CommandPaletteState,
+  pub editor:                Editor,
+  pub file_path:             Option<PathBuf>,
+  pub should_quit:           bool,
+  pub needs_render:          bool,
+  pub mode:                  Mode,
+  pub keymaps:               Keymaps,
+  pub command_prompt:        CommandPromptState,
+  pub command_registry:      CommandRegistry<Ctx>,
+  pub command_palette:       CommandPaletteState,
   pub command_palette_style: CommandPaletteStyle,
-  pub search_prompt:    the_default::SearchPromptState,
-  pub ui_theme:         Theme,
-  pub ui_state:         UiState,
-  pub pending_input:    Option<the_default::PendingInput>,
-  pub dispatch:         Option<NonNull<DefaultDispatchStatic<Ctx>>>,
+  pub search_prompt:         the_default::SearchPromptState,
+  pub ui_theme:              Theme,
+  pub ui_state:              UiState,
+  pub pending_input:         Option<the_default::PendingInput>,
+  pub dispatch:              Option<NonNull<DefaultDispatchStatic<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
-  pub loader:           Option<Arc<Loader>>,
+  pub loader:                Option<Arc<Loader>>,
   /// Cache for syntax highlights (reused across renders).
-  pub highlight_cache:  HighlightCache,
+  pub highlight_cache:       HighlightCache,
   /// Registers for yanking/pasting.
-  pub registers:        Registers,
+  pub registers:             Registers,
   /// Active register target (for macros/register operations).
-  pub register:         Option<char>,
+  pub register:              Option<char>,
   /// Macro recording state.
-  pub macro_recording:  Option<(char, Vec<KeyBinding>)>,
+  pub macro_recording:       Option<(char, Vec<KeyBinding>)>,
   /// Macro replay stack for recursion guard.
-  pub macro_replaying:  Vec<char>,
+  pub macro_replaying:       Vec<char>,
   /// Pending macro key events to replay.
-  pub macro_queue:      VecDeque<KeyEvent>,
+  pub macro_queue:           VecDeque<KeyEvent>,
   /// Last executed motion for repeat.
-  pub last_motion:      Option<Motion>,
+  pub last_motion:           Option<Motion>,
   /// Render formatting used for visual position mapping.
-  pub text_format:      TextFormat,
+  pub text_format:           TextFormat,
   /// Inline annotations (virtual text) for rendering.
-  pub inline_annotations: Vec<InlineAnnotation>,
+  pub inline_annotations:    Vec<InlineAnnotation>,
   /// Overlay annotations (virtual text) for rendering.
-  pub overlay_annotations: Vec<Overlay>,
+  pub overlay_annotations:   Vec<Overlay>,
   /// Lines to keep above/below cursor when scrolling.
-  pub scrolloff: usize,
+  pub scrolloff:             usize,
 }
 
 fn select_ui_theme() -> Theme {

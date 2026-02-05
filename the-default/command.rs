@@ -1245,6 +1245,7 @@ fn insert_newline<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
 }
 
 fn goto_line_start<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
+  let extend = extend || ctx.mode() == Mode::Select;
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
@@ -1259,6 +1260,7 @@ fn goto_line_start<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
 }
 
 fn goto_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
+  let extend = extend || ctx.mode() == Mode::Select;
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);

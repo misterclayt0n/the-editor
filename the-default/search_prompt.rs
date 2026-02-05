@@ -265,9 +265,13 @@ fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
       let movement = if extend { Movement::Extend } else { Movement::Move };
       let doc = ctx.editor_ref().document();
       let text = doc.text().slice(..);
-      let selection = doc.selection();
+      let selection = ctx
+        .search_prompt_ref()
+        .original_selection
+        .clone()
+        .unwrap_or_else(|| doc.selection().clone());
       let pick = CursorPick::First; // no active cursor concept yet
-      if let Some(next) = search_regex(text, selection, pick, &regex, movement, direction, true) {
+      if let Some(next) = search_regex(text, &selection, pick, &regex, movement, direction, true) {
         let _ = ctx.editor().document_mut().set_selection(next);
       }
     },
@@ -287,25 +291,9 @@ fn finalize_search<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
     return true;
   }
 
-  let direction = match to_lib_direction(ctx.search_prompt_ref().direction) {
-    Some(dir) => dir,
-    None => return false,
-  };
-
   match build_regex(&query, true) {
-    Ok(regex) => {
-      let movement = if ctx.search_prompt_ref().extend {
-        Movement::Extend
-      } else {
-        Movement::Move
-      };
-      let doc = ctx.editor_ref().document();
-      let text = doc.text().slice(..);
-      let selection = doc.selection();
-      let pick = CursorPick::First; // no active cursor concept yet
-      if let Some(next) = search_regex(text, selection, pick, &regex, movement, direction, true) {
-        let _ = ctx.editor().document_mut().set_selection(next);
-      }
+    Ok(_) => {
+      ctx.search_prompt_mut().error = None;
     },
     Err(err) => {
       ctx.search_prompt_mut().error = Some(err);

@@ -16,6 +16,8 @@ use the_stdx::rope::{
 use crate::{
   DefaultContext,
   Direction,
+  Key,
+  KeyEvent,
   Mode,
 };
 
@@ -87,6 +89,82 @@ pub fn open_search_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Directi
   prompt.extend = extend;
 
   ctx.request_render();
+}
+
+pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) -> bool {
+  if !ctx.search_prompt_ref().active {
+    return false;
+  }
+
+  let mut should_update = false;
+
+  match key.key {
+    Key::Escape => {
+      ctx.search_prompt_mut().clear();
+      ctx.request_render();
+      return true;
+    },
+    Key::Enter | Key::NumpadEnter => {
+      if finalize_search(ctx) {
+        ctx.search_prompt_mut().clear();
+      }
+      ctx.request_render();
+      return true;
+    },
+    Key::Backspace => {
+      let prompt = ctx.search_prompt_mut();
+      if prompt.cursor > 0 && prompt.cursor <= prompt.query.len() {
+        let prev = prev_char_boundary(&prompt.query, prompt.cursor);
+        prompt.query.replace_range(prev..prompt.cursor, "");
+        prompt.cursor = prev;
+        should_update = true;
+      }
+    },
+    Key::Delete => {
+      let prompt = ctx.search_prompt_mut();
+      if prompt.cursor < prompt.query.len() {
+        let next = next_char_boundary(&prompt.query, prompt.cursor);
+        prompt.query.replace_range(prompt.cursor..next, "");
+        should_update = true;
+      }
+    },
+    Key::Left => {
+      let prompt = ctx.search_prompt_mut();
+      prompt.cursor = prev_char_boundary(&prompt.query, prompt.cursor);
+      should_update = true;
+    },
+    Key::Right => {
+      let prompt = ctx.search_prompt_mut();
+      prompt.cursor = next_char_boundary(&prompt.query, prompt.cursor);
+      should_update = true;
+    },
+    Key::Home => {
+      ctx.search_prompt_mut().cursor = 0;
+      should_update = true;
+    },
+    Key::End => {
+      let prompt = ctx.search_prompt_mut();
+      prompt.cursor = prompt.query.len();
+      should_update = true;
+    },
+    Key::Char(ch) => {
+      if key.modifiers.ctrl() || key.modifiers.alt() {
+        return true;
+      }
+      let prompt = ctx.search_prompt_mut();
+      prompt.query.insert(prompt.cursor, ch);
+      prompt.cursor += ch.len_utf8();
+      should_update = true;
+    },
+    _ => {},
+  }
+
+  if should_update {
+    update_search_preview(ctx);
+    ctx.request_render();
+  }
+
+  true
 }
 
 pub fn build_search_regex(query: &str) -> Result<Regex, String> {
@@ -162,4 +240,91 @@ pub fn search_impl<Ctx: DefaultContext>(
 
     let _ = ctx.editor().document_mut().set_selection(next);
   }
+}
+
+fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
+  let (query, direction, extend) = {
+    let prompt = ctx.search_prompt_ref();
+    (prompt.query.clone(), prompt.direction, prompt.extend)
+  };
+
+  if query.is_empty() {
+    ctx.search_prompt_mut().error = None;
+    return;
+  }
+
+  match build_search_regex(&query) {
+    Ok(regex) => {
+      ctx.search_prompt_mut().error = None;
+      let movement = if extend { Movement::Extend } else { Movement::Move };
+      search_impl(ctx, &regex, movement, direction, true, false);
+    },
+    Err(err) => {
+      ctx.search_prompt_mut().error = Some(err);
+    },
+  }
+}
+
+fn finalize_search<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
+  let (query, register) = {
+    let prompt = ctx.search_prompt_ref();
+    (prompt.query.clone(), prompt.register)
+  };
+
+  if query.is_empty() {
+    return true;
+  }
+
+  match build_search_regex(&query) {
+    Ok(regex) => {
+      let movement = if ctx.search_prompt_ref().extend {
+        Movement::Extend
+      } else {
+        Movement::Move
+      };
+      search_impl(ctx, &regex, movement, ctx.search_prompt_ref().direction, true, false);
+    },
+    Err(err) => {
+      ctx.search_prompt_mut().error = Some(err);
+      return false;
+    },
+  }
+
+  if let Err(err) = ctx.registers_mut().write(register, vec![query]) {
+    ctx.search_prompt_mut().error = Some(err.to_string());
+    return false;
+  }
+
+  ctx.registers_mut().last_search_register = register;
+  true
+}
+
+fn prev_char_boundary(s: &str, idx: usize) -> usize {
+  if idx == 0 {
+    return 0;
+  }
+  let mut prev = 0;
+  for (i, _) in s.char_indices() {
+    if i >= idx {
+      break;
+    }
+    prev = i;
+  }
+  prev
+}
+
+fn next_char_boundary(s: &str, idx: usize) -> usize {
+  if idx >= s.len() {
+    return s.len();
+  }
+  let mut iter = s.char_indices();
+  while let Some((i, _)) = iter.next() {
+    if i == idx {
+      return iter.next().map(|(n, _)| n).unwrap_or(s.len());
+    }
+    if i > idx {
+      return i;
+    }
+  }
+  s.len()
 }

@@ -583,6 +583,11 @@ fn handle_pending_input<Ctx: DefaultContext>(
 }
 
 fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+  if ctx.search_prompt_ref().active {
+    if crate::search_prompt::handle_search_prompt_key(ctx, key) {
+      return;
+    }
+  }
   if let Some(pending) = ctx.pending_input().cloned() {
     ctx.set_pending_input(None);
     if handle_pending_input(ctx, pending, key) {
@@ -793,6 +798,36 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
   let is_command_palette = target_id
     .map(|id| id.starts_with("command_palette"))
     .unwrap_or(false);
+
+  let is_search_prompt = target_id
+    .map(|id| id.starts_with("search_prompt"))
+    .unwrap_or(false);
+
+  if is_search_prompt {
+    match &event.kind {
+      UiEventKind::Key(key_event) => {
+        if let Some(key_event) = ui_key_event_to_key_event(key_event.clone()) {
+          if crate::search_prompt::handle_search_prompt_key(ctx, key_event) {
+            return UiEventOutcome::handled();
+          }
+        }
+      },
+      UiEventKind::Activate => {
+        if crate::search_prompt::handle_search_prompt_key(
+          ctx,
+          KeyEvent { key: Key::Enter, modifiers: Modifiers::empty() },
+        ) {
+          return UiEventOutcome::handled();
+        }
+      },
+      UiEventKind::Dismiss => {
+        ctx.search_prompt_mut().clear();
+        ctx.request_render();
+        return UiEventOutcome::handled();
+      },
+      _ => {},
+    }
+  }
 
   if is_command_palette {
     match event.kind {

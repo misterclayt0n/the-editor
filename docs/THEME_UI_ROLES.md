@@ -28,3 +28,8 @@ Props map to: `fg`, `bg`, `border`, `accent`.
 - `command_palette.help`
   Applied to the command palette help panel and help text.
   Example scopes: `ui.command_palette.help.panel.bg`, `ui.command_palette.help.text.fg`.
+
+- `search_prompt`
+  Applied to the search prompt panel, container, input, and list.
+  Mirrors `command_palette` colors for now.
+  Example scopes: `ui.search_prompt.panel.bg`, `ui.search_prompt.input.fg`, `ui.search_prompt.list.selected.bg`.

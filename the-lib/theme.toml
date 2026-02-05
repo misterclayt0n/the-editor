@@ -81,6 +81,11 @@ tabstop = { modifiers = ["italic"], bg = "bossanova" }
 "ui.menu.selected" = { fg = "revolver", bg = "white" }
 "ui.menu.scroll" = { fg = "lavender", bg = "comet" }
 
+"ui.command_palette" = { fg = "lavender", bg = "revolver" }
+"ui.command_palette.list.selected" = { fg = "revolver", bg = "white" }
+"ui.search_prompt" = { fg = "lavender", bg = "revolver" }
+"ui.search_prompt.list.selected" = { fg = "revolver", bg = "white" }
+
 "diagnostic.hint" = { underline = { color = "silver", style = "curl" } }
 "diagnostic.info" = { underline = { color = "delta", style = "curl" } }
 "diagnostic.warning" = { underline = { color = "lightning", style = "curl" } }

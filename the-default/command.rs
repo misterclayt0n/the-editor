@@ -12,6 +12,7 @@ use std::{
 
 use smallvec::SmallVec;
 use the_core::{
+  chars::byte_to_char_idx,
   grapheme::{
     nth_next_grapheme_boundary,
     nth_prev_grapheme_boundary,
@@ -768,7 +769,7 @@ fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
     let cursor = if ctx.search_prompt_ref().query.is_empty() {
       1
     } else {
-      1 + ctx.search_prompt_ref().cursor
+      1 + byte_to_char_idx(&ctx.search_prompt_ref().query, ctx.search_prompt_ref().cursor)
     };
     let focus = UiFocus {
       id: "search_prompt_input".to_string(),
@@ -781,7 +782,7 @@ fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
     let cursor = if ctx.command_palette().query.is_empty() {
       1
     } else {
-      ctx.command_palette().query.len() + 1
+      byte_to_char_idx(&ctx.command_palette().query, ctx.command_palette().query.len()) + 1
     };
     let focus = UiFocus {
       id: "command_palette_input".to_string(),

@@ -266,7 +266,7 @@ fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
       let doc = ctx.editor_ref().document();
       let text = doc.text().slice(..);
       let selection = doc.selection();
-      let pick = CursorPick::First;
+      let pick = CursorPick::First; // no active cursor concept yet
       if let Some(next) = search_regex(text, selection, pick, &regex, movement, direction, true) {
         let _ = ctx.editor().document_mut().set_selection(next);
       }
@@ -302,7 +302,7 @@ fn finalize_search<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
       let doc = ctx.editor_ref().document();
       let text = doc.text().slice(..);
       let selection = doc.selection();
-      let pick = CursorPick::First;
+      let pick = CursorPick::First; // no active cursor concept yet
       if let Some(next) = search_regex(text, selection, pick, &regex, movement, direction, true) {
         let _ = ctx.editor().document_mut().set_selection(next);
       }

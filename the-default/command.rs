@@ -1508,6 +1508,7 @@ fn add_cursor<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
 
 fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
   let viewport_width = ctx.editor().view().viewport.width;
+  let is_select = ctx.mode() == Mode::Select;
   let next = {
     let editor = ctx.editor();
     let doc = editor.document_mut();
@@ -1525,7 +1526,7 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
           Direction::Right => MoveDir::Forward,
           _ => return,
         };
-        let behavior = if extend {
+        let behavior = if extend || is_select {
           Movement::Extend
         } else {
           Movement::Move
@@ -1549,7 +1550,7 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
           Direction::Down => MoveDir::Forward,
           _ => return,
         };
-        let behavior = if extend {
+        let behavior = if extend || is_select {
           Movement::Extend
         } else {
           Movement::Move
@@ -1573,7 +1574,7 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
           Direction::Down => MoveDir::Forward,
           _ => return,
         };
-        let behavior = if extend {
+        let behavior = if extend || is_select {
           Movement::Extend
         } else {
           Movement::Move
@@ -1597,7 +1598,7 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
         count,
       } => {
         let count = count.max(1);
-        if extend {
+        if extend || is_select {
           selection.clone().transform(|range| {
             let word = match kind {
               WordMotion::NextWordStart => movement::move_next_word_start(slice, range, count),
@@ -1652,17 +1653,20 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
         }
       },
       Motion::FileStart { extend } => {
+        let extend = extend || is_select;
         selection
           .clone()
           .transform(|range| range.put_cursor(slice, 0, extend))
       },
       Motion::FileEnd { extend } => {
+        let extend = extend || is_select;
         let pos = slice.len_chars();
         selection
           .clone()
           .transform(|range| range.put_cursor(slice, pos, extend))
       },
       Motion::LastLine { extend } => {
+        let extend = extend || is_select;
         let line = slice.len_lines().saturating_sub(1);
         let pos = slice.line_to_char(line);
         selection
@@ -1670,6 +1674,7 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
           .transform(|range| range.put_cursor(slice, pos, extend))
       },
       Motion::Column { col, extend } => {
+        let extend = extend || is_select;
         let col = col.saturating_sub(1);
         selection.clone().transform(|range| {
           let line = slice.char_to_line(range.cursor(slice));

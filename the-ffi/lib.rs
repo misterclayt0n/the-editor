@@ -46,6 +46,7 @@ use the_default::{
   command_palette_filtered_indices,
   command_palette_default_selected,
   command_palette_selected_filtered_index,
+  SearchPromptState,
 };
 use the_config::{
   build_dispatch as config_build_dispatch,
@@ -658,6 +659,7 @@ struct EditorState {
   command_prompt: CommandPromptState,
   command_palette: CommandPaletteState,
   command_palette_style: CommandPaletteStyle,
+  search_prompt:  SearchPromptState,
   ui_state:       UiState,
   needs_render:   bool,
   pending_input:  Option<the_default::PendingInput>,
@@ -680,6 +682,7 @@ impl EditorState {
       command_prompt: CommandPromptState::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style,
+      search_prompt: SearchPromptState::new(),
       ui_state: UiState::default(),
       needs_render: true,
       pending_input: None,
@@ -1510,6 +1513,14 @@ impl DefaultContext for App {
 
   fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle {
     &mut self.active_state_mut().command_palette_style
+  }
+
+  fn search_prompt_ref(&self) -> &SearchPromptState {
+    &self.active_state_ref().search_prompt
+  }
+
+  fn search_prompt_mut(&mut self) -> &mut SearchPromptState {
+    &mut self.active_state_mut().search_prompt
   }
 
   fn ui_state(&self) -> &UiState {

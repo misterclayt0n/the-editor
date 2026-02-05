@@ -11,6 +11,7 @@ mod command_palette;
 mod statusline;
 mod keymap;
 mod pending;
+mod search_prompt;
 
 pub use command_types::{
   Command,
@@ -63,6 +64,7 @@ pub use command_palette::{
   command_palette_filtered_indices,
   command_palette_selected_filtered_index,
 };
+pub use search_prompt::SearchPromptState;
 pub use keymap::{
   KeyAction,
   KeyBinding,

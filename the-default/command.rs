@@ -320,6 +320,8 @@ pub trait DefaultContext: Sized + 'static {
   fn command_palette_mut(&mut self) -> &mut CommandPaletteState;
   fn command_palette_style(&self) -> &CommandPaletteStyle;
   fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle;
+  fn search_prompt_ref(&self) -> &crate::SearchPromptState;
+  fn search_prompt_mut(&mut self) -> &mut crate::SearchPromptState;
   fn ui_state(&self) -> &UiState;
   fn ui_state_mut(&mut self) -> &mut UiState;
   fn dispatch(&self) -> DispatchRef<Self>;

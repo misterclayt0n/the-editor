@@ -74,6 +74,7 @@ pub struct Ctx {
   pub command_registry: CommandRegistry<Ctx>,
   pub command_palette:  CommandPaletteState,
   pub command_palette_style: CommandPaletteStyle,
+  pub search_prompt:    the_default::SearchPromptState,
   pub ui_theme:         Theme,
   pub ui_state:         UiState,
   pub pending_input:    Option<the_default::PendingInput>,
@@ -171,6 +172,7 @@ impl Ctx {
       command_registry: CommandRegistry::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
+      search_prompt: the_default::SearchPromptState::new(),
       ui_theme,
       ui_state: UiState::default(),
       pending_input: None,
@@ -270,6 +272,14 @@ impl the_default::DefaultContext for Ctx {
 
   fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle {
     &mut self.command_palette_style
+  }
+
+  fn search_prompt_ref(&self) -> &the_default::SearchPromptState {
+    &self.search_prompt
+  }
+
+  fn search_prompt_mut(&mut self) -> &mut the_default::SearchPromptState {
+    &mut self.search_prompt
   }
 
   fn ui_state(&self) -> &UiState {

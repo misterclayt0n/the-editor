@@ -46,7 +46,7 @@ Finish the-lib by introducing a **slim document core**, a **minimal editor/sessi
 ## target module structure (the-lib)
 
 ### core (pure state + algorithms)
-- `selection`, `transaction`, `history`, `movement`, `search`, `fuzzy`, `diff`, `auto_pairs`, `comment`, `object`, `text_object`, `surround`, `match_brackets`, `indent`, `position` (logical)
+- `selection`, `transaction`, `history`, `movement`, `search` (char + regex), `fuzzy`, `diff`, `auto_pairs`, `comment`, `object`, `text_object`, `surround`, `match_brackets`, `indent`, `position` (logical)
 
 ### syntax
 - `syntax` and `syntax/config` (already split and cleaned)
@@ -191,4 +191,3 @@ Start with **Phase 1 + Phase 2** (render pipeline), because it unblocks
 `visual_position` and `indent` and gives a stable target for the Document/Editor API.
 
 After that, build `Document` and then `EditorState` in that order.
-

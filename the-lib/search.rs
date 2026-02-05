@@ -49,6 +49,28 @@
 //!   considered as a candidate in the search
 
 use ropey::RopeSlice;
+use the_core::grapheme::{
+  ensure_grapheme_boundary_next,
+  ensure_grapheme_boundary_prev,
+};
+use the_stdx::rope::{
+  Config,
+  Regex,
+  RegexBuilder,
+  RopeSliceExt,
+};
+
+use crate::{
+  movement::{
+    Direction,
+    Movement,
+  },
+  selection::{
+    CursorPick,
+    Range,
+    Selection,
+  },
+};
 
 /// Trait for matching characters during search operations.
 ///
@@ -190,11 +212,78 @@ pub fn find_nth_prev<M: CharMatcher>(
   )
 }
 
+/// Build a regex for interactive search with optional smart-case.
+///
+/// If `smart_case` is true, the regex is case-insensitive unless the query
+/// contains an uppercase letter.
+pub fn build_regex(query: &str, smart_case: bool) -> Result<Regex, String> {
+  let case_insensitive = smart_case && !query.chars().any(char::is_uppercase);
+  RegexBuilder::new()
+    .syntax(Config::new().case_insensitive(case_insensitive).multi_line(true))
+    .build(query)
+    .map_err(|err| err.to_string())
+}
+
+/// Find the next regex match and return an updated selection.
+///
+/// Uses `pick` to choose which cursor/range acts as the anchor. If no match is
+/// found, returns `None`.
+pub fn search_regex(
+  text: RopeSlice,
+  selection: &Selection,
+  pick: CursorPick,
+  regex: &Regex,
+  movement: Movement,
+  direction: Direction,
+  wrap_around: bool,
+) -> Option<Selection> {
+  let (cursor_id, primary) = selection.pick(pick).ok()?;
+  let idx = selection.index_of(cursor_id)?;
+
+  let start = match direction {
+    Direction::Forward => text.char_to_byte(ensure_grapheme_boundary_next(text, primary.to())),
+    Direction::Backward => {
+      text.char_to_byte(ensure_grapheme_boundary_prev(text, primary.from()))
+    },
+  };
+
+  let mut mat = match direction {
+    Direction::Forward => regex.find(text.regex_input_at_bytes(start..)),
+    Direction::Backward => regex.find_iter(text.regex_input_at_bytes(..start)).last(),
+  };
+
+  if mat.is_none() && wrap_around {
+    mat = match direction {
+      Direction::Forward => regex.find(text.regex_input()),
+      Direction::Backward => regex.find_iter(text.regex_input_at_bytes(start..)).last(),
+    };
+  }
+
+  let mat = mat?;
+  let start = text.byte_to_char(mat.start());
+  let end = text.byte_to_char(mat.end());
+  if end == 0 {
+    return None;
+  }
+
+  let range = Range::new(start, end).with_direction(primary.direction());
+  let next = match movement {
+    Movement::Extend => selection.clone().push(range),
+    Movement::Move => selection.clone().replace(idx, range).ok()?,
+  };
+  Some(next)
+}
+
 #[cfg(test)]
 mod test {
   use ropey::Rope;
 
   use super::*;
+  use crate::selection::{
+    Range,
+    Selection,
+  };
+  use smallvec::smallvec;
 
   #[test]
   fn find_next_char() {
@@ -293,5 +382,81 @@ mod test {
       ),
       Some(2)
     );
+  }
+
+  #[test]
+  fn regex_build_smart_case() {
+    let regex = build_regex("abc", true).unwrap();
+    let text = Rope::from("ABC").slice(..);
+    assert!(regex.find(text.regex_input()).is_some());
+
+    let regex = build_regex("Abc", true).unwrap();
+    let text = Rope::from("abc").slice(..);
+    assert!(regex.find(text.regex_input()).is_none());
+  }
+
+  #[test]
+  fn regex_search_wrap() {
+    let text = Rope::from("abc abc");
+    let slice = text.slice(..);
+    let regex = build_regex("abc", true).unwrap();
+    let selection = Selection::point(7);
+
+    let next = search_regex(
+      slice,
+      &selection,
+      CursorPick::First,
+      &regex,
+      Movement::Move,
+      Direction::Forward,
+      true,
+    )
+    .unwrap();
+    assert_eq!(next.ranges()[0].from(), 0);
+    assert_eq!(next.ranges()[0].to(), 3);
+  }
+
+  #[test]
+  fn regex_search_backward() {
+    let text = Rope::from("abc abc");
+    let slice = text.slice(..);
+    let regex = build_regex("abc", true).unwrap();
+    let selection = Selection::point(0);
+
+    let next = search_regex(
+      slice,
+      &selection,
+      CursorPick::First,
+      &regex,
+      Movement::Move,
+      Direction::Backward,
+      true,
+    )
+    .unwrap();
+    assert_eq!(next.ranges()[0].from(), 4);
+    assert_eq!(next.ranges()[0].to(), 7);
+  }
+
+  #[test]
+  fn regex_search_updates_picked_range() {
+    let text = Rope::from("abc abc");
+    let slice = text.slice(..);
+    let regex = build_regex("abc", true).unwrap();
+    let selection = Selection::new(smallvec![Range::point(0), Range::point(4)]).unwrap();
+
+    let next = search_regex(
+      slice,
+      &selection,
+      CursorPick::Last,
+      &regex,
+      Movement::Move,
+      Direction::Forward,
+      true,
+    )
+    .unwrap();
+    assert_eq!(next.ranges()[0].from(), 0);
+    assert_eq!(next.ranges()[0].to(), 0);
+    assert_eq!(next.ranges()[1].from(), 4);
+    assert_eq!(next.ranges()[1].to(), 7);
   }
 }

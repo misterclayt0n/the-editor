@@ -18,6 +18,7 @@ use the_lib::{
     graphics::Color,
   },
 };
+use the_core::chars::byte_to_char_idx;
 
 use crate::DefaultContext;
 
@@ -126,7 +127,7 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   input.cursor = if state.query.is_empty() {
     1
   } else {
-    state.query.len() + 1
+    byte_to_char_idx(&state.query, state.query.len()) + 1
   };
   let input = UiNode::Input(input);
 

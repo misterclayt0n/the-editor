@@ -47,7 +47,7 @@ Notes:
 - core/object.rs - text object logic.
 - core/quick_slots.rs - view slotting model.
 - core/registers.rs - registers/yank history.
-- core/search.rs - search logic.
+- core/search.rs - search logic (single-char + regex).
 - core/selection.rs - selection model.
 - core/special_buffer.rs - special buffer types.
 - core/surround.rs - surround editing behavior.

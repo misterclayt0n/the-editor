@@ -1,14 +1,18 @@
-use the_core::grapheme::{
-  ensure_grapheme_boundary_next,
-  ensure_grapheme_boundary_prev,
-};
 use the_core::chars::{
+  byte_to_char_idx,
   next_char_boundary,
   prev_char_boundary,
 };
 use the_lib::{
-  movement::Movement,
-  selection::Range,
+  movement::{
+    Direction as LibDirection,
+    Movement,
+  },
+  search::{
+    build_regex,
+    search_regex,
+  },
+  selection::CursorPick,
   render::{
     UiColor,
     UiColorToken,
@@ -22,12 +26,6 @@ use the_lib::{
     UiStyle,
     UiEmphasis,
   },
-};
-use the_stdx::rope::{
-  Config,
-  Regex,
-  RegexBuilder,
-  RopeSliceExt,
 };
 
 use crate::{
@@ -48,6 +46,8 @@ pub struct SearchPromptState {
   pub error:       Option<String>,
   pub register:    char,
   pub extend:      bool,
+  pub original_selection: Option<the_lib::selection::Selection>,
+  pub selected:    Option<usize>,
 }
 
 impl SearchPromptState {
@@ -61,6 +61,8 @@ impl SearchPromptState {
       error: None,
       register: '/',
       extend: false,
+      original_selection: None,
+      selected: None,
     }
   }
 
@@ -72,6 +74,8 @@ impl SearchPromptState {
     self.error = None;
     self.register = '/';
     self.extend = false;
+    self.original_selection = None;
+    self.selected = None;
   }
 }
 
@@ -95,6 +99,7 @@ pub fn open_search_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Directi
   let extend = ctx.mode() == Mode::Select;
   let completions = search_completions(ctx, Some(register));
 
+  let original_selection = ctx.editor_ref().document().selection().clone();
   let prompt = ctx.search_prompt_mut();
   prompt.active = true;
   prompt.direction = direction;
@@ -104,6 +109,8 @@ pub fn open_search_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Directi
   prompt.error = None;
   prompt.register = register;
   prompt.extend = extend;
+  prompt.original_selection = Some(original_selection);
+  prompt.selected = None;
 
   ctx.request_render();
 }
@@ -117,6 +124,9 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
 
   match key.key {
     Key::Escape => {
+      if let Some(selection) = ctx.search_prompt_mut().original_selection.take() {
+        let _ = ctx.editor().document_mut().set_selection(selection);
+      }
       ctx.search_prompt_mut().clear();
       ctx.request_render();
       return true;
@@ -134,6 +144,7 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
         let prev = prev_char_boundary(&prompt.query, prompt.cursor);
         prompt.query.replace_range(prev..prompt.cursor, "");
         prompt.cursor = prev;
+        prompt.selected = None;
         should_update = true;
       }
     },
@@ -142,6 +153,7 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
       if prompt.cursor < prompt.query.len() {
         let next = next_char_boundary(&prompt.query, prompt.cursor);
         prompt.query.replace_range(prompt.cursor..next, "");
+        prompt.selected = None;
         should_update = true;
       }
     },
@@ -164,6 +176,52 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
       prompt.cursor = prompt.query.len();
       should_update = true;
     },
+    Key::Up => {
+      let filtered: Vec<String> = filtered_completions(ctx.search_prompt_ref())
+        .into_iter()
+        .cloned()
+        .collect();
+      if filtered.is_empty() {
+        return true;
+      }
+      let prompt = ctx.search_prompt_mut();
+      let current = prompt.selected.unwrap_or(0);
+      let next = if current == 0 {
+        filtered.len() - 1
+      } else {
+        current - 1
+      };
+      prompt.selected = Some(next);
+      apply_completion(prompt, &filtered[next]);
+      should_update = true;
+    },
+    Key::Down => {
+      let filtered: Vec<String> = filtered_completions(ctx.search_prompt_ref())
+        .into_iter()
+        .cloned()
+        .collect();
+      if filtered.is_empty() {
+        return true;
+      }
+      let prompt = ctx.search_prompt_mut();
+      let current = prompt.selected.unwrap_or(filtered.len().saturating_sub(1));
+      let next = if current + 1 >= filtered.len() { 0 } else { current + 1 };
+      prompt.selected = Some(next);
+      apply_completion(prompt, &filtered[next]);
+      should_update = true;
+    },
+    Key::Tab => {
+      let filtered: Vec<String> = filtered_completions(ctx.search_prompt_ref())
+        .into_iter()
+        .cloned()
+        .collect();
+      if let Some(first) = filtered.first() {
+        let prompt = ctx.search_prompt_mut();
+        prompt.selected = Some(0);
+        apply_completion(prompt, first);
+        should_update = true;
+      }
+    },
     Key::Char(ch) => {
       if key.modifiers.ctrl() || key.modifiers.alt() {
         return true;
@@ -171,6 +229,7 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
       let prompt = ctx.search_prompt_mut();
       prompt.query.insert(prompt.cursor, ch);
       prompt.cursor += ch.len_utf8();
+      prompt.selected = None;
       should_update = true;
     },
     _ => {},
@@ -184,81 +243,6 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
   true
 }
 
-pub fn build_search_regex(query: &str) -> Result<Regex, String> {
-  let case_insensitive = !query.chars().any(char::is_uppercase);
-  RegexBuilder::new()
-    .syntax(Config::new().case_insensitive(case_insensitive).multi_line(true))
-    .build(query)
-    .map_err(|err| err.to_string())
-}
-
-pub fn search_impl<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  regex: &Regex,
-  movement: Movement,
-  direction: Direction,
-  wrap_around: bool,
-  _show_warnings: bool,
-) {
-  let doc = ctx.editor_ref().document();
-  let text = doc.text().slice(..);
-  let selection = doc.selection();
-  let Some(primary) = selection.ranges().first().copied() else {
-    return;
-  };
-
-  let start = match direction {
-    Direction::Forward => text.char_to_byte(ensure_grapheme_boundary_next(text, primary.to())),
-    Direction::Backward => {
-      text.char_to_byte(ensure_grapheme_boundary_prev(text, primary.from()))
-    },
-    _ => return,
-  };
-
-  let doc = doc.text().slice(..);
-
-  let mut mat = match direction {
-    Direction::Forward => regex.find(doc.regex_input_at_bytes(start..)),
-    Direction::Backward => regex.find_iter(doc.regex_input_at_bytes(..start)).last(),
-    _ => None,
-  };
-
-  if mat.is_none() && wrap_around {
-    mat = match direction {
-      Direction::Forward => regex.find(doc.regex_input()),
-      Direction::Backward => regex.find_iter(doc.regex_input_at_bytes(start..)).last(),
-      _ => None,
-    };
-  }
-
-  if let Some(mat) = mat {
-    let doc = ctx.editor_ref().document();
-    let text = doc.text().slice(..);
-    let selection = doc.selection();
-    let Some(primary) = selection.ranges().first().copied() else {
-      return;
-    };
-
-    let start = text.byte_to_char(mat.start());
-    let end = text.byte_to_char(mat.end());
-
-    if end == 0 {
-      return;
-    }
-
-    let range = Range::new(start, end).with_direction(primary.direction());
-    let next = match movement {
-      Movement::Extend => selection.clone().push(range),
-      Movement::Move => selection
-        .clone()
-        .replace(0, range)
-        .unwrap_or_else(|_| selection.clone()),
-    };
-
-    let _ = ctx.editor().document_mut().set_selection(next);
-  }
-}
-
 fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let (query, direction, extend) = {
     let prompt = ctx.search_prompt_ref();
@@ -270,11 +254,22 @@ fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {
     return;
   }
 
-  match build_search_regex(&query) {
+  let direction = match to_lib_direction(direction) {
+    Some(dir) => dir,
+    None => return,
+  };
+
+  match build_regex(&query, true) {
     Ok(regex) => {
       ctx.search_prompt_mut().error = None;
       let movement = if extend { Movement::Extend } else { Movement::Move };
-      search_impl(ctx, &regex, movement, direction, true, false);
+      let doc = ctx.editor_ref().document();
+      let text = doc.text().slice(..);
+      let selection = doc.selection();
+      let pick = CursorPick::First;
+      if let Some(next) = search_regex(text, selection, pick, &regex, movement, direction, true) {
+        let _ = ctx.editor().document_mut().set_selection(next);
+      }
     },
     Err(err) => {
       ctx.search_prompt_mut().error = Some(err);
@@ -292,14 +287,25 @@ fn finalize_search<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
     return true;
   }
 
-  match build_search_regex(&query) {
+  let direction = match to_lib_direction(ctx.search_prompt_ref().direction) {
+    Some(dir) => dir,
+    None => return false,
+  };
+
+  match build_regex(&query, true) {
     Ok(regex) => {
       let movement = if ctx.search_prompt_ref().extend {
         Movement::Extend
       } else {
         Movement::Move
       };
-      search_impl(ctx, &regex, movement, ctx.search_prompt_ref().direction, true, false);
+      let doc = ctx.editor_ref().document();
+      let text = doc.text().slice(..);
+      let selection = doc.selection();
+      let pick = CursorPick::First;
+      if let Some(next) = search_regex(text, selection, pick, &regex, movement, direction, true) {
+        let _ = ctx.editor().document_mut().set_selection(next);
+      }
     },
     Err(err) => {
       ctx.search_prompt_mut().error = Some(err);
@@ -314,6 +320,31 @@ fn finalize_search<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
 
   ctx.registers_mut().last_search_register = register;
   true
+}
+
+fn to_lib_direction(direction: Direction) -> Option<LibDirection> {
+  match direction {
+    Direction::Forward => Some(LibDirection::Forward),
+    Direction::Backward => Some(LibDirection::Backward),
+    _ => None,
+  }
+}
+
+fn filtered_completions(prompt: &SearchPromptState) -> Vec<&String> {
+  if prompt.query.is_empty() {
+    return prompt.completions.iter().collect();
+  }
+  prompt
+    .completions
+    .iter()
+    .filter(|item| item.starts_with(&prompt.query))
+    .collect()
+}
+
+fn apply_completion(prompt: &mut SearchPromptState, completion: &str) {
+  prompt.query.clear();
+  prompt.query.push_str(completion);
+  prompt.cursor = completion.len();
 }
 
 pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
@@ -339,31 +370,26 @@ pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode>
   input.cursor = if prompt.query.is_empty() {
     1
   } else {
-    prefix.len() + prompt.cursor
+    prefix.len() + byte_to_char_idx(&prompt.query, prompt.cursor)
   };
   input.style = input.style.with_role("search_prompt");
   input.style.accent = Some(UiColor::Token(UiColorToken::Placeholder));
 
-  let query = prompt.query.as_str();
-  let mut filtered: Vec<&String> = if query.is_empty() {
-    prompt.completions.iter().collect()
-  } else {
-    prompt
-      .completions
-      .iter()
-      .filter(|item| item.starts_with(query))
-      .collect()
-  };
+  let mut filtered = filtered_completions(prompt);
   filtered.truncate(6);
 
   let mut children = vec![UiNode::Input(input)];
 
   if !filtered.is_empty() {
+    let filtered_len = filtered.len();
     let items = filtered
       .into_iter()
       .map(|item| UiListItem::new(item.clone()))
       .collect();
     let mut list = UiList::new("search_prompt_list", items);
+    if let Some(selected) = prompt.selected {
+      list.selected = Some(selected.min(filtered_len.saturating_sub(1)));
+    }
     list.style = list.style.with_role("search_prompt");
     list.style.accent = Some(UiColor::Token(UiColorToken::SelectedBg));
     list.style.border = Some(UiColor::Token(UiColorToken::SelectedText));

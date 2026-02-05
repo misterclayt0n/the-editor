@@ -51,3 +51,41 @@ impl ViewState {
     self
   }
 }
+
+/// Compute adjusted scroll to keep cursor visible with scrolloff padding.
+///
+/// Returns `Some(new_scroll)` when scroll must change, `None` when cursor
+/// is already within the padded viewport.
+pub fn scroll_to_keep_visible(
+  cursor_line: usize,
+  cursor_col: usize,
+  scroll: Position,
+  viewport_height: usize,
+  viewport_width: usize,
+  scrolloff: usize,
+) -> Option<Position> {
+  let v_off = scrolloff.min(viewport_height / 2);
+  let h_off = scrolloff.min(viewport_width / 2);
+
+  let mut new_scroll = scroll;
+
+  // Vertical
+  if cursor_line < scroll.row + v_off {
+    new_scroll.row = cursor_line.saturating_sub(v_off);
+  } else if cursor_line + v_off >= scroll.row + viewport_height {
+    new_scroll.row = cursor_line + v_off + 1 - viewport_height;
+  }
+
+  // Horizontal
+  if cursor_col < scroll.col + h_off {
+    new_scroll.col = cursor_col.saturating_sub(h_off);
+  } else if cursor_col + h_off >= scroll.col + viewport_width {
+    new_scroll.col = cursor_col + h_off + 1 - viewport_width;
+  }
+
+  if new_scroll != scroll {
+    Some(new_scroll)
+  } else {
+    None
+  }
+}

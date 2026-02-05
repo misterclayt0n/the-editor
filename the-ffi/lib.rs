@@ -672,6 +672,7 @@ struct EditorState {
   text_format:    TextFormat,
   inline_annotations: Vec<InlineAnnotation>,
   overlay_annotations: Vec<Overlay>,
+  scrolloff:      usize,
 }
 
 impl EditorState {
@@ -695,6 +696,7 @@ impl EditorState {
       text_format: TextFormat::default(),
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
+      scrolloff: 5,
     }
   }
 }
@@ -1266,6 +1268,8 @@ impl App {
       return false;
     }
 
+    let scrolloff = self.active_state_ref().scrolloff;
+
     let Some(editor) = self.editor_mut(id) else {
       return false;
     };
@@ -1285,21 +1289,14 @@ impl App {
     let viewport_height = view.viewport.height as usize;
     let viewport_width = view.viewport.width as usize;
 
-    let mut new_scroll = view.scroll;
-
-    if cursor_line < view.scroll.row {
-      new_scroll.row = cursor_line;
-    } else if cursor_line >= view.scroll.row + viewport_height {
-      new_scroll.row = cursor_line - viewport_height + 1;
-    }
-
-    if cursor_col < view.scroll.col {
-      new_scroll.col = cursor_col;
-    } else if cursor_col >= view.scroll.col + viewport_width {
-      new_scroll.col = cursor_col - viewport_width + 1;
-    }
-
-    if new_scroll != view.scroll {
+    if let Some(new_scroll) = the_lib::view::scroll_to_keep_visible(
+      cursor_line,
+      cursor_col,
+      view.scroll,
+      viewport_height,
+      viewport_width,
+      scrolloff,
+    ) {
       editor.view_mut().scroll = new_scroll;
       return true;
     }
@@ -1654,6 +1651,10 @@ impl DefaultContext for App {
 
   fn ui_theme(&self) -> &Theme {
     &self.ui_theme
+  }
+
+  fn scrolloff(&self) -> usize {
+    self.active_state_ref().scrolloff
   }
 }
 

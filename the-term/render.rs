@@ -1351,17 +1351,14 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
   let viewport_height = view.viewport.height as usize;
   let viewport_width = view.viewport.width as usize;
 
-  // Vertical scrolling
-  if cursor_line < view.scroll.row {
-    ctx.editor.view_mut().scroll.row = cursor_line;
-  } else if cursor_line >= view.scroll.row + viewport_height {
-    ctx.editor.view_mut().scroll.row = cursor_line - viewport_height + 1;
-  }
-
-  // Horizontal scrolling
-  if cursor_col < view.scroll.col {
-    ctx.editor.view_mut().scroll.col = cursor_col;
-  } else if cursor_col >= view.scroll.col + viewport_width {
-    ctx.editor.view_mut().scroll.col = cursor_col - viewport_width + 1;
+  if let Some(new_scroll) = the_lib::view::scroll_to_keep_visible(
+    cursor_line,
+    cursor_col,
+    view.scroll,
+    viewport_height,
+    viewport_width,
+    ctx.scrolloff,
+  ) {
+    ctx.editor.view_mut().scroll = new_scroll;
   }
 }

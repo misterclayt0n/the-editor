@@ -101,6 +101,8 @@ pub struct Ctx {
   pub inline_annotations: Vec<InlineAnnotation>,
   /// Overlay annotations (virtual text) for rendering.
   pub overlay_annotations: Vec<Overlay>,
+  /// Lines to keep above/below cursor when scrolling.
+  pub scrolloff: usize,
 }
 
 fn select_ui_theme() -> Theme {
@@ -188,6 +190,7 @@ impl Ctx {
       text_format,
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
+      scrolloff: 5,
     })
   }
 
@@ -374,6 +377,10 @@ impl the_default::DefaultContext for Ctx {
 
   fn ui_theme(&self) -> &Theme {
     &self.ui_theme
+  }
+
+  fn scrolloff(&self) -> usize {
+    self.scrolloff
   }
 }
 

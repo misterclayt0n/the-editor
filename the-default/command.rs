@@ -348,6 +348,9 @@ pub trait DefaultContext: Sized + 'static {
   fn text_annotations(&self) -> TextAnnotations<'_>;
   fn syntax_loader(&self) -> Option<&Loader>;
   fn ui_theme(&self) -> &Theme;
+  fn scrolloff(&self) -> usize {
+    5
+  }
 }
 
 pub fn build_dispatch<Ctx>() -> DefaultDispatchStatic<Ctx>

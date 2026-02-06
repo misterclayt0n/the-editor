@@ -562,7 +562,13 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
   input.style = input.style.with_role("file_picker");
   input.style.accent = Some(UiColor::Token(UiColorToken::Placeholder));
 
-  let list_items: Vec<UiListItem> = (0..picker.matched_count())
+  let total_matches = picker.matched_count();
+  let visible_rows = picker.list_visible.max(1);
+  let window_start = picker
+    .list_offset
+    .min(total_matches.saturating_sub(visible_rows));
+  let window_end = window_start.saturating_add(visible_rows).min(total_matches);
+  let list_items: Vec<UiListItem> = (window_start..window_end)
     .filter_map(|idx| picker.matched_item(idx))
     .map(|item| {
       let mut row = UiListItem::new(item.display.clone());
@@ -573,6 +579,9 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
 
   let mut list = UiList::new("file_picker_list", list_items);
   list.selected = picker.selected;
+  list.scroll = window_start;
+  list.virtual_total = Some(total_matches);
+  list.virtual_start = window_start;
   list.max_visible = Some(picker.list_visible);
   list.style = list.style.with_role("file_picker");
   list.style.accent = Some(UiColor::Token(UiColorToken::SelectedBg));

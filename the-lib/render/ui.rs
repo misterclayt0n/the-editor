@@ -320,16 +320,20 @@ impl UiText {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiList {
-  pub id:          String,
-  pub items:       Vec<UiListItem>,
-  pub selected:    Option<usize>,
-  pub scroll:      usize,
-  pub fill_width:  bool,
-  pub style:       UiStyle,
+  pub id:            String,
+  pub items:         Vec<UiListItem>,
+  pub selected:      Option<usize>,
+  pub scroll:        usize,
   #[serde(default)]
-  pub max_visible: Option<usize>,
+  pub virtual_total: Option<usize>,
+  #[serde(default)]
+  pub virtual_start: usize,
+  pub fill_width:    bool,
+  pub style:         UiStyle,
+  #[serde(default)]
+  pub max_visible:   Option<usize>,
   #[serde(default = "default_clip")]
-  pub clip:        bool,
+  pub clip:          bool,
 }
 
 impl UiList {
@@ -339,6 +343,8 @@ impl UiList {
       items,
       selected: None,
       scroll: 0,
+      virtual_total: None,
+      virtual_start: 0,
       fill_width: true,
       style: UiStyle::default(),
       max_visible: None,

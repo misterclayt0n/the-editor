@@ -7,11 +7,7 @@ use ratatui::{
     Block,
     Borders,
     Clear,
-    List,
-    ListItem,
-    ListState,
     Paragraph,
-    StatefulWidget,
     Widget,
     Wrap,
   },
@@ -712,22 +708,28 @@ fn draw_ui_list(
   if visible_items == 0 {
     return;
   }
-  let mut scroll_offset = list
-    .scroll
-    .min(list.items.len().saturating_sub(visible_items));
+  let total_items = list.virtual_total.unwrap_or(list.items.len());
+  let virtual_mode = list.virtual_total.is_some();
+  let mut scroll_offset = if virtual_mode {
+    list
+      .virtual_start
+      .min(total_items.saturating_sub(visible_items))
+  } else {
+    list.scroll.min(total_items.saturating_sub(visible_items))
+  };
   let selected = list.selected;
-  if let Some(sel) = selected {
-    if sel < scroll_offset {
-      scroll_offset = sel;
-    } else if sel >= scroll_offset + visible_items {
-      scroll_offset = sel + 1 - visible_items;
+  if !virtual_mode {
+    if let Some(sel) = selected {
+      if sel < scroll_offset {
+        scroll_offset = sel;
+      } else if sel >= scroll_offset + visible_items {
+        scroll_offset = sel + 1 - visible_items;
+      }
     }
   }
-  let visible = list.items.iter().skip(scroll_offset).take(visible_items);
-
-  for (row_idx, item) in visible.enumerate() {
+  let mut draw_item = |row_idx: usize, absolute_idx: usize, item: &the_lib::render::UiListItem| {
     let y = rect.y + (row_idx * row_height) as u16;
-    let is_selected = selected == Some(row_idx + scroll_offset);
+    let is_selected = selected == Some(absolute_idx);
 
     if is_selected {
       if let Some(bg_color) = selected_bg_color {
@@ -769,8 +771,13 @@ fn draw_ui_list(
       let detail = item
         .subtitle
         .as_deref()
-        .filter(|s| !s.is_empty())
-        .or_else(|| item.description.as_deref().filter(|s| !s.is_empty()));
+        .filter(|detail: &&str| !detail.is_empty())
+        .or_else(|| {
+          item
+            .description
+            .as_deref()
+            .filter(|detail: &&str| !detail.is_empty())
+        });
       if let Some(detail) = detail {
         let mut detail_text = detail.to_string();
         truncate_in_place(&mut detail_text, available_width);
@@ -781,15 +788,31 @@ fn draw_ui_list(
         buf.set_string(rect.x + 1, y + 1, detail_text, detail_style);
       }
     }
+  };
+
+  if virtual_mode {
+    for (row_idx, item) in list.items.iter().take(visible_items).enumerate() {
+      draw_item(row_idx, scroll_offset + row_idx, item);
+    }
+  } else {
+    for (row_idx, item) in list
+      .items
+      .iter()
+      .skip(scroll_offset)
+      .take(visible_items)
+      .enumerate()
+    {
+      draw_item(row_idx, row_idx + scroll_offset, item);
+    }
   }
 
-  if list.items.len() > visible_items {
+  if total_items > visible_items {
     let track_x = rect.x + rect.width - 1;
     let track_height = rect.height;
-    let thumb_height = ((visible_items as f32 / list.items.len() as f32) * track_height as f32)
+    let thumb_height = ((visible_items as f32 / total_items as f32) * track_height as f32)
       .ceil()
       .max(1.0) as u16;
-    let max_scroll = list.items.len().saturating_sub(visible_items);
+    let max_scroll = total_items.saturating_sub(visible_items);
     let thumb_offset = if max_scroll == 0 {
       0
     } else {
@@ -1019,31 +1042,66 @@ fn draw_file_picker_list_pane(
     return;
   }
 
-  let list_items: Vec<ListItem<'_>> = (0..picker.matched_count())
-    .filter_map(|idx| picker.matched_item(idx))
-    .map(|item| {
-      let mut style = text_style;
-      if item.is_dir {
-        style = style.add_modifier(Modifier::BOLD);
-      }
-      ListItem::new(item.display.clone()).style(style)
-    })
-    .collect();
-
-  if list_items.is_empty() {
+  let total_matches = picker.matched_count();
+  if total_matches == 0 {
     Paragraph::new("<No matches>")
       .style(text_style.add_modifier(Modifier::DIM))
       .render(list_area, buf);
     return;
   }
 
-  let mut list_state = ListState::default();
-  list_state.select(picker.selected);
-  *list_state.offset_mut() = picker.list_offset;
-  let list = List::new(list_items)
-    .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-    .highlight_symbol(" > ");
-  StatefulWidget::render(list, list_area, buf, &mut list_state);
+  let visible_rows = list_area.height as usize;
+  if visible_rows == 0 {
+    return;
+  }
+  let scroll_offset = picker
+    .list_offset
+    .min(total_matches.saturating_sub(visible_rows));
+  let end = scroll_offset
+    .saturating_add(visible_rows)
+    .min(total_matches);
+  for row_idx in scroll_offset..end {
+    let Some(item) = picker.matched_item(row_idx) else {
+      continue;
+    };
+    let y = list_area.y + (row_idx - scroll_offset) as u16;
+    let is_selected = picker.selected == Some(row_idx);
+    let mut style = text_style;
+    if item.is_dir {
+      style = style.add_modifier(Modifier::BOLD);
+    }
+    if is_selected {
+      style = style.add_modifier(Modifier::REVERSED);
+    }
+
+    let mut label = item.display.clone();
+    let content_width = list_area.width.saturating_sub(3) as usize;
+    truncate_in_place(&mut label, content_width);
+    let marker = if is_selected { " > " } else { "   " };
+    buf.set_string(list_area.x, y, marker, style);
+    buf.set_string(list_area.x.saturating_add(3), y, label, style);
+  }
+
+  if total_matches > visible_rows {
+    let track_x = list_area.x + list_area.width.saturating_sub(1);
+    let track_height = list_area.height;
+    let thumb_height = ((visible_rows as f32 / total_matches as f32) * track_height as f32)
+      .ceil()
+      .max(1.0) as u16;
+    let max_scroll = total_matches.saturating_sub(visible_rows);
+    let thumb_offset = if max_scroll == 0 {
+      0
+    } else {
+      ((scroll_offset as f32 / max_scroll as f32) * (track_height - thumb_height) as f32).round()
+        as u16
+    };
+    for idx in 0..track_height {
+      let y = list_area.y + idx;
+      let is_thumb = idx >= thumb_offset && idx < thumb_offset + thumb_height;
+      let symbol = if is_thumb { "█" } else { "│" };
+      buf.set_string(track_x, y, symbol, border_style);
+    }
+  }
 }
 
 fn draw_file_picker_preview_pane(

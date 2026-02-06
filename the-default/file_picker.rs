@@ -1282,10 +1282,7 @@ fn refresh_matcher_state(state: &mut FilePickerState) -> bool {
 
   let mut changed = status.changed;
 
-  let prev_selected = state.selected;
-  let prev_offset = state.list_offset;
-  normalize_selection_and_scroll(state);
-  if prev_selected != state.selected || prev_offset != state.list_offset {
+  if clamp_selection_and_offsets(state) {
     changed = true;
   }
 
@@ -1312,25 +1309,7 @@ fn handle_query_change(state: &mut FilePickerState, old_query: &str) {
 
 pub fn set_picker_visible_rows(state: &mut FilePickerState, visible_rows: usize) {
   state.list_visible = visible_rows.max(1);
-  let matched_count = state.matched_count();
-  if matched_count == 0 {
-    state.selected = None;
-    state.hovered = None;
-    state.list_offset = 0;
-    return;
-  }
-
-  if let Some(selected) = state.selected {
-    state.selected = Some(selected.min(matched_count - 1));
-  }
-  if let Some(hovered) = state.hovered {
-    state.hovered = Some(hovered.min(matched_count - 1));
-  }
-
-  let max_offset = matched_count.saturating_sub(state.list_visible);
-  if state.list_offset > max_offset {
-    state.list_offset = max_offset;
-  }
+  let _ = clamp_selection_and_offsets(state);
 }
 
 fn normalize_selection_and_scroll(state: &mut FilePickerState) {
@@ -1355,6 +1334,47 @@ fn normalize_selection_and_scroll(state: &mut FilePickerState) {
   if state.list_offset > max_offset {
     state.list_offset = max_offset;
   }
+}
+
+fn clamp_selection_and_offsets(state: &mut FilePickerState) -> bool {
+  let mut changed = false;
+  let matched_count = state.matched_count();
+  if matched_count == 0 {
+    if state.selected.is_some() {
+      state.selected = None;
+      changed = true;
+    }
+    if state.hovered.is_some() {
+      state.hovered = None;
+      changed = true;
+    }
+    if state.list_offset != 0 {
+      state.list_offset = 0;
+      changed = true;
+    }
+    return changed;
+  }
+
+  let last = matched_count - 1;
+  let next_selected = Some(state.selected.unwrap_or(0).min(last));
+  if state.selected != next_selected {
+    state.selected = next_selected;
+    changed = true;
+  }
+
+  let next_hovered = state.hovered.map(|hovered| hovered.min(last));
+  if state.hovered != next_hovered {
+    state.hovered = next_hovered;
+    changed = true;
+  }
+
+  let max_offset = matched_count.saturating_sub(state.list_visible.max(1));
+  if state.list_offset > max_offset {
+    state.list_offset = max_offset;
+    changed = true;
+  }
+
+  changed
 }
 
 fn new_matcher(wake_tx: Option<Sender<()>>) -> Nucleo<Arc<FilePickerItem>> {

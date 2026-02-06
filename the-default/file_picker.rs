@@ -12,6 +12,7 @@ use std::{
   },
 };
 
+use ignore::DirEntry;
 use the_core::chars::{
   next_char_boundary,
   prev_char_boundary,
@@ -49,18 +50,7 @@ const MAX_FILE_SIZE_FOR_PREVIEW: u64 = 10 * 1024 * 1024;
 const MAX_PREVIEW_BYTES: usize = 256 * 1024;
 const MAX_PREVIEW_LINES: usize = 512;
 const PAGE_SIZE: usize = 12;
-const ALWAYS_IGNORED_DIRS: &[&str] = &[".git", ".hg", ".jj", ".pijul", ".svn"];
-const DEFAULT_IGNORED_DIRS: &[&str] = &[
-  "target",
-  "node_modules",
-  ".cache",
-  ".direnv",
-  ".next",
-  ".nuxt",
-  "dist",
-  "build",
-  "coverage",
-];
+const DEDUP_SYMLINKS: bool = true;
 
 #[derive(Debug, Clone)]
 pub struct FilePickerItem {
@@ -572,73 +562,57 @@ fn collect_items(root: &Path, max_items: usize) -> std::io::Result<Vec<FilePicke
   } else {
     root.to_path_buf()
   };
-  let mut items = Vec::new();
-  let mut stack = vec![root.clone()];
 
-  while let Some(dir) = stack.pop() {
-    let read_dir = match fs::read_dir(&dir) {
-      Ok(read_dir) => read_dir,
-      Err(err) => {
-        if dir == root {
-          return Err(err);
-        }
-        continue;
-      },
+  let absolute_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+  let mut walk_builder = ignore::WalkBuilder::new(&root);
+  let mut walker = walk_builder
+    .hidden(true)
+    .parents(true)
+    .ignore(true)
+    .follow_links(true)
+    .git_ignore(true)
+    .git_global(true)
+    .git_exclude(true)
+    .sort_by_file_name(|name1, name2| name1.cmp(name2))
+    .filter_entry(move |entry| filter_picker_entry(entry, &absolute_root, DEDUP_SYMLINKS))
+    .types(excluded_types())
+    .build();
+
+  let mut items = Vec::new();
+  for entry in &mut walker {
+    let entry = match entry {
+      Ok(entry) => entry,
+      Err(_) => continue,
     };
 
-    let mut entries = Vec::new();
-    for entry in read_dir {
-      let Ok(entry) = entry else {
-        continue;
-      };
-      entries.push(entry);
+    if !entry
+      .file_type()
+      .is_some_and(|file_type| file_type.is_file())
+    {
+      continue;
     }
-    entries.sort_by_key(|entry| entry.file_name());
 
-    for entry in entries {
-      let path = entry.path();
-      let file_name = entry.file_name();
-      let file_name = file_name.to_string_lossy();
-      let file_type = match entry.file_type() {
-        Ok(file_type) => file_type,
-        Err(_) => continue,
-      };
-      let is_dir = file_type.is_dir();
+    let path = entry.into_path();
+    let rel = match path.strip_prefix(&root) {
+      Ok(rel) => rel,
+      Err(_) => continue,
+    };
 
-      if should_skip_entry(&file_name, is_dir) {
-        continue;
-      }
+    let mut display = rel.to_string_lossy().to_string();
+    if std::path::MAIN_SEPARATOR != '/' {
+      display = display.replace(std::path::MAIN_SEPARATOR, "/");
+    }
+    let display_lower = display.to_lowercase();
 
-      if is_dir {
-        stack.push(path);
-        continue;
-      }
-      if !file_type.is_file() {
-        continue;
-      }
+    items.push(FilePickerItem {
+      absolute: path,
+      display,
+      display_lower,
+      is_dir: false,
+    });
 
-      let rel = match path.strip_prefix(&root) {
-        Ok(rel) => rel,
-        Err(_) => continue,
-      };
-
-      let mut display = rel.to_string_lossy().to_string();
-      if std::path::MAIN_SEPARATOR != '/' {
-        display = display.replace(std::path::MAIN_SEPARATOR, "/");
-      }
-      let display_lower = display.to_lowercase();
-
-      items.push(FilePickerItem {
-        absolute: path,
-        display,
-        display_lower,
-        is_dir,
-      });
-
-      if items.len() >= max_items {
-        items.sort_by(|lhs, rhs| lhs.display.cmp(&rhs.display));
-        return Ok(items);
-      }
+    if items.len() >= max_items {
+      break;
     }
   }
 
@@ -646,21 +620,39 @@ fn collect_items(root: &Path, max_items: usize) -> std::io::Result<Vec<FilePicke
   Ok(items)
 }
 
-fn should_skip_entry(name: &str, is_dir: bool) -> bool {
-  // Align with Helix defaults: hidden files/directories are excluded.
-  if name.starts_with('.') && name != "." && name != ".." {
-    return true;
+fn filter_picker_entry(entry: &DirEntry, root: &Path, dedup_symlinks: bool) -> bool {
+  if matches!(
+    entry.file_name().to_str(),
+    Some(".git" | ".pijul" | ".jj" | ".hg" | ".svn")
+  ) {
+    return false;
   }
 
-  if ALWAYS_IGNORED_DIRS.contains(&name) {
-    return true;
+  if dedup_symlinks && entry.path_is_symlink() {
+    return entry
+      .path()
+      .canonicalize()
+      .ok()
+      .is_some_and(|path| !path.starts_with(root));
   }
 
-  if is_dir && DEFAULT_IGNORED_DIRS.contains(&name) {
-    return true;
-  }
+  true
+}
 
-  false
+fn excluded_types() -> ignore::types::Types {
+  use ignore::types::TypesBuilder;
+
+  let mut type_builder = TypesBuilder::new();
+  type_builder
+    .add(
+      "compressed",
+      "*.{zip,gz,bz2,zst,lzo,sz,tgz,tbz2,lz,lz4,lzma,lzo,z,Z,xz,7z,rar,cab}",
+    )
+    .expect("invalid compressed type definition");
+  type_builder.negate("all");
+  type_builder
+    .build()
+    .expect("failed to build excluded types")
 }
 
 fn poll_scan_results(state: &mut FilePickerState) -> bool {

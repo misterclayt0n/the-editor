@@ -8,6 +8,8 @@ license = "MIT"
 path = "lib.rs"
 
 [dependencies]
+ignore       = { workspace = true }
+nucleo       = { workspace = true }
 smallvec     = "1.13.2"
 the-core     = { path = "../the-core" }
 the-dispatch = { path = "../the-dispatch" }

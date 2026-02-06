@@ -1085,7 +1085,9 @@ fn draw_file_picker_list_pane(
     if is_selected {
       style = style.add_modifier(Modifier::REVERSED);
     } else if is_hovered {
-      style = style.add_modifier(Modifier::UNDERLINED);
+      style = style
+        .add_modifier(Modifier::REVERSED)
+        .add_modifier(Modifier::DIM);
     }
 
     let mut label = item.display.clone();

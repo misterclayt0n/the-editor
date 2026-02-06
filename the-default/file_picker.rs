@@ -1263,53 +1263,72 @@ fn refresh_preview(state: &mut FilePickerState) {
     return;
   }
 
-  state.preview = FilePickerPreview::Message("Loading preview…".to_string());
-  state.preview_request_id = state.preview_request_id.wrapping_add(1);
-  let request_id = state.preview_request_id;
-  state.preview_pending_id = Some(request_id);
-  state
-    .preview_latest_request
-    .store(request_id, Ordering::Relaxed);
-
-  let request = PreviewRequest {
-    request_id,
-    path: item.absolute.clone(),
-    is_dir: item.is_dir,
-  };
-
-  let sent = state
-    .preview_req_tx
-    .as_ref()
-    .is_some_and(|request_tx| request_tx.send(request).is_ok());
-  if sent {
-    return;
-  }
-
-  let preview = preview_for_path(&item.absolute, item.is_dir, state.syntax_loader.as_deref());
-  state
-    .preview_cache
-    .insert(item.absolute.clone(), preview.clone());
-  state.preview = preview;
-  state.preview_pending_id = None;
-  state.preview_latest_request.store(0, Ordering::Relaxed);
-}
-
-fn preview_for_path(
-  path: &Path,
-  is_dir: bool,
-  syntax_loader: Option<&Loader>,
-) -> FilePickerPreview {
-  match preview_for_path_base(path, is_dir) {
-    PreviewBuild::Final(preview) => preview,
+  match preview_for_path_base(&item.absolute, item.is_dir) {
+    PreviewBuild::Final(preview) => {
+      state
+        .preview_cache
+        .insert(item.absolute.clone(), preview.clone());
+      state.preview = preview;
+      state.preview_pending_id = None;
+      state.preview_latest_request.store(0, Ordering::Relaxed);
+    },
     PreviewBuild::Source(mut source_preview) => {
-      if let Some(loader) = syntax_loader {
-        let highlights =
-          collect_source_highlights(path, &source_preview.text, source_preview.end_byte, loader);
-        if !highlights.is_empty() {
-          source_preview.source.highlights = highlights.into();
-        }
+      let base_preview = FilePickerPreview::Source(source_preview.source.clone());
+      state
+        .preview_cache
+        .insert(item.absolute.clone(), base_preview.clone());
+      state.preview = base_preview;
+
+      if state.syntax_loader.is_none() {
+        state.preview_pending_id = None;
+        state.preview_latest_request.store(0, Ordering::Relaxed);
+        return;
       }
-      FilePickerPreview::Source(source_preview.source)
+
+      state.preview_request_id = state.preview_request_id.wrapping_add(1);
+      let request_id = state.preview_request_id;
+      state.preview_pending_id = Some(request_id);
+      state
+        .preview_latest_request
+        .store(request_id, Ordering::Relaxed);
+
+      let request = PreviewRequest {
+        request_id,
+        path: item.absolute.clone(),
+        is_dir: item.is_dir,
+      };
+
+      let sent = state
+        .preview_req_tx
+        .as_ref()
+        .is_some_and(|request_tx| request_tx.send(request).is_ok());
+      if sent {
+        return;
+      }
+
+      let Some(loader) = state.syntax_loader.as_deref() else {
+        state.preview_pending_id = None;
+        state.preview_latest_request.store(0, Ordering::Relaxed);
+        return;
+      };
+
+      let highlights = collect_source_highlights(
+        &item.absolute,
+        &source_preview.text,
+        source_preview.end_byte,
+        loader,
+      );
+      if !highlights.is_empty() {
+        source_preview.source.highlights = highlights.into();
+      }
+
+      let preview = FilePickerPreview::Source(source_preview.source);
+      state
+        .preview_cache
+        .insert(item.absolute.clone(), preview.clone());
+      state.preview = preview;
+      state.preview_pending_id = None;
+      state.preview_latest_request.store(0, Ordering::Relaxed);
     },
   }
 }

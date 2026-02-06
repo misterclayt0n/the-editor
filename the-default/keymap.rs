@@ -643,7 +643,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       "g" => goto_file_start,
       "|" => goto_column,
       "e" => goto_last_line,
-      // "f" => goto_file,
+      // "f" => goto_file, // REIMAGINE THIS
       "h" => goto_line_start,
       "l" => goto_line_end,
       // "s" => goto_first_nonwhitespace,
@@ -819,7 +819,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     // "C-s" => save_selection,
 
     "space" => { "Space"
-      // "f" => file_picker,
+      "f" => file_picker,
       // "F" => file_picker_in_current_directory,
       // "e" => file_explorer,
       // "E" => file_explorer_in_current_buffer_directory,

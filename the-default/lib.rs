@@ -7,6 +7,7 @@ mod command;
 mod command_palette;
 mod command_registry;
 mod command_types;
+mod file_picker;
 mod input;
 mod keymap;
 mod pending;
@@ -56,6 +57,16 @@ pub use command_types::{
   Direction,
   Motion,
   WordMotion,
+};
+pub use file_picker::{
+  FilePickerItem,
+  FilePickerPreview,
+  FilePickerState,
+  build_file_picker_ui,
+  close_file_picker,
+  handle_file_picker_key,
+  open_file_picker,
+  submit_file_picker,
 };
 pub use input::{
   Key,

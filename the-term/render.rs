@@ -3,9 +3,21 @@
 use ratatui::{
   prelude::*,
   style::Modifier,
-  widgets::Clear,
+  widgets::{
+    Block,
+    Borders,
+    Clear,
+    List,
+    ListItem,
+    ListState,
+    Paragraph,
+    StatefulWidget,
+    Widget,
+    Wrap,
+  },
 };
 use the_default::{
+  FilePickerPreview,
   render_plan,
   ui_tree,
 };
@@ -835,6 +847,236 @@ fn draw_ui_node(
   }
 }
 
+fn draw_file_picker_panel(
+  buf: &mut Buffer,
+  area: Rect,
+  ctx: &Ctx,
+  panel: &UiPanel,
+  focus: Option<&the_lib::render::UiFocus>,
+  cursor_out: &mut Option<(u16, u16)>,
+) {
+  let picker = &ctx.file_picker;
+  if !picker.active || area.width < 4 || area.height < 4 {
+    return;
+  }
+
+  let (text_style, fill_style, border_style) = ui_style_colors(&panel.style);
+  let width = area
+    .width
+    .saturating_mul(9)
+    .saturating_div(10)
+    .max(72)
+    .min(area.width);
+  let height = area
+    .height
+    .saturating_mul(8)
+    .saturating_div(10)
+    .max(18)
+    .min(area.height);
+  let x = area.x + area.width.saturating_sub(width) / 2;
+  let y = area.y + area.height.saturating_sub(height) / 2;
+  let rect = Rect::new(x, y, width, height);
+
+  let title = panel
+    .title
+    .clone()
+    .unwrap_or_else(|| "File Picker".to_string());
+  let outer = Block::default()
+    .borders(Borders::ALL)
+    .title(title)
+    .border_style(border_style)
+    .style(fill_style);
+  let inner = outer.inner(rect);
+  outer.render(rect, buf);
+
+  if inner.width < 3 || inner.height < 3 {
+    return;
+  }
+
+  let show_preview = picker.show_preview && inner.width >= 72;
+  let panes = if show_preview {
+    Layout::default()
+      .direction(Direction::Horizontal)
+      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+      .split(inner)
+  } else {
+    Layout::default()
+      .direction(Direction::Horizontal)
+      .constraints([Constraint::Percentage(100)])
+      .split(inner)
+  };
+
+  draw_file_picker_list_pane(
+    buf,
+    panes[0],
+    picker,
+    text_style,
+    fill_style,
+    border_style,
+    focus,
+    cursor_out,
+  );
+
+  if show_preview && panes.len() > 1 {
+    draw_file_picker_preview_pane(buf, panes[1], picker, text_style, fill_style, border_style);
+  }
+}
+
+fn draw_file_picker_list_pane(
+  buf: &mut Buffer,
+  rect: Rect,
+  picker: &the_default::FilePickerState,
+  text_style: Style,
+  fill_style: Style,
+  border_style: Style,
+  focus: Option<&the_lib::render::UiFocus>,
+  cursor_out: &mut Option<(u16, u16)>,
+) {
+  let block = Block::default()
+    .borders(Borders::ALL)
+    .border_style(border_style)
+    .style(fill_style);
+  let inner = block.inner(rect);
+  block.render(rect, buf);
+
+  if inner.width == 0 || inner.height == 0 {
+    return;
+  }
+
+  let prompt_area = Rect::new(inner.x, inner.y, inner.width, 1);
+  let prompt = if picker.query.is_empty() {
+    "Find file".to_string()
+  } else {
+    picker.query.clone()
+  };
+  let prompt_style = if picker.query.is_empty() {
+    text_style.add_modifier(Modifier::DIM)
+  } else {
+    text_style
+  };
+  Paragraph::new(prompt)
+    .style(prompt_style)
+    .render(prompt_area, buf);
+
+  let count = format!("{}/{}", picker.matched_count(), picker.total_count());
+  let count_style = text_style.add_modifier(Modifier::DIM);
+  buf.set_stringn(
+    prompt_area.x.saturating_add(
+      prompt_area
+        .width
+        .saturating_sub(count.chars().count() as u16),
+    ),
+    prompt_area.y,
+    &count,
+    prompt_area.width as usize,
+    count_style,
+  );
+
+  if let Some(error) = picker.error.as_ref().filter(|err| !err.is_empty()) {
+    let error_area = Rect::new(
+      prompt_area.x,
+      prompt_area.y,
+      prompt_area
+        .width
+        .saturating_sub(count.chars().count() as u16 + 1),
+      1,
+    );
+    let mut error_text = format!("! {error}");
+    truncate_in_place(&mut error_text, error_area.width as usize);
+    buf.set_string(error_area.x, error_area.y, error_text, count_style);
+  }
+
+  let is_focused = focus
+    .map(|focus| focus.id == "file_picker_input")
+    .unwrap_or(true);
+  if is_focused && cursor_out.is_none() {
+    let cursor_col = picker.query[..picker.cursor.min(picker.query.len())]
+      .chars()
+      .count() as u16;
+    let x = prompt_area
+      .x
+      .saturating_add(cursor_col)
+      .min(prompt_area.x + prompt_area.width.saturating_sub(1));
+    *cursor_out = Some((x, prompt_area.y));
+  }
+
+  if inner.height < 3 {
+    return;
+  }
+
+  let divider_y = inner.y + 1;
+  let divider = "─".repeat(inner.width as usize);
+  buf.set_string(inner.x, divider_y, divider, border_style);
+
+  let list_area = Rect::new(
+    inner.x,
+    divider_y.saturating_add(1),
+    inner.width,
+    inner.height.saturating_sub(2),
+  );
+  if list_area.width == 0 || list_area.height == 0 {
+    return;
+  }
+
+  let list_items: Vec<ListItem<'_>> = picker
+    .filtered
+    .iter()
+    .filter_map(|idx| picker.items.get(*idx))
+    .map(|item| {
+      let mut style = text_style;
+      if item.is_dir {
+        style = style.add_modifier(Modifier::BOLD);
+      }
+      ListItem::new(item.display.clone()).style(style)
+    })
+    .collect();
+
+  if list_items.is_empty() {
+    Paragraph::new("<No matches>")
+      .style(text_style.add_modifier(Modifier::DIM))
+      .render(list_area, buf);
+    return;
+  }
+
+  let mut list_state = ListState::default();
+  list_state.select(picker.selected);
+  let list = List::new(list_items)
+    .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+    .highlight_symbol(" > ");
+  StatefulWidget::render(list, list_area, buf, &mut list_state);
+}
+
+fn draw_file_picker_preview_pane(
+  buf: &mut Buffer,
+  rect: Rect,
+  picker: &the_default::FilePickerState,
+  text_style: Style,
+  fill_style: Style,
+  border_style: Style,
+) {
+  let block = Block::default()
+    .borders(Borders::ALL)
+    .border_style(border_style)
+    .style(fill_style)
+    .title("Preview");
+  let inner = block.inner(rect);
+  block.render(rect, buf);
+  if inner.width == 0 || inner.height == 0 {
+    return;
+  }
+
+  let text = match &picker.preview {
+    FilePickerPreview::Empty => String::new(),
+    FilePickerPreview::Text(text) => text.clone(),
+    FilePickerPreview::Message(message) => message.clone(),
+  };
+
+  Paragraph::new(text)
+    .style(text_style)
+    .wrap(Wrap { trim: false })
+    .render(inner, buf);
+}
+
 fn max_content_width_for_intent(
   intent: LayoutIntent,
   area: Rect,
@@ -859,6 +1101,11 @@ fn draw_ui_panel(
   focus: Option<&the_lib::render::UiFocus>,
   cursor_out: &mut Option<(u16, u16)>,
 ) {
+  if panel.id == "file_picker" || panel.style.role.as_deref() == Some("file_picker") {
+    draw_file_picker_panel(buf, area, ctx, panel, focus, cursor_out);
+    return;
+  }
+
   let boxed = panel.style.border.is_some();
   let border: u16 = if boxed { 1 } else { 0 };
   let padding = panel.constraints.padding;

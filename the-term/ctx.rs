@@ -21,6 +21,7 @@ use the_default::{
   CommandRegistry,
   DefaultDispatchStatic,
   DispatchRef,
+  FilePickerState,
   KeyBinding,
   KeyEvent,
   Keymaps,
@@ -55,11 +56,13 @@ use the_lib::{
       default_theme,
     },
   },
+  selection::Selection,
   syntax::{
     HighlightCache,
     Loader,
     Syntax,
   },
+  transaction::Transaction,
   view::ViewState,
 };
 use the_runtime::clipboard::ClipboardProvider;
@@ -76,6 +79,7 @@ pub struct Ctx {
   pub command_registry:      CommandRegistry<Ctx>,
   pub command_palette:       CommandPaletteState,
   pub command_palette_style: CommandPaletteStyle,
+  pub file_picker:           FilePickerState,
   pub search_prompt:         the_default::SearchPromptState,
   pub ui_theme:              Theme,
   pub ui_state:              UiState,
@@ -176,6 +180,7 @@ impl Ctx {
       command_registry: CommandRegistry::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
+      file_picker: FilePickerState::default(),
       search_prompt: the_default::SearchPromptState::new(),
       ui_theme,
       ui_state: UiState::default(),
@@ -279,6 +284,14 @@ impl the_default::DefaultContext for Ctx {
     &mut self.command_palette_style
   }
 
+  fn file_picker(&self) -> &FilePickerState {
+    &self.file_picker
+  }
+
+  fn file_picker_mut(&mut self) -> &mut FilePickerState {
+    &mut self.file_picker
+  }
+
   fn search_prompt_ref(&self) -> &the_default::SearchPromptState {
     &self.search_prompt
   }
@@ -379,6 +392,41 @@ impl the_default::DefaultContext for Ctx {
 
   fn ui_theme(&self) -> &Theme {
     &self.ui_theme
+  }
+
+  fn set_file_path(&mut self, path: Option<PathBuf>) {
+    self.file_path = path;
+  }
+
+  fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
+    let content = std::fs::read_to_string(path)?;
+
+    {
+      let doc = self.editor.document_mut();
+      let len = doc.text().len_chars();
+      let tx = Transaction::change(doc.text(), vec![(0, len, Some(content.as_str().into()))])
+        .map_err(|err| std::io::Error::other(err.to_string()))?;
+      doc
+        .apply_transaction(&tx)
+        .map_err(|err| std::io::Error::other(err.to_string()))?;
+      let _ = doc.set_selection(Selection::point(0));
+      doc.clear_syntax();
+      if let Some(loader) = &self.loader {
+        let _ = setup_syntax(doc, path, loader);
+      }
+      doc.set_display_name(
+        path
+          .file_name()
+          .map(|name| name.to_string_lossy().to_string())
+          .unwrap_or_else(|| path.display().to_string()),
+      );
+      let _ = doc.mark_saved();
+    }
+
+    self.file_path = Some(path.to_path_buf());
+    self.editor.view_mut().scroll = Position::new(0, 0);
+    self.needs_render = true;
+    Ok(())
   }
 
   fn scrolloff(&self) -> usize {

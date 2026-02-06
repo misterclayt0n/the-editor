@@ -42,6 +42,7 @@ use the_default::{
   DefaultDispatchStatic,
   Direction as CommandDirection,
   DispatchRef,
+  FilePickerState,
   KeyBinding,
   KeyEvent,
   Keymaps,
@@ -99,6 +100,7 @@ use the_lib::{
   selection::{
     CursorId,
     CursorPick,
+    Selection,
   },
   syntax::Loader,
   transaction::Transaction,
@@ -661,6 +663,7 @@ struct EditorState {
   command_prompt:        CommandPromptState,
   command_palette:       CommandPaletteState,
   command_palette_style: CommandPaletteStyle,
+  file_picker:           FilePickerState,
   search_prompt:         SearchPromptState,
   ui_state:              UiState,
   needs_render:          bool,
@@ -685,6 +688,7 @@ impl EditorState {
       command_prompt: CommandPromptState::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style,
+      file_picker: FilePickerState::default(),
       search_prompt: SearchPromptState::new(),
       ui_state: UiState::default(),
       needs_render: true,
@@ -1567,6 +1571,14 @@ impl DefaultContext for App {
     &mut self.active_state_mut().command_palette_style
   }
 
+  fn file_picker(&self) -> &FilePickerState {
+    &self.active_state_ref().file_picker
+  }
+
+  fn file_picker_mut(&mut self) -> &mut FilePickerState {
+    &mut self.active_state_mut().file_picker
+  }
+
   fn search_prompt_ref(&self) -> &SearchPromptState {
     &self.active_state_ref().search_prompt
   }
@@ -1667,6 +1679,46 @@ impl DefaultContext for App {
 
   fn ui_theme(&self) -> &Theme {
     &self.ui_theme
+  }
+
+  fn set_file_path(&mut self, path: Option<PathBuf>) {
+    if let Some(id) = self.active_editor {
+      match path {
+        Some(path) => {
+          self.file_paths.insert(id, path);
+        },
+        None => {
+          self.file_paths.remove(&id);
+        },
+      }
+    }
+  }
+
+  fn open_file(&mut self, path: &Path) -> std::io::Result<()> {
+    let content = std::fs::read_to_string(path)?;
+    {
+      let editor = self.active_editor_mut();
+      let doc = editor.document_mut();
+      let len = doc.text().len_chars();
+      let tx = Transaction::change(doc.text(), vec![(0, len, Some(content.as_str().into()))])
+        .map_err(|err| std::io::Error::other(err.to_string()))?;
+      doc
+        .apply_transaction(&tx)
+        .map_err(|err| std::io::Error::other(err.to_string()))?;
+      let _ = doc.set_selection(Selection::point(0));
+      doc.clear_syntax();
+      doc.set_display_name(
+        path
+          .file_name()
+          .map(|name| name.to_string_lossy().to_string())
+          .unwrap_or_else(|| path.display().to_string()),
+      );
+      let _ = doc.mark_saved();
+      editor.view_mut().scroll = LibPosition::new(0, 0);
+    }
+    DefaultContext::set_file_path(self, Some(path.to_path_buf()));
+    self.request_render();
+    Ok(())
   }
 
   fn scrolloff(&self) -> usize {

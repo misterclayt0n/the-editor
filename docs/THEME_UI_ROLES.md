@@ -33,3 +33,7 @@ Props map to: `fg`, `bg`, `border`, `accent`.
   Applied to the search prompt panel, container, input, and list.
   Mirrors `command_palette` colors for now.
   Example scopes: `ui.search_prompt.panel.bg`, `ui.search_prompt.input.fg`, `ui.search_prompt.list.selected.bg`.
+
+- `file_picker`
+  Applied to the file picker panel, container, input, list, and preview text.
+  Example scopes: `ui.file_picker.panel.bg`, `ui.file_picker.input.fg`, `ui.file_picker.list.selected.bg`.

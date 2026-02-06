@@ -540,6 +540,7 @@ pub enum Command {
   },
   Search,
   RSearch,
+  FilePicker,
   Save,
   Quit,
 }
@@ -1181,5 +1182,10 @@ impl Command {
   #[must_use]
   pub const fn rsearch() -> Self {
     Self::RSearch
+  }
+
+  #[must_use]
+  pub const fn file_picker() -> Self {
+    Self::FilePicker
   }
 }

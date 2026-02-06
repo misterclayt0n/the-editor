@@ -85,6 +85,8 @@ tabstop = { modifiers = ["italic"], bg = "bossanova" }
 "ui.command_palette.list.selected" = { fg = "revolver", bg = "white" }
 "ui.search_prompt" = { fg = "lavender", bg = "revolver" }
 "ui.search_prompt.list.selected" = { fg = "revolver", bg = "white" }
+"ui.file_picker" = { fg = "lavender", bg = "revolver" }
+"ui.file_picker.list.selected" = { fg = "revolver", bg = "white" }
 
 "diagnostic.hint" = { underline = { color = "silver", style = "curl" } }
 "diagnostic.info" = { underline = { color = "delta", style = "curl" } }

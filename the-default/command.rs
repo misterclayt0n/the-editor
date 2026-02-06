@@ -6,7 +6,10 @@ use std::{
     HashMap,
     VecDeque,
   },
-  path::Path,
+  path::{
+    Path,
+    PathBuf,
+  },
   sync::OnceLock,
 };
 
@@ -332,6 +335,8 @@ pub trait DefaultContext: Sized + 'static {
   fn command_palette_mut(&mut self) -> &mut CommandPaletteState;
   fn command_palette_style(&self) -> &CommandPaletteStyle;
   fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle;
+  fn file_picker(&self) -> &crate::file_picker::FilePickerState;
+  fn file_picker_mut(&mut self) -> &mut crate::file_picker::FilePickerState;
   fn search_prompt_ref(&self) -> &crate::SearchPromptState;
   fn search_prompt_mut(&mut self) -> &mut crate::SearchPromptState;
   fn ui_state(&self) -> &UiState;
@@ -355,6 +360,8 @@ pub trait DefaultContext: Sized + 'static {
   fn text_annotations(&self) -> TextAnnotations<'_>;
   fn syntax_loader(&self) -> Option<&Loader>;
   fn ui_theme(&self) -> &Theme;
+  fn set_file_path(&mut self, path: Option<PathBuf>);
+  fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
   fn scrolloff(&self) -> usize {
     5
   }
@@ -607,6 +614,11 @@ fn handle_pending_input<Ctx: DefaultContext>(
 }
 
 fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+  if ctx.file_picker().active {
+    if crate::file_picker::handle_file_picker_key(ctx, key) {
+      return;
+    }
+  }
   if ctx.search_prompt_ref().active {
     if crate::search_prompt::handle_search_prompt_key(ctx, key) {
       return;
@@ -716,6 +728,7 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::SelectTextobjectInner => ctx.dispatch().select_textobject_inner(ctx, ()),
     Command::Search => ctx.dispatch().search(ctx, ()),
     Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
+    Command::FilePicker => crate::file_picker::open_file_picker(ctx),
     Command::SearchNextOrPrev {
       direction,
       extend,
@@ -803,7 +816,18 @@ fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
   tree.overlays.extend(overlays);
   let overlays = crate::search_prompt::build_search_prompt_ui(ctx);
   tree.overlays.extend(overlays);
-  if ctx.search_prompt_ref().active {
+  let overlays = crate::file_picker::build_file_picker_ui(ctx);
+  tree.overlays.extend(overlays);
+  if ctx.file_picker().active {
+    let cursor = byte_to_char_idx(&ctx.file_picker().query, ctx.file_picker().cursor);
+    let focus = UiFocus {
+      id:     "file_picker_input".to_string(),
+      kind:   UiFocusKind::Input,
+      cursor: Some(cursor),
+    };
+    tree.focus = Some(focus.clone());
+    ctx.ui_state_mut().set_focus(Some(focus));
+  } else if ctx.search_prompt_ref().active {
     let cursor = if ctx.search_prompt_ref().query.is_empty() {
       1
     } else {
@@ -862,6 +886,31 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
   let is_search_prompt = target_id
     .map(|id| id.starts_with("search_prompt"))
     .unwrap_or(false);
+
+  let is_file_picker = target_id
+    .map(|id| id.starts_with("file_picker"))
+    .unwrap_or(false);
+
+  if is_file_picker {
+    match &event.kind {
+      UiEventKind::Key(key_event) => {
+        if let Some(key_event) = ui_key_event_to_key_event(key_event.clone()) {
+          if crate::file_picker::handle_file_picker_key(ctx, key_event) {
+            return UiEventOutcome::handled();
+          }
+        }
+      },
+      UiEventKind::Activate => {
+        crate::file_picker::submit_file_picker(ctx);
+        return UiEventOutcome::handled();
+      },
+      UiEventKind::Dismiss => {
+        crate::file_picker::close_file_picker(ctx);
+        return UiEventOutcome::handled();
+      },
+      UiEventKind::Command(_) => {},
+    }
+  }
 
   if is_search_prompt {
     match &event.kind {
@@ -3270,6 +3319,7 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "goto_last_line" => Some(Command::goto_last_line()),
     "search" => Some(Command::search()),
     "rsearch" => Some(Command::rsearch()),
+    "file_picker" => Some(Command::file_picker()),
     "search_next" => Some(Command::search_next()),
     "search_prev" => Some(Command::search_prev()),
     "extend_search_next" => Some(Command::extend_search_next()),

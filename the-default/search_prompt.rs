@@ -226,6 +226,16 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
         should_update = true;
       }
     },
+    Key::Char('n') if key.modifiers.ctrl() && !key.modifiers.alt() => {
+      step_search_prompt(ctx, Direction::Forward);
+      ctx.request_render();
+      return true;
+    },
+    Key::Char('p') if key.modifiers.ctrl() && !key.modifiers.alt() => {
+      step_search_prompt(ctx, Direction::Backward);
+      ctx.request_render();
+      return true;
+    },
     Key::Char(ch) => {
       if key.modifiers.ctrl() || key.modifiers.alt() {
         return true;
@@ -245,6 +255,50 @@ pub fn handle_search_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEven
   }
 
   true
+}
+
+pub fn step_search_prompt<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
+  let (query, extend) = {
+    let prompt = ctx.search_prompt_ref();
+    (prompt.query.clone(), prompt.extend)
+  };
+
+  if query.is_empty() {
+    return;
+  }
+
+  let direction = match to_lib_direction(direction) {
+    Some(dir) => dir,
+    None => return,
+  };
+
+  match build_regex(&query, true) {
+    Ok(regex) => {
+      ctx.search_prompt_mut().error = None;
+      let movement = if extend {
+        Movement::Extend
+      } else {
+        Movement::Move
+      };
+      let pick = if extend {
+        match direction {
+          LibDirection::Forward => CursorPick::Last,
+          LibDirection::Backward => CursorPick::First,
+        }
+      } else {
+        CursorPick::First
+      };
+      let doc = ctx.editor_ref().document();
+      let text = doc.text().slice(..);
+      let selection = doc.selection().clone();
+      if let Some(next) = search_regex(text, &selection, pick, &regex, movement, direction, true) {
+        let _ = ctx.editor().document_mut().set_selection(next);
+      }
+    },
+    Err(err) => {
+      ctx.search_prompt_mut().error = Some(err);
+    },
+  }
 }
 
 pub fn update_search_preview<Ctx: DefaultContext>(ctx: &mut Ctx) {

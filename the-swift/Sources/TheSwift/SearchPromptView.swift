@@ -20,6 +20,8 @@ struct SearchPromptView: View {
     let snapshot: SearchPromptSnapshot
     @Binding var layout: SearchPromptLayout
     let onQueryChange: (String) -> Void
+    let onSearchPrev: () -> Void
+    let onSearchNext: () -> Void
     let onClose: () -> Void
     let onSubmit: () -> Void
 
@@ -94,6 +96,16 @@ struct SearchPromptView: View {
                         onQueryChange(newValue)
                     }
                 }
+
+            Button(action: onSearchPrev) {
+                Image(systemName: "chevron.up")
+            }
+            .buttonStyle(SearchBarButtonStyle())
+
+            Button(action: onSearchNext) {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(SearchBarButtonStyle())
 
             Button(action: onClose) {
                 Image(systemName: "xmark")

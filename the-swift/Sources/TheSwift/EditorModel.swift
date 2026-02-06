@@ -193,6 +193,14 @@ final class EditorModel: ObservableObject {
         refresh()
     }
 
+    func searchPrev() {
+        searchStep(character: "p")
+    }
+
+    func searchNext() {
+        searchStep(character: "n")
+    }
+
     func closeSearch() {
         _ = app.search_prompt_close(editorId)
         refresh()
@@ -200,6 +208,22 @@ final class EditorModel: ObservableObject {
 
     func submitSearch() {
         _ = app.search_prompt_submit(editorId)
+        refresh()
+    }
+
+    private func searchStep(character: Character) {
+        guard let scalar = character.unicodeScalars.first else {
+            return
+        }
+        // Ctrl-N/Ctrl-P is handled by the search prompt to step next/previous
+        // match while keeping the prompt open.
+        let event = KeyEvent(
+            kind: KeyKind.char.rawValue,
+            codepoint: scalar.value,
+            modifiers: 0b0000_0001
+        )
+        _ = app.handle_key(editorId, event)
+        _ = app.ensure_cursor_visible(editorId)
         refresh()
     }
 

@@ -8,6 +8,8 @@ struct UiOverlayHost: View {
     let onCloseCommandPalette: () -> Void
     let onQueryChange: (String) -> Void
     let onSearchQueryChange: (String) -> Void
+    let onSearchPrev: () -> Void
+    let onSearchNext: () -> Void
     let onSearchClose: () -> Void
     let onSearchSubmit: () -> Void
     @State private var searchLayout = SearchPromptLayout()
@@ -43,6 +45,8 @@ struct UiOverlayHost: View {
                         snapshot: searchSnapshot,
                         layout: $searchLayout,
                         onQueryChange: onSearchQueryChange,
+                        onSearchPrev: onSearchPrev,
+                        onSearchNext: onSearchNext,
                         onClose: onSearchClose,
                         onSubmit: onSearchSubmit
                     )

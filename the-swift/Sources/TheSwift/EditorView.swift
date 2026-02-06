@@ -40,6 +40,12 @@ struct EditorView: View {
                     onSearchQueryChange: { query in
                         model.setSearchQuery(query)
                     },
+                    onSearchPrev: {
+                        model.searchPrev()
+                    },
+                    onSearchNext: {
+                        model.searchNext()
+                    },
                     onSearchClose: {
                         model.closeSearch()
                     },

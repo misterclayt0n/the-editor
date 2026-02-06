@@ -674,6 +674,8 @@ fn build_file_walker(root: &Path) -> ignore::Walk {
     .git_exclude(true)
     .sort_by_file_name(|name1, name2| name1.cmp(name2))
     .filter_entry(move |entry| filter_picker_entry(entry, &absolute_root, DEDUP_SYMLINKS))
+    .add_custom_ignore_filename(the_loader::config_dir().join("ignore"))
+    .add_custom_ignore_filename(".helix/ignore")
     .types(excluded_types())
     .build()
 }

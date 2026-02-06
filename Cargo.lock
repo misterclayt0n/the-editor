@@ -1344,6 +1344,7 @@ dependencies = [
  "the-core",
  "the-dispatch",
  "the-lib",
+ "the-loader",
  "the-stdx",
 ]
 

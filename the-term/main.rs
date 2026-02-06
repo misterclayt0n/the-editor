@@ -99,7 +99,7 @@ fn main() -> Result<()> {
       break;
     }
 
-    if event::poll(Duration::from_millis(100))? {
+    if event::poll(Duration::from_millis(16))? {
       match event::read()? {
         Event::Key(key) => {
           input::handle_key(&mut ctx, key);

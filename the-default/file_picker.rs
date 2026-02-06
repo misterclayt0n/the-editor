@@ -61,7 +61,8 @@ const MAX_PREVIEW_BYTES: usize = 256 * 1024;
 const MAX_PREVIEW_LINES: usize = 512;
 const PAGE_SIZE: usize = 12;
 const DEDUP_SYMLINKS: bool = true;
-const SCAN_BATCH_SIZE: usize = 256;
+const SCAN_BATCH_SIZE: usize = 64;
+const INITIAL_SCAN_BATCH_SIZE: usize = 8;
 const MATCHER_TICK_TIMEOUT_MS: u64 = 10;
 const DEFAULT_LIST_VISIBLE_ROWS: usize = 32;
 
@@ -633,6 +634,7 @@ fn spawn_scan_thread(
 
     let mut total = 0usize;
     let mut batch = Vec::with_capacity(SCAN_BATCH_SIZE);
+    let mut batch_size = INITIAL_SCAN_BATCH_SIZE;
     for entry in &mut walker {
       if cancel.load(Ordering::Relaxed) {
         break;
@@ -665,13 +667,14 @@ fn spawn_scan_thread(
       });
       total += 1;
 
-      if batch.len() >= SCAN_BATCH_SIZE {
+      if batch.len() >= batch_size {
         if scan_tx
           .send((generation, ScanMessage::Batch(std::mem::take(&mut batch))))
           .is_err()
         {
           return;
         }
+        batch_size = SCAN_BATCH_SIZE;
       }
       if total >= max_items {
         break;

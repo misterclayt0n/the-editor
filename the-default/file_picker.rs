@@ -1312,7 +1312,25 @@ fn handle_query_change(state: &mut FilePickerState, old_query: &str) {
 
 pub fn set_picker_visible_rows(state: &mut FilePickerState, visible_rows: usize) {
   state.list_visible = visible_rows.max(1);
-  normalize_selection_and_scroll(state);
+  let matched_count = state.matched_count();
+  if matched_count == 0 {
+    state.selected = None;
+    state.hovered = None;
+    state.list_offset = 0;
+    return;
+  }
+
+  if let Some(selected) = state.selected {
+    state.selected = Some(selected.min(matched_count - 1));
+  }
+  if let Some(hovered) = state.hovered {
+    state.hovered = Some(hovered.min(matched_count - 1));
+  }
+
+  let max_offset = matched_count.saturating_sub(state.list_visible);
+  if state.list_offset > max_offset {
+    state.list_offset = max_offset;
+  }
 }
 
 fn normalize_selection_and_scroll(state: &mut FilePickerState) {

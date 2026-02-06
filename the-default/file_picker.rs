@@ -5,37 +5,47 @@ use std::{
     Path,
     PathBuf,
   },
-  sync::mpsc::{
-    self,
-    Receiver,
-    TryRecvError,
+  sync::{
+    Arc,
+    atomic::{
+      AtomicBool,
+      Ordering,
+    },
+    mpsc::{
+      self,
+      Receiver,
+      Sender,
+      TryRecvError,
+    },
   },
 };
 
 use ignore::DirEntry;
+use nucleo::{
+  Config as NucleoConfig,
+  Nucleo,
+  pattern::{
+    CaseMatching,
+    Normalization,
+  },
+};
 use the_core::chars::{
   next_char_boundary,
   prev_char_boundary,
 };
-use the_lib::{
-  fuzzy::{
-    MatchMode,
-    fuzzy_match,
-  },
-  render::{
-    UiColor,
-    UiColorToken,
-    UiConstraints,
-    UiContainer,
-    UiDivider,
-    UiInput,
-    UiLayout,
-    UiList,
-    UiListItem,
-    UiNode,
-    UiPanel,
-    UiStyle,
-  },
+use the_lib::render::{
+  UiColor,
+  UiColorToken,
+  UiConstraints,
+  UiContainer,
+  UiDivider,
+  UiInput,
+  UiLayout,
+  UiList,
+  UiListItem,
+  UiNode,
+  UiPanel,
+  UiStyle,
 };
 
 use crate::{
@@ -51,13 +61,14 @@ const MAX_PREVIEW_BYTES: usize = 256 * 1024;
 const MAX_PREVIEW_LINES: usize = 512;
 const PAGE_SIZE: usize = 12;
 const DEDUP_SYMLINKS: bool = true;
+const SCAN_BATCH_SIZE: usize = 256;
+const MATCHER_TICK_TIMEOUT_MS: u64 = 10;
 
 #[derive(Debug, Clone)]
 pub struct FilePickerItem {
-  pub absolute:  PathBuf,
-  pub display:   String,
-  display_lower: String,
-  pub is_dir:    bool,
+  pub absolute: PathBuf,
+  pub display:  String,
+  pub is_dir:   bool,
 }
 
 #[derive(Debug, Clone)]
@@ -67,43 +78,55 @@ pub enum FilePickerPreview {
   Message(String),
 }
 
-#[derive(Debug)]
 pub struct FilePickerState {
-  pub active:       bool,
-  pub root:         PathBuf,
-  pub query:        String,
-  pub cursor:       usize,
-  pub items:        Vec<FilePickerItem>,
-  pub filtered:     Vec<usize>,
-  pub selected:     Option<usize>,
-  pub max_results:  usize,
-  pub show_preview: bool,
-  pub preview_path: Option<PathBuf>,
-  pub preview:      FilePickerPreview,
-  pub error:        Option<String>,
-  pub scanning:     bool,
-  scan_generation:  u64,
-  scan_rx:          Option<Receiver<(u64, Result<Vec<FilePickerItem>, String>)>>,
+  pub active:          bool,
+  pub root:            PathBuf,
+  pub query:           String,
+  pub cursor:          usize,
+  pub items:           Vec<FilePickerItem>,
+  pub filtered:        Vec<usize>,
+  pub selected:        Option<usize>,
+  pub max_results:     usize,
+  pub show_preview:    bool,
+  pub preview_path:    Option<PathBuf>,
+  pub preview:         FilePickerPreview,
+  pub error:           Option<String>,
+  pub scanning:        bool,
+  pub matcher_running: bool,
+  scan_generation:     u64,
+  scan_rx:             Option<Receiver<(u64, ScanMessage)>>,
+  scan_cancel:         Option<Arc<AtomicBool>>,
+  matcher:             Nucleo<usize>,
+}
+
+enum ScanMessage {
+  Batch(Vec<FilePickerItem>),
+  Done,
+  Error(String),
 }
 
 impl Default for FilePickerState {
   fn default() -> Self {
+    let matcher = new_matcher();
     Self {
-      active:          false,
-      root:            PathBuf::new(),
-      query:           String::new(),
-      cursor:          0,
-      items:           Vec::new(),
-      filtered:        Vec::new(),
-      selected:        None,
-      max_results:     MAX_RESULTS,
-      show_preview:    true,
-      preview_path:    None,
-      preview:         FilePickerPreview::Empty,
-      error:           None,
-      scanning:        false,
+      active: false,
+      root: PathBuf::new(),
+      query: String::new(),
+      cursor: 0,
+      items: Vec::new(),
+      filtered: Vec::new(),
+      selected: None,
+      max_results: MAX_RESULTS,
+      show_preview: true,
+      preview_path: None,
+      preview: FilePickerPreview::Empty,
+      error: None,
+      scanning: false,
+      matcher_running: false,
       scan_generation: 0,
-      scan_rx:         None,
+      scan_rx: None,
+      scan_cancel: None,
+      matcher,
     }
   }
 }
@@ -127,25 +150,15 @@ impl FilePickerState {
 pub fn open_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let root = picker_root(ctx);
   let show_preview = ctx.file_picker().show_preview;
-  let scan_generation = ctx.file_picker().scan_generation.wrapping_add(1);
-  let (scan_tx, scan_rx) = mpsc::channel();
-  let scan_root = root.clone();
+  if let Some(cancel) = ctx.file_picker().scan_cancel.as_ref() {
+    cancel.store(true, Ordering::Relaxed);
+  }
 
-  std::thread::spawn(move || {
-    let result = collect_items(&scan_root, MAX_SCAN_ITEMS).map_err(|err| err.to_string());
-    let _ = scan_tx.send((scan_generation, result));
-  });
-
-  let mut state = FilePickerState {
-    active: true,
-    root: root.clone(),
-    show_preview,
-    scanning: true,
-    scan_generation,
-    scan_rx: Some(scan_rx),
-    preview: FilePickerPreview::Message("Scanning files…".to_string()),
-    ..FilePickerState::default()
-  };
+  let mut state = FilePickerState::default();
+  state.active = true;
+  state.show_preview = show_preview;
+  state.preview = FilePickerPreview::Message("Scanning files…".to_string());
+  start_scan(&mut state, root);
   poll_scan_results(&mut state);
 
   *ctx.file_picker_mut() = state;
@@ -154,12 +167,17 @@ pub fn open_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
 
 pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let picker = ctx.file_picker_mut();
+  if let Some(cancel) = picker.scan_cancel.as_ref() {
+    cancel.store(true, Ordering::Relaxed);
+  }
   picker.active = false;
   picker.error = None;
   picker.preview_path = None;
   picker.preview = FilePickerPreview::Empty;
   picker.scanning = false;
+  picker.matcher_running = false;
   picker.scan_rx = None;
+  picker.scan_cancel = None;
   ctx.request_render();
 }
 
@@ -257,10 +275,11 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
     Key::Backspace => {
       let picker = ctx.file_picker_mut();
       if picker.cursor > 0 && picker.cursor <= picker.query.len() {
+        let old_query = picker.query.clone();
         let prev = prev_char_boundary(&picker.query, picker.cursor);
         picker.query.replace_range(prev..picker.cursor, "");
         picker.cursor = prev;
-        refresh_filtered(picker);
+        handle_query_change(picker, &old_query);
         refresh_preview(picker);
       }
       ctx.request_render();
@@ -269,9 +288,10 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
     Key::Delete => {
       let picker = ctx.file_picker_mut();
       if picker.cursor < picker.query.len() {
+        let old_query = picker.query.clone();
         let next = next_char_boundary(&picker.query, picker.cursor);
         picker.query.replace_range(picker.cursor..next, "");
-        refresh_filtered(picker);
+        handle_query_change(picker, &old_query);
         refresh_preview(picker);
       }
       ctx.request_render();
@@ -332,9 +352,10 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
         return true;
       }
       let picker = ctx.file_picker_mut();
+      let old_query = picker.query.clone();
       picker.query.insert(picker.cursor, ch);
       picker.cursor += ch.len_utf8();
-      refresh_filtered(picker);
+      handle_query_change(picker, &old_query);
       refresh_preview(picker);
       ctx.request_render();
       true
@@ -348,32 +369,6 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let Some(item) = selected else {
     return;
   };
-
-  if item.is_dir {
-    let picker = ctx.file_picker_mut();
-    picker.root = item.absolute.clone();
-    picker.query.clear();
-    picker.cursor = 0;
-    picker.error = None;
-    picker.preview_path = None;
-    picker.preview = FilePickerPreview::Empty;
-    match collect_items(&picker.root, MAX_SCAN_ITEMS) {
-      Ok(items) => {
-        picker.items = items;
-        refresh_filtered(picker);
-        refresh_preview(picker);
-      },
-      Err(err) => {
-        picker.items.clear();
-        picker.filtered.clear();
-        picker.selected = None;
-        picker.error = Some(err.to_string());
-        picker.preview = FilePickerPreview::Message(format!("Failed to read directory: {err}"));
-      },
-    }
-    ctx.request_render();
-    return;
-  }
 
   if let Err(err) = ctx.open_file(&item.absolute) {
     let picker = ctx.file_picker_mut();
@@ -399,16 +394,16 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
   if !picker.active {
     return Vec::new();
   }
-  let is_scanning = picker.scanning;
+  let is_running = picker.scanning || picker.matcher_running;
 
-  if is_scanning {
+  if is_running {
     ctx.request_render();
   }
   let picker = ctx.file_picker();
 
   let mut status = format!(
     "{}{}/{}",
-    if is_scanning { "(running) " } else { "" },
+    if is_running { "(running) " } else { "" },
     picker.matched_count(),
     picker.total_count()
   );
@@ -556,68 +551,134 @@ fn has_workspace_marker(path: &Path) -> bool {
     .any(|marker| path.join(marker).exists())
 }
 
-fn collect_items(root: &Path, max_items: usize) -> std::io::Result<Vec<FilePickerItem>> {
-  let root = if root.as_os_str().is_empty() {
-    PathBuf::from(".")
-  } else {
-    root.to_path_buf()
-  };
-
-  let absolute_root = root.canonicalize().unwrap_or_else(|_| root.clone());
-  let mut walk_builder = ignore::WalkBuilder::new(&root);
-  let mut walker = walk_builder
-    .hidden(true)
-    .parents(true)
-    .ignore(true)
-    .follow_links(true)
-    .git_ignore(true)
-    .git_global(true)
-    .git_exclude(true)
-    .sort_by_file_name(|name1, name2| name1.cmp(name2))
-    .filter_entry(move |entry| filter_picker_entry(entry, &absolute_root, DEDUP_SYMLINKS))
-    .types(excluded_types())
-    .build();
-
-  let mut items = Vec::new();
-  for entry in &mut walker {
-    let entry = match entry {
-      Ok(entry) => entry,
-      Err(_) => continue,
-    };
-
-    if !entry
-      .file_type()
-      .is_some_and(|file_type| file_type.is_file())
-    {
-      continue;
-    }
-
-    let path = entry.into_path();
-    let rel = match path.strip_prefix(&root) {
-      Ok(rel) => rel,
-      Err(_) => continue,
-    };
-
-    let mut display = rel.to_string_lossy().to_string();
-    if std::path::MAIN_SEPARATOR != '/' {
-      display = display.replace(std::path::MAIN_SEPARATOR, "/");
-    }
-    let display_lower = display.to_lowercase();
-
-    items.push(FilePickerItem {
-      absolute: path,
-      display,
-      display_lower,
-      is_dir: false,
-    });
-
-    if items.len() >= max_items {
-      break;
-    }
+fn start_scan(state: &mut FilePickerState, root: PathBuf) {
+  if let Some(cancel) = state.scan_cancel.as_ref() {
+    cancel.store(true, Ordering::Relaxed);
   }
 
-  items.sort_by(|lhs, rhs| lhs.display.cmp(&rhs.display));
-  Ok(items)
+  state.root = root.clone();
+  state.query.clear();
+  state.cursor = 0;
+  state.items.clear();
+  state.filtered.clear();
+  state.selected = None;
+  state.preview_path = None;
+  state.error = None;
+  state.scanning = true;
+  state.matcher_running = false;
+  state.preview = FilePickerPreview::Message("Scanning files…".to_string());
+
+  state.matcher.restart(true);
+  state
+    .matcher
+    .pattern
+    .reparse(0, "", CaseMatching::Smart, Normalization::Smart, false);
+
+  state.scan_generation = state.scan_generation.wrapping_add(1);
+  let generation = state.scan_generation;
+
+  let (scan_tx, scan_rx) = mpsc::channel();
+  let cancel = Arc::new(AtomicBool::new(false));
+  state.scan_rx = Some(scan_rx);
+  state.scan_cancel = Some(cancel.clone());
+
+  spawn_scan_thread(root, MAX_SCAN_ITEMS, generation, scan_tx, cancel);
+}
+
+fn spawn_scan_thread(
+  root: PathBuf,
+  max_items: usize,
+  generation: u64,
+  scan_tx: Sender<(u64, ScanMessage)>,
+  cancel: Arc<AtomicBool>,
+) {
+  std::thread::spawn(move || {
+    if !root.exists() {
+      let _ = scan_tx.send((
+        generation,
+        ScanMessage::Error("workspace directory does not exist".to_string()),
+      ));
+      return;
+    }
+
+    if let Err(err) = fs::read_dir(&root) {
+      let _ = scan_tx.send((generation, ScanMessage::Error(err.to_string())));
+      return;
+    }
+
+    let absolute_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+    let mut walk_builder = ignore::WalkBuilder::new(&root);
+    let mut walker = walk_builder
+      .hidden(true)
+      .parents(true)
+      .ignore(true)
+      .follow_links(true)
+      .git_ignore(true)
+      .git_global(true)
+      .git_exclude(true)
+      .sort_by_file_name(|name1, name2| name1.cmp(name2))
+      .filter_entry(move |entry| filter_picker_entry(entry, &absolute_root, DEDUP_SYMLINKS))
+      .types(excluded_types())
+      .build();
+
+    let mut total = 0usize;
+    let mut batch = Vec::with_capacity(SCAN_BATCH_SIZE);
+    for entry in &mut walker {
+      if cancel.load(Ordering::Relaxed) {
+        break;
+      }
+
+      let entry = match entry {
+        Ok(entry) => entry,
+        Err(_) => continue,
+      };
+      if !entry
+        .file_type()
+        .is_some_and(|file_type| file_type.is_file())
+      {
+        continue;
+      }
+
+      let path = entry.into_path();
+      let rel = match path.strip_prefix(&root) {
+        Ok(rel) => rel,
+        Err(_) => continue,
+      };
+      let mut display = rel.to_string_lossy().to_string();
+      if std::path::MAIN_SEPARATOR != '/' {
+        display = display.replace(std::path::MAIN_SEPARATOR, "/");
+      }
+      batch.push(FilePickerItem {
+        absolute: path,
+        display,
+        is_dir: false,
+      });
+      total += 1;
+
+      if batch.len() >= SCAN_BATCH_SIZE {
+        if scan_tx
+          .send((generation, ScanMessage::Batch(std::mem::take(&mut batch))))
+          .is_err()
+        {
+          return;
+        }
+      }
+      if total >= max_items {
+        break;
+      }
+    }
+
+    if !batch.is_empty() {
+      if scan_tx
+        .send((generation, ScanMessage::Batch(batch)))
+        .is_err()
+      {
+        return;
+      }
+    }
+
+    let _ = scan_tx.send((generation, ScanMessage::Done));
+  });
 }
 
 fn filter_picker_entry(entry: &DirEntry, root: &Path, dedup_symlinks: bool) -> bool {
@@ -656,113 +717,149 @@ fn excluded_types() -> ignore::types::Types {
 }
 
 fn poll_scan_results(state: &mut FilePickerState) -> bool {
-  let scan_result = match &state.scan_rx {
-    Some(scan_rx) => scan_rx.try_recv(),
-    None => return false,
-  };
+  let mut changed = false;
+  let mut processed = 0usize;
+  while processed < 64 {
+    let scan_result = match state.scan_rx.as_ref() {
+      Some(scan_rx) => scan_rx.try_recv(),
+      None => break,
+    };
+    match scan_result {
+      Ok((generation, message)) => {
+        if generation != state.scan_generation {
+          processed += 1;
+          continue;
+        }
+        match message {
+          ScanMessage::Batch(batch) => {
+            inject_batch(state, batch);
+            changed = true;
+          },
+          ScanMessage::Done => {
+            state.scanning = false;
+            state.scan_rx = None;
+            state.scan_cancel = None;
+            changed = true;
+            break;
+          },
+          ScanMessage::Error(err) => {
+            state.scanning = false;
+            state.scan_rx = None;
+            state.scan_cancel = None;
+            state.error = Some(err.clone());
+            state.preview = FilePickerPreview::Message(format!("Failed to read workspace: {err}"));
+            changed = true;
+            break;
+          },
+        }
+      },
+      Err(TryRecvError::Empty) => break,
+      Err(TryRecvError::Disconnected) => {
+        state.scanning = false;
+        state.scan_rx = None;
+        state.scan_cancel = None;
+        if state.items.is_empty() {
+          state.error = Some("Scan interrupted".to_string());
+          state.preview = FilePickerPreview::Message("Scan interrupted".to_string());
+        }
+        changed = true;
+        break;
+      },
+    }
+    processed += 1;
+  }
 
-  match scan_result {
-    Ok((generation, result)) => {
-      if generation != state.scan_generation {
-        return false;
-      }
-      state.scanning = false;
-      state.scan_rx = None;
-      match result {
-        Ok(items) => {
-          state.items = items;
-          state.error = None;
-          refresh_filtered(state);
-          refresh_preview(state);
-        },
-        Err(err) => {
-          state.items.clear();
-          state.filtered.clear();
-          state.selected = None;
-          state.error = Some(err.clone());
-          state.preview = FilePickerPreview::Message(format!("Failed to read workspace: {err}"));
-        },
-      }
-      true
-    },
-    Err(TryRecvError::Empty) => false,
-    Err(TryRecvError::Disconnected) => {
-      state.scanning = false;
-      state.scan_rx = None;
-      if state.items.is_empty() {
-        state.error = Some("Scan interrupted".to_string());
-        state.preview = FilePickerPreview::Message("Scan interrupted".to_string());
-      }
-      true
-    },
+  if refresh_filtered(state) {
+    refresh_preview(state);
+    changed = true;
+  }
+
+  let running = state.matcher_running || state.scanning;
+  if running {
+    changed = true;
+  }
+
+  changed
+}
+
+fn inject_batch(state: &mut FilePickerState, batch: Vec<FilePickerItem>) {
+  if batch.is_empty() {
+    return;
+  }
+
+  let injector = state.matcher.injector();
+  for item in batch {
+    let idx = state.items.len();
+    let text = item.display.clone();
+    state.items.push(item);
+    injector.push(idx, move |_idx, dst| {
+      dst[0] = text.into();
+    });
   }
 }
 
-fn refresh_filtered(state: &mut FilePickerState) {
-  let mut filtered: Vec<usize> = if state.query.is_empty() {
-    (0..state.items.len()).collect()
-  } else {
-    let mut matches = fuzzy_indices(state, MatchMode::Path);
-    if matches.is_empty() {
-      matches = fuzzy_indices(state, MatchMode::Plain);
-    }
-    if matches.is_empty() {
-      let query = state.query.to_lowercase();
-      matches = state
-        .items
-        .iter()
-        .enumerate()
-        .filter_map(|(index, item)| item.display_lower.contains(&query).then_some(index))
-        .collect();
-    }
-    matches
-  };
+fn refresh_filtered(state: &mut FilePickerState) -> bool {
+  let status = state.matcher.tick(MATCHER_TICK_TIMEOUT_MS);
+  state.matcher_running = status.running || state.matcher.active_injectors() > 0;
 
-  if filtered.len() > state.max_results {
-    filtered.truncate(state.max_results);
+  let snapshot = state.matcher.snapshot();
+  let count = snapshot.matched_item_count().min(state.max_results as u32);
+  let mut filtered = Vec::with_capacity(count as usize);
+  for item in snapshot.matched_items(0..count) {
+    filtered.push(*item.data);
   }
 
-  state.filtered = filtered;
+  let mut changed = status.changed || filtered != state.filtered;
+  if filtered != state.filtered {
+    state.filtered = filtered;
+  }
+
+  let prev_selected = state.selected;
   if state.filtered.is_empty() {
     state.selected = None;
   } else {
     let selected = state.selected.unwrap_or(0).min(state.filtered.len() - 1);
     state.selected = Some(selected);
   }
+  if prev_selected != state.selected {
+    changed = true;
+  }
+
+  changed
 }
 
-fn fuzzy_indices(state: &FilePickerState, mode: MatchMode) -> Vec<usize> {
-  struct PickerKey<'a> {
-    index: usize,
-    text:  &'a str,
+fn handle_query_change(state: &mut FilePickerState, old_query: &str) {
+  if state.query == old_query {
+    return;
   }
 
-  impl AsRef<str> for PickerKey<'_> {
-    fn as_ref(&self) -> &str {
-      self.text
-    }
-  }
-
-  fuzzy_match(
+  state.selected = Some(0);
+  let is_append = state.query.starts_with(old_query);
+  state.matcher.pattern.reparse(
+    0,
     &state.query,
-    state.items.iter().enumerate().map(|(index, item)| {
-      PickerKey {
-        index,
-        text: &item.display,
-      }
-    }),
-    mode,
-  )
-  .into_iter()
-  .map(|(key, _)| key.index)
-  .collect()
+    CaseMatching::Smart,
+    Normalization::Smart,
+    is_append,
+  );
+  let _ = refresh_filtered(state);
+}
+
+fn new_matcher() -> Nucleo<usize> {
+  let mut config = NucleoConfig::DEFAULT;
+  config.set_match_paths();
+  Nucleo::new(config, Arc::new(|| {}), None, 1)
 }
 
 fn refresh_preview(state: &mut FilePickerState) {
   let item = state.current_item().cloned();
   let Some(item) = item else {
     state.preview_path = None;
-    state.preview = FilePickerPreview::Message("No matches".to_string());
+    if state.scanning || state.matcher_running {
+      state.preview = FilePickerPreview::Message("Scanning files…".to_string());
+    } else {
+      state.preview = FilePickerPreview::Message("No matches".to_string());
+    }
     return;
   };
 

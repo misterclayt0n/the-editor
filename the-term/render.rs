@@ -19,6 +19,7 @@ use ratatui::{
 use the_default::{
   FilePickerPreview,
   render_plan,
+  set_picker_visible_rows,
   ui_tree,
 };
 use the_lib::{
@@ -1040,6 +1041,7 @@ fn draw_file_picker_list_pane(
 
   let mut list_state = ListState::default();
   list_state.select(picker.selected);
+  *list_state.offset_mut() = picker.list_offset;
   let list = List::new(list_items)
     .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
     .highlight_symbol(" > ");
@@ -1577,12 +1579,14 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
 
 /// Render the current document state to the terminal.
 pub fn render(f: &mut Frame, ctx: &mut Ctx) {
+  let area = f.size();
+  sync_file_picker_viewport(ctx, area);
+
   let ui = ui_tree(ctx);
   apply_ui_viewport(ctx, &ui, f.size());
   ensure_cursor_visible(ctx);
   let plan = render_plan(ctx);
 
-  let area = f.size();
   f.render_widget(Clear, area);
 
   let ui_cursor = {
@@ -1657,6 +1661,63 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
       }
     }
   }
+}
+
+fn sync_file_picker_viewport(ctx: &mut Ctx, area: Rect) {
+  if !ctx.file_picker.active {
+    return;
+  }
+
+  if area.width < 4 || area.height < 4 {
+    set_picker_visible_rows(&mut ctx.file_picker, 1);
+    return;
+  }
+
+  let width = area
+    .width
+    .saturating_mul(9)
+    .saturating_div(10)
+    .max(72)
+    .min(area.width);
+  let height = area
+    .height
+    .saturating_mul(8)
+    .saturating_div(10)
+    .max(18)
+    .min(area.height);
+  let x = area.x + area.width.saturating_sub(width) / 2;
+  let y = area.y + area.height.saturating_sub(height) / 2;
+  let rect = Rect::new(x, y, width, height);
+
+  let outer = Block::default().borders(Borders::ALL);
+  let inner = outer.inner(rect);
+  if inner.width < 3 || inner.height < 3 {
+    set_picker_visible_rows(&mut ctx.file_picker, 1);
+    return;
+  }
+
+  let show_preview = ctx.file_picker.show_preview && inner.width >= 72;
+  let panes = if show_preview {
+    Layout::default()
+      .direction(Direction::Horizontal)
+      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+      .split(inner)
+  } else {
+    Layout::default()
+      .direction(Direction::Horizontal)
+      .constraints([Constraint::Percentage(100)])
+      .split(inner)
+  };
+  let pane = panes.first().copied().unwrap_or(inner);
+  let list_block = Block::default().borders(Borders::ALL);
+  let list_inner = list_block.inner(pane);
+  let visible_rows = if list_inner.height < 3 {
+    1
+  } else {
+    list_inner.height.saturating_sub(2).max(1) as usize
+  };
+
+  set_picker_visible_rows(&mut ctx.file_picker, visible_rows);
 }
 
 /// Ensure cursor is visible by adjusting scroll if needed.

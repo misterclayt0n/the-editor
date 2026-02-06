@@ -63,6 +63,7 @@ const PAGE_SIZE: usize = 12;
 const DEDUP_SYMLINKS: bool = true;
 const SCAN_BATCH_SIZE: usize = 256;
 const MATCHER_TICK_TIMEOUT_MS: u64 = 10;
+const DEFAULT_LIST_VISIBLE_ROWS: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct FilePickerItem {
@@ -86,6 +87,8 @@ pub struct FilePickerState {
   pub items:           Vec<FilePickerItem>,
   pub filtered:        Vec<usize>,
   pub selected:        Option<usize>,
+  pub list_offset:     usize,
+  pub list_visible:    usize,
   pub max_results:     usize,
   pub show_preview:    bool,
   pub preview_path:    Option<PathBuf>,
@@ -116,6 +119,8 @@ impl Default for FilePickerState {
       items: Vec::new(),
       filtered: Vec::new(),
       selected: None,
+      list_offset: 0,
+      list_visible: DEFAULT_LIST_VISIBLE_ROWS,
       max_results: MAX_RESULTS,
       show_preview: true,
       preview_path: None,
@@ -185,6 +190,7 @@ pub fn move_selection<Ctx: DefaultContext>(ctx: &mut Ctx, amount: isize) {
   let picker = ctx.file_picker_mut();
   if picker.filtered.is_empty() {
     picker.selected = None;
+    picker.list_offset = 0;
     return;
   }
 
@@ -192,6 +198,7 @@ pub fn move_selection<Ctx: DefaultContext>(ctx: &mut Ctx, amount: isize) {
   let selected = picker.selected.unwrap_or(0) as isize;
   let next = (selected + amount).rem_euclid(len) as usize;
   picker.selected = Some(next);
+  normalize_selection_and_scroll(picker);
   refresh_preview(picker);
 }
 
@@ -252,6 +259,7 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
       } else {
         Some(0)
       };
+      normalize_selection_and_scroll(picker);
       refresh_preview(picker);
       ctx.request_render();
       true
@@ -259,6 +267,7 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
     Key::End => {
       let picker = ctx.file_picker_mut();
       picker.selected = picker.filtered.len().checked_sub(1);
+      normalize_selection_and_scroll(picker);
       refresh_preview(picker);
       ctx.request_render();
       true
@@ -437,7 +446,7 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
 
   let mut list = UiList::new("file_picker_list", list_items);
   list.selected = picker.selected;
-  list.max_visible = Some(32);
+  list.max_visible = Some(picker.list_visible);
   list.style = list.style.with_role("file_picker");
   list.style.accent = Some(UiColor::Token(UiColorToken::SelectedBg));
   list.style.border = Some(UiColor::Token(UiColorToken::SelectedText));
@@ -562,6 +571,7 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
   state.items.clear();
   state.filtered.clear();
   state.selected = None;
+  state.list_offset = 0;
   state.preview_path = None;
   state.error = None;
   state.scanning = true;
@@ -815,13 +825,9 @@ fn refresh_filtered(state: &mut FilePickerState) -> bool {
   }
 
   let prev_selected = state.selected;
-  if state.filtered.is_empty() {
-    state.selected = None;
-  } else {
-    let selected = state.selected.unwrap_or(0).min(state.filtered.len() - 1);
-    state.selected = Some(selected);
-  }
-  if prev_selected != state.selected {
+  let prev_offset = state.list_offset;
+  normalize_selection_and_scroll(state);
+  if prev_selected != state.selected || prev_offset != state.list_offset {
     changed = true;
   }
 
@@ -834,6 +840,7 @@ fn handle_query_change(state: &mut FilePickerState, old_query: &str) {
   }
 
   state.selected = Some(0);
+  state.list_offset = 0;
   let is_append = state.query.starts_with(old_query);
   state.matcher.pattern.reparse(
     0,
@@ -843,6 +850,34 @@ fn handle_query_change(state: &mut FilePickerState, old_query: &str) {
     is_append,
   );
   let _ = refresh_filtered(state);
+}
+
+pub fn set_picker_visible_rows(state: &mut FilePickerState, visible_rows: usize) {
+  state.list_visible = visible_rows.max(1);
+  normalize_selection_and_scroll(state);
+}
+
+fn normalize_selection_and_scroll(state: &mut FilePickerState) {
+  if state.filtered.is_empty() {
+    state.selected = None;
+    state.list_offset = 0;
+    return;
+  }
+
+  let visible = state.list_visible.max(1);
+  let selected = state.selected.unwrap_or(0).min(state.filtered.len() - 1);
+  state.selected = Some(selected);
+
+  if selected < state.list_offset {
+    state.list_offset = selected;
+  } else if selected >= state.list_offset.saturating_add(visible) {
+    state.list_offset = selected.saturating_add(1).saturating_sub(visible);
+  }
+
+  let max_offset = state.filtered.len().saturating_sub(visible);
+  if state.list_offset > max_offset {
+    state.list_offset = max_offset;
+  }
 }
 
 fn new_matcher() -> Nucleo<usize> {

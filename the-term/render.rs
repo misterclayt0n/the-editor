@@ -9,7 +9,6 @@ use ratatui::{
     Clear,
     Paragraph,
     Widget,
-    Wrap,
   },
 };
 use the_default::{
@@ -1131,7 +1130,6 @@ fn draw_file_picker_preview_pane(
 
   Paragraph::new(text)
     .style(text_style)
-    .wrap(Wrap { trim: false })
     .render(inner, buf);
 }
 

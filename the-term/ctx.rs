@@ -175,6 +175,10 @@ impl Ctx {
 
     let (file_picker_wake_tx, file_picker_wake_rx) = std::sync::mpsc::channel();
     let mut file_picker = FilePickerState::default();
+    the_default::set_file_picker_config(
+      &mut file_picker,
+      the_config::defaults::build_file_picker_config(),
+    );
     the_default::set_file_picker_wake_sender(&mut file_picker, Some(file_picker_wake_tx));
 
     Ok(Self {

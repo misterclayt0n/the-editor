@@ -68,7 +68,6 @@ const MAX_PREVIEW_BYTES: usize = 256 * 1024;
 const MAX_PREVIEW_LINES: usize = 512;
 const PREVIEW_CACHE_CAPACITY: usize = 128;
 const PAGE_SIZE: usize = 12;
-const DEDUP_SYMLINKS: bool = true;
 const MATCHER_TICK_TIMEOUT_MS: u64 = 10;
 const DEFAULT_LIST_VISIBLE_ROWS: usize = 32;
 const WARMUP_SCAN_BUDGET_MS: u64 = 30;
@@ -78,6 +77,35 @@ pub struct FilePickerItem {
   pub absolute: PathBuf,
   pub display:  String,
   pub is_dir:   bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilePickerConfig {
+  pub hidden:            bool,
+  pub follow_symlinks:   bool,
+  pub deduplicate_links: bool,
+  pub parents:           bool,
+  pub ignore:            bool,
+  pub git_ignore:        bool,
+  pub git_global:        bool,
+  pub git_exclude:       bool,
+  pub max_depth:         Option<usize>,
+}
+
+impl Default for FilePickerConfig {
+  fn default() -> Self {
+    Self {
+      hidden:            true,
+      follow_symlinks:   true,
+      deduplicate_links: true,
+      parents:           true,
+      ignore:            true,
+      git_ignore:        true,
+      git_global:        true,
+      git_exclude:       true,
+      max_depth:         None,
+    }
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -152,6 +180,7 @@ impl PreviewCache {
 pub struct FilePickerState {
   pub active:          bool,
   pub root:            PathBuf,
+  pub config:          FilePickerConfig,
   pub query:           String,
   pub cursor:          usize,
   pub selected:        Option<usize>,
@@ -186,6 +215,7 @@ impl Default for FilePickerState {
     Self {
       active: false,
       root: PathBuf::new(),
+      config: FilePickerConfig::default(),
       query: String::new(),
       cursor: 0,
       selected: None,
@@ -213,6 +243,10 @@ impl Default for FilePickerState {
 
 pub fn set_file_picker_wake_sender(state: &mut FilePickerState, wake_tx: Option<Sender<()>>) {
   state.wake_tx = wake_tx;
+}
+
+pub fn set_file_picker_config(state: &mut FilePickerState, config: FilePickerConfig) {
+  state.config = config;
 }
 
 impl FilePickerState {
@@ -244,6 +278,7 @@ impl FilePickerState {
 pub fn open_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let root = picker_root(ctx);
   let show_preview = ctx.file_picker().show_preview;
+  let config = ctx.file_picker().config.clone();
   let wake_tx = ctx.file_picker().wake_tx.clone();
   if let Some(cancel) = ctx.file_picker().scan_cancel.as_ref() {
     cancel.store(true, Ordering::Relaxed);
@@ -252,6 +287,7 @@ pub fn open_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let mut state = FilePickerState::default();
   state.active = true;
   state.show_preview = show_preview;
+  state.config = config;
   state.wake_tx = wake_tx.clone();
   state.matcher = new_matcher(wake_tx);
   state.preview = FilePickerPreview::Message("Scanning files…".to_string());
@@ -681,7 +717,7 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
   state.scan_cancel = Some(cancel.clone());
   let injector = state.matcher.injector();
 
-  let mut walker = build_file_walker(&root);
+  let mut walker = build_file_walker(&root, &state.config);
   let timeout = Instant::now() + Duration::from_millis(WARMUP_SCAN_BUDGET_MS);
   let mut scanned = 0usize;
   let mut hit_timeout = false;
@@ -731,19 +767,21 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
   );
 }
 
-fn build_file_walker(root: &Path) -> ignore::Walk {
+fn build_file_walker(root: &Path, config: &FilePickerConfig) -> ignore::Walk {
   let absolute_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+  let deduplicate_links = config.deduplicate_links;
   let mut walk_builder = ignore::WalkBuilder::new(root);
   walk_builder
-    .hidden(true)
-    .parents(true)
-    .ignore(true)
-    .follow_links(true)
-    .git_ignore(true)
-    .git_global(true)
-    .git_exclude(true)
+    .hidden(config.hidden)
+    .parents(config.parents)
+    .ignore(config.ignore)
+    .follow_links(config.follow_symlinks)
+    .git_ignore(config.git_ignore)
+    .git_global(config.git_global)
+    .git_exclude(config.git_exclude)
     .sort_by_file_name(|name1, name2| name1.cmp(name2))
-    .filter_entry(move |entry| filter_picker_entry(entry, &absolute_root, DEDUP_SYMLINKS))
+    .max_depth(config.max_depth)
+    .filter_entry(move |entry| filter_picker_entry(entry, &absolute_root, deduplicate_links))
     .add_custom_ignore_filename(the_loader::config_dir().join("ignore"))
     .add_custom_ignore_filename(".helix/ignore")
     .types(excluded_types())

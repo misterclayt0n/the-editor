@@ -1307,6 +1307,7 @@ name = "the-config"
 version = "0.1.0"
 dependencies = [
  "the-config-user",
+ "the-default",
 ]
 
 [[package]]

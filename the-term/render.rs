@@ -3,6 +3,10 @@
 use ratatui::{
   prelude::*,
   style::Modifier,
+  text::{
+    Line,
+    Span,
+  },
   widgets::{
     Block,
     Borders,
@@ -47,6 +51,7 @@ use the_lib::{
     text_annotations::TextAnnotations,
   },
   selection::Range,
+  syntax::Highlight,
 };
 
 use crate::Ctx;
@@ -889,7 +894,12 @@ fn draw_file_picker_panel(
       .ui_theme
       .try_get("ui.file_picker")
       .and_then(|style| style.bg)
-      .or_else(|| ctx.ui_theme.try_get("ui.background").and_then(|style| style.bg))
+      .or_else(|| {
+        ctx
+          .ui_theme
+          .try_get("ui.background")
+          .and_then(|style| style.bg)
+      })
       .map(lib_color_to_ratatui);
     if let Some(bg) = fallback_bg {
       fill_style = fill_style.bg(bg);
@@ -953,7 +963,15 @@ fn draw_file_picker_panel(
   );
 
   if show_preview && panes.len() > 1 {
-    draw_file_picker_preview_pane(buf, panes[1], picker, text_style, fill_style, border_style);
+    draw_file_picker_preview_pane(
+      buf,
+      panes[1],
+      picker,
+      text_style,
+      fill_style,
+      border_style,
+      &ctx.ui_theme,
+    );
   }
 }
 
@@ -1122,6 +1140,7 @@ fn draw_file_picker_preview_pane(
   text_style: Style,
   fill_style: Style,
   border_style: Style,
+  theme: &the_lib::render::theme::Theme,
 ) {
   let block = Block::default()
     .borders(Borders::ALL)
@@ -1136,13 +1155,156 @@ fn draw_file_picker_preview_pane(
 
   let text = match &picker.preview {
     FilePickerPreview::Empty => String::new(),
+    FilePickerPreview::Source(source) => {
+      draw_file_picker_source_preview(buf, inner, source, text_style, theme);
+      return;
+    },
     FilePickerPreview::Text(text) => text.clone(),
     FilePickerPreview::Message(message) => message.clone(),
   };
 
-  Paragraph::new(text)
-    .style(text_style)
-    .render(inner, buf);
+  Paragraph::new(text).style(text_style).render(inner, buf);
+}
+
+fn draw_file_picker_source_preview(
+  buf: &mut Buffer,
+  area: Rect,
+  source: &the_default::FilePickerSourcePreview,
+  text_style: Style,
+  theme: &the_lib::render::theme::Theme,
+) {
+  if area.width == 0 || area.height == 0 {
+    return;
+  }
+
+  let lines_len = source.lines.len().max(1);
+  let line_number_width = lines_len.to_string().len();
+  let gutter_style = text_style.add_modifier(Modifier::DIM);
+
+  for row in 0..area.height as usize {
+    let y = area.y + row as u16;
+    if row >= source.lines.len() {
+      if source.truncated && row == source.lines.len() {
+        buf.set_stringn(area.x, y, "…", area.width as usize, gutter_style);
+      }
+      continue;
+    }
+
+    let line_number = row + 1;
+    let gutter = format!("{line_number:>line_number_width$} ");
+    let gutter_width = gutter.chars().count() as u16;
+    buf.set_stringn(area.x, y, &gutter, area.width as usize, gutter_style);
+
+    if gutter_width >= area.width {
+      continue;
+    }
+
+    let line = &source.lines[row];
+    if line.is_empty() {
+      continue;
+    }
+
+    let line_start = source.line_starts[row];
+    let line_spans = preview_line_spans(line, line_start, &source.highlights, text_style, theme);
+
+    Paragraph::new(Line::from(line_spans)).render(
+      Rect::new(
+        area.x + gutter_width,
+        y,
+        area.width.saturating_sub(gutter_width),
+        1,
+      ),
+      buf,
+    );
+  }
+}
+
+fn preview_line_spans<'a>(
+  line: &'a str,
+  line_start: usize,
+  highlights: &[(Highlight, std::ops::Range<usize>)],
+  text_style: Style,
+  theme: &the_lib::render::theme::Theme,
+) -> Vec<Span<'a>> {
+  if line.is_empty() {
+    return Vec::new();
+  }
+
+  if highlights.is_empty() {
+    return vec![Span::styled(line, text_style)];
+  }
+
+  let line_end = line_start.saturating_add(line.len());
+  let mut boundaries = vec![line_start, line_end];
+  for (_highlight, range) in highlights {
+    if range.end <= line_start || range.start >= line_end {
+      continue;
+    }
+    boundaries.push(range.start.max(line_start));
+    boundaries.push(range.end.min(line_end));
+  }
+  boundaries.sort_unstable();
+  boundaries.dedup();
+
+  let mut spans = Vec::new();
+  for pair in boundaries.windows(2) {
+    let absolute_start = pair[0];
+    let absolute_end = pair[1];
+    if absolute_end <= absolute_start {
+      continue;
+    }
+
+    let local_start = clamp_boundary(line, absolute_start.saturating_sub(line_start), false);
+    let local_end = clamp_boundary(line, absolute_end.saturating_sub(line_start), true);
+    if local_end <= local_start {
+      continue;
+    }
+
+    let sample_byte = absolute_start + (absolute_end - absolute_start) / 2;
+    let style = preview_highlight_at(highlights, sample_byte)
+      .map(|highlight| text_style.patch(lib_style_to_ratatui(theme.highlight(highlight))))
+      .unwrap_or(text_style);
+
+    spans.push(Span::styled(&line[local_start..local_end], style));
+  }
+
+  if spans.is_empty() {
+    spans.push(Span::styled(line, text_style));
+  }
+  spans
+}
+
+fn clamp_boundary(text: &str, idx: usize, round_up: bool) -> usize {
+  let mut idx = idx.min(text.len());
+  if text.is_char_boundary(idx) {
+    return idx;
+  }
+  if round_up {
+    while idx < text.len() && !text.is_char_boundary(idx) {
+      idx += 1;
+    }
+    return idx;
+  }
+  while idx > 0 && !text.is_char_boundary(idx) {
+    idx -= 1;
+  }
+  idx
+}
+
+fn preview_highlight_at(
+  highlights: &[(Highlight, std::ops::Range<usize>)],
+  byte_idx: usize,
+) -> Option<Highlight> {
+  let mut active = None;
+  for (highlight, range) in highlights {
+    if byte_idx < range.start {
+      break;
+    }
+    if byte_idx < range.end {
+      active = Some(*highlight);
+    }
+  }
+  active
 }
 
 fn max_content_width_for_intent(

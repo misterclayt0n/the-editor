@@ -1,10 +1,12 @@
 use std::{
+  cmp::Reverse,
   collections::{
     HashMap,
     VecDeque,
   },
   fs,
   io::Read,
+  ops::Range,
   path::{
     Path,
     PathBuf,
@@ -37,23 +39,31 @@ use nucleo::{
     Normalization,
   },
 };
+use ropey::Rope;
 use the_core::chars::{
   next_char_boundary,
   prev_char_boundary,
 };
-use the_lib::render::{
-  UiColor,
-  UiColorToken,
-  UiConstraints,
-  UiContainer,
-  UiDivider,
-  UiInput,
-  UiLayout,
-  UiList,
-  UiListItem,
-  UiNode,
-  UiPanel,
-  UiStyle,
+use the_lib::{
+  render::{
+    UiColor,
+    UiColorToken,
+    UiConstraints,
+    UiContainer,
+    UiDivider,
+    UiInput,
+    UiLayout,
+    UiList,
+    UiListItem,
+    UiNode,
+    UiPanel,
+    UiStyle,
+  },
+  syntax::{
+    Highlight,
+    Loader,
+    Syntax,
+  },
 };
 
 use crate::{
@@ -111,8 +121,17 @@ impl Default for FilePickerConfig {
 #[derive(Debug, Clone)]
 pub enum FilePickerPreview {
   Empty,
+  Source(FilePickerSourcePreview),
   Text(String),
   Message(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct FilePickerSourcePreview {
+  pub lines:       Arc<[String]>,
+  pub line_starts: Arc<[usize]>,
+  pub highlights:  Arc<[(Highlight, Range<usize>)]>,
+  pub truncated:   bool,
 }
 
 struct PreviewRequest {
@@ -201,6 +220,7 @@ pub struct FilePickerState {
   scan_rx:             Option<Receiver<(u64, ScanMessage)>>,
   scan_cancel:         Option<Arc<AtomicBool>>,
   wake_tx:             Option<Sender<()>>,
+  syntax_loader:       Option<Arc<Loader>>,
   matcher:             Nucleo<Arc<FilePickerItem>>,
 }
 
@@ -236,6 +256,7 @@ impl Default for FilePickerState {
       scan_rx: None,
       scan_cancel: None,
       wake_tx: None,
+      syntax_loader: None,
       matcher,
     }
   }
@@ -247,6 +268,10 @@ pub fn set_file_picker_wake_sender(state: &mut FilePickerState, wake_tx: Option<
 
 pub fn set_file_picker_config(state: &mut FilePickerState, config: FilePickerConfig) {
   state.config = config;
+}
+
+pub fn set_file_picker_syntax_loader(state: &mut FilePickerState, loader: Option<Arc<Loader>>) {
+  state.syntax_loader = loader;
 }
 
 impl FilePickerState {
@@ -280,6 +305,7 @@ pub fn open_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let show_preview = ctx.file_picker().show_preview;
   let config = ctx.file_picker().config.clone();
   let wake_tx = ctx.file_picker().wake_tx.clone();
+  let syntax_loader = ctx.file_picker().syntax_loader.clone();
   if let Some(cancel) = ctx.file_picker().scan_cancel.as_ref() {
     cancel.store(true, Ordering::Relaxed);
   }
@@ -289,6 +315,7 @@ pub fn open_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   state.show_preview = show_preview;
   state.config = config;
   state.wake_tx = wake_tx.clone();
+  state.syntax_loader = syntax_loader;
   state.matcher = new_matcher(wake_tx);
   state.preview = FilePickerPreview::Message("Scanning files…".to_string());
   start_preview_worker(&mut state);
@@ -590,6 +617,7 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
 
   let preview_content = match &picker.preview {
     FilePickerPreview::Empty => String::new(),
+    FilePickerPreview::Source(source) => source_preview_text(source),
     FilePickerPreview::Text(text) => text.clone(),
     FilePickerPreview::Message(message) => message.clone(),
   };
@@ -981,10 +1009,11 @@ fn start_preview_worker(state: &mut FilePickerState) {
   let (request_tx, request_rx) = mpsc::channel::<PreviewRequest>();
   let (result_tx, result_rx) = mpsc::channel::<PreviewResult>();
   let wake_tx = state.wake_tx.clone();
+  let syntax_loader = state.syntax_loader.clone();
 
   std::thread::spawn(move || {
     while let Ok(request) = request_rx.recv() {
-      let preview = preview_for_path(&request.path, request.is_dir);
+      let preview = preview_for_path(&request.path, request.is_dir, syntax_loader.as_deref());
       if result_tx
         .send(PreviewResult {
           request_id: request.request_id,
@@ -1159,7 +1188,7 @@ fn refresh_preview(state: &mut FilePickerState) {
     return;
   }
 
-  let preview = preview_for_path(&item.absolute, item.is_dir);
+  let preview = preview_for_path(&item.absolute, item.is_dir, state.syntax_loader.as_deref());
   state
     .preview_cache
     .insert(item.absolute.clone(), preview.clone());
@@ -1167,7 +1196,11 @@ fn refresh_preview(state: &mut FilePickerState) {
   state.preview_pending_id = None;
 }
 
-fn preview_for_path(path: &Path, is_dir: bool) -> FilePickerPreview {
+fn preview_for_path(
+  path: &Path,
+  is_dir: bool,
+  syntax_loader: Option<&Loader>,
+) -> FilePickerPreview {
   if is_dir {
     return directory_preview(path);
   }
@@ -1208,17 +1241,7 @@ fn preview_for_path(path: &Path, is_dir: bool) -> FilePickerPreview {
   }
 
   let text = String::from_utf8_lossy(&bytes);
-  let mut output = String::new();
-  for (line_idx, line) in text.lines().take(MAX_PREVIEW_LINES).enumerate() {
-    let _ = std::fmt::Write::write_fmt(&mut output, format_args!("{:>4} {}\n", line_idx + 1, line));
-  }
-  if output.is_empty() {
-    output.push_str("<Empty file>");
-  } else if truncated {
-    output.push_str("\n…");
-  }
-
-  FilePickerPreview::Text(output)
+  source_preview(path, text.as_ref(), truncated, syntax_loader)
 }
 
 fn directory_preview(path: &Path) -> FilePickerPreview {
@@ -1249,4 +1272,91 @@ fn directory_preview(path: &Path) -> FilePickerPreview {
   }
 
   FilePickerPreview::Text(names.join("\n"))
+}
+
+fn source_preview(
+  path: &Path,
+  text: &str,
+  truncated_by_bytes: bool,
+  syntax_loader: Option<&Loader>,
+) -> FilePickerPreview {
+  let mut lines = Vec::new();
+  let mut line_starts = Vec::new();
+  let mut consumed_bytes = 0usize;
+
+  let mut segments = text.split_inclusive('\n').peekable();
+  while lines.len() < MAX_PREVIEW_LINES {
+    let Some(segment) = segments.next() else {
+      break;
+    };
+    let line = segment
+      .strip_suffix('\n')
+      .map(|line| line.strip_suffix('\r').unwrap_or(line))
+      .unwrap_or(segment);
+    line_starts.push(consumed_bytes);
+    lines.push(line.to_string());
+    consumed_bytes = consumed_bytes.saturating_add(segment.len());
+  }
+
+  if lines.is_empty() {
+    return FilePickerPreview::Message("<Empty file>".to_string());
+  }
+
+  let truncated = truncated_by_bytes || segments.peek().is_some();
+  let highlights = syntax_loader
+    .map(|loader| collect_source_highlights(path, text, consumed_bytes, loader))
+    .unwrap_or_default();
+
+  FilePickerPreview::Source(FilePickerSourcePreview {
+    lines: lines.into(),
+    line_starts: line_starts.into(),
+    highlights: highlights.into(),
+    truncated,
+  })
+}
+
+fn collect_source_highlights(
+  path: &Path,
+  text: &str,
+  end_byte: usize,
+  loader: &Loader,
+) -> Vec<(Highlight, Range<usize>)> {
+  if end_byte == 0 {
+    return Vec::new();
+  }
+
+  let Some(language) = loader.language_for_filename(path) else {
+    return Vec::new();
+  };
+
+  let rope = Rope::from_str(text);
+  let end_byte = end_byte.min(rope.len_bytes());
+  if end_byte == 0 {
+    return Vec::new();
+  }
+
+  let syntax = match Syntax::new(rope.slice(..), language, loader) {
+    Ok(syntax) => syntax,
+    Err(_) => return Vec::new(),
+  };
+
+  let mut highlights = syntax.collect_highlights(rope.slice(..), loader, 0..end_byte);
+  highlights.retain(|(_highlight, range)| range.start < range.end && range.end <= end_byte);
+  highlights.sort_by_key(|(_highlight, range)| (range.start, Reverse(range.end)));
+  highlights
+}
+
+fn source_preview_text(source: &FilePickerSourcePreview) -> String {
+  let width = source.lines.len().max(1).to_string().len();
+  let mut output = String::new();
+  for (line_idx, line) in source.lines.iter().enumerate() {
+    let _ = std::fmt::Write::write_fmt(
+      &mut output,
+      format_args!("{:>width$} {}\n", line_idx + 1, line, width = width),
+    );
+  }
+  if source.truncated {
+    output.push('…');
+  }
+  output
 }

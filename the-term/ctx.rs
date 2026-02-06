@@ -180,6 +180,7 @@ impl Ctx {
       the_config::defaults::build_file_picker_config(),
     );
     the_default::set_file_picker_wake_sender(&mut file_picker, Some(file_picker_wake_tx));
+    the_default::set_file_picker_syntax_loader(&mut file_picker, loader.clone());
 
     Ok(Self {
       editor,

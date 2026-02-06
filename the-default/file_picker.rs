@@ -64,8 +64,6 @@ const MAX_PREVIEW_BYTES: usize = 256 * 1024;
 const MAX_PREVIEW_LINES: usize = 512;
 const PAGE_SIZE: usize = 12;
 const DEDUP_SYMLINKS: bool = true;
-const SCAN_BATCH_SIZE: usize = 64;
-const INITIAL_SCAN_BATCH_SIZE: usize = 8;
 const MATCHER_TICK_TIMEOUT_MS: u64 = 10;
 const DEFAULT_LIST_VISIBLE_ROWS: usize = 32;
 const WARMUP_SCAN_BUDGET_MS: u64 = 30;
@@ -89,7 +87,6 @@ pub struct FilePickerState {
   pub root:            PathBuf,
   pub query:           String,
   pub cursor:          usize,
-  pub items:           Vec<FilePickerItem>,
   pub selected:        Option<usize>,
   pub list_offset:     usize,
   pub list_visible:    usize,
@@ -103,11 +100,10 @@ pub struct FilePickerState {
   scan_rx:             Option<Receiver<(u64, ScanMessage)>>,
   scan_cancel:         Option<Arc<AtomicBool>>,
   wake_tx:             Option<Sender<()>>,
-  matcher:             Nucleo<usize>,
+  matcher:             Nucleo<Arc<FilePickerItem>>,
 }
 
 enum ScanMessage {
-  Batch(Vec<FilePickerItem>),
   Done,
   Error(String),
 }
@@ -120,7 +116,6 @@ impl Default for FilePickerState {
       root: PathBuf::new(),
       query: String::new(),
       cursor: 0,
-      items: Vec::new(),
       selected: None,
       list_offset: 0,
       list_visible: DEFAULT_LIST_VISIBLE_ROWS,
@@ -144,17 +139,20 @@ pub fn set_file_picker_wake_sender(state: &mut FilePickerState, wake_tx: Option<
 }
 
 impl FilePickerState {
-  pub fn current_item(&self) -> Option<&FilePickerItem> {
+  pub fn current_item(&self) -> Option<Arc<FilePickerItem>> {
     let selected = self.selected?;
     let snapshot = self.matcher.snapshot();
-    let idx = *snapshot.get_matched_item(selected as u32)?.data;
-    self.items.get(idx)
+    Some(snapshot.get_matched_item(selected as u32)?.data.clone())
   }
 
-  pub fn matched_item(&self, matched_index: usize) -> Option<&FilePickerItem> {
+  pub fn matched_item(&self, matched_index: usize) -> Option<Arc<FilePickerItem>> {
     let snapshot = self.matcher.snapshot();
-    let idx = *snapshot.get_matched_item(matched_index as u32)?.data;
-    self.items.get(idx)
+    Some(
+      snapshot
+        .get_matched_item(matched_index as u32)?
+        .data
+        .clone(),
+    )
   }
 
   pub fn matched_count(&self) -> usize {
@@ -162,7 +160,7 @@ impl FilePickerState {
   }
 
   pub fn total_count(&self) -> usize {
-    self.items.len()
+    self.matcher.snapshot().item_count() as usize
   }
 }
 
@@ -392,7 +390,7 @@ pub fn handle_file_picker_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent)
 }
 
 pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let selected = ctx.file_picker().current_item().cloned();
+  let selected = ctx.file_picker().current_item();
   let Some(item) = selected else {
     return;
   };
@@ -580,7 +578,6 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
   state.root = root.clone();
   state.query.clear();
   state.cursor = 0;
-  state.items.clear();
   state.selected = None;
   state.list_offset = 0;
   state.preview_path = None;
@@ -601,13 +598,12 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
   let cancel = Arc::new(AtomicBool::new(false));
   state.scan_rx = None;
   state.scan_cancel = Some(cancel.clone());
+  let injector = state.matcher.injector();
 
   let mut walker = build_file_walker(&root);
   let timeout = Instant::now() + Duration::from_millis(WARMUP_SCAN_BUDGET_MS);
   let mut scanned = 0usize;
   let mut hit_timeout = false;
-  let mut batch = Vec::with_capacity(SCAN_BATCH_SIZE);
-  let mut batch_size = INITIAL_SCAN_BATCH_SIZE;
 
   for entry in &mut walker {
     if cancel.load(Ordering::Relaxed) {
@@ -621,13 +617,8 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
     let Some(item) = entry_to_picker_item(entry, &root) else {
       continue;
     };
-    batch.push(item);
+    inject_item(&injector, item);
     scanned += 1;
-
-    if batch.len() >= batch_size {
-      inject_batch(state, std::mem::take(&mut batch));
-      batch_size = SCAN_BATCH_SIZE;
-    }
 
     if scanned >= MAX_SCAN_ITEMS {
       break;
@@ -636,9 +627,6 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
       hit_timeout = true;
       break;
     }
-  }
-  if !batch.is_empty() {
-    inject_batch(state, batch);
   }
 
   if scanned >= MAX_SCAN_ITEMS || !hit_timeout {
@@ -657,6 +645,7 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
     generation,
     scan_tx,
     cancel,
+    injector,
     state.wake_tx.clone(),
   );
 }
@@ -709,6 +698,7 @@ fn spawn_scan_thread(
   generation: u64,
   scan_tx: Sender<(u64, ScanMessage)>,
   cancel: Arc<AtomicBool>,
+  injector: nucleo::Injector<Arc<FilePickerItem>>,
   wake_tx: Option<Sender<()>>,
 ) {
   std::thread::spawn(move || {
@@ -728,8 +718,6 @@ fn spawn_scan_thread(
     }
 
     let mut total = 0usize;
-    let mut batch = Vec::with_capacity(SCAN_BATCH_SIZE);
-    let mut batch_size = INITIAL_SCAN_BATCH_SIZE;
     for entry in &mut walker {
       if cancel.load(Ordering::Relaxed) {
         break;
@@ -742,32 +730,11 @@ fn spawn_scan_thread(
       let Some(item) = entry_to_picker_item(entry, &root) else {
         continue;
       };
-      batch.push(item);
+      inject_item(&injector, item);
       total += 1;
-
-      if batch.len() >= batch_size {
-        if scan_tx
-          .send((generation, ScanMessage::Batch(std::mem::take(&mut batch))))
-          .is_err()
-        {
-          return;
-        }
-        notify_wake(&wake_tx);
-        batch_size = SCAN_BATCH_SIZE;
-      }
       if total >= remaining_items {
         break;
       }
-    }
-
-    if !batch.is_empty() {
-      if scan_tx
-        .send((generation, ScanMessage::Batch(batch)))
-        .is_err()
-      {
-        return;
-      }
-      notify_wake(&wake_tx);
     }
 
     let _ = scan_tx.send((generation, ScanMessage::Done));
@@ -779,6 +746,14 @@ fn notify_wake(wake_tx: &Option<Sender<()>>) {
   if let Some(wake_tx) = wake_tx.as_ref() {
     let _ = wake_tx.send(());
   }
+}
+
+fn inject_item(injector: &nucleo::Injector<Arc<FilePickerItem>>, item: FilePickerItem) {
+  let text = item.display.clone();
+  let item = Arc::new(item);
+  injector.push(item, move |_item, dst| {
+    dst[0] = text.into();
+  });
 }
 
 fn filter_picker_entry(entry: &DirEntry, root: &Path, dedup_symlinks: bool) -> bool {
@@ -818,8 +793,7 @@ fn excluded_types() -> ignore::types::Types {
 
 fn poll_scan_results(state: &mut FilePickerState) -> bool {
   let mut changed = false;
-  let mut processed = 0usize;
-  while processed < 64 {
+  for _ in 0..64 {
     let scan_result = match state.scan_rx.as_ref() {
       Some(scan_rx) => scan_rx.try_recv(),
       None => break,
@@ -827,14 +801,9 @@ fn poll_scan_results(state: &mut FilePickerState) -> bool {
     match scan_result {
       Ok((generation, message)) => {
         if generation != state.scan_generation {
-          processed += 1;
           continue;
         }
         match message {
-          ScanMessage::Batch(batch) => {
-            inject_batch(state, batch);
-            changed = true;
-          },
           ScanMessage::Done => {
             state.scanning = false;
             state.scan_rx = None;
@@ -858,7 +827,7 @@ fn poll_scan_results(state: &mut FilePickerState) -> bool {
         state.scanning = false;
         state.scan_rx = None;
         state.scan_cancel = None;
-        if state.items.is_empty() {
+        if state.total_count() == 0 {
           state.error = Some("Scan interrupted".to_string());
           state.preview = FilePickerPreview::Message("Scan interrupted".to_string());
         }
@@ -866,7 +835,6 @@ fn poll_scan_results(state: &mut FilePickerState) -> bool {
         break;
       },
     }
-    processed += 1;
   }
 
   if refresh_matcher_state(state) {
@@ -875,22 +843,6 @@ fn poll_scan_results(state: &mut FilePickerState) -> bool {
   }
 
   changed
-}
-
-fn inject_batch(state: &mut FilePickerState, batch: Vec<FilePickerItem>) {
-  if batch.is_empty() {
-    return;
-  }
-
-  let injector = state.matcher.injector();
-  for item in batch {
-    let idx = state.items.len();
-    let text = item.display.clone();
-    state.items.push(item);
-    injector.push(idx, move |_idx, dst| {
-      dst[0] = text.into();
-    });
-  }
 }
 
 fn refresh_matcher_state(state: &mut FilePickerState) -> bool {
@@ -956,7 +908,7 @@ fn normalize_selection_and_scroll(state: &mut FilePickerState) {
   }
 }
 
-fn new_matcher(wake_tx: Option<Sender<()>>) -> Nucleo<usize> {
+fn new_matcher(wake_tx: Option<Sender<()>>) -> Nucleo<Arc<FilePickerItem>> {
   let mut config = NucleoConfig::DEFAULT;
   config.set_match_paths();
   let notify = Arc::new(move || {
@@ -968,7 +920,7 @@ fn new_matcher(wake_tx: Option<Sender<()>>) -> Nucleo<usize> {
 }
 
 fn refresh_preview(state: &mut FilePickerState) {
-  let item = state.current_item().cloned();
+  let item = state.current_item();
   let Some(item) = item else {
     state.preview_path = None;
     if state.scanning || state.matcher_running {

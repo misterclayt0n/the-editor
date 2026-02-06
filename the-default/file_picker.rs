@@ -18,6 +18,10 @@ use std::{
       TryRecvError,
     },
   },
+  time::{
+    Duration,
+    Instant,
+  },
 };
 
 use ignore::DirEntry;
@@ -65,6 +69,7 @@ const SCAN_BATCH_SIZE: usize = 64;
 const INITIAL_SCAN_BATCH_SIZE: usize = 8;
 const MATCHER_TICK_TIMEOUT_MS: u64 = 10;
 const DEFAULT_LIST_VISIBLE_ROWS: usize = 32;
+const WARMUP_SCAN_BUDGET_MS: u64 = 30;
 
 #[derive(Debug, Clone)]
 pub struct FilePickerItem {
@@ -588,17 +593,111 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
   state.scan_generation = state.scan_generation.wrapping_add(1);
   let generation = state.scan_generation;
 
-  let (scan_tx, scan_rx) = mpsc::channel();
   let cancel = Arc::new(AtomicBool::new(false));
-  state.scan_rx = Some(scan_rx);
+  state.scan_rx = None;
   state.scan_cancel = Some(cancel.clone());
 
-  spawn_scan_thread(root, MAX_SCAN_ITEMS, generation, scan_tx, cancel);
+  let mut walker = build_file_walker(&root);
+  let timeout = Instant::now() + Duration::from_millis(WARMUP_SCAN_BUDGET_MS);
+  let mut scanned = 0usize;
+  let mut hit_timeout = false;
+  let mut batch = Vec::with_capacity(SCAN_BATCH_SIZE);
+  let mut batch_size = INITIAL_SCAN_BATCH_SIZE;
+
+  for entry in &mut walker {
+    if cancel.load(Ordering::Relaxed) {
+      break;
+    }
+
+    let entry = match entry {
+      Ok(entry) => entry,
+      Err(_) => continue,
+    };
+    let Some(item) = entry_to_picker_item(entry, &root) else {
+      continue;
+    };
+    batch.push(item);
+    scanned += 1;
+
+    if batch.len() >= batch_size {
+      inject_batch(state, std::mem::take(&mut batch));
+      batch_size = SCAN_BATCH_SIZE;
+    }
+
+    if scanned >= MAX_SCAN_ITEMS {
+      break;
+    }
+    if Instant::now() >= timeout {
+      hit_timeout = true;
+      break;
+    }
+  }
+  if !batch.is_empty() {
+    inject_batch(state, batch);
+  }
+
+  if scanned >= MAX_SCAN_ITEMS || !hit_timeout {
+    state.scanning = false;
+    state.scan_cancel = None;
+    return;
+  }
+
+  let (scan_tx, scan_rx) = mpsc::channel();
+  state.scan_rx = Some(scan_rx);
+
+  spawn_scan_thread(
+    walker,
+    root,
+    MAX_SCAN_ITEMS.saturating_sub(scanned),
+    generation,
+    scan_tx,
+    cancel,
+  );
+}
+
+fn build_file_walker(root: &Path) -> ignore::Walk {
+  let absolute_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+  let mut walk_builder = ignore::WalkBuilder::new(root);
+  walk_builder
+    .hidden(true)
+    .parents(true)
+    .ignore(true)
+    .follow_links(true)
+    .git_ignore(true)
+    .git_global(true)
+    .git_exclude(true)
+    .sort_by_file_name(|name1, name2| name1.cmp(name2))
+    .filter_entry(move |entry| filter_picker_entry(entry, &absolute_root, DEDUP_SYMLINKS))
+    .types(excluded_types())
+    .build()
+}
+
+fn entry_to_picker_item(entry: DirEntry, root: &Path) -> Option<FilePickerItem> {
+  if !entry
+    .file_type()
+    .is_some_and(|file_type| file_type.is_file())
+  {
+    return None;
+  }
+
+  let path = entry.into_path();
+  let rel = path.strip_prefix(root).ok()?;
+  let mut display = rel.to_string_lossy().to_string();
+  if std::path::MAIN_SEPARATOR != '/' {
+    display = display.replace(std::path::MAIN_SEPARATOR, "/");
+  }
+
+  Some(FilePickerItem {
+    absolute: path,
+    display,
+    is_dir: false,
+  })
 }
 
 fn spawn_scan_thread(
+  mut walker: ignore::Walk,
   root: PathBuf,
-  max_items: usize,
+  remaining_items: usize,
   generation: u64,
   scan_tx: Sender<(u64, ScanMessage)>,
   cancel: Arc<AtomicBool>,
@@ -617,21 +716,6 @@ fn spawn_scan_thread(
       return;
     }
 
-    let absolute_root = root.canonicalize().unwrap_or_else(|_| root.clone());
-    let mut walk_builder = ignore::WalkBuilder::new(&root);
-    let mut walker = walk_builder
-      .hidden(true)
-      .parents(true)
-      .ignore(true)
-      .follow_links(true)
-      .git_ignore(true)
-      .git_global(true)
-      .git_exclude(true)
-      .sort_by_file_name(|name1, name2| name1.cmp(name2))
-      .filter_entry(move |entry| filter_picker_entry(entry, &absolute_root, DEDUP_SYMLINKS))
-      .types(excluded_types())
-      .build();
-
     let mut total = 0usize;
     let mut batch = Vec::with_capacity(SCAN_BATCH_SIZE);
     let mut batch_size = INITIAL_SCAN_BATCH_SIZE;
@@ -644,27 +728,10 @@ fn spawn_scan_thread(
         Ok(entry) => entry,
         Err(_) => continue,
       };
-      if !entry
-        .file_type()
-        .is_some_and(|file_type| file_type.is_file())
-      {
+      let Some(item) = entry_to_picker_item(entry, &root) else {
         continue;
-      }
-
-      let path = entry.into_path();
-      let rel = match path.strip_prefix(&root) {
-        Ok(rel) => rel,
-        Err(_) => continue,
       };
-      let mut display = rel.to_string_lossy().to_string();
-      if std::path::MAIN_SEPARATOR != '/' {
-        display = display.replace(std::path::MAIN_SEPARATOR, "/");
-      }
-      batch.push(FilePickerItem {
-        absolute: path,
-        display,
-        is_dir: false,
-      });
+      batch.push(item);
       total += 1;
 
       if batch.len() >= batch_size {
@@ -676,7 +743,7 @@ fn spawn_scan_thread(
         }
         batch_size = SCAN_BATCH_SIZE;
       }
-      if total >= max_items {
+      if total >= remaining_items {
         break;
       }
     }

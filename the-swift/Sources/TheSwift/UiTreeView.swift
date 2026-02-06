@@ -3,6 +3,7 @@ import SwiftUI
 struct UiOverlayHost: View {
     let tree: UiTreeSnapshot
     let cellSize: CGSize
+    let filePickerSnapshot: FilePickerSnapshot?
     let onSelectCommand: (Int) -> Void
     let onSubmitCommand: (Int) -> Void
     let onCloseCommandPalette: () -> Void
@@ -12,6 +13,9 @@ struct UiOverlayHost: View {
     let onSearchNext: () -> Void
     let onSearchClose: () -> Void
     let onSearchSubmit: () -> Void
+    let onFilePickerQueryChange: (String) -> Void
+    let onFilePickerSubmit: (Int) -> Void
+    let onFilePickerClose: () -> Void
     @State private var searchLayout = SearchPromptLayout()
 
     var body: some View {
@@ -29,6 +33,8 @@ struct UiOverlayHost: View {
                     } else if case .panel(let panel) = node, panel.id == "statusline" {
                         EmptyView()
                     } else if case .panel(let panel) = node, panel.id == "search_prompt" {
+                        EmptyView()
+                    } else if case .panel(let panel) = node, panel.id == "file_picker" {
                         EmptyView()
                     } else {
                         UiNodeView(node: node, cellSize: cellSize, containerSize: proxy.size)
@@ -49,6 +55,16 @@ struct UiOverlayHost: View {
                         onSearchNext: onSearchNext,
                         onClose: onSearchClose,
                         onSubmit: onSearchSubmit
+                    )
+                }
+
+                if let filePickerSnapshot, filePickerSnapshot.active {
+                    FilePickerBackdrop()
+                    FilePickerView(
+                        snapshot: filePickerSnapshot,
+                        onQueryChange: onFilePickerQueryChange,
+                        onSubmit: onFilePickerSubmit,
+                        onClose: onFilePickerClose
                     )
                 }
 

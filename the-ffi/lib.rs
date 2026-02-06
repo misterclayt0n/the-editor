@@ -49,10 +49,16 @@ use the_default::{
   Mode,
   Motion,
   SearchPromptState,
+  close_file_picker,
   command_palette_default_selected,
   command_palette_filtered_indices,
   command_palette_selected_filtered_index,
   finalize_search,
+  handle_query_change as file_picker_handle_query_change,
+  poll_scan_results as file_picker_poll_scan_results,
+  refresh_matcher_state as file_picker_refresh_matcher_state,
+  select_file_picker_index,
+  submit_file_picker,
   update_search_preview,
 };
 use the_lib::{
@@ -1265,6 +1271,97 @@ impl App {
     true
   }
 
+  // ---- File picker methods ----
+
+  pub fn file_picker_set_query(&mut self, id: ffi::EditorId, query: &str) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let picker = self.file_picker_mut();
+    if !picker.active {
+      return false;
+    }
+    let old_query = picker.query.clone();
+    picker.query = query.to_string();
+    picker.cursor = query.len();
+    file_picker_handle_query_change(picker, &old_query);
+    self.request_render();
+    true
+  }
+
+  pub fn file_picker_submit(&mut self, id: ffi::EditorId, index: usize) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    if !self.file_picker().active {
+      return false;
+    }
+    select_file_picker_index(self, index);
+    submit_file_picker(self);
+    true
+  }
+
+  pub fn file_picker_close(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    if !self.file_picker().active {
+      return false;
+    }
+    close_file_picker(self);
+    true
+  }
+
+  pub fn file_picker_snapshot_json(
+    &mut self,
+    id: ffi::EditorId,
+    max_items: usize,
+  ) -> String {
+    if self.activate(id).is_none() {
+      return "{}".to_string();
+    }
+    let picker = self.file_picker_mut();
+    file_picker_poll_scan_results(picker);
+    file_picker_refresh_matcher_state(picker);
+
+    let picker = self.file_picker();
+    if !picker.active {
+      return r#"{"active":false}"#.to_string();
+    }
+
+    let matched_count = picker.matched_count();
+    let total_count = picker.total_count();
+    let scanning = picker.scanning || picker.matcher_running;
+    let root_display = picker
+      .root
+      .file_name()
+      .map(|n| n.to_string_lossy().into_owned())
+      .unwrap_or_default();
+
+    let limit = max_items.min(matched_count);
+    let mut items = Vec::with_capacity(limit);
+    for i in 0..limit {
+      if let Some(item) = picker.matched_item(i) {
+        items.push(serde_json::json!({
+          "display": item.display,
+          "is_dir": item.is_dir,
+        }));
+      }
+    }
+
+    let snapshot = serde_json::json!({
+      "active": true,
+      "query": picker.query,
+      "matched_count": matched_count,
+      "total_count": total_count,
+      "scanning": scanning,
+      "root": root_display,
+      "items": items,
+    });
+
+    snapshot.to_string()
+  }
+
   pub fn take_should_quit(&mut self) -> bool {
     let should_quit = self.should_quit;
     self.should_quit = false;
@@ -1988,6 +2085,10 @@ mod ffi {
     fn search_prompt_set_query(self: &mut App, id: EditorId, query: &str) -> bool;
     fn search_prompt_close(self: &mut App, id: EditorId) -> bool;
     fn search_prompt_submit(self: &mut App, id: EditorId) -> bool;
+    fn file_picker_set_query(self: &mut App, id: EditorId, query: &str) -> bool;
+    fn file_picker_submit(self: &mut App, id: EditorId, index: usize) -> bool;
+    fn file_picker_close(self: &mut App, id: EditorId) -> bool;
+    fn file_picker_snapshot_json(self: &mut App, id: EditorId, max_items: usize) -> String;
     fn take_should_quit(self: &mut App) -> bool;
     fn handle_key(self: &mut App, id: EditorId, event: KeyEvent) -> bool;
     fn ensure_cursor_visible(self: &mut App, id: EditorId) -> bool;

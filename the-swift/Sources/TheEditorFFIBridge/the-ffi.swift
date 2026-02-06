@@ -164,6 +164,24 @@ extension AppRefMut {
         __swift_bridge__$App$search_prompt_submit(ptr, id.intoFfiRepr())
     }
 
+    public func file_picker_set_query<GenericToRustStr: ToRustStr>(_ id: EditorId, _ query: GenericToRustStr) -> Bool {
+        return query.toRustStr({ queryAsRustStr in
+            __swift_bridge__$App$file_picker_set_query(ptr, id.intoFfiRepr(), queryAsRustStr)
+        })
+    }
+
+    public func file_picker_submit(_ id: EditorId, _ index: UInt) -> Bool {
+        __swift_bridge__$App$file_picker_submit(ptr, id.intoFfiRepr(), index)
+    }
+
+    public func file_picker_close(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$file_picker_close(ptr, id.intoFfiRepr())
+    }
+
+    public func file_picker_snapshot_json(_ id: EditorId, _ max_items: UInt) -> RustString {
+        RustString(ptr: __swift_bridge__$App$file_picker_snapshot_json(ptr, id.intoFfiRepr(), max_items))
+    }
+
     public func take_should_quit() -> Bool {
         __swift_bridge__$App$take_should_quit(ptr)
     }

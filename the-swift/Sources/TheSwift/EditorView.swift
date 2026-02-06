@@ -14,7 +14,8 @@ struct EditorView: View {
         let font = model.font
         let isPaletteOpen = model.uiTree.hasCommandPalettePanel
         let isSearchOpen = model.uiTree.hasSearchPromptPanel
-        let isOverlayOpen = isPaletteOpen || isSearchOpen
+        let isFilePickerOpen = model.filePickerSnapshot?.active ?? false
+        let isOverlayOpen = isPaletteOpen || isSearchOpen || isFilePickerOpen
         GeometryReader { proxy in
             ZStack {
                 Canvas { context, size in
@@ -25,6 +26,7 @@ struct EditorView: View {
                 UiOverlayHost(
                     tree: model.uiTree,
                     cellSize: cellSize,
+                    filePickerSnapshot: model.filePickerSnapshot,
                     onSelectCommand: { index in
                         model.selectCommandPalette(index: index)
                     },
@@ -51,6 +53,15 @@ struct EditorView: View {
                     },
                     onSearchSubmit: {
                         model.submitSearch()
+                    },
+                    onFilePickerQueryChange: { query in
+                        model.setFilePickerQuery(query)
+                    },
+                    onFilePickerSubmit: { index in
+                        model.submitFilePicker(index: index)
+                    },
+                    onFilePickerClose: {
+                        model.closeFilePicker()
                     }
                 )
             }

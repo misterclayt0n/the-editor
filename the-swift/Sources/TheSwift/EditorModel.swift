@@ -13,6 +13,8 @@ final class EditorModel: ObservableObject {
     let cellSize: CGSize
     let font: Font
     private(set) var mode: EditorMode = .normal
+    @Published var filePickerSnapshot: FilePickerSnapshot? = nil
+    private var filePickerTimer: Timer? = nil
     private var scrollRemainderX: CGFloat = 0
     private var scrollRemainderY: CGFloat = 0
 
@@ -66,6 +68,7 @@ final class EditorModel: ObservableObject {
         updateEffectiveViewport()
         plan = app.render_plan(editorId)
         mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
+        refreshFilePicker()
         if app.take_should_quit() {
             NSApp.terminate(nil)
         }
@@ -230,6 +233,73 @@ final class EditorModel: ObservableObject {
     func setCommandPaletteQuery(_ query: String) {
         _ = app.command_palette_set_query(editorId, query)
         uiTree = fetchUiTree()
+    }
+
+    // MARK: - File picker
+
+    func setFilePickerQuery(_ query: String) {
+        _ = app.file_picker_set_query(editorId, query)
+        refreshFilePicker()
+    }
+
+    func submitFilePicker(index: Int) {
+        _ = app.file_picker_submit(editorId, UInt(index))
+        refresh()
+    }
+
+    func closeFilePicker() {
+        filePickerTimer?.invalidate()
+        filePickerTimer = nil
+        _ = app.file_picker_close(editorId)
+        filePickerSnapshot = nil
+        refresh()
+    }
+
+    func refreshFilePicker() {
+        let json = app.file_picker_snapshot_json(editorId, 300).toString()
+        guard let data = json.data(using: .utf8) else {
+            stopFilePickerTimerIfNeeded()
+            filePickerSnapshot = nil
+            return
+        }
+
+        let decoder = JSONDecoder()
+        do {
+            let snapshot = try decoder.decode(FilePickerSnapshot.self, from: data)
+            if snapshot.active {
+                filePickerSnapshot = FilePickerSnapshot(
+                    active: snapshot.active,
+                    query: snapshot.query,
+                    matchedCount: snapshot.matchedCount,
+                    totalCount: snapshot.totalCount,
+                    scanning: snapshot.scanning,
+                    root: snapshot.root,
+                    items: snapshot.items?.enumerated().map { index, item in
+                        FilePickerItemSnapshot(id: index, display: item.display, isDir: item.isDir)
+                    }
+                )
+                startFilePickerTimerIfNeeded(scanning: snapshot.scanning ?? false)
+            } else {
+                stopFilePickerTimerIfNeeded()
+                filePickerSnapshot = nil
+            }
+        } catch {
+            debugUiLog("file_picker decode failed: \(error)")
+            stopFilePickerTimerIfNeeded()
+            filePickerSnapshot = nil
+        }
+    }
+
+    private func startFilePickerTimerIfNeeded(scanning: Bool) {
+        guard filePickerTimer == nil, scanning else { return }
+        filePickerTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            self?.refreshFilePicker()
+        }
+    }
+
+    private func stopFilePickerTimerIfNeeded() {
+        filePickerTimer?.invalidate()
+        filePickerTimer = nil
     }
 
     private func fetchUiTree() -> UiTreeSnapshot {

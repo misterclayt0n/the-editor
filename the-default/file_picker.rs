@@ -1080,7 +1080,7 @@ fn excluded_types() -> ignore::types::Types {
     .expect("failed to build excluded types")
 }
 
-fn poll_scan_results(state: &mut FilePickerState) -> bool {
+pub fn poll_scan_results(state: &mut FilePickerState) -> bool {
   let mut changed = false;
   for _ in 0..64 {
     let scan_result = match state.scan_rx.as_ref() {
@@ -1276,7 +1276,7 @@ fn poll_preview_results(state: &mut FilePickerState) -> bool {
   changed
 }
 
-fn refresh_matcher_state(state: &mut FilePickerState) -> bool {
+pub fn refresh_matcher_state(state: &mut FilePickerState) -> bool {
   let status = state.matcher.tick(MATCHER_TICK_TIMEOUT_MS);
   state.matcher_running = status.running || state.matcher.active_injectors() > 0;
 
@@ -1289,7 +1289,7 @@ fn refresh_matcher_state(state: &mut FilePickerState) -> bool {
   changed
 }
 
-fn handle_query_change(state: &mut FilePickerState, old_query: &str) {
+pub fn handle_query_change(state: &mut FilePickerState, old_query: &str) {
   if state.query == old_query {
     return;
   }

@@ -10,6 +10,7 @@ struct UiOverlayHost: View {
     let onSearchQueryChange: (String) -> Void
     let onSearchClose: () -> Void
     let onSearchSubmit: () -> Void
+    @State private var searchLayout = SearchPromptLayout()
 
     var body: some View {
         GeometryReader { proxy in
@@ -40,6 +41,7 @@ struct UiOverlayHost: View {
                 if let searchSnapshot {
                     SearchPromptView(
                         snapshot: searchSnapshot,
+                        layout: $searchLayout,
                         onQueryChange: onSearchQueryChange,
                         onClose: onSearchClose,
                         onSubmit: onSearchSubmit

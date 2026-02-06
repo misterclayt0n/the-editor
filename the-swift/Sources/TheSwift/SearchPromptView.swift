@@ -1,5 +1,9 @@
 import SwiftUI
 
+struct SearchPromptLayout {
+    var corner: SearchPromptView.Corner = .topRight
+}
+
 struct SearchPromptSnapshot {
     let isOpen: Bool
     let query: String
@@ -14,12 +18,12 @@ struct SearchPromptSnapshot {
 
 struct SearchPromptView: View {
     let snapshot: SearchPromptSnapshot
+    @Binding var layout: SearchPromptLayout
     let onQueryChange: (String) -> Void
     let onClose: () -> Void
     let onSubmit: () -> Void
 
     @State private var query: String = ""
-    @State private var corner: Corner = .topRight
     @State private var dragOffset: CGSize = .zero
     @State private var barSize: CGSize = .zero
     @FocusState private var isSearchFieldFocused: Bool
@@ -38,21 +42,21 @@ struct SearchPromptView: View {
                 )
                 .padding(padding)
                 .offset(dragOffset)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: corner.alignment)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: layout.corner.alignment)
                 .gesture(
                     DragGesture()
                         .onChanged { value in
                             dragOffset = value.translation
                         }
                         .onEnded { value in
-                            let center = centerPosition(for: corner, in: geo.size)
+                            let center = centerPosition(for: layout.corner, in: geo.size)
                             let newCenter = CGPoint(
                                 x: center.x + value.translation.width,
                                 y: center.y + value.translation.height
                             )
                             let newCorner = closestCorner(to: newCenter, in: geo.size)
                             withAnimation(.easeOut(duration: 0.2)) {
-                                corner = newCorner
+                                layout.corner = newCorner
                                 dragOffset = .zero
                             }
                         }

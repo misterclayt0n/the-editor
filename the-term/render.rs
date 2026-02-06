@@ -1019,10 +1019,8 @@ fn draw_file_picker_list_pane(
     return;
   }
 
-  let list_items: Vec<ListItem<'_>> = picker
-    .filtered
-    .iter()
-    .filter_map(|idx| picker.items.get(*idx))
+  let list_items: Vec<ListItem<'_>> = (0..picker.matched_count())
+    .filter_map(|idx| picker.matched_item(idx))
     .map(|item| {
       let mut style = text_style;
       if item.is_dir {

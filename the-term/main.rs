@@ -14,7 +14,10 @@ mod render;
 mod terminal;
 mod theme;
 
-use std::time::Duration;
+use std::{
+  sync::mpsc::TryRecvError,
+  time::Duration,
+};
 
 use clap::{
   Parser,
@@ -110,6 +113,16 @@ fn main() -> Result<()> {
           ctx.needs_render = true;
         },
         _ => {},
+      }
+    }
+
+    loop {
+      match ctx.file_picker_wake_rx.try_recv() {
+        Ok(()) => {
+          ctx.needs_render = true;
+        },
+        Err(TryRecvError::Empty) => break,
+        Err(TryRecvError::Disconnected) => break,
       }
     }
 

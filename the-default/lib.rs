@@ -66,6 +66,7 @@ pub use file_picker::{
   close_file_picker,
   handle_file_picker_key,
   open_file_picker,
+  set_file_picker_wake_sender,
   set_picker_visible_rows,
   submit_file_picker,
 };

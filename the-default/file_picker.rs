@@ -105,6 +105,7 @@ pub struct FilePickerState {
   scan_generation:     u64,
   scan_rx:             Option<Receiver<(u64, ScanMessage)>>,
   scan_cancel:         Option<Arc<AtomicBool>>,
+  wake_tx:             Option<Sender<()>>,
   matcher:             Nucleo<usize>,
 }
 
@@ -116,7 +117,7 @@ enum ScanMessage {
 
 impl Default for FilePickerState {
   fn default() -> Self {
-    let matcher = new_matcher();
+    let matcher = new_matcher(None);
     Self {
       active: false,
       root: PathBuf::new(),
@@ -137,9 +138,14 @@ impl Default for FilePickerState {
       scan_generation: 0,
       scan_rx: None,
       scan_cancel: None,
+      wake_tx: None,
       matcher,
     }
   }
+}
+
+pub fn set_file_picker_wake_sender(state: &mut FilePickerState, wake_tx: Option<Sender<()>>) {
+  state.wake_tx = wake_tx;
 }
 
 impl FilePickerState {
@@ -161,6 +167,7 @@ impl FilePickerState {
 pub fn open_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let root = picker_root(ctx);
   let show_preview = ctx.file_picker().show_preview;
+  let wake_tx = ctx.file_picker().wake_tx.clone();
   if let Some(cancel) = ctx.file_picker().scan_cancel.as_ref() {
     cancel.store(true, Ordering::Relaxed);
   }
@@ -168,6 +175,8 @@ pub fn open_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   let mut state = FilePickerState::default();
   state.active = true;
   state.show_preview = show_preview;
+  state.wake_tx = wake_tx.clone();
+  state.matcher = new_matcher(wake_tx);
   state.preview = FilePickerPreview::Message("Scanning files…".to_string());
   start_scan(&mut state, root);
   poll_scan_results(&mut state);
@@ -409,12 +418,8 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
   if !picker.active {
     return Vec::new();
   }
-  let is_running = picker.scanning || picker.matcher_running;
-
-  if is_running {
-    ctx.request_render();
-  }
   let picker = ctx.file_picker();
+  let is_running = picker.scanning || picker.matcher_running;
 
   let mut status = format!(
     "{}{}/{}",
@@ -652,6 +657,7 @@ fn start_scan(state: &mut FilePickerState, root: PathBuf) {
     generation,
     scan_tx,
     cancel,
+    state.wake_tx.clone(),
   );
 }
 
@@ -701,6 +707,7 @@ fn spawn_scan_thread(
   generation: u64,
   scan_tx: Sender<(u64, ScanMessage)>,
   cancel: Arc<AtomicBool>,
+  wake_tx: Option<Sender<()>>,
 ) {
   std::thread::spawn(move || {
     if !root.exists() {
@@ -708,11 +715,13 @@ fn spawn_scan_thread(
         generation,
         ScanMessage::Error("workspace directory does not exist".to_string()),
       ));
+      notify_wake(&wake_tx);
       return;
     }
 
     if let Err(err) = fs::read_dir(&root) {
       let _ = scan_tx.send((generation, ScanMessage::Error(err.to_string())));
+      notify_wake(&wake_tx);
       return;
     }
 
@@ -741,6 +750,7 @@ fn spawn_scan_thread(
         {
           return;
         }
+        notify_wake(&wake_tx);
         batch_size = SCAN_BATCH_SIZE;
       }
       if total >= remaining_items {
@@ -755,10 +765,18 @@ fn spawn_scan_thread(
       {
         return;
       }
+      notify_wake(&wake_tx);
     }
 
     let _ = scan_tx.send((generation, ScanMessage::Done));
+    notify_wake(&wake_tx);
   });
+}
+
+fn notify_wake(wake_tx: &Option<Sender<()>>) {
+  if let Some(wake_tx) = wake_tx.as_ref() {
+    let _ = wake_tx.send(());
+  }
 }
 
 fn filter_picker_entry(entry: &DirEntry, root: &Path, dedup_symlinks: bool) -> bool {
@@ -854,11 +872,6 @@ fn poll_scan_results(state: &mut FilePickerState) -> bool {
     changed = true;
   }
 
-  let running = state.matcher_running || state.scanning;
-  if running {
-    changed = true;
-  }
-
   changed
 }
 
@@ -950,10 +963,15 @@ fn normalize_selection_and_scroll(state: &mut FilePickerState) {
   }
 }
 
-fn new_matcher() -> Nucleo<usize> {
+fn new_matcher(wake_tx: Option<Sender<()>>) -> Nucleo<usize> {
   let mut config = NucleoConfig::DEFAULT;
   config.set_match_paths();
-  Nucleo::new(config, Arc::new(|| {}), None, 1)
+  let notify = Arc::new(move || {
+    if let Some(wake_tx) = wake_tx.as_ref() {
+      let _ = wake_tx.send(());
+    }
+  });
+  Nucleo::new(config, notify, None, 1)
 }
 
 fn refresh_preview(state: &mut FilePickerState) {

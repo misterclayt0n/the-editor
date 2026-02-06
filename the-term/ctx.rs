@@ -9,7 +9,10 @@ use std::{
     PathBuf,
   },
   ptr::NonNull,
-  sync::Arc,
+  sync::{
+    Arc,
+    mpsc::Receiver,
+  },
 };
 
 use eyre::Result;
@@ -73,6 +76,7 @@ pub struct Ctx {
   pub file_path:             Option<PathBuf>,
   pub should_quit:           bool,
   pub needs_render:          bool,
+  pub file_picker_wake_rx:   Receiver<()>,
   pub mode:                  Mode,
   pub keymaps:               Keymaps,
   pub command_prompt:        CommandPromptState,
@@ -169,18 +173,23 @@ impl Ctx {
     let mut text_format = TextFormat::default();
     text_format.viewport_width = viewport.width;
 
+    let (file_picker_wake_tx, file_picker_wake_rx) = std::sync::mpsc::channel();
+    let mut file_picker = FilePickerState::default();
+    the_default::set_file_picker_wake_sender(&mut file_picker, Some(file_picker_wake_tx));
+
     Ok(Self {
       editor,
       file_path: file_path.map(PathBuf::from),
       should_quit: false,
       needs_render: true,
+      file_picker_wake_rx,
       mode: Mode::Normal,
       keymaps: Keymaps::default(),
       command_prompt: CommandPromptState::new(),
       command_registry: CommandRegistry::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
-      file_picker: FilePickerState::default(),
+      file_picker,
       search_prompt: the_default::SearchPromptState::new(),
       ui_theme,
       ui_state: UiState::default(),

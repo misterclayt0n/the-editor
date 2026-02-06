@@ -102,6 +102,7 @@ pub fn handle_mouse(ctx: &mut Ctx, event: CrosstermMouseEvent) {
   let y = event.row;
   match event.kind {
     MouseEventKind::Down(MouseButton::Left) => {
+      set_list_hover_from_position(ctx, layout, x, y);
       handle_left_down(ctx, layout, x, y);
     },
     MouseEventKind::Drag(MouseButton::Left) => {
@@ -115,6 +116,9 @@ pub fn handle_mouse(ctx: &mut Ctx, event: CrosstermMouseEvent) {
     },
     MouseEventKind::ScrollDown => {
       handle_wheel(ctx, layout, x, y, 3);
+    },
+    MouseEventKind::Moved => {
+      set_list_hover_from_position(ctx, layout, x, y);
     },
     _ => {},
   }
@@ -146,6 +150,7 @@ fn handle_left_down(ctx: &mut Ctx, layout: crate::picker_layout::FilePickerLayou
         .min(metrics.max_thumb_offset);
       let offset = scroll_offset_from_thumb(metrics, clamped_y);
       set_file_picker_list_offset(ctx, offset);
+      ctx.file_picker.hovered = None;
       ctx.file_picker_drag = Some(FilePickerDragState::ListScrollbar { grab_offset });
       return;
     }
@@ -184,11 +189,13 @@ fn handle_left_down(ctx: &mut Ctx, layout: crate::picker_layout::FilePickerLayou
         .min(metrics.max_thumb_offset);
       let offset = scroll_offset_from_thumb(metrics, clamped_y);
       set_file_picker_preview_offset(ctx, offset, visible_rows);
+      ctx.file_picker.hovered = None;
       ctx.file_picker_drag = Some(FilePickerDragState::PreviewScrollbar { grab_offset });
       return;
     }
   }
 
+  ctx.file_picker.hovered = None;
   ctx.file_picker_drag = None;
 }
 
@@ -256,6 +263,7 @@ fn handle_wheel(
       .is_some_and(|track| point_in_rect(x, y, track))
   {
     scroll_file_picker_list(ctx, delta);
+    set_list_hover_from_position(ctx, layout, x, y);
     return;
   }
 
@@ -265,7 +273,28 @@ fn handle_wheel(
         .preview_scrollbar
         .is_some_and(|track| point_in_rect(x, y, track)))
   {
+    ctx.file_picker.hovered = None;
     scroll_file_picker_preview(ctx, delta, layout.preview_visible_rows());
+  }
+}
+
+fn set_list_hover_from_position(
+  ctx: &mut Ctx,
+  layout: crate::picker_layout::FilePickerLayout,
+  x: u16,
+  y: u16,
+) {
+  let next_hover = if point_in_rect(x, y, layout.list_content) {
+    let row = y.saturating_sub(layout.list_content.y) as usize;
+    let index = layout.list_scroll_offset.saturating_add(row);
+    (index < ctx.file_picker.matched_count()).then_some(index)
+  } else {
+    None
+  };
+
+  if ctx.file_picker.hovered != next_hover {
+    ctx.file_picker.hovered = next_hover;
+    ctx.request_render();
   }
 }
 

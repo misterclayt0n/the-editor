@@ -1077,12 +1077,15 @@ fn draw_file_picker_list_pane(
     };
     let y = list_area.y + (row_idx - scroll_offset) as u16;
     let is_selected = picker.selected == Some(row_idx);
+    let is_hovered = picker.hovered == Some(row_idx);
     let mut style = text_style;
     if item.is_dir {
       style = style.add_modifier(Modifier::BOLD);
     }
     if is_selected {
       style = style.add_modifier(Modifier::REVERSED);
+    } else if is_hovered {
+      style = style.add_modifier(Modifier::UNDERLINED);
     }
 
     let mut label = item.display.clone();

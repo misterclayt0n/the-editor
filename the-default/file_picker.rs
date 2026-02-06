@@ -216,6 +216,7 @@ pub struct FilePickerState {
   pub query:              String,
   pub cursor:             usize,
   pub selected:           Option<usize>,
+  pub hovered:            Option<usize>,
   pub list_offset:        usize,
   pub list_visible:       usize,
   pub preview_scroll:     usize,
@@ -254,6 +255,7 @@ impl Default for FilePickerState {
       query: String::new(),
       cursor: 0,
       selected: None,
+      hovered: None,
       list_offset: 0,
       list_visible: DEFAULT_LIST_VISIBLE_ROWS,
       preview_scroll: 0,
@@ -370,6 +372,7 @@ pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   }
   picker.active = false;
   picker.error = None;
+  picker.hovered = None;
   picker.preview_scroll = 0;
   picker.preview_path = None;
   picker.preview = FilePickerPreview::Empty;
@@ -594,6 +597,7 @@ pub fn select_file_picker_index<Ctx: DefaultContext>(ctx: &mut Ctx, index: usize
   let matched_count = picker.matched_count();
   if matched_count == 0 {
     picker.selected = None;
+    picker.hovered = None;
     picker.list_offset = 0;
     picker.preview_scroll = 0;
     picker.preview = FilePickerPreview::Message("No matches".to_string());
@@ -617,6 +621,7 @@ pub fn set_file_picker_list_offset<Ctx: DefaultContext>(ctx: &mut Ctx, offset: u
   let matched_count = picker.matched_count();
   if matched_count == 0 {
     picker.selected = None;
+    picker.hovered = None;
     picker.list_offset = 0;
     picker.preview_scroll = 0;
     picker.preview = FilePickerPreview::Message("No matches".to_string());
@@ -627,21 +632,11 @@ pub fn set_file_picker_list_offset<Ctx: DefaultContext>(ctx: &mut Ctx, offset: u
   let visible = picker.list_visible.max(1);
   let max_offset = matched_count.saturating_sub(visible);
   let next_offset = offset.min(max_offset);
-  if picker.list_offset == next_offset
-    && picker
-      .selected
-      .is_some_and(|selected| selected >= next_offset && selected < next_offset + visible)
-  {
+  if picker.list_offset == next_offset {
     return;
   }
 
   picker.list_offset = next_offset;
-  let window_end = next_offset.saturating_add(visible).min(matched_count);
-  let selected = picker.selected.unwrap_or(next_offset);
-  if !(next_offset..window_end).contains(&selected) {
-    picker.selected = Some(next_offset.min(matched_count - 1));
-    refresh_preview(picker);
-  }
   ctx.request_render();
 }
 

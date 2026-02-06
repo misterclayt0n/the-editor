@@ -883,7 +883,18 @@ fn draw_file_picker_panel(
     return;
   }
 
-  let (text_style, fill_style, border_style) = ui_style_colors(&panel.style);
+  let (text_style, mut fill_style, border_style) = ui_style_colors(&panel.style);
+  if fill_style.bg.is_none() {
+    let fallback_bg = ctx
+      .ui_theme
+      .try_get("ui.file_picker")
+      .and_then(|style| style.bg)
+      .or_else(|| ctx.ui_theme.try_get("ui.background").and_then(|style| style.bg))
+      .map(lib_color_to_ratatui);
+    if let Some(bg) = fallback_bg {
+      fill_style = fill_style.bg(bg);
+    }
+  }
   let width = area
     .width
     .saturating_mul(9)
@@ -904,6 +915,7 @@ fn draw_file_picker_panel(
     .title
     .clone()
     .unwrap_or_else(|| "File Picker".to_string());
+  fill_rect(buf, rect, fill_style);
   let outer = Block::default()
     .borders(Borders::ALL)
     .title(title)

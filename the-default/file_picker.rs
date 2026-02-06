@@ -15,6 +15,7 @@ use std::{
     Arc,
     atomic::{
       AtomicBool,
+      AtomicU64,
       Ordering,
     },
     mpsc::{
@@ -144,6 +145,18 @@ struct PreviewResult {
   request_id: u64,
   path:       PathBuf,
   preview:    FilePickerPreview,
+  is_final:   bool,
+}
+
+struct SourcePreviewData {
+  source:   FilePickerSourcePreview,
+  text:     String,
+  end_byte: usize,
+}
+
+enum PreviewBuild {
+  Final(FilePickerPreview),
+  Source(SourcePreviewData),
 }
 
 struct PreviewCache {
@@ -197,31 +210,32 @@ impl PreviewCache {
 }
 
 pub struct FilePickerState {
-  pub active:          bool,
-  pub root:            PathBuf,
-  pub config:          FilePickerConfig,
-  pub query:           String,
-  pub cursor:          usize,
-  pub selected:        Option<usize>,
-  pub list_offset:     usize,
-  pub list_visible:    usize,
-  pub show_preview:    bool,
-  pub preview_path:    Option<PathBuf>,
-  pub preview:         FilePickerPreview,
-  pub error:           Option<String>,
-  pub scanning:        bool,
-  pub matcher_running: bool,
-  preview_cache:       PreviewCache,
-  preview_req_tx:      Option<Sender<PreviewRequest>>,
-  preview_res_rx:      Option<Receiver<PreviewResult>>,
-  preview_request_id:  u64,
-  preview_pending_id:  Option<u64>,
-  scan_generation:     u64,
-  scan_rx:             Option<Receiver<(u64, ScanMessage)>>,
-  scan_cancel:         Option<Arc<AtomicBool>>,
-  wake_tx:             Option<Sender<()>>,
-  syntax_loader:       Option<Arc<Loader>>,
-  matcher:             Nucleo<Arc<FilePickerItem>>,
+  pub active:             bool,
+  pub root:               PathBuf,
+  pub config:             FilePickerConfig,
+  pub query:              String,
+  pub cursor:             usize,
+  pub selected:           Option<usize>,
+  pub list_offset:        usize,
+  pub list_visible:       usize,
+  pub show_preview:       bool,
+  pub preview_path:       Option<PathBuf>,
+  pub preview:            FilePickerPreview,
+  pub error:              Option<String>,
+  pub scanning:           bool,
+  pub matcher_running:    bool,
+  preview_cache:          PreviewCache,
+  preview_req_tx:         Option<Sender<PreviewRequest>>,
+  preview_res_rx:         Option<Receiver<PreviewResult>>,
+  preview_request_id:     u64,
+  preview_pending_id:     Option<u64>,
+  scan_generation:        u64,
+  scan_rx:                Option<Receiver<(u64, ScanMessage)>>,
+  scan_cancel:            Option<Arc<AtomicBool>>,
+  preview_latest_request: Arc<AtomicU64>,
+  wake_tx:                Option<Sender<()>>,
+  syntax_loader:          Option<Arc<Loader>>,
+  matcher:                Nucleo<Arc<FilePickerItem>>,
 }
 
 enum ScanMessage {
@@ -255,6 +269,7 @@ impl Default for FilePickerState {
       scan_generation: 0,
       scan_rx: None,
       scan_cancel: None,
+      preview_latest_request: Arc::new(AtomicU64::new(0)),
       wake_tx: None,
       syntax_loader: None,
       matcher,
@@ -340,6 +355,7 @@ pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   picker.preview_req_tx = None;
   picker.preview_res_rx = None;
   picker.preview_pending_id = None;
+  picker.preview_latest_request.store(0, Ordering::Relaxed);
   picker.scan_rx = None;
   picker.scan_cancel = None;
   ctx.request_render();
@@ -1010,21 +1026,95 @@ fn start_preview_worker(state: &mut FilePickerState) {
   let (result_tx, result_rx) = mpsc::channel::<PreviewResult>();
   let wake_tx = state.wake_tx.clone();
   let syntax_loader = state.syntax_loader.clone();
+  let latest_request = state.preview_latest_request.clone();
+
+  let send_preview = |result_tx: &Sender<PreviewResult>,
+                      wake_tx: &Option<Sender<()>>,
+                      request: &PreviewRequest,
+                      preview: FilePickerPreview,
+                      is_final: bool| {
+    let sent = result_tx.send(PreviewResult {
+      request_id: request.request_id,
+      path: request.path.clone(),
+      preview,
+      is_final,
+    });
+    if sent.is_ok() {
+      notify_wake(wake_tx);
+    }
+    sent
+  };
 
   std::thread::spawn(move || {
-    while let Ok(request) = request_rx.recv() {
-      let preview = preview_for_path(&request.path, request.is_dir, syntax_loader.as_deref());
-      if result_tx
-        .send(PreviewResult {
-          request_id: request.request_id,
-          path: request.path,
-          preview,
-        })
-        .is_err()
-      {
-        break;
+    while let Ok(mut request) = request_rx.recv() {
+      while let Ok(next) = request_rx.try_recv() {
+        request = next;
       }
-      notify_wake(&wake_tx);
+
+      if request.request_id != latest_request.load(Ordering::Relaxed) {
+        continue;
+      }
+
+      match preview_for_path_base(&request.path, request.is_dir) {
+        PreviewBuild::Final(preview) => {
+          if request.request_id != latest_request.load(Ordering::Relaxed) {
+            continue;
+          }
+          if send_preview(&result_tx, &wake_tx, &request, preview, true).is_err() {
+            break;
+          }
+        },
+        PreviewBuild::Source(source_preview) => {
+          if request.request_id != latest_request.load(Ordering::Relaxed) {
+            continue;
+          }
+          let can_highlight = syntax_loader.is_some();
+          if send_preview(
+            &result_tx,
+            &wake_tx,
+            &request,
+            FilePickerPreview::Source(source_preview.source.clone()),
+            !can_highlight,
+          )
+          .is_err()
+          {
+            break;
+          }
+
+          if !can_highlight || request.request_id != latest_request.load(Ordering::Relaxed) {
+            continue;
+          }
+
+          let Some(loader) = syntax_loader.as_deref() else {
+            continue;
+          };
+          let highlights = collect_source_highlights(
+            &request.path,
+            &source_preview.text,
+            source_preview.end_byte,
+            loader,
+          );
+          if request.request_id != latest_request.load(Ordering::Relaxed) {
+            continue;
+          }
+
+          let mut preview = source_preview.source;
+          if !highlights.is_empty() {
+            preview.highlights = highlights.into();
+          }
+          if send_preview(
+            &result_tx,
+            &wake_tx,
+            &request,
+            FilePickerPreview::Source(preview),
+            true,
+          )
+          .is_err()
+          {
+            break;
+          }
+        },
+      }
     }
   });
 
@@ -1051,7 +1141,9 @@ fn poll_preview_results(state: &mut FilePickerState) -> bool {
             .is_some_and(|path| path == &result.path)
         {
           state.preview = result.preview;
-          state.preview_pending_id = None;
+          if result.is_final {
+            state.preview_pending_id = None;
+          }
           changed = true;
         }
       },
@@ -1146,6 +1238,7 @@ fn refresh_preview(state: &mut FilePickerState) {
   let Some(item) = item else {
     state.preview_path = None;
     state.preview_pending_id = None;
+    state.preview_latest_request.store(0, Ordering::Relaxed);
     if state.scanning || state.matcher_running {
       state.preview = FilePickerPreview::Message("Scanning files…".to_string());
     } else {
@@ -1166,6 +1259,7 @@ fn refresh_preview(state: &mut FilePickerState) {
   if let Some(preview) = state.preview_cache.get(&item.absolute) {
     state.preview = preview;
     state.preview_pending_id = None;
+    state.preview_latest_request.store(0, Ordering::Relaxed);
     return;
   }
 
@@ -1173,6 +1267,9 @@ fn refresh_preview(state: &mut FilePickerState) {
   state.preview_request_id = state.preview_request_id.wrapping_add(1);
   let request_id = state.preview_request_id;
   state.preview_pending_id = Some(request_id);
+  state
+    .preview_latest_request
+    .store(request_id, Ordering::Relaxed);
 
   let request = PreviewRequest {
     request_id,
@@ -1194,6 +1291,7 @@ fn refresh_preview(state: &mut FilePickerState) {
     .insert(item.absolute.clone(), preview.clone());
   state.preview = preview;
   state.preview_pending_id = None;
+  state.preview_latest_request.store(0, Ordering::Relaxed);
 }
 
 fn preview_for_path(
@@ -1201,25 +1299,45 @@ fn preview_for_path(
   is_dir: bool,
   syntax_loader: Option<&Loader>,
 ) -> FilePickerPreview {
+  match preview_for_path_base(path, is_dir) {
+    PreviewBuild::Final(preview) => preview,
+    PreviewBuild::Source(mut source_preview) => {
+      if let Some(loader) = syntax_loader {
+        let highlights =
+          collect_source_highlights(path, &source_preview.text, source_preview.end_byte, loader);
+        if !highlights.is_empty() {
+          source_preview.source.highlights = highlights.into();
+        }
+      }
+      FilePickerPreview::Source(source_preview.source)
+    },
+  }
+}
+
+fn preview_for_path_base(path: &Path, is_dir: bool) -> PreviewBuild {
   if is_dir {
-    return directory_preview(path);
+    return PreviewBuild::Final(directory_preview(path));
   }
 
   let metadata = match fs::metadata(path) {
     Ok(metadata) => metadata,
     Err(_) => {
-      return FilePickerPreview::Message("<File not found>".to_string());
+      return PreviewBuild::Final(FilePickerPreview::Message("<File not found>".to_string()));
     },
   };
 
   if metadata.len() > MAX_FILE_SIZE_FOR_PREVIEW {
-    return FilePickerPreview::Message("<File too large to preview>".to_string());
+    return PreviewBuild::Final(FilePickerPreview::Message(
+      "<File too large to preview>".to_string(),
+    ));
   }
 
   let file = match fs::File::open(path) {
     Ok(file) => file,
     Err(_) => {
-      return FilePickerPreview::Message("<Could not read file>".to_string());
+      return PreviewBuild::Final(FilePickerPreview::Message(
+        "<Could not read file>".to_string(),
+      ));
     },
   };
   let mut bytes = Vec::new();
@@ -1228,11 +1346,13 @@ fn preview_for_path(
     .read_to_end(&mut bytes)
     .is_err()
   {
-    return FilePickerPreview::Message("<Could not read file>".to_string());
+    return PreviewBuild::Final(FilePickerPreview::Message(
+      "<Could not read file>".to_string(),
+    ));
   }
 
   if bytes.contains(&0) {
-    return FilePickerPreview::Message("<Binary file>".to_string());
+    return PreviewBuild::Final(FilePickerPreview::Message("<Binary file>".to_string()));
   }
 
   let truncated = bytes.len() > MAX_PREVIEW_BYTES;
@@ -1240,8 +1360,16 @@ fn preview_for_path(
     bytes.truncate(MAX_PREVIEW_BYTES);
   }
 
-  let text = String::from_utf8_lossy(&bytes);
-  source_preview(path, text.as_ref(), truncated, syntax_loader)
+  let text = String::from_utf8_lossy(&bytes).into_owned();
+  let Some((source, end_byte)) = source_preview(&text, truncated) else {
+    return PreviewBuild::Final(FilePickerPreview::Message("<Empty file>".to_string()));
+  };
+
+  PreviewBuild::Source(SourcePreviewData {
+    source,
+    text,
+    end_byte,
+  })
 }
 
 fn directory_preview(path: &Path) -> FilePickerPreview {
@@ -1275,11 +1403,9 @@ fn directory_preview(path: &Path) -> FilePickerPreview {
 }
 
 fn source_preview(
-  path: &Path,
   text: &str,
   truncated_by_bytes: bool,
-  syntax_loader: Option<&Loader>,
-) -> FilePickerPreview {
+) -> Option<(FilePickerSourcePreview, usize)> {
   let mut lines = Vec::new();
   let mut line_starts = Vec::new();
   let mut consumed_bytes = 0usize;
@@ -1299,20 +1425,19 @@ fn source_preview(
   }
 
   if lines.is_empty() {
-    return FilePickerPreview::Message("<Empty file>".to_string());
+    return None;
   }
 
   let truncated = truncated_by_bytes || segments.peek().is_some();
-  let highlights = syntax_loader
-    .map(|loader| collect_source_highlights(path, text, consumed_bytes, loader))
-    .unwrap_or_default();
-
-  FilePickerPreview::Source(FilePickerSourcePreview {
-    lines: lines.into(),
-    line_starts: line_starts.into(),
-    highlights: highlights.into(),
-    truncated,
-  })
+  Some((
+    FilePickerSourcePreview {
+      lines: lines.into(),
+      line_starts: line_starts.into(),
+      highlights: Vec::<(Highlight, Range<usize>)>::new().into(),
+      truncated,
+    },
+    consumed_bytes,
+  ))
 }
 
 fn collect_source_highlights(

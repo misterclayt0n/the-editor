@@ -90,6 +90,7 @@ fn main() -> Result<()> {
   terminal.enter_raw_mode()?;
 
   // Initial render
+  ctx.needs_render = false;
   terminal.draw(|f| render::render(f, &mut ctx))?;
 
   // Event loop
@@ -114,8 +115,8 @@ fn main() -> Result<()> {
 
     // Render if needed
     if ctx.needs_render {
-      terminal.draw(|f| render::render(f, &mut ctx))?;
       ctx.needs_render = false;
+      terminal.draw(|f| render::render(f, &mut ctx))?;
     }
   }
 

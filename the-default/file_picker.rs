@@ -218,6 +218,7 @@ pub struct FilePickerState {
   pub selected:           Option<usize>,
   pub list_offset:        usize,
   pub list_visible:       usize,
+  pub preview_scroll:     usize,
   pub show_preview:       bool,
   pub preview_path:       Option<PathBuf>,
   pub preview:            FilePickerPreview,
@@ -255,6 +256,7 @@ impl Default for FilePickerState {
       selected: None,
       list_offset: 0,
       list_visible: DEFAULT_LIST_VISIBLE_ROWS,
+      preview_scroll: 0,
       show_preview: true,
       preview_path: None,
       preview: FilePickerPreview::Empty,
@@ -313,6 +315,26 @@ impl FilePickerState {
   pub fn total_count(&self) -> usize {
     self.matcher.snapshot().item_count() as usize
   }
+
+  pub fn preview_line_count(&self) -> usize {
+    match &self.preview {
+      FilePickerPreview::Empty => 0,
+      FilePickerPreview::Source(source) => {
+        source.lines.len().saturating_add(source.truncated as usize)
+      },
+      FilePickerPreview::Text(text) => text.lines().count().max(1),
+      FilePickerPreview::Message(message) => message.lines().count().max(1),
+    }
+  }
+
+  pub fn clamp_preview_scroll(&mut self, visible_rows: usize) {
+    let max_offset = self
+      .preview_line_count()
+      .saturating_sub(visible_rows.max(1));
+    if self.preview_scroll > max_offset {
+      self.preview_scroll = max_offset;
+    }
+  }
 }
 
 pub fn open_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
@@ -348,6 +370,7 @@ pub fn close_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   }
   picker.active = false;
   picker.error = None;
+  picker.preview_scroll = 0;
   picker.preview_path = None;
   picker.preview = FilePickerPreview::Empty;
   picker.scanning = false;
@@ -564,6 +587,105 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   }
 
   close_file_picker(ctx);
+}
+
+pub fn select_file_picker_index<Ctx: DefaultContext>(ctx: &mut Ctx, index: usize) {
+  let picker = ctx.file_picker_mut();
+  let matched_count = picker.matched_count();
+  if matched_count == 0 {
+    picker.selected = None;
+    picker.list_offset = 0;
+    picker.preview_scroll = 0;
+    picker.preview = FilePickerPreview::Message("No matches".to_string());
+    ctx.request_render();
+    return;
+  }
+
+  picker.selected = Some(index.min(matched_count - 1));
+  normalize_selection_and_scroll(picker);
+  refresh_preview(picker);
+  ctx.request_render();
+}
+
+pub fn open_file_picker_index<Ctx: DefaultContext>(ctx: &mut Ctx, index: usize) {
+  select_file_picker_index(ctx, index);
+  submit_file_picker(ctx);
+}
+
+pub fn set_file_picker_list_offset<Ctx: DefaultContext>(ctx: &mut Ctx, offset: usize) {
+  let picker = ctx.file_picker_mut();
+  let matched_count = picker.matched_count();
+  if matched_count == 0 {
+    picker.selected = None;
+    picker.list_offset = 0;
+    picker.preview_scroll = 0;
+    picker.preview = FilePickerPreview::Message("No matches".to_string());
+    ctx.request_render();
+    return;
+  }
+
+  let visible = picker.list_visible.max(1);
+  let max_offset = matched_count.saturating_sub(visible);
+  let next_offset = offset.min(max_offset);
+  if picker.list_offset == next_offset
+    && picker
+      .selected
+      .is_some_and(|selected| selected >= next_offset && selected < next_offset + visible)
+  {
+    return;
+  }
+
+  picker.list_offset = next_offset;
+  let window_end = next_offset.saturating_add(visible).min(matched_count);
+  let selected = picker.selected.unwrap_or(next_offset);
+  if !(next_offset..window_end).contains(&selected) {
+    picker.selected = Some(next_offset.min(matched_count - 1));
+    refresh_preview(picker);
+  }
+  ctx.request_render();
+}
+
+pub fn scroll_file_picker_list<Ctx: DefaultContext>(ctx: &mut Ctx, delta: isize) {
+  let picker = ctx.file_picker();
+  let current = picker.list_offset;
+  let target = if delta < 0 {
+    current.saturating_sub(delta.unsigned_abs())
+  } else {
+    current.saturating_add(delta as usize)
+  };
+  set_file_picker_list_offset(ctx, target);
+}
+
+pub fn set_file_picker_preview_offset<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  offset: usize,
+  visible_rows: usize,
+) {
+  let picker = ctx.file_picker_mut();
+  let max_offset = picker
+    .preview_line_count()
+    .saturating_sub(visible_rows.max(1));
+  let next = offset.min(max_offset);
+  if picker.preview_scroll == next {
+    return;
+  }
+  picker.preview_scroll = next;
+  ctx.request_render();
+}
+
+pub fn scroll_file_picker_preview<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  delta: isize,
+  visible_rows: usize,
+) {
+  let picker = ctx.file_picker();
+  let current = picker.preview_scroll;
+  let target = if delta < 0 {
+    current.saturating_sub(delta.unsigned_abs())
+  } else {
+    current.saturating_add(delta as usize)
+  };
+  set_file_picker_preview_offset(ctx, target, visible_rows);
 }
 
 pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
@@ -1236,6 +1358,7 @@ fn new_matcher(wake_tx: Option<Sender<()>>) -> Nucleo<Arc<FilePickerItem>> {
 fn refresh_preview(state: &mut FilePickerState) {
   let item = state.current_item();
   let Some(item) = item else {
+    state.preview_scroll = 0;
     state.preview_path = None;
     state.preview_pending_id = None;
     state.preview_latest_request.store(0, Ordering::Relaxed);
@@ -1256,6 +1379,7 @@ fn refresh_preview(state: &mut FilePickerState) {
   }
 
   state.preview_path = Some(item.absolute.clone());
+  state.preview_scroll = 0;
   if let Some(preview) = state.preview_cache.get(&item.absolute) {
     state.preview = preview;
     state.preview_pending_id = None;

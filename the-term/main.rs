@@ -10,6 +10,7 @@ mod config_cli;
 mod ctx;
 mod dispatch;
 mod input;
+mod picker_layout;
 mod render;
 mod terminal;
 mod theme;
@@ -106,6 +107,9 @@ fn main() -> Result<()> {
       match event::read()? {
         Event::Key(key) => {
           input::handle_key(&mut ctx, key);
+        },
+        Event::Mouse(mouse) => {
+          input::handle_mouse(&mut ctx, mouse);
         },
         Event::Resize(w, h) => {
           ctx.resize(w, h);

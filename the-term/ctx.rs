@@ -70,6 +70,14 @@ use the_lib::{
 };
 use the_runtime::clipboard::ClipboardProvider;
 
+use crate::picker_layout::FilePickerLayout;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilePickerDragState {
+  ListScrollbar { grab_offset: u16 },
+  PreviewScrollbar { grab_offset: u16 },
+}
+
 /// Application state passed to all handlers.
 pub struct Ctx {
   pub editor:                Editor,
@@ -84,6 +92,8 @@ pub struct Ctx {
   pub command_palette:       CommandPaletteState,
   pub command_palette_style: CommandPaletteStyle,
   pub file_picker:           FilePickerState,
+  pub file_picker_layout:    Option<FilePickerLayout>,
+  pub file_picker_drag:      Option<FilePickerDragState>,
   pub search_prompt:         the_default::SearchPromptState,
   pub ui_theme:              Theme,
   pub ui_state:              UiState,
@@ -195,6 +205,8 @@ impl Ctx {
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
       file_picker,
+      file_picker_layout: None,
+      file_picker_drag: None,
       search_prompt: the_default::SearchPromptState::new(),
       ui_theme,
       ui_state: UiState::default(),

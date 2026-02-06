@@ -54,7 +54,14 @@ use the_lib::{
   syntax::Highlight,
 };
 
-use crate::Ctx;
+use crate::{
+  Ctx,
+  picker_layout::{
+    FilePickerLayout,
+    compute_file_picker_layout,
+    compute_scrollbar_metrics,
+  },
+};
 
 fn lib_color_to_ratatui(color: the_lib::render::graphics::Color) -> Color {
   use the_lib::render::graphics::Color as LibColor;
@@ -888,6 +895,16 @@ fn draw_file_picker_panel(
     return;
   }
 
+  let Some(layout) = ctx
+    .file_picker_layout
+    .or_else(|| compute_file_picker_layout(area, picker))
+  else {
+    return;
+  };
+  if layout.panel.width == 0 || layout.panel.height == 0 {
+    return;
+  }
+
   let (text_style, mut fill_style, border_style) = ui_style_colors(&panel.style);
   if fill_style.bg.is_none() {
     let fallback_bg = ctx
@@ -905,55 +922,26 @@ fn draw_file_picker_panel(
       fill_style = fill_style.bg(bg);
     }
   }
-  let width = area
-    .width
-    .saturating_mul(9)
-    .saturating_div(10)
-    .max(72)
-    .min(area.width);
-  let height = area
-    .height
-    .saturating_mul(8)
-    .saturating_div(10)
-    .max(18)
-    .min(area.height);
-  let x = area.x + area.width.saturating_sub(width) / 2;
-  let y = area.y + area.height.saturating_sub(height) / 2;
-  let rect = Rect::new(x, y, width, height);
 
   let title = panel
     .title
     .clone()
     .unwrap_or_else(|| "File Picker".to_string());
-  fill_rect(buf, rect, fill_style);
+  fill_rect(buf, layout.panel, fill_style);
   let outer = Block::default()
     .borders(Borders::ALL)
     .title(title)
     .border_style(border_style)
     .style(fill_style);
-  let inner = outer.inner(rect);
-  outer.render(rect, buf);
+  outer.render(layout.panel, buf);
 
-  if inner.width < 3 || inner.height < 3 {
+  if layout.panel_inner.width < 3 || layout.panel_inner.height < 3 {
     return;
   }
 
-  let show_preview = picker.show_preview && inner.width >= 72;
-  let panes = if show_preview {
-    Layout::default()
-      .direction(Direction::Horizontal)
-      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-      .split(inner)
-  } else {
-    Layout::default()
-      .direction(Direction::Horizontal)
-      .constraints([Constraint::Percentage(100)])
-      .split(inner)
-  };
-
   draw_file_picker_list_pane(
     buf,
-    panes[0],
+    &layout,
     picker,
     text_style,
     fill_style,
@@ -962,10 +950,10 @@ fn draw_file_picker_panel(
     cursor_out,
   );
 
-  if show_preview && panes.len() > 1 {
+  if layout.show_preview {
     draw_file_picker_preview_pane(
       buf,
-      panes[1],
+      &layout,
       picker,
       text_style,
       fill_style,
@@ -977,7 +965,7 @@ fn draw_file_picker_panel(
 
 fn draw_file_picker_list_pane(
   buf: &mut Buffer,
-  rect: Rect,
+  layout: &FilePickerLayout,
   picker: &the_default::FilePickerState,
   text_style: Style,
   fill_style: Style,
@@ -985,18 +973,19 @@ fn draw_file_picker_list_pane(
   focus: Option<&the_lib::render::UiFocus>,
   cursor_out: &mut Option<(u16, u16)>,
 ) {
+  let rect = layout.list_pane;
   let block = Block::default()
     .borders(Borders::ALL)
     .border_style(border_style)
     .style(fill_style);
-  let inner = block.inner(rect);
   block.render(rect, buf);
 
+  let inner = layout.list_inner;
   if inner.width == 0 || inner.height == 0 {
     return;
   }
 
-  let prompt_area = Rect::new(inner.x, inner.y, inner.width, 1);
+  let prompt_area = layout.list_prompt;
   let prompt = if picker.query.is_empty() {
     "Find file".to_string()
   } else {
@@ -1057,16 +1046,11 @@ fn draw_file_picker_list_pane(
     return;
   }
 
-  let divider_y = inner.y + 1;
+  let divider_y = prompt_area.y.saturating_add(1);
   let divider = "─".repeat(inner.width as usize);
   buf.set_string(inner.x, divider_y, divider, border_style);
 
-  let list_area = Rect::new(
-    inner.x,
-    divider_y.saturating_add(1),
-    inner.width,
-    inner.height.saturating_sub(2),
-  );
+  let list_area = layout.list_content;
   if list_area.width == 0 || list_area.height == 0 {
     return;
   }
@@ -1083,9 +1067,7 @@ fn draw_file_picker_list_pane(
   if visible_rows == 0 {
     return;
   }
-  let scroll_offset = picker
-    .list_offset
-    .min(total_matches.saturating_sub(visible_rows));
+  let scroll_offset = layout.list_scroll_offset;
   let end = scroll_offset
     .saturating_add(visible_rows)
     .min(total_matches);
@@ -1111,59 +1093,72 @@ fn draw_file_picker_list_pane(
     buf.set_string(list_area.x.saturating_add(3), y, label, style);
   }
 
-  if total_matches > visible_rows {
-    let track_x = list_area.x + list_area.width.saturating_sub(1);
-    let track_height = list_area.height;
-    let thumb_height = ((visible_rows as f32 / total_matches as f32) * track_height as f32)
-      .ceil()
-      .max(1.0) as u16;
-    let max_scroll = total_matches.saturating_sub(visible_rows);
-    let thumb_offset = if max_scroll == 0 {
-      0
-    } else {
-      ((scroll_offset as f32 / max_scroll as f32) * (track_height - thumb_height) as f32).round()
-        as u16
-    };
-    for idx in 0..track_height {
-      let y = list_area.y + idx;
-      let is_thumb = idx >= thumb_offset && idx < thumb_offset + thumb_height;
+  if let Some(track) = layout.list_scrollbar_track
+    && let Some(metrics) =
+      compute_scrollbar_metrics(track, total_matches, visible_rows, scroll_offset)
+  {
+    for idx in 0..track.height {
+      let y = track.y + idx;
+      let is_thumb = idx >= metrics.thumb_offset
+        && idx < metrics.thumb_offset.saturating_add(metrics.thumb_height);
       let symbol = if is_thumb { "█" } else { "│" };
-      buf.set_string(track_x, y, symbol, border_style);
+      buf.set_string(track.x, y, symbol, border_style);
     }
   }
 }
 
 fn draw_file_picker_preview_pane(
   buf: &mut Buffer,
-  rect: Rect,
+  layout: &FilePickerLayout,
   picker: &the_default::FilePickerState,
   text_style: Style,
   fill_style: Style,
   border_style: Style,
   theme: &the_lib::render::theme::Theme,
 ) {
+  let Some(rect) = layout.preview_pane else {
+    return;
+  };
+
   let block = Block::default()
     .borders(Borders::ALL)
     .border_style(border_style)
     .style(fill_style)
     .title("Preview");
-  let inner = block.inner(rect);
   block.render(rect, buf);
-  if inner.width == 0 || inner.height == 0 {
+  let Some(content) = layout.preview_content else {
+    return;
+  };
+  if content.width == 0 || content.height == 0 {
     return;
   }
 
-  let text = match &picker.preview {
-    FilePickerPreview::Empty => String::new(),
-    FilePickerPreview::Source(source) => {
-      draw_file_picker_source_preview(buf, inner, source, text_style, theme);
-      return;
-    },
-    FilePickerPreview::Text(text) => text.clone(),
-    FilePickerPreview::Message(message) => message.clone(),
-  };
+  let scroll_offset = layout.preview_scroll_offset;
+  let visible_rows = content.height as usize;
+  let total_lines = picker.preview_line_count();
 
-  Paragraph::new(text).style(text_style).render(inner, buf);
+  match &picker.preview {
+    FilePickerPreview::Empty => {},
+    FilePickerPreview::Source(source) => {
+      draw_file_picker_source_preview(buf, content, source, text_style, theme, scroll_offset);
+    },
+    FilePickerPreview::Text(text) | FilePickerPreview::Message(text) => {
+      draw_file_picker_plain_preview(buf, content, text, text_style, scroll_offset);
+    },
+  }
+
+  if let Some(track) = layout.preview_scrollbar
+    && let Some(metrics) =
+      compute_scrollbar_metrics(track, total_lines, visible_rows, scroll_offset)
+  {
+    for idx in 0..track.height {
+      let y = track.y + idx;
+      let is_thumb = idx >= metrics.thumb_offset
+        && idx < metrics.thumb_offset.saturating_add(metrics.thumb_height);
+      let symbol = if is_thumb { "█" } else { "│" };
+      buf.set_string(track.x, y, symbol, border_style);
+    }
+  }
 }
 
 fn draw_file_picker_source_preview(
@@ -1172,6 +1167,7 @@ fn draw_file_picker_source_preview(
   source: &the_default::FilePickerSourcePreview,
   text_style: Style,
   theme: &the_lib::render::theme::Theme,
+  scroll_offset: usize,
 ) {
   if area.width == 0 || area.height == 0 {
     return;
@@ -1183,14 +1179,15 @@ fn draw_file_picker_source_preview(
 
   for row in 0..area.height as usize {
     let y = area.y + row as u16;
-    if row >= source.lines.len() {
-      if source.truncated && row == source.lines.len() {
+    let line_idx = scroll_offset.saturating_add(row);
+    if line_idx >= source.lines.len() {
+      if source.truncated && line_idx == source.lines.len() {
         buf.set_stringn(area.x, y, "…", area.width as usize, gutter_style);
       }
       continue;
     }
 
-    let line_number = row + 1;
+    let line_number = line_idx + 1;
     let gutter = format!("{line_number:>line_number_width$} ");
     let gutter_width = gutter.chars().count() as u16;
     buf.set_stringn(area.x, y, &gutter, area.width as usize, gutter_style);
@@ -1199,12 +1196,12 @@ fn draw_file_picker_source_preview(
       continue;
     }
 
-    let line = &source.lines[row];
+    let line = &source.lines[line_idx];
     if line.is_empty() {
       continue;
     }
 
-    let line_start = source.line_starts[row];
+    let line_start = source.line_starts[line_idx];
     let line_spans = preview_line_spans(line, line_start, &source.highlights, text_style, theme);
 
     Paragraph::new(Line::from(line_spans)).render(
@@ -1215,6 +1212,33 @@ fn draw_file_picker_source_preview(
         1,
       ),
       buf,
+    );
+  }
+}
+
+fn draw_file_picker_plain_preview(
+  buf: &mut Buffer,
+  area: Rect,
+  text: &str,
+  text_style: Style,
+  scroll_offset: usize,
+) {
+  if area.width == 0 || area.height == 0 {
+    return;
+  }
+
+  for (row, line) in text
+    .lines()
+    .skip(scroll_offset)
+    .take(area.height as usize)
+    .enumerate()
+  {
+    buf.set_stringn(
+      area.x,
+      area.y + row as u16,
+      line,
+      area.width as usize,
+      text_style,
     );
   }
 }
@@ -1893,59 +1917,27 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
 
 fn sync_file_picker_viewport(ctx: &mut Ctx, area: Rect) {
   if !ctx.file_picker.active {
+    ctx.file_picker_layout = None;
+    ctx.file_picker_drag = None;
     return;
   }
 
-  if area.width < 4 || area.height < 4 {
+  let Some(layout) = compute_file_picker_layout(area, &ctx.file_picker) else {
     set_picker_visible_rows(&mut ctx.file_picker, 1);
+    ctx.file_picker.clamp_preview_scroll(1);
+    ctx.file_picker_layout = None;
+    ctx.file_picker_drag = None;
     return;
-  }
-
-  let width = area
-    .width
-    .saturating_mul(9)
-    .saturating_div(10)
-    .max(72)
-    .min(area.width);
-  let height = area
-    .height
-    .saturating_mul(8)
-    .saturating_div(10)
-    .max(18)
-    .min(area.height);
-  let x = area.x + area.width.saturating_sub(width) / 2;
-  let y = area.y + area.height.saturating_sub(height) / 2;
-  let rect = Rect::new(x, y, width, height);
-
-  let outer = Block::default().borders(Borders::ALL);
-  let inner = outer.inner(rect);
-  if inner.width < 3 || inner.height < 3 {
-    set_picker_visible_rows(&mut ctx.file_picker, 1);
-    return;
-  }
-
-  let show_preview = ctx.file_picker.show_preview && inner.width >= 72;
-  let panes = if show_preview {
-    Layout::default()
-      .direction(Direction::Horizontal)
-      .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-      .split(inner)
-  } else {
-    Layout::default()
-      .direction(Direction::Horizontal)
-      .constraints([Constraint::Percentage(100)])
-      .split(inner)
-  };
-  let pane = panes.first().copied().unwrap_or(inner);
-  let list_block = Block::default().borders(Borders::ALL);
-  let list_inner = list_block.inner(pane);
-  let visible_rows = if list_inner.height < 3 {
-    1
-  } else {
-    list_inner.height.saturating_sub(2).max(1) as usize
   };
 
-  set_picker_visible_rows(&mut ctx.file_picker, visible_rows);
+  set_picker_visible_rows(&mut ctx.file_picker, layout.list_visible_rows());
+  ctx
+    .file_picker
+    .clamp_preview_scroll(layout.preview_visible_rows());
+  ctx.file_picker_layout = compute_file_picker_layout(area, &ctx.file_picker);
+  if ctx.file_picker_layout.is_none() {
+    ctx.file_picker_drag = None;
+  }
 }
 
 /// Ensure cursor is visible by adjusting scroll if needed.

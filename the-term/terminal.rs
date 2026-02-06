@@ -6,6 +6,10 @@ use std::io::{
 };
 
 use crossterm::{
+  event::{
+    DisableMouseCapture,
+    EnableMouseCapture,
+  },
   execute,
   terminal::{
     EnterAlternateScreen,
@@ -35,12 +39,20 @@ impl Terminal {
 
   pub fn enter_raw_mode(&mut self) -> Result<()> {
     enable_raw_mode()?;
-    execute!(self.terminal.backend_mut(), EnterAlternateScreen)?;
+    execute!(
+      self.terminal.backend_mut(),
+      EnterAlternateScreen,
+      EnableMouseCapture
+    )?;
     Ok(())
   }
 
   pub fn leave_raw_mode(&mut self) -> Result<()> {
-    execute!(self.terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+      self.terminal.backend_mut(),
+      DisableMouseCapture,
+      LeaveAlternateScreen
+    )?;
     disable_raw_mode()?;
     Ok(())
   }

@@ -5,10 +5,19 @@ use crossterm::event::{
   KeyEvent as CrosstermKeyEvent,
   KeyEventKind,
   KeyModifiers,
+  MouseButton,
+  MouseEvent as CrosstermMouseEvent,
+  MouseEventKind,
 };
+use ratatui::layout::Rect;
 use the_default::{
   DefaultContext,
   Mode,
+  open_file_picker_index,
+  scroll_file_picker_list,
+  scroll_file_picker_preview,
+  set_file_picker_list_offset,
+  set_file_picker_preview_offset,
   ui_event as dispatch_ui_event,
 };
 use the_lib::render::{
@@ -21,10 +30,17 @@ use the_lib::render::{
 
 use crate::{
   Ctx,
+  ctx::FilePickerDragState,
   dispatch::{
     Key,
     KeyEvent,
     Modifiers,
+  },
+  picker_layout::{
+    compute_file_picker_layout,
+    compute_scrollbar_metrics,
+    point_in_rect,
+    scroll_offset_from_thumb,
   },
 };
 
@@ -65,6 +81,192 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
   let key_event = KeyEvent { key, modifiers };
 
   ctx.dispatch().pre_on_keypress(ctx, key_event);
+}
+
+pub fn handle_mouse(ctx: &mut Ctx, event: CrosstermMouseEvent) {
+  if !ctx.file_picker.active {
+    return;
+  }
+
+  let viewport = ctx.editor.view().viewport;
+  let viewport = Rect::new(viewport.x, viewport.y, viewport.width, viewport.height);
+  let layout = ctx
+    .file_picker_layout
+    .or_else(|| compute_file_picker_layout(viewport, &ctx.file_picker));
+  let Some(layout) = layout else {
+    return;
+  };
+  ctx.file_picker_layout = Some(layout);
+
+  let x = event.column;
+  let y = event.row;
+  match event.kind {
+    MouseEventKind::Down(MouseButton::Left) => {
+      handle_left_down(ctx, layout, x, y);
+    },
+    MouseEventKind::Drag(MouseButton::Left) => {
+      handle_left_drag(ctx, layout, y);
+    },
+    MouseEventKind::Up(MouseButton::Left) => {
+      ctx.file_picker_drag = None;
+    },
+    MouseEventKind::ScrollUp => {
+      handle_wheel(ctx, layout, x, y, -3);
+    },
+    MouseEventKind::ScrollDown => {
+      handle_wheel(ctx, layout, x, y, 3);
+    },
+    _ => {},
+  }
+}
+
+fn handle_left_down(ctx: &mut Ctx, layout: crate::picker_layout::FilePickerLayout, x: u16, y: u16) {
+  let picker = &ctx.file_picker;
+
+  if let Some(track) = layout.list_scrollbar_track
+    && point_in_rect(x, y, track)
+  {
+    let visible_rows = layout.list_visible_rows();
+    let total_matches = picker.matched_count();
+    if let Some(metrics) = compute_scrollbar_metrics(
+      track,
+      total_matches,
+      visible_rows,
+      layout.list_scroll_offset,
+    ) {
+      let thumb_start = track.y.saturating_add(metrics.thumb_offset);
+      let thumb_end = thumb_start.saturating_add(metrics.thumb_height);
+      let mut grab_offset = y.saturating_sub(thumb_start);
+      if y < thumb_start || y >= thumb_end {
+        grab_offset = metrics.thumb_height / 2;
+      }
+      let clamped_y = y
+        .saturating_sub(track.y)
+        .saturating_sub(grab_offset)
+        .min(metrics.max_thumb_offset);
+      let offset = scroll_offset_from_thumb(metrics, clamped_y);
+      set_file_picker_list_offset(ctx, offset);
+      ctx.file_picker_drag = Some(FilePickerDragState::ListScrollbar { grab_offset });
+      return;
+    }
+  }
+
+  if point_in_rect(x, y, layout.list_content) {
+    let row = y.saturating_sub(layout.list_content.y) as usize;
+    let index = layout.list_scroll_offset.saturating_add(row);
+    if index < picker.matched_count() {
+      open_file_picker_index(ctx, index);
+      ctx.file_picker_drag = None;
+      return;
+    }
+  }
+
+  if let Some(track) = layout.preview_scrollbar
+    && point_in_rect(x, y, track)
+  {
+    let visible_rows = layout.preview_visible_rows();
+    let total_lines = picker.preview_line_count();
+    if let Some(metrics) = compute_scrollbar_metrics(
+      track,
+      total_lines,
+      visible_rows,
+      layout.preview_scroll_offset,
+    ) {
+      let thumb_start = track.y.saturating_add(metrics.thumb_offset);
+      let thumb_end = thumb_start.saturating_add(metrics.thumb_height);
+      let mut grab_offset = y.saturating_sub(thumb_start);
+      if y < thumb_start || y >= thumb_end {
+        grab_offset = metrics.thumb_height / 2;
+      }
+      let clamped_y = y
+        .saturating_sub(track.y)
+        .saturating_sub(grab_offset)
+        .min(metrics.max_thumb_offset);
+      let offset = scroll_offset_from_thumb(metrics, clamped_y);
+      set_file_picker_preview_offset(ctx, offset, visible_rows);
+      ctx.file_picker_drag = Some(FilePickerDragState::PreviewScrollbar { grab_offset });
+      return;
+    }
+  }
+
+  ctx.file_picker_drag = None;
+}
+
+fn handle_left_drag(ctx: &mut Ctx, layout: crate::picker_layout::FilePickerLayout, y: u16) {
+  let Some(drag) = ctx.file_picker_drag else {
+    return;
+  };
+
+  match drag {
+    FilePickerDragState::ListScrollbar { grab_offset } => {
+      let Some(track) = layout.list_scrollbar_track else {
+        return;
+      };
+      let visible_rows = layout.list_visible_rows();
+      let total_matches = ctx.file_picker.matched_count();
+      let Some(metrics) = compute_scrollbar_metrics(
+        track,
+        total_matches,
+        visible_rows,
+        layout.list_scroll_offset,
+      ) else {
+        return;
+      };
+      let thumb_offset = y
+        .saturating_sub(track.y)
+        .saturating_sub(grab_offset)
+        .min(metrics.max_thumb_offset);
+      let offset = scroll_offset_from_thumb(metrics, thumb_offset);
+      set_file_picker_list_offset(ctx, offset);
+    },
+    FilePickerDragState::PreviewScrollbar { grab_offset } => {
+      let Some(track) = layout.preview_scrollbar else {
+        return;
+      };
+      let visible_rows = layout.preview_visible_rows();
+      let total_lines = ctx.file_picker.preview_line_count();
+      let Some(metrics) = compute_scrollbar_metrics(
+        track,
+        total_lines,
+        visible_rows,
+        layout.preview_scroll_offset,
+      ) else {
+        return;
+      };
+      let thumb_offset = y
+        .saturating_sub(track.y)
+        .saturating_sub(grab_offset)
+        .min(metrics.max_thumb_offset);
+      let offset = scroll_offset_from_thumb(metrics, thumb_offset);
+      set_file_picker_preview_offset(ctx, offset, visible_rows);
+    },
+  }
+}
+
+fn handle_wheel(
+  ctx: &mut Ctx,
+  layout: crate::picker_layout::FilePickerLayout,
+  x: u16,
+  y: u16,
+  delta: isize,
+) {
+  if point_in_rect(x, y, layout.list_content)
+    || layout
+      .list_scrollbar_track
+      .is_some_and(|track| point_in_rect(x, y, track))
+  {
+    scroll_file_picker_list(ctx, delta);
+    return;
+  }
+
+  if let Some(preview_content) = layout.preview_content
+    && (point_in_rect(x, y, preview_content)
+      || layout
+        .preview_scrollbar
+        .is_some_and(|track| point_in_rect(x, y, track)))
+  {
+    scroll_file_picker_preview(ctx, delta, layout.preview_visible_rows());
+  }
 }
 
 fn to_key(code: KeyCode) -> Option<Key> {

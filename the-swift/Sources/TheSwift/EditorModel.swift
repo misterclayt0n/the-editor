@@ -275,7 +275,12 @@ final class EditorModel: ObservableObject {
                     scanning: snapshot.scanning,
                     root: snapshot.root,
                     items: snapshot.items?.enumerated().map { index, item in
-                        FilePickerItemSnapshot(id: index, display: item.display, isDir: item.isDir)
+                        FilePickerItemSnapshot(
+                            id: index,
+                            display: item.display,
+                            isDir: item.isDir,
+                            matchIndices: item.matchIndices
+                        )
                     }
                 )
                 startFilePickerTimerIfNeeded(scanning: snapshot.scanning ?? false)

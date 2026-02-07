@@ -408,9 +408,14 @@ struct UiNodeView: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.title)
-                    .foregroundColor(titleColor)
-                    .font(.system(size: 14, weight: item.emphasis ? .semibold : .medium, design: .rounded))
+                highlightedListText(
+                    item.title,
+                    matchIndices: item.matchIndices,
+                    baseColor: titleColor,
+                    highlightColor: isSelected ? selectedText : Color.accentColor,
+                    fontSize: 14,
+                    baseWeight: item.emphasis ? .semibold : .medium
+                )
                 if let subtitle = item.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
                         .foregroundColor(detailColor)
@@ -450,6 +455,52 @@ struct UiNodeView: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ? selectedBg : Color.clear)
         )
+    }
+
+    private func highlightedListText(
+        _ text: String,
+        matchIndices: [Int],
+        baseColor: Color,
+        highlightColor: Color,
+        fontSize: CGFloat,
+        baseWeight: Font.Weight
+    ) -> Text {
+        guard !text.isEmpty else { return Text("") }
+        guard !matchIndices.isEmpty else {
+            return Text(text)
+                .foregroundColor(baseColor)
+                .font(.system(size: fontSize, weight: baseWeight, design: .rounded))
+        }
+
+        let indexSet = Set(matchIndices)
+        func segment(_ value: String, matched: Bool) -> Text {
+            Text(value)
+                .foregroundColor(matched ? highlightColor : baseColor)
+                .font(.system(size: fontSize, weight: matched ? .bold : baseWeight, design: .rounded))
+        }
+
+        var result = Text("")
+        var current = ""
+        var currentMatched: Bool? = nil
+
+        for (index, ch) in text.enumerated() {
+            let matched = indexSet.contains(index)
+            if currentMatched == nil {
+                currentMatched = matched
+            }
+            if currentMatched != matched {
+                result = result + segment(current, matched: currentMatched ?? false)
+                current = ""
+                currentMatched = matched
+            }
+            current.append(ch)
+        }
+
+        if !current.isEmpty {
+            result = result + segment(current, matched: currentMatched ?? false)
+        }
+
+        return result
     }
 }
 

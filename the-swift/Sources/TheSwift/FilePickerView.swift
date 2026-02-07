@@ -26,24 +26,28 @@ struct FilePickerItemSnapshot: Decodable, Identifiable {
     let id: Int
     let display: String
     let isDir: Bool
+    let matchIndices: [Int]
 
     private enum CodingKeys: String, CodingKey {
         case display
         case isDir = "is_dir"
+        case matchIndices = "match_indices"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         display = try container.decode(String.self, forKey: .display)
         isDir = (try? container.decode(Bool.self, forKey: .isDir)) ?? false
+        matchIndices = (try? container.decode([Int].self, forKey: .matchIndices)) ?? []
         // id will be set by the parent during array mapping
         id = 0
     }
 
-    init(id: Int, display: String, isDir: Bool) {
+    init(id: Int, display: String, isDir: Bool, matchIndices: [Int]) {
         self.id = id
         self.display = display
         self.isDir = isDir
+        self.matchIndices = matchIndices
     }
 
     var filename: String {
@@ -57,6 +61,22 @@ struct FilePickerItemSnapshot: Decodable, Identifiable {
 
     var fileExtension: String {
         (filename as NSString).pathExtension.lowercased()
+    }
+
+    var filenameMatchIndices: [Int] {
+        let filenameStart = max(0, display.count - filename.count)
+        return matchIndices.compactMap { index in
+            let local = index - filenameStart
+            return (0..<filename.count).contains(local) ? local : nil
+        }
+    }
+
+    var directoryMatchIndices: [Int] {
+        let count = directory.count
+        guard count > 0 else { return [] }
+        return matchIndices.compactMap { index in
+            (0..<count).contains(index) ? index : nil
+        }
     }
 }
 
@@ -172,7 +192,7 @@ struct FilePickerView: View {
                 statusText
             },
             itemContent: { index, isSelected, isHovered in
-                fileRowContent(for: items[index])
+                fileRowContent(for: items[index], isSelected: isSelected)
             },
             emptyContent: {
                 VStack(spacing: 8) {
@@ -219,7 +239,7 @@ struct FilePickerView: View {
 
     // MARK: - Row content
 
-    private func fileRowContent(for item: FilePickerItemSnapshot) -> some View {
+    private func fileRowContent(for item: FilePickerItemSnapshot, isSelected: Bool) -> some View {
         let (iconName, iconColor) = fileIcon(for: item)
 
         return HStack(spacing: 8) {
@@ -229,15 +249,25 @@ struct FilePickerView: View {
                 .frame(width: 18, alignment: .center)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.filename)
-                    .font(.system(size: 14, weight: item.isDir ? .semibold : .medium))
-                    .foregroundColor(.primary)
+                highlightedText(
+                    item.filename,
+                    matchIndices: item.filenameMatchIndices,
+                    baseColor: .primary,
+                    highlightColor: .accentColor,
+                    fontSize: 14,
+                    baseWeight: item.isDir ? .semibold : .medium
+                )
                     .lineLimit(1)
 
                 if !item.directory.isEmpty {
-                    Text(item.directory)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                    highlightedText(
+                        item.directory,
+                        matchIndices: item.directoryMatchIndices,
+                        baseColor: .secondary,
+                        highlightColor: isSelected ? .primary : .accentColor,
+                        fontSize: 12,
+                        baseWeight: .regular
+                    )
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -245,6 +275,47 @@ struct FilePickerView: View {
 
             Spacer()
         }
+    }
+
+    private func highlightedText(
+        _ text: String,
+        matchIndices: [Int],
+        baseColor: Color,
+        highlightColor: Color,
+        fontSize: CGFloat,
+        baseWeight: Font.Weight
+    ) -> Text {
+        guard !text.isEmpty else { return Text("") }
+        let indexSet = Set(matchIndices)
+
+        func segmentText(_ segment: String, matched: Bool) -> Text {
+            Text(segment)
+                .font(.system(size: fontSize, weight: matched ? .bold : baseWeight))
+                .foregroundColor(matched ? highlightColor : baseColor)
+        }
+
+        var result = Text("")
+        var current = ""
+        var currentMatched: Bool? = nil
+
+        for (index, ch) in text.enumerated() {
+            let matched = indexSet.contains(index)
+            if currentMatched == nil {
+                currentMatched = matched
+            }
+            if currentMatched != matched {
+                result = result + segmentText(current, matched: currentMatched ?? false)
+                current = ""
+                currentMatched = matched
+            }
+            current.append(ch)
+        }
+
+        if !current.isEmpty {
+            result = result + segmentText(current, matched: currentMatched ?? false)
+        }
+
+        return result
     }
 }
 

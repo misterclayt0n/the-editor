@@ -180,6 +180,45 @@ fn truncate_in_place(text: &mut String, max_chars: usize) {
   }
 }
 
+fn draw_fuzzy_match_line(
+  buf: &mut Buffer,
+  x: u16,
+  y: u16,
+  text: &str,
+  max_chars: usize,
+  base_style: Style,
+  fuzzy_style: Style,
+  match_indices: &[usize],
+) {
+  if max_chars == 0 {
+    return;
+  }
+
+  let mut next_match_iter = match_indices.iter().copied();
+  let mut next_match = next_match_iter.next();
+  for (char_index, ch) in text.chars().enumerate() {
+    if char_index >= max_chars {
+      break;
+    }
+
+    let mut style = base_style;
+    if next_match.is_some_and(|idx| idx == char_index) {
+      style = style.patch(fuzzy_style);
+      next_match = next_match_iter.next();
+    }
+
+    let mut utf8 = [0u8; 4];
+    let symbol = ch.encode_utf8(&mut utf8);
+    buf.set_stringn(
+      x.saturating_add(char_index as u16),
+      y,
+      symbol,
+      1,
+      style,
+    );
+  }
+}
+
 fn draw_box(buf: &mut Buffer, rect: Rect, border: Style, fill: Style) {
   if rect.width < 2 || rect.height < 2 {
     return;
@@ -946,6 +985,7 @@ fn draw_file_picker_panel(
     text_style,
     fill_style,
     border_style,
+    &ctx.ui_theme,
     focus,
     cursor_out,
   );
@@ -970,6 +1010,7 @@ fn draw_file_picker_list_pane(
   text_style: Style,
   fill_style: Style,
   border_style: Style,
+  theme: &the_lib::render::theme::Theme,
   focus: Option<&the_lib::render::UiFocus>,
   cursor_out: &mut Option<(u16, u16)>,
 ) {
@@ -1071,8 +1112,11 @@ fn draw_file_picker_list_pane(
   let end = scroll_offset
     .saturating_add(visible_rows)
     .min(total_matches);
+  let fuzzy_highlight_style = lib_style_to_ratatui(theme.try_get("special").unwrap_or_default())
+    .add_modifier(Modifier::BOLD);
+  let mut match_indices = Vec::new();
   for row_idx in scroll_offset..end {
-    let Some(item) = picker.matched_item(row_idx) else {
+    let Some(item) = picker.matched_item_with_match_indices(row_idx, &mut match_indices) else {
       continue;
     };
     let y = list_area.y + (row_idx - scroll_offset) as u16;
@@ -1088,12 +1132,19 @@ fn draw_file_picker_list_pane(
       style = style.add_modifier(Modifier::UNDERLINED);
     }
 
-    let mut label = item.display.clone();
     let content_width = list_area.width.saturating_sub(3) as usize;
-    truncate_in_place(&mut label, content_width);
     let marker = if is_selected { " > " } else { "   " };
     buf.set_string(list_area.x, y, marker, style);
-    buf.set_string(list_area.x.saturating_add(3), y, label, style);
+    draw_fuzzy_match_line(
+      buf,
+      list_area.x.saturating_add(3),
+      y,
+      item.display.as_str(),
+      content_width,
+      style,
+      fuzzy_highlight_style,
+      &match_indices,
+    );
   }
 
   if let Some(track) = layout.list_scrollbar_track

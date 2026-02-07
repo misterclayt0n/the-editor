@@ -765,14 +765,17 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
     .list_offset
     .min(total_matches.saturating_sub(visible_rows));
   let window_end = window_start.saturating_add(visible_rows).min(total_matches);
-  let list_items: Vec<UiListItem> = (window_start..window_end)
-    .filter_map(|idx| picker.matched_item(idx))
-    .map(|item| {
-      let mut row = UiListItem::new(item.display.clone());
-      row.emphasis = item.is_dir;
-      row
-    })
-    .collect();
+  let mut match_indices = Vec::new();
+  let mut list_items = Vec::with_capacity(window_end.saturating_sub(window_start));
+  for idx in window_start..window_end {
+    let Some(item) = picker.matched_item_with_match_indices(idx, &mut match_indices) else {
+      continue;
+    };
+    let mut row = UiListItem::new(item.display.clone());
+    row.emphasis = item.is_dir;
+    row.match_indices = Some(match_indices.clone());
+    list_items.push(row);
+  }
 
   let mut list = UiList::new("file_picker_list", list_items);
   list.selected = picker.selected;
@@ -1697,4 +1700,63 @@ fn source_preview_text(source: &FilePickerSourcePreview) -> String {
     output.push('…');
   }
   output
+}
+
+#[cfg(test)]
+mod tests {
+  use std::path::PathBuf;
+
+  use super::*;
+
+  fn sample_item(display: &str) -> FilePickerItem {
+    FilePickerItem {
+      absolute: PathBuf::from(display),
+      display: display.to_string(),
+      is_dir: false,
+    }
+  }
+
+  #[test]
+  fn matched_item_with_match_indices_resets_output_and_returns_sorted_indices() {
+    let mut state = FilePickerState::default();
+    let injector = state.matcher.injector();
+    inject_item(&injector, sample_item("src/main.rs"));
+    inject_item(&injector, sample_item("src/lib.rs"));
+
+    state
+      .matcher
+      .pattern
+      .reparse(0, "mr", CaseMatching::Smart, Normalization::Smart, false);
+    let _ = refresh_matcher_state(&mut state);
+
+    let mut indices = vec![999];
+    let item = state
+      .matched_item_with_match_indices(0, &mut indices)
+      .expect("first match should exist");
+
+    assert_eq!(item.display, "src/main.rs");
+    assert!(!indices.is_empty());
+    assert!(indices.iter().all(|&index| index != 999));
+    assert!(indices.windows(2).all(|window| window[0] <= window[1]));
+  }
+
+  #[test]
+  fn matched_item_with_match_indices_empty_query_has_no_indices() {
+    let mut state = FilePickerState::default();
+    let injector = state.matcher.injector();
+    inject_item(&injector, sample_item("docs/commands.md"));
+    state
+      .matcher
+      .pattern
+      .reparse(0, "", CaseMatching::Smart, Normalization::Smart, false);
+    let _ = refresh_matcher_state(&mut state);
+
+    let mut indices = Vec::new();
+    let item = state
+      .matched_item_with_match_indices(0, &mut indices)
+      .expect("empty query should still match");
+
+    assert_eq!(item.display, "docs/commands.md");
+    assert!(indices.is_empty());
+  }
 }

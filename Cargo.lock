@@ -1368,6 +1368,7 @@ dependencies = [
  "the-config",
  "the-default",
  "the-lib",
+ "the-loader",
 ]
 
 [[package]]

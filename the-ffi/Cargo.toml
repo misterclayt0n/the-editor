@@ -13,8 +13,9 @@ ropey.workspace = true
 serde_json.workspace = true
 swift-bridge    = "0.1"
 the-config      = { path = "../the-config" }
-the-lib         = { path = "../the-lib" }
+the-lib         = { features = [ "runtime-loader" ], path = "../the-lib" }
 the-default     = { path = "../the-default" }
+the-loader      = { path = "../the-loader" }
 
 [build-dependencies]
 swift-bridge-build = "0.1"

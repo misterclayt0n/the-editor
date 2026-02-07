@@ -18,9 +18,12 @@ use std::{
     Path,
     PathBuf,
   },
-  sync::atomic::{
-    AtomicUsize,
-    Ordering,
+  sync::{
+    Arc,
+    atomic::{
+      AtomicUsize,
+      Ordering,
+    },
   },
 };
 
@@ -57,6 +60,7 @@ use the_default::{
   handle_query_change as file_picker_handle_query_change,
   poll_scan_results as file_picker_poll_scan_results,
   refresh_matcher_state as file_picker_refresh_matcher_state,
+  set_file_picker_syntax_loader,
   select_file_picker_index,
   submit_file_picker,
   update_search_preview,
@@ -112,6 +116,7 @@ use the_lib::{
   transaction::Transaction,
   view::ViewState,
 };
+use the_loader::config::user_lang_config;
 
 /// Global document ID counter for FFI layer.
 static NEXT_DOC_ID: AtomicUsize = AtomicUsize::new(1);
@@ -685,16 +690,18 @@ struct EditorState {
 }
 
 impl EditorState {
-  fn new() -> Self {
+  fn new(loader: Option<Arc<Loader>>) -> Self {
     let mut command_palette_style = CommandPaletteStyle::floating(CommandPaletteTheme::ghostty());
     command_palette_style.layout = CommandPaletteLayout::Custom;
+    let mut file_picker = FilePickerState::default();
+    set_file_picker_syntax_loader(&mut file_picker, loader);
 
     Self {
       mode: Mode::Normal,
       command_prompt: CommandPromptState::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style,
-      file_picker: FilePickerState::default(),
+      file_picker,
       search_prompt: SearchPromptState::new(),
       ui_state: UiState::default(),
       needs_render: true,
@@ -722,6 +729,19 @@ fn select_ui_theme() -> Theme {
   }
 }
 
+fn init_loader(theme: &Theme) -> Result<Loader, String> {
+  use the_lib::syntax::{
+    config::Configuration,
+    runtime_loader::RuntimeLoader,
+  };
+
+  let config_value = user_lang_config().map_err(|error| error.to_string())?;
+  let config: Configuration = config_value.try_into().map_err(|error| format!("{error}"))?;
+  let loader = Loader::new(config, RuntimeLoader::new()).map_err(|error| format!("{error}"))?;
+  loader.set_scopes(theme.scopes().iter().cloned().collect());
+  Ok(loader)
+}
+
 /// FFI-safe app wrapper with editor management.
 pub struct App {
   inner:            LibApp,
@@ -735,11 +755,20 @@ pub struct App {
   registers:        Registers,
   last_motion:      Option<Motion>,
   ui_theme:         Theme,
+  loader:           Option<Arc<Loader>>,
 }
 
 impl App {
   pub fn new() -> Self {
     let dispatch = config_build_dispatch::<App>();
+    let ui_theme = select_ui_theme();
+    let loader = match init_loader(&ui_theme) {
+      Ok(loader) => Some(Arc::new(loader)),
+      Err(error) => {
+        eprintln!("Warning: syntax highlighting unavailable in FFI: {error}");
+        None
+      },
+    };
     Self {
       inner: LibApp::default(),
       dispatch,
@@ -751,7 +780,8 @@ impl App {
       should_quit: false,
       registers: Registers::new(),
       last_motion: None,
-      ui_theme: select_ui_theme(),
+      ui_theme,
+      loader,
     }
   }
 
@@ -763,7 +793,9 @@ impl App {
   ) -> ffi::EditorId {
     let view = ViewState::new(viewport.to_lib(), scroll.to_lib());
     let id = self.inner.create_editor(Rope::from_str(text), view);
-    self.states.insert(id, EditorState::new());
+    self
+      .states
+      .insert(id, EditorState::new(self.loader.clone()));
     self.active_editor.get_or_insert(id);
     ffi::EditorId::from(id)
   }
@@ -1538,7 +1570,11 @@ impl App {
       return false;
     }
     self.active_editor = Some(id);
-    self.states.entry(id).or_insert_with(EditorState::new);
+    let loader = self.loader.clone();
+    self
+      .states
+      .entry(id)
+      .or_insert_with(|| EditorState::new(loader.clone()));
     true
   }
 

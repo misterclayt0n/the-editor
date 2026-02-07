@@ -114,6 +114,7 @@ use the_lib::{
     Selection,
   },
   syntax::{
+    Highlight,
     HighlightCache,
     Loader,
     Syntax,
@@ -1034,6 +1035,14 @@ impl App {
       .get(&id)
       .map(|state| mode_to_u8(state.mode))
       .unwrap_or(mode_to_u8(Mode::Normal))
+  }
+
+  pub fn theme_highlight_style(&self, highlight: u32) -> ffi::Style {
+    let idx = highlight as usize;
+    if idx >= self.ui_theme.scopes().len() {
+      return ffi::Style::default();
+    }
+    ffi::Style::from(self.ui_theme.highlight(Highlight::new(highlight)))
   }
 
   pub fn command_palette_is_open(&mut self, id: ffi::EditorId) -> bool {
@@ -2162,6 +2171,7 @@ mod ffi {
     fn ui_event_json(self: &mut App, id: EditorId, event_json: &str) -> bool;
     fn text(self: &App, id: EditorId) -> String;
     fn mode(self: &App, id: EditorId) -> u8;
+    fn theme_highlight_style(self: &App, highlight: u32) -> Style;
     fn command_palette_is_open(self: &mut App, id: EditorId) -> bool;
     fn command_palette_query(self: &mut App, id: EditorId) -> String;
     fn command_palette_layout(self: &mut App, id: EditorId) -> u8;

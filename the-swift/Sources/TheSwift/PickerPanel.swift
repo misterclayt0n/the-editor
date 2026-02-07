@@ -276,8 +276,10 @@ struct PickerPanel<
     private func moveSelection(_ delta: Int) {
         guard itemCount > 0 else { return }
 
-        let current = selectedIndex ?? (delta < 0 ? itemCount - 1 : 0)
-        let next = max(0, min(current + delta, itemCount - 1))
+        let current = clampedIndex(selectedIndex) ?? 0
+        let len = itemCount
+        let raw = current + delta
+        let next = ((raw % len) + len) % len
 
         selectedIndex = next
         onSelectionChange?(next)

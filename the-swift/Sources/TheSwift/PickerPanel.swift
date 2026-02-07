@@ -50,7 +50,7 @@ struct PickerPanel<
         panelContainer
             .onAppear {
                 query = externalQuery
-                selectedIndex = itemCount == 0 ? nil : (externalSelectedIndex ?? 0)
+                selectedIndex = clampedIndex(externalSelectedIndex ?? 0)
                 DispatchQueue.main.async {
                     isTextFieldFocused = true
                 }
@@ -141,7 +141,7 @@ struct PickerPanel<
                     .textFieldStyle(.plain)
                     .focused($isTextFieldFocused)
                     .onSubmit {
-                        if let selected = selectedIndex {
+                        if let selected = clampedIndex(selectedIndex) {
                             onSubmit(selected)
                         }
                     }
@@ -234,9 +234,11 @@ struct PickerPanel<
                 .frame(maxHeight: maxListHeight)
                 .onChange(of: selectedIndex) { newIndex in
                     guard let index = newIndex else { return }
-                    withAnimation(.easeOut(duration: 0.1)) {
-                        proxy.scrollTo(index, anchor: .center)
-                    }
+                    scrollSelectionIntoView(index: index, proxy: proxy)
+                }
+                .onAppear {
+                    guard let index = selectedIndex else { return }
+                    scrollSelectionIntoView(index: index, proxy: proxy)
                 }
             }
         }
@@ -271,15 +273,8 @@ struct PickerPanel<
     private func moveSelection(_ delta: Int) {
         guard itemCount > 0 else { return }
 
-        let current = selectedIndex ?? (delta > 0 ? -1 : itemCount)
-        var next = current + delta
-
-        if abs(delta) == 1 {
-            if next < 0 { next = itemCount - 1 }
-            if next >= itemCount { next = 0 }
-        } else {
-            next = max(0, min(next, itemCount - 1))
-        }
+        let current = selectedIndex ?? (delta < 0 ? itemCount - 1 : 0)
+        let next = max(0, min(current + delta, itemCount - 1))
 
         selectedIndex = next
         onSelectionChange?(next)
@@ -290,15 +285,31 @@ struct PickerPanel<
             selectedIndex = nil
             return
         }
-        if let idx = selectedIndex, idx < itemCount {
+        if let idx = clampedIndex(selectedIndex) {
+            selectedIndex = idx
             return
         }
-        if let ext = externalSelectedIndex, ext < itemCount {
+        if let ext = clampedIndex(externalSelectedIndex) {
             selectedIndex = ext
         } else if !query.isEmpty {
             selectedIndex = 0
         } else {
             selectedIndex = nil
+        }
+    }
+
+    private func clampedIndex(_ index: Int?) -> Int? {
+        guard itemCount > 0 else { return nil }
+        guard let index else { return nil }
+        return max(0, min(index, itemCount - 1))
+    }
+
+    private func scrollSelectionIntoView(index: Int, proxy: ScrollViewProxy) {
+        var transaction = Transaction()
+        transaction.animation = nil
+        withTransaction(transaction) {
+            // nil anchor keeps native "only scroll when needed" behavior.
+            proxy.scrollTo(index, anchor: nil)
         }
     }
 }

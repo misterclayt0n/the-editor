@@ -1340,11 +1340,13 @@ impl App {
 
     let limit = max_items.min(matched_count);
     let mut items = Vec::with_capacity(limit);
+    let mut match_indices = Vec::new();
     for i in 0..limit {
-      if let Some(item) = picker.matched_item(i) {
+      if let Some(item) = picker.matched_item_with_match_indices(i, &mut match_indices) {
         items.push(serde_json::json!({
           "display": item.display,
           "is_dir": item.is_dir,
+          "match_indices": &match_indices,
         }));
       }
     }

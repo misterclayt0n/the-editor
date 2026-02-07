@@ -50,7 +50,7 @@ struct PickerPanel<
         panelContainer
             .onAppear {
                 query = externalQuery
-                selectedIndex = clampedIndex(externalSelectedIndex ?? 0)
+                selectedIndex = initialSelection()
                 DispatchQueue.main.async {
                     isTextFieldFocused = true
                 }
@@ -63,6 +63,9 @@ struct PickerPanel<
             }
             .onChange(of: itemCount) { _ in
                 syncSelection()
+            }
+            .onChange(of: selectedIndex) { newValue in
+                normalizeSelection(newValue)
             }
     }
 
@@ -285,23 +288,34 @@ struct PickerPanel<
             selectedIndex = nil
             return
         }
-        if let idx = clampedIndex(selectedIndex) {
-            selectedIndex = idx
-            return
-        }
-        if let ext = clampedIndex(externalSelectedIndex) {
-            selectedIndex = ext
-        } else if !query.isEmpty {
-            selectedIndex = 0
-        } else {
-            selectedIndex = nil
-        }
+        selectedIndex = clampedIndex(selectedIndex)
+            ?? clampedIndex(externalSelectedIndex)
+            ?? 0
     }
 
     private func clampedIndex(_ index: Int?) -> Int? {
         guard itemCount > 0 else { return nil }
         guard let index else { return nil }
         return max(0, min(index, itemCount - 1))
+    }
+
+    private func initialSelection() -> Int? {
+        guard itemCount > 0 else { return nil }
+        return clampedIndex(externalSelectedIndex) ?? 0
+    }
+
+    private func normalizeSelection(_ newValue: Int?) {
+        guard itemCount > 0 else {
+            if selectedIndex != nil {
+                selectedIndex = nil
+            }
+            return
+        }
+
+        let normalized = clampedIndex(newValue) ?? 0
+        if selectedIndex != normalized {
+            selectedIndex = normalized
+        }
     }
 
     private func scrollSelectionIntoView(index: Int, proxy: ScrollViewProxy) {

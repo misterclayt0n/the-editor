@@ -112,7 +112,10 @@ use the_lib::{
     CursorPick,
     Selection,
   },
-  syntax::Loader,
+  syntax::{
+    Loader,
+    Syntax,
+  },
   transaction::Transaction,
   view::ViewState,
 };
@@ -742,6 +745,15 @@ fn init_loader(theme: &Theme) -> Result<Loader, String> {
   Ok(loader)
 }
 
+fn setup_syntax(doc: &mut LibDocument, path: &Path, loader: &Loader) -> Result<(), String> {
+  let language = loader
+    .language_for_filename(path)
+    .ok_or_else(|| format!("unknown language for {}", path.display()))?;
+  let syntax = Syntax::new(doc.text().slice(..), language, loader).map_err(|error| format!("{error}"))?;
+  doc.set_syntax(syntax);
+  Ok(())
+}
+
 /// FFI-safe app wrapper with editor management.
 pub struct App {
   inner:            LibApp,
@@ -834,14 +846,13 @@ impl App {
   }
 
   pub fn set_file_path(&mut self, id: ffi::EditorId, path: &str) -> bool {
-    let _ = self.activate(id);
-    let Some(id) = id.to_lib() else {
+    if self.activate(id).is_none() {
       return false;
-    };
+    }
     if path.is_empty() {
-      self.file_paths.remove(&id);
+      DefaultContext::set_file_path(self, None);
     } else {
-      self.file_paths.insert(id, PathBuf::from(path));
+      DefaultContext::set_file_path(self, Some(PathBuf::from(path)));
     }
     true
   }
@@ -1624,6 +1635,24 @@ impl App {
     let id = id.to_lib()?;
     self.inner.editor_mut(id)
   }
+
+  fn refresh_editor_syntax(&mut self, id: LibEditorId) {
+    let path = self.file_paths.get(&id).cloned();
+    let loader = self.loader.clone();
+    let Some(editor) = self.inner.editor_mut(id) else {
+      return;
+    };
+    let doc = editor.document_mut();
+    match (loader.as_deref(), path.as_deref()) {
+      (Some(loader), Some(path)) => {
+        if let Err(error) = setup_syntax(doc, path, loader) {
+          eprintln!("Warning: could not enable syntax for {}: {error}", path.display());
+          doc.clear_syntax();
+        }
+      },
+      _ => doc.clear_syntax(),
+    }
+  }
 }
 
 impl Default for App {
@@ -1809,7 +1838,7 @@ impl DefaultContext for App {
   }
 
   fn syntax_loader(&self) -> Option<&Loader> {
-    None
+    self.loader.as_deref()
   }
 
   fn ui_theme(&self) -> &Theme {
@@ -1826,6 +1855,7 @@ impl DefaultContext for App {
           self.file_paths.remove(&id);
         },
       }
+      self.refresh_editor_syntax(id);
     }
   }
 
@@ -1841,7 +1871,6 @@ impl DefaultContext for App {
         .apply_transaction(&tx)
         .map_err(|err| std::io::Error::other(err.to_string()))?;
       let _ = doc.set_selection(Selection::point(0));
-      doc.clear_syntax();
       doc.set_display_name(
         path
           .file_name()

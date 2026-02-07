@@ -107,6 +107,7 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
       leading_icon: item.leading_icon.clone(),
       leading_color: item.leading_color.map(UiColor::Value),
       symbols: item.symbols.clone(),
+      match_indices: None,
       emphasis: item.emphasis,
       action: Some(item.title.clone()),
     });

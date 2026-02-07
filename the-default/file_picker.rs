@@ -1,4 +1,5 @@
 use std::{
+  cell::RefCell,
   cmp::Reverse,
   collections::{
     HashMap,
@@ -34,6 +35,7 @@ use std::{
 use ignore::DirEntry;
 use nucleo::{
   Config as NucleoConfig,
+  Matcher as NucleoMatcher,
   Nucleo,
   pattern::{
     CaseMatching,
@@ -82,6 +84,11 @@ const PAGE_SIZE: usize = 12;
 const MATCHER_TICK_TIMEOUT_MS: u64 = 10;
 const DEFAULT_LIST_VISIBLE_ROWS: usize = 32;
 const WARMUP_SCAN_BUDGET_MS: u64 = 30;
+
+thread_local! {
+  static MATCH_INDEX_SCRATCH: RefCell<(NucleoMatcher, Vec<u32>)> =
+    RefCell::new((NucleoMatcher::default(), Vec::new()));
+}
 
 #[derive(Debug, Clone)]
 pub struct FilePickerItem {
@@ -308,6 +315,36 @@ impl FilePickerState {
         .data
         .clone(),
     )
+  }
+
+  pub fn matched_item_with_match_indices(
+    &self,
+    matched_index: usize,
+    indices_out: &mut Vec<usize>,
+  ) -> Option<Arc<FilePickerItem>> {
+    let snapshot = self.matcher.snapshot();
+    let item = snapshot.get_matched_item(matched_index as u32)?;
+
+    indices_out.clear();
+    MATCH_INDEX_SCRATCH.with(|scratch| {
+      let mut scratch = scratch.borrow_mut();
+      let (matcher, indices) = &mut *scratch;
+      matcher.config = NucleoConfig::DEFAULT;
+      matcher.config.set_match_paths();
+
+      indices.clear();
+      snapshot.pattern().column_pattern(0).indices(
+        item.matcher_columns[0].slice(..),
+        matcher,
+        indices,
+      );
+      indices.sort_unstable();
+      indices.dedup();
+
+      indices_out.extend(indices.iter().map(|index| *index as usize));
+    });
+
+    Some(item.data.clone())
   }
 
   pub fn matched_count(&self) -> usize {

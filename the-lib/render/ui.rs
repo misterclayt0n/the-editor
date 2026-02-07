@@ -366,6 +366,8 @@ pub struct UiListItem {
   pub leading_color: Option<UiColor>,
   #[serde(default)]
   pub symbols:       Option<Vec<String>>,
+  #[serde(default)]
+  pub match_indices: Option<Vec<usize>>,
   pub emphasis:      bool,
   #[serde(default)]
   pub action:        Option<String>,
@@ -382,6 +384,7 @@ impl UiListItem {
       leading_icon:  None,
       leading_color: None,
       symbols:       None,
+      match_indices: None,
       emphasis:      false,
       action:        None,
     }

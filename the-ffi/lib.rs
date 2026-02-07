@@ -86,6 +86,7 @@ use the_lib::{
     OverlayRectKind,
     OverlayText,
     RenderStyles,
+    SyntaxHighlightAdapter,
     UiState,
     build_plan,
     graphics::{
@@ -113,6 +114,7 @@ use the_lib::{
     Selection,
   },
   syntax::{
+    HighlightCache,
     Loader,
     Syntax,
   },
@@ -689,6 +691,7 @@ struct EditorState {
   text_format:           TextFormat,
   inline_annotations:    Vec<InlineAnnotation>,
   overlay_annotations:   Vec<Overlay>,
+  highlight_cache:       HighlightCache,
   scrolloff:             usize,
 }
 
@@ -716,6 +719,7 @@ impl EditorState {
       text_format: TextFormat::default(),
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
+      highlight_cache: HighlightCache::default(),
       scrolloff: 5,
     }
   }
@@ -956,30 +960,62 @@ impl App {
         state.overlay_annotations.clone(),
       )
     };
+    let mut highlight_cache = {
+      let state = self.active_state_mut();
+      std::mem::take(&mut state.highlight_cache)
+    };
+    let loader = self.loader.clone();
 
-    let editor = self.active_editor_mut();
-    let view = editor.view();
-    text_fmt.viewport_width = view.viewport.width;
+    let plan = {
+      let editor = self.active_editor_mut();
+      let view = editor.view();
+      text_fmt.viewport_width = view.viewport.width;
 
-    let mut annotations = TextAnnotations::default();
-    if !inline_annotations.is_empty() {
-      let _ = annotations.add_inline_annotations(&inline_annotations, None);
-    }
-    if !overlay_annotations.is_empty() {
-      let _ = annotations.add_overlay(&overlay_annotations, None);
-    }
+      let mut annotations = TextAnnotations::default();
+      if !inline_annotations.is_empty() {
+        let _ = annotations.add_inline_annotations(&inline_annotations, None);
+      }
+      if !overlay_annotations.is_empty() {
+        let _ = annotations.add_overlay(&overlay_annotations, None);
+      }
 
-    let mut highlights = NoHighlights;
-    let (doc, cache) = editor.document_and_cache();
-    build_plan(
-      doc,
-      view,
-      &text_fmt,
-      &mut annotations,
-      &mut highlights,
-      cache,
-      styles,
-    )
+      let (doc, cache) = editor.document_and_cache();
+      if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
+        let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
+        let mut adapter = SyntaxHighlightAdapter::new(
+          doc.text().slice(..),
+          syntax,
+          loader,
+          &mut highlight_cache,
+          line_range,
+          doc.version(),
+          1,
+        );
+        build_plan(
+          doc,
+          view,
+          &text_fmt,
+          &mut annotations,
+          &mut adapter,
+          cache,
+          styles,
+        )
+      } else {
+        let mut highlights = NoHighlights;
+        build_plan(
+          doc,
+          view,
+          &text_fmt,
+          &mut annotations,
+          &mut highlights,
+          cache,
+          styles,
+        )
+      }
+    };
+
+    self.active_state_mut().highlight_cache = highlight_cache;
+    plan
   }
 
   pub fn text(&self, id: ffi::EditorId) -> String {

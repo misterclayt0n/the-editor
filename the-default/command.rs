@@ -318,6 +318,14 @@ pub trait DefaultContext: Sized + 'static {
   fn editor_ref(&self) -> &Editor;
   fn file_path(&self) -> Option<&Path>;
   fn request_render(&mut self);
+  fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
+    let loader_ptr = self.syntax_loader().map(|loader| loader as *const Loader);
+    let doc = self.editor().document_mut();
+    let loader = loader_ptr.map(|ptr| unsafe { &*ptr });
+    doc
+      .apply_transaction_with_syntax(transaction, loader)
+      .is_ok()
+  }
   fn build_render_plan(&mut self) -> RenderPlan;
   fn build_render_plan_with_styles(&mut self, styles: RenderStyles) -> RenderPlan {
     let _ = styles;
@@ -1084,7 +1092,7 @@ fn insert_char<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {
 
   let pairs = AutoPairs::default();
   if let Ok(Some(tx)) = auto_pairs::hook(doc.text(), &selection, ch, &pairs) {
-    let _ = doc.apply_transaction(&tx);
+    let _ = ctx.apply_transaction(&tx);
     return;
   }
 
@@ -1096,7 +1104,7 @@ fn insert_char<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {
     return;
   };
 
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 }
 
 fn delete_char<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
@@ -1106,7 +1114,7 @@ fn delete_char<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
 
   let pairs = AutoPairs::default();
   if let Ok(Some(tx)) = auto_pairs::delete_hook(doc.text(), &selection, &pairs) {
-    let _ = doc.apply_transaction(&tx);
+    let _ = ctx.apply_transaction(&tx);
     return;
   }
 
@@ -1155,7 +1163,7 @@ fn delete_char<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
     return;
   };
 
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 }
 
 fn delete_char_forward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
@@ -1173,7 +1181,7 @@ fn delete_char_forward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
     return;
   };
 
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 }
 
 fn delete_word_backward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
@@ -1195,7 +1203,7 @@ fn delete_word_backward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
     return;
   };
 
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 }
 
 fn delete_word_forward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
@@ -1218,7 +1226,7 @@ fn delete_word_forward<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
     return;
   };
 
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 }
 
 fn kill_to_line_start<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
@@ -1258,7 +1266,7 @@ fn kill_to_line_start<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
     return;
   };
 
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 }
 
 fn kill_to_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
@@ -1285,7 +1293,7 @@ fn kill_to_line_end<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
     return;
   };
 
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 }
 
 fn insert_tab<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
@@ -1299,7 +1307,7 @@ fn insert_tab<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
     return;
   };
 
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 }
 
 fn insert_newline<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
@@ -1402,7 +1410,7 @@ fn insert_newline<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let cursor_ids: SmallVec<[CursorId; 1]> = selection.cursor_ids().iter().copied().collect();
   let new_selection = Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| selection);
   let tx = tx.with_selection(new_selection);
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 }
 
 fn goto_line_start<Ctx: DefaultContext>(ctx: &mut Ctx, extend: bool) {
@@ -2016,7 +2024,7 @@ fn delete_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
   });
 
   if let Ok(tx) = tx {
-    let _ = doc.apply_transaction(&tx);
+    let _ = ctx.apply_transaction(&tx);
   }
 
   if yank {
@@ -2062,7 +2070,7 @@ fn change_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
   });
 
   if let Ok(tx) = tx {
-    let _ = doc.apply_transaction(&tx);
+    let _ = ctx.apply_transaction(&tx);
   }
 
   if yank {
@@ -2102,7 +2110,7 @@ fn replace_selection_with_str<Ctx: DefaultContext>(ctx: &mut Ctx, replacement: &
   });
 
   if let Ok(tx) = tx {
-    let _ = doc.apply_transaction(&tx);
+    let _ = ctx.apply_transaction(&tx);
   }
 
   if ctx.mode() == Mode::Select {
@@ -2146,7 +2154,7 @@ fn replace_with_yanked<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   });
 
   if let Ok(tx) = tx {
-    let _ = doc.apply_transaction(&tx);
+    let _ = ctx.apply_transaction(&tx);
   }
 
   ctx.set_mode(Mode::Normal);
@@ -2264,7 +2272,7 @@ fn paste<Ctx: DefaultContext>(ctx: &mut Ctx, after: bool) {
     tx = tx.with_selection(new_selection);
   }
 
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 
   ctx.set_mode(Mode::Normal);
   ctx.request_render();
@@ -2399,7 +2407,7 @@ where
   });
 
   if let Ok(tx) = tx {
-    let _ = doc.apply_transaction(&tx);
+    let _ = ctx.apply_transaction(&tx);
   }
 
   ctx.set_mode(Mode::Normal);
@@ -2690,7 +2698,7 @@ fn indent<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
   let Ok(tx) = Transaction::change(doc.text(), changes.into_iter()) else {
     return;
   };
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 
   if ctx.mode() == Mode::Select {
     ctx.set_mode(Mode::Normal);
@@ -2737,7 +2745,7 @@ fn unindent<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
   let Ok(tx) = Transaction::change(doc.text(), changes.into_iter()) else {
     return;
   };
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 
   if ctx.mode() == Mode::Select {
     ctx.set_mode(Mode::Normal);
@@ -2865,7 +2873,7 @@ fn surround_add_impl<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
   let new_selection =
     Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| selection.clone());
   let tx = tx.with_selection(new_selection);
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 
   if ctx.mode() == Mode::Select {
     ctx.set_mode(Mode::Normal);
@@ -2905,7 +2913,7 @@ fn surround_delete_impl<Ctx: DefaultContext>(
     return;
   };
 
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 
   if ctx.mode() == Mode::Select {
     ctx.set_mode(Mode::Normal);
@@ -2974,7 +2982,7 @@ fn surround_replace_with<Ctx: DefaultContext>(
     Selection::new_with_ids(ranges, cursor_ids).unwrap_or_else(|_| doc.selection().clone());
 
   let tx = tx.with_selection(new_selection);
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 }
 
 fn copy_selection_on_line<Ctx: DefaultContext>(ctx: &mut Ctx, direction: Direction) {
@@ -3220,15 +3228,18 @@ fn open<Ctx: DefaultContext>(
   };
 
   let tx = tx.with_selection(new_selection);
-  let _ = doc.apply_transaction(&tx);
+  let _ = ctx.apply_transaction(&tx);
 
   // Clamp selection to document bounds to avoid out-of-range cursor panics.
-  let max = doc.text().len_chars();
-  let clamped = doc
-    .selection()
-    .clone()
-    .transform(|range| Range::new(range.anchor.min(max), range.head.min(max)));
-  let _ = doc.set_selection(clamped);
+  {
+    let doc = ctx.editor().document_mut();
+    let max = doc.text().len_chars();
+    let clamped = doc
+      .selection()
+      .clone()
+      .transform(|range| Range::new(range.anchor.min(max), range.head.min(max)));
+    let _ = doc.set_selection(clamped);
+  }
 
   ctx.request_render();
 }

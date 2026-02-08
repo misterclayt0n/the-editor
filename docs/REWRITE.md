@@ -287,6 +287,8 @@ We adopt the same shape:
   `HighlightCache` per editor.
 - Swift consumes span highlight IDs via `theme_highlight_style` and theme colors
   (replacing local hue fallback).
+- Term + FFI apply edits with a short synchronous parse budget and fall back to
+  interpolation + background parse completion.
 - Loader failures degrade gracefully to non-highlighted rendering.
 
 ### Future crates

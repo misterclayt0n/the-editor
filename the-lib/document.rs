@@ -35,6 +35,7 @@
 use std::{
   borrow::Cow,
   num::NonZeroUsize,
+  sync::Arc,
 };
 
 use ropey::Rope;
@@ -62,7 +63,10 @@ use crate::{
     Selection,
     SelectionError,
   },
-  syntax::Syntax,
+  syntax::{
+    Loader,
+    Syntax,
+  },
   transaction::{
     ChangeSet,
     Transaction,
@@ -130,18 +134,20 @@ pub type Result<T> = std::result::Result<T, DocumentError>;
 
 #[derive(Debug)]
 pub struct Document {
-  id:           DocumentId,
-  display_name: Tendril,
-  text:         Rope,
-  selection:    Selection,
-  history:      History,
-  changes:      ChangeSet,
-  old_state:    Option<State>,
-  indent_style: IndentStyle,
-  line_ending:  LineEnding,
-  version:      u64,
-  flags:        DocumentFlags,
-  syntax:       Option<Syntax>,
+  id:             DocumentId,
+  display_name:   Tendril,
+  text:           Rope,
+  selection:      Selection,
+  history:        History,
+  changes:        ChangeSet,
+  old_state:      Option<State>,
+  indent_style:   IndentStyle,
+  line_ending:    LineEnding,
+  version:        u64,
+  flags:          DocumentFlags,
+  syntax:         Option<Syntax>,
+  syntax_loader:  Option<Arc<Loader>>,
+  syntax_version: u64,
 }
 
 impl Document {
@@ -162,6 +168,8 @@ impl Document {
       version: 0,
       flags: DocumentFlags::default(),
       syntax: None,
+      syntax_loader: None,
+      syntax_version: 0,
     }
   }
 
@@ -230,12 +238,34 @@ impl Document {
     self.syntax.as_ref()
   }
 
+  pub fn syntax_mut(&mut self) -> Option<&mut Syntax> {
+    self.syntax.as_mut()
+  }
+
+  pub fn syntax_version(&self) -> u64 {
+    self.syntax_version
+  }
+
+  pub fn bump_syntax_version(&mut self) {
+    self.syntax_version = self.syntax_version.saturating_add(1);
+  }
+
   pub fn set_syntax(&mut self, syntax: Syntax) {
     self.syntax = Some(syntax);
+    self.syntax_loader = None;
+    self.syntax_version = self.syntax_version.saturating_add(1);
+  }
+
+  pub fn set_syntax_with_loader(&mut self, syntax: Syntax, loader: Arc<Loader>) {
+    self.syntax = Some(syntax);
+    self.syntax_loader = Some(loader);
+    self.syntax_version = self.syntax_version.saturating_add(1);
   }
 
   pub fn clear_syntax(&mut self) {
     self.syntax = None;
+    self.syntax_loader = None;
+    self.syntax_version = 0;
   }
 
   pub fn history(&self) -> &History {
@@ -243,9 +273,25 @@ impl Document {
   }
 
   pub fn apply_transaction(&mut self, transaction: &Transaction) -> Result<()> {
+    let loader = self.syntax_loader.clone();
+    self.apply_transaction_with_syntax(transaction, loader.as_deref())
+  }
+
+  pub fn apply_transaction_with_syntax(
+    &mut self,
+    transaction: &Transaction,
+    loader: Option<&Loader>,
+  ) -> Result<()> {
     if self.flags.readonly {
       return Err(DocumentError::Readonly);
     }
+
+    let old_text = if !transaction.changes().is_empty() && self.syntax.is_some() && loader.is_some()
+    {
+      Some(self.text.clone())
+    } else {
+      None
+    };
 
     if !transaction.changes().is_empty() && self.old_state.is_none() {
       self.old_state = Some(State {
@@ -267,6 +313,24 @@ impl Document {
     if !transaction.changes().is_empty() {
       self.flags.modified = true;
       self.version = self.version.saturating_add(1);
+    }
+
+    if let (Some(old_text), Some(loader), Some(syntax)) =
+      (old_text.as_ref(), loader, self.syntax.as_mut())
+    {
+      if syntax
+        .update(
+          old_text.slice(..),
+          self.text.slice(..),
+          transaction.changes(),
+          loader,
+        )
+        .is_ok()
+      {
+        self.syntax_version = self.syntax_version.saturating_add(1);
+      } else {
+        self.clear_syntax();
+      }
     }
 
     Ok(())

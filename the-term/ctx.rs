@@ -11,8 +11,15 @@ use std::{
   ptr::NonNull,
   sync::{
     Arc,
-    mpsc::Receiver,
+    mpsc::{
+      Receiver,
+      Sender,
+      TryRecvError,
+      channel,
+    },
   },
+  thread,
+  time::Duration,
 };
 
 use eyre::Result;
@@ -64,6 +71,7 @@ use the_lib::{
     HighlightCache,
     Loader,
     Syntax,
+    generate_edits,
   },
   transaction::Transaction,
   view::ViewState,
@@ -76,6 +84,12 @@ use crate::picker_layout::FilePickerLayout;
 pub enum FilePickerDragState {
   ListScrollbar { grab_offset: u16 },
   PreviewScrollbar { grab_offset: u16 },
+}
+
+#[derive(Debug)]
+pub struct SyntaxParseResult {
+  pub request_id: u64,
+  pub syntax:     Option<Syntax>,
 }
 
 /// Application state passed to all handlers.
@@ -103,6 +117,12 @@ pub struct Ctx {
   pub loader:                Option<Arc<Loader>>,
   /// Cache for syntax highlights (reused across renders).
   pub highlight_cache:       HighlightCache,
+  /// Background parse result channel (async syntax fallback).
+  pub syntax_parse_tx:       Sender<SyntaxParseResult>,
+  /// Background parse result receiver (async syntax fallback).
+  pub syntax_parse_rx:       Receiver<SyntaxParseResult>,
+  /// Latest parse request id; stale parse results are discarded.
+  pub syntax_parse_latest:   u64,
   /// Registers for yanking/pasting.
   pub registers:             Registers,
   /// Active register target (for macros/register operations).
@@ -191,6 +211,7 @@ impl Ctx {
     );
     the_default::set_file_picker_wake_sender(&mut file_picker, Some(file_picker_wake_tx));
     the_default::set_file_picker_syntax_loader(&mut file_picker, loader.clone());
+    let (syntax_parse_tx, syntax_parse_rx) = channel();
 
     Ok(Self {
       editor,
@@ -214,6 +235,9 @@ impl Ctx {
       dispatch: None,
       loader,
       highlight_cache: HighlightCache::default(),
+      syntax_parse_tx,
+      syntax_parse_rx,
+      syntax_parse_latest: 0,
       registers,
       register: None,
       macro_recording: None,
@@ -235,6 +259,38 @@ impl Ctx {
   pub fn resize(&mut self, width: u16, height: u16) {
     self.editor.view_mut().viewport = Rect::new(0, 0, width, height);
   }
+
+  pub fn poll_syntax_parse_results(&mut self) -> bool {
+    let mut newest: Option<SyntaxParseResult> = None;
+    loop {
+      match self.syntax_parse_rx.try_recv() {
+        Ok(result) => newest = Some(result),
+        Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+      }
+    }
+
+    let Some(result) = newest else {
+      return false;
+    };
+
+    if result.request_id != self.syntax_parse_latest {
+      return false;
+    }
+
+    let doc = self.editor.document_mut();
+    match result.syntax {
+      Some(syntax) => {
+        if let Some(loader) = &self.loader {
+          doc.set_syntax_with_loader(syntax, loader.clone());
+        } else {
+          doc.set_syntax(syntax);
+        }
+      },
+      None => doc.clear_syntax(),
+    }
+    self.highlight_cache.clear();
+    true
+  }
 }
 
 impl the_default::DefaultContext for Ctx {
@@ -252,6 +308,85 @@ impl the_default::DefaultContext for Ctx {
 
   fn request_render(&mut self) {
     self.needs_render = true;
+  }
+
+  fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
+    let loader = self.loader.clone();
+    let changes = transaction.changes().clone();
+
+    let mut async_payload: Option<(Syntax, Rope, Rope, Arc<Loader>)> = None;
+    {
+      let doc = self.editor.document_mut();
+      let old_text = doc.text().clone();
+      if doc
+        .apply_transaction_with_syntax(transaction, None)
+        .is_err()
+      {
+        return false;
+      }
+
+      if transaction.changes().is_empty() {
+        return true;
+      }
+
+      if let Some(loader) = loader.as_ref() {
+        let new_text = doc.text().clone();
+        let edits = generate_edits(old_text.slice(..), transaction.changes());
+        let mut bump_syntax_version = false;
+        let mut clear_syntax = false;
+
+        if let Some(syntax) = doc.syntax_mut() {
+          match syntax.try_update_with_short_timeout(
+            new_text.slice(..),
+            &edits,
+            loader.as_ref(),
+            Duration::from_millis(3),
+          ) {
+            Ok(true) => {
+              bump_syntax_version = true;
+            },
+            Ok(false) => {
+              syntax.interpolate(old_text.slice(..), transaction.changes());
+              bump_syntax_version = true;
+              async_payload = Some((syntax.clone(), old_text.clone(), new_text, loader.clone()));
+            },
+            Err(_) => {
+              clear_syntax = true;
+            },
+          }
+        }
+
+        if clear_syntax {
+          doc.clear_syntax();
+          self.highlight_cache.clear();
+        } else if bump_syntax_version {
+          doc.bump_syntax_version();
+        }
+      }
+    }
+
+    if let Some((mut syntax, old_text, new_text, loader)) = async_payload {
+      self.syntax_parse_latest = self.syntax_parse_latest.saturating_add(1);
+      let request_id = self.syntax_parse_latest;
+      let tx = self.syntax_parse_tx.clone();
+      thread::spawn(move || {
+        let parsed = syntax
+          .update(
+            old_text.slice(..),
+            new_text.slice(..),
+            &changes,
+            loader.as_ref(),
+          )
+          .ok()
+          .map(|_| syntax);
+        let _ = tx.send(SyntaxParseResult {
+          request_id,
+          syntax: parsed,
+        });
+      });
+    }
+
+    true
   }
 
   fn build_render_plan(&mut self) -> RenderPlan {
@@ -449,6 +584,9 @@ impl the_default::DefaultContext for Ctx {
       let _ = doc.mark_saved();
     }
 
+    self.syntax_parse_latest = self.syntax_parse_latest.saturating_add(1);
+    self.highlight_cache.clear();
+
     self.file_path = Some(path.to_path_buf());
     self.editor.view_mut().scroll = Position::new(0, 0);
     self.needs_render = true;
@@ -482,15 +620,16 @@ fn init_loader(theme: &Theme) -> Result<Loader> {
 }
 
 /// Set up syntax highlighting for a document based on filename.
-fn setup_syntax(doc: &mut Document, path: &Path, loader: &Loader) -> Result<()> {
+fn setup_syntax(doc: &mut Document, path: &Path, loader: &Arc<Loader>) -> Result<()> {
   // Detect language from filename
   let lang = loader
     .language_for_filename(path)
     .ok_or_else(|| eyre::eyre!("unknown language for {}", path.display()))?;
 
   // Create syntax tree
-  let syntax = Syntax::new(doc.text().slice(..), lang, loader).map_err(|e| eyre::eyre!("{e}"))?;
-  doc.set_syntax(syntax);
+  let syntax =
+    Syntax::new(doc.text().slice(..), lang, loader.as_ref()).map_err(|e| eyre::eyre!("{e}"))?;
+  doc.set_syntax_with_loader(syntax, loader.clone());
 
   Ok(())
 }

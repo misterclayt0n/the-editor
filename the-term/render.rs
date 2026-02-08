@@ -209,13 +209,7 @@ fn draw_fuzzy_match_line(
 
     let mut utf8 = [0u8; 4];
     let symbol = ch.encode_utf8(&mut utf8);
-    buf.set_stringn(
-      x.saturating_add(char_index as u16),
-      y,
-      symbol,
-      1,
-      style,
-    );
+    buf.set_stringn(x.saturating_add(char_index as u16), y, symbol, 1, style);
   }
 }
 
@@ -1112,8 +1106,8 @@ fn draw_file_picker_list_pane(
   let end = scroll_offset
     .saturating_add(visible_rows)
     .min(total_matches);
-  let fuzzy_highlight_style = lib_style_to_ratatui(theme.try_get("special").unwrap_or_default())
-    .add_modifier(Modifier::BOLD);
+  let fuzzy_highlight_style =
+    lib_style_to_ratatui(theme.try_get("special").unwrap_or_default()).add_modifier(Modifier::BOLD);
   let mut match_indices = Vec::new();
   for row_idx in scroll_offset..end {
     let Some(item) = picker.matched_item_with_match_indices(row_idx, &mut match_indices) else {
@@ -1856,7 +1850,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       &mut ctx.highlight_cache,
       line_range,
       doc.version(),
-      1, // syntax version (simplified)
+      doc.syntax_version(),
     );
 
     build_plan(

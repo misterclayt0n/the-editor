@@ -24,7 +24,15 @@ use std::{
       AtomicUsize,
       Ordering,
     },
+    mpsc::{
+      Receiver,
+      Sender,
+      TryRecvError,
+      channel,
+    },
   },
+  thread,
+  time::Duration,
 };
 
 use ropey::Rope;
@@ -118,6 +126,7 @@ use the_lib::{
     HighlightCache,
     Loader,
     Syntax,
+    generate_edits,
   },
   transaction::Transaction,
   view::ViewState,
@@ -675,6 +684,12 @@ impl Default for Document {
   }
 }
 
+#[derive(Debug)]
+struct SyntaxParseResult {
+  request_id: u64,
+  syntax:     Option<Syntax>,
+}
+
 struct EditorState {
   mode:                  Mode,
   command_prompt:        CommandPromptState,
@@ -693,6 +708,9 @@ struct EditorState {
   inline_annotations:    Vec<InlineAnnotation>,
   overlay_annotations:   Vec<Overlay>,
   highlight_cache:       HighlightCache,
+  syntax_parse_tx:       Sender<SyntaxParseResult>,
+  syntax_parse_rx:       Receiver<SyntaxParseResult>,
+  syntax_parse_latest:   u64,
   scrolloff:             usize,
 }
 
@@ -702,6 +720,7 @@ impl EditorState {
     command_palette_style.layout = CommandPaletteLayout::Custom;
     let mut file_picker = FilePickerState::default();
     set_file_picker_syntax_loader(&mut file_picker, loader);
+    let (syntax_parse_tx, syntax_parse_rx) = channel();
 
     Self {
       mode: Mode::Normal,
@@ -721,6 +740,9 @@ impl EditorState {
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
       highlight_cache: HighlightCache::default(),
+      syntax_parse_tx,
+      syntax_parse_rx,
+      syntax_parse_latest: 0,
       scrolloff: 5,
     }
   }
@@ -752,13 +774,13 @@ fn init_loader(theme: &Theme) -> Result<Loader, String> {
   Ok(loader)
 }
 
-fn setup_syntax(doc: &mut LibDocument, path: &Path, loader: &Loader) -> Result<(), String> {
+fn setup_syntax(doc: &mut LibDocument, path: &Path, loader: &Arc<Loader>) -> Result<(), String> {
   let language = loader
     .language_for_filename(path)
     .ok_or_else(|| format!("unknown language for {}", path.display()))?;
-  let syntax =
-    Syntax::new(doc.text().slice(..), language, loader).map_err(|error| format!("{error}"))?;
-  doc.set_syntax(syntax);
+  let syntax = Syntax::new(doc.text().slice(..), language, loader.as_ref())
+    .map_err(|error| format!("{error}"))?;
+  doc.set_syntax_with_loader(syntax, loader.clone());
   Ok(())
 }
 
@@ -956,6 +978,8 @@ impl App {
     &mut self,
     styles: RenderStyles,
   ) -> the_lib::render::RenderPlan {
+    let _ = self.poll_active_syntax_parse_results();
+
     let (mut text_fmt, inline_annotations, overlay_annotations) = {
       let state = self.active_state_ref();
       (
@@ -993,7 +1017,7 @@ impl App {
           &mut highlight_cache,
           line_range,
           doc.version(),
-          1,
+          doc.syntax_version(),
         );
         build_plan(
           doc,
@@ -1531,11 +1555,12 @@ impl App {
   }
 
   pub fn delete_forward(&mut self, id: ffi::EditorId) -> bool {
-    let _ = self.activate(id);
-    self
-      .editor_mut(id)
-      .map(|editor| delete_forward(editor.document_mut()))
-      .unwrap_or(false)
+    if self.activate(id).is_none() {
+      return false;
+    }
+    let dispatch = self.dispatch();
+    dispatch.pre_on_action(self, Command::delete_char_forward(1));
+    true
   }
 
   pub fn move_left(&mut self, id: ffi::EditorId) {
@@ -1635,7 +1660,12 @@ impl App {
 
   fn activate(&mut self, id: ffi::EditorId) -> Option<LibEditorId> {
     let id = id.to_lib()?;
-    self.set_active_editor(id).then_some(id)
+    if self.set_active_editor(id) {
+      let _ = self.poll_editor_syntax_parse_results(id);
+      Some(id)
+    } else {
+      None
+    }
   }
 
   fn active_state_mut(&mut self) -> &mut EditorState {
@@ -1680,6 +1710,62 @@ impl App {
     self.inner.editor_mut(id)
   }
 
+  fn poll_editor_syntax_parse_results(&mut self, id: LibEditorId) -> bool {
+    let (latest_request, newest_result) = {
+      let Some(state) = self.states.get_mut(&id) else {
+        return false;
+      };
+
+      let latest_request = state.syntax_parse_latest;
+      let mut newest: Option<SyntaxParseResult> = None;
+      loop {
+        match state.syntax_parse_rx.try_recv() {
+          Ok(result) => newest = Some(result),
+          Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+        }
+      }
+
+      (latest_request, newest)
+    };
+
+    let Some(result) = newest_result else {
+      return false;
+    };
+
+    if result.request_id != latest_request {
+      return false;
+    }
+
+    let loader = self.loader.clone();
+    let Some(editor) = self.inner.editor_mut(id) else {
+      return false;
+    };
+    let doc = editor.document_mut();
+    match result.syntax {
+      Some(syntax) => {
+        if let Some(loader) = loader {
+          doc.set_syntax_with_loader(syntax, loader);
+        } else {
+          doc.set_syntax(syntax);
+        }
+      },
+      None => doc.clear_syntax(),
+    }
+
+    if let Some(state) = self.states.get_mut(&id) {
+      state.highlight_cache.clear();
+      state.needs_render = true;
+    }
+    true
+  }
+
+  fn poll_active_syntax_parse_results(&mut self) -> bool {
+    let Some(id) = self.active_editor else {
+      return false;
+    };
+    self.poll_editor_syntax_parse_results(id)
+  }
+
   fn refresh_editor_syntax(&mut self, id: LibEditorId) {
     let path = self.file_paths.get(&id).cloned();
     let loader = self.loader.clone();
@@ -1687,7 +1773,7 @@ impl App {
       return;
     };
     let doc = editor.document_mut();
-    match (loader.as_deref(), path.as_deref()) {
+    match (loader.as_ref(), path.as_deref()) {
       (Some(loader), Some(path)) => {
         if let Err(error) = setup_syntax(doc, path, loader) {
           eprintln!(
@@ -1698,6 +1784,11 @@ impl App {
         }
       },
       _ => doc.clear_syntax(),
+    }
+
+    if let Some(state) = self.states.get_mut(&id) {
+      state.syntax_parse_latest = state.syntax_parse_latest.saturating_add(1);
+      state.highlight_cache.clear();
     }
   }
 }
@@ -1724,6 +1815,106 @@ impl DefaultContext for App {
 
   fn request_render(&mut self) {
     self.active_state_mut().needs_render = true;
+  }
+
+  fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
+    let Some(editor_id) = self.active_editor else {
+      return false;
+    };
+
+    let _ = self.poll_editor_syntax_parse_results(editor_id);
+
+    let loader = self.loader.clone();
+    let changes = transaction.changes().clone();
+    let mut async_payload: Option<(Syntax, Rope, Rope, Arc<Loader>)> = None;
+    let mut clear_highlights = false;
+
+    {
+      let Some(editor) = self.inner.editor_mut(editor_id) else {
+        return false;
+      };
+      let doc = editor.document_mut();
+      let old_text = doc.text().clone();
+
+      if doc
+        .apply_transaction_with_syntax(transaction, None)
+        .is_err()
+      {
+        return false;
+      }
+
+      if transaction.changes().is_empty() {
+        return true;
+      }
+
+      if let Some(loader) = loader.as_ref() {
+        let new_text = doc.text().clone();
+        let edits = generate_edits(old_text.slice(..), transaction.changes());
+        let mut bump_syntax_version = false;
+        let mut clear_syntax = false;
+
+        if let Some(syntax) = doc.syntax_mut() {
+          match syntax.try_update_with_short_timeout(
+            new_text.slice(..),
+            &edits,
+            loader.as_ref(),
+            Duration::from_millis(3),
+          ) {
+            Ok(true) => {
+              bump_syntax_version = true;
+            },
+            Ok(false) => {
+              syntax.interpolate(old_text.slice(..), transaction.changes());
+              bump_syntax_version = true;
+              async_payload = Some((syntax.clone(), old_text.clone(), new_text, loader.clone()));
+            },
+            Err(_) => {
+              clear_syntax = true;
+            },
+          }
+        }
+
+        if clear_syntax {
+          doc.clear_syntax();
+          clear_highlights = true;
+        } else if bump_syntax_version {
+          doc.bump_syntax_version();
+        }
+      }
+    }
+
+    if clear_highlights {
+      self.active_state_mut().highlight_cache.clear();
+    }
+
+    if let Some((mut syntax, old_text, new_text, loader)) = async_payload {
+      let (request_id, tx) = {
+        let state = self
+          .states
+          .get_mut(&editor_id)
+          .expect("missing editor state for active editor");
+        state.syntax_parse_latest = state.syntax_parse_latest.saturating_add(1);
+        (state.syntax_parse_latest, state.syntax_parse_tx.clone())
+      };
+
+      thread::spawn(move || {
+        let parsed = syntax
+          .update(
+            old_text.slice(..),
+            new_text.slice(..),
+            &changes,
+            loader.as_ref(),
+          )
+          .ok()
+          .map(|_| syntax);
+        let _ = tx.send(SyntaxParseResult {
+          request_id,
+          syntax: parsed,
+        });
+      });
+    }
+
+    true
   }
 
   fn build_render_plan(&mut self) -> the_lib::render::RenderPlan {
@@ -2667,6 +2858,11 @@ fn overlay_rect_kind_to_u8(kind: OverlayRectKind) -> u8 {
 
 #[cfg(test)]
 mod tests {
+  use std::{
+    thread,
+    time::Duration,
+  };
+
   use super::{
     App,
     LibStyle,
@@ -2717,5 +2913,67 @@ mod tests {
     let app = App::new();
     let style = app.theme_highlight_style(u32::MAX);
     assert_eq!(style.to_lib(), LibStyle::default());
+  }
+
+  fn first_highlight_id(plan: &super::RenderPlan) -> Option<u32> {
+    for line_index in 0..plan.line_count() {
+      let line = plan.line_at(line_index);
+      for span_index in 0..line.span_count() {
+        let span = line.span_at(span_index);
+        if span.has_highlight() {
+          return Some(span.highlight());
+        }
+      }
+    }
+    None
+  }
+
+  fn wait_for_plan<F>(app: &mut App, id: ffi::EditorId, predicate: F) -> Option<super::RenderPlan>
+  where
+    F: Fn(&super::RenderPlan) -> bool,
+  {
+    for _ in 0..80 {
+      let plan = app.render_plan(id);
+      if predicate(&plan) {
+        return Some(plan);
+      }
+      thread::sleep(Duration::from_millis(5));
+    }
+    None
+  }
+
+  #[test]
+  fn syntax_highlight_updates_after_insert() {
+    let mut app = App::new();
+    if app.loader.is_none() {
+      return;
+    }
+
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  80,
+      height: 24,
+    };
+    let scroll = ffi::Position { row: 0, col: 0 };
+    let id = app.create_editor("let value = 1;\n", viewport, scroll);
+    assert!(app.set_file_path(id, "main.rs"));
+
+    let initial_plan = wait_for_plan(&mut app, id, |plan| first_highlight_id(plan).is_some())
+      .expect("expected initial syntax highlights");
+    let initial_highlight = first_highlight_id(&initial_plan).expect("expected initial highlight");
+
+    assert!(app.insert(id, "// "));
+
+    let updated_plan = wait_for_plan(&mut app, id, |plan| {
+      let Some(highlight) = first_highlight_id(plan) else {
+        return false;
+      };
+      highlight != initial_highlight
+    })
+    .expect("expected updated syntax highlight after edit");
+
+    let updated_highlight = first_highlight_id(&updated_plan).expect("expected updated highlight");
+    assert_ne!(updated_highlight, initial_highlight);
   }
 }

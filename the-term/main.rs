@@ -130,6 +130,10 @@ fn main() -> Result<()> {
       }
     }
 
+    if ctx.poll_syntax_parse_results() {
+      ctx.needs_render = true;
+    }
+
     // Render if needed
     if ctx.needs_render {
       ctx.needs_render = false;

@@ -60,8 +60,8 @@ use the_default::{
   handle_query_change as file_picker_handle_query_change,
   poll_scan_results as file_picker_poll_scan_results,
   refresh_matcher_state as file_picker_refresh_matcher_state,
-  set_file_picker_syntax_loader,
   select_file_picker_index,
+  set_file_picker_syntax_loader,
   submit_file_picker,
   update_search_preview,
 };
@@ -744,7 +744,9 @@ fn init_loader(theme: &Theme) -> Result<Loader, String> {
   };
 
   let config_value = user_lang_config().map_err(|error| error.to_string())?;
-  let config: Configuration = config_value.try_into().map_err(|error| format!("{error}"))?;
+  let config: Configuration = config_value
+    .try_into()
+    .map_err(|error| format!("{error}"))?;
   let loader = Loader::new(config, RuntimeLoader::new()).map_err(|error| format!("{error}"))?;
   loader.set_scopes(theme.scopes().iter().cloned().collect());
   Ok(loader)
@@ -754,7 +756,8 @@ fn setup_syntax(doc: &mut LibDocument, path: &Path, loader: &Loader) -> Result<(
   let language = loader
     .language_for_filename(path)
     .ok_or_else(|| format!("unknown language for {}", path.display()))?;
-  let syntax = Syntax::new(doc.text().slice(..), language, loader).map_err(|error| format!("{error}"))?;
+  let syntax =
+    Syntax::new(doc.text().slice(..), language, loader).map_err(|error| format!("{error}"))?;
   doc.set_syntax(syntax);
   Ok(())
 }
@@ -1400,11 +1403,7 @@ impl App {
     true
   }
 
-  pub fn file_picker_snapshot_json(
-    &mut self,
-    id: ffi::EditorId,
-    max_items: usize,
-  ) -> String {
+  pub fn file_picker_snapshot_json(&mut self, id: ffi::EditorId, max_items: usize) -> String {
     if self.activate(id).is_none() {
       return "{}".to_string();
     }
@@ -1691,7 +1690,10 @@ impl App {
     match (loader.as_deref(), path.as_deref()) {
       (Some(loader), Some(path)) => {
         if let Err(error) = setup_syntax(doc, path, loader) {
-          eprintln!("Warning: could not enable syntax for {}: {error}", path.display());
+          eprintln!(
+            "Warning: could not enable syntax for {}: {error}",
+            path.display()
+          );
           doc.clear_syntax();
         }
       },
@@ -2667,6 +2669,7 @@ fn overlay_rect_kind_to_u8(kind: OverlayRectKind) -> u8 {
 mod tests {
   use super::{
     App,
+    LibStyle,
     ffi,
   };
 
@@ -2707,5 +2710,12 @@ mod tests {
     let plan = app.render_plan(id);
     let line = plan.line_at(0);
     assert_eq!(line.span_at(0).text(), "yo hello");
+  }
+
+  #[test]
+  fn theme_highlight_style_out_of_bounds_returns_default() {
+    let app = App::new();
+    let style = app.theme_highlight_style(u32::MAX);
+    assert_eq!(style.to_lib(), LibStyle::default());
   }
 }

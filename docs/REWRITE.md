@@ -279,6 +279,16 @@ We adopt the same shape:
 
 - **the-dispatch**: dynamic overridable dispatch (behavior layer)
 
+### Tree-sitter status (Swift path)
+
+- **the-ffi** initializes the runtime syntax loader and keeps it in app state.
+- Syntax is attached when file paths are set/opened, then consumed by `render::plan`.
+- Render plan highlighting uses `SyntaxHighlightAdapter` with a persistent
+  `HighlightCache` per editor.
+- Swift consumes span highlight IDs via `theme_highlight_style` and theme colors
+  (replacing local hue fallback).
+- Loader failures degrade gracefully to non-highlighted rendering.
+
 ### Future crates
 
 - **the-client-macos**: SwiftUI host + Metal view

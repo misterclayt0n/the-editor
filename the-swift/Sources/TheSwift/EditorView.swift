@@ -178,16 +178,13 @@ struct EditorView: View {
 
     private func colorForSpan(_ span: RenderSpan) -> SwiftUI.Color {
         if span.has_highlight() {
-            let hue = Double(span.highlight() % 16) / 16.0
-            return SwiftUI.Color(hue: hue, saturation: 0.55, brightness: 0.95)
+            if let color = model.colorForHighlight(span.highlight()) {
+                return color
+            }
         }
         if span.is_virtual() {
             return SwiftUI.Color.white.opacity(0.4)
         }
         return SwiftUI.Color.white
-    }
-
-    private func colorFrom(_ color: TheEditorFFIBridge.Color) -> SwiftUI.Color? {
-        ColorMapper.color(from: color)
     }
 }

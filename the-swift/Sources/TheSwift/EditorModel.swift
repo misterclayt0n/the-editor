@@ -17,6 +17,7 @@ final class EditorModel: ObservableObject {
     private var filePickerTimer: Timer? = nil
     private var scrollRemainderX: CGFloat = 0
     private var scrollRemainderY: CGFloat = 0
+    private var syntaxHighlightStyleCache: [UInt32: Style] = [:]
 
     init(filePath: String? = nil) {
         self.app = TheEditorFFIBridge.App()
@@ -327,6 +328,23 @@ final class EditorModel: ObservableObject {
             debugUiLog("ui_tree json contains command_palette=\(hasPalette)")
             return .empty
         }
+    }
+
+    func colorForHighlight(_ highlight: UInt32) -> SwiftUI.Color? {
+        let style = cachedSyntaxHighlightStyle(for: highlight)
+        guard style.has_fg else {
+            return nil
+        }
+        return ColorMapper.color(from: style.fg)
+    }
+
+    private func cachedSyntaxHighlightStyle(for highlight: UInt32) -> Style {
+        if let style = syntaxHighlightStyleCache[highlight] {
+            return style
+        }
+        let style = app.theme_highlight_style(highlight)
+        syntaxHighlightStyleCache[highlight] = style
+        return style
     }
 
     private func debugUiLog(_ message: String) {

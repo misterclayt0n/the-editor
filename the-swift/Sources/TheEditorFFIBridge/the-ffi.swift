@@ -259,6 +259,10 @@ extension AppRef {
     public func mode(_ id: EditorId) -> UInt8 {
         __swift_bridge__$App$mode(ptr, id.intoFfiRepr())
     }
+
+    public func theme_highlight_style(_ highlight: UInt32) -> Style {
+        __swift_bridge__$App$theme_highlight_style(ptr, highlight).intoSwiftRepr()
+    }
 }
 extension App: Vectorizable {
     public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
@@ -1372,6 +1376,5 @@ extension RenderPlan: Vectorizable {
         __swift_bridge__$Vec_RenderPlan$len(vecPtr)
     }
 }
-
 
 

@@ -46,6 +46,7 @@ use crate::{
     ServerCapabilitiesSnapshot,
   },
   jsonrpc,
+  text_sync::file_uri_for_path,
   transport::{
     StdioTransport,
     TransportEvent,
@@ -769,25 +770,4 @@ fn restart_transport(
     warn!("lsp transport restarted");
   }
   restarted
-}
-
-fn file_uri_for_path(path: &Path) -> Option<String> {
-  let absolute = if path.is_absolute() {
-    path.to_path_buf()
-  } else {
-    std::env::current_dir().ok()?.join(path)
-  };
-
-  let mut uri = String::from("file://");
-  #[cfg(windows)]
-  {
-    let normalized = absolute.to_string_lossy().replace('\\', "/");
-    uri.push('/');
-    uri.push_str(&normalized);
-  }
-  #[cfg(not(windows))]
-  {
-    uri.push_str(&absolute.to_string_lossy());
-  }
-  Some(uri)
 }

@@ -1,0 +1,225 @@
+use std::path::Path;
+
+use ropey::{
+  Rope,
+  RopeSlice,
+};
+use serde_json::{
+  Value,
+  json,
+};
+use the_lib::transaction::{
+  ChangeSet,
+  Operation,
+};
+
+use crate::TextDocumentSyncKind;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Utf16Position {
+  line:      u32,
+  character: u32,
+}
+
+impl Utf16Position {
+  fn as_json(self) -> Value {
+    json!({
+      "line": self.line,
+      "character": self.character,
+    })
+  }
+}
+
+pub fn file_uri_for_path(path: &Path) -> Option<String> {
+  let absolute = if path.is_absolute() {
+    path.to_path_buf()
+  } else {
+    std::env::current_dir().ok()?.join(path)
+  };
+
+  let mut uri = String::from("file://");
+  #[cfg(windows)]
+  {
+    let normalized = absolute.to_string_lossy().replace('\\', "/");
+    uri.push('/');
+    uri.push_str(&normalized);
+  }
+  #[cfg(not(windows))]
+  {
+    uri.push_str(&absolute.to_string_lossy());
+  }
+  Some(uri)
+}
+
+pub fn did_open_params(uri: &str, language_id: &str, version: i32, text: &Rope) -> Value {
+  json!({
+    "textDocument": {
+      "uri": uri,
+      "languageId": language_id,
+      "version": version,
+      "text": text.to_string(),
+    }
+  })
+}
+
+pub fn did_change_params(
+  uri: &str,
+  version: i32,
+  old_text: &Rope,
+  new_text: &Rope,
+  changeset: &ChangeSet,
+  sync_kind: TextDocumentSyncKind,
+) -> Option<Value> {
+  let content_changes = match sync_kind {
+    TextDocumentSyncKind::None => return None,
+    TextDocumentSyncKind::Full => {
+      vec![json!({
+        "text": new_text.to_string(),
+      })]
+    },
+    TextDocumentSyncKind::Incremental => {
+      changeset_to_content_changes(old_text, new_text, changeset)
+    },
+  };
+
+  if content_changes.is_empty() {
+    return None;
+  }
+
+  Some(json!({
+    "textDocument": {
+      "uri": uri,
+      "version": version,
+    },
+    "contentChanges": content_changes,
+  }))
+}
+
+pub fn did_save_params(uri: &str, text: Option<&str>) -> Value {
+  match text {
+    Some(text) => {
+      json!({
+        "textDocument": { "uri": uri },
+        "text": text,
+      })
+    },
+    None => {
+      json!({
+        "textDocument": { "uri": uri },
+      })
+    },
+  }
+}
+
+pub fn did_close_params(uri: &str) -> Value {
+  json!({
+    "textDocument": {
+      "uri": uri,
+    }
+  })
+}
+
+pub fn changeset_to_content_changes(
+  old_text: &Rope,
+  new_text: &Rope,
+  changeset: &ChangeSet,
+) -> Vec<Value> {
+  use Operation::{
+    Delete,
+    Insert,
+    Retain,
+  };
+
+  let mut iter = changeset.changes().iter().peekable();
+  let mut old_pos = 0usize;
+  let mut new_pos = 0usize;
+  let old_slice = old_text.slice(..);
+  let mut changes = Vec::new();
+
+  while let Some(operation) = iter.next() {
+    let len = match operation {
+      Delete(count) | Retain(count) => *count,
+      Insert(_) => 0,
+    };
+    let mut old_end = old_pos + len;
+
+    match operation {
+      Retain(count) => {
+        new_pos += count;
+      },
+      Delete(_) => {
+        let start = pos_to_utf16_position(new_text, new_pos);
+        let end = traverse_utf16(start, old_slice.slice(old_pos..old_end));
+
+        changes.push(json!({
+          "range": {
+            "start": start.as_json(),
+            "end": end.as_json(),
+          },
+          "text": "",
+        }));
+      },
+      Insert(text) => {
+        let start = pos_to_utf16_position(new_text, new_pos);
+        new_pos += text.chars().count();
+
+        let end = if let Some(Delete(delete_count)) = iter.peek() {
+          old_end = old_pos + *delete_count;
+          iter.next();
+          traverse_utf16(start, old_slice.slice(old_pos..old_end))
+        } else {
+          start
+        };
+
+        changes.push(json!({
+          "range": {
+            "start": start.as_json(),
+            "end": end.as_json(),
+          },
+          "text": text.to_string(),
+        }));
+      },
+    }
+
+    old_pos = old_end;
+  }
+
+  changes
+}
+
+fn pos_to_utf16_position(text: &Rope, pos: usize) -> Utf16Position {
+  let line = text.char_to_line(pos);
+  let line_start = text.line_to_char(line);
+  let utf16_col = text
+    .slice(line_start..pos)
+    .chars()
+    .map(|ch| ch.len_utf16() as u32)
+    .sum::<u32>();
+
+  Utf16Position {
+    line:      line as u32,
+    character: utf16_col,
+  }
+}
+
+fn traverse_utf16(pos: Utf16Position, text: RopeSlice<'_>) -> Utf16Position {
+  let Utf16Position {
+    mut line,
+    mut character,
+  } = pos;
+
+  let mut chars = text.chars().peekable();
+  while let Some(ch) = chars.next() {
+    if ch == '\n' || ch == '\r' {
+      if ch == '\r' && chars.peek() == Some(&'\n') {
+        chars.next();
+      }
+      line += 1;
+      character = 0;
+    } else {
+      character += ch.len_utf16() as u32;
+    }
+  }
+
+  Utf16Position { line, character }
+}

@@ -413,6 +413,8 @@ pub trait DefaultContext: Sized + 'static {
   fn ui_theme(&self) -> &Theme;
   fn set_file_path(&mut self, path: Option<PathBuf>);
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
+  fn on_file_saved(&mut self, _path: &Path, _text: &str) {}
+  fn on_before_quit(&mut self) {}
   fn scrolloff(&self) -> usize {
     5
   }
@@ -2036,9 +2038,10 @@ fn save<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let text = ctx.editor().document().text().to_string();
   let line_count = text.lines().count().max(1);
   let byte_count = text.len();
-  match std::fs::write(&path, text) {
+  match std::fs::write(&path, &text) {
     Ok(()) => {
       let _ = ctx.editor().document_mut().mark_saved();
+      ctx.on_file_saved(&path, &text);
       let path_text = status_path_text(&path);
       let size_text = format_binary_size(byte_count);
       ctx.push_info(
@@ -2078,6 +2081,7 @@ fn format_binary_size(bytes: usize) -> String {
 }
 
 fn quit<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
+  ctx.on_before_quit();
   ctx.request_quit();
 }
 

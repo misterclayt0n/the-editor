@@ -27,15 +27,51 @@ pub enum LspCapability {
   DocumentColors,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextDocumentSyncKind {
+  None,
+  Full,
+  Incremental,
+}
+
+impl TextDocumentSyncKind {
+  fn from_lsp_code(code: i64) -> Self {
+    match code {
+      1 => Self::Full,
+      2 => Self::Incremental,
+      _ => Self::None,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextDocumentSyncOptions {
+  pub open_close:        bool,
+  pub kind:              TextDocumentSyncKind,
+  pub save_include_text: bool,
+}
+
+impl Default for TextDocumentSyncOptions {
+  fn default() -> Self {
+    Self {
+      open_close:        false,
+      kind:              TextDocumentSyncKind::None,
+      save_include_text: false,
+    }
+  }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ServerCapabilitiesSnapshot {
-  raw:       Value,
-  supported: HashSet<LspCapability>,
+  raw:                Value,
+  supported:          HashSet<LspCapability>,
+  text_document_sync: TextDocumentSyncOptions,
 }
 
 impl ServerCapabilitiesSnapshot {
   pub fn from_raw(raw: Value) -> Self {
     let mut supported = HashSet::new();
+    let text_document_sync = parse_text_document_sync(&raw);
 
     if capability_present(&raw, "documentFormattingProvider") {
       supported.insert(LspCapability::Format);
@@ -92,7 +128,11 @@ impl ServerCapabilitiesSnapshot {
       supported.insert(LspCapability::DocumentColors);
     }
 
-    Self { raw, supported }
+    Self {
+      raw,
+      supported,
+      text_document_sync,
+    }
   }
 
   pub fn raw(&self) -> &Value {
@@ -105,6 +145,10 @@ impl ServerCapabilitiesSnapshot {
 
   pub fn supported(&self) -> &HashSet<LspCapability> {
     &self.supported
+  }
+
+  pub fn text_document_sync(&self) -> TextDocumentSyncOptions {
+    self.text_document_sync
   }
 }
 
@@ -153,5 +197,50 @@ fn capability_present(raw: &Value, key: &str) -> bool {
     Some(Value::Bool(enabled)) => *enabled,
     Some(Value::Null) | None => false,
     Some(_) => true,
+  }
+}
+
+fn parse_text_document_sync(raw: &Value) -> TextDocumentSyncOptions {
+  let Some(sync) = raw.get("textDocumentSync") else {
+    return TextDocumentSyncOptions::default();
+  };
+
+  match sync {
+    Value::Number(number) => {
+      TextDocumentSyncOptions {
+        kind: number
+          .as_i64()
+          .map(TextDocumentSyncKind::from_lsp_code)
+          .unwrap_or(TextDocumentSyncKind::None),
+        ..TextDocumentSyncOptions::default()
+      }
+    },
+    Value::Object(object) => {
+      let kind = object
+        .get("change")
+        .and_then(Value::as_i64)
+        .map(TextDocumentSyncKind::from_lsp_code)
+        .unwrap_or(TextDocumentSyncKind::None);
+      let open_close = object
+        .get("openClose")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+      let save_include_text = match object.get("save") {
+        Some(Value::Object(save)) => {
+          save
+            .get("includeText")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        },
+        _ => false,
+      };
+
+      TextDocumentSyncOptions {
+        open_close,
+        kind,
+        save_include_text,
+      }
+    },
+    _ => TextDocumentSyncOptions::default(),
   }
 }

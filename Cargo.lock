@@ -1417,8 +1417,10 @@ dependencies = [
 name = "the-lsp"
 version = "0.1.0"
 dependencies = [
+ "ropey",
  "serde",
  "serde_json",
+ "the-lib",
  "thiserror",
  "tracing",
 ]

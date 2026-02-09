@@ -26,11 +26,13 @@ struct FilePickerItemSnapshot: Decodable, Identifiable {
     let id: Int
     let display: String
     let isDir: Bool
+    let icon: String?
     let matchIndices: [Int]
 
     private enum CodingKeys: String, CodingKey {
         case display
         case isDir = "is_dir"
+        case icon
         case matchIndices = "match_indices"
     }
 
@@ -38,15 +40,17 @@ struct FilePickerItemSnapshot: Decodable, Identifiable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         display = try container.decode(String.self, forKey: .display)
         isDir = (try? container.decode(Bool.self, forKey: .isDir)) ?? false
+        icon = try? container.decode(String.self, forKey: .icon)
         matchIndices = (try? container.decode([Int].self, forKey: .matchIndices)) ?? []
         // id will be set by the parent during array mapping
         id = 0
     }
 
-    init(id: Int, display: String, isDir: Bool, matchIndices: [Int]) {
+    init(id: Int, display: String, isDir: Bool, icon: String?, matchIndices: [Int]) {
         self.id = id
         self.display = display
         self.isDir = isDir
+        self.icon = icon
         self.matchIndices = matchIndices
     }
 
@@ -86,7 +90,76 @@ fileprivate func fileIcon(for item: FilePickerItemSnapshot) -> (symbol: String, 
     if item.isDir {
         return ("folder.fill", .secondary)
     }
-    switch item.fileExtension {
+    if let icon = item.icon,
+       let mapped = filePickerSymbol(for: icon) {
+        return mapped
+    }
+    return fallbackFileIcon(forExtension: item.fileExtension)
+}
+
+fileprivate func filePickerSymbol(for icon: String) -> (symbol: String, color: Color)? {
+    switch icon {
+    case "archive":
+        return ("archivebox.fill", .brown)
+    case "book", "file_markdown":
+        return ("doc.richtext.fill", .gray)
+    case "c":
+        return ("doc.text.fill", Color(red: 0.3, green: 0.5, blue: 0.8))
+    case "cpp":
+        return ("doc.text.fill", Color(red: 0.3, green: 0.5, blue: 0.8))
+    case "css":
+        return ("paintbrush.fill", .pink)
+    case "database":
+        return ("cylinder.fill", .mint)
+    case "docker":
+        return ("shippingbox.fill", .blue)
+    case "file_doc":
+        return ("doc.fill", .red)
+    case "file_git":
+        return ("point.topleft.down.curvedto.point.bottomright.up", .orange)
+    case "file_lock", "lock":
+        return ("lock.fill", .gray)
+    case "file_rust", "rust":
+        return ("gearshape.2.fill", Color(red: 0.72, green: 0.35, blue: 0.16))
+    case "file_toml", "toml", "settings":
+        return ("gearshape.fill", .gray)
+    case "go":
+        return ("doc.text.fill", .cyan)
+    case "html":
+        return ("globe", .orange)
+    case "image":
+        return ("photo.fill", .green)
+    case "java":
+        return ("doc.text.fill", .orange)
+    case "javascript":
+        return ("doc.text.fill", .yellow)
+    case "json":
+        return ("doc.text.fill", .blue)
+    case "kotlin":
+        return ("doc.text.fill", .orange)
+    case "nix":
+        return ("hexagon.fill", .purple)
+    case "python":
+        return ("doc.text.fill", Color(red: 0.2, green: 0.6, blue: 0.85))
+    case "sass":
+        return ("paintbrush.fill", .pink)
+    case "swift":
+        return ("swift", .orange)
+    case "terminal", "tool_hammer":
+        return ("terminal.fill", .green)
+    case "typescript":
+        return ("doc.text.fill", .blue)
+    case "folder", "folder_open", "folder_search":
+        return ("folder.fill", .secondary)
+    case "file_generic":
+        return ("doc.fill", .secondary)
+    default:
+        return nil
+    }
+}
+
+fileprivate func fallbackFileIcon(forExtension ext: String) -> (symbol: String, color: Color) {
+    switch ext {
     case "swift":
         return ("swift", .orange)
     case "rs":

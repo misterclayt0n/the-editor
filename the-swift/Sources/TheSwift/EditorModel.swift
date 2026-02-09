@@ -280,6 +280,7 @@ final class EditorModel: ObservableObject {
                             id: index,
                             display: item.display,
                             isDir: item.isDir,
+                            icon: item.icon,
                             matchIndices: item.matchIndices
                         )
                     }

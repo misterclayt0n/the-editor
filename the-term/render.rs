@@ -1126,12 +1126,24 @@ fn draw_file_picker_list_pane(
       style = style.add_modifier(Modifier::UNDERLINED);
     }
 
-    let content_width = list_area.width.saturating_sub(3) as usize;
     let marker = if is_selected { " > " } else { "   " };
     buf.set_string(list_area.x, y, marker, style);
+
+    let icon = file_picker_icon_glyph(item.icon.as_str(), item.is_dir);
+    let icon_x = list_area.x.saturating_add(3);
+    buf.set_string(icon_x, y, icon, style);
+
+    let icon_width = icon.chars().count() as u16;
+    let text_x = icon_x.saturating_add(icon_width.saturating_add(1));
+    let content_width = list_area
+      .width
+      .saturating_sub(3 + icon_width.saturating_add(1)) as usize;
+    if content_width == 0 {
+      continue;
+    }
     draw_fuzzy_match_line(
       buf,
-      list_area.x.saturating_add(3),
+      text_x,
       y,
       item.display.as_str(),
       content_width,
@@ -1152,6 +1164,45 @@ fn draw_file_picker_list_pane(
       let symbol = if is_thumb { "█" } else { "│" };
       buf.set_string(track.x, y, symbol, border_style);
     }
+  }
+}
+
+fn file_picker_icon_glyph(icon: &str, is_dir: bool) -> &'static str {
+  if is_dir {
+    return "";
+  }
+
+  match icon {
+    "folder" | "folder_open" | "folder_search" => "",
+    "archive" => "",
+    "book" => "󰂺",
+    "c" => "",
+    "cpp" => "",
+    "css" => "",
+    "database" => "",
+    "docker" => "",
+    "file_doc" => "󰈦",
+    "file_git" => "",
+    "file_lock" | "lock" => "󰌾",
+    "file_markdown" => "",
+    "file_rust" | "rust" => "",
+    "file_toml" | "toml" => "",
+    "go" => "",
+    "html" => "",
+    "image" => "󰈟",
+    "java" => "",
+    "javascript" => "",
+    "json" => "",
+    "kotlin" => "",
+    "nix" => "",
+    "python" => "",
+    "sass" => "",
+    "settings" => "",
+    "swift" => "",
+    "terminal" => "",
+    "tool_hammer" => "󰛶",
+    "typescript" => "",
+    _ => "󰈔",
   }
 }
 

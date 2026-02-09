@@ -1479,6 +1479,7 @@ impl App {
         items.push(serde_json::json!({
           "display": item.display,
           "is_dir": item.is_dir,
+          "icon": item.icon,
           "match_indices": &match_indices,
         }));
       }

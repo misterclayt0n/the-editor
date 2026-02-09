@@ -70,6 +70,14 @@ extension AppRefMut {
         RustString(ptr: __swift_bridge__$App$ui_tree_json(ptr, id.intoFfiRepr()))
     }
 
+    public func message_snapshot_json(_ id: EditorId) -> RustString {
+        RustString(ptr: __swift_bridge__$App$message_snapshot_json(ptr, id.intoFfiRepr()))
+    }
+
+    public func message_events_since_json(_ id: EditorId, _ seq: UInt64) -> RustString {
+        RustString(ptr: __swift_bridge__$App$message_events_since_json(ptr, id.intoFfiRepr(), seq))
+    }
+
     public func ui_event_json<GenericToRustStr: ToRustStr>(_ id: EditorId, _ event_json: GenericToRustStr) -> Bool {
         return event_json.toRustStr({ event_jsonAsRustStr in
             __swift_bridge__$App$ui_event_json(ptr, id.intoFfiRepr(), event_jsonAsRustStr)

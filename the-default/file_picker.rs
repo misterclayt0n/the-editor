@@ -94,6 +94,7 @@ thread_local! {
 pub struct FilePickerItem {
   pub absolute: PathBuf,
   pub display:  String,
+  pub icon:     String,
   pub is_dir:   bool,
 }
 
@@ -777,6 +778,7 @@ pub fn build_file_picker_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
     };
     let mut row = UiListItem::new(item.display.clone());
     row.emphasis = item.is_dir;
+    row.leading_icon = Some(item.icon.clone());
     row.match_indices = Some(match_indices.clone());
     list_items.push(row);
   }
@@ -1016,12 +1018,166 @@ fn entry_to_picker_item(entry: DirEntry, root: &Path) -> Option<FilePickerItem> 
   if std::path::MAIN_SEPARATOR != '/' {
     display = display.replace(std::path::MAIN_SEPARATOR, "/");
   }
+  let icon = icon_name_for_path(rel).to_string();
 
   Some(FilePickerItem {
     absolute: path,
     display,
+    icon,
     is_dir: false,
   })
+}
+
+fn icon_name_for_path(path: &Path) -> &'static str {
+  let file_name = path
+    .file_name()
+    .and_then(|name| name.to_str())
+    .unwrap_or_default();
+  let extension = path
+    .extension()
+    .and_then(|extension| extension.to_str())
+    .unwrap_or_default();
+
+  if matches_ignore_ascii_case(file_name, &["cargo.toml", "cargo.lock"]) {
+    return "rust";
+  }
+  if matches_ignore_ascii_case(file_name, &["justfile", "makefile"]) {
+    return "tool_hammer";
+  }
+  if file_name.eq_ignore_ascii_case("dockerfile") {
+    return "docker";
+  }
+  if matches_ignore_ascii_case(file_name, &["license", "copying"]) {
+    return "file_lock";
+  }
+  if file_name.eq_ignore_ascii_case("readme")
+    || file_name.to_ascii_lowercase().starts_with("readme.")
+  {
+    return "book";
+  }
+  if file_name.starts_with('.') {
+    return "settings";
+  }
+
+  if extension.eq_ignore_ascii_case("rs") {
+    return "file_rust";
+  }
+  if extension.eq_ignore_ascii_case("toml") {
+    return "file_toml";
+  }
+  if extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown") {
+    return "file_markdown";
+  }
+  if extension.eq_ignore_ascii_case("json") {
+    return "json";
+  }
+  if extension.eq_ignore_ascii_case("yaml") || extension.eq_ignore_ascii_case("yml") {
+    return "file_code";
+  }
+  if extension.eq_ignore_ascii_case("nix") {
+    return "nix";
+  }
+  if extension.eq_ignore_ascii_case("swift") {
+    return "swift";
+  }
+  if extension.eq_ignore_ascii_case("py") {
+    return "python";
+  }
+  if extension.eq_ignore_ascii_case("js")
+    || extension.eq_ignore_ascii_case("mjs")
+    || extension.eq_ignore_ascii_case("cjs")
+    || extension.eq_ignore_ascii_case("jsx")
+  {
+    return "javascript";
+  }
+  if extension.eq_ignore_ascii_case("ts") || extension.eq_ignore_ascii_case("tsx") {
+    return "typescript";
+  }
+  if extension.eq_ignore_ascii_case("go") {
+    return "go";
+  }
+  if extension.eq_ignore_ascii_case("java") {
+    return "java";
+  }
+  if extension.eq_ignore_ascii_case("kt") || extension.eq_ignore_ascii_case("kts") {
+    return "kotlin";
+  }
+  if extension.eq_ignore_ascii_case("c") || extension.eq_ignore_ascii_case("h") {
+    return "c";
+  }
+  if extension.eq_ignore_ascii_case("cc")
+    || extension.eq_ignore_ascii_case("cpp")
+    || extension.eq_ignore_ascii_case("cxx")
+    || extension.eq_ignore_ascii_case("hpp")
+    || extension.eq_ignore_ascii_case("hh")
+    || extension.eq_ignore_ascii_case("hxx")
+  {
+    return "cpp";
+  }
+  if extension.eq_ignore_ascii_case("html") || extension.eq_ignore_ascii_case("htm") {
+    return "html";
+  }
+  if extension.eq_ignore_ascii_case("css") {
+    return "css";
+  }
+  if extension.eq_ignore_ascii_case("scss") || extension.eq_ignore_ascii_case("sass") {
+    return "sass";
+  }
+  if extension.eq_ignore_ascii_case("sh")
+    || extension.eq_ignore_ascii_case("bash")
+    || extension.eq_ignore_ascii_case("zsh")
+    || extension.eq_ignore_ascii_case("fish")
+    || extension.eq_ignore_ascii_case("nu")
+  {
+    return "terminal";
+  }
+  if extension.eq_ignore_ascii_case("png")
+    || extension.eq_ignore_ascii_case("jpg")
+    || extension.eq_ignore_ascii_case("jpeg")
+    || extension.eq_ignore_ascii_case("gif")
+    || extension.eq_ignore_ascii_case("bmp")
+    || extension.eq_ignore_ascii_case("webp")
+    || extension.eq_ignore_ascii_case("svg")
+    || extension.eq_ignore_ascii_case("ico")
+  {
+    return "image";
+  }
+  if extension.eq_ignore_ascii_case("pdf") {
+    return "file_doc";
+  }
+  if extension.eq_ignore_ascii_case("zip")
+    || extension.eq_ignore_ascii_case("gz")
+    || extension.eq_ignore_ascii_case("xz")
+    || extension.eq_ignore_ascii_case("zst")
+    || extension.eq_ignore_ascii_case("tar")
+    || extension.eq_ignore_ascii_case("rar")
+    || extension.eq_ignore_ascii_case("7z")
+  {
+    return "archive";
+  }
+  if extension.eq_ignore_ascii_case("sql")
+    || extension.eq_ignore_ascii_case("sqlite")
+    || extension.eq_ignore_ascii_case("db")
+  {
+    return "database";
+  }
+  if extension.eq_ignore_ascii_case("lock") {
+    return "lock";
+  }
+  if extension.eq_ignore_ascii_case("git")
+    || extension.eq_ignore_ascii_case("patch")
+    || extension.eq_ignore_ascii_case("diff")
+  {
+    return "file_git";
+  }
+
+  "file_generic"
+}
+
+fn matches_ignore_ascii_case(candidate: &str, variants: &[&str]) -> bool {
+  variants
+    .iter()
+    .any(|variant| candidate.eq_ignore_ascii_case(variant))
 }
 
 fn spawn_scan_thread(
@@ -1716,6 +1872,7 @@ mod tests {
     FilePickerItem {
       absolute: PathBuf::from(display),
       display:  display.to_string(),
+      icon:     "file_generic".to_string(),
       is_dir:   false,
     }
   }

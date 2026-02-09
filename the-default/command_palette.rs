@@ -81,6 +81,22 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   let palette_style = ctx.command_palette_style();
   let layout = palette_style.layout;
   let theme = palette_style.theme;
+  let ui_theme = ctx.ui_theme();
+  let selected_scope = ui_theme
+    .try_get("ui.command_palette.list.selected")
+    .or_else(|| ui_theme.try_get("ui.menu.selected"));
+  let selected_bg = selected_scope
+    .and_then(|style| style.bg)
+    .unwrap_or(theme.selected_bg);
+  let selected_text = selected_scope
+    .and_then(|style| style.fg)
+    .unwrap_or(theme.selected_text);
+  let placeholder_color = ui_theme
+    .try_get("ui.text.inactive")
+    .and_then(|style| style.fg)
+    .or_else(|| ui_theme.try_get("ui.virtual").and_then(|style| style.fg))
+    .or_else(|| ui_theme.try_get("ui.linenr").and_then(|style| style.fg))
+    .unwrap_or(theme.placeholder);
 
   let filtered = command_palette_filtered_indices(state);
   let selected = command_palette_selected_filtered_index(state).or_else(|| {
@@ -123,7 +139,7 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     },
   );
   input.style = input.style.with_role("command_palette");
-  input.style.accent = Some(UiColor::Value(theme.placeholder));
+  input.style.accent = Some(UiColor::Value(placeholder_color));
   input.placeholder = Some(":Execute a command…".to_string());
   input.cursor = if state.query.is_empty() {
     1
@@ -135,8 +151,8 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   let mut list = UiList::new("command_palette_list", items);
   list.selected = selected;
   list.style = list.style.with_role("command_palette");
-  list.style.accent = Some(UiColor::Value(theme.selected_bg));
-  list.style.border = Some(UiColor::Value(theme.selected_text));
+  list.style.accent = Some(UiColor::Value(selected_bg));
+  list.style.border = Some(UiColor::Value(selected_text));
   let list = UiNode::List(list);
 
   let children = if matches!(layout, CommandPaletteLayout::Bottom) {

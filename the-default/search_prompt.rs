@@ -1,7 +1,7 @@
 use the_core::chars::{
+  byte_to_char_idx,
   next_char_boundary,
   prev_char_boundary,
-  byte_to_char_idx,
 };
 use the_lib::{
   movement::{
@@ -17,8 +17,8 @@ use the_lib::{
     UiContainer,
     UiDivider,
     UiEmphasis,
-    UiInsets,
     UiInput,
+    UiInsets,
     UiList,
     UiListItem,
     UiNode,
@@ -463,7 +463,7 @@ pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode>
       top:    0,
       bottom: 0,
     },
-    align: UiAlignPair {
+    align:      UiAlignPair {
       horizontal: UiAlign::Center,
       vertical:   UiAlign::Center,
     },

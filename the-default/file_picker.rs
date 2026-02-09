@@ -1711,8 +1711,8 @@ mod tests {
   fn sample_item(display: &str) -> FilePickerItem {
     FilePickerItem {
       absolute: PathBuf::from(display),
-      display: display.to_string(),
-      is_dir: false,
+      display:  display.to_string(),
+      is_dir:   false,
     }
   }
 

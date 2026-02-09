@@ -1414,6 +1414,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "the-lsp"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "the-runtime"
 version = "0.1.0"
 dependencies = [
@@ -1457,6 +1465,7 @@ dependencies = [
  "the-default",
  "the-lib",
  "the-loader",
+ "the-lsp",
  "the-runtime",
 ]
 

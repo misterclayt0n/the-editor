@@ -1,0 +1,15 @@
+[package]
+name              = "the-lsp"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace   = true
+
+[lints]
+workspace = true

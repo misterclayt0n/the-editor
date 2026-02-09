@@ -48,7 +48,10 @@ use the_lib::{
     Editor,
     EditorId,
   },
-  messages::MessageCenter,
+  messages::{
+    MessageCenter,
+    MessageLevel,
+  },
   position::Position,
   registers::Registers,
   render::{
@@ -77,6 +80,11 @@ use the_lib::{
   },
   transaction::Transaction,
   view::ViewState,
+};
+use the_lsp::{
+  LspEvent,
+  LspRuntime,
+  LspRuntimeConfig,
 };
 use the_runtime::clipboard::ClipboardProvider;
 
@@ -109,6 +117,7 @@ pub struct Ctx {
   pub command_palette:       CommandPaletteState,
   pub command_palette_style: CommandPaletteStyle,
   pub file_picker:           FilePickerState,
+  pub lsp_runtime:           LspRuntime,
   pub file_picker_layout:    Option<FilePickerLayout>,
   pub file_picker_drag:      Option<FilePickerDragState>,
   pub search_prompt:         the_default::SearchPromptState,
@@ -215,6 +224,19 @@ impl Ctx {
     the_default::set_file_picker_wake_sender(&mut file_picker, Some(file_picker_wake_tx));
     the_default::set_file_picker_syntax_loader(&mut file_picker, loader.clone());
     let (syntax_parse_tx, syntax_parse_rx) = channel();
+    let workspace_root = file_path
+      .map(PathBuf::from)
+      .and_then(|path| {
+        let path = if path.is_absolute() {
+          path
+        } else {
+          env::current_dir().ok()?.join(path)
+        };
+        path.parent().map(|parent| parent.to_path_buf())
+      })
+      .map(|path| the_loader::find_workspace_in(path).0)
+      .unwrap_or_else(|| the_loader::find_workspace().0);
+    let lsp_runtime = LspRuntime::new(LspRuntimeConfig::new(workspace_root));
 
     Ok(Self {
       editor,
@@ -230,6 +252,7 @@ impl Ctx {
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
       file_picker,
+      lsp_runtime,
       file_picker_layout: None,
       file_picker_drag: None,
       search_prompt: the_default::SearchPromptState::new(),
@@ -294,6 +317,31 @@ impl Ctx {
     }
     self.highlight_cache.clear();
     true
+  }
+
+  pub fn start_background_services(&mut self) {
+    if let Err(err) = self.lsp_runtime.start() {
+      eprintln!("Warning: failed to start LSP runtime: {err}");
+    }
+  }
+
+  pub fn shutdown_background_services(&mut self) {
+    if let Err(err) = self.lsp_runtime.shutdown() {
+      eprintln!("Warning: failed to stop LSP runtime: {err}");
+    }
+  }
+
+  pub fn poll_lsp_events(&mut self) -> bool {
+    let mut needs_render = false;
+    while let Some(event) = self.lsp_runtime.try_recv_event() {
+      if let LspEvent::Error(message) = event {
+        self
+          .messages
+          .publish(MessageLevel::Error, Some("lsp".into()), message);
+        needs_render = true;
+      }
+    }
+    needs_render
   }
 }
 

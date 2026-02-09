@@ -89,6 +89,7 @@ fn main() -> Result<()> {
   ctx.keymaps = the_config::build_keymaps();
   let dispatch = build_dispatch::<Ctx>();
   ctx.set_dispatch(&dispatch);
+  ctx.start_background_services();
   let mut terminal = terminal::Terminal::new()?;
 
   terminal.enter_raw_mode()?;
@@ -134,6 +135,10 @@ fn main() -> Result<()> {
       ctx.needs_render = true;
     }
 
+    if ctx.poll_lsp_events() {
+      ctx.needs_render = true;
+    }
+
     // Render if needed
     if ctx.needs_render {
       ctx.needs_render = false;
@@ -141,6 +146,7 @@ fn main() -> Result<()> {
     }
   }
 
+  ctx.shutdown_background_services();
   terminal.leave_raw_mode()?;
   Ok(())
 }

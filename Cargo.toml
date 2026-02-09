@@ -6,6 +6,7 @@ members = [
   "the-dispatch",
   "the-ffi",
   "the-lib",
+  "the-lsp",
   "the-loader",
   "the-runtime",
   "the-stdx",

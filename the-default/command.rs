@@ -700,7 +700,12 @@ fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
         ctx.dispatch().post_on_keypress(ctx, command);
       }
     },
-    KeyOutcome::Handled | KeyOutcome::Continue => {},
+    KeyOutcome::Handled => {
+      // Pending/cancelled keymap states must trigger a redraw so statusline
+      // indicators (e.g. pending keys) are visible immediately.
+      ctx.dispatch().render_request(ctx, ());
+    },
+    KeyOutcome::Continue => {},
   }
 }
 

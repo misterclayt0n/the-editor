@@ -6,16 +6,16 @@ license.workspace = true
 
 [lib]
 crate-type = [ "staticlib" ]
-path = "lib.rs"
+path       = "lib.rs"
 
 [dependencies]
-ropey.workspace = true
+ropey.workspace      = true
 serde_json.workspace = true
-swift-bridge    = "0.1"
-the-config      = { path = "../the-config" }
-the-lib         = { features = [ "runtime-loader" ], path = "../the-lib" }
-the-default     = { path = "../the-default" }
-the-loader      = { path = "../the-loader" }
+swift-bridge         = "0.1"
+the-config           = { path = "../the-config" }
+the-default          = { path = "../the-default" }
+the-lib              = { features = [ "runtime-loader" ], path = "../the-lib" }
+the-loader           = { path = "../the-loader" }
 
 [build-dependencies]
 swift-bridge-build = "0.1"

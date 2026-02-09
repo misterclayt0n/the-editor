@@ -1,15 +1,13 @@
 use the_default::{
+  Command,
   DefaultContext,
   DefaultDispatchStatic,
+  Direction,
   Key,
   KeyEvent,
   Keymaps,
   build_dispatch as default_dispatch,
   default_pre_on_keypress,
-};
-use the_default::{
-  Command,
-  Direction,
 };
 
 /// Build the dispatch pipeline for the editor.

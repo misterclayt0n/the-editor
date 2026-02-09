@@ -15,6 +15,7 @@ swift-bridge         = "0.1"
 the-config           = { path = "../the-config" }
 the-default          = { path = "../the-default" }
 the-lib              = { features = [ "runtime-loader" ], path = "../the-lib" }
+the-lsp              = { path = "../the-lsp" }
 the-loader           = { path = "../the-loader" }
 
 [build-dependencies]

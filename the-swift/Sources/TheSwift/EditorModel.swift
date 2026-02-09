@@ -15,6 +15,7 @@ final class EditorModel: ObservableObject {
     private(set) var mode: EditorMode = .normal
     @Published var filePickerSnapshot: FilePickerSnapshot? = nil
     private var filePickerTimer: Timer? = nil
+    private var backgroundTimer: Timer? = nil
     private var scrollRemainderX: CGFloat = 0
     private var scrollRemainderY: CGFloat = 0
     private var syntaxHighlightStyleCache: [UInt32: Style] = [:]
@@ -34,6 +35,12 @@ final class EditorModel: ObservableObject {
         }
         self.plan = app.render_plan(editorId)
         self.mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
+        startBackgroundTimerIfNeeded()
+    }
+
+    deinit {
+        filePickerTimer?.invalidate()
+        backgroundTimer?.invalidate()
     }
 
     private static func loadText(filePath: String?) -> String {
@@ -65,6 +72,7 @@ final class EditorModel: ObservableObject {
     }
 
     func refresh() {
+        _ = app.poll_background(editorId)
         uiTree = fetchUiTree()
         updateEffectiveViewport()
         plan = app.render_plan(editorId)
@@ -307,6 +315,16 @@ final class EditorModel: ObservableObject {
     private func stopFilePickerTimerIfNeeded() {
         filePickerTimer?.invalidate()
         filePickerTimer = nil
+    }
+
+    private func startBackgroundTimerIfNeeded() {
+        guard backgroundTimer == nil else { return }
+        backgroundTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            if self.app.poll_background(self.editorId) {
+                self.refresh()
+            }
+        }
     }
 
     private func fetchUiTree() -> UiTreeSnapshot {

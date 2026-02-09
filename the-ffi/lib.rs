@@ -32,7 +32,11 @@ use std::{
     },
   },
   thread,
-  time::Duration,
+  time::{
+    Duration,
+    Instant,
+    SystemTime,
+  },
 };
 
 use ropey::Rope;
@@ -77,6 +81,10 @@ use the_default::{
 use the_lib::{
   Tendril,
   app::App as LibApp,
+  diagnostics::{
+    DiagnosticCounts,
+    DiagnosticsState,
+  },
   document::{
     Document as LibDocument,
     DocumentId,
@@ -134,6 +142,22 @@ use the_lib::{
   view::ViewState,
 };
 use the_loader::config::user_lang_config;
+use the_lsp::{
+  LspEvent,
+  LspProgressKind,
+  LspRuntime,
+  LspRuntimeConfig,
+  LspServerConfig,
+  text_sync::{
+    FileChangeType,
+    did_change_params,
+    did_change_watched_files_params,
+    did_close_params,
+    did_open_params,
+    did_save_params,
+    file_uri_for_path,
+  },
+};
 
 /// Global document ID counter for FFI layer.
 static NEXT_DOC_ID: AtomicUsize = AtomicUsize::new(1);
@@ -692,6 +716,55 @@ struct SyntaxParseResult {
   syntax:     Option<Syntax>,
 }
 
+#[derive(Debug, Clone)]
+struct LspDocumentSyncState {
+  path:        PathBuf,
+  uri:         String,
+  language_id: String,
+  version:     i32,
+  opened:      bool,
+}
+
+#[derive(Debug, Clone)]
+struct LspWatchedFileState {
+  path:          PathBuf,
+  uri:           String,
+  exists:        bool,
+  last_modified: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LspStatusPhase {
+  Off,
+  Starting,
+  Initializing,
+  Ready,
+  Busy,
+  Error,
+}
+
+#[derive(Debug, Clone)]
+struct LspStatuslineState {
+  phase:  LspStatusPhase,
+  detail: Option<String>,
+}
+
+impl LspStatuslineState {
+  fn off(detail: Option<String>) -> Self {
+    Self {
+      phase: LspStatusPhase::Off,
+      detail,
+    }
+  }
+
+  fn is_loading(&self) -> bool {
+    matches!(
+      self.phase,
+      LspStatusPhase::Starting | LspStatusPhase::Initializing | LspStatusPhase::Busy
+    )
+  }
+}
+
 struct EditorState {
   mode:                  Mode,
   command_prompt:        CommandPromptState,
@@ -788,20 +861,166 @@ fn setup_syntax(doc: &mut LibDocument, path: &Path, loader: &Arc<Loader>) -> Res
   Ok(())
 }
 
+fn lsp_server_from_env() -> Option<LspServerConfig> {
+  let command = env::var("THE_EDITOR_LSP_COMMAND").ok()?.trim().to_string();
+  if command.is_empty() {
+    return None;
+  }
+
+  let mut server = LspServerConfig::new(command.clone(), command);
+  if let Ok(args) = env::var("THE_EDITOR_LSP_ARGS") {
+    let args: Vec<String> = args.split_whitespace().map(ToOwned::to_owned).collect();
+    if !args.is_empty() {
+      server = server.with_args(args);
+    }
+  }
+  Some(server)
+}
+
+fn command_in_path(command: &str) -> bool {
+  if command.trim().is_empty() {
+    return false;
+  }
+  let command_path = Path::new(command);
+  if command_path.is_absolute() || command.contains(std::path::MAIN_SEPARATOR) {
+    return command_path.exists();
+  }
+  let Ok(path_var) = env::var("PATH") else {
+    return false;
+  };
+  env::split_paths(&path_var).any(|dir| dir.join(command).exists())
+}
+
+fn lsp_server_from_language_config(loader: &Loader, path: &Path) -> Option<LspServerConfig> {
+  let language = loader.language_for_filename(path)?;
+  let language_config = loader.language(language).config();
+  let mut fallback = None;
+
+  for server_features in &language_config.services.language_servers {
+    let server_name = server_features.name.clone();
+    let Some(server_config) = loader.language_server_configs().get(&server_name) else {
+      continue;
+    };
+    let server = LspServerConfig::new(server_name, server_config.command.clone())
+      .with_args(server_config.args.clone())
+      .with_env(
+        server_config
+          .environment
+          .iter()
+          .map(|(key, value)| (key.clone(), value.clone())),
+      )
+      .with_initialize_options(server_config.config.clone())
+      .with_initialize_timeout(Duration::from_secs(server_config.timeout));
+
+    if command_in_path(server.command()) {
+      return Some(server);
+    }
+    if fallback.is_none() {
+      fallback = Some(server);
+    }
+  }
+
+  fallback
+}
+
+fn lsp_language_id_for_path(loader: Option<&Loader>, path: &Path) -> Option<String> {
+  let loader = loader?;
+  let language = loader.language_for_filename(path)?;
+  let language_config = loader.language(language).config();
+  Some(
+    language_config
+      .services
+      .language_server_language_id
+      .clone()
+      .unwrap_or_else(|| language_config.syntax.language_id.clone()),
+  )
+}
+
+fn build_lsp_document_state(path: &Path, loader: Option<&Loader>) -> Option<LspDocumentSyncState> {
+  let uri = file_uri_for_path(path)?;
+  let language_id = lsp_language_id_for_path(loader, path).unwrap_or_else(|| "plaintext".into());
+  Some(LspDocumentSyncState {
+    path: path.to_path_buf(),
+    uri,
+    language_id,
+    version: 1,
+    opened: false,
+  })
+}
+
+fn spinner_frame(index: usize) -> char {
+  const FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+  FRAMES[index % FRAMES.len()]
+}
+
+fn detail_if_empty(detail: String, fallback: &str) -> String {
+  if detail.is_empty() {
+    fallback.to_string()
+  } else {
+    detail
+  }
+}
+
+fn clamp_status_text(text: &str, max_chars: usize) -> String {
+  if max_chars == 0 {
+    return String::new();
+  }
+  if text.chars().count() <= max_chars {
+    return text.to_string();
+  }
+  if max_chars == 1 {
+    return "…".to_string();
+  }
+  let mut out = String::new();
+  for ch in text.chars().take(max_chars - 1) {
+    out.push(ch);
+  }
+  out.push('…');
+  out
+}
+
+fn summarize_lsp_error(message: &str) -> String {
+  if message.contains("No such file or directory") {
+    return "command not found".to_string();
+  }
+  if message.contains("server closed stdio") || message.contains("closed the stream") {
+    return "server exited".to_string();
+  }
+  if message.contains("initialize request timed out") {
+    return "initialize timeout".to_string();
+  }
+  clamp_status_text(message, 24)
+}
+
+fn file_watch_snapshot(path: &Path) -> (bool, Option<SystemTime>) {
+  let metadata = std::fs::metadata(path).ok();
+  let exists = metadata.is_some();
+  let last_modified = metadata.and_then(|meta| meta.modified().ok());
+  (exists, last_modified)
+}
+
 /// FFI-safe app wrapper with editor management.
 pub struct App {
-  inner:            LibApp,
-  dispatch:         DefaultDispatchStatic<App>,
-  keymaps:          Keymaps,
-  command_registry: CommandRegistry<App>,
-  states:           HashMap<LibEditorId, EditorState>,
-  file_paths:       HashMap<LibEditorId, PathBuf>,
-  active_editor:    Option<LibEditorId>,
-  should_quit:      bool,
-  registers:        Registers,
-  last_motion:      Option<Motion>,
-  ui_theme:         Theme,
-  loader:           Option<Arc<Loader>>,
+  inner:                 LibApp,
+  dispatch:              DefaultDispatchStatic<App>,
+  keymaps:               Keymaps,
+  command_registry:      CommandRegistry<App>,
+  states:                HashMap<LibEditorId, EditorState>,
+  file_paths:            HashMap<LibEditorId, PathBuf>,
+  active_editor:         Option<LibEditorId>,
+  should_quit:           bool,
+  registers:             Registers,
+  last_motion:           Option<Motion>,
+  lsp_runtime:           LspRuntime,
+  lsp_ready:             bool,
+  lsp_document:          Option<LspDocumentSyncState>,
+  lsp_statusline:        LspStatuslineState,
+  lsp_spinner_index:     usize,
+  lsp_spinner_last_tick: Instant,
+  lsp_watched_file:      Option<LspWatchedFileState>,
+  diagnostics:           DiagnosticsState,
+  ui_theme:              Theme,
+  loader:                Option<Arc<Loader>>,
 }
 
 impl App {
@@ -815,6 +1034,17 @@ impl App {
         None
       },
     };
+    let workspace_root = env::current_dir()
+      .ok()
+      .map(|path| the_loader::find_workspace_in(path).0)
+      .unwrap_or_else(|| the_loader::find_workspace().0);
+    let lsp_runtime = LspRuntime::new(
+      LspRuntimeConfig::new(workspace_root)
+        .with_restart_policy(true, Duration::from_millis(250))
+        .with_restart_limits(6, Duration::from_secs(30))
+        .with_request_policy(Duration::from_secs(8), 1),
+    );
+
     Self {
       inner: LibApp::default(),
       dispatch,
@@ -826,6 +1056,14 @@ impl App {
       should_quit: false,
       registers: Registers::new(),
       last_motion: None,
+      lsp_runtime,
+      lsp_ready: false,
+      lsp_document: None,
+      lsp_statusline: LspStatuslineState::off(Some("unavailable".into())),
+      lsp_spinner_index: 0,
+      lsp_spinner_last_tick: Instant::now(),
+      lsp_watched_file: None,
+      diagnostics: DiagnosticsState::default(),
       ui_theme,
       loader,
     }
@@ -856,6 +1094,12 @@ impl App {
       self.file_paths.remove(&id);
       if self.active_editor == Some(id) {
         self.active_editor = None;
+        self.lsp_close_current_document();
+        let _ = self.lsp_runtime.shutdown();
+        self.lsp_ready = false;
+        self.lsp_document = None;
+        self.lsp_watched_file = None;
+        self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
       }
     }
     removed
@@ -938,6 +1182,7 @@ impl App {
     if self.activate(id).is_none() {
       return RenderPlan::empty();
     }
+    let _ = self.poll_background_active();
 
     let plan = the_default::render_plan(self);
     plan.into()
@@ -951,6 +1196,7 @@ impl App {
     if self.activate(id).is_none() {
       return RenderPlan::empty();
     }
+    let _ = self.poll_background_active();
 
     let plan = the_default::render_plan_with_styles(self, styles.to_lib());
     plan.into()
@@ -960,6 +1206,7 @@ impl App {
     if self.activate(id).is_none() {
       return "{}".to_string();
     }
+    let _ = self.poll_background_active();
 
     let tree = the_default::ui_tree(self);
     serde_json::to_string(&tree).unwrap_or_else(|_| "{}".to_string())
@@ -1504,6 +1751,483 @@ impl App {
     should_quit
   }
 
+  pub fn poll_background(&mut self, id: ffi::EditorId) -> bool {
+    if self.activate(id).is_none() {
+      return false;
+    }
+    self.poll_background_active()
+  }
+
+  fn poll_background_active(&mut self) -> bool {
+    let mut changed = false;
+    if self.poll_active_syntax_parse_results() {
+      changed = true;
+    }
+    if self.poll_lsp_events() {
+      changed = true;
+    }
+    self.poll_lsp_file_watch();
+    if self.tick_lsp_statusline() {
+      changed = true;
+    }
+    if changed {
+      self.request_render();
+    }
+    changed
+  }
+
+  fn lsp_runtime_config_for_active_file(&self) -> (LspRuntimeConfig, bool) {
+    let active_path = self.file_path();
+    let workspace_root = active_path
+      .and_then(|path| {
+        let absolute = if path.is_absolute() {
+          path.to_path_buf()
+        } else {
+          env::current_dir().ok()?.join(path)
+        };
+        let anchor = absolute.parent().map(|parent| parent.to_path_buf())?;
+        Some(the_loader::find_workspace_in(anchor).0)
+      })
+      .unwrap_or_else(|| the_loader::find_workspace().0);
+
+    let mut config = LspRuntimeConfig::new(workspace_root)
+      .with_restart_policy(true, Duration::from_millis(250))
+      .with_restart_limits(6, Duration::from_secs(30))
+      .with_request_policy(Duration::from_secs(8), 1);
+    let server_from_language = active_path.and_then(|path| {
+      self
+        .loader
+        .as_deref()
+        .and_then(|loader| lsp_server_from_language_config(loader, path))
+    });
+    if let Some(server) = server_from_language.or_else(lsp_server_from_env) {
+      config = config.with_server(server);
+    }
+    let configured = config.server().is_some();
+    (config, configured)
+  }
+
+  fn refresh_lsp_runtime_for_active_file(&mut self) {
+    self.lsp_close_current_document();
+    self.lsp_ready = false;
+    self.lsp_spinner_index = 0;
+    self.diagnostics.clear();
+    let _ = self.lsp_runtime.shutdown();
+
+    let active_path = self.file_path().map(Path::to_path_buf);
+    self.lsp_document =
+      active_path.and_then(|path| build_lsp_document_state(&path, self.loader.as_deref()));
+    self.lsp_sync_watched_file_state();
+
+    let (config, configured) = self.lsp_runtime_config_for_active_file();
+    self.lsp_runtime = LspRuntime::new(config);
+
+    if configured {
+      self.set_lsp_status(LspStatusPhase::Starting, Some("starting".into()));
+      if let Err(err) = self.lsp_runtime.start() {
+        self.set_lsp_status_error(&err.to_string());
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to start lsp server: {err}"),
+        );
+      }
+    } else {
+      self.set_lsp_status(LspStatusPhase::Off, Some("unavailable".into()));
+    }
+  }
+
+  fn set_lsp_status(&mut self, phase: LspStatusPhase, detail: Option<String>) {
+    self.lsp_statusline = LspStatuslineState {
+      phase,
+      detail: detail.map(|value| clamp_status_text(&value, 28)),
+    };
+    if !self.lsp_statusline.is_loading() {
+      self.lsp_spinner_index = 0;
+    }
+  }
+
+  fn set_lsp_status_error(&mut self, message: &str) {
+    self.set_lsp_status(LspStatusPhase::Error, Some(summarize_lsp_error(message)));
+  }
+
+  fn tick_lsp_statusline(&mut self) -> bool {
+    if !self.lsp_statusline.is_loading() {
+      return false;
+    }
+    let now = Instant::now();
+    if now.duration_since(self.lsp_spinner_last_tick) < Duration::from_millis(120) {
+      return false;
+    }
+    self.lsp_spinner_last_tick = now;
+    self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 4;
+    true
+  }
+
+  fn lsp_statusline_text_value(&self) -> Option<String> {
+    let has_server = self.lsp_runtime.config().server().is_some();
+    if !has_server && matches!(self.lsp_statusline.phase, LspStatusPhase::Off) {
+      return Some("lsp: unavailable".to_string());
+    }
+
+    let detail = self.lsp_statusline.detail.clone().unwrap_or_default();
+    let text = match self.lsp_statusline.phase {
+      LspStatusPhase::Off => {
+        if detail.is_empty() {
+          "lsp: off".to_string()
+        } else {
+          format!("lsp: {detail}")
+        }
+      },
+      LspStatusPhase::Starting => {
+        format!(
+          "lsp {} {}",
+          spinner_frame(self.lsp_spinner_index),
+          detail_if_empty(detail, "starting")
+        )
+      },
+      LspStatusPhase::Initializing => {
+        format!(
+          "lsp {} {}",
+          spinner_frame(self.lsp_spinner_index),
+          detail_if_empty(detail, "initializing")
+        )
+      },
+      LspStatusPhase::Ready => {
+        if detail.is_empty() {
+          "lsp: ready".to_string()
+        } else {
+          format!("lsp: ready ({detail})")
+        }
+      },
+      LspStatusPhase::Busy => {
+        format!(
+          "lsp {} {}",
+          spinner_frame(self.lsp_spinner_index),
+          detail_if_empty(detail, "working")
+        )
+      },
+      LspStatusPhase::Error => {
+        if detail.is_empty() {
+          "lsp: error".to_string()
+        } else {
+          format!("lsp: error ({detail})")
+        }
+      },
+    };
+
+    Some(clamp_status_text(&text, 36))
+  }
+
+  fn publish_lsp_message(
+    &mut self,
+    level: the_lib::messages::MessageLevel,
+    text: impl Into<String>,
+  ) {
+    if self.active_editor.is_none() {
+      return;
+    }
+    self
+      .active_state_mut()
+      .messages
+      .publish(level, Some("lsp".into()), text.into());
+  }
+
+  fn poll_lsp_events(&mut self) -> bool {
+    let mut changed = false;
+    while let Some(event) = self.lsp_runtime.try_recv_event() {
+      match event {
+        LspEvent::Started { .. } => {
+          if self.lsp_runtime.config().server().is_none() {
+            self.set_lsp_status(LspStatusPhase::Off, Some("unavailable".into()));
+          } else {
+            self.set_lsp_status(LspStatusPhase::Starting, Some("starting".into()));
+          }
+          changed = true;
+        },
+        LspEvent::CapabilitiesRegistered { server_name } => {
+          let matches_configured_server = self
+            .lsp_runtime
+            .config()
+            .server()
+            .is_some_and(|server| server.name() == server_name);
+          if matches_configured_server {
+            self.lsp_ready = true;
+            self.lsp_open_current_document();
+            self.set_lsp_status(LspStatusPhase::Ready, Some(server_name));
+            changed = true;
+          }
+        },
+        LspEvent::ServerStarted { server_name, .. } => {
+          self.lsp_ready = false;
+          if let Some(state) = self.lsp_document.as_mut() {
+            state.opened = false;
+          }
+          self.set_lsp_status(LspStatusPhase::Starting, Some(server_name));
+          changed = true;
+        },
+        LspEvent::RequestDispatched { method, .. } => {
+          if method == "initialize" {
+            self.set_lsp_status(LspStatusPhase::Initializing, Some("initializing".into()));
+            changed = true;
+          }
+        },
+        LspEvent::ServerStopped { .. } | LspEvent::Stopped => {
+          self.lsp_ready = false;
+          if let Some(state) = self.lsp_document.as_mut() {
+            state.opened = false;
+          }
+          if self.lsp_runtime.config().server().is_some() {
+            self.set_lsp_status(LspStatusPhase::Starting, Some("restarting".into()));
+          } else {
+            self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
+          }
+          changed = true;
+        },
+        LspEvent::Progress { progress } => {
+          match progress.kind {
+            LspProgressKind::Begin => {
+              let title = progress.title.unwrap_or_else(|| "work".into());
+              let text = progress
+                .message
+                .as_deref()
+                .map(|message| format!("{title}: {message}"))
+                .unwrap_or(title);
+              self.set_lsp_status(LspStatusPhase::Busy, Some(text.clone()));
+              self.publish_lsp_message(the_lib::messages::MessageLevel::Info, text);
+              changed = true;
+            },
+            LspProgressKind::End => {
+              if self.lsp_ready {
+                self.set_lsp_status(LspStatusPhase::Ready, None);
+              }
+              if let Some(message) = progress.message {
+                self.publish_lsp_message(the_lib::messages::MessageLevel::Info, message);
+                changed = true;
+              }
+            },
+            LspProgressKind::Report => {},
+          }
+        },
+        LspEvent::Error(message) => {
+          self.set_lsp_status_error(&message);
+          self.publish_lsp_message(the_lib::messages::MessageLevel::Error, message);
+          changed = true;
+        },
+        LspEvent::DiagnosticsPublished { diagnostics } => {
+          let diagnostic_uri = diagnostics.uri.clone();
+          let active_uri = self.lsp_document.as_ref().map(|state| state.uri.as_str());
+          let previous = self
+            .diagnostics
+            .document(&diagnostic_uri)
+            .map(|document| document.counts())
+            .unwrap_or_default();
+          let next = self.diagnostics.apply_document(diagnostics);
+          if active_uri.is_some_and(|uri| uri == diagnostic_uri) && previous != next {
+            self.publish_lsp_diagnostic_message(next);
+            changed = true;
+          }
+        },
+        _ => {},
+      }
+    }
+
+    changed
+  }
+
+  fn publish_lsp_diagnostic_message(&mut self, counts: DiagnosticCounts) {
+    let text = if counts.total == 0 {
+      "diagnostics cleared".to_string()
+    } else {
+      format!(
+        "diagnostics: {} error(s), {} warning(s), {} info, {} hint(s)",
+        counts.errors, counts.warnings, counts.information, counts.hints
+      )
+    };
+    let level = if counts.errors > 0 {
+      the_lib::messages::MessageLevel::Error
+    } else if counts.warnings > 0 {
+      the_lib::messages::MessageLevel::Warning
+    } else {
+      the_lib::messages::MessageLevel::Info
+    };
+    self.publish_lsp_message(level, text);
+  }
+
+  fn lsp_sync_kind(&self) -> Option<the_lsp::TextDocumentSyncKind> {
+    let server = self.lsp_runtime.config().server()?;
+    self
+      .lsp_runtime
+      .server_capabilities(server.name())
+      .map(|capabilities| capabilities.text_document_sync().kind)
+  }
+
+  fn lsp_save_include_text(&self) -> bool {
+    let Some(server) = self.lsp_runtime.config().server() else {
+      return false;
+    };
+    self
+      .lsp_runtime
+      .server_capabilities(server.name())
+      .is_some_and(|capabilities| capabilities.text_document_sync().save_include_text)
+  }
+
+  fn lsp_open_current_document(&mut self) {
+    if !self.lsp_ready {
+      return;
+    }
+
+    let Some(state) = self.lsp_document.as_ref() else {
+      return;
+    };
+    if state.opened {
+      return;
+    }
+
+    let uri = state.uri.clone();
+    let language_id = state.language_id.clone();
+    let version = state.version;
+    let text = self.active_editor_ref().document().text().clone();
+    let params = did_open_params(&uri, &language_id, version, &text);
+    if self
+      .lsp_runtime
+      .send_notification("textDocument/didOpen", Some(params))
+      .is_ok()
+      && let Some(state) = self.lsp_document.as_mut()
+    {
+      state.opened = true;
+    }
+  }
+
+  fn lsp_close_current_document(&mut self) {
+    let Some(uri) = self
+      .lsp_document
+      .as_ref()
+      .filter(|state| state.opened)
+      .map(|state| state.uri.clone())
+    else {
+      return;
+    };
+
+    let params = did_close_params(&uri);
+    let _ = self
+      .lsp_runtime
+      .send_notification("textDocument/didClose", Some(params));
+    if let Some(state) = self.lsp_document.as_mut() {
+      state.opened = false;
+    }
+  }
+
+  fn lsp_send_did_change(&mut self, old_text: &Rope, changes: &the_lib::transaction::ChangeSet) {
+    if !self.lsp_ready {
+      return;
+    }
+
+    let Some(sync_kind) = self.lsp_sync_kind() else {
+      return;
+    };
+    let Some((uri, current_version)) = self
+      .lsp_document
+      .as_ref()
+      .filter(|state| state.opened)
+      .map(|state| (state.uri.clone(), state.version))
+    else {
+      return;
+    };
+
+    let next_version = current_version.saturating_add(1);
+    let new_text = self.active_editor_ref().document().text().clone();
+    let Some(params) =
+      did_change_params(&uri, next_version, old_text, &new_text, changes, sync_kind)
+    else {
+      return;
+    };
+
+    if self
+      .lsp_runtime
+      .send_notification("textDocument/didChange", Some(params))
+      .is_ok()
+      && let Some(state) = self.lsp_document.as_mut()
+    {
+      state.version = next_version;
+    }
+  }
+
+  fn lsp_send_did_save(&mut self, text: Option<&str>) {
+    if !self.lsp_ready {
+      return;
+    }
+
+    let Some(uri) = self
+      .lsp_document
+      .as_ref()
+      .filter(|state| state.opened)
+      .map(|state| state.uri.clone())
+    else {
+      return;
+    };
+
+    let payload_text = if self.lsp_save_include_text() {
+      text
+    } else {
+      None
+    };
+    let params = did_save_params(&uri, payload_text);
+    let _ = self
+      .lsp_runtime
+      .send_notification("textDocument/didSave", Some(params));
+  }
+
+  fn lsp_sync_watched_file_state(&mut self) {
+    self.lsp_watched_file = self.lsp_document.as_ref().map(|state| {
+      let (exists, last_modified) = file_watch_snapshot(&state.path);
+      LspWatchedFileState {
+        path: state.path.clone(),
+        uri: state.uri.clone(),
+        exists,
+        last_modified,
+      }
+    });
+  }
+
+  fn poll_lsp_file_watch(&mut self) {
+    if !self.lsp_ready {
+      return;
+    }
+    let Some(active_uri) = self
+      .lsp_document
+      .as_ref()
+      .filter(|state| state.opened)
+      .map(|state| state.uri.clone())
+    else {
+      return;
+    };
+
+    let Some(watch) = self.lsp_watched_file.as_mut() else {
+      return;
+    };
+    if watch.uri != active_uri {
+      return;
+    }
+
+    let (exists, last_modified) = file_watch_snapshot(&watch.path);
+    let change_type = match (watch.exists, exists) {
+      (false, true) => Some(FileChangeType::Created),
+      (true, false) => Some(FileChangeType::Deleted),
+      (true, true) if watch.last_modified != last_modified => Some(FileChangeType::Changed),
+      _ => None,
+    };
+
+    watch.exists = exists;
+    watch.last_modified = last_modified;
+
+    if let Some(change_type) = change_type {
+      let params = did_change_watched_files_params([(watch.uri.clone(), change_type)]);
+      let _ = self
+        .lsp_runtime
+        .send_notification("workspace/didChangeWatchedFiles", Some(params));
+    }
+  }
+
   pub fn handle_key(&mut self, id: ffi::EditorId, event: ffi::KeyEvent) -> bool {
     if self.activate(id).is_none() {
       return false;
@@ -1672,12 +2396,16 @@ impl App {
     if self.inner.editor(id).is_none() {
       return false;
     }
+    let changed = self.active_editor != Some(id);
     self.active_editor = Some(id);
     let loader = self.loader.clone();
     self
       .states
       .entry(id)
       .or_insert_with(|| EditorState::new(loader.clone()));
+    if changed {
+      self.refresh_lsp_runtime_for_active_file();
+    }
     true
   }
 
@@ -1822,6 +2550,13 @@ impl Default for App {
   }
 }
 
+impl Drop for App {
+  fn drop(&mut self) {
+    self.lsp_close_current_document();
+    let _ = self.lsp_runtime.shutdown();
+  }
+}
+
 impl DefaultContext for App {
   fn editor(&mut self) -> &mut the_lib::editor::Editor {
     self.active_editor_mut()
@@ -1852,6 +2587,10 @@ impl DefaultContext for App {
     MessagePresentation::Hidden
   }
 
+  fn lsp_statusline_text(&self) -> Option<String> {
+    self.lsp_statusline_text_value()
+  }
+
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
     let Some(editor_id) = self.active_editor else {
       return false;
@@ -1859,6 +2598,7 @@ impl DefaultContext for App {
 
     let _ = self.poll_editor_syntax_parse_results(editor_id);
 
+    let old_text_for_lsp = self.active_editor_ref().document().text().clone();
     let loader = self.loader.clone();
     let changes = transaction.changes().clone();
     let mut async_payload: Option<(Syntax, Rope, Rope, Arc<Loader>)> = None;
@@ -1948,6 +2688,8 @@ impl DefaultContext for App {
         });
       });
     }
+
+    self.lsp_send_did_change(&old_text_for_lsp, transaction.changes());
 
     true
   }
@@ -2129,6 +2871,7 @@ impl DefaultContext for App {
         },
       }
       self.refresh_editor_syntax(id);
+      self.refresh_lsp_runtime_for_active_file();
     }
   }
 
@@ -2156,6 +2899,19 @@ impl DefaultContext for App {
     DefaultContext::set_file_path(self, Some(path.to_path_buf()));
     self.request_render();
     Ok(())
+  }
+
+  fn on_file_saved(&mut self, _path: &Path, text: &str) {
+    self.lsp_send_did_save(Some(text));
+  }
+
+  fn on_before_quit(&mut self) {
+    self.lsp_close_current_document();
+    let _ = self.lsp_runtime.shutdown();
+    self.lsp_ready = false;
+    self.lsp_document = None;
+    self.lsp_watched_file = None;
+    self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
   }
 
   fn scrolloff(&self) -> usize {
@@ -2432,6 +3188,7 @@ mod ffi {
     fn file_picker_submit(self: &mut App, id: EditorId, index: usize) -> bool;
     fn file_picker_close(self: &mut App, id: EditorId) -> bool;
     fn file_picker_snapshot_json(self: &mut App, id: EditorId, max_items: usize) -> String;
+    fn poll_background(self: &mut App, id: EditorId) -> bool;
     fn take_should_quit(self: &mut App) -> bool;
     fn handle_key(self: &mut App, id: EditorId, event: KeyEvent) -> bool;
     fn ensure_cursor_visible(self: &mut App, id: EditorId) -> bool;

@@ -450,6 +450,66 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
         ..Signature::DEFAULT
       },
     ));
+
+    self.register(TypableCommand::new(
+      "goto-definition",
+      &["gd"],
+      "Go to symbol definition via LSP",
+      cmd_lsp_goto_definition::<Ctx>,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "hover",
+      &["K"],
+      "Show symbol hover information via LSP",
+      cmd_lsp_hover::<Ctx>,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "references",
+      &["gr"],
+      "Find symbol references via LSP",
+      cmd_lsp_references::<Ctx>,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "document-symbols",
+      &["ds"],
+      "List document symbols via LSP",
+      cmd_lsp_document_symbols::<Ctx>,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "workspace-symbols",
+      &["ws"],
+      "Query workspace symbols via LSP",
+      cmd_lsp_workspace_symbols::<Ctx>,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 
@@ -520,6 +580,72 @@ fn cmd_help<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent)
   let prompt = ctx.command_prompt_mut();
   prompt.help = Some(help);
   prompt.error = None;
+  Ok(())
+}
+
+fn cmd_lsp_goto_definition<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  ctx
+    .dispatch()
+    .pre_on_action(ctx, Command::LspGotoDefinition);
+  Ok(())
+}
+
+fn cmd_lsp_hover<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  ctx.dispatch().pre_on_action(ctx, Command::LspHover);
+  Ok(())
+}
+
+fn cmd_lsp_references<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  ctx.dispatch().pre_on_action(ctx, Command::LspReferences);
+  Ok(())
+}
+
+fn cmd_lsp_document_symbols<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  ctx
+    .dispatch()
+    .pre_on_action(ctx, Command::LspDocumentSymbols);
+  Ok(())
+}
+
+fn cmd_lsp_workspace_symbols<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  ctx
+    .dispatch()
+    .pre_on_action(ctx, Command::LspWorkspaceSymbols);
   Ok(())
 }
 

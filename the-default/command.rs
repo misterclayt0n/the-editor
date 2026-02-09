@@ -413,6 +413,11 @@ pub trait DefaultContext: Sized + 'static {
   fn ui_theme(&self) -> &Theme;
   fn set_file_path(&mut self, path: Option<PathBuf>);
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
+  fn lsp_goto_definition(&mut self) {}
+  fn lsp_hover(&mut self) {}
+  fn lsp_references(&mut self) {}
+  fn lsp_document_symbols(&mut self) {}
+  fn lsp_workspace_symbols(&mut self) {}
   fn on_file_saved(&mut self, _path: &Path, _text: &str) {}
   fn on_before_quit(&mut self) {}
   fn scrolloff(&self) -> usize {
@@ -791,6 +796,11 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::Search => ctx.dispatch().search(ctx, ()),
     Command::RSearch => ctx.dispatch().rsearch(ctx, ()),
     Command::FilePicker => crate::file_picker::open_file_picker(ctx),
+    Command::LspGotoDefinition => ctx.lsp_goto_definition(),
+    Command::LspHover => ctx.lsp_hover(),
+    Command::LspReferences => ctx.lsp_references(),
+    Command::LspDocumentSymbols => ctx.lsp_document_symbols(),
+    Command::LspWorkspaceSymbols => ctx.lsp_workspace_symbols(),
     Command::SearchNextOrPrev {
       direction,
       extend,
@@ -3428,6 +3438,16 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "search" => Some(Command::search()),
     "rsearch" => Some(Command::rsearch()),
     "file_picker" => Some(Command::file_picker()),
+    "lsp_goto_definition" => Some(Command::lsp_goto_definition()),
+    "goto_definition" => Some(Command::lsp_goto_definition()),
+    "lsp_hover" => Some(Command::lsp_hover()),
+    "hover" => Some(Command::lsp_hover()),
+    "lsp_references" => Some(Command::lsp_references()),
+    "goto_reference" => Some(Command::lsp_references()),
+    "lsp_document_symbols" => Some(Command::lsp_document_symbols()),
+    "document_symbols" => Some(Command::lsp_document_symbols()),
+    "lsp_workspace_symbols" => Some(Command::lsp_workspace_symbols()),
+    "workspace_symbols" => Some(Command::lsp_workspace_symbols()),
     "search_next" => Some(Command::search_next()),
     "search_prev" => Some(Command::search_prev()),
     "extend_search_next" => Some(Command::extend_search_next()),

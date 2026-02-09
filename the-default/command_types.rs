@@ -541,6 +541,11 @@ pub enum Command {
   Search,
   RSearch,
   FilePicker,
+  LspGotoDefinition,
+  LspHover,
+  LspReferences,
+  LspDocumentSymbols,
+  LspWorkspaceSymbols,
   Save,
   Quit,
 }
@@ -1187,5 +1192,30 @@ impl Command {
   #[must_use]
   pub const fn file_picker() -> Self {
     Self::FilePicker
+  }
+
+  #[must_use]
+  pub const fn lsp_goto_definition() -> Self {
+    Self::LspGotoDefinition
+  }
+
+  #[must_use]
+  pub const fn lsp_hover() -> Self {
+    Self::LspHover
+  }
+
+  #[must_use]
+  pub const fn lsp_references() -> Self {
+    Self::LspReferences
+  }
+
+  #[must_use]
+  pub const fn lsp_document_symbols() -> Self {
+    Self::LspDocumentSymbols
+  }
+
+  #[must_use]
+  pub const fn lsp_workspace_symbols() -> Self {
+    Self::LspWorkspaceSymbols
   }
 }

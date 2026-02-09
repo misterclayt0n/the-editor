@@ -1423,6 +1423,7 @@ dependencies = [
  "the-lib",
  "thiserror",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -1465,6 +1466,7 @@ dependencies = [
  "eyre",
  "ratatui",
  "ropey",
+ "serde_json",
  "the-config",
  "the-default",
  "the-lib",

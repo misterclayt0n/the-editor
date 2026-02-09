@@ -1,4 +1,7 @@
-use std::path::Path;
+use std::path::{
+  Path,
+  PathBuf,
+};
 
 use ropey::{
   Rope,
@@ -49,6 +52,46 @@ pub fn file_uri_for_path(path: &Path) -> Option<String> {
     uri.push_str(&absolute.to_string_lossy());
   }
   Some(uri)
+}
+
+pub fn path_for_file_uri(uri: &str) -> Option<PathBuf> {
+  let parsed = url::Url::parse(uri).ok()?;
+  if parsed.scheme() != "file" {
+    return None;
+  }
+  parsed.to_file_path().ok()
+}
+
+pub fn char_idx_to_utf16_position(text: &Rope, pos: usize) -> (u32, u32) {
+  let utf16 = pos_to_utf16_position(text, pos);
+  (utf16.line, utf16.character)
+}
+
+pub fn utf16_position_to_char_idx(text: &Rope, line: u32, character: u32) -> usize {
+  if text.len_chars() == 0 {
+    return 0;
+  }
+
+  let line = (line as usize).min(text.len_lines().saturating_sub(1));
+  let line_start = text.line_to_char(line);
+  let line_end = if line + 1 < text.len_lines() {
+    text.line_to_char(line + 1)
+  } else {
+    text.len_chars()
+  };
+
+  let mut utf16_count = 0u32;
+  let mut char_idx = line_start;
+  for ch in text.slice(line_start..line_end).chars() {
+    let next = utf16_count.saturating_add(ch.len_utf16() as u32);
+    if next > character {
+      break;
+    }
+    utf16_count = next;
+    char_idx = char_idx.saturating_add(1);
+  }
+
+  char_idx
 }
 
 pub fn did_open_params(uri: &str, language_id: &str, version: i32, text: &Rope) -> Value {

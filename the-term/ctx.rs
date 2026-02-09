@@ -1,7 +1,10 @@
 //! Application context (state).
 
 use std::{
-  collections::VecDeque,
+  collections::{
+    HashMap,
+    VecDeque,
+  },
   env,
   num::NonZeroUsize,
   path::{
@@ -24,6 +27,7 @@ use std::{
 
 use eyre::Result;
 use ropey::Rope;
+use serde_json::Value;
 use the_default::{
   CommandPaletteState,
   CommandPaletteStyle,
@@ -89,18 +93,35 @@ use the_lib::{
   view::ViewState,
 };
 use the_lsp::{
+  LspCapability,
   LspEvent,
+  LspLocation,
+  LspPosition,
   LspRuntime,
   LspRuntimeConfig,
   LspServerConfig,
+  LspSymbol,
   TextDocumentSyncKind,
+  document_symbols_params,
+  goto_definition_params,
+  hover_params,
+  jsonrpc,
+  parse_document_symbols_response,
+  parse_hover_response,
+  parse_locations_response,
+  parse_workspace_symbols_response,
+  references_params,
   text_sync::{
+    char_idx_to_utf16_position,
     did_change_params,
     did_close_params,
     did_open_params,
     did_save_params,
     file_uri_for_path,
+    path_for_file_uri,
+    utf16_position_to_char_idx,
   },
+  workspace_symbols_params,
 };
 use the_runtime::clipboard::ClipboardProvider;
 
@@ -127,6 +148,37 @@ pub struct LspDocumentSyncState {
   pub opened:      bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PendingLspRequestKind {
+  GotoDefinition { uri: String },
+  Hover { uri: String },
+  References { uri: String },
+  DocumentSymbols { uri: String },
+  WorkspaceSymbols { query: String },
+}
+
+impl PendingLspRequestKind {
+  fn label(&self) -> &'static str {
+    match self {
+      Self::GotoDefinition { .. } => "goto-definition",
+      Self::Hover { .. } => "hover",
+      Self::References { .. } => "references",
+      Self::DocumentSymbols { .. } => "document-symbols",
+      Self::WorkspaceSymbols { .. } => "workspace-symbols",
+    }
+  }
+
+  fn uri(&self) -> Option<&str> {
+    match self {
+      Self::GotoDefinition { uri }
+      | Self::Hover { uri }
+      | Self::References { uri }
+      | Self::DocumentSymbols { uri } => Some(uri.as_str()),
+      Self::WorkspaceSymbols { .. } => None,
+    }
+  }
+}
+
 /// Application state passed to all handlers.
 pub struct Ctx {
   pub editor:                Editor,
@@ -145,6 +197,7 @@ pub struct Ctx {
   pub lsp_runtime:           LspRuntime,
   pub lsp_ready:             bool,
   pub lsp_document:          Option<LspDocumentSyncState>,
+  lsp_pending_requests:      HashMap<u64, PendingLspRequestKind>,
   pub diagnostics:           DiagnosticsState,
   pub file_picker_layout:    Option<FilePickerLayout>,
   pub file_picker_drag:      Option<FilePickerDragState>,
@@ -359,6 +412,7 @@ impl Ctx {
       lsp_runtime,
       lsp_ready: false,
       lsp_document,
+      lsp_pending_requests: HashMap::new(),
       diagnostics: DiagnosticsState::default(),
       file_picker_layout: None,
       file_picker_drag: None,
@@ -428,6 +482,7 @@ impl Ctx {
 
   pub fn start_background_services(&mut self) {
     self.lsp_ready = false;
+    self.lsp_pending_requests.clear();
     if let Err(err) = self.lsp_runtime.start() {
       eprintln!("Warning: failed to start LSP runtime: {err}");
     }
@@ -436,6 +491,7 @@ impl Ctx {
   pub fn shutdown_background_services(&mut self) {
     self.lsp_close_current_document();
     self.lsp_ready = false;
+    self.lsp_pending_requests.clear();
     if let Err(err) = self.lsp_runtime.shutdown() {
       eprintln!("Warning: failed to stop LSP runtime: {err}");
     }
@@ -459,15 +515,20 @@ impl Ctx {
         },
         LspEvent::ServerStarted { .. } => {
           self.lsp_ready = false;
+          self.lsp_pending_requests.clear();
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
           }
         },
         LspEvent::ServerStopped { .. } | LspEvent::Stopped => {
           self.lsp_ready = false;
+          self.lsp_pending_requests.clear();
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
           }
+        },
+        LspEvent::RpcMessage { message } => {
+          needs_render |= self.handle_lsp_rpc_message(message);
         },
         LspEvent::Error(message) => {
           self
@@ -493,6 +554,301 @@ impl Ctx {
       }
     }
     needs_render
+  }
+
+  fn handle_lsp_rpc_message(&mut self, message: jsonrpc::Message) -> bool {
+    let jsonrpc::Message::Response(response) = message else {
+      return false;
+    };
+    self.handle_lsp_response(response)
+  }
+
+  fn handle_lsp_response(&mut self, response: jsonrpc::Response) -> bool {
+    let jsonrpc::Id::Number(id) = response.id else {
+      return false;
+    };
+    let Some(kind) = self.lsp_pending_requests.remove(&id) else {
+      return false;
+    };
+
+    if let Some(uri) = kind.uri() {
+      let current_uri = self.lsp_document.as_ref().map(|state| state.uri.as_str());
+      if current_uri != Some(uri) {
+        return false;
+      }
+    }
+
+    if let Some(error) = response.error {
+      self.messages.publish(
+        MessageLevel::Error,
+        Some("lsp".into()),
+        format!("lsp {} failed: {}", kind.label(), error.message),
+      );
+      return true;
+    }
+
+    match kind {
+      PendingLspRequestKind::GotoDefinition { .. } => {
+        let locations = match parse_locations_response(response.result.as_ref()) {
+          Ok(locations) => locations,
+          Err(err) => {
+            self.messages.publish(
+              MessageLevel::Error,
+              Some("lsp".into()),
+              format!("failed to parse goto-definition response: {err}"),
+            );
+            return true;
+          },
+        };
+        self.apply_locations_result("definition", locations)
+      },
+      PendingLspRequestKind::Hover { .. } => {
+        let hover = match parse_hover_response(response.result.as_ref()) {
+          Ok(hover) => hover,
+          Err(err) => {
+            self.messages.publish(
+              MessageLevel::Error,
+              Some("lsp".into()),
+              format!("failed to parse hover response: {err}"),
+            );
+            return true;
+          },
+        };
+        match hover {
+          Some(text) => {
+            self
+              .messages
+              .publish(MessageLevel::Info, Some("lsp".into()), text);
+          },
+          None => {
+            self.messages.publish(
+              MessageLevel::Info,
+              Some("lsp".into()),
+              "no hover information",
+            );
+          },
+        }
+        true
+      },
+      PendingLspRequestKind::References { .. } => {
+        let locations = match parse_locations_response(response.result.as_ref()) {
+          Ok(locations) => locations,
+          Err(err) => {
+            self.messages.publish(
+              MessageLevel::Error,
+              Some("lsp".into()),
+              format!("failed to parse references response: {err}"),
+            );
+            return true;
+          },
+        };
+        self.apply_locations_result("references", locations)
+      },
+      PendingLspRequestKind::DocumentSymbols { uri } => {
+        let symbols = match parse_document_symbols_response(&uri, response.result.as_ref()) {
+          Ok(symbols) => symbols,
+          Err(err) => {
+            self.messages.publish(
+              MessageLevel::Error,
+              Some("lsp".into()),
+              format!("failed to parse document-symbols response: {err}"),
+            );
+            return true;
+          },
+        };
+        self.apply_symbols_result("document symbols", symbols)
+      },
+      PendingLspRequestKind::WorkspaceSymbols { query: _query } => {
+        let symbols = match parse_workspace_symbols_response(response.result.as_ref()) {
+          Ok(symbols) => symbols,
+          Err(err) => {
+            self.messages.publish(
+              MessageLevel::Error,
+              Some("lsp".into()),
+              format!("failed to parse workspace-symbols response: {err}"),
+            );
+            return true;
+          },
+        };
+        self.apply_symbols_result("workspace symbols", symbols)
+      },
+    }
+  }
+
+  fn apply_locations_result(&mut self, label: &str, locations: Vec<LspLocation>) -> bool {
+    if locations.is_empty() {
+      self.messages.publish(
+        MessageLevel::Info,
+        Some("lsp".into()),
+        format!("no {label} found"),
+      );
+      return true;
+    }
+
+    let jumped = self.jump_to_location(&locations[0]);
+    if jumped {
+      let total = locations.len();
+      let text = if total == 1 {
+        format!("{label}: 1 result")
+      } else {
+        format!("{label}: {total} results (jumped to first)")
+      };
+      self
+        .messages
+        .publish(MessageLevel::Info, Some("lsp".into()), text);
+    }
+    jumped
+  }
+
+  fn apply_symbols_result(&mut self, label: &str, symbols: Vec<LspSymbol>) -> bool {
+    if symbols.is_empty() {
+      self.messages.publish(
+        MessageLevel::Info,
+        Some("lsp".into()),
+        format!("no {label} found"),
+      );
+      return true;
+    }
+
+    if let Some(location) = symbols.iter().find_map(|symbol| symbol.location.as_ref()) {
+      let jumped = self.jump_to_location(location);
+      if jumped {
+        self.messages.publish(
+          MessageLevel::Info,
+          Some("lsp".into()),
+          format!("{label}: {} results (jumped to first)", symbols.len()),
+        );
+      }
+      return jumped;
+    }
+
+    self.messages.publish(
+      MessageLevel::Info,
+      Some("lsp".into()),
+      format!("{label}: {} results", symbols.len()),
+    );
+    true
+  }
+
+  fn jump_to_location(&mut self, location: &LspLocation) -> bool {
+    let Some(path) = path_for_file_uri(&location.uri) else {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        format!("unsupported location URI: {}", location.uri),
+      );
+      return true;
+    };
+
+    if self
+      .file_path
+      .as_ref()
+      .is_none_or(|current| current != &path)
+      && let Err(err) = <Self as the_default::DefaultContext>::open_file(self, &path)
+    {
+      self.messages.publish(
+        MessageLevel::Error,
+        Some("lsp".into()),
+        format!("failed to open location '{}': {err}", path.display()),
+      );
+      return true;
+    }
+
+    let cursor = {
+      let doc = self.editor.document();
+      utf16_position_to_char_idx(
+        doc.text(),
+        location.range.start.line,
+        location.range.start.character,
+      )
+    };
+
+    let _ = self
+      .editor
+      .document_mut()
+      .set_selection(Selection::point(cursor));
+    self.editor.view_mut().scroll = Position::new(
+      (location.range.start.line as usize).saturating_sub(self.scrolloff),
+      0,
+    );
+    <Self as the_default::DefaultContext>::request_render(self);
+    true
+  }
+
+  fn lsp_supports(&self, capability: LspCapability) -> bool {
+    let Some(server) = self.lsp_runtime.config().server() else {
+      return false;
+    };
+    self
+      .lsp_runtime
+      .server_capabilities(server.name())
+      .is_some_and(|capabilities| capabilities.supports(capability))
+  }
+
+  fn current_lsp_position(&self) -> Option<(String, LspPosition)> {
+    if !self.lsp_ready {
+      return None;
+    }
+    let state = self.lsp_document.as_ref()?.clone();
+    if !state.opened {
+      return None;
+    }
+
+    let doc = self.editor.document();
+    let range = doc.selection().ranges().first().copied()?;
+    let cursor = range.cursor(doc.text().slice(..));
+    let (line, character) = char_idx_to_utf16_position(doc.text(), cursor);
+
+    Some((state.uri, LspPosition { line, character }))
+  }
+
+  fn dispatch_lsp_request(
+    &mut self,
+    method: &'static str,
+    params: Value,
+    pending: PendingLspRequestKind,
+  ) {
+    match self.lsp_runtime.send_request(method, Some(params)) {
+      Ok(request_id) => {
+        self.lsp_pending_requests.insert(request_id, pending);
+      },
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Error,
+          Some("lsp".into()),
+          format!("failed to dispatch {method}: {err}"),
+        );
+      },
+    }
+  }
+
+  fn workspace_symbol_query_from_cursor(&self) -> String {
+    let doc = self.editor.document();
+    let text = doc.text();
+    let Some(range) = doc.selection().ranges().first().copied() else {
+      return String::new();
+    };
+    let cursor = range.cursor(text.slice(..));
+    let line_idx = text.char_to_line(cursor);
+    let line_start = text.line_to_char(line_idx);
+    let line_end = if line_idx + 1 < text.len_lines() {
+      text.line_to_char(line_idx + 1)
+    } else {
+      text.len_chars()
+    };
+
+    let line: Vec<char> = text.slice(line_start..line_end).chars().collect();
+    let local_cursor = cursor.saturating_sub(line_start);
+    let mut start = local_cursor.min(line.len());
+    while start > 0 && is_symbol_word_char(line[start - 1]) {
+      start -= 1;
+    }
+    let mut end = local_cursor.min(line.len());
+    while end < line.len() && is_symbol_word_char(line[end]) {
+      end += 1;
+    }
+
+    line[start..end].iter().collect()
   }
 
   fn lsp_sync_kind(&self) -> Option<TextDocumentSyncKind> {
@@ -644,6 +1000,10 @@ impl Ctx {
     };
     self.messages.publish(level, Some("lsp".into()), text);
   }
+}
+
+fn is_symbol_word_char(ch: char) -> bool {
+  ch == '_' || ch.is_alphanumeric()
 }
 
 impl the_default::DefaultContext for Ctx {
@@ -926,6 +1286,133 @@ impl the_default::DefaultContext for Ctx {
   fn set_file_path(&mut self, path: Option<PathBuf>) {
     self.lsp_refresh_document_state(path.as_deref());
     self.file_path = path;
+  }
+
+  fn lsp_goto_definition(&mut self) {
+    if !self.lsp_supports(LspCapability::GotoDefinition) {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "goto-definition is not supported by the active server",
+      );
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "goto-definition unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/definition",
+      goto_definition_params(&uri, position),
+      PendingLspRequestKind::GotoDefinition { uri },
+    );
+  }
+
+  fn lsp_hover(&mut self) {
+    if !self.lsp_supports(LspCapability::Hover) {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "hover is not supported by the active server",
+      );
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "hover unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/hover",
+      hover_params(&uri, position),
+      PendingLspRequestKind::Hover { uri },
+    );
+  }
+
+  fn lsp_references(&mut self) {
+    if !self.lsp_supports(LspCapability::GotoReference) {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "references are not supported by the active server",
+      );
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "references unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/references",
+      references_params(&uri, position, false),
+      PendingLspRequestKind::References { uri },
+    );
+  }
+
+  fn lsp_document_symbols(&mut self) {
+    if !self.lsp_supports(LspCapability::DocumentSymbols) {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "document symbols are not supported by the active server",
+      );
+      return;
+    }
+
+    let Some(uri) = self
+      .lsp_document
+      .as_ref()
+      .filter(|state| state.opened && self.lsp_ready)
+      .map(|state| state.uri.clone())
+    else {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "document symbols unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/documentSymbol",
+      document_symbols_params(&uri),
+      PendingLspRequestKind::DocumentSymbols { uri },
+    );
+  }
+
+  fn lsp_workspace_symbols(&mut self) {
+    if !self.lsp_supports(LspCapability::WorkspaceSymbols) {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "workspace symbols are not supported by the active server",
+      );
+      return;
+    }
+
+    let query = self.workspace_symbol_query_from_cursor();
+    self.dispatch_lsp_request(
+      "workspace/symbol",
+      workspace_symbols_params(&query),
+      PendingLspRequestKind::WorkspaceSymbols { query },
+    );
   }
 
   fn on_file_saved(&mut self, _path: &Path, text: &str) {

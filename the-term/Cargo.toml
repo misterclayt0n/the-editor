@@ -14,6 +14,7 @@ crossterm.workspace = true
 eyre.workspace      = true
 ratatui.workspace   = true
 ropey.workspace     = true
+serde_json.workspace = true
 the-config          = { path = "../the-config" }
 the-default         = { path = "../the-default" }
 the-lib             = { features = [ "runtime-loader" ], path = "../the-lib" }

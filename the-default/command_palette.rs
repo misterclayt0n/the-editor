@@ -7,7 +7,6 @@ use the_lib::{
   render::{
     LayoutIntent,
     UiColor,
-    UiColorToken,
     UiConstraints,
     UiContainer,
     UiDivider,
@@ -79,7 +78,9 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     return Vec::new();
   }
 
-  let layout = ctx.command_palette_style().layout;
+  let palette_style = ctx.command_palette_style();
+  let layout = palette_style.layout;
+  let theme = palette_style.theme;
 
   let filtered = command_palette_filtered_indices(state);
   let selected = command_palette_selected_filtered_index(state).or_else(|| {
@@ -122,7 +123,7 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     },
   );
   input.style = input.style.with_role("command_palette");
-  input.style.accent = Some(UiColor::Token(UiColorToken::Placeholder));
+  input.style.accent = Some(UiColor::Value(theme.placeholder));
   input.placeholder = Some(":Execute a command…".to_string());
   input.cursor = if state.query.is_empty() {
     1
@@ -134,8 +135,8 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   let mut list = UiList::new("command_palette_list", items);
   list.selected = selected;
   list.style = list.style.with_role("command_palette");
-  list.style.accent = Some(UiColor::Token(UiColorToken::SelectedBg));
-  list.style.border = Some(UiColor::Token(UiColorToken::SelectedText));
+  list.style.accent = Some(UiColor::Value(theme.selected_bg));
+  list.style.border = Some(UiColor::Value(theme.selected_text));
   let list = UiNode::List(list);
 
   let children = if matches!(layout, CommandPaletteLayout::Bottom) {

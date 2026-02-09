@@ -545,6 +545,9 @@ pub fn ui_tree<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiTree {
     let statusline = crate::statusline::build_statusline_ui(ctx);
     tree.overlays.insert(0, statusline);
   }
+  if let Some(message_bar) = crate::message_bar::build_message_bar_ui(ctx) {
+    tree.overlays.insert(1, message_bar);
+  }
   resolve_ui_tree(&mut tree, ctx.ui_theme());
   tree
 }
@@ -661,6 +664,7 @@ fn handle_pending_input<Ctx: DefaultContext>(
 }
 
 fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
+  ctx.dismiss_active_message();
   if ctx.file_picker().active {
     if crate::file_picker::handle_file_picker_key(ctx, key) {
       return;
@@ -2021,14 +2025,47 @@ fn save<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
     return;
   };
   let text = ctx.editor().document().text().to_string();
+  let line_count = text.lines().count().max(1);
+  let byte_count = text.len();
   match std::fs::write(&path, text) {
     Ok(()) => {
       let _ = ctx.editor().document_mut().mark_saved();
+      let path_text = status_path_text(&path);
+      let size_text = format_binary_size(byte_count);
+      ctx.push_info(
+        "save",
+        format!("'{path_text}' written, {line_count}L {size_text}"),
+      );
     },
     Err(err) => {
       ctx.push_error("save", format!("Failed to write {}: {err}", path.display()));
     },
   }
+}
+
+fn status_path_text(path: &Path) -> String {
+  if let Ok(cwd) = std::env::current_dir() {
+    if let Ok(relative) = path.strip_prefix(&cwd) {
+      return relative.display().to_string();
+    }
+  }
+  path.display().to_string()
+}
+
+fn format_binary_size(bytes: usize) -> String {
+  const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+  if bytes < 1024 {
+    return format!("{bytes}B");
+  }
+
+  let mut unit_index = 0usize;
+  let mut value = bytes as f64;
+  while value >= 1024.0 && unit_index < UNITS.len() - 1 {
+    value /= 1024.0;
+    unit_index += 1;
+  }
+
+  format!("{value:.1}{}", UNITS[unit_index])
 }
 
 fn quit<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {

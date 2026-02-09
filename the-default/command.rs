@@ -804,7 +804,7 @@ fn on_render<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> RenderPlan {
   ctx.build_render_plan()
 }
 
-fn post_render<Ctx: DefaultContext>(ctx: &mut Ctx, mut plan: RenderPlan) -> RenderPlan {
+fn post_render<Ctx: DefaultContext>(ctx: &mut Ctx, plan: RenderPlan) -> RenderPlan {
   let _ = ctx;
   plan
 }
@@ -2489,6 +2489,7 @@ enum OpenDirection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CommentContinuation {
   Enabled,
+  #[allow(dead_code)]
   Disabled,
 }
 

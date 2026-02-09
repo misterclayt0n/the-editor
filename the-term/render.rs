@@ -1418,11 +1418,11 @@ fn draw_ui_panel(
   let max_content_width =
     max_content_width_for_intent(panel.intent.clone(), area, border, padding_h);
   let (child_w, child_h) = measure_node(&panel.child, max_content_width);
-  let mut panel_width = child_w
+  let panel_width = child_w
     .saturating_add(border * 2 + padding_h)
     .min(area.width)
     .max(10);
-  let mut panel_height = child_h
+  let panel_height = child_h
     .saturating_add(border * 2 + padding_v + title_height)
     .min(area.height)
     .max(3);

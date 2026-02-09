@@ -283,6 +283,7 @@ pub fn binding_from_literal<L: IntoKeyBinding>(literal: L) -> KeyBinding {
     .unwrap_or_else(|err| panic!("invalid key literal: {err}"))
 }
 
+#[allow(dead_code)]
 pub fn binding_from_ident(name: &str) -> KeyBinding {
   KeyBinding::from_str(name).unwrap_or_else(|err| panic!("invalid key identifier '{name}': {err}"))
 }

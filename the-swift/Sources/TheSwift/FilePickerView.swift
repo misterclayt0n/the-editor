@@ -86,15 +86,21 @@ struct FilePickerItemSnapshot: Decodable, Identifiable {
 
 // MARK: - File type icons
 
-fileprivate func fileIcon(for item: FilePickerItemSnapshot) -> String {
+fileprivate func iconToken(for item: FilePickerItemSnapshot) -> String {
     if item.isDir {
-        return "folder.fill"
+        return "folder"
     }
-    if let icon = item.icon,
-       let mapped = filePickerSymbol(for: icon) {
-        return mapped
+    if let icon = item.icon, !icon.isEmpty {
+        return icon
     }
-    return fallbackFileIcon(forExtension: item.fileExtension)
+    return "file_generic"
+}
+
+fileprivate func fileIcon(for item: FilePickerItemSnapshot) -> (svg: Image?, symbol: String) {
+    let token = iconToken(for: item)
+    let svg = PickerIconLoader.image(named: token)
+    let symbol = filePickerSymbol(for: token) ?? fallbackFileIcon(forExtension: item.fileExtension)
+    return (svg, symbol)
 }
 
 fileprivate func filePickerSymbol(for icon: String) -> String? {
@@ -291,14 +297,21 @@ struct FilePickerView: View {
     // MARK: - Row content
 
     private func fileRowContent(for item: FilePickerItemSnapshot, isSelected: Bool) -> some View {
-        let iconName = fileIcon(for: item)
+        let icon = fileIcon(for: item)
 
         return HStack(spacing: 8) {
-            Image(systemName: iconName)
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(.secondary)
-                .font(.system(size: 14, weight: .medium))
-                .frame(width: 18, alignment: .center)
+            Group {
+                if let svg = icon.svg {
+                    svg
+                        .renderingMode(.template)
+                } else {
+                    Image(systemName: icon.symbol)
+                        .symbolRenderingMode(.monochrome)
+                }
+            }
+            .foregroundStyle(.secondary)
+            .font(.system(size: 14, weight: .medium))
+            .frame(width: 18, alignment: .center)
 
             VStack(alignment: .leading, spacing: 2) {
                 highlightedText(

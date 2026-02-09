@@ -86,9 +86,9 @@ struct FilePickerItemSnapshot: Decodable, Identifiable {
 
 // MARK: - File type icons
 
-fileprivate func fileIcon(for item: FilePickerItemSnapshot) -> (symbol: String, color: Color) {
+fileprivate func fileIcon(for item: FilePickerItemSnapshot) -> String {
     if item.isDir {
-        return ("folder.fill", .secondary)
+        return "folder.fill"
     }
     if let icon = item.icon,
        let mapped = filePickerSymbol(for: icon) {
@@ -97,111 +97,89 @@ fileprivate func fileIcon(for item: FilePickerItemSnapshot) -> (symbol: String, 
     return fallbackFileIcon(forExtension: item.fileExtension)
 }
 
-fileprivate func filePickerSymbol(for icon: String) -> (symbol: String, color: Color)? {
+fileprivate func filePickerSymbol(for icon: String) -> String? {
     switch icon {
     case "archive":
-        return ("archivebox.fill", .brown)
+        return "archivebox.fill"
     case "book", "file_markdown":
-        return ("doc.richtext.fill", .gray)
-    case "c":
-        return ("doc.text.fill", Color(red: 0.3, green: 0.5, blue: 0.8))
-    case "cpp":
-        return ("doc.text.fill", Color(red: 0.3, green: 0.5, blue: 0.8))
+        return "doc.richtext.fill"
+    case "c", "cpp", "go", "html", "java", "javascript", "json", "kotlin", "python", "sass", "swift", "typescript":
+        return "chevron.left.forwardslash.chevron.right"
     case "css":
-        return ("paintbrush.fill", .pink)
+        return "paintbrush.fill"
     case "database":
-        return ("cylinder.fill", .mint)
+        return "cylinder.fill"
     case "docker":
-        return ("shippingbox.fill", .blue)
+        return "shippingbox.fill"
     case "file_doc":
-        return ("doc.fill", .red)
+        return "doc.fill"
     case "file_git":
-        return ("point.topleft.down.curvedto.point.bottomright.up", .orange)
+        return "point.topleft.down.curvedto.point.bottomright.up"
     case "file_lock", "lock":
-        return ("lock.fill", .gray)
+        return "lock.fill"
     case "file_rust", "rust":
-        return ("gearshape.2.fill", Color(red: 0.72, green: 0.35, blue: 0.16))
+        return "chevron.left.forwardslash.chevron.right"
     case "file_toml", "toml", "settings":
-        return ("gearshape.fill", .gray)
-    case "go":
-        return ("doc.text.fill", .cyan)
-    case "html":
-        return ("globe", .orange)
+        return "doc.text.fill"
     case "image":
-        return ("photo.fill", .green)
-    case "java":
-        return ("doc.text.fill", .orange)
-    case "javascript":
-        return ("doc.text.fill", .yellow)
-    case "json":
-        return ("doc.text.fill", .blue)
-    case "kotlin":
-        return ("doc.text.fill", .orange)
+        return "photo.fill"
     case "nix":
-        return ("hexagon.fill", .purple)
-    case "python":
-        return ("doc.text.fill", Color(red: 0.2, green: 0.6, blue: 0.85))
-    case "sass":
-        return ("paintbrush.fill", .pink)
-    case "swift":
-        return ("swift", .orange)
+        return "chevron.left.forwardslash.chevron.right"
     case "terminal", "tool_hammer":
-        return ("terminal.fill", .green)
-    case "typescript":
-        return ("doc.text.fill", .blue)
+        return "terminal.fill"
     case "folder", "folder_open", "folder_search":
-        return ("folder.fill", .secondary)
+        return "folder.fill"
     case "file_generic":
-        return ("doc.fill", .secondary)
+        return "doc.fill"
     default:
         return nil
     }
 }
 
-fileprivate func fallbackFileIcon(forExtension ext: String) -> (symbol: String, color: Color) {
+fileprivate func fallbackFileIcon(forExtension ext: String) -> String {
     switch ext {
     case "swift":
-        return ("swift", .orange)
+        return "chevron.left.forwardslash.chevron.right"
     case "rs":
-        return ("gearshape.2.fill", Color(red: 0.72, green: 0.35, blue: 0.16))
+        return "chevron.left.forwardslash.chevron.right"
     case "js", "jsx":
-        return ("doc.text.fill", .yellow)
+        return "chevron.left.forwardslash.chevron.right"
     case "ts", "tsx":
-        return ("doc.text.fill", .blue)
+        return "chevron.left.forwardslash.chevron.right"
     case "py":
-        return ("doc.text.fill", Color(red: 0.2, green: 0.6, blue: 0.85))
+        return "chevron.left.forwardslash.chevron.right"
     case "rb":
-        return ("doc.text.fill", .red)
+        return "chevron.left.forwardslash.chevron.right"
     case "go":
-        return ("doc.text.fill", .cyan)
+        return "chevron.left.forwardslash.chevron.right"
     case "md", "markdown":
-        return ("doc.richtext.fill", .gray)
+        return "doc.richtext.fill"
     case "json", "yaml", "yml", "toml":
-        return ("gearshape.fill", .gray)
+        return "doc.text.fill"
     case "html", "htm":
-        return ("globe", .orange)
+        return "chevron.left.forwardslash.chevron.right"
     case "css", "scss", "less":
-        return ("paintbrush.fill", .pink)
+        return "paintbrush.fill"
     case "png", "jpg", "jpeg", "gif", "svg", "ico", "webp":
-        return ("photo.fill", .green)
+        return "photo.fill"
     case "pdf":
-        return ("doc.fill", .red)
+        return "doc.fill"
     case "txt", "log":
-        return ("doc.text", .secondary)
+        return "doc.text"
     case "sh", "bash", "zsh", "fish":
-        return ("terminal.fill", .green)
+        return "terminal.fill"
     case "c", "h":
-        return ("doc.text.fill", Color(red: 0.3, green: 0.5, blue: 0.8))
+        return "chevron.left.forwardslash.chevron.right"
     case "cpp", "cc", "hpp", "cxx":
-        return ("doc.text.fill", Color(red: 0.3, green: 0.5, blue: 0.8))
+        return "chevron.left.forwardslash.chevron.right"
     case "java", "kt", "kts":
-        return ("doc.text.fill", .orange)
+        return "chevron.left.forwardslash.chevron.right"
     case "xml":
-        return ("chevron.left.forwardslash.chevron.right", .gray)
+        return "chevron.left.forwardslash.chevron.right"
     case "lock":
-        return ("lock.fill", .gray)
+        return "lock.fill"
     default:
-        return ("doc.fill", .secondary)
+        return "doc.fill"
     }
 }
 
@@ -313,11 +291,12 @@ struct FilePickerView: View {
     // MARK: - Row content
 
     private func fileRowContent(for item: FilePickerItemSnapshot, isSelected: Bool) -> some View {
-        let (iconName, iconColor) = fileIcon(for: item)
+        let iconName = fileIcon(for: item)
 
         return HStack(spacing: 8) {
             Image(systemName: iconName)
-                .foregroundStyle(iconColor)
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(.secondary)
                 .font(.system(size: 14, weight: .medium))
                 .frame(width: 18, alignment: .center)
 

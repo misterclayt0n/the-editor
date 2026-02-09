@@ -1120,9 +1120,7 @@ fn draw_file_picker_list_pane(
     if item.is_dir {
       style = style.add_modifier(Modifier::BOLD);
     }
-    if is_selected {
-      style = style.add_modifier(Modifier::REVERSED);
-    } else if is_hovered {
+    if is_hovered {
       style = style.add_modifier(Modifier::UNDERLINED);
     }
 

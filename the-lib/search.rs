@@ -389,11 +389,13 @@ mod test {
   #[test]
   fn regex_build_smart_case() {
     let regex = build_regex("abc", true).unwrap();
-    let text = Rope::from("ABC").slice(..);
+    let uppercase = Rope::from("ABC");
+    let text = uppercase.slice(..);
     assert!(regex.find(text.regex_input()).is_some());
 
     let regex = build_regex("Abc", true).unwrap();
-    let text = Rope::from("abc").slice(..);
+    let lowercase = Rope::from("abc");
+    let text = lowercase.slice(..);
     assert!(regex.find(text.regex_input()).is_none());
   }
 

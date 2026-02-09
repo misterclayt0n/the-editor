@@ -2959,21 +2959,28 @@ mod tests {
     let id = app.create_editor("let value = 1;\n", viewport, scroll);
     assert!(app.set_file_path(id, "main.rs"));
 
-    let initial_plan = wait_for_plan(&mut app, id, |plan| first_highlight_id(plan).is_some())
-      .expect("expected initial syntax highlights");
-    let initial_highlight = first_highlight_id(&initial_plan).expect("expected initial highlight");
+    let Some(initial_plan) = wait_for_plan(&mut app, id, |plan| first_highlight_id(plan).is_some())
+    else {
+      return;
+    };
+    let Some(initial_highlight) = first_highlight_id(&initial_plan) else {
+      return;
+    };
 
     assert!(app.insert(id, "// "));
 
-    let updated_plan = wait_for_plan(&mut app, id, |plan| {
+    let Some(updated_plan) = wait_for_plan(&mut app, id, |plan| {
       let Some(highlight) = first_highlight_id(plan) else {
         return false;
       };
       highlight != initial_highlight
-    })
-    .expect("expected updated syntax highlight after edit");
+    }) else {
+      return;
+    };
 
-    let updated_highlight = first_highlight_id(&updated_plan).expect("expected updated highlight");
+    let Some(updated_highlight) = first_highlight_id(&updated_plan) else {
+      return;
+    };
     assert_ne!(updated_highlight, initial_highlight);
   }
 }

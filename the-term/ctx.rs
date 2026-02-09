@@ -85,6 +85,7 @@ use the_lsp::{
   LspEvent,
   LspRuntime,
   LspRuntimeConfig,
+  LspServerConfig,
 };
 use the_runtime::clipboard::ClipboardProvider;
 
@@ -168,6 +169,23 @@ fn select_ui_theme() -> Theme {
   }
 }
 
+fn lsp_server_from_env() -> Option<LspServerConfig> {
+  let command = env::var("THE_EDITOR_LSP_COMMAND").ok()?.trim().to_string();
+  if command.is_empty() {
+    return None;
+  }
+
+  let mut server = LspServerConfig::new(command);
+  if let Ok(args) = env::var("THE_EDITOR_LSP_ARGS") {
+    let args: Vec<String> = args.split_whitespace().map(ToOwned::to_owned).collect();
+    if !args.is_empty() {
+      server = server.with_args(args);
+    }
+  }
+
+  Some(server)
+}
+
 impl Ctx {
   pub fn new(file_path: Option<&str>) -> Result<Self> {
     // Load text from file or create empty document
@@ -236,7 +254,11 @@ impl Ctx {
       })
       .map(|path| the_loader::find_workspace_in(path).0)
       .unwrap_or_else(|| the_loader::find_workspace().0);
-    let lsp_runtime = LspRuntime::new(LspRuntimeConfig::new(workspace_root));
+    let mut lsp_runtime_config = LspRuntimeConfig::new(workspace_root);
+    if let Some(server) = lsp_server_from_env() {
+      lsp_runtime_config = lsp_runtime_config.with_server(server);
+    }
+    let lsp_runtime = LspRuntime::new(lsp_runtime_config);
 
     Ok(Self {
       editor,

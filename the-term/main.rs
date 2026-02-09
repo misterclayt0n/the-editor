@@ -139,6 +139,8 @@ fn main() -> Result<()> {
       ctx.needs_render = true;
     }
 
+    ctx.poll_lsp_file_watch();
+
     // Render if needed
     if ctx.needs_render {
       ctx.needs_render = false;

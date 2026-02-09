@@ -4,6 +4,22 @@ use the_lib::diagnostics::DocumentDiagnostics;
 
 use crate::jsonrpc;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspProgress {
+  pub token:      String,
+  pub kind:       LspProgressKind,
+  pub title:      Option<String>,
+  pub message:    Option<String>,
+  pub percentage: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LspProgressKind {
+  Begin,
+  Report,
+  End,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum LspEvent {
   Started {
@@ -27,8 +43,15 @@ pub enum LspEvent {
   RequestCompleted {
     id: u64,
   },
+  RequestTimedOut {
+    id:     u64,
+    method: String,
+  },
   DiagnosticsPublished {
     diagnostics: DocumentDiagnostics,
+  },
+  Progress {
+    progress: LspProgress,
   },
   RpcMessage {
     message: jsonrpc::Message,

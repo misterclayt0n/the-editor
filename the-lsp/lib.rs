@@ -5,6 +5,7 @@ mod editing;
 mod event;
 pub mod jsonrpc;
 mod navigation;
+mod progress;
 mod runtime;
 pub mod text_sync;
 mod transport;
@@ -42,7 +43,11 @@ pub use editing::{
   rename_params,
   signature_help_params,
 };
-pub use event::LspEvent;
+pub use event::{
+  LspEvent,
+  LspProgress,
+  LspProgressKind,
+};
 pub use navigation::{
   LspLocation,
   LspPosition,
@@ -59,9 +64,14 @@ pub use navigation::{
   references_params,
   workspace_symbols_params,
 };
+pub use progress::{
+  ProgressParseError,
+  parse_progress_notification,
+};
 pub use runtime::{
   LspRuntime,
   LspRuntimeConfig,
   LspRuntimeError,
   LspServerConfig,
 };
+pub use text_sync::FileChangeType;

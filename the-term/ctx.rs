@@ -22,7 +22,10 @@ use std::{
     },
   },
   thread,
-  time::Duration,
+  time::{
+    Duration,
+    SystemTime,
+  },
 };
 
 use eyre::Result;
@@ -99,12 +102,14 @@ use the_lib::{
   view::ViewState,
 };
 use the_lsp::{
+  FileChangeType,
   LspCapability,
   LspCompletionItem,
   LspEvent,
   LspExecuteCommand,
   LspLocation,
   LspPosition,
+  LspProgressKind,
   LspRuntime,
   LspRuntimeConfig,
   LspServerConfig,
@@ -135,6 +140,7 @@ use the_lsp::{
   text_sync::{
     char_idx_to_utf16_position,
     did_change_params,
+    did_change_watched_files_params,
     did_close_params,
     did_open_params,
     did_save_params,
@@ -167,6 +173,14 @@ pub struct LspDocumentSyncState {
   pub language_id: String,
   pub version:     i32,
   pub opened:      bool,
+}
+
+#[derive(Debug, Clone)]
+struct LspWatchedFileState {
+  path:          PathBuf,
+  uri:           String,
+  exists:        bool,
+  last_modified: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,6 +248,21 @@ impl PendingLspRequestKind {
       Self::WorkspaceSymbols { .. } => None,
     }
   }
+
+  fn cancellation_key(&self) -> (&'static str, Option<&str>) {
+    match self {
+      Self::GotoDefinition { uri } => ("goto-definition", Some(uri)),
+      Self::Hover { uri } => ("hover", Some(uri)),
+      Self::References { uri } => ("references", Some(uri)),
+      Self::DocumentSymbols { uri } => ("document-symbols", Some(uri)),
+      Self::WorkspaceSymbols { .. } => ("workspace-symbols", None),
+      Self::Completion { uri, .. } => ("completion", Some(uri)),
+      Self::SignatureHelp { uri } => ("signature-help", Some(uri)),
+      Self::CodeActions { uri } => ("code-actions", Some(uri)),
+      Self::Rename { uri } => ("rename", Some(uri)),
+      Self::Format { uri } => ("format", Some(uri)),
+    }
+  }
 }
 
 /// Application state passed to all handlers.
@@ -254,6 +283,7 @@ pub struct Ctx {
   pub lsp_runtime:           LspRuntime,
   pub lsp_ready:             bool,
   pub lsp_document:          Option<LspDocumentSyncState>,
+  lsp_watched_file:          Option<LspWatchedFileState>,
   lsp_pending_requests:      HashMap<u64, PendingLspRequestKind>,
   pub diagnostics:           DiagnosticsState,
   pub file_picker_layout:    Option<FilePickerLayout>,
@@ -437,7 +467,10 @@ impl Ctx {
       })
       .map(|path| the_loader::find_workspace_in(path).0)
       .unwrap_or_else(|| the_loader::find_workspace().0);
-    let mut lsp_runtime_config = LspRuntimeConfig::new(workspace_root);
+    let mut lsp_runtime_config = LspRuntimeConfig::new(workspace_root)
+      .with_restart_policy(true, Duration::from_millis(250))
+      .with_restart_limits(6, Duration::from_secs(30))
+      .with_request_policy(Duration::from_secs(8), 1);
     let server_from_language = file_path.map(Path::new).and_then(|path| {
       loader
         .as_deref()
@@ -469,6 +502,7 @@ impl Ctx {
       lsp_runtime,
       lsp_ready: false,
       lsp_document,
+      lsp_watched_file: None,
       lsp_pending_requests: HashMap::new(),
       diagnostics: DiagnosticsState::default(),
       file_picker_layout: None,
@@ -540,6 +574,7 @@ impl Ctx {
   pub fn start_background_services(&mut self) {
     self.lsp_ready = false;
     self.lsp_pending_requests.clear();
+    self.lsp_sync_watched_file_state();
     if let Err(err) = self.lsp_runtime.start() {
       eprintln!("Warning: failed to start LSP runtime: {err}");
     }
@@ -549,6 +584,7 @@ impl Ctx {
     self.lsp_close_current_document();
     self.lsp_ready = false;
     self.lsp_pending_requests.clear();
+    self.lsp_watched_file = None;
     if let Err(err) = self.lsp_runtime.shutdown() {
       eprintln!("Warning: failed to stop LSP runtime: {err}");
     }
@@ -587,6 +623,47 @@ impl Ctx {
         LspEvent::RpcMessage { message } => {
           needs_render |= self.handle_lsp_rpc_message(message);
         },
+        LspEvent::RequestTimedOut { id, method } => {
+          if let Some(pending) = self.lsp_pending_requests.remove(&id) {
+            self.messages.publish(
+              MessageLevel::Warning,
+              Some("lsp".into()),
+              format!("lsp {} timed out", pending.label()),
+            );
+          } else {
+            self.messages.publish(
+              MessageLevel::Warning,
+              Some("lsp".into()),
+              format!("lsp {method} timed out"),
+            );
+          }
+          needs_render = true;
+        },
+        LspEvent::Progress { progress } => {
+          match progress.kind {
+            LspProgressKind::Begin => {
+              let title = progress.title.unwrap_or_else(|| "work".into());
+              let text = progress
+                .message
+                .as_deref()
+                .map(|message| format!("{title}: {message}"))
+                .unwrap_or(title);
+              self
+                .messages
+                .publish(MessageLevel::Info, Some("lsp".into()), text);
+              needs_render = true;
+            },
+            LspProgressKind::End => {
+              if let Some(message) = progress.message {
+                self
+                  .messages
+                  .publish(MessageLevel::Info, Some("lsp".into()), message);
+                needs_render = true;
+              }
+            },
+            LspProgressKind::Report => {},
+          }
+        },
         LspEvent::Error(message) => {
           self
             .messages
@@ -611,6 +688,40 @@ impl Ctx {
       }
     }
     needs_render
+  }
+
+  pub fn poll_lsp_file_watch(&mut self) {
+    if !self.lsp_ready {
+      return;
+    }
+
+    let Some(active_uri) = self.current_lsp_uri() else {
+      return;
+    };
+    let Some(watch) = self.lsp_watched_file.as_mut() else {
+      return;
+    };
+    if watch.uri != active_uri {
+      return;
+    }
+
+    let (exists, last_modified) = file_watch_snapshot(&watch.path);
+    let change_type = match (watch.exists, exists) {
+      (false, true) => Some(FileChangeType::Created),
+      (true, false) => Some(FileChangeType::Deleted),
+      (true, true) if watch.last_modified != last_modified => Some(FileChangeType::Changed),
+      _ => None,
+    };
+
+    watch.exists = exists;
+    watch.last_modified = last_modified;
+
+    if let Some(change_type) = change_type {
+      let params = did_change_watched_files_params([(watch.uri.clone(), change_type)]);
+      let _ = self
+        .lsp_runtime
+        .send_notification("workspace/didChangeWatchedFiles", Some(params));
+    }
   }
 
   fn handle_lsp_rpc_message(&mut self, message: jsonrpc::Message) -> bool {
@@ -1309,12 +1420,39 @@ impl Ctx {
     )
   }
 
+  fn cancel_pending_lsp_requests_for(&mut self, next: &PendingLspRequestKind) {
+    let target = next.cancellation_key();
+    let ids_to_cancel = self
+      .lsp_pending_requests
+      .iter()
+      .filter_map(|(id, pending)| {
+        if pending.cancellation_key() == target {
+          Some(*id)
+        } else {
+          None
+        }
+      })
+      .collect::<Vec<_>>();
+
+    for id in ids_to_cancel {
+      let _ = self.lsp_pending_requests.remove(&id);
+      if let Err(err) = self.lsp_runtime.cancel_request(id) {
+        self.messages.publish(
+          MessageLevel::Warning,
+          Some("lsp".into()),
+          format!("failed to cancel stale request {id}: {err}"),
+        );
+      }
+    }
+  }
+
   fn dispatch_lsp_request(
     &mut self,
     method: &'static str,
     params: Value,
     pending: PendingLspRequestKind,
   ) {
+    self.cancel_pending_lsp_requests_for(&pending);
     match self.lsp_runtime.send_request(method, Some(params)) {
       Ok(request_id) => {
         self.lsp_pending_requests.insert(request_id, pending);
@@ -1484,9 +1622,22 @@ impl Ctx {
       .send_notification("textDocument/didSave", Some(params));
   }
 
+  fn lsp_sync_watched_file_state(&mut self) {
+    self.lsp_watched_file = self.lsp_document.as_ref().map(|state| {
+      let (exists, last_modified) = file_watch_snapshot(&state.path);
+      LspWatchedFileState {
+        path: state.path.clone(),
+        uri: state.uri.clone(),
+        exists,
+        last_modified,
+      }
+    });
+  }
+
   fn lsp_refresh_document_state(&mut self, path: Option<&Path>) {
     self.lsp_document =
       path.and_then(|path| build_lsp_document_state(path, self.loader.as_deref()));
+    self.lsp_sync_watched_file_state();
   }
 
   fn publish_lsp_diagnostic_message(&mut self, counts: DiagnosticCounts) {
@@ -1511,6 +1662,13 @@ impl Ctx {
 
 fn is_symbol_word_char(ch: char) -> bool {
   ch == '_' || ch.is_alphanumeric()
+}
+
+fn file_watch_snapshot(path: &Path) -> (bool, Option<SystemTime>) {
+  let metadata = std::fs::metadata(path).ok();
+  let exists = metadata.is_some();
+  let last_modified = metadata.and_then(|meta| meta.modified().ok());
+  (exists, last_modified)
 }
 
 fn diagnostic_severity_to_lsp_code(severity: DiagnosticSeverity) -> u8 {

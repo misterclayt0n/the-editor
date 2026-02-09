@@ -19,6 +19,23 @@ use the_lib::transaction::{
 use crate::TextDocumentSyncKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileChangeType {
+  Created,
+  Changed,
+  Deleted,
+}
+
+impl FileChangeType {
+  fn as_lsp_code(self) -> u8 {
+    match self {
+      Self::Created => 1,
+      Self::Changed => 2,
+      Self::Deleted => 3,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Utf16Position {
   line:      u32,
   character: u32,
@@ -159,6 +176,24 @@ pub fn did_close_params(uri: &str) -> Value {
     "textDocument": {
       "uri": uri,
     }
+  })
+}
+
+pub fn did_change_watched_files_params(
+  changes: impl IntoIterator<Item = (String, FileChangeType)>,
+) -> Value {
+  let changes = changes
+    .into_iter()
+    .map(|(uri, change_type)| {
+      json!({
+        "uri": uri,
+        "type": change_type.as_lsp_code(),
+      })
+    })
+    .collect::<Vec<_>>();
+
+  json!({
+    "changes": changes,
   })
 }
 

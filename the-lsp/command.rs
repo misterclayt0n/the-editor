@@ -4,6 +4,9 @@ use serde_json::Value;
 pub enum LspCommand {
   Shutdown,
   RestartServer,
+  CancelRequest {
+    id: u64,
+  },
   SendRequest {
     id:     u64,
     method: String,

@@ -47,6 +47,7 @@ use crate::{
   },
   diagnostics::parse_publish_diagnostics,
   jsonrpc,
+  parse_progress_notification,
   text_sync::file_uri_for_path,
   transport::{
     StdioTransport,
@@ -137,6 +138,10 @@ pub struct LspRuntimeConfig {
   server:             Option<LspServerConfig>,
   restart_on_failure: bool,
   restart_backoff:    Duration,
+  restart_max_burst:  usize,
+  restart_window:     Duration,
+  request_timeout:    Duration,
+  request_retries:    u8,
 }
 
 impl LspRuntimeConfig {
@@ -146,6 +151,10 @@ impl LspRuntimeConfig {
       server: None,
       restart_on_failure: true,
       restart_backoff: Duration::from_millis(250),
+      restart_max_burst: 5,
+      restart_window: Duration::from_secs(20),
+      request_timeout: Duration::from_secs(10),
+      request_retries: 1,
     }
   }
 
@@ -170,6 +179,18 @@ impl LspRuntimeConfig {
   pub fn with_restart_policy(mut self, enabled: bool, backoff: Duration) -> Self {
     self.restart_on_failure = enabled;
     self.restart_backoff = backoff;
+    self
+  }
+
+  pub fn with_restart_limits(mut self, max_burst: usize, window: Duration) -> Self {
+    self.restart_max_burst = max_burst;
+    self.restart_window = window;
+    self
+  }
+
+  pub fn with_request_policy(mut self, timeout: Duration, retries: u8) -> Self {
+    self.request_timeout = timeout;
+    self.request_retries = retries;
     self
   }
 }
@@ -286,6 +307,10 @@ impl LspRuntime {
     self.send(LspCommand::RestartServer)
   }
 
+  pub fn cancel_request(&self, id: u64) -> Result<(), LspRuntimeError> {
+    self.send(LspCommand::CancelRequest { id })
+  }
+
   pub fn try_recv_event(&self) -> Option<LspEvent> {
     let rx = self.event_rx.as_ref()?;
     match rx.try_recv() {
@@ -334,25 +359,31 @@ pub enum LspRuntimeError {
 
 #[derive(Debug)]
 struct PendingRequest {
-  method:     String,
-  kind:       PendingRequestKind,
-  timeout_at: Option<Instant>,
+  method:       String,
+  kind:         PendingRequestKind,
+  timeout_at:   Option<Instant>,
+  request:      Option<jsonrpc::Message>,
+  retries_left: u8,
 }
 
 impl PendingRequest {
   fn initialize(server_name: String, timeout_at: Instant) -> Self {
     Self {
-      method:     "initialize".into(),
-      kind:       PendingRequestKind::Initialize { server_name },
-      timeout_at: Some(timeout_at),
+      method:       "initialize".into(),
+      kind:         PendingRequestKind::Initialize { server_name },
+      timeout_at:   Some(timeout_at),
+      request:      None,
+      retries_left: 0,
     }
   }
 
-  fn other(method: String) -> Self {
+  fn other(method: String, request: jsonrpc::Message, timeout: Duration, retries_left: u8) -> Self {
     Self {
       method,
       kind: PendingRequestKind::Other,
-      timeout_at: None,
+      timeout_at: Some(Instant::now() + timeout),
+      request: Some(request),
+      retries_left,
     }
   }
 }
@@ -361,6 +392,34 @@ impl PendingRequest {
 enum PendingRequestKind {
   Initialize { server_name: String },
   Other,
+}
+
+#[derive(Debug)]
+struct RestartTracker {
+  window_started: Instant,
+  attempts:       usize,
+}
+
+impl RestartTracker {
+  fn new() -> Self {
+    Self {
+      window_started: Instant::now(),
+      attempts:       0,
+    }
+  }
+
+  fn allow_attempt(&mut self, config: &LspRuntimeConfig) -> bool {
+    let now = Instant::now();
+    if now.duration_since(self.window_started) >= config.restart_window {
+      self.window_started = now;
+      self.attempts = 0;
+    }
+    if self.attempts >= config.restart_max_burst {
+      return false;
+    }
+    self.attempts += 1;
+    true
+  }
 }
 
 fn run_worker(
@@ -378,6 +437,7 @@ fn run_worker(
   });
 
   let mut pending_requests = HashMap::<u64, PendingRequest>::new();
+  let mut restart_tracker = RestartTracker::new();
   let mut transport = spawn_transport(&config, &event_tx);
   if let Some(current_transport) = transport.as_ref() {
     initialize_server(&config, current_transport, &event_tx, &mut pending_requests);
@@ -385,13 +445,20 @@ fn run_worker(
 
   let mut should_exit = false;
   while !should_exit {
-    if check_request_timeouts(&mut pending_requests, &event_tx) && config.restart_on_failure {
+    let restart_due_to_timeout = check_request_timeouts(
+      &config,
+      transport.as_ref(),
+      &mut pending_requests,
+      &event_tx,
+    );
+    if restart_due_to_timeout && config.restart_on_failure {
       transport = restart_transport(
         &config,
         &capabilities,
         transport,
         &event_tx,
         &mut pending_requests,
+        &mut restart_tracker,
       );
     }
 
@@ -400,6 +467,7 @@ fn run_worker(
       while let Some(event) = current_transport.try_recv_event() {
         match event {
           TransportEvent::Message(message) => {
+            handle_server_request_message(&message, current_transport, &event_tx);
             handle_rpc_message(
               &message,
               current_transport,
@@ -454,6 +522,7 @@ fn run_worker(
           transport,
           &event_tx,
           &mut pending_requests,
+          &mut restart_tracker,
         );
       }
     }
@@ -469,7 +538,28 @@ fn run_worker(
           transport,
           &event_tx,
           &mut pending_requests,
+          &mut restart_tracker,
         );
+      },
+      Ok(LspCommand::CancelRequest { id }) => {
+        let pending = pending_requests.remove(&id);
+        if pending.is_none() {
+          continue;
+        }
+
+        if let Some(current_transport) = transport.as_ref() {
+          let cancel_payload = json!({
+            "id": id,
+          });
+          if let Err(err) = current_transport.send(jsonrpc::Message::notification(
+            "$/cancelRequest",
+            Some(cancel_payload),
+          )) {
+            let _ = event_tx.send(LspEvent::Error(format!(
+              "failed to cancel request {id}: {err}"
+            )));
+          }
+        }
       },
       Ok(LspCommand::SendNotification { method, params }) => {
         if let Some(current_transport) = transport.as_ref() {
@@ -487,11 +577,19 @@ fn run_worker(
       Ok(LspCommand::SendRequest { id, method, params }) => {
         if let Some(current_transport) = transport.as_ref() {
           let message = jsonrpc::Message::request(id, method.clone(), params);
-          if let Err(err) = current_transport.send(message) {
+          if let Err(err) = current_transport.send(message.clone()) {
             let _ = event_tx.send(LspEvent::Error(format!("failed to send request: {err}")));
             continue;
           }
-          pending_requests.insert(id, PendingRequest::other(method.clone()));
+          pending_requests.insert(
+            id,
+            PendingRequest::other(
+              method.clone(),
+              message,
+              config.request_timeout,
+              config.request_retries,
+            ),
+          );
           let _ = event_tx.send(LspEvent::RequestDispatched { id, method });
         } else {
           let _ = event_tx.send(LspEvent::Error(
@@ -569,53 +667,121 @@ fn handle_rpc_message(
   }
 }
 
+fn handle_server_request_message(
+  message: &jsonrpc::Message,
+  transport: &StdioTransport,
+  event_tx: &Sender<LspEvent>,
+) {
+  let jsonrpc::Message::Request(request) = message else {
+    return;
+  };
+
+  match request.method.as_str() {
+    "window/workDoneProgress/create" => {
+      if let Err(err) = transport.send(jsonrpc::Message::response_ok(
+        request.id.clone(),
+        Some(Value::Null),
+      )) {
+        let _ = event_tx.send(LspEvent::Error(format!(
+          "failed to reply to workDoneProgress/create: {err}"
+        )));
+      }
+    },
+    _ => {},
+  }
+}
+
 fn handle_notification_message(message: &jsonrpc::Message, event_tx: &Sender<LspEvent>) {
   let jsonrpc::Message::Notification(notification) = message else {
     return;
   };
 
-  if notification.method != "textDocument/publishDiagnostics" {
-    return;
-  }
-
-  match parse_publish_diagnostics(notification.params.as_ref()) {
-    Ok(diagnostics) => {
-      let _ = event_tx.send(LspEvent::DiagnosticsPublished { diagnostics });
+  match notification.method.as_str() {
+    "textDocument/publishDiagnostics" => {
+      match parse_publish_diagnostics(notification.params.as_ref()) {
+        Ok(diagnostics) => {
+          let _ = event_tx.send(LspEvent::DiagnosticsPublished { diagnostics });
+        },
+        Err(err) => {
+          let _ = event_tx.send(LspEvent::Error(format!(
+            "failed to parse publishDiagnostics: {err}"
+          )));
+        },
+      }
     },
-    Err(err) => {
-      let _ = event_tx.send(LspEvent::Error(format!(
-        "failed to parse publishDiagnostics: {err}"
-      )));
+    "$/progress" => {
+      match parse_progress_notification(notification.params.as_ref()) {
+        Ok(progress) => {
+          let _ = event_tx.send(LspEvent::Progress { progress });
+        },
+        Err(err) => {
+          let _ = event_tx.send(LspEvent::Error(format!("failed to parse progress: {err}")));
+        },
+      }
     },
+    _ => {},
   }
 }
 
 fn check_request_timeouts(
+  config: &LspRuntimeConfig,
+  transport: Option<&StdioTransport>,
   pending_requests: &mut HashMap<u64, PendingRequest>,
   event_tx: &Sender<LspEvent>,
 ) -> bool {
   let now = Instant::now();
-  let mut initialize_timed_out = false;
+  let mut restart_required = false;
+  let timed_out_ids = pending_requests
+    .iter()
+    .filter_map(|(id, pending)| {
+      match pending.timeout_at {
+        Some(deadline) if now >= deadline => Some(*id),
+        _ => None,
+      }
+    })
+    .collect::<Vec<_>>();
 
-  pending_requests.retain(|_id, pending| {
-    let Some(deadline) = pending.timeout_at else {
-      return true;
+  for id in timed_out_ids {
+    let Some(mut pending) = pending_requests.remove(&id) else {
+      continue;
     };
-    if now < deadline {
-      return true;
-    }
 
     if matches!(pending.kind, PendingRequestKind::Initialize { .. }) {
-      initialize_timed_out = true;
+      restart_required = true;
+      let _ = event_tx.send(LspEvent::Error(
+        "lsp initialize request timed out; restarting server".into(),
+      ));
+      continue;
     }
-    let _ = event_tx.send(LspEvent::Error(format!(
-      "lsp request timeout: {}",
-      pending.method
-    )));
-    false
-  });
 
-  initialize_timed_out
+    let should_retry = pending.retries_left > 0;
+    if should_retry && let Some(request) = pending.request.clone() {
+      if let Some(current_transport) = transport {
+        if current_transport.send(request).is_ok() {
+          pending.retries_left = pending.retries_left.saturating_sub(1);
+          pending.timeout_at = Some(now + config.request_timeout);
+          let retries_remaining = pending.retries_left;
+          let method = pending.method.clone();
+          pending_requests.insert(id, pending);
+          let _ = event_tx.send(LspEvent::Error(format!(
+            "lsp request timeout: {method}; retrying (remaining: {retries_remaining})"
+          )));
+          continue;
+        } else if config.restart_on_failure {
+          restart_required = true;
+        }
+      }
+    }
+
+    let method = pending.method.clone();
+    let _ = event_tx.send(LspEvent::RequestTimedOut {
+      id,
+      method: method.clone(),
+    });
+    let _ = event_tx.send(LspEvent::Error(format!("lsp request timeout: {method}")));
+  }
+
+  restart_required
 }
 
 fn initialize_server(
@@ -695,6 +861,10 @@ fn default_client_capabilities() -> Value {
       "configuration": true,
       "didChangeConfiguration": {
         "dynamicRegistration": true
+      },
+      "didChangeWatchedFiles": {
+        "dynamicRegistration": true,
+        "relativePatternSupport": true
       }
     },
     "textDocument": {
@@ -704,6 +874,9 @@ fn default_client_capabilities() -> Value {
         "willSave": false,
         "willSaveWaitUntil": false
       }
+    },
+    "window": {
+      "workDoneProgress": true
     }
   })
 }
@@ -771,6 +944,7 @@ fn restart_transport(
   mut current: Option<StdioTransport>,
   event_tx: &Sender<LspEvent>,
   pending_requests: &mut HashMap<u64, PendingRequest>,
+  restart_tracker: &mut RestartTracker,
 ) -> Option<StdioTransport> {
   pending_requests.clear();
   let _ = shutdown_transport(&mut current, event_tx);
@@ -783,6 +957,14 @@ fn restart_transport(
   }
 
   if config.server().is_none() {
+    return None;
+  }
+
+  if !restart_tracker.allow_attempt(config) {
+    let _ = event_tx.send(LspEvent::Error(format!(
+      "lsp restart suppressed after {} attempts in {:?}",
+      config.restart_max_burst, config.restart_window
+    )));
     return None;
   }
 

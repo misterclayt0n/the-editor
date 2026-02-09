@@ -1,6 +1,8 @@
 import AppKit
 import Foundation
+import ImageIO
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum PickerIconLoader {
     private static let cache = SvgIconCache()
@@ -68,11 +70,24 @@ private final class SvgIconCache {
         guard let data = try? Data(contentsOf: url) else {
             return nil
         }
-        if let pngData = createPngDataFromSvgData(data),
-           let image = NSImage(data: pngData as Data) {
+        if let image = decodeSvgWithImageIO(data) {
             return image
         }
         return NSImage(data: data)
+    }
+
+    private func decodeSvgWithImageIO(_ data: Data) -> NSImage? {
+        let options: CFDictionary = {
+            if #available(macOS 11.0, *) {
+                return [kCGImageSourceTypeIdentifierHint: UTType.svg.identifier] as CFDictionary
+            }
+            return [:] as CFDictionary
+        }()
+        guard let source = CGImageSourceCreateWithData(data as CFData, options),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return nil
+        }
+        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
     }
 
     private static func resolveIconDirectories() -> [URL] {
@@ -128,12 +143,4 @@ private final class SvgIconCache {
             }
         }
     }
-}
-
-// ImageIO exports this symbol on modern macOS and it reliably converts SVG bytes to PNG bytes.
-@_silgen_name("CGCreatePNGDataFromSVGData")
-private func cgCreatePngDataFromSvgData(_ data: CFData, _ options: CFDictionary?) -> Unmanaged<CFData>?
-
-private func createPngDataFromSvgData(_ data: Data) -> CFData? {
-    cgCreatePngDataFromSvgData(data as CFData, nil)?.takeRetainedValue()
 }

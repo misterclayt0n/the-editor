@@ -619,9 +619,13 @@ pub fn submit_file_picker<Ctx: DefaultContext>(ctx: &mut Ctx) {
   };
 
   if let Err(err) = ctx.open_file(&item.absolute) {
-    let picker = ctx.file_picker_mut();
-    picker.error = Some(err.to_string());
-    picker.preview = FilePickerPreview::Message(format!("Failed to open file: {err}"));
+    let message = err.to_string();
+    {
+      let picker = ctx.file_picker_mut();
+      picker.error = Some(message.clone());
+      picker.preview = FilePickerPreview::Message(format!("Failed to open file: {message}"));
+    }
+    ctx.push_error("file_picker", format!("Failed to open file: {message}"));
     ctx.request_render();
     return;
   }

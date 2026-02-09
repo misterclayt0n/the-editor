@@ -81,6 +81,7 @@ use the_lib::{
     DocumentId,
   },
   editor::EditorId as LibEditorId,
+  messages::MessageCenter,
   movement::{
     self,
     Direction,
@@ -699,6 +700,7 @@ struct EditorState {
   search_prompt:         SearchPromptState,
   ui_state:              UiState,
   needs_render:          bool,
+  messages:              MessageCenter,
   pending_input:         Option<the_default::PendingInput>,
   register:              Option<char>,
   macro_recording:       Option<(char, Vec<KeyBinding>)>,
@@ -731,6 +733,7 @@ impl EditorState {
       search_prompt: SearchPromptState::new(),
       ui_state: UiState::default(),
       needs_render: true,
+      messages: MessageCenter::default(),
       pending_input: None,
       register: None,
       macro_recording: None,
@@ -1815,6 +1818,14 @@ impl DefaultContext for App {
 
   fn request_render(&mut self) {
     self.active_state_mut().needs_render = true;
+  }
+
+  fn messages(&self) -> &MessageCenter {
+    &self.active_state_ref().messages
+  }
+
+  fn messages_mut(&mut self) -> &mut MessageCenter {
+    &mut self.active_state_mut().messages
   }
 
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {

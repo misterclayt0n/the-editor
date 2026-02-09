@@ -106,3 +106,11 @@ pub use search_prompt::{
   finalize_search,
   update_search_preview,
 };
+pub use the_lib::messages::{
+  Message,
+  MessageCenter,
+  MessageEvent,
+  MessageEventKind,
+  MessageLevel,
+  MessageSnapshot,
+};

@@ -619,7 +619,9 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
 
       let (command, args, _) = split(&line);
       if command.is_empty() {
-        ctx.command_prompt_mut().error = Some("empty command".to_string());
+        let message = "empty command".to_string();
+        ctx.command_prompt_mut().error = Some(message.clone());
+        ctx.push_error("command", message);
         ctx.request_render();
         return true;
       }
@@ -639,8 +641,9 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
           }
         },
         Err(err) => {
-          let prompt = ctx.command_prompt_mut();
-          prompt.error = Some(err.to_string());
+          let message = err.to_string();
+          ctx.command_prompt_mut().error = Some(message.clone());
+          ctx.push_error("command", message);
         },
       }
 

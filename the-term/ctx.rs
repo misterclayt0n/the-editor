@@ -47,6 +47,7 @@ use the_lib::{
     Editor,
     EditorId,
   },
+  messages::MessageCenter,
   position::Position,
   registers::Registers,
   render::{
@@ -98,6 +99,7 @@ pub struct Ctx {
   pub file_path:             Option<PathBuf>,
   pub should_quit:           bool,
   pub needs_render:          bool,
+  pub messages:              MessageCenter,
   pub file_picker_wake_rx:   Receiver<()>,
   pub mode:                  Mode,
   pub keymaps:               Keymaps,
@@ -218,6 +220,7 @@ impl Ctx {
       file_path: file_path.map(PathBuf::from),
       should_quit: false,
       needs_render: true,
+      messages: MessageCenter::default(),
       file_picker_wake_rx,
       mode: Mode::Normal,
       keymaps: Keymaps::default(),
@@ -308,6 +311,14 @@ impl the_default::DefaultContext for Ctx {
 
   fn request_render(&mut self) {
     self.needs_render = true;
+  }
+
+  fn messages(&self) -> &MessageCenter {
+    &self.messages
+  }
+
+  fn messages_mut(&mut self) -> &mut MessageCenter {
+    &mut self.messages
   }
 
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {

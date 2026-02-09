@@ -362,13 +362,16 @@ pub fn finalize_search<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
       ctx.search_prompt_mut().error = None;
     },
     Err(err) => {
-      ctx.search_prompt_mut().error = Some(err);
+      ctx.search_prompt_mut().error = Some(err.clone());
+      ctx.push_error("search", err);
       return false;
     },
   }
 
   if let Err(err) = ctx.registers_mut().write(register, vec![query]) {
-    ctx.search_prompt_mut().error = Some(err.to_string());
+    let message = err.to_string();
+    ctx.search_prompt_mut().error = Some(message.clone());
+    ctx.push_error("search", message);
     return false;
   }
 

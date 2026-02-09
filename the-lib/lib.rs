@@ -16,6 +16,7 @@ pub mod fuzzy;
 pub mod history;
 pub mod indent;
 pub mod match_brackets;
+pub mod messages;
 pub mod movement;
 pub mod object;
 pub mod position;

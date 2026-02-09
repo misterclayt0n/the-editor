@@ -37,6 +37,11 @@ use the_lib::{
   history::UndoKind,
   indent,
   match_brackets as mb,
+  messages::{
+    Message,
+    MessageCenter,
+    MessageLevel,
+  },
   movement::{
     self,
     Direction as MoveDir,
@@ -318,6 +323,40 @@ pub trait DefaultContext: Sized + 'static {
   fn editor_ref(&self) -> &Editor;
   fn file_path(&self) -> Option<&Path>;
   fn request_render(&mut self);
+  fn messages(&self) -> &MessageCenter;
+  fn messages_mut(&mut self) -> &mut MessageCenter;
+  fn push_message(
+    &mut self,
+    level: MessageLevel,
+    source: impl Into<String>,
+    text: impl Into<String>,
+  ) -> Message {
+    let message = self
+      .messages_mut()
+      .publish(level, Some(source.into()), text.into());
+    self.request_render();
+    message
+  }
+  fn push_info(&mut self, source: impl Into<String>, text: impl Into<String>) -> Message {
+    self.push_message(MessageLevel::Info, source, text)
+  }
+  fn push_warning(&mut self, source: impl Into<String>, text: impl Into<String>) -> Message {
+    self.push_message(MessageLevel::Warning, source, text)
+  }
+  fn push_error(&mut self, source: impl Into<String>, text: impl Into<String>) -> Message {
+    self.push_message(MessageLevel::Error, source, text)
+  }
+  fn dismiss_active_message(&mut self) -> Option<Message> {
+    let message = self.messages_mut().dismiss_active();
+    if message.is_some() {
+      self.request_render();
+    }
+    message
+  }
+  fn clear_messages(&mut self) {
+    self.messages_mut().clear();
+    self.request_render();
+  }
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
     let loader_ptr = self.syntax_loader().map(|loader| loader as *const Loader);
     let doc = self.editor().document_mut();
@@ -970,7 +1009,9 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
           let registry = ctx.command_registry_ref() as *const CommandRegistry<Ctx>;
           let result = unsafe { (&*registry).execute(ctx, command, args, CommandEvent::Validate) };
           if let Err(err) = result {
-            ctx.command_prompt_mut().error = Some(err.to_string());
+            let message = err.to_string();
+            ctx.command_prompt_mut().error = Some(message.clone());
+            ctx.push_error("command", message);
           }
           ctx.request_render();
         }
@@ -1061,7 +1102,9 @@ fn submit_command_palette_selected<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
       true
     },
     Err(err) => {
-      ctx.command_prompt_mut().error = Some(err.to_string());
+      let message = err.to_string();
+      ctx.command_prompt_mut().error = Some(message.clone());
+      ctx.push_error("command_palette", message);
       ctx.request_render();
       false
     },
@@ -1974,11 +2017,18 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
 
 fn save<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
   let Some(path) = ctx.file_path().map(|path| path.to_path_buf()) else {
+    ctx.push_warning("save", "No file path set");
     return;
   };
   let text = ctx.editor().document().text().to_string();
-  let _ = std::fs::write(path, text);
-  let _ = ctx.editor().document_mut().mark_saved();
+  match std::fs::write(&path, text) {
+    Ok(()) => {
+      let _ = ctx.editor().document_mut().mark_saved();
+    },
+    Err(err) => {
+      ctx.push_error("save", format!("Failed to write {}: {err}", path.display()));
+    },
+  }
 }
 
 fn quit<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {

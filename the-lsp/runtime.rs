@@ -905,8 +905,17 @@ fn spawn_transport(
       Some(transport)
     },
     Err(err) => {
+      let args = if server.args().is_empty() {
+        String::new()
+      } else {
+        format!(" {}", server.args().join(" "))
+      };
+      let command_line = format!("{}{}", server.command(), args);
+      let path_preview = std::env::var("PATH")
+        .map(|path| clamp_for_log(&path, 240))
+        .unwrap_or_else(|_| "<unset>".to_string());
       let _ = event_tx.send(LspEvent::Error(format!(
-        "failed to start lsp server: {err}"
+        "failed to start lsp server '{command_line}': {err} (PATH={path_preview})"
       )));
       None
     },
@@ -975,4 +984,22 @@ fn restart_transport(
     warn!("lsp transport restarted");
   }
   restarted
+}
+
+fn clamp_for_log(value: &str, max_chars: usize) -> String {
+  if max_chars == 0 {
+    return String::new();
+  }
+  if value.chars().count() <= max_chars {
+    return value.to_string();
+  }
+  if max_chars == 1 {
+    return "…".to_string();
+  }
+  let mut out = String::new();
+  for ch in value.chars().take(max_chars - 1) {
+    out.push(ch);
+  }
+  out.push('…');
+  out
 }

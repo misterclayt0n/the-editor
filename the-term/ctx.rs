@@ -29,6 +29,7 @@ use std::{
   thread,
   time::{
     Duration,
+    Instant,
     SystemTime,
   },
 };
@@ -188,6 +189,38 @@ struct LspWatchedFileState {
   last_modified: Option<SystemTime>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LspStatusPhase {
+  Off,
+  Starting,
+  Initializing,
+  Ready,
+  Busy,
+  Error,
+}
+
+#[derive(Debug, Clone)]
+struct LspStatuslineState {
+  phase:  LspStatusPhase,
+  detail: Option<String>,
+}
+
+impl LspStatuslineState {
+  fn off(detail: Option<String>) -> Self {
+    Self {
+      phase: LspStatusPhase::Off,
+      detail,
+    }
+  }
+
+  fn is_loading(&self) -> bool {
+    matches!(
+      self.phase,
+      LspStatusPhase::Starting | LspStatusPhase::Initializing | LspStatusPhase::Busy
+    )
+  }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingLspRequestKind {
   GotoDefinition {
@@ -279,6 +312,7 @@ pub struct Ctx {
   pub messages:              MessageCenter,
   message_log:               Option<BufWriter<std::fs::File>>,
   message_log_seq:           u64,
+  lsp_trace_log:             Option<BufWriter<std::fs::File>>,
   pub file_picker_wake_rx:   Receiver<()>,
   pub mode:                  Mode,
   pub keymaps:               Keymaps,
@@ -290,6 +324,9 @@ pub struct Ctx {
   pub lsp_runtime:           LspRuntime,
   pub lsp_ready:             bool,
   pub lsp_document:          Option<LspDocumentSyncState>,
+  lsp_statusline:            LspStatuslineState,
+  lsp_spinner_index:         usize,
+  lsp_spinner_last_tick:     Instant,
   lsp_watched_file:          Option<LspWatchedFileState>,
   lsp_pending_requests:      HashMap<u64, PendingLspRequestKind>,
   pub diagnostics:           DiagnosticsState,
@@ -374,6 +411,44 @@ fn open_message_log() -> Option<BufWriter<std::fs::File>> {
     Err(err) => {
       eprintln!(
         "Warning: failed to open message log file '{}': {err}",
+        path.display()
+      );
+      None
+    },
+  }
+}
+
+fn resolve_lsp_trace_log_path() -> Option<PathBuf> {
+  match env::var("THE_EDITOR_LSP_TRACE_LOG") {
+    Ok(path) => {
+      let path = path.trim();
+      if path.is_empty() || path.eq_ignore_ascii_case("off") || path.eq_ignore_ascii_case("none") {
+        None
+      } else {
+        Some(PathBuf::from(path))
+      }
+    },
+    Err(_) => Some(PathBuf::from("/tmp/the-editor-lsp-trace.log")),
+  }
+}
+
+fn open_lsp_trace_log() -> Option<BufWriter<std::fs::File>> {
+  let path = resolve_lsp_trace_log_path()?;
+  if let Some(parent) = path.parent()
+    && let Err(err) = std::fs::create_dir_all(parent)
+  {
+    eprintln!(
+      "Warning: failed to create lsp trace directory '{}': {err}",
+      parent.display()
+    );
+    return None;
+  }
+
+  match OpenOptions::new().create(true).append(true).open(&path) {
+    Ok(file) => Some(BufWriter::new(file)),
+    Err(err) => {
+      eprintln!(
+        "Warning: failed to open lsp trace log '{}': {err}",
         path.display()
       );
       None
@@ -491,6 +566,7 @@ impl Ctx {
     let mut text_format = TextFormat::default();
     text_format.viewport_width = viewport.width;
     let message_log = open_message_log();
+    let lsp_trace_log = open_lsp_trace_log();
 
     let (file_picker_wake_tx, file_picker_wake_rx) = std::sync::mpsc::channel();
     let mut file_picker = FilePickerState::default();
@@ -525,6 +601,7 @@ impl Ctx {
     if let Some(server) = server_from_language.or_else(lsp_server_from_env) {
       lsp_runtime_config = lsp_runtime_config.with_server(server);
     }
+    let lsp_server_configured = lsp_runtime_config.server().is_some();
     let lsp_runtime = LspRuntime::new(lsp_runtime_config);
     let lsp_document = file_path
       .map(PathBuf::from)
@@ -539,6 +616,7 @@ impl Ctx {
       messages: MessageCenter::default(),
       message_log,
       message_log_seq: 0,
+      lsp_trace_log,
       file_picker_wake_rx,
       mode: Mode::Normal,
       keymaps: Keymaps::default(),
@@ -550,6 +628,16 @@ impl Ctx {
       lsp_runtime,
       lsp_ready: false,
       lsp_document,
+      lsp_statusline: if lsp_server_configured {
+        LspStatuslineState {
+          phase:  LspStatusPhase::Starting,
+          detail: Some("booting".into()),
+        }
+      } else {
+        LspStatuslineState::off(Some("unavailable".into()))
+      },
+      lsp_spinner_index: 0,
+      lsp_spinner_last_tick: Instant::now(),
       lsp_watched_file: None,
       lsp_pending_requests: HashMap::new(),
       diagnostics: DiagnosticsState::default(),
@@ -623,7 +711,40 @@ impl Ctx {
     self.lsp_ready = false;
     self.lsp_pending_requests.clear();
     self.lsp_sync_watched_file_state();
+    let path_preview = env::var("PATH")
+      .ok()
+      .map(|value| clamp_status_text(&value, 240));
+    if let Some(server) = self.lsp_runtime.config().server() {
+      self.log_lsp_trace_value(json!({
+        "ts_ms": SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|duration| duration.as_millis() as u64).unwrap_or(0),
+        "kind": "bootstrap",
+        "server": {
+          "name": server.name(),
+          "command": server.command(),
+          "args": server.args(),
+        },
+        "workspace_root": self.lsp_runtime.config().workspace_root(),
+        "env": {
+          "THE_EDITOR_LSP_COMMAND": env::var("THE_EDITOR_LSP_COMMAND").ok(),
+          "THE_EDITOR_LSP_ARGS": env::var("THE_EDITOR_LSP_ARGS").ok(),
+          "PATH": path_preview,
+        }
+      }));
+    } else {
+      self.log_lsp_trace_value(json!({
+        "ts_ms": SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|duration| duration.as_millis() as u64).unwrap_or(0),
+        "kind": "bootstrap",
+        "server": null,
+        "workspace_root": self.lsp_runtime.config().workspace_root(),
+      }));
+    }
+    if self.lsp_runtime.config().server().is_some() {
+      self.set_lsp_status(LspStatusPhase::Starting, Some("starting".into()));
+    } else {
+      self.set_lsp_status(LspStatusPhase::Off, Some("unavailable".into()));
+    }
     if let Err(err) = self.lsp_runtime.start() {
+      self.set_lsp_status_error(&err.to_string());
       eprintln!("Warning: failed to start LSP runtime: {err}");
     }
   }
@@ -632,6 +753,11 @@ impl Ctx {
     self.lsp_close_current_document();
     self.lsp_ready = false;
     self.lsp_pending_requests.clear();
+    self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
+    self.log_lsp_trace_value(json!({
+      "ts_ms": SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|duration| duration.as_millis() as u64).unwrap_or(0),
+      "kind": "shutdown",
+    }));
     self.lsp_watched_file = None;
     if let Err(err) = self.lsp_runtime.shutdown() {
       eprintln!("Warning: failed to stop LSP runtime: {err}");
@@ -684,10 +810,137 @@ impl Ctx {
     }
   }
 
+  fn log_lsp_trace_value(&mut self, entry: Value) {
+    let Some(writer) = self.lsp_trace_log.as_mut() else {
+      return;
+    };
+    let line = match serde_json::to_string(&entry) {
+      Ok(line) => line,
+      Err(err) => {
+        eprintln!("Warning: failed to serialize lsp trace entry: {err}");
+        self.lsp_trace_log = None;
+        return;
+      },
+    };
+    if let Err(err) = writeln!(writer, "{line}") {
+      eprintln!("Warning: failed to write lsp trace entry: {err}");
+      self.lsp_trace_log = None;
+      return;
+    }
+    if let Err(err) = writer.flush() {
+      eprintln!("Warning: failed to flush lsp trace log: {err}");
+      self.lsp_trace_log = None;
+    }
+  }
+
+  fn log_lsp_trace_event(&mut self, event: &LspEvent) {
+    let timestamp_ms = SystemTime::now()
+      .duration_since(SystemTime::UNIX_EPOCH)
+      .map(|duration| duration.as_millis() as u64)
+      .unwrap_or(0);
+    self.log_lsp_trace_value(json!({
+      "ts_ms": timestamp_ms,
+      "kind": "event",
+      "event": summarize_lsp_event(event),
+    }));
+  }
+
+  fn set_lsp_status(&mut self, phase: LspStatusPhase, detail: Option<String>) {
+    self.lsp_statusline = LspStatuslineState {
+      phase,
+      detail: detail.map(|value| clamp_status_text(&value, 28)),
+    };
+    if !self.lsp_statusline.is_loading() {
+      self.lsp_spinner_index = 0;
+    }
+  }
+
+  fn set_lsp_status_error(&mut self, message: &str) {
+    let summary = summarize_lsp_error(message);
+    self.set_lsp_status(LspStatusPhase::Error, Some(summary));
+  }
+
+  pub fn tick_lsp_statusline(&mut self) -> bool {
+    if !self.lsp_statusline.is_loading() {
+      return false;
+    }
+    let now = Instant::now();
+    if now.duration_since(self.lsp_spinner_last_tick) < Duration::from_millis(120) {
+      return false;
+    }
+    self.lsp_spinner_last_tick = now;
+    self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 4;
+    true
+  }
+
+  fn lsp_statusline_text_value(&self) -> Option<String> {
+    let has_server = self.lsp_runtime.config().server().is_some();
+    if !has_server && matches!(self.lsp_statusline.phase, LspStatusPhase::Off) {
+      return Some("lsp: unavailable".to_string());
+    }
+
+    let detail = self.lsp_statusline.detail.clone().unwrap_or_default();
+    let text = match self.lsp_statusline.phase {
+      LspStatusPhase::Off => {
+        if detail.is_empty() {
+          "lsp: off".to_string()
+        } else {
+          format!("lsp: {detail}")
+        }
+      },
+      LspStatusPhase::Starting => {
+        format!(
+          "lsp {} {}",
+          spinner_frame(self.lsp_spinner_index),
+          detail_if_empty(detail, "starting")
+        )
+      },
+      LspStatusPhase::Initializing => {
+        format!(
+          "lsp {} {}",
+          spinner_frame(self.lsp_spinner_index),
+          detail_if_empty(detail, "initializing")
+        )
+      },
+      LspStatusPhase::Ready => {
+        if detail.is_empty() {
+          "lsp: ready".to_string()
+        } else {
+          format!("lsp: ready ({detail})")
+        }
+      },
+      LspStatusPhase::Busy => {
+        format!(
+          "lsp {} {}",
+          spinner_frame(self.lsp_spinner_index),
+          detail_if_empty(detail, "working")
+        )
+      },
+      LspStatusPhase::Error => {
+        if detail.is_empty() {
+          "lsp: error".to_string()
+        } else {
+          format!("lsp: error ({detail})")
+        }
+      },
+    };
+
+    Some(clamp_status_text(&text, 36))
+  }
+
   pub fn poll_lsp_events(&mut self) -> bool {
     let mut needs_render = false;
     while let Some(event) = self.lsp_runtime.try_recv_event() {
+      self.log_lsp_trace_event(&event);
       match event {
+        LspEvent::Started { .. } => {
+          if self.lsp_runtime.config().server().is_none() {
+            self.set_lsp_status(LspStatusPhase::Off, Some("unavailable".into()));
+          } else {
+            self.set_lsp_status(LspStatusPhase::Starting, Some("starting".into()));
+          }
+          needs_render = true;
+        },
         LspEvent::CapabilitiesRegistered { server_name } => {
           let matches_configured_server = self
             .lsp_runtime
@@ -697,14 +950,23 @@ impl Ctx {
           if matches_configured_server {
             self.lsp_ready = true;
             self.lsp_open_current_document();
+            self.set_lsp_status(LspStatusPhase::Ready, Some(server_name));
             needs_render = true;
           }
         },
-        LspEvent::ServerStarted { .. } => {
+        LspEvent::ServerStarted { server_name, .. } => {
           self.lsp_ready = false;
           self.lsp_pending_requests.clear();
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
+          }
+          self.set_lsp_status(LspStatusPhase::Starting, Some(server_name));
+          needs_render = true;
+        },
+        LspEvent::RequestDispatched { method, .. } => {
+          if method == "initialize" {
+            self.set_lsp_status(LspStatusPhase::Initializing, Some("initializing".into()));
+            needs_render = true;
           }
         },
         LspEvent::ServerStopped { .. } | LspEvent::Stopped => {
@@ -713,6 +975,12 @@ impl Ctx {
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
           }
+          if self.lsp_runtime.config().server().is_some() {
+            self.set_lsp_status(LspStatusPhase::Starting, Some("restarting".into()));
+          } else {
+            self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
+          }
+          needs_render = true;
         },
         LspEvent::RpcMessage { message } => {
           needs_render |= self.handle_lsp_rpc_message(message);
@@ -731,6 +999,7 @@ impl Ctx {
               format!("lsp {method} timed out"),
             );
           }
+          self.set_lsp_status(LspStatusPhase::Error, Some("request timeout".into()));
           needs_render = true;
         },
         LspEvent::Progress { progress } => {
@@ -742,12 +1011,16 @@ impl Ctx {
                 .as_deref()
                 .map(|message| format!("{title}: {message}"))
                 .unwrap_or(title);
+              self.set_lsp_status(LspStatusPhase::Busy, Some(text.clone()));
               self
                 .messages
                 .publish(MessageLevel::Info, Some("lsp".into()), text);
               needs_render = true;
             },
             LspProgressKind::End => {
+              if self.lsp_ready {
+                self.set_lsp_status(LspStatusPhase::Ready, None);
+              }
               if let Some(message) = progress.message {
                 self
                   .messages
@@ -759,6 +1032,7 @@ impl Ctx {
           }
         },
         LspEvent::Error(message) => {
+          self.set_lsp_status_error(&message);
           self
             .messages
             .publish(MessageLevel::Error, Some("lsp".into()), message);
@@ -1765,6 +2039,178 @@ fn file_watch_snapshot(path: &Path) -> (bool, Option<SystemTime>) {
   (exists, last_modified)
 }
 
+fn summarize_lsp_event(event: &LspEvent) -> Value {
+  match event {
+    LspEvent::Started { workspace_root } => {
+      json!({
+        "name": "started",
+        "workspace_root": workspace_root,
+      })
+    },
+    LspEvent::ServerStarted {
+      server_name,
+      command,
+      args,
+    } => {
+      json!({
+        "name": "server_started",
+        "server": server_name,
+        "command": command,
+        "args": args,
+      })
+    },
+    LspEvent::ServerStopped { exit_code } => {
+      json!({
+        "name": "server_stopped",
+        "exit_code": exit_code,
+      })
+    },
+    LspEvent::CapabilitiesRegistered { server_name } => {
+      json!({
+        "name": "capabilities_registered",
+        "server": server_name,
+      })
+    },
+    LspEvent::RequestDispatched { id, method } => {
+      json!({
+        "name": "request_dispatched",
+        "id": id,
+        "method": method,
+      })
+    },
+    LspEvent::RequestCompleted { id } => {
+      json!({
+        "name": "request_completed",
+        "id": id,
+      })
+    },
+    LspEvent::RequestTimedOut { id, method } => {
+      json!({
+        "name": "request_timed_out",
+        "id": id,
+        "method": method,
+      })
+    },
+    LspEvent::DiagnosticsPublished { diagnostics } => {
+      json!({
+        "name": "diagnostics_published",
+        "uri": diagnostics.uri,
+        "count": diagnostics.diagnostics.len(),
+      })
+    },
+    LspEvent::Progress { progress } => {
+      json!({
+        "name": "progress",
+        "token": progress.token,
+        "phase": format!("{:?}", progress.kind).to_lowercase(),
+        "title": progress.title,
+        "message": progress.message,
+        "percentage": progress.percentage,
+      })
+    },
+    LspEvent::RpcMessage { message } => {
+      json!({
+        "name": "rpc_message",
+        "summary": summarize_rpc_message(message),
+      })
+    },
+    LspEvent::ServerStderr { line } => {
+      json!({
+        "name": "server_stderr",
+        "line": line,
+      })
+    },
+    LspEvent::Stopped => {
+      json!({
+        "name": "stopped",
+      })
+    },
+    LspEvent::Error(message) => {
+      json!({
+        "name": "error",
+        "message": message,
+      })
+    },
+  }
+}
+
+fn summarize_rpc_message(message: &jsonrpc::Message) -> Value {
+  match message {
+    jsonrpc::Message::Request(request) => {
+      json!({
+        "type": "request",
+        "id": summarize_jsonrpc_id(&request.id),
+        "method": request.method,
+      })
+    },
+    jsonrpc::Message::Notification(notification) => {
+      json!({
+        "type": "notification",
+        "method": notification.method,
+      })
+    },
+    jsonrpc::Message::Response(response) => {
+      json!({
+        "type": "response",
+        "id": summarize_jsonrpc_id(&response.id),
+        "is_error": response.error.is_some(),
+      })
+    },
+  }
+}
+
+fn summarize_jsonrpc_id(id: &jsonrpc::Id) -> Value {
+  match id {
+    jsonrpc::Id::Null => Value::Null,
+    jsonrpc::Id::Number(number) => json!(number),
+    jsonrpc::Id::String(value) => json!(value),
+  }
+}
+
+fn spinner_frame(index: usize) -> char {
+  const FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+  FRAMES[index % FRAMES.len()]
+}
+
+fn detail_if_empty(detail: String, fallback: &str) -> String {
+  if detail.is_empty() {
+    fallback.to_string()
+  } else {
+    detail
+  }
+}
+
+fn clamp_status_text(text: &str, max_chars: usize) -> String {
+  if max_chars == 0 {
+    return String::new();
+  }
+  if text.chars().count() <= max_chars {
+    return text.to_string();
+  }
+  if max_chars == 1 {
+    return "…".to_string();
+  }
+  let mut out = String::new();
+  for ch in text.chars().take(max_chars - 1) {
+    out.push(ch);
+  }
+  out.push('…');
+  out
+}
+
+fn summarize_lsp_error(message: &str) -> String {
+  if message.contains("No such file or directory") {
+    return "command not found".to_string();
+  }
+  if message.contains("server closed stdio") || message.contains("closed the stream") {
+    return "server exited".to_string();
+  }
+  if message.contains("initialize request timed out") {
+    return "initialize timeout".to_string();
+  }
+  clamp_status_text(message, 24)
+}
+
 fn diagnostic_severity_to_lsp_code(severity: DiagnosticSeverity) -> u8 {
   match severity {
     DiagnosticSeverity::Error => 1,
@@ -1848,6 +2294,10 @@ impl the_default::DefaultContext for Ctx {
 
   fn message_presentation(&self) -> MessagePresentation {
     MessagePresentation::InlineStatusline
+  }
+
+  fn lsp_statusline_text(&self) -> Option<String> {
+    self.lsp_statusline_text_value()
   }
 
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {

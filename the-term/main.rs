@@ -140,6 +140,9 @@ fn main() -> Result<()> {
     }
 
     ctx.poll_lsp_file_watch();
+    if ctx.tick_lsp_statusline() {
+      ctx.needs_render = true;
+    }
     ctx.flush_message_log();
 
     // Render if needed

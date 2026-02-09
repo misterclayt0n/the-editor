@@ -361,6 +361,9 @@ pub trait DefaultContext: Sized + 'static {
   fn message_presentation(&self) -> MessagePresentation {
     MessagePresentation::InlineStatusline
   }
+  fn lsp_statusline_text(&self) -> Option<String> {
+    None
+  }
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
     let loader_ptr = self.syntax_loader().map(|loader| loader as *const Loader);
     let doc = self.editor().document_mut();

@@ -30,6 +30,7 @@ pub fn statusline_present(tree: &the_lib::render::UiTree) -> bool {
 pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
   let viewport_width = ctx.editor_ref().view().viewport.width as usize;
   let pending_keys = pending_keys_text(ctx);
+  let lsp_part = ctx.lsp_statusline_text().filter(|text| !text.is_empty());
   let doc = ctx.editor_ref().document();
   let slice = doc.text().slice(..);
   let selection = doc.selection();
@@ -72,6 +73,9 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
       if let Some(pending) = pending_part.as_ref() {
         budget = budget.saturating_sub(pending.chars().count() + 2);
       }
+      if let Some(lsp) = lsp_part.as_ref() {
+        budget = budget.saturating_sub(lsp.chars().count() + 2);
+      }
       let clamped = clamp_with_ellipsis(&message, budget.min(96));
       if clamped.is_empty() {
         None
@@ -83,6 +87,9 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
   let mut right_parts = Vec::new();
   if let Some(pending) = pending_part {
     right_parts.push(pending);
+  }
+  if let Some(lsp) = lsp_part {
+    right_parts.push(lsp);
   }
   if let Some(message) = message_part {
     right_parts.push(message);

@@ -1,7 +1,7 @@
 use the_core::chars::{
-  byte_to_char_idx,
   next_char_boundary,
   prev_char_boundary,
+  byte_to_char_idx,
 };
 use the_lib::{
   movement::{
@@ -9,11 +9,15 @@ use the_lib::{
     Movement,
   },
   render::{
+    UiAlign,
+    UiAlignPair,
     UiColor,
     UiColorToken,
+    UiConstraints,
     UiContainer,
     UiDivider,
     UiEmphasis,
+    UiInsets,
     UiInput,
     UiList,
     UiListItem,
@@ -403,25 +407,9 @@ pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode>
     return Vec::new();
   }
 
-  let prefix = match prompt.direction {
-    Direction::Forward => "/",
-    Direction::Backward => "?",
-    _ => "/",
-  };
-
-  let value = if prompt.query.is_empty() {
-    String::new()
-  } else {
-    format!("{prefix}{}", prompt.query)
-  };
-
-  let mut input = UiInput::new("search_prompt_input", value);
-  input.placeholder = Some(format!("{prefix}search"));
-  input.cursor = if prompt.query.is_empty() {
-    1
-  } else {
-    prefix.len() + byte_to_char_idx(&prompt.query, prompt.cursor)
-  };
+  let mut input = UiInput::new("search_prompt_input", prompt.query.clone());
+  input.placeholder = Some("search".to_string());
+  input.cursor = byte_to_char_idx(&prompt.query, prompt.cursor);
   input.style = input.style.with_role("search_prompt");
   input.style.accent = Some(UiColor::Token(UiColorToken::Placeholder));
 
@@ -461,8 +449,24 @@ pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode>
   container.style = container.style.with_role("search_prompt");
   let container = UiNode::Container(container);
 
-  let mut panel = UiPanel::bottom("search_prompt", container);
+  let mut panel = UiPanel::floating("search_prompt", container);
   panel.style = panel.style.with_role("search_prompt");
+  panel.constraints = UiConstraints {
+    min_width:  Some(50),
+    max_width:  Some(65),
+    min_height: None,
+    max_height: None,
+    padding:    UiInsets {
+      left:   1,
+      right:  1,
+      top:    0,
+      bottom: 0,
+    },
+    align: UiAlignPair {
+      horizontal: UiAlign::Center,
+      vertical:   UiAlign::Center,
+    },
+  };
 
   vec![UiNode::Panel(panel)]
 }

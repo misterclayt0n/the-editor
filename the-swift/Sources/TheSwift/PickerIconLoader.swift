@@ -1,4 +1,5 @@
 import AppKit
+import Foundation
 import SwiftUI
 
 enum PickerIconLoader {
@@ -55,12 +56,23 @@ private final class SvgIconCache {
             for root in iconDirectories {
                 let url = root.appendingPathComponent(candidate).appendingPathExtension("svg")
                 guard FileManager.default.fileExists(atPath: url.path) else { continue }
-                guard let image = NSImage(contentsOf: url) else { continue }
+                guard let image = loadSvgImage(from: url) else { continue }
                 image.isTemplate = true
                 return image
             }
         }
         return nil
+    }
+
+    private func loadSvgImage(from url: URL) -> NSImage? {
+        guard let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        if let pngData = createPngDataFromSvgData(data),
+           let image = NSImage(data: pngData as Data) {
+            return image
+        }
+        return NSImage(data: data)
     }
 
     private static func resolveIconDirectories() -> [URL] {
@@ -77,21 +89,51 @@ private final class SvgIconCache {
             }
         }
 
+        if let explicitPath = ProcessInfo.processInfo.environment["THE_SWIFT_ICON_DIR"] {
+            append(URL(fileURLWithPath: explicitPath, isDirectory: true))
+        }
+
         if let resourceURL = Bundle.module.resourceURL {
             append(resourceURL.appendingPathComponent("icons", isDirectory: true))
             append(resourceURL)
+            appendCandidates(from: resourceURL)
+        }
+        if let mainResourceURL = Bundle.main.resourceURL {
+            append(mainResourceURL.appendingPathComponent("icons", isDirectory: true))
+            append(mainResourceURL.appendingPathComponent("assets/icons", isDirectory: true))
+            appendCandidates(from: mainResourceURL)
         }
 
         let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        append(cwd.appendingPathComponent("assets/icons", isDirectory: true))
-        append(cwd.appendingPathComponent("../assets/icons", isDirectory: true))
-        append(cwd.appendingPathComponent("../../assets/icons", isDirectory: true))
+        appendCandidates(from: cwd)
 
         let sourceDir = URL(fileURLWithPath: #filePath, isDirectory: false)
             .deletingLastPathComponent()
         append(sourceDir.appendingPathComponent("Resources/icons", isDirectory: true))
-        append(sourceDir.appendingPathComponent("../../../../assets/icons", isDirectory: true))
+        append(sourceDir.appendingPathComponent("../../../assets/icons", isDirectory: true))
+        appendCandidates(from: sourceDir)
 
         return dirs
+
+        func appendCandidates(from start: URL, maxDepth: Int = 8) {
+            var current = start.standardizedFileURL
+            for _ in 0..<maxDepth {
+                append(current.appendingPathComponent("assets/icons", isDirectory: true))
+                append(current.appendingPathComponent("icons", isDirectory: true))
+                let parent = current.deletingLastPathComponent()
+                if parent.path == current.path {
+                    break
+                }
+                current = parent
+            }
+        }
     }
+}
+
+// ImageIO exports this symbol on modern macOS and it reliably converts SVG bytes to PNG bytes.
+@_silgen_name("CGCreatePNGDataFromSVGData")
+private func cgCreatePngDataFromSvgData(_ data: CFData, _ options: CFDictionary?) -> Unmanaged<CFData>?
+
+private func createPngDataFromSvgData(_ data: Data) -> CFData? {
+    cgCreatePngDataFromSvgData(data as CFData, nil)?.takeRetainedValue()
 }

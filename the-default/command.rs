@@ -126,6 +126,7 @@ use crate::{
     ParseKeyBindingError,
     handle_key as keymap_handle_key,
   },
+  message_bar::MessagePresentation,
 };
 
 define! {
@@ -356,6 +357,9 @@ pub trait DefaultContext: Sized + 'static {
   fn clear_messages(&mut self) {
     self.messages_mut().clear();
     self.request_render();
+  }
+  fn message_presentation(&self) -> MessagePresentation {
+    MessagePresentation::InlineStatusline
   }
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
     let loader_ptr = self.syntax_loader().map(|loader| loader as *const Loader);

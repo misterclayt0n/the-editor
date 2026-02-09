@@ -57,6 +57,7 @@ use the_default::{
   KeyBinding,
   KeyEvent,
   Keymaps,
+  MessagePresentation,
   Mode,
   Motion,
   SearchPromptState,
@@ -964,6 +965,24 @@ impl App {
     serde_json::to_string(&tree).unwrap_or_else(|_| "{}".to_string())
   }
 
+  pub fn message_snapshot_json(&mut self, id: ffi::EditorId) -> String {
+    if self.activate(id).is_none() {
+      return "{}".to_string();
+    }
+
+    let snapshot = self.active_state_ref().messages.snapshot();
+    serde_json::to_string(&snapshot).unwrap_or_else(|_| "{}".to_string())
+  }
+
+  pub fn message_events_since_json(&mut self, id: ffi::EditorId, seq: u64) -> String {
+    if self.activate(id).is_none() {
+      return "[]".to_string();
+    }
+
+    let events = self.active_state_ref().messages.events_since(seq);
+    serde_json::to_string(&events).unwrap_or_else(|_| "[]".to_string())
+  }
+
   pub fn ui_event_json(&mut self, id: ffi::EditorId, event_json: &str) -> bool {
     if self.activate(id).is_none() {
       return false;
@@ -1828,6 +1847,10 @@ impl DefaultContext for App {
     &mut self.active_state_mut().messages
   }
 
+  fn message_presentation(&self) -> MessagePresentation {
+    MessagePresentation::Hidden
+  }
+
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
     let Some(editor_id) = self.active_editor else {
       return false;
@@ -2372,6 +2395,8 @@ mod ffi {
     fn render_plan(self: &mut App, id: EditorId) -> RenderPlan;
     fn render_plan_with_styles(self: &mut App, id: EditorId, styles: RenderStyles) -> RenderPlan;
     fn ui_tree_json(self: &mut App, id: EditorId) -> String;
+    fn message_snapshot_json(self: &mut App, id: EditorId) -> String;
+    fn message_events_since_json(self: &mut App, id: EditorId, seq: u64) -> String;
     fn ui_event_json(self: &mut App, id: EditorId, event_json: &str) -> bool;
     fn text(self: &App, id: EditorId) -> String;
     fn mode(self: &App, id: EditorId) -> u8;

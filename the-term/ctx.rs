@@ -35,6 +35,7 @@ use the_default::{
   KeyBinding,
   KeyEvent,
   Keymaps,
+  MessagePresentation,
   Mode,
   Motion,
 };
@@ -319,6 +320,10 @@ impl the_default::DefaultContext for Ctx {
 
   fn messages_mut(&mut self) -> &mut MessageCenter {
     &mut self.messages
+  }
+
+  fn message_presentation(&self) -> MessagePresentation {
+    MessagePresentation::InlineStatusline
   }
 
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {

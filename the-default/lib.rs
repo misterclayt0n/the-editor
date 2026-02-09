@@ -10,6 +10,7 @@ mod command_types;
 mod file_picker;
 mod input;
 mod keymap;
+mod message_bar;
 mod pending;
 mod search_prompt;
 mod statusline;
@@ -99,6 +100,10 @@ pub use keymap::{
   Mode,
   action_from_name,
   default,
+};
+pub use message_bar::{
+  MessagePresentation,
+  build_message_bar_ui,
 };
 pub use pending::PendingInput;
 pub use search_prompt::{

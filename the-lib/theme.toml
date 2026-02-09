@@ -89,6 +89,10 @@ tabstop = { bg = "bossanova", modifiers = [ "italic" ] }
 "ui.search_prompt.list.selected"   = { bg = "white", fg = "revolver" }
 "ui.search_prompt.panel.border"    = { fg = "comet" }
 
+"ui.message_error"   = { bg = "revolver", fg = "apricot" }
+"ui.message_info"    = { bg = "revolver", fg = "lavender" }
+"ui.message_warning" = { bg = "revolver", fg = "honey" }
+
 "diagnostic.deprecated"  = { modifiers = [ "crossed_out" ] }
 "diagnostic.error"       = { underline = { color = "apricot", style = "curl" } }
 "diagnostic.hint"        = { underline = { color = "silver", style = "curl" } }

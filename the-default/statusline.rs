@@ -12,6 +12,7 @@ use the_lib::render::{
 use crate::{
   DefaultContext,
   Mode,
+  message_bar::inline_statusline_message,
 };
 
 pub const STATUSLINE_ID: &str = "statusline";
@@ -65,7 +66,7 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
   let status = UiStatusBar {
     id: Some(STATUSLINE_ID.to_string()),
     left,
-    center: String::new(),
+    center: inline_statusline_message(ctx).unwrap_or_default(),
     right,
     style: UiStyle::default().with_role("statusline"),
   };

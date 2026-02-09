@@ -836,14 +836,10 @@ fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
     tree.focus = Some(focus.clone());
     ctx.ui_state_mut().set_focus(Some(focus));
   } else if ctx.search_prompt_ref().active {
-    let cursor = if ctx.search_prompt_ref().query.is_empty() {
-      1
-    } else {
-      1 + byte_to_char_idx(
-        &ctx.search_prompt_ref().query,
-        ctx.search_prompt_ref().cursor,
-      )
-    };
+    let cursor = byte_to_char_idx(
+      &ctx.search_prompt_ref().query,
+      ctx.search_prompt_ref().cursor,
+    );
     let focus = UiFocus {
       id:     "search_prompt_input".to_string(),
       kind:   UiFocusKind::Input,

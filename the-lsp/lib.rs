@@ -1,5 +1,6 @@
 mod capabilities;
 mod command;
+mod diagnostics;
 mod event;
 pub mod jsonrpc;
 mod runtime;
@@ -14,6 +15,10 @@ pub use capabilities::{
   TextDocumentSyncOptions,
 };
 pub use command::LspCommand;
+pub use diagnostics::{
+  PublishDiagnosticsError,
+  parse_publish_diagnostics,
+};
 pub use event::LspEvent;
 pub use runtime::{
   LspRuntime,

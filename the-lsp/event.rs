@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use the_lib::diagnostics::DocumentDiagnostics;
+
 use crate::jsonrpc;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,6 +26,9 @@ pub enum LspEvent {
   },
   RequestCompleted {
     id: u64,
+  },
+  DiagnosticsPublished {
+    diagnostics: DocumentDiagnostics,
   },
   RpcMessage {
     message: jsonrpc::Message,

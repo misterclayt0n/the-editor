@@ -45,6 +45,7 @@ use crate::{
     CapabilityRegistry,
     ServerCapabilitiesSnapshot,
   },
+  diagnostics::parse_publish_diagnostics,
   jsonrpc,
   text_sync::file_uri_for_path,
   transport::{
@@ -406,6 +407,7 @@ fn run_worker(
               &capabilities,
               &mut pending_requests,
             );
+            handle_notification_message(&message, &event_tx);
             let _ = event_tx.send(LspEvent::RpcMessage { message });
           },
           TransportEvent::Stderr(line) => {
@@ -564,6 +566,27 @@ fn handle_rpc_message(
       }
     },
     PendingRequestKind::Other => {},
+  }
+}
+
+fn handle_notification_message(message: &jsonrpc::Message, event_tx: &Sender<LspEvent>) {
+  let jsonrpc::Message::Notification(notification) = message else {
+    return;
+  };
+
+  if notification.method != "textDocument/publishDiagnostics" {
+    return;
+  }
+
+  match parse_publish_diagnostics(notification.params.as_ref()) {
+    Ok(diagnostics) => {
+      let _ = event_tx.send(LspEvent::DiagnosticsPublished { diagnostics });
+    },
+    Err(err) => {
+      let _ = event_tx.send(LspEvent::Error(format!(
+        "failed to parse publishDiagnostics: {err}"
+      )));
+    },
   }
 }
 

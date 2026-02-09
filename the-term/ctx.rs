@@ -40,6 +40,10 @@ use the_default::{
   Motion,
 };
 use the_lib::{
+  diagnostics::{
+    DiagnosticCounts,
+    DiagnosticsState,
+  },
   document::{
     Document,
     DocumentId,
@@ -141,6 +145,7 @@ pub struct Ctx {
   pub lsp_runtime:           LspRuntime,
   pub lsp_ready:             bool,
   pub lsp_document:          Option<LspDocumentSyncState>,
+  pub diagnostics:           DiagnosticsState,
   pub file_picker_layout:    Option<FilePickerLayout>,
   pub file_picker_drag:      Option<FilePickerDragState>,
   pub search_prompt:         the_default::SearchPromptState,
@@ -354,6 +359,7 @@ impl Ctx {
       lsp_runtime,
       lsp_ready: false,
       lsp_document,
+      diagnostics: DiagnosticsState::default(),
       file_picker_layout: None,
       file_picker_drag: None,
       search_prompt: the_default::SearchPromptState::new(),
@@ -468,6 +474,20 @@ impl Ctx {
             .messages
             .publish(MessageLevel::Error, Some("lsp".into()), message);
           needs_render = true;
+        },
+        LspEvent::DiagnosticsPublished { diagnostics } => {
+          let diagnostic_uri = diagnostics.uri.clone();
+          let active_uri = self.lsp_document.as_ref().map(|state| state.uri.as_str());
+          let previous_counts = self
+            .diagnostics
+            .document(&diagnostic_uri)
+            .map(|document| document.counts())
+            .unwrap_or_default();
+          let next_counts = self.diagnostics.apply_document(diagnostics);
+          if active_uri.is_some_and(|uri| uri == diagnostic_uri) && previous_counts != next_counts {
+            self.publish_lsp_diagnostic_message(next_counts);
+            needs_render = true;
+          }
         },
         _ => {},
       }
@@ -604,6 +624,25 @@ impl Ctx {
   fn lsp_refresh_document_state(&mut self, path: Option<&Path>) {
     self.lsp_document =
       path.and_then(|path| build_lsp_document_state(path, self.loader.as_deref()));
+  }
+
+  fn publish_lsp_diagnostic_message(&mut self, counts: DiagnosticCounts) {
+    let text = if counts.total == 0 {
+      "diagnostics cleared".to_string()
+    } else {
+      format!(
+        "diagnostics: {} error(s), {} warning(s), {} info, {} hint(s)",
+        counts.errors, counts.warnings, counts.information, counts.hints
+      )
+    };
+    let level = if counts.errors > 0 {
+      MessageLevel::Error
+    } else if counts.warnings > 0 {
+      MessageLevel::Warning
+    } else {
+      MessageLevel::Info
+    };
+    self.messages.publish(level, Some("lsp".into()), text);
   }
 }
 

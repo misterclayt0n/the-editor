@@ -175,7 +175,7 @@ fn lsp_server_from_env() -> Option<LspServerConfig> {
     return None;
   }
 
-  let mut server = LspServerConfig::new(command);
+  let mut server = LspServerConfig::new(command.clone(), command);
   if let Ok(args) = env::var("THE_EDITOR_LSP_ARGS") {
     let args: Vec<String> = args.split_whitespace().map(ToOwned::to_owned).collect();
     if !args.is_empty() {
@@ -184,6 +184,27 @@ fn lsp_server_from_env() -> Option<LspServerConfig> {
   }
 
   Some(server)
+}
+
+fn lsp_server_from_language_config(loader: &Loader, path: &Path) -> Option<LspServerConfig> {
+  let language = loader.language_for_filename(path)?;
+  let language_config = loader.language(language).config();
+  let server_features = language_config.services.language_servers.first()?;
+  let server_name = server_features.name.clone();
+  let server_config = loader.language_server_configs().get(&server_name)?;
+
+  Some(
+    LspServerConfig::new(server_name, server_config.command.clone())
+      .with_args(server_config.args.clone())
+      .with_env(
+        server_config
+          .environment
+          .iter()
+          .map(|(key, value)| (key.clone(), value.clone())),
+      )
+      .with_initialize_options(server_config.config.clone())
+      .with_initialize_timeout(Duration::from_secs(server_config.timeout)),
+  )
 }
 
 impl Ctx {
@@ -255,7 +276,12 @@ impl Ctx {
       .map(|path| the_loader::find_workspace_in(path).0)
       .unwrap_or_else(|| the_loader::find_workspace().0);
     let mut lsp_runtime_config = LspRuntimeConfig::new(workspace_root);
-    if let Some(server) = lsp_server_from_env() {
+    let server_from_language = file_path.map(Path::new).and_then(|path| {
+      loader
+        .as_deref()
+        .and_then(|loader| lsp_server_from_language_config(loader, path))
+    });
+    if let Some(server) = server_from_language.or_else(lsp_server_from_env) {
       lsp_runtime_config = lsp_runtime_config.with_server(server);
     }
     let lsp_runtime = LspRuntime::new(lsp_runtime_config);

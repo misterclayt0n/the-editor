@@ -8,11 +8,15 @@ pub enum LspEvent {
     workspace_root: PathBuf,
   },
   ServerStarted {
-    command: String,
-    args:    Vec<String>,
+    server_name: String,
+    command:     String,
+    args:        Vec<String>,
   },
   ServerStopped {
     exit_code: Option<i32>,
+  },
+  CapabilitiesRegistered {
+    server_name: String,
   },
   RequestDispatched {
     id:     u64,

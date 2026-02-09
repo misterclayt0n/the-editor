@@ -28,6 +28,7 @@ pub fn statusline_present(tree: &the_lib::render::UiTree) -> bool {
 }
 
 pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
+  let pending_keys = pending_keys_text(ctx);
   let doc = ctx.editor_ref().document();
   let slice = doc.text().slice(..);
   let selection = doc.selection();
@@ -57,16 +58,20 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
     left.push_str(" [RO]");
   }
 
-  let right = if selection.ranges().len() > 1 {
+  let cursor_text = if selection.ranges().len() > 1 {
     format!("{} sel  {line}:{col}", selection.ranges().len())
   } else {
     format!("{line}:{col}")
   };
-  let right = if let Some(message) = inline_statusline_message(ctx).filter(|m| !m.is_empty()) {
-    format!("{message}  {right}")
-  } else {
-    right
-  };
+  let mut right_parts = Vec::new();
+  if let Some(pending) = pending_keys.filter(|pending| !pending.is_empty()) {
+    right_parts.push(pending);
+  }
+  if let Some(message) = inline_statusline_message(ctx).filter(|message| !message.is_empty()) {
+    right_parts.push(message);
+  }
+  right_parts.push(cursor_text);
+  let right = right_parts.join("  ");
 
   let status = UiStatusBar {
     id: Some(STATUSLINE_ID.to_string()),
@@ -106,4 +111,18 @@ fn mode_label(mode: Mode) -> &'static str {
     Mode::Select => "SEL",
     Mode::Command => "CMD",
   }
+}
+
+fn pending_keys_text<Ctx: DefaultContext>(ctx: &mut Ctx) -> Option<String> {
+  let pending = ctx.keymaps().pending();
+  if pending.is_empty() {
+    return None;
+  }
+  Some(
+    pending
+      .iter()
+      .map(ToString::to_string)
+      .collect::<Vec<_>>()
+      .join(" "),
+  )
 }

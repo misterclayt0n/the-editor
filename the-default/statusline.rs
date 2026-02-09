@@ -62,11 +62,16 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
   } else {
     format!("{line}:{col}")
   };
+  let right = if let Some(message) = inline_statusline_message(ctx).filter(|m| !m.is_empty()) {
+    format!("{message}  {right}")
+  } else {
+    right
+  };
 
   let status = UiStatusBar {
     id: Some(STATUSLINE_ID.to_string()),
     left,
-    center: inline_statusline_message(ctx).unwrap_or_default(),
+    center: String::new(),
     right,
     style: UiStyle::default().with_role("statusline"),
   };

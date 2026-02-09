@@ -16,7 +16,11 @@ private final class SvgIconCache {
     private var images: [String: NSImage] = [:]
     private var missing: Set<String> = []
     private let lock = NSLock()
-    private let iconDirectories: [URL] = Self.resolveIconDirectories()
+    private let iconDirectories: [URL]
+
+    init() {
+        iconDirectories = SvgIconCache.resolveIconDirectories()
+    }
 
     func image(named icon: String) -> NSImage? {
         let key = icon.trimmingCharacters(in: .whitespacesAndNewlines)

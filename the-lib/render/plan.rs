@@ -401,6 +401,7 @@ fn add_selections_and_cursor<'a>(
   view: ViewState,
   styles: RenderStyles,
 ) {
+  let row_visible_end_cols = visible_line_end_cols(plan);
   let selection = doc.selection();
   let cursor_kind = CursorKind::Block;
 
@@ -418,7 +419,7 @@ fn add_selections_and_cursor<'a>(
         continue;
       };
 
-      push_selection_rects(plan, start, end, styles.selection);
+      push_selection_rects(plan, start, end, styles.selection, &row_visible_end_cols);
     }
 
     let cursor_pos = range.cursor(doc.text().slice(..));
@@ -458,7 +459,44 @@ fn clamp_position(plan: &RenderPlan, pos: Position) -> Option<Position> {
   Some(Position::new(pos.row - row_start, pos.col - col_start))
 }
 
-fn push_selection_rects(plan: &mut RenderPlan, start: Position, end: Position, style: Style) {
+fn visible_line_end_cols(plan: &RenderPlan) -> Vec<usize> {
+  let mut row_end_cols = vec![plan.scroll.col; plan.viewport.height as usize];
+  for line in &plan.lines {
+    let row = line.row as usize;
+    if row >= row_end_cols.len() {
+      continue;
+    }
+
+    let end_col = line
+      .spans
+      .iter()
+      .map(|span| plan.scroll.col + span.end_col() as usize)
+      .max()
+      .unwrap_or(plan.scroll.col);
+    row_end_cols[row] = row_end_cols[row].max(end_col);
+  }
+  row_end_cols
+}
+
+fn row_visible_end_col(plan: &RenderPlan, row: usize, row_visible_end_cols: &[usize]) -> usize {
+  let row_start = plan.scroll.row;
+  let col_start = plan.scroll.col;
+  let col_end = col_start + plan.viewport.width as usize;
+  let relative = row.saturating_sub(row_start);
+  row_visible_end_cols
+    .get(relative)
+    .copied()
+    .unwrap_or(col_start)
+    .min(col_end)
+}
+
+fn push_selection_rects(
+  plan: &mut RenderPlan,
+  start: Position,
+  end: Position,
+  style: Style,
+  row_visible_end_cols: &[usize],
+) {
   let row_start = plan.scroll.row;
   let row_end = row_start + plan.viewport.height as usize;
   let col_start = plan.scroll.col;
@@ -473,9 +511,9 @@ fn push_selection_rects(plan: &mut RenderPlan, start: Position, end: Position, s
       return;
     }
     let from = start.col.min(end.col);
-    let to = start.col.max(end.col);
+    let mut to = start.col.max(end.col);
     let from = from.max(col_start);
-    let to = to.min(col_end);
+    to = to.min(row_visible_end_col(plan, row, row_visible_end_cols));
     if to <= from {
       return;
     }
@@ -496,12 +534,13 @@ fn push_selection_rects(plan: &mut RenderPlan, start: Position, end: Position, s
       continue;
     }
 
+    let row_end_col = row_visible_end_col(plan, row, row_visible_end_cols);
     let (from, to) = if row == start_row {
-      (start.col, col_end)
+      (start.col, row_end_col)
     } else if row == end_row {
-      (col_start, end.col)
+      (col_start, end.col.min(row_end_col))
     } else {
-      (col_start, col_end)
+      (col_start, row_end_col)
     };
 
     let from = from.max(col_start);
@@ -616,7 +655,7 @@ mod tests {
     );
 
     assert_eq!(plan.selections.len(), 2);
-    assert_eq!(plan.selections[0].rect, Rect::new(2, 0, 6, 1));
+    assert_eq!(plan.selections[0].rect, Rect::new(2, 0, 2, 1));
     assert_eq!(plan.selections[1].rect, Rect::new(0, 1, 2, 1));
 
     assert_eq!(plan.cursors.len(), 2);

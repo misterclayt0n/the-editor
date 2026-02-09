@@ -418,6 +418,11 @@ pub trait DefaultContext: Sized + 'static {
   fn lsp_references(&mut self) {}
   fn lsp_document_symbols(&mut self) {}
   fn lsp_workspace_symbols(&mut self) {}
+  fn lsp_completion(&mut self) {}
+  fn lsp_signature_help(&mut self) {}
+  fn lsp_code_actions(&mut self) {}
+  fn lsp_rename(&mut self, _new_name: &str) {}
+  fn lsp_format(&mut self) {}
   fn on_file_saved(&mut self, _path: &Path, _text: &str) {}
   fn on_before_quit(&mut self) {}
   fn scrolloff(&self) -> usize {
@@ -801,6 +806,10 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::LspReferences => ctx.lsp_references(),
     Command::LspDocumentSymbols => ctx.lsp_document_symbols(),
     Command::LspWorkspaceSymbols => ctx.lsp_workspace_symbols(),
+    Command::LspCompletion => ctx.lsp_completion(),
+    Command::LspSignatureHelp => ctx.lsp_signature_help(),
+    Command::LspCodeActions => ctx.lsp_code_actions(),
+    Command::LspFormat => ctx.lsp_format(),
     Command::SearchNextOrPrev {
       direction,
       extend,
@@ -3448,6 +3457,14 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "document_symbols" => Some(Command::lsp_document_symbols()),
     "lsp_workspace_symbols" => Some(Command::lsp_workspace_symbols()),
     "workspace_symbols" => Some(Command::lsp_workspace_symbols()),
+    "lsp_completion" => Some(Command::lsp_completion()),
+    "completion" => Some(Command::lsp_completion()),
+    "lsp_signature_help" => Some(Command::lsp_signature_help()),
+    "signature_help" => Some(Command::lsp_signature_help()),
+    "lsp_code_actions" => Some(Command::lsp_code_actions()),
+    "code_action" => Some(Command::lsp_code_actions()),
+    "lsp_format" => Some(Command::lsp_format()),
+    "format" => Some(Command::lsp_format()),
     "search_next" => Some(Command::search_next()),
     "search_prev" => Some(Command::search_prev()),
     "extend_search_next" => Some(Command::extend_search_next()),

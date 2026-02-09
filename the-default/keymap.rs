@@ -765,7 +765,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
     ">" => indent,
     "<" => unindent,
-    // "=" => format_selections,
+    "=" => lsp_format,
     // "J" => join_selections,
     // "A-J" => join_selections_space,
     // "K" => keep_selections,
@@ -831,7 +831,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
       // "d" => diagnostics_picker,
       // "D" => workspace_diagnostics_picker,
       // "g" => changed_file_picker,
-      // "a" => code_action,
+      "a" => lsp_code_actions,
       // "'" => last_picker,
       // "G" => { "Debug (experimental)" sticky=true
       //   "l" => dap_launch,
@@ -978,7 +978,8 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
     "esc" => normal_mode,
 
     "C-s" => commit_undo_checkpoint,
-    // "C-x" => completion,
+    "C-x" => lsp_completion,
+    "A-k" => lsp_signature_help,
     // "C-r" => insert_register,
 
     "C-w" | "A-backspace" => delete_word_backward,

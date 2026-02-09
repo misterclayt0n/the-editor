@@ -546,6 +546,10 @@ pub enum Command {
   LspReferences,
   LspDocumentSymbols,
   LspWorkspaceSymbols,
+  LspCompletion,
+  LspSignatureHelp,
+  LspCodeActions,
+  LspFormat,
   Save,
   Quit,
 }
@@ -1217,5 +1221,25 @@ impl Command {
   #[must_use]
   pub const fn lsp_workspace_symbols() -> Self {
     Self::LspWorkspaceSymbols
+  }
+
+  #[must_use]
+  pub const fn lsp_completion() -> Self {
+    Self::LspCompletion
+  }
+
+  #[must_use]
+  pub const fn lsp_signature_help() -> Self {
+    Self::LspSignatureHelp
+  }
+
+  #[must_use]
+  pub const fn lsp_code_actions() -> Self {
+    Self::LspCodeActions
+  }
+
+  #[must_use]
+  pub const fn lsp_format() -> Self {
+    Self::LspFormat
   }
 }

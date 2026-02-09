@@ -1,6 +1,7 @@
 mod capabilities;
 mod command;
 mod diagnostics;
+mod editing;
 mod event;
 pub mod jsonrpc;
 mod navigation;
@@ -19,6 +20,27 @@ pub use command::LspCommand;
 pub use diagnostics::{
   PublishDiagnosticsError,
   parse_publish_diagnostics,
+};
+pub use editing::{
+  EditingParseError,
+  LspCodeAction,
+  LspCompletionItem,
+  LspDocumentEdit,
+  LspExecuteCommand,
+  LspSignatureHelp,
+  LspTextEdit,
+  LspWorkspaceEdit,
+  code_action_params,
+  completion_params,
+  execute_command_params,
+  formatting_params,
+  parse_code_actions_response,
+  parse_completion_response,
+  parse_formatting_response,
+  parse_signature_help_response,
+  parse_workspace_edit_response,
+  rename_params,
+  signature_help_params,
 };
 pub use event::LspEvent;
 pub use navigation::{

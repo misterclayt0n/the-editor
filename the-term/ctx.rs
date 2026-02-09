@@ -27,7 +27,10 @@ use std::{
 
 use eyre::Result;
 use ropey::Rope;
-use serde_json::Value;
+use serde_json::{
+  Value,
+  json,
+};
 use the_default::{
   CommandPaletteState,
   CommandPaletteStyle,
@@ -45,7 +48,9 @@ use the_default::{
 };
 use the_lib::{
   diagnostics::{
+    Diagnostic,
     DiagnosticCounts,
+    DiagnosticSeverity,
     DiagnosticsState,
   },
   document::{
@@ -56,6 +61,7 @@ use the_lib::{
     Editor,
     EditorId,
   },
+  indent::IndentStyle,
   messages::{
     MessageCenter,
     MessageLevel,
@@ -94,23 +100,38 @@ use the_lib::{
 };
 use the_lsp::{
   LspCapability,
+  LspCompletionItem,
   LspEvent,
+  LspExecuteCommand,
   LspLocation,
   LspPosition,
   LspRuntime,
   LspRuntimeConfig,
   LspServerConfig,
   LspSymbol,
+  LspTextEdit,
+  LspWorkspaceEdit,
   TextDocumentSyncKind,
+  code_action_params,
+  completion_params,
   document_symbols_params,
+  execute_command_params,
+  formatting_params,
   goto_definition_params,
   hover_params,
   jsonrpc,
+  parse_code_actions_response,
+  parse_completion_response,
   parse_document_symbols_response,
+  parse_formatting_response,
   parse_hover_response,
   parse_locations_response,
+  parse_signature_help_response,
+  parse_workspace_edit_response,
   parse_workspace_symbols_response,
   references_params,
+  rename_params,
+  signature_help_params,
   text_sync::{
     char_idx_to_utf16_position,
     did_change_params,
@@ -150,11 +171,37 @@ pub struct LspDocumentSyncState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingLspRequestKind {
-  GotoDefinition { uri: String },
-  Hover { uri: String },
-  References { uri: String },
-  DocumentSymbols { uri: String },
-  WorkspaceSymbols { query: String },
+  GotoDefinition {
+    uri: String,
+  },
+  Hover {
+    uri: String,
+  },
+  References {
+    uri: String,
+  },
+  DocumentSymbols {
+    uri: String,
+  },
+  WorkspaceSymbols {
+    query: String,
+  },
+  Completion {
+    uri:           String,
+    fallback_char: usize,
+  },
+  SignatureHelp {
+    uri: String,
+  },
+  CodeActions {
+    uri: String,
+  },
+  Rename {
+    uri: String,
+  },
+  Format {
+    uri: String,
+  },
 }
 
 impl PendingLspRequestKind {
@@ -165,6 +212,11 @@ impl PendingLspRequestKind {
       Self::References { .. } => "references",
       Self::DocumentSymbols { .. } => "document-symbols",
       Self::WorkspaceSymbols { .. } => "workspace-symbols",
+      Self::Completion { .. } => "completion",
+      Self::SignatureHelp { .. } => "signature-help",
+      Self::CodeActions { .. } => "code-actions",
+      Self::Rename { .. } => "rename",
+      Self::Format { .. } => "format",
     }
   }
 
@@ -173,7 +225,12 @@ impl PendingLspRequestKind {
       Self::GotoDefinition { uri }
       | Self::Hover { uri }
       | Self::References { uri }
-      | Self::DocumentSymbols { uri } => Some(uri.as_str()),
+      | Self::DocumentSymbols { uri }
+      | Self::Completion { uri, .. }
+      | Self::SignatureHelp { uri }
+      | Self::CodeActions { uri }
+      | Self::Rename { uri }
+      | Self::Format { uri } => Some(uri.as_str()),
       Self::WorkspaceSymbols { .. } => None,
     }
   }
@@ -672,6 +729,17 @@ impl Ctx {
         };
         self.apply_symbols_result("workspace symbols", symbols)
       },
+      PendingLspRequestKind::Completion { fallback_char, .. } => {
+        self.handle_completion_response(response.result.as_ref(), fallback_char)
+      },
+      PendingLspRequestKind::SignatureHelp { .. } => {
+        self.handle_signature_help_response(response.result.as_ref())
+      },
+      PendingLspRequestKind::CodeActions { .. } => {
+        self.handle_code_actions_response(response.result.as_ref())
+      },
+      PendingLspRequestKind::Rename { .. } => self.handle_rename_response(response.result.as_ref()),
+      PendingLspRequestKind::Format { .. } => self.handle_format_response(response.result.as_ref()),
     }
   }
 
@@ -727,6 +795,392 @@ impl Ctx {
       Some("lsp".into()),
       format!("{label}: {} results", symbols.len()),
     );
+    true
+  }
+
+  fn handle_completion_response(&mut self, result: Option<&Value>, fallback_char: usize) -> bool {
+    let items = match parse_completion_response(result) {
+      Ok(items) => items,
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Error,
+          Some("lsp".into()),
+          format!("failed to parse completion response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    let Some(item) = items.into_iter().next() else {
+      self.messages.publish(
+        MessageLevel::Info,
+        Some("lsp".into()),
+        "no completion candidates",
+      );
+      return true;
+    };
+
+    self.apply_completion_item(item, fallback_char)
+  }
+
+  fn apply_completion_item(&mut self, item: LspCompletionItem, fallback_char: usize) -> bool {
+    let has_text_edits = item.primary_edit.is_some() || !item.additional_edits.is_empty();
+    if has_text_edits {
+      let Some(uri) = self.current_lsp_uri() else {
+        self.messages.publish(
+          MessageLevel::Warning,
+          Some("lsp".into()),
+          "completion unavailable: no active LSP document",
+        );
+        return true;
+      };
+
+      let mut edits = Vec::with_capacity(1 + item.additional_edits.len());
+      if let Some(primary) = item.primary_edit {
+        edits.push(primary);
+      }
+      edits.extend(item.additional_edits);
+      let workspace_edit = LspWorkspaceEdit {
+        documents: vec![the_lsp::LspDocumentEdit {
+          uri,
+          version: None,
+          edits,
+        }],
+      };
+      return self.apply_workspace_edit(&workspace_edit, "completion");
+    }
+
+    let insert_text = item.insert_text.unwrap_or(item.label);
+    if insert_text.is_empty() {
+      return true;
+    }
+
+    let cursor = fallback_char.min(self.editor.document().text().len_chars());
+    let tx = match Transaction::change(self.editor.document().text(), vec![(
+      cursor,
+      cursor,
+      Some(insert_text.into()),
+    )]) {
+      Ok(tx) => tx,
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Error,
+          Some("lsp".into()),
+          format!("failed to build completion transaction: {err}"),
+        );
+        return true;
+      },
+    };
+
+    if <Self as the_default::DefaultContext>::apply_transaction(self, &tx) {
+      <Self as the_default::DefaultContext>::request_render(self);
+      self
+        .messages
+        .publish(MessageLevel::Info, Some("lsp".into()), "completion applied");
+    } else {
+      self.messages.publish(
+        MessageLevel::Error,
+        Some("lsp".into()),
+        "failed to apply completion",
+      );
+    }
+    true
+  }
+
+  fn handle_signature_help_response(&mut self, result: Option<&Value>) -> bool {
+    let signature = match parse_signature_help_response(result) {
+      Ok(signature) => signature,
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Error,
+          Some("lsp".into()),
+          format!("failed to parse signature help response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    let Some(signature) = signature else {
+      self.messages.publish(
+        MessageLevel::Info,
+        Some("lsp".into()),
+        "no signature help available",
+      );
+      return true;
+    };
+
+    let mut text = signature.label;
+    if text.len() > 240 {
+      text.truncate(240);
+      text.push('…');
+    }
+    if let Some(active_parameter) = signature.active_parameter {
+      text.push_str(&format!("  (param {})", active_parameter + 1));
+    }
+    self
+      .messages
+      .publish(MessageLevel::Info, Some("lsp".into()), text);
+    true
+  }
+
+  fn handle_code_actions_response(&mut self, result: Option<&Value>) -> bool {
+    let mut actions = match parse_code_actions_response(result) {
+      Ok(actions) => actions,
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Error,
+          Some("lsp".into()),
+          format!("failed to parse code actions response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    if actions.is_empty() {
+      self.messages.publish(
+        MessageLevel::Info,
+        Some("lsp".into()),
+        "no code actions available",
+      );
+      return true;
+    }
+
+    actions.sort_by_key(|action| !action.is_preferred);
+    let action = actions.remove(0);
+
+    if let Some(edit) = action.edit.as_ref() {
+      let _ = self.apply_workspace_edit(edit, "code action");
+      self.messages.publish(
+        MessageLevel::Info,
+        Some("lsp".into()),
+        format!("code action: {}", action.title),
+      );
+      return true;
+    }
+
+    if let Some(command) = action.command {
+      return self.execute_lsp_command_action(command, action.title);
+    }
+
+    self.messages.publish(
+      MessageLevel::Info,
+      Some("lsp".into()),
+      format!("code action '{}' had no edits", action.title),
+    );
+    true
+  }
+
+  fn handle_rename_response(&mut self, result: Option<&Value>) -> bool {
+    let workspace_edit = match parse_workspace_edit_response(result) {
+      Ok(edit) => edit,
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Error,
+          Some("lsp".into()),
+          format!("failed to parse rename response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    let Some(workspace_edit) = workspace_edit else {
+      self.messages.publish(
+        MessageLevel::Info,
+        Some("lsp".into()),
+        "rename produced no edits",
+      );
+      return true;
+    };
+
+    self.apply_workspace_edit(&workspace_edit, "rename")
+  }
+
+  fn handle_format_response(&mut self, result: Option<&Value>) -> bool {
+    let edits = match parse_formatting_response(result) {
+      Ok(edits) => edits,
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Error,
+          Some("lsp".into()),
+          format!("failed to parse formatting response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    if edits.is_empty() {
+      self
+        .messages
+        .publish(MessageLevel::Info, Some("lsp".into()), "already formatted");
+      return true;
+    }
+
+    let Some(uri) = self.current_lsp_uri() else {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "format unavailable: no active LSP document",
+      );
+      return true;
+    };
+
+    let workspace_edit = LspWorkspaceEdit {
+      documents: vec![the_lsp::LspDocumentEdit {
+        uri,
+        version: None,
+        edits,
+      }],
+    };
+    self.apply_workspace_edit(&workspace_edit, "format")
+  }
+
+  fn execute_lsp_command_action(&mut self, command: LspExecuteCommand, title: String) -> bool {
+    let params = execute_command_params(&command.command, command.arguments);
+    match self
+      .lsp_runtime
+      .send_request("workspace/executeCommand", Some(params))
+    {
+      Ok(_) => {
+        self.messages.publish(
+          MessageLevel::Info,
+          Some("lsp".into()),
+          format!("executed code action: {title}"),
+        );
+      },
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Error,
+          Some("lsp".into()),
+          format!("failed to execute code action '{title}': {err}"),
+        );
+      },
+    }
+    true
+  }
+
+  fn apply_workspace_edit(&mut self, workspace_edit: &LspWorkspaceEdit, source: &str) -> bool {
+    if workspace_edit.documents.is_empty() {
+      self.messages.publish(
+        MessageLevel::Info,
+        Some("lsp".into()),
+        format!("{source}: no edits"),
+      );
+      return true;
+    }
+
+    let current_uri = self.current_lsp_uri();
+    let mut applied_documents = 0usize;
+    let mut applied_edits = 0usize;
+
+    for document in &workspace_edit.documents {
+      if document.edits.is_empty() {
+        continue;
+      }
+      let applied = if current_uri.as_ref() == Some(&document.uri) {
+        self.apply_text_edits_to_current_document(&document.edits)
+      } else {
+        self.apply_text_edits_to_file_uri(&document.uri, &document.edits)
+      };
+      if applied {
+        applied_documents = applied_documents.saturating_add(1);
+        applied_edits = applied_edits.saturating_add(document.edits.len());
+      }
+    }
+
+    if applied_documents > 0 {
+      self.messages.publish(
+        MessageLevel::Info,
+        Some("lsp".into()),
+        format!("{source}: applied {applied_edits} edit(s) across {applied_documents} file(s)"),
+      );
+    } else {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        format!("{source}: no edits were applied"),
+      );
+    }
+    true
+  }
+
+  fn apply_text_edits_to_current_document(&mut self, edits: &[LspTextEdit]) -> bool {
+    let tx = match build_transaction_from_lsp_text_edits(self.editor.document().text(), edits) {
+      Ok(tx) => tx,
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Error,
+          Some("lsp".into()),
+          format!("failed to build edit transaction: {err}"),
+        );
+        return false;
+      },
+    };
+
+    if <Self as the_default::DefaultContext>::apply_transaction(self, &tx) {
+      <Self as the_default::DefaultContext>::request_render(self);
+      true
+    } else {
+      self.messages.publish(
+        MessageLevel::Error,
+        Some("lsp".into()),
+        "failed to apply edit transaction",
+      );
+      false
+    }
+  }
+
+  fn apply_text_edits_to_file_uri(&mut self, uri: &str, edits: &[LspTextEdit]) -> bool {
+    let Some(path) = path_for_file_uri(uri) else {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        format!("unsupported file URI in workspace edit: {uri}"),
+      );
+      return false;
+    };
+
+    let content = match std::fs::read_to_string(&path) {
+      Ok(content) => content,
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Error,
+          Some("lsp".into()),
+          format!("failed to read '{}': {err}", path.display()),
+        );
+        return false;
+      },
+    };
+    let mut rope = Rope::from(content);
+
+    let tx = match build_transaction_from_lsp_text_edits(&rope, edits) {
+      Ok(tx) => tx,
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Error,
+          Some("lsp".into()),
+          format!("failed to build workspace edit transaction: {err}"),
+        );
+        return false;
+      },
+    };
+
+    if let Err(err) = tx.apply(&mut rope) {
+      self.messages.publish(
+        MessageLevel::Error,
+        Some("lsp".into()),
+        format!("failed to apply edits to '{}': {err}", path.display()),
+      );
+      return false;
+    }
+
+    if let Err(err) = std::fs::write(&path, rope.to_string()) {
+      self.messages.publish(
+        MessageLevel::Error,
+        Some("lsp".into()),
+        format!("failed to write '{}': {err}", path.display()),
+      );
+      return false;
+    }
     true
   }
 
@@ -800,6 +1254,59 @@ impl Ctx {
     let (line, character) = char_idx_to_utf16_position(doc.text(), cursor);
 
     Some((state.uri, LspPosition { line, character }))
+  }
+
+  fn current_lsp_range(&self) -> Option<(String, the_lsp::LspRange)> {
+    if !self.lsp_ready {
+      return None;
+    }
+    let state = self.lsp_document.as_ref()?.clone();
+    if !state.opened {
+      return None;
+    }
+
+    let doc = self.editor.document();
+    let range = doc.selection().ranges().first().copied()?;
+    let start = range.anchor.min(range.head);
+    let end = range.anchor.max(range.head);
+    let (start_line, start_character) = char_idx_to_utf16_position(doc.text(), start);
+    let (end_line, end_character) = char_idx_to_utf16_position(doc.text(), end);
+
+    Some((state.uri, the_lsp::LspRange {
+      start: LspPosition {
+        line:      start_line,
+        character: start_character,
+      },
+      end:   LspPosition {
+        line:      end_line,
+        character: end_character,
+      },
+    }))
+  }
+
+  fn current_lsp_uri(&self) -> Option<String> {
+    if !self.lsp_ready {
+      return None;
+    }
+    self
+      .lsp_document
+      .as_ref()
+      .filter(|state| state.opened)
+      .map(|state| state.uri.clone())
+  }
+
+  fn current_lsp_diagnostics_payload(&self, uri: &str) -> Value {
+    let Some(document_diagnostics) = self.diagnostics.document(uri) else {
+      return json!([]);
+    };
+
+    Value::Array(
+      document_diagnostics
+        .diagnostics
+        .iter()
+        .map(diagnostic_to_lsp_json)
+        .collect(),
+    )
   }
 
   fn dispatch_lsp_request(
@@ -1004,6 +1511,62 @@ impl Ctx {
 
 fn is_symbol_word_char(ch: char) -> bool {
   ch == '_' || ch.is_alphanumeric()
+}
+
+fn diagnostic_severity_to_lsp_code(severity: DiagnosticSeverity) -> u8 {
+  match severity {
+    DiagnosticSeverity::Error => 1,
+    DiagnosticSeverity::Warning => 2,
+    DiagnosticSeverity::Information => 3,
+    DiagnosticSeverity::Hint => 4,
+  }
+}
+
+fn diagnostic_to_lsp_json(diagnostic: &Diagnostic) -> Value {
+  let mut value = json!({
+    "range": {
+      "start": {
+        "line": diagnostic.range.start.line,
+        "character": diagnostic.range.start.character,
+      },
+      "end": {
+        "line": diagnostic.range.end.line,
+        "character": diagnostic.range.end.character,
+      },
+    },
+    "message": diagnostic.message,
+  });
+
+  if let Some(object) = value.as_object_mut() {
+    if let Some(severity) = diagnostic.severity {
+      object.insert(
+        "severity".into(),
+        json!(diagnostic_severity_to_lsp_code(severity)),
+      );
+    }
+    if let Some(code) = &diagnostic.code {
+      object.insert("code".into(), json!(code));
+    }
+    if let Some(source) = &diagnostic.source {
+      object.insert("source".into(), json!(source));
+    }
+  }
+
+  value
+}
+
+fn build_transaction_from_lsp_text_edits(
+  text: &Rope,
+  edits: &[LspTextEdit],
+) -> std::result::Result<Transaction, String> {
+  let mut changes = Vec::with_capacity(edits.len());
+  for edit in edits {
+    let from = utf16_position_to_char_idx(text, edit.range.start.line, edit.range.start.character);
+    let to = utf16_position_to_char_idx(text, edit.range.end.line, edit.range.end.character);
+    changes.push((from, to, Some(edit.new_text.clone().into())));
+  }
+  changes.sort_by_key(|(from, to, _)| (*from, *to));
+  Transaction::change(text, changes).map_err(|err| err.to_string())
 }
 
 impl the_default::DefaultContext for Ctx {
@@ -1412,6 +1975,161 @@ impl the_default::DefaultContext for Ctx {
       "workspace/symbol",
       workspace_symbols_params(&query),
       PendingLspRequestKind::WorkspaceSymbols { query },
+    );
+  }
+
+  fn lsp_completion(&mut self) {
+    if !self.lsp_supports(LspCapability::Completion) {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "completion is not supported by the active server",
+      );
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "completion unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    let fallback_char = self
+      .editor
+      .document()
+      .selection()
+      .ranges()
+      .first()
+      .map(|range| range.cursor(self.editor.document().text().slice(..)))
+      .unwrap_or(0);
+
+    self.dispatch_lsp_request(
+      "textDocument/completion",
+      completion_params(&uri, position),
+      PendingLspRequestKind::Completion { uri, fallback_char },
+    );
+  }
+
+  fn lsp_signature_help(&mut self) {
+    if !self.lsp_supports(LspCapability::SignatureHelp) {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "signature help is not supported by the active server",
+      );
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "signature help unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/signatureHelp",
+      signature_help_params(&uri, position),
+      PendingLspRequestKind::SignatureHelp { uri },
+    );
+  }
+
+  fn lsp_code_actions(&mut self) {
+    if !self.lsp_supports(LspCapability::CodeAction) {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "code actions are not supported by the active server",
+      );
+      return;
+    }
+
+    let Some((uri, range)) = self.current_lsp_range() else {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "code actions unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    let diagnostics = self.current_lsp_diagnostics_payload(&uri);
+    self.dispatch_lsp_request(
+      "textDocument/codeAction",
+      code_action_params(&uri, range, diagnostics, None),
+      PendingLspRequestKind::CodeActions { uri },
+    );
+  }
+
+  fn lsp_rename(&mut self, new_name: &str) {
+    if !self.lsp_supports(LspCapability::RenameSymbol) {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "rename is not supported by the active server",
+      );
+      return;
+    }
+
+    let new_name = new_name.trim();
+    if new_name.is_empty() {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "rename requires a non-empty name",
+      );
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "rename unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/rename",
+      rename_params(&uri, position, new_name),
+      PendingLspRequestKind::Rename { uri },
+    );
+  }
+
+  fn lsp_format(&mut self) {
+    if !self.lsp_supports(LspCapability::Format) {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "format is not supported by the active server",
+      );
+      return;
+    }
+
+    let Some(uri) = self.current_lsp_uri() else {
+      self.messages.publish(
+        MessageLevel::Warning,
+        Some("lsp".into()),
+        "format unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    let (tab_size, insert_spaces) = match self.editor.document().indent_style() {
+      IndentStyle::Tabs => (4, false),
+      IndentStyle::Spaces(width) => (width as u32, true),
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/formatting",
+      formatting_params(&uri, tab_size, insert_spaces),
+      PendingLspRequestKind::Format { uri },
     );
   }
 

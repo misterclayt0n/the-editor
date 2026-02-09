@@ -510,6 +510,66 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
         ..Signature::DEFAULT
       },
     ));
+
+    self.register(TypableCommand::new(
+      "completion",
+      &["cmp"],
+      "Trigger LSP completion and apply first match",
+      cmd_lsp_completion::<Ctx>,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "signature-help",
+      &["sig"],
+      "Show LSP signature help",
+      cmd_lsp_signature_help::<Ctx>,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "code-action",
+      &["ca"],
+      "Run preferred LSP code action",
+      cmd_lsp_code_actions::<Ctx>,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "rename-symbol",
+      &["rn"],
+      "Rename symbol via LSP",
+      cmd_lsp_rename::<Ctx>,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (1, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "format",
+      &["fmt"],
+      "Format current document via LSP",
+      cmd_lsp_format::<Ctx>,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 
@@ -646,6 +706,71 @@ fn cmd_lsp_workspace_symbols<Ctx: DefaultContext>(
   ctx
     .dispatch()
     .pre_on_action(ctx, Command::LspWorkspaceSymbols);
+  Ok(())
+}
+
+fn cmd_lsp_completion<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  ctx.dispatch().pre_on_action(ctx, Command::LspCompletion);
+  Ok(())
+}
+
+fn cmd_lsp_signature_help<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  ctx.dispatch().pre_on_action(ctx, Command::LspSignatureHelp);
+  Ok(())
+}
+
+fn cmd_lsp_code_actions<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  ctx.dispatch().pre_on_action(ctx, Command::LspCodeActions);
+  Ok(())
+}
+
+fn cmd_lsp_rename<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  let Some(new_name) = args.first() else {
+    return Err(CommandError::new(
+      "rename-symbol requires a new symbol name",
+    ));
+  };
+  ctx.lsp_rename(new_name);
+  Ok(())
+}
+
+fn cmd_lsp_format<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+  ctx.dispatch().pre_on_action(ctx, Command::LspFormat);
   Ok(())
 }
 

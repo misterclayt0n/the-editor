@@ -1,5 +1,5 @@
 [package]
-name = "the-config"
+name    = "the-config"
 version = "0.1.0"
 edition = "2024"
 
@@ -7,5 +7,5 @@ edition = "2024"
 path = "src/lib.rs"
 
 [dependencies]
-the-config-user = { path = "/Users/misterclayt0n/.config/the-editor", package = "the-config-user" }
+the-config-user = { package = "the-config-fallback", path = "fallback" }
 the-default     = { path = "../the-default" }

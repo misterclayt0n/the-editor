@@ -28,6 +28,7 @@ pub fn statusline_present(tree: &the_lib::render::UiTree) -> bool {
 }
 
 pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
+  let viewport_width = ctx.editor_ref().view().viewport.width as usize;
   let pending_keys = pending_keys_text(ctx);
   let doc = ctx.editor_ref().document();
   let slice = doc.text().slice(..);
@@ -63,11 +64,27 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
   } else {
     format!("{line}:{col}")
   };
+  let pending_part = pending_keys.filter(|pending| !pending.is_empty());
+  let message_part = inline_statusline_message(ctx)
+    .filter(|message| !message.is_empty())
+    .and_then(|message| {
+      let mut budget = viewport_width.saturating_sub(cursor_text.chars().count() + 8);
+      if let Some(pending) = pending_part.as_ref() {
+        budget = budget.saturating_sub(pending.chars().count() + 2);
+      }
+      let clamped = clamp_with_ellipsis(&message, budget.min(96));
+      if clamped.is_empty() {
+        None
+      } else {
+        Some(clamped)
+      }
+    });
+
   let mut right_parts = Vec::new();
-  if let Some(pending) = pending_keys.filter(|pending| !pending.is_empty()) {
+  if let Some(pending) = pending_part {
     right_parts.push(pending);
   }
-  if let Some(message) = inline_statusline_message(ctx).filter(|message| !message.is_empty()) {
+  if let Some(message) = message_part {
     right_parts.push(message);
   }
   right_parts.push(cursor_text);
@@ -125,4 +142,24 @@ fn pending_keys_text<Ctx: DefaultContext>(ctx: &mut Ctx) -> Option<String> {
       .collect::<Vec<_>>()
       .join(" "),
   )
+}
+
+fn clamp_with_ellipsis(text: &str, max_chars: usize) -> String {
+  if max_chars == 0 {
+    return String::new();
+  }
+  let count = text.chars().count();
+  if count <= max_chars {
+    return text.to_string();
+  }
+  if max_chars == 1 {
+    return "…".to_string();
+  }
+
+  let mut out = String::new();
+  for ch in text.chars().take(max_chars - 1) {
+    out.push(ch);
+  }
+  out.push('…');
+  out
 }

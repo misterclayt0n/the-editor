@@ -1739,14 +1739,37 @@ fn draw_ui_status_bar(buf: &mut Buffer, rect: Rect, _ctx: &Ctx, status: &UiStatu
   truncate_in_place(&mut right, rect.width as usize);
   truncate_in_place(&mut center, rect.width as usize);
 
-  buf.set_string(rect.x, rect.y, left, text_style);
-  if !center.is_empty() {
-    let cx = rect.x + rect.width.saturating_sub(center.len() as u16) / 2;
-    buf.set_string(cx, rect.y, center, text_style);
+  let mut left_width = left.chars().count() as u16;
+  let mut right_width = right.chars().count() as u16;
+  if left_width.saturating_add(right_width) >= rect.width {
+    let available_right = rect.width.saturating_sub(left_width.saturating_add(1));
+    truncate_in_place(&mut right, available_right as usize);
+    right_width = right.chars().count() as u16;
   }
+  if left_width.saturating_add(right_width) >= rect.width {
+    let available_left = rect.width.saturating_sub(right_width.saturating_add(1));
+    truncate_in_place(&mut left, available_left as usize);
+    left_width = left.chars().count() as u16;
+  }
+
+  buf.set_string(rect.x, rect.y, left, text_style);
   if !right.is_empty() {
-    let rx = rect.x + rect.width.saturating_sub(right.len() as u16);
+    let rx = rect.x + rect.width.saturating_sub(right_width);
     buf.set_string(rx, rect.y, right, text_style);
+  }
+  if !center.is_empty() {
+    let center_start = rect.x + left_width.saturating_add(1);
+    let center_end = rect
+      .x
+      .saturating_add(rect.width)
+      .saturating_sub(right_width.saturating_add(1));
+    if center_end > center_start {
+      let center_width = center_end.saturating_sub(center_start);
+      truncate_in_place(&mut center, center_width as usize);
+      let center_text_width = center.chars().count() as u16;
+      let cx = center_start + center_width.saturating_sub(center_text_width) / 2;
+      buf.set_string(cx, rect.y, center, text_style);
+    }
   }
 }
 

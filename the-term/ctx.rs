@@ -6,6 +6,11 @@ use std::{
     VecDeque,
   },
   env,
+  fs::OpenOptions,
+  io::{
+    BufWriter,
+    Write,
+  },
   num::NonZeroUsize,
   path::{
     Path,
@@ -272,6 +277,8 @@ pub struct Ctx {
   pub should_quit:           bool,
   pub needs_render:          bool,
   pub messages:              MessageCenter,
+  message_log:               Option<BufWriter<std::fs::File>>,
+  message_log_seq:           u64,
   pub file_picker_wake_rx:   Receiver<()>,
   pub mode:                  Mode,
   pub keymaps:               Keymaps,
@@ -332,6 +339,44 @@ fn select_ui_theme() -> Theme {
     Some(other) => {
       eprintln!("Unknown theme '{other}', falling back to default theme.");
       default_theme().clone()
+    },
+  }
+}
+
+fn resolve_message_log_path() -> Option<PathBuf> {
+  match env::var("THE_EDITOR_MESSAGE_LOG") {
+    Ok(path) => {
+      let path = path.trim();
+      if path.is_empty() || path.eq_ignore_ascii_case("off") || path.eq_ignore_ascii_case("none") {
+        None
+      } else {
+        Some(PathBuf::from(path))
+      }
+    },
+    Err(_) => Some(PathBuf::from("/tmp/the-editor-messages.log")),
+  }
+}
+
+fn open_message_log() -> Option<BufWriter<std::fs::File>> {
+  let path = resolve_message_log_path()?;
+  if let Some(parent) = path.parent()
+    && let Err(err) = std::fs::create_dir_all(parent)
+  {
+    eprintln!(
+      "Warning: failed to create message log directory '{}': {err}",
+      parent.display()
+    );
+    return None;
+  }
+
+  match OpenOptions::new().create(true).append(true).open(&path) {
+    Ok(file) => Some(BufWriter::new(file)),
+    Err(err) => {
+      eprintln!(
+        "Warning: failed to open message log file '{}': {err}",
+        path.display()
+      );
+      None
     },
   }
 }
@@ -445,6 +490,7 @@ impl Ctx {
 
     let mut text_format = TextFormat::default();
     text_format.viewport_width = viewport.width;
+    let message_log = open_message_log();
 
     let (file_picker_wake_tx, file_picker_wake_rx) = std::sync::mpsc::channel();
     let mut file_picker = FilePickerState::default();
@@ -491,6 +537,8 @@ impl Ctx {
       should_quit: false,
       needs_render: true,
       messages: MessageCenter::default(),
+      message_log,
+      message_log_seq: 0,
       file_picker_wake_rx,
       mode: Mode::Normal,
       keymaps: Keymaps::default(),
@@ -587,6 +635,52 @@ impl Ctx {
     self.lsp_watched_file = None;
     if let Err(err) = self.lsp_runtime.shutdown() {
       eprintln!("Warning: failed to stop LSP runtime: {err}");
+    }
+  }
+
+  pub fn flush_message_log(&mut self) {
+    let Some(writer) = self.message_log.as_mut() else {
+      return;
+    };
+    let events = self.messages.events_since(self.message_log_seq);
+    if events.is_empty() {
+      return;
+    }
+
+    let mut had_error = None;
+    for event in events {
+      let seq = event.seq;
+      let timestamp_ms = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+      let entry = json!({
+        "ts_ms": timestamp_ms,
+        "event": event,
+      });
+      let line = match serde_json::to_string(&entry) {
+        Ok(line) => line,
+        Err(err) => {
+          had_error = Some(format!("failed to serialize message event: {err}"));
+          break;
+        },
+      };
+      if let Err(err) = writeln!(writer, "{line}") {
+        had_error = Some(format!("failed to write message event log: {err}"));
+        break;
+      }
+      self.message_log_seq = seq;
+    }
+
+    if had_error.is_none()
+      && let Err(err) = writer.flush()
+    {
+      had_error = Some(format!("failed to flush message event log: {err}"));
+    }
+
+    if let Some(err) = had_error {
+      eprintln!("Warning: {err}");
+      self.message_log = None;
     }
   }
 

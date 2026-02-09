@@ -118,7 +118,7 @@ fileprivate func filePickerSymbol(for icon: String) -> String? {
     case "file_lock", "lock":
         return "lock.fill"
     case "file_rust", "rust":
-        return "chevron.left.forwardslash.chevron.right"
+        return "r.square.fill"
     case "file_toml", "toml", "settings":
         return "doc.text.fill"
     case "image":
@@ -141,7 +141,7 @@ fileprivate func fallbackFileIcon(forExtension ext: String) -> String {
     case "swift":
         return "chevron.left.forwardslash.chevron.right"
     case "rs":
-        return "chevron.left.forwardslash.chevron.right"
+        return "r.square.fill"
     case "js", "jsx":
         return "chevron.left.forwardslash.chevron.right"
     case "ts", "tsx":

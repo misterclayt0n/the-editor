@@ -1425,7 +1425,7 @@ fn draw_ui_panel(
   let mut panel_height = child_h
     .saturating_add(border * 2 + padding_v + title_height)
     .min(area.height)
-    .max(4);
+    .max(3);
 
   let (mut panel_width, panel_height) = apply_constraints(
     panel_width,

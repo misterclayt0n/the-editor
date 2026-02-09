@@ -447,6 +447,7 @@ pub fn build_search_prompt_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode>
 
   let mut container = UiContainer::column("search_prompt_container", 0, children);
   container.style = container.style.with_role("search_prompt");
+  container.constraints.align.horizontal = UiAlign::Stretch;
   let container = UiNode::Container(container);
 
   let mut panel = UiPanel::floating("search_prompt", container);

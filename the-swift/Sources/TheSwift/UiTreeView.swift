@@ -261,6 +261,18 @@ struct UiNodeView: View {
     @ViewBuilder
     private func statusBarView(_ status: UiStatusBarSnapshot, cellSize: CGSize) -> some View {
         HStack {
+            if let icon = status.leftIcon, !icon.isEmpty {
+                Group {
+                    if let svg = PickerIconLoader.image(named: icon) {
+                        svg
+                            .renderingMode(.template)
+                    } else {
+                        Image(systemName: filePickerSymbol(for: icon) ?? "doc.fill")
+                            .symbolRenderingMode(.monochrome)
+                    }
+                }
+                .foregroundStyle(.secondary)
+            }
             Text(status.left)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -590,6 +602,7 @@ struct StatuslineSnapshot {
     let left: String
     let center: String
     let right: String
+    let leftIcon: String?
     let style: UiStyleSnapshot
     let panelStyle: UiStyleSnapshot
 }
@@ -644,6 +657,11 @@ struct StatuslineView: View {
         }
     }
 
+    private var resolvedLeftIcon: (svg: Image?, symbol: String)? {
+        guard let icon = snapshot.leftIcon, !icon.isEmpty else { return nil }
+        return (PickerIconLoader.image(named: icon), filePickerSymbol(for: icon) ?? "doc.fill")
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Rectangle()
@@ -656,6 +674,22 @@ struct StatuslineView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(modeColor)
                     .frame(minWidth: 48, alignment: .leading)
+
+                if let icon = resolvedLeftIcon {
+                    Group {
+                        if let svg = icon.svg {
+                            svg
+                                .renderingMode(.template)
+                        } else {
+                            Image(systemName: icon.symbol)
+                                .symbolRenderingMode(.monochrome)
+                        }
+                    }
+                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 14, alignment: .center)
+                    .padding(.trailing, 4)
+                }
 
                 if !filename.isEmpty {
                     Text(filename)
@@ -771,6 +805,7 @@ extension UiTreeSnapshot {
             left: status.left,
             center: status.center,
             right: status.right,
+            leftIcon: status.leftIcon,
             style: status.style,
             panelStyle: panel.style
         )

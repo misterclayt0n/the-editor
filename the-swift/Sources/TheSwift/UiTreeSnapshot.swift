@@ -217,6 +217,7 @@ struct UiStatusBarSnapshot: Decodable {
     let center: String
     let right: String
     let style: UiStyleSnapshot
+    let leftIcon: String?
 }
 
 enum UiAxisSnapshot: String, Decodable {

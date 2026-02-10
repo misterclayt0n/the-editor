@@ -103,7 +103,7 @@ fileprivate func fileIcon(for item: FilePickerItemSnapshot) -> (svg: Image?, sym
     return (svg, symbol)
 }
 
-fileprivate func filePickerSymbol(for icon: String) -> String? {
+func filePickerSymbol(for icon: String) -> String? {
     switch icon {
     case "archive":
         return "archivebox.fill"

@@ -451,6 +451,8 @@ pub struct UiStatusBar {
   pub center:         String,
   pub right:          String,
   pub style:          UiStyle,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub left_icon:      Option<String>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub right_segments: Vec<UiStyledSpan>,
 }

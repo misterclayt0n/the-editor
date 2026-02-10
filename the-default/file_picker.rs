@@ -1018,7 +1018,7 @@ fn entry_to_picker_item(entry: DirEntry, root: &Path) -> Option<FilePickerItem> 
   if std::path::MAIN_SEPARATOR != '/' {
     display = display.replace(std::path::MAIN_SEPARATOR, "/");
   }
-  let icon = icon_name_for_path(rel).to_string();
+  let icon = file_picker_icon_name_for_path(rel).to_string();
 
   Some(FilePickerItem {
     absolute: path,
@@ -1028,7 +1028,7 @@ fn entry_to_picker_item(entry: DirEntry, root: &Path) -> Option<FilePickerItem> 
   })
 }
 
-fn icon_name_for_path(path: &Path) -> &'static str {
+pub fn file_picker_icon_name_for_path(path: &Path) -> &'static str {
   let file_name = path
     .file_name()
     .and_then(|name| name.to_str())
@@ -1172,6 +1172,45 @@ fn icon_name_for_path(path: &Path) -> &'static str {
   }
 
   "file_generic"
+}
+
+pub fn file_picker_icon_glyph(icon: &str, is_dir: bool) -> &'static str {
+  if is_dir {
+    return "";
+  }
+
+  match icon {
+    "folder" | "folder_open" | "folder_search" => "",
+    "archive" => "",
+    "book" => "󰂺",
+    "c" => "",
+    "cpp" => "",
+    "css" => "",
+    "database" => "",
+    "docker" => "",
+    "file_doc" => "󰈦",
+    "file_git" => "",
+    "file_lock" | "lock" => "󰌾",
+    "file_markdown" => "",
+    "file_rust" | "rust" => "",
+    "file_toml" | "toml" => "",
+    "go" => "",
+    "html" => "",
+    "image" => "󰈟",
+    "java" => "",
+    "javascript" => "",
+    "json" => "",
+    "kotlin" => "",
+    "nix" => "",
+    "python" => "",
+    "sass" => "",
+    "settings" => "",
+    "swift" => "",
+    "terminal" => "",
+    "tool_hammer" => "󰛶",
+    "typescript" => "",
+    _ => "󰈔",
+  }
 }
 
 fn matches_ignore_ascii_case(candidate: &str, variants: &[&str]) -> bool {

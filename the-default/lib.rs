@@ -67,6 +67,8 @@ pub use file_picker::{
   FilePickerState,
   build_file_picker_ui,
   close_file_picker,
+  file_picker_icon_glyph,
+  file_picker_icon_name_for_path,
   handle_file_picker_key,
   handle_query_change,
   open_file_picker,

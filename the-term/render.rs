@@ -17,6 +17,7 @@ use ratatui::{
 };
 use the_default::{
   FilePickerPreview,
+  file_picker_icon_glyph,
   render_plan,
   set_picker_visible_rows,
   ui_tree,
@@ -1166,45 +1167,6 @@ fn draw_file_picker_list_pane(
   }
 }
 
-fn file_picker_icon_glyph(icon: &str, is_dir: bool) -> &'static str {
-  if is_dir {
-    return "";
-  }
-
-  match icon {
-    "folder" | "folder_open" | "folder_search" => "",
-    "archive" => "",
-    "book" => "󰂺",
-    "c" => "",
-    "cpp" => "",
-    "css" => "",
-    "database" => "",
-    "docker" => "",
-    "file_doc" => "󰈦",
-    "file_git" => "",
-    "file_lock" | "lock" => "󰌾",
-    "file_markdown" => "",
-    "file_rust" | "rust" => "",
-    "file_toml" | "toml" => "",
-    "go" => "",
-    "html" => "",
-    "image" => "󰈟",
-    "java" => "",
-    "javascript" => "",
-    "json" => "",
-    "kotlin" => "",
-    "nix" => "",
-    "python" => "",
-    "sass" => "",
-    "settings" => "",
-    "swift" => "",
-    "terminal" => "",
-    "tool_hammer" => "󰛶",
-    "typescript" => "",
-    _ => "󰈔",
-  }
-}
-
 fn draw_file_picker_preview_pane(
   buf: &mut Buffer,
   layout: &FilePickerLayout,
@@ -1734,6 +1696,14 @@ fn draw_ui_status_bar(buf: &mut Buffer, rect: Rect, _ctx: &Ctx, status: &UiStatu
   fill_rect(buf, Rect::new(rect.x, rect.y, rect.width, 1), fill_style);
 
   let mut left = status.left.clone();
+  if let Some(icon_token) = status.left_icon.as_deref() {
+    let glyph = file_picker_icon_glyph(icon_token, false);
+    left = match left.split_once("  ") {
+      Some((mode, file)) if !file.is_empty() => format!("{mode}  {glyph}  {file}"),
+      _ if left.is_empty() => glyph.to_string(),
+      _ => format!("{glyph} {left}"),
+    };
+  }
   truncate_in_place(&mut left, rect.width as usize);
   let left_width = left.chars().count() as u16;
 

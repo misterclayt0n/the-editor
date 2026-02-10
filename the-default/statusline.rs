@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use the_lib::render::{
   LayoutIntent,
   UiConstraints,
@@ -14,6 +16,7 @@ use the_lib::render::{
 use crate::{
   DefaultContext,
   Mode,
+  file_picker_icon_name_for_path,
   message_bar::inline_statusline_message,
 };
 
@@ -52,6 +55,17 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
     .and_then(|name| name.to_str())
     .map(str::to_string)
     .unwrap_or_else(|| doc.display_name().to_string());
+  let left_icon = ctx
+    .file_path()
+    .map(file_picker_icon_name_for_path)
+    .or_else(|| {
+      if file_name.is_empty() {
+        None
+      } else {
+        Some(file_picker_icon_name_for_path(Path::new(file_name.as_str())))
+      }
+    })
+    .map(str::to_string);
 
   let mut left = format!("{}  {}", mode_label(ctx.mode()), file_name);
   let flags = doc.flags();
@@ -124,6 +138,7 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
     center: String::new(),
     right,
     style: UiStyle::default().with_role("statusline"),
+    left_icon,
     right_segments,
   };
 

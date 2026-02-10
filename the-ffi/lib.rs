@@ -2893,8 +2893,7 @@ impl DefaultContext for App {
 
     let old_text_for_lsp = self.active_editor_ref().document().text().clone();
     let loader = self.loader.clone();
-    let changes = transaction.changes().clone();
-    let mut async_payload: Option<(Syntax, Rope, Rope, Arc<Loader>)> = None;
+    let mut async_parse_job: Option<Box<dyn FnOnce() -> Option<Syntax> + Send>> = None;
     let mut clear_highlights = false;
 
     {
@@ -2932,9 +2931,14 @@ impl DefaultContext for App {
               bump_syntax_version = true;
             },
             Ok(false) => {
+              let root_language = syntax.root_language();
               syntax.interpolate(old_text.slice(..), transaction.changes());
               bump_syntax_version = true;
-              async_payload = Some((syntax.clone(), old_text.clone(), new_text, loader.clone()));
+              let parse_source = new_text.clone();
+              let parse_loader = loader.clone();
+              async_parse_job = Some(Box::new(move || {
+                Syntax::new(parse_source.slice(..), root_language, parse_loader.as_ref()).ok()
+              }));
             },
             Err(_) => {
               clear_syntax = true;
@@ -2955,7 +2959,7 @@ impl DefaultContext for App {
       self.active_state_mut().highlight_cache.clear();
     }
 
-    if let Some((mut syntax, old_text, new_text, loader)) = async_payload {
+    if let Some(parse_job) = async_parse_job {
       let (request_id, tx) = {
         let state = self
           .states
@@ -2966,15 +2970,7 @@ impl DefaultContext for App {
       };
 
       thread::spawn(move || {
-        let parsed = syntax
-          .update(
-            old_text.slice(..),
-            new_text.slice(..),
-            &changes,
-            loader.as_ref(),
-          )
-          .ok()
-          .map(|_| syntax);
+        let parsed = parse_job();
         let _ = tx.send(SyntaxParseResult {
           request_id,
           syntax: parsed,

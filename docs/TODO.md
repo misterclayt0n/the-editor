@@ -1,10 +1,23 @@
-# Theme TODO
+# TODO
+- [ ] First class jj support
+- [ ] File watching (this may take a while to get nice)
+- [ ] Render selection on other pairs (like in flow/vscode/zed when I select something and the rest kinda get's selected as well, but we can probably skip one char selection for this I suppose)
+- [ ] Line wrap
 
-1. [x] Port the helix theme parser into the-lib and embed default theme data.
-2. [x] Add UiStyle.role for semantic UI styling.
-3. [x] Add UI scope generation for UiTree components/states (role-aware).
-4. [x] Resolve UiTree styles against Theme in the-lib.
-5. [x] Wire the resolver into the default UI pipeline before clients render.
-6. [x] Add theme selection/config plumbing for clients.
-7. [x] Assign semantic roles for core UI components and document them.
-8. [x] Update clients to consume resolved colors and drop hardcoded defaults.
+### Swift
+- [ ] Correct mouse support (scrolling and also selecting stuff with the cursor)
+- [ ] Refactor a bit of the statusline (show file icons, full file path)
+- [ ] Figure out correct theming
+- [ ] Gutter line (line numbers, VCS stuff)
+- [ ] Render LSP completer
+- [ ] Render '\n' selection
+- [ ] Render multiple cursor formats (bar, block)
+
+### Terminal
+- [ ] Correct mouse support (scrolling and also selecting stuff with the cursor)
+- [ ] Gutter line (line numbers, VCS stuff)
+- [ ] Render LSP completer
+- [ ] Render file icons in the statusline (flow editor shouuld be a good inspiration here)
+- [ ] Render '\n' selection
+- [ ] Render multiple cursor formats (bar, underline, block)
+ 

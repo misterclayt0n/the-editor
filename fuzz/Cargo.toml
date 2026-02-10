@@ -1,0 +1,38 @@
+[package]
+name = "the-editor-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ropey = "1.6.1"
+the-lib = { path = "../the-lib", features = ["runtime-loader"] }
+the-loader = { path = "../the-loader" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "syntax_update"
+path = "fuzz_targets/syntax_update.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "syntax_interpolate"
+path = "fuzz_targets/syntax_interpolate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "syntax_edits"
+path = "fuzz_targets/syntax_edits.rs"
+test = false
+doc = false
+bench = false

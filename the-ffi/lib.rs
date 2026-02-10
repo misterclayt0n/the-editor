@@ -3150,7 +3150,6 @@ impl DefaultContext for App {
             },
             Ok(false) => {
               let root_language = syntax.root_language();
-              syntax.interpolate(old_text.slice(..), transaction.changes());
               bump_syntax_version = true;
               let parse_source = new_text.clone();
               let parse_loader = loader.clone();

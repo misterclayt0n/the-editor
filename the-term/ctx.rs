@@ -2354,9 +2354,7 @@ impl the_default::DefaultContext for Ctx {
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
     let old_text_for_lsp = self.editor.document().text().clone();
     let loader = self.loader.clone();
-    let changes = transaction.changes().clone();
-
-    let mut async_payload: Option<(Syntax, Rope, Rope, Arc<Loader>)> = None;
+    let mut async_parse_job: Option<Box<dyn FnOnce() -> Option<Syntax> + Send>> = None;
     {
       let doc = self.editor.document_mut();
       let old_text = doc.text().clone();
@@ -2388,9 +2386,13 @@ impl the_default::DefaultContext for Ctx {
               bump_syntax_version = true;
             },
             Ok(false) => {
-              syntax.interpolate(old_text.slice(..), transaction.changes());
               bump_syntax_version = true;
-              async_payload = Some((syntax.clone(), old_text.clone(), new_text, loader.clone()));
+              let root_language = syntax.root_language();
+              let parse_source = new_text.clone();
+              let parse_loader = loader.clone();
+              async_parse_job = Some(Box::new(move || {
+                Syntax::new(parse_source.slice(..), root_language, parse_loader.as_ref()).ok()
+              }));
             },
             Err(_) => {
               clear_syntax = true;
@@ -2407,20 +2409,12 @@ impl the_default::DefaultContext for Ctx {
       }
     }
 
-    if let Some((mut syntax, old_text, new_text, loader)) = async_payload {
+    if let Some(parse_job) = async_parse_job {
       self.syntax_parse_latest = self.syntax_parse_latest.saturating_add(1);
       let request_id = self.syntax_parse_latest;
       let tx = self.syntax_parse_tx.clone();
       thread::spawn(move || {
-        let parsed = syntax
-          .update(
-            old_text.slice(..),
-            new_text.slice(..),
-            &changes,
-            loader.as_ref(),
-          )
-          .ok()
-          .map(|_| syntax);
+        let parsed = parse_job();
         let _ = tx.send(SyntaxParseResult {
           request_id,
           syntax: parsed,

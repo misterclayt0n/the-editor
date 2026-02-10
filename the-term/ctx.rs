@@ -102,6 +102,7 @@ use the_lib::{
     Syntax,
     generate_edits,
   },
+  syntax_async::select_latest_matching_request,
   transaction::{
     ChangeSet,
     Transaction,
@@ -306,69 +307,69 @@ impl PendingLspRequestKind {
 
 /// Application state passed to all handlers.
 pub struct Ctx {
-  pub editor:                Editor,
-  pub file_path:             Option<PathBuf>,
-  pub should_quit:           bool,
-  pub needs_render:          bool,
-  pub messages:              MessageCenter,
-  message_log:               Option<BufWriter<std::fs::File>>,
-  message_log_seq:           u64,
-  lsp_trace_log:             Option<BufWriter<std::fs::File>>,
-  pub file_picker_wake_rx:   Receiver<()>,
-  pub mode:                  Mode,
-  pub keymaps:               Keymaps,
-  pub command_prompt:        CommandPromptState,
-  pub command_registry:      CommandRegistry<Ctx>,
-  pub command_palette:       CommandPaletteState,
-  pub command_palette_style: CommandPaletteStyle,
-  pub file_picker:           FilePickerState,
-  pub lsp_runtime:           LspRuntime,
-  pub lsp_ready:             bool,
-  pub lsp_document:          Option<LspDocumentSyncState>,
-  lsp_statusline:            LspStatuslineState,
-  lsp_spinner_index:         usize,
-  lsp_spinner_last_tick:     Instant,
+  pub editor:                 Editor,
+  pub file_path:              Option<PathBuf>,
+  pub should_quit:            bool,
+  pub needs_render:           bool,
+  pub messages:               MessageCenter,
+  message_log:                Option<BufWriter<std::fs::File>>,
+  message_log_seq:            u64,
+  lsp_trace_log:              Option<BufWriter<std::fs::File>>,
+  pub file_picker_wake_rx:    Receiver<()>,
+  pub mode:                   Mode,
+  pub keymaps:                Keymaps,
+  pub command_prompt:         CommandPromptState,
+  pub command_registry:       CommandRegistry<Ctx>,
+  pub command_palette:        CommandPaletteState,
+  pub command_palette_style:  CommandPaletteStyle,
+  pub file_picker:            FilePickerState,
+  pub lsp_runtime:            LspRuntime,
+  pub lsp_ready:              bool,
+  pub lsp_document:           Option<LspDocumentSyncState>,
+  lsp_statusline:             LspStatuslineState,
+  lsp_spinner_index:          usize,
+  lsp_spinner_last_tick:      Instant,
   lsp_active_progress_tokens: HashSet<String>,
-  lsp_watched_file:          Option<LspWatchedFileState>,
-  lsp_pending_requests:      HashMap<u64, PendingLspRequestKind>,
-  pub diagnostics:           DiagnosticsState,
-  pub file_picker_layout:    Option<FilePickerLayout>,
-  pub file_picker_drag:      Option<FilePickerDragState>,
-  pub search_prompt:         the_default::SearchPromptState,
-  pub ui_theme:              Theme,
-  pub ui_state:              UiState,
-  pub pending_input:         Option<the_default::PendingInput>,
-  pub dispatch:              Option<NonNull<DefaultDispatchStatic<Ctx>>>,
+  lsp_watched_file:           Option<LspWatchedFileState>,
+  lsp_pending_requests:       HashMap<u64, PendingLspRequestKind>,
+  pub diagnostics:            DiagnosticsState,
+  pub file_picker_layout:     Option<FilePickerLayout>,
+  pub file_picker_drag:       Option<FilePickerDragState>,
+  pub search_prompt:          the_default::SearchPromptState,
+  pub ui_theme:               Theme,
+  pub ui_state:               UiState,
+  pub pending_input:          Option<the_default::PendingInput>,
+  pub dispatch:               Option<NonNull<DefaultDispatchStatic<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
-  pub loader:                Option<Arc<Loader>>,
+  pub loader:                 Option<Arc<Loader>>,
   /// Cache for syntax highlights (reused across renders).
-  pub highlight_cache:       HighlightCache,
+  pub highlight_cache:        HighlightCache,
   /// Background parse result channel (async syntax fallback).
-  pub syntax_parse_tx:       Sender<SyntaxParseResult>,
+  pub syntax_parse_tx:        Sender<SyntaxParseResult>,
   /// Background parse result receiver (async syntax fallback).
-  pub syntax_parse_rx:       Receiver<SyntaxParseResult>,
+  pub syntax_parse_rx:        Receiver<SyntaxParseResult>,
   /// Latest parse request id; stale parse results are discarded.
-  pub syntax_parse_latest:   u64,
+  pub syntax_parse_latest:    u64,
   /// Registers for yanking/pasting.
-  pub registers:             Registers,
+  pub registers:              Registers,
   /// Active register target (for macros/register operations).
-  pub register:              Option<char>,
+  pub register:               Option<char>,
   /// Macro recording state.
-  pub macro_recording:       Option<(char, Vec<KeyBinding>)>,
+  pub macro_recording:        Option<(char, Vec<KeyBinding>)>,
   /// Macro replay stack for recursion guard.
-  pub macro_replaying:       Vec<char>,
+  pub macro_replaying:        Vec<char>,
   /// Pending macro key events to replay.
-  pub macro_queue:           VecDeque<KeyEvent>,
+  pub macro_queue:            VecDeque<KeyEvent>,
   /// Last executed motion for repeat.
-  pub last_motion:           Option<Motion>,
+  pub last_motion:            Option<Motion>,
   /// Render formatting used for visual position mapping.
-  pub text_format:           TextFormat,
+  pub text_format:            TextFormat,
   /// Inline annotations (virtual text) for rendering.
-  pub inline_annotations:    Vec<InlineAnnotation>,
+  pub inline_annotations:     Vec<InlineAnnotation>,
   /// Overlay annotations (virtual text) for rendering.
-  pub overlay_annotations:   Vec<Overlay>,
+  pub overlay_annotations:    Vec<Overlay>,
   /// Lines to keep above/below cursor when scrolling.
-  pub scrolloff:             usize,
+  pub scrolloff:              usize,
 }
 
 fn select_ui_theme() -> Theme {
@@ -679,21 +680,20 @@ impl Ctx {
   }
 
   pub fn poll_syntax_parse_results(&mut self) -> bool {
-    let mut newest: Option<SyntaxParseResult> = None;
+    let latest_request = self.syntax_parse_latest;
+    let mut drained = Vec::new();
     loop {
       match self.syntax_parse_rx.try_recv() {
-        Ok(result) => newest = Some(result),
+        Ok(result) => drained.push(result),
         Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
       }
     }
 
-    let Some(result) = newest else {
+    let Some(result) =
+      select_latest_matching_request(latest_request, drained, |result| result.request_id)
+    else {
       return false;
     };
-
-    if result.request_id != self.syntax_parse_latest {
-      return false;
-    }
 
     let doc = self.editor.document_mut();
     match result.syntax {
@@ -1045,10 +1045,8 @@ impl Ctx {
             },
             LspProgressKind::Report => {
               if self.lsp_active_progress_tokens.contains(&progress.token) {
-                let text = format_lsp_progress_text(
-                  progress.title.as_deref(),
-                  progress.message.as_deref(),
-                );
+                let text =
+                  format_lsp_progress_text(progress.title.as_deref(), progress.message.as_deref());
                 self.set_lsp_status(LspStatusPhase::Busy, Some(text));
                 needs_render = true;
               }

@@ -62,7 +62,9 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
       if file_name.is_empty() {
         None
       } else {
-        Some(file_picker_icon_name_for_path(Path::new(file_name.as_str())))
+        Some(file_picker_icon_name_for_path(Path::new(
+          file_name.as_str(),
+        )))
       }
     })
     .map(str::to_string);

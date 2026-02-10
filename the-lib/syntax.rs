@@ -1843,17 +1843,19 @@ mod runtime_tests {
   use ropey::Rope;
 
   use super::*;
-  use crate::syntax::{
-    config::{
-      Configuration,
-      FileType,
-      LanguageConfiguration,
-      LanguageServicesConfig,
-      SyntaxLanguageConfig,
+  use crate::{
+    syntax::{
+      config::{
+        Configuration,
+        FileType,
+        LanguageConfiguration,
+        LanguageServicesConfig,
+        SyntaxLanguageConfig,
+      },
+      runtime_loader::RuntimeLoader,
     },
-    runtime_loader::RuntimeLoader,
+    transaction::Transaction,
   };
-  use crate::transaction::Transaction;
 
   fn language_config(language_id: &str, scope: &str, extension: &str) -> LanguageConfiguration {
     LanguageConfiguration {
@@ -1899,9 +1901,7 @@ mod runtime_tests {
 
   impl SimRng {
     fn new(seed: u64) -> Self {
-      Self {
-        state: seed.max(1),
-      }
+      Self { state: seed.max(1) }
     }
 
     fn next_u64(&mut self) -> u64 {
@@ -1924,20 +1924,7 @@ mod runtime_tests {
 
   fn next_edit(rng: &mut SimRng, len_chars: usize) -> (usize, usize, Option<String>, &'static str) {
     const TOKENS: &[&str] = &[
-      "a",
-      "_",
-      " ",
-      "\n",
-      "{",
-      "}",
-      "(",
-      ")",
-      "\"",
-      "::",
-      "let ",
-      "fn ",
-      "0",
-      "🙂",
+      "a", "_", " ", "\n", "{", "}", "(", ")", "\"", "::", "let ", "fn ", "0", "🙂",
     ];
 
     let op = if len_chars == 0 { 0 } else { rng.next_usize(3) };
@@ -2010,10 +1997,11 @@ mod runtime_tests {
 
     let corpora = [
       "fn main() {\n    let value = 1;\n    println!(\"{value}\");\n}\n",
-      "/// docs\nfn parse(input: &str) -> Result<(), Error> {\n    input.parse::<u64>()?;\n    Ok(())\n}\n",
+      "/// docs\nfn parse(input: &str) -> Result<(), Error> {\n    input.parse::<u64>()?;\n    \
+       Ok(())\n}\n",
       "enum Token { Ident(String), Number(u64), Eof }\n",
     ];
-    let seeds = [0x41u64, 0x5eedu64, 0xdead_beefu64, 0x1234_5678u64];
+    let seeds = [0x41u64, 0x5EEDu64, 0xDEAD_BEEFu64, 0x1234_5678u64];
 
     for (corpus_idx, corpus) in corpora.iter().enumerate() {
       for seed in seeds {
@@ -2038,13 +2026,15 @@ mod runtime_tests {
           )
           .unwrap_or_else(|err| {
             panic!(
-              "failed to build transaction: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
+              "failed to build transaction: seed={combined_seed} corpus={corpus_idx} step={step} \
+               op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
             )
           });
           let changes = transaction.changes().clone();
           transaction.apply(&mut text).unwrap_or_else(|err| {
             panic!(
-              "failed to apply transaction: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name}: {err}"
+              "failed to apply transaction: seed={combined_seed} corpus={corpus_idx} step={step} \
+               op={op_name}: {err}"
             )
           });
 
@@ -2052,7 +2042,8 @@ mod runtime_tests {
             .update(old_text.slice(..), text.slice(..), &changes, &loader)
             .unwrap_or_else(|err| {
               panic!(
-                "syntax update failed: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
+                "syntax update failed: seed={combined_seed} corpus={corpus_idx} step={step} \
+                 op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
               )
             });
 
@@ -2062,11 +2053,13 @@ mod runtime_tests {
           let root_end = root_range.end as usize;
           assert!(
             root_start <= root_end,
-            "invalid root ordering: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} root_start={root_start} root_end={root_end}"
+            "invalid root ordering: seed={combined_seed} corpus={corpus_idx} step={step} \
+             op={op_name} root_start={root_start} root_end={root_end}"
           );
           assert!(
             root_end <= len_bytes,
-            "invalid root end: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} root_end={} len_bytes={len_bytes}",
+            "invalid root end: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} \
+             root_end={} len_bytes={len_bytes}",
             root_end
           );
 
@@ -2074,7 +2067,8 @@ mod runtime_tests {
           for (_highlight, range) in highlights {
             assert!(
               range.start <= range.end && range.end <= len_bytes,
-              "invalid highlight range: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} range={range:?} len_bytes={len_bytes}"
+              "invalid highlight range: seed={combined_seed} corpus={corpus_idx} step={step} \
+               op={op_name} range={range:?} len_bytes={len_bytes}"
             );
           }
         }
@@ -2096,11 +2090,12 @@ mod runtime_tests {
 
     let corpora = [
       "fn main() {\n    let value = 1;\n    println!(\"{value}\");\n}\n",
-      "/// docs\nfn parse(input: &str) -> Result<(), Error> {\n    input.parse::<u64>()?;\n    Ok(())\n}\n",
+      "/// docs\nfn parse(input: &str) -> Result<(), Error> {\n    input.parse::<u64>()?;\n    \
+       Ok(())\n}\n",
       "enum Token { Ident(String), Number(u64), Eof }\n",
       "impl Parser {\n    fn next(&mut self) -> Option<char> { self.input.pop() }\n}\n",
     ];
-    let seeds = [0x41u64, 0x5eedu64, 0xdead_beefu64, 0x1234_5678u64];
+    let seeds = [0x41u64, 0x5EEDu64, 0xDEAD_BEEFu64, 0x1234_5678u64];
 
     for (corpus_idx, corpus) in corpora.iter().enumerate() {
       for seed in seeds {
@@ -2125,13 +2120,15 @@ mod runtime_tests {
           )
           .unwrap_or_else(|err| {
             panic!(
-              "failed to build transaction: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
+              "failed to build transaction: seed={combined_seed} corpus={corpus_idx} step={step} \
+               op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
             )
           });
           let changes = transaction.changes().clone();
           transaction.apply(&mut text).unwrap_or_else(|err| {
             panic!(
-              "failed to apply transaction: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name}: {err}"
+              "failed to apply transaction: seed={combined_seed} corpus={corpus_idx} step={step} \
+               op={op_name}: {err}"
             )
           });
 
@@ -2139,7 +2136,8 @@ mod runtime_tests {
             .update(old_text.slice(..), text.slice(..), &changes, &loader)
             .unwrap_or_else(|err| {
               panic!(
-                "incremental syntax update failed: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
+                "incremental syntax update failed: seed={combined_seed} corpus={corpus_idx} \
+                 step={step} op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
               )
             });
 
@@ -2149,7 +2147,8 @@ mod runtime_tests {
 
           let fresh = Syntax::new(text.slice(..), language, &loader).unwrap_or_else(|err| {
             panic!(
-              "fresh syntax parse failed: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
+              "fresh syntax parse failed: seed={combined_seed} corpus={corpus_idx} step={step} \
+               op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
             )
           });
 
@@ -2163,7 +2162,8 @@ mod runtime_tests {
           assert_eq!(
             incremental_root.byte_range(),
             fresh_root.byte_range(),
-            "root byte range mismatch: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name}"
+            "root byte range mismatch: seed={combined_seed} corpus={corpus_idx} step={step} \
+             op={op_name}"
           );
 
           let windows = sampled_byte_ranges(
@@ -2176,9 +2176,9 @@ mod runtime_tests {
             let fresh_highlights =
               normalized_highlights(&fresh, text.slice(..), &loader, window.clone());
             assert_eq!(
-              incremental_highlights,
-              fresh_highlights,
-              "highlight mismatch: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} window={window:?}"
+              incremental_highlights, fresh_highlights,
+              "highlight mismatch: seed={combined_seed} corpus={corpus_idx} step={step} \
+               op={op_name} window={window:?}"
             );
           }
         }

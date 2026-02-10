@@ -139,6 +139,7 @@ use the_lib::{
     Syntax,
     generate_edits,
   },
+  syntax_async::select_latest_matching_request,
   transaction::Transaction,
   view::ViewState,
 };
@@ -2755,30 +2756,28 @@ impl App {
   }
 
   fn poll_editor_syntax_parse_results(&mut self, id: LibEditorId) -> bool {
-    let (latest_request, newest_result) = {
+    let (latest_request, drained_results) = {
       let Some(state) = self.states.get_mut(&id) else {
         return false;
       };
 
       let latest_request = state.syntax_parse_latest;
-      let mut newest: Option<SyntaxParseResult> = None;
+      let mut drained = Vec::new();
       loop {
         match state.syntax_parse_rx.try_recv() {
-          Ok(result) => newest = Some(result),
+          Ok(result) => drained.push(result),
           Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
         }
       }
 
-      (latest_request, newest)
+      (latest_request, drained)
     };
 
-    let Some(result) = newest_result else {
+    let Some(result) =
+      select_latest_matching_request(latest_request, drained_results, |result| result.request_id)
+    else {
       return false;
     };
-
-    if result.request_id != latest_request {
-      return false;
-    }
 
     let loader = self.loader.clone();
     let Some(editor) = self.inner.editor_mut(id) else {

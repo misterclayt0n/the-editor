@@ -27,6 +27,7 @@ pub mod search;
 pub mod selection;
 pub mod surround;
 pub mod syntax;
+pub mod syntax_async;
 pub mod text_object;
 pub mod transaction;
 pub mod view;

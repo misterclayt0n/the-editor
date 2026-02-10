@@ -978,7 +978,7 @@ fn build_lsp_document_state(path: &Path, loader: Option<&Loader>) -> Option<LspD
 }
 
 fn spinner_frame(index: usize) -> char {
-  const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  const FRAMES: [char; 8] = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'];
   FRAMES[index % FRAMES.len()]
 }
 
@@ -1924,7 +1924,7 @@ impl App {
       return false;
     }
     self.lsp_spinner_last_tick = now;
-    self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 10;
+    self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 8;
     true
   }
 

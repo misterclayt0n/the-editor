@@ -882,7 +882,7 @@ impl Ctx {
       return false;
     }
     self.lsp_spinner_last_tick = now;
-    self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 10;
+    self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 8;
     true
   }
 
@@ -2192,7 +2192,7 @@ fn summarize_jsonrpc_id(id: &jsonrpc::Id) -> Value {
 }
 
 fn spinner_frame(index: usize) -> char {
-  const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  const FRAMES: [char; 8] = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'];
   FRAMES[index % FRAMES.len()]
 }
 

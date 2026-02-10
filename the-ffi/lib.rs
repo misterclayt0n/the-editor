@@ -143,19 +143,28 @@ use the_lib::{
 };
 use the_loader::config::user_lang_config;
 use the_lsp::{
+  LspCapability,
   LspEvent,
+  LspLocation,
+  LspPosition,
   LspProgressKind,
   LspRuntime,
   LspRuntimeConfig,
   LspServerConfig,
+  goto_definition_params,
+  jsonrpc,
+  parse_locations_response,
   text_sync::{
     FileChangeType,
+    char_idx_to_utf16_position,
     did_change_params,
     did_change_watched_files_params,
     did_close_params,
     did_open_params,
     did_save_params,
     file_uri_for_path,
+    path_for_file_uri,
+    utf16_position_to_char_idx,
   },
 };
 
@@ -765,6 +774,25 @@ impl LspStatuslineState {
   }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PendingLspRequestKind {
+  GotoDefinition { uri: String },
+}
+
+impl PendingLspRequestKind {
+  fn label(&self) -> &'static str {
+    match self {
+      Self::GotoDefinition { .. } => "goto-definition",
+    }
+  }
+
+  fn uri(&self) -> &str {
+    match self {
+      Self::GotoDefinition { uri } => uri.as_str(),
+    }
+  }
+}
+
 struct EditorState {
   mode:                  Mode,
   command_prompt:        CommandPromptState,
@@ -1018,6 +1046,7 @@ pub struct App {
   lsp_spinner_index:     usize,
   lsp_spinner_last_tick: Instant,
   lsp_watched_file:      Option<LspWatchedFileState>,
+  lsp_pending_requests:  HashMap<u64, PendingLspRequestKind>,
   diagnostics:           DiagnosticsState,
   ui_theme:              Theme,
   loader:                Option<Arc<Loader>>,
@@ -1063,6 +1092,7 @@ impl App {
       lsp_spinner_index: 0,
       lsp_spinner_last_tick: Instant::now(),
       lsp_watched_file: None,
+      lsp_pending_requests: HashMap::new(),
       diagnostics: DiagnosticsState::default(),
       ui_theme,
       loader,
@@ -1099,6 +1129,7 @@ impl App {
         self.lsp_ready = false;
         self.lsp_document = None;
         self.lsp_watched_file = None;
+        self.lsp_pending_requests.clear();
         self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
       }
     }
@@ -1812,6 +1843,7 @@ impl App {
     self.lsp_ready = false;
     self.lsp_spinner_index = 0;
     self.diagnostics.clear();
+    self.lsp_pending_requests.clear();
     let _ = self.lsp_runtime.shutdown();
 
     let active_path = self.file_path().map(Path::to_path_buf);
@@ -1959,6 +1991,7 @@ impl App {
         },
         LspEvent::ServerStarted { server_name, .. } => {
           self.lsp_ready = false;
+          self.lsp_pending_requests.clear();
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
           }
@@ -1973,6 +2006,7 @@ impl App {
         },
         LspEvent::ServerStopped { .. } | LspEvent::Stopped => {
           self.lsp_ready = false;
+          self.lsp_pending_requests.clear();
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
           }
@@ -2013,6 +2047,19 @@ impl App {
           self.publish_lsp_message(the_lib::messages::MessageLevel::Error, message);
           changed = true;
         },
+        LspEvent::RequestTimedOut { id, method } => {
+          let text = if let Some(kind) = self.lsp_pending_requests.remove(&id) {
+            format!("lsp {} timed out", kind.label())
+          } else {
+            format!("lsp {method} timed out")
+          };
+          self.publish_lsp_message(the_lib::messages::MessageLevel::Warning, text);
+          self.set_lsp_status(LspStatusPhase::Error, Some("request timeout".into()));
+          changed = true;
+        },
+        LspEvent::RpcMessage { message } => {
+          changed |= self.handle_lsp_rpc_message(message);
+        },
         LspEvent::DiagnosticsPublished { diagnostics } => {
           let diagnostic_uri = diagnostics.uri.clone();
           let active_uri = self.lsp_document.as_ref().map(|state| state.uri.as_str());
@@ -2051,6 +2098,165 @@ impl App {
       the_lib::messages::MessageLevel::Info
     };
     self.publish_lsp_message(level, text);
+  }
+
+  fn handle_lsp_rpc_message(&mut self, message: jsonrpc::Message) -> bool {
+    let jsonrpc::Message::Response(response) = message else {
+      return false;
+    };
+    self.handle_lsp_response(response)
+  }
+
+  fn handle_lsp_response(&mut self, response: jsonrpc::Response) -> bool {
+    let jsonrpc::Id::Number(id) = response.id else {
+      return false;
+    };
+    let Some(kind) = self.lsp_pending_requests.remove(&id) else {
+      return false;
+    };
+
+    if self
+      .lsp_document
+      .as_ref()
+      .map(|state| state.uri.as_str())
+      .is_some_and(|uri| uri != kind.uri())
+    {
+      return false;
+    }
+
+    if let Some(error) = response.error {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Error,
+        format!("lsp {} failed: {}", kind.label(), error.message),
+      );
+      return true;
+    }
+
+    match kind {
+      PendingLspRequestKind::GotoDefinition { .. } => {
+        let locations = match parse_locations_response(response.result.as_ref()) {
+          Ok(locations) => locations,
+          Err(err) => {
+            self.publish_lsp_message(
+              the_lib::messages::MessageLevel::Error,
+              format!("failed to parse goto-definition response: {err}"),
+            );
+            return true;
+          },
+        };
+        self.apply_locations_result("definition", locations)
+      },
+    }
+  }
+
+  fn apply_locations_result(&mut self, label: &str, locations: Vec<LspLocation>) -> bool {
+    if locations.is_empty() {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Info,
+        format!("no {label} found"),
+      );
+      return true;
+    }
+
+    let jumped = self.jump_to_location(&locations[0]);
+    if jumped {
+      let total = locations.len();
+      let text = if total == 1 {
+        format!("{label}: 1 result")
+      } else {
+        format!("{label}: {total} results (jumped to first)")
+      };
+      self.publish_lsp_message(the_lib::messages::MessageLevel::Info, text);
+    }
+    jumped
+  }
+
+  fn jump_to_location(&mut self, location: &LspLocation) -> bool {
+    let Some(path) = path_for_file_uri(&location.uri) else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        format!("unsupported location URI: {}", location.uri),
+      );
+      return true;
+    };
+
+    if self
+      .file_path()
+      .is_none_or(|current| current != path.as_path())
+      && let Err(err) = <Self as DefaultContext>::open_file(self, &path)
+    {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Error,
+        format!("failed to open location '{}': {err}", path.display()),
+      );
+      return true;
+    }
+
+    let cursor = {
+      let doc = self.active_editor_ref().document();
+      utf16_position_to_char_idx(
+        doc.text(),
+        location.range.start.line,
+        location.range.start.character,
+      )
+    };
+
+    let _ = self
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(cursor));
+    self.active_editor_mut().view_mut().scroll = LibPosition::new(
+      (location.range.start.line as usize).saturating_sub(self.scrolloff()),
+      0,
+    );
+    self.request_render();
+    true
+  }
+
+  fn lsp_supports(&self, capability: LspCapability) -> bool {
+    let Some(server) = self.lsp_runtime.config().server() else {
+      return false;
+    };
+    self
+      .lsp_runtime
+      .server_capabilities(server.name())
+      .is_some_and(|capabilities| capabilities.supports(capability))
+  }
+
+  fn current_lsp_position(&self) -> Option<(String, LspPosition)> {
+    if !self.lsp_ready {
+      return None;
+    }
+    let state = self.lsp_document.as_ref()?.clone();
+    if !state.opened {
+      return None;
+    }
+
+    let doc = self.active_editor_ref().document();
+    let range = doc.selection().ranges().first().copied()?;
+    let cursor = range.cursor(doc.text().slice(..));
+    let (line, character) = char_idx_to_utf16_position(doc.text(), cursor);
+
+    Some((state.uri, LspPosition { line, character }))
+  }
+
+  fn dispatch_lsp_request(
+    &mut self,
+    method: &'static str,
+    params: serde_json::Value,
+    pending: PendingLspRequestKind,
+  ) {
+    match self.lsp_runtime.send_request(method, Some(params)) {
+      Ok(request_id) => {
+        self.lsp_pending_requests.insert(request_id, pending);
+      },
+      Err(err) => {
+        self.publish_lsp_message(
+          the_lib::messages::MessageLevel::Error,
+          format!("failed to dispatch {method}: {err}"),
+        );
+      },
+    }
   }
 
   fn lsp_sync_kind(&self) -> Option<the_lsp::TextDocumentSyncKind> {
@@ -2901,6 +3107,30 @@ impl DefaultContext for App {
     Ok(())
   }
 
+  fn lsp_goto_definition(&mut self) {
+    if !self.lsp_supports(LspCapability::GotoDefinition) {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "goto-definition is not supported by the active server",
+      );
+      return;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      self.publish_lsp_message(
+        the_lib::messages::MessageLevel::Warning,
+        "goto-definition unavailable: no active LSP document",
+      );
+      return;
+    };
+
+    self.dispatch_lsp_request(
+      "textDocument/definition",
+      goto_definition_params(&uri, position),
+      PendingLspRequestKind::GotoDefinition { uri },
+    );
+  }
+
   fn on_file_saved(&mut self, _path: &Path, text: &str) {
     self.lsp_send_did_save(Some(text));
   }
@@ -2911,6 +3141,7 @@ impl DefaultContext for App {
     self.lsp_ready = false;
     self.lsp_document = None;
     self.lsp_watched_file = None;
+    self.lsp_pending_requests.clear();
     self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
   }
 

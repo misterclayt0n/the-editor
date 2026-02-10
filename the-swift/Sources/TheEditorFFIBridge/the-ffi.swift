@@ -190,6 +190,10 @@ extension AppRefMut {
         RustString(ptr: __swift_bridge__$App$file_picker_snapshot_json(ptr, id.intoFfiRepr(), max_items))
     }
 
+    public func poll_background(_ id: EditorId) -> Bool {
+        __swift_bridge__$App$poll_background(ptr, id.intoFfiRepr())
+    }
+
     public func take_should_quit() -> Bool {
         __swift_bridge__$App$take_should_quit(ptr)
     }

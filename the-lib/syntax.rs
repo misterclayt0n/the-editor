@@ -1850,6 +1850,7 @@ mod runtime_tests {
     },
     runtime_loader::RuntimeLoader,
   };
+  use crate::transaction::Transaction;
 
   fn language_config(language_id: &str, scope: &str, extension: &str) -> LanguageConfiguration {
     LanguageConfiguration {
@@ -1886,6 +1887,163 @@ mod runtime_tests {
     };
 
     Loader::new(config, RuntimeLoader::new()).expect("loader")
+  }
+
+  #[derive(Debug, Clone, Copy)]
+  struct SimRng {
+    state: u64,
+  }
+
+  impl SimRng {
+    fn new(seed: u64) -> Self {
+      Self {
+        state: seed.max(1),
+      }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+      let mut x = self.state;
+      x ^= x << 13;
+      x ^= x >> 7;
+      x ^= x << 17;
+      self.state = x;
+      x
+    }
+
+    fn next_usize(&mut self, upper: usize) -> usize {
+      if upper == 0 {
+        0
+      } else {
+        (self.next_u64() as usize) % upper
+      }
+    }
+  }
+
+  fn next_edit(rng: &mut SimRng, len_chars: usize) -> (usize, usize, Option<String>, &'static str) {
+    const TOKENS: &[&str] = &[
+      "a",
+      "_",
+      " ",
+      "\n",
+      "{",
+      "}",
+      "(",
+      ")",
+      "\"",
+      "::",
+      "let ",
+      "fn ",
+      "0",
+      "🙂",
+    ];
+
+    let op = if len_chars == 0 { 0 } else { rng.next_usize(3) };
+    match op {
+      0 => {
+        let at = rng.next_usize(len_chars.saturating_add(1));
+        let replacement = TOKENS[rng.next_usize(TOKENS.len())].to_string();
+        (at, at, Some(replacement), "insert")
+      },
+      1 => {
+        let from = rng.next_usize(len_chars);
+        let max_span = (len_chars - from).min(8);
+        let span = 1 + rng.next_usize(max_span);
+        (from, from + span, None, "delete")
+      },
+      _ => {
+        let from = rng.next_usize(len_chars);
+        let max_span = (len_chars - from).min(8);
+        let span = 1 + rng.next_usize(max_span);
+        let replacement = TOKENS[rng.next_usize(TOKENS.len())].to_string();
+        (from, from + span, Some(replacement), "replace")
+      },
+    }
+  }
+
+  #[test]
+  fn deterministic_syntax_edit_simulation() {
+    let loader = test_loader();
+    let Some(language) = loader.language_for_name("rust") else {
+      eprintln!("Skipping deterministic_syntax_edit_simulation: Rust language not configured");
+      return;
+    };
+    if loader.get_config(language).is_none() {
+      eprintln!("Skipping deterministic_syntax_edit_simulation: Rust grammar not available");
+      return;
+    }
+
+    let corpora = [
+      "fn main() {\n    let value = 1;\n    println!(\"{value}\");\n}\n",
+      "/// docs\nfn parse(input: &str) -> Result<(), Error> {\n    input.parse::<u64>()?;\n    Ok(())\n}\n",
+      "enum Token { Ident(String), Number(u64), Eof }\n",
+    ];
+    let seeds = [0x41u64, 0x5eedu64, 0xdead_beefu64, 0x1234_5678u64];
+
+    for (corpus_idx, corpus) in corpora.iter().enumerate() {
+      for seed in seeds {
+        let combined_seed = seed ^ ((corpus_idx as u64 + 1) * 0x9E37_79B9);
+        let mut rng = SimRng::new(combined_seed);
+        let mut text = Rope::from_str(corpus);
+        let mut syntax = match Syntax::new(text.slice(..), language, &loader) {
+          Ok(syntax) => syntax,
+          Err(err) => {
+            eprintln!("Skipping deterministic_syntax_edit_simulation: {err}");
+            return;
+          },
+        };
+
+        for step in 0..320usize {
+          let old_text = text.clone();
+          let (from, to, replacement, op_name) = next_edit(&mut rng, old_text.len_chars());
+
+          let transaction = Transaction::change(
+            &text,
+            vec![(from, to, replacement.clone().map(Into::into))].into_iter(),
+          )
+          .unwrap_or_else(|err| {
+            panic!(
+              "failed to build transaction: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
+            )
+          });
+          let changes = transaction.changes().clone();
+          transaction.apply(&mut text).unwrap_or_else(|err| {
+            panic!(
+              "failed to apply transaction: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name}: {err}"
+            )
+          });
+
+          syntax
+            .update(old_text.slice(..), text.slice(..), &changes, &loader)
+            .unwrap_or_else(|err| {
+              panic!(
+                "syntax update failed: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
+              )
+            });
+
+          let root_range = syntax.tree().root_node().byte_range();
+          let len_bytes = text.len_bytes();
+          let root_start = root_range.start as usize;
+          let root_end = root_range.end as usize;
+          assert!(
+            root_start <= root_end,
+            "invalid root ordering: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} root_start={root_start} root_end={root_end}"
+          );
+          assert!(
+            root_end <= len_bytes,
+            "invalid root end: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} root_end={} len_bytes={len_bytes}",
+            root_end
+          );
+
+          let highlights = syntax.collect_highlights(text.slice(..), &loader, 0..len_bytes);
+          for (_highlight, range) in highlights {
+            assert!(
+              range.start <= range.end && range.end <= len_bytes,
+              "invalid highlight range: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} range={range:?} len_bytes={len_bytes}"
+            );
+          }
+        }
+      }
+    }
   }
 
   #[test]

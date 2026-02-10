@@ -3,7 +3,21 @@
 - [ ] File watching (this may take a while to get nice)
 - [ ] Render selection on other pairs (like in flow/vscode/zed when I select something and the rest kinda get's selected as well, but we can probably skip one char selection for this I suppose)
 - [ ] Line wrap
-- [ ] Deterministic simulation on treesitter behavior (overall syntax)
+- [ ] TODO 1 — syntax: deterministic simulation harness
+  - [ ] Seeded edit streams on fixed corpora with reproducible failures
+  - [ ] Invariant checks for parse tree + highlight range integrity
+- [ ] TODO 2 — syntax: differential oracle checks
+  - [ ] Compare incremental updates vs fresh `Syntax::new` parses
+  - [ ] Assert equivalent highlight/range results on sampled windows
+- [ ] TODO 3 — syntax: async interleaving simulation
+  - [ ] Deterministic timeout/delay/out-of-order parse completion scenarios
+  - [ ] Assert latest-result-only apply and version/cache monotonicity
+- [ ] TODO 4 — syntax: crash-focused fuzzing
+  - [ ] Add `cargo-fuzz` targets for edit/update/interpolate pipelines
+  - [ ] Run with sanitizers and keep deterministic repro inputs
+- [ ] TODO 5 — syntax: client stress suites
+  - [ ] Long-running headless edit/render loops for `the-term` and `the-ffi`
+  - [ ] Fixture matrix (rust/markdown/toml/nix + unicode-heavy text)
 
 ### Swift
 - [ ] Correct mouse support (scrolling and also selecting stuff with the cursor)

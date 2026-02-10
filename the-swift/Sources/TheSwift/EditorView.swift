@@ -28,6 +28,7 @@ struct EditorView: View {
                     cellSize: cellSize,
                     filePickerSnapshot: model.filePickerSnapshot,
                     pendingKeys: model.pendingKeys,
+                    pendingKeyHints: model.pendingKeyHints,
                     onSelectCommand: { index in
                         model.selectCommandPalette(index: index)
                     },

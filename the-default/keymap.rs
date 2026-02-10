@@ -387,6 +387,35 @@ pub enum KeymapResult {
   Cancelled(Vec<KeyBinding>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyHintKind {
+  Action,
+  Prefix,
+}
+
+impl KeyHintKind {
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Action => "action",
+      Self::Prefix => "prefix",
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyHintOption {
+  pub key:   KeyBinding,
+  pub label: String,
+  pub kind:  KeyHintKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingKeyHints {
+  pub pending: Vec<KeyBinding>,
+  pub scope:   Option<String>,
+  pub options: Vec<KeyHintOption>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Keymaps {
   pub map:    HashMap<Mode, KeyTrie>,
@@ -409,6 +438,41 @@ impl Keymaps {
 
   pub fn sticky(&self) -> Option<&KeyTrieNode> {
     self.sticky.as_ref()
+  }
+
+  pub fn pending_hints(&self, mode: Mode) -> Option<PendingKeyHints> {
+    if self.state.is_empty() {
+      return None;
+    }
+
+    let keymap = self.map.get(&mode)?;
+    let first = self.state.first().copied()?;
+    let base = match &self.sticky {
+      Some(trie) => KeyTrie::Node(trie.clone()),
+      None => keymap.clone(),
+    };
+    let trie = base.search(&[first])?;
+    let node = trie.search(&self.state[1..])?.node()?;
+
+    let options = node
+      .order
+      .iter()
+      .filter_map(|key| {
+        let entry = node.map.get(key)?;
+        let (label, kind) = key_hint_for_entry(entry);
+        Some(KeyHintOption {
+          key: *key,
+          label,
+          kind,
+        })
+      })
+      .collect();
+
+    Some(PendingKeyHints {
+      pending: self.state.clone(),
+      scope: non_empty_scope_name(&node.name),
+      options,
+    })
   }
 
   pub fn contains_key(&self, mode: Mode, binding: KeyBinding) -> bool {
@@ -594,6 +658,120 @@ fn mode_from_name(name: &str) -> Option<Mode> {
     "command_mode" => Some(Mode::Command),
     _ => None,
   }
+}
+
+fn non_empty_scope_name(name: &str) -> Option<String> {
+  let trimmed = name.trim();
+  if trimmed.is_empty() {
+    None
+  } else {
+    Some(trimmed.to_string())
+  }
+}
+
+fn key_hint_for_entry(entry: &KeyTrie) -> (String, KeyHintKind) {
+  match entry {
+    KeyTrie::Node(node) => {
+      let label = node
+        .name
+        .trim()
+        .strip_prefix(" ")
+        .unwrap_or(node.name.trim());
+      let label = if label.is_empty() {
+        "more keys".to_string()
+      } else {
+        humanize_identifier(label)
+      };
+      (label, KeyHintKind::Prefix)
+    },
+    KeyTrie::Command(action) => (key_action_hint_label(*action), KeyHintKind::Action),
+    KeyTrie::Sequence(actions) => {
+      let mut labels = actions
+        .iter()
+        .map(|action| key_action_hint_label(*action))
+        .collect::<Vec<_>>();
+      let label = match labels.len() {
+        0 => "sequence".to_string(),
+        1 => labels.remove(0),
+        n => format!("{} (+{} more)", labels.remove(0), n - 1),
+      };
+      (label, KeyHintKind::Action)
+    },
+  }
+}
+
+fn key_action_hint_label(action: KeyAction) -> String {
+  match action {
+    KeyAction::Command(command) => command_hint_label(command),
+    KeyAction::Mode(mode) => {
+      match mode {
+        Mode::Normal => "normal mode".to_string(),
+        Mode::Insert => "insert mode".to_string(),
+        Mode::Select => "select mode".to_string(),
+        Mode::Command => "command mode".to_string(),
+      }
+    },
+    KeyAction::Named(name) => humanize_identifier(name),
+  }
+}
+
+fn command_hint_label(command: Command) -> String {
+  match command {
+    Command::FilePicker => "find file".to_string(),
+    Command::Search => "search".to_string(),
+    Command::RSearch => "search backward".to_string(),
+    Command::Save => "write file".to_string(),
+    Command::Quit => "quit".to_string(),
+    Command::LspGotoDefinition => "goto definition".to_string(),
+    Command::LspHover => "hover".to_string(),
+    Command::LspReferences => "references".to_string(),
+    Command::LspDocumentSymbols => "document symbols".to_string(),
+    Command::LspWorkspaceSymbols => "workspace symbols".to_string(),
+    Command::LspCompletion => "completion".to_string(),
+    Command::LspSignatureHelp => "signature help".to_string(),
+    Command::LspCodeActions => "code action".to_string(),
+    Command::LspFormat => "format document".to_string(),
+    _ => {
+      let variant = format!("{command:?}");
+      let head = variant.split(['(', '{']).next().unwrap_or("command").trim();
+      humanize_identifier(head)
+    },
+  }
+}
+
+fn humanize_identifier(input: &str) -> String {
+  let mut out = String::new();
+  let mut last_was_space = false;
+  let mut previous_is_lower_or_digit = false;
+
+  for ch in input.chars() {
+    if ch == '_' || ch == '-' {
+      if !last_was_space && !out.is_empty() {
+        out.push(' ');
+      }
+      last_was_space = true;
+      previous_is_lower_or_digit = false;
+      continue;
+    }
+
+    if ch.is_uppercase() {
+      if previous_is_lower_or_digit && !last_was_space {
+        out.push(' ');
+      }
+      for lower in ch.to_lowercase() {
+        out.push(lower);
+      }
+      last_was_space = false;
+      previous_is_lower_or_digit = false;
+      continue;
+    }
+
+    out.push(ch.to_ascii_lowercase());
+    last_was_space = false;
+    previous_is_lower_or_digit = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+  }
+
+  out.trim().to_string()
 }
 
 pub fn action_from_name(name: &'static str) -> KeyAction {

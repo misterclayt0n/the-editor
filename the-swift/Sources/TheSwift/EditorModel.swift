@@ -14,6 +14,7 @@ final class EditorModel: ObservableObject {
     let font: Font
     private(set) var mode: EditorMode = .normal
     @Published var pendingKeys: [String] = []
+    @Published var pendingKeyHints: PendingKeyHintsSnapshot? = nil
     @Published var filePickerSnapshot: FilePickerSnapshot? = nil
     private var filePickerTimer: Timer? = nil
     private var backgroundTimer: Timer? = nil
@@ -79,6 +80,7 @@ final class EditorModel: ObservableObject {
         plan = app.render_plan(editorId)
         mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
         pendingKeys = fetchPendingKeys()
+        pendingKeyHints = fetchPendingKeyHints()
         refreshFilePicker()
         if app.take_should_quit() {
             NSApp.terminate(nil)
@@ -358,6 +360,18 @@ final class EditorModel: ObservableObject {
             return []
         }
         return keys
+    }
+
+    private func fetchPendingKeyHints() -> PendingKeyHintsSnapshot? {
+        let json = app.pending_key_hints_json(editorId).toString()
+        guard json != "null",
+              let data = json.data(using: .utf8) else {
+            return nil
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(PendingKeyHintsSnapshot.self, from: data)
     }
 
     func colorForHighlight(_ highlight: UInt32) -> SwiftUI.Color? {

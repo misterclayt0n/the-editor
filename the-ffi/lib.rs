@@ -1050,28 +1050,28 @@ fn file_watch_snapshot(path: &Path) -> (bool, Option<SystemTime>) {
 
 /// FFI-safe app wrapper with editor management.
 pub struct App {
-  inner:                 LibApp,
-  dispatch:              DefaultDispatchStatic<App>,
-  keymaps:               Keymaps,
-  command_registry:      CommandRegistry<App>,
-  states:                HashMap<LibEditorId, EditorState>,
-  file_paths:            HashMap<LibEditorId, PathBuf>,
-  active_editor:         Option<LibEditorId>,
-  should_quit:           bool,
-  registers:             Registers,
-  last_motion:           Option<Motion>,
-  lsp_runtime:           LspRuntime,
-  lsp_ready:             bool,
-  lsp_document:          Option<LspDocumentSyncState>,
-  lsp_statusline:        LspStatuslineState,
-  lsp_spinner_index:     usize,
-  lsp_spinner_last_tick: Instant,
+  inner:                      LibApp,
+  dispatch:                   DefaultDispatchStatic<App>,
+  keymaps:                    Keymaps,
+  command_registry:           CommandRegistry<App>,
+  states:                     HashMap<LibEditorId, EditorState>,
+  file_paths:                 HashMap<LibEditorId, PathBuf>,
+  active_editor:              Option<LibEditorId>,
+  should_quit:                bool,
+  registers:                  Registers,
+  last_motion:                Option<Motion>,
+  lsp_runtime:                LspRuntime,
+  lsp_ready:                  bool,
+  lsp_document:               Option<LspDocumentSyncState>,
+  lsp_statusline:             LspStatuslineState,
+  lsp_spinner_index:          usize,
+  lsp_spinner_last_tick:      Instant,
   lsp_active_progress_tokens: HashSet<String>,
-  lsp_watched_file:      Option<LspWatchedFileState>,
-  lsp_pending_requests:  HashMap<u64, PendingLspRequestKind>,
-  diagnostics:           DiagnosticsState,
-  ui_theme:              Theme,
-  loader:                Option<Arc<Loader>>,
+  lsp_watched_file:           Option<LspWatchedFileState>,
+  lsp_pending_requests:       HashMap<u64, PendingLspRequestKind>,
+  diagnostics:                DiagnosticsState,
+  ui_theme:                   Theme,
+  loader:                     Option<Arc<Loader>>,
 }
 
 impl App {
@@ -1274,6 +1274,42 @@ impl App {
     }
     let keys: Vec<String> = pending.iter().map(ToString::to_string).collect();
     serde_json::to_string(&keys).unwrap_or_else(|_| "[]".to_string())
+  }
+
+  pub fn pending_key_hints_json(&self, id: ffi::EditorId) -> String {
+    let Some(id) = id.to_lib() else {
+      return "null".to_string();
+    };
+    let Some(state) = self.states.get(&id) else {
+      return "null".to_string();
+    };
+    let Some(snapshot) = self.keymaps.pending_hints(state.mode) else {
+      return "null".to_string();
+    };
+
+    let pending = snapshot
+      .pending
+      .iter()
+      .map(ToString::to_string)
+      .collect::<Vec<_>>();
+    let options = snapshot
+      .options
+      .iter()
+      .map(|option| {
+        serde_json::json!({
+          "key": option.key.to_string(),
+          "label": option.label,
+          "kind": option.kind.as_str(),
+        })
+      })
+      .collect::<Vec<_>>();
+
+    serde_json::json!({
+      "pending": pending,
+      "scope": snapshot.scope,
+      "options": options,
+    })
+    .to_string()
   }
 
   pub fn message_snapshot_json(&mut self, id: ffi::EditorId) -> String {
@@ -2085,10 +2121,8 @@ impl App {
             },
             LspProgressKind::Report => {
               if self.lsp_active_progress_tokens.contains(&progress.token) {
-                let text = format_lsp_progress_text(
-                  progress.title.as_deref(),
-                  progress.message.as_deref(),
-                );
+                let text =
+                  format_lsp_progress_text(progress.title.as_deref(), progress.message.as_deref());
                 self.set_lsp_status(LspStatusPhase::Busy, Some(text));
                 changed = true;
               }
@@ -3442,6 +3476,7 @@ mod ffi {
     fn ui_event_json(self: &mut App, id: EditorId, event_json: &str) -> bool;
     fn text(self: &App, id: EditorId) -> String;
     fn pending_keys_json(self: &App, id: EditorId) -> String;
+    fn pending_key_hints_json(self: &App, id: EditorId) -> String;
     fn mode(self: &App, id: EditorId) -> u8;
     fn theme_highlight_style(self: &App, highlight: u32) -> Style;
     fn command_palette_is_open(self: &mut App, id: EditorId) -> bool;

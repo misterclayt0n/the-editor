@@ -5,6 +5,7 @@ struct UiOverlayHost: View {
     let cellSize: CGSize
     let filePickerSnapshot: FilePickerSnapshot?
     let pendingKeys: [String]
+    let pendingKeyHints: PendingKeyHintsSnapshot?
     let onSelectCommand: (Int) -> Void
     let onSubmitCommand: (Int) -> Void
     let onCloseCommandPalette: () -> Void
@@ -45,7 +46,7 @@ struct UiOverlayHost: View {
                     }
                 }
 
-                KeySequenceIndicator(keys: pendingKeys)
+                KeySequenceIndicator(keys: pendingKeys, hints: pendingKeyHints)
                     .padding(.bottom, 28)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 

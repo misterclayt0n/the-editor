@@ -452,42 +452,6 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
     ));
 
     self.register(TypableCommand::new(
-      "document-symbols",
-      &["ds"],
-      "List document symbols via LSP",
-      cmd_lsp_document_symbols::<Ctx>,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "workspace-symbols",
-      &["ws"],
-      "Query workspace symbols via LSP",
-      cmd_lsp_workspace_symbols::<Ctx>,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
-      "signature-help",
-      &["sig"],
-      "Show LSP signature help",
-      cmd_lsp_signature_help::<Ctx>,
-      CommandCompleter::none(),
-      Signature {
-        positionals: (0, Some(0)),
-        ..Signature::DEFAULT
-      },
-    ));
-
-    self.register(TypableCommand::new(
       "format",
       &["fmt"],
       "Format current document via LSP",
@@ -568,46 +532,6 @@ fn cmd_help<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent)
   let prompt = ctx.command_prompt_mut();
   prompt.help = Some(help);
   prompt.error = None;
-  Ok(())
-}
-
-fn cmd_lsp_document_symbols<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  _args: Args,
-  event: CommandEvent,
-) -> CommandResult {
-  if event != CommandEvent::Validate {
-    return Ok(());
-  }
-  ctx
-    .dispatch()
-    .pre_on_action(ctx, Command::LspDocumentSymbols);
-  Ok(())
-}
-
-fn cmd_lsp_workspace_symbols<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  _args: Args,
-  event: CommandEvent,
-) -> CommandResult {
-  if event != CommandEvent::Validate {
-    return Ok(());
-  }
-  ctx
-    .dispatch()
-    .pre_on_action(ctx, Command::LspWorkspaceSymbols);
-  Ok(())
-}
-
-fn cmd_lsp_signature_help<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  _args: Args,
-  event: CommandEvent,
-) -> CommandResult {
-  if event != CommandEvent::Validate {
-    return Ok(());
-  }
-  ctx.dispatch().pre_on_action(ctx, Command::LspSignatureHelp);
   Ok(())
 }
 

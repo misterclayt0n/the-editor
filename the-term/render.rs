@@ -2099,6 +2099,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
   let ui_cursor = {
     let buf = f.buffer_mut();
     let mut cursor_out = None;
+    let content_x = area.x.saturating_add(plan.content_offset_x);
     let base_text_style = lib_style_to_ratatui(ctx.ui_theme.try_get("ui.text").unwrap_or_default());
     if let Some(bg) = ctx
       .ui_theme
@@ -2108,9 +2109,35 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
       fill_rect(buf, area, Style::default().bg(lib_color_to_ratatui(bg)));
     }
 
+    if plan.content_offset_x > 0 {
+      for line in &plan.gutter_lines {
+        let y = area.y + line.row;
+        if y >= area.y + area.height {
+          continue;
+        }
+        for span in &line.spans {
+          let x = area.x + span.col;
+          if x >= content_x {
+            continue;
+          }
+          let max_width = content_x.saturating_sub(x) as usize;
+          if max_width == 0 {
+            continue;
+          }
+          buf.set_stringn(
+            x,
+            y,
+            span.text.as_str(),
+            max_width,
+            lib_style_to_ratatui(span.style),
+          );
+        }
+      }
+    }
+
     for selection in &plan.selections {
       let rect = Rect::new(
-        area.x + selection.rect.x,
+        content_x + selection.rect.x,
         area.y + selection.rect.y,
         selection.rect.width,
         selection.rect.height,
@@ -2125,7 +2152,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
         continue;
       }
       for span in &line.spans {
-        let x = area.x + span.col;
+        let x = content_x + span.col;
         if x >= area.x + area.width {
           continue;
         }
@@ -2141,7 +2168,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
 
     // Draw cursors
     for cursor in &plan.cursors {
-      let x = area.x + cursor.pos.col as u16;
+      let x = content_x + cursor.pos.col as u16;
       let y = area.y + cursor.pos.row as u16;
       if x < area.x + area.width && y < area.y + area.height {
         let style = lib_style_to_ratatui(cursor.style);
@@ -2161,7 +2188,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
     f.set_cursor(x, y);
   } else {
     if let Some(cursor) = plan.cursors.first() {
-      let x = area.x + cursor.pos.col as u16;
+      let x = area.x + plan.content_offset_x + cursor.pos.col as u16;
       let y = area.y + cursor.pos.row as u16;
       if x < area.x + area.width && y < area.y + area.height {
         f.set_cursor(x, y);
@@ -2212,7 +2239,8 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
 
   let view = ctx.editor.view();
   let viewport_height = view.viewport.height as usize;
-  let viewport_width = view.viewport.width as usize;
+  let gutter_width = gutter_width_for_document(doc, view.viewport.width, &ctx.gutter_config);
+  let viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1) as usize;
 
   if ctx.text_format.soft_wrap {
     let mut changed = false;

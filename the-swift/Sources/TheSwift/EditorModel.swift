@@ -13,6 +13,7 @@ final class EditorModel: ObservableObject {
     let cellSize: CGSize
     let font: Font
     private(set) var mode: EditorMode = .normal
+    @Published var pendingKeys: [String] = []
     @Published var filePickerSnapshot: FilePickerSnapshot? = nil
     private var filePickerTimer: Timer? = nil
     private var backgroundTimer: Timer? = nil
@@ -77,6 +78,7 @@ final class EditorModel: ObservableObject {
         updateEffectiveViewport()
         plan = app.render_plan(editorId)
         mode = EditorMode(rawValue: app.mode(editorId)) ?? .normal
+        pendingKeys = fetchPendingKeys()
         refreshFilePicker()
         if app.take_should_quit() {
             NSApp.terminate(nil)
@@ -347,6 +349,15 @@ final class EditorModel: ObservableObject {
             debugUiLog("ui_tree json contains command_palette=\(hasPalette)")
             return .empty
         }
+    }
+
+    private func fetchPendingKeys() -> [String] {
+        let json = app.pending_keys_json(editorId).toString()
+        guard let data = json.data(using: .utf8),
+              let keys = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return keys
     }
 
     func colorForHighlight(_ highlight: UInt32) -> SwiftUI.Color? {

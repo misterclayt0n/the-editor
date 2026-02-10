@@ -268,6 +268,10 @@ extension AppRef {
         RustString(ptr: __swift_bridge__$App$text(ptr, id.intoFfiRepr()))
     }
 
+    public func pending_keys_json(_ id: EditorId) -> RustString {
+        RustString(ptr: __swift_bridge__$App$pending_keys_json(ptr, id.intoFfiRepr()))
+    }
+
     public func mode(_ id: EditorId) -> UInt8 {
         __swift_bridge__$App$mode(ptr, id.intoFfiRepr())
     }

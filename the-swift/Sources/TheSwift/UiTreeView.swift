@@ -4,6 +4,7 @@ struct UiOverlayHost: View {
     let tree: UiTreeSnapshot
     let cellSize: CGSize
     let filePickerSnapshot: FilePickerSnapshot?
+    let pendingKeys: [String]
     let onSelectCommand: (Int) -> Void
     let onSubmitCommand: (Int) -> Void
     let onCloseCommandPalette: () -> Void
@@ -44,16 +45,18 @@ struct UiOverlayHost: View {
                     }
                 }
 
+                KeySequenceIndicator(keys: pendingKeys)
+                    .padding(.bottom, 28)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+
                 if let statuslineSnapshot {
-                    StatuslineView(snapshot: statuslineSnapshot, cellSize: cellSize)
+                    StatuslineView(snapshot: statuslineSnapshot, cellSize: cellSize, pendingKeys: pendingKeys)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                 }
 
-                if let toastSnapshot {
-                    MessageToastView(snapshot: toastSnapshot)
-                        .padding(.bottom, 28)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                }
+                MessageToastContainer(snapshot: toastSnapshot)
+                    .padding(.bottom, 28)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 
                 if let searchSnapshot {
                     SearchPromptView(
@@ -533,6 +536,20 @@ struct MessageToastSnapshot {
     let style: UiStyleSnapshot
 }
 
+struct MessageToastContainer: View {
+    let snapshot: MessageToastSnapshot?
+
+    var body: some View {
+        ZStack {
+            if let snapshot {
+                MessageToastView(snapshot: snapshot)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: snapshot == nil)
+    }
+}
+
 struct MessageToastView: View {
     let snapshot: MessageToastSnapshot
 
@@ -584,8 +601,18 @@ struct StatuslineSnapshot {
 struct StatuslineView: View {
     let snapshot: StatuslineSnapshot
     let cellSize: CGSize
+    let pendingKeys: [String]
 
     private var statuslineHeight: CGFloat { 22 }
+
+    private var rightText: String {
+        guard !pendingKeys.isEmpty else { return snapshot.right }
+        let prefix = pendingKeys.joined(separator: " ") + "  "
+        if snapshot.right.hasPrefix(prefix) {
+            return String(snapshot.right.dropFirst(prefix.count))
+        }
+        return snapshot.right
+    }
 
     private var modeName: String {
         snapshot.left.components(separatedBy: " ").first ?? ""
@@ -660,7 +687,7 @@ struct StatuslineView: View {
                     Spacer(minLength: 8)
                 }
 
-                Text(snapshot.right)
+                Text(rightText)
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(.secondary)
             }

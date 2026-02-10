@@ -1267,6 +1267,15 @@ impl App {
     serde_json::to_string(&tree).unwrap_or_else(|_| "{}".to_string())
   }
 
+  pub fn pending_keys_json(&self, _id: ffi::EditorId) -> String {
+    let pending = self.keymaps.pending();
+    if pending.is_empty() {
+      return "[]".to_string();
+    }
+    let keys: Vec<String> = pending.iter().map(ToString::to_string).collect();
+    serde_json::to_string(&keys).unwrap_or_else(|_| "[]".to_string())
+  }
+
   pub fn message_snapshot_json(&mut self, id: ffi::EditorId) -> String {
     if self.activate(id).is_none() {
       return "{}".to_string();
@@ -3432,6 +3441,7 @@ mod ffi {
     fn message_events_since_json(self: &mut App, id: EditorId, seq: u64) -> String;
     fn ui_event_json(self: &mut App, id: EditorId, event_json: &str) -> bool;
     fn text(self: &App, id: EditorId) -> String;
+    fn pending_keys_json(self: &App, id: EditorId) -> String;
     fn mode(self: &App, id: EditorId) -> u8;
     fn theme_highlight_style(self: &App, highlight: u32) -> Style;
     fn command_palette_is_open(self: &mut App, id: EditorId) -> bool;

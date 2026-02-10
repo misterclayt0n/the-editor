@@ -2591,6 +2591,14 @@ impl the_default::DefaultContext for Ctx {
     }
   }
 
+  fn gutter_config(&self) -> &GutterConfig {
+    &self.gutter_config
+  }
+
+  fn gutter_config_mut(&mut self) -> &mut GutterConfig {
+    &mut self.gutter_config
+  }
+
   fn text_annotations(&self) -> TextAnnotations<'_> {
     let mut annotations = TextAnnotations::default();
     if !self.inline_annotations.is_empty() {
@@ -3213,6 +3221,33 @@ pkgs.mkShell {
 
     let toggled_plan = build_render_plan(&mut ctx);
     assert_eq!(toggled_plan.lines.len(), no_wrap_plan.lines.len());
+  }
+
+  #[test]
+  fn gutter_and_line_number_commands_update_config() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let registry = ctx.command_registry_ref() as *const the_default::CommandRegistry<Ctx>;
+
+    assert!(!ctx.gutter_config.layout.is_empty());
+
+    unsafe { (&*registry).execute(&mut ctx, "gutter", "off", CommandEvent::Validate) }
+      .expect("gutter off");
+    assert!(ctx.gutter_config.layout.is_empty());
+
+    unsafe { (&*registry).execute(&mut ctx, "line-number", "relative", CommandEvent::Validate) }
+      .expect("line-number relative");
+    assert!(ctx.gutter_config.layout.contains(&the_lib::render::GutterType::LineNumbers));
+    assert_eq!(
+      ctx.gutter_config.line_numbers.mode,
+      the_lib::render::LineNumberMode::Relative
+    );
+
+    unsafe { (&*registry).execute(&mut ctx, "line-number", "off", CommandEvent::Validate) }
+      .expect("line-number off");
+    assert!(!ctx.gutter_config.layout.contains(&the_lib::render::GutterType::LineNumbers));
   }
 
   #[test]

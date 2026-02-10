@@ -56,6 +56,9 @@ use the_lib::{
   },
   registers::Registers,
   render::{
+    GutterConfig,
+    GutterType,
+    LineNumberMode,
     RenderPlan,
     RenderStyles,
     UiEvent,
@@ -413,6 +416,8 @@ pub trait DefaultContext: Sized + 'static {
   fn text_format(&self) -> TextFormat;
   fn soft_wrap_enabled(&self) -> bool;
   fn set_soft_wrap_enabled(&mut self, enabled: bool);
+  fn gutter_config(&self) -> &GutterConfig;
+  fn gutter_config_mut(&mut self) -> &mut GutterConfig;
   fn text_annotations(&self) -> TextAnnotations<'_>;
   fn syntax_loader(&self) -> Option<&Loader>;
   fn ui_theme(&self) -> &Theme;

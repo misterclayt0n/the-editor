@@ -3358,6 +3358,14 @@ impl DefaultContext for App {
     }
   }
 
+  fn gutter_config(&self) -> &GutterConfig {
+    &self.active_state_ref().gutter_config
+  }
+
+  fn gutter_config_mut(&mut self) -> &mut GutterConfig {
+    &mut self.active_state_mut().gutter_config
+  }
+
   fn text_annotations(&self) -> TextAnnotations<'_> {
     let state = self.active_state_ref();
     let mut annotations = TextAnnotations::default();

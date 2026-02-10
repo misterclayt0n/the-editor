@@ -273,6 +273,11 @@ fn pre_on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
 - The command palette UI is built from UiTree (`the-default/command_palette.rs`).
 - The help panel overlay has been removed (description is rendered inline).
 
+### Editor display commands
+- `:wrap [on|off|toggle|status]` controls soft wrapping.
+- `:gutter [on|off|toggle|status]` controls gutter visibility.
+- `:line-number [absolute|relative|off|status]` controls line-number mode.
+
 ### How to use (pattern)
 For any command that needs a follow‑up character (f/t/F/T, insert‑register,
 replace, etc.), set pending state and return:

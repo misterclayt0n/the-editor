@@ -20,6 +20,11 @@ use the_lib::command_line::{
   Tokenizer,
   split,
 };
+use the_lib::render::{
+  GutterConfig,
+  GutterType,
+  LineNumberMode,
+};
 
 use crate::{
   Command,
@@ -474,6 +479,30 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
         ..Signature::DEFAULT
       },
     ));
+
+    self.register(TypableCommand::new(
+      "gutter",
+      &[],
+      "Configure gutter visibility (on/off/toggle/status)",
+      cmd_gutter::<Ctx>,
+      CommandCompleter::all(completers::gutter_mode),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "line-number",
+      &["line-numbers"],
+      "Configure line-number mode (absolute/relative/off/status)",
+      cmd_line_number::<Ctx>,
+      CommandCompleter::all(completers::line_number_mode),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 
@@ -583,6 +612,143 @@ fn cmd_wrap<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent)
 
   let state_label = if ctx.soft_wrap_enabled() { "on" } else { "off" };
   ctx.push_info("editor", format!("soft wrap: {state_label}"));
+  Ok(())
+}
+
+fn default_gutter_layout() -> Vec<GutterType> {
+  GutterConfig::default().layout
+}
+
+fn ensure_line_number_column(layout: &mut Vec<GutterType>) {
+  if layout.contains(&GutterType::LineNumbers) {
+    return;
+  }
+
+  if layout.is_empty() {
+    *layout = default_gutter_layout();
+  } else {
+    layout.push(GutterType::Spacer);
+    layout.push(GutterType::LineNumbers);
+  }
+}
+
+fn cmd_gutter<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let mode = args.first().unwrap_or("toggle");
+  let mut changed = false;
+  let enabled = {
+    let config = ctx.gutter_config_mut();
+    match mode {
+      "on" => {
+        if config.layout.is_empty() {
+          config.layout = default_gutter_layout();
+          changed = true;
+        }
+      },
+      "off" => {
+        if !config.layout.is_empty() {
+          config.layout.clear();
+          changed = true;
+        }
+      },
+      "toggle" => {
+        if config.layout.is_empty() {
+          config.layout = default_gutter_layout();
+        } else {
+          config.layout.clear();
+        }
+        changed = true;
+      },
+      "status" => {},
+      other => {
+        return Err(CommandError::new(format!(
+          "invalid gutter mode '{other}' (expected on/off/toggle/status)"
+        )));
+      },
+    }
+    !config.layout.is_empty()
+  };
+
+  if changed {
+    ctx.request_render();
+  }
+
+  let state = if enabled { "on" } else { "off" };
+  ctx.push_info("editor", format!("gutter: {state}"));
+  Ok(())
+}
+
+fn cmd_line_number<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let mode = args.first().unwrap_or("status");
+  let mut changed = false;
+  let message = {
+    let config = ctx.gutter_config_mut();
+    match mode {
+      "absolute" => {
+        if config.line_numbers.mode != LineNumberMode::Absolute {
+          config.line_numbers.mode = LineNumberMode::Absolute;
+          changed = true;
+        }
+        let prev_len = config.layout.len();
+        ensure_line_number_column(&mut config.layout);
+        if config.layout.len() != prev_len {
+          changed = true;
+        }
+      },
+      "relative" => {
+        if config.line_numbers.mode != LineNumberMode::Relative {
+          config.line_numbers.mode = LineNumberMode::Relative;
+          changed = true;
+        }
+        let prev_len = config.layout.len();
+        ensure_line_number_column(&mut config.layout);
+        if config.layout.len() != prev_len {
+          changed = true;
+        }
+      },
+      "off" => {
+        let prev_len = config.layout.len();
+        config.layout.retain(|column| *column != GutterType::LineNumbers);
+        changed |= config.layout.len() != prev_len;
+      },
+      "status" => {},
+      other => {
+        return Err(CommandError::new(format!(
+          "invalid line-number mode '{other}' (expected absolute/relative/off/status)"
+        )));
+      },
+    }
+
+    if config.layout.contains(&GutterType::LineNumbers) {
+      let mode = match config.line_numbers.mode {
+        LineNumberMode::Absolute => "absolute",
+        LineNumberMode::Relative => "relative",
+      };
+      format!("line numbers: {mode}")
+    } else {
+      "line numbers: off".to_string()
+    }
+  };
+
+  if changed {
+    ctx.request_render();
+  }
+  ctx.push_info("editor", message);
   Ok(())
 }
 
@@ -869,6 +1035,36 @@ pub mod completers {
 
   pub fn wrap_mode<Ctx>(_ctx: &Ctx, input: &str) -> Vec<Completion> {
     const MODES: &[&str] = &["toggle", "on", "off", "status"];
+    MODES
+      .iter()
+      .filter(|mode| mode.starts_with(input))
+      .map(|mode| {
+        Completion {
+          range: 0..,
+          text:  (*mode).to_string(),
+          doc:   None,
+        }
+      })
+      .collect()
+  }
+
+  pub fn gutter_mode<Ctx>(_ctx: &Ctx, input: &str) -> Vec<Completion> {
+    const MODES: &[&str] = &["toggle", "on", "off", "status"];
+    MODES
+      .iter()
+      .filter(|mode| mode.starts_with(input))
+      .map(|mode| {
+        Completion {
+          range: 0..,
+          text:  (*mode).to_string(),
+          doc:   None,
+        }
+      })
+      .collect()
+  }
+
+  pub fn line_number_mode<Ctx>(_ctx: &Ctx, input: &str) -> Vec<Completion> {
+    const MODES: &[&str] = &["absolute", "relative", "off", "status"];
     MODES
       .iter()
       .filter(|mode| mode.starts_with(input))

@@ -28,7 +28,6 @@ struct EditorView: View {
                     cellSize: cellSize,
                     filePickerSnapshot: model.filePickerSnapshot,
                     pendingKeys: model.pendingKeys,
-                    pendingKeyHints: model.pendingKeyHints,
                     onSelectCommand: { index in
                         model.selectCommandPalette(index: index)
                     },
@@ -97,6 +96,12 @@ struct EditorView: View {
                         .allowsHitTesting(true)
                     }
                 }
+            )
+            .overlay(
+                KeySequenceIndicator(keys: model.pendingKeys, hints: model.pendingKeyHints)
+                    .padding(.bottom, 28)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom),
+                alignment: .bottom
             )
             .onAppear {
                 model.updateViewport(pixelSize: proxy.size, cellSize: cellSize)

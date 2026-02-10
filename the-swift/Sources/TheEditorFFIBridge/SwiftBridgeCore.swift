@@ -1,4 +1,3 @@
-import TheEditorFFI
 import Foundation
 
 extension RustString {

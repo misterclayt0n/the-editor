@@ -1,6 +1,3 @@
-import Foundation
-import TheEditorFFI
-
 
 public class App: AppRefMut {
     var isOwned: Bool = true
@@ -776,22 +773,26 @@ public struct RenderStyles {
     public var selection: Style
     public var cursor: Style
     public var active_cursor: Style
+    public var gutter: Style
+    public var gutter_active: Style
 
-    public init(selection: Style,cursor: Style,active_cursor: Style) {
+    public init(selection: Style,cursor: Style,active_cursor: Style,gutter: Style,gutter_active: Style) {
         self.selection = selection
         self.cursor = cursor
         self.active_cursor = active_cursor
+        self.gutter = gutter
+        self.gutter_active = gutter_active
     }
 
     @inline(__always)
     func intoFfiRepr() -> __swift_bridge__$RenderStyles {
-        { let val = self; return __swift_bridge__$RenderStyles(selection: val.selection.intoFfiRepr(), cursor: val.cursor.intoFfiRepr(), active_cursor: val.active_cursor.intoFfiRepr()); }()
+        { let val = self; return __swift_bridge__$RenderStyles(selection: val.selection.intoFfiRepr(), cursor: val.cursor.intoFfiRepr(), active_cursor: val.active_cursor.intoFfiRepr(), gutter: val.gutter.intoFfiRepr(), gutter_active: val.gutter_active.intoFfiRepr()); }()
     }
 }
 extension __swift_bridge__$RenderStyles {
     @inline(__always)
     func intoSwiftRepr() -> RenderStyles {
-        { let val = self; return RenderStyles(selection: val.selection.intoSwiftRepr(), cursor: val.cursor.intoSwiftRepr(), active_cursor: val.active_cursor.intoSwiftRepr()); }()
+        { let val = self; return RenderStyles(selection: val.selection.intoSwiftRepr(), cursor: val.cursor.intoSwiftRepr(), active_cursor: val.active_cursor.intoSwiftRepr(), gutter: val.gutter.intoSwiftRepr(), gutter_active: val.gutter_active.intoSwiftRepr()); }()
     }
 }
 extension __swift_bridge__$Option$RenderStyles {
@@ -998,6 +999,182 @@ extension RenderLine: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_RenderLine$len(vecPtr)
+    }
+}
+
+
+public class RenderGutterSpan: RenderGutterSpanRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$RenderGutterSpan$_free(ptr)
+        }
+    }
+}
+public class RenderGutterSpanRefMut: RenderGutterSpanRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class RenderGutterSpanRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension RenderGutterSpanRef {
+    public func col() -> UInt16 {
+        __swift_bridge__$RenderGutterSpan$col(ptr)
+    }
+
+    public func text() -> RustString {
+        RustString(ptr: __swift_bridge__$RenderGutterSpan$text(ptr))
+    }
+
+    public func style() -> Style {
+        __swift_bridge__$RenderGutterSpan$style(ptr).intoSwiftRepr()
+    }
+}
+extension RenderGutterSpan: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_RenderGutterSpan$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_RenderGutterSpan$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: RenderGutterSpan) {
+        __swift_bridge__$Vec_RenderGutterSpan$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_RenderGutterSpan$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (RenderGutterSpan(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderGutterSpanRef> {
+        let pointer = __swift_bridge__$Vec_RenderGutterSpan$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderGutterSpanRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderGutterSpanRefMut> {
+        let pointer = __swift_bridge__$Vec_RenderGutterSpan$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderGutterSpanRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<RenderGutterSpanRef> {
+        UnsafePointer<RenderGutterSpanRef>(OpaquePointer(__swift_bridge__$Vec_RenderGutterSpan$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_RenderGutterSpan$len(vecPtr)
+    }
+}
+
+
+public class RenderGutterLine: RenderGutterLineRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$RenderGutterLine$_free(ptr)
+        }
+    }
+}
+public class RenderGutterLineRefMut: RenderGutterLineRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class RenderGutterLineRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension RenderGutterLineRef {
+    public func row() -> UInt16 {
+        __swift_bridge__$RenderGutterLine$row(ptr)
+    }
+
+    public func span_count() -> UInt {
+        __swift_bridge__$RenderGutterLine$span_count(ptr)
+    }
+
+    public func span_at(_ index: UInt) -> RenderGutterSpan {
+        RenderGutterSpan(ptr: __swift_bridge__$RenderGutterLine$span_at(ptr, index))
+    }
+}
+extension RenderGutterLine: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_RenderGutterLine$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_RenderGutterLine$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: RenderGutterLine) {
+        __swift_bridge__$Vec_RenderGutterLine$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_RenderGutterLine$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (RenderGutterLine(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderGutterLineRef> {
+        let pointer = __swift_bridge__$Vec_RenderGutterLine$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderGutterLineRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<RenderGutterLineRefMut> {
+        let pointer = __swift_bridge__$Vec_RenderGutterLine$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return RenderGutterLineRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<RenderGutterLineRef> {
+        UnsafePointer<RenderGutterLineRef>(OpaquePointer(__swift_bridge__$Vec_RenderGutterLine$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_RenderGutterLine$len(vecPtr)
     }
 }
 
@@ -1314,6 +1491,18 @@ extension RenderPlanRef {
 
     public func scroll() -> Position {
         __swift_bridge__$RenderPlan$scroll(ptr).intoSwiftRepr()
+    }
+
+    public func content_offset_x() -> UInt16 {
+        __swift_bridge__$RenderPlan$content_offset_x(ptr)
+    }
+
+    public func gutter_line_count() -> UInt {
+        __swift_bridge__$RenderPlan$gutter_line_count(ptr)
+    }
+
+    public func gutter_line_at(_ index: UInt) -> RenderGutterLine {
+        RenderGutterLine(ptr: __swift_bridge__$RenderPlan$gutter_line_at(ptr, index))
     }
 
     public func line_count() -> UInt {

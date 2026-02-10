@@ -454,6 +454,85 @@ impl From<the_lib::render::RenderSpan> for RenderSpan {
 }
 
 #[derive(Debug, Clone)]
+pub struct RenderGutterSpan {
+  inner: the_lib::render::RenderGutterSpan,
+}
+
+impl Default for RenderGutterSpan {
+  fn default() -> Self {
+    Self {
+      inner: the_lib::render::RenderGutterSpan {
+        col:   0,
+        text:  Tendril::new(),
+        style: LibStyle::default(),
+      },
+    }
+  }
+}
+
+impl RenderGutterSpan {
+  fn col(&self) -> u16 {
+    self.inner.col
+  }
+
+  fn text(&self) -> String {
+    self.inner.text.to_string()
+  }
+
+  fn style(&self) -> ffi::Style {
+    self.inner.style.into()
+  }
+}
+
+impl From<the_lib::render::RenderGutterSpan> for RenderGutterSpan {
+  fn from(span: the_lib::render::RenderGutterSpan) -> Self {
+    Self { inner: span }
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct RenderGutterLine {
+  inner: the_lib::render::RenderGutterLine,
+}
+
+impl Default for RenderGutterLine {
+  fn default() -> Self {
+    Self {
+      inner: the_lib::render::RenderGutterLine {
+        row:   0,
+        spans: Vec::new(),
+      },
+    }
+  }
+}
+
+impl RenderGutterLine {
+  fn row(&self) -> u16 {
+    self.inner.row
+  }
+
+  fn span_count(&self) -> usize {
+    self.inner.spans.len()
+  }
+
+  fn span_at(&self, index: usize) -> RenderGutterSpan {
+    self
+      .inner
+      .spans
+      .get(index)
+      .cloned()
+      .map(RenderGutterSpan::from)
+      .unwrap_or_default()
+  }
+}
+
+impl From<the_lib::render::RenderGutterLine> for RenderGutterLine {
+  fn from(line: the_lib::render::RenderGutterLine) -> Self {
+    Self { inner: line }
+  }
+}
+
+#[derive(Debug, Clone)]
 pub struct RenderLine {
   inner: the_lib::render::RenderLine,
 }
@@ -659,6 +738,24 @@ impl RenderPlan {
 
   fn scroll(&self) -> ffi::Position {
     self.inner.scroll.into()
+  }
+
+  fn content_offset_x(&self) -> u16 {
+    self.inner.content_offset_x
+  }
+
+  fn gutter_line_count(&self) -> usize {
+    self.inner.gutter_lines.len()
+  }
+
+  fn gutter_line_at(&self, index: usize) -> RenderGutterLine {
+    self
+      .inner
+      .gutter_lines
+      .get(index)
+      .cloned()
+      .map(RenderGutterLine::from)
+      .unwrap_or_default()
   }
 
   fn line_count(&self) -> usize {
@@ -3773,6 +3870,20 @@ mod ffi {
   }
 
   extern "Rust" {
+    type RenderGutterSpan;
+    fn col(self: &RenderGutterSpan) -> u16;
+    fn text(self: &RenderGutterSpan) -> String;
+    fn style(self: &RenderGutterSpan) -> Style;
+  }
+
+  extern "Rust" {
+    type RenderGutterLine;
+    fn row(self: &RenderGutterLine) -> u16;
+    fn span_count(self: &RenderGutterLine) -> usize;
+    fn span_at(self: &RenderGutterLine, index: usize) -> RenderGutterSpan;
+  }
+
+  extern "Rust" {
     type RenderCursor;
     fn id(self: &RenderCursor) -> u64;
     fn pos(self: &RenderCursor) -> Position;
@@ -3801,6 +3912,9 @@ mod ffi {
     type RenderPlan;
     fn viewport(self: &RenderPlan) -> Rect;
     fn scroll(self: &RenderPlan) -> Position;
+    fn content_offset_x(self: &RenderPlan) -> u16;
+    fn gutter_line_count(self: &RenderPlan) -> usize;
+    fn gutter_line_at(self: &RenderPlan, index: usize) -> RenderGutterLine;
     fn line_count(self: &RenderPlan) -> usize;
     fn line_at(self: &RenderPlan, index: usize) -> RenderLine;
     fn cursor_count(self: &RenderPlan) -> usize;

@@ -431,7 +431,7 @@ mod tests {
     let value = json!({
       "contents": {
         "kind": "markdown",
-        "value": "```rust\\nfn test()\\n```"
+        "value": "```rust\nfn test()\n```"
       }
     });
     let hover = parse_hover_response(Some(&value)).expect("hover parse");

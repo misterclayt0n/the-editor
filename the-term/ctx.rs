@@ -3,6 +3,7 @@
 use std::{
   collections::{
     HashMap,
+    HashSet,
     VecDeque,
   },
   env,
@@ -327,6 +328,7 @@ pub struct Ctx {
   lsp_statusline:            LspStatuslineState,
   lsp_spinner_index:         usize,
   lsp_spinner_last_tick:     Instant,
+  lsp_active_progress_tokens: HashSet<String>,
   lsp_watched_file:          Option<LspWatchedFileState>,
   lsp_pending_requests:      HashMap<u64, PendingLspRequestKind>,
   pub diagnostics:           DiagnosticsState,
@@ -638,6 +640,7 @@ impl Ctx {
       },
       lsp_spinner_index: 0,
       lsp_spinner_last_tick: Instant::now(),
+      lsp_active_progress_tokens: HashSet::new(),
       lsp_watched_file: None,
       lsp_pending_requests: HashMap::new(),
       diagnostics: DiagnosticsState::default(),
@@ -709,6 +712,7 @@ impl Ctx {
 
   pub fn start_background_services(&mut self) {
     self.lsp_ready = false;
+    self.lsp_active_progress_tokens.clear();
     self.lsp_pending_requests.clear();
     self.lsp_sync_watched_file_state();
     let path_preview = env::var("PATH")
@@ -752,6 +756,7 @@ impl Ctx {
   pub fn shutdown_background_services(&mut self) {
     self.lsp_close_current_document();
     self.lsp_ready = false;
+    self.lsp_active_progress_tokens.clear();
     self.lsp_pending_requests.clear();
     self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
     self.log_lsp_trace_value(json!({
@@ -856,11 +861,19 @@ impl Ctx {
   }
 
   fn set_lsp_status_error(&mut self, message: &str) {
+    self.lsp_active_progress_tokens.clear();
     let summary = summarize_lsp_error(message);
     self.set_lsp_status(LspStatusPhase::Error, Some(summary));
   }
 
   pub fn tick_lsp_statusline(&mut self) -> bool {
+    if matches!(self.lsp_statusline.phase, LspStatusPhase::Busy)
+      && self.lsp_active_progress_tokens.is_empty()
+      && self.lsp_ready
+    {
+      self.set_lsp_status(LspStatusPhase::Ready, None);
+      return true;
+    }
     if !self.lsp_statusline.is_loading() {
       return false;
     }
@@ -890,14 +903,14 @@ impl Ctx {
       },
       LspStatusPhase::Starting => {
         format!(
-          "lsp {} {}",
+          "lsp: {} {}",
           spinner_frame(self.lsp_spinner_index),
           detail_if_empty(detail, "starting")
         )
       },
       LspStatusPhase::Initializing => {
         format!(
-          "lsp {} {}",
+          "lsp: {} {}",
           spinner_frame(self.lsp_spinner_index),
           detail_if_empty(detail, "initializing")
         )
@@ -911,7 +924,7 @@ impl Ctx {
       },
       LspStatusPhase::Busy => {
         format!(
-          "lsp {} {}",
+          "lsp: {} {}",
           spinner_frame(self.lsp_spinner_index),
           detail_if_empty(detail, "working")
         )
@@ -949,6 +962,7 @@ impl Ctx {
             .is_some_and(|server| server.name() == server_name);
           if matches_configured_server {
             self.lsp_ready = true;
+            self.lsp_active_progress_tokens.clear();
             self.lsp_open_current_document();
             self.set_lsp_status(LspStatusPhase::Ready, Some(server_name));
             needs_render = true;
@@ -956,6 +970,7 @@ impl Ctx {
         },
         LspEvent::ServerStarted { server_name, .. } => {
           self.lsp_ready = false;
+          self.lsp_active_progress_tokens.clear();
           self.lsp_pending_requests.clear();
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
@@ -971,6 +986,7 @@ impl Ctx {
         },
         LspEvent::ServerStopped { .. } | LspEvent::Stopped => {
           self.lsp_ready = false;
+          self.lsp_active_progress_tokens.clear();
           self.lsp_pending_requests.clear();
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
@@ -1007,6 +1023,7 @@ impl Ctx {
             LspProgressKind::Begin => {
               let text =
                 format_lsp_progress_text(progress.title.as_deref(), progress.message.as_deref());
+              self.lsp_active_progress_tokens.insert(progress.token);
               self.set_lsp_status(LspStatusPhase::Busy, Some(text.clone()));
               self
                 .messages
@@ -1014,8 +1031,10 @@ impl Ctx {
               needs_render = true;
             },
             LspProgressKind::End => {
-              if self.lsp_ready {
+              self.lsp_active_progress_tokens.remove(&progress.token);
+              if self.lsp_ready && self.lsp_active_progress_tokens.is_empty() {
                 self.set_lsp_status(LspStatusPhase::Ready, None);
+                needs_render = true;
               }
               if let Some(message) = progress.message.and_then(non_empty_trimmed) {
                 self
@@ -1024,7 +1043,16 @@ impl Ctx {
                 needs_render = true;
               }
             },
-            LspProgressKind::Report => {},
+            LspProgressKind::Report => {
+              if self.lsp_active_progress_tokens.contains(&progress.token) {
+                let text = format_lsp_progress_text(
+                  progress.title.as_deref(),
+                  progress.message.as_deref(),
+                );
+                self.set_lsp_status(LspStatusPhase::Busy, Some(text));
+                needs_render = true;
+              }
+            },
           }
         },
         LspEvent::Error(message) => {

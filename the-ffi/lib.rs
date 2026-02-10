@@ -7,6 +7,7 @@
 use std::{
   collections::{
     HashMap,
+    HashSet,
     VecDeque,
   },
   env,
@@ -1065,6 +1066,7 @@ pub struct App {
   lsp_statusline:        LspStatuslineState,
   lsp_spinner_index:     usize,
   lsp_spinner_last_tick: Instant,
+  lsp_active_progress_tokens: HashSet<String>,
   lsp_watched_file:      Option<LspWatchedFileState>,
   lsp_pending_requests:  HashMap<u64, PendingLspRequestKind>,
   diagnostics:           DiagnosticsState,
@@ -1111,6 +1113,7 @@ impl App {
       lsp_statusline: LspStatuslineState::off(Some("unavailable".into())),
       lsp_spinner_index: 0,
       lsp_spinner_last_tick: Instant::now(),
+      lsp_active_progress_tokens: HashSet::new(),
       lsp_watched_file: None,
       lsp_pending_requests: HashMap::new(),
       diagnostics: DiagnosticsState::default(),
@@ -1149,6 +1152,7 @@ impl App {
         self.lsp_ready = false;
         self.lsp_document = None;
         self.lsp_watched_file = None;
+        self.lsp_active_progress_tokens.clear();
         self.lsp_pending_requests.clear();
         self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
       }
@@ -1863,6 +1867,7 @@ impl App {
     self.lsp_ready = false;
     self.lsp_spinner_index = 0;
     self.diagnostics.clear();
+    self.lsp_active_progress_tokens.clear();
     self.lsp_pending_requests.clear();
     let _ = self.lsp_runtime.shutdown();
 
@@ -1899,19 +1904,27 @@ impl App {
   }
 
   fn set_lsp_status_error(&mut self, message: &str) {
+    self.lsp_active_progress_tokens.clear();
     self.set_lsp_status(LspStatusPhase::Error, Some(summarize_lsp_error(message)));
   }
 
   fn tick_lsp_statusline(&mut self) -> bool {
+    if matches!(self.lsp_statusline.phase, LspStatusPhase::Busy)
+      && self.lsp_active_progress_tokens.is_empty()
+      && self.lsp_ready
+    {
+      self.set_lsp_status(LspStatusPhase::Ready, None);
+      return true;
+    }
     if !self.lsp_statusline.is_loading() {
       return false;
     }
     let now = Instant::now();
-    if now.duration_since(self.lsp_spinner_last_tick) < Duration::from_millis(120) {
+    if now.duration_since(self.lsp_spinner_last_tick) < Duration::from_millis(80) {
       return false;
     }
     self.lsp_spinner_last_tick = now;
-    self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 4;
+    self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 10;
     true
   }
 
@@ -1932,14 +1945,14 @@ impl App {
       },
       LspStatusPhase::Starting => {
         format!(
-          "lsp {} {}",
+          "lsp: {} {}",
           spinner_frame(self.lsp_spinner_index),
           detail_if_empty(detail, "starting")
         )
       },
       LspStatusPhase::Initializing => {
         format!(
-          "lsp {} {}",
+          "lsp: {} {}",
           spinner_frame(self.lsp_spinner_index),
           detail_if_empty(detail, "initializing")
         )
@@ -1953,7 +1966,7 @@ impl App {
       },
       LspStatusPhase::Busy => {
         format!(
-          "lsp {} {}",
+          "lsp: {} {}",
           spinner_frame(self.lsp_spinner_index),
           detail_if_empty(detail, "working")
         )
@@ -2004,6 +2017,7 @@ impl App {
             .is_some_and(|server| server.name() == server_name);
           if matches_configured_server {
             self.lsp_ready = true;
+            self.lsp_active_progress_tokens.clear();
             self.lsp_open_current_document();
             self.set_lsp_status(LspStatusPhase::Ready, Some(server_name));
             changed = true;
@@ -2011,6 +2025,7 @@ impl App {
         },
         LspEvent::ServerStarted { server_name, .. } => {
           self.lsp_ready = false;
+          self.lsp_active_progress_tokens.clear();
           self.lsp_pending_requests.clear();
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
@@ -2026,6 +2041,7 @@ impl App {
         },
         LspEvent::ServerStopped { .. } | LspEvent::Stopped => {
           self.lsp_ready = false;
+          self.lsp_active_progress_tokens.clear();
           self.lsp_pending_requests.clear();
           if let Some(state) = self.lsp_document.as_mut() {
             state.opened = false;
@@ -2042,20 +2058,32 @@ impl App {
             LspProgressKind::Begin => {
               let text =
                 format_lsp_progress_text(progress.title.as_deref(), progress.message.as_deref());
+              self.lsp_active_progress_tokens.insert(progress.token);
               self.set_lsp_status(LspStatusPhase::Busy, Some(text.clone()));
               self.publish_lsp_message(the_lib::messages::MessageLevel::Info, text);
               changed = true;
             },
             LspProgressKind::End => {
-              if self.lsp_ready {
+              self.lsp_active_progress_tokens.remove(&progress.token);
+              if self.lsp_ready && self.lsp_active_progress_tokens.is_empty() {
                 self.set_lsp_status(LspStatusPhase::Ready, None);
+                changed = true;
               }
               if let Some(message) = progress.message.and_then(non_empty_trimmed) {
                 self.publish_lsp_message(the_lib::messages::MessageLevel::Info, message);
                 changed = true;
               }
             },
-            LspProgressKind::Report => {},
+            LspProgressKind::Report => {
+              if self.lsp_active_progress_tokens.contains(&progress.token) {
+                let text = format_lsp_progress_text(
+                  progress.title.as_deref(),
+                  progress.message.as_deref(),
+                );
+                self.set_lsp_status(LspStatusPhase::Busy, Some(text));
+                changed = true;
+              }
+            },
           }
         },
         LspEvent::Error(message) => {
@@ -3157,6 +3185,7 @@ impl DefaultContext for App {
     self.lsp_ready = false;
     self.lsp_document = None;
     self.lsp_watched_file = None;
+    self.lsp_active_progress_tokens.clear();
     self.lsp_pending_requests.clear();
     self.set_lsp_status(LspStatusPhase::Off, Some("stopped".into()));
   }

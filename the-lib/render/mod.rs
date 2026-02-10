@@ -46,6 +46,7 @@ pub use plan::{
   RenderSelection,
   RenderSpan,
   RenderStyles,
+  RenderVisibleRow,
   build_plan,
 };
 pub use ui::*;

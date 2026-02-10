@@ -133,6 +133,13 @@ impl RenderLine {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderVisibleRow {
+  pub row:               u16,
+  pub doc_line:          usize,
+  pub first_visual_line: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderCursor {
   pub id:    crate::selection::CursorId,
   pub pos:   Position,
@@ -165,12 +172,13 @@ impl Default for RenderStyles {
 
 #[derive(Debug, Clone)]
 pub struct RenderPlan {
-  pub viewport:   Rect,
-  pub scroll:     Position,
-  pub lines:      Vec<RenderLine>,
-  pub cursors:    Vec<RenderCursor>,
-  pub selections: Vec<RenderSelection>,
-  pub overlays:   Vec<OverlayNode>,
+  pub viewport:     Rect,
+  pub scroll:       Position,
+  pub visible_rows: Vec<RenderVisibleRow>,
+  pub lines:        Vec<RenderLine>,
+  pub cursors:      Vec<RenderCursor>,
+  pub selections:   Vec<RenderSelection>,
+  pub overlays:     Vec<OverlayNode>,
 }
 
 impl RenderPlan {
@@ -178,6 +186,7 @@ impl RenderPlan {
     Self {
       viewport,
       scroll,
+      visible_rows: Vec::new(),
       lines: Vec::new(),
       cursors: Vec::new(),
       selections: Vec::new(),
@@ -306,6 +315,7 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
 
     let mut current_row: Option<usize> = None;
     let mut current_line = RenderLine::new(0);
+    let mut visible_rows: Vec<Option<RenderVisibleRow>> = vec![None; view.viewport.height as usize];
 
     for grapheme in &mut formatter {
       if grapheme.source.is_eof() {
@@ -319,6 +329,25 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
       } else {
         rel_pos.col
       };
+
+      if abs_row >= row_start && abs_row < row_end {
+        let row = abs_row - row_start;
+        if row < visible_rows.len() {
+          let first_visual_line = grapheme.char_idx == text.line_to_char(grapheme.line_idx);
+          match &mut visible_rows[row] {
+            Some(meta) => {
+              meta.first_visual_line |= first_visual_line;
+            },
+            None => {
+              visible_rows[row] = Some(RenderVisibleRow {
+                row: row as u16,
+                doc_line: grapheme.line_idx,
+                first_visual_line,
+              });
+            },
+          }
+        }
+      }
 
       if grapheme.raw == Grapheme::Newline {
         if let Some(row) = current_row {
@@ -375,6 +404,7 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
     if current_row.is_some() {
       plan.lines.push(current_line);
     }
+    plan.visible_rows = visible_rows.into_iter().flatten().collect();
   }
 
   add_selections_and_cursor(&mut plan, doc, text_fmt, annotations, view, styles);
@@ -752,5 +782,39 @@ mod tests {
       .filter_map(|span| span.highlight)
       .collect();
     assert!(span_highlights.contains(&crate::syntax::Highlight::new(1)));
+  }
+
+  #[test]
+  fn build_plan_exposes_visible_row_metadata() {
+    let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(id, Rope::from("a\n\nabcdef"));
+    let view = ViewState::new(Rect::new(0, 0, 4, 4), Position::new(0, 0));
+    let mut text_fmt = TextFormat::default();
+    text_fmt.soft_wrap = true;
+    text_fmt.viewport_width = 4;
+
+    let mut annotations = TextAnnotations::default();
+    let mut highlights = NoHighlights;
+    let mut cache = RenderCache::default();
+    let styles = RenderStyles::default();
+    let plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+
+    assert_eq!(plan.visible_rows.len(), 4);
+    assert_eq!(plan.visible_rows[0].doc_line, 0);
+    assert!(plan.visible_rows[0].first_visual_line);
+    assert_eq!(plan.visible_rows[1].doc_line, 1);
+    assert!(plan.visible_rows[1].first_visual_line);
+    assert_eq!(plan.visible_rows[2].doc_line, 2);
+    assert!(plan.visible_rows[2].first_visual_line);
+    assert_eq!(plan.visible_rows[3].doc_line, 2);
+    assert!(!plan.visible_rows[3].first_visual_line);
   }
 }

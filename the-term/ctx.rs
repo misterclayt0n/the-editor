@@ -2962,3 +2962,191 @@ fn setup_syntax(doc: &mut Document, path: &Path, loader: &Arc<Loader>) -> Result
 
   Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+  use std::{
+    path::Path,
+    thread,
+    time::Duration,
+  };
+
+  use the_default::DefaultContext;
+  use the_lib::transaction::Transaction;
+
+  use super::Ctx;
+  use crate::{
+    dispatch::build_dispatch,
+    render::build_render_plan,
+  };
+
+  #[derive(Debug, Clone, Copy)]
+  struct SimRng {
+    state: u64,
+  }
+
+  impl SimRng {
+    fn new(seed: u64) -> Self {
+      Self { state: seed.max(1) }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+      let mut x = self.state;
+      x ^= x << 13;
+      x ^= x >> 7;
+      x ^= x << 17;
+      self.state = x;
+      x
+    }
+
+    fn next_usize(&mut self, upper: usize) -> usize {
+      if upper == 0 {
+        0
+      } else {
+        (self.next_u64() as usize) % upper
+      }
+    }
+  }
+
+  fn fixture_matrix() -> [(&'static str, String); 5] {
+    [
+      (
+        "fixture.rs",
+        r#"fn main() {
+    let greeting = "hello🙂";
+    let mut total = 0;
+    for value in [1, 2, 3, 4] {
+        total += value;
+    }
+    println!("{greeting} {total}");
+}
+"#
+        .repeat(18),
+      ),
+      (
+        "fixture.md",
+        r#"# heading
+
+- alpha
+- beta
+- gamma
+
+```rust
+fn fenced() {}
+```
+"#
+        .repeat(20),
+      ),
+      (
+        "fixture.toml",
+        r#"[package]
+name = "fixture"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = "1"
+"#
+        .repeat(16),
+      ),
+      (
+        "fixture.nix",
+        r#"{ pkgs ? import <nixpkgs> {} }:
+pkgs.mkShell {
+  buildInputs = with pkgs; [ rustc cargo ];
+}
+"#
+        .repeat(18),
+      ),
+      (
+        "fixture.txt",
+        "unicode: 🙂🚀 café e\u{301} こんにちは Привет عربى हिन्दी\n".repeat(28),
+      ),
+    ]
+  }
+
+  fn next_edit(rng: &mut SimRng, len_chars: usize) -> (usize, usize, Option<&'static str>) {
+    const TOKENS: &[&str] = &[
+      "a", "_", " ", "\n", "{}", "let ", "fn ", "🙂", "é", "λ", "->", "\"",
+    ];
+
+    let op = if len_chars == 0 { 0 } else { rng.next_usize(3) };
+    match op {
+      0 => {
+        let at = rng.next_usize(len_chars.saturating_add(1));
+        let insert = TOKENS[rng.next_usize(TOKENS.len())];
+        (at, at, Some(insert))
+      },
+      1 => {
+        let from = rng.next_usize(len_chars);
+        let span = 1 + rng.next_usize((len_chars - from).min(6));
+        (from, from + span, None)
+      },
+      _ => {
+        let from = rng.next_usize(len_chars);
+        let span = 1 + rng.next_usize((len_chars - from).min(6));
+        let insert = TOKENS[rng.next_usize(TOKENS.len())];
+        (from, from + span, Some(insert))
+      },
+    }
+  }
+
+  #[test]
+  fn headless_client_stress_fixture_matrix() {
+    let dispatch = build_dispatch::<Ctx>();
+
+    for (fixture_index, (fixture_name, fixture_text)) in fixture_matrix().into_iter().enumerate() {
+      let mut ctx = Ctx::new(None).expect("ctx");
+      ctx.set_dispatch(&dispatch);
+
+      let initial = Transaction::change(
+        ctx.editor.document().text(),
+        std::iter::once((0, 0, Some(fixture_text.into()))),
+      )
+      .expect("initial transaction");
+      assert!(DefaultContext::apply_transaction(&mut ctx, &initial));
+
+      if let Some(loader) = ctx.loader.clone() {
+        let _ = super::setup_syntax(ctx.editor.document_mut(), Path::new(fixture_name), &loader);
+      }
+
+      let mut rng = SimRng::new(0xFACE_B00C ^ fixture_index as u64);
+      for step in 0..96usize {
+        let current = ctx.editor.document().text().clone();
+        let (from, to, insert) = next_edit(&mut rng, current.len_chars());
+        let tx = Transaction::change(
+          &current,
+          std::iter::once((from, to, insert.map(|text| text.into()))),
+        )
+        .expect("edit transaction");
+        assert!(
+          DefaultContext::apply_transaction(&mut ctx, &tx),
+          "failed apply for fixture={fixture_name} step={step}"
+        );
+
+        if step % 4 == 0 {
+          for _ in 0..3 {
+            let _ = ctx.poll_syntax_parse_results();
+            thread::sleep(Duration::from_millis(1));
+          }
+        }
+
+        let plan = build_render_plan(&mut ctx);
+        assert!(
+          !plan.lines.is_empty(),
+          "empty render plan for fixture={fixture_name} step={step}"
+        );
+      }
+
+      for _ in 0..12 {
+        let _ = ctx.poll_syntax_parse_results();
+        let plan = build_render_plan(&mut ctx);
+        assert!(
+          !plan.lines.is_empty(),
+          "empty render plan during settle for fixture={fixture_name}"
+        );
+        thread::sleep(Duration::from_millis(1));
+      }
+    }
+  }
+}

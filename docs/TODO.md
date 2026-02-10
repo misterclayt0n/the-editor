@@ -15,9 +15,9 @@
 - [x] TODO 4 — syntax: crash-focused fuzzing
   - [x] Add `cargo-fuzz` targets for edit/update/interpolate pipelines
   - [x] Run with sanitizers and keep deterministic repro inputs
-- [ ] TODO 5 — syntax: client stress suites
-  - [ ] Long-running headless edit/render loops for `the-term` and `the-ffi`
-  - [ ] Fixture matrix (rust/markdown/toml/nix + unicode-heavy text)
+- [x] TODO 5 — syntax: client stress suites
+  - [x] Long-running headless edit/render loops for `the-term` and `the-ffi`
+  - [x] Fixture matrix (rust/markdown/toml/nix + unicode-heavy text)
 
 ### Swift
 - [ ] Correct mouse support (scrolling and also selecting stuff with the cursor)

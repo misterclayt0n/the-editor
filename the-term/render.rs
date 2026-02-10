@@ -29,6 +29,7 @@ use the_lib::{
   render::{
     LayoutIntent,
     NoHighlights,
+    RenderDiffGutterStyles,
     RenderDiagnosticGutterStyles,
     RenderPlan,
     RenderStyles,
@@ -48,6 +49,7 @@ use the_lib::{
     UiText,
     UiTooltip,
     UiTree,
+    apply_diff_gutter_markers,
     apply_diagnostic_gutter_markers,
     build_plan,
     gutter_width_for_document,
@@ -186,6 +188,23 @@ fn render_diagnostic_styles_from_theme(
     hint:    theme
       .try_get("hint")
       .or_else(|| theme.try_get("diagnostic.hint"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+  }
+}
+
+fn render_diff_styles_from_theme(theme: &the_lib::render::theme::Theme) -> RenderDiffGutterStyles {
+  RenderDiffGutterStyles {
+    added:    theme
+      .try_get("diff.plus")
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    modified: theme
+      .try_get("diff.delta")
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    removed:  theme
+      .try_get("diff.minus")
       .or_else(|| theme.try_get("ui.linenr"))
       .unwrap_or_default(),
   }
@@ -2001,6 +2020,8 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   );
   let diagnostics_by_line = active_diagnostics_by_line(ctx);
   let diagnostic_styles = render_diagnostic_styles_from_theme(&ctx.ui_theme);
+  let diff_styles = render_diff_styles_from_theme(&ctx.ui_theme);
+  let diff_signs = ctx.gutter_diff_signs.clone();
 
   // Set up text formatting
   ctx.text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
@@ -2059,6 +2080,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   };
 
   apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
+  apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
   plan
 }
 

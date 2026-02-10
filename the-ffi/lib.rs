@@ -108,9 +108,12 @@ use the_lib::{
     OverlayRectKind,
     OverlayText,
     RenderDiagnosticGutterStyles,
+    RenderDiffGutterStyles,
+    RenderGutterDiffKind,
     RenderStyles,
     SyntaxHighlightAdapter,
     UiState,
+    apply_diff_gutter_markers,
     apply_diagnostic_gutter_markers,
     build_plan,
     gutter_width_for_document,
@@ -818,6 +821,7 @@ struct EditorState {
   macro_queue:           VecDeque<KeyEvent>,
   text_format:           TextFormat,
   gutter_config:         GutterConfig,
+  gutter_diff_signs:     BTreeMap<usize, RenderGutterDiffKind>,
   inline_annotations:    Vec<InlineAnnotation>,
   overlay_annotations:   Vec<Overlay>,
   highlight_cache:       HighlightCache,
@@ -852,6 +856,7 @@ impl EditorState {
       macro_queue: VecDeque::new(),
       text_format: TextFormat::default(),
       gutter_config: GutterConfig::default(),
+      gutter_diff_signs: BTreeMap::new(),
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
       highlight_cache: HighlightCache::default(),
@@ -894,6 +899,23 @@ fn render_diagnostic_styles_from_theme(theme: &Theme) -> RenderDiagnosticGutterS
     hint:    theme
       .try_get("hint")
       .or_else(|| theme.try_get("diagnostic.hint"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+  }
+}
+
+fn render_diff_styles_from_theme(theme: &Theme) -> RenderDiffGutterStyles {
+  RenderDiffGutterStyles {
+    added:    theme
+      .try_get("diff.plus")
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    modified: theme
+      .try_get("diff.delta")
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    removed:  theme
+      .try_get("diff.minus")
       .or_else(|| theme.try_get("ui.linenr"))
       .unwrap_or_default(),
   }
@@ -1392,11 +1414,12 @@ impl App {
   ) -> the_lib::render::RenderPlan {
     let _ = self.poll_active_syntax_parse_results();
 
-    let (mut text_fmt, gutter_config, inline_annotations, overlay_annotations) = {
+    let (mut text_fmt, gutter_config, diff_signs, inline_annotations, overlay_annotations) = {
       let state = self.active_state_ref();
       (
         state.text_format.clone(),
         state.gutter_config.clone(),
+        state.gutter_diff_signs.clone(),
         state.inline_annotations.clone(),
         state.overlay_annotations.clone(),
       )
@@ -1408,6 +1431,7 @@ impl App {
     let loader = self.loader.clone();
     let diagnostics_by_line = self.active_diagnostics_by_line();
     let diagnostic_styles = render_diagnostic_styles_from_theme(&self.ui_theme);
+    let diff_styles = render_diff_styles_from_theme(&self.ui_theme);
 
     let mut plan = {
       let editor = self.active_editor_mut();
@@ -1460,6 +1484,7 @@ impl App {
       }
     };
     apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
+    apply_diff_gutter_markers(&mut plan, &diff_signs, diff_styles);
 
     self.active_state_mut().highlight_cache = highlight_cache;
     plan

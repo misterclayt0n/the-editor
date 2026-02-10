@@ -2,6 +2,7 @@
 
 use std::{
   collections::{
+    BTreeMap,
     HashMap,
     HashSet,
     VecDeque,
@@ -80,6 +81,7 @@ use the_lib::{
   registers::Registers,
   render::{
     GutterConfig,
+    RenderGutterDiffKind,
     RenderPlan,
     RenderStyles,
     UiState,
@@ -367,6 +369,8 @@ pub struct Ctx {
   pub text_format:            TextFormat,
   /// Gutter layout and line-number rendering config.
   pub gutter_config:          GutterConfig,
+  /// VCS-like gutter signs keyed by document line.
+  pub gutter_diff_signs:      BTreeMap<usize, RenderGutterDiffKind>,
   /// Inline annotations (virtual text) for rendering.
   pub inline_annotations:     Vec<InlineAnnotation>,
   /// Overlay annotations (virtual text) for rendering.
@@ -668,6 +672,7 @@ impl Ctx {
       last_motion: None,
       text_format,
       gutter_config: GutterConfig::default(),
+      gutter_diff_signs: BTreeMap::new(),
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
       scrolloff: 5,

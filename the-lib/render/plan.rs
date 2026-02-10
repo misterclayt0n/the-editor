@@ -652,6 +652,30 @@ impl Default for RenderDiagnosticGutterStyles {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderGutterDiffKind {
+  Added,
+  Modified,
+  Removed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderDiffGutterStyles {
+  pub added:    Style,
+  pub modified: Style,
+  pub removed:  Style,
+}
+
+impl Default for RenderDiffGutterStyles {
+  fn default() -> Self {
+    Self {
+      added:    Style::default(),
+      modified: Style::default(),
+      removed:  Style::default(),
+    }
+  }
+}
+
 pub fn apply_diagnostic_gutter_markers(
   plan: &mut RenderPlan,
   diagnostics_by_line: &BTreeMap<usize, DiagnosticSeverity>,
@@ -683,6 +707,42 @@ pub fn apply_diagnostic_gutter_markers(
     line.push_span(RenderGutterSpan {
       col: column.col,
       text: "●".into(),
+      style,
+    });
+    line.sort_spans();
+  }
+}
+
+pub fn apply_diff_gutter_markers(
+  plan: &mut RenderPlan,
+  diff_by_line: &BTreeMap<usize, RenderGutterDiffKind>,
+  styles: RenderDiffGutterStyles,
+) {
+  let Some(column) = plan.gutter_column(GutterType::Diff) else {
+    return;
+  };
+
+  for (meta, line) in plan.visible_rows.iter().zip(plan.gutter_lines.iter_mut()) {
+    line
+      .spans
+      .retain(|span| span.col < column.col || span.col >= column.col.saturating_add(column.width));
+
+    if !meta.first_visual_line {
+      continue;
+    }
+
+    let Some(kind) = diff_by_line.get(&meta.doc_line).copied() else {
+      continue;
+    };
+
+    let (text, style) = match kind {
+      RenderGutterDiffKind::Added => ("+", styles.added),
+      RenderGutterDiffKind::Modified => ("~", styles.modified),
+      RenderGutterDiffKind::Removed => ("-", styles.removed),
+    };
+    line.push_span(RenderGutterSpan {
+      col: column.col,
+      text: text.into(),
       style,
     });
     line.sort_spans();
@@ -1191,5 +1251,39 @@ mod tests {
       .find(|line| line.row == 1)
       .expect("row 1 exists");
     assert!(row1.spans.iter().any(|span| span.text == "●"));
+  }
+
+  #[test]
+  fn apply_diff_markers_to_gutter_column() {
+    let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(id, Rope::from("a\nb\n"));
+    let view = ViewState::new(Rect::new(0, 0, 20, 2), Position::new(0, 0));
+    let text_fmt = TextFormat::default();
+    let mut annotations = TextAnnotations::default();
+    let mut highlights = NoHighlights;
+    let mut cache = RenderCache::default();
+    let styles = RenderStyles::default();
+    let gutter = GutterConfig::default();
+
+    let mut plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &gutter,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+    let mut diff = BTreeMap::new();
+    diff.insert(0, RenderGutterDiffKind::Modified);
+    apply_diff_gutter_markers(&mut plan, &diff, RenderDiffGutterStyles::default());
+
+    let row0 = plan
+      .gutter_lines
+      .iter()
+      .find(|line| line.row == 0)
+      .expect("row 0 exists");
+    assert!(row0.spans.iter().any(|span| span.text == "~"));
   }
 }

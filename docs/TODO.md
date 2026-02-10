@@ -3,6 +3,7 @@
 - [ ] File watching (this may take a while to get nice)
 - [ ] Render selection on other pairs (like in flow/vscode/zed when I select something and the rest kinda get's selected as well, but we can probably skip one char selection for this I suppose)
 - [ ] Line wrap
+- [ ] Deterministic simulation on treesitter behavior (overall syntax)
 
 ### Swift
 - [ ] Correct mouse support (scrolling and also selecting stuff with the cursor)

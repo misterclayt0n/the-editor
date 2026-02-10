@@ -2210,21 +2210,28 @@ fn replace_selection_with_str<Ctx: DefaultContext>(ctx: &mut Ctx, replacement: &
   let selection = doc.selection().clone();
   let slice = doc.text().slice(..);
 
-  // Create transaction that replaces each range with the character repeated
+  // Create transaction that replaces each range with the character repeated.
+  // In normal mode our selection ranges may be empty; treat those as replacing
+  // the grapheme under the cursor.
   let tx = Transaction::change_by_selection(doc.text(), &selection, |range| {
-    if range.is_empty() {
-      (range.from(), range.to(), None)
+    let (from, to) = if range.is_empty() {
+      (
+        range.from(),
+        nth_next_grapheme_boundary(slice, range.from(), 1),
+      )
     } else {
-      let graphemes = slice.slice(range.from()..range.to()).graphemes().count();
-      if graphemes == 0 {
-        return (range.from(), range.to(), None);
-      }
-      let mut out = Tendril::new();
-      for _ in 0..graphemes {
-        out.push_str(replacement);
-      }
-      (range.from(), range.to(), Some(out))
+      (range.from(), range.to())
+    };
+
+    let graphemes = slice.slice(from..to).graphemes().count();
+    if graphemes == 0 {
+      return (from, to, None);
     }
+    let mut out = Tendril::new();
+    for _ in 0..graphemes {
+      out.push_str(replacement);
+    }
+    (from, to, Some(out))
   });
 
   if let Ok(tx) = tx {

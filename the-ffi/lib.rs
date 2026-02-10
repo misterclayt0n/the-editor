@@ -3128,6 +3128,14 @@ impl DefaultContext for App {
     text_fmt
   }
 
+  fn soft_wrap_enabled(&self) -> bool {
+    self.active_state_ref().text_format.soft_wrap
+  }
+
+  fn set_soft_wrap_enabled(&mut self, enabled: bool) {
+    self.active_state_mut().text_format.soft_wrap = enabled;
+  }
+
   fn text_annotations(&self) -> TextAnnotations<'_> {
     let state = self.active_state_ref();
     let mut annotations = TextAnnotations::default();
@@ -3974,7 +3982,11 @@ mod tests {
     time::Duration,
   };
 
-  use the_default::DefaultContext;
+  use the_default::{
+    CommandEvent,
+    CommandRegistry,
+    DefaultContext,
+  };
   use the_lib::transaction::Transaction;
 
   use super::{
@@ -4267,5 +4279,42 @@ pkgs.mkShell {
 
       assert!(app.remove_editor(id));
     }
+  }
+
+  #[test]
+  fn wrap_command_toggles_soft_wrap_and_changes_render_lines() {
+    let mut app = App::new();
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  24,
+      height: 12,
+    };
+    let scroll = ffi::Position { row: 0, col: 0 };
+    let id = app.create_editor(&"wrap-me-".repeat(40), viewport, scroll);
+    assert!(app.activate(id).is_some());
+
+    assert!(!app.soft_wrap_enabled());
+    let no_wrap = app.render_plan(id);
+    assert_eq!(no_wrap.line_count(), 1);
+
+    let registry = app.command_registry_ref() as *const CommandRegistry<App>;
+    unsafe { (&*registry).execute(&mut app, "wrap", "on", CommandEvent::Validate) }
+      .expect("wrap on");
+    assert!(app.soft_wrap_enabled());
+
+    let wrapped = app.render_plan(id);
+    assert!(wrapped.line_count() > no_wrap.line_count());
+
+    unsafe { (&*registry).execute(&mut app, "wrap", "status", CommandEvent::Validate) }
+      .expect("wrap status");
+    assert!(app.soft_wrap_enabled());
+
+    unsafe { (&*registry).execute(&mut app, "wrap", "toggle", CommandEvent::Validate) }
+      .expect("wrap toggle");
+    assert!(!app.soft_wrap_enabled());
+
+    let toggled = app.render_plan(id);
+    assert_eq!(toggled.line_count(), no_wrap.line_count());
   }
 }

@@ -411,6 +411,8 @@ pub trait DefaultContext: Sized + 'static {
   fn last_motion(&self) -> Option<Motion>;
   fn set_last_motion(&mut self, motion: Option<Motion>);
   fn text_format(&self) -> TextFormat;
+  fn soft_wrap_enabled(&self) -> bool;
+  fn set_soft_wrap_enabled(&mut self, enabled: bool);
   fn text_annotations(&self) -> TextAnnotations<'_>;
   fn syntax_loader(&self) -> Option<&Loader>;
   fn ui_theme(&self) -> &Theme;

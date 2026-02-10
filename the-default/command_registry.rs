@@ -462,6 +462,18 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
         ..Signature::DEFAULT
       },
     ));
+
+    self.register(TypableCommand::new(
+      "wrap",
+      &[],
+      "Configure soft line wrapping (on/off/toggle/status)",
+      cmd_wrap::<Ctx>,
+      CommandCompleter::all(completers::wrap_mode),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
   }
 }
 
@@ -544,6 +556,33 @@ fn cmd_lsp_format<Ctx: DefaultContext>(
     return Ok(());
   }
   ctx.dispatch().pre_on_action(ctx, Command::LspFormat);
+  Ok(())
+}
+
+fn cmd_wrap<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let mode = args.first().unwrap_or("toggle");
+  let next_state = match mode {
+    "on" => Some(true),
+    "off" => Some(false),
+    "toggle" => Some(!ctx.soft_wrap_enabled()),
+    "status" => None,
+    other => {
+      return Err(CommandError::new(format!(
+        "invalid wrap mode '{other}' (expected on/off/toggle/status)"
+      )));
+    },
+  };
+
+  if let Some(enabled) = next_state {
+    ctx.set_soft_wrap_enabled(enabled);
+  }
+
+  let state_label = if ctx.soft_wrap_enabled() { "on" } else { "off" };
+  ctx.push_info("editor", format!("soft wrap: {state_label}"));
   Ok(())
 }
 
@@ -823,6 +862,21 @@ pub mod completers {
             .command_registry_ref()
             .get(name)
             .map(|cmd| cmd.doc.to_string()),
+        }
+      })
+      .collect()
+  }
+
+  pub fn wrap_mode<Ctx>(_ctx: &Ctx, input: &str) -> Vec<Completion> {
+    const MODES: &[&str] = &["toggle", "on", "off", "status"];
+    MODES
+      .iter()
+      .filter(|mode| mode.starts_with(input))
+      .map(|mode| {
+        Completion {
+          range: 0..,
+          text:  (*mode).to_string(),
+          doc:   None,
         }
       })
       .collect()

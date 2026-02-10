@@ -2571,6 +2571,14 @@ impl the_default::DefaultContext for Ctx {
     self.text_format.clone()
   }
 
+  fn soft_wrap_enabled(&self) -> bool {
+    self.text_format.soft_wrap
+  }
+
+  fn set_soft_wrap_enabled(&mut self, enabled: bool) {
+    self.text_format.soft_wrap = enabled;
+  }
+
   fn text_annotations(&self) -> TextAnnotations<'_> {
     let mut annotations = TextAnnotations::default();
     if !self.inline_annotations.is_empty() {
@@ -2971,7 +2979,10 @@ mod tests {
     time::Duration,
   };
 
-  use the_default::DefaultContext;
+  use the_default::{
+    CommandEvent,
+    DefaultContext,
+  };
   use the_lib::transaction::Transaction;
 
   use super::Ctx;
@@ -3148,5 +3159,44 @@ pkgs.mkShell {
         thread::sleep(Duration::from_millis(1));
       }
     }
+  }
+
+  #[test]
+  fn wrap_command_toggles_soft_wrap_and_changes_render_lines() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+    ctx.resize(24, 12);
+
+    let long_line = "wrap-me-".repeat(40);
+    let initial_tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some(long_line.into()))),
+    )
+    .expect("initial transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &initial_tx));
+
+    assert!(!ctx.soft_wrap_enabled());
+    let no_wrap_plan = build_render_plan(&mut ctx);
+    assert_eq!(no_wrap_plan.lines.len(), 1);
+
+    let registry = ctx.command_registry_ref() as *const the_default::CommandRegistry<Ctx>;
+    unsafe { (&*registry).execute(&mut ctx, "wrap", "on", CommandEvent::Validate) }
+      .expect("wrap on");
+    assert!(ctx.soft_wrap_enabled());
+
+    let wrapped_plan = build_render_plan(&mut ctx);
+    assert!(wrapped_plan.lines.len() > no_wrap_plan.lines.len());
+
+    unsafe { (&*registry).execute(&mut ctx, "wrap", "status", CommandEvent::Validate) }
+      .expect("wrap status");
+    assert!(ctx.soft_wrap_enabled());
+
+    unsafe { (&*registry).execute(&mut ctx, "wrap", "toggle", CommandEvent::Validate) }
+      .expect("wrap toggle");
+    assert!(!ctx.soft_wrap_enabled());
+
+    let toggled_plan = build_render_plan(&mut ctx);
+    assert_eq!(toggled_plan.lines.len(), no_wrap_plan.lines.len());
   }
 }

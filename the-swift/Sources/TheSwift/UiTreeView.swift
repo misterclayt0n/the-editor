@@ -24,6 +24,7 @@ struct UiOverlayHost: View {
                 let paletteSnapshot = tree.commandPaletteSnapshot()
                 let statuslineSnapshot = tree.statuslineSnapshot()
                 let searchSnapshot = tree.searchPromptSnapshot()
+                let toastSnapshot = tree.messageToastSnapshot()
 
                 ForEach(Array(tree.overlays.enumerated()), id: \.offset) { _, node in
                     if case .panel(let panel) = node, panel.id == "command_palette" {
@@ -36,6 +37,8 @@ struct UiOverlayHost: View {
                         EmptyView()
                     } else if case .panel(let panel) = node, panel.id == "file_picker" {
                         EmptyView()
+                    } else if case .panel(let panel) = node, panel.id == "message_toast" {
+                        EmptyView()
                     } else {
                         UiNodeView(node: node, cellSize: cellSize, containerSize: proxy.size)
                     }
@@ -44,6 +47,12 @@ struct UiOverlayHost: View {
                 if let statuslineSnapshot {
                     StatuslineView(snapshot: statuslineSnapshot, cellSize: cellSize)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                }
+
+                if let toastSnapshot {
+                    MessageToastView(snapshot: toastSnapshot)
+                        .padding(.bottom, 28)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 }
 
                 if let searchSnapshot {
@@ -518,6 +527,52 @@ fileprivate struct UiShortcutSymbolsView: View {
     }
 }
 
+struct MessageToastSnapshot {
+    let text: String
+    let role: String?
+    let style: UiStyleSnapshot
+}
+
+struct MessageToastView: View {
+    let snapshot: MessageToastSnapshot
+
+    private var levelColor: Color {
+        switch snapshot.role {
+        case "message_error":
+            return .red
+        case "message_warning":
+            return .yellow
+        default:
+            return Color(nsColor: .tertiaryLabelColor)
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(levelColor)
+                .frame(width: 6, height: 6)
+
+            Text(snapshot.text)
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            Capsule()
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            Capsule()
+                .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 0.5)
+        )
+        .shadow(color: Color.black.opacity(0.15), radius: 8, x: 0, y: 4)
+    }
+}
+
 struct StatuslineSnapshot {
     let left: String
     let center: String
@@ -653,6 +708,25 @@ extension UiTreeSnapshot {
             selectedIndex: list?.selected,
             items: paletteItems,
             layout: CommandPaletteLayout.from(intent: panel.intent)
+        )
+    }
+
+    func messageToastSnapshot() -> MessageToastSnapshot? {
+        let panel = findPanel(in: root, id: "message_toast") ?? overlays.compactMap { node in
+            if case .panel(let panel) = node, panel.id == "message_toast" { return panel }
+            return nil
+        }.first
+
+        guard let panel else { return nil }
+
+        guard let text = findText(in: panel.child, id: "message_toast_text") else {
+            return nil
+        }
+
+        return MessageToastSnapshot(
+            text: text.content,
+            role: panel.style.role,
+            style: panel.style
         )
     }
 

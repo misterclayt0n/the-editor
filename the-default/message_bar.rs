@@ -2,11 +2,14 @@ use the_lib::{
   messages::MessageLevel,
   render::{
     LayoutIntent,
+    UiAlign,
+    UiAlignPair,
     UiConstraints,
     UiInsets,
     UiLayer,
     UiNode,
     UiPanel,
+    UiRadius,
     UiStyle,
     UiText,
   },
@@ -18,6 +21,7 @@ use crate::DefaultContext;
 pub enum MessagePresentation {
   InlineStatusline,
   Panel,
+  Toast,
   Hidden,
 }
 
@@ -41,9 +45,14 @@ fn role_for_level(level: MessageLevel) -> &'static str {
 }
 
 pub fn build_message_bar_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Option<UiNode> {
-  if !matches!(ctx.message_presentation(), MessagePresentation::Panel) {
-    return None;
+  match ctx.message_presentation() {
+    MessagePresentation::Panel => build_panel(ctx),
+    MessagePresentation::Toast => build_toast(ctx),
+    _ => None,
   }
+}
+
+fn build_panel<Ctx: DefaultContext>(ctx: &mut Ctx) -> Option<UiNode> {
   let message = ctx.messages().active()?;
   let role = role_for_level(message.level);
 
@@ -64,6 +73,48 @@ pub fn build_message_bar_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Option<UiNode
       bottom: 0,
     },
     ..UiConstraints::default()
+  };
+
+  Some(UiNode::Panel(panel))
+}
+
+fn build_toast<Ctx: DefaultContext>(ctx: &mut Ctx) -> Option<UiNode> {
+  let message = ctx.messages().active()?;
+  let role = role_for_level(message.level);
+
+  let display = if let Some(source) = message.source.as_deref() {
+    format!("{source} \u{2013} {}", message.text)
+  } else {
+    message.text.clone()
+  };
+
+  let mut text = UiText::new("message_toast_text", display);
+  text.style = UiStyle::default().with_role(role);
+  text.max_lines = Some(1);
+
+  let mut panel = UiPanel::new(
+    "message_toast",
+    LayoutIntent::Floating,
+    UiNode::Text(text),
+  );
+  panel.style = UiStyle::default().with_role(role);
+  panel.style.radius = UiRadius::Medium;
+  panel.layer = UiLayer::Overlay;
+  panel.constraints = UiConstraints {
+    min_width:  None,
+    max_width:  Some(80),
+    min_height: Some(1),
+    max_height: Some(1),
+    padding:    UiInsets {
+      left:   1,
+      right:  1,
+      top:    0,
+      bottom: 0,
+    },
+    align: UiAlignPair {
+      horizontal: UiAlign::Center,
+      vertical:   UiAlign::End,
+    },
   };
 
   Some(UiNode::Panel(panel))

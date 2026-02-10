@@ -2790,7 +2790,7 @@ impl DefaultContext for App {
   }
 
   fn message_presentation(&self) -> MessagePresentation {
-    MessagePresentation::Hidden
+    MessagePresentation::Toast
   }
 
   fn lsp_statusline_text(&self) -> Option<String> {

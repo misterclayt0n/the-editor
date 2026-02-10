@@ -977,7 +977,7 @@ fn build_lsp_document_state(path: &Path, loader: Option<&Loader>) -> Option<LspD
 }
 
 fn spinner_frame(index: usize) -> char {
-  const FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+  const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   FRAMES[index % FRAMES.len()]
 }
 

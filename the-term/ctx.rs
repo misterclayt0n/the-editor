@@ -2164,7 +2164,7 @@ fn summarize_jsonrpc_id(id: &jsonrpc::Id) -> Value {
 }
 
 fn spinner_frame(index: usize) -> char {
-  const FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+  const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   FRAMES[index % FRAMES.len()]
 }
 

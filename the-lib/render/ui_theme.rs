@@ -195,6 +195,11 @@ fn resolve_node(
         UiComponent::StatusBar,
         &states,
       );
+      for span in &mut status_bar.right_segments {
+        if let Some(ref mut style) = span.style {
+          resolve_style(style, theme, role, UiComponent::StatusBar, &states);
+        }
+      }
     },
     UiNode::Divider(_) | UiNode::Spacer(_) => {},
   }

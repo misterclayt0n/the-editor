@@ -39,6 +39,7 @@ use the_lib::{
     UiPanel,
     UiStatusBar,
     UiStyle,
+    UiStyledSpan,
     UiText,
     UiTooltip,
     UiTree,
@@ -1733,43 +1734,104 @@ fn draw_ui_status_bar(buf: &mut Buffer, rect: Rect, _ctx: &Ctx, status: &UiStatu
   fill_rect(buf, Rect::new(rect.x, rect.y, rect.width, 1), fill_style);
 
   let mut left = status.left.clone();
-  let mut center = status.center.clone();
-  let mut right = status.right.clone();
   truncate_in_place(&mut left, rect.width as usize);
-  truncate_in_place(&mut right, rect.width as usize);
-  truncate_in_place(&mut center, rect.width as usize);
+  let left_width = left.chars().count() as u16;
 
-  let mut left_width = left.chars().count() as u16;
-  let mut right_width = right.chars().count() as u16;
-  if left_width.saturating_add(right_width) >= rect.width {
-    let available_right = rect.width.saturating_sub(left_width.saturating_add(1));
-    truncate_in_place(&mut right, available_right as usize);
-    right_width = right.chars().count() as u16;
-  }
-  if left_width.saturating_add(right_width) >= rect.width {
-    let available_left = rect.width.saturating_sub(right_width.saturating_add(1));
-    truncate_in_place(&mut left, available_left as usize);
-    left_width = left.chars().count() as u16;
-  }
+  if !status.right_segments.is_empty() {
+    // Styled segments path: render each segment with its own style.
+    let separator = "  ";
+    let sep_len = separator.chars().count() as u16;
 
-  buf.set_string(rect.x, rect.y, left, text_style);
-  if !right.is_empty() {
-    let rx = rect.x + rect.width.saturating_sub(right_width);
-    buf.set_string(rx, rect.y, right, text_style);
-  }
-  if !center.is_empty() {
-    let center_start = rect.x + left_width.saturating_add(1);
-    let center_end = rect
-      .x
-      .saturating_add(rect.width)
-      .saturating_sub(right_width.saturating_add(1));
-    if center_end > center_start {
-      let center_width = center_end.saturating_sub(center_start);
-      truncate_in_place(&mut center, center_width as usize);
-      let center_text_width = center.chars().count() as u16;
-      let cx = center_start + center_width.saturating_sub(center_text_width) / 2;
-      buf.set_string(cx, rect.y, center, text_style);
+    // Compute total right width.
+    let mut total_right: u16 = 0;
+    for (i, seg) in status.right_segments.iter().enumerate() {
+      total_right = total_right.saturating_add(seg.text.chars().count() as u16);
+      if i > 0 {
+        total_right = total_right.saturating_add(sep_len);
+      }
     }
+
+    // Collision: if left + right >= width, cap left.
+    let left_width = if left_width.saturating_add(total_right) >= rect.width {
+      let available = rect.width.saturating_sub(total_right.saturating_add(1));
+      truncate_in_place(&mut left, available as usize);
+      left.chars().count() as u16
+    } else {
+      left_width
+    };
+
+    buf.set_string(rect.x, rect.y, &left, text_style);
+
+    // Render segments right-to-left.
+    let mut rx = rect.x.saturating_add(rect.width);
+    for (i, seg) in status.right_segments.iter().enumerate().rev() {
+      let seg_style = styled_span_style(seg, text_style);
+      let text_w = seg.text.chars().count() as u16;
+      rx = rx.saturating_sub(text_w);
+      if rx >= rect.x.saturating_add(left_width) {
+        buf.set_string(rx, rect.y, &seg.text, seg_style);
+      }
+      if i > 0 {
+        rx = rx.saturating_sub(sep_len);
+        if rx >= rect.x.saturating_add(left_width) {
+          buf.set_string(rx, rect.y, separator, text_style);
+        }
+      }
+    }
+  } else {
+    // Fallback: plain text path (backward compat).
+    let mut center = status.center.clone();
+    let mut right = status.right.clone();
+    truncate_in_place(&mut right, rect.width as usize);
+    truncate_in_place(&mut center, rect.width as usize);
+
+    let mut left_width = left_width;
+    let mut right_width = right.chars().count() as u16;
+    if left_width.saturating_add(right_width) >= rect.width {
+      let available_right = rect.width.saturating_sub(left_width.saturating_add(1));
+      truncate_in_place(&mut right, available_right as usize);
+      right_width = right.chars().count() as u16;
+    }
+    if left_width.saturating_add(right_width) >= rect.width {
+      let available_left = rect.width.saturating_sub(right_width.saturating_add(1));
+      truncate_in_place(&mut left, available_left as usize);
+      left_width = left.chars().count() as u16;
+    }
+
+    buf.set_string(rect.x, rect.y, &left, text_style);
+    if !right.is_empty() {
+      let rx = rect.x + rect.width.saturating_sub(right_width);
+      buf.set_string(rx, rect.y, right, text_style);
+    }
+    if !center.is_empty() {
+      let center_start = rect.x + left_width.saturating_add(1);
+      let center_end = rect
+        .x
+        .saturating_add(rect.width)
+        .saturating_sub(right_width.saturating_add(1));
+      if center_end > center_start {
+        let center_width = center_end.saturating_sub(center_start);
+        truncate_in_place(&mut center, center_width as usize);
+        let center_text_width = center.chars().count() as u16;
+        let cx = center_start + center_width.saturating_sub(center_text_width) / 2;
+        buf.set_string(cx, rect.y, center, text_style);
+      }
+    }
+  }
+}
+
+fn styled_span_style(span: &UiStyledSpan, base: Style) -> Style {
+  match &span.style {
+    None => base,
+    Some(s) => {
+      let mut style = base;
+      if let Some(ref fg) = s.fg {
+        if let Some(color) = resolve_ui_color(fg) {
+          style = style.fg(color);
+        }
+      }
+      apply_ui_emphasis(style, s.emphasis)
+    },
   }
 }
 

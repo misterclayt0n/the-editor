@@ -438,12 +438,21 @@ pub struct UiTooltip {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiStyledSpan {
+  pub text:  String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub style: Option<UiStyle>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiStatusBar {
   pub id:     Option<String>,
   pub left:   String,
   pub center: String,
   pub right:  String,
   pub style:  UiStyle,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub right_segments: Vec<UiStyledSpan>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

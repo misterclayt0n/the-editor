@@ -1,12 +1,14 @@
 use the_lib::render::{
   LayoutIntent,
   UiConstraints,
+  UiEmphasis,
   UiInsets,
   UiLayer,
   UiNode,
   UiPanel,
   UiStatusBar,
   UiStyle,
+  UiStyledSpan,
 };
 
 use crate::{
@@ -85,15 +87,22 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
     });
 
   let mut right_parts = Vec::new();
+  let mut right_segments = Vec::new();
   if let Some(pending) = pending_part {
+    right_segments.push(UiStyledSpan { text: pending.clone(), style: None });
     right_parts.push(pending);
   }
   if let Some(lsp) = lsp_part {
+    let mut lsp_style = UiStyle::default();
+    lsp_style.emphasis = UiEmphasis::Muted;
+    right_segments.push(UiStyledSpan { text: lsp.clone(), style: Some(lsp_style) });
     right_parts.push(lsp);
   }
   if let Some(message) = message_part {
+    right_segments.push(UiStyledSpan { text: message.clone(), style: None });
     right_parts.push(message);
   }
+  right_segments.push(UiStyledSpan { text: cursor_text.clone(), style: None });
   right_parts.push(cursor_text);
   let right = right_parts.join("  ");
 
@@ -103,6 +112,7 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
     center: String::new(),
     right,
     style: UiStyle::default().with_role("statusline"),
+    right_segments,
   };
 
   let mut panel = UiPanel::new(

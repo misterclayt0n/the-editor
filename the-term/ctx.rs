@@ -865,11 +865,11 @@ impl Ctx {
       return false;
     }
     let now = Instant::now();
-    if now.duration_since(self.lsp_spinner_last_tick) < Duration::from_millis(120) {
+    if now.duration_since(self.lsp_spinner_last_tick) < Duration::from_millis(80) {
       return false;
     }
     self.lsp_spinner_last_tick = now;
-    self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 4;
+    self.lsp_spinner_index = (self.lsp_spinner_index + 1) % 10;
     true
   }
 
@@ -2168,7 +2168,7 @@ fn summarize_jsonrpc_id(id: &jsonrpc::Id) -> Value {
 }
 
 fn spinner_frame(index: usize) -> char {
-  const FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+  const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   FRAMES[index % FRAMES.len()]
 }
 

@@ -131,7 +131,17 @@ impl MessageCenter {
     };
     self.next_message_id = self.next_message_id.saturating_add(1);
 
-    self.active = Some(message.clone());
+    // A background message (source="lsp") must not displace an active
+    // foreground message.  It still goes into history and events.
+    let new_is_bg = is_background_source(message.source.as_deref());
+    let active_is_fg = self
+      .active
+      .as_ref()
+      .is_some_and(|m| !is_background_source(m.source.as_deref()));
+    if !(new_is_bg && active_is_fg) {
+      self.active = Some(message.clone());
+    }
+
     self.history.push_back(message.clone());
     while self.history.len() > self.history_limit {
       self.history.pop_front();
@@ -185,6 +195,10 @@ impl MessageCenter {
   }
 }
 
+fn is_background_source(source: Option<&str>) -> bool {
+  source.is_some_and(|s| s.eq_ignore_ascii_case("lsp"))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -214,5 +228,37 @@ mod tests {
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].seq, 2);
     assert_eq!(events[1].seq, 3);
+  }
+
+  #[test]
+  fn lsp_message_does_not_displace_editor_active() {
+    let mut center = MessageCenter::default();
+
+    // Editor message becomes active.
+    let editor_msg = center.info(Some("save".into()), "File saved");
+    assert_eq!(center.active().unwrap().text, "File saved");
+
+    // LSP message must not displace it.
+    center.info(Some("lsp".into()), "cargo check");
+    assert_eq!(center.active().unwrap().id, editor_msg.id);
+
+    // But it still goes into history.
+    assert_eq!(center.history_len(), 2);
+  }
+
+  #[test]
+  fn lsp_message_replaces_lsp_active() {
+    let mut center = MessageCenter::default();
+    center.info(Some("lsp".into()), "starting");
+    center.info(Some("lsp".into()), "cargo check");
+    assert_eq!(center.active().unwrap().text, "cargo check");
+  }
+
+  #[test]
+  fn editor_message_replaces_lsp_active() {
+    let mut center = MessageCenter::default();
+    center.info(Some("lsp".into()), "cargo check");
+    center.info(Some("save".into()), "File saved");
+    assert_eq!(center.active().unwrap().text, "File saved");
   }
 }

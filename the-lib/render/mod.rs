@@ -41,6 +41,8 @@ pub use plan::{
   NoHighlights,
   RenderCache,
   RenderCursor,
+  RenderGutterLine,
+  RenderGutterSpan,
   RenderLine,
   RenderPlan,
   RenderSelection,
@@ -48,6 +50,7 @@ pub use plan::{
   RenderStyles,
   RenderVisibleRow,
   build_plan,
+  gutter_width_for_document,
 };
 pub use ui::*;
 pub use visual_position::{

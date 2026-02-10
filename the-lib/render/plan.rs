@@ -14,6 +14,7 @@
 //!   },
 //!   position::Position,
 //!   render::{
+//!     GutterConfig,
 //!     NoHighlights,
 //!     RenderCache,
 //!     RenderStyles,
@@ -33,11 +34,13 @@
 //! let mut highlights = NoHighlights;
 //! let mut cache = RenderCache::default();
 //! let styles = RenderStyles::default();
+//! let gutter = GutterConfig::default();
 //!
 //! let plan = build_plan(
 //!   &doc,
 //!   view,
 //!   &text_fmt,
+//!   &gutter,
 //!   &mut annotations,
 //!   &mut highlights,
 //!   &mut cache,
@@ -64,6 +67,11 @@ use crate::{
     doc_formatter::{
       DocumentFormatter,
       prev_checkpoint,
+    },
+    gutter::{
+      GutterConfig,
+      GutterType,
+      LineNumberMode,
     },
     graphics::{
       CursorKind,
@@ -140,6 +148,35 @@ pub struct RenderVisibleRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderGutterSpan {
+  pub col:   u16,
+  pub text:  Tendril,
+  pub style: Style,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderGutterLine {
+  pub row:   u16,
+  pub spans: Vec<RenderGutterSpan>,
+}
+
+impl RenderGutterLine {
+  fn new(row: u16) -> Self {
+    Self {
+      row,
+      spans: Vec::new(),
+    }
+  }
+
+  fn push_span(&mut self, span: RenderGutterSpan) {
+    if span.text.is_empty() {
+      return;
+    }
+    self.spans.push(span);
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderCursor {
   pub id:    crate::selection::CursorId,
   pub pos:   Position,
@@ -158,6 +195,8 @@ pub struct RenderStyles {
   pub selection:     Style,
   pub cursor:        Style,
   pub active_cursor: Style,
+  pub gutter:        Style,
+  pub gutter_active: Style,
 }
 
 impl Default for RenderStyles {
@@ -166,19 +205,23 @@ impl Default for RenderStyles {
       selection:     Style::default(),
       cursor:        Style::default(),
       active_cursor: Style::default(),
+      gutter:        Style::default(),
+      gutter_active: Style::default(),
     }
   }
 }
 
 #[derive(Debug, Clone)]
 pub struct RenderPlan {
-  pub viewport:     Rect,
-  pub scroll:       Position,
-  pub visible_rows: Vec<RenderVisibleRow>,
-  pub lines:        Vec<RenderLine>,
-  pub cursors:      Vec<RenderCursor>,
-  pub selections:   Vec<RenderSelection>,
-  pub overlays:     Vec<OverlayNode>,
+  pub viewport:         Rect,
+  pub scroll:           Position,
+  pub content_offset_x: u16,
+  pub visible_rows:     Vec<RenderVisibleRow>,
+  pub gutter_lines:     Vec<RenderGutterLine>,
+  pub lines:            Vec<RenderLine>,
+  pub cursors:          Vec<RenderCursor>,
+  pub selections:       Vec<RenderSelection>,
+  pub overlays:         Vec<OverlayNode>,
 }
 
 impl RenderPlan {
@@ -186,12 +229,18 @@ impl RenderPlan {
     Self {
       viewport,
       scroll,
+      content_offset_x: 0,
       visible_rows: Vec::new(),
+      gutter_lines: Vec::new(),
       lines: Vec::new(),
       cursors: Vec::new(),
       selections: Vec::new(),
       overlays: Vec::new(),
     }
+  }
+
+  pub fn content_width(&self) -> usize {
+    self.viewport.width.saturating_sub(self.content_offset_x) as usize
   }
 }
 
@@ -268,6 +317,7 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
   doc: &'a Document,
   view: ViewState,
   text_fmt: &'a TextFormat,
+  gutter: &GutterConfig,
   annotations: &'t mut TextAnnotations<'a>,
   highlights: &mut H,
   cache: &mut RenderCache,
@@ -275,6 +325,14 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
 ) -> RenderPlan {
   let mut plan = RenderPlan::empty(view.viewport, view.scroll);
   let text = doc.text().slice(..);
+
+  let line_number_width = line_number_column_width(doc, gutter);
+  plan.content_offset_x = gutter_width_for_document(doc, view.viewport.width, gutter);
+  let content_width = if text_fmt.viewport_width == 0 {
+    view.viewport.width.max(1) as usize
+  } else {
+    text_fmt.viewport_width as usize
+  };
 
   cache.reset_if_stale(
     doc.version(),
@@ -372,7 +430,7 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
       }
 
       let col = abs_col - col_start;
-      if col >= view.viewport.width as usize {
+      if col >= content_width {
         continue;
       }
 
@@ -405,11 +463,142 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
       plan.lines.push(current_line);
     }
     plan.visible_rows = visible_rows.into_iter().flatten().collect();
+    plan.gutter_lines = build_gutter_lines(
+      &plan.visible_rows,
+      doc,
+      view,
+      gutter,
+      styles,
+      line_number_width,
+    );
   }
 
   add_selections_and_cursor(&mut plan, doc, text_fmt, annotations, view, styles);
 
   plan
+}
+
+fn line_number_column_width(doc: &Document, gutter: &GutterConfig) -> usize {
+  if !gutter.layout.contains(&GutterType::LineNumbers) {
+    return 0;
+  }
+  let lines = doc.text().len_lines().max(1);
+  gutter
+    .line_numbers
+    .min_width
+    .max(lines.to_string().len())
+}
+
+fn gutter_total_width(gutter: &GutterConfig, line_number_width: usize) -> u16 {
+  let mut width = 0usize;
+  for col in &gutter.layout {
+    width = width.saturating_add(match col {
+      GutterType::Diagnostics => 1,
+      GutterType::Diff => 1,
+      GutterType::Spacer => 1,
+      GutterType::LineNumbers => line_number_width,
+    });
+  }
+  width.min(u16::MAX as usize) as u16
+}
+
+pub fn gutter_width_for_document(doc: &Document, viewport_width: u16, gutter: &GutterConfig) -> u16 {
+  let line_number_width = line_number_column_width(doc, gutter);
+  if viewport_width == 0 {
+    return 0;
+  }
+  gutter_total_width(gutter, line_number_width).min(viewport_width.saturating_sub(1))
+}
+
+fn build_gutter_lines(
+  visible_rows: &[RenderVisibleRow],
+  doc: &Document,
+  view: ViewState,
+  gutter: &GutterConfig,
+  styles: RenderStyles,
+  line_number_width: usize,
+) -> Vec<RenderGutterLine> {
+  if gutter.layout.is_empty() {
+    return Vec::new();
+  }
+
+  let active_line = active_doc_line(doc, view);
+  let mut out = Vec::with_capacity(visible_rows.len());
+
+  for row in visible_rows {
+    let mut line = RenderGutterLine::new(row.row);
+    let mut col_offset = 0u16;
+    for column in &gutter.layout {
+      match column {
+        GutterType::LineNumbers => {
+          let width = line_number_width as u16;
+          if width > 0
+            && row.first_visual_line
+            && let Some(text) = line_number_text(
+              gutter.line_numbers.mode,
+              row.doc_line,
+              active_line,
+              line_number_width,
+            )
+          {
+            let style = if active_line.is_some_and(|line| line == row.doc_line) {
+              styles.gutter_active
+            } else {
+              styles.gutter
+            };
+            line.push_span(RenderGutterSpan {
+              col: col_offset,
+              text: text.into(),
+              style,
+            });
+          }
+          col_offset = col_offset.saturating_add(width);
+        },
+        GutterType::Diagnostics | GutterType::Diff | GutterType::Spacer => {
+          col_offset = col_offset.saturating_add(1);
+        },
+      }
+    }
+    out.push(line);
+  }
+
+  out
+}
+
+fn line_number_text(
+  mode: LineNumberMode,
+  doc_line: usize,
+  active_line: Option<usize>,
+  width: usize,
+) -> Option<String> {
+  if width == 0 {
+    return None;
+  }
+
+  let absolute = doc_line.saturating_add(1);
+  let value = match mode {
+    LineNumberMode::Absolute => absolute,
+    LineNumberMode::Relative => match active_line {
+      Some(active) if active == doc_line => absolute,
+      Some(active) => active.abs_diff(doc_line),
+      None => absolute,
+    },
+  };
+  Some(format!("{value:>width$}"))
+}
+
+fn active_doc_line(doc: &Document, view: ViewState) -> Option<usize> {
+  let text = doc.text().slice(..);
+  let selection = doc.selection();
+  if let Some(active_cursor) = view.active_cursor
+    && let Some((_, range)) = selection
+      .iter_with_ids()
+      .find(|(cursor_id, _)| *cursor_id == active_cursor)
+  {
+    return Some(text.char_to_line(range.cursor(text)));
+  }
+  let range = selection.ranges().first()?;
+  Some(text.char_to_line(range.cursor(text)))
 }
 
 fn grapheme_text(grapheme: &FormattedGrapheme<'_>) -> Option<(Tendril, usize)> {
@@ -481,7 +670,7 @@ fn clamp_position(plan: &RenderPlan, pos: Position) -> Option<Position> {
   let row_start = plan.scroll.row;
   let row_end = row_start + plan.viewport.height as usize;
   let col_start = plan.scroll.col;
-  let col_end = col_start + plan.viewport.width as usize;
+  let col_end = col_start + plan.content_width();
 
   if pos.row < row_start || pos.row >= row_end {
     return None;
@@ -561,7 +750,7 @@ fn grapheme_str<'a>(grapheme: ropey::RopeSlice<'a>) -> GraphemeStr<'a> {
 fn row_visible_end_col(plan: &RenderPlan, row: usize, row_visible_end_cols: &[usize]) -> usize {
   let row_start = plan.scroll.row;
   let col_start = plan.scroll.col;
-  let col_end = col_start + plan.viewport.width as usize;
+  let col_end = col_start + plan.content_width();
   let relative = row.saturating_sub(row_start);
   row_visible_end_cols
     .get(relative)
@@ -580,7 +769,7 @@ fn push_selection_rects(
   let row_start = plan.scroll.row;
   let row_end = row_start + plan.viewport.height as usize;
   let col_start = plan.scroll.col;
-  let col_end = col_start + plan.viewport.width as usize;
+  let col_end = col_start + plan.content_width();
 
   let start_row = start.row;
   let end_row = end.row;
@@ -653,12 +842,20 @@ mod tests {
       DocumentId,
     },
     render::SyntaxHighlightAdapter,
+    render::GutterConfig,
     selection::{
       Range,
       Selection,
     },
     syntax::HighlightCache,
   };
+
+  fn no_gutter() -> GutterConfig {
+    GutterConfig {
+      layout: Vec::new(),
+      ..GutterConfig::default()
+    }
+  }
 
   #[test]
   fn build_plan_simple_text() {
@@ -668,6 +865,7 @@ mod tests {
     let text_fmt = TextFormat::default();
     let mut annotations = TextAnnotations::default();
     let mut highlights = NoHighlights;
+    let gutter = no_gutter();
 
     let mut cache = RenderCache::default();
     let styles = RenderStyles::default();
@@ -675,6 +873,7 @@ mod tests {
       &doc,
       view,
       &text_fmt,
+      &gutter,
       &mut annotations,
       &mut highlights,
       &mut cache,
@@ -693,6 +892,7 @@ mod tests {
     let text_fmt = TextFormat::default();
     let mut annotations = TextAnnotations::default();
     let mut highlights = NoHighlights;
+    let gutter = no_gutter();
 
     let mut cache = RenderCache::default();
     let styles = RenderStyles::default();
@@ -700,6 +900,7 @@ mod tests {
       &doc,
       view,
       &text_fmt,
+      &gutter,
       &mut annotations,
       &mut highlights,
       &mut cache,
@@ -721,6 +922,7 @@ mod tests {
     let text_fmt = TextFormat::default();
     let mut annotations = TextAnnotations::default();
     let mut highlights = NoHighlights;
+    let gutter = no_gutter();
     let mut cache = RenderCache::default();
     let styles = RenderStyles::default();
 
@@ -728,6 +930,7 @@ mod tests {
       &doc,
       view,
       &text_fmt,
+      &gutter,
       &mut annotations,
       &mut highlights,
       &mut cache,
@@ -765,11 +968,13 @@ mod tests {
 
     let mut cache = RenderCache::default();
     let styles = RenderStyles::default();
+    let gutter = no_gutter();
 
     let plan = build_plan(
       &doc,
       view,
       &text_fmt,
+      &gutter,
       &mut annotations,
       &mut highlights,
       &mut cache,
@@ -795,12 +1000,14 @@ mod tests {
 
     let mut annotations = TextAnnotations::default();
     let mut highlights = NoHighlights;
+    let gutter = no_gutter();
     let mut cache = RenderCache::default();
     let styles = RenderStyles::default();
     let plan = build_plan(
       &doc,
       view,
       &text_fmt,
+      &gutter,
       &mut annotations,
       &mut highlights,
       &mut cache,
@@ -816,5 +1023,46 @@ mod tests {
     assert!(plan.visible_rows[2].first_visual_line);
     assert_eq!(plan.visible_rows[3].doc_line, 2);
     assert!(!plan.visible_rows[3].first_visual_line);
+  }
+
+  #[test]
+  fn build_plan_generates_line_number_gutter_payload() {
+    let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(id, Rope::from("a\nb\n"));
+    let view = ViewState::new(Rect::new(0, 0, 20, 2), Position::new(0, 0));
+    let text_fmt = TextFormat::default();
+    let mut annotations = TextAnnotations::default();
+    let mut highlights = NoHighlights;
+    let mut cache = RenderCache::default();
+    let styles = RenderStyles::default();
+    let gutter = GutterConfig::default();
+
+    let plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &gutter,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+
+    assert!(plan.content_offset_x > 0);
+    assert_eq!(plan.gutter_lines.len(), 2);
+    let line0_text = plan.gutter_lines[0]
+      .spans
+      .iter()
+      .map(|span| span.text.as_str())
+      .collect::<Vec<_>>()
+      .join("");
+    let line1_text = plan.gutter_lines[1]
+      .spans
+      .iter()
+      .map(|span| span.text.as_str())
+      .collect::<Vec<_>>()
+      .join("");
+    assert!(line0_text.contains('1'));
+    assert!(line1_text.contains('2'));
   }
 }

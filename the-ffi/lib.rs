@@ -100,6 +100,7 @@ use the_lib::{
   position::Position as LibPosition,
   registers::Registers,
   render::{
+    GutterConfig,
     NoHighlights,
     OverlayNode,
     OverlayRectKind,
@@ -108,6 +109,7 @@ use the_lib::{
     SyntaxHighlightAdapter,
     UiState,
     build_plan,
+    gutter_width_for_document,
     graphics::{
       Color as LibColor,
       CursorKind as LibCursorKind,
@@ -811,6 +813,7 @@ struct EditorState {
   macro_replaying:       Vec<char>,
   macro_queue:           VecDeque<KeyEvent>,
   text_format:           TextFormat,
+  gutter_config:         GutterConfig,
   inline_annotations:    Vec<InlineAnnotation>,
   overlay_annotations:   Vec<Overlay>,
   highlight_cache:       HighlightCache,
@@ -844,6 +847,7 @@ impl EditorState {
       macro_replaying: Vec::new(),
       macro_queue: VecDeque::new(),
       text_format: TextFormat::default(),
+      gutter_config: GutterConfig::default(),
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
       highlight_cache: HighlightCache::default(),
@@ -1350,10 +1354,11 @@ impl App {
   ) -> the_lib::render::RenderPlan {
     let _ = self.poll_active_syntax_parse_results();
 
-    let (mut text_fmt, inline_annotations, overlay_annotations) = {
+    let (mut text_fmt, gutter_config, inline_annotations, overlay_annotations) = {
       let state = self.active_state_ref();
       (
         state.text_format.clone(),
+        state.gutter_config.clone(),
         state.inline_annotations.clone(),
         state.overlay_annotations.clone(),
       )
@@ -1367,7 +1372,6 @@ impl App {
     let plan = {
       let editor = self.active_editor_mut();
       let view = editor.view();
-      text_fmt.viewport_width = view.viewport.width;
 
       let mut annotations = TextAnnotations::default();
       if !inline_annotations.is_empty() {
@@ -1378,6 +1382,8 @@ impl App {
       }
 
       let (doc, cache) = editor.document_and_cache();
+      let gutter_width = gutter_width_for_document(doc, view.viewport.width, &gutter_config);
+      text_fmt.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
       if let (Some(loader), Some(syntax)) = (loader.as_deref(), doc.syntax()) {
         let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
         let mut adapter = SyntaxHighlightAdapter::new(
@@ -1393,6 +1399,7 @@ impl App {
           doc,
           view,
           &text_fmt,
+          &gutter_config,
           &mut annotations,
           &mut adapter,
           cache,
@@ -1404,6 +1411,7 @@ impl App {
           doc,
           view,
           &text_fmt,
+          &gutter_config,
           &mut annotations,
           &mut highlights,
           cache,
@@ -3655,6 +3663,8 @@ mod ffi {
     selection:     Style,
     cursor:        Style,
     active_cursor: Style,
+    gutter:        Style,
+    gutter_active: Style,
   }
 
   extern "Rust" {
@@ -3775,6 +3785,8 @@ impl ffi::RenderStyles {
       selection:     self.selection.to_lib(),
       cursor:        self.cursor.to_lib(),
       active_cursor: self.active_cursor.to_lib(),
+      gutter:        self.gutter.to_lib(),
+      gutter_active: self.gutter_active.to_lib(),
     }
   }
 }
@@ -3785,6 +3797,8 @@ impl Default for ffi::RenderStyles {
       selection:     ffi::Style::default(),
       cursor:        ffi::Style::default(),
       active_cursor: ffi::Style::default(),
+      gutter:        ffi::Style::default(),
+      gutter_active: ffi::Style::default(),
     }
   }
 }

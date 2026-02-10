@@ -79,6 +79,7 @@ use the_lib::{
   position::Position,
   registers::Registers,
   render::{
+    GutterConfig,
     RenderPlan,
     RenderStyles,
     UiState,
@@ -364,6 +365,8 @@ pub struct Ctx {
   pub last_motion:            Option<Motion>,
   /// Render formatting used for visual position mapping.
   pub text_format:            TextFormat,
+  /// Gutter layout and line-number rendering config.
+  pub gutter_config:          GutterConfig,
   /// Inline annotations (virtual text) for rendering.
   pub inline_annotations:     Vec<InlineAnnotation>,
   /// Overlay annotations (virtual text) for rendering.
@@ -664,6 +667,7 @@ impl Ctx {
       macro_queue: VecDeque::new(),
       last_motion: None,
       text_format,
+      gutter_config: GutterConfig::default(),
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
       scrolloff: 5,

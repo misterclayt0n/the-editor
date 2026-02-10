@@ -45,6 +45,7 @@ use the_lib::{
     UiTooltip,
     UiTree,
     build_plan,
+    gutter_width_for_document,
     graphics::{
       Modifier as LibModifier,
       Style as LibStyle,
@@ -150,6 +151,11 @@ fn render_styles_from_theme(theme: &the_lib::render::theme::Theme) -> RenderStyl
     selection,
     cursor,
     active_cursor,
+    gutter: theme.try_get("ui.linenr").unwrap_or_default(),
+    gutter_active: theme
+      .try_get("ui.linenr.selected")
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
   }
 }
 
@@ -1925,9 +1931,14 @@ pub fn build_render_plan(ctx: &mut Ctx) -> RenderPlan {
 
 pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> RenderPlan {
   let view = ctx.editor.view();
+  let gutter_width = gutter_width_for_document(
+    ctx.editor.document(),
+    view.viewport.width,
+    &ctx.gutter_config,
+  );
 
   // Set up text formatting
-  ctx.text_format.viewport_width = view.viewport.width;
+  ctx.text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
   let text_fmt = &ctx.text_format;
 
   // Set up annotations
@@ -1961,6 +1972,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       doc,
       view,
       text_fmt,
+      &ctx.gutter_config,
       &mut annotations,
       &mut adapter,
       render_cache,
@@ -1973,6 +1985,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       doc,
       view,
       text_fmt,
+      &ctx.gutter_config,
       &mut annotations,
       &mut highlights,
       render_cache,

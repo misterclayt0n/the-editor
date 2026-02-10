@@ -8,6 +8,7 @@
 pub mod doc_formatter;
 pub mod grapheme;
 pub mod graphics;
+pub mod gutter;
 pub mod highlight_adapter;
 pub mod overlay;
 pub mod plan;
@@ -21,6 +22,12 @@ pub mod visual_position;
 pub use grapheme::{
   FormattedGrapheme,
   GraphemeSource,
+};
+pub use gutter::{
+  GutterConfig,
+  GutterLineNumbersConfig,
+  GutterType,
+  LineNumberMode,
 };
 pub use highlight_adapter::SyntaxHighlightAdapter;
 pub use overlay::{

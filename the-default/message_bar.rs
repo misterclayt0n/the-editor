@@ -25,6 +25,17 @@ pub enum MessagePresentation {
   Hidden,
 }
 
+fn is_lsp_source(source: Option<&str>) -> bool {
+  source.is_some_and(|source| source.eq_ignore_ascii_case("lsp"))
+}
+
+fn visible_message<Ctx: DefaultContext>(ctx: &Ctx) -> Option<&the_lib::messages::Message> {
+  ctx
+    .messages()
+    .active()
+    .filter(|message| !is_lsp_source(message.source.as_deref()))
+}
+
 pub fn inline_statusline_message<Ctx: DefaultContext>(ctx: &Ctx) -> Option<String> {
   if !matches!(
     ctx.message_presentation(),
@@ -33,7 +44,7 @@ pub fn inline_statusline_message<Ctx: DefaultContext>(ctx: &Ctx) -> Option<Strin
     return None;
   }
 
-  ctx.messages().active().map(|message| message.text.clone())
+  visible_message(ctx).map(|message| message.text.clone())
 }
 
 fn role_for_level(level: MessageLevel) -> &'static str {
@@ -53,7 +64,7 @@ pub fn build_message_bar_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Option<UiNode
 }
 
 fn build_panel<Ctx: DefaultContext>(ctx: &mut Ctx) -> Option<UiNode> {
-  let message = ctx.messages().active()?;
+  let message = visible_message(ctx)?;
   let role = role_for_level(message.level);
 
   let mut text = UiText::new("message_bar_text", message.text.clone());
@@ -79,7 +90,7 @@ fn build_panel<Ctx: DefaultContext>(ctx: &mut Ctx) -> Option<UiNode> {
 }
 
 fn build_toast<Ctx: DefaultContext>(ctx: &mut Ctx) -> Option<UiNode> {
-  let message = ctx.messages().active()?;
+  let message = visible_message(ctx)?;
   let role = role_for_level(message.level);
 
   let display = if let Some(source) = message.source.as_deref() {
@@ -92,11 +103,7 @@ fn build_toast<Ctx: DefaultContext>(ctx: &mut Ctx) -> Option<UiNode> {
   text.style = UiStyle::default().with_role(role);
   text.max_lines = Some(1);
 
-  let mut panel = UiPanel::new(
-    "message_toast",
-    LayoutIntent::Floating,
-    UiNode::Text(text),
-  );
+  let mut panel = UiPanel::new("message_toast", LayoutIntent::Floating, UiNode::Text(text));
   panel.style = UiStyle::default().with_role(role);
   panel.style.radius = UiRadius::Medium;
   panel.layer = UiLayer::Overlay;
@@ -111,7 +118,7 @@ fn build_toast<Ctx: DefaultContext>(ctx: &mut Ctx) -> Option<UiNode> {
       top:    0,
       bottom: 0,
     },
-    align: UiAlignPair {
+    align:      UiAlignPair {
       horizontal: UiAlign::Center,
       vertical:   UiAlign::End,
     },

@@ -64,17 +64,15 @@ pub fn scroll_to_keep_visible(
   viewport_width: usize,
   scrolloff: usize,
 ) -> Option<Position> {
-  let v_off = scrolloff.min(viewport_height / 2);
-  let h_off = scrolloff.min(viewport_width / 2);
-
   let mut new_scroll = scroll;
 
-  // Vertical
-  if cursor_line < scroll.row + v_off {
-    new_scroll.row = cursor_line.saturating_sub(v_off);
-  } else if cursor_line + v_off >= scroll.row + viewport_height {
-    new_scroll.row = cursor_line + v_off + 1 - viewport_height;
+  if let Some(new_row) =
+    scroll_row_to_keep_visible(cursor_line, scroll.row, viewport_height, scrolloff)
+  {
+    new_scroll.row = new_row;
   }
+
+  let h_off = scrolloff.min(viewport_width / 2);
 
   // Horizontal
   if cursor_col < scroll.col + h_off {
@@ -85,6 +83,33 @@ pub fn scroll_to_keep_visible(
 
   if new_scroll != scroll {
     Some(new_scroll)
+  } else {
+    None
+  }
+}
+
+/// Compute adjusted vertical scroll row to keep cursor visible with scrolloff
+/// padding.
+///
+/// Returns `Some(new_row)` when the row must change, `None` when cursor
+/// is already within the padded viewport.
+pub fn scroll_row_to_keep_visible(
+  cursor_line: usize,
+  scroll_row: usize,
+  viewport_height: usize,
+  scrolloff: usize,
+) -> Option<usize> {
+  let v_off = scrolloff.min(viewport_height / 2);
+  let mut new_row = scroll_row;
+
+  if cursor_line < scroll_row + v_off {
+    new_row = cursor_line.saturating_sub(v_off);
+  } else if cursor_line + v_off >= scroll_row + viewport_height {
+    new_row = cursor_line + v_off + 1 - viewport_height;
+  }
+
+  if new_row != scroll_row {
+    Some(new_row)
   } else {
     None
   }

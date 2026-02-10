@@ -2111,6 +2111,31 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
   let viewport_height = view.viewport.height as usize;
   let viewport_width = view.viewport.width as usize;
 
+  if ctx.text_format.soft_wrap {
+    let mut changed = false;
+    let mut new_scroll = view.scroll;
+
+    if let Some(new_row) = the_lib::view::scroll_row_to_keep_visible(
+      cursor_line,
+      view.scroll.row,
+      viewport_height,
+      ctx.scrolloff,
+    ) {
+      new_scroll.row = new_row;
+      changed = true;
+    }
+
+    if view.scroll.col != 0 {
+      new_scroll.col = 0;
+      changed = true;
+    }
+
+    if changed {
+      ctx.editor.view_mut().scroll = new_scroll;
+    }
+    return;
+  }
+
   if let Some(new_scroll) = the_lib::view::scroll_to_keep_visible(
     cursor_line,
     cursor_col,

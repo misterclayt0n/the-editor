@@ -2577,6 +2577,9 @@ impl the_default::DefaultContext for Ctx {
 
   fn set_soft_wrap_enabled(&mut self, enabled: bool) {
     self.text_format.soft_wrap = enabled;
+    if enabled {
+      self.editor.view_mut().scroll.col = 0;
+    }
   }
 
   fn text_annotations(&self) -> TextAnnotations<'_> {
@@ -2988,7 +2991,10 @@ mod tests {
   use super::Ctx;
   use crate::{
     dispatch::build_dispatch,
-    render::build_render_plan,
+    render::{
+      build_render_plan,
+      ensure_cursor_visible,
+    },
   };
 
   #[derive(Debug, Clone, Copy)]
@@ -3198,5 +3204,24 @@ pkgs.mkShell {
 
     let toggled_plan = build_render_plan(&mut ctx);
     assert_eq!(toggled_plan.lines.len(), no_wrap_plan.lines.len());
+  }
+
+  #[test]
+  fn ensure_cursor_visible_keeps_horizontal_scroll_zero_with_soft_wrap() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.resize(24, 12);
+    DefaultContext::set_soft_wrap_enabled(&mut ctx, true);
+
+    let long_line = "horizontal-scroll-".repeat(20);
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some(long_line.into()))),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    ctx.editor.view_mut().scroll.col = 40;
+    ensure_cursor_visible(&mut ctx);
+    assert_eq!(ctx.editor.view().scroll.col, 0);
   }
 }

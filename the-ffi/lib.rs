@@ -2540,6 +2540,7 @@ impl App {
     }
 
     let scrolloff = self.active_state_ref().scrolloff;
+    let soft_wrap = self.active_state_ref().text_format.soft_wrap;
 
     let Some(editor) = self.editor_mut(id) else {
       return false;
@@ -2559,6 +2560,31 @@ impl App {
     let view = editor.view();
     let viewport_height = view.viewport.height as usize;
     let viewport_width = view.viewport.width as usize;
+
+    if soft_wrap {
+      let mut changed = false;
+      let mut new_scroll = view.scroll;
+      if let Some(new_row) = the_lib::view::scroll_row_to_keep_visible(
+        cursor_line,
+        view.scroll.row,
+        viewport_height,
+        scrolloff,
+      ) {
+        new_scroll.row = new_row;
+        changed = true;
+      }
+      if view.scroll.col != 0 {
+        new_scroll.col = 0;
+        changed = true;
+      }
+
+      if changed {
+        editor.view_mut().scroll = new_scroll;
+        return true;
+      }
+
+      return false;
+    }
 
     if let Some(new_scroll) = the_lib::view::scroll_to_keep_visible(
       cursor_line,
@@ -3134,6 +3160,9 @@ impl DefaultContext for App {
 
   fn set_soft_wrap_enabled(&mut self, enabled: bool) {
     self.active_state_mut().text_format.soft_wrap = enabled;
+    if enabled {
+      self.active_editor_mut().view_mut().scroll.col = 0;
+    }
   }
 
   fn text_annotations(&self) -> TextAnnotations<'_> {
@@ -4316,5 +4345,24 @@ pkgs.mkShell {
 
     let toggled = app.render_plan(id);
     assert_eq!(toggled.line_count(), no_wrap.line_count());
+  }
+
+  #[test]
+  fn ensure_cursor_visible_keeps_horizontal_scroll_zero_with_soft_wrap() {
+    let mut app = App::new();
+    let viewport = ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  24,
+      height: 12,
+    };
+    let scroll = ffi::Position { row: 0, col: 0 };
+    let id = app.create_editor(&"horizontal-scroll-".repeat(20), viewport, scroll);
+    assert!(app.activate(id).is_some());
+
+    DefaultContext::set_soft_wrap_enabled(&mut app, true);
+    assert!(app.set_scroll(id, ffi::Position { row: 0, col: 40 }));
+    assert!(app.ensure_cursor_visible(id));
+    assert_eq!(app.active_editor_ref().view().scroll.col, 0);
   }
 }

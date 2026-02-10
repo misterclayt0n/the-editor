@@ -1005,12 +1005,8 @@ impl Ctx {
         LspEvent::Progress { progress } => {
           match progress.kind {
             LspProgressKind::Begin => {
-              let title = progress.title.unwrap_or_else(|| "work".into());
-              let text = progress
-                .message
-                .as_deref()
-                .map(|message| format!("{title}: {message}"))
-                .unwrap_or(title);
+              let text =
+                format_lsp_progress_text(progress.title.as_deref(), progress.message.as_deref());
               self.set_lsp_status(LspStatusPhase::Busy, Some(text.clone()));
               self
                 .messages
@@ -1021,7 +1017,7 @@ impl Ctx {
               if self.lsp_ready {
                 self.set_lsp_status(LspStatusPhase::Ready, None);
               }
-              if let Some(message) = progress.message {
+              if let Some(message) = progress.message.and_then(non_empty_trimmed) {
                 self
                   .messages
                   .publish(MessageLevel::Info, Some("lsp".into()), message);
@@ -2168,7 +2164,7 @@ fn summarize_jsonrpc_id(id: &jsonrpc::Id) -> Value {
 }
 
 fn spinner_frame(index: usize) -> char {
-  const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  const FRAMES: [char; 4] = ['|', '/', '-', '\\'];
   FRAMES[index % FRAMES.len()]
 }
 
@@ -2196,6 +2192,26 @@ fn clamp_status_text(text: &str, max_chars: usize) -> String {
   }
   out.push('…');
   out
+}
+
+fn non_empty_trimmed(value: String) -> Option<String> {
+  let trimmed = value.trim();
+  if trimmed.is_empty() {
+    None
+  } else {
+    Some(trimmed.to_string())
+  }
+}
+
+fn format_lsp_progress_text(title: Option<&str>, message: Option<&str>) -> String {
+  let title = title.map(str::trim).filter(|title| !title.is_empty());
+  let message = message.map(str::trim).filter(|message| !message.is_empty());
+  match (title, message) {
+    (Some(title), Some(message)) => format!("{title}: {message}"),
+    (Some(title), None) => title.to_string(),
+    (None, Some(message)) => message.to_string(),
+    (None, None) => "work".to_string(),
+  }
 }
 
 fn summarize_lsp_error(message: &str) -> String {

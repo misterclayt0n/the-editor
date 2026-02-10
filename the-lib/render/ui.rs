@@ -446,11 +446,11 @@ pub struct UiStyledSpan {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiStatusBar {
-  pub id:     Option<String>,
-  pub left:   String,
-  pub center: String,
-  pub right:  String,
-  pub style:  UiStyle,
+  pub id:             Option<String>,
+  pub left:           String,
+  pub center:         String,
+  pub right:          String,
+  pub style:          UiStyle,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub right_segments: Vec<UiStyledSpan>,
 }

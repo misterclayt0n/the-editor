@@ -1835,7 +1835,10 @@ mod test {
 
 #[cfg(all(test, feature = "runtime-loader"))]
 mod runtime_tests {
-  use std::collections::HashMap;
+  use std::{
+    collections::HashMap,
+    ops::Range,
+  };
 
   use ropey::Rope;
 
@@ -1960,6 +1963,39 @@ mod runtime_tests {
     }
   }
 
+  fn normalized_highlights(
+    syntax: &Syntax,
+    text: RopeSlice,
+    loader: &Loader,
+    range: Range<usize>,
+  ) -> Vec<(u32, Range<usize>)> {
+    let end = range.end.min(text.len_bytes());
+    let start = range.start.min(end);
+    let mut highlights = syntax.collect_highlights(text, loader, start..end);
+    highlights.retain(|(_highlight, span)| span.start <= span.end && span.end <= end);
+    highlights.sort_by_key(|(highlight, span)| (span.start, span.end, highlight.get()));
+    highlights
+      .into_iter()
+      .map(|(highlight, span)| (highlight.get(), span))
+      .collect()
+  }
+
+  fn sampled_byte_ranges(mut rng: SimRng, len_bytes: usize) -> Vec<Range<usize>> {
+    if len_bytes == 0 {
+      return vec![0..0];
+    }
+
+    let mut ranges = Vec::with_capacity(4);
+    ranges.push(0..len_bytes);
+    for _ in 0..3 {
+      let start = rng.next_usize(len_bytes);
+      let max_width = (len_bytes - start).max(1).min(512);
+      let width = 1 + rng.next_usize(max_width);
+      ranges.push(start..(start + width));
+    }
+    ranges
+  }
+
   #[test]
   fn deterministic_syntax_edit_simulation() {
     let loader = test_loader();
@@ -2039,6 +2075,110 @@ mod runtime_tests {
             assert!(
               range.start <= range.end && range.end <= len_bytes,
               "invalid highlight range: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} range={range:?} len_bytes={len_bytes}"
+            );
+          }
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn deterministic_syntax_differential_oracle() {
+    let loader = test_loader();
+    let Some(language) = loader.language_for_name("rust") else {
+      eprintln!("Skipping deterministic_syntax_differential_oracle: Rust language not configured");
+      return;
+    };
+    if loader.get_config(language).is_none() {
+      eprintln!("Skipping deterministic_syntax_differential_oracle: Rust grammar not available");
+      return;
+    }
+
+    let corpora = [
+      "fn main() {\n    let value = 1;\n    println!(\"{value}\");\n}\n",
+      "/// docs\nfn parse(input: &str) -> Result<(), Error> {\n    input.parse::<u64>()?;\n    Ok(())\n}\n",
+      "enum Token { Ident(String), Number(u64), Eof }\n",
+      "impl Parser {\n    fn next(&mut self) -> Option<char> { self.input.pop() }\n}\n",
+    ];
+    let seeds = [0x41u64, 0x5eedu64, 0xdead_beefu64, 0x1234_5678u64];
+
+    for (corpus_idx, corpus) in corpora.iter().enumerate() {
+      for seed in seeds {
+        let combined_seed = seed ^ ((corpus_idx as u64 + 1) * 0x9E37_79B9);
+        let mut rng = SimRng::new(combined_seed);
+        let mut text = Rope::from_str(corpus);
+        let mut incremental = match Syntax::new(text.slice(..), language, &loader) {
+          Ok(syntax) => syntax,
+          Err(err) => {
+            eprintln!("Skipping deterministic_syntax_differential_oracle: {err}");
+            return;
+          },
+        };
+
+        for step in 0..240usize {
+          let old_text = text.clone();
+          let (from, to, replacement, op_name) = next_edit(&mut rng, old_text.len_chars());
+
+          let transaction = Transaction::change(
+            &text,
+            vec![(from, to, replacement.clone().map(Into::into))].into_iter(),
+          )
+          .unwrap_or_else(|err| {
+            panic!(
+              "failed to build transaction: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
+            )
+          });
+          let changes = transaction.changes().clone();
+          transaction.apply(&mut text).unwrap_or_else(|err| {
+            panic!(
+              "failed to apply transaction: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name}: {err}"
+            )
+          });
+
+          incremental
+            .update(old_text.slice(..), text.slice(..), &changes, &loader)
+            .unwrap_or_else(|err| {
+              panic!(
+                "incremental syntax update failed: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
+              )
+            });
+
+          if step % 8 != 0 && step != 239 {
+            continue;
+          }
+
+          let fresh = Syntax::new(text.slice(..), language, &loader).unwrap_or_else(|err| {
+            panic!(
+              "fresh syntax parse failed: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} from={from} to={to} replacement={replacement:?}: {err}"
+            )
+          });
+
+          let incremental_root = incremental.tree().root_node();
+          let fresh_root = fresh.tree().root_node();
+          assert_eq!(
+            incremental_root.kind_id(),
+            fresh_root.kind_id(),
+            "root kind mismatch: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name}"
+          );
+          assert_eq!(
+            incremental_root.byte_range(),
+            fresh_root.byte_range(),
+            "root byte range mismatch: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name}"
+          );
+
+          let windows = sampled_byte_ranges(
+            SimRng::new(combined_seed ^ ((step as u64 + 1) * 0xA24B_AED4)),
+            text.len_bytes(),
+          );
+          for window in windows {
+            let incremental_highlights =
+              normalized_highlights(&incremental, text.slice(..), &loader, window.clone());
+            let fresh_highlights =
+              normalized_highlights(&fresh, text.slice(..), &loader, window.clone());
+            assert_eq!(
+              incremental_highlights,
+              fresh_highlights,
+              "highlight mismatch: seed={combined_seed} corpus={corpus_idx} step={step} op={op_name} window={window:?}"
             );
           }
         }

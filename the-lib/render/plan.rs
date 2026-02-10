@@ -48,7 +48,11 @@
 
 use std::collections::BTreeMap;
 
-use the_core::grapheme::Grapheme;
+use the_core::grapheme::{
+  Grapheme,
+  GraphemeStr,
+};
+use the_stdx::rope::RopeSliceExt;
 
 use crate::{
   Tendril,
@@ -401,7 +405,7 @@ fn add_selections_and_cursor<'a>(
   view: ViewState,
   styles: RenderStyles,
 ) {
-  let row_visible_end_cols = visible_line_end_cols(plan);
+  let row_visible_end_cols = visible_line_end_cols(plan, doc, text_fmt, annotations);
   let selection = doc.selection();
   let cursor_kind = CursorKind::Block;
 
@@ -459,7 +463,46 @@ fn clamp_position(plan: &RenderPlan, pos: Position) -> Option<Position> {
   Some(Position::new(pos.row - row_start, pos.col - col_start))
 }
 
-fn visible_line_end_cols(plan: &RenderPlan) -> Vec<usize> {
+fn visible_line_end_cols<'a>(
+  plan: &RenderPlan,
+  doc: &'a Document,
+  text_fmt: &'a TextFormat,
+  annotations: &mut TextAnnotations<'a>,
+) -> Vec<usize> {
+  if !text_fmt.soft_wrap && !annotations.has_line_annotations() {
+    let mut row_end_cols = vec![plan.scroll.col; plan.viewport.height as usize];
+    let text = doc.text().slice(..);
+
+    for (row, end_col) in row_end_cols.iter_mut().enumerate() {
+      let abs_row = plan.scroll.row + row;
+      if abs_row >= text.len_lines() {
+        break;
+      }
+
+      let line = text.line(abs_row);
+      let mut visual_col = 0usize;
+      let mut has_line_ending = false;
+      for grapheme in line.graphemes() {
+        let g = grapheme_str(grapheme);
+        let g = Grapheme::new(g, visual_col, text_fmt.tab_width);
+        if matches!(g, Grapheme::Newline) {
+          has_line_ending = true;
+        }
+        visual_col += g.width();
+      }
+
+      // Make newline/eof selection visible, matching Helix behavior where
+      // both line endings and EOF are selectable graphemes.
+      if !has_line_ending {
+        visual_col = visual_col.saturating_add(1);
+      }
+
+      *end_col = plan.scroll.col + visual_col;
+    }
+
+    return row_end_cols;
+  }
+
   let mut row_end_cols = vec![plan.scroll.col; plan.viewport.height as usize];
   for line in &plan.lines {
     let row = line.row as usize;
@@ -476,6 +519,13 @@ fn visible_line_end_cols(plan: &RenderPlan) -> Vec<usize> {
     row_end_cols[row] = row_end_cols[row].max(end_col);
   }
   row_end_cols
+}
+
+fn grapheme_str<'a>(grapheme: ropey::RopeSlice<'a>) -> GraphemeStr<'a> {
+  match grapheme.as_str() {
+    Some(slice) => GraphemeStr::from(slice),
+    None => GraphemeStr::from(grapheme.to_string()),
+  }
 }
 
 fn row_visible_end_col(plan: &RenderPlan, row: usize, row_visible_end_cols: &[usize]) -> usize {
@@ -655,7 +705,7 @@ mod tests {
     );
 
     assert_eq!(plan.selections.len(), 2);
-    assert_eq!(plan.selections[0].rect, Rect::new(2, 0, 2, 1));
+    assert_eq!(plan.selections[0].rect, Rect::new(2, 0, 3, 1));
     assert_eq!(plan.selections[1].rect, Rect::new(0, 1, 2, 1));
 
     assert_eq!(plan.cursors.len(), 2);

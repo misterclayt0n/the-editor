@@ -25,7 +25,7 @@
 - [ ] Figure out correct theming
 - [ ] Gutter line (line numbers, VCS stuff)
 - [ ] Render LSP completer
-- [ ] Render '\n' selection
+- [x] Render '\n' selection
 - [ ] Render multiple cursor formats (bar, block)
 
 ### Terminal
@@ -33,6 +33,6 @@
 - [ ] Gutter line (line numbers, VCS stuff)
 - [ ] Render LSP completer
 - [x] Render file icons in the statusline (flow editor shouuld be a good inspiration here)
-- [ ] Render '\n' selection
+- [x] Render '\n' selection
 - [ ] Render multiple cursor formats (bar, underline, block)
  

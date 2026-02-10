@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct PendingKeyHintsSnapshot: Decodable {
@@ -26,6 +27,7 @@ struct KeySequenceIndicator: View {
 
     @State private var isShowingPopover = false
     @State private var hoverWorkItem: DispatchWorkItem?
+    @State private var isPointerCursorActive = false
 
     private var displayKeys: [String] {
         if let hints, !hints.pending.isEmpty {
@@ -59,7 +61,11 @@ struct KeySequenceIndicator: View {
         .onChange(of: canShowPopover) { canShow in
             if !canShow {
                 dismissPopover()
+                deactivatePointerCursor()
             }
+        }
+        .onDisappear {
+            deactivatePointerCursor()
         }
     }
 
@@ -93,6 +99,7 @@ struct KeySequenceIndicator: View {
             isShowingPopover.toggle()
         }
         .onHover { hovering in
+            updatePointerCursor(hovering)
             handleHover(hovering)
         }
         .popover(isPresented: $isShowingPopover, arrowEdge: .bottom) {
@@ -166,6 +173,22 @@ struct KeySequenceIndicator: View {
         hoverWorkItem?.cancel()
         hoverWorkItem = nil
         isShowingPopover = false
+    }
+
+    private func updatePointerCursor(_ hovering: Bool) {
+        if hovering && canShowPopover {
+            guard !isPointerCursorActive else { return }
+            NSCursor.pointingHand.push()
+            isPointerCursorActive = true
+            return
+        }
+        deactivatePointerCursor()
+    }
+
+    private func deactivatePointerCursor() {
+        guard isPointerCursorActive else { return }
+        NSCursor.pop()
+        isPointerCursorActive = false
     }
 }
 

@@ -1,5 +1,7 @@
 //! Rendering - converts RenderPlan to ratatui draw calls.
 
+use std::collections::BTreeMap;
+
 use ratatui::{
   prelude::*,
   style::Modifier,
@@ -23,9 +25,11 @@ use the_default::{
   ui_tree,
 };
 use the_lib::{
+  diagnostics::DiagnosticSeverity,
   render::{
     LayoutIntent,
     NoHighlights,
+    RenderDiagnosticGutterStyles,
     RenderPlan,
     RenderStyles,
     SyntaxHighlightAdapter,
@@ -44,6 +48,7 @@ use the_lib::{
     UiText,
     UiTooltip,
     UiTree,
+    apply_diagnostic_gutter_markers,
     build_plan,
     gutter_width_for_document,
     graphics::{
@@ -156,6 +161,64 @@ fn render_styles_from_theme(theme: &the_lib::render::theme::Theme) -> RenderStyl
       .try_get("ui.linenr.selected")
       .or_else(|| theme.try_get("ui.linenr"))
       .unwrap_or_default(),
+  }
+}
+
+fn render_diagnostic_styles_from_theme(
+  theme: &the_lib::render::theme::Theme,
+) -> RenderDiagnosticGutterStyles {
+  RenderDiagnosticGutterStyles {
+    error:   theme
+      .try_get("error")
+      .or_else(|| theme.try_get("diagnostic.error"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    warning: theme
+      .try_get("warning")
+      .or_else(|| theme.try_get("diagnostic.warning"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    info:    theme
+      .try_get("info")
+      .or_else(|| theme.try_get("diagnostic.info"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    hint:    theme
+      .try_get("hint")
+      .or_else(|| theme.try_get("diagnostic.hint"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+  }
+}
+
+fn active_diagnostics_by_line(ctx: &Ctx) -> BTreeMap<usize, DiagnosticSeverity> {
+  let Some(state) = ctx.lsp_document.as_ref().filter(|state| state.opened) else {
+    return BTreeMap::new();
+  };
+  let Some(document) = ctx.diagnostics.document(&state.uri) else {
+    return BTreeMap::new();
+  };
+
+  let mut out = BTreeMap::new();
+  for diagnostic in &document.diagnostics {
+    let line = diagnostic.range.start.line as usize;
+    let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
+    match out.get(&line).copied() {
+      Some(prev) if diagnostic_severity_rank(prev) >= diagnostic_severity_rank(severity) => {},
+      _ => {
+        out.insert(line, severity);
+      },
+    }
+  }
+  out
+}
+
+fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {
+  match severity {
+    DiagnosticSeverity::Error => 4,
+    DiagnosticSeverity::Warning => 3,
+    DiagnosticSeverity::Information => 2,
+    DiagnosticSeverity::Hint => 1,
   }
 }
 
@@ -1936,6 +1999,8 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
     view.viewport.width,
     &ctx.gutter_config,
   );
+  let diagnostics_by_line = active_diagnostics_by_line(ctx);
+  let diagnostic_styles = render_diagnostic_styles_from_theme(&ctx.ui_theme);
 
   // Set up text formatting
   ctx.text_format.viewport_width = view.viewport.width.saturating_sub(gutter_width).max(1);
@@ -1953,7 +2018,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
   let (doc, render_cache) = ctx.editor.document_and_cache();
 
   // Build the render plan (with or without syntax highlighting)
-  if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
+  let mut plan = if let (Some(loader), Some(syntax)) = (&ctx.loader, doc.syntax()) {
     // Calculate line range for highlighting
     let line_range = view.scroll.row..(view.scroll.row + view.viewport.height as usize);
 
@@ -1991,7 +2056,10 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       render_cache,
       styles,
     )
-  }
+  };
+
+  apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
+  plan
 }
 
 /// Render the current document state to the terminal.

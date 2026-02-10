@@ -41,7 +41,9 @@ pub use plan::{
   NoHighlights,
   RenderCache,
   RenderCursor,
+  RenderDiagnosticGutterStyles,
   RenderGutterLine,
+  RenderGutterColumn,
   RenderGutterSpan,
   RenderLine,
   RenderPlan,
@@ -49,6 +51,7 @@ pub use plan::{
   RenderSpan,
   RenderStyles,
   RenderVisibleRow,
+  apply_diagnostic_gutter_markers,
   build_plan,
   gutter_width_for_document,
 };

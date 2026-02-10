@@ -59,6 +59,7 @@ use the_stdx::rope::RopeSliceExt;
 
 use crate::{
   Tendril,
+  diagnostics::DiagnosticSeverity,
   document::Document,
   position::Position,
   render::{
@@ -154,6 +155,13 @@ pub struct RenderGutterSpan {
   pub style: Style,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderGutterColumn {
+  pub kind:  GutterType,
+  pub col:   u16,
+  pub width: u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderGutterLine {
   pub row:   u16,
@@ -173,6 +181,10 @@ impl RenderGutterLine {
       return;
     }
     self.spans.push(span);
+  }
+
+  fn sort_spans(&mut self) {
+    self.spans.sort_by_key(|span| span.col);
   }
 }
 
@@ -216,6 +228,7 @@ pub struct RenderPlan {
   pub viewport:         Rect,
   pub scroll:           Position,
   pub content_offset_x: u16,
+  pub gutter_columns:   Vec<RenderGutterColumn>,
   pub visible_rows:     Vec<RenderVisibleRow>,
   pub gutter_lines:     Vec<RenderGutterLine>,
   pub lines:            Vec<RenderLine>,
@@ -230,6 +243,7 @@ impl RenderPlan {
       viewport,
       scroll,
       content_offset_x: 0,
+      gutter_columns: Vec::new(),
       visible_rows: Vec::new(),
       gutter_lines: Vec::new(),
       lines: Vec::new(),
@@ -241,6 +255,14 @@ impl RenderPlan {
 
   pub fn content_width(&self) -> usize {
     self.viewport.width.saturating_sub(self.content_offset_x) as usize
+  }
+
+  pub fn gutter_column(&self, kind: GutterType) -> Option<RenderGutterColumn> {
+    self
+      .gutter_columns
+      .iter()
+      .copied()
+      .find(|column| column.kind == kind)
   }
 }
 
@@ -327,7 +349,12 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
   let text = doc.text().slice(..);
 
   let line_number_width = line_number_column_width(doc, gutter);
-  plan.content_offset_x = gutter_width_for_document(doc, view.viewport.width, gutter);
+  plan.gutter_columns = build_gutter_columns(gutter, line_number_width);
+  plan.content_offset_x = if view.viewport.width == 0 {
+    0
+  } else {
+    gutter_columns_width(&plan.gutter_columns).min(view.viewport.width.saturating_sub(1))
+  };
   let content_width = if text_fmt.viewport_width == 0 {
     view.viewport.width.max(1) as usize
   } else {
@@ -463,14 +490,8 @@ pub fn build_plan<'a, 't, H: HighlightProvider>(
       plan.lines.push(current_line);
     }
     plan.visible_rows = visible_rows.into_iter().flatten().collect();
-    plan.gutter_lines = build_gutter_lines(
-      &plan.visible_rows,
-      doc,
-      view,
-      gutter,
-      styles,
-      line_number_width,
-    );
+    plan.gutter_lines =
+      build_gutter_lines(&plan.visible_rows, doc, view, gutter, &plan.gutter_columns, styles);
   }
 
   add_selections_and_cursor(&mut plan, doc, text_fmt, annotations, view, styles);
@@ -489,25 +510,41 @@ fn line_number_column_width(doc: &Document, gutter: &GutterConfig) -> usize {
     .max(lines.to_string().len())
 }
 
-fn gutter_total_width(gutter: &GutterConfig, line_number_width: usize) -> u16 {
-  let mut width = 0usize;
-  for col in &gutter.layout {
-    width = width.saturating_add(match col {
-      GutterType::Diagnostics => 1,
-      GutterType::Diff => 1,
-      GutterType::Spacer => 1,
-      GutterType::LineNumbers => line_number_width,
+fn build_gutter_columns(gutter: &GutterConfig, line_number_width: usize) -> Vec<RenderGutterColumn> {
+  let mut out = Vec::with_capacity(gutter.layout.len());
+  let mut col = 0u16;
+  for kind in &gutter.layout {
+    let width = match kind {
+      GutterType::Diagnostics | GutterType::Diff | GutterType::Spacer => 1,
+      GutterType::LineNumbers => line_number_width as u16,
+    };
+    if width == 0 {
+      continue;
+    }
+    out.push(RenderGutterColumn {
+      kind: *kind,
+      col,
+      width,
     });
+    col = col.saturating_add(width);
   }
-  width.min(u16::MAX as usize) as u16
+  out
+}
+
+fn gutter_columns_width(columns: &[RenderGutterColumn]) -> u16 {
+  columns
+    .iter()
+    .map(|column| column.col.saturating_add(column.width))
+    .max()
+    .unwrap_or(0)
 }
 
 pub fn gutter_width_for_document(doc: &Document, viewport_width: u16, gutter: &GutterConfig) -> u16 {
-  let line_number_width = line_number_column_width(doc, gutter);
+  let columns = build_gutter_columns(gutter, line_number_column_width(doc, gutter));
   if viewport_width == 0 {
     return 0;
   }
-  gutter_total_width(gutter, line_number_width).min(viewport_width.saturating_sub(1))
+  gutter_columns_width(&columns).min(viewport_width.saturating_sub(1))
 }
 
 fn build_gutter_lines(
@@ -515,10 +552,10 @@ fn build_gutter_lines(
   doc: &Document,
   view: ViewState,
   gutter: &GutterConfig,
+  columns: &[RenderGutterColumn],
   styles: RenderStyles,
-  line_number_width: usize,
 ) -> Vec<RenderGutterLine> {
-  if gutter.layout.is_empty() {
+  if columns.is_empty() {
     return Vec::new();
   }
 
@@ -527,18 +564,15 @@ fn build_gutter_lines(
 
   for row in visible_rows {
     let mut line = RenderGutterLine::new(row.row);
-    let mut col_offset = 0u16;
-    for column in &gutter.layout {
-      match column {
+    for column in columns {
+      match column.kind {
         GutterType::LineNumbers => {
-          let width = line_number_width as u16;
-          if width > 0
-            && row.first_visual_line
+          if row.first_visual_line
             && let Some(text) = line_number_text(
               gutter.line_numbers.mode,
               row.doc_line,
               active_line,
-              line_number_width,
+              column.width as usize,
             )
           {
             let style = if active_line.is_some_and(|line| line == row.doc_line) {
@@ -547,18 +581,16 @@ fn build_gutter_lines(
               styles.gutter
             };
             line.push_span(RenderGutterSpan {
-              col: col_offset,
+              col: column.col,
               text: text.into(),
               style,
             });
           }
-          col_offset = col_offset.saturating_add(width);
         },
-        GutterType::Diagnostics | GutterType::Diff | GutterType::Spacer => {
-          col_offset = col_offset.saturating_add(1);
-        },
+        GutterType::Diagnostics | GutterType::Diff | GutterType::Spacer => {},
       }
     }
+    line.sort_spans();
     out.push(line);
   }
 
@@ -599,6 +631,62 @@ fn active_doc_line(doc: &Document, view: ViewState) -> Option<usize> {
   }
   let range = selection.ranges().first()?;
   Some(text.char_to_line(range.cursor(text)))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderDiagnosticGutterStyles {
+  pub error:   Style,
+  pub warning: Style,
+  pub info:    Style,
+  pub hint:    Style,
+}
+
+impl Default for RenderDiagnosticGutterStyles {
+  fn default() -> Self {
+    Self {
+      error:   Style::default(),
+      warning: Style::default(),
+      info:    Style::default(),
+      hint:    Style::default(),
+    }
+  }
+}
+
+pub fn apply_diagnostic_gutter_markers(
+  plan: &mut RenderPlan,
+  diagnostics_by_line: &BTreeMap<usize, DiagnosticSeverity>,
+  styles: RenderDiagnosticGutterStyles,
+) {
+  let Some(column) = plan.gutter_column(GutterType::Diagnostics) else {
+    return;
+  };
+
+  for (meta, line) in plan.visible_rows.iter().zip(plan.gutter_lines.iter_mut()) {
+    line
+      .spans
+      .retain(|span| span.col < column.col || span.col >= column.col.saturating_add(column.width));
+
+    if !meta.first_visual_line {
+      continue;
+    }
+
+    let Some(severity) = diagnostics_by_line.get(&meta.doc_line).copied() else {
+      continue;
+    };
+
+    let style = match severity {
+      DiagnosticSeverity::Error => styles.error,
+      DiagnosticSeverity::Warning => styles.warning,
+      DiagnosticSeverity::Information => styles.info,
+      DiagnosticSeverity::Hint => styles.hint,
+    };
+    line.push_span(RenderGutterSpan {
+      col: column.col,
+      text: "●".into(),
+      style,
+    });
+    line.sort_spans();
+  }
 }
 
 fn grapheme_text(grapheme: &FormattedGrapheme<'_>) -> Option<(Tendril, usize)> {
@@ -837,6 +925,7 @@ mod tests {
 
   use super::*;
   use crate::{
+    diagnostics::DiagnosticSeverity,
     document::{
       Document,
       DocumentId,
@@ -1064,5 +1153,43 @@ mod tests {
       .join("");
     assert!(line0_text.contains('1'));
     assert!(line1_text.contains('2'));
+  }
+
+  #[test]
+  fn apply_diagnostic_markers_to_gutter_column() {
+    let id = DocumentId::new(std::num::NonZeroUsize::new(1).unwrap());
+    let doc = Document::new(id, Rope::from("a\nb\n"));
+    let view = ViewState::new(Rect::new(0, 0, 20, 2), Position::new(0, 0));
+    let text_fmt = TextFormat::default();
+    let mut annotations = TextAnnotations::default();
+    let mut highlights = NoHighlights;
+    let mut cache = RenderCache::default();
+    let styles = RenderStyles::default();
+    let gutter = GutterConfig::default();
+
+    let mut plan = build_plan(
+      &doc,
+      view,
+      &text_fmt,
+      &gutter,
+      &mut annotations,
+      &mut highlights,
+      &mut cache,
+      styles,
+    );
+    let mut diagnostics = BTreeMap::new();
+    diagnostics.insert(1, DiagnosticSeverity::Warning);
+    apply_diagnostic_gutter_markers(
+      &mut plan,
+      &diagnostics,
+      RenderDiagnosticGutterStyles::default(),
+    );
+
+    let row1 = plan
+      .gutter_lines
+      .iter()
+      .find(|line| line.row == 1)
+      .expect("row 1 exists");
+    assert!(row1.spans.iter().any(|span| span.text == "●"));
   }
 }

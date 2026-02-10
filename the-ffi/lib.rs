@@ -6,6 +6,7 @@
 
 use std::{
   collections::{
+    BTreeMap,
     HashMap,
     HashSet,
     VecDeque,
@@ -84,6 +85,7 @@ use the_lib::{
   app::App as LibApp,
   diagnostics::{
     DiagnosticCounts,
+    DiagnosticSeverity,
     DiagnosticsState,
   },
   document::{
@@ -105,9 +107,11 @@ use the_lib::{
     OverlayNode,
     OverlayRectKind,
     OverlayText,
+    RenderDiagnosticGutterStyles,
     RenderStyles,
     SyntaxHighlightAdapter,
     UiState,
+    apply_diagnostic_gutter_markers,
     build_plan,
     gutter_width_for_document,
     graphics::{
@@ -870,6 +874,40 @@ fn select_ui_theme() -> Theme {
   }
 }
 
+fn render_diagnostic_styles_from_theme(theme: &Theme) -> RenderDiagnosticGutterStyles {
+  RenderDiagnosticGutterStyles {
+    error:   theme
+      .try_get("error")
+      .or_else(|| theme.try_get("diagnostic.error"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    warning: theme
+      .try_get("warning")
+      .or_else(|| theme.try_get("diagnostic.warning"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    info:    theme
+      .try_get("info")
+      .or_else(|| theme.try_get("diagnostic.info"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+    hint:    theme
+      .try_get("hint")
+      .or_else(|| theme.try_get("diagnostic.hint"))
+      .or_else(|| theme.try_get("ui.linenr"))
+      .unwrap_or_default(),
+  }
+}
+
+fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {
+  match severity {
+    DiagnosticSeverity::Error => 4,
+    DiagnosticSeverity::Warning => 3,
+    DiagnosticSeverity::Information => 2,
+    DiagnosticSeverity::Hint => 1,
+  }
+}
+
 fn init_loader(theme: &Theme) -> Result<Loader, String> {
   use the_lib::syntax::{
     config::Configuration,
@@ -1368,8 +1406,10 @@ impl App {
       std::mem::take(&mut state.highlight_cache)
     };
     let loader = self.loader.clone();
+    let diagnostics_by_line = self.active_diagnostics_by_line();
+    let diagnostic_styles = render_diagnostic_styles_from_theme(&self.ui_theme);
 
-    let plan = {
+    let mut plan = {
       let editor = self.active_editor_mut();
       let view = editor.view();
 
@@ -1419,6 +1459,7 @@ impl App {
         )
       }
     };
+    apply_diagnostic_gutter_markers(&mut plan, &diagnostics_by_line, diagnostic_styles);
 
     self.active_state_mut().highlight_cache = highlight_cache;
     plan
@@ -2194,6 +2235,28 @@ impl App {
       the_lib::messages::MessageLevel::Info
     };
     self.publish_lsp_message(level, text);
+  }
+
+  fn active_diagnostics_by_line(&self) -> BTreeMap<usize, DiagnosticSeverity> {
+    let Some(state) = self.lsp_document.as_ref().filter(|state| state.opened) else {
+      return BTreeMap::new();
+    };
+    let Some(document) = self.diagnostics.document(&state.uri) else {
+      return BTreeMap::new();
+    };
+
+    let mut out = BTreeMap::new();
+    for diagnostic in &document.diagnostics {
+      let line = diagnostic.range.start.line as usize;
+      let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::Warning);
+      match out.get(&line).copied() {
+        Some(prev) if diagnostic_severity_rank(prev) >= diagnostic_severity_rank(severity) => {},
+        _ => {
+          out.insert(line, severity);
+        },
+      }
+    }
+    out
   }
 
   fn handle_lsp_rpc_message(&mut self, message: jsonrpc::Message) -> bool {

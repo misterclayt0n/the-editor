@@ -192,7 +192,7 @@ struct EditorView: View {
                 switch kind {
                 case .diagnostic:
                     let color = colorForStyle(span.style(), fallback: SwiftUI.Color(nsColor: .systemRed))
-                    drawDiagnosticDot(in: context, x: x, y: y, cellSize: cellSize, color: color)
+                    drawDiagnosticIndicator(in: context, y: y, cellSize: cellSize, gutterWidth: contentOffsetX, color: color)
                 case .diff:
                     let fallback: SwiftUI.Color
                     switch span.text().toString().trimmingCharacters(in: .whitespaces) {
@@ -211,17 +211,21 @@ struct EditorView: View {
         }
     }
 
-    private func drawDiagnosticDot(
+    private func drawDiagnosticIndicator(
         in context: GraphicsContext,
-        x: CGFloat, y: CGFloat,
+        y: CGFloat,
         cellSize: CGSize,
+        gutterWidth: CGFloat,
         color: SwiftUI.Color
     ) {
-        let diameter: CGFloat = 5.0
-        let dotX = x + (cellSize.width - diameter) / 2.0
-        let dotY = y + (cellSize.height - diameter) / 2.0
-        let path = Path(ellipseIn: CGRect(x: dotX, y: dotY, width: diameter, height: diameter))
-        context.fill(path, with: .color(color))
+        // Row tint: subtle color wash across the entire gutter row
+        let tintRect = CGRect(x: 0, y: y, width: gutterWidth, height: cellSize.height)
+        context.fill(Path(tintRect), with: .color(color.opacity(0.06)))
+
+        // Left-edge stripe: flush against the left wall, full cell height
+        let stripeWidth: CGFloat = 2.0
+        let stripeRect = CGRect(x: 0, y: y, width: stripeWidth, height: cellSize.height)
+        context.fill(Path(stripeRect), with: .color(color.opacity(0.7)))
     }
 
     private func drawDiffBar(

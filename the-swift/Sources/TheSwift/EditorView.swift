@@ -114,28 +114,153 @@ struct EditorView: View {
 
     private func drawPlan(in context: GraphicsContext, size: CGSize, plan: RenderPlan, cellSize: CGSize, font: Font) {
         let contentOffsetX = CGFloat(plan.content_offset_x()) * cellSize.width
-        drawGutter(in: context, plan: plan, cellSize: cellSize, font: font)
+        drawGutter(in: context, size: size, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
         drawSelections(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
         drawText(in: context, plan: plan, cellSize: cellSize, font: font, contentOffsetX: contentOffsetX)
         drawCursors(in: context, plan: plan, cellSize: cellSize, contentOffsetX: contentOffsetX)
     }
 
-    private func drawGutter(in context: GraphicsContext, plan: RenderPlan, cellSize: CGSize, font: Font) {
-        let lineCount = Int(plan.gutter_line_count())
-        guard lineCount > 0 else { return }
+    // MARK: - Gutter
 
+    private enum GutterSpanKind {
+        case lineNumber
+        case diagnostic
+        case diff
+        case other
+    }
+
+    private func classifyGutterSpan(_ span: RenderGutterSpan) -> GutterSpanKind {
+        let text = span.text().toString()
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return .other }
+        if trimmed == "\u{25CF}" { return .diagnostic }
+        if trimmed == "+" || trimmed == "~" || trimmed == "-" { return .diff }
+        if trimmed.allSatisfy({ $0.isNumber }) { return .lineNumber }
+        return .other
+    }
+
+    private func activeCursorRow(plan: RenderPlan) -> UInt16? {
+        let count = Int(plan.cursor_count())
+        guard count > 0 else { return nil }
+        let pos = plan.cursor_at(0).pos()
+        return UInt16(clamping: pos.row)
+    }
+
+    private func drawGutter(
+        in context: GraphicsContext,
+        size: CGSize,
+        plan: RenderPlan,
+        cellSize: CGSize,
+        font: Font,
+        contentOffsetX: CGFloat
+    ) {
+        let lineCount = Int(plan.gutter_line_count())
+        guard lineCount > 0, contentOffsetX > 0 else { return }
+
+        let activeRow = activeCursorRow(plan: plan)
+
+        // Layer 1: Gutter background
+        let gutterBg = CGRect(x: 0, y: 0, width: contentOffsetX, height: size.height)
+        context.fill(Path(gutterBg), with: .color(SwiftUI.Color(white: 0.055)))
+
+        // Layer 2: Active line highlight
+        if let activeRow {
+            let y = CGFloat(activeRow) * cellSize.height
+            let rect = CGRect(x: 0, y: y, width: contentOffsetX, height: cellSize.height)
+            context.fill(Path(rect), with: .color(SwiftUI.Color.white.opacity(0.04)))
+        }
+
+        // Layer 3: Vertical separator
+        let sepPath = Path { p in
+            p.move(to: CGPoint(x: contentOffsetX - 0.5, y: 0))
+            p.addLine(to: CGPoint(x: contentOffsetX - 0.5, y: size.height))
+        }
+        context.stroke(sepPath, with: .color(SwiftUI.Color(nsColor: .separatorColor).opacity(0.3)), lineWidth: 0.5)
+
+        // Layer 4: Per-span rendering
         for lineIndex in 0..<lineCount {
             let line = plan.gutter_line_at(UInt(lineIndex))
             let y = CGFloat(line.row()) * cellSize.height
+            let isActiveLine = activeRow == line.row()
             let spanCount = Int(line.span_count())
+
             for spanIndex in 0..<spanCount {
                 let span = line.span_at(UInt(spanIndex))
                 let x = CGFloat(span.col()) * cellSize.width
-                let color = colorForStyle(span.style(), fallback: SwiftUI.Color.white.opacity(0.45))
-                let text = Text(span.text().toString()).font(font).foregroundColor(color)
-                context.draw(text, at: CGPoint(x: x, y: y), anchor: .topLeading)
+                let kind = classifyGutterSpan(span)
+
+                switch kind {
+                case .diagnostic:
+                    let color = colorForStyle(span.style(), fallback: SwiftUI.Color(nsColor: .systemRed))
+                    drawDiagnosticDot(in: context, x: x, y: y, cellSize: cellSize, color: color)
+                case .diff:
+                    let fallback: SwiftUI.Color
+                    switch span.text().toString().trimmingCharacters(in: .whitespaces) {
+                    case "+": fallback = SwiftUI.Color(nsColor: .systemGreen)
+                    case "~": fallback = SwiftUI.Color(nsColor: .systemYellow)
+                    default:  fallback = SwiftUI.Color(nsColor: .systemRed)
+                    }
+                    let color = colorForStyle(span.style(), fallback: fallback)
+                    drawDiffBar(in: context, x: x, y: y, cellSize: cellSize, color: color)
+                case .lineNumber:
+                    drawLineNumber(in: context, span: span, x: x, y: y, font: font, isActive: isActiveLine)
+                case .other:
+                    break
+                }
             }
         }
+    }
+
+    private func drawDiagnosticDot(
+        in context: GraphicsContext,
+        x: CGFloat, y: CGFloat,
+        cellSize: CGSize,
+        color: SwiftUI.Color
+    ) {
+        let diameter: CGFloat = 5.0
+        let dotX = x + (cellSize.width - diameter) / 2.0
+        let dotY = y + (cellSize.height - diameter) / 2.0
+        let path = Path(ellipseIn: CGRect(x: dotX, y: dotY, width: diameter, height: diameter))
+        context.fill(path, with: .color(color))
+    }
+
+    private func drawDiffBar(
+        in context: GraphicsContext,
+        x: CGFloat, y: CGFloat,
+        cellSize: CGSize,
+        color: SwiftUI.Color
+    ) {
+        let barWidth: CGFloat = 2.5
+        let insetY: CGFloat = 2.0
+        let barX = x + (cellSize.width - barWidth) / 2.0
+        let barRect = CGRect(
+            x: barX,
+            y: y + insetY,
+            width: barWidth,
+            height: cellSize.height - insetY * 2
+        )
+        let path = Path(roundedRect: barRect, cornerRadius: 1.0)
+        context.fill(path, with: .color(color.opacity(0.85)))
+    }
+
+    private func drawLineNumber(
+        in context: GraphicsContext,
+        span: RenderGutterSpan,
+        x: CGFloat, y: CGFloat,
+        font: Font,
+        isActive: Bool
+    ) {
+        let style = span.style()
+        let color: SwiftUI.Color
+        if style.has_fg, let themeColor = ColorMapper.color(from: style.fg) {
+            color = themeColor
+        } else if isActive {
+            color = SwiftUI.Color(nsColor: .secondaryLabelColor)
+        } else {
+            color = SwiftUI.Color(nsColor: .tertiaryLabelColor)
+        }
+        let text = Text(span.text().toString()).font(font).foregroundColor(color)
+        context.draw(text, at: CGPoint(x: x, y: y), anchor: .topLeading)
     }
 
     private func drawSelections(

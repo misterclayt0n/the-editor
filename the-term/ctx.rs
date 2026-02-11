@@ -3334,9 +3334,12 @@ fn setup_syntax(doc: &mut Document, path: &Path, loader: &Arc<Loader>) -> Result
 #[cfg(test)]
 mod tests {
   use std::{
+    fs,
     path::Path,
+    path::PathBuf,
     thread,
     time::Duration,
+    time::SystemTime,
   };
 
   use the_default::{
@@ -3349,6 +3352,11 @@ mod tests {
     handle_key,
   };
   use the_lib::{
+    position::{
+      char_idx_at_coords,
+      coords_at_pos,
+    },
+    position::Position,
     selection::Selection,
     transaction::Transaction,
   };
@@ -3361,6 +3369,35 @@ mod tests {
       ensure_cursor_visible,
     },
   };
+
+  struct TempTestFile {
+    path: PathBuf,
+  }
+
+  impl TempTestFile {
+    fn new(prefix: &str, content: &str) -> Self {
+      let nonce = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+      let path = std::env::temp_dir().join(format!(
+        "the-editor-{prefix}-{}-{nonce}.txt",
+        std::process::id()
+      ));
+      fs::write(&path, content).expect("write temp test file");
+      Self { path }
+    }
+
+    fn as_path(&self) -> &Path {
+      &self.path
+    }
+  }
+
+  impl Drop for TempTestFile {
+    fn drop(&mut self) {
+      let _ = fs::remove_file(&self.path);
+    }
+  }
 
   #[derive(Debug, Clone, Copy)]
   struct SimRng {
@@ -3615,6 +3652,46 @@ pkgs.mkShell {
     ctx.editor.view_mut().scroll.col = 40;
     ensure_cursor_visible(&mut ctx);
     assert_eq!(ctx.editor.view().scroll.col, 0);
+  }
+
+  #[test]
+  fn reload_preserves_cursor_and_scroll_semantically_after_external_edit() {
+    let fixture = TempTestFile::new("semantic-reload", "zero\none\ntwo\nthree\n");
+    let mut ctx = Ctx::new(Some(
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    let cursor = {
+      let text = ctx.editor.document().text().slice(..);
+      char_idx_at_coords(text, Position::new(2, 1))
+    };
+    let _ = ctx.editor.document_mut().set_selection(Selection::point(cursor));
+    ctx.editor.view_mut().scroll = Position::new(2, 7);
+
+    let before_cursor_coords = {
+      let text = ctx.editor.document().text().slice(..);
+      let head = ctx.editor.document().selection().ranges()[0].head;
+      coords_at_pos(text, head)
+    };
+    let before_scroll = ctx.editor.view().scroll;
+
+    fs::write(fixture.as_path(), "inserted\nzero\none\ntwo\nthree\n").expect("update fixture");
+    <Ctx as DefaultContext>::reload_file_preserving_view(&mut ctx, fixture.as_path())
+      .expect("reload preserving view");
+
+    let after_cursor_coords = {
+      let text = ctx.editor.document().text().slice(..);
+      let head = ctx.editor.document().selection().ranges()[0].head;
+      coords_at_pos(text, head)
+    };
+
+    assert_eq!(ctx.editor.document().text().to_string(), "inserted\nzero\none\ntwo\nthree\n");
+    assert_eq!(after_cursor_coords, before_cursor_coords);
+    assert_eq!(ctx.editor.view().scroll, before_scroll);
   }
 
   #[test]

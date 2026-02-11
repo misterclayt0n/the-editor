@@ -55,6 +55,7 @@ use the_lib::{
   },
   position::{
     Position,
+    coords_at_pos,
     char_idx_at_coords,
   },
   registers::Registers,
@@ -430,6 +431,7 @@ pub trait DefaultContext: Sized + 'static {
   fn set_file_path(&mut self, path: Option<PathBuf>);
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
   fn reload_file_preserving_view(&mut self, path: &Path) -> std::io::Result<()> {
+    let previous_text = self.editor_ref().document().text().clone();
     let previous_selection = self.editor_ref().document().selection().clone();
     let previous_scroll = self.editor_ref().view().scroll;
 
@@ -437,10 +439,16 @@ pub trait DefaultContext: Sized + 'static {
 
     {
       let doc = self.editor().document_mut();
-      let max = doc.text().len_chars();
-      let clamped = previous_selection
-        .transform(|range| Range::new(range.anchor.min(max), range.head.min(max)));
-      let _ = doc.set_selection(clamped);
+      let new_text = doc.text().clone();
+      let remapped = previous_selection.transform(|range| {
+        let anchor_coords = coords_at_pos(previous_text.slice(..), range.anchor);
+        let head_coords = coords_at_pos(previous_text.slice(..), range.head);
+        Range::new(
+          char_idx_at_coords(new_text.slice(..), anchor_coords),
+          char_idx_at_coords(new_text.slice(..), head_coords),
+        )
+      });
+      let _ = doc.set_selection(remapped);
     }
 
     let max_row = self

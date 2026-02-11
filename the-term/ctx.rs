@@ -175,6 +175,11 @@ use the_runtime::{
     trace_event as trace_file_watch_event,
     watch as watch_path,
   },
+  file_watch_consumer::{
+    WatchPollOutcome,
+    WatchedFileEventsState,
+    poll_watch_events,
+  },
 };
 use the_vcs::{
   DiffHandle,
@@ -223,11 +228,8 @@ pub struct LspDocumentSyncState {
 }
 
 struct LspWatchedFileState {
-  path:           PathBuf,
-  uri:            String,
-  events_rx:      Receiver<Vec<the_runtime::file_watch::PathEvent>>,
+  stream:         WatchedFileEventsState,
   _watch_handle:  WatchHandle,
-  suppress_until: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1212,71 +1214,29 @@ impl Ctx {
 
   pub fn poll_lsp_file_watch(&mut self) -> bool {
     let lsp_ready = self.lsp_ready;
-
-    let mut watcher_disconnected = false;
-    let mut pending_changes = Vec::new();
-    let watched_uri;
-    let watched_path;
-
-    {
-      let Some(watch) = self.lsp_watched_file.as_mut() else {
-        trace_file_watch_event("consumer_poll_skip", "client=term reason=no_watch_state");
+    let (watched_uri, watched_path, pending_changes) = match poll_watch_events(
+      self.lsp_watched_file.as_mut().map(|watch| &mut watch.stream),
+      Instant::now(),
+      "term",
+      |event, message| trace_file_watch_event(event, message),
+    ) {
+      WatchPollOutcome::NoChanges => return false,
+      WatchPollOutcome::Disconnected { .. } => {
+        self.lsp_sync_watched_file_state();
         return false;
-      };
-
-      watched_uri = watch.uri.clone();
-      watched_path = watch.path.clone();
-
-      loop {
-        match watch.events_rx.try_recv() {
-          Ok(batch) => {
-            if batch.is_empty() {
-              continue;
-            }
-
-            if let Some(until) = watch.suppress_until {
-              if Instant::now() <= until {
-                trace_file_watch_event(
-                  "consumer_suppress_drop",
-                  format!(
-                    "client=term path={} reason=self_save_window",
-                    watch.path.display()
-                  ),
-                );
-                continue;
-              }
-              watch.suppress_until = None;
-            }
-
-            let mut batch_change = None;
-            for event in batch {
-              batch_change = Some(file_change_type_for_path_event(event.kind));
-            }
-            if let Some(change_type) = batch_change {
-              pending_changes.push(change_type);
-            }
-          },
-          Err(TryRecvError::Empty) => break,
-          Err(TryRecvError::Disconnected) => {
-            watcher_disconnected = true;
-            break;
-          },
-        }
-      }
-    }
-
-    if watcher_disconnected {
-      trace_file_watch_event(
-        "consumer_watcher_disconnected",
-        format!("client=term path={}", watched_path.display()),
-      );
-      self.lsp_sync_watched_file_state();
-      return false;
-    }
-
-    if pending_changes.is_empty() {
-      return false;
-    }
+      },
+      WatchPollOutcome::Changes {
+        path,
+        uri,
+        kinds,
+      } => {
+        let pending_changes = kinds
+          .into_iter()
+          .map(file_change_type_for_path_event)
+          .collect::<Vec<_>>();
+        (uri, path, pending_changes)
+      },
+    };
 
     trace_file_watch_event(
       "consumer_changes_collected",
@@ -2294,11 +2254,13 @@ impl Ctx {
     self.lsp_watched_file = self.lsp_document.as_ref().map(|state| {
       let (events_rx, watch_handle) = watch_path(&state.path, lsp_file_watch_latency());
       LspWatchedFileState {
-        path: state.path.clone(),
-        uri: state.uri.clone(),
-        events_rx,
+        stream: WatchedFileEventsState {
+          path: state.path.clone(),
+          uri: state.uri.clone(),
+          events_rx,
+          suppress_until: None,
+        },
         _watch_handle: watch_handle,
-        suppress_until: None,
       }
     });
   }
@@ -3239,7 +3201,7 @@ impl the_default::DefaultContext for Ctx {
 
   fn on_file_saved(&mut self, _path: &Path, text: &str) {
     if let Some(watch) = self.lsp_watched_file.as_mut() {
-      watch.suppress_until = Some(Instant::now() + lsp_self_save_suppress_window());
+      watch.stream.suppress_until = Some(Instant::now() + lsp_self_save_suppress_window());
     }
     self.lsp_send_did_save(Some(text));
   }
@@ -3365,7 +3327,10 @@ mod tests {
     transaction::Transaction,
   };
 
-  use super::Ctx;
+  use super::{
+    Ctx,
+    WatchedFileEventsState,
+  };
   use crate::{
     dispatch::build_dispatch,
     render::{
@@ -3412,11 +3377,13 @@ mod tests {
     let (_unused_rx, watch_handle) = super::watch_path(path, Duration::from_millis(0));
     let uri = the_lsp::text_sync::file_uri_for_path(path).expect("file uri");
     ctx.lsp_watched_file = Some(super::LspWatchedFileState {
-      path: path.to_path_buf(),
-      uri,
-      events_rx,
+      stream: WatchedFileEventsState {
+        path: path.to_path_buf(),
+        uri,
+        events_rx,
+        suppress_until: None,
+      },
       _watch_handle: watch_handle,
-      suppress_until: None,
     });
     events_tx
   }
@@ -3810,7 +3777,7 @@ pkgs.mkShell {
     let watch_tx = install_test_watch_state(&mut ctx, fixture.as_path());
     let before = ctx.editor.document().text().to_string();
     if let Some(watch) = ctx.lsp_watched_file.as_mut() {
-      watch.suppress_until = Some(std::time::Instant::now() + Duration::from_secs(2));
+      watch.stream.suppress_until = Some(std::time::Instant::now() + Duration::from_secs(2));
     } else {
       panic!("expected watch state");
     }
@@ -3850,7 +3817,7 @@ pkgs.mkShell {
     let rebound_watch_path = ctx
       .lsp_watched_file
       .as_ref()
-      .map(|watch| watch.path.clone())
+      .map(|watch| watch.stream.path.clone())
       .expect("watch should be rebound");
     assert_eq!(rebound_watch_path, fixture.as_path());
 

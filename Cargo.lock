@@ -1452,6 +1452,7 @@ dependencies = [
  "the-lib",
  "the-loader",
  "the-lsp",
+ "the-runtime",
  "the-vcs",
 ]
 

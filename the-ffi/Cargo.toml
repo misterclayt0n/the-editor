@@ -17,6 +17,7 @@ the-default          = { path = "../the-default" }
 the-lib              = { features = [ "runtime-loader" ], path = "../the-lib" }
 the-lsp              = { path = "../the-lsp" }
 the-loader           = { path = "../the-loader" }
+the-runtime          = { path = "../the-runtime" }
 the-vcs              = { path = "../the-vcs", features = [ "diff", "git", "jj" ] }
 
 [build-dependencies]

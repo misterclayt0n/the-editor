@@ -539,11 +539,13 @@ impl Loader {
       .map(|(idx, data)| (Language(idx as u32), data))
   }
 
-  fn query_text<'a>(&'a self, language_id: &str, kind: QueryKind) -> Cow<'a, str> {
-    self
-      .resources
-      .query(language_id, kind)
-      .unwrap_or(Cow::Borrowed(""))
+  fn query_text(&self, language_id: &str, kind: QueryKind) -> String {
+    tree_house::read_query(language_id, |language| {
+      self
+        .resources
+        .query(language, kind)
+        .map_or_else(String::new, Cow::into_owned)
+    })
   }
 
   pub fn language_configs(&self) -> impl ExactSizeIterator<Item = &LanguageConfiguration> {
@@ -1793,10 +1795,74 @@ impl RainbowQuery {
 
 #[cfg(test)]
 mod test {
+  use std::{
+    borrow::Cow,
+    collections::HashMap,
+  };
+
   use ropey::Rope;
+  use tree_house::tree_sitter::Grammar;
 
   use super::*;
-  use crate::transaction::Transaction;
+  use crate::{
+    syntax::{
+      config::{
+        Configuration,
+        FileType,
+        LanguageConfiguration,
+        LanguageServicesConfig,
+        SyntaxLanguageConfig,
+      },
+      resources::{
+        QueryKind,
+        SyntaxResources,
+      },
+    },
+    transaction::Transaction,
+  };
+
+  #[derive(Debug, Default)]
+  struct MockResources {
+    queries: HashMap<(String, QueryKind), String>,
+  }
+
+  impl SyntaxResources for MockResources {
+    fn grammar(&self, _grammar_name: &str) -> Option<Grammar> {
+      None
+    }
+
+    fn query(&self, language_id: &str, kind: QueryKind) -> Option<Cow<'_, str>> {
+      self
+        .queries
+        .get(&(language_id.to_string(), kind))
+        .map(|query| Cow::Borrowed(query.as_str()))
+    }
+  }
+
+  fn test_language(language_id: &str, extension: &str) -> LanguageConfiguration {
+    LanguageConfiguration {
+      syntax:   SyntaxLanguageConfig {
+        language_id:          language_id.to_string(),
+        scope:                format!("source.{language_id}"),
+        file_types:           vec![FileType::Extension(extension.to_string())],
+        shebangs:             Vec::new(),
+        comment_tokens:       None,
+        block_comment_tokens: None,
+        text_width:           None,
+        soft_wrap:            None,
+        auto_format:          false,
+        path_completion:      None,
+        word_completion:      None,
+        grammar:              None,
+        injection_regex:      None,
+        indent:               None,
+        auto_pairs:           None,
+        rulers:               None,
+        rainbow_brackets:     None,
+      },
+      services: LanguageServicesConfig::default(),
+    }
+  }
 
   #[test]
   fn test_input_edits() {
@@ -1847,6 +1913,37 @@ mod test {
       old_end_point: Point::ZERO,
       new_end_point: Point::ZERO,
     }]);
+  }
+
+  #[test]
+  fn query_text_expands_inherits_directives() {
+    let mut resources = MockResources::default();
+    resources.queries.insert(
+      ("rust".into(), QueryKind::Highlights),
+      "(identifier) @variable".into(),
+    );
+    resources.queries.insert(
+      ("rust-format-args-macro".into(), QueryKind::Highlights),
+      "; inherits: rust".into(),
+    );
+
+    let loader = Loader::new(
+      Configuration {
+        language:        vec![
+          test_language("rust", "rs"),
+          test_language("rust-format-args-macro", "rfam"),
+        ],
+        language_server: HashMap::new(),
+      },
+      resources,
+    )
+    .expect("loader");
+
+    let text = loader.query_text("rust-format-args-macro", QueryKind::Highlights);
+    assert!(
+      text.contains("(identifier) @variable"),
+      "expected inherited rust highlight query, got: {text}"
+    );
   }
 }
 

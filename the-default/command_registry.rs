@@ -607,9 +607,12 @@ fn cmd_reload<Ctx: DefaultContext>(
     ));
   }
 
-  ctx
-    .open_file(&path)
-    .map_err(|err| CommandError::new(format!("failed to reload '{}': {err}", path.display())))?;
+  ctx.reload_file_preserving_view(&path).map_err(|err| {
+    CommandError::new(format!(
+      "failed to reload '{}': {err}",
+      path.display()
+    ))
+  })?;
 
   let suffix = if force { " (discarded local changes)" } else { "" };
   ctx.push_info(

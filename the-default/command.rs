@@ -429,6 +429,31 @@ pub trait DefaultContext: Sized + 'static {
   fn ui_theme(&self) -> &Theme;
   fn set_file_path(&mut self, path: Option<PathBuf>);
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
+  fn reload_file_preserving_view(&mut self, path: &Path) -> std::io::Result<()> {
+    let previous_selection = self.editor_ref().document().selection().clone();
+    let previous_scroll = self.editor_ref().view().scroll;
+
+    self.open_file(path)?;
+
+    {
+      let doc = self.editor().document_mut();
+      let max = doc.text().len_chars();
+      let clamped = previous_selection
+        .transform(|range| Range::new(range.anchor.min(max), range.head.min(max)));
+      let _ = doc.set_selection(clamped);
+    }
+
+    let max_row = self
+      .editor_ref()
+      .document()
+      .text()
+      .len_lines()
+      .saturating_sub(1);
+    self.editor().view_mut().scroll = Position::new(previous_scroll.row.min(max_row), previous_scroll.col);
+
+    self.request_render();
+    Ok(())
+  }
   fn log_target_names(&self) -> &'static [&'static str] {
     &[]
   }

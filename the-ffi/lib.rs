@@ -2916,7 +2916,7 @@ impl App {
           return true;
         }
 
-        match <Self as DefaultContext>::open_file(self, watched_path) {
+        match <Self as DefaultContext>::reload_file_preserving_view(self, watched_path) {
           Ok(()) => {
             trace_file_watch_event(
               "consumer_external_reload_ok",

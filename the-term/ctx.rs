@@ -3766,6 +3766,38 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn rapid_external_changes_reload_to_latest_on_disk_content() {
+    let fixture = TempTestFile::new("rapid-watch", "first\n");
+    let mut ctx = Ctx::new(Some(
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    let watch_tx = install_test_watch_state(&mut ctx, fixture.as_path());
+    fs::write(fixture.as_path(), "second\n").expect("write second");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send first event");
+
+    fs::write(fixture.as_path(), "third\n").expect("write third");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send second event");
+
+    assert!(ctx.poll_lsp_file_watch());
+    assert_eq!(ctx.editor.document().text().to_string(), "third\n");
+  }
+
+  #[test]
   fn normal_x_then_c_performs_linewise_change() {
     let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");

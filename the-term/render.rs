@@ -2124,10 +2124,15 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
           if max_width == 0 {
             continue;
           }
+          let text = if is_diff_gutter_marker(span.text.as_str()) {
+            "▏"
+          } else {
+            span.text.as_str()
+          };
           buf.set_stringn(
             x,
             y,
-            span.text.as_str(),
+            text,
             max_width,
             lib_style_to_ratatui(span.style),
           );
@@ -2195,6 +2200,10 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
       }
     }
   }
+}
+
+fn is_diff_gutter_marker(text: &str) -> bool {
+  matches!(text.trim(), "+" | "~" | "-")
 }
 
 fn sync_file_picker_viewport(ctx: &mut Ctx, area: Rect) {

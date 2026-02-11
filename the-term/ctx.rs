@@ -2445,6 +2445,7 @@ impl the_default::DefaultContext for Ctx {
               bump_syntax_version = true;
             },
             Ok(false) => {
+              syntax.interpolate_with_edits(&edits);
               bump_syntax_version = true;
               let root_language = syntax.root_language();
               let parse_source = new_text.clone();

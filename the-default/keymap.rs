@@ -576,6 +576,11 @@ fn apply_actions<Ctx: DefaultContext>(ctx: &mut Ctx, actions: &[KeyAction]) -> K
 }
 
 fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
+  let previous_mode = ctx.mode();
+  if previous_mode == Mode::Insert && mode != Mode::Insert {
+    let _ = ctx.editor().document_mut().commit();
+  }
+
   if mode == Mode::Select {
     let doc = ctx.editor().document_mut();
     let text = doc.text().slice(..);

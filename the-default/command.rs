@@ -3298,7 +3298,7 @@ fn open<Ctx: DefaultContext>(
     let indent = match line.first_non_whitespace_char() {
       Some(pos) if continue_comment_token.is_some() => line.slice(..pos).to_string(),
       _ => {
-        indent::indent_for_newline(
+        indent_for_newline_safe(
           loader,
           syntax,
           &indent_heuristic,
@@ -3532,5 +3532,40 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "select_textobject_inner" => Some(Command::select_textobject_inner()),
 
     _ => None,
+  }
+}
+
+fn indent_for_newline_safe(
+  loader: &Loader,
+  syntax: Option<&the_lib::syntax::Syntax>,
+  indent_heuristic: &IndentationHeuristic,
+  indent_style: &the_lib::indent::IndentStyle,
+  tab_width: usize,
+  text: ropey::RopeSlice,
+  line_before: usize,
+  line_before_end_pos: usize,
+  current_line: usize,
+) -> String {
+  match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    indent::indent_for_newline(
+      loader,
+      syntax,
+      indent_heuristic,
+      indent_style,
+      tab_width,
+      text,
+      line_before,
+      line_before_end_pos,
+      current_line,
+    )
+  })) {
+    Ok(indent) => indent,
+    Err(_) => {
+      let line = text.line(current_line);
+      line
+        .first_non_whitespace_char()
+        .map(|pos| line.slice(..pos).to_string())
+        .unwrap_or_default()
+    },
   }
 }

@@ -3220,6 +3220,7 @@ impl DefaultContext for App {
               bump_syntax_version = true;
             },
             Ok(false) => {
+              syntax.interpolate_with_edits(&edits);
               let root_language = syntax.root_language();
               bump_syntax_version = true;
               let parse_source = new_text.clone();

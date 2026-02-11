@@ -149,6 +149,7 @@ use the_lib::{
     generate_edits,
   },
   syntax_async::{
+    ParseHighlightState,
     ParseLifecycle,
     ParseRequest,
     QueueParseDecision,
@@ -951,6 +952,7 @@ struct EditorState {
   syntax_parse_tx:       Sender<SyntaxParseResult>,
   syntax_parse_rx:       Receiver<SyntaxParseResult>,
   syntax_parse_lifecycle: ParseLifecycle<SyntaxParseJob>,
+  syntax_parse_highlight_state: ParseHighlightState,
   scrolloff:             usize,
 }
 
@@ -986,6 +988,7 @@ impl EditorState {
       syntax_parse_tx,
       syntax_parse_rx,
       syntax_parse_lifecycle: ParseLifecycle::default(),
+      syntax_parse_highlight_state: ParseHighlightState::default(),
       scrolloff: 5,
     }
   }
@@ -1558,7 +1561,14 @@ impl App {
   ) -> the_lib::render::RenderPlan {
     let _ = self.poll_active_syntax_parse_results();
 
-    let (mut text_fmt, gutter_config, diff_signs, inline_annotations, overlay_annotations) = {
+    let (
+      mut text_fmt,
+      gutter_config,
+      diff_signs,
+      inline_annotations,
+      overlay_annotations,
+      allow_cache_refresh,
+    ) = {
       let state = self.active_state_ref();
       (
         state.text_format.clone(),
@@ -1566,6 +1576,9 @@ impl App {
         state.gutter_diff_signs.clone(),
         state.inline_annotations.clone(),
         state.overlay_annotations.clone(),
+        state
+          .syntax_parse_highlight_state
+          .allow_cache_refresh(&state.syntax_parse_lifecycle),
       )
     };
     let mut highlight_cache = {
@@ -1602,6 +1615,7 @@ impl App {
           line_range,
           doc.version(),
           doc.syntax_version(),
+          allow_cache_refresh,
         );
         build_plan(
           doc,
@@ -3072,23 +3086,34 @@ impl App {
       changed = true;
 
       let loader = self.loader.clone();
-      let Some(editor) = self.inner.editor_mut(id) else {
-        continue;
+      let parsed_state = {
+        let Some(editor) = self.inner.editor_mut(id) else {
+          continue;
+        };
+        let doc = editor.document_mut();
+        match result.syntax {
+          Some(syntax) => {
+            if let Some(loader) = loader {
+              doc.set_syntax_with_loader(syntax, loader);
+            } else {
+              doc.set_syntax(syntax);
+            }
+            Some(true)
+          },
+          None => {
+            doc.clear_syntax();
+            Some(false)
+          },
+        }
       };
-      let doc = editor.document_mut();
-      match result.syntax {
-        Some(syntax) => {
-          if let Some(loader) = loader {
-            doc.set_syntax_with_loader(syntax, loader);
-          } else {
-            doc.set_syntax(syntax);
-          }
-        },
-        None => doc.clear_syntax(),
-      }
 
       if let Some(state) = self.states.get_mut(&id) {
         state.highlight_cache.clear();
+        if parsed_state == Some(true) {
+          state.syntax_parse_highlight_state.mark_parsed();
+        } else if parsed_state == Some(false) {
+          state.syntax_parse_highlight_state.mark_cleared();
+        }
         state.needs_render = true;
       }
     }
@@ -3127,6 +3152,7 @@ impl App {
   fn refresh_editor_syntax(&mut self, id: LibEditorId) {
     let path = self.file_paths.get(&id).cloned();
     let loader = self.loader.clone();
+    let mut parsed = false;
     let Some(editor) = self.inner.editor_mut(id) else {
       return;
     };
@@ -3140,13 +3166,21 @@ impl App {
           );
           doc.clear_syntax();
         }
+        parsed = doc.syntax().is_some();
       },
-      _ => doc.clear_syntax(),
+      _ => {
+        doc.clear_syntax();
+      },
     }
 
     if let Some(state) = self.states.get_mut(&id) {
       state.syntax_parse_lifecycle.cancel_pending();
       state.highlight_cache.clear();
+      if parsed {
+        state.syntax_parse_highlight_state.mark_parsed();
+      } else {
+        state.syntax_parse_highlight_state.mark_cleared();
+      }
     }
   }
 
@@ -3244,6 +3278,12 @@ impl DefaultContext for App {
   }
 
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
+    enum SyntaxParseHighlightUpdate {
+      Parsed,
+      Interpolated,
+      Cleared,
+    }
+
     let Some(editor_id) = self.active_editor else {
       return false;
     };
@@ -3255,6 +3295,7 @@ impl DefaultContext for App {
     let mut async_parse_job: Option<SyntaxParseJob> = None;
     let mut async_parse_doc_version = None;
     let mut clear_highlights = false;
+    let mut syntax_highlight_update: Option<SyntaxParseHighlightUpdate> = None;
 
     {
       let Some(editor) = self.inner.editor_mut(editor_id) else {
@@ -3289,11 +3330,13 @@ impl DefaultContext for App {
           ) {
             Ok(true) => {
               bump_syntax_version = true;
+              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Parsed);
             },
             Ok(false) => {
               syntax.interpolate_with_edits(&edits);
               let root_language = syntax.root_language();
               bump_syntax_version = true;
+              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Interpolated);
               let parse_source = new_text.clone();
               let parse_loader = loader.clone();
               async_parse_doc_version = Some(doc.version());
@@ -3303,6 +3346,7 @@ impl DefaultContext for App {
             },
             Err(_) => {
               clear_syntax = true;
+              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Cleared);
             },
           }
         }
@@ -3318,6 +3362,18 @@ impl DefaultContext for App {
 
     if clear_highlights {
       self.active_state_mut().highlight_cache.clear();
+    }
+
+    if let Some(update) = syntax_highlight_update
+      && let Some(state) = self.states.get_mut(&editor_id)
+    {
+      match update {
+        SyntaxParseHighlightUpdate::Parsed => state.syntax_parse_highlight_state.mark_parsed(),
+        SyntaxParseHighlightUpdate::Interpolated => {
+          state.syntax_parse_highlight_state.mark_interpolated();
+        },
+        SyntaxParseHighlightUpdate::Cleared => state.syntax_parse_highlight_state.mark_cleared(),
+      }
     }
 
     if let (Some(parse_job), Some(doc_version)) = (async_parse_job, async_parse_doc_version) {

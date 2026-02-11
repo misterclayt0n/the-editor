@@ -106,6 +106,7 @@ use the_lib::{
     generate_edits,
   },
   syntax_async::{
+    ParseHighlightState,
     ParseLifecycle,
     ParseRequest,
     QueueParseDecision,
@@ -379,6 +380,8 @@ pub struct Ctx {
   pub syntax_parse_rx:        Receiver<SyntaxParseResult>,
   /// Async parse lifecycle (single in-flight + one queued replacement).
   pub syntax_parse_lifecycle: ParseLifecycle<SyntaxParseJob>,
+  /// Syntax parse/highlight gate state (parsed vs interpolated).
+  pub syntax_parse_highlight_state: ParseHighlightState,
   /// Registers for yanking/pasting.
   pub registers:              Registers,
   /// Active register target (for macros/register operations).
@@ -694,6 +697,7 @@ impl Ctx {
       syntax_parse_tx,
       syntax_parse_rx,
       syntax_parse_lifecycle: ParseLifecycle::default(),
+      syntax_parse_highlight_state: ParseHighlightState::default(),
       registers,
       register: None,
       macro_recording: None,
@@ -761,6 +765,12 @@ impl Ctx {
     }
   }
 
+  pub fn syntax_highlight_refresh_allowed(&self) -> bool {
+    self
+      .syntax_parse_highlight_state
+      .allow_cache_refresh(&self.syntax_parse_lifecycle)
+  }
+
   pub fn poll_syntax_parse_results(&mut self) -> bool {
     let current_doc_version = self.editor.document().version();
     let mut changed = false;
@@ -785,16 +795,27 @@ impl Ctx {
         continue;
       }
 
-      let doc = self.editor.document_mut();
-      match result.syntax {
-        Some(syntax) => {
-          if let Some(loader) = &self.loader {
-            doc.set_syntax_with_loader(syntax, loader.clone());
-          } else {
-            doc.set_syntax(syntax);
-          }
-        },
-        None => doc.clear_syntax(),
+      let parsed_state = {
+        let doc = self.editor.document_mut();
+        match result.syntax {
+          Some(syntax) => {
+            if let Some(loader) = &self.loader {
+              doc.set_syntax_with_loader(syntax, loader.clone());
+            } else {
+              doc.set_syntax(syntax);
+            }
+            Some(true)
+          },
+          None => {
+            doc.clear_syntax();
+            Some(false)
+          },
+        }
+      };
+      if parsed_state == Some(true) {
+        self.syntax_parse_highlight_state.mark_parsed();
+      } else if parsed_state == Some(false) {
+        self.syntax_parse_highlight_state.mark_cleared();
       }
       self.highlight_cache.clear();
       changed = true;
@@ -857,6 +878,7 @@ impl Ctx {
       "kind": "shutdown",
     }));
     self.lsp_watched_file = None;
+    self.syntax_parse_highlight_state.mark_cleared();
     if let Err(err) = self.lsp_runtime.shutdown() {
       eprintln!("Warning: failed to stop LSP runtime: {err}");
     }
@@ -2452,10 +2474,17 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
+    enum SyntaxParseHighlightUpdate {
+      Parsed,
+      Interpolated,
+      Cleared,
+    }
+
     let old_text_for_lsp = self.editor.document().text().clone();
     let loader = self.loader.clone();
     let mut async_parse_job: Option<SyntaxParseJob> = None;
     let mut async_parse_doc_version = None;
+    let mut syntax_highlight_update: Option<SyntaxParseHighlightUpdate> = None;
     {
       let doc = self.editor.document_mut();
       let old_text = doc.text().clone();
@@ -2485,10 +2514,12 @@ impl the_default::DefaultContext for Ctx {
           ) {
             Ok(true) => {
               bump_syntax_version = true;
+              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Parsed);
             },
             Ok(false) => {
               syntax.interpolate_with_edits(&edits);
               bump_syntax_version = true;
+              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Interpolated);
               let root_language = syntax.root_language();
               let parse_source = new_text.clone();
               let parse_loader = loader.clone();
@@ -2499,6 +2530,7 @@ impl the_default::DefaultContext for Ctx {
             },
             Err(_) => {
               clear_syntax = true;
+              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Cleared);
             },
           }
         }
@@ -2514,6 +2546,16 @@ impl the_default::DefaultContext for Ctx {
 
     if let (Some(parse_job), Some(doc_version)) = (async_parse_job, async_parse_doc_version) {
       self.queue_syntax_parse_job(doc_version, parse_job);
+    }
+
+    if let Some(update) = syntax_highlight_update {
+      match update {
+        SyntaxParseHighlightUpdate::Parsed => self.syntax_parse_highlight_state.mark_parsed(),
+        SyntaxParseHighlightUpdate::Interpolated => {
+          self.syntax_parse_highlight_state.mark_interpolated();
+        },
+        SyntaxParseHighlightUpdate::Cleared => self.syntax_parse_highlight_state.mark_cleared(),
+      }
     }
 
     self.lsp_send_did_change(&old_text_for_lsp, transaction.changes());
@@ -3031,6 +3073,11 @@ impl the_default::DefaultContext for Ctx {
 
     self.syntax_parse_lifecycle.cancel_pending();
     self.highlight_cache.clear();
+    if self.editor.document().syntax().is_some() {
+      self.syntax_parse_highlight_state.mark_parsed();
+    } else {
+      self.syntax_parse_highlight_state.mark_cleared();
+    }
 
     <Self as the_default::DefaultContext>::set_file_path(self, Some(path.to_path_buf()));
     self.lsp_open_current_document();

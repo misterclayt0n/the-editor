@@ -24,7 +24,7 @@
 //! let mut cache = HighlightCache::default();
 //! let line_range = 0..1;
 //! let mut adapter =
-//!   SyntaxHighlightAdapter::new(text.slice(..), syntax, loader, &mut cache, line_range, 1, 1);
+//!   SyntaxHighlightAdapter::new(text.slice(..), syntax, loader, &mut cache, line_range, 1, 1, true);
 //! let _ = adapter.highlight_at(0);
 //! # }
 //! ```
@@ -61,9 +61,11 @@ impl<'a> SyntaxHighlightAdapter<'a> {
     line_range: Range<usize>,
     doc_version: u64,
     syntax_version: u64,
+    allow_cache_refresh: bool,
   ) -> Self {
     let byte_range = line_range_to_bytes(text, line_range.clone());
-    if !byte_range.is_empty()
+    if allow_cache_refresh
+      && !byte_range.is_empty()
       && (cache.doc_version() != doc_version
         || cache.syntax_version() != syntax_version
         || !cache.is_range_cached(byte_range.clone()))

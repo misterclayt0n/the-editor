@@ -2036,6 +2036,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
     let _ = annotations.add_overlay(&ctx.overlay_annotations, None);
   }
 
+  let allow_cache_refresh = ctx.syntax_highlight_refresh_allowed();
   let (doc, render_cache) = ctx.editor.document_and_cache();
 
   // Build the render plan (with or without syntax highlighting)
@@ -2052,6 +2053,7 @@ pub fn build_render_plan_with_styles(ctx: &mut Ctx, styles: RenderStyles) -> Ren
       line_range,
       doc.version(),
       doc.syntax_version(),
+      allow_cache_refresh,
     );
 
     build_plan(

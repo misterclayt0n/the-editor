@@ -45,6 +45,44 @@ pub struct ParseResultDecision<T> {
   pub start_next: Option<ParseRequest<T>>,
 }
 
+/// Tracks whether rendering is currently based on interpolated (potentially
+/// stale) syntax.
+///
+/// When interpolation has occurred and a full parse is pending, callers should
+/// avoid re-querying highlight spans from tree-sitter until a parsed result is
+/// applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ParseHighlightState {
+  interpolated: bool,
+}
+
+impl ParseHighlightState {
+  /// Mark the syntax as fully parsed (synchronous parse success or async swap).
+  pub fn mark_parsed(&mut self) {
+    self.interpolated = false;
+  }
+
+  /// Mark the syntax as interpolation-only until async parsing catches up.
+  pub fn mark_interpolated(&mut self) {
+    self.interpolated = true;
+  }
+
+  /// Reset state when syntax is unavailable/cleared.
+  pub fn mark_cleared(&mut self) {
+    self.interpolated = false;
+  }
+
+  /// Returns true when it's safe to refresh highlight caches from syntax.
+  pub fn allow_cache_refresh<T>(&self, lifecycle: &ParseLifecycle<T>) -> bool {
+    !self.interpolated && lifecycle.in_flight().is_none() && lifecycle.queued().is_none()
+  }
+
+  /// Returns true if current syntax state came from interpolation.
+  pub fn is_interpolated(&self) -> bool {
+    self.interpolated
+  }
+}
+
 /// Coordinates a single in-flight async parse with one queued replacement.
 ///
 /// This mirrors Zed's "one background parse + parse again if stale" policy:
@@ -167,6 +205,7 @@ where
 #[cfg(test)]
 mod tests {
   use super::{
+    ParseHighlightState,
     ParseLifecycle,
     QueueParseDecision,
     select_latest_matching_request,
@@ -403,5 +442,57 @@ mod tests {
         "highlight cache epoch should only advance on successful apply"
       );
     }
+  }
+
+  #[test]
+  fn parse_highlight_state_blocks_refresh_until_async_parse_applies() {
+    let mut lifecycle = ParseLifecycle::default();
+    let mut state = ParseHighlightState::default();
+    assert!(state.allow_cache_refresh(&lifecycle));
+
+    state.mark_interpolated();
+    assert!(!state.allow_cache_refresh(&lifecycle));
+
+    let QueueParseDecision::Start(started) = lifecycle.queue(10, ()) else {
+      panic!("expected immediate start");
+    };
+    assert!(!state.allow_cache_refresh(&lifecycle));
+
+    let finished = lifecycle.on_result(started.meta.request_id, 10, 10);
+    assert!(finished.apply);
+    assert!(finished.start_next.is_none());
+    state.mark_parsed();
+    assert!(state.allow_cache_refresh(&lifecycle));
+  }
+
+  #[test]
+  fn parse_highlight_state_respects_pending_queue_even_when_parsed() {
+    let mut lifecycle = ParseLifecycle::default();
+    let mut state = ParseHighlightState::default();
+
+    let QueueParseDecision::Start(started) = lifecycle.queue(1, ()) else {
+      panic!("expected immediate start");
+    };
+    let QueueParseDecision::Queued(_) = lifecycle.queue(2, ()) else {
+      panic!("expected queued request");
+    };
+
+    state.mark_parsed();
+    assert!(
+      !state.allow_cache_refresh(&lifecycle),
+      "pending queued parse should keep cache refresh disabled"
+    );
+
+    let first = lifecycle.on_result(started.meta.request_id, 1, 2);
+    assert!(!first.apply);
+    let Some(next) = first.start_next else {
+      panic!("queued request should start");
+    };
+    assert!(!state.allow_cache_refresh(&lifecycle));
+
+    let second = lifecycle.on_result(next.meta.request_id, 2, 2);
+    assert!(second.apply);
+    assert!(second.start_next.is_none());
+    assert!(state.allow_cache_refresh(&lifecycle));
   }
 }

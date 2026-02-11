@@ -10,6 +10,7 @@ path = "lib.rs"
 [dependencies]
 arc-swap = "1.8.0"
 eyre.workspace = true
+imara-diff.workspace = true
 log = "0.4"
 ropey.workspace = true
 

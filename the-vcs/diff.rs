@@ -1,20 +1,20 @@
 use std::iter::Peekable;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    Mutex,
+    RwLock,
+    RwLockReadGuard,
+};
 
 use imara_diff::Algorithm;
-use parking_lot::{RwLock, RwLockReadGuard};
 use ropey::Rope;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use tokio::task::JoinHandle;
-
-use crate::diff::worker::DiffWorker;
 
 pub use imara_diff::Hunk;
 
 mod line_cache;
-mod worker;
+use line_cache::InternedRopeLines;
 
-struct Event {
+struct PendingEvent {
     text: Rope,
     is_base: bool,
 }
@@ -26,35 +26,95 @@ struct DiffInner {
     hunks: Vec<Hunk>,
 }
 
+struct DiffState {
+    interner: InternedRopeLines,
+    diff_alloc: imara_diff::Diff,
+    pending_doc: Option<Rope>,
+    pending_diff_base: Option<Rope>,
+}
+
+impl DiffState {
+    fn new(diff_base: Rope, doc: Rope) -> Self {
+        let mut state = Self {
+            interner: InternedRopeLines::new(diff_base, doc),
+            diff_alloc: imara_diff::Diff::default(),
+            pending_doc: None,
+            pending_diff_base: None,
+        };
+        state.recompute_current();
+        state
+    }
+
+    fn enqueue(&mut self, event: PendingEvent) {
+        if event.is_base {
+            self.pending_diff_base = Some(event.text);
+        } else {
+            self.pending_doc = Some(event.text);
+        }
+    }
+
+    fn recompute_current(&mut self) {
+        if let Some(lines) = self.interner.interned_lines() {
+            self.diff_alloc.compute_with(
+                ALGORITHM,
+                &lines.before,
+                &lines.after,
+                lines.interner.num_tokens(),
+            );
+            self.diff_alloc.postprocess_with_heuristic(
+                lines,
+                imara_diff::IndentHeuristic::new(|token| {
+                    imara_diff::IndentLevel::for_ascii_line(lines.interner[token].bytes(), 4)
+                }),
+            );
+        } else {
+            self.diff_alloc = imara_diff::Diff::default();
+        }
+    }
+
+    fn flush_pending(&mut self) -> bool {
+        if self.pending_doc.is_none() && self.pending_diff_base.is_none() {
+            return false;
+        }
+
+        if let Some(base) = self.pending_diff_base.take() {
+            let doc = self.pending_doc.take();
+            self.interner.update_diff_base(base, doc);
+        } else if let Some(doc) = self.pending_doc.take() {
+            self.interner.update_doc(doc);
+        }
+
+        self.recompute_current();
+        true
+    }
+
+    fn snapshot(&self) -> DiffInner {
+        DiffInner {
+            diff_base: self.interner.diff_base(),
+            doc: self.interner.doc(),
+            hunks: self.diff_alloc.hunks().collect(),
+        }
+    }
+}
+
 /// Representation of a diff that can be updated.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DiffHandle {
-    channel: UnboundedSender<Event>,
+    state: Arc<Mutex<DiffState>>,
     diff: Arc<RwLock<DiffInner>>,
     inverted: bool,
 }
 
 impl DiffHandle {
     pub fn new(diff_base: Rope, doc: Rope) -> DiffHandle {
-        DiffHandle::new_with_handle(diff_base, doc).0
-    }
-
-    fn new_with_handle(diff_base: Rope, doc: Rope) -> (DiffHandle, JoinHandle<()>) {
-        let (sender, receiver) = unbounded_channel();
-        let diff: Arc<RwLock<DiffInner>> = Arc::default();
-        let worker = DiffWorker {
-            channel: receiver,
-            diff: diff.clone(),
-            diff_finished_notify: Arc::default(),
-            diff_alloc: imara_diff::Diff::default(),
-        };
-        let handle = tokio::spawn(worker.run(diff_base, doc));
-        let differ = DiffHandle {
-            channel: sender,
+        let state = DiffState::new(diff_base, doc);
+        let snapshot = state.snapshot();
+        let diff = Arc::new(RwLock::new(snapshot));
+        DiffHandle {
+            state: Arc::new(Mutex::new(state)),
             diff,
             inverted: false,
-        };
-        (differ, handle)
+        }
     }
 
     /// Switch base and modified texts' roles
@@ -64,8 +124,9 @@ impl DiffHandle {
 
     /// Load the actual diff
     pub fn load(&self) -> Diff<'_> {
+        let _ = self.poll();
         Diff {
-            diff: self.diff.read(),
+            diff: self.diff.read().expect("diff read lock poisoned"),
             inverted: self.inverted,
         }
     }
@@ -73,8 +134,11 @@ impl DiffHandle {
     /// Updates the document associated with this redraw handle
     /// `block` is currently ignored; callers should decide redraw scheduling.
     pub fn update_document(&self, doc: Rope, block: bool) -> bool {
-        let _ = block;
-        self.update_document_impl(doc, self.inverted)
+        let _queued = self.update_document_impl(doc, self.inverted);
+        if block {
+            let _ = self.poll();
+        }
+        _queued
     }
 
     /// Updates the base text of the diff. Returns if the update was successful.
@@ -83,15 +147,27 @@ impl DiffHandle {
     }
 
     fn update_document_impl(&self, text: Rope, is_base: bool) -> bool {
-        let event = Event { text, is_base };
-        self.channel.send(event).is_ok()
+        let mut state = self.state.lock().expect("diff state lock poisoned");
+        state.enqueue(PendingEvent { text, is_base });
+        true
+    }
+
+    /// Recompute hunks for all queued updates.
+    ///
+    /// Returns `true` if a new snapshot was produced.
+    pub fn poll(&self) -> bool {
+        let mut state = self.state.lock().expect("diff state lock poisoned");
+        if !state.flush_pending() {
+            return false;
+        }
+        let snapshot = state.snapshot();
+        drop(state);
+        let mut diff = self.diff.write().expect("diff write lock poisoned");
+        *diff = snapshot;
+        true
     }
 }
 
-/// synchronous debounce value should be low
-/// so we can update synchronously most of the time
-const DIFF_DEBOUNCE_TIME_SYNC: u64 = 1;
-const DIFF_DEBOUNCE_TIME_ASYNC: u64 = 96;
 const ALGORITHM: Algorithm = Algorithm::Histogram;
 const MAX_DIFF_LINES: usize = 64 * u16::MAX as usize;
 // cap average line length to 128 for files with MAX_DIFF_LINES

@@ -1482,6 +1482,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "eyre",
+ "imara-diff",
  "log",
  "ropey",
 ]

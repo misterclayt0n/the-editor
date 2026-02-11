@@ -497,7 +497,7 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
 
     self.register(TypableCommand::new(
       "soft-wrap",
-      &[],
+      &["wrap"],
       "Configure soft line wrapping (on/off/toggle/status)",
       cmd_wrap::<Ctx>,
       CommandCompleter::all(completers::wrap_mode),

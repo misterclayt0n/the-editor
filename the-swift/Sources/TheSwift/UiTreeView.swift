@@ -605,6 +605,7 @@ struct StatuslineSnapshot {
     let leftIcon: String?
     let style: UiStyleSnapshot
     let panelStyle: UiStyleSnapshot
+    let rightSegments: [UiStyledSpanSnapshot]
 }
 
 struct StatuslineView: View {
@@ -614,13 +615,48 @@ struct StatuslineView: View {
 
     private var statuslineHeight: CGFloat { 22 }
 
-    private var rightText: String {
-        guard !pendingKeys.isEmpty else { return snapshot.right }
-        let prefix = pendingKeys.joined(separator: " ") + "  "
-        if snapshot.right.hasPrefix(prefix) {
-            return String(snapshot.right.dropFirst(prefix.count))
+    private var rightSegments: [StatuslineSegment] {
+        let segments = snapshot.rightSegments
+        guard !segments.isEmpty else {
+            // Fallback: render the plain right string as a single segment
+            return [StatuslineSegment(text: snapshot.right, isMuted: false, isVcs: false)]
         }
-        return snapshot.right
+
+        // Filter out pending keys (rendered separately by KeySequenceIndicator)
+        let pending = pendingKeys.isEmpty ? nil : pendingKeys.joined(separator: " ")
+        return segments.compactMap { span in
+            if let pending, span.text == pending { return nil }
+            let isMuted = span.style?.emphasis == .muted
+            let isVcs = isMuted && isVcsSegment(span.text)
+            let text = isVcs ? stripNerdFontPrefix(span.text) : span.text
+            return StatuslineSegment(text: text, isMuted: isMuted, isVcs: isVcs)
+        }.filter { !$0.text.isEmpty }
+    }
+
+    private func isVcsSegment(_ text: String) -> Bool {
+        // VCS segments are prefixed with a Nerd Font git-branch glyph (U+E0A0 or similar
+        // private-use characters) followed by a space and the branch name.
+        guard let first = text.unicodeScalars.first else { return false }
+        // Nerd Font glyphs live in private-use areas (E000-F8FF, F0000-FFFFD, 100000-10FFFD)
+        let value = first.value
+        return (0xE000...0xF8FF).contains(value)
+            || (0xF0000...0xFFFFD).contains(value)
+            || (0x100000...0x10FFFD).contains(value)
+    }
+
+    private func stripNerdFontPrefix(_ text: String) -> String {
+        // Remove the leading Nerd Font glyph and any trailing space
+        var chars = text.unicodeScalars.makeIterator()
+        guard let first = chars.next() else { return text }
+        let value = first.value
+        let isNerd = (0xE000...0xF8FF).contains(value)
+            || (0xF0000...0xFFFFD).contains(value)
+            || (0x100000...0x10FFFD).contains(value)
+        if isNerd {
+            let rest = String(text.dropFirst())
+            return rest.hasPrefix(" ") ? String(rest.dropFirst()) : rest
+        }
+        return text
     }
 
     private var modeName: String {
@@ -717,15 +753,64 @@ struct StatuslineView: View {
                     Spacer(minLength: 8)
                 }
 
-                Text(rightText)
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(.secondary)
+                statuslineRightSegments
             }
             .padding(.horizontal, 12)
             .frame(height: statuslineHeight - 0.5)
         }
         .frame(height: statuslineHeight)
     }
+
+    @ViewBuilder
+    private var statuslineRightSegments: some View {
+        let segs = rightSegments
+        if segs.isEmpty {
+            EmptyView()
+        } else {
+            HStack(spacing: 0) {
+                ForEach(Array(segs.enumerated()), id: \.offset) { index, seg in
+                    if index > 0 {
+                        Text("  ")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.quaternary)
+                    }
+
+                    if seg.isVcs {
+                        vcsSegmentView(seg.text)
+                    } else if seg.isMuted {
+                        Text(seg.text)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    } else {
+                        Text(seg.text)
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func vcsSegmentView(_ branchName: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.triangle.branch")
+                .font(.system(size: 9, weight: .semibold))
+
+            Text(branchName)
+                .font(.system(size: 11))
+                .lineLimit(1)
+        }
+        .foregroundStyle(.tertiary)
+    }
+}
+
+fileprivate struct StatuslineSegment {
+    let text: String
+    let isMuted: Bool
+    let isVcs: Bool
 }
 
 
@@ -807,7 +892,8 @@ extension UiTreeSnapshot {
             right: status.right,
             leftIcon: status.leftIcon,
             style: status.style,
-            panelStyle: panel.style
+            panelStyle: panel.style,
+            rightSegments: status.rightSegments
         )
     }
 

@@ -211,6 +211,22 @@ struct UiTooltipSnapshot: Decodable {
     let style: UiStyleSnapshot
 }
 
+struct UiStyledSpanSnapshot: Decodable {
+    let text: String
+    let style: UiStyleSnapshot?
+
+    private enum CodingKeys: String, CodingKey {
+        case text
+        case style
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        text = try container.decode(String.self, forKey: .text)
+        style = try? container.decode(UiStyleSnapshot.self, forKey: .style)
+    }
+}
+
 struct UiStatusBarSnapshot: Decodable {
     let id: String?
     let left: String
@@ -218,6 +234,22 @@ struct UiStatusBarSnapshot: Decodable {
     let right: String
     let style: UiStyleSnapshot
     let leftIcon: String?
+    let rightSegments: [UiStyledSpanSnapshot]
+
+    private enum CodingKeys: String, CodingKey {
+        case id, left, center, right, style, leftIcon, rightSegments
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try? container.decode(String.self, forKey: .id)
+        left = try container.decode(String.self, forKey: .left)
+        center = (try? container.decode(String.self, forKey: .center)) ?? ""
+        right = (try? container.decode(String.self, forKey: .right)) ?? ""
+        style = (try? container.decode(UiStyleSnapshot.self, forKey: .style)) ?? .fallback
+        leftIcon = try? container.decode(String.self, forKey: .leftIcon)
+        rightSegments = (try? container.decode([UiStyledSpanSnapshot].self, forKey: .rightSegments)) ?? []
+    }
 }
 
 enum UiAxisSnapshot: String, Decodable {

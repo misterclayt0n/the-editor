@@ -3833,6 +3833,41 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn watcher_disconnect_rebinds_and_keeps_processing_changes() {
+    let fixture = TempTestFile::new("disconnect-watch", "one\n");
+    let mut ctx = Ctx::new(Some(
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    let watch_tx = install_test_watch_state(&mut ctx, fixture.as_path());
+    drop(watch_tx);
+
+    assert!(!ctx.poll_lsp_file_watch());
+    let rebound_watch_path = ctx
+      .lsp_watched_file
+      .as_ref()
+      .map(|watch| watch.path.clone())
+      .expect("watch should be rebound");
+    assert_eq!(rebound_watch_path, fixture.as_path());
+
+    let rebound_tx = install_test_watch_state(&mut ctx, fixture.as_path());
+    fs::write(fixture.as_path(), "two\n").expect("update fixture");
+    rebound_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send rebound event");
+
+    assert!(ctx.poll_lsp_file_watch());
+    assert_eq!(ctx.editor.document().text().to_string(), "two\n");
+  }
+
+  #[test]
   fn normal_x_then_c_performs_linewise_change() {
     let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");

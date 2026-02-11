@@ -8,7 +8,7 @@ aklsdjlkasjd
 - [x] Dirty buffer + external edit => no overwrite, explicit conflict/warning state.
 - [x] Two rapid external edits => final content matches disk, no stale intermediate state.
 - [x] Save self-event suppression window => no false reload after own save.
-- [ ] Watcher disconnect/recreate => watcher rebinds and continues processing.
+- [x] Watcher disconnect/recreate => watcher rebinds and continues processing.
 - [ ] Missing file then create => parent fallback path correctly triggers load.
 - [ ] Render selection on other pairs (like in flow/vscode/zed when I select something and the rest kinda get's selected as well, but we can probably skip one char selection for this I suppose)
 - [x] Line wrap

@@ -178,6 +178,11 @@ use the_lsp::{
     utf16_position_to_char_idx,
   },
 };
+use the_vcs::{
+  DiffHandle,
+  DiffProviderRegistry,
+  DiffSignKind,
+};
 
 /// Global document ID counter for FFI layer.
 static NEXT_DOC_ID: AtomicUsize = AtomicUsize::new(1);
@@ -1018,6 +1023,22 @@ fn render_diff_styles_from_theme(theme: &Theme) -> RenderDiffGutterStyles {
   }
 }
 
+fn vcs_gutter_signs(handle: &DiffHandle) -> BTreeMap<usize, RenderGutterDiffKind> {
+  handle
+    .load()
+    .line_signs()
+    .into_iter()
+    .map(|(line, kind)| {
+      let marker = match kind {
+        DiffSignKind::Added => RenderGutterDiffKind::Added,
+        DiffSignKind::Modified => RenderGutterDiffKind::Modified,
+        DiffSignKind::Removed => RenderGutterDiffKind::Removed,
+      };
+      (line, marker)
+    })
+    .collect()
+}
+
 fn diagnostic_severity_rank(severity: DiagnosticSeverity) -> u8 {
   match severity {
     DiagnosticSeverity::Error => 4,
@@ -1218,6 +1239,8 @@ pub struct App {
   command_registry:           CommandRegistry<App>,
   states:                     HashMap<LibEditorId, EditorState>,
   file_paths:                 HashMap<LibEditorId, PathBuf>,
+  vcs_provider:               DiffProviderRegistry,
+  vcs_diff_handles:           HashMap<LibEditorId, DiffHandle>,
   active_editor:              Option<LibEditorId>,
   should_quit:                bool,
   registers:                  Registers,
@@ -1265,6 +1288,8 @@ impl App {
       command_registry: CommandRegistry::new(),
       states: HashMap::new(),
       file_paths: HashMap::new(),
+      vcs_provider: DiffProviderRegistry::default(),
+      vcs_diff_handles: HashMap::new(),
       active_editor: None,
       should_quit: false,
       registers: Registers::new(),
@@ -1307,6 +1332,7 @@ impl App {
     if removed {
       self.states.remove(&id);
       self.file_paths.remove(&id);
+      self.vcs_diff_handles.remove(&id);
       if self.active_editor == Some(id) {
         self.active_editor = None;
         self.lsp_close_current_document();
@@ -3053,6 +3079,51 @@ impl App {
       state.highlight_cache.clear();
     }
   }
+
+  fn clear_vcs_diff_for_editor(&mut self, id: LibEditorId) {
+    self.vcs_diff_handles.remove(&id);
+    if let Some(state) = self.states.get_mut(&id) {
+      state.gutter_diff_signs.clear();
+    }
+  }
+
+  fn refresh_vcs_diff_base_for_editor(&mut self, id: LibEditorId) {
+    let Some(path) = self.file_paths.get(&id).cloned() else {
+      self.clear_vcs_diff_for_editor(id);
+      return;
+    };
+    let Some(diff_base) = self.vcs_provider.get_diff_base(&path) else {
+      self.clear_vcs_diff_for_editor(id);
+      return;
+    };
+    let Some(editor) = self.inner.editor(id) else {
+      self.clear_vcs_diff_for_editor(id);
+      return;
+    };
+
+    let diff_base = Rope::from_str(String::from_utf8_lossy(&diff_base).as_ref());
+    let doc = editor.document().text().clone();
+    let handle = DiffHandle::new(diff_base, doc);
+    let signs = vcs_gutter_signs(&handle);
+    self.vcs_diff_handles.insert(id, handle);
+    if let Some(state) = self.states.get_mut(&id) {
+      state.gutter_diff_signs = signs;
+      state.needs_render = true;
+    }
+  }
+
+  fn refresh_vcs_diff_document_for_editor(&mut self, id: LibEditorId) {
+    let Some(handle) = self.vcs_diff_handles.get(&id) else {
+      return;
+    };
+    let Some(editor) = self.inner.editor(id) else {
+      return;
+    };
+    let _ = handle.update_document(editor.document().text().clone(), true);
+    if let Some(state) = self.states.get_mut(&id) {
+      state.gutter_diff_signs = vcs_gutter_signs(handle);
+    }
+  }
 }
 
 impl Default for App {
@@ -3196,6 +3267,7 @@ impl DefaultContext for App {
     }
 
     self.lsp_send_did_change(&old_text_for_lsp, transaction.changes());
+    self.refresh_vcs_diff_document_for_editor(editor_id);
 
     true
   }
@@ -3397,6 +3469,7 @@ impl DefaultContext for App {
       }
       self.refresh_editor_syntax(id);
       self.refresh_lsp_runtime_for_active_file();
+      self.refresh_vcs_diff_base_for_editor(id);
     }
   }
 

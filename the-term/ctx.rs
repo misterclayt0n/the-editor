@@ -1240,10 +1240,6 @@ impl Ctx {
               watch.suppress_until = None;
             }
 
-            if !lsp_ready {
-              continue;
-            }
-
             let mut batch_change = None;
             for event in batch {
               batch_change = Some(file_change_type_for_path_event(event.kind));
@@ -1270,23 +1266,76 @@ impl Ctx {
       return false;
     }
 
-    let params = did_change_watched_files_params(
-      pending_changes
-        .iter()
-        .copied()
-        .map(|change_type| (watched_uri.clone(), change_type)),
-    );
-    let _ = self
-      .lsp_runtime
-      .send_notification("workspace/didChangeWatchedFiles", Some(params));
+    if lsp_ready {
+      let params = did_change_watched_files_params(
+        pending_changes
+          .iter()
+          .copied()
+          .map(|change_type| (watched_uri.clone(), change_type)),
+      );
+      let _ = self
+        .lsp_runtime
+        .send_notification("workspace/didChangeWatchedFiles", Some(params));
+    }
 
     if let Some(change_type) = pending_changes.last().copied() {
-      let (level, text) = lsp_file_watch_message(&watched_path, change_type);
-      self.messages.publish(level, Some("lsp".into()), text);
-      return true;
+      return self.handle_external_file_watch_change(&watched_path, change_type);
     }
 
     false
+  }
+
+  fn handle_external_file_watch_change(
+    &mut self,
+    watched_path: &Path,
+    change_type: FileChangeType,
+  ) -> bool {
+    let label = watched_path
+      .file_name()
+      .map(|name| name.to_string_lossy().to_string())
+      .unwrap_or_else(|| watched_path.display().to_string());
+
+    match change_type {
+      FileChangeType::Deleted => {
+        self.messages.publish(
+          MessageLevel::Warning,
+          Some("watch".into()),
+          format!("file deleted on disk: {label}"),
+        );
+        true
+      },
+      FileChangeType::Created | FileChangeType::Changed => {
+        if self.editor.document().flags().modified {
+          self.messages.publish(
+            MessageLevel::Warning,
+            Some("watch".into()),
+            format!(
+              "file changed on disk: {label} (buffer has unsaved changes; run :reload force to discard them)"
+            ),
+          );
+          return true;
+        }
+
+        match <Self as the_default::DefaultContext>::open_file(self, watched_path) {
+          Ok(()) => {
+            self.messages.publish(
+              MessageLevel::Info,
+              Some("watch".into()),
+              format!("reloaded from disk: {label}"),
+            );
+            true
+          },
+          Err(err) => {
+            self.messages.publish(
+              MessageLevel::Error,
+              Some("watch".into()),
+              format!("failed to reload '{label}': {err}"),
+            );
+            true
+          },
+        }
+      },
+    }
   }
 
   fn handle_lsp_rpc_message(&mut self, message: jsonrpc::Message) -> bool {
@@ -2243,28 +2292,6 @@ fn file_change_type_for_path_event(kind: PathEventKind) -> FileChangeType {
     PathEventKind::Created => FileChangeType::Created,
     PathEventKind::Changed => FileChangeType::Changed,
     PathEventKind::Removed => FileChangeType::Deleted,
-  }
-}
-
-fn lsp_file_watch_message(path: &Path, change_type: FileChangeType) -> (MessageLevel, String) {
-  let label = path
-    .file_name()
-    .map(|name| name.to_string_lossy().to_string())
-    .unwrap_or_else(|| path.display().to_string());
-
-  match change_type {
-    FileChangeType::Created => (
-      MessageLevel::Info,
-      format!("file created on disk: {label}"),
-    ),
-    FileChangeType::Changed => (
-      MessageLevel::Warning,
-      format!("file changed on disk: {label}"),
-    ),
-    FileChangeType::Deleted => (
-      MessageLevel::Warning,
-      format!("file deleted on disk: {label}"),
-    ),
   }
 }
 

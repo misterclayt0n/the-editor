@@ -1271,31 +1271,6 @@ fn file_change_type_for_path_event(kind: PathEventKind) -> FileChangeType {
   }
 }
 
-fn lsp_file_watch_message(
-  path: &Path,
-  change_type: FileChangeType,
-) -> (the_lib::messages::MessageLevel, String) {
-  let label = path
-    .file_name()
-    .map(|name| name.to_string_lossy().to_string())
-    .unwrap_or_else(|| path.display().to_string());
-
-  match change_type {
-    FileChangeType::Created => (
-      the_lib::messages::MessageLevel::Info,
-      format!("file created on disk: {label}"),
-    ),
-    FileChangeType::Changed => (
-      the_lib::messages::MessageLevel::Warning,
-      format!("file changed on disk: {label}"),
-    ),
-    FileChangeType::Deleted => (
-      the_lib::messages::MessageLevel::Warning,
-      format!("file deleted on disk: {label}"),
-    ),
-  }
-}
-
 /// FFI-safe app wrapper with editor management.
 pub struct App {
   inner:                      LibApp,
@@ -2812,10 +2787,6 @@ impl App {
               watch.suppress_until = None;
             }
 
-            if !lsp_ready {
-              continue;
-            }
-
             let mut batch_change = None;
             for event in batch {
               batch_change = Some(file_change_type_for_path_event(event.kind));
@@ -2842,23 +2813,88 @@ impl App {
       return false;
     }
 
-    let params = did_change_watched_files_params(
-      pending_changes
-        .iter()
-        .copied()
-        .map(|change_type| (watched_uri.clone(), change_type)),
-    );
-    let _ = self
-      .lsp_runtime
-      .send_notification("workspace/didChangeWatchedFiles", Some(params));
+    if lsp_ready {
+      let params = did_change_watched_files_params(
+        pending_changes
+          .iter()
+          .copied()
+          .map(|change_type| (watched_uri.clone(), change_type)),
+      );
+      let _ = self
+        .lsp_runtime
+        .send_notification("workspace/didChangeWatchedFiles", Some(params));
+    }
 
     if let Some(change_type) = pending_changes.last().copied() {
-      let (level, text) = lsp_file_watch_message(&watched_path, change_type);
-      self.publish_lsp_message(level, text);
-      return true;
+      return self.handle_external_file_watch_change(&watched_path, change_type);
     }
 
     false
+  }
+
+  fn handle_external_file_watch_change(
+    &mut self,
+    watched_path: &Path,
+    change_type: FileChangeType,
+  ) -> bool {
+    let label = watched_path
+      .file_name()
+      .map(|name| name.to_string_lossy().to_string())
+      .unwrap_or_else(|| watched_path.display().to_string());
+
+    match change_type {
+      FileChangeType::Deleted => {
+        if self.active_editor.is_some() {
+          self.active_state_mut().messages.publish(
+            the_lib::messages::MessageLevel::Warning,
+            Some("watch".into()),
+            format!("file deleted on disk: {label}"),
+          );
+          self.request_render();
+        }
+        true
+      },
+      FileChangeType::Created | FileChangeType::Changed => {
+        if self.active_editor_ref().document().flags().modified {
+          if self.active_editor.is_some() {
+            self.active_state_mut().messages.publish(
+              the_lib::messages::MessageLevel::Warning,
+              Some("watch".into()),
+              format!(
+                "file changed on disk: {label} (buffer has unsaved changes; run :reload force to discard them)"
+              ),
+            );
+            self.request_render();
+          }
+          return true;
+        }
+
+        match <Self as DefaultContext>::open_file(self, watched_path) {
+          Ok(()) => {
+            if self.active_editor.is_some() {
+              self.active_state_mut().messages.publish(
+                the_lib::messages::MessageLevel::Info,
+                Some("watch".into()),
+                format!("reloaded from disk: {label}"),
+              );
+              self.request_render();
+            }
+            true
+          },
+          Err(err) => {
+            if self.active_editor.is_some() {
+              self.active_state_mut().messages.publish(
+                the_lib::messages::MessageLevel::Error,
+                Some("watch".into()),
+                format!("failed to reload '{label}': {err}"),
+              );
+              self.request_render();
+            }
+            true
+          },
+        }
+      },
+    }
   }
 
   pub fn handle_key(&mut self, id: ffi::EditorId, event: ffi::KeyEvent) -> bool {

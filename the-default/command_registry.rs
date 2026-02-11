@@ -448,6 +448,18 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
     ));
 
     self.register(TypableCommand::new(
+      "reload",
+      &[],
+      "Reload current file from disk (use :reload force to discard unsaved changes)",
+      cmd_reload::<Ctx>,
+      CommandCompleter::all(completers::reload_mode),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
       "help",
       &["h"],
       "Show help for commands",
@@ -563,6 +575,47 @@ fn cmd_write_quit<Ctx: DefaultContext>(
 
   ctx.dispatch().pre_on_action(ctx, Command::Save);
   ctx.dispatch().pre_on_action(ctx, Command::Quit);
+  Ok(())
+}
+
+fn cmd_reload<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let force = match args.first() {
+    None => false,
+    Some("force") | Some("!") => true,
+    Some(other) => {
+      return Err(CommandError::new(format!(
+        "invalid reload mode '{other}' (expected force)"
+      )));
+    },
+  };
+
+  let Some(path) = ctx.file_path().map(|path| path.to_path_buf()) else {
+    return Err(CommandError::new("no file path set for current buffer"));
+  };
+
+  if ctx.editor().document().flags().modified && !force {
+    return Err(CommandError::new(
+      "buffer has unsaved changes; run :reload force to discard them",
+    ));
+  }
+
+  ctx
+    .open_file(&path)
+    .map_err(|err| CommandError::new(format!("failed to reload '{}': {err}", path.display())))?;
+
+  let suffix = if force { " (discarded local changes)" } else { "" };
+  ctx.push_info(
+    "reload",
+    format!("reloaded {} from disk{suffix}", path.display()),
+  );
   Ok(())
 }
 
@@ -1158,6 +1211,19 @@ pub mod completers {
       .map(|target| Completion {
         range: 0..,
         text:  (*target).to_string(),
+        doc:   None,
+      })
+      .collect()
+  }
+
+  pub fn reload_mode<Ctx>(_ctx: &Ctx, input: &str) -> Vec<Completion> {
+    const MODES: &[&str] = &["force"];
+    MODES
+      .iter()
+      .filter(|mode| mode.starts_with(input))
+      .map(|mode| Completion {
+        range: 0..,
+        text:  (*mode).to_string(),
         doc:   None,
       })
       .collect()

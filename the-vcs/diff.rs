@@ -5,6 +5,7 @@ use std::sync::{
     RwLock,
     RwLockReadGuard,
 };
+use std::collections::BTreeMap;
 
 use imara_diff::Algorithm;
 use ropey::Rope;
@@ -173,6 +174,13 @@ const MAX_DIFF_LINES: usize = 64 * u16::MAX as usize;
 // cap average line length to 128 for files with MAX_DIFF_LINES
 const MAX_DIFF_BYTES: usize = MAX_DIFF_LINES * 128;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffSignKind {
+    Added,
+    Modified,
+    Removed,
+}
+
 /// A list of changes in a file sorted in ascending
 /// non-overlapping order
 #[derive(Debug)]
@@ -324,6 +332,52 @@ impl Diff<'_> {
             }
         }
     }
+
+    pub fn line_signs(&self) -> BTreeMap<usize, DiffSignKind> {
+        self.line_signs_in_range(0, usize::MAX)
+    }
+
+    pub fn line_signs_in_range(
+        &self,
+        start_line: usize,
+        end_line: usize,
+    ) -> BTreeMap<usize, DiffSignKind> {
+        let mut out = BTreeMap::new();
+        if start_line >= end_line {
+            return out;
+        }
+
+        for hunk in &self.diff.hunks {
+            let range = if self.inverted {
+                hunk.before.clone()
+            } else {
+                hunk.after.clone()
+            };
+
+            let kind = if hunk.is_pure_insertion() {
+                DiffSignKind::Added
+            } else if hunk.is_pure_removal() {
+                DiffSignKind::Removed
+            } else {
+                DiffSignKind::Modified
+            };
+
+            if hunk.is_pure_removal() {
+                let line = range.start as usize;
+                if (start_line..end_line).contains(&line) {
+                    out.insert(line, kind);
+                }
+                continue;
+            }
+
+            let from = (range.start as usize).max(start_line);
+            let to = (range.end as usize).min(end_line);
+            for line in from..to {
+                out.insert(line, kind);
+            }
+        }
+        out
+    }
 }
 
 pub struct HunksInLineRangesIter<'a, I: Iterator<Item = (usize, usize)>> {
@@ -331,6 +385,31 @@ pub struct HunksInLineRangesIter<'a, I: Iterator<Item = (usize, usize)>> {
     line_ranges: Peekable<I>,
     inverted: bool,
     cursor: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DiffHandle,
+        DiffSignKind,
+    };
+    use ropey::Rope;
+
+    #[test]
+    fn line_signs_report_added_lines() {
+        let handle = DiffHandle::new(Rope::from_str("a\n"), Rope::from_str("a\nb\n"));
+        let diff = handle.load();
+        let signs = diff.line_signs();
+        assert_eq!(signs.get(&1).copied(), Some(DiffSignKind::Added));
+    }
+
+    #[test]
+    fn line_signs_report_removed_lines() {
+        let handle = DiffHandle::new(Rope::from_str("a\nb\n"), Rope::from_str("a\n"));
+        let diff = handle.load();
+        let signs = diff.line_signs();
+        assert_eq!(signs.get(&1).copied(), Some(DiffSignKind::Removed));
+    }
 }
 
 impl<'a, I: Iterator<Item = (usize, usize)>> Iterator for HunksInLineRangesIter<'a, I> {

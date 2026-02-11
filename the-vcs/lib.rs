@@ -21,7 +21,7 @@ mod git;
 mod diff;
 
 #[cfg(feature = "diff")]
-pub use diff::{DiffHandle, Hunk};
+pub use diff::{DiffHandle, DiffSignKind, Hunk};
 
 mod status;
 

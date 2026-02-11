@@ -1128,10 +1128,12 @@ impl Syntax {
     }));
 
     match collected {
-      Ok(highlights) => highlights
-        .into_iter()
-        .map(|(hl, range)| (hl, range.start as usize..range.end as usize))
-        .collect(),
+      Ok(highlights) => {
+        highlights
+          .into_iter()
+          .map(|(hl, range)| (hl, range.start as usize..range.end as usize))
+          .collect()
+      },
       Err(_) => Vec::new(),
     }
   }

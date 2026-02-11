@@ -1,6 +1,5 @@
 //! `helix_vcs` provides types for working with diffs from a Version Control System (VCS).
-//! Currently `git` is the only supported provider for diffs, but this architecture allows
-//! for other providers to be added in the future.
+//! Currently `git` and `jj` providers are supported for diffs.
 
 use arc_swap::ArcSwap;
 use eyre::{
@@ -17,6 +16,9 @@ use std::{
 #[cfg(feature = "git")]
 mod git;
 
+#[cfg(feature = "jj")]
+mod jj;
+
 #[cfg(feature = "diff")]
 mod diff;
 
@@ -27,8 +29,7 @@ mod status;
 
 pub use status::FileChange;
 
-/// Contains all active diff providers. Diff providers are compiled in via features. Currently
-/// only `git` is supported.
+/// Contains all active diff providers. Diff providers are compiled in via features.
 #[derive(Clone)]
 pub struct DiffProviderRegistry {
     providers: Vec<DiffProvider>,
@@ -86,13 +87,15 @@ impl DiffProviderRegistry {
 
 impl Default for DiffProviderRegistry {
     fn default() -> Self {
-        // currently only git is supported
-        // TODO make this configurable when more providers are added
-        let providers = vec![
-            #[cfg(feature = "git")]
-            DiffProvider::Git,
-            DiffProvider::None,
-        ];
+        // Keep a deterministic provider order. Prefer jj in colocated jj+git repos.
+        let mut providers = Vec::new();
+        #[cfg(feature = "jj")]
+        if jj::is_available() {
+            providers.push(DiffProvider::Jj);
+        }
+        #[cfg(feature = "git")]
+        providers.push(DiffProvider::Git);
+        providers.push(DiffProvider::None);
         DiffProviderRegistry { providers }
     }
 }
@@ -105,6 +108,8 @@ impl Default for DiffProviderRegistry {
 enum DiffProvider {
     #[cfg(feature = "git")]
     Git,
+    #[cfg(feature = "jj")]
+    Jj,
     None,
 }
 
@@ -113,6 +118,8 @@ impl DiffProvider {
         match self {
             #[cfg(feature = "git")]
             Self::Git => git::get_diff_base(_file),
+            #[cfg(feature = "jj")]
+            Self::Jj => jj::get_diff_base(_file),
             Self::None => bail!("No diff support compiled in"),
         }
     }
@@ -121,6 +128,8 @@ impl DiffProvider {
         match self {
             #[cfg(feature = "git")]
             Self::Git => git::get_current_head_name(_file),
+            #[cfg(feature = "jj")]
+            Self::Jj => jj::get_current_head_name(_file),
             Self::None => bail!("No diff support compiled in"),
         }
     }
@@ -133,6 +142,8 @@ impl DiffProvider {
         match self {
             #[cfg(feature = "git")]
             Self::Git => git::for_each_changed_file(_cwd, _f),
+            #[cfg(feature = "jj")]
+            Self::Jj => jj::for_each_changed_file(_cwd, _f),
             Self::None => bail!("No diff support compiled in"),
         }
     }

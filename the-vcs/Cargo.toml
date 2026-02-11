@@ -17,6 +17,7 @@ ropey.workspace = true
 [features]
 default = []
 git = []
+jj = []
 diff = []
 
 [dev-dependencies]

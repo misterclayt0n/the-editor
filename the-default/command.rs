@@ -122,13 +122,13 @@ use crate::{
     CommandPaletteState,
     CommandPaletteStyle,
   },
-  completion_menu::CompletionMenuState,
   command_registry::{
     CommandEvent,
     CommandPromptState,
     CommandRegistry,
     handle_command_prompt_key,
   },
+  completion_menu::CompletionMenuState,
   keymap::{
     Keymaps,
     Mode,
@@ -414,6 +414,9 @@ pub trait DefaultContext: Sized + 'static {
   fn completion_menu(&self) -> &CompletionMenuState;
   fn completion_menu_mut(&mut self) -> &mut CompletionMenuState;
   fn completion_accept_selected(&mut self, _index: usize) -> bool {
+    false
+  }
+  fn completion_accept_on_commit_char(&mut self, _ch: char) -> bool {
     false
   }
   fn file_picker(&self) -> &crate::file_picker::FilePickerState;
@@ -842,7 +845,12 @@ fn pre_on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
 
 fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
   match command {
-    Command::InsertChar(ch) => ctx.dispatch().insert_char(ctx, ch),
+    Command::InsertChar(ch) => {
+      if ctx.completion_menu().active {
+        let _ = ctx.completion_accept_on_commit_char(ch);
+      }
+      ctx.dispatch().insert_char(ctx, ch);
+    },
     Command::InsertNewline => ctx.dispatch().insert_newline(ctx, ()),
     Command::DeleteChar => ctx.dispatch().delete_char(ctx, ()),
     Command::DeleteCharForward { count } => ctx.dispatch().delete_char_forward(ctx, count),

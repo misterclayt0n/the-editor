@@ -28,6 +28,7 @@ pub use editing::{
   LspCompletionItem,
   LspDocumentEdit,
   LspExecuteCommand,
+  LspInsertTextFormat,
   LspSignatureHelp,
   LspTextEdit,
   LspWorkspaceEdit,

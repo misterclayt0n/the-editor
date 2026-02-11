@@ -30,12 +30,32 @@ pub struct LspWorkspaceEdit {
   pub documents: Vec<LspDocumentEdit>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LspInsertTextFormat {
+  PlainText,
+  Snippet,
+}
+
+impl LspInsertTextFormat {
+  fn from_lsp(value: u8) -> Option<Self> {
+    match value {
+      1 => Some(Self::PlainText),
+      2 => Some(Self::Snippet),
+      _ => None,
+    }
+  }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspCompletionItem {
-  pub label:            String,
-  pub primary_edit:     Option<LspTextEdit>,
-  pub additional_edits: Vec<LspTextEdit>,
-  pub insert_text:      Option<String>,
+  pub label:              String,
+  pub detail:             Option<String>,
+  pub documentation:      Option<String>,
+  pub primary_edit:       Option<LspTextEdit>,
+  pub additional_edits:   Vec<LspTextEdit>,
+  pub insert_text:        Option<String>,
+  pub insert_text_format: Option<LspInsertTextFormat>,
+  pub commit_characters:  Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,22 +182,18 @@ pub fn parse_completion_response(
   }
 
   if let Ok(list) = serde_json::from_value::<CompletionListPayload>(result.clone()) {
+    let defaults = list.item_defaults;
     return Ok(
       list
         .items
         .into_iter()
-        .map(CompletionItemPayload::into_item)
+        .map(|item| item.into_item(defaults.as_ref()))
         .collect(),
     );
   }
 
   if let Ok(items) = serde_json::from_value::<Vec<CompletionItemPayload>>(result.clone()) {
-    return Ok(
-      items
-        .into_iter()
-        .map(CompletionItemPayload::into_item)
-        .collect(),
-    );
+    return Ok(items.into_iter().map(|item| item.into_item(None)).collect());
   }
 
   Err(EditingParseError::InvalidShape)
@@ -312,26 +328,48 @@ fn workspace_edit_from_payload(payload: WorkspaceEditPayload) -> LspWorkspaceEdi
 #[serde(rename_all = "camelCase")]
 struct CompletionListPayload {
   #[serde(default)]
-  items: Vec<CompletionItemPayload>,
+  items:         Vec<CompletionItemPayload>,
+  item_defaults: Option<CompletionItemDefaultsPayload>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CompletionItemPayload {
   label:                 String,
+  detail:                Option<String>,
+  documentation:         Option<DocumentationPayload>,
   insert_text:           Option<String>,
+  insert_text_format:    Option<u8>,
+  #[serde(default)]
+  commit_characters:     Option<Vec<String>>,
   text_edit:             Option<CompletionTextEditPayload>,
   #[serde(default)]
   additional_text_edits: Vec<TextEditPayload>,
 }
 
 impl CompletionItemPayload {
-  fn into_item(self) -> LspCompletionItem {
+  fn into_item(self, defaults: Option<&CompletionItemDefaultsPayload>) -> LspCompletionItem {
+    let commit_characters = self
+      .commit_characters
+      .or_else(|| defaults.and_then(|default| default.commit_characters.clone()))
+      .unwrap_or_default();
+    let insert_text_format = self
+      .insert_text_format
+      .and_then(LspInsertTextFormat::from_lsp)
+      .or_else(|| {
+        defaults.and_then(|default| {
+          default
+            .insert_text_format
+            .and_then(LspInsertTextFormat::from_lsp)
+        })
+      });
     let primary_edit = self
       .text_edit
       .map(CompletionTextEditPayload::into_text_edit);
     LspCompletionItem {
       label: self.label,
+      detail: self.detail,
+      documentation: self.documentation.map(DocumentationPayload::into_text),
       primary_edit,
       additional_edits: self
         .additional_text_edits
@@ -339,8 +377,38 @@ impl CompletionItemPayload {
         .map(TextEditPayload::into_text_edit)
         .collect(),
       insert_text: self.insert_text,
+      insert_text_format,
+      commit_characters,
     }
   }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompletionItemDefaultsPayload {
+  commit_characters:  Option<Vec<String>>,
+  insert_text_format: Option<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum DocumentationPayload {
+  String(String),
+  Markup(MarkupContentPayload),
+}
+
+impl DocumentationPayload {
+  fn into_text(self) -> String {
+    match self {
+      Self::String(value) => value,
+      Self::Markup(markup) => markup.value,
+    }
+  }
+}
+
+#[derive(Debug, Deserialize)]
+struct MarkupContentPayload {
+  value: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -600,5 +668,52 @@ mod tests {
       .expect("parse ok")
       .expect("some edit");
     assert_eq!(parsed.documents.len(), 2);
+  }
+
+  #[test]
+  fn parse_completion_response_applies_item_defaults_and_metadata() {
+    let value = json!({
+      "items": [
+        {
+          "label": "println!",
+          "detail": "macro_rules!",
+          "documentation": {
+            "kind": "markdown",
+            "value": "Prints to stdout."
+          },
+          "insertText": "println!($1)$0",
+          "insertTextFormat": 2,
+          "commitCharacters": [";"]
+        },
+        {
+          "label": "dbg!",
+          "documentation": "Debug macro",
+          "insertText": "dbg!($1)"
+        }
+      ],
+      "itemDefaults": {
+        "commitCharacters": ["."],
+        "insertTextFormat": 2
+      }
+    });
+
+    let parsed = parse_completion_response(Some(&value)).expect("completion parse");
+    assert_eq!(parsed.len(), 2);
+    assert_eq!(parsed[0].detail.as_deref(), Some("macro_rules!"));
+    assert_eq!(
+      parsed[0].documentation.as_deref(),
+      Some("Prints to stdout.")
+    );
+    assert_eq!(
+      parsed[0].insert_text_format,
+      Some(LspInsertTextFormat::Snippet)
+    );
+    assert_eq!(parsed[0].commit_characters, vec![";".to_string()]);
+    assert_eq!(parsed[1].documentation.as_deref(), Some("Debug macro"));
+    assert_eq!(
+      parsed[1].insert_text_format,
+      Some(LspInsertTextFormat::Snippet)
+    );
+    assert_eq!(parsed[1].commit_characters, vec![".".to_string()]);
   }
 }

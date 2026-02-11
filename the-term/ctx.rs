@@ -123,6 +123,7 @@ use the_lsp::{
   LspCompletionItem,
   LspEvent,
   LspExecuteCommand,
+  LspInsertTextFormat,
   LspLocation,
   LspPosition,
   LspProgressKind,
@@ -275,36 +276,16 @@ impl LspStatuslineState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingLspRequestKind {
-  GotoDefinition {
-    uri: String,
-  },
-  Hover {
-    uri: String,
-  },
-  References {
-    uri: String,
-  },
-  DocumentSymbols {
-    uri: String,
-  },
-  WorkspaceSymbols {
-    query: String,
-  },
-  Completion {
-    uri: String,
-  },
-  SignatureHelp {
-    uri: String,
-  },
-  CodeActions {
-    uri: String,
-  },
-  Rename {
-    uri: String,
-  },
-  Format {
-    uri: String,
-  },
+  GotoDefinition { uri: String },
+  Hover { uri: String },
+  References { uri: String },
+  DocumentSymbols { uri: String },
+  WorkspaceSymbols { query: String },
+  Completion { uri: String },
+  SignatureHelp { uri: String },
+  CodeActions { uri: String },
+  Rename { uri: String },
+  Format { uri: String },
 }
 
 impl PendingLspRequestKind {
@@ -1664,13 +1645,14 @@ impl Ctx {
     let menu_items = self
       .lsp_completion_items
       .iter()
-      .map(|item| the_default::CompletionMenuItem::new(item.label.clone()))
+      .map(completion_menu_item_for_lsp_item)
       .collect();
     the_default::show_completion_menu(self, menu_items);
     true
   }
 
   fn apply_completion_item(&mut self, item: LspCompletionItem, fallback_char: usize) -> bool {
+    let item = normalize_completion_item_for_apply(item);
     let has_text_edits = item.primary_edit.is_some() || !item.additional_edits.is_empty();
     if has_text_edits {
       let Some(uri) = self.current_lsp_uri() else {
@@ -2613,6 +2595,219 @@ fn non_empty_trimmed(value: String) -> Option<String> {
   }
 }
 
+fn completion_menu_item_for_lsp_item(item: &LspCompletionItem) -> the_default::CompletionMenuItem {
+  let mut menu_item = the_default::CompletionMenuItem::new(item.label.clone());
+  menu_item.detail = completion_menu_detail_text(item);
+  menu_item
+}
+
+fn completion_menu_detail_text(item: &LspCompletionItem) -> Option<String> {
+  let detail = item
+    .detail
+    .as_ref()
+    .map(|value| value.trim())
+    .filter(|value| !value.is_empty())
+    .map(ToOwned::to_owned);
+  let docs = item
+    .documentation
+    .as_deref()
+    .and_then(|value| summarize_completion_documentation(value, 72));
+  match (detail, docs) {
+    (Some(detail), Some(docs)) if detail != docs => Some(format!("{detail} | {docs}")),
+    (Some(detail), _) => Some(detail),
+    (_, Some(docs)) => Some(docs),
+    _ => None,
+  }
+}
+
+fn summarize_completion_documentation(value: &str, max_chars: usize) -> Option<String> {
+  let mut compact = String::new();
+  let mut last_was_space = false;
+  let flattened = value.replace("```", " ");
+  for ch in flattened.chars() {
+    if ch.is_whitespace() {
+      if !last_was_space && !compact.is_empty() {
+        compact.push(' ');
+      }
+      last_was_space = true;
+      continue;
+    }
+    compact.push(ch);
+    last_was_space = false;
+  }
+  let compact = compact.trim();
+  if compact.is_empty() {
+    None
+  } else {
+    Some(clamp_status_text(compact, max_chars))
+  }
+}
+
+fn normalize_completion_item_for_apply(mut item: LspCompletionItem) -> LspCompletionItem {
+  if item.insert_text_format == Some(LspInsertTextFormat::Snippet) {
+    if let Some(insert_text) = item.insert_text.as_mut() {
+      let rendered = render_lsp_snippet_fallback(insert_text);
+      *insert_text = rendered;
+    }
+    if let Some(primary_edit) = item.primary_edit.as_mut() {
+      let rendered = render_lsp_snippet_fallback(&primary_edit.new_text);
+      primary_edit.new_text = rendered;
+    }
+    for additional in &mut item.additional_edits {
+      let rendered = render_lsp_snippet_fallback(&additional.new_text);
+      additional.new_text = rendered;
+    }
+  }
+  item
+}
+
+fn completion_item_accepts_commit_char(item: &LspCompletionItem, ch: char) -> bool {
+  item.commit_characters.iter().any(|candidate| {
+    let mut chars = candidate.chars();
+    matches!(chars.next(), Some(first) if first == ch) && chars.next().is_none()
+  })
+}
+
+fn render_lsp_snippet_fallback(source: &str) -> String {
+  let chars: Vec<char> = source.chars().collect();
+  let (rendered, _) = render_snippet_fragment(&chars, 0, None);
+  rendered
+}
+
+fn render_snippet_fragment(
+  chars: &[char],
+  mut index: usize,
+  terminator: Option<char>,
+) -> (String, usize) {
+  let mut out = String::new();
+  while index < chars.len() {
+    let ch = chars[index];
+    if terminator == Some(ch) {
+      return (out, index + 1);
+    }
+    if ch == '\\' {
+      if let Some(next) = chars.get(index + 1).copied() {
+        out.push(next);
+        index += 2;
+      } else {
+        index += 1;
+      }
+      continue;
+    }
+    if ch == '$'
+      && let Some((rendered, next_index)) = parse_snippet_dollar(chars, index)
+    {
+      out.push_str(&rendered);
+      index = next_index;
+      continue;
+    }
+    out.push(ch);
+    index += 1;
+  }
+  (out, index)
+}
+
+fn parse_snippet_dollar(chars: &[char], index: usize) -> Option<(String, usize)> {
+  let next = *chars.get(index + 1)?;
+  if next.is_ascii_digit() {
+    let mut cursor = index + 1;
+    while chars
+      .get(cursor)
+      .copied()
+      .is_some_and(|value| value.is_ascii_digit())
+    {
+      cursor += 1;
+    }
+    return Some((String::new(), cursor));
+  }
+  if next == '{' {
+    return Some(parse_snippet_braced(chars, index + 2));
+  }
+  if is_snippet_identifier_char(next) {
+    let mut cursor = index + 1;
+    while chars
+      .get(cursor)
+      .copied()
+      .is_some_and(is_snippet_identifier_char)
+    {
+      cursor += 1;
+    }
+    return Some((String::new(), cursor));
+  }
+  None
+}
+
+fn parse_snippet_braced(chars: &[char], mut index: usize) -> (String, usize) {
+  let start = index;
+  while chars
+    .get(index)
+    .copied()
+    .is_some_and(is_snippet_identifier_char)
+  {
+    index += 1;
+  }
+  if index == start {
+    return (String::new(), index);
+  }
+  match chars.get(index).copied() {
+    Some('}') => (String::new(), index + 1),
+    Some(':') => render_snippet_fragment(chars, index + 1, Some('}')),
+    Some('|') => parse_snippet_choice(chars, index + 1),
+    Some(_) => {
+      let mut cursor = index;
+      while chars.get(cursor).copied() != Some('}') {
+        if cursor >= chars.len() {
+          return (String::new(), cursor);
+        }
+        cursor += 1;
+      }
+      (String::new(), cursor + 1)
+    },
+    None => (String::new(), index),
+  }
+}
+
+fn parse_snippet_choice(chars: &[char], mut index: usize) -> (String, usize) {
+  let mut first_choice: Option<String> = None;
+  let mut current = String::new();
+  let mut escaped = false;
+  while index < chars.len() {
+    let ch = chars[index];
+    if escaped {
+      current.push(ch);
+      escaped = false;
+      index += 1;
+      continue;
+    }
+    if ch == '\\' {
+      escaped = true;
+      index += 1;
+      continue;
+    }
+    if ch == ',' {
+      if first_choice.is_none() {
+        first_choice = Some(current.clone());
+      }
+      current.clear();
+      index += 1;
+      continue;
+    }
+    if ch == '|' && chars.get(index + 1).copied() == Some('}') {
+      if first_choice.is_none() {
+        first_choice = Some(current);
+      }
+      return (first_choice.unwrap_or_default(), index + 2);
+    }
+    current.push(ch);
+    index += 1;
+  }
+  (first_choice.unwrap_or(current), index)
+}
+
+fn is_snippet_identifier_char(ch: char) -> bool {
+  ch.is_ascii_alphanumeric() || ch == '_'
+}
+
 fn format_lsp_progress_text(title: Option<&str>, message: Option<&str>) -> String {
   let title = title.map(str::trim).filter(|title| !title.is_empty());
   let message = message.map(str::trim).filter(|message| !message.is_empty());
@@ -2913,6 +3108,21 @@ impl the_default::DefaultContext for Ctx {
 
   fn completion_menu_mut(&mut self) -> &mut the_default::CompletionMenuState {
     &mut self.completion_menu
+  }
+
+  fn completion_accept_on_commit_char(&mut self, ch: char) -> bool {
+    let Some(selected) = self.completion_menu.selected else {
+      return false;
+    };
+    let should_accept = self
+      .lsp_completion_items
+      .get(selected)
+      .is_some_and(|item| completion_item_accepts_commit_char(item, ch));
+    if should_accept {
+      the_default::completion_accept(self);
+      return true;
+    }
+    false
   }
 
   fn completion_accept_selected(&mut self, index: usize) -> bool {
@@ -3491,6 +3701,10 @@ mod tests {
     selection::Selection,
     transaction::Transaction,
   };
+  use the_lsp::{
+    LspCompletionItem,
+    LspInsertTextFormat,
+  };
   use the_runtime::file_watch::{
     PathEvent,
     PathEventKind,
@@ -3499,6 +3713,9 @@ mod tests {
   use super::{
     Ctx,
     WatchedFileEventsState,
+    completion_item_accepts_commit_char,
+    completion_menu_detail_text,
+    render_lsp_snippet_fallback,
   };
   use crate::{
     dispatch::build_dispatch,
@@ -3510,6 +3727,51 @@ mod tests {
 
   struct TempTestFile {
     path: PathBuf,
+  }
+
+  fn empty_completion_item() -> LspCompletionItem {
+    LspCompletionItem {
+      label:              "item".to_string(),
+      detail:             None,
+      documentation:      None,
+      primary_edit:       None,
+      additional_edits:   Vec::new(),
+      insert_text:        None,
+      insert_text_format: Some(LspInsertTextFormat::PlainText),
+      commit_characters:  Vec::new(),
+    }
+  }
+
+  #[test]
+  fn snippet_fallback_renders_placeholders_and_choices() {
+    assert_eq!(
+      render_lsp_snippet_fallback("foo($1, ${2:bar}, ${3|x,y|})$0"),
+      "foo(, bar, x)"
+    );
+    assert_eq!(
+      render_lsp_snippet_fallback("${TM_FILENAME:main}.rs"),
+      "main.rs"
+    );
+    assert_eq!(render_lsp_snippet_fallback("a\\$b\\}"), "a$b}");
+  }
+
+  #[test]
+  fn completion_commit_characters_match_single_character_entries() {
+    let mut item = empty_completion_item();
+    item.commit_characters = vec![";".into(), "::".into()];
+    assert!(completion_item_accepts_commit_char(&item, ';'));
+    assert!(!completion_item_accepts_commit_char(&item, ':'));
+  }
+
+  #[test]
+  fn completion_menu_detail_prefers_detail_and_summarizes_documentation() {
+    let mut item = empty_completion_item();
+    item.detail = Some("fn(item)".to_string());
+    item.documentation = Some("line one\nline two".to_string());
+    assert_eq!(
+      completion_menu_detail_text(&item).as_deref(),
+      Some("fn(item) | line one line two")
+    );
   }
 
   impl TempTestFile {
@@ -4001,9 +4263,8 @@ pkgs.mkShell {
     assert!(<Ctx as DefaultContext>::watch_conflict_active(&ctx));
 
     let registry = ctx.command_registry_ref() as *const the_default::CommandRegistry<Ctx>;
-    let write_err =
-      unsafe { (&*registry).execute(&mut ctx, "write", "", CommandEvent::Validate) }
-        .expect_err("write should fail with conflict");
+    let write_err = unsafe { (&*registry).execute(&mut ctx, "write", "", CommandEvent::Validate) }
+      .expect_err("write should fail with conflict");
     assert!(write_err.to_string().contains(":w!"));
 
     unsafe { (&*registry).execute(&mut ctx, "w!", "", CommandEvent::Validate) }
@@ -4058,7 +4319,10 @@ pkgs.mkShell {
       std::iter::once((0, 0, Some("local-".into()))),
     )
     .expect("local edit");
-    assert!(DefaultContext::apply_transaction(&mut ctx, &local_edit_again));
+    assert!(DefaultContext::apply_transaction(
+      &mut ctx,
+      &local_edit_again
+    ));
     fs::write(fixture.as_path(), "disk-gamma\ndisk-delta\n").expect("update fixture");
     watch_tx
       .send(vec![PathEvent {

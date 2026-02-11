@@ -1487,6 +1487,7 @@ dependencies = [
  "imara-diff",
  "log",
  "ropey",
+ "tempfile",
 ]
 
 [[package]]

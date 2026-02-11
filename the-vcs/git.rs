@@ -131,6 +131,14 @@ pub fn get_diff_base(file: &Path) -> Result<Vec<u8>> {
     let repo_root = git_repo_root(&file)?;
     let relative = repo_relative_git_path(&file, &repo_root)?;
     let spec = format!("HEAD:{relative}");
+    let kind_output = run_git(&repo_root, &["cat-file", "-t", &spec])?;
+    let kind = String::from_utf8(kind_output.stdout).wrap_err("invalid git object kind output")?;
+    let kind = kind.trim();
+    if kind != "blob" {
+        return Err(eyre!(
+            "git object for {relative} is {kind}, expected blob"
+        ));
+    }
     let output = run_git(&repo_root, &["show", &spec])?;
     Ok(output.stdout)
 }

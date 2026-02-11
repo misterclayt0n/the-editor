@@ -1,8 +1,16 @@
-use std::{fs::File, io::Write, path::Path, process::Command};
+use std::{
+    fs::File,
+    io::Write,
+    path::Path,
+    process::Command,
+};
 
 use tempfile::TempDir;
 
-use crate::git;
+use crate::{
+    FileChange,
+    git,
+};
 
 fn exec_git_cmd(args: &str, git_dir: &Path) {
     let res = Command::new("git")
@@ -31,6 +39,26 @@ fn exec_git_cmd(args: &str, git_dir: &Path) {
         eprintln!("{}", String::from_utf8_lossy(&res.stderr));
         panic!("`git {args}` failed (see output above)")
     }
+}
+
+fn exec_git_cmd_output(args: &str, git_dir: &Path) -> String {
+    let res = Command::new("git")
+        .arg("-C")
+        .arg(git_dir)
+        .args(args.split_whitespace())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_ASKPASS")
+        .env_remove("SSH_ASKPASS")
+        .env("GIT_TERMINAL_PROMPT", "false")
+        .output()
+        .unwrap_or_else(|_| panic!("`git {args}` failed"));
+    if !res.status.success() {
+        println!("{}", String::from_utf8_lossy(&res.stdout));
+        eprintln!("{}", String::from_utf8_lossy(&res.stderr));
+        panic!("`git {args}` failed (see output above)")
+    }
+    String::from_utf8(res.stdout)
+        .unwrap_or_else(|_| panic!("`git {args}` produced non utf8 output"))
 }
 
 fn create_commit(repo: &Path, add_modified: bool) {
@@ -149,4 +177,107 @@ fn symlink_to_git_repo() {
 
     assert_eq!(git::get_diff_base(&file_link).unwrap(), contents);
     assert_eq!(git::get_diff_base(&file).unwrap(), contents);
+}
+
+#[test]
+fn current_head_name_prefers_branch_name() {
+    let temp_git = empty_git_repo();
+    let file = temp_git.path().join("file.txt");
+    File::create(&file).unwrap().write_all(b"head").unwrap();
+    create_commit(temp_git.path(), true);
+
+    let head = git::get_current_head_name(&file).expect("head name");
+    let current = head.load();
+    assert_eq!(current.as_ref().as_ref(), "main");
+}
+
+#[test]
+fn current_head_name_falls_back_to_short_commit_when_detached() {
+    let temp_git = empty_git_repo();
+    let file = temp_git.path().join("file.txt");
+    File::create(&file).unwrap().write_all(b"head").unwrap();
+    create_commit(temp_git.path(), true);
+    exec_git_cmd("checkout --detach HEAD", temp_git.path());
+
+    let head = git::get_current_head_name(&file).expect("head name");
+    let current = head.load();
+    assert_eq!(current.as_ref().len(), 8);
+    assert!(current.chars().all(|ch| ch.is_ascii_hexdigit()));
+}
+
+#[test]
+fn for_each_changed_file_reports_working_tree_changes() {
+    let temp_git = empty_git_repo();
+    let modified = temp_git.path().join("modified.txt");
+    let deleted = temp_git.path().join("deleted.txt");
+    File::create(&modified).unwrap().write_all(b"modified").unwrap();
+    File::create(&deleted).unwrap().write_all(b"deleted").unwrap();
+    create_commit(temp_git.path(), true);
+
+    File::create(&modified).unwrap().write_all(b"changed").unwrap();
+    std::fs::remove_file(&deleted).unwrap();
+    let untracked = temp_git.path().join("new.txt");
+    File::create(&untracked).unwrap().write_all(b"new").unwrap();
+
+    let changes = std::cell::RefCell::new(Vec::new());
+    git::for_each_changed_file(temp_git.path(), |entry| {
+        changes.borrow_mut().push(entry.expect("file change entry"));
+        true
+    })
+    .expect("collect changed files");
+    let changes = changes.into_inner();
+
+    assert!(changes.iter().any(|change| {
+        matches!(
+            change,
+            FileChange::Modified { path } if path.file_name().is_some_and(|name| name == "modified.txt")
+        )
+    }));
+    assert!(changes.iter().any(|change| {
+        matches!(
+            change,
+            FileChange::Deleted { path } if path.file_name().is_some_and(|name| name == "deleted.txt")
+        )
+    }));
+    assert!(changes.iter().any(|change| {
+        matches!(
+            change,
+            FileChange::Untracked { path } if path.file_name().is_some_and(|name| name == "new.txt")
+        )
+    }));
+}
+
+#[test]
+fn for_each_changed_file_reports_staged_rename() {
+    let temp_git = empty_git_repo();
+    let old_path = temp_git.path().join("old.txt");
+    File::create(&old_path).unwrap().write_all(b"renamed").unwrap();
+    create_commit(temp_git.path(), true);
+
+    let new_path = temp_git.path().join("new.txt");
+    std::fs::rename(&old_path, &new_path).unwrap();
+    exec_git_cmd("add -A", temp_git.path());
+
+    let changes = std::cell::RefCell::new(Vec::new());
+    git::for_each_changed_file(temp_git.path(), |entry| {
+        changes.borrow_mut().push(entry.expect("file change entry"));
+        true
+    })
+    .expect("collect changed files");
+    let changes = changes.into_inner();
+
+    assert!(changes.iter().any(|change| {
+        matches!(
+            change,
+            FileChange::Renamed { from_path, to_path }
+              if from_path.file_name().is_some_and(|name| name == "old.txt")
+              && to_path.file_name().is_some_and(|name| name == "new.txt")
+        )
+    }));
+
+    let status = exec_git_cmd_output("status --porcelain=1 --untracked-files=all", temp_git.path());
+    assert!(
+        status.lines().any(|line| line.starts_with("R ")),
+        "expected rename entry in porcelain output, got:\n{status}"
+    );
 }

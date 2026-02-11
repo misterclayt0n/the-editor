@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 /// States for a file having been changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileChange {
     /// Not tracked by the VCS.
     Untracked { path: PathBuf },

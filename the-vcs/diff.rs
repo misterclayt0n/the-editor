@@ -1,13 +1,11 @@
 use std::iter::Peekable;
 use std::sync::Arc;
 
-use helix_event::RenderLockGuard;
 use imara_diff::Algorithm;
 use parking_lot::{RwLock, RwLockReadGuard};
 use ropey::Rope;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::task::JoinHandle;
-use tokio::time::Instant;
 
 use crate::diff::worker::DiffWorker;
 
@@ -16,16 +14,9 @@ pub use imara_diff::Hunk;
 mod line_cache;
 mod worker;
 
-/// A rendering lock passed to the differ the prevents redraws from occurring
-struct RenderLock {
-    pub lock: RenderLockGuard,
-    pub timeout: Option<Instant>,
-}
-
 struct Event {
     text: Rope,
     is_base: bool,
-    render_lock: Option<RenderLock>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -80,34 +71,19 @@ impl DiffHandle {
     }
 
     /// Updates the document associated with this redraw handle
-    /// This function is only intended to be called from within the rendering loop
-    /// if called from elsewhere it may fail to acquire the render lock and panic
+    /// `block` is currently ignored; callers should decide redraw scheduling.
     pub fn update_document(&self, doc: Rope, block: bool) -> bool {
-        let lock = helix_event::lock_frame();
-        let timeout = if block {
-            None
-        } else {
-            Some(Instant::now() + tokio::time::Duration::from_millis(SYNC_DIFF_TIMEOUT))
-        };
-        self.update_document_impl(doc, self.inverted, Some(RenderLock { lock, timeout }))
+        let _ = block;
+        self.update_document_impl(doc, self.inverted)
     }
 
     /// Updates the base text of the diff. Returns if the update was successful.
     pub fn update_diff_base(&self, diff_base: Rope) -> bool {
-        self.update_document_impl(diff_base, !self.inverted, None)
+        self.update_document_impl(diff_base, !self.inverted)
     }
 
-    fn update_document_impl(
-        &self,
-        text: Rope,
-        is_base: bool,
-        render_lock: Option<RenderLock>,
-    ) -> bool {
-        let event = Event {
-            text,
-            is_base,
-            render_lock,
-        };
+    fn update_document_impl(&self, text: Rope, is_base: bool) -> bool {
+        let event = Event { text, is_base };
         self.channel.send(event).is_ok()
     }
 }
@@ -115,8 +91,6 @@ impl DiffHandle {
 /// synchronous debounce value should be low
 /// so we can update synchronously most of the time
 const DIFF_DEBOUNCE_TIME_SYNC: u64 = 1;
-/// maximum time that rendering should be blocked until the diff finishes
-const SYNC_DIFF_TIMEOUT: u64 = 12;
 const DIFF_DEBOUNCE_TIME_ASYNC: u64 = 96;
 const ALGORITHM: Algorithm = Algorithm::Histogram;
 const MAX_DIFF_LINES: usize = 64 * u16::MAX as usize;

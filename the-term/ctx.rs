@@ -2477,7 +2477,6 @@ impl the_default::DefaultContext for Ctx {
     enum SyntaxParseHighlightUpdate {
       Parsed,
       Interpolated,
-      Cleared,
     }
 
     let old_text_for_lsp = self.editor.document().text().clone();
@@ -2503,7 +2502,6 @@ impl the_default::DefaultContext for Ctx {
         let new_text = doc.text().clone();
         let edits = generate_edits(old_text.slice(..), transaction.changes());
         let mut bump_syntax_version = false;
-        let mut clear_syntax = false;
 
         if let Some(syntax) = doc.syntax_mut() {
           match syntax.try_update_with_short_timeout(
@@ -2529,16 +2527,21 @@ impl the_default::DefaultContext for Ctx {
               }));
             },
             Err(_) => {
-              clear_syntax = true;
-              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Cleared);
+              syntax.interpolate_with_edits(&edits);
+              bump_syntax_version = true;
+              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Interpolated);
+              let root_language = syntax.root_language();
+              let parse_source = new_text.clone();
+              let parse_loader = loader.clone();
+              async_parse_doc_version = Some(doc.version());
+              async_parse_job = Some(Box::new(move || {
+                Syntax::new(parse_source.slice(..), root_language, parse_loader.as_ref()).ok()
+              }));
             },
           }
         }
 
-        if clear_syntax {
-          doc.clear_syntax();
-          self.highlight_cache.clear();
-        } else if bump_syntax_version {
+        if bump_syntax_version {
           doc.bump_syntax_version();
         }
       }
@@ -2554,7 +2557,6 @@ impl the_default::DefaultContext for Ctx {
         SyntaxParseHighlightUpdate::Interpolated => {
           self.syntax_parse_highlight_state.mark_interpolated();
         },
-        SyntaxParseHighlightUpdate::Cleared => self.syntax_parse_highlight_state.mark_cleared(),
       }
     }
 

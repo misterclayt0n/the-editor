@@ -1120,8 +1120,8 @@ impl Syntax {
       return Vec::new();
     }
 
-    let highlighter = self.highlighter(source, loader, start as u32..end as u32);
     let collected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+      let highlighter = self.highlighter(source, loader, start as u32..end as u32);
       highlighter.collect_highlights()
     }));
 

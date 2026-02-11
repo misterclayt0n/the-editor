@@ -3281,7 +3281,6 @@ impl DefaultContext for App {
     enum SyntaxParseHighlightUpdate {
       Parsed,
       Interpolated,
-      Cleared,
     }
 
     let Some(editor_id) = self.active_editor else {
@@ -3294,7 +3293,6 @@ impl DefaultContext for App {
     let loader = self.loader.clone();
     let mut async_parse_job: Option<SyntaxParseJob> = None;
     let mut async_parse_doc_version = None;
-    let mut clear_highlights = false;
     let mut syntax_highlight_update: Option<SyntaxParseHighlightUpdate> = None;
 
     {
@@ -3319,7 +3317,6 @@ impl DefaultContext for App {
         let new_text = doc.text().clone();
         let edits = generate_edits(old_text.slice(..), transaction.changes());
         let mut bump_syntax_version = false;
-        let mut clear_syntax = false;
 
         if let Some(syntax) = doc.syntax_mut() {
           match syntax.try_update_with_short_timeout(
@@ -3345,23 +3342,24 @@ impl DefaultContext for App {
               }));
             },
             Err(_) => {
-              clear_syntax = true;
-              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Cleared);
+              syntax.interpolate_with_edits(&edits);
+              bump_syntax_version = true;
+              syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Interpolated);
+              let root_language = syntax.root_language();
+              let parse_source = new_text.clone();
+              let parse_loader = loader.clone();
+              async_parse_doc_version = Some(doc.version());
+              async_parse_job = Some(Box::new(move || {
+                Syntax::new(parse_source.slice(..), root_language, parse_loader.as_ref()).ok()
+              }));
             },
           }
         }
 
-        if clear_syntax {
-          doc.clear_syntax();
-          clear_highlights = true;
-        } else if bump_syntax_version {
+        if bump_syntax_version {
           doc.bump_syntax_version();
         }
       }
-    }
-
-    if clear_highlights {
-      self.active_state_mut().highlight_cache.clear();
     }
 
     if let Some(update) = syntax_highlight_update
@@ -3372,7 +3370,6 @@ impl DefaultContext for App {
         SyntaxParseHighlightUpdate::Interpolated => {
           state.syntax_parse_highlight_state.mark_interpolated();
         },
-        SyntaxParseHighlightUpdate::Cleared => state.syntax_parse_highlight_state.mark_cleared(),
       }
     }
 

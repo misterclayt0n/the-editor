@@ -74,7 +74,11 @@ impl ParseHighlightState {
 
   /// Returns true when it's safe to refresh highlight caches from syntax.
   pub fn allow_cache_refresh<T>(&self, lifecycle: &ParseLifecycle<T>) -> bool {
-    !self.interpolated && lifecycle.in_flight().is_none() && lifecycle.queued().is_none()
+    if self.interpolated {
+      lifecycle.in_flight().is_some() || lifecycle.queued().is_some()
+    } else {
+      true
+    }
   }
 
   /// Returns true if current syntax state came from interpolation.
@@ -445,7 +449,7 @@ mod tests {
   }
 
   #[test]
-  fn parse_highlight_state_blocks_refresh_until_async_parse_applies() {
+  fn parse_highlight_state_allows_refresh_while_async_parse_is_running() {
     let mut lifecycle = ParseLifecycle::default();
     let mut state = ParseHighlightState::default();
     assert!(state.allow_cache_refresh(&lifecycle));
@@ -456,7 +460,7 @@ mod tests {
     let QueueParseDecision::Start(started) = lifecycle.queue(10, ()) else {
       panic!("expected immediate start");
     };
-    assert!(!state.allow_cache_refresh(&lifecycle));
+    assert!(state.allow_cache_refresh(&lifecycle));
 
     let finished = lifecycle.on_result(started.meta.request_id, 10, 10);
     assert!(finished.apply);
@@ -466,7 +470,7 @@ mod tests {
   }
 
   #[test]
-  fn parse_highlight_state_respects_pending_queue_even_when_parsed() {
+  fn parse_highlight_state_blocks_only_when_interpolated_without_work() {
     let mut lifecycle = ParseLifecycle::default();
     let mut state = ParseHighlightState::default();
 
@@ -477,22 +481,19 @@ mod tests {
       panic!("expected queued request");
     };
 
-    state.mark_parsed();
-    assert!(
-      !state.allow_cache_refresh(&lifecycle),
-      "pending queued parse should keep cache refresh disabled"
-    );
+    state.mark_interpolated();
+    assert!(state.allow_cache_refresh(&lifecycle));
 
     let first = lifecycle.on_result(started.meta.request_id, 1, 2);
     assert!(!first.apply);
     let Some(next) = first.start_next else {
       panic!("queued request should start");
     };
-    assert!(!state.allow_cache_refresh(&lifecycle));
+    assert!(state.allow_cache_refresh(&lifecycle));
 
     let second = lifecycle.on_result(next.meta.request_id, 2, 2);
     assert!(second.apply);
     assert!(second.start_next.is_none());
-    assert!(state.allow_cache_refresh(&lifecycle));
+    assert!(!state.allow_cache_refresh(&lifecycle));
   }
 }

@@ -1,7 +1,5 @@
 # TODO
 - [ ] First class jj support
-
-aklsdjlkasjd
 - [x] File watching (this may take a while to get nice) - Only thing left is better testing for this feature
 - [ ] File watch verification:
 - [x] Clean buffer + external edit => auto reload, cursor/scroll preserved semantically.

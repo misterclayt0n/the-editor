@@ -12,18 +12,20 @@ use the_core::chars::{
   next_char_boundary,
   prev_char_boundary,
 };
-use the_lib::command_line::{
-  Args,
-  CompletionState,
-  Signature,
-  Token,
-  Tokenizer,
-  split,
-};
-use the_lib::render::{
-  GutterConfig,
-  GutterType,
-  LineNumberMode,
+use the_lib::{
+  command_line::{
+    Args,
+    CompletionState,
+    Signature,
+    Token,
+    Tokenizer,
+    split,
+  },
+  render::{
+    GutterConfig,
+    GutterType,
+    LineNumberMode,
+  },
 };
 
 use crate::{
@@ -469,7 +471,7 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
     ));
 
     self.register(TypableCommand::new(
-      "wrap",
+      "soft-wrap",
       &[],
       "Configure soft line wrapping (on/off/toggle/status)",
       cmd_wrap::<Ctx>,
@@ -723,7 +725,9 @@ fn cmd_line_number<Ctx: DefaultContext>(
       },
       "off" => {
         let prev_len = config.layout.len();
-        config.layout.retain(|column| *column != GutterType::LineNumbers);
+        config
+          .layout
+          .retain(|column| *column != GutterType::LineNumbers);
         changed |= config.layout.len() != prev_len;
       },
       "status" => {},

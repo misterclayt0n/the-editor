@@ -1370,6 +1370,7 @@ dependencies = [
  "the-lib",
  "the-loader",
  "the-lsp",
+ "the-vcs",
 ]
 
 [[package]]
@@ -1474,6 +1475,7 @@ dependencies = [
  "the-loader",
  "the-lsp",
  "the-runtime",
+ "the-vcs",
 ]
 
 [[package]]

@@ -162,6 +162,11 @@ use the_lsp::{
   workspace_symbols_params,
 };
 use the_runtime::clipboard::ClipboardProvider;
+use the_vcs::{
+  DiffHandle,
+  DiffProviderRegistry,
+  DiffSignKind,
+};
 
 use crate::picker_layout::FilePickerLayout;
 
@@ -371,6 +376,10 @@ pub struct Ctx {
   pub gutter_config:          GutterConfig,
   /// VCS-like gutter signs keyed by document line.
   pub gutter_diff_signs:      BTreeMap<usize, RenderGutterDiffKind>,
+  /// Active VCS provider registry for diff base resolution.
+  pub vcs_provider:           DiffProviderRegistry,
+  /// Incremental VCS diff state for the active file.
+  pub vcs_diff:               Option<DiffHandle>,
   /// Inline annotations (virtual text) for rendering.
   pub inline_annotations:     Vec<InlineAnnotation>,
   /// Overlay annotations (virtual text) for rendering.
@@ -618,7 +627,7 @@ impl Ctx {
       .as_deref()
       .and_then(|path| build_lsp_document_state(path, loader.as_deref()));
 
-    Ok(Self {
+    let mut ctx = Self {
       editor,
       file_path: file_path.map(PathBuf::from),
       should_quit: false,
@@ -673,14 +682,48 @@ impl Ctx {
       text_format,
       gutter_config: GutterConfig::default(),
       gutter_diff_signs: BTreeMap::new(),
+      vcs_provider: DiffProviderRegistry::default(),
+      vcs_diff: None,
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
       scrolloff: 5,
-    })
+    };
+    ctx.refresh_vcs_diff_base();
+    Ok(ctx)
   }
 
   pub fn set_dispatch(&mut self, dispatch: &DefaultDispatchStatic<Ctx>) {
     self.dispatch = Some(NonNull::from(dispatch));
+  }
+
+  fn clear_vcs_diff(&mut self) {
+    self.vcs_diff = None;
+    self.gutter_diff_signs.clear();
+  }
+
+  fn refresh_vcs_diff_base(&mut self) {
+    let Some(path) = self.file_path.clone() else {
+      self.clear_vcs_diff();
+      return;
+    };
+    let Some(diff_base) = self.vcs_provider.get_diff_base(&path) else {
+      self.clear_vcs_diff();
+      return;
+    };
+
+    let diff_base = Rope::from_str(String::from_utf8_lossy(&diff_base).as_ref());
+    let doc = self.editor.document().text().clone();
+    let handle = DiffHandle::new(diff_base, doc);
+    self.gutter_diff_signs = vcs_gutter_signs(&handle);
+    self.vcs_diff = Some(handle);
+  }
+
+  fn refresh_vcs_diff_document(&mut self) {
+    let Some(handle) = self.vcs_diff.as_ref() else {
+      return;
+    };
+    let _ = handle.update_document(self.editor.document().text().clone(), true);
+    self.gutter_diff_signs = vcs_gutter_signs(handle);
   }
 
   /// Handle terminal resize.
@@ -2070,6 +2113,22 @@ fn file_watch_snapshot(path: &Path) -> (bool, Option<SystemTime>) {
   (exists, last_modified)
 }
 
+fn vcs_gutter_signs(handle: &DiffHandle) -> BTreeMap<usize, RenderGutterDiffKind> {
+  handle
+    .load()
+    .line_signs()
+    .into_iter()
+    .map(|(line, kind)| {
+      let marker = match kind {
+        DiffSignKind::Added => RenderGutterDiffKind::Added,
+        DiffSignKind::Modified => RenderGutterDiffKind::Modified,
+        DiffSignKind::Removed => RenderGutterDiffKind::Removed,
+      };
+      (line, marker)
+    })
+    .collect()
+}
+
 fn summarize_lsp_event(event: &LspEvent) -> Value {
   match event {
     LspEvent::Started { workspace_root } => {
@@ -2423,6 +2482,7 @@ impl the_default::DefaultContext for Ctx {
     }
 
     self.lsp_send_did_change(&old_text_for_lsp, transaction.changes());
+    self.refresh_vcs_diff_document();
 
     true
   }
@@ -2615,6 +2675,7 @@ impl the_default::DefaultContext for Ctx {
   fn set_file_path(&mut self, path: Option<PathBuf>) {
     self.lsp_refresh_document_state(path.as_deref());
     self.file_path = path;
+    self.refresh_vcs_diff_base();
   }
 
   fn lsp_goto_definition(&mut self) {
@@ -2936,8 +2997,7 @@ impl the_default::DefaultContext for Ctx {
     self.syntax_parse_latest = self.syntax_parse_latest.saturating_add(1);
     self.highlight_cache.clear();
 
-    self.file_path = Some(path.to_path_buf());
-    self.lsp_refresh_document_state(Some(path));
+    <Self as the_default::DefaultContext>::set_file_path(self, Some(path.to_path_buf()));
     self.lsp_open_current_document();
     self.editor.view_mut().scroll = Position::new(0, 0);
     self.needs_render = true;

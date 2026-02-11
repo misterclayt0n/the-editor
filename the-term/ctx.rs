@@ -1211,7 +1211,6 @@ impl Ctx {
 
   pub fn poll_lsp_file_watch(&mut self) -> bool {
     let lsp_ready = self.lsp_ready;
-    let active_uri = self.current_lsp_uri();
 
     let mut watcher_disconnected = false;
     let mut pending_changes = Vec::new();
@@ -1225,7 +1224,6 @@ impl Ctx {
 
       watched_uri = watch.uri.clone();
       watched_path = watch.path.clone();
-      let active_matches = active_uri.as_deref() == Some(watch.uri.as_str());
 
       loop {
         match watch.events_rx.try_recv() {
@@ -1242,7 +1240,7 @@ impl Ctx {
               watch.suppress_until = None;
             }
 
-            if !lsp_ready || !active_matches {
+            if !lsp_ready {
               continue;
             }
 

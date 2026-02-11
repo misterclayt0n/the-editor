@@ -2783,11 +2783,6 @@ impl App {
 
   fn poll_lsp_file_watch(&mut self) -> bool {
     let lsp_ready = self.lsp_ready;
-    let active_uri = self
-      .lsp_document
-      .as_ref()
-      .filter(|state| state.opened)
-      .map(|state| state.uri.clone());
 
     let mut watcher_disconnected = false;
     let mut pending_changes = Vec::new();
@@ -2801,7 +2796,6 @@ impl App {
 
       watched_uri = watch.uri.clone();
       watched_path = watch.path.clone();
-      let active_matches = active_uri.as_deref() == Some(watch.uri.as_str());
 
       loop {
         match watch.events_rx.try_recv() {
@@ -2818,7 +2812,7 @@ impl App {
               watch.suppress_until = None;
             }
 
-            if !lsp_ready || !active_matches {
+            if !lsp_ready {
               continue;
             }
 

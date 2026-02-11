@@ -3,6 +3,11 @@
 //! This keeps external-change conflict/reload behavior consistent between
 //! editor clients while remaining independent from UI concerns.
 
+use std::path::Path;
+
+use ropey::Rope;
+use the_lib::diff::compare_ropes;
+
 /// State for the active watched file's external reload lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FileWatchReloadState {
@@ -58,6 +63,24 @@ pub fn decide_external_reload(
   FileWatchReloadDecision::ReloadNeeded
 }
 
+/// Evaluate reload/conflict decision by comparing current buffer text with
+/// disk.
+pub fn evaluate_external_reload_from_disk(
+  state: &mut FileWatchReloadState,
+  watched_path: &Path,
+  current_text: &Rope,
+  buffer_modified: bool,
+) -> std::io::Result<FileWatchReloadDecision> {
+  let disk_text = std::fs::read_to_string(watched_path)?;
+  let disk_rope = Rope::from_str(&disk_text);
+  let has_disk_changes = !compare_ropes(current_text, &disk_rope).changes().is_empty();
+  Ok(decide_external_reload(
+    state,
+    buffer_modified,
+    has_disk_changes,
+  ))
+}
+
 /// Mark a successful reload from disk.
 pub fn mark_reload_applied(state: &mut FileWatchReloadState) {
   *state = FileWatchReloadState::Clean;
@@ -70,13 +93,43 @@ pub fn clear_reload_state(state: &mut FileWatchReloadState) {
 
 #[cfg(test)]
 mod tests {
+  use ropey::Rope;
+  use std::{
+    fs,
+    path::{
+      Path,
+      PathBuf,
+    },
+    time::SystemTime,
+  };
+
   use super::{
     FileWatchReloadDecision,
     FileWatchReloadState,
     clear_reload_state,
     decide_external_reload,
+    evaluate_external_reload_from_disk,
     mark_reload_applied,
   };
+
+  fn temp_path(prefix: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+      .duration_since(SystemTime::UNIX_EPOCH)
+      .map(|d| d.as_nanos())
+      .unwrap_or(0);
+    std::env::temp_dir().join(format!(
+      "the-editor-file-watch-reload-{prefix}-{}-{nonce}.txt",
+      std::process::id()
+    ))
+  }
+
+  fn write_file(path: &Path, text: &str) {
+    fs::write(path, text).expect("write temp file");
+  }
+
+  fn remove_file(path: &Path) {
+    let _ = fs::remove_file(path);
+  }
 
   #[test]
   fn no_disk_changes_resets_to_clean() {
@@ -114,5 +167,45 @@ mod tests {
     state = FileWatchReloadState::Conflict;
     clear_reload_state(&mut state);
     assert_eq!(state, FileWatchReloadState::Clean);
+  }
+
+  #[test]
+  fn evaluate_external_reload_handles_clean_and_conflict_flows() {
+    let path = temp_path("evaluate");
+    write_file(&path, "alpha\n");
+    let mut state = FileWatchReloadState::Clean;
+
+    let same =
+      evaluate_external_reload_from_disk(&mut state, &path, &Rope::from_str("alpha\n"), false)
+        .expect("evaluate same");
+    assert_eq!(same, FileWatchReloadDecision::Noop);
+    assert_eq!(state, FileWatchReloadState::Clean);
+
+    write_file(&path, "beta\n");
+    let reload =
+      evaluate_external_reload_from_disk(&mut state, &path, &Rope::from_str("alpha\n"), false)
+        .expect("evaluate reload");
+    assert_eq!(reload, FileWatchReloadDecision::ReloadNeeded);
+    assert_eq!(state, FileWatchReloadState::ReloadNeeded);
+
+    let conflict =
+      evaluate_external_reload_from_disk(&mut state, &path, &Rope::from_str("alpha\n"), true)
+        .expect("evaluate conflict");
+    assert_eq!(conflict, FileWatchReloadDecision::ConflictEntered);
+    assert_eq!(state, FileWatchReloadState::Conflict);
+
+    remove_file(&path);
+  }
+
+  #[test]
+  fn evaluate_external_reload_reports_read_error() {
+    let path = temp_path("missing");
+    remove_file(&path);
+
+    let mut state = FileWatchReloadState::Clean;
+    let err =
+      evaluate_external_reload_from_disk(&mut state, &path, &Rope::from_str("alpha\n"), false)
+        .expect_err("missing file should error");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
   }
 }

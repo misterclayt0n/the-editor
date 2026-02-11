@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 notify = "8.2.0"
+ropey.workspace = true
 serde.workspace = true
 tracing.workspace = true
 the-lib         = { path = "../the-lib" }

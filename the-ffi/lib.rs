@@ -87,7 +87,6 @@ use the_lib::{
     DiagnosticSeverity,
     DiagnosticsState,
   },
-  diff::compare_ropes,
   document::{
     Document as LibDocument,
     DocumentId,
@@ -200,7 +199,7 @@ use the_runtime::{
     FileWatchReloadDecision,
     FileWatchReloadState,
     clear_reload_state,
-    decide_external_reload,
+    evaluate_external_reload_from_disk,
     mark_reload_applied,
   },
 };
@@ -2872,38 +2871,33 @@ impl App {
         true
       },
       FileChangeType::Created | FileChangeType::Changed => {
-        let disk_text = match std::fs::read_to_string(watched_path) {
-          Ok(text) => text,
-          Err(err) => {
-            trace_file_watch_event(
-              "consumer_external_read_err",
-              format!("client=ffi path={} err={err}", watched_path.display()),
-            );
-            if self.active_editor.is_some() {
-              self.active_state_mut().messages.publish(
-                the_lib::messages::MessageLevel::Error,
-                Some("watch".into()),
-                format!("failed to read '{label}' from disk: {err}"),
-              );
-              self.request_render();
-            }
-            return true;
-          },
-        };
-
-        let has_disk_changes = {
-          let current = self.active_editor_ref().document().text().clone();
-          let disk = Rope::from_str(&disk_text);
-          !compare_ropes(&current, &disk).changes().is_empty()
-        };
+        let current = self.active_editor_ref().document().text().clone();
         let buffer_modified = self.active_editor_ref().document().flags().modified;
         let decision = match self.lsp_watched_file.as_mut() {
           Some(watch) => {
-            decide_external_reload(
+            match evaluate_external_reload_from_disk(
               &mut watch.stream.reload_state,
+              watched_path,
+              &current,
               buffer_modified,
-              has_disk_changes,
-            )
+            ) {
+              Ok(decision) => decision,
+              Err(err) => {
+                trace_file_watch_event(
+                  "consumer_external_read_err",
+                  format!("client=ffi path={} err={err}", watched_path.display()),
+                );
+                if self.active_editor.is_some() {
+                  self.active_state_mut().messages.publish(
+                    the_lib::messages::MessageLevel::Error,
+                    Some("watch".into()),
+                    format!("failed to read '{label}' from disk: {err}"),
+                  );
+                  self.request_render();
+                }
+                return true;
+              },
+            }
           },
           None => return false,
         };

@@ -1518,6 +1518,7 @@ dependencies = [
  "clipboard-win",
  "libc",
  "notify",
+ "ropey",
  "serde",
  "the-lib",
  "the-stdx",

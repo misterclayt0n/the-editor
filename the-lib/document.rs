@@ -272,6 +272,29 @@ impl Document {
     &self.history
   }
 
+  pub fn prepare_undo_jump(&self) -> Option<HistoryJump> {
+    self.history.undo()
+  }
+
+  pub fn prepare_redo_jump(&self) -> Option<HistoryJump> {
+    self.history.redo()
+  }
+
+  pub fn prepare_earlier_jump(&self, uk: UndoKind) -> Result<HistoryJump> {
+    Ok(self.history.earlier(uk)?)
+  }
+
+  pub fn prepare_later_jump(&self, uk: UndoKind) -> Result<HistoryJump> {
+    Ok(self.history.later(uk)?)
+  }
+
+  pub fn finish_history_jump(&mut self, jump: &HistoryJump) -> Result<()> {
+    self.history.apply_jump(jump)?;
+    self.changes = ChangeSet::new(self.text.slice(..));
+    self.old_state = None;
+    Ok(())
+  }
+
   pub fn apply_transaction(&mut self, transaction: &Transaction) -> Result<()> {
     let loader = self.syntax_loader.clone();
     self.apply_transaction_with_syntax(transaction, loader.as_deref())
@@ -369,56 +392,44 @@ impl Document {
   }
 
   pub fn undo(&mut self) -> Result<bool> {
-    let Some(jump) = self.history.undo() else {
+    let Some(jump) = self.prepare_undo_jump() else {
       return Ok(false);
     };
-    self.apply_history_jump(&jump)?;
-    self.history.apply_jump(&jump)?;
+    self.apply_prepared_history_jump(&jump)?;
     Ok(true)
   }
 
   pub fn redo(&mut self) -> Result<bool> {
-    let Some(jump) = self.history.redo() else {
+    let Some(jump) = self.prepare_redo_jump() else {
       return Ok(false);
     };
-    self.apply_history_jump(&jump)?;
-    self.history.apply_jump(&jump)?;
+    self.apply_prepared_history_jump(&jump)?;
     Ok(true)
   }
 
   pub fn earlier(&mut self, uk: UndoKind) -> Result<bool> {
-    let jump = match self.history.earlier(uk) {
+    let jump = match self.prepare_earlier_jump(uk) {
       Ok(j) => j,
       Err(_) => return Ok(false),
     };
-    self.apply_history_jump(&jump)?;
-    self.history.apply_jump(&jump)?;
+    self.apply_prepared_history_jump(&jump)?;
     Ok(true)
   }
 
   pub fn later(&mut self, uk: UndoKind) -> Result<bool> {
-    let jump = match self.history.later(uk) {
+    let jump = match self.prepare_later_jump(uk) {
       Ok(j) => j,
       Err(_) => return Ok(false),
     };
-    self.apply_history_jump(&jump)?;
-    self.history.apply_jump(&jump)?;
+    self.apply_prepared_history_jump(&jump)?;
     Ok(true)
   }
 
-  fn apply_history_jump(&mut self, jump: &HistoryJump) -> Result<()> {
+  fn apply_prepared_history_jump(&mut self, jump: &HistoryJump) -> Result<()> {
     for txn in &jump.transactions {
-      txn.apply(&mut self.text)?;
-      if let Some(sel) = txn.selection() {
-        self.selection = sel.clone();
-      } else {
-        self.selection = self.selection.clone().map(txn.changes())?;
-      }
+      self.apply_transaction(txn)?;
     }
-
-    self.changes = ChangeSet::new(self.text.slice(..));
-    self.old_state = None;
-    self.version = self.version.saturating_add(1);
+    self.finish_history_jump(jump)?;
     Ok(())
   }
 }
@@ -460,6 +471,31 @@ mod tests {
 
     assert!(doc.redo().unwrap());
     assert_eq!(doc.text().to_string(), "hello!");
+  }
+
+  #[test]
+  fn prepared_history_jump_does_not_create_new_revision_on_commit() {
+    let id = DocumentId::new(NonZeroUsize::new(1).unwrap());
+    let mut doc = Document::new(id, Rope::from("hello"));
+
+    let tx = Transaction::change(doc.text(), vec![(5, 5, Some("!".into()))]).unwrap();
+    doc.apply_transaction(&tx).unwrap();
+    doc.commit().unwrap();
+    assert_eq!(doc.history().current_revision(), 1);
+    assert_eq!(doc.history().len(), 2);
+
+    let jump = doc.prepare_undo_jump().unwrap();
+    for txn in &jump.transactions {
+      doc.apply_transaction(txn).unwrap();
+    }
+    doc.finish_history_jump(&jump).unwrap();
+
+    assert_eq!(doc.text().to_string(), "hello");
+    assert_eq!(doc.history().current_revision(), 0);
+
+    let history_len = doc.history().len();
+    doc.commit().unwrap();
+    assert_eq!(doc.history().len(), history_len);
   }
 
   #[test]

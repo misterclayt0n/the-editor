@@ -34,7 +34,10 @@ use the_lib::{
     AutoPairs,
   },
   editor::Editor,
-  history::UndoKind,
+  history::{
+    HistoryJump,
+    UndoKind,
+  },
   indent,
   match_brackets as mb,
   messages::{
@@ -2804,41 +2807,71 @@ fn extend_line_impl<Ctx: DefaultContext>(ctx: &mut Ctx, extend: ExtendDirection,
   let _ = doc.set_selection(new_selection);
 }
 
+fn apply_prepared_history_jump<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  jump: &HistoryJump,
+) -> bool {
+  for transaction in &jump.transactions {
+    if !ctx.apply_transaction(transaction) {
+      return false;
+    }
+  }
+  ctx.editor().document_mut().finish_history_jump(jump).is_ok()
+}
+
 fn undo<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
-  let doc = ctx.editor().document_mut();
   let count = count.max(1);
   for _ in 0..count {
-    if doc.undo().ok() != Some(true) {
+    let Some(jump) = ctx.editor_ref().document().prepare_undo_jump() else {
+      break;
+    };
+    if !apply_prepared_history_jump(ctx, &jump) {
       break;
     }
   }
 }
 
 fn redo<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
-  let doc = ctx.editor().document_mut();
   let count = count.max(1);
   for _ in 0..count {
-    if doc.redo().ok() != Some(true) {
+    let Some(jump) = ctx.editor_ref().document().prepare_redo_jump() else {
+      break;
+    };
+    if !apply_prepared_history_jump(ctx, &jump) {
       break;
     }
   }
 }
 
 fn earlier<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
-  let doc = ctx.editor().document_mut();
   let count = count.max(1);
   for _ in 0..count {
-    if doc.earlier(UndoKind::Steps(1)).ok() != Some(true) {
+    let Some(jump) = ctx
+      .editor_ref()
+      .document()
+      .prepare_earlier_jump(UndoKind::Steps(1))
+      .ok()
+    else {
+      break;
+    };
+    if !apply_prepared_history_jump(ctx, &jump) {
       break;
     }
   }
 }
 
 fn later<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {
-  let doc = ctx.editor().document_mut();
   let count = count.max(1);
   for _ in 0..count {
-    if doc.later(UndoKind::Steps(1)).ok() != Some(true) {
+    let Some(jump) = ctx
+      .editor_ref()
+      .document()
+      .prepare_later_jump(UndoKind::Steps(1))
+      .ok()
+    else {
+      break;
+    };
+    if !apply_prepared_history_jump(ctx, &jump) {
       break;
     }
   }

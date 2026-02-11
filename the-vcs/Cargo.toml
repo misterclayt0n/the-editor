@@ -11,6 +11,7 @@ path = "lib.rs"
 arc-swap = "1.8.0"
 eyre.workspace = true
 log = "0.4"
+ropey.workspace = true
 
 [features]
 default = []

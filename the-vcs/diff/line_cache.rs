@@ -12,8 +12,8 @@
 //! A transmute is used to change the lifetime of the slice to static to circumvent that project.
 use std::mem::transmute;
 
-use helix_core::{Rope, RopeSlice};
 use imara_diff::{InternedInput, Interner};
+use ropey::{Rope, RopeSlice};
 
 use super::{MAX_DIFF_BYTES, MAX_DIFF_LINES};
 

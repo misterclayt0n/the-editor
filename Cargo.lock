@@ -1483,6 +1483,7 @@ dependencies = [
  "arc-swap",
  "eyre",
  "log",
+ "ropey",
 ]
 
 [[package]]

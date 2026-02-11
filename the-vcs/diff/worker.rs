@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use helix_core::{Rope, RopeSlice};
 use imara_diff::{IndentHeuristic, IndentLevel, InternedInput};
 use parking_lot::RwLock;
+use ropey::{Rope, RopeSlice};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::Notify;
 use tokio::time::{timeout, timeout_at, Duration};

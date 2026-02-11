@@ -61,6 +61,8 @@ pub struct HighlightCache {
 
   /// Byte range that has been queried and cached
   cached_range: ops::Range<usize>,
+  /// Flat list of cached highlight spans for the current cached range.
+  spans:        Vec<(Highlight, ops::Range<usize>)>,
 }
 
 impl HighlightCache {
@@ -82,6 +84,26 @@ impl HighlightCache {
     // Since rendering applies highlights via patch() (last wins), this ensures
     // shorter/more-specific highlights take precedence over container highlights.
     highlights.sort_by_key(|(_, range)| (range.start, Reverse(range.end)));
+    highlights.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+    highlights
+  }
+
+  /// Get cached highlights intersecting a byte range.
+  pub fn get_byte_range(
+    &self,
+    byte_range: ops::Range<usize>,
+  ) -> Vec<(Highlight, ops::Range<usize>)> {
+    if byte_range.start >= byte_range.end {
+      return Vec::new();
+    }
+    let mut highlights: Vec<_> = self
+      .spans
+      .iter()
+      .filter(|(_, span)| span.start < byte_range.end && span.end > byte_range.start)
+      .cloned()
+      .collect();
+    highlights.sort_by_key(|(_, range)| (range.start, Reverse(range.end)));
+    highlights.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
     highlights
   }
 
@@ -107,16 +129,29 @@ impl HighlightCache {
       self.by_line.clear();
     }
 
-    // Group highlights by the line they start on
-    for (highlight, range) in highlights {
-      let start_line = text.byte_to_char(range.start);
-      let start_line = text.char_to_line(start_line);
+    self.spans = highlights.clone();
 
-      self
-        .by_line
-        .entry(start_line)
-        .or_default()
-        .push((highlight, range.clone()));
+    // Group highlights by every line they overlap with so line-range queries can
+    // resolve captures that start before the viewport.
+    for (highlight, range) in highlights {
+      if range.start >= range.end {
+        continue;
+      }
+      let start_byte = range.start.min(text.len_bytes());
+      let end_byte = range
+        .end
+        .saturating_sub(1)
+        .min(text.len_bytes().saturating_sub(1));
+      let start_line = text.byte_to_line(start_byte);
+      let end_line = text.byte_to_line(end_byte);
+
+      for line in start_line..=end_line {
+        self
+          .by_line
+          .entry(line)
+          .or_default()
+          .push((highlight, range.clone()));
+      }
     }
 
     // Update metadata
@@ -153,6 +188,7 @@ impl HighlightCache {
   /// Clear all cached highlights
   pub fn clear(&mut self) {
     self.by_line.clear();
+    self.spans.clear();
     self.cached_range = 0..0;
     self.doc_version = 0;
     self.syntax_version = 0;
@@ -314,5 +350,33 @@ mod tests {
     assert!(cache.is_range_cached(5..10)); // Within range
     assert!(!cache.is_range_cached(0..20)); // Beyond cached range
     assert!(!cache.is_range_cached(15..20)); // Completely outside
+  }
+
+  #[test]
+  fn test_highlight_cache_line_and_byte_queries_include_overlaps() {
+    let mut cache = HighlightCache::default();
+    let text = Rope::from("one\ntwo\nthree\n");
+
+    let start = text.line_to_byte(0);
+    let middle = text.line_to_byte(1);
+    let end = text.line_to_byte(2);
+    cache.update_range(
+      0..text.len_bytes(),
+      vec![
+        (Highlight::new(1), start..end),  // spans lines 0..=1
+        (Highlight::new(2), middle..end), // spans line 1
+      ],
+      text.slice(..),
+      1,
+      1,
+    );
+
+    let line_one = cache.get_line_range(1, 1);
+    assert!(line_one.iter().any(|(hl, _)| *hl == Highlight::new(1)));
+    assert!(line_one.iter().any(|(hl, _)| *hl == Highlight::new(2)));
+
+    let byte_hits = cache.get_byte_range(middle..end);
+    assert!(byte_hits.iter().any(|(hl, _)| *hl == Highlight::new(1)));
+    assert!(byte_hits.iter().any(|(hl, _)| *hl == Highlight::new(2)));
   }
 }

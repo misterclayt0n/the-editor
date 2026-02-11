@@ -49,6 +49,7 @@ pub struct SyntaxHighlightAdapter<'a> {
   text:       RopeSlice<'a>,
   highlights: Vec<(Highlight, Range<usize>)>,
   idx:        usize,
+  active:     Vec<(Highlight, usize)>,
 }
 
 impl<'a> SyntaxHighlightAdapter<'a> {
@@ -82,7 +83,8 @@ impl<'a> SyntaxHighlightAdapter<'a> {
 
   pub fn from_cache(text: RopeSlice<'a>, cache: &HighlightCache, line_range: Range<usize>) -> Self {
     let highlights = if line_range.start < line_range.end {
-      cache.get_line_range(line_range.start, line_range.end - 1)
+      let byte_range = line_range_to_bytes(text, line_range.clone());
+      cache.get_byte_range(byte_range)
     } else {
       Vec::new()
     };
@@ -91,6 +93,7 @@ impl<'a> SyntaxHighlightAdapter<'a> {
       text,
       highlights,
       idx: 0,
+      active: Vec::new(),
     }
   }
 }
@@ -102,16 +105,19 @@ impl HighlightProvider for SyntaxHighlightAdapter<'_> {
     }
 
     let byte_idx = self.text.char_to_byte(char_idx);
-    while let Some((_, range)) = self.highlights.get(self.idx) {
-      if byte_idx < range.start {
-        return None;
+
+    while let Some((highlight, range)) = self.highlights.get(self.idx) {
+      if range.start > byte_idx {
+        break;
       }
-      if byte_idx < range.end {
-        return Some(self.highlights[self.idx].0);
+      if range.end > byte_idx {
+        self.active.push((*highlight, range.end));
       }
       self.idx += 1;
     }
-    None
+
+    self.active.retain(|(_, end)| *end > byte_idx);
+    self.active.last().map(|(highlight, _)| *highlight)
   }
 }
 
@@ -151,5 +157,29 @@ mod tests {
     let mut adapter = SyntaxHighlightAdapter::from_cache(text.slice(..), &cache, 0..1);
     assert_eq!(adapter.highlight_at(0), Some(Highlight::new(1)));
     assert_eq!(adapter.highlight_at(4), None);
+  }
+
+  #[test]
+  fn adapter_prefers_most_specific_active_highlight() {
+    let text = Rope::from("abcdef\n");
+    let mut cache = HighlightCache::default();
+    cache.update_range(
+      0..text.len_bytes(),
+      vec![
+        (Highlight::new(1), 0..6),
+        (Highlight::new(2), 2..5),
+        (Highlight::new(3), 3..4),
+      ],
+      text.slice(..),
+      1,
+      1,
+    );
+
+    let mut adapter = SyntaxHighlightAdapter::from_cache(text.slice(..), &cache, 0..1);
+    assert_eq!(adapter.highlight_at(0), Some(Highlight::new(1)));
+    assert_eq!(adapter.highlight_at(2), Some(Highlight::new(2)));
+    assert_eq!(adapter.highlight_at(3), Some(Highlight::new(3)));
+    assert_eq!(adapter.highlight_at(4), Some(Highlight::new(2)));
+    assert_eq!(adapter.highlight_at(5), Some(Highlight::new(1)));
   }
 }

@@ -2148,8 +2148,16 @@ fn delete_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
     }
   });
 
-  if let Ok(tx) = tx {
-    let _ = ctx.apply_transaction(&tx);
+  let tx = match tx {
+    Ok(tx) => tx,
+    Err(err) => {
+      ctx.push_error("edit", format!("failed to build delete transaction: {err}"));
+      return;
+    },
+  };
+  if !ctx.apply_transaction(&tx) {
+    ctx.push_error("edit", "failed to apply delete transaction");
+    return;
   }
 
   if yank {
@@ -2160,9 +2168,23 @@ fn delete_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
   ctx.request_render();
 }
 
+fn selection_is_linewise(selection: &Selection, text: &ropey::Rope) -> bool {
+  selection.ranges().iter().all(|range| {
+    let slice = text.slice(..);
+    if range.slice(slice).len_lines() < 2 {
+      return false;
+    }
+    let (start_line, end_line) = range.line_range(slice);
+    let start = text.line_to_char(start_line);
+    let end = text.line_to_char((end_line + 1).min(text.len_lines()));
+    start == range.from() && end == range.to()
+  })
+}
+
 fn change_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
   let doc = ctx.editor().document_mut();
   let selection = doc.selection().clone();
+  let only_whole_lines = selection_is_linewise(&selection, doc.text());
   let slice = doc.text().slice(..);
 
   // Collect fragments, treating empty selections as 1-char selections
@@ -2194,16 +2216,28 @@ fn change_selection<Ctx: DefaultContext>(ctx: &mut Ctx, yank: bool) {
     }
   });
 
-  if let Ok(tx) = tx {
-    let _ = ctx.apply_transaction(&tx);
+  let tx = match tx {
+    Ok(tx) => tx,
+    Err(err) => {
+      ctx.push_error("edit", format!("failed to build change transaction: {err}"));
+      return;
+    },
+  };
+  if !ctx.apply_transaction(&tx) {
+    ctx.push_error("edit", "failed to apply change transaction");
+    return;
   }
 
   if yank {
     let _ = ctx.registers_mut().write('"', fragments);
   }
 
-  ctx.set_mode(Mode::Insert);
-  ctx.request_render();
+  if only_whole_lines {
+    open(ctx, OpenDirection::Above, CommentContinuation::Disabled);
+  } else {
+    ctx.set_mode(Mode::Insert);
+    ctx.request_render();
+  }
 }
 
 fn replace_selection<Ctx: DefaultContext>(ctx: &mut Ctx, ch: char) {

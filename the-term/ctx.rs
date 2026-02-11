@@ -3091,8 +3091,16 @@ mod tests {
   use the_default::{
     CommandEvent,
     DefaultContext,
+    Key,
+    KeyEvent,
+    Mode,
+    Modifiers,
+    handle_key,
   };
-  use the_lib::transaction::Transaction;
+  use the_lib::{
+    selection::Selection,
+    transaction::Transaction,
+  };
 
   use super::Ctx;
   use crate::{
@@ -3356,5 +3364,50 @@ pkgs.mkShell {
     ctx.editor.view_mut().scroll.col = 40;
     ensure_cursor_visible(&mut ctx);
     assert_eq!(ctx.editor.view().scroll.col, 0);
+  }
+
+  #[test]
+  fn normal_x_then_c_performs_linewise_change() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("one\nline-two\nthree\n".into()))),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+
+    let line_two_start = ctx.editor.document().text().line_to_char(1);
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(line_two_start, line_two_start));
+
+    handle_key(
+      &dispatch,
+      &mut ctx,
+      KeyEvent {
+        key:       Key::Char('x'),
+        modifiers: Modifiers::empty(),
+      },
+    );
+
+    let selected = ctx.editor.document().selection().ranges()[0];
+    assert_eq!(selected.from(), line_two_start);
+    assert_eq!(selected.to(), ctx.editor.document().text().line_to_char(2));
+
+    handle_key(
+      &dispatch,
+      &mut ctx,
+      KeyEvent {
+        key:       Key::Char('c'),
+        modifiers: Modifiers::empty(),
+      },
+    );
+
+    assert_eq!(ctx.editor.document().text().to_string(), "one\n\nthree\n");
+    assert_eq!(ctx.mode(), Mode::Insert);
   }
 }

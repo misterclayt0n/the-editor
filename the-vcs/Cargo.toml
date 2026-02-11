@@ -1,0 +1,21 @@
+[package]
+name = "the-vcs"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+arc-swap = "1.8.0"
+eyre.workspace = true
+log = "0.4"
+
+[features]
+default = []
+git = []
+diff = []
+
+[lints]
+workspace = true

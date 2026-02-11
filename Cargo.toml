@@ -10,7 +10,7 @@ members = [
   "the-loader",
   "the-runtime",
   "the-stdx",
-  "the-term",
+  "the-term", "the-vcs",
 ]
 resolver = "3"
 

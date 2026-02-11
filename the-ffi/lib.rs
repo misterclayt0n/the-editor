@@ -2961,8 +2961,8 @@ impl App {
                 the_lib::messages::MessageLevel::Warning,
                 Some("watch".into()),
                 format!(
-                  "file changed on disk: {label} (buffer has unsaved changes; run :reload force \
-                   to discard them)"
+                  "file changed on disk: {label} (buffer has unsaved changes; run :rl to reload \
+                   disk or :w! to overwrite disk)"
                 ),
               );
               self.request_render();
@@ -5198,6 +5198,13 @@ pkgs.mkShell {
       ffi::Position { row: 0, col: 0 },
     );
     assert!(app.activate(id).is_some());
+    assert!(app.set_file_path(
+      id,
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8")
+    ));
 
     let cursor = {
       let text = app.active_editor_ref().document().text().slice(..);
@@ -5247,6 +5254,13 @@ pkgs.mkShell {
       ffi::Position { row: 0, col: 0 },
     );
     assert!(app.activate(id).is_some());
+    assert!(app.set_file_path(
+      id,
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8")
+    ));
 
     let local_edit = Transaction::change(
       app.active_editor_ref().document().text(),
@@ -5289,6 +5303,123 @@ pkgs.mkShell {
       <App as DefaultContext>::watch_statusline_text(&app).as_deref(),
       Some("watch: conflict")
     );
+  }
+
+  #[test]
+  fn watch_conflict_write_requires_force_and_w_bang_overwrites_disk() {
+    let _guard = ffi_test_guard();
+    let fixture = TempTestFile::new("conflict-write-force", "alpha\nbeta\n");
+    let mut app = App::new();
+    let id = app.create_editor(
+      &fs::read_to_string(fixture.as_path()).expect("read fixture"),
+      default_viewport(),
+      ffi::Position { row: 0, col: 0 },
+    );
+    assert!(app.activate(id).is_some());
+    assert!(app.set_file_path(
+      id,
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8")
+    ));
+
+    let local_edit = Transaction::change(
+      app.active_editor_ref().document().text(),
+      std::iter::once((0, 0, Some("local-".into()))),
+    )
+    .expect("local edit");
+    assert!(DefaultContext::apply_transaction(&mut app, &local_edit));
+    let local_snapshot = app.text(id);
+
+    let watch_tx = install_test_watch_state(&mut app, id, fixture.as_path());
+    fs::write(fixture.as_path(), "disk-alpha\ndisk-beta\n").expect("update fixture");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send watch event");
+    assert!(app.poll_lsp_file_watch());
+    assert!(<App as DefaultContext>::watch_conflict_active(&app));
+
+    let registry = app.command_registry_ref() as *const CommandRegistry<App>;
+    let write_err = unsafe { (&*registry).execute(&mut app, "write", "", CommandEvent::Validate) }
+      .expect_err("write should fail with conflict");
+    assert!(write_err.to_string().contains(":w!"));
+
+    unsafe { (&*registry).execute(&mut app, "w!", "", CommandEvent::Validate) }
+      .expect("force write");
+    assert_eq!(
+      fs::read_to_string(fixture.as_path()).expect("read disk"),
+      local_snapshot
+    );
+    assert!(!<App as DefaultContext>::watch_conflict_active(&app));
+  }
+
+  #[test]
+  fn watch_conflict_rl_and_rla_aliases_reload_and_clear_conflict() {
+    let _guard = ffi_test_guard();
+    let fixture = TempTestFile::new("conflict-reload-alias", "alpha\nbeta\n");
+    let mut app = App::new();
+    let id = app.create_editor(
+      &fs::read_to_string(fixture.as_path()).expect("read fixture"),
+      default_viewport(),
+      ffi::Position { row: 0, col: 0 },
+    );
+    assert!(app.activate(id).is_some());
+    assert!(app.set_file_path(
+      id,
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8")
+    ));
+
+    let local_edit = Transaction::change(
+      app.active_editor_ref().document().text(),
+      std::iter::once((0, 0, Some("local-".into()))),
+    )
+    .expect("local edit");
+    assert!(DefaultContext::apply_transaction(&mut app, &local_edit));
+
+    let watch_tx = install_test_watch_state(&mut app, id, fixture.as_path());
+    fs::write(fixture.as_path(), "disk-alpha\ndisk-beta\n").expect("update fixture");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send watch event");
+    assert!(app.poll_lsp_file_watch());
+    assert!(<App as DefaultContext>::watch_conflict_active(&app));
+
+    let registry = app.command_registry_ref() as *const CommandRegistry<App>;
+    unsafe { (&*registry).execute(&mut app, "rl", "", CommandEvent::Validate) }
+      .expect("reload alias");
+    assert_eq!(app.text(id), "disk-alpha\ndisk-beta\n");
+    assert!(!<App as DefaultContext>::watch_conflict_active(&app));
+
+    let local_edit_again = Transaction::change(
+      app.active_editor_ref().document().text(),
+      std::iter::once((0, 0, Some("local-".into()))),
+    )
+    .expect("local edit");
+    assert!(DefaultContext::apply_transaction(&mut app, &local_edit_again));
+    fs::write(fixture.as_path(), "disk-gamma\ndisk-delta\n").expect("update fixture");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send watch event");
+    assert!(app.poll_lsp_file_watch());
+    assert!(<App as DefaultContext>::watch_conflict_active(&app));
+
+    unsafe { (&*registry).execute(&mut app, "rla", "", CommandEvent::Validate) }
+      .expect("reload-all alias");
+    assert_eq!(app.text(id), "disk-gamma\ndisk-delta\n");
+    assert!(!<App as DefaultContext>::watch_conflict_active(&app));
   }
 
   #[test]

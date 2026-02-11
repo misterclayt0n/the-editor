@@ -436,6 +436,18 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
     ));
 
     self.register(TypableCommand::new(
+      "write!",
+      &["w!"],
+      "Force write buffer to file even when a watch conflict is active",
+      cmd_write_force::<Ctx>,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
       "write-quit",
       &["wq", "x"],
       "Write buffer to file and close the editor",
@@ -449,9 +461,21 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
 
     self.register(TypableCommand::new(
       "reload",
-      &[],
+      &["rl"],
       "Reload current file from disk (use :reload force to discard unsaved changes)",
       cmd_reload::<Ctx>,
+      CommandCompleter::all(completers::reload_mode),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "reload-all",
+      &["rla"],
+      "Reload all open files from disk (single-buffer clients reload the active file)",
+      cmd_reload_all::<Ctx>,
       CommandCompleter::all(completers::reload_mode),
       Signature {
         positionals: (0, Some(1)),
@@ -584,11 +608,10 @@ fn cmd_write<Ctx: DefaultContext>(
     return Ok(());
   }
 
-  ctx.dispatch().pre_on_action(ctx, Command::Save);
-  Ok(())
+  ctx.save_current_buffer(false).map_err(CommandError::new)
 }
 
-fn cmd_write_quit<Ctx: DefaultContext>(
+fn cmd_write_force<Ctx: DefaultContext>(
   ctx: &mut Ctx,
   _args: Args,
   event: CommandEvent,
@@ -597,22 +620,12 @@ fn cmd_write_quit<Ctx: DefaultContext>(
     return Ok(());
   }
 
-  ctx.dispatch().pre_on_action(ctx, Command::Save);
-  ctx.dispatch().pre_on_action(ctx, Command::Quit);
-  Ok(())
+  ctx.save_current_buffer(true).map_err(CommandError::new)
 }
 
-fn cmd_reload<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  args: Args,
-  event: CommandEvent,
-) -> CommandResult {
-  if event != CommandEvent::Validate {
-    return Ok(());
-  }
-
+fn reload_force_from_args<Ctx: DefaultContext>(ctx: &Ctx, args: &Args) -> Result<bool, CommandError> {
   let force = match args.first() {
-    None => false,
+    None => ctx.watch_conflict_active(),
     Some("force") | Some("!") => true,
     Some(other) => {
       return Err(CommandError::new(format!(
@@ -620,14 +633,17 @@ fn cmd_reload<Ctx: DefaultContext>(
       )));
     },
   };
+  Ok(force)
+}
 
+fn reload_active_file<Ctx: DefaultContext>(ctx: &mut Ctx, force: bool) -> CommandResult {
   let Some(path) = ctx.file_path().map(|path| path.to_path_buf()) else {
     return Err(CommandError::new("no file path set for current buffer"));
   };
 
   if ctx.editor().document().flags().modified && !force {
     return Err(CommandError::new(
-      "buffer has unsaved changes; run :reload force to discard them",
+      "buffer has unsaved changes; run :rl to discard them, or :write to save first",
     ));
   }
 
@@ -646,6 +662,46 @@ fn cmd_reload<Ctx: DefaultContext>(
     format!("reloaded {} from disk{suffix}", path.display()),
   );
   Ok(())
+}
+
+fn cmd_write_quit<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  ctx.save_current_buffer(false).map_err(CommandError::new)?;
+  ctx.dispatch().pre_on_action(ctx, Command::Quit);
+  Ok(())
+}
+
+fn cmd_reload<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let force = reload_force_from_args(ctx, &args)?;
+  reload_active_file(ctx, force)
+}
+
+fn cmd_reload_all<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let force = reload_force_from_args(ctx, &args)?;
+  reload_active_file(ctx, force)
 }
 
 fn cmd_watch_conflict<Ctx: DefaultContext>(
@@ -671,7 +727,7 @@ fn cmd_watch_conflict<Ctx: DefaultContext>(
     if ctx.watch_conflict_active() {
       ctx.push_warning(
         "watch",
-        "external file conflict active; use :watch-conflict discard to reload from disk",
+        "external file conflict active; use :rl to reload disk or :w! to keep local changes",
       );
     } else {
       ctx.push_info("watch", "no external file conflict");

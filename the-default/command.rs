@@ -441,6 +441,38 @@ pub trait DefaultContext: Sized + 'static {
   fn ui_theme(&self) -> &Theme;
   fn set_file_path(&mut self, path: Option<PathBuf>);
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
+  fn save_current_buffer(&mut self, force: bool) -> Result<(), String> {
+    let Some(path) = self.file_path().map(|path| path.to_path_buf()) else {
+      return Err("No file path set".to_string());
+    };
+
+    if self.watch_conflict_active() && !force {
+      return Err(
+        "external file conflict active; use :w! to overwrite disk or :rl to reload from disk"
+          .to_string(),
+      );
+    }
+
+    let text = self.editor_ref().document().text().to_string();
+    let line_count = text.lines().count().max(1);
+    let byte_count = text.len();
+    std::fs::write(&path, &text)
+      .map_err(|err| format!("Failed to write {}: {err}", path.display()))?;
+    let _ = self.editor().document_mut().mark_saved();
+    self.on_file_saved(&path, &text);
+    if force {
+      self.clear_watch_conflict();
+    }
+
+    let path_text = status_path_text(&path);
+    let size_text = format_binary_size(byte_count);
+    let forced_suffix = if force { " (forced)" } else { "" };
+    self.push_info(
+      "save",
+      format!("'{path_text}' written, {line_count}L {size_text}{forced_suffix}"),
+    );
+    Ok(())
+  }
   fn reload_file_preserving_view(&mut self, path: &Path) -> std::io::Result<()> {
     let disk_text = std::fs::read_to_string(path)?;
     let previous_text = self.editor_ref().document().text().clone();
@@ -2123,27 +2155,12 @@ fn motion<Ctx: DefaultContext>(ctx: &mut Ctx, motion: Motion) {
 }
 
 fn save<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
-  let Some(path) = ctx.file_path().map(|path| path.to_path_buf()) else {
-    ctx.push_warning("save", "No file path set");
-    return;
-  };
-  let text = ctx.editor().document().text().to_string();
-  let line_count = text.lines().count().max(1);
-  let byte_count = text.len();
-  match std::fs::write(&path, &text) {
-    Ok(()) => {
-      let _ = ctx.editor().document_mut().mark_saved();
-      ctx.on_file_saved(&path, &text);
-      let path_text = status_path_text(&path);
-      let size_text = format_binary_size(byte_count);
-      ctx.push_info(
-        "save",
-        format!("'{path_text}' written, {line_count}L {size_text}"),
-      );
-    },
-    Err(err) => {
-      ctx.push_error("save", format!("Failed to write {}: {err}", path.display()));
-    },
+  if let Err(err) = ctx.save_current_buffer(false) {
+    if err.starts_with("Failed to write ") {
+      ctx.push_error("save", err);
+    } else {
+      ctx.push_warning("save", err);
+    }
   }
 }
 

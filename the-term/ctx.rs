@@ -1392,8 +1392,8 @@ impl Ctx {
               MessageLevel::Warning,
               Some("watch".into()),
               format!(
-                "file changed on disk: {label} (buffer has unsaved changes; run :reload force to \
-                 discard them)"
+                "file changed on disk: {label} (buffer has unsaved changes; run :rl to reload \
+                 disk or :w! to overwrite disk)"
               ),
             );
             true
@@ -3928,6 +3928,114 @@ pkgs.mkShell {
     assert_eq!(
       ctx.editor.document().text().to_string(),
       "disk-alpha\ndisk-beta\n"
+    );
+    assert!(!<Ctx as DefaultContext>::watch_conflict_active(&ctx));
+  }
+
+  #[test]
+  fn watch_conflict_write_requires_force_and_w_bang_overwrites_disk() {
+    let fixture = TempTestFile::new("conflict-write-force", "alpha\nbeta\n");
+    let mut ctx = Ctx::new(Some(
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    let local_edit = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("local-".into()))),
+    )
+    .expect("local edit");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &local_edit));
+    let local_snapshot = ctx.editor.document().text().to_string();
+
+    let watch_tx = install_test_watch_state(&mut ctx, fixture.as_path());
+    fs::write(fixture.as_path(), "disk-alpha\ndisk-beta\n").expect("update fixture");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send watch event");
+    assert!(ctx.poll_lsp_file_watch());
+    assert!(<Ctx as DefaultContext>::watch_conflict_active(&ctx));
+
+    let registry = ctx.command_registry_ref() as *const the_default::CommandRegistry<Ctx>;
+    let write_err =
+      unsafe { (&*registry).execute(&mut ctx, "write", "", CommandEvent::Validate) }
+        .expect_err("write should fail with conflict");
+    assert!(write_err.to_string().contains(":w!"));
+
+    unsafe { (&*registry).execute(&mut ctx, "w!", "", CommandEvent::Validate) }
+      .expect("force write");
+    assert_eq!(
+      fs::read_to_string(fixture.as_path()).expect("read disk"),
+      local_snapshot
+    );
+    assert!(!<Ctx as DefaultContext>::watch_conflict_active(&ctx));
+  }
+
+  #[test]
+  fn watch_conflict_rl_and_rla_aliases_reload_and_clear_conflict() {
+    let fixture = TempTestFile::new("conflict-reload-alias", "alpha\nbeta\n");
+    let mut ctx = Ctx::new(Some(
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    let local_edit = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("local-".into()))),
+    )
+    .expect("local edit");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &local_edit));
+
+    let watch_tx = install_test_watch_state(&mut ctx, fixture.as_path());
+    fs::write(fixture.as_path(), "disk-alpha\ndisk-beta\n").expect("update fixture");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send watch event");
+    assert!(ctx.poll_lsp_file_watch());
+    assert!(<Ctx as DefaultContext>::watch_conflict_active(&ctx));
+
+    let registry = ctx.command_registry_ref() as *const the_default::CommandRegistry<Ctx>;
+    unsafe { (&*registry).execute(&mut ctx, "rl", "", CommandEvent::Validate) }
+      .expect("reload alias");
+    assert_eq!(
+      ctx.editor.document().text().to_string(),
+      "disk-alpha\ndisk-beta\n"
+    );
+    assert!(!<Ctx as DefaultContext>::watch_conflict_active(&ctx));
+
+    let local_edit_again = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("local-".into()))),
+    )
+    .expect("local edit");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &local_edit_again));
+    fs::write(fixture.as_path(), "disk-gamma\ndisk-delta\n").expect("update fixture");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send watch event");
+    assert!(ctx.poll_lsp_file_watch());
+    assert!(<Ctx as DefaultContext>::watch_conflict_active(&ctx));
+
+    unsafe { (&*registry).execute(&mut ctx, "rla", "", CommandEvent::Validate) }
+      .expect("reload-all alias");
+    assert_eq!(
+      ctx.editor.document().text().to_string(),
+      "disk-gamma\ndisk-delta\n"
     );
     assert!(!<Ctx as DefaultContext>::watch_conflict_active(&ctx));
   }

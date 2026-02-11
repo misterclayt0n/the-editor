@@ -547,6 +547,10 @@ pub enum Command {
   LspDocumentSymbols,
   LspWorkspaceSymbols,
   LspCompletion,
+  CompletionNext,
+  CompletionPrev,
+  CompletionAccept,
+  CompletionCancel,
   LspSignatureHelp,
   LspCodeActions,
   LspFormat,
@@ -1226,6 +1230,26 @@ impl Command {
   #[must_use]
   pub const fn lsp_completion() -> Self {
     Self::LspCompletion
+  }
+
+  #[must_use]
+  pub const fn completion_next() -> Self {
+    Self::CompletionNext
+  }
+
+  #[must_use]
+  pub const fn completion_prev() -> Self {
+    Self::CompletionPrev
+  }
+
+  #[must_use]
+  pub const fn completion_accept() -> Self {
+    Self::CompletionAccept
+  }
+
+  #[must_use]
+  pub const fn completion_cancel() -> Self {
+    Self::CompletionCancel
   }
 
   #[must_use]

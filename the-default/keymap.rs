@@ -581,6 +581,10 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
     let _ = ctx.editor().document_mut().commit();
   }
 
+  if mode != Mode::Insert {
+    ctx.completion_menu_mut().clear();
+  }
+
   if mode == Mode::Select {
     let doc = ctx.editor().document_mut();
     let text = doc.text().slice(..);
@@ -733,6 +737,10 @@ fn command_hint_label(command: Command) -> String {
     Command::LspDocumentSymbols => "document symbols".to_string(),
     Command::LspWorkspaceSymbols => "workspace symbols".to_string(),
     Command::LspCompletion => "completion".to_string(),
+    Command::CompletionNext => "completion next".to_string(),
+    Command::CompletionPrev => "completion previous".to_string(),
+    Command::CompletionAccept => "completion accept".to_string(),
+    Command::CompletionCancel => "completion cancel".to_string(),
     Command::LspSignatureHelp => "signature help".to_string(),
     Command::LspCodeActions => "code action".to_string(),
     Command::LspFormat => "format document".to_string(),
@@ -1162,6 +1170,10 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
     "C-s" => commit_undo_checkpoint,
     "C-x" => lsp_completion,
+    "C-n" => completion_next,
+    "C-p" => completion_prev,
+    "C-y" => completion_accept,
+    "C-e" => completion_cancel,
     "A-k" => lsp_signature_help,
     // "C-r" => insert_register,
 

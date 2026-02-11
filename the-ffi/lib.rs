@@ -952,6 +952,7 @@ struct EditorState {
   command_prompt:               CommandPromptState,
   command_palette:              CommandPaletteState,
   command_palette_style:        CommandPaletteStyle,
+  completion_menu:              the_default::CompletionMenuState,
   file_picker:                  FilePickerState,
   search_prompt:                SearchPromptState,
   ui_state:                     UiState,
@@ -989,6 +990,7 @@ impl EditorState {
       command_prompt: CommandPromptState::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style,
+      completion_menu: the_default::CompletionMenuState::default(),
       file_picker,
       search_prompt: SearchPromptState::new(),
       ui_state: UiState::default(),
@@ -3722,6 +3724,14 @@ impl DefaultContext for App {
 
   fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle {
     &mut self.active_state_mut().command_palette_style
+  }
+
+  fn completion_menu(&self) -> &the_default::CompletionMenuState {
+    &self.active_state_ref().completion_menu
+  }
+
+  fn completion_menu_mut(&mut self) -> &mut the_default::CompletionMenuState {
+    &mut self.active_state_mut().completion_menu
   }
 
   fn file_picker(&self) -> &FilePickerState {

@@ -122,6 +122,7 @@ use crate::{
     CommandPaletteState,
     CommandPaletteStyle,
   },
+  completion_menu::CompletionMenuState,
   command_registry::{
     CommandEvent,
     CommandPromptState,
@@ -410,6 +411,11 @@ pub trait DefaultContext: Sized + 'static {
   fn command_palette_mut(&mut self) -> &mut CommandPaletteState;
   fn command_palette_style(&self) -> &CommandPaletteStyle;
   fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle;
+  fn completion_menu(&self) -> &CompletionMenuState;
+  fn completion_menu_mut(&mut self) -> &mut CompletionMenuState;
+  fn completion_accept_selected(&mut self, _index: usize) -> bool {
+    false
+  }
   fn file_picker(&self) -> &crate::file_picker::FilePickerState;
   fn file_picker_mut(&mut self) -> &mut crate::file_picker::FilePickerState;
   fn search_prompt_ref(&self) -> &crate::SearchPromptState;
@@ -912,6 +918,10 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::LspDocumentSymbols => ctx.lsp_document_symbols(),
     Command::LspWorkspaceSymbols => ctx.lsp_workspace_symbols(),
     Command::LspCompletion => ctx.lsp_completion(),
+    Command::CompletionNext => crate::completion_menu::completion_next(ctx),
+    Command::CompletionPrev => crate::completion_menu::completion_prev(ctx),
+    Command::CompletionAccept => crate::completion_menu::completion_accept(ctx),
+    Command::CompletionCancel => crate::completion_menu::close_completion_menu(ctx),
     Command::LspSignatureHelp => ctx.lsp_signature_help(),
     Command::LspCodeActions => ctx.lsp_code_actions(),
     Command::LspFormat => ctx.lsp_format(),
@@ -928,7 +938,22 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
 
+  if ctx.completion_menu().active && !command_preserves_completion_menu(command) {
+    ctx.completion_menu_mut().clear();
+  }
+
   ctx.dispatch().post_on_action(ctx, ());
+}
+
+fn command_preserves_completion_menu(command: Command) -> bool {
+  matches!(
+    command,
+    Command::LspCompletion
+      | Command::CompletionNext
+      | Command::CompletionPrev
+      | Command::CompletionAccept
+      | Command::CompletionCancel
+  )
 }
 
 fn repeat_last_motion<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) {
@@ -1000,6 +1025,8 @@ fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
   let mut tree = UiTree::new();
   let overlays = crate::command_palette::build_command_palette_ui(ctx);
   tree.overlays.extend(overlays);
+  let overlays = crate::completion_menu::build_completion_menu_ui(ctx);
+  tree.overlays.extend(overlays);
   let overlays = crate::search_prompt::build_search_prompt_ui(ctx);
   tree.overlays.extend(overlays);
   let overlays = crate::file_picker::build_file_picker_ui(ctx);
@@ -1041,6 +1068,10 @@ fn on_ui<Ctx: DefaultContext>(ctx: &mut Ctx, _unit: ()) -> UiTree {
     };
     tree.focus = Some(focus.clone());
     ctx.ui_state_mut().set_focus(Some(focus));
+  } else if ctx.completion_menu().active {
+    let focus = UiFocus::list("completion_list");
+    tree.focus = Some(focus.clone());
+    ctx.ui_state_mut().set_focus(Some(focus));
   } else {
     tree.focus = ctx.ui_state().focus().cloned();
   }
@@ -1063,6 +1094,10 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
 
   let is_command_palette = target_id
     .map(|id| id.starts_with("command_palette"))
+    .unwrap_or(false);
+
+  let is_completion_menu = target_id
+    .map(|id| id.starts_with("completion"))
     .unwrap_or(false);
 
   let is_search_prompt = target_id
@@ -1121,9 +1156,9 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
   }
 
   if is_command_palette {
-    match event.kind {
+    match &event.kind {
       UiEventKind::Key(key_event) => {
-        if let Some(key_event) = ui_key_event_to_key_event(key_event) {
+        if let Some(key_event) = ui_key_event_to_key_event(key_event.clone()) {
           if handle_command_prompt_key(ctx, key_event) {
             return UiEventOutcome::handled();
           }
@@ -1156,6 +1191,51 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
         }
         return UiEventOutcome::handled();
       },
+    }
+  }
+
+  if is_completion_menu {
+    match &event.kind {
+      UiEventKind::Key(key_event) => {
+        if let Some(key_event) = ui_key_event_to_key_event(key_event.clone()) {
+          match key_event.key {
+            Key::Up => {
+              crate::completion_menu::completion_prev(ctx);
+              return UiEventOutcome::handled();
+            },
+            Key::Down => {
+              crate::completion_menu::completion_next(ctx);
+              return UiEventOutcome::handled();
+            },
+            Key::Tab if key_event.modifiers.shift() => {
+              crate::completion_menu::completion_prev(ctx);
+              return UiEventOutcome::handled();
+            },
+            Key::Tab => {
+              crate::completion_menu::completion_next(ctx);
+              return UiEventOutcome::handled();
+            },
+            Key::Enter | Key::NumpadEnter => {
+              crate::completion_menu::completion_accept(ctx);
+              return UiEventOutcome::handled();
+            },
+            Key::Escape => {
+              crate::completion_menu::close_completion_menu(ctx);
+              return UiEventOutcome::handled();
+            },
+            _ => {},
+          }
+        }
+      },
+      UiEventKind::Activate => {
+        crate::completion_menu::completion_accept(ctx);
+        return UiEventOutcome::handled();
+      },
+      UiEventKind::Dismiss => {
+        crate::completion_menu::close_completion_menu(ctx);
+        return UiEventOutcome::handled();
+      },
+      UiEventKind::Command(_) => {},
     }
   }
 
@@ -3624,6 +3704,10 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "workspace_symbols" => Some(Command::lsp_workspace_symbols()),
     "lsp_completion" => Some(Command::lsp_completion()),
     "completion" => Some(Command::lsp_completion()),
+    "completion_next" => Some(Command::completion_next()),
+    "completion_prev" => Some(Command::completion_prev()),
+    "completion_accept" => Some(Command::completion_accept()),
+    "completion_cancel" => Some(Command::completion_cancel()),
     "lsp_signature_help" => Some(Command::lsp_signature_help()),
     "signature_help" => Some(Command::lsp_signature_help()),
     "lsp_code_actions" => Some(Command::lsp_code_actions()),

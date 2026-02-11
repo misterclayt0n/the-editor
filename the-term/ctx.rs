@@ -291,8 +291,7 @@ enum PendingLspRequestKind {
     query: String,
   },
   Completion {
-    uri:           String,
-    fallback_char: usize,
+    uri: String,
   },
   SignatureHelp {
     uri: String,
@@ -372,6 +371,7 @@ pub struct Ctx {
   pub command_registry:             CommandRegistry<Ctx>,
   pub command_palette:              CommandPaletteState,
   pub command_palette_style:        CommandPaletteStyle,
+  pub completion_menu:              the_default::CompletionMenuState,
   pub file_picker:                  FilePickerState,
   pub lsp_runtime:                  LspRuntime,
   pub lsp_ready:                    bool,
@@ -382,6 +382,7 @@ pub struct Ctx {
   lsp_active_progress_tokens:       HashSet<String>,
   lsp_watched_file:                 Option<LspWatchedFileState>,
   lsp_pending_requests:             HashMap<u64, PendingLspRequestKind>,
+  lsp_completion_items:             Vec<LspCompletionItem>,
   pub diagnostics:                  DiagnosticsState,
   pub file_picker_layout:           Option<FilePickerLayout>,
   pub file_picker_drag:             Option<FilePickerDragState>,
@@ -689,6 +690,7 @@ impl Ctx {
       command_registry: CommandRegistry::new(),
       command_palette: CommandPaletteState::default(),
       command_palette_style: CommandPaletteStyle::helix_bottom(),
+      completion_menu: the_default::CompletionMenuState::default(),
       file_picker,
       lsp_runtime,
       lsp_ready: false,
@@ -706,6 +708,7 @@ impl Ctx {
       lsp_active_progress_tokens: HashSet::new(),
       lsp_watched_file: None,
       lsp_pending_requests: HashMap::new(),
+      lsp_completion_items: Vec::new(),
       diagnostics: DiagnosticsState::default(),
       file_picker_layout: None,
       file_picker_drag: None,
@@ -1560,8 +1563,8 @@ impl Ctx {
         };
         self.apply_symbols_result("workspace symbols", symbols)
       },
-      PendingLspRequestKind::Completion { fallback_char, .. } => {
-        self.handle_completion_response(response.result.as_ref(), fallback_char)
+      PendingLspRequestKind::Completion { .. } => {
+        self.handle_completion_response(response.result.as_ref())
       },
       PendingLspRequestKind::SignatureHelp { .. } => {
         self.handle_signature_help_response(response.result.as_ref())
@@ -1629,7 +1632,7 @@ impl Ctx {
     true
   }
 
-  fn handle_completion_response(&mut self, result: Option<&Value>, fallback_char: usize) -> bool {
+  fn handle_completion_response(&mut self, result: Option<&Value>) -> bool {
     let items = match parse_completion_response(result) {
       Ok(items) => items,
       Err(err) => {
@@ -1642,16 +1645,29 @@ impl Ctx {
       },
     };
 
-    let Some(item) = items.into_iter().next() else {
+    if items.is_empty() {
+      self.lsp_completion_items.clear();
+      self.completion_menu.clear();
       self.messages.publish(
         MessageLevel::Info,
         Some("lsp".into()),
         "no completion candidates",
       );
       return true;
-    };
+    }
 
-    self.apply_completion_item(item, fallback_char)
+    if self.mode != Mode::Insert {
+      return true;
+    }
+
+    self.lsp_completion_items = items;
+    let menu_items = self
+      .lsp_completion_items
+      .iter()
+      .map(|item| the_default::CompletionMenuItem::new(item.label.clone()))
+      .collect();
+    the_default::show_completion_menu(self, menu_items);
+    true
   }
 
   fn apply_completion_item(&mut self, item: LspCompletionItem, fallback_char: usize) -> bool {
@@ -2891,6 +2907,34 @@ impl the_default::DefaultContext for Ctx {
     &mut self.command_palette_style
   }
 
+  fn completion_menu(&self) -> &the_default::CompletionMenuState {
+    &self.completion_menu
+  }
+
+  fn completion_menu_mut(&mut self) -> &mut the_default::CompletionMenuState {
+    &mut self.completion_menu
+  }
+
+  fn completion_accept_selected(&mut self, index: usize) -> bool {
+    let Some(item) = self.lsp_completion_items.get(index).cloned() else {
+      return false;
+    };
+
+    let fallback_char = self
+      .editor
+      .document()
+      .selection()
+      .ranges()
+      .first()
+      .map(|range| range.cursor(self.editor.document().text().slice(..)))
+      .unwrap_or(0);
+    let applied = self.apply_completion_item(item, fallback_char);
+    if applied {
+      self.lsp_completion_items.clear();
+    }
+    applied
+  }
+
   fn file_picker(&self) -> &FilePickerState {
     &self.file_picker
   }
@@ -3185,19 +3229,13 @@ impl the_default::DefaultContext for Ctx {
       return;
     };
 
-    let fallback_char = self
-      .editor
-      .document()
-      .selection()
-      .ranges()
-      .first()
-      .map(|range| range.cursor(self.editor.document().text().slice(..)))
-      .unwrap_or(0);
+    self.lsp_completion_items.clear();
+    self.completion_menu.clear();
 
     self.dispatch_lsp_request(
       "textDocument/completion",
       completion_params(&uri, position),
-      PendingLspRequestKind::Completion { uri, fallback_char },
+      PendingLspRequestKind::Completion { uri },
     );
   }
 

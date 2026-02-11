@@ -33,6 +33,7 @@ use the_lib::{
     self,
     AutoPairs,
   },
+  diff::compare_ropes,
   editor::Editor,
   history::{
     HistoryJump,
@@ -55,8 +56,8 @@ use the_lib::{
   },
   position::{
     Position,
-    coords_at_pos,
     char_idx_at_coords,
+    coords_at_pos,
   },
   registers::Registers,
   render::{
@@ -431,11 +432,16 @@ pub trait DefaultContext: Sized + 'static {
   fn set_file_path(&mut self, path: Option<PathBuf>);
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
   fn reload_file_preserving_view(&mut self, path: &Path) -> std::io::Result<()> {
+    let disk_text = std::fs::read_to_string(path)?;
     let previous_text = self.editor_ref().document().text().clone();
     let previous_selection = self.editor_ref().document().selection().clone();
     let previous_scroll = self.editor_ref().view().scroll;
+    let disk_rope = ropey::Rope::from_str(&disk_text);
 
-    self.open_file(path)?;
+    let tx = compare_ropes(&previous_text, &disk_rope);
+    if !tx.changes().is_empty() && !self.apply_transaction(&tx) {
+      return Err(std::io::Error::other("failed to apply reload transaction"));
+    }
 
     {
       let doc = self.editor().document_mut();
@@ -449,6 +455,7 @@ pub trait DefaultContext: Sized + 'static {
         )
       });
       let _ = doc.set_selection(remapped);
+      let _ = doc.mark_saved();
     }
 
     let max_row = self
@@ -457,7 +464,8 @@ pub trait DefaultContext: Sized + 'static {
       .text()
       .len_lines()
       .saturating_sub(1);
-    self.editor().view_mut().scroll = Position::new(previous_scroll.row.min(max_row), previous_scroll.col);
+    self.editor().view_mut().scroll =
+      Position::new(previous_scroll.row.min(max_row), previous_scroll.col);
 
     self.request_render();
     Ok(())
@@ -2846,16 +2854,17 @@ fn extend_line_impl<Ctx: DefaultContext>(ctx: &mut Ctx, extend: ExtendDirection,
   let _ = doc.set_selection(new_selection);
 }
 
-fn apply_prepared_history_jump<Ctx: DefaultContext>(
-  ctx: &mut Ctx,
-  jump: &HistoryJump,
-) -> bool {
+fn apply_prepared_history_jump<Ctx: DefaultContext>(ctx: &mut Ctx, jump: &HistoryJump) -> bool {
   for transaction in &jump.transactions {
     if !ctx.apply_transaction(transaction) {
       return false;
     }
   }
-  ctx.editor().document_mut().finish_history_jump(jump).is_ok()
+  ctx
+    .editor()
+    .document_mut()
+    .finish_history_jump(jump)
+    .is_ok()
 }
 
 fn undo<Ctx: DefaultContext>(ctx: &mut Ctx, count: usize) {

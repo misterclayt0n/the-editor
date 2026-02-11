@@ -87,6 +87,7 @@ use the_lib::{
     DiagnosticSeverity,
     DiagnosticsState,
   },
+  diff::compare_ropes,
   document::{
     Document as LibDocument,
     DocumentId,
@@ -112,10 +113,9 @@ use the_lib::{
     RenderStyles,
     SyntaxHighlightAdapter,
     UiState,
-    apply_diff_gutter_markers,
     apply_diagnostic_gutter_markers,
+    apply_diff_gutter_markers,
     build_plan,
-    gutter_width_for_document,
     graphics::{
       Color as LibColor,
       CursorKind as LibCursorKind,
@@ -123,6 +123,7 @@ use the_lib::{
       Style as LibStyle,
       UnderlineStyle as LibUnderlineStyle,
     },
+    gutter_width_for_document,
     text_annotations::{
       InlineAnnotation,
       Overlay,
@@ -182,17 +183,26 @@ use the_lsp::{
     utf16_position_to_char_idx,
   },
 };
-use the_runtime::file_watch::{
-  PathEventKind,
-  WatchHandle,
-  resolve_trace_log_path as resolve_file_watch_trace_log_path,
-  trace_event as trace_file_watch_event,
-  watch as watch_path,
-};
-use the_runtime::file_watch_consumer::{
-  WatchPollOutcome,
-  WatchedFileEventsState,
-  poll_watch_events,
+use the_runtime::{
+  file_watch::{
+    PathEventKind,
+    WatchHandle,
+    resolve_trace_log_path as resolve_file_watch_trace_log_path,
+    trace_event as trace_file_watch_event,
+    watch as watch_path,
+  },
+  file_watch_consumer::{
+    WatchPollOutcome,
+    WatchedFileEventsState,
+    poll_watch_events,
+  },
+  file_watch_reload::{
+    FileWatchReloadDecision,
+    FileWatchReloadState,
+    clear_reload_state,
+    decide_external_reload,
+    mark_reload_applied,
+  },
 };
 use the_vcs::{
   DiffHandle,
@@ -864,9 +874,9 @@ fn spawn_syntax_parse_request(
   thread::spawn(move || {
     let parsed = (request.payload)();
     let _ = tx.send(SyntaxParseResult {
-      request_id: request.meta.request_id,
+      request_id:  request.meta.request_id,
       doc_version: request.meta.doc_version,
-      syntax: parsed,
+      syntax:      parsed,
     });
   });
 }
@@ -881,8 +891,8 @@ struct LspDocumentSyncState {
 }
 
 struct LspWatchedFileState {
-  stream:         WatchedFileEventsState,
-  _watch_handle:  WatchHandle,
+  stream:        WatchedFileEventsState,
+  _watch_handle: WatchHandle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -937,32 +947,32 @@ impl PendingLspRequestKind {
 }
 
 struct EditorState {
-  mode:                  Mode,
-  command_prompt:        CommandPromptState,
-  command_palette:       CommandPaletteState,
-  command_palette_style: CommandPaletteStyle,
-  file_picker:           FilePickerState,
-  search_prompt:         SearchPromptState,
-  ui_state:              UiState,
-  needs_render:          bool,
-  messages:              MessageCenter,
-  pending_input:         Option<the_default::PendingInput>,
-  register:              Option<char>,
-  macro_recording:       Option<(char, Vec<KeyBinding>)>,
-  macro_replaying:       Vec<char>,
-  macro_queue:           VecDeque<KeyEvent>,
-  text_format:           TextFormat,
-  gutter_config:         GutterConfig,
-  gutter_diff_signs:     BTreeMap<usize, RenderGutterDiffKind>,
-  vcs_statusline:        Option<String>,
-  inline_annotations:    Vec<InlineAnnotation>,
-  overlay_annotations:   Vec<Overlay>,
-  highlight_cache:       HighlightCache,
-  syntax_parse_tx:       Sender<SyntaxParseResult>,
-  syntax_parse_rx:       Receiver<SyntaxParseResult>,
-  syntax_parse_lifecycle: ParseLifecycle<SyntaxParseJob>,
+  mode:                         Mode,
+  command_prompt:               CommandPromptState,
+  command_palette:              CommandPaletteState,
+  command_palette_style:        CommandPaletteStyle,
+  file_picker:                  FilePickerState,
+  search_prompt:                SearchPromptState,
+  ui_state:                     UiState,
+  needs_render:                 bool,
+  messages:                     MessageCenter,
+  pending_input:                Option<the_default::PendingInput>,
+  register:                     Option<char>,
+  macro_recording:              Option<(char, Vec<KeyBinding>)>,
+  macro_replaying:              Vec<char>,
+  macro_queue:                  VecDeque<KeyEvent>,
+  text_format:                  TextFormat,
+  gutter_config:                GutterConfig,
+  gutter_diff_signs:            BTreeMap<usize, RenderGutterDiffKind>,
+  vcs_statusline:               Option<String>,
+  inline_annotations:           Vec<InlineAnnotation>,
+  overlay_annotations:          Vec<Overlay>,
+  highlight_cache:              HighlightCache,
+  syntax_parse_tx:              Sender<SyntaxParseResult>,
+  syntax_parse_rx:              Receiver<SyntaxParseResult>,
+  syntax_parse_lifecycle:       ParseLifecycle<SyntaxParseJob>,
   syntax_parse_highlight_state: ParseHighlightState,
-  scrolloff:             usize,
+  scrolloff:                    usize,
 }
 
 impl EditorState {
@@ -2750,11 +2760,12 @@ impl App {
     self.lsp_watched_file = self.lsp_document.as_ref().map(|state| {
       let (events_rx, watch_handle) = watch_path(&state.path, lsp_file_watch_latency());
       LspWatchedFileState {
-        stream: WatchedFileEventsState {
+        stream:        WatchedFileEventsState {
           path: state.path.clone(),
           uri: state.uri.clone(),
           events_rx,
           suppress_until: None,
+          reload_state: FileWatchReloadState::Clean,
         },
         _watch_handle: watch_handle,
       }
@@ -2764,7 +2775,10 @@ impl App {
   fn poll_lsp_file_watch(&mut self) -> bool {
     let lsp_ready = self.lsp_ready;
     let (watched_uri, watched_path, pending_changes) = match poll_watch_events(
-      self.lsp_watched_file.as_mut().map(|watch| &mut watch.stream),
+      self
+        .lsp_watched_file
+        .as_mut()
+        .map(|watch| &mut watch.stream),
       Instant::now(),
       "ffi",
       |event, message| trace_file_watch_event(event, message),
@@ -2774,11 +2788,7 @@ impl App {
         self.lsp_sync_watched_file_state();
         return false;
       },
-      WatchPollOutcome::Changes {
-        path,
-        uri,
-        kinds,
-      } => {
+      WatchPollOutcome::Changes { path, uri, kinds } => {
         let pending_changes = kinds
           .into_iter()
           .map(file_change_type_for_path_event)
@@ -2844,6 +2854,9 @@ impl App {
 
     match change_type {
       FileChangeType::Deleted => {
+        if let Some(watch) = self.lsp_watched_file.as_mut() {
+          clear_reload_state(&mut watch.stream.reload_state);
+        }
         trace_file_watch_event(
           "consumer_external_deleted",
           format!("client=ffi path={}", watched_path.display()),
@@ -2859,54 +2872,111 @@ impl App {
         true
       },
       FileChangeType::Created | FileChangeType::Changed => {
-        if self.active_editor_ref().document().flags().modified {
-          trace_file_watch_event(
-            "consumer_external_changed_dirty",
-            format!("client=ffi path={}", watched_path.display()),
-          );
-          if self.active_editor.is_some() {
-            self.active_state_mut().messages.publish(
-              the_lib::messages::MessageLevel::Warning,
-              Some("watch".into()),
-              format!(
-                "file changed on disk: {label} (buffer has unsaved changes; run :reload force to discard them)"
-              ),
-            );
-            self.request_render();
-          }
-          return true;
-        }
-
-        match <Self as DefaultContext>::reload_file_preserving_view(self, watched_path) {
-          Ok(()) => {
-            trace_file_watch_event(
-              "consumer_external_reload_ok",
-              format!("client=ffi path={}", watched_path.display()),
-            );
-            if self.active_editor.is_some() {
-              self.active_state_mut().messages.publish(
-                the_lib::messages::MessageLevel::Info,
-                Some("watch".into()),
-                format!("reloaded from disk: {label}"),
-              );
-              self.request_render();
-            }
-            true
-          },
+        let disk_text = match std::fs::read_to_string(watched_path) {
+          Ok(text) => text,
           Err(err) => {
             trace_file_watch_event(
-              "consumer_external_reload_err",
+              "consumer_external_read_err",
               format!("client=ffi path={} err={err}", watched_path.display()),
             );
             if self.active_editor.is_some() {
               self.active_state_mut().messages.publish(
                 the_lib::messages::MessageLevel::Error,
                 Some("watch".into()),
-                format!("failed to reload '{label}': {err}"),
+                format!("failed to read '{label}' from disk: {err}"),
+              );
+              self.request_render();
+            }
+            return true;
+          },
+        };
+
+        let has_disk_changes = {
+          let current = self.active_editor_ref().document().text().clone();
+          let disk = Rope::from_str(&disk_text);
+          !compare_ropes(&current, &disk).changes().is_empty()
+        };
+        let buffer_modified = self.active_editor_ref().document().flags().modified;
+        let decision = match self.lsp_watched_file.as_mut() {
+          Some(watch) => {
+            decide_external_reload(
+              &mut watch.stream.reload_state,
+              buffer_modified,
+              has_disk_changes,
+            )
+          },
+          None => return false,
+        };
+
+        match decision {
+          FileWatchReloadDecision::Noop => {
+            trace_file_watch_event(
+              "consumer_external_noop",
+              format!("client=ffi path={}", watched_path.display()),
+            );
+            false
+          },
+          FileWatchReloadDecision::ConflictEntered => {
+            trace_file_watch_event(
+              "consumer_external_changed_dirty",
+              format!("client=ffi path={}", watched_path.display()),
+            );
+            if self.active_editor.is_some() {
+              self.active_state_mut().messages.publish(
+                the_lib::messages::MessageLevel::Warning,
+                Some("watch".into()),
+                format!(
+                  "file changed on disk: {label} (buffer has unsaved changes; run :reload force \
+                   to discard them)"
+                ),
               );
               self.request_render();
             }
             true
+          },
+          FileWatchReloadDecision::ConflictOngoing => {
+            trace_file_watch_event(
+              "consumer_external_conflict_ongoing",
+              format!("client=ffi path={}", watched_path.display()),
+            );
+            false
+          },
+          FileWatchReloadDecision::ReloadNeeded => {
+            match <Self as DefaultContext>::reload_file_preserving_view(self, watched_path) {
+              Ok(()) => {
+                if let Some(watch) = self.lsp_watched_file.as_mut() {
+                  mark_reload_applied(&mut watch.stream.reload_state);
+                }
+                trace_file_watch_event(
+                  "consumer_external_reload_ok",
+                  format!("client=ffi path={}", watched_path.display()),
+                );
+                if self.active_editor.is_some() {
+                  self.active_state_mut().messages.publish(
+                    the_lib::messages::MessageLevel::Info,
+                    Some("watch".into()),
+                    format!("reloaded from disk: {label}"),
+                  );
+                  self.request_render();
+                }
+                true
+              },
+              Err(err) => {
+                trace_file_watch_event(
+                  "consumer_external_reload_err",
+                  format!("client=ffi path={} err={err}", watched_path.display()),
+                );
+                if self.active_editor.is_some() {
+                  self.active_state_mut().messages.publish(
+                    the_lib::messages::MessageLevel::Error,
+                    Some("watch".into()),
+                    format!("failed to reload '{label}': {err}"),
+                  );
+                  self.request_render();
+                }
+                true
+              },
+            }
           },
         }
       },
@@ -3808,6 +3878,7 @@ impl DefaultContext for App {
   fn on_file_saved(&mut self, _path: &Path, text: &str) {
     if let Some(watch) = self.lsp_watched_file.as_mut() {
       watch.stream.suppress_until = Some(Instant::now() + lsp_self_save_suppress_window());
+      clear_reload_state(&mut watch.stream.reload_state);
     }
     self.lsp_send_did_save(Some(text));
   }

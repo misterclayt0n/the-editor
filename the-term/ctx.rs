@@ -64,6 +64,7 @@ use the_lib::{
     DiagnosticSeverity,
     DiagnosticsState,
   },
+  diff::compare_ropes,
   document::{
     Document,
     DocumentId,
@@ -180,6 +181,13 @@ use the_runtime::{
     WatchedFileEventsState,
     poll_watch_events,
   },
+  file_watch_reload::{
+    FileWatchReloadDecision,
+    FileWatchReloadState,
+    clear_reload_state,
+    decide_external_reload,
+    mark_reload_applied,
+  },
 };
 use the_vcs::{
   DiffHandle,
@@ -211,9 +219,9 @@ fn spawn_syntax_parse_request(
   thread::spawn(move || {
     let parsed = (request.payload)();
     let _ = tx.send(SyntaxParseResult {
-      request_id: request.meta.request_id,
+      request_id:  request.meta.request_id,
       doc_version: request.meta.doc_version,
-      syntax: parsed,
+      syntax:      parsed,
     });
   });
 }
@@ -228,8 +236,8 @@ pub struct LspDocumentSyncState {
 }
 
 struct LspWatchedFileState {
-  stream:         WatchedFileEventsState,
-  _watch_handle:  WatchHandle,
+  stream:        WatchedFileEventsState,
+  _watch_handle: WatchHandle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,81 +356,81 @@ impl PendingLspRequestKind {
 
 /// Application state passed to all handlers.
 pub struct Ctx {
-  pub editor:                 Editor,
-  pub file_path:              Option<PathBuf>,
-  pub should_quit:            bool,
-  pub needs_render:           bool,
-  pub messages:               MessageCenter,
-  message_log:                Option<BufWriter<std::fs::File>>,
-  message_log_seq:            u64,
-  lsp_trace_log:              Option<BufWriter<std::fs::File>>,
-  pub file_picker_wake_rx:    Receiver<()>,
-  pub mode:                   Mode,
-  pub keymaps:                Keymaps,
-  pub command_prompt:         CommandPromptState,
-  pub command_registry:       CommandRegistry<Ctx>,
-  pub command_palette:        CommandPaletteState,
-  pub command_palette_style:  CommandPaletteStyle,
-  pub file_picker:            FilePickerState,
-  pub lsp_runtime:            LspRuntime,
-  pub lsp_ready:              bool,
-  pub lsp_document:           Option<LspDocumentSyncState>,
-  lsp_statusline:             LspStatuslineState,
-  lsp_spinner_index:          usize,
-  lsp_spinner_last_tick:      Instant,
-  lsp_active_progress_tokens: HashSet<String>,
-  lsp_watched_file:           Option<LspWatchedFileState>,
-  lsp_pending_requests:       HashMap<u64, PendingLspRequestKind>,
-  pub diagnostics:            DiagnosticsState,
-  pub file_picker_layout:     Option<FilePickerLayout>,
-  pub file_picker_drag:       Option<FilePickerDragState>,
-  pub search_prompt:          the_default::SearchPromptState,
-  pub ui_theme:               Theme,
-  pub ui_state:               UiState,
-  pub pending_input:          Option<the_default::PendingInput>,
-  pub dispatch:               Option<NonNull<DefaultDispatchStatic<Ctx>>>,
+  pub editor:                       Editor,
+  pub file_path:                    Option<PathBuf>,
+  pub should_quit:                  bool,
+  pub needs_render:                 bool,
+  pub messages:                     MessageCenter,
+  message_log:                      Option<BufWriter<std::fs::File>>,
+  message_log_seq:                  u64,
+  lsp_trace_log:                    Option<BufWriter<std::fs::File>>,
+  pub file_picker_wake_rx:          Receiver<()>,
+  pub mode:                         Mode,
+  pub keymaps:                      Keymaps,
+  pub command_prompt:               CommandPromptState,
+  pub command_registry:             CommandRegistry<Ctx>,
+  pub command_palette:              CommandPaletteState,
+  pub command_palette_style:        CommandPaletteStyle,
+  pub file_picker:                  FilePickerState,
+  pub lsp_runtime:                  LspRuntime,
+  pub lsp_ready:                    bool,
+  pub lsp_document:                 Option<LspDocumentSyncState>,
+  lsp_statusline:                   LspStatuslineState,
+  lsp_spinner_index:                usize,
+  lsp_spinner_last_tick:            Instant,
+  lsp_active_progress_tokens:       HashSet<String>,
+  lsp_watched_file:                 Option<LspWatchedFileState>,
+  lsp_pending_requests:             HashMap<u64, PendingLspRequestKind>,
+  pub diagnostics:                  DiagnosticsState,
+  pub file_picker_layout:           Option<FilePickerLayout>,
+  pub file_picker_drag:             Option<FilePickerDragState>,
+  pub search_prompt:                the_default::SearchPromptState,
+  pub ui_theme:                     Theme,
+  pub ui_state:                     UiState,
+  pub pending_input:                Option<the_default::PendingInput>,
+  pub dispatch:                     Option<NonNull<DefaultDispatchStatic<Ctx>>>,
   /// Syntax loader for language detection and highlighting.
-  pub loader:                 Option<Arc<Loader>>,
+  pub loader:                       Option<Arc<Loader>>,
   /// Cache for syntax highlights (reused across renders).
-  pub highlight_cache:        HighlightCache,
+  pub highlight_cache:              HighlightCache,
   /// Background parse result channel (async syntax fallback).
-  pub syntax_parse_tx:        Sender<SyntaxParseResult>,
+  pub syntax_parse_tx:              Sender<SyntaxParseResult>,
   /// Background parse result receiver (async syntax fallback).
-  pub syntax_parse_rx:        Receiver<SyntaxParseResult>,
+  pub syntax_parse_rx:              Receiver<SyntaxParseResult>,
   /// Async parse lifecycle (single in-flight + one queued replacement).
-  pub syntax_parse_lifecycle: ParseLifecycle<SyntaxParseJob>,
+  pub syntax_parse_lifecycle:       ParseLifecycle<SyntaxParseJob>,
   /// Syntax parse/highlight gate state (parsed vs interpolated).
   pub syntax_parse_highlight_state: ParseHighlightState,
   /// Registers for yanking/pasting.
-  pub registers:              Registers,
+  pub registers:                    Registers,
   /// Active register target (for macros/register operations).
-  pub register:               Option<char>,
+  pub register:                     Option<char>,
   /// Macro recording state.
-  pub macro_recording:        Option<(char, Vec<KeyBinding>)>,
+  pub macro_recording:              Option<(char, Vec<KeyBinding>)>,
   /// Macro replay stack for recursion guard.
-  pub macro_replaying:        Vec<char>,
+  pub macro_replaying:              Vec<char>,
   /// Pending macro key events to replay.
-  pub macro_queue:            VecDeque<KeyEvent>,
+  pub macro_queue:                  VecDeque<KeyEvent>,
   /// Last executed motion for repeat.
-  pub last_motion:            Option<Motion>,
+  pub last_motion:                  Option<Motion>,
   /// Render formatting used for visual position mapping.
-  pub text_format:            TextFormat,
+  pub text_format:                  TextFormat,
   /// Gutter layout and line-number rendering config.
-  pub gutter_config:          GutterConfig,
+  pub gutter_config:                GutterConfig,
   /// VCS-like gutter signs keyed by document line.
-  pub gutter_diff_signs:      BTreeMap<usize, RenderGutterDiffKind>,
+  pub gutter_diff_signs:            BTreeMap<usize, RenderGutterDiffKind>,
   /// Active VCS provider registry for diff base resolution.
-  pub vcs_provider:           DiffProviderRegistry,
+  pub vcs_provider:                 DiffProviderRegistry,
   /// Cached VCS statusline text for the active file.
-  pub vcs_statusline:         Option<String>,
+  pub vcs_statusline:               Option<String>,
   /// Incremental VCS diff state for the active file.
-  pub vcs_diff:               Option<DiffHandle>,
+  pub vcs_diff:                     Option<DiffHandle>,
   /// Inline annotations (virtual text) for rendering.
-  pub inline_annotations:     Vec<InlineAnnotation>,
+  pub inline_annotations:           Vec<InlineAnnotation>,
   /// Overlay annotations (virtual text) for rendering.
-  pub overlay_annotations:    Vec<Overlay>,
+  pub overlay_annotations:          Vec<Overlay>,
   /// Lines to keep above/below cursor when scrolling.
-  pub scrolloff:              usize,
+  pub scrolloff:                    usize,
 }
 
 fn select_ui_theme() -> Theme {
@@ -1215,7 +1223,10 @@ impl Ctx {
   pub fn poll_lsp_file_watch(&mut self) -> bool {
     let lsp_ready = self.lsp_ready;
     let (watched_uri, watched_path, pending_changes) = match poll_watch_events(
-      self.lsp_watched_file.as_mut().map(|watch| &mut watch.stream),
+      self
+        .lsp_watched_file
+        .as_mut()
+        .map(|watch| &mut watch.stream),
       Instant::now(),
       "term",
       |event, message| trace_file_watch_event(event, message),
@@ -1225,11 +1236,7 @@ impl Ctx {
         self.lsp_sync_watched_file_state();
         return false;
       },
-      WatchPollOutcome::Changes {
-        path,
-        uri,
-        kinds,
-      } => {
+      WatchPollOutcome::Changes { path, uri, kinds } => {
         let pending_changes = kinds
           .into_iter()
           .map(file_change_type_for_path_event)
@@ -1295,6 +1302,9 @@ impl Ctx {
 
     match change_type {
       FileChangeType::Deleted => {
+        if let Some(watch) = self.lsp_watched_file.as_mut() {
+          clear_reload_state(&mut watch.stream.reload_state);
+        }
         trace_file_watch_event(
           "consumer_external_deleted",
           format!("client=term path={}", watched_path.display()),
@@ -1307,45 +1317,102 @@ impl Ctx {
         true
       },
       FileChangeType::Created | FileChangeType::Changed => {
-        if self.editor.document().flags().modified {
-          trace_file_watch_event(
-            "consumer_external_changed_dirty",
-            format!("client=term path={}", watched_path.display()),
-          );
-          self.messages.publish(
-            MessageLevel::Warning,
-            Some("watch".into()),
-            format!(
-              "file changed on disk: {label} (buffer has unsaved changes; run :reload force to discard them)"
-            ),
-          );
-          return true;
-        }
-
-        match <Self as the_default::DefaultContext>::reload_file_preserving_view(self, watched_path) {
-          Ok(()) => {
-            trace_file_watch_event(
-              "consumer_external_reload_ok",
-              format!("client=term path={}", watched_path.display()),
-            );
-            self.messages.publish(
-              MessageLevel::Info,
-              Some("watch".into()),
-              format!("reloaded from disk: {label}"),
-            );
-            true
-          },
+        let disk_text = match std::fs::read_to_string(watched_path) {
+          Ok(text) => text,
           Err(err) => {
             trace_file_watch_event(
-              "consumer_external_reload_err",
+              "consumer_external_read_err",
               format!("client=term path={} err={err}", watched_path.display()),
             );
             self.messages.publish(
               MessageLevel::Error,
               Some("watch".into()),
-              format!("failed to reload '{label}': {err}"),
+              format!("failed to read '{label}' from disk: {err}"),
+            );
+            return true;
+          },
+        };
+
+        let has_disk_changes = {
+          let current = self.editor.document().text().clone();
+          let disk = Rope::from_str(&disk_text);
+          !compare_ropes(&current, &disk).changes().is_empty()
+        };
+        let buffer_modified = self.editor.document().flags().modified;
+        let decision = match self.lsp_watched_file.as_mut() {
+          Some(watch) => {
+            decide_external_reload(
+              &mut watch.stream.reload_state,
+              buffer_modified,
+              has_disk_changes,
+            )
+          },
+          None => return false,
+        };
+
+        match decision {
+          FileWatchReloadDecision::Noop => {
+            trace_file_watch_event(
+              "consumer_external_noop",
+              format!("client=term path={}", watched_path.display()),
+            );
+            false
+          },
+          FileWatchReloadDecision::ConflictEntered => {
+            trace_file_watch_event(
+              "consumer_external_changed_dirty",
+              format!("client=term path={}", watched_path.display()),
+            );
+            self.messages.publish(
+              MessageLevel::Warning,
+              Some("watch".into()),
+              format!(
+                "file changed on disk: {label} (buffer has unsaved changes; run :reload force to \
+                 discard them)"
+              ),
             );
             true
+          },
+          FileWatchReloadDecision::ConflictOngoing => {
+            trace_file_watch_event(
+              "consumer_external_conflict_ongoing",
+              format!("client=term path={}", watched_path.display()),
+            );
+            false
+          },
+          FileWatchReloadDecision::ReloadNeeded => {
+            match <Self as the_default::DefaultContext>::reload_file_preserving_view(
+              self,
+              watched_path,
+            ) {
+              Ok(()) => {
+                if let Some(watch) = self.lsp_watched_file.as_mut() {
+                  mark_reload_applied(&mut watch.stream.reload_state);
+                }
+                trace_file_watch_event(
+                  "consumer_external_reload_ok",
+                  format!("client=term path={}", watched_path.display()),
+                );
+                self.messages.publish(
+                  MessageLevel::Info,
+                  Some("watch".into()),
+                  format!("reloaded from disk: {label}"),
+                );
+                true
+              },
+              Err(err) => {
+                trace_file_watch_event(
+                  "consumer_external_reload_err",
+                  format!("client=term path={} err={err}", watched_path.display()),
+                );
+                self.messages.publish(
+                  MessageLevel::Error,
+                  Some("watch".into()),
+                  format!("failed to reload '{label}': {err}"),
+                );
+                true
+              },
+            }
           },
         }
       },
@@ -2254,11 +2321,12 @@ impl Ctx {
     self.lsp_watched_file = self.lsp_document.as_ref().map(|state| {
       let (events_rx, watch_handle) = watch_path(&state.path, lsp_file_watch_latency());
       LspWatchedFileState {
-        stream: WatchedFileEventsState {
+        stream:        WatchedFileEventsState {
           path: state.path.clone(),
           uri: state.uri.clone(),
           events_rx,
           suppress_until: None,
+          reload_state: FileWatchReloadState::Clean,
         },
         _watch_handle: watch_handle,
       }
@@ -3202,6 +3270,7 @@ impl the_default::DefaultContext for Ctx {
   fn on_file_saved(&mut self, _path: &Path, text: &str) {
     if let Some(watch) = self.lsp_watched_file.as_mut() {
       watch.stream.suppress_until = Some(Instant::now() + lsp_self_save_suppress_window());
+      clear_reload_state(&mut watch.stream.reload_state);
     }
     self.lsp_send_did_save(Some(text));
   }
@@ -3296,15 +3365,19 @@ fn setup_syntax(doc: &mut Document, path: &Path, loader: &Arc<Loader>) -> Result
 mod tests {
   use std::{
     fs,
-    path::Path,
-    path::PathBuf,
+    path::{
+      Path,
+      PathBuf,
+    },
     sync::mpsc::{
       Sender,
       channel,
     },
     thread,
-    time::Duration,
-    time::SystemTime,
+    time::{
+      Duration,
+      SystemTime,
+    },
   };
 
   use the_default::{
@@ -3319,12 +3392,16 @@ mod tests {
   use the_lib::{
     messages::MessageEventKind,
     position::{
+      Position,
       char_idx_at_coords,
       coords_at_pos,
     },
-    position::Position,
     selection::Selection,
     transaction::Transaction,
+  };
+  use the_runtime::file_watch::{
+    PathEvent,
+    PathEventKind,
   };
 
   use super::{
@@ -3337,10 +3414,6 @@ mod tests {
       build_render_plan,
       ensure_cursor_visible,
     },
-  };
-  use the_runtime::file_watch::{
-    PathEvent,
-    PathEventKind,
   };
 
   struct TempTestFile {
@@ -3377,11 +3450,12 @@ mod tests {
     let (_unused_rx, watch_handle) = super::watch_path(path, Duration::from_millis(0));
     let uri = the_lsp::text_sync::file_uri_for_path(path).expect("file uri");
     ctx.lsp_watched_file = Some(super::LspWatchedFileState {
-      stream: WatchedFileEventsState {
+      stream:        WatchedFileEventsState {
         path: path.to_path_buf(),
         uri,
         events_rx,
         suppress_until: None,
+        reload_state: super::FileWatchReloadState::Clean,
       },
       _watch_handle: watch_handle,
     });
@@ -3613,7 +3687,12 @@ pkgs.mkShell {
 
     unsafe { (&*registry).execute(&mut ctx, "line-number", "relative", CommandEvent::Validate) }
       .expect("line-number relative");
-    assert!(ctx.gutter_config.layout.contains(&the_lib::render::GutterType::LineNumbers));
+    assert!(
+      ctx
+        .gutter_config
+        .layout
+        .contains(&the_lib::render::GutterType::LineNumbers)
+    );
     assert_eq!(
       ctx.gutter_config.line_numbers.mode,
       the_lib::render::LineNumberMode::Relative
@@ -3621,7 +3700,12 @@ pkgs.mkShell {
 
     unsafe { (&*registry).execute(&mut ctx, "line-number", "off", CommandEvent::Validate) }
       .expect("line-number off");
-    assert!(!ctx.gutter_config.layout.contains(&the_lib::render::GutterType::LineNumbers));
+    assert!(
+      !ctx
+        .gutter_config
+        .layout
+        .contains(&the_lib::render::GutterType::LineNumbers)
+    );
   }
 
   #[test]
@@ -3658,7 +3742,10 @@ pkgs.mkShell {
       let text = ctx.editor.document().text().slice(..);
       char_idx_at_coords(text, Position::new(2, 1))
     };
-    let _ = ctx.editor.document_mut().set_selection(Selection::point(cursor));
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::point(cursor));
     ctx.editor.view_mut().scroll = Position::new(2, 7);
 
     let before_cursor_coords = {
@@ -3678,7 +3765,10 @@ pkgs.mkShell {
       coords_at_pos(text, head)
     };
 
-    assert_eq!(ctx.editor.document().text().to_string(), "inserted\nzero\none\ntwo\nthree\n");
+    assert_eq!(
+      ctx.editor.document().text().to_string(),
+      "inserted\nzero\none\ntwo\nthree\n"
+    );
     assert_eq!(after_cursor_coords, before_cursor_coords);
     assert_eq!(ctx.editor.view().scroll, before_scroll);
   }
@@ -3719,13 +3809,15 @@ pkgs.mkShell {
     let events = ctx.messages.events_since(before_seq);
     let warning = events
       .iter()
-      .find_map(|event| match &event.kind {
-        MessageEventKind::Published { message } => {
-          (message.level == the_lib::messages::MessageLevel::Warning
-            && message.source.as_deref() == Some("watch"))
-          .then_some(message.text.as_str())
-        },
-        _ => None,
+      .find_map(|event| {
+        match &event.kind {
+          MessageEventKind::Published { message } => {
+            (message.level == the_lib::messages::MessageLevel::Warning
+              && message.source.as_deref() == Some("watch"))
+            .then_some(message.text.as_str())
+          },
+          _ => None,
+        }
       })
       .expect("watch warning message");
     assert!(warning.contains("buffer has unsaved changes"));
@@ -3853,27 +3945,19 @@ pkgs.mkShell {
       .document_mut()
       .set_selection(Selection::single(line_two_start, line_two_start));
 
-    handle_key(
-      &dispatch,
-      &mut ctx,
-      KeyEvent {
-        key:       Key::Char('x'),
-        modifiers: Modifiers::empty(),
-      },
-    );
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Char('x'),
+      modifiers: Modifiers::empty(),
+    });
 
     let selected = ctx.editor.document().selection().ranges()[0];
     assert_eq!(selected.from(), line_two_start);
     assert_eq!(selected.to(), ctx.editor.document().text().line_to_char(2));
 
-    handle_key(
-      &dispatch,
-      &mut ctx,
-      KeyEvent {
-        key:       Key::Char('c'),
-        modifiers: Modifiers::empty(),
-      },
-    );
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Char('c'),
+      modifiers: Modifiers::empty(),
+    });
 
     assert_eq!(ctx.editor.document().text().to_string(), "one\n\nthree\n");
     assert_eq!(ctx.mode(), Mode::Insert);

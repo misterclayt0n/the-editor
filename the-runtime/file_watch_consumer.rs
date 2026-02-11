@@ -12,9 +12,12 @@ use std::{
   time::Instant,
 };
 
-use crate::file_watch::{
-  PathEvent,
-  PathEventKind,
+use crate::{
+  file_watch::{
+    PathEvent,
+    PathEventKind,
+  },
+  file_watch_reload::FileWatchReloadState,
 };
 
 /// Mutable state required to poll a watched file event stream.
@@ -23,6 +26,7 @@ pub struct WatchedFileEventsState {
   pub uri:            String,
   pub events_rx:      Receiver<Vec<PathEvent>>,
   pub suppress_until: Option<Instant>,
+  pub reload_state:   FileWatchReloadState,
 }
 
 /// Poll result for [`poll_watch_events`].
@@ -52,7 +56,10 @@ pub fn poll_watch_events(
   mut trace: impl FnMut(&str, String),
 ) -> WatchPollOutcome {
   let Some(state) = state else {
-    trace("consumer_poll_skip", format!("client={client} reason=no_watch_state"));
+    trace(
+      "consumer_poll_skip",
+      format!("client={client} reason=no_watch_state"),
+    );
     return WatchPollOutcome::NoChanges;
   };
 
@@ -103,9 +110,7 @@ pub fn poll_watch_events(
       "consumer_watcher_disconnected",
       format!("client={client} path={}", watched_path.display()),
     );
-    return WatchPollOutcome::Disconnected {
-      path: watched_path,
-    };
+    return WatchPollOutcome::Disconnected { path: watched_path };
   }
 
   if kinds.is_empty() {
@@ -129,25 +134,31 @@ mod tests {
     },
   };
 
-  use crate::file_watch::{
-    PathEvent,
-    PathEventKind,
-  };
-
   use super::{
     WatchPollOutcome,
     WatchedFileEventsState,
     poll_watch_events,
   };
+  use crate::{
+    file_watch::{
+      PathEvent,
+      PathEventKind,
+    },
+    file_watch_reload::FileWatchReloadState,
+  };
 
-  fn new_state() -> (WatchedFileEventsState, std::sync::mpsc::Sender<Vec<PathEvent>>) {
+  fn new_state() -> (
+    WatchedFileEventsState,
+    std::sync::mpsc::Sender<Vec<PathEvent>>,
+  ) {
     let (tx, rx) = channel();
     (
       WatchedFileEventsState {
-        path: "/tmp/watched.txt".into(),
-        uri: "file:///tmp/watched.txt".into(),
-        events_rx: rx,
+        path:           "/tmp/watched.txt".into(),
+        uri:            "file:///tmp/watched.txt".into(),
+        events_rx:      rx,
         suppress_until: None,
+        reload_state:   FileWatchReloadState::Clean,
       },
       tx,
     )
@@ -186,14 +197,11 @@ mod tests {
     .expect("send second batch");
 
     let outcome = poll_watch_events(Some(&mut state), Instant::now(), "test", |_, _| {});
-    assert_eq!(
-      outcome,
-      WatchPollOutcome::Changes {
-        path: state.path.clone(),
-        uri: state.uri.clone(),
-        kinds: vec![PathEventKind::Changed, PathEventKind::Removed],
-      }
-    );
+    assert_eq!(outcome, WatchPollOutcome::Changes {
+      path:  state.path.clone(),
+      uri:   state.uri.clone(),
+      kinds: vec![PathEventKind::Changed, PathEventKind::Removed],
+    });
   }
 
   #[test]
@@ -224,14 +232,11 @@ mod tests {
       "test",
       |_, _| {},
     );
-    assert_eq!(
-      second,
-      WatchPollOutcome::Changes {
-        path: state.path.clone(),
-        uri: state.uri.clone(),
-        kinds: vec![PathEventKind::Changed],
-      }
-    );
+    assert_eq!(second, WatchPollOutcome::Changes {
+      path:  state.path.clone(),
+      uri:   state.uri.clone(),
+      kinds: vec![PathEventKind::Changed],
+    });
     assert!(state.suppress_until.is_none());
   }
 
@@ -241,11 +246,8 @@ mod tests {
     drop(tx);
 
     let outcome = poll_watch_events(Some(&mut state), Instant::now(), "test", |_, _| {});
-    assert_eq!(
-      outcome,
-      WatchPollOutcome::Disconnected {
-        path: state.path.clone(),
-      }
-    );
+    assert_eq!(outcome, WatchPollOutcome::Disconnected {
+      path: state.path.clone(),
+    });
   }
 }

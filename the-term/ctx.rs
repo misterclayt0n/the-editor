@@ -3337,6 +3337,10 @@ mod tests {
     fs,
     path::Path,
     path::PathBuf,
+    sync::mpsc::{
+      Sender,
+      channel,
+    },
     thread,
     time::Duration,
     time::SystemTime,
@@ -3352,6 +3356,7 @@ mod tests {
     handle_key,
   };
   use the_lib::{
+    messages::MessageEventKind,
     position::{
       char_idx_at_coords,
       coords_at_pos,
@@ -3368,6 +3373,10 @@ mod tests {
       build_render_plan,
       ensure_cursor_visible,
     },
+  };
+  use the_runtime::file_watch::{
+    PathEvent,
+    PathEventKind,
   };
 
   struct TempTestFile {
@@ -3397,6 +3406,20 @@ mod tests {
     fn drop(&mut self) {
       let _ = fs::remove_file(&self.path);
     }
+  }
+
+  fn install_test_watch_state(ctx: &mut Ctx, path: &Path) -> Sender<Vec<PathEvent>> {
+    let (events_tx, events_rx) = channel();
+    let (_unused_rx, watch_handle) = super::watch_path(path, Duration::from_millis(0));
+    let uri = the_lsp::text_sync::file_uri_for_path(path).expect("file uri");
+    ctx.lsp_watched_file = Some(super::LspWatchedFileState {
+      path: path.to_path_buf(),
+      uri,
+      events_rx,
+      _watch_handle: watch_handle,
+      suppress_until: None,
+    });
+    events_tx
   }
 
   #[derive(Debug, Clone, Copy)]
@@ -3692,6 +3715,54 @@ pkgs.mkShell {
     assert_eq!(ctx.editor.document().text().to_string(), "inserted\nzero\none\ntwo\nthree\n");
     assert_eq!(after_cursor_coords, before_cursor_coords);
     assert_eq!(ctx.editor.view().scroll, before_scroll);
+  }
+
+  #[test]
+  fn dirty_buffer_external_change_keeps_buffer_and_warns() {
+    let fixture = TempTestFile::new("dirty-watch", "alpha\nbeta\n");
+    let mut ctx = Ctx::new(Some(
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    let local_edit = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("local-".into()))),
+    )
+    .expect("local edit");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &local_edit));
+    assert!(ctx.editor.document().flags().modified);
+    let dirty_snapshot = ctx.editor.document().text().to_string();
+
+    let watch_tx = install_test_watch_state(&mut ctx, fixture.as_path());
+    fs::write(fixture.as_path(), "disk-alpha\ndisk-beta\n").expect("update fixture");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send watch event");
+
+    let before_seq = ctx.messages.latest_seq();
+    assert!(ctx.poll_lsp_file_watch());
+    assert_eq!(ctx.editor.document().text().to_string(), dirty_snapshot);
+
+    let events = ctx.messages.events_since(before_seq);
+    let warning = events
+      .iter()
+      .find_map(|event| match &event.kind {
+        MessageEventKind::Published { message } => {
+          (message.level == the_lib::messages::MessageLevel::Warning
+            && message.source.as_deref() == Some("watch"))
+          .then_some(message.text.as_str())
+        },
+        _ => None,
+      })
+      .expect("watch warning message");
+    assert!(warning.contains("buffer has unsaved changes"));
   }
 
   #[test]

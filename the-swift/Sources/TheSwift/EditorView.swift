@@ -201,7 +201,7 @@ struct EditorView: View {
                     default:  fallback = SwiftUI.Color(nsColor: .systemRed)
                     }
                     let color = colorForStyle(span.style(), fallback: fallback)
-                    drawDiffBar(in: context, x: x, y: y, cellSize: cellSize, color: color)
+                    drawDiffBar(in: context, y: y, cellSize: cellSize, gutterWidth: contentOffsetX, color: color)
                 case .lineNumber:
                     drawLineNumber(in: context, span: span, x: x, y: y, font: font, isActive: isActiveLine)
                 case .other:
@@ -230,21 +230,21 @@ struct EditorView: View {
 
     private func drawDiffBar(
         in context: GraphicsContext,
-        x: CGFloat, y: CGFloat,
+        y: CGFloat,
         cellSize: CGSize,
+        gutterWidth: CGFloat,
         color: SwiftUI.Color
     ) {
-        let barWidth: CGFloat = 2.5
-        let insetY: CGFloat = 2.0
-        let barX = x + (cellSize.width - barWidth) / 2.0
+        // Thin stripe along the separator edge — consecutive lines merge into
+        // one continuous colored strip (no vertical inset).
+        let barWidth: CGFloat = 2.0
         let barRect = CGRect(
-            x: barX,
-            y: y + insetY,
+            x: gutterWidth - barWidth - 0.5,
+            y: y,
             width: barWidth,
-            height: cellSize.height - insetY * 2
+            height: cellSize.height
         )
-        let path = Path(roundedRect: barRect, cornerRadius: 1.0)
-        context.fill(path, with: .color(color.opacity(0.85)))
+        context.fill(Path(barRect), with: .color(color.opacity(0.7)))
     }
 
     private func drawLineNumber(

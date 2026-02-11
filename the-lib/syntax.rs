@@ -1104,17 +1104,34 @@ impl Syntax {
     loader: &Loader,
     byte_range: ops::Range<usize>,
   ) -> Vec<(Highlight, ops::Range<usize>)> {
-    let highlighter = self.highlighter(
-      source,
-      loader,
-      byte_range.start as u32..byte_range.end as u32,
-    );
+    let len_bytes = source.len_bytes();
+    if len_bytes == 0 {
+      return Vec::new();
+    }
 
-    highlighter
-      .collect_highlights()
-      .into_iter()
-      .map(|(hl, range)| (hl, range.start as usize..range.end as usize))
-      .collect()
+    let start = byte_range.start.min(len_bytes);
+    let end = byte_range.end.min(len_bytes);
+    if start >= end {
+      return Vec::new();
+    }
+
+    let root_end = self.tree().root_node().end_byte() as usize;
+    if root_end > len_bytes {
+      return Vec::new();
+    }
+
+    let highlighter = self.highlighter(source, loader, start as u32..end as u32);
+    let collected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+      highlighter.collect_highlights()
+    }));
+
+    match collected {
+      Ok(highlights) => highlights
+        .into_iter()
+        .map(|(hl, range)| (hl, range.start as usize..range.end as usize))
+        .collect(),
+      Err(_) => Vec::new(),
+    }
   }
 
   /// Re-queries the given line range and updates the cache with fresh

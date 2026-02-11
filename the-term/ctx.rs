@@ -105,7 +105,11 @@ use the_lib::{
     Syntax,
     generate_edits,
   },
-  syntax_async::select_latest_matching_request,
+  syntax_async::{
+    ParseLifecycle,
+    ParseRequest,
+    QueueParseDecision,
+  },
   transaction::{
     ChangeSet,
     Transaction,
@@ -178,8 +182,25 @@ pub enum FilePickerDragState {
 
 #[derive(Debug)]
 pub struct SyntaxParseResult {
-  pub request_id: u64,
-  pub syntax:     Option<Syntax>,
+  pub request_id:  u64,
+  pub doc_version: u64,
+  pub syntax:      Option<Syntax>,
+}
+
+type SyntaxParseJob = Box<dyn FnOnce() -> Option<Syntax> + Send>;
+
+fn spawn_syntax_parse_request(
+  tx: Sender<SyntaxParseResult>,
+  request: ParseRequest<SyntaxParseJob>,
+) {
+  thread::spawn(move || {
+    let parsed = (request.payload)();
+    let _ = tx.send(SyntaxParseResult {
+      request_id: request.meta.request_id,
+      doc_version: request.meta.doc_version,
+      syntax: parsed,
+    });
+  });
 }
 
 #[derive(Debug, Clone)]
@@ -356,8 +377,8 @@ pub struct Ctx {
   pub syntax_parse_tx:        Sender<SyntaxParseResult>,
   /// Background parse result receiver (async syntax fallback).
   pub syntax_parse_rx:        Receiver<SyntaxParseResult>,
-  /// Latest parse request id; stale parse results are discarded.
-  pub syntax_parse_latest:    u64,
+  /// Async parse lifecycle (single in-flight + one queued replacement).
+  pub syntax_parse_lifecycle: ParseLifecycle<SyntaxParseJob>,
   /// Registers for yanking/pasting.
   pub registers:              Registers,
   /// Active register target (for macros/register operations).
@@ -672,7 +693,7 @@ impl Ctx {
       highlight_cache: HighlightCache::default(),
       syntax_parse_tx,
       syntax_parse_rx,
-      syntax_parse_latest: 0,
+      syntax_parse_lifecycle: ParseLifecycle::default(),
       registers,
       register: None,
       macro_recording: None,
@@ -731,35 +752,55 @@ impl Ctx {
     self.editor.view_mut().viewport = Rect::new(0, 0, width, height);
   }
 
-  pub fn poll_syntax_parse_results(&mut self) -> bool {
-    let latest_request = self.syntax_parse_latest;
-    let mut drained = Vec::new();
-    loop {
-      match self.syntax_parse_rx.try_recv() {
-        Ok(result) => drained.push(result),
-        Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
-      }
-    }
-
-    let Some(result) =
-      select_latest_matching_request(latest_request, drained, |result| result.request_id)
-    else {
-      return false;
-    };
-
-    let doc = self.editor.document_mut();
-    match result.syntax {
-      Some(syntax) => {
-        if let Some(loader) = &self.loader {
-          doc.set_syntax_with_loader(syntax, loader.clone());
-        } else {
-          doc.set_syntax(syntax);
-        }
+  fn queue_syntax_parse_job(&mut self, doc_version: u64, parse_job: SyntaxParseJob) {
+    match self.syntax_parse_lifecycle.queue(doc_version, parse_job) {
+      QueueParseDecision::Start(request) => {
+        spawn_syntax_parse_request(self.syntax_parse_tx.clone(), request);
       },
-      None => doc.clear_syntax(),
+      QueueParseDecision::Queued(_) => {},
     }
-    self.highlight_cache.clear();
-    true
+  }
+
+  pub fn poll_syntax_parse_results(&mut self) -> bool {
+    let current_doc_version = self.editor.document().version();
+    let mut changed = false;
+
+    loop {
+      let result = match self.syntax_parse_rx.try_recv() {
+        Ok(result) => result,
+        Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+      };
+
+      let decision = self.syntax_parse_lifecycle.on_result(
+        result.request_id,
+        result.doc_version,
+        current_doc_version,
+      );
+
+      if let Some(next_request) = decision.start_next {
+        spawn_syntax_parse_request(self.syntax_parse_tx.clone(), next_request);
+      }
+
+      if !decision.apply {
+        continue;
+      }
+
+      let doc = self.editor.document_mut();
+      match result.syntax {
+        Some(syntax) => {
+          if let Some(loader) = &self.loader {
+            doc.set_syntax_with_loader(syntax, loader.clone());
+          } else {
+            doc.set_syntax(syntax);
+          }
+        },
+        None => doc.clear_syntax(),
+      }
+      self.highlight_cache.clear();
+      changed = true;
+    }
+
+    changed
   }
 
   pub fn start_background_services(&mut self) {
@@ -2413,7 +2454,8 @@ impl the_default::DefaultContext for Ctx {
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
     let old_text_for_lsp = self.editor.document().text().clone();
     let loader = self.loader.clone();
-    let mut async_parse_job: Option<Box<dyn FnOnce() -> Option<Syntax> + Send>> = None;
+    let mut async_parse_job: Option<SyntaxParseJob> = None;
+    let mut async_parse_doc_version = None;
     {
       let doc = self.editor.document_mut();
       let old_text = doc.text().clone();
@@ -2450,6 +2492,7 @@ impl the_default::DefaultContext for Ctx {
               let root_language = syntax.root_language();
               let parse_source = new_text.clone();
               let parse_loader = loader.clone();
+              async_parse_doc_version = Some(doc.version());
               async_parse_job = Some(Box::new(move || {
                 Syntax::new(parse_source.slice(..), root_language, parse_loader.as_ref()).ok()
               }));
@@ -2469,17 +2512,8 @@ impl the_default::DefaultContext for Ctx {
       }
     }
 
-    if let Some(parse_job) = async_parse_job {
-      self.syntax_parse_latest = self.syntax_parse_latest.saturating_add(1);
-      let request_id = self.syntax_parse_latest;
-      let tx = self.syntax_parse_tx.clone();
-      thread::spawn(move || {
-        let parsed = parse_job();
-        let _ = tx.send(SyntaxParseResult {
-          request_id,
-          syntax: parsed,
-        });
-      });
+    if let (Some(parse_job), Some(doc_version)) = (async_parse_job, async_parse_doc_version) {
+      self.queue_syntax_parse_job(doc_version, parse_job);
     }
 
     self.lsp_send_did_change(&old_text_for_lsp, transaction.changes());
@@ -2995,7 +3029,7 @@ impl the_default::DefaultContext for Ctx {
       let _ = doc.mark_saved();
     }
 
-    self.syntax_parse_latest = self.syntax_parse_latest.saturating_add(1);
+    self.syntax_parse_lifecycle.cancel_pending();
     self.highlight_cache.clear();
 
     <Self as the_default::DefaultContext>::set_file_path(self, Some(path.to_path_buf()));

@@ -148,7 +148,11 @@ use the_lib::{
     Syntax,
     generate_edits,
   },
-  syntax_async::select_latest_matching_request,
+  syntax_async::{
+    ParseLifecycle,
+    ParseRequest,
+    QueueParseDecision,
+  },
   transaction::Transaction,
   view::ViewState,
 };
@@ -834,8 +838,25 @@ impl Default for Document {
 
 #[derive(Debug)]
 struct SyntaxParseResult {
-  request_id: u64,
-  syntax:     Option<Syntax>,
+  request_id:  u64,
+  doc_version: u64,
+  syntax:      Option<Syntax>,
+}
+
+type SyntaxParseJob = Box<dyn FnOnce() -> Option<Syntax> + Send>;
+
+fn spawn_syntax_parse_request(
+  tx: Sender<SyntaxParseResult>,
+  request: ParseRequest<SyntaxParseJob>,
+) {
+  thread::spawn(move || {
+    let parsed = (request.payload)();
+    let _ = tx.send(SyntaxParseResult {
+      request_id: request.meta.request_id,
+      doc_version: request.meta.doc_version,
+      syntax: parsed,
+    });
+  });
 }
 
 #[derive(Debug, Clone)]
@@ -929,7 +950,7 @@ struct EditorState {
   highlight_cache:       HighlightCache,
   syntax_parse_tx:       Sender<SyntaxParseResult>,
   syntax_parse_rx:       Receiver<SyntaxParseResult>,
-  syntax_parse_latest:   u64,
+  syntax_parse_lifecycle: ParseLifecycle<SyntaxParseJob>,
   scrolloff:             usize,
 }
 
@@ -964,7 +985,7 @@ impl EditorState {
       highlight_cache: HighlightCache::default(),
       syntax_parse_tx,
       syntax_parse_rx,
-      syntax_parse_latest: 0,
+      syntax_parse_lifecycle: ParseLifecycle::default(),
       scrolloff: 5,
     }
   }
@@ -3001,50 +3022,99 @@ impl App {
   }
 
   fn poll_editor_syntax_parse_results(&mut self, id: LibEditorId) -> bool {
-    let (latest_request, drained_results) = {
+    let current_doc_version = {
+      let Some(editor) = self.inner.editor(id) else {
+        return false;
+      };
+      editor.document().version()
+    };
+
+    let mut drained_results = Vec::new();
+    {
       let Some(state) = self.states.get_mut(&id) else {
         return false;
       };
-
-      let latest_request = state.syntax_parse_latest;
-      let mut drained = Vec::new();
       loop {
         match state.syntax_parse_rx.try_recv() {
-          Ok(result) => drained.push(result),
+          Ok(result) => drained_results.push(result),
           Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
         }
       }
-
-      (latest_request, drained)
-    };
-
-    let Some(result) =
-      select_latest_matching_request(latest_request, drained_results, |result| result.request_id)
-    else {
-      return false;
-    };
-
-    let loader = self.loader.clone();
-    let Some(editor) = self.inner.editor_mut(id) else {
-      return false;
-    };
-    let doc = editor.document_mut();
-    match result.syntax {
-      Some(syntax) => {
-        if let Some(loader) = loader {
-          doc.set_syntax_with_loader(syntax, loader);
-        } else {
-          doc.set_syntax(syntax);
-        }
-      },
-      None => doc.clear_syntax(),
     }
 
-    if let Some(state) = self.states.get_mut(&id) {
-      state.highlight_cache.clear();
-      state.needs_render = true;
+    let mut changed = false;
+    for result in drained_results {
+      let (apply_result, start_next) = {
+        let Some(state) = self.states.get_mut(&id) else {
+          return changed;
+        };
+        let decision = state.syntax_parse_lifecycle.on_result(
+          result.request_id,
+          result.doc_version,
+          current_doc_version,
+        );
+        (decision.apply, decision.start_next)
+      };
+
+      if let Some(next_request) = start_next {
+        let tx = {
+          let Some(state) = self.states.get(&id) else {
+            return changed;
+          };
+          state.syntax_parse_tx.clone()
+        };
+        spawn_syntax_parse_request(tx, next_request);
+      }
+
+      if !apply_result {
+        continue;
+      }
+      changed = true;
+
+      let loader = self.loader.clone();
+      let Some(editor) = self.inner.editor_mut(id) else {
+        continue;
+      };
+      let doc = editor.document_mut();
+      match result.syntax {
+        Some(syntax) => {
+          if let Some(loader) = loader {
+            doc.set_syntax_with_loader(syntax, loader);
+          } else {
+            doc.set_syntax(syntax);
+          }
+        },
+        None => doc.clear_syntax(),
+      }
+
+      if let Some(state) = self.states.get_mut(&id) {
+        state.highlight_cache.clear();
+        state.needs_render = true;
+      }
     }
-    true
+
+    changed
+  }
+
+  fn queue_editor_syntax_parse_job(
+    &mut self,
+    id: LibEditorId,
+    doc_version: u64,
+    parse_job: SyntaxParseJob,
+  ) {
+    let start_request = {
+      let Some(state) = self.states.get_mut(&id) else {
+        return;
+      };
+      match state.syntax_parse_lifecycle.queue(doc_version, parse_job) {
+        QueueParseDecision::Start(request) => Some((state.syntax_parse_tx.clone(), request)),
+        QueueParseDecision::Queued(_) => None,
+      }
+    };
+
+    if let Some((tx, request)) = start_request {
+      spawn_syntax_parse_request(tx, request);
+    }
   }
 
   fn poll_active_syntax_parse_results(&mut self) -> bool {
@@ -3075,7 +3145,7 @@ impl App {
     }
 
     if let Some(state) = self.states.get_mut(&id) {
-      state.syntax_parse_latest = state.syntax_parse_latest.saturating_add(1);
+      state.syntax_parse_lifecycle.cancel_pending();
       state.highlight_cache.clear();
     }
   }
@@ -3182,7 +3252,8 @@ impl DefaultContext for App {
 
     let old_text_for_lsp = self.active_editor_ref().document().text().clone();
     let loader = self.loader.clone();
-    let mut async_parse_job: Option<Box<dyn FnOnce() -> Option<Syntax> + Send>> = None;
+    let mut async_parse_job: Option<SyntaxParseJob> = None;
+    let mut async_parse_doc_version = None;
     let mut clear_highlights = false;
 
     {
@@ -3225,6 +3296,7 @@ impl DefaultContext for App {
               bump_syntax_version = true;
               let parse_source = new_text.clone();
               let parse_loader = loader.clone();
+              async_parse_doc_version = Some(doc.version());
               async_parse_job = Some(Box::new(move || {
                 Syntax::new(parse_source.slice(..), root_language, parse_loader.as_ref()).ok()
               }));
@@ -3248,23 +3320,8 @@ impl DefaultContext for App {
       self.active_state_mut().highlight_cache.clear();
     }
 
-    if let Some(parse_job) = async_parse_job {
-      let (request_id, tx) = {
-        let state = self
-          .states
-          .get_mut(&editor_id)
-          .expect("missing editor state for active editor");
-        state.syntax_parse_latest = state.syntax_parse_latest.saturating_add(1);
-        (state.syntax_parse_latest, state.syntax_parse_tx.clone())
-      };
-
-      thread::spawn(move || {
-        let parsed = parse_job();
-        let _ = tx.send(SyntaxParseResult {
-          request_id,
-          syntax: parsed,
-        });
-      });
+    if let (Some(parse_job), Some(doc_version)) = (async_parse_job, async_parse_doc_version) {
+      self.queue_editor_syntax_parse_job(editor_id, doc_version, parse_job);
     }
 
     self.lsp_send_did_change(&old_text_for_lsp, transaction.changes());

@@ -74,11 +74,8 @@ impl ParseHighlightState {
 
   /// Returns true when it's safe to refresh highlight caches from syntax.
   pub fn allow_cache_refresh<T>(&self, lifecycle: &ParseLifecycle<T>) -> bool {
-    if self.interpolated {
-      lifecycle.in_flight().is_some() || lifecycle.queued().is_some()
-    } else {
-      true
-    }
+    let _ = lifecycle;
+    true
   }
 
   /// Returns true if current syntax state came from interpolation.
@@ -455,7 +452,7 @@ mod tests {
     assert!(state.allow_cache_refresh(&lifecycle));
 
     state.mark_interpolated();
-    assert!(!state.allow_cache_refresh(&lifecycle));
+    assert!(state.allow_cache_refresh(&lifecycle));
 
     let QueueParseDecision::Start(started) = lifecycle.queue(10, ()) else {
       panic!("expected immediate start");
@@ -470,7 +467,7 @@ mod tests {
   }
 
   #[test]
-  fn parse_highlight_state_blocks_only_when_interpolated_without_work() {
+  fn parse_highlight_state_allows_refresh_in_all_interpolated_states() {
     let mut lifecycle = ParseLifecycle::default();
     let mut state = ParseHighlightState::default();
 
@@ -494,6 +491,6 @@ mod tests {
     let second = lifecycle.on_result(next.meta.request_id, 2, 2);
     assert!(second.apply);
     assert!(second.start_next.is_none());
-    assert!(!state.allow_cache_refresh(&lifecycle));
+    assert!(state.allow_cache_refresh(&lifecycle));
   }
 }

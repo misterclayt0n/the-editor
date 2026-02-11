@@ -3083,7 +3083,6 @@ impl App {
       if !apply_result {
         continue;
       }
-      changed = true;
 
       let loader = self.loader.clone();
       let parsed_state = {
@@ -3100,21 +3099,19 @@ impl App {
             }
             Some(true)
           },
-          None => {
-            doc.clear_syntax();
-            Some(false)
-          },
+          None => None,
         }
       };
 
       if let Some(state) = self.states.get_mut(&id) {
-        state.highlight_cache.clear();
         if parsed_state == Some(true) {
+          state.highlight_cache.clear();
           state.syntax_parse_highlight_state.mark_parsed();
-        } else if parsed_state == Some(false) {
-          state.syntax_parse_highlight_state.mark_cleared();
+          changed = true;
+          state.needs_render = true;
+        } else {
+          state.syntax_parse_highlight_state.mark_interpolated();
         }
-        state.needs_render = true;
       }
     }
 
@@ -3331,26 +3328,34 @@ impl DefaultContext for App {
             },
             Ok(false) => {
               syntax.interpolate_with_edits(&edits);
-              let root_language = syntax.root_language();
               bump_syntax_version = true;
               syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Interpolated);
+              let mut parse_syntax = syntax.clone();
               let parse_source = new_text.clone();
               let parse_loader = loader.clone();
+              let parse_edits = edits.clone();
               async_parse_doc_version = Some(doc.version());
               async_parse_job = Some(Box::new(move || {
-                Syntax::new(parse_source.slice(..), root_language, parse_loader.as_ref()).ok()
+                parse_syntax
+                  .update_with_edits(parse_source.slice(..), &parse_edits, parse_loader.as_ref())
+                  .ok()
+                  .map(|()| parse_syntax)
               }));
             },
             Err(_) => {
               syntax.interpolate_with_edits(&edits);
               bump_syntax_version = true;
               syntax_highlight_update = Some(SyntaxParseHighlightUpdate::Interpolated);
-              let root_language = syntax.root_language();
+              let mut parse_syntax = syntax.clone();
               let parse_source = new_text.clone();
               let parse_loader = loader.clone();
+              let parse_edits = edits.clone();
               async_parse_doc_version = Some(doc.version());
               async_parse_job = Some(Box::new(move || {
-                Syntax::new(parse_source.slice(..), root_language, parse_loader.as_ref()).ok()
+                parse_syntax
+                  .update_with_edits(parse_source.slice(..), &parse_edits, parse_loader.as_ref())
+                  .ok()
+                  .map(|()| parse_syntax)
               }));
             },
           }

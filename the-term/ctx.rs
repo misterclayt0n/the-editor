@@ -166,7 +166,14 @@ use the_lsp::{
   },
   workspace_symbols_params,
 };
-use the_runtime::clipboard::ClipboardProvider;
+use the_runtime::{
+  clipboard::ClipboardProvider,
+  file_watch::{
+    PathEventKind,
+    WatchHandle,
+    watch as watch_path,
+  },
+};
 use the_vcs::{
   DiffHandle,
   DiffProviderRegistry,
@@ -213,12 +220,12 @@ pub struct LspDocumentSyncState {
   pub opened:      bool,
 }
 
-#[derive(Debug, Clone)]
 struct LspWatchedFileState {
-  path:          PathBuf,
-  uri:           String,
-  exists:        bool,
-  last_modified: Option<SystemTime>,
+  path:           PathBuf,
+  uri:            String,
+  events_rx:      Receiver<Vec<the_runtime::file_watch::PathEvent>>,
+  _watch_handle:  WatchHandle,
+  suppress_until: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1201,38 +1208,86 @@ impl Ctx {
     needs_render
   }
 
-  pub fn poll_lsp_file_watch(&mut self) {
-    if !self.lsp_ready {
-      return;
+  pub fn poll_lsp_file_watch(&mut self) -> bool {
+    let lsp_ready = self.lsp_ready;
+    let active_uri = self.current_lsp_uri();
+
+    let mut watcher_disconnected = false;
+    let mut pending_changes = Vec::new();
+    let watched_uri;
+    let watched_path;
+
+    {
+      let Some(watch) = self.lsp_watched_file.as_mut() else {
+        return false;
+      };
+
+      watched_uri = watch.uri.clone();
+      watched_path = watch.path.clone();
+      let active_matches = active_uri.as_deref() == Some(watch.uri.as_str());
+
+      loop {
+        match watch.events_rx.try_recv() {
+          Ok(batch) => {
+            if batch.is_empty() {
+              continue;
+            }
+
+            if let Some(until) = watch.suppress_until {
+              if Instant::now() <= until {
+                watch.suppress_until = None;
+                continue;
+              }
+              watch.suppress_until = None;
+            }
+
+            if !lsp_ready || !active_matches {
+              continue;
+            }
+
+            let mut batch_change = None;
+            for event in batch {
+              batch_change = Some(file_change_type_for_path_event(event.kind));
+            }
+            if let Some(change_type) = batch_change {
+              pending_changes.push(change_type);
+            }
+          },
+          Err(TryRecvError::Empty) => break,
+          Err(TryRecvError::Disconnected) => {
+            watcher_disconnected = true;
+            break;
+          },
+        }
+      }
     }
 
-    let Some(active_uri) = self.current_lsp_uri() else {
-      return;
-    };
-    let Some(watch) = self.lsp_watched_file.as_mut() else {
-      return;
-    };
-    if watch.uri != active_uri {
-      return;
+    if watcher_disconnected {
+      self.lsp_sync_watched_file_state();
+      return false;
     }
 
-    let (exists, last_modified) = file_watch_snapshot(&watch.path);
-    let change_type = match (watch.exists, exists) {
-      (false, true) => Some(FileChangeType::Created),
-      (true, false) => Some(FileChangeType::Deleted),
-      (true, true) if watch.last_modified != last_modified => Some(FileChangeType::Changed),
-      _ => None,
-    };
-
-    watch.exists = exists;
-    watch.last_modified = last_modified;
-
-    if let Some(change_type) = change_type {
-      let params = did_change_watched_files_params([(watch.uri.clone(), change_type)]);
-      let _ = self
-        .lsp_runtime
-        .send_notification("workspace/didChangeWatchedFiles", Some(params));
+    if pending_changes.is_empty() {
+      return false;
     }
+
+    let params = did_change_watched_files_params(
+      pending_changes
+        .iter()
+        .copied()
+        .map(|change_type| (watched_uri.clone(), change_type)),
+    );
+    let _ = self
+      .lsp_runtime
+      .send_notification("workspace/didChangeWatchedFiles", Some(params));
+
+    if let Some(change_type) = pending_changes.last().copied() {
+      let (level, text) = lsp_file_watch_message(&watched_path, change_type);
+      self.messages.publish(level, Some("lsp".into()), text);
+      return true;
+    }
+
+    false
   }
 
   fn handle_lsp_rpc_message(&mut self, message: jsonrpc::Message) -> bool {
@@ -2135,12 +2190,13 @@ impl Ctx {
 
   fn lsp_sync_watched_file_state(&mut self) {
     self.lsp_watched_file = self.lsp_document.as_ref().map(|state| {
-      let (exists, last_modified) = file_watch_snapshot(&state.path);
+      let (events_rx, watch_handle) = watch_path(&state.path, lsp_file_watch_latency());
       LspWatchedFileState {
         path: state.path.clone(),
         uri: state.uri.clone(),
-        exists,
-        last_modified,
+        events_rx,
+        _watch_handle: watch_handle,
+        suppress_until: None,
       }
     });
   }
@@ -2175,11 +2231,42 @@ fn is_symbol_word_char(ch: char) -> bool {
   ch == '_' || ch.is_alphanumeric()
 }
 
-fn file_watch_snapshot(path: &Path) -> (bool, Option<SystemTime>) {
-  let metadata = std::fs::metadata(path).ok();
-  let exists = metadata.is_some();
-  let last_modified = metadata.and_then(|meta| meta.modified().ok());
-  (exists, last_modified)
+fn lsp_file_watch_latency() -> Duration {
+  Duration::from_millis(120)
+}
+
+fn lsp_self_save_suppress_window() -> Duration {
+  Duration::from_millis(500)
+}
+
+fn file_change_type_for_path_event(kind: PathEventKind) -> FileChangeType {
+  match kind {
+    PathEventKind::Created => FileChangeType::Created,
+    PathEventKind::Changed => FileChangeType::Changed,
+    PathEventKind::Removed => FileChangeType::Deleted,
+  }
+}
+
+fn lsp_file_watch_message(path: &Path, change_type: FileChangeType) -> (MessageLevel, String) {
+  let label = path
+    .file_name()
+    .map(|name| name.to_string_lossy().to_string())
+    .unwrap_or_else(|| path.display().to_string());
+
+  match change_type {
+    FileChangeType::Created => (
+      MessageLevel::Info,
+      format!("file created on disk: {label}"),
+    ),
+    FileChangeType::Changed => (
+      MessageLevel::Warning,
+      format!("file changed on disk: {label}"),
+    ),
+    FileChangeType::Deleted => (
+      MessageLevel::Warning,
+      format!("file deleted on disk: {label}"),
+    ),
+  }
 }
 
 fn vcs_gutter_signs(handle: &DiffHandle) -> BTreeMap<usize, RenderGutterDiffKind> {
@@ -3058,6 +3145,9 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn on_file_saved(&mut self, _path: &Path, text: &str) {
+    if let Some(watch) = self.lsp_watched_file.as_mut() {
+      watch.suppress_until = Some(Instant::now() + lsp_self_save_suppress_window());
+    }
     self.lsp_send_did_save(Some(text));
   }
 

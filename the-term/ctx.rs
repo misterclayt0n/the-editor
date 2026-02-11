@@ -1243,7 +1243,6 @@ impl Ctx {
                     watch.path.display()
                   ),
                 );
-                watch.suppress_until = None;
                 continue;
               }
               watch.suppress_until = None;
@@ -3795,6 +3794,42 @@ pkgs.mkShell {
 
     assert!(ctx.poll_lsp_file_watch());
     assert_eq!(ctx.editor.document().text().to_string(), "third\n");
+  }
+
+  #[test]
+  fn self_save_suppression_window_ignores_all_events_until_expiry() {
+    let fixture = TempTestFile::new("suppression-watch", "one\n");
+    let mut ctx = Ctx::new(Some(
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    let watch_tx = install_test_watch_state(&mut ctx, fixture.as_path());
+    let before = ctx.editor.document().text().to_string();
+    if let Some(watch) = ctx.lsp_watched_file.as_mut() {
+      watch.suppress_until = Some(std::time::Instant::now() + Duration::from_secs(2));
+    } else {
+      panic!("expected watch state");
+    }
+
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send first suppressed event");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send second suppressed event");
+
+    assert!(!ctx.poll_lsp_file_watch());
+    assert_eq!(ctx.editor.document().text().to_string(), before);
   }
 
   #[test]

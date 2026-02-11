@@ -2790,7 +2790,6 @@ impl App {
                     watch.path.display()
                   ),
                 );
-                watch.suppress_until = None;
                 continue;
               }
               watch.suppress_until = None;

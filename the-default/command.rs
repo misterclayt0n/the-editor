@@ -429,6 +429,12 @@ pub trait DefaultContext: Sized + 'static {
   fn ui_theme(&self) -> &Theme;
   fn set_file_path(&mut self, path: Option<PathBuf>);
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
+  fn log_target_names(&self) -> &'static [&'static str] {
+    &[]
+  }
+  fn log_path_for_target(&self, _target: &str) -> Option<PathBuf> {
+    None
+  }
   fn lsp_goto_definition(&mut self) {}
   fn lsp_hover(&mut self) {}
   fn lsp_references(&mut self) {}

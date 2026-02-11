@@ -1521,6 +1521,7 @@ dependencies = [
  "serde",
  "the-lib",
  "the-stdx",
+ "tracing",
 ]
 
 [[package]]

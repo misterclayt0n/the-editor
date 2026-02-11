@@ -185,6 +185,7 @@ use the_lsp::{
 use the_runtime::file_watch::{
   PathEventKind,
   WatchHandle,
+  resolve_trace_log_path as resolve_file_watch_trace_log_path,
   watch as watch_path,
 };
 use the_vcs::{
@@ -3694,6 +3695,17 @@ impl DefaultContext for App {
       self.refresh_editor_syntax(id);
       self.refresh_lsp_runtime_for_active_file();
       self.refresh_vcs_diff_base_for_editor(id);
+    }
+  }
+
+  fn log_target_names(&self) -> &'static [&'static str] {
+    &["watch"]
+  }
+
+  fn log_path_for_target(&self, target: &str) -> Option<PathBuf> {
+    match target {
+      "watch" => resolve_file_watch_trace_log_path(),
+      _ => None,
     }
   }
 

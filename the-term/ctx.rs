@@ -171,6 +171,7 @@ use the_runtime::{
   file_watch::{
     PathEventKind,
     WatchHandle,
+    resolve_trace_log_path as resolve_file_watch_trace_log_path,
     watch as watch_path,
   },
 };
@@ -2860,6 +2861,19 @@ impl the_default::DefaultContext for Ctx {
     self.lsp_refresh_document_state(path.as_deref());
     self.file_path = path;
     self.refresh_vcs_diff_base();
+  }
+
+  fn log_target_names(&self) -> &'static [&'static str] {
+    &["messages", "lsp", "watch"]
+  }
+
+  fn log_path_for_target(&self, target: &str) -> Option<PathBuf> {
+    match target {
+      "messages" => resolve_message_log_path(),
+      "lsp" => resolve_lsp_trace_log_path(),
+      "watch" => resolve_file_watch_trace_log_path(),
+      _ => None,
+    }
   }
 
   fn lsp_goto_definition(&mut self) {

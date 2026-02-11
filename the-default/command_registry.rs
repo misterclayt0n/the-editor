@@ -3,6 +3,7 @@ use std::{
     HashMap,
     HashSet,
   },
+  fs::OpenOptions,
   fmt,
   ops::RangeFrom,
   sync::Arc,
@@ -459,6 +460,18 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
     ));
 
     self.register(TypableCommand::new(
+      "log-open",
+      &["open-log"],
+      "Open a debug log file (messages/lsp/watch)",
+      cmd_log_open::<Ctx>,
+      CommandCompleter::all(completers::log_target),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
       "format",
       &["fmt"],
       "Format current document via LSP",
@@ -575,6 +588,61 @@ fn cmd_help<Ctx: DefaultContext>(ctx: &mut Ctx, args: Args, event: CommandEvent)
   let prompt = ctx.command_prompt_mut();
   prompt.help = Some(help);
   prompt.error = None;
+  Ok(())
+}
+
+fn cmd_log_open<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let targets = ctx.log_target_names();
+  let Some(target) = args.first().or_else(|| targets.first().copied()) else {
+    return Err(CommandError::new(
+      "no log targets configured for this editor client",
+    ));
+  };
+
+  let Some(path) = ctx.log_path_for_target(target) else {
+    if targets.contains(&target) {
+      return Err(CommandError::new(format!(
+        "log target '{target}' is disabled"
+      )));
+    }
+    let available = if targets.is_empty() {
+      "none".to_string()
+    } else {
+      targets.join(", ")
+    };
+    return Err(CommandError::new(format!(
+      "unknown log target '{target}' (available: {available})"
+    )));
+  };
+
+  if let Some(parent) = path.parent()
+    && let Err(err) = std::fs::create_dir_all(parent)
+  {
+    return Err(CommandError::new(format!(
+      "failed to create log directory '{}': {err}",
+      parent.display()
+    )));
+  }
+
+  if let Err(err) = OpenOptions::new().create(true).append(true).open(&path) {
+    return Err(CommandError::new(format!(
+      "failed to open log file '{}': {err}",
+      path.display()
+    )));
+  }
+
+  ctx
+    .open_file(&path)
+    .map_err(|err| CommandError::new(format!("failed to open log buffer: {err}")))?;
+  ctx.push_info("editor", format!("opened {target} log: {}", path.display()));
   Ok(())
 }
 
@@ -1078,6 +1146,19 @@ pub mod completers {
           text:  (*mode).to_string(),
           doc:   None,
         }
+      })
+      .collect()
+  }
+
+  pub fn log_target<Ctx: DefaultContext>(ctx: &Ctx, input: &str) -> Vec<Completion> {
+    ctx
+      .log_target_names()
+      .iter()
+      .filter(|target| target.starts_with(input))
+      .map(|target| Completion {
+        range: 0..,
+        text:  (*target).to_string(),
+        doc:   None,
       })
       .collect()
   }

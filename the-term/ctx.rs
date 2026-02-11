@@ -172,6 +172,7 @@ use the_runtime::{
     PathEventKind,
     WatchHandle,
     resolve_trace_log_path as resolve_file_watch_trace_log_path,
+    trace_event as trace_file_watch_event,
     watch as watch_path,
   },
 };
@@ -1219,6 +1220,7 @@ impl Ctx {
 
     {
       let Some(watch) = self.lsp_watched_file.as_mut() else {
+        trace_file_watch_event("consumer_poll_skip", "client=term reason=no_watch_state");
         return false;
       };
 
@@ -1234,6 +1236,13 @@ impl Ctx {
 
             if let Some(until) = watch.suppress_until {
               if Instant::now() <= until {
+                trace_file_watch_event(
+                  "consumer_suppress_drop",
+                  format!(
+                    "client=term path={} reason=self_save_window",
+                    watch.path.display()
+                  ),
+                );
                 watch.suppress_until = None;
                 continue;
               }
@@ -1258,6 +1267,10 @@ impl Ctx {
     }
 
     if watcher_disconnected {
+      trace_file_watch_event(
+        "consumer_watcher_disconnected",
+        format!("client=term path={}", watched_path.display()),
+      );
       self.lsp_sync_watched_file_state();
       return false;
     }
@@ -1265,6 +1278,15 @@ impl Ctx {
     if pending_changes.is_empty() {
       return false;
     }
+
+    trace_file_watch_event(
+      "consumer_changes_collected",
+      format!(
+        "client=term path={} changes={}",
+        watched_path.display(),
+        pending_changes.len()
+      ),
+    );
 
     if lsp_ready {
       let params = did_change_watched_files_params(
@@ -1276,6 +1298,23 @@ impl Ctx {
       let _ = self
         .lsp_runtime
         .send_notification("workspace/didChangeWatchedFiles", Some(params));
+      trace_file_watch_event(
+        "consumer_lsp_notify_sent",
+        format!(
+          "client=term path={} changes={}",
+          watched_path.display(),
+          pending_changes.len()
+        ),
+      );
+    } else {
+      trace_file_watch_event(
+        "consumer_lsp_notify_skipped",
+        format!(
+          "client=term path={} reason=lsp_not_ready changes={}",
+          watched_path.display(),
+          pending_changes.len()
+        ),
+      );
     }
 
     if let Some(change_type) = pending_changes.last().copied() {
@@ -1297,6 +1336,10 @@ impl Ctx {
 
     match change_type {
       FileChangeType::Deleted => {
+        trace_file_watch_event(
+          "consumer_external_deleted",
+          format!("client=term path={}", watched_path.display()),
+        );
         self.messages.publish(
           MessageLevel::Warning,
           Some("watch".into()),
@@ -1306,6 +1349,10 @@ impl Ctx {
       },
       FileChangeType::Created | FileChangeType::Changed => {
         if self.editor.document().flags().modified {
+          trace_file_watch_event(
+            "consumer_external_changed_dirty",
+            format!("client=term path={}", watched_path.display()),
+          );
           self.messages.publish(
             MessageLevel::Warning,
             Some("watch".into()),
@@ -1318,6 +1365,10 @@ impl Ctx {
 
         match <Self as the_default::DefaultContext>::open_file(self, watched_path) {
           Ok(()) => {
+            trace_file_watch_event(
+              "consumer_external_reload_ok",
+              format!("client=term path={}", watched_path.display()),
+            );
             self.messages.publish(
               MessageLevel::Info,
               Some("watch".into()),
@@ -1326,6 +1377,10 @@ impl Ctx {
             true
           },
           Err(err) => {
+            trace_file_watch_event(
+              "consumer_external_reload_err",
+              format!("client=term path={} err={err}", watched_path.display()),
+            );
             self.messages.publish(
               MessageLevel::Error,
               Some("watch".into()),

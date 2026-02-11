@@ -120,6 +120,13 @@ fn file_watch_trace(event: &str, message: impl Into<String>) {
   let _ = writer.flush();
 }
 
+/// Emit a file-watcher trace event from runtime consumers.
+///
+/// This uses the same sink as the internal watcher instrumentation.
+pub fn trace_event(event: &str, message: impl Into<String>) {
+  file_watch_trace(event, message);
+}
+
 /// Handle for a logical watcher stream created by [`watch`].
 ///
 /// Dropping the handle unregisters all watched paths and stops background

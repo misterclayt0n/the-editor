@@ -186,6 +186,7 @@ use the_runtime::file_watch::{
   PathEventKind,
   WatchHandle,
   resolve_trace_log_path as resolve_file_watch_trace_log_path,
+  trace_event as trace_file_watch_event,
   watch as watch_path,
 };
 use the_vcs::{
@@ -2766,6 +2767,7 @@ impl App {
 
     {
       let Some(watch) = self.lsp_watched_file.as_mut() else {
+        trace_file_watch_event("consumer_poll_skip", "client=ffi reason=no_watch_state");
         return false;
       };
 
@@ -2781,6 +2783,13 @@ impl App {
 
             if let Some(until) = watch.suppress_until {
               if Instant::now() <= until {
+                trace_file_watch_event(
+                  "consumer_suppress_drop",
+                  format!(
+                    "client=ffi path={} reason=self_save_window",
+                    watch.path.display()
+                  ),
+                );
                 watch.suppress_until = None;
                 continue;
               }
@@ -2805,6 +2814,10 @@ impl App {
     }
 
     if watcher_disconnected {
+      trace_file_watch_event(
+        "consumer_watcher_disconnected",
+        format!("client=ffi path={}", watched_path.display()),
+      );
       self.lsp_sync_watched_file_state();
       return false;
     }
@@ -2812,6 +2825,15 @@ impl App {
     if pending_changes.is_empty() {
       return false;
     }
+
+    trace_file_watch_event(
+      "consumer_changes_collected",
+      format!(
+        "client=ffi path={} changes={}",
+        watched_path.display(),
+        pending_changes.len()
+      ),
+    );
 
     if lsp_ready {
       let params = did_change_watched_files_params(
@@ -2823,6 +2845,23 @@ impl App {
       let _ = self
         .lsp_runtime
         .send_notification("workspace/didChangeWatchedFiles", Some(params));
+      trace_file_watch_event(
+        "consumer_lsp_notify_sent",
+        format!(
+          "client=ffi path={} changes={}",
+          watched_path.display(),
+          pending_changes.len()
+        ),
+      );
+    } else {
+      trace_file_watch_event(
+        "consumer_lsp_notify_skipped",
+        format!(
+          "client=ffi path={} reason=lsp_not_ready changes={}",
+          watched_path.display(),
+          pending_changes.len()
+        ),
+      );
     }
 
     if let Some(change_type) = pending_changes.last().copied() {
@@ -2844,6 +2883,10 @@ impl App {
 
     match change_type {
       FileChangeType::Deleted => {
+        trace_file_watch_event(
+          "consumer_external_deleted",
+          format!("client=ffi path={}", watched_path.display()),
+        );
         if self.active_editor.is_some() {
           self.active_state_mut().messages.publish(
             the_lib::messages::MessageLevel::Warning,
@@ -2856,6 +2899,10 @@ impl App {
       },
       FileChangeType::Created | FileChangeType::Changed => {
         if self.active_editor_ref().document().flags().modified {
+          trace_file_watch_event(
+            "consumer_external_changed_dirty",
+            format!("client=ffi path={}", watched_path.display()),
+          );
           if self.active_editor.is_some() {
             self.active_state_mut().messages.publish(
               the_lib::messages::MessageLevel::Warning,
@@ -2871,6 +2918,10 @@ impl App {
 
         match <Self as DefaultContext>::open_file(self, watched_path) {
           Ok(()) => {
+            trace_file_watch_event(
+              "consumer_external_reload_ok",
+              format!("client=ffi path={}", watched_path.display()),
+            );
             if self.active_editor.is_some() {
               self.active_state_mut().messages.publish(
                 the_lib::messages::MessageLevel::Info,
@@ -2882,6 +2933,10 @@ impl App {
             true
           },
           Err(err) => {
+            trace_file_watch_event(
+              "consumer_external_reload_err",
+              format!("client=ffi path={} err={err}", watched_path.display()),
+            );
             if self.active_editor.is_some() {
               self.active_state_mut().messages.publish(
                 the_lib::messages::MessageLevel::Error,

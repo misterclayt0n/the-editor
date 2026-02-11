@@ -3227,6 +3227,9 @@ fn open<Ctx: DefaultContext>(
   open: OpenDirection,
   comment_continuation: CommentContinuation,
 ) {
+  let loader_ptr = ctx.syntax_loader().map(|loader| loader as *const Loader);
+  let fallback_loader = syntax_loader() as *const Loader;
+
   // NOTE: count support isn't wired yet in the new context.
   let count = 1usize;
   ctx.set_mode(Mode::Insert);
@@ -3248,8 +3251,8 @@ fn open<Ctx: DefaultContext>(
   };
 
   let tab_width = 4usize;
-  let indent_heuristic = IndentationHeuristic::Simple;
-  let loader = syntax_loader();
+  let indent_heuristic = IndentationHeuristic::default();
+  let loader = unsafe { &*loader_ptr.unwrap_or(fallback_loader) };
   let loader_language_count = loader.languages().len();
 
   let tx = Transaction::change_by_selection(contents, &selection, |range| {

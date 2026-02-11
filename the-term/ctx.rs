@@ -182,6 +182,8 @@ use the_runtime::{
   },
   file_watch_reload::{
     FileWatchReloadDecision,
+    FileWatchReloadError,
+    FileWatchReloadIoState,
     FileWatchReloadState,
     clear_reload_state,
     evaluate_external_reload_from_disk,
@@ -1322,22 +1324,51 @@ impl Ctx {
           Some(watch) => {
             match evaluate_external_reload_from_disk(
               &mut watch.stream.reload_state,
+              &mut watch.stream.reload_io,
               watched_path,
               &current,
               buffer_modified,
             ) {
               Ok(decision) => decision,
               Err(err) => {
-                trace_file_watch_event(
-                  "consumer_external_read_err",
-                  format!("client=term path={} err={err}", watched_path.display()),
-                );
-                self.messages.publish(
-                  MessageLevel::Error,
-                  Some("watch".into()),
-                  format!("failed to read '{label}' from disk: {err}"),
-                );
-                return true;
+                match err {
+                  FileWatchReloadError::BackoffActive { retry_after } => {
+                    let retry_in_ms = retry_after
+                      .saturating_duration_since(Instant::now())
+                      .as_millis();
+                    trace_file_watch_event(
+                      "consumer_external_read_backoff",
+                      format!(
+                        "client=term path={} retry_in_ms={retry_in_ms}",
+                        watched_path.display()
+                      ),
+                    );
+                    return false;
+                  },
+                  FileWatchReloadError::ReadFailed {
+                    error, retry_after, ..
+                  } => {
+                    let retry_in_ms = retry_after
+                      .saturating_duration_since(Instant::now())
+                      .as_millis();
+                    trace_file_watch_event(
+                      "consumer_external_read_err",
+                      format!(
+                        "client=term path={} err={} retry_in_ms={retry_in_ms}",
+                        watched_path.display(),
+                        error
+                      ),
+                    );
+                    self.messages.publish(
+                      MessageLevel::Warning,
+                      Some("watch".into()),
+                      format!(
+                        "failed to read '{label}' from disk: {error} (retrying in {retry_in_ms}ms)"
+                      ),
+                    );
+                    return true;
+                  },
+                }
               },
             }
           },
@@ -2321,6 +2352,7 @@ impl Ctx {
           events_rx,
           suppress_until: None,
           reload_state: FileWatchReloadState::Clean,
+          reload_io: FileWatchReloadIoState::default(),
         },
         _watch_handle: watch_handle,
       }
@@ -2363,6 +2395,14 @@ fn lsp_file_watch_latency() -> Duration {
 
 fn lsp_self_save_suppress_window() -> Duration {
   Duration::from_millis(500)
+}
+
+fn watch_statusline_text_for_state(state: FileWatchReloadState) -> Option<String> {
+  match state {
+    FileWatchReloadState::Conflict => Some("watch: conflict".to_string()),
+    FileWatchReloadState::ReloadNeeded => Some("watch: reload pending".to_string()),
+    FileWatchReloadState::Clean => None,
+  }
 }
 
 fn file_change_type_for_path_event(kind: PathEventKind) -> FileChangeType {
@@ -2672,6 +2712,26 @@ impl the_default::DefaultContext for Ctx {
 
   fn vcs_statusline_text(&self) -> Option<String> {
     self.vcs_statusline.clone()
+  }
+
+  fn watch_statusline_text(&self) -> Option<String> {
+    self
+      .lsp_watched_file
+      .as_ref()
+      .and_then(|watch| watch_statusline_text_for_state(watch.stream.reload_state))
+  }
+
+  fn watch_conflict_active(&self) -> bool {
+    self
+      .lsp_watched_file
+      .as_ref()
+      .is_some_and(|watch| watch.stream.reload_state == FileWatchReloadState::Conflict)
+  }
+
+  fn clear_watch_conflict(&mut self) {
+    if let Some(watch) = self.lsp_watched_file.as_mut() {
+      clear_reload_state(&mut watch.stream.reload_state);
+    }
   }
 
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
@@ -3450,6 +3510,7 @@ mod tests {
         events_rx,
         suppress_until: None,
         reload_state: super::FileWatchReloadState::Clean,
+        reload_io: super::FileWatchReloadIoState::default(),
       },
       _watch_handle: watch_handle,
     });
@@ -3815,6 +3876,85 @@ pkgs.mkShell {
       })
       .expect("watch warning message");
     assert!(warning.contains("buffer has unsaved changes"));
+    assert_eq!(
+      <Ctx as DefaultContext>::watch_statusline_text(&ctx).as_deref(),
+      Some("watch: conflict")
+    );
+  }
+
+  #[test]
+  fn watch_conflict_discard_command_reloads_and_clears_conflict_state() {
+    let fixture = TempTestFile::new("conflict-discard", "alpha\nbeta\n");
+    let mut ctx = Ctx::new(Some(
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+
+    let local_edit = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("local-".into()))),
+    )
+    .expect("local edit");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &local_edit));
+
+    let watch_tx = install_test_watch_state(&mut ctx, fixture.as_path());
+    fs::write(fixture.as_path(), "disk-alpha\ndisk-beta\n").expect("update fixture");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send watch event");
+    assert!(ctx.poll_lsp_file_watch());
+    assert_eq!(
+      <Ctx as DefaultContext>::watch_statusline_text(&ctx).as_deref(),
+      Some("watch: conflict")
+    );
+
+    let registry = ctx.command_registry_ref() as *const the_default::CommandRegistry<Ctx>;
+    unsafe {
+      (&*registry).execute(
+        &mut ctx,
+        "watch-conflict",
+        "discard",
+        CommandEvent::Validate,
+      )
+    }
+    .expect("discard conflict");
+
+    assert_eq!(
+      ctx.editor.document().text().to_string(),
+      "disk-alpha\ndisk-beta\n"
+    );
+    assert!(!<Ctx as DefaultContext>::watch_conflict_active(&ctx));
+  }
+
+  #[test]
+  fn watch_scope_command_reports_active_document_policy() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    let before_seq = ctx.messages.latest_seq();
+    let registry = ctx.command_registry_ref() as *const the_default::CommandRegistry<Ctx>;
+    unsafe { (&*registry).execute(&mut ctx, "watch-scope", "", CommandEvent::Validate) }
+      .expect("watch-scope command");
+
+    let events = ctx.messages.events_since(before_seq);
+    let info = events
+      .iter()
+      .find_map(|event| {
+        match &event.kind {
+          MessageEventKind::Published { message } => {
+            (message.level == the_lib::messages::MessageLevel::Info
+              && message.source.as_deref() == Some("watch"))
+            .then_some(message.text.as_str())
+          },
+          _ => None,
+        }
+      })
+      .expect("watch-scope info");
+    assert!(info.contains("active-document"));
   }
 
   #[test]

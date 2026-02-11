@@ -3,7 +3,14 @@
 //! This keeps external-change conflict/reload behavior consistent between
 //! editor clients while remaining independent from UI concerns.
 
-use std::path::Path;
+use std::{
+  path::Path,
+  time::{
+    Duration,
+    Instant,
+    SystemTime,
+  },
+};
 
 use ropey::Rope;
 use the_lib::diff::compare_ropes;
@@ -31,6 +38,50 @@ pub enum FileWatchReloadDecision {
   ConflictEntered,
   /// Conflict is still active from a previous external change.
   ConflictOngoing,
+}
+
+/// Cached disk fingerprint used for fast-path no-op evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileWatchDiskFingerprint {
+  pub len:      u64,
+  pub modified: Option<SystemTime>,
+}
+
+/// Mutable IO state for watched-file reload evaluation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FileWatchReloadIoState {
+  pub disk_fingerprint: Option<FileWatchDiskFingerprint>,
+  pub read_failures:    u8,
+  pub retry_after:      Option<Instant>,
+}
+
+/// Reload evaluation error.
+#[derive(Debug)]
+pub enum FileWatchReloadError {
+  BackoffActive {
+    retry_after: Instant,
+  },
+  ReadFailed {
+    error:       std::io::Error,
+    failures:    u8,
+    retry_after: Instant,
+  },
+}
+
+impl FileWatchReloadError {
+  pub fn retry_after(&self) -> Instant {
+    match self {
+      Self::BackoffActive { retry_after } => *retry_after,
+      Self::ReadFailed { retry_after, .. } => *retry_after,
+    }
+  }
+
+  pub fn io_error(&self) -> Option<&std::io::Error> {
+    match self {
+      Self::ReadFailed { error, .. } => Some(error),
+      Self::BackoffActive { .. } => None,
+    }
+  }
 }
 
 /// Advance watched-file reload state after observing an external disk change.
@@ -63,15 +114,67 @@ pub fn decide_external_reload(
   FileWatchReloadDecision::ReloadNeeded
 }
 
+const READ_BACKOFF_BASE_MS: u64 = 80;
+const READ_BACKOFF_MAX_MS: u64 = 2_000;
+
+fn backoff_delay_for_failures(failures: u8) -> Duration {
+  let shift = failures.saturating_sub(1).min(5) as u32;
+  let factor = 1u64 << shift;
+  Duration::from_millis((READ_BACKOFF_BASE_MS.saturating_mul(factor)).min(READ_BACKOFF_MAX_MS))
+}
+
+fn mark_read_failure(
+  io_state: &mut FileWatchReloadIoState,
+  now: Instant,
+  error: std::io::Error,
+) -> FileWatchReloadError {
+  io_state.read_failures = io_state.read_failures.saturating_add(1);
+  let retry_after = now + backoff_delay_for_failures(io_state.read_failures);
+  io_state.retry_after = Some(retry_after);
+  FileWatchReloadError::ReadFailed {
+    error,
+    failures: io_state.read_failures,
+    retry_after,
+  }
+}
+
 /// Evaluate reload/conflict decision by comparing current buffer text with
 /// disk.
 pub fn evaluate_external_reload_from_disk(
   state: &mut FileWatchReloadState,
+  io_state: &mut FileWatchReloadIoState,
   watched_path: &Path,
   current_text: &Rope,
   buffer_modified: bool,
-) -> std::io::Result<FileWatchReloadDecision> {
-  let disk_text = std::fs::read_to_string(watched_path)?;
+) -> Result<FileWatchReloadDecision, FileWatchReloadError> {
+  let now = Instant::now();
+  if let Some(retry_after) = io_state.retry_after
+    && now < retry_after
+  {
+    return Err(FileWatchReloadError::BackoffActive { retry_after });
+  }
+
+  let metadata = match std::fs::metadata(watched_path) {
+    Ok(metadata) => metadata,
+    Err(err) => return Err(mark_read_failure(io_state, now, err)),
+  };
+
+  let fingerprint = FileWatchDiskFingerprint {
+    len:      metadata.len(),
+    modified: metadata.modified().ok(),
+  };
+  if io_state.disk_fingerprint == Some(fingerprint) {
+    return Ok(FileWatchReloadDecision::Noop);
+  }
+
+  let disk_text = match std::fs::read_to_string(watched_path) {
+    Ok(text) => text,
+    Err(err) => return Err(mark_read_failure(io_state, now, err)),
+  };
+  io_state.disk_fingerprint = Some(fingerprint);
+  io_state.read_failures = 0;
+  io_state.retry_after = None;
+
   let disk_rope = Rope::from_str(&disk_text);
   let has_disk_changes = !compare_ropes(current_text, &disk_rope).changes().is_empty();
   Ok(decide_external_reload(
@@ -93,19 +196,27 @@ pub fn clear_reload_state(state: &mut FileWatchReloadState) {
 
 #[cfg(test)]
 mod tests {
-  use ropey::Rope;
   use std::{
     fs,
     path::{
       Path,
       PathBuf,
     },
-    time::SystemTime,
+    time::{
+      Duration,
+      SystemTime,
+    },
   };
+
+  use ropey::Rope;
 
   use super::{
     FileWatchReloadDecision,
+    FileWatchReloadError,
+    FileWatchReloadIoState,
     FileWatchReloadState,
+    READ_BACKOFF_BASE_MS,
+    backoff_delay_for_failures,
     clear_reload_state,
     decide_external_reload,
     evaluate_external_reload_from_disk,
@@ -174,23 +285,40 @@ mod tests {
     let path = temp_path("evaluate");
     write_file(&path, "alpha\n");
     let mut state = FileWatchReloadState::Clean;
+    let mut io_state = FileWatchReloadIoState::default();
 
-    let same =
-      evaluate_external_reload_from_disk(&mut state, &path, &Rope::from_str("alpha\n"), false)
-        .expect("evaluate same");
+    let same = evaluate_external_reload_from_disk(
+      &mut state,
+      &mut io_state,
+      &path,
+      &Rope::from_str("alpha\n"),
+      false,
+    )
+    .expect("evaluate same");
     assert_eq!(same, FileWatchReloadDecision::Noop);
     assert_eq!(state, FileWatchReloadState::Clean);
 
     write_file(&path, "beta\n");
-    let reload =
-      evaluate_external_reload_from_disk(&mut state, &path, &Rope::from_str("alpha\n"), false)
-        .expect("evaluate reload");
+    let reload = evaluate_external_reload_from_disk(
+      &mut state,
+      &mut io_state,
+      &path,
+      &Rope::from_str("alpha\n"),
+      false,
+    )
+    .expect("evaluate reload");
     assert_eq!(reload, FileWatchReloadDecision::ReloadNeeded);
     assert_eq!(state, FileWatchReloadState::ReloadNeeded);
 
-    let conflict =
-      evaluate_external_reload_from_disk(&mut state, &path, &Rope::from_str("alpha\n"), true)
-        .expect("evaluate conflict");
+    write_file(&path, "gamma\n");
+    let conflict = evaluate_external_reload_from_disk(
+      &mut state,
+      &mut io_state,
+      &path,
+      &Rope::from_str("alpha\n"),
+      true,
+    )
+    .expect("evaluate conflict");
     assert_eq!(conflict, FileWatchReloadDecision::ConflictEntered);
     assert_eq!(state, FileWatchReloadState::Conflict);
 
@@ -203,9 +331,89 @@ mod tests {
     remove_file(&path);
 
     let mut state = FileWatchReloadState::Clean;
-    let err =
-      evaluate_external_reload_from_disk(&mut state, &path, &Rope::from_str("alpha\n"), false)
-        .expect_err("missing file should error");
-    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    let mut io_state = FileWatchReloadIoState::default();
+    let err = evaluate_external_reload_from_disk(
+      &mut state,
+      &mut io_state,
+      &path,
+      &Rope::from_str("alpha\n"),
+      false,
+    )
+    .expect_err("missing file should error");
+    match err {
+      FileWatchReloadError::ReadFailed { error, .. } => {
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+      },
+      other => panic!("expected read failure, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn evaluate_external_reload_uses_metadata_fast_path() {
+    let path = temp_path("metadata-fast-path");
+    write_file(&path, "alpha\n");
+    let mut state = FileWatchReloadState::Clean;
+    let mut io_state = FileWatchReloadIoState::default();
+
+    let first = evaluate_external_reload_from_disk(
+      &mut state,
+      &mut io_state,
+      &path,
+      &Rope::from_str("alpha\n"),
+      false,
+    )
+    .expect("first evaluate");
+    assert_eq!(first, FileWatchReloadDecision::Noop);
+    assert!(io_state.disk_fingerprint.is_some());
+
+    let second = evaluate_external_reload_from_disk(
+      &mut state,
+      &mut io_state,
+      &path,
+      &Rope::from_str("alpha\n"),
+      false,
+    )
+    .expect("second evaluate");
+    assert_eq!(second, FileWatchReloadDecision::Noop);
+
+    remove_file(&path);
+  }
+
+  #[test]
+  fn evaluate_external_reload_applies_read_backoff_window() {
+    let path = temp_path("read-backoff");
+    remove_file(&path);
+    let mut state = FileWatchReloadState::Clean;
+    let mut io_state = FileWatchReloadIoState::default();
+
+    let first = evaluate_external_reload_from_disk(
+      &mut state,
+      &mut io_state,
+      &path,
+      &Rope::from_str("alpha\n"),
+      false,
+    )
+    .expect_err("first read should fail");
+    let retry_after = first.retry_after();
+
+    let second = evaluate_external_reload_from_disk(
+      &mut state,
+      &mut io_state,
+      &path,
+      &Rope::from_str("alpha\n"),
+      false,
+    )
+    .expect_err("second call during window should back off");
+    match second {
+      FileWatchReloadError::BackoffActive {
+        retry_after: second_retry,
+      } => {
+        assert_eq!(retry_after, second_retry);
+      },
+      other => panic!("expected backoff active, got {other:?}"),
+    }
+
+    let delay = backoff_delay_for_failures(1);
+    assert!(delay >= Duration::from_millis(READ_BACKOFF_BASE_MS));
   }
 }

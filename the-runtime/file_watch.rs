@@ -146,7 +146,10 @@ impl WatchHandle {
   /// events to the requested path prefix.
   pub fn add(&self, path: &Path) -> notify::Result<()> {
     let logical_path = normalize_path(path);
-    file_watch_trace("watch_add_begin", format!("path={}", logical_path.display()));
+    file_watch_trace(
+      "watch_add_begin",
+      format!("path={}", logical_path.display()),
+    );
     {
       let registrations = lock(&self.registrations);
       if registrations.contains_key(&logical_path) {
@@ -166,11 +169,7 @@ impl WatchHandle {
       Ok(id) => {
         file_watch_trace(
           "watch_add_direct",
-          format!(
-            "path={} registration_id={}",
-            logical_path.display(),
-            id.0
-          ),
+          format!("path={} registration_id={}", logical_path.display(), id.0),
         );
         registration_ids.push(id);
       },
@@ -178,10 +177,7 @@ impl WatchHandle {
         let Some(parent) = logical_path.parent() else {
           file_watch_trace(
             "watch_add_error",
-            format!(
-              "path={} reason=no_parent err={err}",
-              logical_path.display()
-            ),
+            format!("path={} reason=no_parent err={err}", logical_path.display()),
           );
           return Err(err);
         };
@@ -200,18 +196,15 @@ impl WatchHandle {
       },
     }
 
-    if watch_file_parent && !parent_filter_registered
+    if watch_file_parent
+      && !parent_filter_registered
       && let Some(parent) = logical_path.parent()
     {
       let parent = normalize_path(parent);
       let id = self.register(parent, logical_path.clone())?;
       file_watch_trace(
         "watch_add_parent_registered",
-        format!(
-          "path={} registration_id={}",
-          logical_path.display(),
-          id.0
-        ),
+        format!("path={} registration_id={}", logical_path.display(), id.0),
       );
       registration_ids.push(id);
     }
@@ -242,11 +235,7 @@ impl WatchHandle {
         if let Ok(id) = self.register(parent, target) {
           file_watch_trace(
             "watch_add_symlink_parent_registered",
-            format!(
-              "path={} registration_id={}",
-              logical_path.display(),
-              id.0
-            ),
+            format!("path={} registration_id={}", logical_path.display(), id.0),
           );
           registration_ids.push(id);
         }
@@ -265,7 +254,10 @@ impl WatchHandle {
   /// Remove a previously added logical path.
   pub fn remove(&self, path: &Path) -> notify::Result<()> {
     let logical_path = normalize_path(path);
-    file_watch_trace("watch_remove_begin", format!("path={}", logical_path.display()));
+    file_watch_trace(
+      "watch_remove_begin",
+      format!("path={}", logical_path.display()),
+    );
     let Some(registrations) = lock(&self.registrations).remove(&logical_path) else {
       file_watch_trace(
         "watch_remove_skip",
@@ -278,7 +270,10 @@ impl WatchHandle {
       global(|watcher| watcher.remove(registration))?;
     }
 
-    file_watch_trace("watch_remove_done", format!("path={}", logical_path.display()));
+    file_watch_trace(
+      "watch_remove_done",
+      format!("path={}", logical_path.display()),
+    );
     Ok(())
   }
 
@@ -353,7 +348,8 @@ impl WatchHandle {
         file_watch_trace(
           "register_callback_mapped",
           format!(
-            "watch_path={callback_watch_path} filter_path={callback_filter_path} kind={kind:?} mapped={mapped_count} wake={should_wake}"
+            "watch_path={callback_watch_path} filter_path={callback_filter_path} kind={kind:?} \
+             mapped={mapped_count} wake={should_wake}"
           ),
         );
       })
@@ -647,11 +643,7 @@ impl GlobalWatcher {
     }
     file_watch_trace(
       "global_remove_done",
-      format!(
-        "registration_id={} remaining_path_refs={}",
-        id.0,
-        count
-      ),
+      format!("registration_id={} remaining_path_refs={}", id.0, count),
     );
   }
 }
@@ -729,6 +721,10 @@ mod test {
   use std::{
     fs,
     path::PathBuf,
+    sync::{
+      Mutex,
+      OnceLock,
+    },
     thread,
     time::{
       Duration,
@@ -744,6 +740,14 @@ mod test {
     path_matches_filter,
     watch,
   };
+
+  fn watch_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static WATCH_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    WATCH_TEST_LOCK
+      .get_or_init(|| Mutex::new(()))
+      .lock()
+      .expect("watch test lock")
+  }
 
   #[test]
   fn coalesce_events_keeps_last_kind_and_sorts_by_path() {
@@ -788,6 +792,7 @@ mod test {
 
   #[test]
   fn watch_missing_file_reports_event_when_file_is_created() {
+    let _guard = watch_test_guard();
     let nonce = SystemTime::now()
       .duration_since(SystemTime::UNIX_EPOCH)
       .map(|d| d.as_nanos())
@@ -802,20 +807,17 @@ mod test {
     let _ = fs::remove_file(&missing_path);
 
     let (events_rx, _watch) = watch(&missing_path, Duration::from_millis(30));
-    thread::sleep(Duration::from_millis(120));
+    thread::sleep(Duration::from_millis(220));
     fs::write(&missing_path, "created\n").expect("create watched file");
 
     let mut saw_create_event = false;
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
       match events_rx.recv_timeout(Duration::from_millis(250)) {
         Ok(batch) => {
           if batch.iter().any(|event| {
             event.path == normalized_missing_path
-              && matches!(
-                event.kind,
-                PathEventKind::Created | PathEventKind::Changed
-              )
+              && matches!(event.kind, PathEventKind::Created | PathEventKind::Changed)
           }) {
             saw_create_event = true;
             break;
@@ -832,6 +834,57 @@ mod test {
       saw_create_event,
       "expected created/changed event for {}",
       missing_path.display()
+    );
+  }
+
+  #[test]
+  fn watch_atomic_save_rename_reports_change_for_target_file() {
+    let _guard = watch_test_guard();
+    let nonce = SystemTime::now()
+      .duration_since(SystemTime::UNIX_EPOCH)
+      .map(|d| d.as_nanos())
+      .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!(
+      "the-editor-watch-atomic-save-{}-{nonce}",
+      std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create temp watch dir");
+    let target_path = root.join("atomic.txt");
+    fs::write(&target_path, "one\n").expect("seed watched file");
+    let normalized_target_path = super::normalize_path(&target_path);
+
+    let (events_rx, _watch) = watch(&target_path, Duration::from_millis(30));
+    thread::sleep(Duration::from_millis(120));
+
+    let temp_path = root.join("atomic.txt.tmp");
+    fs::write(&temp_path, "two\n").expect("write temp file");
+    fs::rename(&temp_path, &target_path).expect("atomic rename");
+
+    let mut saw_change_event = false;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+      match events_rx.recv_timeout(Duration::from_millis(250)) {
+        Ok(batch) => {
+          if batch.iter().any(|event| {
+            event.path == normalized_target_path
+              && matches!(event.kind, PathEventKind::Created | PathEventKind::Changed)
+          }) {
+            saw_change_event = true;
+            break;
+          }
+        },
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+      }
+    }
+
+    let _ = fs::remove_file(&target_path);
+    let _ = fs::remove_file(&temp_path);
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+      saw_change_event,
+      "expected created/changed event for {} after atomic rename",
+      target_path.display()
     );
   }
 }

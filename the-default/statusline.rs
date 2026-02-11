@@ -36,6 +36,7 @@ pub fn statusline_present(tree: &the_lib::render::UiTree) -> bool {
 pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
   let viewport_width = ctx.editor_ref().view().viewport.width as usize;
   let pending_keys = pending_keys_text(ctx);
+  let watch_part = ctx.watch_statusline_text().filter(|text| !text.is_empty());
   let lsp_part = ctx.lsp_statusline_text().filter(|text| !text.is_empty());
   let vcs_part = ctx
     .vcs_statusline_text()
@@ -99,6 +100,9 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
       if let Some(lsp) = lsp_part.as_ref() {
         budget = budget.saturating_sub(lsp.chars().count() + 2);
       }
+      if let Some(watch) = watch_part.as_ref() {
+        budget = budget.saturating_sub(watch.chars().count() + 2);
+      }
       if let Some(vcs) = vcs_part.as_ref() {
         budget = budget.saturating_sub(vcs.chars().count() + 2);
       }
@@ -127,6 +131,15 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
       style: Some(lsp_style),
     });
     right_parts.push(lsp);
+  }
+  if let Some(watch) = watch_part {
+    let mut watch_style = UiStyle::default();
+    watch_style.emphasis = UiEmphasis::Strong;
+    right_segments.push(UiStyledSpan {
+      text:  watch.clone(),
+      style: Some(watch_style),
+    });
+    right_parts.push(watch);
   }
   if let Some(vcs) = vcs_part {
     let mut vcs_style = UiStyle::default();

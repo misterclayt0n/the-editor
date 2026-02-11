@@ -17,7 +17,10 @@ use crate::{
     PathEvent,
     PathEventKind,
   },
-  file_watch_reload::FileWatchReloadState,
+  file_watch_reload::{
+    FileWatchReloadIoState,
+    FileWatchReloadState,
+  },
 };
 
 /// Mutable state required to poll a watched file event stream.
@@ -27,6 +30,7 @@ pub struct WatchedFileEventsState {
   pub events_rx:      Receiver<Vec<PathEvent>>,
   pub suppress_until: Option<Instant>,
   pub reload_state:   FileWatchReloadState,
+  pub reload_io:      FileWatchReloadIoState,
 }
 
 /// Poll result for [`poll_watch_events`].
@@ -144,7 +148,10 @@ mod tests {
       PathEvent,
       PathEventKind,
     },
-    file_watch_reload::FileWatchReloadState,
+    file_watch_reload::{
+      FileWatchReloadIoState,
+      FileWatchReloadState,
+    },
   };
 
   fn new_state() -> (
@@ -159,6 +166,7 @@ mod tests {
         events_rx:      rx,
         suppress_until: None,
         reload_state:   FileWatchReloadState::Clean,
+        reload_io:      FileWatchReloadIoState::default(),
       },
       tx,
     )

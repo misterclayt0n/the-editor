@@ -197,6 +197,8 @@ use the_runtime::{
   },
   file_watch_reload::{
     FileWatchReloadDecision,
+    FileWatchReloadError,
+    FileWatchReloadIoState,
     FileWatchReloadState,
     clear_reload_state,
     evaluate_external_reload_from_disk,
@@ -1273,6 +1275,14 @@ fn lsp_file_watch_latency() -> Duration {
 
 fn lsp_self_save_suppress_window() -> Duration {
   Duration::from_millis(500)
+}
+
+fn watch_statusline_text_for_state(state: FileWatchReloadState) -> Option<String> {
+  match state {
+    FileWatchReloadState::Conflict => Some("watch: conflict".to_string()),
+    FileWatchReloadState::ReloadNeeded => Some("watch: reload pending".to_string()),
+    FileWatchReloadState::Clean => None,
+  }
 }
 
 fn file_change_type_for_path_event(kind: PathEventKind) -> FileChangeType {
@@ -2765,6 +2775,7 @@ impl App {
           events_rx,
           suppress_until: None,
           reload_state: FileWatchReloadState::Clean,
+          reload_io: FileWatchReloadIoState::default(),
         },
         _watch_handle: watch_handle,
       }
@@ -2877,25 +2888,55 @@ impl App {
           Some(watch) => {
             match evaluate_external_reload_from_disk(
               &mut watch.stream.reload_state,
+              &mut watch.stream.reload_io,
               watched_path,
               &current,
               buffer_modified,
             ) {
               Ok(decision) => decision,
               Err(err) => {
-                trace_file_watch_event(
-                  "consumer_external_read_err",
-                  format!("client=ffi path={} err={err}", watched_path.display()),
-                );
-                if self.active_editor.is_some() {
-                  self.active_state_mut().messages.publish(
-                    the_lib::messages::MessageLevel::Error,
-                    Some("watch".into()),
-                    format!("failed to read '{label}' from disk: {err}"),
-                  );
-                  self.request_render();
+                match err {
+                  FileWatchReloadError::BackoffActive { retry_after } => {
+                    let retry_in_ms = retry_after
+                      .saturating_duration_since(Instant::now())
+                      .as_millis();
+                    trace_file_watch_event(
+                      "consumer_external_read_backoff",
+                      format!(
+                        "client=ffi path={} retry_in_ms={retry_in_ms}",
+                        watched_path.display()
+                      ),
+                    );
+                    return false;
+                  },
+                  FileWatchReloadError::ReadFailed {
+                    error, retry_after, ..
+                  } => {
+                    let retry_in_ms = retry_after
+                      .saturating_duration_since(Instant::now())
+                      .as_millis();
+                    trace_file_watch_event(
+                      "consumer_external_read_err",
+                      format!(
+                        "client=ffi path={} err={} retry_in_ms={retry_in_ms}",
+                        watched_path.display(),
+                        error
+                      ),
+                    );
+                    if self.active_editor.is_some() {
+                      self.active_state_mut().messages.publish(
+                        the_lib::messages::MessageLevel::Warning,
+                        Some("watch".into()),
+                        format!(
+                          "failed to read '{label}' from disk: {error} (retrying in \
+                           {retry_in_ms}ms)"
+                        ),
+                      );
+                      self.request_render();
+                    }
+                    return true;
+                  },
                 }
-                return true;
               },
             }
           },
@@ -3491,6 +3532,26 @@ impl DefaultContext for App {
       .states
       .get(&id)
       .and_then(|state| state.vcs_statusline.clone())
+  }
+
+  fn watch_statusline_text(&self) -> Option<String> {
+    self
+      .lsp_watched_file
+      .as_ref()
+      .and_then(|watch| watch_statusline_text_for_state(watch.stream.reload_state))
+  }
+
+  fn watch_conflict_active(&self) -> bool {
+    self
+      .lsp_watched_file
+      .as_ref()
+      .is_some_and(|watch| watch.stream.reload_state == FileWatchReloadState::Conflict)
+  }
+
+  fn clear_watch_conflict(&mut self) {
+    if let Some(watch) = self.lsp_watched_file.as_mut() {
+      clear_reload_state(&mut watch.stream.reload_state);
+    }
   }
 
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
@@ -4652,9 +4713,25 @@ fn overlay_rect_kind_to_u8(kind: OverlayRectKind) -> u8 {
 #[cfg(test)]
 mod tests {
   use std::{
-    path::PathBuf,
+    fs,
+    path::{
+      Path,
+      PathBuf,
+    },
+    sync::{
+      Mutex,
+      OnceLock,
+      mpsc::{
+        Sender,
+        channel,
+      },
+    },
     thread,
-    time::Duration,
+    time::{
+      Duration,
+      Instant,
+      SystemTime,
+    },
   };
 
   use the_default::{
@@ -4662,7 +4739,20 @@ mod tests {
     CommandRegistry,
     DefaultContext,
   };
-  use the_lib::transaction::Transaction;
+  use the_lib::{
+    messages::MessageEventKind,
+    position::{
+      Position as LibPosition,
+      char_idx_at_coords,
+      coords_at_pos,
+    },
+    selection::Selection,
+    transaction::Transaction,
+  };
+  use the_runtime::file_watch::{
+    PathEvent,
+    PathEventKind,
+  };
 
   use super::{
     App,
@@ -4672,6 +4762,7 @@ mod tests {
 
   #[test]
   fn app_render_plan_basic() {
+    let _guard = ffi_test_guard();
     let mut app = App::new();
     let viewport = ffi::Rect {
       x:      0,
@@ -4691,6 +4782,7 @@ mod tests {
 
   #[test]
   fn app_insert_updates_text_and_plan() {
+    let _guard = ffi_test_guard();
     let mut app = App::new();
     let viewport = ffi::Rect {
       x:      0,
@@ -4711,6 +4803,7 @@ mod tests {
 
   #[test]
   fn theme_highlight_style_out_of_bounds_returns_default() {
+    let _guard = ffi_test_guard();
     let app = App::new();
     let style = app.theme_highlight_style(u32::MAX);
     assert_eq!(style.to_lib(), LibStyle::default());
@@ -4743,8 +4836,87 @@ mod tests {
     None
   }
 
+  fn ffi_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    TEST_LOCK
+      .get_or_init(|| Mutex::new(()))
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner())
+  }
+
+  struct TempTestFile {
+    path: PathBuf,
+  }
+
+  impl TempTestFile {
+    fn new(prefix: &str, content: &str) -> Self {
+      let nonce = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+      let path = std::env::temp_dir().join(format!(
+        "the-editor-ffi-{prefix}-{}-{nonce}.txt",
+        std::process::id()
+      ));
+      fs::write(&path, content).expect("write temp test file");
+      Self { path }
+    }
+
+    fn as_path(&self) -> &Path {
+      &self.path
+    }
+  }
+
+  impl Drop for TempTestFile {
+    fn drop(&mut self) {
+      let _ = fs::remove_file(&self.path);
+    }
+  }
+
+  fn default_viewport() -> ffi::Rect {
+    ffi::Rect {
+      x:      0,
+      y:      0,
+      width:  80,
+      height: 24,
+    }
+  }
+
+  fn install_test_watch_state(
+    app: &mut App,
+    id: ffi::EditorId,
+    path: &Path,
+  ) -> Sender<Vec<PathEvent>> {
+    assert!(app.activate(id).is_some());
+    let (events_tx, events_rx) = channel();
+    let (_unused_rx, watch_handle) = super::watch_path(path, Duration::from_millis(0));
+    let uri = the_lsp::text_sync::file_uri_for_path(path).expect("file uri");
+
+    app.lsp_document = Some(super::LspDocumentSyncState {
+      path:        path.to_path_buf(),
+      uri:         uri.clone(),
+      language_id: "text".into(),
+      version:     0,
+      opened:      false,
+    });
+    app.lsp_watched_file = Some(super::LspWatchedFileState {
+      stream:        super::WatchedFileEventsState {
+        path: path.to_path_buf(),
+        uri,
+        events_rx,
+        suppress_until: None,
+        reload_state: super::FileWatchReloadState::Clean,
+        reload_io: super::FileWatchReloadIoState::default(),
+      },
+      _watch_handle: watch_handle,
+    });
+
+    events_tx
+  }
+
   #[test]
   fn syntax_highlight_updates_after_insert() {
+    let _guard = ffi_test_guard();
     let mut app = App::new();
     if app.loader.is_none() {
       return;
@@ -4898,6 +5070,7 @@ pkgs.mkShell {
 
   #[test]
   fn headless_client_stress_fixture_matrix() {
+    let _guard = ffi_test_guard();
     let mut app = App::new();
 
     for (fixture_index, (fixture_name, fixture_text)) in fixture_matrix().into_iter().enumerate() {
@@ -4958,6 +5131,7 @@ pkgs.mkShell {
 
   #[test]
   fn wrap_command_toggles_soft_wrap_and_changes_render_lines() {
+    let _guard = ffi_test_guard();
     let mut app = App::new();
     let viewport = ffi::Rect {
       x:      0,
@@ -4995,6 +5169,7 @@ pkgs.mkShell {
 
   #[test]
   fn ensure_cursor_visible_keeps_horizontal_scroll_zero_with_soft_wrap() {
+    let _guard = ffi_test_guard();
     let mut app = App::new();
     let viewport = ffi::Rect {
       x:      0,
@@ -5010,5 +5185,245 @@ pkgs.mkShell {
     assert!(app.set_scroll(id, ffi::Position { row: 0, col: 40 }));
     assert!(app.ensure_cursor_visible(id));
     assert_eq!(app.active_editor_ref().view().scroll.col, 0);
+  }
+
+  #[test]
+  fn watch_reload_preserves_cursor_and_scroll_semantically_after_external_edit() {
+    let _guard = ffi_test_guard();
+    let fixture = TempTestFile::new("semantic-reload", "zero\none\ntwo\nthree\n");
+    let mut app = App::new();
+    let id = app.create_editor(
+      &fs::read_to_string(fixture.as_path()).expect("read fixture"),
+      default_viewport(),
+      ffi::Position { row: 0, col: 0 },
+    );
+    assert!(app.activate(id).is_some());
+
+    let cursor = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      char_idx_at_coords(text, LibPosition::new(2, 1))
+    };
+    let _ = app
+      .active_editor_mut()
+      .document_mut()
+      .set_selection(Selection::point(cursor));
+    app.active_editor_mut().view_mut().scroll = LibPosition::new(2, 7);
+
+    let before_cursor_coords = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      let head = app.active_editor_ref().document().selection().ranges()[0].head;
+      coords_at_pos(text, head)
+    };
+    let before_scroll = app.active_editor_ref().view().scroll;
+
+    let watch_tx = install_test_watch_state(&mut app, id, fixture.as_path());
+    fs::write(fixture.as_path(), "inserted\nzero\none\ntwo\nthree\n").expect("update fixture");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send watch event");
+
+    assert!(app.poll_lsp_file_watch());
+    let after_cursor_coords = {
+      let text = app.active_editor_ref().document().text().slice(..);
+      let head = app.active_editor_ref().document().selection().ranges()[0].head;
+      coords_at_pos(text, head)
+    };
+    assert_eq!(app.text(id), "inserted\nzero\none\ntwo\nthree\n");
+    assert_eq!(after_cursor_coords, before_cursor_coords);
+    assert_eq!(app.active_editor_ref().view().scroll, before_scroll);
+  }
+
+  #[test]
+  fn watch_dirty_buffer_external_change_keeps_buffer_and_warns() {
+    let _guard = ffi_test_guard();
+    let fixture = TempTestFile::new("dirty-watch", "alpha\nbeta\n");
+    let mut app = App::new();
+    let id = app.create_editor(
+      &fs::read_to_string(fixture.as_path()).expect("read fixture"),
+      default_viewport(),
+      ffi::Position { row: 0, col: 0 },
+    );
+    assert!(app.activate(id).is_some());
+
+    let local_edit = Transaction::change(
+      app.active_editor_ref().document().text(),
+      std::iter::once((0, 0, Some("local-".into()))),
+    )
+    .expect("local edit");
+    assert!(DefaultContext::apply_transaction(&mut app, &local_edit));
+    let dirty_snapshot = app.text(id);
+    assert!(app.active_editor_ref().document().flags().modified);
+
+    let watch_tx = install_test_watch_state(&mut app, id, fixture.as_path());
+    fs::write(fixture.as_path(), "disk-alpha\ndisk-beta\n").expect("update fixture");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send watch event");
+
+    let before_seq = app.active_state_ref().messages.latest_seq();
+    assert!(app.poll_lsp_file_watch());
+    assert_eq!(app.text(id), dirty_snapshot);
+
+    let events = app.active_state_ref().messages.events_since(before_seq);
+    let warning = events
+      .iter()
+      .find_map(|event| {
+        match &event.kind {
+          MessageEventKind::Published { message } => {
+            (message.level == the_lib::messages::MessageLevel::Warning
+              && message.source.as_deref() == Some("watch"))
+            .then_some(message.text.as_str())
+          },
+          _ => None,
+        }
+      })
+      .expect("watch warning message");
+    assert!(warning.contains("buffer has unsaved changes"));
+    assert_eq!(
+      <App as DefaultContext>::watch_statusline_text(&app).as_deref(),
+      Some("watch: conflict")
+    );
+  }
+
+  #[test]
+  fn watch_rapid_external_changes_reload_to_latest_on_disk_content() {
+    let _guard = ffi_test_guard();
+    let fixture = TempTestFile::new("rapid-watch", "first\n");
+    let mut app = App::new();
+    let id = app.create_editor("first\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    let watch_tx = install_test_watch_state(&mut app, id, fixture.as_path());
+    fs::write(fixture.as_path(), "second\n").expect("write second");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send first event");
+
+    fs::write(fixture.as_path(), "third\n").expect("write third");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send second event");
+
+    assert!(app.poll_lsp_file_watch());
+    assert_eq!(app.text(id), "third\n");
+  }
+
+  #[test]
+  fn watch_self_save_suppression_window_ignores_events_until_expiry() {
+    let _guard = ffi_test_guard();
+    let fixture = TempTestFile::new("suppression-watch", "one\n");
+    let mut app = App::new();
+    let id = app.create_editor("one\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    let watch_tx = install_test_watch_state(&mut app, id, fixture.as_path());
+    let before = app.text(id);
+    if let Some(watch) = app.lsp_watched_file.as_mut() {
+      watch.stream.suppress_until = Some(Instant::now() + Duration::from_secs(2));
+    } else {
+      panic!("expected watch state");
+    }
+
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send first suppressed event");
+    watch_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send second suppressed event");
+
+    assert!(!app.poll_lsp_file_watch());
+    assert_eq!(app.text(id), before);
+  }
+
+  #[test]
+  fn watch_disconnect_rebinds_and_keeps_processing_changes() {
+    let _guard = ffi_test_guard();
+    let fixture = TempTestFile::new("disconnect-watch", "one\n");
+    let mut app = App::new();
+    let id = app.create_editor("one\n", default_viewport(), ffi::Position {
+      row: 0,
+      col: 0,
+    });
+    assert!(app.activate(id).is_some());
+
+    let watch_tx = install_test_watch_state(&mut app, id, fixture.as_path());
+    drop(watch_tx);
+
+    assert!(!app.poll_lsp_file_watch());
+    let rebound_watch_path = app
+      .lsp_watched_file
+      .as_ref()
+      .map(|watch| watch.stream.path.clone())
+      .expect("watch should be rebound");
+    assert_eq!(rebound_watch_path, fixture.as_path());
+
+    let rebound_tx = install_test_watch_state(&mut app, id, fixture.as_path());
+    fs::write(fixture.as_path(), "two\n").expect("update fixture");
+    rebound_tx
+      .send(vec![PathEvent {
+        path: fixture.as_path().to_path_buf(),
+        kind: PathEventKind::Changed,
+      }])
+      .expect("send rebound event");
+
+    assert!(app.poll_lsp_file_watch());
+    assert_eq!(app.text(id), "two\n");
+  }
+
+  #[test]
+  fn watch_missing_file_then_create_triggers_reload() {
+    let _guard = ffi_test_guard();
+    let nonce = SystemTime::now()
+      .duration_since(SystemTime::UNIX_EPOCH)
+      .map(|d| d.as_nanos())
+      .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!(
+      "the-editor-ffi-watch-missing-{}-{nonce}",
+      std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create temp root");
+    let missing_path = root.join("created-later.txt");
+    let _ = fs::remove_file(&missing_path);
+
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+    let watch_tx = install_test_watch_state(&mut app, id, &missing_path);
+
+    fs::write(&missing_path, "created\n").expect("create watched file");
+    watch_tx
+      .send(vec![PathEvent {
+        path: missing_path.clone(),
+        kind: PathEventKind::Created,
+      }])
+      .expect("send created event");
+
+    assert!(app.poll_lsp_file_watch());
+    assert_eq!(app.text(id), "created\n");
+    let _ = fs::remove_file(&missing_path);
+    let _ = fs::remove_dir_all(&root);
   }
 }

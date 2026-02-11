@@ -3,8 +3,8 @@ use std::{
     HashMap,
     HashSet,
   },
-  fs::OpenOptions,
   fmt,
+  fs::OpenOptions,
   ops::RangeFrom,
   sync::Arc,
 };
@@ -460,6 +460,30 @@ impl<Ctx: DefaultContext + 'static> CommandRegistry<Ctx> {
     ));
 
     self.register(TypableCommand::new(
+      "watch-conflict",
+      &[],
+      "Inspect or resolve external file-watch conflicts (status/discard)",
+      cmd_watch_conflict::<Ctx>,
+      CommandCompleter::all(completers::watch_conflict_mode),
+      Signature {
+        positionals: (0, Some(1)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
+      "watch-scope",
+      &[],
+      "Show active file-watch scope policy",
+      cmd_watch_scope::<Ctx>,
+      CommandCompleter::none(),
+      Signature {
+        positionals: (0, Some(0)),
+        ..Signature::DEFAULT
+      },
+    ));
+
+    self.register(TypableCommand::new(
       "help",
       &["h"],
       "Show help for commands",
@@ -607,17 +631,85 @@ fn cmd_reload<Ctx: DefaultContext>(
     ));
   }
 
-  ctx.reload_file_preserving_view(&path).map_err(|err| {
-    CommandError::new(format!(
-      "failed to reload '{}': {err}",
-      path.display()
-    ))
-  })?;
+  ctx
+    .reload_file_preserving_view(&path)
+    .map_err(|err| CommandError::new(format!("failed to reload '{}': {err}", path.display())))?;
+  ctx.clear_watch_conflict();
 
-  let suffix = if force { " (discarded local changes)" } else { "" };
+  let suffix = if force {
+    " (discarded local changes)"
+  } else {
+    ""
+  };
   ctx.push_info(
     "reload",
     format!("reloaded {} from disk{suffix}", path.display()),
+  );
+  Ok(())
+}
+
+fn cmd_watch_conflict<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  let mode = match args.first() {
+    None | Some("status") => "status",
+    Some("discard") | Some("reload") => "discard",
+    Some(other) => {
+      return Err(CommandError::new(format!(
+        "invalid watch-conflict mode '{other}' (expected status|discard)"
+      )));
+    },
+  };
+
+  if mode == "status" {
+    if ctx.watch_conflict_active() {
+      ctx.push_warning(
+        "watch",
+        "external file conflict active; use :watch-conflict discard to reload from disk",
+      );
+    } else {
+      ctx.push_info("watch", "no external file conflict");
+    }
+    return Ok(());
+  }
+
+  if !ctx.watch_conflict_active() {
+    return Err(CommandError::new("no external file conflict to resolve"));
+  }
+
+  let Some(path) = ctx.file_path().map(|path| path.to_path_buf()) else {
+    return Err(CommandError::new("no file path set for current buffer"));
+  };
+
+  ctx
+    .reload_file_preserving_view(&path)
+    .map_err(|err| CommandError::new(format!("failed to reload '{}': {err}", path.display())))?;
+  ctx.clear_watch_conflict();
+  ctx.push_info(
+    "watch",
+    format!("discarded local changes and reloaded {}", path.display()),
+  );
+  Ok(())
+}
+
+fn cmd_watch_scope<Ctx: DefaultContext>(
+  ctx: &mut Ctx,
+  _args: Args,
+  event: CommandEvent,
+) -> CommandResult {
+  if event != CommandEvent::Validate {
+    return Ok(());
+  }
+
+  ctx.push_info(
+    "watch",
+    format!("file watch scope: {}", ctx.watch_scope_name()),
   );
   Ok(())
 }
@@ -1211,10 +1303,12 @@ pub mod completers {
       .log_target_names()
       .iter()
       .filter(|target| target.starts_with(input))
-      .map(|target| Completion {
-        range: 0..,
-        text:  (*target).to_string(),
-        doc:   None,
+      .map(|target| {
+        Completion {
+          range: 0..,
+          text:  (*target).to_string(),
+          doc:   None,
+        }
       })
       .collect()
   }
@@ -1224,10 +1318,27 @@ pub mod completers {
     MODES
       .iter()
       .filter(|mode| mode.starts_with(input))
-      .map(|mode| Completion {
-        range: 0..,
-        text:  (*mode).to_string(),
-        doc:   None,
+      .map(|mode| {
+        Completion {
+          range: 0..,
+          text:  (*mode).to_string(),
+          doc:   None,
+        }
+      })
+      .collect()
+  }
+
+  pub fn watch_conflict_mode<Ctx>(_ctx: &Ctx, input: &str) -> Vec<Completion> {
+    const MODES: &[&str] = &["status", "discard"];
+    MODES
+      .iter()
+      .filter(|mode| mode.starts_with(input))
+      .map(|mode| {
+        Completion {
+          range: 0..,
+          text:  (*mode).to_string(),
+          doc:   None,
+        }
       })
       .collect()
   }

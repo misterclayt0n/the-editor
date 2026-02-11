@@ -375,6 +375,16 @@ pub trait DefaultContext: Sized + 'static {
   fn vcs_statusline_text(&self) -> Option<String> {
     None
   }
+  fn watch_statusline_text(&self) -> Option<String> {
+    None
+  }
+  fn watch_conflict_active(&self) -> bool {
+    false
+  }
+  fn clear_watch_conflict(&mut self) {}
+  fn watch_scope_name(&self) -> &'static str {
+    "active-document"
+  }
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {
     let loader_ptr = self.syntax_loader().map(|loader| loader as *const Loader);
     let doc = self.editor().document_mut();

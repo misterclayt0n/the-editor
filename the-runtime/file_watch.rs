@@ -159,6 +159,8 @@ impl WatchHandle {
     }
 
     let mut registration_ids = Vec::new();
+    let mut parent_filter_registered = false;
+    let watch_file_parent = !logical_path.is_dir();
 
     match self.register(logical_path.clone(), logical_path.clone()) {
       Ok(id) => {
@@ -194,7 +196,24 @@ impl WatchHandle {
         );
         let id = self.register(parent, logical_path.clone())?;
         registration_ids.push(id);
+        parent_filter_registered = true;
       },
+    }
+
+    if watch_file_parent && !parent_filter_registered
+      && let Some(parent) = logical_path.parent()
+    {
+      let parent = normalize_path(parent);
+      let id = self.register(parent, logical_path.clone())?;
+      file_watch_trace(
+        "watch_add_parent_registered",
+        format!(
+          "path={} registration_id={}",
+          logical_path.display(),
+          id.0
+        ),
+      );
+      registration_ids.push(id);
     }
 
     if let Some(target) = resolve_symlink_target(&logical_path) {
@@ -460,13 +479,26 @@ fn spawn_dispatch_thread(
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
-  if path.is_absolute() {
-    return path.to_path_buf();
+  let absolute = if path.is_absolute() {
+    path.to_path_buf()
+  } else {
+    match std::env::current_dir() {
+      Ok(cwd) => cwd.join(path),
+      Err(_) => path.to_path_buf(),
+    }
+  };
+
+  if let Ok(canonical) = std::fs::canonicalize(&absolute) {
+    return canonical;
   }
-  match std::env::current_dir() {
-    Ok(cwd) => cwd.join(path),
-    Err(_) => path.to_path_buf(),
+
+  if let (Some(parent), Some(name)) = (absolute.parent(), absolute.file_name())
+    && let Ok(canonical_parent) = std::fs::canonicalize(parent)
+  {
+    return canonical_parent.join(name);
   }
+
+  absolute
 }
 
 fn resolve_symlink_target(path: &Path) -> Option<PathBuf> {
@@ -694,13 +726,23 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod test {
-  use std::path::PathBuf;
+  use std::{
+    fs,
+    path::PathBuf,
+    thread,
+    time::{
+      Duration,
+      Instant,
+      SystemTime,
+    },
+  };
 
   use super::{
     PathEvent,
     PathEventKind,
     coalesce_events,
     path_matches_filter,
+    watch,
   };
 
   #[test]
@@ -742,5 +784,54 @@ mod test {
       &PathBuf::from("/tmp/elsewhere"),
       &root
     ));
+  }
+
+  #[test]
+  fn watch_missing_file_reports_event_when_file_is_created() {
+    let nonce = SystemTime::now()
+      .duration_since(SystemTime::UNIX_EPOCH)
+      .map(|d| d.as_nanos())
+      .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!(
+      "the-editor-watch-missing-{}-{nonce}",
+      std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create temp watch dir");
+    let missing_path = root.join("created-later.txt");
+    let normalized_missing_path = super::normalize_path(&missing_path);
+    let _ = fs::remove_file(&missing_path);
+
+    let (events_rx, _watch) = watch(&missing_path, Duration::from_millis(30));
+    thread::sleep(Duration::from_millis(120));
+    fs::write(&missing_path, "created\n").expect("create watched file");
+
+    let mut saw_create_event = false;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+      match events_rx.recv_timeout(Duration::from_millis(250)) {
+        Ok(batch) => {
+          if batch.iter().any(|event| {
+            event.path == normalized_missing_path
+              && matches!(
+                event.kind,
+                PathEventKind::Created | PathEventKind::Changed
+              )
+          }) {
+            saw_create_event = true;
+            break;
+          }
+        },
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+      }
+    }
+
+    let _ = fs::remove_file(&missing_path);
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+      saw_create_event,
+      "expected created/changed event for {}",
+      missing_path.display()
+    );
   }
 }

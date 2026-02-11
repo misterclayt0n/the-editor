@@ -14,12 +14,17 @@ use eyre::{
   eyre,
 };
 
-use crate::FileChange;
+use crate::{
+  FileChange,
+  VcsStatuslineInfo,
+};
 
 #[cfg(test)] mod test;
 
 const DIFF_LINE_TEMPLATE: &str =
   r#"self.status_char() ++ "\t" ++ self.source().path() ++ "\t" ++ self.target().path() ++ "\n""#;
+const STATUSLINE_TEMPLATE: &str =
+  r#"self.local_bookmarks() ++ "\t" ++ self.description().first_line() ++ "\n""#;
 
 pub fn is_available() -> bool {
   Command::new("jj")
@@ -31,10 +36,9 @@ pub fn is_available() -> bool {
 
 fn run_jj(cwd: &Path, args: &[&str]) -> Result<std::process::Output> {
   let output = Command::new("jj")
+    .current_dir(cwd)
     .arg("--no-pager")
     .arg("--color=never")
-    .arg("-R")
-    .arg(cwd)
     .args(args)
     .env_remove("GIT_DIR")
     .env_remove("GIT_WORK_TREE")
@@ -170,6 +174,42 @@ pub fn get_current_head_name(file: &Path) -> Result<Arc<ArcSwap<Box<str>>>> {
   Ok(Arc::new(ArcSwap::from_pointee(
     head_name.to_owned().into_boxed_str(),
   )))
+}
+
+pub fn get_statusline_info(file: &Path) -> Result<VcsStatuslineInfo> {
+  let file = canonical_file_path(file)?;
+  let repo_root = jj_repo_root(&file)?;
+  let output = run_jj(&repo_root, &[
+    "--ignore-working-copy",
+    "log",
+    "-r",
+    "@",
+    "--no-graph",
+    "-T",
+    STATUSLINE_TEMPLATE,
+  ])?;
+  let text = String::from_utf8(output.stdout).wrap_err("invalid jj statusline output")?;
+  let line = text
+    .lines()
+    .next()
+    .ok_or_else(|| eyre!("jj statusline output is empty"))?;
+  let mut fields = line.splitn(2, '\t');
+  let bookmark = fields
+    .next()
+    .unwrap_or_default()
+    .split_whitespace()
+    .next()
+    .map(ToOwned::to_owned);
+  let description_raw = fields.next().unwrap_or_default().trim();
+  let description = if description_raw.is_empty() {
+    "(no description set)".to_string()
+  } else {
+    description_raw.to_owned()
+  };
+  Ok(VcsStatuslineInfo::Jj {
+    description,
+    bookmark,
+  })
 }
 
 pub fn for_each_changed_file(cwd: &Path, f: impl Fn(Result<FileChange>) -> bool) -> Result<()> {

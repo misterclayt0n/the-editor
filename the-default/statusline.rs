@@ -16,6 +16,7 @@ use the_lib::render::{
 use crate::{
   DefaultContext,
   Mode,
+  file_picker_icon_glyph,
   file_picker_icon_name_for_path,
   message_bar::inline_statusline_message,
 };
@@ -36,6 +37,10 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
   let viewport_width = ctx.editor_ref().view().viewport.width as usize;
   let pending_keys = pending_keys_text(ctx);
   let lsp_part = ctx.lsp_statusline_text().filter(|text| !text.is_empty());
+  let vcs_part = ctx
+    .vcs_statusline_text()
+    .filter(|text| !text.is_empty())
+    .map(|text| format!("{} {text}", file_picker_icon_glyph("git_branch", false)));
   let doc = ctx.editor_ref().document();
   let slice = doc.text().slice(..);
   let selection = doc.selection();
@@ -94,6 +99,9 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
       if let Some(lsp) = lsp_part.as_ref() {
         budget = budget.saturating_sub(lsp.chars().count() + 2);
       }
+      if let Some(vcs) = vcs_part.as_ref() {
+        budget = budget.saturating_sub(vcs.chars().count() + 2);
+      }
       let clamped = clamp_with_ellipsis(&message, budget.min(96));
       if clamped.is_empty() {
         None
@@ -119,6 +127,15 @@ pub fn build_statusline_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> UiNode {
       style: Some(lsp_style),
     });
     right_parts.push(lsp);
+  }
+  if let Some(vcs) = vcs_part {
+    let mut vcs_style = UiStyle::default();
+    vcs_style.emphasis = UiEmphasis::Muted;
+    right_segments.push(UiStyledSpan {
+      text:  vcs.clone(),
+      style: Some(vcs_style),
+    });
+    right_parts.push(vcs);
   }
   if let Some(message) = message_part {
     right_segments.push(UiStyledSpan {

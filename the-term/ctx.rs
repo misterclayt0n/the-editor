@@ -402,6 +402,8 @@ pub struct Ctx {
   pub gutter_diff_signs:      BTreeMap<usize, RenderGutterDiffKind>,
   /// Active VCS provider registry for diff base resolution.
   pub vcs_provider:           DiffProviderRegistry,
+  /// Cached VCS statusline text for the active file.
+  pub vcs_statusline:         Option<String>,
   /// Incremental VCS diff state for the active file.
   pub vcs_diff:               Option<DiffHandle>,
   /// Inline annotations (virtual text) for rendering.
@@ -708,6 +710,7 @@ impl Ctx {
       gutter_config: GutterConfig::default(),
       gutter_diff_signs: BTreeMap::new(),
       vcs_provider: DiffProviderRegistry::default(),
+      vcs_statusline: None,
       vcs_diff: None,
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
@@ -727,6 +730,12 @@ impl Ctx {
   }
 
   fn refresh_vcs_diff_base(&mut self) {
+    self.vcs_statusline = self
+      .file_path
+      .as_deref()
+      .and_then(|path| self.vcs_provider.get_statusline_info(path))
+      .map(|info| info.statusline_text());
+
     let Some(path) = self.file_path.clone() else {
       self.clear_vcs_diff();
       return;
@@ -2468,6 +2477,10 @@ impl the_default::DefaultContext for Ctx {
 
   fn lsp_statusline_text(&self) -> Option<String> {
     self.lsp_statusline_text_value()
+  }
+
+  fn vcs_statusline_text(&self) -> Option<String> {
+    self.vcs_statusline.clone()
   }
 
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {

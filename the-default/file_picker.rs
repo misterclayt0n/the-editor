@@ -1190,6 +1190,7 @@ pub fn file_picker_icon_glyph(icon: &str, is_dir: bool) -> &'static str {
     "docker" => "",
     "file_doc" => "󰈦",
     "file_git" => "",
+    "git_branch" => "",
     "file_lock" | "lock" => "󰌾",
     "file_markdown" => "",
     "file_rust" | "rust" => "",

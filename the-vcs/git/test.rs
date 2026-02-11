@@ -9,6 +9,7 @@ use tempfile::TempDir;
 
 use crate::{
     FileChange,
+    VcsStatuslineInfo,
     git,
 };
 
@@ -203,6 +204,39 @@ fn current_head_name_falls_back_to_short_commit_when_detached() {
     let current = head.load();
     assert_eq!(current.as_ref().len(), 8);
     assert!(current.chars().all(|ch| ch.is_ascii_hexdigit()));
+}
+
+#[test]
+fn statusline_info_uses_branch_name() {
+    let temp_git = empty_git_repo();
+    let file = temp_git.path().join("file.txt");
+    File::create(&file).unwrap().write_all(b"head").unwrap();
+    create_commit(temp_git.path(), true);
+
+    let info = git::get_statusline_info(&file).expect("statusline info");
+    assert_eq!(
+        info,
+        VcsStatuslineInfo::Git {
+            branch: "main".to_string()
+        }
+    );
+}
+
+#[test]
+fn statusline_info_uses_detached_marker() {
+    let temp_git = empty_git_repo();
+    let file = temp_git.path().join("file.txt");
+    File::create(&file).unwrap().write_all(b"head").unwrap();
+    create_commit(temp_git.path(), true);
+    exec_git_cmd("checkout --detach HEAD", temp_git.path());
+
+    let info = git::get_statusline_info(&file).expect("statusline info");
+    assert_eq!(
+        info,
+        VcsStatuslineInfo::Git {
+            branch: "(detached)".to_string()
+        }
+    );
 }
 
 #[test]

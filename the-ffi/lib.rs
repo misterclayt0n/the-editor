@@ -946,6 +946,7 @@ struct EditorState {
   text_format:           TextFormat,
   gutter_config:         GutterConfig,
   gutter_diff_signs:     BTreeMap<usize, RenderGutterDiffKind>,
+  vcs_statusline:        Option<String>,
   inline_annotations:    Vec<InlineAnnotation>,
   overlay_annotations:   Vec<Overlay>,
   highlight_cache:       HighlightCache,
@@ -982,6 +983,7 @@ impl EditorState {
       text_format: TextFormat::default(),
       gutter_config: GutterConfig::default(),
       gutter_diff_signs: BTreeMap::new(),
+      vcs_statusline: None,
       inline_annotations: Vec::new(),
       overlay_annotations: Vec::new(),
       highlight_cache: HighlightCache::default(),
@@ -3189,7 +3191,17 @@ impl App {
   }
 
   fn refresh_vcs_diff_base_for_editor(&mut self, id: LibEditorId) {
-    let Some(path) = self.file_paths.get(&id).cloned() else {
+    let path = self.file_paths.get(&id).cloned();
+    let statusline = path
+      .as_deref()
+      .and_then(|path| self.vcs_provider.get_statusline_info(path))
+      .map(|info| info.statusline_text());
+    if let Some(state) = self.states.get_mut(&id) {
+      state.vcs_statusline = statusline;
+      state.needs_render = true;
+    }
+
+    let Some(path) = path else {
       self.clear_vcs_diff_for_editor(id);
       return;
     };
@@ -3272,6 +3284,14 @@ impl DefaultContext for App {
 
   fn lsp_statusline_text(&self) -> Option<String> {
     self.lsp_statusline_text_value()
+  }
+
+  fn vcs_statusline_text(&self) -> Option<String> {
+    let id = self.active_editor?;
+    self
+      .states
+      .get(&id)
+      .and_then(|state| state.vcs_statusline.clone())
   }
 
   fn apply_transaction(&mut self, transaction: &Transaction) -> bool {

@@ -9,6 +9,7 @@ use tempfile::TempDir;
 
 use crate::{
   FileChange,
+  VcsStatuslineInfo,
   jj,
 };
 
@@ -109,6 +110,28 @@ fn modified_file() {
 }
 
 #[test]
+fn statusline_info_supports_nested_file_paths() {
+  if !require_jj() {
+    return;
+  }
+  let temp_jj = empty_jj_repo();
+  let nested_dir = temp_jj.path().join("the-lib/src");
+  std::fs::create_dir_all(&nested_dir).unwrap();
+  let file = nested_dir.join("command_line.rs");
+  File::create(&file).unwrap().write_all(b"head").unwrap();
+  create_base_commit(temp_jj.path());
+
+  let info = jj::get_statusline_info(&file).expect("statusline info");
+  assert_eq!(
+    info,
+    VcsStatuslineInfo::Jj {
+      description: "work".to_string(),
+      bookmark:    None,
+    }
+  );
+}
+
+#[test]
 fn current_head_name_prefers_bookmark_name() {
   if !require_jj() {
     return;
@@ -144,6 +167,48 @@ fn current_head_name_falls_back_to_change_id() {
     current
       .chars()
       .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
+  );
+}
+
+#[test]
+fn statusline_info_includes_description_without_bookmark() {
+  if !require_jj() {
+    return;
+  }
+  let temp_jj = empty_jj_repo();
+  let file = temp_jj.path().join("file.txt");
+  File::create(&file).unwrap().write_all(b"head").unwrap();
+  create_base_commit(temp_jj.path());
+
+  let info = jj::get_statusline_info(&file).expect("statusline info");
+  assert_eq!(
+    info,
+    VcsStatuslineInfo::Jj {
+      description: "work".to_string(),
+      bookmark:    None,
+    }
+  );
+}
+
+#[test]
+fn statusline_info_includes_description_and_bookmark() {
+  if !require_jj() {
+    return;
+  }
+  let temp_jj = empty_jj_repo();
+  let file = temp_jj.path().join("file.txt");
+  File::create(&file).unwrap().write_all(b"head").unwrap();
+  create_base_commit(temp_jj.path());
+  exec_jj_cmd(&["describe", "-m", "vcs: add statusline"], temp_jj.path());
+  exec_jj_cmd(&["bookmark", "create", "main", "-r", "@"], temp_jj.path());
+
+  let info = jj::get_statusline_info(&file).expect("statusline info");
+  assert_eq!(
+    info,
+    VcsStatuslineInfo::Jj {
+      description: "vcs: add statusline".to_string(),
+      bookmark:    Some("main".to_string()),
+    }
   );
 }
 

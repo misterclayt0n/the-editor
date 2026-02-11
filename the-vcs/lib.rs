@@ -29,6 +29,36 @@ mod status;
 
 pub use status::FileChange;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VcsStatuslineInfo {
+    Jj {
+        description: String,
+        bookmark: Option<String>,
+    },
+    Git {
+        branch: String,
+    },
+}
+
+impl VcsStatuslineInfo {
+    pub fn statusline_text(&self) -> String {
+        match self {
+            Self::Jj {
+                description,
+                bookmark,
+            } => match bookmark {
+                Some(bookmark) if !bookmark.is_empty() => {
+                    format!("{description} · {bookmark}")
+                }
+                _ => description.clone(),
+            },
+            Self::Git {
+                branch,
+            } => branch.clone(),
+        }
+    }
+}
+
 /// Contains all active diff providers. Diff providers are compiled in via features.
 #[derive(Clone)]
 pub struct DiffProviderRegistry {
@@ -60,6 +90,20 @@ impl DiffProviderRegistry {
                 Err(err) => {
                     log::debug!("{err:#?}");
                     log::debug!("failed to obtain current head name for {}", file.display());
+                    None
+                }
+            })
+    }
+
+    /// Get statusline metadata for the active VCS provider.
+    pub fn get_statusline_info(&self, file: &Path) -> Option<VcsStatuslineInfo> {
+        self.providers
+            .iter()
+            .find_map(|provider| match provider.get_statusline_info(file) {
+                Ok(res) => Some(res),
+                Err(err) => {
+                    log::debug!("{err:#?}");
+                    log::debug!("failed to obtain vcs statusline info for {}", file.display());
                     None
                 }
             })
@@ -130,6 +174,16 @@ impl DiffProvider {
             Self::Git => git::get_current_head_name(_file),
             #[cfg(feature = "jj")]
             Self::Jj => jj::get_current_head_name(_file),
+            Self::None => bail!("No diff support compiled in"),
+        }
+    }
+
+    fn get_statusline_info(&self, _file: &Path) -> Result<VcsStatuslineInfo> {
+        match self {
+            #[cfg(feature = "git")]
+            Self::Git => git::get_statusline_info(_file),
+            #[cfg(feature = "jj")]
+            Self::Jj => jj::get_statusline_info(_file),
             Self::None => bail!("No diff support compiled in"),
         }
     }

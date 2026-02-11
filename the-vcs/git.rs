@@ -14,7 +14,10 @@ use eyre::{
     eyre,
 };
 
-use crate::FileChange;
+use crate::{
+    FileChange,
+    VcsStatuslineInfo,
+};
 
 #[cfg(test)]
 mod test;
@@ -167,6 +170,20 @@ pub fn get_current_head_name(file: &Path) -> Result<Arc<ArcSwap<Box<str>>>> {
     };
 
     Ok(Arc::new(ArcSwap::from_pointee(head_name.into_boxed_str())))
+}
+
+pub fn get_statusline_info(file: &Path) -> Result<VcsStatuslineInfo> {
+    let file = canonical_file_path(file)?;
+    let repo_root = git_repo_root(&file)?;
+    let branch = run_git(&repo_root, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "(detached)".to_string());
+    Ok(VcsStatuslineInfo::Git {
+        branch,
+    })
 }
 
 pub fn for_each_changed_file(cwd: &Path, f: impl Fn(Result<FileChange>) -> bool) -> Result<()> {

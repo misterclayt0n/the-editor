@@ -1,6 +1,8 @@
 # TODO
 - [ ] First class jj support
-- [ ] File watching (this may take a while to get nice)
+
+aklsdjlkasjd
+- [x] File watching (this may take a while to get nice) - Only thing left is better testing for this feature
 - [ ] Render selection on other pairs (like in flow/vscode/zed when I select something and the rest kinda get's selected as well, but we can probably skip one char selection for this I suppose)
 - [x] Line wrap
 

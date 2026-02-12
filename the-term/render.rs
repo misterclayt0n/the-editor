@@ -1652,7 +1652,6 @@ fn completion_docs_panel_rect(
   let desired_height = panel_height.min(area.height).max(1);
   let gap = 1u16;
   let min_side_width = 24u16;
-  let min_vertical_height = 4u16;
 
   let area_right = area.x.saturating_add(area.width);
   let area_bottom = area.y.saturating_add(area.height);
@@ -1680,34 +1679,6 @@ fn completion_docs_panel_rect(
       right_x
     } else {
       left_end.saturating_sub(width)
-    };
-    return Some(Rect::new(x, y, width, height));
-  }
-
-  let below_y = completion_rect
-    .y
-    .saturating_add(completion_rect.height)
-    .saturating_add(gap);
-  let below_available_height = area_bottom.saturating_sub(below_y);
-  let above_available_height = completion_rect.y.saturating_sub(area.y.saturating_add(gap));
-  if below_available_height >= min_vertical_height || above_available_height >= min_vertical_height {
-    let place_below = below_available_height >= above_available_height;
-    let available_height = if place_below {
-      below_available_height
-    } else {
-      above_available_height
-    };
-    let height = desired_height.min(available_height).max(1);
-    let width = desired_width.min(area.width).max(1);
-    let max_x = area_right.saturating_sub(width);
-    let x = completion_rect.x.clamp(area.x, max_x);
-    let y = if place_below {
-      below_y
-    } else {
-      completion_rect
-        .y
-        .saturating_sub(gap)
-        .saturating_sub(height)
     };
     return Some(Rect::new(x, y, width, height));
   }
@@ -2681,15 +2652,18 @@ mod tests {
   }
 
   #[test]
-  fn completion_docs_panel_rect_avoids_overlap_when_viewport_is_narrow() {
+  fn completion_docs_panel_rect_hides_when_viewport_is_narrow() {
     let area = Rect::new(0, 0, 72, 22);
     let completion_rect = Rect::new(4, 5, 46, 10);
-    let docs_rect =
-      completion_docs_panel_rect(area, 40, 9, completion_rect).expect("docs rect");
-    let overlaps_x = docs_rect.x < completion_rect.x + completion_rect.width
-      && completion_rect.x < docs_rect.x + docs_rect.width;
-    let overlaps_y = docs_rect.y < completion_rect.y + completion_rect.height
-      && completion_rect.y < docs_rect.y + docs_rect.height;
-    assert!(!(overlaps_x && overlaps_y));
+    let docs_rect = completion_docs_panel_rect(area, 40, 9, completion_rect);
+    assert!(docs_rect.is_none());
+  }
+
+  #[test]
+  fn completion_docs_panel_rect_hides_when_side_space_is_unavailable() {
+    let area = Rect::new(0, 0, 80, 24);
+    let completion_rect = Rect::new(2, 6, 76, 10);
+    let docs_rect = completion_docs_panel_rect(area, 36, 9, completion_rect);
+    assert!(docs_rect.is_none());
   }
 }

@@ -74,8 +74,11 @@ impl ParseHighlightState {
 
   /// Returns true when it's safe to refresh highlight caches from syntax.
   pub fn allow_cache_refresh<T>(&self, lifecycle: &ParseLifecycle<T>) -> bool {
-    let _ = lifecycle;
-    true
+    if !self.interpolated {
+      return true;
+    }
+
+    lifecycle.in_flight().is_none() && lifecycle.queued().is_none()
   }
 
   /// Returns true if current syntax state came from interpolation.
@@ -443,7 +446,7 @@ mod tests {
   }
 
   #[test]
-  fn parse_highlight_state_allows_refresh_while_async_parse_is_running() {
+  fn parse_highlight_state_blocks_refresh_while_async_parse_is_running() {
     let mut lifecycle = ParseLifecycle::default();
     let mut state = ParseHighlightState::default();
     assert!(state.allow_cache_refresh(&lifecycle));
@@ -454,7 +457,7 @@ mod tests {
     let QueueParseDecision::Start(started) = lifecycle.queue(10, ()) else {
       panic!("expected immediate start");
     };
-    assert!(state.allow_cache_refresh(&lifecycle));
+    assert!(!state.allow_cache_refresh(&lifecycle));
 
     let finished = lifecycle.on_result(started.meta.request_id, 10, 10);
     assert!(finished.apply);
@@ -464,7 +467,7 @@ mod tests {
   }
 
   #[test]
-  fn parse_highlight_state_allows_refresh_in_all_interpolated_states() {
+  fn parse_highlight_state_blocks_refresh_until_interpolated_queue_drains() {
     let mut lifecycle = ParseLifecycle::default();
     let mut state = ParseHighlightState::default();
 
@@ -476,14 +479,14 @@ mod tests {
     };
 
     state.mark_interpolated();
-    assert!(state.allow_cache_refresh(&lifecycle));
+    assert!(!state.allow_cache_refresh(&lifecycle));
 
     let first = lifecycle.on_result(started.meta.request_id, 1, 2);
     assert!(!first.apply);
     let Some(next) = first.start_next else {
       panic!("queued request should start");
     };
-    assert!(state.allow_cache_refresh(&lifecycle));
+    assert!(!state.allow_cache_refresh(&lifecycle));
 
     let second = lifecycle.on_result(next.meta.request_id, 2, 2);
     assert!(second.apply);

@@ -58,6 +58,12 @@ pub struct LspCompletionItem {
   pub commit_characters:  Vec<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LspCompletionResponse {
+  pub items:     Vec<LspCompletionItem>,
+  pub raw_items: Vec<Value>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspSignatureHelp {
   pub label:            String,
@@ -174,29 +180,68 @@ pub fn execute_command_params(command: &str, arguments: Option<Vec<Value>>) -> V
 pub fn parse_completion_response(
   result: Option<&Value>,
 ) -> Result<Vec<LspCompletionItem>, EditingParseError> {
+  Ok(parse_completion_response_with_raw(result)?.items)
+}
+
+pub fn parse_completion_response_with_raw(
+  result: Option<&Value>,
+) -> Result<LspCompletionResponse, EditingParseError> {
   let Some(result) = result else {
-    return Ok(Vec::new());
+    return Ok(LspCompletionResponse::default());
   };
   if result.is_null() {
-    return Ok(Vec::new());
+    return Ok(LspCompletionResponse::default());
   }
 
   if let Ok(list) = serde_json::from_value::<CompletionListPayload>(result.clone()) {
     let defaults = list.item_defaults;
-    return Ok(
+    let mut raw_items = result
+      .get("items")
+      .and_then(Value::as_array)
+      .cloned()
+      .unwrap_or_default();
+    for raw in &mut raw_items {
+      apply_completion_defaults_to_raw_item(raw, defaults.as_ref());
+    }
+    let items = if !raw_items.is_empty() {
+      raw_items
+        .iter()
+        .cloned()
+        .map(serde_json::from_value::<CompletionItemPayload>)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|item| item.into_item(None))
+        .collect()
+    } else {
       list
         .items
         .into_iter()
         .map(|item| item.into_item(defaults.as_ref()))
-        .collect(),
-    );
+        .collect()
+    };
+    return Ok(LspCompletionResponse { items, raw_items });
   }
 
   if let Ok(items) = serde_json::from_value::<Vec<CompletionItemPayload>>(result.clone()) {
-    return Ok(items.into_iter().map(|item| item.into_item(None)).collect());
+    let raw_items = result.as_array().cloned().unwrap_or_default();
+    let items = items.into_iter().map(|item| item.into_item(None)).collect();
+    return Ok(LspCompletionResponse { items, raw_items });
   }
 
   Err(EditingParseError::InvalidShape)
+}
+
+pub fn parse_completion_item_response(
+  result: Option<&Value>,
+) -> Result<Option<LspCompletionItem>, EditingParseError> {
+  let Some(result) = result else {
+    return Ok(None);
+  };
+  if result.is_null() {
+    return Ok(None);
+  }
+  let payload: CompletionItemPayload = serde_json::from_value(result.clone())?;
+  Ok(Some(payload.into_item(None)))
 }
 
 pub fn parse_signature_help_response(
@@ -383,11 +428,40 @@ impl CompletionItemPayload {
   }
 }
 
+fn apply_completion_defaults_to_raw_item(
+  raw_item: &mut Value,
+  defaults: Option<&CompletionItemDefaultsPayload>,
+) {
+  let Some(defaults) = defaults else {
+    return;
+  };
+  let Some(obj) = raw_item.as_object_mut() else {
+    return;
+  };
+
+  if !obj.contains_key("commitCharacters")
+    && let Some(value) = defaults.commit_characters.clone()
+  {
+    obj.insert("commitCharacters".to_string(), json!(value));
+  }
+  if !obj.contains_key("insertTextFormat")
+    && let Some(value) = defaults.insert_text_format
+  {
+    obj.insert("insertTextFormat".to_string(), json!(value));
+  }
+  if !obj.contains_key("data")
+    && let Some(value) = defaults.data.clone()
+  {
+    obj.insert("data".to_string(), value);
+  }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CompletionItemDefaultsPayload {
   commit_characters:  Option<Vec<String>>,
   insert_text_format: Option<u8>,
+  data:               Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -715,5 +789,47 @@ mod tests {
       Some(LspInsertTextFormat::Snippet)
     );
     assert_eq!(parsed[1].commit_characters, vec![".".to_string()]);
+  }
+
+  #[test]
+  fn parse_completion_response_with_raw_applies_default_data_to_raw_items() {
+    let value = json!({
+      "items": [
+        {
+          "label": "alpha"
+        },
+        {
+          "label": "beta",
+          "data": { "x": 1 }
+        }
+      ],
+      "itemDefaults": {
+        "data": { "kind": "default" }
+      }
+    });
+
+    let parsed = parse_completion_response_with_raw(Some(&value)).expect("completion parse");
+    assert_eq!(parsed.items.len(), 2);
+    assert_eq!(parsed.raw_items.len(), 2);
+    assert_eq!(
+      parsed.raw_items[0].get("data"),
+      Some(&json!({ "kind": "default" }))
+    );
+    assert_eq!(parsed.raw_items[1].get("data"), Some(&json!({ "x": 1 })));
+  }
+
+  #[test]
+  fn parse_completion_item_response_handles_single_item() {
+    let value = json!({
+      "label": "abc",
+      "detail": "detail",
+      "documentation": "docs"
+    });
+    let parsed = parse_completion_item_response(Some(&value))
+      .expect("parse ok")
+      .expect("item");
+    assert_eq!(parsed.label, "abc");
+    assert_eq!(parsed.detail.as_deref(), Some("detail"));
+    assert_eq!(parsed.documentation.as_deref(), Some("docs"));
   }
 }

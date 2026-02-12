@@ -143,7 +143,8 @@ use the_lsp::{
   hover_params,
   jsonrpc,
   parse_code_actions_response,
-  parse_completion_response,
+  parse_completion_item_response,
+  parse_completion_response_with_raw,
   parse_document_symbols_response,
   parse_formatting_response,
   parse_hover_response,
@@ -282,6 +283,7 @@ enum PendingLspRequestKind {
   DocumentSymbols { uri: String },
   WorkspaceSymbols { query: String },
   Completion { uri: String },
+  CompletionResolve { uri: String, index: usize },
   SignatureHelp { uri: String },
   CodeActions { uri: String },
   Rename { uri: String },
@@ -297,6 +299,7 @@ impl PendingLspRequestKind {
       Self::DocumentSymbols { .. } => "document-symbols",
       Self::WorkspaceSymbols { .. } => "workspace-symbols",
       Self::Completion { .. } => "completion",
+      Self::CompletionResolve { .. } => "completion-resolve",
       Self::SignatureHelp { .. } => "signature-help",
       Self::CodeActions { .. } => "code-actions",
       Self::Rename { .. } => "rename",
@@ -311,6 +314,7 @@ impl PendingLspRequestKind {
       | Self::References { uri }
       | Self::DocumentSymbols { uri }
       | Self::Completion { uri, .. }
+      | Self::CompletionResolve { uri, .. }
       | Self::SignatureHelp { uri }
       | Self::CodeActions { uri }
       | Self::Rename { uri }
@@ -327,6 +331,7 @@ impl PendingLspRequestKind {
       Self::DocumentSymbols { uri } => ("document-symbols", Some(uri)),
       Self::WorkspaceSymbols { .. } => ("workspace-symbols", None),
       Self::Completion { uri, .. } => ("completion", Some(uri)),
+      Self::CompletionResolve { uri, .. } => ("completion-resolve", Some(uri)),
       Self::SignatureHelp { uri } => ("signature-help", Some(uri)),
       Self::CodeActions { uri } => ("code-actions", Some(uri)),
       Self::Rename { uri } => ("rename", Some(uri)),
@@ -364,6 +369,8 @@ pub struct Ctx {
   lsp_watched_file:                 Option<LspWatchedFileState>,
   lsp_pending_requests:             HashMap<u64, PendingLspRequestKind>,
   lsp_completion_items:             Vec<LspCompletionItem>,
+  lsp_completion_raw_items:         Vec<Value>,
+  lsp_completion_resolved_indices:  HashSet<usize>,
   pub diagnostics:                  DiagnosticsState,
   pub file_picker_layout:           Option<FilePickerLayout>,
   pub file_picker_drag:             Option<FilePickerDragState>,
@@ -690,6 +697,8 @@ impl Ctx {
       lsp_watched_file: None,
       lsp_pending_requests: HashMap::new(),
       lsp_completion_items: Vec::new(),
+      lsp_completion_raw_items: Vec::new(),
+      lsp_completion_resolved_indices: HashSet::new(),
       diagnostics: DiagnosticsState::default(),
       file_picker_layout: None,
       file_picker_drag: None,
@@ -1547,6 +1556,9 @@ impl Ctx {
       PendingLspRequestKind::Completion { .. } => {
         self.handle_completion_response(response.result.as_ref())
       },
+      PendingLspRequestKind::CompletionResolve { index, .. } => {
+        self.handle_completion_resolve_response(index, response.result.as_ref())
+      },
       PendingLspRequestKind::SignatureHelp { .. } => {
         self.handle_signature_help_response(response.result.as_ref())
       },
@@ -1614,8 +1626,8 @@ impl Ctx {
   }
 
   fn handle_completion_response(&mut self, result: Option<&Value>) -> bool {
-    let items = match parse_completion_response(result) {
-      Ok(items) => items,
+    let completion = match parse_completion_response_with_raw(result) {
+      Ok(completion) => completion,
       Err(err) => {
         self.messages.publish(
           MessageLevel::Error,
@@ -1626,8 +1638,10 @@ impl Ctx {
       },
     };
 
-    if items.is_empty() {
+    if completion.items.is_empty() {
       self.lsp_completion_items.clear();
+      self.lsp_completion_raw_items.clear();
+      self.lsp_completion_resolved_indices.clear();
       self.completion_menu.clear();
       self.messages.publish(
         MessageLevel::Info,
@@ -1641,13 +1655,45 @@ impl Ctx {
       return true;
     }
 
-    self.lsp_completion_items = items;
+    self.lsp_completion_items = completion.items;
+    self.lsp_completion_raw_items = completion.raw_items;
+    self.lsp_completion_resolved_indices.clear();
     let menu_items = self
       .lsp_completion_items
       .iter()
       .map(completion_menu_item_for_lsp_item)
       .collect();
     the_default::show_completion_menu(self, menu_items);
+    true
+  }
+
+  fn handle_completion_resolve_response(&mut self, index: usize, result: Option<&Value>) -> bool {
+    let resolved = match parse_completion_item_response(result) {
+      Ok(item) => item,
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Warning,
+          Some("lsp".into()),
+          format!("failed to parse completion resolve response: {err}"),
+        );
+        return true;
+      },
+    };
+
+    self.lsp_completion_resolved_indices.insert(index);
+
+    let Some(resolved) = resolved else {
+      return true;
+    };
+    let Some(item) = self.lsp_completion_items.get_mut(index) else {
+      return true;
+    };
+    merge_resolved_completion_item(item, resolved);
+
+    if let Some(ui_item) = self.completion_menu.items.get_mut(index) {
+      *ui_item = completion_menu_item_for_lsp_item(item);
+      self.needs_render = true;
+    }
     true
   }
 
@@ -2185,6 +2231,53 @@ impl Ctx {
     }
   }
 
+  fn resolve_completion_item_if_needed(&mut self, index: usize) {
+    if !self.completion_menu.active {
+      return;
+    }
+    if self.lsp_completion_resolved_indices.contains(&index) {
+      return;
+    }
+    if index >= self.lsp_completion_items.len() || index >= self.lsp_completion_raw_items.len() {
+      return;
+    }
+    let pending = self.lsp_pending_requests.values().any(|request| {
+      matches!(
+        request,
+        PendingLspRequestKind::CompletionResolve {
+          index: pending_index,
+          ..
+        } if *pending_index == index
+      )
+    });
+    if pending {
+      return;
+    }
+
+    let Some(uri) = self.current_lsp_uri() else {
+      return;
+    };
+    let params = self.lsp_completion_raw_items[index].clone();
+    match self
+      .lsp_runtime
+      .send_request("completionItem/resolve", Some(params))
+    {
+      Ok(request_id) => {
+        self.lsp_pending_requests.insert(
+          request_id,
+          PendingLspRequestKind::CompletionResolve { uri, index },
+        );
+      },
+      Err(err) => {
+        self.messages.publish(
+          MessageLevel::Warning,
+          Some("lsp".into()),
+          format!("failed to dispatch completionItem/resolve: {err}"),
+        );
+      },
+    }
+  }
+
   fn workspace_symbol_query_from_cursor(&self) -> String {
     let doc = self.editor.document();
     let text = doc.text();
@@ -2598,6 +2691,7 @@ fn non_empty_trimmed(value: String) -> Option<String> {
 fn completion_menu_item_for_lsp_item(item: &LspCompletionItem) -> the_default::CompletionMenuItem {
   let mut menu_item = the_default::CompletionMenuItem::new(item.label.clone());
   menu_item.detail = completion_menu_detail_text(item);
+  menu_item.documentation = completion_menu_documentation_text(item);
   menu_item
 }
 
@@ -2620,6 +2714,13 @@ fn completion_menu_detail_text(item: &LspCompletionItem) -> Option<String> {
   }
 }
 
+fn completion_menu_documentation_text(item: &LspCompletionItem) -> Option<String> {
+  item
+    .documentation
+    .as_deref()
+    .and_then(|value| format_completion_documentation(value, 8, 88))
+}
+
 fn summarize_completion_documentation(value: &str, max_chars: usize) -> Option<String> {
   let mut compact = String::new();
   let mut last_was_space = false;
@@ -2640,6 +2741,56 @@ fn summarize_completion_documentation(value: &str, max_chars: usize) -> Option<S
     None
   } else {
     Some(clamp_status_text(compact, max_chars))
+  }
+}
+
+fn format_completion_documentation(
+  value: &str,
+  max_lines: usize,
+  max_chars_per_line: usize,
+) -> Option<String> {
+  if max_lines == 0 || max_chars_per_line == 0 {
+    return None;
+  }
+  let mut lines = Vec::new();
+  for line in value.lines() {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with("```") {
+      continue;
+    }
+    lines.push(clamp_status_text(trimmed, max_chars_per_line));
+    if lines.len() >= max_lines {
+      break;
+    }
+  }
+  if lines.is_empty() {
+    None
+  } else {
+    Some(lines.join("\n"))
+  }
+}
+
+fn merge_resolved_completion_item(current: &mut LspCompletionItem, resolved: LspCompletionItem) {
+  if current.detail.is_none() {
+    current.detail = resolved.detail;
+  }
+  if current.documentation.is_none() {
+    current.documentation = resolved.documentation;
+  }
+  if current.primary_edit.is_none() {
+    current.primary_edit = resolved.primary_edit;
+  }
+  if current.additional_edits.is_empty() {
+    current.additional_edits = resolved.additional_edits;
+  }
+  if current.insert_text.is_none() {
+    current.insert_text = resolved.insert_text;
+  }
+  if current.insert_text_format.is_none() {
+    current.insert_text_format = resolved.insert_text_format;
+  }
+  if current.commit_characters.is_empty() {
+    current.commit_characters = resolved.commit_characters;
   }
 }
 
@@ -3110,6 +3261,10 @@ impl the_default::DefaultContext for Ctx {
     &mut self.completion_menu
   }
 
+  fn completion_selection_changed(&mut self, index: usize) {
+    self.resolve_completion_item_if_needed(index);
+  }
+
   fn completion_accept_on_commit_char(&mut self, ch: char) -> bool {
     let Some(selected) = self.completion_menu.selected else {
       return false;
@@ -3141,6 +3296,8 @@ impl the_default::DefaultContext for Ctx {
     let applied = self.apply_completion_item(item, fallback_char);
     if applied {
       self.lsp_completion_items.clear();
+      self.lsp_completion_raw_items.clear();
+      self.lsp_completion_resolved_indices.clear();
     }
     applied
   }
@@ -3440,6 +3597,8 @@ impl the_default::DefaultContext for Ctx {
     };
 
     self.lsp_completion_items.clear();
+    self.lsp_completion_raw_items.clear();
+    self.lsp_completion_resolved_indices.clear();
     self.completion_menu.clear();
 
     self.dispatch_lsp_request(
@@ -3714,7 +3873,9 @@ mod tests {
     Ctx,
     WatchedFileEventsState,
     completion_item_accepts_commit_char,
+    completion_menu_documentation_text,
     completion_menu_detail_text,
+    merge_resolved_completion_item,
     render_lsp_snippet_fallback,
   };
   use crate::{
@@ -3772,6 +3933,34 @@ mod tests {
       completion_menu_detail_text(&item).as_deref(),
       Some("fn(item) | line one line two")
     );
+  }
+
+  #[test]
+  fn completion_menu_documentation_compacts_markdown_blocks() {
+    let mut item = empty_completion_item();
+    item.documentation = Some("```rust\nfn test() {}\n```\n\nMore details".to_string());
+    assert_eq!(
+      completion_menu_documentation_text(&item).as_deref(),
+      Some("fn test() {}\nMore details")
+    );
+  }
+
+  #[test]
+  fn merge_resolved_completion_item_keeps_existing_and_fills_missing_fields() {
+    let mut current = empty_completion_item();
+    current.detail = Some("existing".to_string());
+
+    let mut resolved = empty_completion_item();
+    resolved.documentation = Some("docs".to_string());
+    resolved.commit_characters = vec![";".to_string()];
+    resolved.insert_text = Some("insert".to_string());
+
+    merge_resolved_completion_item(&mut current, resolved);
+
+    assert_eq!(current.detail.as_deref(), Some("existing"));
+    assert_eq!(current.documentation.as_deref(), Some("docs"));
+    assert_eq!(current.commit_characters, vec![";".to_string()]);
+    assert_eq!(current.insert_text.as_deref(), Some("insert"));
   }
 
   impl TempTestFile {

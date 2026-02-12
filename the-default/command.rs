@@ -413,6 +413,7 @@ pub trait DefaultContext: Sized + 'static {
   fn command_palette_style_mut(&mut self) -> &mut CommandPaletteStyle;
   fn completion_menu(&self) -> &CompletionMenuState;
   fn completion_menu_mut(&mut self) -> &mut CompletionMenuState;
+  fn completion_selection_changed(&mut self, _index: usize) {}
   fn completion_accept_selected(&mut self, _index: usize) -> bool {
     false
   }

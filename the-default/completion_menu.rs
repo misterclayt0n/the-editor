@@ -6,6 +6,7 @@ use the_lib::render::{
   UiListItem,
   UiNode,
   UiPanel,
+  UiText,
 };
 
 use crate::DefaultContext;
@@ -14,15 +15,17 @@ const MAX_VISIBLE_ITEMS: usize = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionMenuItem {
-  pub label:  String,
-  pub detail: Option<String>,
+  pub label:         String,
+  pub detail:        Option<String>,
+  pub documentation: Option<String>,
 }
 
 impl CompletionMenuItem {
   pub fn new(label: impl Into<String>) -> Self {
     Self {
-      label:  label.into(),
+      label: label.into(),
       detail: None,
+      documentation: None,
     }
   }
 }
@@ -83,43 +86,61 @@ pub fn close_completion_menu<Ctx: DefaultContext>(ctx: &mut Ctx) {
 }
 
 pub fn show_completion_menu<Ctx: DefaultContext>(ctx: &mut Ctx, items: Vec<CompletionMenuItem>) {
-  let state = ctx.completion_menu_mut();
-  state.set_items(items);
-  state.clamp();
+  let selected = {
+    let state = ctx.completion_menu_mut();
+    state.set_items(items);
+    state.clamp();
+    state.selected
+  };
+  if let Some(index) = selected {
+    ctx.completion_selection_changed(index);
+  }
   ctx.request_render();
 }
 
 pub fn completion_next<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let state = ctx.completion_menu_mut();
-  if !state.active || state.items.is_empty() {
-    return;
-  }
+  let selected = {
+    let state = ctx.completion_menu_mut();
+    if !state.active || state.items.is_empty() {
+      return;
+    }
 
-  let current = state.selected.unwrap_or(0);
-  let next = if current + 1 >= state.items.len() {
-    0
-  } else {
-    current + 1
+    let current = state.selected.unwrap_or(0);
+    let next = if current + 1 >= state.items.len() {
+      0
+    } else {
+      current + 1
+    };
+    state.selected = Some(next);
+    state.clamp();
+    state.selected
   };
-  state.selected = Some(next);
-  state.clamp();
+  if let Some(index) = selected {
+    ctx.completion_selection_changed(index);
+  }
   ctx.request_render();
 }
 
 pub fn completion_prev<Ctx: DefaultContext>(ctx: &mut Ctx) {
-  let state = ctx.completion_menu_mut();
-  if !state.active || state.items.is_empty() {
-    return;
-  }
+  let selected = {
+    let state = ctx.completion_menu_mut();
+    if !state.active || state.items.is_empty() {
+      return;
+    }
 
-  let current = state.selected.unwrap_or(0);
-  let next = if current == 0 {
-    state.items.len() - 1
-  } else {
-    current - 1
+    let current = state.selected.unwrap_or(0);
+    let next = if current == 0 {
+      state.items.len() - 1
+    } else {
+      current - 1
+    };
+    state.selected = Some(next);
+    state.clamp();
+    state.selected
   };
-  state.selected = Some(next);
-  state.clamp();
+  if let Some(index) = selected {
+    ctx.completion_selection_changed(index);
+  }
   ctx.request_render();
 }
 
@@ -172,7 +193,23 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   list.max_visible = Some(MAX_VISIBLE_ITEMS);
   list.style = list.style.with_role("completion");
 
-  let mut container = UiContainer::column("completion_container", 0, vec![UiNode::List(list)]);
+  let mut children = vec![UiNode::List(list)];
+  let docs = state
+    .selected
+    .and_then(|index| state.items.get(index))
+    .and_then(|item| item.documentation.as_ref())
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty());
+  if let Some(docs) = docs {
+    let mut docs_text = UiText::new("completion_docs", docs);
+    docs_text.style = docs_text.style.with_role("completion");
+    docs_text.max_lines = Some(8);
+    docs_text.clip = false;
+    children.push(UiNode::divider());
+    children.push(UiNode::Text(docs_text));
+  }
+
+  let mut container = UiContainer::column("completion_container", 0, children);
   container.style = container.style.with_role("completion");
 
   let mut panel = UiPanel::new(
@@ -183,7 +220,7 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   panel.style = panel.style.with_role("completion");
   panel.constraints = UiConstraints::floating_default();
   panel.constraints.min_width = Some(28);
-  panel.constraints.max_height = Some((MAX_VISIBLE_ITEMS as u16).saturating_add(2));
+  panel.constraints.max_height = Some((MAX_VISIBLE_ITEMS as u16).saturating_add(10));
 
   vec![UiNode::Panel(panel)]
 }

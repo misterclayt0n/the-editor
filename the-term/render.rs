@@ -23,6 +23,8 @@ use ratatui::{
 use ropey::Rope;
 use the_default::{
   FilePickerPreview,
+  command_palette_filtered_indices,
+  command_palette_selected_filtered_index,
   file_picker_icon_glyph,
   render_plan,
   set_picker_visible_rows,
@@ -38,13 +40,20 @@ use the_lib::{
     RenderPlan,
     RenderStyles,
     SyntaxHighlightAdapter,
+    UiAlign,
+    UiAlignPair,
     UiAxis,
     UiContainer,
+    UiConstraints,
+    UiInsets,
+    UiColor,
+    UiColorToken,
     UiEmphasis,
     UiInput,
     UiLayer,
     UiLayout,
     UiList,
+    UiListItem,
     UiNode,
     UiPanel,
     UiStatusBar,
@@ -3103,6 +3112,10 @@ fn is_search_prompt_overlay(node: &UiNode) -> bool {
   matches!(node, UiNode::Panel(panel) if panel.id.starts_with("search_prompt"))
 }
 
+fn is_command_palette_overlay(node: &UiNode) -> bool {
+  matches!(node, UiNode::Panel(panel) if panel.id.starts_with("command_palette"))
+}
+
 fn status_bar_from_overlay_mut(node: &mut UiNode) -> Option<&mut UiStatusBar> {
   match node {
     UiNode::Panel(panel) if panel.id == "statusline" => {
@@ -3117,6 +3130,18 @@ fn status_bar_from_overlay_mut(node: &mut UiNode) -> Option<&mut UiStatusBar> {
   }
 }
 
+fn command_palette_statusline_text(query: &str, cursor: usize) -> String {
+  let mut cursor = cursor.min(query.len());
+  while cursor > 0 && !query.is_char_boundary(cursor) {
+    cursor -= 1;
+  }
+  if !query.is_char_boundary(cursor) {
+    cursor = 0;
+  }
+  let (before, after) = query.split_at(cursor);
+  format!("CMD {before}█{after}")
+}
+
 fn search_statusline_text(query: &str, cursor: usize) -> String {
   let mut cursor = cursor.min(query.len());
   while cursor > 0 && !query.is_char_boundary(cursor) {
@@ -3129,7 +3154,96 @@ fn search_statusline_text(query: &str, cursor: usize) -> String {
   format!("FIND {before}█{after}")
 }
 
+fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
+  let state = &ctx.command_palette;
+  if !state.is_open {
+    return None;
+  }
+
+  let filtered = command_palette_filtered_indices(state);
+  if filtered.is_empty() {
+    return None;
+  }
+
+  const MAX_VISIBLE_ITEMS: usize = 8;
+  let visible_count = filtered.len().min(MAX_VISIBLE_ITEMS).max(1);
+  let selected = command_palette_selected_filtered_index(state);
+  let selected_index = selected.unwrap_or(0);
+  let max_window_start = filtered.len().saturating_sub(visible_count);
+  let window_start = selected_index
+    .saturating_sub(visible_count.saturating_sub(1))
+    .min(max_window_start);
+  let items: Vec<UiListItem> = filtered
+    .iter()
+    .skip(window_start)
+    .take(visible_count)
+    .filter_map(|index| state.items.get(*index))
+    .map(|item| UiListItem::new(item.title.clone()))
+    .collect();
+  if items.is_empty() {
+    return None;
+  }
+
+  let mut list = UiList::new("command_palette_list", items);
+  list.fill_width = false;
+  list.selected = selected;
+  list.scroll = window_start;
+  list.virtual_total = Some(filtered.len());
+  list.virtual_start = window_start;
+  list.max_visible = Some(visible_count);
+  list.style = list.style.with_role("command_palette");
+  list.style.accent = Some(UiColor::Token(UiColorToken::SelectedBg));
+  list.style.border = Some(UiColor::Token(UiColorToken::SelectedText));
+
+  let mut panel = UiPanel::new(
+    "term_command_palette_list",
+    LayoutIntent::Custom("term_command_palette_list".to_string()),
+    UiNode::List(list),
+  );
+  panel.style = panel.style.with_role("command_palette");
+  panel.style.border = None;
+  panel.layer = UiLayer::Overlay;
+  panel.constraints = UiConstraints {
+    min_width: Some(24),
+    max_width: Some(72),
+    min_height: Some(1),
+    max_height: Some(visible_count as u16),
+    padding: UiInsets {
+      left: 1,
+      right: 1,
+      top: 0,
+      bottom: 0,
+    },
+    align: UiAlignPair {
+      horizontal: UiAlign::Start,
+      vertical: UiAlign::End,
+    },
+    ..UiConstraints::default()
+  };
+
+  Some(UiNode::Panel(panel))
+}
+
 fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
+  if ctx.command_palette.is_open {
+    ui.overlays.retain(|node| !is_command_palette_overlay(node));
+    if let Some(status) = ui
+      .overlays
+      .iter_mut()
+      .find_map(status_bar_from_overlay_mut)
+    {
+      status.left = command_palette_statusline_text(
+        ctx.command_palette.query.as_str(),
+        ctx.command_palette.query.len(),
+      );
+      status.left_icon = None;
+    }
+    if let Some(list_overlay) = build_term_command_palette_list_overlay(ctx) {
+      ui.overlays.push(list_overlay);
+    }
+    return;
+  }
+
   if !ctx.search_prompt.active {
     return;
   }

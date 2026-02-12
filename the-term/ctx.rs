@@ -425,6 +425,7 @@ pub struct Ctx {
   lsp_completion_items:             Vec<LspCompletionItem>,
   lsp_completion_raw_items:         Vec<Value>,
   lsp_completion_resolved_indices:  HashSet<usize>,
+  lsp_completion_visible_indices:   Vec<usize>,
   lsp_completion_fallback_start:    Option<usize>,
   lsp_completion_generation:        u64,
   lsp_pending_auto_completion:      Option<PendingAutoCompletion>,
@@ -772,6 +773,7 @@ impl Ctx {
       lsp_completion_items: Vec::new(),
       lsp_completion_raw_items: Vec::new(),
       lsp_completion_resolved_indices: HashSet::new(),
+      lsp_completion_visible_indices: Vec::new(),
       lsp_completion_fallback_start: None,
       lsp_completion_generation: 0,
       lsp_pending_auto_completion: None,
@@ -1767,6 +1769,7 @@ impl Ctx {
       self.lsp_completion_items.clear();
       self.lsp_completion_raw_items.clear();
       self.lsp_completion_resolved_indices.clear();
+      self.lsp_completion_visible_indices.clear();
       self.lsp_completion_fallback_start = None;
       self.completion_menu.clear();
       if announce_empty {
@@ -1783,12 +1786,7 @@ impl Ctx {
     self.lsp_completion_raw_items = completion.raw_items;
     self.lsp_completion_resolved_indices.clear();
     self.lsp_completion_fallback_start = Some(replace_start.min(request_cursor));
-    let menu_items = self
-      .lsp_completion_items
-      .iter()
-      .map(completion_menu_item_for_lsp_item)
-      .collect();
-    the_default::show_completion_menu(self, menu_items);
+    self.rebuild_completion_menu();
     true
   }
 
@@ -1815,7 +1813,12 @@ impl Ctx {
     };
     merge_resolved_completion_item(item, resolved);
 
-    if let Some(ui_item) = self.completion_menu.items.get_mut(index) {
+    if let Some(visible_index) = self
+      .lsp_completion_visible_indices
+      .iter()
+      .position(|candidate| *candidate == index)
+      && let Some(ui_item) = self.completion_menu.items.get_mut(visible_index)
+    {
       *ui_item = completion_menu_item_for_lsp_item(item);
       self.needs_render = true;
     }
@@ -2306,10 +2309,78 @@ impl Ctx {
     })
   }
 
+  fn completion_source_index_for_visible_index(&self, index: usize) -> Option<usize> {
+    self.lsp_completion_visible_indices.get(index).copied()
+  }
+
+  fn completion_filter_fragment(&self) -> Option<String> {
+    let cursor = self.primary_cursor_char_idx()?;
+    let start = self.lsp_completion_fallback_start.unwrap_or(cursor).min(cursor);
+    let doc = self.editor.document();
+    let text = doc.text();
+    let fragment = text.slice(start..cursor).to_string();
+    Some(fragment)
+  }
+
+  fn rebuild_completion_menu(&mut self) {
+    if self.lsp_completion_items.is_empty() {
+      self.lsp_completion_visible_indices.clear();
+      self.completion_menu.clear();
+      return;
+    }
+
+    let fragment = self.completion_filter_fragment().unwrap_or_default();
+    let mut visible: Vec<(usize, u32)> = self
+      .lsp_completion_items
+      .iter()
+      .enumerate()
+      .filter_map(|(index, item)| {
+        let candidate = completion_item_filter_text(item);
+        completion_match_score(&fragment, candidate).map(|score| (index, score))
+      })
+      .collect();
+
+    visible.sort_by(|(left_index, left_score), (right_index, right_score)| {
+      right_score
+        .cmp(left_score)
+        .then_with(|| {
+          self.lsp_completion_items[*right_index]
+            .preselect
+            .cmp(&self.lsp_completion_items[*left_index].preselect)
+        })
+        .then_with(|| {
+          let left_key = completion_item_sort_key(&self.lsp_completion_items[*left_index]);
+          let right_key = completion_item_sort_key(&self.lsp_completion_items[*right_index]);
+          left_key.cmp(&right_key)
+        })
+        .then_with(|| {
+          self.lsp_completion_items[*left_index]
+            .label
+            .cmp(&self.lsp_completion_items[*right_index].label)
+        })
+        .then_with(|| left_index.cmp(right_index))
+    });
+
+    self.lsp_completion_visible_indices = visible.into_iter().map(|(index, _)| index).collect();
+    if self.lsp_completion_visible_indices.is_empty() {
+      self.completion_menu.clear();
+      return;
+    }
+
+    let menu_items = self
+      .lsp_completion_visible_indices
+      .iter()
+      .filter_map(|index| self.lsp_completion_items.get(*index))
+      .map(completion_menu_item_for_lsp_item)
+      .collect();
+    the_default::show_completion_menu(self, menu_items);
+  }
+
   fn clear_completion_state(&mut self) {
     self.lsp_completion_items.clear();
     self.lsp_completion_raw_items.clear();
     self.lsp_completion_resolved_indices.clear();
+    self.lsp_completion_visible_indices.clear();
     self.lsp_completion_fallback_start = None;
     self.completion_menu.clear();
   }
@@ -2391,6 +2462,9 @@ impl Ctx {
 
     match command {
       Command::InsertChar(ch) => {
+        if self.completion_menu.active {
+          self.rebuild_completion_menu();
+        }
         if self.lsp_completion_supports_trigger_char(ch) {
           return self.schedule_auto_completion(
             CompletionTriggerSource::TriggerCharacter(ch),
@@ -2412,6 +2486,9 @@ impl Ctx {
       | Command::DeleteWordForward { .. }
       | Command::KillToLineStart
       | Command::KillToLineEnd => {
+        if self.completion_menu.active {
+          self.rebuild_completion_menu();
+        }
         if self.completion_menu.active || self.cursor_prev_char_is_word() {
           return self.schedule_auto_completion(
             CompletionTriggerSource::Incomplete,
@@ -3190,6 +3267,15 @@ fn format_completion_documentation(
 }
 
 fn merge_resolved_completion_item(current: &mut LspCompletionItem, resolved: LspCompletionItem) {
+  if current.filter_text.is_none() {
+    current.filter_text = resolved.filter_text;
+  }
+  if current.sort_text.is_none() {
+    current.sort_text = resolved.sort_text;
+  }
+  if !current.preselect {
+    current.preselect = resolved.preselect;
+  }
   if current.detail.is_none() {
     current.detail = resolved.detail;
   }
@@ -3239,6 +3325,61 @@ fn completion_item_accepts_commit_char(item: &LspCompletionItem, ch: char) -> bo
     let mut chars = candidate.chars();
     matches!(chars.next(), Some(first) if first == ch) && chars.next().is_none()
   })
+}
+
+fn completion_item_filter_text(item: &LspCompletionItem) -> &str {
+  item.filter_text.as_deref().unwrap_or(&item.label)
+}
+
+fn completion_item_sort_key(item: &LspCompletionItem) -> String {
+  item
+    .sort_text
+    .as_deref()
+    .unwrap_or(completion_item_filter_text(item))
+    .to_ascii_lowercase()
+}
+
+fn completion_match_score(filter: &str, candidate: &str) -> Option<u32> {
+  if filter.is_empty() {
+    return Some(0);
+  }
+
+  let filter = filter.to_ascii_lowercase();
+  let candidate = candidate.to_ascii_lowercase();
+  if candidate.is_empty() {
+    return None;
+  }
+
+  if candidate.starts_with(&filter) {
+    let extra = candidate.len().saturating_sub(filter.len()) as u32;
+    return Some(10_000u32.saturating_sub(extra.min(2_000)));
+  }
+
+  if let Some(pos) = candidate.find(&filter) {
+    return Some(6_000u32.saturating_sub((pos as u32).saturating_mul(16)));
+  }
+
+  let mut candidate_chars = candidate.chars().enumerate();
+  let mut last = 0usize;
+  let mut gaps = 0usize;
+  let mut matched = false;
+  for needle in filter.chars() {
+    let mut found = None;
+    for (idx, hay) in candidate_chars.by_ref() {
+      if hay == needle {
+        found = Some(idx);
+        break;
+      }
+    }
+    let idx = found?;
+    if matched {
+      gaps += idx.saturating_sub(last + 1);
+    }
+    last = idx;
+    matched = true;
+  }
+
+  Some(2_000u32.saturating_sub((gaps as u32).saturating_mul(8)))
 }
 
 fn render_lsp_snippet_fallback(source: &str) -> String {
@@ -3684,16 +3825,22 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn completion_selection_changed(&mut self, index: usize) {
-    self.resolve_completion_item_if_needed(index);
+    let source_index = self
+      .completion_source_index_for_visible_index(index)
+      .unwrap_or(index);
+    self.resolve_completion_item_if_needed(source_index);
   }
 
   fn completion_accept_on_commit_char(&mut self, ch: char) -> bool {
     let Some(selected) = self.completion_menu.selected else {
       return false;
     };
+    let source_index = self
+      .completion_source_index_for_visible_index(selected)
+      .unwrap_or(selected);
     let should_accept = self
       .lsp_completion_items
-      .get(selected)
+      .get(source_index)
       .is_some_and(|item| completion_item_accepts_commit_char(item, ch));
     if should_accept {
       the_default::completion_accept(self);
@@ -3707,7 +3854,10 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn completion_accept_selected(&mut self, index: usize) -> bool {
-    let Some(item) = self.lsp_completion_items.get(index).cloned() else {
+    let source_index = self
+      .completion_source_index_for_visible_index(index)
+      .unwrap_or(index);
+    let Some(item) = self.lsp_completion_items.get(source_index).cloned() else {
       return false;
     };
 
@@ -4276,6 +4426,7 @@ mod tests {
     Ctx,
     WatchedFileEventsState,
     completion_item_accepts_commit_char,
+    completion_match_score,
     completion_menu_detail_text,
     completion_menu_documentation_text,
     merge_resolved_completion_item,
@@ -4296,6 +4447,9 @@ mod tests {
   fn empty_completion_item() -> LspCompletionItem {
     LspCompletionItem {
       label:              "item".to_string(),
+      filter_text:        None,
+      sort_text:          None,
+      preselect:          false,
       detail:             None,
       documentation:      None,
       kind:               None,
@@ -4350,6 +4504,14 @@ mod tests {
   }
 
   #[test]
+  fn completion_match_score_prefers_prefix_and_rejects_unrelated_candidates() {
+    let prefix = completion_match_score("std", "std::").expect("prefix score");
+    let fuzzy = completion_match_score("std", "serde_std_types").expect("fuzzy score");
+    assert!(prefix > fuzzy);
+    assert!(completion_match_score("std", "command_palette").is_none());
+  }
+
+  #[test]
   fn merge_resolved_completion_item_keeps_existing_and_fills_missing_fields() {
     let mut current = empty_completion_item();
     current.detail = Some("existing".to_string());
@@ -4365,6 +4527,40 @@ mod tests {
     assert_eq!(current.documentation.as_deref(), Some("docs"));
     assert_eq!(current.commit_characters, vec![";".to_string()]);
     assert_eq!(current.insert_text.as_deref(), Some("insert"));
+  }
+
+  #[test]
+  fn rebuild_completion_menu_filters_to_matching_items() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some("use std".into()))),
+    )
+    .expect("seed transaction");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+    let cursor = ctx.editor.document().text().len_chars();
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::point(cursor));
+
+    let mut low = empty_completion_item();
+    low.label = "command".to_string();
+    low.filter_text = Some("command".to_string());
+    low.sort_text = Some("zzz".to_string());
+
+    let mut top = empty_completion_item();
+    top.label = "std".to_string();
+    top.filter_text = Some("std".to_string());
+    top.sort_text = Some("aaa".to_string());
+
+    ctx.lsp_completion_items = vec![low, top];
+    ctx.lsp_completion_fallback_start = Some("use ".chars().count());
+    ctx.rebuild_completion_menu();
+
+    assert!(ctx.completion_menu.active);
+    assert_eq!(ctx.completion_menu.items.len(), 1);
+    assert_eq!(ctx.completion_menu.items[0].label, "std");
   }
 
   #[test]

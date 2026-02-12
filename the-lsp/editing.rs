@@ -111,6 +111,9 @@ impl LspCompletionItemKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspCompletionItem {
   pub label:              String,
+  pub filter_text:        Option<String>,
+  pub sort_text:          Option<String>,
+  pub preselect:          bool,
   pub detail:             Option<String>,
   pub documentation:      Option<String>,
   pub kind:               Option<LspCompletionItemKind>,
@@ -503,6 +506,9 @@ struct CompletionListPayload {
 #[serde(rename_all = "camelCase")]
 struct CompletionItemPayload {
   label:                 String,
+  filter_text:           Option<String>,
+  sort_text:             Option<String>,
+  preselect:             Option<bool>,
   detail:                Option<String>,
   documentation:         Option<DocumentationPayload>,
   kind:                  Option<u8>,
@@ -536,6 +542,9 @@ impl CompletionItemPayload {
       .map(CompletionTextEditPayload::into_text_edit);
     LspCompletionItem {
       label: self.label,
+      filter_text: self.filter_text,
+      sort_text: self.sort_text,
+      preselect: self.preselect.unwrap_or(false),
       detail: self.detail,
       documentation: self.documentation.map(DocumentationPayload::into_text),
       kind: self.kind.and_then(LspCompletionItemKind::from_lsp),
@@ -874,6 +883,9 @@ mod tests {
       "items": [
         {
           "label": "println!",
+          "filterText": "println",
+          "sortText": "0001",
+          "preselect": true,
           "detail": "macro_rules!",
           "documentation": {
             "kind": "markdown",
@@ -897,6 +909,9 @@ mod tests {
 
     let parsed = parse_completion_response(Some(&value)).expect("completion parse");
     assert_eq!(parsed.len(), 2);
+    assert_eq!(parsed[0].filter_text.as_deref(), Some("println"));
+    assert_eq!(parsed[0].sort_text.as_deref(), Some("0001"));
+    assert!(parsed[0].preselect);
     assert_eq!(parsed[0].detail.as_deref(), Some("macro_rules!"));
     assert_eq!(
       parsed[0].documentation.as_deref(),
@@ -908,6 +923,7 @@ mod tests {
     );
     assert_eq!(parsed[0].commit_characters, vec![";".to_string()]);
     assert_eq!(parsed[1].documentation.as_deref(), Some("Debug macro"));
+    assert!(!parsed[1].preselect);
     assert_eq!(
       parsed[1].insert_text_format,
       Some(LspInsertTextFormat::Snippet)

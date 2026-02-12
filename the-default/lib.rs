@@ -66,6 +66,7 @@ pub use completion_menu::{
   build_completion_menu_ui,
   close_completion_menu,
   completion_accept,
+  completion_docs_scroll,
   completion_next,
   completion_prev,
   show_completion_menu,

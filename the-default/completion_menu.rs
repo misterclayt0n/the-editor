@@ -43,6 +43,7 @@ pub struct CompletionMenuState {
   pub items:    Vec<CompletionMenuItem>,
   pub selected: Option<usize>,
   pub scroll:   usize,
+  pub docs_scroll: usize,
 }
 
 impl CompletionMenuState {
@@ -51,6 +52,7 @@ impl CompletionMenuState {
     self.items.clear();
     self.selected = None;
     self.scroll = 0;
+    self.docs_scroll = 0;
   }
 
   pub fn set_items(&mut self, items: Vec<CompletionMenuItem>) {
@@ -58,6 +60,7 @@ impl CompletionMenuState {
     self.active = !self.items.is_empty();
     self.selected = if self.items.is_empty() { None } else { Some(0) };
     self.scroll = 0;
+    self.docs_scroll = 0;
   }
 
   fn clamp(&mut self) {
@@ -122,6 +125,7 @@ pub fn completion_next<Ctx: DefaultContext>(ctx: &mut Ctx) {
       current + 1
     };
     state.selected = Some(next);
+    state.docs_scroll = 0;
     state.clamp();
     state.selected
   };
@@ -145,6 +149,7 @@ pub fn completion_prev<Ctx: DefaultContext>(ctx: &mut Ctx) {
       current - 1
     };
     state.selected = Some(next);
+    state.docs_scroll = 0;
     state.clamp();
     state.selected
   };
@@ -171,6 +176,31 @@ pub fn completion_accept<Ctx: DefaultContext>(ctx: &mut Ctx) {
     ctx.completion_menu_mut().clear();
   }
   ctx.request_render();
+}
+
+pub fn completion_docs_scroll<Ctx: DefaultContext>(ctx: &mut Ctx, delta: isize) {
+  let changed = {
+    let state = ctx.completion_menu_mut();
+    if !state.active || state.items.is_empty() {
+      return;
+    }
+    let next = if delta.is_negative() {
+      state
+        .docs_scroll
+        .saturating_sub(delta.unsigned_abs())
+    } else {
+      state.docs_scroll.saturating_add(delta as usize)
+    };
+    if next == state.docs_scroll {
+      false
+    } else {
+      state.docs_scroll = next;
+      true
+    }
+  };
+  if changed {
+    ctx.request_render();
+  }
 }
 
 pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNode> {
@@ -234,7 +264,6 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   if let Some(docs) = docs {
     let mut docs_text = UiText::new("completion_docs_text", docs);
     docs_text.style = docs_text.style.with_role("completion_docs");
-    docs_text.max_lines = Some(14);
     docs_text.clip = false;
 
     let mut docs_container = UiContainer::column(

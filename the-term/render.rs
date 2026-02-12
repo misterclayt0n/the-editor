@@ -721,8 +721,474 @@ fn layout_children<'a>(container: &'a UiContainer, rect: Rect) -> Vec<(Rect, &'a
   placements
 }
 
-fn draw_ui_text(buf: &mut Buffer, rect: Rect, _ctx: &Ctx, text: &UiText) {
+#[derive(Clone)]
+struct StyledTextRun {
+  text:  String,
+  style: Style,
+}
+
+#[derive(Clone, Copy)]
+struct CompletionDocsStyles {
+  base:    Style,
+  heading: [Style; 6],
+  bullet:  Style,
+  quote:   Style,
+  code:    Style,
+  link:    Style,
+  rule:    Style,
+}
+
+impl CompletionDocsStyles {
+  fn default(base: Style) -> Self {
+    let heading = [
+      base.add_modifier(Modifier::BOLD),
+      base.add_modifier(Modifier::BOLD),
+      base.add_modifier(Modifier::BOLD),
+      base.add_modifier(Modifier::BOLD),
+      base.add_modifier(Modifier::BOLD),
+      base.add_modifier(Modifier::BOLD),
+    ];
+    Self {
+      base,
+      heading,
+      bullet: base.add_modifier(Modifier::BOLD),
+      quote: base.add_modifier(Modifier::DIM),
+      code: base.add_modifier(Modifier::DIM),
+      link: base.add_modifier(Modifier::UNDERLINED),
+      rule: base.add_modifier(Modifier::DIM),
+    }
+  }
+}
+
+fn theme_style_or(ctx: &Ctx, scope: &str, fallback: Style) -> Style {
+  ctx
+    .ui_theme
+    .try_get(scope)
+    .map(lib_style_to_ratatui)
+    .map(|style| fallback.patch(style))
+    .unwrap_or(fallback)
+}
+
+fn completion_docs_styles(ctx: &Ctx, base: Style) -> CompletionDocsStyles {
+  let mut styles = CompletionDocsStyles::default(base);
+  styles.heading = [
+    theme_style_or(ctx, "markup.heading.1", styles.heading[0]),
+    theme_style_or(ctx, "markup.heading.2", styles.heading[1]),
+    theme_style_or(ctx, "markup.heading.3", styles.heading[2]),
+    theme_style_or(ctx, "markup.heading.4", styles.heading[3]),
+    theme_style_or(ctx, "markup.heading.5", styles.heading[4]),
+    theme_style_or(ctx, "markup.heading.6", styles.heading[5]),
+  ];
+  styles.bullet = theme_style_or(ctx, "markup.list.unnumbered", styles.bullet);
+  styles.quote = theme_style_or(ctx, "markup.quote", styles.quote);
+  styles.code = theme_style_or(ctx, "markup.raw.inline", styles.code);
+  styles.link = theme_style_or(ctx, "markup.link.text", styles.link);
+  styles.rule = theme_style_or(ctx, "punctuation.special", styles.rule);
+  styles
+}
+
+fn push_styled_run(runs: &mut Vec<StyledTextRun>, text: String, style: Style) {
+  if text.is_empty() {
+    return;
+  }
+  if let Some(last) = runs.last_mut()
+    && last.style == style
+  {
+    last.text.push_str(&text);
+    return;
+  }
+  runs.push(StyledTextRun { text, style });
+}
+
+fn parse_markdown_link(chars: &[char], start: usize) -> Option<(usize, String)> {
+  if chars.get(start).copied() != Some('[') {
+    return None;
+  }
+  let mut close_bracket = start + 1;
+  while close_bracket < chars.len() && chars[close_bracket] != ']' {
+    close_bracket += 1;
+  }
+  if close_bracket >= chars.len()
+    || chars.get(close_bracket + 1).copied() != Some('(')
+  {
+    return None;
+  }
+  let mut close_paren = close_bracket + 2;
+  while close_paren < chars.len() && chars[close_paren] != ')' {
+    close_paren += 1;
+  }
+  if close_paren >= chars.len() {
+    return None;
+  }
+  let label: String = chars[start + 1..close_bracket].iter().collect();
+  Some((close_paren + 1, label))
+}
+
+fn parse_inline_markdown_runs(
+  text: &str,
+  styles: &CompletionDocsStyles,
+  base: Style,
+) -> Vec<StyledTextRun> {
+  let chars: Vec<char> = text.chars().collect();
+  let mut runs = Vec::new();
+  let mut buf = String::new();
+  let mut idx = 0usize;
+  let mut bold = false;
+  let mut italic = false;
+
+  let flush = |runs: &mut Vec<StyledTextRun>, buf: &mut String, bold: bool, italic: bool| {
+    if buf.is_empty() {
+      return;
+    }
+    let mut style = base;
+    if bold {
+      style = style.add_modifier(Modifier::BOLD);
+    }
+    if italic {
+      style = style.add_modifier(Modifier::ITALIC);
+    }
+    push_styled_run(runs, std::mem::take(buf), style);
+  };
+
+  while idx < chars.len() {
+    if chars[idx] == '`' {
+      flush(&mut runs, &mut buf, bold, italic);
+      let mut end = idx + 1;
+      while end < chars.len() && chars[end] != '`' {
+        end += 1;
+      }
+      if end < chars.len() {
+        let literal: String = chars[idx + 1..end].iter().collect();
+        push_styled_run(&mut runs, literal, styles.code);
+        idx = end + 1;
+        continue;
+      }
+      buf.push(chars[idx]);
+      idx += 1;
+      continue;
+    }
+
+    if let Some((next, label)) = parse_markdown_link(&chars, idx) {
+      flush(&mut runs, &mut buf, bold, italic);
+      let mut style = base;
+      if bold {
+        style = style.add_modifier(Modifier::BOLD);
+      }
+      if italic {
+        style = style.add_modifier(Modifier::ITALIC);
+      }
+      push_styled_run(&mut runs, label, style.patch(styles.link));
+      idx = next;
+      continue;
+    }
+
+    if idx + 1 < chars.len() && chars[idx] == '*' && chars[idx + 1] == '*' {
+      flush(&mut runs, &mut buf, bold, italic);
+      bold = !bold;
+      idx += 2;
+      continue;
+    }
+
+    if chars[idx] == '*' {
+      flush(&mut runs, &mut buf, bold, italic);
+      italic = !italic;
+      idx += 1;
+      continue;
+    }
+
+    buf.push(chars[idx]);
+    idx += 1;
+  }
+
+  flush(&mut runs, &mut buf, bold, italic);
+  runs
+}
+
+fn parse_numbered_list_prefix(line: &str) -> Option<(String, &str)> {
+  let bytes = line.as_bytes();
+  let mut idx = 0usize;
+  while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+    idx += 1;
+  }
+  if idx == 0
+    || idx + 1 >= bytes.len()
+    || bytes[idx] != b'.'
+    || bytes[idx + 1] != b' '
+  {
+    return None;
+  }
+  let marker = line[..=idx].to_string();
+  let rest = &line[idx + 2..];
+  Some((marker, rest))
+}
+
+fn parse_heading(line: &str) -> Option<(usize, &str)> {
+  let mut level = 0usize;
+  for ch in line.chars() {
+    if ch == '#' {
+      level += 1;
+    } else {
+      break;
+    }
+  }
+  if level == 0 || level > 6 {
+    return None;
+  }
+  line
+    .strip_prefix(&"#".repeat(level))
+    .and_then(|rest| rest.strip_prefix(' '))
+    .map(|rest| (level, rest))
+}
+
+fn is_markdown_rule(line: &str) -> bool {
+  let chars: Vec<char> = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+  if chars.len() < 3 {
+    return false;
+  }
+  chars
+    .iter()
+    .all(|ch| matches!(ch, '-' | '_' | '*'))
+}
+
+fn completion_docs_markdown_lines(
+  markdown: &str,
+  styles: &CompletionDocsStyles,
+) -> Vec<Vec<StyledTextRun>> {
+  let mut lines = Vec::new();
+  let mut in_code_block = false;
+
+  for raw_line in markdown.lines() {
+    let normalized = raw_line.replace('\t', "  ");
+    let trimmed = normalized.trim_start();
+
+    if trimmed.starts_with("```") {
+      in_code_block = !in_code_block;
+      continue;
+    }
+
+    if in_code_block {
+      lines.push(vec![StyledTextRun {
+        text:  normalized,
+        style: styles.code,
+      }]);
+      continue;
+    }
+
+    if trimmed.is_empty() {
+      lines.push(Vec::new());
+      continue;
+    }
+
+    if is_markdown_rule(trimmed) {
+      lines.push(vec![StyledTextRun {
+        text:  "───".to_string(),
+        style: styles.rule,
+      }]);
+      continue;
+    }
+
+    if let Some((level, heading)) = parse_heading(trimmed) {
+      let style = styles.heading[level.saturating_sub(1)];
+      let runs = parse_inline_markdown_runs(heading, styles, style);
+      lines.push(runs);
+      continue;
+    }
+
+    if let Some(stripped) = trimmed
+      .strip_prefix("- ")
+      .or_else(|| trimmed.strip_prefix("* "))
+      .or_else(|| trimmed.strip_prefix("+ "))
+    {
+      let mut runs = Vec::new();
+      push_styled_run(&mut runs, "• ".to_string(), styles.bullet);
+      runs.extend(parse_inline_markdown_runs(stripped, styles, styles.base));
+      lines.push(runs);
+      continue;
+    }
+
+    if let Some((marker, rest)) = parse_numbered_list_prefix(trimmed) {
+      let mut runs = Vec::new();
+      push_styled_run(&mut runs, format!("{marker} "), styles.bullet);
+      runs.extend(parse_inline_markdown_runs(rest, styles, styles.base));
+      lines.push(runs);
+      continue;
+    }
+
+    if let Some(quoted) = trimmed.strip_prefix('>') {
+      let mut runs = Vec::new();
+      push_styled_run(&mut runs, "│ ".to_string(), styles.quote);
+      runs.extend(parse_inline_markdown_runs(
+        quoted.trim_start(),
+        styles,
+        styles.quote,
+      ));
+      lines.push(runs);
+      continue;
+    }
+
+    lines.push(parse_inline_markdown_runs(trimmed, styles, styles.base));
+  }
+
+  if lines.is_empty() {
+    lines.push(Vec::new());
+  }
+  lines
+}
+
+fn wrap_styled_runs(runs: &[StyledTextRun], width: usize) -> Vec<Vec<StyledTextRun>> {
+  if width == 0 {
+    return Vec::new();
+  }
+  if runs.is_empty() {
+    return vec![Vec::new()];
+  }
+
+  let mut wrapped = Vec::new();
+  let mut current = Vec::new();
+  let mut col = 0usize;
+
+  for run in runs {
+    let mut piece = String::new();
+    for ch in run.text.chars() {
+      if col >= width {
+        if !piece.is_empty() {
+          push_styled_run(&mut current, std::mem::take(&mut piece), run.style);
+        }
+        wrapped.push(current);
+        current = Vec::new();
+        col = 0;
+      }
+      piece.push(ch);
+      col += 1;
+    }
+    if !piece.is_empty() {
+      push_styled_run(&mut current, piece, run.style);
+    }
+  }
+
+  if current.is_empty() {
+    wrapped.push(Vec::new());
+  } else {
+    wrapped.push(current);
+  }
+  wrapped
+}
+
+fn completion_docs_rows(
+  markdown: &str,
+  styles: &CompletionDocsStyles,
+  width: usize,
+) -> Vec<Vec<StyledTextRun>> {
+  let mut rows = Vec::new();
+  for line in completion_docs_markdown_lines(markdown, styles) {
+    rows.extend(wrap_styled_runs(&line, width));
+  }
+  if rows.is_empty() {
+    rows.push(Vec::new());
+  }
+  rows
+}
+
+fn draw_styled_row(
+  buf: &mut Buffer,
+  x: u16,
+  y: u16,
+  width: usize,
+  row: &[StyledTextRun],
+  base_style: Style,
+) {
+  if width == 0 {
+    return;
+  }
+  buf.set_string(x, y, " ".repeat(width), base_style);
+
+  let mut col = 0usize;
+  for run in row {
+    for ch in run.text.chars() {
+      if col >= width {
+        return;
+      }
+      let mut symbol = [0u8; 4];
+      let symbol = ch.encode_utf8(&mut symbol);
+      buf.set_stringn(x + col as u16, y, symbol, 1, run.style);
+      col += 1;
+    }
+  }
+}
+
+fn draw_completion_docs_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiText) {
   if rect.width == 0 || rect.height == 0 {
+    return;
+  }
+
+  let (text_style, ..) = ui_style_colors(&text.style);
+  let base_style = apply_ui_emphasis(text_style, text.style.emphasis);
+  let styles = completion_docs_styles(ctx, base_style);
+
+  let mut content_width = rect.width as usize;
+  let mut rows = completion_docs_rows(&text.content, &styles, content_width);
+  let mut show_scrollbar = rows.len() > rect.height as usize && rect.width > 1;
+  if show_scrollbar {
+    content_width = rect.width.saturating_sub(1) as usize;
+    rows = completion_docs_rows(&text.content, &styles, content_width);
+    show_scrollbar = rows.len() > rect.height as usize && rect.width > 1;
+  }
+
+  let total_rows = rows.len();
+  let visible_rows = rect.height as usize;
+  let max_scroll = total_rows.saturating_sub(visible_rows);
+  let scroll = ctx.completion_menu.docs_scroll.min(max_scroll);
+
+  for row_idx in 0..visible_rows {
+    let y = rect.y + row_idx as u16;
+    if let Some(row) = rows.get(scroll + row_idx) {
+      draw_styled_row(buf, rect.x, y, content_width, row, base_style);
+    } else {
+      draw_styled_row(buf, rect.x, y, content_width, &[], base_style);
+    }
+  }
+
+  if show_scrollbar {
+    let track_x = rect.x + rect.width - 1;
+    let track_height = rect.height;
+    let thumb_height = ((visible_rows as f32 / total_rows as f32) * track_height as f32)
+      .round()
+      .clamp(1.0, track_height as f32) as u16;
+    let max_thumb_offset = track_height.saturating_sub(thumb_height);
+    let thumb_offset = if max_scroll == 0 || max_thumb_offset == 0 {
+      0
+    } else {
+      ((scroll as f32 / max_scroll as f32) * max_thumb_offset as f32).round() as u16
+    };
+    let scroll_color = text
+      .style
+      .border
+      .as_ref()
+      .and_then(resolve_ui_color)
+      .or_else(|| text.style.accent.as_ref().and_then(resolve_ui_color))
+      .or(base_style.fg);
+
+    for row in 0..track_height {
+      let symbol = if row >= thumb_offset && row < thumb_offset + thumb_height {
+        "█"
+      } else {
+        "│"
+      };
+      let mut style = Style::default();
+      if let Some(color) = scroll_color {
+        style = style.fg(color);
+      }
+      buf.set_string(track_x, rect.y + row, symbol, style);
+    }
+  }
+}
+
+fn draw_ui_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiText) {
+  if rect.width == 0 || rect.height == 0 {
+    return;
+  }
+  if text.style.role.as_deref() == Some("completion_docs") {
+    draw_completion_docs_text(buf, rect, ctx, text);
     return;
   }
   let (text_style, ..) = ui_style_colors(&text.style);
@@ -2613,13 +3079,34 @@ mod tests {
   use ratatui::{
     buffer::Buffer,
     layout::Rect,
+    style::Style,
   };
   use the_lib::render::{
     UiList,
     UiListItem,
   };
 
-  use super::{completion_docs_panel_rect, completion_panel_rect, draw_ui_list};
+  use super::{
+    CompletionDocsStyles,
+    StyledTextRun,
+    completion_docs_panel_rect,
+    completion_docs_rows,
+    completion_panel_rect,
+    draw_ui_list,
+  };
+
+  fn flatten_rows(rows: &[Vec<StyledTextRun>]) -> Vec<String> {
+    rows
+      .iter()
+      .map(|row| {
+        row
+          .iter()
+          .map(|run| run.text.as_str())
+          .collect::<Vec<_>>()
+          .join("")
+      })
+      .collect()
+  }
 
   #[test]
   fn completion_panel_rect_places_below_cursor_when_space_exists() {
@@ -2706,5 +3193,35 @@ mod tests {
 
     let next_row_cell = buf.get(track_x, rect.y + 1);
     assert_eq!(next_row_cell.symbol(), "│");
+  }
+
+  #[test]
+  fn completion_docs_rows_parse_markdown_basics() {
+    let styles = CompletionDocsStyles::default(Style::default());
+    let rows = completion_docs_rows(
+      "# Title\n- item\n[Result](https://example.com)\n```rs\nfn test() {}\n```",
+      &styles,
+      80,
+    );
+    let non_empty: Vec<_> = flatten_rows(&rows)
+      .into_iter()
+      .filter(|line| !line.trim().is_empty())
+      .collect();
+    assert_eq!(
+      non_empty,
+      vec![
+        "Title".to_string(),
+        "• item".to_string(),
+        "Result".to_string(),
+        "fn test() {}".to_string(),
+      ]
+    );
+  }
+
+  #[test]
+  fn completion_docs_rows_wrap_long_lines() {
+    let styles = CompletionDocsStyles::default(Style::default());
+    let rows = completion_docs_rows("abcdef", &styles, 3);
+    assert_eq!(flatten_rows(&rows), vec!["abc".to_string(), "def".to_string()]);
   }
 }

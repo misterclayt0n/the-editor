@@ -3204,32 +3204,16 @@ fn completion_menu_documentation_text(item: &LspCompletionItem) -> Option<String
   item
     .documentation
     .as_deref()
-    .and_then(|value| format_completion_documentation(value, 8, 88))
+    .and_then(normalize_completion_documentation)
 }
 
-fn format_completion_documentation(
-  value: &str,
-  max_lines: usize,
-  max_chars_per_line: usize,
-) -> Option<String> {
-  if max_lines == 0 || max_chars_per_line == 0 {
-    return None;
-  }
-  let mut lines = Vec::new();
-  for line in value.lines() {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with("```") {
-      continue;
-    }
-    lines.push(clamp_status_text(trimmed, max_chars_per_line));
-    if lines.len() >= max_lines {
-      break;
-    }
-  }
-  if lines.is_empty() {
+fn normalize_completion_documentation(value: &str) -> Option<String> {
+  let normalized = value.replace("\r\n", "\n").replace('\r', "\n");
+  let trimmed = normalized.trim();
+  if trimmed.is_empty() {
     None
   } else {
-    Some(lines.join("\n"))
+    Some(trimmed.to_string())
   }
 }
 
@@ -4471,12 +4455,12 @@ mod tests {
   }
 
   #[test]
-  fn completion_menu_documentation_compacts_markdown_blocks() {
+  fn completion_menu_documentation_preserves_markdown_blocks() {
     let mut item = empty_completion_item();
     item.documentation = Some("```rust\nfn test() {}\n```\n\nMore details".to_string());
     assert_eq!(
       completion_menu_documentation_text(&item).as_deref(),
-      Some("fn test() {}\nMore details")
+      Some("```rust\nfn test() {}\n```\n\nMore details")
     );
   }
 

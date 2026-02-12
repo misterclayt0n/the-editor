@@ -879,6 +879,22 @@ fn handle_insert_mode_completion_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: Ke
       crate::completion_menu::completion_accept(ctx);
       true
     },
+    Key::PageUp => {
+      crate::completion_menu::completion_docs_scroll(ctx, -6);
+      true
+    },
+    Key::PageDown => {
+      crate::completion_menu::completion_docs_scroll(ctx, 6);
+      true
+    },
+    Key::Char('u') if key.modifiers.ctrl() => {
+      crate::completion_menu::completion_docs_scroll(ctx, -6);
+      true
+    },
+    Key::Char('d') if key.modifiers.ctrl() => {
+      crate::completion_menu::completion_docs_scroll(ctx, 6);
+      true
+    },
     // Let keymaps decide escape behavior (normal mode by default).
     Key::Escape => false,
     _ => false,
@@ -1277,6 +1293,22 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
             },
             Key::Enter | Key::NumpadEnter => {
               crate::completion_menu::completion_accept(ctx);
+              return UiEventOutcome::handled();
+            },
+            Key::PageUp => {
+              crate::completion_menu::completion_docs_scroll(ctx, -6);
+              return UiEventOutcome::handled();
+            },
+            Key::PageDown => {
+              crate::completion_menu::completion_docs_scroll(ctx, 6);
+              return UiEventOutcome::handled();
+            },
+            Key::Char('u') if key_event.modifiers.ctrl() => {
+              crate::completion_menu::completion_docs_scroll(ctx, -6);
+              return UiEventOutcome::handled();
+            },
+            Key::Char('d') if key_event.modifiers.ctrl() => {
+              crate::completion_menu::completion_docs_scroll(ctx, 6);
               return UiEventOutcome::handled();
             },
             Key::Escape => {

@@ -92,14 +92,73 @@ pub enum EditingParseError {
   Decode(#[from] serde_json::Error),
 }
 
-pub fn completion_params(uri: &str, position: LspPosition) -> Value {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LspCompletionTriggerKind {
+  Invoked,
+  TriggerCharacter,
+  TriggerForIncompleteCompletions,
+}
+
+impl LspCompletionTriggerKind {
+  fn as_lsp_code(self) -> u8 {
+    match self {
+      Self::Invoked => 1,
+      Self::TriggerCharacter => 2,
+      Self::TriggerForIncompleteCompletions => 3,
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspCompletionContext {
+  pub trigger_kind:      LspCompletionTriggerKind,
+  pub trigger_character: Option<String>,
+}
+
+impl LspCompletionContext {
+  pub fn invoked() -> Self {
+    Self {
+      trigger_kind:      LspCompletionTriggerKind::Invoked,
+      trigger_character: None,
+    }
+  }
+
+  pub fn trigger_character(ch: char) -> Self {
+    Self {
+      trigger_kind:      LspCompletionTriggerKind::TriggerCharacter,
+      trigger_character: Some(ch.to_string()),
+    }
+  }
+
+  pub fn trigger_for_incomplete() -> Self {
+    Self {
+      trigger_kind:      LspCompletionTriggerKind::TriggerForIncompleteCompletions,
+      trigger_character: None,
+    }
+  }
+}
+
+pub fn completion_params(
+  uri: &str,
+  position: LspPosition,
+  context: &LspCompletionContext,
+) -> Value {
+  let mut context_json = json!({
+    "triggerKind": context.trigger_kind.as_lsp_code(),
+  });
+  if let Some(ch) = context.trigger_character.as_deref()
+    && let Some(object) = context_json.as_object_mut()
+  {
+    object.insert("triggerCharacter".to_string(), json!(ch));
+  }
+
   json!({
     "textDocument": { "uri": uri },
     "position": {
       "line": position.line,
       "character": position.character,
     },
-    "context": { "triggerKind": 1 },
+    "context": context_json,
   })
 }
 
@@ -831,5 +890,33 @@ mod tests {
     assert_eq!(parsed.label, "abc");
     assert_eq!(parsed.detail.as_deref(), Some("detail"));
     assert_eq!(parsed.documentation.as_deref(), Some("docs"));
+  }
+
+  #[test]
+  fn completion_params_sets_invoked_context() {
+    let params = completion_params(
+      "file:///tmp/main.rs",
+      LspPosition {
+        line:      3,
+        character: 5,
+      },
+      &LspCompletionContext::invoked(),
+    );
+    assert_eq!(params["context"]["triggerKind"], json!(1));
+    assert!(params["context"].get("triggerCharacter").is_none());
+  }
+
+  #[test]
+  fn completion_params_sets_trigger_character_context() {
+    let params = completion_params(
+      "file:///tmp/main.rs",
+      LspPosition {
+        line:      3,
+        character: 5,
+      },
+      &LspCompletionContext::trigger_character(':'),
+    );
+    assert_eq!(params["context"]["triggerKind"], json!(2));
+    assert_eq!(params["context"]["triggerCharacter"], json!(":"));
   }
 }

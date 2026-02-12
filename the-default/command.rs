@@ -420,6 +420,9 @@ pub trait DefaultContext: Sized + 'static {
   fn completion_accept_on_commit_char(&mut self, _ch: char) -> bool {
     false
   }
+  fn completion_on_action(&mut self, _command: Command) -> bool {
+    false
+  }
   fn file_picker(&self) -> &crate::file_picker::FilePickerState;
   fn file_picker_mut(&mut self) -> &mut crate::file_picker::FilePickerState;
   fn search_prompt_ref(&self) -> &crate::SearchPromptState;
@@ -947,7 +950,9 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::Quit => ctx.dispatch().quit(ctx, ()),
   }
 
-  if ctx.completion_menu().active && !command_preserves_completion_menu(command) {
+  let preserve_completion_menu =
+    command_preserves_completion_menu(command) || ctx.completion_on_action(command);
+  if ctx.completion_menu().active && !preserve_completion_menu {
     ctx.completion_menu_mut().clear();
   }
 

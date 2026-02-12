@@ -43,6 +43,7 @@ use serde_json::{
   json,
 };
 use the_default::{
+  Command,
   CommandPaletteState,
   CommandPaletteStyle,
   CommandPromptState,
@@ -120,6 +121,7 @@ use the_lib::{
 use the_lsp::{
   FileChangeType,
   LspCapability,
+  LspCompletionContext,
   LspCompletionItem,
   LspEvent,
   LspExecuteCommand,
@@ -275,19 +277,69 @@ impl LspStatuslineState {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompletionTriggerSource {
+  Manual,
+  Invoked,
+  TriggerCharacter(char),
+  Incomplete,
+}
+
+impl CompletionTriggerSource {
+  fn to_lsp_context(self) -> LspCompletionContext {
+    match self {
+      Self::Manual | Self::Invoked => LspCompletionContext::invoked(),
+      Self::TriggerCharacter(ch) => LspCompletionContext::trigger_character(ch),
+      Self::Incomplete => LspCompletionContext::trigger_for_incomplete(),
+    }
+  }
+}
+
+#[derive(Debug, Clone)]
+struct PendingAutoCompletion {
+  due_at:  Instant,
+  trigger: CompletionTriggerSource,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingLspRequestKind {
-  GotoDefinition { uri: String },
-  Hover { uri: String },
-  References { uri: String },
-  DocumentSymbols { uri: String },
-  WorkspaceSymbols { query: String },
-  Completion { uri: String },
-  CompletionResolve { uri: String, index: usize },
-  SignatureHelp { uri: String },
-  CodeActions { uri: String },
-  Rename { uri: String },
-  Format { uri: String },
+  GotoDefinition {
+    uri: String,
+  },
+  Hover {
+    uri: String,
+  },
+  References {
+    uri: String,
+  },
+  DocumentSymbols {
+    uri: String,
+  },
+  WorkspaceSymbols {
+    query: String,
+  },
+  Completion {
+    uri:            String,
+    generation:     u64,
+    cursor:         usize,
+    announce_empty: bool,
+  },
+  CompletionResolve {
+    uri:   String,
+    index: usize,
+  },
+  SignatureHelp {
+    uri: String,
+  },
+  CodeActions {
+    uri: String,
+  },
+  Rename {
+    uri: String,
+  },
+  Format {
+    uri: String,
+  },
 }
 
 impl PendingLspRequestKind {
@@ -371,6 +423,8 @@ pub struct Ctx {
   lsp_completion_items:             Vec<LspCompletionItem>,
   lsp_completion_raw_items:         Vec<Value>,
   lsp_completion_resolved_indices:  HashSet<usize>,
+  lsp_completion_generation:        u64,
+  lsp_pending_auto_completion:      Option<PendingAutoCompletion>,
   pub diagnostics:                  DiagnosticsState,
   pub file_picker_layout:           Option<FilePickerLayout>,
   pub file_picker_drag:             Option<FilePickerDragState>,
@@ -554,10 +608,7 @@ fn resolve_lsp_server(loader: Option<&Loader>, path: Option<&Path>) -> Option<Ls
   server_from_language.or_else(lsp_server_from_env)
 }
 
-fn lsp_server_configs_equal(
-  lhs: Option<&LspServerConfig>,
-  rhs: Option<&LspServerConfig>,
-) -> bool {
+fn lsp_server_configs_equal(lhs: Option<&LspServerConfig>, rhs: Option<&LspServerConfig>) -> bool {
   match (lhs, rhs) {
     (None, None) => true,
     (Some(lhs), Some(rhs)) => {
@@ -718,6 +769,8 @@ impl Ctx {
       lsp_completion_items: Vec::new(),
       lsp_completion_raw_items: Vec::new(),
       lsp_completion_resolved_indices: HashSet::new(),
+      lsp_completion_generation: 0,
+      lsp_pending_auto_completion: None,
       diagnostics: DiagnosticsState::default(),
       file_picker_layout: None,
       file_picker_drag: None,
@@ -1233,6 +1286,23 @@ impl Ctx {
     needs_render
   }
 
+  pub fn poll_lsp_completion_auto_trigger(&mut self) -> bool {
+    let Some(pending) = self.lsp_pending_auto_completion.clone() else {
+      return false;
+    };
+    if self.mode != Mode::Insert {
+      self.lsp_pending_auto_completion = None;
+      return false;
+    }
+    if Instant::now() < pending.due_at {
+      return false;
+    }
+
+    self.lsp_pending_auto_completion = None;
+    let _ = self.dispatch_completion_request(pending.trigger, false);
+    false
+  }
+
   pub fn poll_lsp_file_watch(&mut self) -> bool {
     let lsp_ready = self.lsp_ready;
     let (watched_uri, watched_path, pending_changes) = match poll_watch_events(
@@ -1572,8 +1642,18 @@ impl Ctx {
         };
         self.apply_symbols_result("workspace symbols", symbols)
       },
-      PendingLspRequestKind::Completion { .. } => {
-        self.handle_completion_response(response.result.as_ref())
+      PendingLspRequestKind::Completion {
+        generation,
+        cursor,
+        announce_empty,
+        ..
+      } => {
+        self.handle_completion_response(
+          response.result.as_ref(),
+          generation,
+          cursor,
+          announce_empty,
+        )
       },
       PendingLspRequestKind::CompletionResolve { index, .. } => {
         self.handle_completion_resolve_response(index, response.result.as_ref())
@@ -1644,7 +1724,26 @@ impl Ctx {
     true
   }
 
-  fn handle_completion_response(&mut self, result: Option<&Value>) -> bool {
+  fn handle_completion_response(
+    &mut self,
+    result: Option<&Value>,
+    generation: u64,
+    request_cursor: usize,
+    announce_empty: bool,
+  ) -> bool {
+    if generation != self.lsp_completion_generation {
+      return false;
+    }
+    if self.mode != Mode::Insert {
+      return false;
+    }
+    let Some(current_cursor) = self.primary_cursor_char_idx() else {
+      return false;
+    };
+    if current_cursor != request_cursor {
+      return false;
+    }
+
     let completion = match parse_completion_response_with_raw(result) {
       Ok(completion) => completion,
       Err(err) => {
@@ -1662,15 +1761,13 @@ impl Ctx {
       self.lsp_completion_raw_items.clear();
       self.lsp_completion_resolved_indices.clear();
       self.completion_menu.clear();
-      self.messages.publish(
-        MessageLevel::Info,
-        Some("lsp".into()),
-        "no completion candidates",
-      );
-      return true;
-    }
-
-    if self.mode != Mode::Insert {
+      if announce_empty {
+        self.messages.publish(
+          MessageLevel::Info,
+          Some("lsp".into()),
+          "no completion candidates",
+        );
+      }
       return true;
     }
 
@@ -2133,6 +2230,173 @@ impl Ctx {
       .is_some_and(|capabilities| capabilities.supports(capability))
   }
 
+  fn primary_cursor_char_idx(&self) -> Option<usize> {
+    let doc = self.editor.document();
+    let range = doc.selection().ranges().first().copied()?;
+    Some(range.cursor(doc.text().slice(..)))
+  }
+
+  fn cursor_prev_char_is_word(&self) -> bool {
+    let Some(cursor) = self.primary_cursor_char_idx() else {
+      return false;
+    };
+    if cursor == 0 {
+      return false;
+    }
+    self
+      .editor
+      .document()
+      .text()
+      .get_char(cursor.saturating_sub(1))
+      .is_some_and(is_symbol_word_char)
+  }
+
+  fn lsp_completion_supports_trigger_char(&self, ch: char) -> bool {
+    let Some(server) = self.lsp_runtime.config().server() else {
+      return false;
+    };
+    let Some(capabilities) = self.lsp_runtime.server_capabilities(server.name()) else {
+      return false;
+    };
+    let Some(values) = capabilities
+      .raw()
+      .get("completionProvider")
+      .and_then(|provider| provider.get("triggerCharacters"))
+      .and_then(Value::as_array)
+    else {
+      return false;
+    };
+
+    values.iter().filter_map(Value::as_str).any(|value| {
+      let mut chars = value.chars();
+      matches!(chars.next(), Some(first) if first == ch && chars.next().is_none())
+    })
+  }
+
+  fn clear_completion_state(&mut self) {
+    self.lsp_completion_items.clear();
+    self.lsp_completion_raw_items.clear();
+    self.lsp_completion_resolved_indices.clear();
+    self.completion_menu.clear();
+  }
+
+  fn dispatch_completion_request(
+    &mut self,
+    trigger: CompletionTriggerSource,
+    announce_empty: bool,
+  ) -> bool {
+    if !self.lsp_supports(LspCapability::Completion) {
+      if matches!(trigger, CompletionTriggerSource::Manual) {
+        self.messages.publish(
+          MessageLevel::Warning,
+          Some("lsp".into()),
+          "completion is not supported by the active server",
+        );
+      }
+      return false;
+    }
+
+    let Some((uri, position)) = self.current_lsp_position() else {
+      if matches!(trigger, CompletionTriggerSource::Manual) {
+        self.messages.publish(
+          MessageLevel::Warning,
+          Some("lsp".into()),
+          "completion unavailable: no active LSP document",
+        );
+      }
+      return false;
+    };
+    let Some(cursor) = self.primary_cursor_char_idx() else {
+      return false;
+    };
+
+    self.lsp_completion_generation = self.lsp_completion_generation.wrapping_add(1);
+    let generation = self.lsp_completion_generation;
+    let context = trigger.to_lsp_context();
+    self.dispatch_lsp_request(
+      "textDocument/completion",
+      completion_params(&uri, position, &context),
+      PendingLspRequestKind::Completion {
+        uri,
+        generation,
+        cursor,
+        announce_empty,
+      },
+    );
+    true
+  }
+
+  fn schedule_auto_completion(
+    &mut self,
+    trigger: CompletionTriggerSource,
+    delay: Duration,
+  ) -> bool {
+    if self.mode != Mode::Insert || !self.lsp_supports(LspCapability::Completion) {
+      self.lsp_pending_auto_completion = None;
+      return false;
+    }
+
+    self.lsp_pending_auto_completion = Some(PendingAutoCompletion {
+      due_at: Instant::now() + delay,
+      trigger,
+    });
+    true
+  }
+
+  fn cancel_auto_completion(&mut self) {
+    self.lsp_pending_auto_completion = None;
+  }
+
+  fn handle_completion_action(&mut self, command: Command) -> bool {
+    if self.mode != Mode::Insert {
+      self.cancel_auto_completion();
+      return false;
+    }
+
+    match command {
+      Command::InsertChar(ch) => {
+        if self.lsp_completion_supports_trigger_char(ch) {
+          return self.schedule_auto_completion(
+            CompletionTriggerSource::TriggerCharacter(ch),
+            lsp_completion_trigger_char_latency(),
+          );
+        }
+        if is_symbol_word_char(ch) {
+          return self.schedule_auto_completion(
+            CompletionTriggerSource::Invoked,
+            lsp_completion_auto_trigger_latency(),
+          );
+        }
+        self.cancel_auto_completion();
+        false
+      },
+      Command::DeleteChar
+      | Command::DeleteCharForward { .. }
+      | Command::DeleteWordBackward { .. }
+      | Command::DeleteWordForward { .. }
+      | Command::KillToLineStart
+      | Command::KillToLineEnd => {
+        if self.completion_menu.active || self.cursor_prev_char_is_word() {
+          return self.schedule_auto_completion(
+            CompletionTriggerSource::Incomplete,
+            lsp_completion_auto_trigger_latency(),
+          );
+        }
+        self.cancel_auto_completion();
+        false
+      },
+      Command::LspCompletion
+      | Command::CompletionNext
+      | Command::CompletionPrev
+      | Command::CompletionAccept
+      | Command::CompletionCancel => true,
+      _ => {
+        self.cancel_auto_completion();
+        false
+      },
+    }
+  }
+
   fn current_lsp_position(&self) -> Option<(String, LspPosition)> {
     if !self.lsp_ready {
       return None;
@@ -2282,10 +2546,12 @@ impl Ctx {
       .send_request("completionItem/resolve", Some(params))
     {
       Ok(request_id) => {
-        self.lsp_pending_requests.insert(
-          request_id,
-          PendingLspRequestKind::CompletionResolve { uri, index },
-        );
+        self
+          .lsp_pending_requests
+          .insert(request_id, PendingLspRequestKind::CompletionResolve {
+            uri,
+            index,
+          });
       },
       Err(err) => {
         self.messages.publish(
@@ -2481,10 +2747,8 @@ impl Ctx {
     self.lsp_active_progress_tokens.clear();
     self.lsp_pending_requests.clear();
     self.lsp_watched_file = None;
-    self.lsp_completion_items.clear();
-    self.lsp_completion_raw_items.clear();
-    self.lsp_completion_resolved_indices.clear();
-    self.completion_menu.clear();
+    self.clear_completion_state();
+    self.cancel_auto_completion();
 
     if was_running && let Err(err) = self.lsp_runtime.shutdown() {
       eprintln!("Warning: failed to stop LSP runtime while reconfiguring: {err}");
@@ -2539,6 +2803,14 @@ fn is_symbol_word_char(ch: char) -> bool {
 
 fn lsp_file_watch_latency() -> Duration {
   Duration::from_millis(120)
+}
+
+fn lsp_completion_auto_trigger_latency() -> Duration {
+  Duration::from_millis(80)
+}
+
+fn lsp_completion_trigger_char_latency() -> Duration {
+  Duration::from_millis(20)
 }
 
 fn lsp_self_save_suppress_window() -> Duration {
@@ -3337,6 +3609,10 @@ impl the_default::DefaultContext for Ctx {
     false
   }
 
+  fn completion_on_action(&mut self, command: Command) -> bool {
+    self.handle_completion_action(command)
+  }
+
   fn completion_accept_selected(&mut self, index: usize) -> bool {
     let Some(item) = self.lsp_completion_items.get(index).cloned() else {
       return false;
@@ -3352,9 +3628,8 @@ impl the_default::DefaultContext for Ctx {
       .unwrap_or(0);
     let applied = self.apply_completion_item(item, fallback_char);
     if applied {
-      self.lsp_completion_items.clear();
-      self.lsp_completion_raw_items.clear();
-      self.lsp_completion_resolved_indices.clear();
+      self.clear_completion_state();
+      self.cancel_auto_completion();
     }
     applied
   }
@@ -3635,34 +3910,8 @@ impl the_default::DefaultContext for Ctx {
   }
 
   fn lsp_completion(&mut self) {
-    if !self.lsp_supports(LspCapability::Completion) {
-      self.messages.publish(
-        MessageLevel::Warning,
-        Some("lsp".into()),
-        "completion is not supported by the active server",
-      );
-      return;
-    }
-
-    let Some((uri, position)) = self.current_lsp_position() else {
-      self.messages.publish(
-        MessageLevel::Warning,
-        Some("lsp".into()),
-        "completion unavailable: no active LSP document",
-      );
-      return;
-    };
-
-    self.lsp_completion_items.clear();
-    self.lsp_completion_raw_items.clear();
-    self.lsp_completion_resolved_indices.clear();
-    self.completion_menu.clear();
-
-    self.dispatch_lsp_request(
-      "textDocument/completion",
-      completion_params(&uri, position),
-      PendingLspRequestKind::Completion { uri },
-    );
+    self.cancel_auto_completion();
+    let _ = self.dispatch_completion_request(CompletionTriggerSource::Manual, true);
   }
 
   fn lsp_signature_help(&mut self) {
@@ -3930,8 +4179,8 @@ mod tests {
     Ctx,
     WatchedFileEventsState,
     completion_item_accepts_commit_char,
-    completion_menu_documentation_text,
     completion_menu_detail_text,
+    completion_menu_documentation_text,
     merge_resolved_completion_item,
     render_lsp_snippet_fallback,
   };

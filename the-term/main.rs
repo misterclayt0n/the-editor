@@ -135,6 +135,10 @@ fn main() -> Result<()> {
       ctx.needs_render = true;
     }
 
+    if ctx.poll_lsp_completion_auto_trigger() {
+      ctx.needs_render = true;
+    }
+
     if ctx.poll_lsp_events() {
       ctx.needs_render = true;
     }

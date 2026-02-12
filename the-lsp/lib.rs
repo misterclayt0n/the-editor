@@ -25,8 +25,10 @@ pub use diagnostics::{
 pub use editing::{
   EditingParseError,
   LspCodeAction,
+  LspCompletionContext,
   LspCompletionItem,
   LspCompletionResponse,
+  LspCompletionTriggerKind,
   LspDocumentEdit,
   LspExecuteCommand,
   LspInsertTextFormat,

@@ -51,7 +51,7 @@ struct CommandPaletteSnapshot {
 struct CommandPaletteView: View {
     let snapshot: CommandPaletteSnapshot
     let onSelect: (Int) -> Void
-    let onSubmit: (Int) -> Void
+    let onSubmit: (Int?) -> Void
     let onClose: () -> Void
     let onQueryChange: (String) -> Void
 
@@ -70,6 +70,7 @@ struct CommandPaletteView: View {
                 showTabNavigation: false,
                 showPageNavigation: false,
                 showCtrlCClose: false,
+                autoSelectFirstItem: false,
                 itemCount: snapshot.items.count,
                 externalQuery: snapshot.query,
                 externalSelectedIndex: snapshot.selectedIndex,

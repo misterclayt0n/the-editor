@@ -4812,6 +4812,28 @@ mod tests {
   }
 
   #[test]
+  fn command_palette_query_does_not_auto_select_without_explicit_navigation() {
+    let _guard = ffi_test_guard();
+    let mut app = App::new();
+    let id = app.create_editor("", default_viewport(), ffi::Position { row: 0, col: 0 });
+
+    let opened = app.handle_key(id, ffi::KeyEvent {
+      kind:      0,
+      codepoint: ':' as u32,
+      modifiers: 0,
+    });
+    assert!(opened);
+    assert!(app.command_palette_is_open(id));
+
+    assert!(app.command_palette_set_query(id, "w"));
+    assert!(app.command_palette_filtered_count(id) > 0);
+    assert_eq!(app.command_palette_filtered_selected_index(id), -1);
+
+    assert!(app.command_palette_select_filtered(id, 0));
+    assert_eq!(app.command_palette_filtered_selected_index(id), 0);
+  }
+
+  #[test]
   fn theme_highlight_style_out_of_bounds_returns_default() {
     let _guard = ffi_test_guard();
     let app = App::new();

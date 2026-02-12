@@ -17,7 +17,6 @@ use crate::{
   KeyOutcome,
   Modifiers,
   command_from_name,
-  command_palette_default_selected,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -632,7 +631,7 @@ fn apply_mode<Ctx: DefaultContext>(ctx: &mut Ctx, mode: Mode) {
     if palette.is_open {
       palette.query = palette_query;
       palette.items = palette_items;
-      palette.selected = command_palette_default_selected(palette);
+      palette.selected = None;
     } else {
       palette.query.clear();
       palette.selected = None;

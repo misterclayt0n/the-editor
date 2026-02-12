@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use the_core::chars::byte_to_char_idx;
 use the_lib::{
   fuzzy::{
@@ -99,10 +101,7 @@ pub fn build_command_palette_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     .unwrap_or(theme.placeholder);
 
   let filtered = command_palette_filtered_indices(state);
-  let selected = command_palette_selected_filtered_index(state).or_else(|| {
-    command_palette_default_selected(state)
-      .and_then(|sel| filtered.iter().position(|&idx| idx == sel))
-  });
+  let selected = command_palette_selected_filtered_index(state);
 
   let mut items = Vec::with_capacity(filtered.len());
   for &idx in &filtered {
@@ -204,8 +203,9 @@ pub fn command_palette_filtered_indices(state: &CommandPaletteState) -> Vec<usiz
     (0..state.items.len()).collect()
   } else {
     struct PaletteKey {
-      index: usize,
-      text:  String,
+      index:      usize,
+      text:       String,
+      alias_rank: u8,
     }
 
     impl AsRef<str> for PaletteKey {
@@ -214,22 +214,69 @@ pub fn command_palette_filtered_indices(state: &CommandPaletteState) -> Vec<usiz
       }
     }
 
+    let query_lower = state.query.to_lowercase();
     let keys: Vec<PaletteKey> = state
       .items
       .iter()
       .enumerate()
-      .map(|(idx, item)| {
-        PaletteKey {
-          index: idx,
-          text:  item.title.clone(),
+      .flat_map(|(idx, item)| {
+        let mut keys = Vec::with_capacity(1 + item.aliases.len());
+        keys.push(PaletteKey {
+          index:      idx,
+          text:       item.title.clone(),
+          alias_rank: 0,
+        });
+        for alias in &item.aliases {
+          let alias_lower = alias.to_lowercase();
+          let alias_rank = if alias_lower == query_lower {
+            3
+          } else if alias_lower.starts_with(&query_lower) {
+            2
+          } else {
+            1
+          };
+          keys.push(PaletteKey {
+            index: idx,
+            text: alias.clone(),
+            alias_rank,
+          });
         }
+        keys
       })
       .collect();
 
-    fuzzy_match(&state.query, keys.iter(), MatchMode::Plain)
+    let mut best_per_index: HashMap<usize, (u8, u16, usize)> = HashMap::new();
+    for (order, (key, score)) in fuzzy_match(&state.query, keys.iter(), MatchMode::Plain)
       .into_iter()
-      .map(|(key, _)| key.index)
-      .collect()
+      .enumerate()
+    {
+      let candidate = (key.alias_rank, score, order);
+      best_per_index
+        .entry(key.index)
+        .and_modify(|current| {
+          if candidate.0 > current.0
+            || (candidate.0 == current.0 && candidate.1 > current.1)
+            || (candidate.0 == current.0 && candidate.1 == current.1 && candidate.2 < current.2)
+          {
+            *current = candidate;
+          }
+        })
+        .or_insert(candidate);
+    }
+
+    let mut ranked: Vec<(usize, u8, u16, usize)> = best_per_index
+      .into_iter()
+      .map(|(index, (alias_rank, score, order))| (index, alias_rank, score, order))
+      .collect();
+    ranked.sort_by(|left, right| {
+      right
+        .1
+        .cmp(&left.1)
+        .then_with(|| right.2.cmp(&left.2))
+        .then_with(|| left.3.cmp(&right.3))
+        .then_with(|| left.0.cmp(&right.0))
+    });
+    ranked.into_iter().map(|(index, ..)| index).collect()
   };
 
   if filtered.len() > state.max_results {
@@ -245,11 +292,48 @@ pub fn command_palette_selected_filtered_index(state: &CommandPaletteState) -> O
   filtered.iter().position(|&idx| idx == selected)
 }
 
-pub fn command_palette_default_selected(state: &CommandPaletteState) -> Option<usize> {
-  if state.query.is_empty() {
-    None
-  } else {
-    command_palette_filtered_indices(state).first().copied()
+pub fn command_palette_default_selected(_state: &CommandPaletteState) -> Option<usize> {
+  None
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{
+    CommandPaletteItem,
+    CommandPaletteState,
+    command_palette_default_selected,
+    command_palette_filtered_indices,
+  };
+
+  #[test]
+  fn alias_exact_match_is_ranked_above_title_fuzzy_match() {
+    let watch = CommandPaletteItem::new("watch-conflict");
+    let mut write = CommandPaletteItem::new("write");
+    write.aliases = vec!["w".to_string()];
+
+    let state = CommandPaletteState {
+      is_open:     true,
+      query:       "w".to_string(),
+      selected:    None,
+      items:       vec![watch, write],
+      max_results: 10,
+    };
+
+    let filtered = command_palette_filtered_indices(&state);
+    assert_eq!(filtered.first().copied(), Some(1));
+  }
+
+  #[test]
+  fn default_selected_is_none_even_with_query_matches() {
+    let state = CommandPaletteState {
+      is_open:     true,
+      query:       "w".to_string(),
+      selected:    None,
+      items:       vec![CommandPaletteItem::new("write")],
+      max_results: 10,
+    };
+
+    assert_eq!(command_palette_default_selected(&state), None);
   }
 }
 

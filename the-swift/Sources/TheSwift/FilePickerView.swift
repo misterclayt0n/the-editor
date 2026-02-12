@@ -233,11 +233,16 @@ struct FilePickerView: View {
             showTabNavigation: true,
             showPageNavigation: true,
             showCtrlCClose: true,
+            autoSelectFirstItem: true,
             itemCount: items.count,
             externalQuery: snapshot.query ?? "",
             externalSelectedIndex: nil,
             onQueryChange: onQueryChange,
-            onSubmit: onSubmit,
+            onSubmit: { index in
+                if let index {
+                    onSubmit(index)
+                }
+            },
             onClose: onClose,
             onSelectionChange: nil,
             leadingHeader: {

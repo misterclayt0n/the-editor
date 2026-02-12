@@ -193,8 +193,13 @@ final class EditorModel: ObservableObject {
         refresh()
     }
 
-    func submitCommandPalette(index: Int) {
-        _ = app.command_palette_submit_filtered(editorId, UInt(index))
+    func submitCommandPalette(index: Int?) {
+        if let index {
+            _ = app.command_palette_submit_filtered(editorId, UInt(index))
+        } else {
+            let event = KeyEvent(kind: KeyKind.enter.rawValue, codepoint: 0, modifiers: 0)
+            _ = app.handle_key(editorId, event)
+        }
         refresh()
     }
 

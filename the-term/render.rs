@@ -3230,16 +3230,14 @@ fn command_palette_statusline_text(query: &str, cursor: usize) -> String {
 
 fn term_command_palette_filtered_selection(
   state: &the_default::CommandPaletteState,
-) -> Option<(Vec<usize>, usize)> {
+) -> Option<(Vec<usize>, Option<usize>)> {
   let filtered = command_palette_filtered_indices(state);
   if filtered.is_empty() {
     return None;
   }
   let selected = state
     .selected
-    .and_then(|current| filtered.iter().position(|&idx| idx == current))
-    .unwrap_or(0)
-    .min(filtered.len().saturating_sub(1));
+    .and_then(|current| filtered.iter().position(|&idx| idx == current));
   Some((filtered, selected))
 }
 
@@ -3291,7 +3289,7 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
 
   let mut list = UiList::new("command_palette_list", items);
   list.fill_width = false;
-  list.selected = Some(selected);
+  list.selected = selected;
   list.scroll = 0;
   list.max_visible = Some(MAX_VISIBLE_ITEMS);
   list.style = list.style.with_role("completion");
@@ -3341,7 +3339,7 @@ fn build_term_command_palette_docs_overlay(ctx: &Ctx) -> Option<UiNode> {
   let mut filtered_state = state.clone();
   filtered_state.query = query.to_string();
   let (filtered, selected_filtered) = term_command_palette_filtered_selection(&filtered_state)?;
-  let selected_index = *filtered.get(selected_filtered)?;
+  let selected_index = *filtered.get(selected_filtered.unwrap_or(0))?;
   let item = state.items.get(selected_index)?;
 
   let mut docs = String::new();
@@ -3831,7 +3829,7 @@ mod tests {
   }
 
   #[test]
-  fn term_command_palette_selection_defaults_to_first_filtered_item() {
+  fn term_command_palette_selection_stays_empty_without_explicit_selection() {
     let state = CommandPaletteState {
       is_open:     true,
       query:       String::new(),
@@ -3846,7 +3844,7 @@ mod tests {
     let (filtered, selected) =
       term_command_palette_filtered_selection(&state).expect("filtered selection");
     assert_eq!(filtered, vec![0, 1]);
-    assert_eq!(selected, 0);
+    assert_eq!(selected, None);
   }
 
   #[test]

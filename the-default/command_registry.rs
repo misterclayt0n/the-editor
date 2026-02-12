@@ -35,7 +35,6 @@ use crate::{
   Key,
   KeyEvent,
   Mode,
-  command_palette_default_selected,
   command_palette_filtered_indices,
 };
 
@@ -1097,10 +1096,8 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
           if let Some(sel) = palette.selected {
             let filtered = command_palette_filtered_indices(palette);
             if !filtered.contains(&sel) {
-              palette.selected = filtered.first().copied();
+              palette.selected = None;
             }
-          } else {
-            palette.selected = command_palette_default_selected(palette);
           }
           palette.selected
         };
@@ -1274,7 +1271,12 @@ pub fn handle_command_prompt_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEve
     {
       let palette = ctx.command_palette_mut();
       palette.query = input;
-      palette.selected = command_palette_default_selected(palette);
+      if let Some(sel) = palette.selected {
+        let filtered = command_palette_filtered_indices(palette);
+        if !filtered.contains(&sel) {
+          palette.selected = None;
+        }
+      }
     }
     ctx.request_render();
   }

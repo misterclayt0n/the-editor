@@ -6,7 +6,7 @@ struct UiOverlayHost: View {
     let filePickerSnapshot: FilePickerSnapshot?
     let pendingKeys: [String]
     let onSelectCommand: (Int) -> Void
-    let onSubmitCommand: (Int) -> Void
+    let onSubmitCommand: (Int?) -> Void
     let onCloseCommandPalette: () -> Void
     let onQueryChange: (String) -> Void
     let onSearchQueryChange: (String) -> Void

@@ -5407,6 +5407,85 @@ pkgs.mkShell {
   }
 
   #[test]
+  fn command_palette_query_input_does_not_auto_select_item() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Char(':'),
+      modifiers: Modifiers::empty(),
+    });
+    assert_eq!(ctx.mode(), Mode::Command);
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Char('w'),
+      modifiers: Modifiers::empty(),
+    });
+
+    assert_eq!(ctx.command_palette.query, "w");
+    assert_eq!(ctx.command_palette.selected, None);
+  }
+
+  #[test]
+  fn command_palette_explicit_navigation_sets_selection() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Char(':'),
+      modifiers: Modifiers::empty(),
+    });
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Char('w'),
+      modifiers: Modifiers::empty(),
+    });
+    assert_eq!(ctx.command_palette.selected, None);
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Down,
+      modifiers: Modifiers::empty(),
+    });
+
+    assert!(ctx.command_palette.selected.is_some());
+  }
+
+  #[test]
+  fn command_palette_enter_submits_typed_alias_without_selection() {
+    let dispatch = build_dispatch::<Ctx>();
+    let fixture = TempTestFile::new("command-palette-enter", "alpha\n");
+    let mut ctx = Ctx::new(Some(
+      fixture
+        .as_path()
+        .to_str()
+        .expect("temp test path should be utf-8"),
+    ))
+    .expect("ctx");
+    ctx.set_dispatch(&dispatch);
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Char(':'),
+      modifiers: Modifiers::empty(),
+    });
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Char('w'),
+      modifiers: Modifiers::empty(),
+    });
+
+    assert_eq!(ctx.mode(), Mode::Command);
+    assert_eq!(ctx.command_palette.selected, None);
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Enter,
+      modifiers: Modifiers::empty(),
+    });
+
+    assert_eq!(ctx.mode(), Mode::Normal);
+    assert!(!ctx.command_palette.is_open);
+  }
+
+  #[test]
   fn escape_with_completion_active_returns_to_normal_mode() {
     let dispatch = build_dispatch::<Ctx>();
     let mut ctx = Ctx::new(None).expect("ctx");

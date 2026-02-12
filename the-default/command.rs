@@ -456,7 +456,10 @@ pub trait DefaultContext: Sized + 'static {
   fn open_file(&mut self, path: &Path) -> std::io::Result<()>;
   fn save_current_buffer(&mut self, force: bool) -> Result<(), String> {
     let Some(path) = self.file_path().map(|path| path.to_path_buf()) else {
-      return Err("No file path set".to_string());
+      return Err(
+        "no file path set for current buffer; use :write <path> to save an untitled buffer"
+          .to_string(),
+      );
     };
 
     if self.watch_conflict_active() && !force {
@@ -1241,7 +1244,12 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
         }
       },
       UiEventKind::Activate => {
-        if submit_command_palette_selected(ctx) {
+        if submit_command_palette_selected(ctx)
+          || handle_command_prompt_key(ctx, KeyEvent {
+            key:       Key::Enter,
+            modifiers: Modifiers::empty(),
+          })
+        {
           return UiEventOutcome::handled();
         }
       },
@@ -1391,10 +1399,7 @@ fn submit_command_palette_selected<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
   }
 
   let filtered = crate::command_palette::command_palette_filtered_indices(palette);
-  let selected = palette
-    .selected
-    .filter(|sel| filtered.contains(sel))
-    .or_else(|| filtered.first().copied());
+  let selected = palette.selected.filter(|sel| filtered.contains(sel));
 
   let Some(item_idx) = selected else {
     return false;
@@ -1423,7 +1428,7 @@ fn submit_command_palette_selected<Ctx: DefaultContext>(ctx: &mut Ctx) -> bool {
       ctx.command_prompt_mut().error = Some(message.clone());
       ctx.push_error("command_palette", message);
       ctx.request_render();
-      false
+      true
     },
   }
 }

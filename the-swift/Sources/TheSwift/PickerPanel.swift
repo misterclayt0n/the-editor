@@ -20,6 +20,7 @@ struct PickerPanel<
     let showTabNavigation: Bool
     let showPageNavigation: Bool
     let showCtrlCClose: Bool
+    let autoSelectFirstItem: Bool
 
     // Data
     let itemCount: Int
@@ -28,7 +29,7 @@ struct PickerPanel<
 
     // Callbacks
     let onQueryChange: (String) -> Void
-    let onSubmit: (Int) -> Void
+    let onSubmit: (Int?) -> Void
     let onClose: () -> Void
     let onSelectionChange: ((Int) -> Void)?
 
@@ -144,9 +145,7 @@ struct PickerPanel<
                     .textFieldStyle(.plain)
                     .focused($isTextFieldFocused)
                     .onSubmit {
-                        if let selected = clampedIndex(selectedIndex) {
-                            onSubmit(selected)
-                        }
+                        onSubmit(clampedIndex(selectedIndex))
                     }
                     .onExitCommand {
                         onClose()
@@ -276,10 +275,14 @@ struct PickerPanel<
     private func moveSelection(_ delta: Int) {
         guard itemCount > 0 else { return }
 
-        let current = clampedIndex(selectedIndex) ?? 0
         let len = itemCount
-        let raw = current + delta
-        let next = ((raw % len) + len) % len
+        let next: Int
+        if let current = clampedIndex(selectedIndex) {
+            let raw = current + delta
+            next = ((raw % len) + len) % len
+        } else {
+            next = delta >= 0 ? 0 : (len - 1)
+        }
 
         selectedIndex = next
         onSelectionChange?(next)
@@ -290,9 +293,13 @@ struct PickerPanel<
             selectedIndex = nil
             return
         }
+        if !autoSelectFirstItem {
+            selectedIndex = clampedIndex(externalSelectedIndex)
+            return
+        }
         selectedIndex = clampedIndex(selectedIndex)
             ?? clampedIndex(externalSelectedIndex)
-            ?? 0
+            ?? (autoSelectFirstItem ? 0 : nil)
     }
 
     private func clampedIndex(_ index: Int?) -> Int? {
@@ -303,7 +310,7 @@ struct PickerPanel<
 
     private func initialSelection() -> Int? {
         guard itemCount > 0 else { return nil }
-        return clampedIndex(externalSelectedIndex) ?? 0
+        return clampedIndex(externalSelectedIndex) ?? (autoSelectFirstItem ? 0 : nil)
     }
 
     private func normalizeSelection(_ newValue: Int?) {
@@ -314,7 +321,7 @@ struct PickerPanel<
             return
         }
 
-        let normalized = clampedIndex(newValue) ?? 0
+        let normalized = clampedIndex(newValue) ?? (autoSelectFirstItem ? 0 : nil)
         if selectedIndex != normalized {
             selectedIndex = normalized
         }

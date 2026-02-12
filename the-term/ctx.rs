@@ -4363,12 +4363,15 @@ mod tests {
 
   use the_default::{
     CommandEvent,
+    CompletionMenuItem,
     DefaultContext,
     Key,
     KeyEvent,
     Mode,
     Modifiers,
     handle_key,
+    show_completion_menu,
+    ui_event,
   };
   use the_lib::{
     messages::MessageEventKind,
@@ -4376,6 +4379,13 @@ mod tests {
       Position,
       char_idx_at_coords,
       coords_at_pos,
+    },
+    render::{
+      UiEvent,
+      UiEventKind,
+      UiKey,
+      UiKeyEvent,
+      UiModifiers,
     },
     selection::Selection,
     transaction::Transaction,
@@ -5393,5 +5403,43 @@ pkgs.mkShell {
 
     assert_eq!(ctx.editor.document().text().to_string(), "one\n\nthree\n");
     assert_eq!(ctx.mode(), Mode::Insert);
+  }
+
+  #[test]
+  fn escape_with_completion_active_returns_to_normal_mode() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+    ctx.set_mode(Mode::Insert);
+    show_completion_menu(&mut ctx, vec![CompletionMenuItem::new("item")]);
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::Escape,
+      modifiers: Modifiers::empty(),
+    });
+
+    assert_eq!(ctx.mode(), Mode::Normal);
+    assert!(!ctx.completion_menu.active);
+  }
+
+  #[test]
+  fn ui_escape_with_completion_active_returns_to_normal_mode() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+    ctx.set_mode(Mode::Insert);
+    show_completion_menu(&mut ctx, vec![CompletionMenuItem::new("item")]);
+
+    let outcome = ui_event(&mut ctx, UiEvent {
+      target: Some("completion_list".to_string()),
+      kind:   UiEventKind::Key(UiKeyEvent {
+        key:       UiKey::Escape,
+        modifiers: UiModifiers::default(),
+      }),
+    });
+
+    assert!(outcome.handled);
+    assert_eq!(ctx.mode(), Mode::Normal);
+    assert!(!ctx.completion_menu.active);
   }
 }

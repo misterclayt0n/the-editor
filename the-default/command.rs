@@ -827,19 +827,29 @@ fn on_keypress<Ctx: DefaultContext>(ctx: &mut Ctx, key: KeyEvent) {
     }
   }
 
-  match keymap_handle_key(ctx, key) {
-    KeyOutcome::Command(command) => ctx.dispatch().post_on_keypress(ctx, command),
+  let outcome = keymap_handle_key(ctx, key);
+  let _ = handle_key_outcome(ctx, outcome);
+}
+
+fn handle_key_outcome<Ctx: DefaultContext>(ctx: &mut Ctx, outcome: KeyOutcome) -> bool {
+  match outcome {
+    KeyOutcome::Command(command) => {
+      ctx.dispatch().post_on_keypress(ctx, command);
+      true
+    },
     KeyOutcome::Commands(commands) => {
       for command in commands {
         ctx.dispatch().post_on_keypress(ctx, command);
       }
+      true
     },
     KeyOutcome::Handled => {
       // Pending/cancelled keymap states must trigger a redraw so statusline
       // indicators (e.g. pending keys) are visible immediately.
       ctx.dispatch().render_request(ctx, ());
+      true
     },
-    KeyOutcome::Continue => {},
+    KeyOutcome::Continue => false,
   }
 }
 
@@ -869,10 +879,8 @@ fn handle_insert_mode_completion_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: Ke
       crate::completion_menu::completion_accept(ctx);
       true
     },
-    Key::Escape => {
-      crate::completion_menu::close_completion_menu(ctx);
-      true
-    },
+    // Let keymaps decide escape behavior (normal mode by default).
+    Key::Escape => false,
     _ => false,
   }
 }
@@ -1272,7 +1280,11 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
               return UiEventOutcome::handled();
             },
             Key::Escape => {
-              crate::completion_menu::close_completion_menu(ctx);
+              // Route through keymaps so escape mirrors keyboard behavior.
+              let outcome = keymap_handle_key(ctx, key_event);
+              if !handle_key_outcome(ctx, outcome) {
+                crate::completion_menu::close_completion_menu(ctx);
+              }
               return UiEventOutcome::handled();
             },
             _ => {},

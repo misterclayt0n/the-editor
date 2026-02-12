@@ -3192,22 +3192,12 @@ fn completion_kind_color(kind: LspCompletionItemKind) -> the_lib::render::graphi
 }
 
 fn completion_menu_detail_text(item: &LspCompletionItem) -> Option<String> {
-  let detail = item
+  item
     .detail
     .as_ref()
     .map(|value| value.trim())
     .filter(|value| !value.is_empty())
-    .map(ToOwned::to_owned);
-  let docs = item
-    .documentation
-    .as_deref()
-    .and_then(|value| summarize_completion_documentation(value, 72));
-  match (detail, docs) {
-    (Some(detail), Some(docs)) if detail != docs => Some(format!("{detail} | {docs}")),
-    (Some(detail), _) => Some(detail),
-    (_, Some(docs)) => Some(docs),
-    _ => None,
-  }
+    .map(ToOwned::to_owned)
 }
 
 fn completion_menu_documentation_text(item: &LspCompletionItem) -> Option<String> {
@@ -3215,29 +3205,6 @@ fn completion_menu_documentation_text(item: &LspCompletionItem) -> Option<String
     .documentation
     .as_deref()
     .and_then(|value| format_completion_documentation(value, 8, 88))
-}
-
-fn summarize_completion_documentation(value: &str, max_chars: usize) -> Option<String> {
-  let mut compact = String::new();
-  let mut last_was_space = false;
-  let flattened = value.replace("```", " ");
-  for ch in flattened.chars() {
-    if ch.is_whitespace() {
-      if !last_was_space && !compact.is_empty() {
-        compact.push(' ');
-      }
-      last_was_space = true;
-      continue;
-    }
-    compact.push(ch);
-    last_was_space = false;
-  }
-  let compact = compact.trim();
-  if compact.is_empty() {
-    None
-  } else {
-    Some(clamp_status_text(compact, max_chars))
-  }
 }
 
 fn format_completion_documentation(
@@ -4483,13 +4450,13 @@ mod tests {
   }
 
   #[test]
-  fn completion_menu_detail_prefers_detail_and_summarizes_documentation() {
+  fn completion_menu_detail_uses_only_item_detail() {
     let mut item = empty_completion_item();
     item.detail = Some("fn(item)".to_string());
     item.documentation = Some("line one\nline two".to_string());
     assert_eq!(
       completion_menu_detail_text(&item).as_deref(),
-      Some("fn(item) | line one line two")
+      Some("fn(item)")
     );
   }
 

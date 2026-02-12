@@ -69,6 +69,7 @@ pub use completion_menu::{
   completion_docs_scroll,
   completion_next,
   completion_prev,
+  set_completion_docs_scroll,
   show_completion_menu,
 };
 pub use file_picker::{

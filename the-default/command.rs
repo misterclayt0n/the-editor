@@ -879,22 +879,6 @@ fn handle_insert_mode_completion_key<Ctx: DefaultContext>(ctx: &mut Ctx, key: Ke
       crate::completion_menu::completion_accept(ctx);
       true
     },
-    Key::PageUp => {
-      crate::completion_menu::completion_docs_scroll(ctx, -6);
-      true
-    },
-    Key::PageDown => {
-      crate::completion_menu::completion_docs_scroll(ctx, 6);
-      true
-    },
-    Key::Char('u') if key.modifiers.ctrl() => {
-      crate::completion_menu::completion_docs_scroll(ctx, -6);
-      true
-    },
-    Key::Char('d') if key.modifiers.ctrl() => {
-      crate::completion_menu::completion_docs_scroll(ctx, 6);
-      true
-    },
     // Let keymaps decide escape behavior (normal mode by default).
     Key::Escape => false,
     _ => false,
@@ -996,6 +980,20 @@ fn on_action<Ctx: DefaultContext>(ctx: &mut Ctx, command: Command) {
     Command::CompletionPrev => crate::completion_menu::completion_prev(ctx),
     Command::CompletionAccept => crate::completion_menu::completion_accept(ctx),
     Command::CompletionCancel => crate::completion_menu::close_completion_menu(ctx),
+    Command::CompletionDocsScrollUp => {
+      if ctx.completion_menu().active {
+        crate::completion_menu::completion_docs_scroll(ctx, -6);
+      } else {
+        ctx.dispatch().page_up(ctx, false);
+      }
+    },
+    Command::CompletionDocsScrollDown => {
+      if ctx.completion_menu().active {
+        crate::completion_menu::completion_docs_scroll(ctx, 6);
+      } else {
+        ctx.dispatch().page_down(ctx, false);
+      }
+    },
     Command::LspSignatureHelp => ctx.lsp_signature_help(),
     Command::LspCodeActions => ctx.lsp_code_actions(),
     Command::LspFormat => ctx.lsp_format(),
@@ -1029,6 +1027,8 @@ fn command_preserves_completion_menu(command: Command) -> bool {
       | Command::CompletionPrev
       | Command::CompletionAccept
       | Command::CompletionCancel
+      | Command::CompletionDocsScrollUp
+      | Command::CompletionDocsScrollDown
   )
 }
 
@@ -1295,21 +1295,23 @@ fn on_ui_event<Ctx: DefaultContext>(ctx: &mut Ctx, event: UiEvent) -> UiEventOut
               crate::completion_menu::completion_accept(ctx);
               return UiEventOutcome::handled();
             },
-            Key::PageUp => {
-              crate::completion_menu::completion_docs_scroll(ctx, -6);
-              return UiEventOutcome::handled();
-            },
-            Key::PageDown => {
-              crate::completion_menu::completion_docs_scroll(ctx, 6);
-              return UiEventOutcome::handled();
+            Key::PageUp | Key::PageDown => {
+              let outcome = keymap_handle_key(ctx, key_event);
+              if handle_key_outcome(ctx, outcome) {
+                return UiEventOutcome::handled();
+              }
             },
             Key::Char('u') if key_event.modifiers.ctrl() => {
-              crate::completion_menu::completion_docs_scroll(ctx, -6);
-              return UiEventOutcome::handled();
+              let outcome = keymap_handle_key(ctx, key_event);
+              if handle_key_outcome(ctx, outcome) {
+                return UiEventOutcome::handled();
+              }
             },
             Key::Char('d') if key_event.modifiers.ctrl() => {
-              crate::completion_menu::completion_docs_scroll(ctx, 6);
-              return UiEventOutcome::handled();
+              let outcome = keymap_handle_key(ctx, key_event);
+              if handle_key_outcome(ctx, outcome) {
+                return UiEventOutcome::handled();
+              }
             },
             Key::Escape => {
               // Route through keymaps so escape mirrors keyboard behavior.
@@ -3804,6 +3806,8 @@ pub fn command_from_name(name: &str) -> Option<Command> {
     "completion_prev" => Some(Command::completion_prev()),
     "completion_accept" => Some(Command::completion_accept()),
     "completion_cancel" => Some(Command::completion_cancel()),
+    "completion_docs_scroll_up" => Some(Command::completion_docs_scroll_up()),
+    "completion_docs_scroll_down" => Some(Command::completion_docs_scroll_down()),
     "lsp_signature_help" => Some(Command::lsp_signature_help()),
     "signature_help" => Some(Command::lsp_signature_help()),
     "lsp_code_actions" => Some(Command::lsp_code_actions()),

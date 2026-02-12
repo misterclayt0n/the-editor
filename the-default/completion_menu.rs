@@ -39,10 +39,10 @@ impl CompletionMenuItem {
 
 #[derive(Debug, Clone, Default)]
 pub struct CompletionMenuState {
-  pub active:   bool,
-  pub items:    Vec<CompletionMenuItem>,
-  pub selected: Option<usize>,
-  pub scroll:   usize,
+  pub active:      bool,
+  pub items:       Vec<CompletionMenuItem>,
+  pub selected:    Option<usize>,
+  pub scroll:      usize,
   pub docs_scroll: usize,
 }
 
@@ -185,9 +185,7 @@ pub fn completion_docs_scroll<Ctx: DefaultContext>(ctx: &mut Ctx, delta: isize) 
       return;
     }
     let next = if delta.is_negative() {
-      state
-        .docs_scroll
-        .saturating_sub(delta.unsigned_abs())
+      state.docs_scroll.saturating_sub(delta.unsigned_abs())
     } else {
       state.docs_scroll.saturating_add(delta as usize)
     };
@@ -195,6 +193,24 @@ pub fn completion_docs_scroll<Ctx: DefaultContext>(ctx: &mut Ctx, delta: isize) 
       false
     } else {
       state.docs_scroll = next;
+      true
+    }
+  };
+  if changed {
+    ctx.request_render();
+  }
+}
+
+pub fn set_completion_docs_scroll<Ctx: DefaultContext>(ctx: &mut Ctx, scroll: usize) {
+  let changed = {
+    let state = ctx.completion_menu_mut();
+    if !state.active || state.items.is_empty() {
+      return;
+    }
+    if state.docs_scroll == scroll {
+      false
+    } else {
+      state.docs_scroll = scroll;
       true
     }
   };
@@ -266,11 +282,10 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     docs_text.style = docs_text.style.with_role("completion_docs");
     docs_text.clip = false;
 
-    let mut docs_container = UiContainer::column(
-      "completion_docs_container",
-      0,
-      vec![UiNode::Text(docs_text)],
-    );
+    let mut docs_container =
+      UiContainer::column("completion_docs_container", 0, vec![UiNode::Text(
+        docs_text,
+      )]);
     docs_container.style = docs_container.style.with_role("completion_docs");
 
     let mut docs_panel = UiPanel::new(

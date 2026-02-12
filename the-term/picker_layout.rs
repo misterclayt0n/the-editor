@@ -40,6 +40,15 @@ pub struct FilePickerLayout {
   pub preview_scrollbar:     Option<Rect>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompletionDocsLayout {
+  pub panel:           Rect,
+  pub content:         Rect,
+  pub scrollbar_track: Option<Rect>,
+  pub visible_rows:    usize,
+  pub total_rows:      usize,
+}
+
 impl FilePickerLayout {
   pub fn list_visible_rows(self) -> usize {
     self.list_content.height.max(1) as usize

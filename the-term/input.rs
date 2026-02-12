@@ -13,9 +13,11 @@ use ratatui::layout::Rect;
 use the_default::{
   DefaultContext,
   Mode,
+  completion_docs_scroll,
   open_file_picker_index,
   scroll_file_picker_list,
   scroll_file_picker_preview,
+  set_completion_docs_scroll,
   set_file_picker_list_offset,
   set_file_picker_preview_offset,
   ui_event as dispatch_ui_event,
@@ -30,7 +32,10 @@ use the_lib::render::{
 
 use crate::{
   Ctx,
-  ctx::FilePickerDragState,
+  ctx::{
+    CompletionDocsDragState,
+    FilePickerDragState,
+  },
   dispatch::{
     Key,
     KeyEvent,
@@ -84,41 +89,66 @@ pub fn handle_key(ctx: &mut Ctx, event: CrosstermKeyEvent) {
 }
 
 pub fn handle_mouse(ctx: &mut Ctx, event: CrosstermMouseEvent) {
-  if !ctx.file_picker.active {
+  if ctx.file_picker.active {
+    let viewport = ctx.editor.view().viewport;
+    let viewport = Rect::new(viewport.x, viewport.y, viewport.width, viewport.height);
+    let layout = ctx
+      .file_picker_layout
+      .or_else(|| compute_file_picker_layout(viewport, &ctx.file_picker));
+    let Some(layout) = layout else {
+      return;
+    };
+    ctx.file_picker_layout = Some(layout);
+
+    let x = event.column;
+    let y = event.row;
+    match event.kind {
+      MouseEventKind::Down(MouseButton::Left) => {
+        set_list_hover_from_position(ctx, layout, x, y);
+        handle_left_down(ctx, layout, x, y);
+      },
+      MouseEventKind::Drag(MouseButton::Left) => {
+        handle_left_drag(ctx, layout, y);
+      },
+      MouseEventKind::Up(MouseButton::Left) => {
+        ctx.file_picker_drag = None;
+      },
+      MouseEventKind::ScrollUp => {
+        handle_wheel(ctx, layout, x, y, -3);
+      },
+      MouseEventKind::ScrollDown => {
+        handle_wheel(ctx, layout, x, y, 3);
+      },
+      MouseEventKind::Moved => {
+        set_list_hover_from_position(ctx, layout, x, y);
+      },
+      _ => {},
+    }
     return;
   }
 
-  let viewport = ctx.editor.view().viewport;
-  let viewport = Rect::new(viewport.x, viewport.y, viewport.width, viewport.height);
-  let layout = ctx
-    .file_picker_layout
-    .or_else(|| compute_file_picker_layout(viewport, &ctx.file_picker));
-  let Some(layout) = layout else {
-    return;
-  };
-  ctx.file_picker_layout = Some(layout);
-
   let x = event.column;
   let y = event.row;
+  let Some(layout) = ctx.completion_docs_layout else {
+    ctx.completion_docs_drag = None;
+    return;
+  };
+
   match event.kind {
     MouseEventKind::Down(MouseButton::Left) => {
-      set_list_hover_from_position(ctx, layout, x, y);
-      handle_left_down(ctx, layout, x, y);
+      handle_completion_docs_left_down(ctx, layout, x, y);
     },
     MouseEventKind::Drag(MouseButton::Left) => {
-      handle_left_drag(ctx, layout, y);
+      handle_completion_docs_drag(ctx, layout, y);
     },
     MouseEventKind::Up(MouseButton::Left) => {
-      ctx.file_picker_drag = None;
+      ctx.completion_docs_drag = None;
     },
     MouseEventKind::ScrollUp => {
-      handle_wheel(ctx, layout, x, y, -3);
+      handle_completion_docs_wheel(ctx, layout, x, y, -3);
     },
     MouseEventKind::ScrollDown => {
-      handle_wheel(ctx, layout, x, y, 3);
-    },
-    MouseEventKind::Moved => {
-      set_list_hover_from_position(ctx, layout, x, y);
+      handle_completion_docs_wheel(ctx, layout, x, y, 3);
     },
     _ => {},
   }
@@ -298,6 +328,93 @@ fn set_list_hover_from_position(
   }
 }
 
+fn completion_docs_metrics(
+  ctx: &Ctx,
+  layout: crate::picker_layout::CompletionDocsLayout,
+) -> Option<crate::picker_layout::ScrollbarMetrics> {
+  let track = layout.scrollbar_track?;
+  compute_scrollbar_metrics(
+    track,
+    layout.total_rows,
+    layout.visible_rows.max(1),
+    ctx.completion_menu.docs_scroll,
+  )
+}
+
+fn handle_completion_docs_left_down(
+  ctx: &mut Ctx,
+  layout: crate::picker_layout::CompletionDocsLayout,
+  x: u16,
+  y: u16,
+) {
+  let Some(track) = layout.scrollbar_track else {
+    ctx.completion_docs_drag = None;
+    return;
+  };
+  if !point_in_rect(x, y, track) {
+    ctx.completion_docs_drag = None;
+    return;
+  }
+
+  let Some(metrics) = completion_docs_metrics(ctx, layout) else {
+    ctx.completion_docs_drag = None;
+    return;
+  };
+
+  let thumb_start = track.y.saturating_add(metrics.thumb_offset);
+  let thumb_end = thumb_start.saturating_add(metrics.thumb_height);
+  let mut grab_offset = y.saturating_sub(thumb_start);
+  if y < thumb_start || y >= thumb_end {
+    grab_offset = metrics.thumb_height / 2;
+  }
+  let clamped_y = y
+    .saturating_sub(track.y)
+    .saturating_sub(grab_offset)
+    .min(metrics.max_thumb_offset);
+  let scroll = scroll_offset_from_thumb(metrics, clamped_y);
+  set_completion_docs_scroll(ctx, scroll);
+  ctx.completion_docs_drag = Some(CompletionDocsDragState::Scrollbar { grab_offset });
+}
+
+fn handle_completion_docs_drag(
+  ctx: &mut Ctx,
+  layout: crate::picker_layout::CompletionDocsLayout,
+  y: u16,
+) {
+  let Some(CompletionDocsDragState::Scrollbar { grab_offset }) = ctx.completion_docs_drag else {
+    return;
+  };
+  let Some(track) = layout.scrollbar_track else {
+    return;
+  };
+  let Some(metrics) = completion_docs_metrics(ctx, layout) else {
+    return;
+  };
+
+  let thumb_offset = y
+    .saturating_sub(track.y)
+    .saturating_sub(grab_offset)
+    .min(metrics.max_thumb_offset);
+  let scroll = scroll_offset_from_thumb(metrics, thumb_offset);
+  set_completion_docs_scroll(ctx, scroll);
+}
+
+fn handle_completion_docs_wheel(
+  ctx: &mut Ctx,
+  layout: crate::picker_layout::CompletionDocsLayout,
+  x: u16,
+  y: u16,
+  delta: isize,
+) {
+  let in_content = point_in_rect(x, y, layout.content);
+  let in_scrollbar = layout
+    .scrollbar_track
+    .is_some_and(|track| point_in_rect(x, y, track));
+  if in_content || in_scrollbar {
+    completion_docs_scroll(ctx, delta);
+  }
+}
+
 fn to_key(code: KeyCode) -> Option<Key> {
   match code {
     KeyCode::Char(c) => Some(Key::Char(c)),
@@ -380,5 +497,71 @@ fn to_ui_modifiers(modifiers: KeyModifiers) -> UiModifiers {
     alt:   modifiers.contains(KeyModifiers::ALT),
     shift: modifiers.contains(KeyModifiers::SHIFT),
     meta:  modifiers.contains(KeyModifiers::SUPER),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use crossterm::event::{
+    KeyModifiers,
+    MouseEvent,
+  };
+  use the_default::{
+    CompletionMenuItem,
+    show_completion_menu,
+  };
+
+  use super::*;
+
+  fn mouse_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+      kind,
+      column,
+      row,
+      modifiers: KeyModifiers::empty(),
+    }
+  }
+
+  #[test]
+  fn completion_docs_wheel_scrolls_when_pointer_is_inside_docs() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    show_completion_menu(&mut ctx, vec![CompletionMenuItem::new("item")]);
+    ctx.completion_docs_layout = Some(crate::picker_layout::CompletionDocsLayout {
+      panel:           Rect::new(0, 0, 20, 8),
+      content:         Rect::new(1, 1, 18, 6),
+      scrollbar_track: Some(Rect::new(19, 1, 1, 6)),
+      visible_rows:    6,
+      total_rows:      24,
+    });
+
+    handle_mouse(&mut ctx, mouse_event(MouseEventKind::ScrollDown, 2, 2));
+    assert_eq!(ctx.completion_menu.docs_scroll, 3);
+  }
+
+  #[test]
+  fn completion_docs_scrollbar_drag_updates_scroll_offset() {
+    let mut ctx = Ctx::new(None).expect("ctx");
+    show_completion_menu(&mut ctx, vec![CompletionMenuItem::new("item")]);
+    ctx.completion_docs_layout = Some(crate::picker_layout::CompletionDocsLayout {
+      panel:           Rect::new(0, 0, 20, 8),
+      content:         Rect::new(1, 1, 18, 6),
+      scrollbar_track: Some(Rect::new(19, 1, 1, 6)),
+      visible_rows:    6,
+      total_rows:      30,
+    });
+
+    handle_mouse(
+      &mut ctx,
+      mouse_event(MouseEventKind::Down(MouseButton::Left), 19, 6),
+    );
+    assert!(ctx.completion_docs_drag.is_some());
+    let after_down = ctx.completion_menu.docs_scroll;
+    assert!(after_down > 0);
+
+    handle_mouse(
+      &mut ctx,
+      mouse_event(MouseEventKind::Drag(MouseButton::Left), 19, 6),
+    );
+    assert!(ctx.completion_menu.docs_scroll >= after_down);
   }
 }

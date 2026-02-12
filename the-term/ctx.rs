@@ -201,12 +201,20 @@ use the_vcs::{
   DiffSignKind,
 };
 
-use crate::picker_layout::FilePickerLayout;
+use crate::picker_layout::{
+  CompletionDocsLayout,
+  FilePickerLayout,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilePickerDragState {
   ListScrollbar { grab_offset: u16 },
   PreviewScrollbar { grab_offset: u16 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionDocsDragState {
+  Scrollbar { grab_offset: u16 },
 }
 
 #[derive(Debug)]
@@ -432,6 +440,8 @@ pub struct Ctx {
   pub diagnostics:                  DiagnosticsState,
   pub file_picker_layout:           Option<FilePickerLayout>,
   pub file_picker_drag:             Option<FilePickerDragState>,
+  pub completion_docs_layout:       Option<CompletionDocsLayout>,
+  pub completion_docs_drag:         Option<CompletionDocsDragState>,
   pub search_prompt:                the_default::SearchPromptState,
   pub ui_theme:                     Theme,
   pub ui_state:                     UiState,
@@ -780,6 +790,8 @@ impl Ctx {
       diagnostics: DiagnosticsState::default(),
       file_picker_layout: None,
       file_picker_drag: None,
+      completion_docs_layout: None,
+      completion_docs_drag: None,
       search_prompt: the_default::SearchPromptState::new(),
       ui_theme,
       ui_state: UiState::default(),
@@ -2315,7 +2327,10 @@ impl Ctx {
 
   fn completion_filter_fragment(&self) -> Option<String> {
     let cursor = self.primary_cursor_char_idx()?;
-    let start = self.lsp_completion_fallback_start.unwrap_or(cursor).min(cursor);
+    let start = self
+      .lsp_completion_fallback_start
+      .unwrap_or(cursor)
+      .min(cursor);
     let doc = self.editor.document();
     let text = doc.text();
     let fragment = text.slice(start..cursor).to_string();
@@ -2502,7 +2517,9 @@ impl Ctx {
       | Command::CompletionNext
       | Command::CompletionPrev
       | Command::CompletionAccept
-      | Command::CompletionCancel => true,
+      | Command::CompletionCancel
+      | Command::CompletionDocsScrollUp
+      | Command::CompletionDocsScrollDown => true,
       _ => {
         self.cancel_auto_completion();
         false
@@ -3148,30 +3165,30 @@ fn completion_menu_item_for_lsp_item(item: &LspCompletionItem) -> the_default::C
 fn completion_kind_icon(kind: LspCompletionItemKind) -> &'static str {
   use LspCompletionItemKind::*;
   match kind {
-    Text          => "w",
-    Method        => "f",
-    Function      => "f",
-    Constructor   => "f",
-    Field         => "m",
-    Variable      => "v",
-    Class         => "c",
-    Interface     => "i",
-    Module        => "M",
-    Property      => "m",
-    Unit          => "u",
-    Value         => "v",
-    Enum          => "e",
-    Keyword       => "k",
-    Snippet       => "S",
-    Color         => "v",
-    File          => "F",
-    Reference     => "r",
-    Folder        => "D",
-    EnumMember    => "e",
-    Constant      => "C",
-    Struct        => "s",
-    Event         => "E",
-    Operator      => "o",
+    Text => "w",
+    Method => "f",
+    Function => "f",
+    Constructor => "f",
+    Field => "m",
+    Variable => "v",
+    Class => "c",
+    Interface => "i",
+    Module => "M",
+    Property => "m",
+    Unit => "u",
+    Value => "v",
+    Enum => "e",
+    Keyword => "k",
+    Snippet => "S",
+    Color => "v",
+    File => "F",
+    Reference => "r",
+    Folder => "D",
+    EnumMember => "e",
+    Constant => "C",
+    Struct => "s",
+    Event => "E",
+    Operator => "o",
     TypeParameter => "t",
   }
 }
@@ -3180,14 +3197,14 @@ fn completion_kind_color(kind: LspCompletionItemKind) -> the_lib::render::graphi
   use LspCompletionItemKind::*;
   use the_lib::render::graphics::Color;
   match kind {
-    Method | Function | Constructor | Operator => Color::Rgb(0xdb, 0xbf, 0xef), // lilac
-    Field | Variable | Property | Value | Reference => Color::Rgb(0xa4, 0xa0, 0xe8), // lavender
-    Class | Interface | Enum | Struct | TypeParameter => Color::Rgb(0xef, 0xba, 0x5d), // honey
-    Module | Folder | EnumMember | Constant => Color::Rgb(0xe8, 0xdc, 0xa0),    // chamois
-    Keyword                                 => Color::Rgb(0xec, 0xcd, 0xba),    // almond
-    Snippet                                 => Color::Rgb(0x9f, 0xf2, 0x8f),    // mint
-    Event                                   => Color::Rgb(0xf4, 0x78, 0x68),    // apricot
-    Text | Unit | Color | File              => Color::Rgb(0xcc, 0xcc, 0xcc),    // silver
+    Method | Function | Constructor | Operator => Color::Rgb(0xDB, 0xBF, 0xEF), // lilac
+    Field | Variable | Property | Value | Reference => Color::Rgb(0xA4, 0xA0, 0xE8), // lavender
+    Class | Interface | Enum | Struct | TypeParameter => Color::Rgb(0xEF, 0xBA, 0x5D), // honey
+    Module | Folder | EnumMember | Constant => Color::Rgb(0xE8, 0xDC, 0xA0),    // chamois
+    Keyword => Color::Rgb(0xEC, 0xCD, 0xBA),                                    // almond
+    Snippet => Color::Rgb(0x9F, 0xF2, 0x8F),                                    // mint
+    Event => Color::Rgb(0xF4, 0x78, 0x68),                                      // apricot
+    Text | Unit | Color | File => Color::Rgb(0xCC, 0xCC, 0xCC),                 // silver
   }
 }
 
@@ -5425,5 +5442,73 @@ pkgs.mkShell {
     assert!(outcome.handled);
     assert_eq!(ctx.mode(), Mode::Normal);
     assert!(!ctx.completion_menu.active);
+  }
+
+  #[test]
+  fn page_down_scrolls_completion_docs_when_menu_is_active() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+    ctx.set_mode(Mode::Insert);
+
+    let mut item = CompletionMenuItem::new("item");
+    item.documentation = Some("line 1\nline 2\nline 3\nline 4\nline 5\nline 6".to_string());
+    show_completion_menu(&mut ctx, vec![item]);
+    assert_eq!(ctx.completion_menu.docs_scroll, 0);
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::PageDown,
+      modifiers: Modifiers::empty(),
+    });
+
+    assert!(ctx.completion_menu.docs_scroll > 0);
+    assert_eq!(ctx.mode(), Mode::Insert);
+    assert!(ctx.completion_menu.active);
+  }
+
+  #[test]
+  fn page_down_falls_back_to_editor_scroll_when_completion_is_inactive() {
+    let dispatch = build_dispatch::<Ctx>();
+    let mut ctx = Ctx::new(None).expect("ctx");
+    ctx.set_dispatch(&dispatch);
+    ctx.set_mode(Mode::Insert);
+
+    let mut source = String::new();
+    for idx in 0..120 {
+      source.push_str(&format!("line {idx}\n"));
+    }
+    let tx = Transaction::change(
+      ctx.editor.document().text(),
+      std::iter::once((0, 0, Some(source.into()))),
+    )
+    .expect("seed long text");
+    assert!(DefaultContext::apply_transaction(&mut ctx, &tx));
+    let _ = ctx
+      .editor
+      .document_mut()
+      .set_selection(Selection::single(0, 0));
+    let before_scroll = ctx.editor.view().scroll.row;
+    let before_cursor = {
+      let doc = ctx.editor.document();
+      let text = doc.text();
+      let range = doc.selection().ranges()[0];
+      let cursor = range.cursor(text.slice(..));
+      text.char_to_line(cursor)
+    };
+
+    handle_key(&dispatch, &mut ctx, KeyEvent {
+      key:       Key::PageDown,
+      modifiers: Modifiers::empty(),
+    });
+
+    let after_scroll = ctx.editor.view().scroll.row;
+    let after_cursor = {
+      let doc = ctx.editor.document();
+      let text = doc.text();
+      let range = doc.selection().ranges()[0];
+      let cursor = range.cursor(text.slice(..));
+      text.char_to_line(cursor)
+    };
+    assert!(after_scroll > before_scroll || after_cursor > before_cursor);
   }
 }

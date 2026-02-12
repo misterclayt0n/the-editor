@@ -551,6 +551,8 @@ pub enum Command {
   CompletionPrev,
   CompletionAccept,
   CompletionCancel,
+  CompletionDocsScrollUp,
+  CompletionDocsScrollDown,
   LspSignatureHelp,
   LspCodeActions,
   LspFormat,
@@ -1250,6 +1252,16 @@ impl Command {
   #[must_use]
   pub const fn completion_cancel() -> Self {
     Self::CompletionCancel
+  }
+
+  #[must_use]
+  pub const fn completion_docs_scroll_up() -> Self {
+    Self::CompletionDocsScrollUp
+  }
+
+  #[must_use]
+  pub const fn completion_docs_scroll_down() -> Self {
+    Self::CompletionDocsScrollDown
   }
 
   #[must_use]

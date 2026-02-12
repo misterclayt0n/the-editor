@@ -1,6 +1,9 @@
 //! Rendering - converts RenderPlan to ratatui draw calls.
 
-use std::collections::BTreeMap;
+use std::{
+  collections::BTreeMap,
+  path::Path,
+};
 
 use ratatui::{
   prelude::*,
@@ -17,6 +20,7 @@ use ratatui::{
     Widget,
   },
 };
+use ropey::Rope;
 use the_default::{
   FilePickerPreview,
   file_picker_icon_glyph,
@@ -61,12 +65,16 @@ use the_lib::{
     text_annotations::TextAnnotations,
   },
   selection::Range,
-  syntax::Highlight,
+  syntax::{
+    Highlight,
+    Syntax,
+  },
 };
 
 use crate::{
   Ctx,
   picker_layout::{
+    CompletionDocsLayout,
     FilePickerLayout,
     compute_file_picker_layout,
     compute_scrollbar_metrics,
@@ -477,8 +485,8 @@ fn measure_node(node: &UiNode, max_width: u16) -> (u16, u16) {
     UiNode::List(list) => {
       let mut width: usize = 0;
       let is_completion_list = list.style.role.as_deref() == Some("completion");
-      let has_icons = is_completion_list
-        && list.items.iter().any(|item| item.leading_icon.is_some());
+      let has_icons =
+        is_completion_list && list.items.iter().any(|item| item.leading_icon.is_some());
       let icon_width: usize = if has_icons { 2 } else { 0 };
       let mut has_detail = false;
       for item in &list.items {
@@ -808,9 +816,7 @@ fn parse_markdown_link(chars: &[char], start: usize) -> Option<(usize, String)> 
   while close_bracket < chars.len() && chars[close_bracket] != ']' {
     close_bracket += 1;
   }
-  if close_bracket >= chars.len()
-    || chars.get(close_bracket + 1).copied() != Some('(')
-  {
+  if close_bracket >= chars.len() || chars.get(close_bracket + 1).copied() != Some('(') {
     return None;
   }
   let mut close_paren = close_bracket + 2;
@@ -910,11 +916,7 @@ fn parse_numbered_list_prefix(line: &str) -> Option<(String, &str)> {
   while idx < bytes.len() && bytes[idx].is_ascii_digit() {
     idx += 1;
   }
-  if idx == 0
-    || idx + 1 >= bytes.len()
-    || bytes[idx] != b'.'
-    || bytes[idx + 1] != b' '
-  {
+  if idx == 0 || idx + 1 >= bytes.len() || bytes[idx] != b'.' || bytes[idx + 1] != b' ' {
     return None;
   }
   let marker = line[..=idx].to_string();
@@ -945,32 +947,162 @@ fn is_markdown_rule(line: &str) -> bool {
   if chars.len() < 3 {
     return false;
   }
-  chars
-    .iter()
-    .all(|ch| matches!(ch, '-' | '_' | '*'))
+  chars.iter().all(|ch| matches!(ch, '-' | '_' | '*'))
+}
+
+fn parse_markdown_fence_language(trimmed_line: &str) -> Option<String> {
+  let fence = trimmed_line.strip_prefix("```")?;
+  let token = fence
+    .trim()
+    .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '{' | '}'))
+    .next()
+    .unwrap_or_default()
+    .trim_matches('.');
+  (!token.is_empty()).then(|| token.to_string())
+}
+
+fn highlighted_code_block_lines(
+  code_lines: &[String],
+  styles: &CompletionDocsStyles,
+  ctx: Option<&Ctx>,
+  language: Option<&str>,
+) -> Vec<Vec<StyledTextRun>> {
+  if code_lines.is_empty() {
+    return vec![Vec::new()];
+  }
+
+  let Some(ctx) = ctx else {
+    return code_lines
+      .iter()
+      .map(|line| {
+        vec![StyledTextRun {
+          text:  line.clone(),
+          style: styles.code,
+        }]
+      })
+      .collect();
+  };
+  let Some(loader) = ctx.loader.as_deref() else {
+    return code_lines
+      .iter()
+      .map(|line| {
+        vec![StyledTextRun {
+          text:  line.clone(),
+          style: styles.code,
+        }]
+      })
+      .collect();
+  };
+  let Some(language) = language.and_then(|marker| {
+    loader
+      .language_for_name(marker)
+      .or_else(|| loader.language_for_scope(marker))
+      .or_else(|| loader.language_for_filename(Path::new(&format!("tmp.{marker}"))))
+  }) else {
+    return code_lines
+      .iter()
+      .map(|line| {
+        vec![StyledTextRun {
+          text:  line.clone(),
+          style: styles.code,
+        }]
+      })
+      .collect();
+  };
+
+  let joined = code_lines.join("\n");
+  let rope = Rope::from_str(&joined);
+  let Ok(syntax) = Syntax::new(rope.slice(..), language, loader) else {
+    return code_lines
+      .iter()
+      .map(|line| {
+        vec![StyledTextRun {
+          text:  line.clone(),
+          style: styles.code,
+        }]
+      })
+      .collect();
+  };
+
+  let mut highlights = syntax.collect_highlights(rope.slice(..), loader, 0..rope.len_bytes());
+  highlights.sort_by_key(|(_highlight, range)| (range.start, std::cmp::Reverse(range.end)));
+
+  let mut rendered = Vec::with_capacity(code_lines.len());
+  let mut line_start_byte = 0usize;
+
+  for (idx, line) in code_lines.iter().enumerate() {
+    let mut runs = Vec::new();
+    let mut piece = String::new();
+    let mut active_style = styles.code;
+    let mut byte_idx = line_start_byte;
+
+    for ch in line.chars() {
+      let style = preview_highlight_at(&highlights, byte_idx)
+        .map(|highlight| {
+          styles
+            .code
+            .patch(lib_style_to_ratatui(ctx.ui_theme.highlight(highlight)))
+        })
+        .unwrap_or(styles.code);
+      if style != active_style && !piece.is_empty() {
+        push_styled_run(&mut runs, std::mem::take(&mut piece), active_style);
+      }
+      active_style = style;
+      piece.push(ch);
+      byte_idx = byte_idx.saturating_add(ch.len_utf8());
+    }
+    push_styled_run(&mut runs, piece, active_style);
+    if runs.is_empty() {
+      runs.push(StyledTextRun {
+        text:  String::new(),
+        style: styles.code,
+      });
+    }
+    rendered.push(runs);
+
+    line_start_byte = line_start_byte.saturating_add(line.len());
+    if idx + 1 < code_lines.len() {
+      line_start_byte = line_start_byte.saturating_add(1);
+    }
+  }
+
+  rendered
 }
 
 fn completion_docs_markdown_lines(
   markdown: &str,
   styles: &CompletionDocsStyles,
+  ctx: Option<&Ctx>,
 ) -> Vec<Vec<StyledTextRun>> {
   let mut lines = Vec::new();
   let mut in_code_block = false;
+  let mut code_block_language: Option<String> = None;
+  let mut code_block_lines: Vec<String> = Vec::new();
 
   for raw_line in markdown.lines() {
     let normalized = raw_line.replace('\t', "  ");
     let trimmed = normalized.trim_start();
 
     if trimmed.starts_with("```") {
-      in_code_block = !in_code_block;
+      if in_code_block {
+        lines.extend(highlighted_code_block_lines(
+          &code_block_lines,
+          styles,
+          ctx,
+          code_block_language.as_deref(),
+        ));
+        code_block_lines.clear();
+        code_block_language = None;
+        in_code_block = false;
+      } else {
+        code_block_language = parse_markdown_fence_language(trimmed);
+        in_code_block = true;
+      }
       continue;
     }
 
     if in_code_block {
-      lines.push(vec![StyledTextRun {
-        text:  normalized,
-        style: styles.code,
-      }]);
+      code_block_lines.push(normalized);
       continue;
     }
 
@@ -1029,6 +1161,15 @@ fn completion_docs_markdown_lines(
     lines.push(parse_inline_markdown_runs(trimmed, styles, styles.base));
   }
 
+  if in_code_block {
+    lines.extend(highlighted_code_block_lines(
+      &code_block_lines,
+      styles,
+      ctx,
+      code_block_language.as_deref(),
+    ));
+  }
+
   if lines.is_empty() {
     lines.push(Vec::new());
   }
@@ -1074,19 +1215,67 @@ fn wrap_styled_runs(runs: &[StyledTextRun], width: usize) -> Vec<Vec<StyledTextR
   wrapped
 }
 
-fn completion_docs_rows(
+fn completion_docs_rows_with_context(
   markdown: &str,
   styles: &CompletionDocsStyles,
   width: usize,
+  ctx: Option<&Ctx>,
 ) -> Vec<Vec<StyledTextRun>> {
   let mut rows = Vec::new();
-  for line in completion_docs_markdown_lines(markdown, styles) {
+  for line in completion_docs_markdown_lines(markdown, styles, ctx) {
     rows.extend(wrap_styled_runs(&line, width));
   }
   if rows.is_empty() {
     rows.push(Vec::new());
   }
   rows
+}
+
+fn completion_docs_rows(
+  markdown: &str,
+  styles: &CompletionDocsStyles,
+  width: usize,
+) -> Vec<Vec<StyledTextRun>> {
+  completion_docs_rows_with_context(markdown, styles, width, None)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CompletionDocsRenderMetrics {
+  content_width:  usize,
+  total_rows:     usize,
+  visible_rows:   usize,
+  show_scrollbar: bool,
+}
+
+fn completion_docs_render_metrics(
+  markdown: &str,
+  styles: &CompletionDocsStyles,
+  rect: Rect,
+) -> CompletionDocsRenderMetrics {
+  if rect.width == 0 || rect.height == 0 {
+    return CompletionDocsRenderMetrics {
+      content_width:  0,
+      total_rows:     0,
+      visible_rows:   0,
+      show_scrollbar: false,
+    };
+  }
+
+  let mut content_width = rect.width as usize;
+  let mut rows = completion_docs_rows(markdown, styles, content_width);
+  let mut show_scrollbar = rows.len() > rect.height as usize && rect.width > 1;
+  if show_scrollbar {
+    content_width = rect.width.saturating_sub(1) as usize;
+    rows = completion_docs_rows(markdown, styles, content_width);
+    show_scrollbar = rows.len() > rect.height as usize && rect.width > 1;
+  }
+
+  CompletionDocsRenderMetrics {
+    content_width,
+    total_rows: rows.len(),
+    visible_rows: rect.height as usize,
+    show_scrollbar,
+  }
 }
 
 fn draw_styled_row(
@@ -1124,18 +1313,11 @@ fn draw_completion_docs_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiT
   let (text_style, ..) = ui_style_colors(&text.style);
   let base_style = apply_ui_emphasis(text_style, text.style.emphasis);
   let styles = completion_docs_styles(ctx, base_style);
-
-  let mut content_width = rect.width as usize;
-  let mut rows = completion_docs_rows(&text.content, &styles, content_width);
-  let mut show_scrollbar = rows.len() > rect.height as usize && rect.width > 1;
-  if show_scrollbar {
-    content_width = rect.width.saturating_sub(1) as usize;
-    rows = completion_docs_rows(&text.content, &styles, content_width);
-    show_scrollbar = rows.len() > rect.height as usize && rect.width > 1;
-  }
-
-  let total_rows = rows.len();
-  let visible_rows = rect.height as usize;
+  let metrics = completion_docs_render_metrics(&text.content, &styles, rect);
+  let content_width = metrics.content_width;
+  let rows = completion_docs_rows_with_context(&text.content, &styles, content_width, Some(ctx));
+  let total_rows = metrics.total_rows;
+  let visible_rows = metrics.visible_rows;
   let max_scroll = total_rows.saturating_sub(visible_rows);
   let scroll = ctx.completion_menu.docs_scroll.min(max_scroll);
 
@@ -1148,7 +1330,7 @@ fn draw_completion_docs_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiT
     }
   }
 
-  if show_scrollbar {
+  if metrics.show_scrollbar {
     let track_x = rect.x + rect.width - 1;
     let track_height = rect.height;
     let thumb_height = ((visible_rows as f32 / total_rows as f32) * track_height as f32)
@@ -1282,12 +1464,7 @@ fn draw_ui_input(
   }
 }
 
-fn draw_ui_list(
-  buf: &mut Buffer,
-  rect: Rect,
-  list: &UiList,
-  _cursor_out: &mut Option<(u16, u16)>,
-) {
+fn draw_ui_list(buf: &mut Buffer, rect: Rect, list: &UiList, _cursor_out: &mut Option<(u16, u16)>) {
   if rect.width == 0 || rect.height == 0 {
     return;
   }
@@ -1307,8 +1484,7 @@ fn draw_ui_list(
     .and_then(resolve_ui_color)
     .or(base_text_color);
   let is_completion_list = list.style.role.as_deref() == Some("completion");
-  let has_icons = is_completion_list
-    && list.items.iter().any(|item| item.leading_icon.is_some());
+  let has_icons = is_completion_list && list.items.iter().any(|item| item.leading_icon.is_some());
   let icon_col_width: u16 = if has_icons { 2 } else { 0 };
   let has_detail = list.items.iter().any(|item| {
     item.subtitle.as_ref().map_or(false, |s| !s.is_empty())
@@ -1410,8 +1586,10 @@ fn draw_ui_list(
       }
 
       let label_x = base_content_x + icon_col_width;
-      let label_available =
-        rect.width.saturating_sub(1 + icon_col_width + row_right_padding) as usize;
+      let label_available = rect
+        .width
+        .saturating_sub(1 + icon_col_width + row_right_padding)
+        as usize;
 
       let detail = item
         .subtitle
@@ -1511,7 +1689,8 @@ fn draw_ui_list(
         as u16
     };
     for i in 0..track_height {
-      // Keep selected row highlight visually continuous; don't paint scrollbar glyphs over it.
+      // Keep selected row highlight visually continuous; don't paint scrollbar glyphs
+      // over it.
       if selected_visible_row == Some(i) {
         continue;
       }
@@ -2191,6 +2370,70 @@ fn panel_box_size(panel: &UiPanel, area: Rect) -> (u16, u16) {
   )
 }
 
+fn panel_content_rect(rect: Rect, panel: &UiPanel) -> Rect {
+  let mut content = inner_rect(rect);
+  if panel.title.is_some() {
+    content = Rect::new(
+      content.x,
+      content.y.saturating_add(1),
+      content.width,
+      content.height.saturating_sub(1),
+    );
+  }
+  inset_rect(content, panel.constraints.padding)
+}
+
+fn selected_completion_docs_text(ctx: &Ctx) -> Option<&str> {
+  ctx
+    .completion_menu
+    .selected
+    .and_then(|idx| ctx.completion_menu.items.get(idx))
+    .and_then(|item| item.documentation.as_deref())
+    .map(str::trim)
+    .filter(|docs| !docs.is_empty())
+}
+
+fn completion_docs_layout_for_panel(
+  ctx: &Ctx,
+  panel: &UiPanel,
+  panel_rect: Rect,
+) -> Option<CompletionDocsLayout> {
+  let docs = selected_completion_docs_text(ctx)?;
+  let content = panel_content_rect(panel_rect, panel);
+  if content.width == 0 || content.height == 0 {
+    return None;
+  }
+
+  let base_style = ui_style_colors(&panel.style).0;
+  let styles = completion_docs_styles(ctx, base_style);
+  let metrics = completion_docs_render_metrics(docs, &styles, content);
+  let scrollbar_track = metrics.show_scrollbar.then(|| {
+    Rect::new(
+      content.x + content.width.saturating_sub(1),
+      content.y,
+      1,
+      content.height,
+    )
+  });
+
+  Some(CompletionDocsLayout {
+    panel: panel_rect,
+    content: if scrollbar_track.is_some() {
+      Rect::new(
+        content.x,
+        content.y,
+        content.width.saturating_sub(1),
+        content.height,
+      )
+    } else {
+      content
+    },
+    scrollbar_track,
+    visible_rows: metrics.visible_rows,
+    total_rows: metrics.total_rows,
+  })
+}
+
 fn draw_ui_panel(
   buf: &mut Buffer,
   area: Rect,
@@ -2651,11 +2894,12 @@ fn draw_panel_in_rect(
 fn draw_ui_overlays(
   buf: &mut Buffer,
   area: Rect,
-  ctx: &Ctx,
+  ctx: &mut Ctx,
   ui: &UiTree,
   editor_cursor: Option<(u16, u16)>,
   cursor_out: &mut Option<(u16, u16)>,
 ) {
+  ctx.completion_docs_layout = None;
   let mut top_offset: u16 = 0;
   let mut bottom_offset: u16 = 0;
   let focus = ui.focus.as_ref();
@@ -2675,9 +2919,11 @@ fn draw_ui_overlays(
       let node = layer_nodes[index];
       match node {
         UiNode::Panel(panel) => {
-          let completion_docs_pair = layer_nodes.get(index + 1).and_then(|next| match *next {
-            UiNode::Panel(next_panel) if panel_is_completion_docs(next_panel) => Some(next_panel),
-            _ => None,
+          let completion_docs_pair = layer_nodes.get(index + 1).and_then(|next| {
+            match *next {
+              UiNode::Panel(next_panel) if panel_is_completion_docs(next_panel) => Some(next_panel),
+              _ => None,
+            }
           });
           if panel_is_completion(panel)
             && matches!(
@@ -2709,6 +2955,8 @@ fn draw_ui_overlays(
                 );
                 if let Some(docs_rect) = docs_rect {
                   draw_box_with_title(buf, docs_rect, ctx, docs_panel, focus, cursor_out);
+                  ctx.completion_docs_layout =
+                    completion_docs_layout_for_panel(ctx, docs_panel, docs_rect);
                 }
               }
             }
@@ -2779,6 +3027,9 @@ fn draw_ui_overlays(
       }
       index += 1;
     }
+  }
+  if ctx.completion_docs_layout.is_none() {
+    ctx.completion_docs_drag = None;
   }
 }
 
@@ -3139,8 +3390,7 @@ mod tests {
   fn completion_docs_panel_rect_prefers_right_side() {
     let area = Rect::new(0, 0, 100, 30);
     let completion_rect = Rect::new(20, 9, 30, 8);
-    let docs_rect =
-      completion_docs_panel_rect(area, 24, 10, completion_rect).expect("docs rect");
+    let docs_rect = completion_docs_panel_rect(area, 24, 10, completion_rect).expect("docs rect");
     assert_eq!(docs_rect.x, 51);
     assert_eq!(docs_rect.y, completion_rect.y);
   }
@@ -3149,8 +3399,7 @@ mod tests {
   fn completion_docs_panel_rect_flips_left_when_right_is_tight() {
     let area = Rect::new(0, 0, 70, 20);
     let completion_rect = Rect::new(45, 4, 24, 8);
-    let docs_rect =
-      completion_docs_panel_rect(area, 20, 8, completion_rect).expect("docs rect");
+    let docs_rect = completion_docs_panel_rect(area, 20, 8, completion_rect).expect("docs rect");
     assert_eq!(docs_rect.x, 24);
     assert_eq!(docs_rect.y, completion_rect.y);
   }
@@ -3207,21 +3456,21 @@ mod tests {
       .into_iter()
       .filter(|line| !line.trim().is_empty())
       .collect();
-    assert_eq!(
-      non_empty,
-      vec![
-        "Title".to_string(),
-        "• item".to_string(),
-        "Result".to_string(),
-        "fn test() {}".to_string(),
-      ]
-    );
+    assert_eq!(non_empty, vec![
+      "Title".to_string(),
+      "• item".to_string(),
+      "Result".to_string(),
+      "fn test() {}".to_string(),
+    ]);
   }
 
   #[test]
   fn completion_docs_rows_wrap_long_lines() {
     let styles = CompletionDocsStyles::default(Style::default());
     let rows = completion_docs_rows("abcdef", &styles, 3);
-    assert_eq!(flatten_rows(&rows), vec!["abc".to_string(), "def".to_string()]);
+    assert_eq!(flatten_rows(&rows), vec![
+      "abc".to_string(),
+      "def".to_string()
+    ]);
   }
 }

@@ -476,6 +476,7 @@ fn measure_node(node: &UiNode, max_width: u16) -> (u16, u16) {
     UiNode::Spacer(spacer) => (max_width, spacer.size.max(1)),
     UiNode::List(list) => {
       let mut width: usize = 0;
+      let is_completion_list = list.style.role.as_deref() == Some("completion");
       let mut has_detail = false;
       for item in &list.items {
         let mut w = item.title.chars().count();
@@ -488,8 +489,12 @@ fn measure_node(node: &UiNode, max_width: u16) -> (u16, u16) {
           .filter(|s| !s.is_empty())
           .or_else(|| item.description.as_deref().filter(|s| !s.is_empty()))
         {
-          has_detail = true;
-          w = w.max(detail.chars().count());
+          if is_completion_list {
+            w = w.saturating_add(detail.chars().count() + 2);
+          } else {
+            has_detail = true;
+            w = w.max(detail.chars().count());
+          }
         }
         width = width.max(w);
       }
@@ -498,7 +503,13 @@ fn measure_node(node: &UiNode, max_width: u16) -> (u16, u16) {
       } else {
         width.min(max_width as usize).max(1) as u16
       };
-      let base_height = if has_detail { 2 } else { 1 };
+      let base_height = if is_completion_list {
+        1
+      } else if has_detail {
+        2
+      } else {
+        1
+      };
       let row_height = base_height;
       let mut count = list.items.len().max(1);
       if let Some(max_visible) = list.max_visible {
@@ -827,11 +838,18 @@ fn draw_ui_list(
     .as_ref()
     .and_then(resolve_ui_color)
     .or(base_text_color);
+  let is_completion_list = list.style.role.as_deref() == Some("completion");
   let has_detail = list.items.iter().any(|item| {
     item.subtitle.as_ref().map_or(false, |s| !s.is_empty())
       || item.description.as_ref().map_or(false, |s| !s.is_empty())
   });
-  let base_height: usize = if has_detail { 2 } else { 1 };
+  let base_height: usize = if is_completion_list {
+    1
+  } else if has_detail {
+    2
+  } else {
+    1
+  };
   let row_gap: usize = 0;
   let row_height: usize = base_height + row_gap;
   let visible_rows = rect.height as usize;
@@ -864,6 +882,7 @@ fn draw_ui_list(
   let mut draw_item = |row_idx: usize, absolute_idx: usize, item: &the_lib::render::UiListItem| {
     let y = rect.y + (row_idx * row_height) as u16;
     let is_selected = selected == Some(absolute_idx);
+    let row_right_padding = if total_items > visible_items { 2 } else { 1 };
 
     if is_selected {
       if let Some(bg_color) = selected_bg_color {
@@ -890,18 +909,57 @@ fn draw_ui_list(
 
     let mut title = item.title.clone();
     let shortcut = item.shortcut.clone().unwrap_or_default();
-    let available_width = rect.width.saturating_sub(2) as usize;
+    let available_width = rect.width.saturating_sub(1 + row_right_padding) as usize;
+    let content_x = rect.x + 1;
     if !shortcut.is_empty() && shortcut.len() + 2 < available_width {
       let shortcut_width = shortcut.len() + 1;
       truncate_in_place(&mut title, available_width.saturating_sub(shortcut_width));
-      let shortcut_x = rect.x + rect.width.saturating_sub(shortcut.len() as u16 + 1);
+      let shortcut_x = rect.x
+        + rect
+          .width
+          .saturating_sub(shortcut.len() as u16 + row_right_padding);
       buf.set_string(shortcut_x, y, shortcut, row_style);
     } else {
       truncate_in_place(&mut title, available_width);
     }
-    buf.set_string(rect.x + 1, y, title, row_style);
+    if is_completion_list {
+      let detail = item
+        .subtitle
+        .as_deref()
+        .filter(|detail| !detail.is_empty())
+        .or_else(|| {
+          item
+            .description
+            .as_deref()
+            .filter(|detail| !detail.is_empty())
+        });
+      if let Some(detail) = detail {
+        let content_right = rect.x + rect.width.saturating_sub(row_right_padding);
+        let mut detail_text = detail.to_string();
+        truncate_in_place(&mut detail_text, available_width.saturating_sub(4));
+        let detail_width = detail_text.chars().count() as u16;
+        let detail_x = content_right.saturating_sub(detail_width);
+        let mut title_width = detail_x.saturating_sub(content_x).saturating_sub(1) as usize;
+        if title_width == 0 {
+          title_width = 1;
+        }
+        truncate_in_place(&mut title, title_width);
+        buf.set_string(content_x, y, title, row_style);
+        let mut detail_style = row_style.add_modifier(Modifier::DIM);
+        if is_selected {
+          detail_style = row_style;
+        }
+        if detail_x > content_x {
+          buf.set_string(detail_x, y, detail_text, detail_style);
+        }
+      } else {
+        buf.set_string(content_x, y, title, row_style);
+      }
+    } else {
+      buf.set_string(content_x, y, title, row_style);
+    }
 
-    if base_height > 1 {
+    if !is_completion_list && base_height > 1 {
       let detail = item
         .subtitle
         .as_deref()
@@ -972,6 +1030,7 @@ fn draw_ui_node(
   ctx: &Ctx,
   node: &UiNode,
   focus: Option<&the_lib::render::UiFocus>,
+  editor_cursor: Option<(u16, u16)>,
   cursor_out: &mut Option<(u16, u16)>,
 ) {
   if rect.width == 0 || rect.height == 0 {
@@ -990,11 +1049,19 @@ fn draw_ui_node(
     UiNode::Container(container) => {
       let placements = layout_children(container, rect);
       for (child_rect, child) in placements {
-        draw_ui_node(buf, child_rect, ctx, child, focus, cursor_out);
+        draw_ui_node(
+          buf,
+          child_rect,
+          ctx,
+          child,
+          focus,
+          editor_cursor,
+          cursor_out,
+        );
       }
     },
     UiNode::Panel(panel) => {
-      draw_ui_panel(buf, rect, ctx, panel, focus, cursor_out);
+      draw_ui_panel(buf, rect, ctx, panel, focus, editor_cursor, cursor_out);
     },
     UiNode::Tooltip(tooltip) => {
       draw_ui_tooltip(buf, rect, ctx, tooltip);
@@ -1495,12 +1562,59 @@ fn max_content_width_for_intent(
   }
 }
 
+fn panel_is_completion(panel: &UiPanel) -> bool {
+  panel.id == "completion" || panel.style.role.as_deref() == Some("completion")
+}
+
+fn completion_panel_rect(
+  area: Rect,
+  panel_width: u16,
+  panel_height: u16,
+  editor_cursor: Option<(u16, u16)>,
+) -> Rect {
+  let width = panel_width.min(area.width).max(1);
+  let height = panel_height.min(area.height).max(1);
+  let center_x = area.x + (area.width.saturating_sub(width)) / 2;
+  let center_y = area.y + (area.height.saturating_sub(height)) / 2;
+  let Some((cursor_x, cursor_y)) = editor_cursor else {
+    return Rect::new(center_x, center_y, width, height);
+  };
+  if area.width == 0 || area.height == 0 {
+    return Rect::new(center_x, center_y, width, height);
+  }
+
+  let max_x = area.x + area.width.saturating_sub(width);
+  let max_y = area.y + area.height.saturating_sub(height);
+  let cursor_x = cursor_x.clamp(area.x, area.x + area.width.saturating_sub(1));
+  let cursor_y = cursor_y.clamp(area.y, area.y + area.height.saturating_sub(1));
+
+  let mut x = cursor_x.saturating_sub(1);
+  x = x.clamp(area.x, max_x);
+
+  let below_start = cursor_y.saturating_add(1).max(area.y);
+  let below_space = area
+    .y
+    .saturating_add(area.height)
+    .saturating_sub(below_start);
+  let above_space = cursor_y.saturating_sub(area.y);
+  let place_below = below_space >= height || below_space >= above_space;
+
+  let y = if place_below {
+    below_start.min(max_y)
+  } else {
+    cursor_y.saturating_sub(height).max(area.y)
+  };
+
+  Rect::new(x, y, width, height)
+}
+
 fn draw_ui_panel(
   buf: &mut Buffer,
   area: Rect,
   ctx: &Ctx,
   panel: &UiPanel,
   focus: Option<&the_lib::render::UiFocus>,
+  editor_cursor: Option<(u16, u16)>,
   cursor_out: &mut Option<(u16, u16)>,
 ) {
   if panel.id == "file_picker" || panel.style.role.as_deref() == Some("file_picker") {
@@ -1535,6 +1649,17 @@ fn draw_ui_panel(
     area.height,
   );
 
+  if panel_is_completion(panel)
+    && matches!(
+      panel.intent,
+      LayoutIntent::Custom(_) | LayoutIntent::Floating
+    )
+  {
+    let rect = completion_panel_rect(area, panel_width, panel_height, editor_cursor);
+    draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
+    return;
+  }
+
   match panel.intent.clone() {
     LayoutIntent::Bottom => {
       let mut height = if boxed {
@@ -1566,7 +1691,15 @@ fn draw_ui_panel(
           BorderEdge::Top,
           !panel_is_statusline(panel),
         );
-        draw_ui_node(buf, content, ctx, &panel.child, focus, cursor_out);
+        draw_ui_node(
+          buf,
+          content,
+          ctx,
+          &panel.child,
+          focus,
+          editor_cursor,
+          cursor_out,
+        );
       }
     },
     LayoutIntent::Top => {
@@ -1599,7 +1732,15 @@ fn draw_ui_panel(
           BorderEdge::Bottom,
           !panel_is_statusline(panel),
         );
-        draw_ui_node(buf, content, ctx, &panel.child, focus, cursor_out);
+        draw_ui_node(
+          buf,
+          content,
+          ctx,
+          &panel.child,
+          focus,
+          editor_cursor,
+          cursor_out,
+        );
       }
     },
     LayoutIntent::SidebarLeft => {
@@ -1655,7 +1796,7 @@ fn draw_box_with_title(
   }
 
   let content = inset_rect(content, panel.constraints.padding);
-  draw_ui_node(buf, content, ctx, &panel.child, focus, cursor_out);
+  draw_ui_node(buf, content, ctx, &panel.child, focus, None, cursor_out);
 }
 
 #[derive(Clone, Copy)]
@@ -1938,7 +2079,7 @@ fn draw_panel_in_rect(
     draw_box_with_title(buf, rect, ctx, panel, focus, cursor_out);
   } else {
     let content = draw_flat_panel(buf, rect, ctx, panel, edge, !panel_is_statusline(panel));
-    draw_ui_node(buf, content, ctx, &panel.child, focus, cursor_out);
+    draw_ui_node(buf, content, ctx, &panel.child, focus, None, cursor_out);
   }
 }
 
@@ -1947,6 +2088,7 @@ fn draw_ui_overlays(
   area: Rect,
   ctx: &Ctx,
   ui: &UiTree,
+  editor_cursor: Option<(u16, u16)>,
   cursor_out: &mut Option<(u16, u16)>,
 ) {
   let mut top_offset: u16 = 0;
@@ -1964,7 +2106,7 @@ fn draw_ui_overlays(
           match panel.intent.clone() {
             LayoutIntent::Bottom => {
               if matches!(layer, the_lib::render::UiLayer::Tooltip) {
-                draw_ui_panel(buf, area, ctx, panel, focus, cursor_out);
+                draw_ui_panel(buf, area, ctx, panel, focus, editor_cursor, cursor_out);
                 continue;
               }
               let available_height = area.height.saturating_sub(top_offset + bottom_offset);
@@ -1984,7 +2126,7 @@ fn draw_ui_overlays(
             },
             LayoutIntent::Top => {
               if matches!(layer, the_lib::render::UiLayer::Tooltip) {
-                draw_ui_panel(buf, area, ctx, panel, focus, cursor_out);
+                draw_ui_panel(buf, area, ctx, panel, focus, editor_cursor, cursor_out);
                 continue;
               }
               let available_height = area.height.saturating_sub(top_offset + bottom_offset);
@@ -1997,10 +2139,26 @@ fn draw_ui_overlays(
               top_offset = top_offset.saturating_add(panel_height);
               draw_panel_in_rect(buf, rect, ctx, panel, BorderEdge::Bottom, focus, cursor_out);
             },
-            _ => draw_ui_panel(buf, area, ctx, panel, focus, cursor_out),
+            _ => {
+              let available_height = area.height.saturating_sub(top_offset + bottom_offset);
+              if available_height == 0 {
+                continue;
+              }
+              let overlay_area =
+                Rect::new(area.x, area.y + top_offset, area.width, available_height);
+              draw_ui_panel(
+                buf,
+                overlay_area,
+                ctx,
+                panel,
+                focus,
+                editor_cursor,
+                cursor_out,
+              )
+            },
           }
         },
-        _ => draw_ui_node(buf, area, ctx, node, focus, cursor_out),
+        _ => draw_ui_node(buf, area, ctx, node, focus, editor_cursor, cursor_out),
       }
     }
   }
@@ -2102,6 +2260,12 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
     let buf = f.buffer_mut();
     let mut cursor_out = None;
     let content_x = area.x.saturating_add(plan.content_offset_x);
+    let editor_cursor = plan.cursors.first().map(|cursor| {
+      (
+        content_x + cursor.pos.col as u16,
+        area.y + cursor.pos.row as u16,
+      )
+    });
     let base_text_style = lib_style_to_ratatui(ctx.ui_theme.try_get("ui.text").unwrap_or_default());
     if let Some(bg) = ctx
       .ui_theme
@@ -2180,8 +2344,16 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
     }
 
     // Draw UI root and overlays.
-    draw_ui_node(buf, area, ctx, &ui.root, ui.focus.as_ref(), &mut cursor_out);
-    draw_ui_overlays(buf, area, ctx, &ui, &mut cursor_out);
+    draw_ui_node(
+      buf,
+      area,
+      ctx,
+      &ui.root,
+      ui.focus.as_ref(),
+      editor_cursor,
+      &mut cursor_out,
+    );
+    draw_ui_overlays(buf, area, ctx, &ui, editor_cursor, &mut cursor_out);
     cursor_out
   };
 

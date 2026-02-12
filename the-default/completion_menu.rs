@@ -173,6 +173,13 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     return Vec::new();
   }
 
+  let docs = state
+    .selected
+    .and_then(|index| state.items.get(index))
+    .and_then(|item| item.documentation.as_ref())
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty());
+
   let list_items = state
     .items
     .iter()
@@ -200,16 +207,10 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   list.style = list.style.with_role("completion");
 
   let mut children = vec![UiNode::List(list)];
-  let docs = state
-    .selected
-    .and_then(|index| state.items.get(index))
-    .and_then(|item| item.documentation.as_ref())
-    .map(|value| value.trim().to_string())
-    .filter(|value| !value.is_empty());
   if let Some(docs) = docs {
     let mut docs_text = UiText::new("completion_docs", docs);
     docs_text.style = docs_text.style.with_role("completion");
-    docs_text.max_lines = Some(8);
+    docs_text.max_lines = Some(6);
     docs_text.clip = false;
     children.push(UiNode::divider());
     children.push(UiNode::Text(docs_text));
@@ -224,9 +225,10 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
     UiNode::Container(container),
   );
   panel.style = panel.style.with_role("completion");
-  panel.constraints = UiConstraints::floating_default();
+  panel.constraints = UiConstraints::panel();
   panel.constraints.min_width = Some(28);
-  panel.constraints.max_height = Some((MAX_VISIBLE_ITEMS as u16).saturating_add(10));
+  panel.constraints.max_width = Some(64);
+  panel.constraints.max_height = Some((MAX_VISIBLE_ITEMS as u16).saturating_add(8));
 
   vec![UiNode::Panel(panel)]
 }

@@ -477,9 +477,12 @@ fn measure_node(node: &UiNode, max_width: u16) -> (u16, u16) {
     UiNode::List(list) => {
       let mut width: usize = 0;
       let is_completion_list = list.style.role.as_deref() == Some("completion");
+      let has_icons = is_completion_list
+        && list.items.iter().any(|item| item.leading_icon.is_some());
+      let icon_width: usize = if has_icons { 2 } else { 0 };
       let mut has_detail = false;
       for item in &list.items {
-        let mut w = item.title.chars().count();
+        let mut w = item.title.chars().count() + icon_width;
         if let Some(shortcut) = item.shortcut.as_ref() {
           w = w.saturating_add(shortcut.chars().count() + 3);
         }
@@ -839,6 +842,9 @@ fn draw_ui_list(
     .and_then(resolve_ui_color)
     .or(base_text_color);
   let is_completion_list = list.style.role.as_deref() == Some("completion");
+  let has_icons = is_completion_list
+    && list.items.iter().any(|item| item.leading_icon.is_some());
+  let icon_col_width: u16 = if has_icons { 2 } else { 0 };
   let has_detail = list.items.iter().any(|item| {
     item.subtitle.as_ref().map_or(false, |s| !s.is_empty())
       || item.description.as_ref().map_or(false, |s| !s.is_empty())
@@ -909,8 +915,8 @@ fn draw_ui_list(
 
     let mut title = item.title.clone();
     let shortcut = item.shortcut.clone().unwrap_or_default();
+    let base_content_x = rect.x + 1;
     let available_width = rect.width.saturating_sub(1 + row_right_padding) as usize;
-    let content_x = rect.x + 1;
     if !shortcut.is_empty() && shortcut.len() + 2 < available_width {
       let shortcut_width = shortcut.len() + 1;
       truncate_in_place(&mut title, available_width.saturating_sub(shortcut_width));
@@ -923,6 +929,25 @@ fn draw_ui_list(
       truncate_in_place(&mut title, available_width);
     }
     if is_completion_list {
+      if has_icons {
+        if let Some(icon) = item.leading_icon.as_deref() {
+          let icon_style = if is_selected {
+            row_style
+          } else if let Some(ref color) = item.leading_color {
+            resolve_ui_color(color)
+              .map(|c| Style::default().fg(c))
+              .unwrap_or(row_style)
+          } else {
+            row_style
+          };
+          buf.set_string(base_content_x, y, icon, icon_style);
+        }
+      }
+
+      let label_x = base_content_x + icon_col_width;
+      let label_available =
+        rect.width.saturating_sub(1 + icon_col_width + row_right_padding) as usize;
+
       let detail = item
         .subtitle
         .as_deref()
@@ -936,27 +961,29 @@ fn draw_ui_list(
       if let Some(detail) = detail {
         let content_right = rect.x + rect.width.saturating_sub(row_right_padding);
         let mut detail_text = detail.to_string();
-        truncate_in_place(&mut detail_text, available_width.saturating_sub(4));
+        truncate_in_place(&mut detail_text, label_available.saturating_sub(4));
         let detail_width = detail_text.chars().count() as u16;
         let detail_x = content_right.saturating_sub(detail_width);
-        let mut title_width = detail_x.saturating_sub(content_x).saturating_sub(1) as usize;
+        let mut title_width = detail_x.saturating_sub(label_x).saturating_sub(1) as usize;
         if title_width == 0 {
           title_width = 1;
         }
         truncate_in_place(&mut title, title_width);
-        buf.set_string(content_x, y, title, row_style);
-        let mut detail_style = row_style.add_modifier(Modifier::DIM);
-        if is_selected {
-          detail_style = row_style;
-        }
-        if detail_x > content_x {
+        buf.set_string(label_x, y, title, row_style);
+        let detail_style = if is_selected {
+          row_style
+        } else {
+          row_style.add_modifier(Modifier::DIM)
+        };
+        if detail_x > label_x {
           buf.set_string(detail_x, y, detail_text, detail_style);
         }
       } else {
-        buf.set_string(content_x, y, title, row_style);
+        truncate_in_place(&mut title, label_available);
+        buf.set_string(label_x, y, title, row_style);
       }
     } else {
-      buf.set_string(content_x, y, title, row_style);
+      buf.set_string(base_content_x, y, title, row_style);
     }
 
     if !is_completion_list && base_height > 1 {

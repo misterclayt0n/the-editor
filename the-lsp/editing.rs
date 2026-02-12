@@ -46,11 +46,74 @@ impl LspInsertTextFormat {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LspCompletionItemKind {
+  Text,
+  Method,
+  Function,
+  Constructor,
+  Field,
+  Variable,
+  Class,
+  Interface,
+  Module,
+  Property,
+  Unit,
+  Value,
+  Enum,
+  Keyword,
+  Snippet,
+  Color,
+  File,
+  Reference,
+  Folder,
+  EnumMember,
+  Constant,
+  Struct,
+  Event,
+  Operator,
+  TypeParameter,
+}
+
+impl LspCompletionItemKind {
+  pub fn from_lsp(value: u8) -> Option<Self> {
+    match value {
+      1 => Some(Self::Text),
+      2 => Some(Self::Method),
+      3 => Some(Self::Function),
+      4 => Some(Self::Constructor),
+      5 => Some(Self::Field),
+      6 => Some(Self::Variable),
+      7 => Some(Self::Class),
+      8 => Some(Self::Interface),
+      9 => Some(Self::Module),
+      10 => Some(Self::Property),
+      11 => Some(Self::Unit),
+      12 => Some(Self::Value),
+      13 => Some(Self::Enum),
+      14 => Some(Self::Keyword),
+      15 => Some(Self::Snippet),
+      16 => Some(Self::Color),
+      17 => Some(Self::File),
+      18 => Some(Self::Reference),
+      19 => Some(Self::Folder),
+      20 => Some(Self::EnumMember),
+      21 => Some(Self::Constant),
+      22 => Some(Self::Struct),
+      23 => Some(Self::Event),
+      24 => Some(Self::Operator),
+      25 => Some(Self::TypeParameter),
+      _ => None,
+    }
+  }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspCompletionItem {
   pub label:              String,
   pub detail:             Option<String>,
   pub documentation:      Option<String>,
+  pub kind:               Option<LspCompletionItemKind>,
   pub primary_edit:       Option<LspTextEdit>,
   pub additional_edits:   Vec<LspTextEdit>,
   pub insert_text:        Option<String>,
@@ -442,6 +505,7 @@ struct CompletionItemPayload {
   label:                 String,
   detail:                Option<String>,
   documentation:         Option<DocumentationPayload>,
+  kind:                  Option<u8>,
   insert_text:           Option<String>,
   insert_text_format:    Option<u8>,
   #[serde(default)]
@@ -474,6 +538,7 @@ impl CompletionItemPayload {
       label: self.label,
       detail: self.detail,
       documentation: self.documentation.map(DocumentationPayload::into_text),
+      kind: self.kind.and_then(LspCompletionItemKind::from_lsp),
       primary_edit,
       additional_edits: self
         .additional_text_edits

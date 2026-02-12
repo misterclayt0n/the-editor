@@ -123,6 +123,7 @@ use the_lsp::{
   LspCapability,
   LspCompletionContext,
   LspCompletionItem,
+  LspCompletionItemKind,
   LspEvent,
   LspExecuteCommand,
   LspInsertTextFormat,
@@ -3060,7 +3061,57 @@ fn completion_menu_item_for_lsp_item(item: &LspCompletionItem) -> the_default::C
   let mut menu_item = the_default::CompletionMenuItem::new(item.label.clone());
   menu_item.detail = completion_menu_detail_text(item);
   menu_item.documentation = completion_menu_documentation_text(item);
+  if let Some(kind) = item.kind {
+    menu_item.kind_icon = Some(completion_kind_icon(kind).to_string());
+    menu_item.kind_color = Some(completion_kind_color(kind));
+  }
   menu_item
+}
+
+fn completion_kind_icon(kind: LspCompletionItemKind) -> &'static str {
+  use LspCompletionItemKind::*;
+  match kind {
+    Text          => "w",
+    Method        => "f",
+    Function      => "f",
+    Constructor   => "f",
+    Field         => "m",
+    Variable      => "v",
+    Class         => "c",
+    Interface     => "i",
+    Module        => "M",
+    Property      => "m",
+    Unit          => "u",
+    Value         => "v",
+    Enum          => "e",
+    Keyword       => "k",
+    Snippet       => "S",
+    Color         => "v",
+    File          => "F",
+    Reference     => "r",
+    Folder        => "D",
+    EnumMember    => "e",
+    Constant      => "C",
+    Struct        => "s",
+    Event         => "E",
+    Operator      => "o",
+    TypeParameter => "t",
+  }
+}
+
+fn completion_kind_color(kind: LspCompletionItemKind) -> the_lib::render::graphics::Color {
+  use LspCompletionItemKind::*;
+  use the_lib::render::graphics::Color;
+  match kind {
+    Method | Function | Constructor | Operator => Color::Rgb(0xdb, 0xbf, 0xef), // lilac
+    Field | Variable | Property | Value | Reference => Color::Rgb(0xa4, 0xa0, 0xe8), // lavender
+    Class | Interface | Enum | Struct | TypeParameter => Color::Rgb(0xef, 0xba, 0x5d), // honey
+    Module | Folder | EnumMember | Constant => Color::Rgb(0xe8, 0xdc, 0xa0),    // chamois
+    Keyword                                 => Color::Rgb(0xec, 0xcd, 0xba),    // almond
+    Snippet                                 => Color::Rgb(0x9f, 0xf2, 0x8f),    // mint
+    Event                                   => Color::Rgb(0xf4, 0x78, 0x68),    // apricot
+    Text | Unit | Color | File              => Color::Rgb(0xcc, 0xcc, 0xcc),    // silver
+  }
 }
 
 fn completion_menu_detail_text(item: &LspCompletionItem) -> Option<String> {
@@ -3144,6 +3195,9 @@ fn merge_resolved_completion_item(current: &mut LspCompletionItem, resolved: Lsp
   }
   if current.documentation.is_none() {
     current.documentation = resolved.documentation;
+  }
+  if current.kind.is_none() {
+    current.kind = resolved.kind;
   }
   if current.primary_edit.is_none() {
     current.primary_edit = resolved.primary_edit;
@@ -4244,6 +4298,7 @@ mod tests {
       label:              "item".to_string(),
       detail:             None,
       documentation:      None,
+      kind:               None,
       primary_edit:       None,
       additional_edits:   Vec::new(),
       insert_text:        None,

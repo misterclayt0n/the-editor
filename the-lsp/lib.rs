@@ -27,6 +27,7 @@ pub use editing::{
   LspCodeAction,
   LspCompletionContext,
   LspCompletionItem,
+  LspCompletionItemKind,
   LspCompletionResponse,
   LspCompletionTriggerKind,
   LspDocumentEdit,

@@ -1,5 +1,6 @@
 use the_lib::render::{
   LayoutIntent,
+  UiColor,
   UiConstraints,
   UiContainer,
   UiList,
@@ -7,6 +8,7 @@ use the_lib::render::{
   UiNode,
   UiPanel,
   UiText,
+  graphics::Color,
 };
 
 use crate::DefaultContext;
@@ -18,6 +20,8 @@ pub struct CompletionMenuItem {
   pub label:         String,
   pub detail:        Option<String>,
   pub documentation: Option<String>,
+  pub kind_icon:     Option<String>,
+  pub kind_color:    Option<Color>,
 }
 
 impl CompletionMenuItem {
@@ -26,6 +30,8 @@ impl CompletionMenuItem {
       label:         label.into(),
       detail:        None,
       documentation: None,
+      kind_icon:     None,
+      kind_color:    None,
     }
   }
 }
@@ -190,8 +196,8 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
         description:   None,
         shortcut:      None,
         badge:         None,
-        leading_icon:  None,
-        leading_color: None,
+        leading_icon:  item.kind_icon.clone(),
+        leading_color: item.kind_color.map(UiColor::Value),
         symbols:       None,
         match_indices: None,
         emphasis:      false,

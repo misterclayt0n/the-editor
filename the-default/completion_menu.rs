@@ -212,17 +212,7 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   list.max_visible = Some(MAX_VISIBLE_ITEMS);
   list.style = list.style.with_role("completion");
 
-  let mut children = vec![UiNode::List(list)];
-  if let Some(docs) = docs {
-    let mut docs_text = UiText::new("completion_docs", docs);
-    docs_text.style = docs_text.style.with_role("completion");
-    docs_text.max_lines = Some(6);
-    docs_text.clip = false;
-    children.push(UiNode::divider());
-    children.push(UiNode::Text(docs_text));
-  }
-
-  let mut container = UiContainer::column("completion_container", 0, children);
+  let mut container = UiContainer::column("completion_container", 0, vec![UiNode::List(list)]);
   container.style = container.style.with_role("completion");
 
   let mut panel = UiPanel::new(
@@ -234,7 +224,35 @@ pub fn build_completion_menu_ui<Ctx: DefaultContext>(ctx: &mut Ctx) -> Vec<UiNod
   panel.constraints = UiConstraints::panel();
   panel.constraints.min_width = Some(28);
   panel.constraints.max_width = Some(64);
-  panel.constraints.max_height = Some((MAX_VISIBLE_ITEMS as u16).saturating_add(8));
+  panel.constraints.max_height = Some((MAX_VISIBLE_ITEMS as u16).saturating_add(4));
 
-  vec![UiNode::Panel(panel)]
+  let mut overlays = vec![UiNode::Panel(panel)];
+
+  if let Some(docs) = docs {
+    let mut docs_text = UiText::new("completion_docs_text", docs);
+    docs_text.style = docs_text.style.with_role("completion_docs");
+    docs_text.max_lines = Some(14);
+    docs_text.clip = false;
+
+    let mut docs_container = UiContainer::column(
+      "completion_docs_container",
+      0,
+      vec![UiNode::Text(docs_text)],
+    );
+    docs_container.style = docs_container.style.with_role("completion_docs");
+
+    let mut docs_panel = UiPanel::new(
+      "completion_docs",
+      LayoutIntent::Custom("completion_docs".to_string()),
+      UiNode::Container(docs_container),
+    );
+    docs_panel.style = docs_panel.style.with_role("completion_docs");
+    docs_panel.constraints = UiConstraints::panel();
+    docs_panel.constraints.min_width = Some(28);
+    docs_panel.constraints.max_width = Some(84);
+    docs_panel.constraints.max_height = Some(18);
+    overlays.push(UiNode::Panel(docs_panel));
+  }
+
+  overlays
 }

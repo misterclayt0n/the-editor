@@ -1593,6 +1593,10 @@ fn panel_is_completion(panel: &UiPanel) -> bool {
   panel.id == "completion" || panel.style.role.as_deref() == Some("completion")
 }
 
+fn panel_is_completion_docs(panel: &UiPanel) -> bool {
+  panel.id == "completion_docs" || panel.style.role.as_deref() == Some("completion_docs")
+}
+
 fn completion_panel_rect(
   area: Rect,
   panel_width: u16,
@@ -1635,20 +1639,38 @@ fn completion_panel_rect(
   Rect::new(x, y, width, height)
 }
 
-fn draw_ui_panel(
-  buf: &mut Buffer,
+fn completion_docs_panel_rect(
   area: Rect,
-  ctx: &Ctx,
-  panel: &UiPanel,
-  focus: Option<&the_lib::render::UiFocus>,
-  editor_cursor: Option<(u16, u16)>,
-  cursor_out: &mut Option<(u16, u16)>,
-) {
-  if panel.id == "file_picker" || panel.style.role.as_deref() == Some("file_picker") {
-    draw_file_picker_panel(buf, area, ctx, panel, focus, cursor_out);
-    return;
-  }
+  panel_width: u16,
+  panel_height: u16,
+  completion_rect: Rect,
+) -> Rect {
+  let width = panel_width.min(area.width).max(1);
+  let height = panel_height.min(area.height).max(1);
+  let gap = 1u16;
 
+  let max_x = area.x + area.width.saturating_sub(width);
+  let max_y = area.y + area.height.saturating_sub(height);
+  let right_x = completion_rect
+    .x
+    .saturating_add(completion_rect.width)
+    .saturating_add(gap);
+  let left_x = completion_rect
+    .x
+    .saturating_sub(gap)
+    .saturating_sub(width);
+  let right_fits = right_x <= max_x;
+  let x = if right_fits {
+    right_x
+  } else {
+    left_x.clamp(area.x, max_x)
+  };
+  let y = completion_rect.y.clamp(area.y, max_y);
+
+  Rect::new(x, y, width, height)
+}
+
+fn panel_box_size(panel: &UiPanel, area: Rect) -> (u16, u16) {
   let boxed = panel.style.border.is_some();
   let border: u16 = if boxed { 1 } else { 0 };
   let padding = panel.constraints.padding;
@@ -1668,13 +1690,37 @@ fn draw_ui_panel(
     .min(area.height)
     .max(3);
 
-  let (mut panel_width, panel_height) = apply_constraints(
+  apply_constraints(
     panel_width,
     panel_height,
     &panel.constraints,
     area.width,
     area.height,
-  );
+  )
+}
+
+fn draw_ui_panel(
+  buf: &mut Buffer,
+  area: Rect,
+  ctx: &Ctx,
+  panel: &UiPanel,
+  focus: Option<&the_lib::render::UiFocus>,
+  editor_cursor: Option<(u16, u16)>,
+  cursor_out: &mut Option<(u16, u16)>,
+) {
+  if panel.id == "file_picker" || panel.style.role.as_deref() == Some("file_picker") {
+    draw_file_picker_panel(buf, area, ctx, panel, focus, cursor_out);
+    return;
+  }
+
+  let boxed = panel.style.border.is_some();
+  let border: u16 = if boxed { 1 } else { 0 };
+  let padding_h = panel.constraints.padding.horizontal();
+  let padding_v = panel.constraints.padding.vertical();
+  let max_content_width =
+    max_content_width_for_intent(panel.intent.clone(), area, border, padding_h);
+  let (_, child_h) = measure_node(&panel.child, max_content_width);
+  let (mut panel_width, panel_height) = panel_box_size(panel, area);
 
   if panel_is_completion(panel)
     && matches!(
@@ -2127,17 +2173,65 @@ fn draw_ui_overlays(
     the_lib::render::UiLayer::Tooltip,
   ];
   for layer in layers {
-    for node in ui.overlays.iter().filter(|node| node_layer(node) == layer) {
+    let layer_nodes: Vec<&UiNode> = ui
+      .overlays
+      .iter()
+      .filter(|node| node_layer(node) == layer)
+      .collect();
+    let mut index = 0usize;
+    while index < layer_nodes.len() {
+      let node = layer_nodes[index];
       match node {
         UiNode::Panel(panel) => {
+          let completion_docs_pair = layer_nodes.get(index + 1).and_then(|next| match *next {
+            UiNode::Panel(next_panel) if panel_is_completion_docs(next_panel) => Some(next_panel),
+            _ => None,
+          });
+          if panel_is_completion(panel)
+            && matches!(
+              panel.intent,
+              LayoutIntent::Custom(_) | LayoutIntent::Floating
+            )
+            && completion_docs_pair.is_some()
+          {
+            let available_height = area.height.saturating_sub(top_offset + bottom_offset);
+            if available_height > 0 {
+              let overlay_area =
+                Rect::new(area.x, area.y + top_offset, area.width, available_height);
+              let (completion_width, completion_height) = panel_box_size(panel, overlay_area);
+              let completion_rect = completion_panel_rect(
+                overlay_area,
+                completion_width,
+                completion_height,
+                editor_cursor,
+              );
+              draw_box_with_title(buf, completion_rect, ctx, panel, focus, cursor_out);
+
+              if let Some(docs_panel) = completion_docs_pair {
+                let (docs_width, docs_height) = panel_box_size(docs_panel, overlay_area);
+                let docs_rect = completion_docs_panel_rect(
+                  overlay_area,
+                  docs_width,
+                  docs_height,
+                  completion_rect,
+                );
+                draw_box_with_title(buf, docs_rect, ctx, docs_panel, focus, cursor_out);
+              }
+            }
+            index += 2;
+            continue;
+          }
+
           match panel.intent.clone() {
             LayoutIntent::Bottom => {
               if matches!(layer, the_lib::render::UiLayer::Tooltip) {
                 draw_ui_panel(buf, area, ctx, panel, focus, editor_cursor, cursor_out);
+                index += 1;
                 continue;
               }
               let available_height = area.height.saturating_sub(top_offset + bottom_offset);
               if available_height == 0 {
+                index += 1;
                 continue;
               }
               let rect_area = Rect::new(area.x, area.y + top_offset, area.width, available_height);
@@ -2154,10 +2248,12 @@ fn draw_ui_overlays(
             LayoutIntent::Top => {
               if matches!(layer, the_lib::render::UiLayer::Tooltip) {
                 draw_ui_panel(buf, area, ctx, panel, focus, editor_cursor, cursor_out);
+                index += 1;
                 continue;
               }
               let available_height = area.height.saturating_sub(top_offset + bottom_offset);
               if available_height == 0 {
+                index += 1;
                 continue;
               }
               let rect_area = Rect::new(area.x, area.y + top_offset, area.width, available_height);
@@ -2187,6 +2283,7 @@ fn draw_ui_overlays(
         },
         _ => draw_ui_node(buf, area, ctx, node, focus, editor_cursor, cursor_out),
       }
+      index += 1;
     }
   }
 }
@@ -2487,7 +2584,7 @@ pub fn ensure_cursor_visible(ctx: &mut Ctx) {
 mod tests {
   use ratatui::layout::Rect;
 
-  use super::completion_panel_rect;
+  use super::{completion_docs_panel_rect, completion_panel_rect};
 
   #[test]
   fn completion_panel_rect_places_below_cursor_when_space_exists() {
@@ -2514,5 +2611,23 @@ mod tests {
     assert!(rect.y >= area.y);
     assert!(rect.x + rect.width <= area.x + area.width);
     assert!(rect.y + rect.height <= area.y + area.height);
+  }
+
+  #[test]
+  fn completion_docs_panel_rect_prefers_right_side() {
+    let area = Rect::new(0, 0, 100, 30);
+    let completion_rect = Rect::new(20, 9, 30, 8);
+    let docs_rect = completion_docs_panel_rect(area, 24, 10, completion_rect);
+    assert_eq!(docs_rect.x, 51);
+    assert_eq!(docs_rect.y, completion_rect.y);
+  }
+
+  #[test]
+  fn completion_docs_panel_rect_flips_left_when_right_is_tight() {
+    let area = Rect::new(0, 0, 70, 20);
+    let completion_rect = Rect::new(45, 4, 24, 8);
+    let docs_rect = completion_docs_panel_rect(area, 20, 8, completion_rect);
+    assert_eq!(docs_rect.x, 24);
+    assert_eq!(docs_rect.y, completion_rect.y);
   }
 }

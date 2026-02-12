@@ -42,13 +42,13 @@ use the_lib::{
     UiAlign,
     UiAlignPair,
     UiAxis,
-    UiContainer,
-    UiConstraints,
-    UiInsets,
     UiColor,
     UiColorToken,
+    UiConstraints,
+    UiContainer,
     UiEmphasis,
     UiInput,
+    UiInsets,
     UiLayer,
     UiLayout,
     UiList,
@@ -71,6 +71,7 @@ use the_lib::{
     },
     gutter_width_for_document,
     text_annotations::TextAnnotations,
+    ui_theme::resolve_ui_tree,
   },
   selection::Range,
   syntax::{
@@ -1327,7 +1328,16 @@ fn draw_completion_docs_text(buf: &mut Buffer, rect: Rect, ctx: &Ctx, text: &UiT
   let total_rows = metrics.total_rows;
   let visible_rows = metrics.visible_rows;
   let max_scroll = total_rows.saturating_sub(visible_rows);
-  let scroll = ctx.completion_menu.docs_scroll.min(max_scroll);
+  let docs_scroll = if text
+    .id
+    .as_deref()
+    .is_some_and(|id| id.starts_with("term_command_palette_docs"))
+  {
+    0
+  } else {
+    ctx.completion_menu.docs_scroll
+  };
+  let scroll = docs_scroll.min(max_scroll);
 
   for row_idx in 0..visible_rows {
     let y = rect.y + row_idx as u16;
@@ -2260,6 +2270,22 @@ fn panel_is_completion_docs(panel: &UiPanel) -> bool {
   panel.id == "completion_docs" || panel.style.role.as_deref() == Some("completion_docs")
 }
 
+fn panel_is_term_command_palette_list(panel: &UiPanel) -> bool {
+  panel.id == "term_command_palette_list"
+}
+
+fn panel_is_term_command_palette_docs(panel: &UiPanel) -> bool {
+  panel.id == "term_command_palette_docs"
+}
+
+fn term_command_palette_panel_rect(area: Rect, panel_width: u16, panel_height: u16) -> Rect {
+  let width = panel_width.min(area.width).max(1);
+  let height = panel_height.min(area.height).max(1);
+  let max_y = area.y.saturating_add(area.height.saturating_sub(height));
+  let y = max_y;
+  Rect::new(area.x, y, width, height)
+}
+
 fn completion_panel_rect(
   area: Rect,
   panel_width: u16,
@@ -2957,12 +2983,64 @@ fn draw_ui_overlays(
       let node = layer_nodes[index];
       match node {
         UiNode::Panel(panel) => {
+          let term_command_docs_pair = layer_nodes.get(index + 1).and_then(|next| {
+            match *next {
+              UiNode::Panel(next_panel) if panel_is_term_command_palette_docs(next_panel) => {
+                Some(next_panel)
+              },
+              _ => None,
+            }
+          });
           let completion_docs_pair = layer_nodes.get(index + 1).and_then(|next| {
             match *next {
               UiNode::Panel(next_panel) if panel_is_completion_docs(next_panel) => Some(next_panel),
               _ => None,
             }
           });
+          if panel_is_term_command_palette_list(panel) {
+            let available_height = area.height.saturating_sub(top_offset + bottom_offset);
+            if available_height > 0 {
+              let overlay_area =
+                Rect::new(area.x, area.y + top_offset, area.width, available_height);
+              let (list_width, list_height) = panel_box_size(panel, overlay_area);
+              let list_rect =
+                term_command_palette_panel_rect(overlay_area, list_width, list_height);
+              draw_panel_in_rect(
+                buf,
+                list_rect,
+                ctx,
+                panel,
+                BorderEdge::Top,
+                false,
+                focus,
+                cursor_out,
+              );
+
+              if let Some(docs_panel) = term_command_docs_pair {
+                let (docs_width, docs_height) = panel_box_size(docs_panel, overlay_area);
+                let docs_rect =
+                  completion_docs_panel_rect(overlay_area, docs_width, docs_height, list_rect);
+                if let Some(docs_rect) = docs_rect {
+                  draw_panel_in_rect(
+                    buf,
+                    docs_rect,
+                    ctx,
+                    docs_panel,
+                    BorderEdge::Top,
+                    false,
+                    focus,
+                    cursor_out,
+                  );
+                }
+              }
+            }
+            index += if term_command_docs_pair.is_some() {
+              2
+            } else {
+              1
+            };
+            continue;
+          }
           if panel_is_completion(panel)
             && matches!(
               panel.intent,
@@ -3150,6 +3228,21 @@ fn command_palette_statusline_text(query: &str, cursor: usize) -> String {
   format!("CMD {before}█{after}")
 }
 
+fn term_command_palette_filtered_selection(
+  state: &the_default::CommandPaletteState,
+) -> Option<(Vec<usize>, usize)> {
+  let filtered = command_palette_filtered_indices(state);
+  if filtered.is_empty() {
+    return None;
+  }
+  let selected = state
+    .selected
+    .and_then(|current| filtered.iter().position(|&idx| idx == current))
+    .unwrap_or(0)
+    .min(filtered.len().saturating_sub(1));
+  Some((filtered, selected))
+}
+
 fn search_statusline_text(query: &str, cursor: usize) -> String {
   let mut cursor = cursor.min(query.len());
   while cursor > 0 && !query.is_char_boundary(cursor) {
@@ -3171,27 +3264,26 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
   let (query, _) = command_palette_prompt_query_and_cursor(ctx);
   let mut filtered_state = state.clone();
   filtered_state.query = query.to_string();
-  let filtered = command_palette_filtered_indices(&filtered_state);
-  if filtered.is_empty() {
-    return None;
-  }
-
-  const MAX_VISIBLE_ITEMS: usize = 8;
-  let visible_count = filtered.len().min(MAX_VISIBLE_ITEMS).max(1);
-  let selected = state
-    .selected
-    .and_then(|selected| filtered.iter().position(|&idx| idx == selected));
-  let selected_index = selected.unwrap_or(0);
-  let max_window_start = filtered.len().saturating_sub(visible_count);
-  let window_start = selected_index
-    .saturating_sub(visible_count.saturating_sub(1))
-    .min(max_window_start);
+  let (filtered, selected) = term_command_palette_filtered_selection(&filtered_state)?;
+  const MAX_VISIBLE_ITEMS: usize = 10;
   let items: Vec<UiListItem> = filtered
     .iter()
-    .skip(window_start)
-    .take(visible_count)
     .filter_map(|index| state.items.get(*index))
-    .map(|item| UiListItem::new(item.title.clone()))
+    .map(|item| {
+      UiListItem {
+        title:         item.title.clone(),
+        subtitle:      item.subtitle.clone().or_else(|| item.shortcut.clone()),
+        description:   None,
+        shortcut:      None,
+        badge:         item.badge.clone(),
+        leading_icon:  item.leading_icon.clone(),
+        leading_color: item.leading_color.map(UiColor::Value),
+        symbols:       item.symbols.clone(),
+        match_indices: None,
+        emphasis:      item.emphasis,
+        action:        None,
+      }
+    })
     .collect();
   if items.is_empty() {
     return None;
@@ -3199,35 +3291,40 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
 
   let mut list = UiList::new("command_palette_list", items);
   list.fill_width = false;
-  list.selected = selected.map(|idx| idx.saturating_sub(window_start));
+  list.selected = Some(selected);
   list.scroll = 0;
-  list.max_visible = Some(visible_count);
-  list.style = list.style.with_role("command_palette");
+  list.max_visible = Some(MAX_VISIBLE_ITEMS);
+  list.style = list.style.with_role("completion");
   list.style.accent = Some(UiColor::Token(UiColorToken::SelectedBg));
   list.style.border = Some(UiColor::Token(UiColorToken::SelectedText));
+
+  let mut container = UiContainer::column("term_command_palette_container", 0, vec![UiNode::List(
+    list,
+  )]);
+  container.style = container.style.with_role("completion");
 
   let mut panel = UiPanel::new(
     "term_command_palette_list",
     LayoutIntent::Custom("term_command_palette_list".to_string()),
-    UiNode::List(list),
+    UiNode::Container(container),
   );
-  panel.style = panel.style.with_role("command_palette");
+  panel.style = panel.style.with_role("completion");
   panel.style.border = None;
   panel.layer = UiLayer::Overlay;
   panel.constraints = UiConstraints {
-    min_width: Some(24),
-    max_width: Some(72),
+    min_width: None,
+    max_width: Some(64),
     min_height: Some(1),
-    max_height: Some(visible_count as u16),
+    max_height: Some((MAX_VISIBLE_ITEMS as u16).saturating_add(4)),
     padding: UiInsets {
-      left: 1,
-      right: 1,
-      top: 0,
+      left:   1,
+      right:  1,
+      top:    0,
       bottom: 0,
     },
     align: UiAlignPair {
       horizontal: UiAlign::Start,
-      vertical: UiAlign::End,
+      vertical:   UiAlign::End,
     },
     ..UiConstraints::default()
   };
@@ -3235,20 +3332,85 @@ fn build_term_command_palette_list_overlay(ctx: &Ctx) -> Option<UiNode> {
   Some(UiNode::Panel(panel))
 }
 
+fn build_term_command_palette_docs_overlay(ctx: &Ctx) -> Option<UiNode> {
+  let state = &ctx.command_palette;
+  if !state.is_open {
+    return None;
+  }
+  let (query, _) = command_palette_prompt_query_and_cursor(ctx);
+  let mut filtered_state = state.clone();
+  filtered_state.query = query.to_string();
+  let (filtered, selected_filtered) = term_command_palette_filtered_selection(&filtered_state)?;
+  let selected_index = *filtered.get(selected_filtered)?;
+  let item = state.items.get(selected_index)?;
+
+  let mut docs = String::new();
+  if let Some(description) = item.description.as_deref().map(str::trim)
+    && !description.is_empty()
+  {
+    docs.push_str(description);
+  }
+  if !item.aliases.is_empty() {
+    if !docs.is_empty() {
+      docs.push_str("\n\n");
+    }
+    docs.push_str("aliases: ");
+    docs.push_str(item.aliases.join(", ").as_str());
+  }
+  if docs.is_empty() {
+    return None;
+  }
+
+  let mut docs_text = UiText::new("term_command_palette_docs_text", docs);
+  docs_text.style = docs_text.style.with_role("completion_docs");
+  docs_text.clip = false;
+
+  let mut docs_container = UiContainer::column("term_command_palette_docs_container", 0, vec![
+    UiNode::Text(docs_text),
+  ]);
+  docs_container.style = docs_container.style.with_role("completion_docs");
+
+  let mut docs_panel = UiPanel::new(
+    "term_command_palette_docs",
+    LayoutIntent::Custom("term_command_palette_docs".to_string()),
+    UiNode::Container(docs_container),
+  );
+  docs_panel.style = docs_panel.style.with_role("completion_docs");
+  docs_panel.style.border = None;
+  docs_panel.layer = UiLayer::Overlay;
+  docs_panel.constraints = UiConstraints {
+    min_width:  Some(28),
+    max_width:  Some(84),
+    min_height: None,
+    max_height: Some(18),
+    padding:    UiInsets {
+      left:   1,
+      right:  1,
+      top:    1,
+      bottom: 1,
+    },
+    align:      UiAlignPair {
+      horizontal: UiAlign::Start,
+      vertical:   UiAlign::End,
+    },
+  };
+
+  Some(UiNode::Panel(docs_panel))
+}
+
 fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
   if ctx.command_palette.is_open {
     ui.overlays.retain(|node| !is_command_palette_overlay(node));
     let (query, cursor) = command_palette_prompt_query_and_cursor(ctx);
-    if let Some(status) = ui
-      .overlays
-      .iter_mut()
-      .find_map(status_bar_from_overlay_mut)
-    {
+    if let Some(status) = ui.overlays.iter_mut().find_map(status_bar_from_overlay_mut) {
       status.left = command_palette_statusline_text(query, cursor);
       status.left_icon = None;
     }
     if let Some(list_overlay) = build_term_command_palette_list_overlay(ctx) {
       ui.overlays.push(list_overlay);
+      if let Some(docs_overlay) = build_term_command_palette_docs_overlay(ctx) {
+        ui.overlays.push(docs_overlay);
+      }
     }
     return;
   }
@@ -3266,15 +3428,9 @@ fn adapt_ui_tree_for_term(ctx: &Ctx, ui: &mut UiTree) {
     ui.focus = None;
   }
 
-  if let Some(status) = ui
-    .overlays
-    .iter_mut()
-    .find_map(status_bar_from_overlay_mut)
-  {
-    status.left = search_statusline_text(
-      ctx.search_prompt.query.as_str(),
-      ctx.search_prompt.cursor,
-    );
+  if let Some(status) = ui.overlays.iter_mut().find_map(status_bar_from_overlay_mut) {
+    status.left =
+      search_statusline_text(ctx.search_prompt.query.as_str(), ctx.search_prompt.cursor);
     status.left_icon = None;
   }
 }
@@ -3367,6 +3523,7 @@ pub fn render(f: &mut Frame, ctx: &mut Ctx) {
 
   let mut ui = ui_tree(ctx);
   adapt_ui_tree_for_term(ctx, &mut ui);
+  resolve_ui_tree(&mut ui, &ctx.ui_theme);
   apply_ui_viewport(ctx, &ui, f.size());
   ensure_cursor_visible(ctx);
   let plan = render_plan(ctx);
@@ -3580,6 +3737,10 @@ mod tests {
     layout::Rect,
     style::Style,
   };
+  use the_default::{
+    CommandPaletteItem,
+    CommandPaletteState,
+  };
   use the_lib::render::{
     UiList,
     UiListItem,
@@ -3592,6 +3753,7 @@ mod tests {
     completion_docs_rows,
     completion_panel_rect,
     draw_ui_list,
+    term_command_palette_filtered_selection,
   };
 
   fn flatten_rows(rows: &[Vec<StyledTextRun>]) -> Vec<String> {
@@ -3666,6 +3828,25 @@ mod tests {
     let completion_rect = Rect::new(2, 6, 76, 10);
     let docs_rect = completion_docs_panel_rect(area, 36, 9, completion_rect);
     assert!(docs_rect.is_none());
+  }
+
+  #[test]
+  fn term_command_palette_selection_defaults_to_first_filtered_item() {
+    let state = CommandPaletteState {
+      is_open:     true,
+      query:       String::new(),
+      selected:    None,
+      items:       vec![
+        CommandPaletteItem::new("help"),
+        CommandPaletteItem::new("quit"),
+      ],
+      max_results: 10,
+    };
+
+    let (filtered, selected) =
+      term_command_palette_filtered_selection(&state).expect("filtered selection");
+    assert_eq!(filtered, vec![0, 1]);
+    assert_eq!(selected, 0);
   }
 
   #[test]
